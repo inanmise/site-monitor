@@ -168,4 +168,19 @@ class DomainExpiryRefreshServiceTest {
         assertThat(a.getDomainExpiryCheckedAt()).isNotBlank();
         assertThat(other.getDomainExpiry()).isNull();
     }
+
+    @Test
+    @DisplayName("manuel sertifika (2026-10-06): takip adı alan adı değil — RDAP/WHOIS sorulmaz, satıra yazılmaz")
+    void manualRows_skipped() {
+        CertificateInventory manual = ci("api.example.test", null);
+        manual.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(manual));
+        when(publicSuffixService.registrableDomain("api.example.test")).thenReturn("example.test");
+
+        assertThat(service.refreshAll()).isZero();
+        verify(diag, never()).diagnose(org.mockito.ArgumentMatchers.anyString());
+        assertThat(service.persistToInventory("example.test", "2027-01-01", "Kayitci")).isZero();
+        assertThat(manual.getDomainExpiry()).isNull();
+        verify(inventoryRepo, never()).save(any());
+    }
 }

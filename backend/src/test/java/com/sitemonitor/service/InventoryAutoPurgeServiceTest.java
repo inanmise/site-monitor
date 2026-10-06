@@ -106,4 +106,23 @@ class InventoryAutoPurgeServiceTest {
         verify(inventoryRepo).findByDeletedAtIsNotNullOrderByDomainAsc();
         verify(auditService, never()).recordSystemEvent(anyString(), anyString(), anyString(), anyString());   // 0 silme → denetim yok
     }
+
+    @Test
+    @DisplayName("manuel sertifika (2026-10-06): kalıcı silme sürümleri de siler; ağ kaydında sürüm deposuna dokunulmaz")
+    void purgesManualVersions() {
+        com.sitemonitor.repository.ManualCertificateVersionRepository versions =
+                mock(com.sitemonitor.repository.ManualCertificateVersionRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "manualVersionRepo", versions);
+        CertificateInventory manual = deleted("api-takip", 40);
+        manual.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        CertificateInventory net = deleted("old.example.com", 40);
+        when(inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()).thenReturn(List.of(manual, net));
+        when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
+        when(noteRepo.findByDomainOrderByCreatedAtDesc(anyString())).thenReturn(List.of());
+
+        assertThat(service.purgeOlderThan(30).purged()).isEqualTo(2);
+        verify(versions).deleteByInventoryId(manual.getId());
+        verify(versions, never()).deleteByInventoryId(net.getId());
+        verify(inventoryRepo).delete(manual);
+    }
 }

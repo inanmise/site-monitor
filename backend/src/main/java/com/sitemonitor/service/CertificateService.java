@@ -83,7 +83,10 @@ public class CertificateService {
 
         // Determine deployment status by comparing fingerprints
         String servedFingerprint = (String) result.get("fingerprint");
-        String deploymentStatus = determineDeploymentStatus(domain, servedFingerprint);
+        // Elle yüklenen sertifika (2026-10-06): "sunucuda gerçekten bu mu" sorusu ağsız cevaplanamaz → UNKNOWN
+        // (MISMATCH alarmı üretmez). Ağ sonucu bu işareti taşımaz — dal ağ kayıtları için hiç girilmez.
+        boolean manualSource = Boolean.TRUE.equals(result.get("manual"));
+        String deploymentStatus = manualSource ? "UNKNOWN" : determineDeploymentStatus(domain, servedFingerprint);
         result.put("deployment_status", deploymentStatus);
 
         // Serialize chain details
@@ -183,7 +186,7 @@ public class CertificateService {
             // TOFU pin: ilk görüşte sabitle, değiştiği anda yenisini sabitle ve değişimi kaydet.
             // SAN listesi ayrıca geçilir: pin, sunulan sertifikanın bu host için KABUL EDİLEBİLİR
             // olmasına bağlı (aşağıya bakın) ve hüküm SAN + trust_status'tan çıkıyor.
-            applyAutoPin(latest, servedFingerprint, now, sanList);
+            applyAutoPin(latest, servedFingerprint, now, sanList, manualSource);
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);
@@ -235,12 +238,22 @@ public class CertificateService {
      * @param san sunulan sertifikanın SAN listesi (host kapsanıyor mu hükmü buradan çıkar)
      */
     static void applyAutoPin(LatestCheck latest, String servedFingerprint, String now, List<String> san) {
+        applyAutoPin(latest, servedFingerprint, now, san, false);
+    }
+
+    /**
+     * @param manualSource elle yüklenen sertifika mı (2026-10-06). Yüklenen dosyada araya girme (MITM) olamaz ve takip
+     *                     adı bir host adı değildir: güven kapısı (ad kapsaması + güven kökü) bu kayıtta SORULMAZ, pin
+     *                     yüklenen sürümü izler. Ağ sonucunda {@code false} — davranış birebir aynı.
+     */
+    static void applyAutoPin(LatestCheck latest, String servedFingerprint, String now, List<String> san,
+                             boolean manualSource) {
         if (servedFingerprint == null || servedFingerprint.isBlank()) return;
         String pinned = latest.getPinnedFingerprint();
         // Aynı sertifika sürüyor: hiçbir yazma gerekmiyor (güven kapısını sormaya bile gerek yok).
         if (pinned != null && pinned.equalsIgnoreCase(servedFingerprint)) return;
 
-        List<String> flags = CertificateHealthRules.securityFlags(
+        List<String> flags = manualSource ? List.of() : CertificateHealthRules.securityFlags(
                 latest.getDomain(), san, latest.getTrustStatus());
         if (!flags.isEmpty()) {
             log.warn("Pin KORUNDU — sunulan sertifika {} için kabul edilebilir değil: {}",
@@ -337,6 +350,8 @@ public class CertificateService {
                 if (tn != null) teamNameMap.put(d, tn);
             }
         }
+        // Elle yüklenen sertifikalar (2026-10-06): geçerli sürüm bilgisi TEK sorguyla; manuel satır yoksa sorgu YOK.
+        Map<String, com.sitemonitor.model.ManualCertificateVersion> manualByDomain = manualCurrentVersions(activeInventory);
         // Tier bazlı eşik (2026-09-20): tek okuma, alan başına tier'ıyla çözülür.
         ThresholdResolution thresholds = ThresholdResolution.load(alertThresholdRepo, null);
         // findByDomainIn → tüm latest_checks yerine sadece aktif domain'lerin satırlarını çek
@@ -356,11 +371,50 @@ public class CertificateService {
                     if (dto.getPlatform() != null) dto.setPlatformName(platformNames.get(dto.getPlatform()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
                     applyNoc(dto, nocSource.get(c.getDomain()));
+                    applyManual(dto, nocSource.get(c.getDomain()), manualByDomain.get(c.getDomain()));
                     int[] td = thresholds.days(tierMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
                     return dto;
                 })
                 .collect(Collectors.toList());
+    }
+
+    /** Manuel sertifika sürümleri — isteğe bağlı (birim testi bağlamında yok → alanlar boş kalır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
+
+    /**
+     * Aktif envanterdeki manuel kayıtların geçerli sürümleri, alan adına göre. Manuel kayıt yoksa sorgu atılmaz
+     * (ağ kayıtlarının yolu bugünküyle aynı).
+     */
+    Map<String, com.sitemonitor.model.ManualCertificateVersion> manualCurrentVersions(List<CertificateInventory> inventory) {
+        if (manualVersionRepo == null || inventory == null) return Map.of();
+        Map<Long, String> domainById = new HashMap<>();
+        for (CertificateInventory inv : inventory) {
+            if (inv.isManual() && inv.getId() != null && inv.getDomain() != null) domainById.put(inv.getId(), inv.getDomain());
+        }
+        if (domainById.isEmpty()) return Map.of();
+        Map<String, com.sitemonitor.model.ManualCertificateVersion> out = new HashMap<>();
+        try {
+            for (var v : manualVersionRepo.findByInventoryIdInAndCurrentTrue(domainById.keySet())) {
+                String d = domainById.get(v.getInventoryId());
+                if (d != null) out.put(d, v);
+            }
+        } catch (Exception e) {
+            log.debug("Manuel sertifika sürümleri okunamadı: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** Manuel satırın kaynak + sürüm alanları (ağ satırında hiçbir şey yazılmaz). */
+    static void applyManual(CertificateDto dto, CertificateInventory inv,
+                            com.sitemonitor.model.ManualCertificateVersion current) {
+        if (inv == null || !inv.isManual()) return;
+        dto.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        if (current != null) {
+            dto.setManualVersion(current.getVersion());
+            dto.setManualUploadedAt(current.getUploadedAt());
+        }
     }
 
     /**

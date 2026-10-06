@@ -54,6 +54,10 @@ public class InventoryAutoPurgeService {
 
     public record Result(int days, int purged, int checksDeleted, List<String> domains) {}
 
+    /** Manuel sertifika sürümleri (2026-10-06) — isteğe bağlı (@InjectMocks birim testinde yok). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
+
     /**
      * Kendi proxy'si (BO4/O1 kardeşi, bug regresyon 2026-09-27). {@link #scheduled} {@link #purgeOlderThan}'ı
      * {@code this.} ile çağırıyordu → {@code @Transactional} ve {@code @CacheEvict} HİÇ devreye girmiyordu.
@@ -99,6 +103,10 @@ public class InventoryAutoPurgeService {
                 List<Long> ids = notes.stream().map(CertificateNote::getId).filter(Objects::nonNull).toList();
                 if (!ids.isEmpty()) noteRevisionRepo.deleteByNoteIdIn(ids);
                 noteRepo.deleteAll(notes);
+            }
+            // Elle yüklenen sertifika sürümleri (2026-10-06) envanter satırıyla birlikte gider.
+            if (manualVersionRepo != null && inv.isManual() && inv.getId() != null) {
+                manualVersionRepo.deleteByInventoryId(inv.getId());
             }
             inventoryRepo.delete(inv);
             purged++; domains.add(domain);

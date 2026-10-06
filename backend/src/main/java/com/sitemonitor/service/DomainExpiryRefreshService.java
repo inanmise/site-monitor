@@ -62,6 +62,7 @@ public class DomainExpiryRefreshService {
         Map<String, String> currentExpiry = new HashMap<>();
         for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
             if (ci.getDeletedAt() != null) continue;
+            if (ci.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): takip adı bir alan adı değil — RDAP/WHOIS yok
             String reg = publicSuffixService.registrableDomain(ci.getDomain());
             if (reg == null || reg.isBlank()) continue;
             reg = reg.toLowerCase();
@@ -152,6 +153,7 @@ public class DomainExpiryRefreshService {
             int updated = 0;
             for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
                 if (ci.getDeletedAt() != null) continue;
+                if (ci.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): takip adı bir alan adı değil — RDAP/WHOIS yok
                 String rowReg = publicSuffixService.registrableDomain(ci.getDomain());
                 if (rowReg != null && rowReg.equalsIgnoreCase(registrable)) {
                     ci.setDomainExpiry(expiry);

@@ -1273,7 +1273,9 @@ public class MonitoringController {
         // tasiyor; kardesleri suzulurken burasi atlanmisti (bkz. inventoryViewable).
         // Org geneli okuma (scope=all) bu süzgeci BİLİNÇLİ atlar — kararı InventoryVisibility verir.
         boolean all = inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
+        // Elle yüklenen sertifika (2026-10-06) bir ağ hedefi değil — erişilebilirlik ekranında satırı yok.
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual())
                 .filter(inv -> all || inventoryViewable(session, inv)).toList();
         java.util.function.Predicate<Long> writable = SessionScope.inventoryWriteTest(session);
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
@@ -1679,7 +1681,9 @@ public class MonitoringController {
     @GetMapping("/port")
     public ResponseEntity<Map<String, Object>> listPort(HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        // Elle yüklenen sertifika (2026-10-06) ağ hedefi değil → envanter türevi izleme ne oluşturulur ne listelenir.
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual()).toList();
         String now = ISO.format(Instant.now());
 
         // Tüm monitörleri tek sorguda yükle, host:port ile indeksle (en küçük id = findFirst...OrderByIdAsc).
@@ -2151,7 +2155,9 @@ public class MonitoringController {
     @GetMapping("/dns")
     public ResponseEntity<Map<String, Object>> listDns(HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        // Elle yüklenen sertifika (2026-10-06) ağ hedefi değil → envanter türevi izleme ne oluşturulur ne listelenir.
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual()).toList();
         String now = ISO.format(Instant.now());
 
         // Tüm monitörleri tek sorguda yükle, domain ile indeksle (en küçük id = findFirst...OrderByIdAsc).

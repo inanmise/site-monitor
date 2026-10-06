@@ -5554,4 +5554,49 @@ class MonitoringControllerTest {
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
         assertCanDiagnose("/api/monitoring/pagespeed");
     }
+
+    // ── Elle yüklenen sertifika (2026-10-06): ağ hedefi değil → erişilebilirlik / türev Port-DNS yüzeylerinde YOK ──
+
+    private static CertificateInventory manualInv(String key) {
+        CertificateInventory i = inv(key);
+        i.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        return i;
+    }
+
+    @Test
+    @DisplayName("manuel: erişilebilirlik özetinde satırı yok")
+    void uptimeOverview_hidesManualRows() throws Exception {
+        when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid"), lc("api-takip", "valid")));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com"), manualInv("api-takip")));
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].domain").value("a.com"));
+    }
+
+    @Test
+    @DisplayName("manuel: envanter türevi Port/DNS izlemesi OLUŞTURULMAZ (yalnız ağ kaydı için)")
+    void derivedPortDns_notProvisionedForManualRows() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("net.example.test"), manualInv("api-takip")));
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of());
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(dnsMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN"))).andExpect(status().isOk());
+        mvc.perform(get("/api/monitoring/dns").session(session("ADMIN"))).andExpect(status().isOk());
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<List<com.sitemonitor.model.PortMonitor>> ports =
+                (org.mockito.ArgumentCaptor) org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(portMonitorRepo).saveAll(ports.capture());
+        org.assertj.core.api.Assertions.assertThat(ports.getValue()).extracting(com.sitemonitor.model.PortMonitor::getHost)
+                .containsExactly("net.example.test");
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<List<com.sitemonitor.model.DnsMonitor>> dns =
+                (org.mockito.ArgumentCaptor) org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(dnsMonitorRepo).saveAll(dns.capture());
+        org.assertj.core.api.Assertions.assertThat(dns.getValue()).extracting(com.sitemonitor.model.DnsMonitor::getDomain)
+                .containsExactly("net.example.test");
+    }
 }

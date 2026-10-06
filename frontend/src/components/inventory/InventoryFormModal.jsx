@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useId } from 'react'
-import { Copy, FlaskConical, Trash2, RefreshCw, ShieldCheck, Globe, Users, Server, FolderOpen, ToggleRight, NotebookPen } from 'lucide-react'
+import { Copy, FlaskConical, Trash2, RefreshCw, ShieldCheck, Globe, Users, Server, FolderOpen, ToggleRight, NotebookPen, FileUp } from 'lucide-react'
 import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
 import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
 import { api, formatDateOnly } from '../../api/client'
@@ -19,6 +19,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import DomainConflictBanner from './DomainConflictBanner.jsx'
 import { domainConflictOf } from './domainConflictModel.js'
+import { isManualCert } from '../manualcert/manualCertModel.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import {
@@ -182,8 +183,12 @@ function initialForm(mode, record) {
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
                                              canManage = true, canWrite = false, canMoveTeam = false,
-                                             canOpenSettings, onClose, onSaved, onRefresh, focus = null }) {
+                                             canOpenSettings, onClose, onSaved, onRefresh, focus = null, manual: manualProp }) {
   const t = useT()
+  // Manuel (dosyadan yüklenen) kayıt (2026-10-06): ağa özgü alanlar (port, vekil, TLS kipi, zaman aşımı, sıklık) ve
+  // "Test et" YOK, takip adı değiştirilmez, kayıttan sonra canlı kontrol koşmaz (sertifika dosyadan; sunucu ağsız
+  // değerlendirir). Değerleri gövdede KAYITTAKİ gibi gider. Ağ kaydında (varsayılan) form birebir aynı.
+  const manual = manualProp ?? isManualCert(record)
   const { isDark } = useTheme()
   const toast = useToast()
   // Araç çubuğu "Panoya kopyala" komutu (2026-09-22): editörün API'sinden GÜNCEL metni alır (form state ile aynı);
@@ -477,6 +482,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
         // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
         const savedNow = form.domain.trim()
+        // Manuel kayıt: canlı ilk kontrol yok (ağda adres yok) — kayıt bitti, form kapanır.
+        if (manual) { onSaved?.(res, savedNow); return }
         setFirstRun(true)
         let chk = null
         try { chk = await api.refreshCertificateHealth(savedNow) } catch (e) { chk = { success: false, error: e?.message } }
@@ -562,15 +569,18 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           {/* Alt çubuk — dokuz izleme formunun KANONİK düzeni: [Test et (solda)] … [Çalıştır] [Sil] [İptal] [Kaydet].
               Düğme METİNLERİ SABİT: evre başlıktaki şeritte; düğme kilitli + aria-busy. */}
           <div data-slot="inv-form-actions" className="flex w-full flex-wrap items-center justify-end gap-2">
-            <Button variant="secondary" className="mr-auto" onClick={runTest}
-              disabled={testing || !form.domain.trim()} aria-busy={testing || undefined}>
-              <FlaskConical size={14} />{t('inv.test')}
-            </Button>
-            {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
+            {!manual && (
+              <Button variant="secondary" className="mr-auto" onClick={runTest}
+                disabled={testing || !form.domain.trim()} aria-busy={testing || undefined}>
+                <FlaskConical size={14} />{t('inv.test')}
+              </Button>
+            )}
+            {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. Manuel kayıtta
+                "Yeniden değerlendir" (aynı uç; sunucu ağsız değerlendirir). */}
             {savedDomain && (
-              <Button variant="secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
-                title={t('inv.runTitle', savedDomain)}>
-                <RefreshCw size={14} />{t('inv.run')}
+              <Button variant="secondary" className={manual ? 'mr-auto' : undefined} onClick={runNow} disabled={running} aria-busy={running || undefined}
+                title={manual ? t('mcert.reevaluateTitle', savedDomain) : t('inv.runTitle', savedDomain)}>
+                <RefreshCw size={14} />{manual ? t('mcert.reevaluate') : t('inv.run')}
               </Button>
             )}
             {savedDomain && canDelete && (
@@ -586,6 +596,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </div>
         </>}>
         {isDuplicate && <AlertBanner tone="info" icon={Copy}>{t('inv.duplicateHint')}</AlertBanner>}
+        {manual && (
+          <div data-slot="inv-form-manual">
+            <AlertBanner tone="info" icon={FileUp} title={t('mcert.form.title')}>{t('mcert.form.body')}</AlertBanner>
+          </div>
+        )}
 
         <FormGrid>
           {/* ── 1. Kimlik (2026-09-27 gruplama): aktif · alan adı · port · açıklama ── */}
@@ -593,17 +608,28 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
           <CheckField full checked={form.active} onCheckedChange={(v) => f('active', v)} label={t('inv.formActive')} />
 
-          <FormField label={t('inv.formDomain')} required error={errors.domain}>
-            {({ id, describedBy, invalid }) => (
-              <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.domain}
-                onChange={e => f('domain', e.target.value)} placeholder={t('inv.formDomainPh')} autoFocus={isDuplicate}
-                autoComplete="off" spellCheck={false}
-                onBlur={() => { if (domainLooksInvalid(form.domain)) setErrors(prev => ({ ...prev, domain: t('inv.domainInvalid') })) }} />
-            )}
-          </FormField>
-          <FormField label={t('inv.formPort')}>
-            {({ id }) => <Input id={id} type="number" inputMode="numeric" value={form.port} onChange={e => f('port', e.target.value)} />}
-          </FormField>
+          {manual ? (
+            // Manuel kayıt: takip adı envanter anahtarıdır — burada değiştirilmez (sertifika sürümleri bu ada bağlı).
+            <FormField label={t('mcert.key.label')} hint={t('mcert.form.keyLocked')} full>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} value={form.domain} readOnly className="font-mono" />
+              )}
+            </FormField>
+          ) : (
+            <>
+              <FormField label={t('inv.formDomain')} required error={errors.domain}>
+                {({ id, describedBy, invalid }) => (
+                  <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.domain}
+                    onChange={e => f('domain', e.target.value)} placeholder={t('inv.formDomainPh')} autoFocus={isDuplicate}
+                    autoComplete="off" spellCheck={false}
+                    onBlur={() => { if (domainLooksInvalid(form.domain)) setErrors(prev => ({ ...prev, domain: t('inv.domainInvalid') })) }} />
+                )}
+              </FormField>
+              <FormField label={t('inv.formPort')}>
+                {({ id }) => <Input id={id} type="number" inputMode="numeric" value={form.port} onChange={e => f('port', e.target.value)} />}
+              </FormField>
+            </>
+          )}
 
           <FormField label={t('inv.formDesc')} full>
             {({ id }) => (
@@ -684,6 +710,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             )}
           </FormField>
 
+          {/* Ağa özgü alanlar (sıklık · TLS kipi · zaman aşımı · vekil) — manuel kayıtta yok (2026-10-06) */}
+          {!manual && (<>
           <FormField label={t('inv.formInterval')} hint={t('inv.formIntervalHint')}>
             {({ id }) => (
               <SearchableSelect
@@ -738,6 +766,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               </div>
             )}
           </FormField>
+          </>)}
 
           {/* ── 4. Gruplama ve bildirim: grup · bildirim grubu · etiketler (öneriler takımın mevcut değerlerinden) ── */}
           <SectionHeader icon={FolderOpen} label={t('inv.sectionGrouping')} />

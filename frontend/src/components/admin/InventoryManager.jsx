@@ -1,5 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
-import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Globe, Building2, Clock, X, Trash2, Power, PowerOff, UserPlus, CheckSquare, Square, AlertTriangle, Inbox } from 'lucide-react'
+import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Globe, Building2, Clock, X, Trash2, Power, PowerOff, UserPlus, CheckSquare, Square, AlertTriangle, Inbox, FileUp } from 'lucide-react'
+import AddCertSplitButton from '../manualcert/AddCertSplitButton.jsx'
+import { navigateTo } from '../../utils/navigate.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -514,6 +516,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }
 
   function openAdd() { setFormModal({ mode: 'add', record: null }) }
+  /** "Dosyadan sertifika ekle" — Manuel Sertifikalar sayfası, yükleme sihirbazı açık (sayfa `mc_upload`'ı okur). */
+  function addFromFile() { navigateTo('manualcerts', { mc_upload: '1' }) }
   function openEdit(item) { setFormModal({ mode: 'edit', record: item }) }
   function openDuplicate(item) { setFormModal({ mode: 'duplicate', record: item }) }
   // Devret modalı: 964dfd1a formu ayrı modale çıkarırken bu yardımcı silinmiş ama satır
@@ -717,7 +721,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <span className="tabular-nums">{checkLabel || t('app.checkNow')}</span>
               </Button>
             )}
-            {canAdd && <Button type="button" onClick={openAdd}><Plus aria-hidden="true" /> {t('inv.addBtn')}</Button>}
+            {/* "Domain ekle" aynı kalır; ok menüsünde AYRI seçenek "Dosyadan sertifika ekle" (2026-10-06) → Manuel Sertifikalar */}
+            {canAdd && <AddCertSplitButton onAddDomain={openAdd} onAddFromFile={addFromFile} />}
           </>
         )} />
 
@@ -786,6 +791,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             : emptyInventory && statusFilter === 'default' && canAdd
               ? <>
                   <Button type="button" size="sm" onClick={openAdd}><Plus aria-hidden="true" /> {t('inv.addBtn')}</Button>
+                  <Button type="button" variant="outline" size="sm" data-slot="inv-add-from-file" onClick={addFromFile}><FileUp aria-hidden="true" /> {t('mcert.add.file')}</Button>
                   {canManage && <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}><Upload aria-hidden="true" /> {t('inv.import')}</Button>}
                 </>
               : null} />

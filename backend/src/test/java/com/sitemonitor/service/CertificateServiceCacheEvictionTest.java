@@ -125,8 +125,10 @@ class CertificateServiceCacheEvictionTest {
     @DisplayName("envanteri yazan her uç önbellek boşaltır: geri yükle / SY-UG aktarımı / takım taşıma / grup yeniden adlandırma")
     void inventoryMutatingEndpointsEvict() throws Exception {
         Map<String, String> admin = publicEndpointBodies(sourceOf("controller/AdminController.java"));
+        // createInventoryRecord (2026-10-06): ekleme kapıları + kayıt, ağ eklemesi ve manuel sertifika için ortak çekirdek
+        // (gövdesi inventoryRepo.save yapar) — onu çağıran uç da envanteri yazar.
         java.util.regex.Pattern write = java.util.regex.Pattern.compile(
-                "inventoryRepo\\.(save|saveAll|delete|deleteById|deleteAll)\\(|teamAdminService\\.moveAll\\(");
+                "inventoryRepo\\.(save|saveAll|delete|deleteById|deleteAll)\\(|teamAdminService\\.moveAll\\(|createInventoryRecord\\(");
         List<String> writers = new ArrayList<>();
         List<String> offenders = new ArrayList<>();
         for (var e : admin.entrySet()) {

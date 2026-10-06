@@ -53,8 +53,33 @@ public class GlobalExceptionHandler {
             body.put("existing", de.getExisting());
             return ResponseEntity.status(409).body(body);
         }
+        // Kodlu çakışma (2026-10-06, manuel sertifika): arayüz iletiyi ayrıştırmaz, kodla dallanır; ek alanlar düz taşınır.
+        if (e instanceof CodedConflictException ce) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("code", ce.getCode());
+            body.put("error", e.getMessage());
+            if (ce.getExtra() != null) ce.getExtra().forEach(body::putIfAbsent);
+            return ResponseEntity.status(409).body(body);
+        }
         return ResponseEntity.status(409)
                 .body(Map.of("success", false, "error", e.getMessage()));
+    }
+
+    /** 409 + yapısal {@code code} (ve isteğe bağlı ek alanlar) — {@link #handleConflict}. */
+    public static class CodedConflictException extends IllegalStateException {
+        private final String code;
+        private final Map<String, Object> extra;
+        public CodedConflictException(String code, String message) {
+            this(code, message, null);
+        }
+        public CodedConflictException(String code, String message, Map<String, Object> extra) {
+            super(message);
+            this.code = code;
+            this.extra = extra;
+        }
+        public String getCode() { return code; }
+        public Map<String, Object> getExtra() { return extra; }
     }
 
     /**

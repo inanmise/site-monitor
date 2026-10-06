@@ -362,6 +362,7 @@ public class AdminController {
             if (orgWide && !SessionScope.canView(session, it.getTeamId())) redactForForeignReader(it);
         }
         applyNotificationGroupNames(session, items);   // çekmecenin "Bildirim grubu" satırı — TEK sorgu, satır başına değil
+        applyManualVersionSummary(items);              // manuel sertifika sürümü (2026-10-06) — TEK sorgu, manuel yoksa hiç
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", items);
         body.put("scope", orgWide || isAdminOrAudit(session) && "all".equalsIgnoreCase(scope.trim()) ? "all" : "mine");
@@ -400,6 +401,7 @@ public class AdminController {
             if (rec.getUgTeamId() != null) rec.setUgTeamName(teamNames.get(rec.getUgTeamId()));
             rec.setCanManage(SessionScope.canWriteInventory(session, rec.getTeamId()));
             applyNotificationGroupNames(session, List.of(rec));   // grup kimliği varsa tek ek sorgu
+            applyManualVersionSummary(List.of(rec));              // manuel sertifika ise tek ek sorgu (2026-10-06)
             if (foreign) redactForForeignReader(rec);
         }
         Map<String, Object> body = new HashMap<>();
@@ -413,6 +415,88 @@ public class AdminController {
             @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requirePerm(session, "inventory.crud", "edit");
         item.setDomain(validateDomain(item.getDomain()));   // URL yapıştırılırsa host'a normalize edilir
+        item.setCertSource(null);   // ağ kaydı — gövde zaten okumaz (READ_ONLY); açık savunma (2026-10-06)
+        CertificateInventory saved = createInventoryRecord(item, session);
+        auditService.recordAction("DOMAIN_ADD", session, request,
+                "CERTIFICATE", saved.getDomain(),
+                "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
+        // Envanter Uptime/SSL kartlarının kaynağı — geçmişi izleme tipleriyle AYNI hunide toplanır.
+        recordInventoryCreateHistory(saved, session);
+        // Anında tek-domain kontrol (async): latest_checks satırı hemen oluşsun → Genel Bakış'ta
+        // gecikmeden görünür ve kontrollere dahil olur (5-dk stale sweep'i beklemeden).
+        schedulerService.checkSingleDomainAsync(saved.getDomain(),
+                saved.getPort() != null ? saved.getPort() : 443,
+                Boolean.TRUE.equals(saved.getUseProxy()), saved.getTlsMode());
+        return ok(Map.of("data", saved, "message", "Domain added to inventory"));
+    }
+
+    // ── Elle yüklenen sertifika kaydı yardımcıları (2026-10-06) ────────────────────────────────────────────────
+
+    /** Bağlama hatalarının TEK nedeni anahtar biçimi mi ({@code domain} alanı, sınıf düzeyi {@code InventoryDomainKey}). */
+    static boolean onlyDomainKeyError(org.springframework.validation.BindingResult binding) {
+        if (binding.getGlobalErrorCount() > 0 || binding.getFieldErrorCount() == 0) return false;
+        for (org.springframework.validation.FieldError fe : binding.getFieldErrors()) {
+            if (!"domain".equals(fe.getField()) || !"InventoryDomainKey".equals(fe.getCode())) return false;
+        }
+        return true;
+    }
+
+    private static volatile org.springframework.core.MethodParameter updateInventoryBodyParam;
+
+    /** {@code updateInventory}'nin gövde parametresi — 400 yanıtı framework'ün ürettiğiyle aynı istisnayla kurulur. */
+    private static org.springframework.core.MethodParameter updateInventoryBodyParameter() {
+        org.springframework.core.MethodParameter p = updateInventoryBodyParam;
+        if (p != null) return p;
+        for (java.lang.reflect.Method m : AdminController.class.getDeclaredMethods()) {
+            if (m.getName().equals("updateInventory")) {
+                p = new org.springframework.core.MethodParameter(m, 1);
+                updateInventoryBodyParam = p;
+                return p;
+            }
+        }
+        throw new IllegalStateException("updateInventory bulunamadı");
+    }
+
+    /** Manuel kaydın anahtarı: değişmediyse aynen (DomainNames KOŞMAZ), değiştiyse manuel takip adı kuralı. */
+    static String manualKeyForUpdate(String current, String requested) {
+        String r = requested == null ? null : requested.trim();
+        if (r != null && current != null && r.equalsIgnoreCase(current)) return current;
+        return com.sitemonitor.service.manualcert.ManualCertificateKeys.validate(r);
+    }
+
+    /** Manuel kayıtta ağ alanları anlamsızdır (bağlanılan bir uç yok) — sabit/boş tutulur. */
+    static void neutralizeNetworkFields(CertificateInventory item) {
+        item.setPort(443);
+        item.setUseProxy(null);
+        item.setTlsMode(null);
+        item.setTimeoutSeconds(null);
+        item.setCheckIntervalHours(null);
+        item.setExpectedFingerprint(null);
+        item.setExpectedSubject(null);
+    }
+
+    /** Envanter geçmişine CREATE satırı (ağ kaydı ve manuel sertifika ekleme ortak). */
+    public void recordInventoryCreateHistory(CertificateInventory saved, HttpSession session) {
+        monitorHistory.record(MonitorHistoryService.INVENTORY, saved.getId(), saved.getDomain(), saved.getTeamId(),
+                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, INVENTORY_FIELDS), null, session);
+    }
+
+    /** Envanter geçmişine UPDATE satırı + not (manuel sertifika yenilemesi: yeni sürüm). */
+    public void recordInventoryUpdateHistory(CertificateInventory before, CertificateInventory after, String note, HttpSession session) {
+        monitorHistory.record(MonitorHistoryService.INVENTORY, after.getId(), after.getDomain(), after.getTeamId(),
+                MonitorHistoryService.UPDATE, before == null ? null : AuditDiff.snapshot(before, INVENTORY_FIELDS),
+                AuditDiff.snapshot(after, INVENTORY_FIELDS), note, session);
+    }
+
+    /**
+     * Envanter kaydı AÇMA çekirdeği — ağ kaydı ({@link #addInventory}) ve elle yüklenen sertifika
+     * ({@code ManualCertificateController}) AYNI kapılardan geçer (2026-10-06, davranış değişmedi: gövde
+     * {@code addInventory}'den taşındı, karakterizasyon testleri sırayı sabitler). Anahtar ({@code domain}) çağıranda
+     * doğrulanmış olmalı. Kapılar: takım zorunlu → grup + etiket → yazma kapsamı → takım var → mükerrer (409) →
+     * sunucu alanları (mass assignment) → UG → port/TLS/sıklık → bildirim grubu / 7/24 → izleme grubu → damga → kayıt.
+     * Denetim, geçmiş ve kontrol ÇAĞIRANIN işidir.
+     */
+    public CertificateInventory createInventoryRecord(CertificateInventory item, HttpSession session) {
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
@@ -465,19 +549,7 @@ public class AdminController {
         if (nocMonitors != null) item.setNocGroupIds(nocMonitors.sanitizeGroupIds(item.getNocGroupIds()));
         item.setGroupName(monitoringGroupService.getOrCreate(item.getTeamId(), "cert", item.getGroupName(), actor(session)));
         monitorHistory.stampCreated(item, session);
-        CertificateInventory saved = inventoryRepo.save(item);
-        auditService.recordAction("DOMAIN_ADD", session, request,
-                "CERTIFICATE", saved.getDomain(),
-                "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
-        // Envanter Uptime/SSL kartlarının kaynağı — geçmişi izleme tipleriyle AYNI hunide toplanır.
-        monitorHistory.record(MonitorHistoryService.INVENTORY, saved.getId(), saved.getDomain(), saved.getTeamId(),
-                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, INVENTORY_FIELDS), null, session);
-        // Anında tek-domain kontrol (async): latest_checks satırı hemen oluşsun → Genel Bakış'ta
-        // gecikmeden görünür ve kontrollere dahil olur (5-dk stale sweep'i beklemeden).
-        schedulerService.checkSingleDomainAsync(saved.getDomain(),
-                saved.getPort() != null ? saved.getPort() : 443,
-                Boolean.TRUE.equals(saved.getUseProxy()), saved.getTlsMode());
-        return ok(Map.of("data", saved, "message", "Domain added to inventory"));
+        return inventoryRepo.save(item);
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
@@ -485,8 +557,20 @@ public class AdminController {
     @Transactional
     public ResponseEntity<Map<String, Object>> updateInventory(
             @PathVariable Long id, @Valid @RequestBody CertificateInventory item,
-            HttpSession session, HttpServletRequest request) {
-        CertificateInventory existing = inventoryRepo.findById(id)
+            org.springframework.validation.BindingResult binding,
+            HttpSession session, HttpServletRequest request) throws org.springframework.web.bind.MethodArgumentNotValidException {
+        // @Valid hatası eskiden olduğu gibi 400'dür (aynı işleyici, aynı gövde, kayıt okunmadan önce). TEK istisna
+        // (2026-10-06): YALNIZ anahtar biçimi hatası olup kayıt ELLE YÜKLENEN sertifikaysa — gövde kaynağı taşımaz
+        // (READ_ONLY), ağ biçimiyle doğrulanır; manuel takip adı aşağıda kendi kuralıyla doğrulanır.
+        CertificateInventory manualRow = null;
+        if (binding.hasErrors()) {
+            if (onlyDomainKeyError(binding)) {
+                manualRow = inventoryRepo.findById(id).filter(CertificateInventory::isManual).orElse(null);
+            }
+            if (manualRow == null) throw new org.springframework.web.bind.MethodArgumentNotValidException(
+                    updateInventoryBodyParameter(), binding);
+        }
+        CertificateInventory existing = manualRow != null ? manualRow : inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
         // 2026-09-18: USER kendi TAKIMININ kaydını düzenler (izleme türleriyle aynı sözleşme); silme/aktarma
         // yönetici kapılarında kalır.
@@ -496,7 +580,14 @@ public class AdminController {
         // etmiyordu. "Example.COM" gibi harf-farklı düzenleme rename sayılmıyor (equalsIgnoreCase)
         // ama satıra yazılıyordu → latest_checks/geçmiş/notlar domain dizesiyle bağlı olduğundan
         // kayıt geçmişsiz kalıyordu; "Other.com" ise exact-UNIQUE'i geçip ikinci satır oluşturuyordu.
-        item.setDomain(validateDomain(item.getDomain()));
+        // Elle yüklenen sertifika (2026-10-06): anahtar bir host adı değil — değişmediyse DOKUNULMAZ (DomainNames
+        // koşmaz), değiştiyse manuel takip adı kuralıyla doğrulanır. Kayıt ağ kaydına çevrilemez (kaynak korunur).
+        if (existing.isManual()) {
+            item.setDomain(manualKeyForUpdate(existing.getDomain(), item.getDomain()));
+            neutralizeNetworkFields(item);   // ağ alanları manuel kayıtta anlamsız — fark/geçmiş de bunu yansıtır
+        } else {
+            item.setDomain(validateDomain(item.getDomain()));
+        }
         requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18) — düzenlemede de
         // Takım aktarımı bu uçtan YALNIZ kaydın takımını yönetenlere (global admin / yönetim kapsamı):
         // TEAM_ADMIN ve üyelik yoluyla gelen USER için teamId mevcut değere sabitlenir.
@@ -631,6 +722,45 @@ public class AdminController {
      * yeniden eklenince eski notlar yeni kaydın altında "diriliyordu" (retention da notları
      * hiç kırpmaz). Çağıran @Transactional — hepsi ya birlikte gider ya hiç.
      */
+    /** Elle yüklenen sertifika sürümleri (2026-10-06) — isteğe bağlı (dilimli test bağlamında yok). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
+
+    /** Kalıcı purge'ün manuel sertifika çocuğu: sürümler envanter satırıyla birlikte gider (çağıran @Transactional). */
+    private void purgeManualVersions(CertificateInventory inv) {
+        if (manualVersionRepo == null || inv == null || inv.getId() == null || !inv.isManual()) return;
+        manualVersionRepo.deleteByInventoryId(inv.getId());
+    }
+
+    /**
+     * Liste/tekil okuma: manuel satırların geçerli sürüm numarası + yüklenme anı — TEK sorgu; manuel satır yoksa sorgu
+     * YOK (ağ kayıtlarının yanıtı bugünküyle aynı).
+     */
+    private void applyManualVersionSummary(List<CertificateInventory> items) {
+        if (manualVersionRepo == null || items == null || items.isEmpty()) return;
+        Map<Long, CertificateInventory> manual = new HashMap<>();
+        for (CertificateInventory it : items) if (it.isManual() && it.getId() != null) manual.put(it.getId(), it);
+        if (manual.isEmpty()) return;
+        try {
+            for (com.sitemonitor.model.ManualCertificateVersion v : manualVersionRepo.findByInventoryIdInAndCurrentTrue(manual.keySet())) {
+                CertificateInventory it = manual.get(v.getInventoryId());
+                if (it == null) continue;
+                it.setManualVersion(v.getVersion());
+                it.setManualUploadedAt(v.getUploadedAt());
+            }
+        } catch (Exception e) {
+            log.debug("Manuel sertifika sürüm özeti okunamadı: {}", e.toString());
+        }
+    }
+
+    /** Tanılama uçları elle yüklenen sertifikada çalışmaz (ağ adresi yok) — 409 {@code MANUAL_CERT}. */
+    private void rejectManualTarget(String rawDomain) {
+        if (rawDomain == null || rawDomain.isBlank()) return;
+        inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(rawDomain.trim())
+                .filter(CertificateInventory::isManual)
+                .ifPresent(i -> { throw CertificateController.manualCertConflict(); });
+    }
+
     private void purgeDomainNotes(String domain) {
         List<com.sitemonitor.model.CertificateNote> notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
         if (notes == null || notes.isEmpty()) return;
@@ -756,6 +886,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        rejectManualTarget(domain);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
@@ -780,6 +911,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runOpensslDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        rejectManualTarget(domain);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
@@ -802,6 +934,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runNetworkDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        rejectManualTarget(domain);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
@@ -827,6 +960,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runHstsDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        rejectManualTarget(domain);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
@@ -856,6 +990,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDomainExpiryDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        rejectManualTarget(domain);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         domain = validateRegistryTarget(domain);
         requireDomainExpiryScope(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
@@ -899,6 +1034,7 @@ public class AdminController {
 
         String host = (body != null && body.get("host") != null && !body.get("host").toString().isBlank())
                 ? body.get("host").toString().trim() : "data.iana.org";
+        rejectManualTarget(host);   // elle yüklenen sertifikanın ağ adresi yok → 409 MANUAL_CERT (2026-10-06)
         // Kardeş tanılama uçları (/diagnostics, /openssl, /network, /hsts, /domain-expiry) admin
         // olmayanı envanter domain'leriyle sınırlar; bu uç tek başına sınırsızdı (pod egress'inden
         // keyfi host:port'a TLS el sıkışması). Aynı kapı burada da.
@@ -1317,6 +1453,7 @@ public class AdminController {
             int checks = certificateCheckRepo.deleteByDomain(domain);
             latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
             purgeDomainNotes(domain);
+            purgeManualVersions(inv);
             inventoryRepo.delete(inv);
             auditService.recordAction("DOMAIN_PURGE", session, request, "CERTIFICATE", domain,
                     "{\"teamId\":" + inv.getTeamId() + ",\"checksDeleted\":" + checks + "}");
@@ -1350,6 +1487,7 @@ public class AdminController {
             checksDeleted += certificateCheckRepo.deleteByDomain(domain);
             latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
             purgeDomainNotes(domain);
+            purgeManualVersions(inv);
             inventoryRepo.delete(inv);
             purged++;
             purgedDomains.add(domain);

@@ -6,7 +6,7 @@ import KeyboardShortcuts from './KeyboardShortcuts.jsx'
 import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import InboxBell from './InboxBell.jsx'
 import {
-  LayoutDashboard, ShieldCheck, FileBadge, Boxes, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
+  LayoutDashboard, ShieldCheck, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
   Activity, Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
   BellRing, TriangleAlert, Siren, Wrench, History, Headset,
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
@@ -64,6 +64,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       items: [
         { id: 'all',           Icon: FileBadge,     labelKey: 'nav.all',           show: true },
         { id: 'domains',       Icon: Boxes,         labelKey: 'nav.domains',       show: true },
+        // Manuel Sertifikalar (2026-10-06): dosyadan yüklenen sertifikalar — Envanter gibi herkese açık (kapsam sunucuda)
+        { id: 'manualcerts',   Icon: FileKey2,      labelKey: 'nav.manualCerts',   show: true },
         // Durum İzleme yalnız sertifika envanteri domainlerini izler (/uptime/overview → inventoryRepo) → Sertifikalar grubunda.
         { id: 'uptime',        Icon: MonitorCheck,  labelKey: 'nav.uptime',        show: true },
         { id: 'forecast',      Icon: CalendarRange, labelKey: 'nav.forecast',      show: true },

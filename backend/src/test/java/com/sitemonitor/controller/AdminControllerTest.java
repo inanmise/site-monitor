@@ -164,6 +164,10 @@ class AdminControllerTest {
     @MockitoBean
     com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
 
+    /** Elle yüklenen sertifika sürümleri (2026-10-06). Stub yoksa boş liste — ağ kayıtlarının yanıtı değişmez. */
+    @MockitoBean
+    com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -4265,5 +4269,237 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/diagnostics/history/16").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.run_type").value("CONNECTION"));
+    }
+
+    // ── Envanter ekleme KARAKTERİZASYONU (2026-10-06) ─────────────────────────────────────────────────────────
+    // Manuel sertifika takibi, ekleme kapılarını paylaşmak için addInventory'yi ortak bir yönteme ayırdı. Bu testler
+    // ağ kaydı yolunun SIRASINI ve yan etkilerini sabitler: kapı sırası, damga → kayıt → DOMAIN_ADD → geçmiş CREATE →
+    // anında tek-domain kontrolü. Yeniden düzenleme bunlardan birini değiştirirse kırmızıya döner.
+
+    @Test
+    @DisplayName("karakterizasyon: ağ kaydı ekleme — damga → kayıt → DOMAIN_ADD → geçmiş CREATE → anında kontrol, bu sırayla")
+    void addInventory_characterization_sideEffectOrder() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(5L); return i; });
+        when(monitoringGroupService.getOrCreate(any(), eq("cert"), any(), any())).thenAnswer(a -> a.getArgument(2));
+
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"Sira.Example.com\",\"port\":8443,"
+                                + "\"team_id\":1,\"use_proxy\":true,\"tls_mode\":\"BROWSER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domain").value("sira.example.com"))
+                .andExpect(jsonPath("$.data.cert_source").doesNotExist());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(monitorHistory, inventoryRepo, auditService, schedulerService);
+        order.verify(monitorHistory).stampCreated(any(), any());
+        order.verify(inventoryRepo).save(any());
+        order.verify(auditService).recordAction(eq("DOMAIN_ADD"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("CERTIFICATE"), eq("sira.example.com"),
+                eq("{\"port\":8443,\"teamId\":1}"));
+        order.verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.INVENTORY), eq(5L),
+                eq("sira.example.com"), eq(1L), eq(com.sitemonitor.service.MonitorHistoryService.CREATE),
+                isNull(), any(), isNull(), any());
+        order.verify(schedulerService).checkSingleDomainAsync("sira.example.com", 8443, true, "browser");
+    }
+
+    @Test
+    @DisplayName("karakterizasyon: kapı sırası — takım yoksa önce takım iletisi, sonra grup/etiket")
+    void addInventory_characterization_guardOrder() throws Exception {
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"takimsiz.example.com\",\"port\":443}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("A team must be selected for the certificate"));
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"grupsuz.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Grup seçimi zorunludur; kayıt kaydedilemez."));
+        verify(inventoryRepo, never()).save(any());
+        verify(schedulerService, never()).checkSingleDomainAsync(any(), org.mockito.ArgumentMatchers.anyInt(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("karakterizasyon: mükerrer alan adı (harf farkı dahil) 409 DOMAIN_EXISTS — kayıt ve kontrol yok")
+    void addInventory_characterization_duplicate409() throws Exception {
+        CertificateInventory clash = inventory("dup.example.com");
+        clash.setId(9L);
+        clash.setTeamId(1L);
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("dup.example.com")).thenReturn(Optional.of(clash));
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"DUP.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
+                .andExpect(jsonPath("$.existing.inventory_id").value(9));
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("manuel sertifika: ağ ekleme gövdesindeki cert_source YOK SAYILIR (READ_ONLY) — kayıt ağ kaydı kalır")
+    void addInventory_certSourceInBody_isIgnored() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(6L); return i; });
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"src.example.com\",\"port\":443,"
+                                + "\"team_id\":1,\"cert_source\":\"MANUAL\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<CertificateInventory> cap = org.mockito.ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo).save(cap.capture());
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getCertSource()).isNull();
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().isManual()).isFalse();
+        verify(schedulerService).checkSingleDomainAsync("src.example.com", 443, false, null);
+    }
+
+    // ── Elle yüklenen sertifika kayıtları (2026-10-06) ───────────────────────────────────────────────────────────
+
+    private CertificateInventory manualInventory(Long id, String key) {
+        CertificateInventory inv = inventory(key);
+        inv.setId(id);
+        inv.setTeamId(1L);
+        inv.setGroupName("Grup A");
+        inv.setTags("t1");
+        inv.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        return inv;
+    }
+
+    private static com.sitemonitor.model.ManualCertificateVersion manualVersion(Long invId, int v) {
+        com.sitemonitor.model.ManualCertificateVersion mv = new com.sitemonitor.model.ManualCertificateVersion();
+        mv.setInventoryId(invId);
+        mv.setVersion(v);
+        mv.setCurrent(true);
+        mv.setUploadedAt("2026-10-05T09:00:00");
+        return mv;
+    }
+
+    @Test
+    @DisplayName("manuel: kalıcı silme sürümleri de siler; ağ kaydında sürüm deposuna dokunulmaz")
+    void purge_manualRowDeletesVersions() throws Exception {
+        CertificateInventory manual = manualInventory(3L, "api-takip");
+        manual.setDeletedAt("2026-10-01T00:00:00");
+        when(inventoryRepo.findById(3L)).thenReturn(Optional.of(manual));
+        mvc.perform(delete("/api/admin/inventory/3/permanent").session(authSession())).andExpect(status().isOk());
+        verify(manualVersionRepo).deleteByInventoryId(3L);
+
+        CertificateInventory net = inventory("net.example.com");
+        net.setId(4L);
+        net.setDeletedAt("2026-10-01T00:00:00");
+        when(inventoryRepo.findById(4L)).thenReturn(Optional.of(net));
+        mvc.perform(delete("/api/admin/inventory/4/permanent").session(authSession())).andExpect(status().isOk());
+        verify(manualVersionRepo, never()).deleteByInventoryId(4L);
+
+        when(inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()).thenReturn(List.of(manual));
+        mvc.perform(post("/api/admin/inventory/purge-deleted").session(authSession())).andExpect(status().isOk());
+        verify(manualVersionRepo, org.mockito.Mockito.times(2)).deleteByInventoryId(3L);
+    }
+
+    @Test
+    @DisplayName("manuel: envanter listesi cert_source + manual_version + manual_uploaded_at (TEK sorgu); ağ satırında alan YOK")
+    void listInventory_manualFields() throws Exception {
+        CertificateInventory net = inventory("net.example.com");
+        net.setId(1L);
+        when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()).thenReturn(List.of(net, manualInventory(4L, "api-takip")));
+        when(manualVersionRepo.findByInventoryIdInAndCurrentTrue(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(manualVersion(4L, 3)));
+        mvc.perform(get("/api/admin/inventory").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].cert_source").doesNotExist())
+                .andExpect(jsonPath("$.data[0].manual_version").doesNotExist())
+                .andExpect(jsonPath("$.data[1].cert_source").value("MANUAL"))
+                .andExpect(jsonPath("$.data[1].manual_version").value(3))
+                .andExpect(jsonPath("$.data[1].manual_uploaded_at").value("2026-10-05T09:00:00"))
+                .andExpect(jsonPath("$.data[1].manual").doesNotExist());
+        verify(manualVersionRepo, org.mockito.Mockito.times(1))
+                .findByInventoryIdInAndCurrentTrue(org.mockito.ArgumentMatchers.anyCollection());
+    }
+
+    @Test
+    @DisplayName("manuel: envanter listesinde manuel satır yoksa sürüm deposu HİÇ sorgulanmaz")
+    void listInventory_noManualRows_noVersionQuery() throws Exception {
+        when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()).thenReturn(List.of(inventory("net.example.com")));
+        mvc.perform(get("/api/admin/inventory").session(authSession())).andExpect(status().isOk());
+        org.mockito.Mockito.verifyNoInteractions(manualVersionRepo);
+    }
+
+    @Test
+    @DisplayName("manuel: tanılama uçları 409 MANUAL_CERT (ağ adresi yok) — tanılama servisleri çağrılmaz")
+    void diagnostics_manualTarget_409() throws Exception {
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("ocp_truststore"))
+                .thenReturn(Optional.of(manualInventory(8L, "ocp_truststore")));
+        for (String path : List.of("/api/admin/diagnostics", "/api/admin/diagnostics/openssl", "/api/admin/diagnostics/network",
+                "/api/admin/diagnostics/hsts", "/api/admin/diagnostics/domain-expiry")) {
+            mvc.perform(post(path).session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"domain\":\"ocp_truststore\",\"port\":443}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("MANUAL_CERT"));
+        }
+        mvc.perform(post("/api/admin/diagnostics/proxy-ca-chain").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"host\":\"ocp_truststore\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MANUAL_CERT"));
+        verify(diagnosticsService, never()).diagnose(any(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("manuel: düzenlemede DEĞİŞMEYEN anahtar DomainNames'e girmez (alt çizgi geçerli), ağ alanları boş tutulur")
+    void updateInventory_manualRow_unchangedKey() throws Exception {
+        CertificateInventory existing = manualInventory(6L, "ocp_truststore");
+        when(inventoryRepo.findById(6L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc.perform(put("/api/admin/inventory/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"ocp_truststore\",\"port\":8443,"
+                                + "\"use_proxy\":true,\"tls_mode\":\"browser\",\"tier\":2}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<CertificateInventory> cap = org.mockito.ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo).save(cap.capture());
+        CertificateInventory saved = cap.getValue();
+        assertThat(saved.getDomain()).isEqualTo("ocp_truststore");
+        assertThat(saved.isManual()).isTrue();
+        assertThat(saved.getPort()).isEqualTo(443);
+        assertThat(saved.getUseProxy()).isNull();
+        assertThat(saved.getTlsMode()).isNull();
+        assertThat(saved.getTier()).isEqualTo(2);
+        verify(latestCheckRepo, never()).renameDomain(any(), any());
+    }
+
+    @Test
+    @DisplayName("manuel: anahtar değişirse manuel kuralla doğrulanır (geçersiz 400, geçerli yeniden adlandırılır)")
+    void updateInventory_manualRow_changedKey() throws Exception {
+        when(inventoryRepo.findById(6L)).thenReturn(Optional.of(manualInventory(6L, "eski-ad")));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc.perform(put("/api/admin/inventory/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"Yeni Ad\"}"))
+                .andExpect(status().isBadRequest());
+        verify(inventoryRepo, never()).save(any());
+
+        when(inventoryRepo.findById(6L)).thenReturn(Optional.of(manualInventory(6L, "eski-ad")));
+        mvc.perform(put("/api/admin/inventory/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yeni_ad\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domain").value("yeni_ad"));
+        verify(latestCheckRepo).renameDomain("eski-ad", "yeni_ad");
+    }
+
+    @Test
+    @DisplayName("ağ kaydı: geçersiz domain biçimi düzenlemede BUGÜNKÜ 400 gövdesiyle reddedilir (fields.domain)")
+    void updateInventory_networkRow_invalidDomain_unchanged400() throws Exception {
+        CertificateInventory existing = inventory("old.example.com");
+        existing.setId(7L);
+        when(inventoryRepo.findById(7L)).thenReturn(Optional.of(existing));
+        mvc.perform(put("/api/admin/inventory/7").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"a_b.example.com\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.domain").value("Geçersiz domain formatı"))
+                .andExpect(jsonPath("$.error").value("Geçersiz alan(lar): domain"));
+        verify(inventoryRepo, never()).save(any());
+        // Kayıt yoksa da (biçim hatası) yine 400 — eskiden olduğu gibi kayıt okunmadan önce reddedilir.
+        mvc.perform(put("/api/admin/inventory/99").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"a_b.example.com\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

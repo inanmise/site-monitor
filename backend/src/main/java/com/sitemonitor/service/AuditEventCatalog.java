@@ -82,6 +82,8 @@ public final class AuditEventCatalog {
             "CERT_INVENTORY_REPORT_SETTINGS",
             "CERT_INVENTORY_REPORT_TEST",
             "CERT_LIST_EXPORT",
+            "CERT_MANUAL_RENEW",
+            "CERT_MANUAL_UPLOAD",
             "CERT_NOTE_ADD",
             "CERT_NOTE_DELETE",
             "CERT_NOTE_EDIT",

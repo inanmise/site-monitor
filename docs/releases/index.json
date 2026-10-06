@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-05T23:45:33Z",
+  "generatedAt": "2026-10-06T22:19:36Z",
   "repo": "inanmise/site-monitor",
-  "count": 709,
+  "count": 710,
   "releases": [
+    {
+      "version": "20.110.0",
+      "tag": "v20.110.0",
+      "releasedAt": "2026-10-06T22:19:28Z",
+      "commit": "586261b00ce8ddecaf043708bc8873c7cb92fe94",
+      "prevVersion": "20.109.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "586261b0",
+          "subject": "dosyadan sertifika takibi — manuel yüklenen sertifikalar (PEM/CRT/CER/DER/P7B/PFX/JKS/ZIP), sürümler ve normal sertifikalarla aynı süre takibi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.109.0",
       "tag": "v20.109.0",

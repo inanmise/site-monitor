@@ -113,6 +113,9 @@ public class CertificateHealthService {
             return summarise(rows);
         }
 
+        // Elle yüklenen sertifika (2026-10-06): ağa bağlanılmadığı için ağa özgü satırlar (ad kapsaması, protokol,
+        // şifre, PFS, HSTS, karışık içerik) NA + gerekçe MANUAL; sertifikaya dayalı satırlar aynen değerlendirilir.
+        boolean manual = inv != null && inv.isManual();
         rows.add(expiryRow(lc, warn, crit));
         rows.add(revocationRow(lc));
         rows.add(chainRow(lc));
@@ -120,14 +123,23 @@ public class CertificateHealthService {
         rows.add(signatureRow(lc));
         rows.add(keySizeRow(lc));
         rows.add(intermediateRow(lc, warn, crit));
-        rows.add(sanMatchRow(lc));
+        rows.add(manual ? manualNa("sanMatch", GROUP_CERTIFICATE) : sanMatchRow(lc));
         rows.add(certificateChangeRow(lc));
-        rows.add(protocolRow(lc));
-        rows.add(cipherRow(lc));
-        rows.add(pfsRow(lc));
-        rows.add(hstsRow(lc));
-        rows.add(mixedContentRow(lc, hasPageMonitor));
+        rows.add(manual ? manualNa("protocol", GROUP_TRANSPORT) : protocolRow(lc));
+        rows.add(manual ? manualNa("cipher", GROUP_TRANSPORT) : cipherRow(lc));
+        rows.add(manual ? manualNa("pfs", GROUP_TRANSPORT) : pfsRow(lc));
+        rows.add(manual ? manualNa("hsts", GROUP_APPLICATION) : hstsRow(lc));
+        rows.add(manual ? manualNa("mixedContent", GROUP_APPLICATION) : mixedContentRow(lc, hasPageMonitor));
         return summarise(rows);
+    }
+
+    /** NA gerekçesi: elle yüklenen sertifika — ağa özgü kontrol uygulanamaz. */
+    public static final String NA_REASON_MANUAL = "MANUAL";
+
+    /** Ağa özgü satırın manuel sertifikadaki hâli — sayıma girmez (NA), kanıt {@code reason=MANUAL} taşır. */
+    private static HealthRow manualNa(String key, String group) {
+        return new HealthRow(key, group, Status.NA, "notApplicableManual", List.of(), "none", List.of(),
+                Map.of("reason", NA_REASON_MANUAL));
     }
 
     private HealthResult summarise(List<HealthRow> rows) {

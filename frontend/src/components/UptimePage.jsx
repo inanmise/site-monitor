@@ -37,6 +37,7 @@ import {
   MonitorMetric, MonitorCardFooter, MonitorStatusBadge, MonitorCardTag, CARD_LAYER, CARD_COPY,
 } from './monitoring/MonitorCard.jsx'
 import { MonitorDetailModal, DetailDivider, DetailSummary } from './monitoring/MonitorDetail.jsx'
+import { withoutManualCerts } from './manualcert/manualCertModel.js'
 
 const REFRESH_INTERVAL = 60
 /**
@@ -98,7 +99,8 @@ export default function UptimePage() {
       const res = await api.monitoring.getUptimeOverview(scope)
       if (my !== overviewSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
-        setItems(res.data)
+        // Manuel (dosyadan yüklenen) sertifikaların ağda adresi yok — Durum İzleme'de gösterilmez (2026-10-06); ağ satırları aynı.
+        setItems(withoutManualCerts(res.data))
         setVisibleToAll(!!res.visible_to_all)
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (res.scope && normalizeScope(res.scope) !== scope) setScopeRaw(normalizeScope(res.scope))

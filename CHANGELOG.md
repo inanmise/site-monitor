@@ -15,6 +15,27 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.110.0] — 2026-10-06
+
+### Added
+- **Dosyadan sertifika takibi (Manuel Sertifikalar):** ağ üzerinden erişilemeyen sertifikalar (OCP keystore/truststore
+  JKS'leri, CA'dan gelen PEM'ler, zinciri tamamlanmış PFX'ler) dosya yüklenerek takibe alınır. Desteklenen biçimler:
+  PEM / CRT / CER (Base64 ya da DER), DER, P7B / P7C, PFX / P12 (parola), JKS / JCEKS / BKS, ZIP paketi ve yapıştırılan
+  PEM metni. Yüklenen dosya analiz edilir (geçerlilik, zincir, güven, zayıf algoritma, CSR / özel anahtar / süresi
+  dolmuş uyarıları); truststore'dan birden çok sertifika tek seferde takibe alınabilir.
+- **Takip normal sertifikalarla birebir aynı:** aynı eşikler, kritiklik katmanı, alarm / eskalasyon / bildirim, raporlar,
+  dashboard, tüm sertifikalar, uyarılar, yenileme tavsiyesi, öngörü ve envanter alanları. Kartlarda ve tablolarda
+  "Manuel" rozeti, bağlantı yolu "Yüklenen dosya".
+- **Yenileme = yeni sürüm:** yeni sertifika yüklenince takip ona geçer; eski sürümler silinmez, sertifika penceresindeki
+  "Sürümler" sekmesinde (parmak izi, geçerlilik, yükleyen, anahtar değişti mi, SAN farkı, PEM indir) görülür.
+- **Giriş noktaları:** Dashboard ve Envanter'deki "Domain Ekle" düğmesinde "Dosyadan sertifika ekle" seçeneği; ayrı
+  "Manuel Sertifikalar" sayfası ("Hangi dosyayı yüklemeliyim?" rehberi, liste, yükleme sihirbazı).
+- Özel anahtarlar ve parolalar hiçbir zaman saklanmaz; yalnız açık sertifika zinciri tutulur. Denetim:
+  `CERT_MANUAL_UPLOAD`, `CERT_MANUAL_RENEW`.
+
+### Changed
+- Fırtına eşiği paydası dosyadan yüklenen sertifikaları saymaz (fırtına üyesi olamazlar); manuel kayıt yokken sayı aynı.
+
 ## [20.109.0] — 2026-10-05
 
 ### Added
@@ -2288,7 +2309,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.109.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.0...HEAD
+[20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0
 [20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0
 [20.107.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.107.0

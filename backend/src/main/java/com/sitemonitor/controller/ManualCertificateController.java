@@ -1,0 +1,753 @@
+package com.sitemonitor.controller;
+
+import com.sitemonitor.config.GlobalExceptionHandler;
+import com.sitemonitor.model.CertificateInventory;
+import com.sitemonitor.model.ManualCertificateVersion;
+import com.sitemonitor.model.Team;
+import com.sitemonitor.repository.CertificateInventoryRepository;
+import com.sitemonitor.repository.ManualCertificateVersionRepository;
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.CertificateService;
+import com.sitemonitor.service.InventoryVisibility;
+import com.sitemonitor.service.MonitorHistoryService;
+import com.sitemonitor.service.PermissionService;
+import com.sitemonitor.service.UserService;
+import com.sitemonitor.service.manualcert.CertificateFileParser;
+import com.sitemonitor.service.manualcert.ManualCertificateAnalyzer;
+import com.sitemonitor.service.manualcert.ManualCertificateEvaluationService;
+import com.sitemonitor.service.manualcert.ManualCertificateKeys;
+import com.sitemonitor.service.manualcert.ManualCertificateService;
+import com.sitemonitor.util.Msg;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import jakarta.validation.ConstraintViolation;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Elle yüklenen sertifikalar (2026-10-06, kullanıcı isteği) — {@code /api/manual-certs}.
+ *
+ * <p>Ağ üzerinden erişilemeyen sertifikalar (CSR → dış tedarikçi → .pem / PFX / JKS / OCP truststore …) DOSYADAN
+ * yüklenir ve süreleri ağ sertifikalarıyla AYNI kurallarla izlenir. Kayıt bir envanter satırıdır
+ * ({@code cert_source = MANUAL}); sürümler {@code manual_certificate_versions}'ta tutulur.
+ *
+ * <p><b>Kapılar</b> envanterle aynıdır: okuma {@code inventory.list/view} + takım görüş kapsamı (org geneli görünürlük
+ * dahil), yazma {@code inventory.crud/edit} + {@code SessionScope.canWriteInventory}. Oluşturma, ağ kaydı eklemenin
+ * kapılarından geçer ({@link AdminController#createInventoryRecord} — takım, grup + etiket, yazma kapsamı, mass
+ * assignment, damga).
+ *
+ * <p><b>Gizlilik:</b> dosya parolası yalnız ayrıştırma süresince bellekte tutulur, sıfırlanır; özel anahtar hiç
+ * okunmaz. İkisi de kaydedilmez, loglanmaz, denetime yazılmaz, yanıtta dönmez. İstek gövdesi TRACE logunda bile
+ * yazılmaz ({@code RequestLoggingFilter.BODY_NEVER_LOGGED}).
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/manual-certs")
+public class ManualCertificateController {
+
+    /** Toplu oluşturmada en çok kayıt (sözleşme). */
+    static final int BATCH_MAX = 20;
+    /** Kullanıcı başına dakikada en çok analiz / yazma (ayrı kovalar). */
+    static final int RATE_PER_MIN = 30;
+    private static final long RATE_WINDOW_MS = 60_000L;
+
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    private final ManualCertificateAnalyzer analyzer;
+    private final ManualCertificateService manualService;
+    private final ManualCertificateEvaluationService evaluation;
+    private final ManualCertificateVersionRepository versionRepo;
+    private final CertificateInventoryRepository inventoryRepo;
+    private final PermissionService permissionService;
+    private final AuditService auditService;
+    private final MonitorHistoryService monitorHistory;
+    private final UserService userService;
+    private final AdminController adminController;
+    private final CertificateService certService;
+    private final ObjectMapper objectMapper;
+    private final TransactionTemplate tx;
+
+    /** Org geneli envanter görünürlüğü — isteğe bağlı (yoksa yalnız kendi kapsamı). */
+    @Autowired(required = false)
+    private InventoryVisibility inventoryVisibility;
+
+    /** Bean Validation — envanter yükünün alan kuralları (port/tier/anahtar). İsteğe bağlı. */
+    @Autowired(required = false)
+    private jakarta.validation.Validator validator;
+
+    private final Map<String, Deque<Long>> rate = new ConcurrentHashMap<>();
+
+    public ManualCertificateController(ManualCertificateAnalyzer analyzer, ManualCertificateService manualService,
+                                       ManualCertificateEvaluationService evaluation,
+                                       ManualCertificateVersionRepository versionRepo,
+                                       CertificateInventoryRepository inventoryRepo,
+                                       PermissionService permissionService, AuditService auditService,
+                                       MonitorHistoryService monitorHistory, UserService userService,
+                                       AdminController adminController, CertificateService certService,
+                                       ObjectMapper objectMapper, PlatformTransactionManager txManager) {
+        this.analyzer = analyzer;
+        this.manualService = manualService;
+        this.evaluation = evaluation;
+        this.versionRepo = versionRepo;
+        this.inventoryRepo = inventoryRepo;
+        this.permissionService = permissionService;
+        this.auditService = auditService;
+        this.monitorHistory = monitorHistory;
+        this.userService = userService;
+        this.adminController = adminController;
+        this.certService = certService;
+        this.objectMapper = objectMapper;
+        this.tx = new TransactionTemplate(txManager);
+    }
+
+    // ── Analiz ───────────────────────────────────────────────────────────────
+
+    /** Dosyayı çözümler — HİÇBİR ŞEY YAZMAZ. Kullanıcı başına dakikada {@value #RATE_PER_MIN}. */
+    @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> analyze(
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "password", required = false) String password,
+            HttpSession session) {
+        permissionService.require(session, "inventory.crud", "edit");
+        ResponseEntity<Map<String, Object>> limited = rateLimit("a:" + actor(session));
+        if (limited != null) return limited;
+        Map<String, String> errors = new LinkedHashMap<>();
+        Upload up = readUpload(file, text, errors);
+        if (up == null) return badRequest(errors, null);
+        ManualCertificateAnalyzer.Analysis a;
+        try {
+            a = analyzeUpload(up, password);
+        } catch (ParseFailure pf) {
+            return pf.response;
+        }
+        return ok(a.toJson());
+    }
+
+    // ── Oluşturma ────────────────────────────────────────────────────────────
+
+    /** Tek kayıt oluşturur: yükleme + {@code ref} + {@code domain} (takip adı) + {@code inventory} (JSON) + {@code note}. */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> create(
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "password", required = false) String password,
+            @RequestParam(value = "ref", required = false) String ref,
+            @RequestParam(value = "domain", required = false) String domain,
+            @RequestParam(value = "inventory", required = false) String inventory,
+            @RequestParam(value = "note", required = false) String note,
+            HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "inventory.crud", "edit");
+        ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
+        if (limited != null) return limited;
+        Map<String, String> errors = new LinkedHashMap<>();
+        Upload up = readUpload(file, text, errors);
+        checkNote(note, errors);
+        CertificateInventory item = parseInventory(inventory, errors);
+        String key = validateKey(domain, "domain", errors);
+        if (up == null) return badRequest(errors, null);
+        ManualCertificateAnalyzer.Analysis a;
+        try {
+            a = analyzeUpload(up, password);
+        } catch (ParseFailure pf) {
+            return pf.response;
+        }
+        ManualCertificateAnalyzer.Entry entry = requireEntry(a, ref, "ref", errors);
+        if (!errors.isEmpty()) return badRequest(errors, a);
+        prepareManualItem(item, key, errors, "");
+        if (!errors.isEmpty()) return badRequest(errors, a);
+
+        if (entry.alreadyTracked() != null) return alreadyTracked(entry);
+        ResponseEntity<Map<String, Object>> clash = keyClash(key);
+        if (clash != null) return clash;
+
+        Created c;
+        try {
+            c = tx.execute(status -> createOne(item, entry, a, note, session));
+        } catch (GlobalExceptionHandler.DomainExistsException de) {
+            return keyExists(key);
+        } catch (IllegalArgumentException iae) {
+            return badRequest(Map.of(), a, iae.getMessage());
+        }
+        afterCreate(List.of(c), a, session, request);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("inventory_id", c.inventory().getId());
+        data.put("domain", c.inventory().getDomain());
+        data.put("version", 1);
+        return ok(data);
+    }
+
+    /** Toplu oluşturma (truststore'dan birden çok CA): {@code items=[{ref, domain}]} (≤ 20), ortak {@code inventory}. Hep ya da hiç. */
+    @PostMapping(value = "/batch", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> createBatch(
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "password", required = false) String password,
+            @RequestParam(value = "items", required = false) String itemsJson,
+            @RequestParam(value = "inventory", required = false) String inventory,
+            @RequestParam(value = "note", required = false) String note,
+            HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "inventory.crud", "edit");
+        ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
+        if (limited != null) return limited;
+        Map<String, String> errors = new LinkedHashMap<>();
+        Upload up = readUpload(file, text, errors);
+        checkNote(note, errors);
+        parseInventory(inventory, errors);   // yalnız doğrulama — her kalem kendi kopyasını ayrıştırır
+        List<String[]> items = parseItems(itemsJson, errors);
+        if (up == null) return badRequest(errors, null);
+        if (!errors.isEmpty()) return badRequest(errors, null);
+        ManualCertificateAnalyzer.Analysis a;
+        try {
+            a = analyzeUpload(up, password);
+        } catch (ParseFailure pf) {
+            return pf.response;
+        }
+        if (a.entries.isEmpty()) {
+            requireEntry(a, null, "file", errors);
+            return badRequest(errors, a);
+        }
+        List<CertificateInventory> invs = new ArrayList<>(items.size());
+        List<ManualCertificateAnalyzer.Entry> entries = new ArrayList<>(items.size());
+        Set<String> seenRefs = new HashSet<>();
+        Set<String> seenKeys = new HashSet<>();
+        for (int i = 0; i < items.size(); i++) {
+            String prefix = "items[" + i + "].";
+            String[] it = items.get(i);
+            ManualCertificateAnalyzer.Entry entry = a.find(it[0]);
+            if (entry == null) errors.put(prefix + "ref", Msg.t("Seçilen sertifika dosyada bulunamadı.",
+                    "The selected certificate wasn't found in the file."));
+            else if (!seenRefs.add(entry.ref)) errors.put(prefix + "ref", Msg.t("Aynı sertifika iki kez seçildi.",
+                    "The same certificate was selected twice."));
+            String key = validateKey(it[1], prefix + "domain", errors);
+            if (key != null && !seenKeys.add(key)) errors.put(prefix + "domain", Msg.t("Takip adı listede tekrarlanıyor.",
+                    "The tracking name is repeated in the list."));
+            CertificateInventory item = parseInventory(inventory, errors);
+            if (item != null && key != null) prepareManualItem(item, key, errors, prefix);
+            invs.add(item);
+            entries.add(entry);
+        }
+        if (!errors.isEmpty()) return badRequest(errors, a);
+        for (int i = 0; i < items.size(); i++) {
+            if (entries.get(i).alreadyTracked() != null) return alreadyTracked(entries.get(i));
+            ResponseEntity<Map<String, Object>> clash = keyClash(invs.get(i).getDomain());
+            if (clash != null) return clash;
+        }
+        List<Created> created;
+        try {
+            created = tx.execute(status -> {
+                List<Created> out = new ArrayList<>(invs.size());
+                for (int i = 0; i < invs.size(); i++) out.add(createOne(invs.get(i), entries.get(i), a, note, session));
+                return out;
+            });
+        } catch (GlobalExceptionHandler.DomainExistsException de) {
+            return keyExists(de.getExisting() != null ? String.valueOf(de.getExisting().get("domain")) : null);
+        } catch (IllegalArgumentException iae) {
+            return badRequest(Map.of(), a, iae.getMessage());
+        }
+        afterCreate(created, a, session, request);
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (Created c : created) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("inventory_id", c.inventory().getId());
+            m.put("domain", c.inventory().getDomain());
+            list.add(m);
+        }
+        return ok(Map.of("created", list));
+    }
+
+    private record Created(CertificateInventory inventory, ManualCertificateVersion version) { }
+
+    /** İşlem İÇİNDE: envanter satırı (ağ eklemesiyle aynı kapılar) + ilk sürüm. */
+    private Created createOne(CertificateInventory item, ManualCertificateAnalyzer.Entry entry,
+                              ManualCertificateAnalyzer.Analysis a, String note, HttpSession session) {
+        CertificateInventory saved = adminController.createInventoryRecord(item, session);
+        ManualCertificateVersion v = manualService.saveFirstVersion(manualService.buildVersion(saved.getId(), 1, entry,
+                a.fileName(), a.format(), actor(session), displayName(session), note));
+        return new Created(saved, v);
+    }
+
+    /** İşlemden SONRA: denetim, geçmiş, çevrim-dışı değerlendirme (yalnız kapanış), önbellek. */
+    private void afterCreate(List<Created> created, ManualCertificateAnalyzer.Analysis a, HttpSession session,
+                             HttpServletRequest request) {
+        for (Created c : created) {
+            CertificateInventory inv = c.inventory();
+            auditService.recordAction("CERT_MANUAL_UPLOAD", session, request, "CERTIFICATE", inv.getDomain(),
+                    AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "team_id", inv.getTeamId(),
+                            "version", 1, "fingerprint", c.version().getFingerprint(), "file_format", a.format()));
+            adminController.recordInventoryCreateHistory(inv, session);
+            try {
+                evaluation.evaluateNow(inv, "manual");
+            } catch (Exception e) {
+                log.warn("Manuel sertifika ilk değerlendirmesi başarısız {}: {}", inv.getDomain(), e.toString());
+            }
+        }
+        certService.evictAllCaches();
+    }
+
+    // ── Yenileme (yeni sürüm) ────────────────────────────────────────────────
+
+    @PostMapping(value = "/{inventoryId}/versions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> renew(
+            @PathVariable Long inventoryId,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "password", required = false) String password,
+            @RequestParam(value = "ref", required = false) String ref,
+            @RequestParam(value = "note", required = false) String note,
+            @RequestParam(value = "confirm", required = false, defaultValue = "false") boolean confirm,
+            HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "inventory.crud", "edit");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
+        if (!SessionScope.canWriteInventory(session, inv.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok.",
+                    "You don't have write access to this record's team."));
+        }
+        ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
+        if (limited != null) return limited;
+        Map<String, String> errors = new LinkedHashMap<>();
+        Upload up = readUpload(file, text, errors);
+        checkNote(note, errors);
+        if (up == null) return badRequest(errors, null);
+        ManualCertificateAnalyzer.Analysis a;
+        try {
+            a = analyzeUpload(up, password);
+        } catch (ParseFailure pf) {
+            return pf.response;
+        }
+        ManualCertificateAnalyzer.Entry entry = requireEntry(a, ref, "ref", errors);
+        if (!errors.isEmpty()) return badRequest(errors, a);
+
+        CertificateInventory before = copyForHistory(inv);
+        ManualCertificateService.RenewOutcome outcome;
+        try {
+            outcome = tx.execute(status -> {
+                ManualCertificateService.RenewOutcome o = manualService.renew(inv, entry, a.fileName(), a.format(),
+                        actor(session), displayName(session), note, confirm);
+                inv.setUpdatedAt(ISO.format(Instant.now()));
+                monitorHistory.stampUpdated(inv, session);
+                inventoryRepo.save(inv);
+                return o;
+            });
+        } catch (ManualCertificateService.RenewRejected rr) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("code", rr.code());
+            body.put("error", rr.getMessage());
+            if (rr.extra() != null) rr.extra().forEach(body::putIfAbsent);
+            return ResponseEntity.status(409).body(body);
+        }
+        int previous = outcome.previous() != null ? outcome.previous().getVersion() : 0;
+        auditService.recordAction("CERT_MANUAL_RENEW", session, request, "CERTIFICATE", inv.getDomain(),
+                AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "version", outcome.created().getVersion(),
+                        "previous_version", previous, "fingerprint", outcome.created().getFingerprint(),
+                        "file_format", a.format()));
+        adminController.recordInventoryUpdateHistory(before, inv,
+                "Yeni sertifika sürümü yüklendi: v" + outcome.created().getVersion()
+                        + (previous > 0 ? " (önceki v" + previous + ")" : ""), session);
+        try {
+            evaluation.evaluateNow(inv, "manual");
+            manualService.acknowledgeRenewal(inv.getDomain(), outcome.created().getFingerprint(), actor(session));
+        } catch (Exception e) {
+            log.warn("Manuel sertifika yenileme değerlendirmesi başarısız {}: {}", inv.getDomain(), e.toString());
+        }
+        certService.evictAllCaches();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("version", outcome.created().getVersion());
+        data.put("previous_version", previous > 0 ? previous : null);
+        data.put("warnings", outcome.warnings().stream().map(CertificateFileParser.Warning::toJson).toList());
+        return ok(data);
+    }
+
+    // ── Okuma ────────────────────────────────────────────────────────────────
+
+    /** Görüş kapsamındaki manuel sertifikalar ({@code scope=all}: org geneli görünürlük — envanter listesiyle aynı kural). */
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> list(@RequestParam(defaultValue = "mine") String scope, HttpSession session) {
+        permissionService.require(session, "inventory.list", "view");
+        List<CertificateInventory> all = inventoryRepo.findByCertSourceAndDeletedAtIsNullOrderByDomainAsc(
+                CertificateInventory.SOURCE_MANUAL);
+        boolean globalViewer = SessionScope.isGlobalViewer(session);
+        boolean orgWide = !globalViewer && inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
+        List<Long> view = SessionScope.viewTeamIds(session);
+        List<CertificateInventory> rows = new ArrayList<>();
+        for (CertificateInventory inv : all) {
+            if (!inv.isManual()) continue;
+            if (globalViewer || orgWide || (view != null && inv.getTeamId() != null && view.contains(inv.getTeamId()))) {
+                rows.add(inv);
+            }
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", manualService.listRows(rows, SessionScope.inventoryWriteTest(session), teamNames()));
+        body.put("scope", orgWide || globalViewer && "all".equalsIgnoreCase(scope == null ? "" : scope.trim()) ? "all" : "mine");
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabledFor(session));
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/{inventoryId}")
+    public ResponseEntity<Map<String, Object>> detail(@PathVariable Long inventoryId, HttpSession session) {
+        permissionService.require(session, "inventory.list", "view");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || !canRead(session, inv)) return notFound();
+        return ok(manualService.detail(inv, SessionScope.canWriteInventory(session, inv.getTeamId()), teamNames()));
+    }
+
+    /** Sürümün AÇIK zinciri (PEM) — {@code <takip-adı>-v<sürüm>.pem}. Özel anahtar hiçbir zaman saklanmaz. */
+    @GetMapping("/{inventoryId}/versions/{versionId}/pem")
+    public ResponseEntity<?> downloadPem(@PathVariable Long inventoryId, @PathVariable Long versionId, HttpSession session) {
+        permissionService.require(session, "inventory.list", "view");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || !canRead(session, inv)) return notFound();
+        ManualCertificateVersion v = versionRepo.findById(versionId).orElse(null);
+        if (v == null || !inventoryId.equals(v.getInventoryId()) || v.getChainPem() == null) return notFound();
+        String name = pemFileName(inv.getDomain(), v.getVersion());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .contentType(MediaType.parseMediaType("application/x-pem-file"))
+                .body(v.getChainPem().getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /** Şimdi yeniden değerlendir — ağsız; yalnız kapanış uzlaştırması (yeni alarm açmaz). Yanıt {@code /check/{domain}} biçimi. */
+    @PostMapping("/{inventoryId}/evaluate")
+    public ResponseEntity<Map<String, Object>> evaluate(@PathVariable Long inventoryId, HttpSession session,
+                                                        HttpServletRequest request) {
+        permissionService.require(session, "inventory.list", "view");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
+        if (!SessionScope.canOperateTeam(session, inv.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu kaydın takımında işlem yetkiniz yok; yalnız görüntüleyebilirsiniz.",
+                    "You can't act on this record's team; you can only view it."));
+        }
+        Map<String, Object> result = evaluation.evaluateNow(inv, "manual");
+        if (result == null) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "code", "MANUAL_CERT",
+                    "error", Msg.t("Geçerli sürüm değerlendirilemedi.", "The current version could not be evaluated.")));
+        }
+        auditService.recordAction("CERT_HEALTH_REFRESH", session, request, "CERTIFICATE", inv.getDomain(),
+                AuditDetail.of("domain", inv.getDomain(), "source", "MANUAL", "trigger", "evaluate"));
+        Map<String, Object> data = new LinkedHashMap<>(result);
+        data.put("port", inv.getPort() != null ? inv.getPort() : 443);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
+    }
+
+    // ── Yükleme / analiz yardımcıları ────────────────────────────────────────
+
+    private record Upload(byte[] bytes, String name, boolean pasted) { }
+
+    /** Dosya ya da yapıştırılan metin (biri zorunlu). Hatada null + {@code errors.file}. */
+    private Upload readUpload(MultipartFile file, String text, Map<String, String> errors) {
+        try {
+            if (file != null && !file.isEmpty()) return new Upload(file.getBytes(), file.getOriginalFilename(), false);
+        } catch (Exception e) {
+            errors.put("file", Msg.t("Dosya okunamadı.", "The file couldn't be read."));
+            return null;
+        }
+        if (text != null && !text.isBlank()) return new Upload(text.getBytes(StandardCharsets.UTF_8), null, true);
+        errors.put("file", Msg.t("Bir sertifika dosyası seçin ya da sertifika metnini yapıştırın.",
+                "Choose a certificate file or paste the certificate text."));
+        return null;
+    }
+
+    /** Ayrıştırma hatası yanıtı (süre aşımı / meşgul) — çağıran aynen döner. */
+    private static final class ParseFailure extends RuntimeException {
+        final transient ResponseEntity<Map<String, Object>> response;
+        ParseFailure(ResponseEntity<Map<String, Object>> response) {
+            super(null, null, false, false);
+            this.response = response;
+        }
+    }
+
+    /** Parola yalnız bu çağrı boyunca bir char dizisinde yaşar ve sıfırlanır; hiçbir yere yazılmaz. */
+    private ManualCertificateAnalyzer.Analysis analyzeUpload(Upload up, String password) {
+        char[] pw = password == null || password.isEmpty() ? null : password.toCharArray();
+        try {
+            return analyzer.analyze(up.bytes(), up.name(), pw, up.pasted());
+        } catch (ManualCertificateAnalyzer.TimeoutExceededException te) {
+            throw new ParseFailure(ResponseEntity.status(422).body(Map.of("success", false, "code", "PARSE_TIMEOUT",
+                    "error", Msg.t("Dosya " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " saniyede çözümlenemedi.",
+                            "The file couldn't be analysed within " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " seconds."))));
+        } catch (ManualCertificateAnalyzer.BusyException be) {
+            throw new ParseFailure(ResponseEntity.status(429).body(Map.of("success", false, "code", "BUSY",
+                    "error", Msg.t("Çözümleyici şu anda meşgul; birkaç saniye sonra yeniden deneyin.",
+                            "The analyser is busy; try again in a few seconds."))));
+        } finally {
+            if (pw != null) Arrays.fill(pw, '\0');
+        }
+    }
+
+    /** Seçilen girdi. Yoksa alan hatası (şifre gerekli/yanlış ise {@code password} alanına). */
+    private ManualCertificateAnalyzer.Entry requireEntry(ManualCertificateAnalyzer.Analysis a, String ref, String field,
+                                                         Map<String, String> errors) {
+        if (a.parsed.needsPassword()) {
+            errors.put("password", Msg.t("Dosya şifreli — şifreyi girin.", "The file is password-protected — enter the password."));
+            return null;
+        }
+        if (a.parsed.passwordError()) {
+            errors.put("password", Msg.t("Şifre yanlış.", "The password is wrong."));
+            return null;
+        }
+        if (a.entries.isEmpty()) {
+            errors.put("file", Msg.t("Dosyada izlenebilir bir sertifika yok.", "The file contains no certificate that can be tracked."));
+            return null;
+        }
+        ManualCertificateAnalyzer.Entry e = a.find(ref);
+        if (e == null) {
+            errors.put(field, ref == null || ref.isBlank()
+                    ? Msg.t("İzlenecek sertifikayı seçin.", "Choose the certificate to track.")
+                    : Msg.t("Seçilen sertifika dosyada bulunamadı.", "The selected certificate wasn't found in the file."));
+        }
+        return e;
+    }
+
+    private static String validateKey(String raw, String field, Map<String, String> errors) {
+        try {
+            return ManualCertificateKeys.validate(raw);
+        } catch (IllegalArgumentException e) {
+            errors.put(field, e.getMessage());
+            return null;
+        }
+    }
+
+    private static void checkNote(String note, Map<String, String> errors) {
+        if (note != null && note.strip().length() > ManualCertificateService.NOTE_MAX) {
+            errors.put("note", Msg.t("Not en çok " + ManualCertificateService.NOTE_MAX + " karakter olabilir.",
+                    "The note can be at most " + ManualCertificateService.NOTE_MAX + " characters."));
+        }
+    }
+
+    /** {@code inventory} JSON'u → envanter nesnesi (ağ eklemesiyle AYNI snake_case yük). Hatada null + alan hatası. */
+    private CertificateInventory parseInventory(String json, Map<String, String> errors) {
+        if (json == null || json.isBlank()) {
+            errors.putIfAbsent("team_id", Msg.t("Takım seçimi zorunludur.", "A team must be selected."));
+            return null;
+        }
+        try {
+            CertificateInventory item = objectMapper.readValue(json, CertificateInventory.class);
+            if (item.getTeamId() == null) errors.putIfAbsent("team_id", Msg.t("Takım seçimi zorunludur.", "A team must be selected."));
+            if (item.getGroupName() == null || item.getGroupName().isBlank())
+                errors.putIfAbsent("group_name", Msg.t("Grup seçimi zorunludur.", "A group must be selected."));
+            if (item.getTags() == null || item.getTags().isBlank())
+                errors.putIfAbsent("tags", Msg.t("En az bir etiket zorunludur.", "At least one tag is required."));
+            return item;
+        } catch (Exception e) {
+            errors.putIfAbsent("inventory", Msg.t("Envanter bilgileri okunamadı.", "The inventory details couldn't be read."));
+            return null;
+        }
+    }
+
+    /** {@code items} JSON dizisi → [ref, domain] çiftleri (≤ {@value #BATCH_MAX}). */
+    private List<String[]> parseItems(String json, Map<String, String> errors) {
+        List<String[]> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            errors.put("items", Msg.t("En az bir sertifika seçin.", "Choose at least one certificate."));
+            return out;
+        }
+        try {
+            JsonNode arr = objectMapper.readTree(json);
+            if (arr == null || !arr.isArray() || arr.isEmpty()) {
+                errors.put("items", Msg.t("En az bir sertifika seçin.", "Choose at least one certificate."));
+                return out;
+            }
+            if (arr.size() > BATCH_MAX) {
+                errors.put("items", Msg.t("Tek seferde en çok " + BATCH_MAX + " sertifika eklenebilir.",
+                        "At most " + BATCH_MAX + " certificates can be added at once."));
+                return out;
+            }
+            for (JsonNode n : arr) {
+                String ref = n.hasNonNull("ref") ? n.get("ref").asString() : null;
+                String domain = n.hasNonNull("domain") ? n.get("domain").asString() : null;
+                out.add(new String[] { ref, domain });
+            }
+        } catch (Exception e) {
+            errors.put("items", Msg.t("Seçim listesi okunamadı.", "The selection list couldn't be read."));
+        }
+        return out;
+    }
+
+    /**
+     * Manuel kaydın sunucu tarafı alanları: kaynak, anahtar, ağ alanları boş; ardından varlığın alan kuralları
+     * (Bean Validation — port/tier/anahtar biçimi). Hata → {@code errors[prefix + alan]}.
+     */
+    private void prepareManualItem(CertificateInventory item, String key, Map<String, String> errors, String prefix) {
+        if (item == null || key == null) return;
+        item.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        item.setDomain(key);
+        AdminController.neutralizeNetworkFields(item);
+        if (validator == null) return;
+        for (ConstraintViolation<CertificateInventory> v : validator.validate(item)) {
+            String path = v.getPropertyPath() == null ? "" : v.getPropertyPath().toString();
+            errors.putIfAbsent(prefix + (path.isEmpty() ? "inventory" : snake(path)), v.getMessage());
+        }
+    }
+
+    private static String snake(String camel) {
+        return camel.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase(Locale.ROOT);
+    }
+
+    private ResponseEntity<Map<String, Object>> keyClash(String key) {
+        if (key == null) return null;
+        return inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(key).isPresent() ? keyExists(key) : null;
+    }
+
+    private static ResponseEntity<Map<String, Object>> keyExists(String key) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", "KEY_EXISTS");
+        body.put("field", "domain");
+        body.put("domain", key);
+        body.put("error", Msg.t("Bu takip adı envanterde zaten kullanılıyor (silinmiş kayıtlar dahil). Başka bir ad seçin.",
+                "This tracking name is already used in the inventory (deleted records included). Choose another name."));
+        return ResponseEntity.status(409).body(body);
+    }
+
+    private static ResponseEntity<Map<String, Object>> alreadyTracked(ManualCertificateAnalyzer.Entry entry) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", "ALREADY_TRACKED");
+        body.put("inventory_id", entry.alreadyTracked().get("inventory_id"));
+        body.put("domain", entry.alreadyTracked().get("domain"));
+        body.put("error", Msg.t("Bu sertifika zaten takip ediliyor: " + entry.alreadyTracked().get("domain"),
+                "This certificate is already tracked: " + entry.alreadyTracked().get("domain")));
+        return ResponseEntity.status(409).body(body);
+    }
+
+    // ── Kapsam / okuma ───────────────────────────────────────────────────────
+
+    private CertificateInventory loadManual(Long id) {
+        if (id == null) return null;
+        return inventoryRepo.findById(id).filter(CertificateInventory::isManual).orElse(null);
+    }
+
+    /**
+     * Tek kayıt okuma — {@code /admin/inventory/by-domain} kuralı: global görüntüleyici; kendi görüş kapsamı (SY takımı);
+     * ya da org geneli okuma (silinmemiş kayıt).
+     */
+    private boolean canRead(HttpSession session, CertificateInventory inv) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        List<Long> view = SessionScope.viewTeamIds(session);
+        if (view != null && inv.getTeamId() != null && view.contains(inv.getTeamId())) return true;
+        return inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv);
+    }
+
+    private Map<Long, String> teamNames() {
+        Map<Long, String> m = new HashMap<>();
+        for (Team t : userService.listTeams()) if (t.getId() != null) m.put(t.getId(), t.getName());
+        return m;
+    }
+
+    /** Geçmiş farkı için alanların kopyası (aynı nesne güncelleneceği için). */
+    private static CertificateInventory copyForHistory(CertificateInventory inv) {
+        CertificateInventory c = new CertificateInventory();
+        org.springframework.beans.BeanUtils.copyProperties(inv, c);
+        return c;
+    }
+
+    static String pemFileName(String domain, Integer version) {
+        String base = domain == null ? "sertifika" : domain.replace("*", "wildcard").replaceAll("[^a-z0-9._-]", "_");
+        return base + "-v" + (version == null ? 0 : version) + ".pem";
+    }
+
+    // ── Hız sınırı ───────────────────────────────────────────────────────────
+
+    private ResponseEntity<Map<String, Object>> rateLimit(String key) {
+        long now = System.currentTimeMillis();
+        if (rate.size() > 1_000) {
+            rate.entrySet().removeIf(e -> {
+                synchronized (e.getValue()) {
+                    while (!e.getValue().isEmpty() && now - e.getValue().peekFirst() > RATE_WINDOW_MS) e.getValue().pollFirst();
+                    return e.getValue().isEmpty();
+                }
+            });
+        }
+        Deque<Long> dq = rate.computeIfAbsent(key, k -> new ArrayDeque<>());
+        synchronized (dq) {
+            while (!dq.isEmpty() && now - dq.peekFirst() > RATE_WINDOW_MS) dq.pollFirst();
+            if (dq.size() >= RATE_PER_MIN) {
+                return ResponseEntity.status(429).body(Map.of("success", false, "code", "RATE_LIMITED",
+                        "error", Msg.t("Çok sık istek — dakikada en çok " + RATE_PER_MIN + ". Lütfen bekleyin.",
+                                "Too many requests — at most " + RATE_PER_MIN + " per minute. Please wait.")));
+            }
+            dq.addLast(now);
+        }
+        return null;
+    }
+
+    // ── Yanıt yardımcıları ───────────────────────────────────────────────────
+
+    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
+    }
+
+    private static ResponseEntity<Map<String, Object>> notFound() {
+        return ResponseEntity.status(404).body(Map.of("success", false,
+                "error", Msg.t("Manuel sertifika kaydı bulunamadı.", "Manual certificate record not found.")));
+    }
+
+    private ResponseEntity<Map<String, Object>> badRequest(Map<String, String> errors, ManualCertificateAnalyzer.Analysis a) {
+        return badRequest(errors, a, null);
+    }
+
+    private ResponseEntity<Map<String, Object>> badRequest(Map<String, String> errors, ManualCertificateAnalyzer.Analysis a,
+                                                           String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("error", message != null ? message : Msg.t("Gönderilen bilgiler geçersiz.", "The submitted details are invalid."));
+        body.put("errors", errors);
+        if (a != null) body.put("warnings", a.warnings.stream().map(CertificateFileParser.Warning::toJson).toList());
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    private static String actor(HttpSession session) {
+        Object u = session != null ? session.getAttribute("username") : null;
+        return u != null ? u.toString() : "anonymous";
+    }
+
+    private static String displayName(HttpSession session) {
+        Object d = session != null ? session.getAttribute("displayName") : null;
+        return d != null && !d.toString().isBlank() ? d.toString() : null;
+    }
+
+    private static String now() {
+        return ISO.format(Instant.now());
+    }
+}

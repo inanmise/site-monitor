@@ -9,6 +9,7 @@
 export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'all', labelKey: 'nav.all' },
   { id: 'domains', labelKey: 'nav.domains' },
+  { id: 'manualcerts', labelKey: 'nav.manualCerts' },
   { id: 'uptime', labelKey: 'nav.uptime' },
   { id: 'forecast', labelKey: 'nav.forecast' },
   { id: 'renewal', labelKey: 'nav.renewal' },

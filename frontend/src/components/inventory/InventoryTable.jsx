@@ -24,6 +24,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import { expiredAgoText, expiresInText } from '../../utils/dayPhrases.js'
+import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
+import { isManualCert } from '../manualcert/manualCertModel.js'
 
 export const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
@@ -236,10 +238,11 @@ export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCo
   return [
     { label: t('inv.show'), onClick: () => onShow(r) },
     { label: t('inv.checkNow'), onClick: () => onCheckNow(r) },
-    { label: t('inv.diagnose'), onClick: () => onDiagnose(r), hidden: !isAdmin },
+    // Manuel (dosyadan yüklenen) kayıt (2026-10-06): ağ tanılaması ve kopyalama yok — adres yok, sertifika dosyadan.
+    { label: t('inv.diagnose'), onClick: () => onDiagnose(r), hidden: !isAdmin || isManualCert(r) },
     // Düzenle/Kopyala satır bazlı (2026-09-18): USER kendi takımının kaydını düzenler; silme canManage'de kalır
     { label: t('inv.edit'), onClick: () => onEdit(r), hidden: !canEditRow(r) },
-    { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canEditRow(r) },
+    { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canEditRow(r) || isManualCert(r) },
     { label: t('inv.transfer'), onClick: () => onTransfer(r), hidden: !(isAdmin && teamsCount > 1) },
     { label: t('inv.delete'), danger: true, onClick: () => onDelete(r.id), hidden: !canManage },
   ]
@@ -389,6 +392,7 @@ export default function InventoryTable({
                           {r.domain}
                         </Button>
                         {port !== 443 && <Badge variant="outline" className="ml-1.5 px-1.5 align-middle font-mono text-[.72em] text-muted-foreground">:{port}</Badge>}
+                        {isManualCert(r) && <span className="ml-1.5 inline-flex align-middle"><ManualCertBadge version={r.manual_version ?? null} uploadedAt={r.manual_uploaded_at ?? null} rowLabel={r.domain} /></span>}
                       </span>
                       {!compact && r.description && <span className="truncate text-[.8em] text-muted-foreground" title={r.description}>{r.description}</span>}
                       {((!show('group') && r.group_name) || (!show('tags') && r.tags)) && (

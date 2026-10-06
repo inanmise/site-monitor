@@ -405,6 +405,10 @@ public class EscalationService {
             for (String alertType : alertTypes) {
                 // Route alert to the team that owns this cert — batch'ten lookup
                 var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
+                // Elle yüklenen sertifika (2026-10-06): takip adı host adı değil → ad uyuşmazlığı alarmı YOK (ikinci kapı;
+                // birincisi determineAlertTypes'taki manual işareti). Ağ kaydında isManual() false — dal hiç girilmez.
+                if (TYPE_HOSTNAME_MISMATCH.equals(alertType)
+                        && inventoryOpt.map(com.sitemonitor.model.CertificateInventory::isManual).orElse(false)) continue;
                 Integer domainTier = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTier).orElse(null);
                 String alertLevel = determineAlertLevel(result, alertType, thresholds.forTier(domainTier));
                 if (alertLevel == null) continue;
@@ -2389,7 +2393,16 @@ public class EscalationService {
                 ? l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList()
                 : java.util.List.of();
         return CertificateHealthRules.securityFlags(
-                (String) result.get("domain"), san, (String) result.get("trust_status"));
+                (String) result.get("domain"), san, (String) result.get("trust_status"), isManualResult(result));
+    }
+
+    /**
+     * Elle yüklenen sertifikanın çevrim-dışı değerlendirme sonucu mu (2026-10-06,
+     * {@code ManualCertificateEvaluationService}: {@code manual=true}). Takip adı bir host adı değildir →
+     * HOSTNAME_MISMATCH bu sonuçlarda HİÇ üretilmez. Ağ kontrolü bu anahtarı üretmez: davranış birebir aynı.
+     */
+    static boolean isManualResult(Map<String, Object> result) {
+        return result != null && Boolean.TRUE.equals(result.get("manual"));
     }
 
     private String securityAlertType(Map<String, Object> result) {
@@ -2398,7 +2411,7 @@ public class EscalationService {
                 ? l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList()
                 : java.util.List.of();
         java.util.List<String> flags = CertificateHealthRules.securityFlags(
-                (String) result.get("domain"), san, (String) result.get("trust_status"));
+                (String) result.get("domain"), san, (String) result.get("trust_status"), isManualResult(result));
         if (flags.contains(CertificateHealthRules.FLAG_HOSTNAME_MISMATCH)
                 && appSettings.getBoolean(SETTING_ALERT_HOSTNAME_MISMATCH, true)) {
             return TYPE_HOSTNAME_MISMATCH;
@@ -2672,6 +2685,47 @@ public class EscalationService {
         return out;
     }
 
+    /** E-posta bağlamı anahtarı: manuel sertifikanın kaynak satırı ({@code EmailTemplateBuilder} "Sertifika Kaynağı" kartı). */
+    public static final String CTX_MANUAL_SOURCE = "inv_manual_source";
+
+    /** Manuel sertifika sürümleri — isteğe bağlı (dilimli test bağlamında yok → kaynak satırı eklenmez). */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
+
+    /**
+     * "Kaynak: Manuel yükleme (sürüm N, dosya …, yükleyen …, tarih …) — yenilemek için yeni sürümü yükleyin".
+     * Geçerli sürüm okunamazsa sürüm ayrıntısı olmadan yazılır.
+     */
+    String manualSourceLine(com.sitemonitor.model.CertificateInventory inv) {
+        com.sitemonitor.model.ManualCertificateVersion v = null;
+        if (manualVersionRepo != null && inv.getId() != null) {
+            try {
+                v = manualVersionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(inv.getId()).orElse(null);
+            } catch (Exception e) {
+                log.debug("Manuel sertifika sürümü okunamadı ({}): {}", inv.getDomain(), e.toString());
+            }
+        }
+        return manualSourceLine(v);
+    }
+
+    static String manualSourceLine(com.sitemonitor.model.ManualCertificateVersion v) {
+        StringBuilder sb = new StringBuilder("Kaynak: Manuel yükleme");
+        if (v != null) {
+            List<String> parts = new ArrayList<>(4);
+            if (v.getVersion() != null) parts.add("sürüm " + v.getVersion());
+            if (v.getFileName() != null && !v.getFileName().isBlank()) parts.add("dosya " + v.getFileName());
+            String who = v.getUploadedByName() != null && !v.getUploadedByName().isBlank()
+                    ? v.getUploadedByName() : v.getUploadedBy();
+            if (who != null && !who.isBlank()) parts.add("yükleyen " + who);
+            if (v.getUploadedAt() != null && v.getUploadedAt().length() >= 10) {
+                String d = v.getUploadedAt();
+                parts.add("tarih " + d.substring(8, 10) + "." + d.substring(5, 7) + "." + d.substring(0, 4));
+            }
+            if (!parts.isEmpty()) sb.append(" (").append(String.join(", ", parts)).append(')');
+        }
+        return sb.append(" — yenilemek için yeni sürümü yükleyin").toString();
+    }
+
     /** Subject'te görünen hedef adı: monitör adı > şema-soyulmuş adres. Çıplak http(s):// subject'e girmez. */
     static String subjectDisplayName(Map<String, Object> ctx, String domain) {
         if (ctx != null) {
@@ -2837,6 +2891,13 @@ public class EscalationService {
                 // geçer ve içerik her gönderimde envanterden YENİDEN okunur (bayat kopya yok).
                 var invContacts = CertificateInventoryContacts.filled(inv);
                 if (!invContacts.isEmpty()) enrichedCtx.putIfAbsent("inv_contacts", invContacts);
+                // Elle yüklenen sertifika (2026-10-06): alıcı sertifikanın sunucudan değil DOSYADAN izlendiğini ve
+                // yenilemenin yeni sürüm yüklemek olduğunu bilmeli. Ağ kaydında isManual() false → hiçbir şey eklenmez
+                // (e-posta bugünküyle bayt bayt aynı).
+                if (inv.isManual()) {
+                    String src = manualSourceLine(inv);
+                    if (src != null) enrichedCtx.putIfAbsent(CTX_MANUAL_SOURCE, src);
+                }
             });
         }
         certContext = enrichedCtx;
