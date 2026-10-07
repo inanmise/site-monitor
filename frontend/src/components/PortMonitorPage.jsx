@@ -46,6 +46,7 @@ import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.
 import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
@@ -138,7 +139,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [density, setDensity] = useCardDensity('port')
   // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
   const failRows = useFailureRows()
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): kalıcı silinen bağımsız izlemenin kartı tam liste yüklemesini BEKLEMEDEN düşer.
+  const monitors = useWithoutDeleted(monitorKind('port'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [defaults, setDefaults] = useState(null)
@@ -376,11 +379,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     // çiziyordu (tasarım sistemi dışı) ve hedefin adını göstermiyordu; kart üzerindeki
     // tek tık yıkıcı bir işlem tetiklediği için mesaj NEYİN silineceğini söylemeli.
     // Türev satırda "sil" gerçekte "izlemeyi durdur"dur (sunucu yalnız duraklatır, satır listede kalır); bağımsız
-    // satır ise KALICI silinir (2026-09-27: silme ≠ duraklatma, deleted_at). DnsMonitorPage ikiziyle aynı metin ayrımı.
+    // satır ise KALICI silinir (2026-10-07: satır, kontrolleri ve notları veritabanından kalkar; geri getirilemez). DnsMonitorPage ikiziyle aynı metin ayrımı.
     const derived = m.standalone !== true
     const label = m.name || (m.host + ":" + m.port)
     const ok = await showConfirm({
-      title: t('mon.deleteTitle'),
+      title: derived ? t('port.deleteDerivedTitle') : t('mon.deleteTitle'),
       message: derived ? t('port.deleteDerivedMsg', label) : t('mon.deleteMsg', label),
       confirmText: derived ? t('port.deleteDerivedConfirm') : t('port.delete'),
       cancelText: t('port.cancel'),
@@ -396,8 +399,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       // silindi saniyordu. DnsMonitorPage ikiziyle ayni desen.
       if (!res?.success) { toast.error(res?.error || t('port.saveError')); return }
       toast.success(derived ? t('port.deletedDerived') : t('port.deleted'))
-      await load()
+      // Bağımsız izleme KALICI silindi (2026-10-07): kart HEMEN düşer, açık detay kapanır; türev satır (duraklatıldı)
+      // listede kalır — sunucu `permanent:false` döner, işaretlenmez. Tazeleme arka planda, arayüz beklemez.
+      if (markMonitorDeleted('port', m.id, res)) setSelected((s) => (s?.id === m.id ? null : s))
       if (modal) closeEdit()
+      load()
     } finally {
       setDeleting(null)
     }

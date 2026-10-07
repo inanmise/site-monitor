@@ -11,8 +11,9 @@
 #   chain-v1.p7b   aynı zincir, PKCS#7 (PEM)
 #   leaf-v2.pfx    yaprak v2 (AYNI anahtar, 397 gün) + zincir, PKCS#12
 #   leaf-v2.jks    leaf-v2.pfx'in JKS kopyası (alias odeme-api)
-#   truststore.jks yalnız iki CA sertifikası (root, issuing)
-#   with-key.pem   yaprak v1 + özel anahtar (sunucu anahtarı yok sayar)
+#   truststore.jks yalnız iki CA sertifikası (root, issuing) — aynı zincir: TEK takip girdisi (ara; kök zincirinde)
+#   roots.jks      birbirinden BAĞIMSIZ iki kendinden imzalı kök (toplu "birden çok" senaryosu: iki girdi)
+#   with-key.pem   yaprak v1 + özel anahtar (2026-10-08: anahtar TARAYICIDA ayıklanır, sunucuya hiç gitmez)
 #   leaf.csr       yaprağın CSR'ı (sertifika değil)
 #   bundle.zip     leaf-v1.pem + int.pem + root.pem
 # Gerekenler: openssl (1.1.1+), JDK (keytool + jar; $JAVA_HOME/bin ya da PATH).
@@ -32,7 +33,7 @@ command -v openssl >/dev/null || { echo "openssl bulunamadı" >&2; exit 1; }
 
 mkdir -p "$OUT"
 cd "$OUT"
-rm -f root.* int.* leaf* chain-v1.* truststore.jks with-key.pem bundle.zip cas.pem ca.ext leaf.ext
+rm -f root.* int.* leaf* chain-v1.* truststore.jks roots.jks root-a.* root-b.* with-key.pem bundle.zip cas.pem ca.ext leaf.ext
 
 cat > ca.ext <<'X'
 basicConstraints=critical,CA:true
@@ -66,11 +67,19 @@ openssl pkcs12 -export -inkey leaf.key -in leaf-v2.pem -certfile cas.pem -name o
   -destkeystore leaf-v2.jks -deststoretype JKS -deststorepass "$PASS" -destkeypass "$PASS" >/dev/null 2>&1
 "$KEYTOOL" -importcert -noprompt -alias root -file root.pem -keystore truststore.jks -storetype JKS -storepass "$PASS" >/dev/null 2>&1
 "$KEYTOOL" -importcert -noprompt -alias issuing -file int.pem -keystore truststore.jks -storetype JKS -storepass "$PASS" >/dev/null 2>&1
+# İki BAĞIMSIZ kök (birbirini imzalamaz, ortak zincir yok) → analizde iki ayrı girdi (toplu seçim senaryosu)
+for x in a b; do
+  X=$(printf '%s' "$x" | tr 'a-z' 'A-Z')
+  openssl req -x509 -new -newkey rsa:2048 -nodes -sha256 -days 3650 -keyout "root-$x.key" -out "root-$x.pem" \
+    -subj "/CN=Test Independent Root $X/O=Example Test" \
+    -addext "basicConstraints=critical,CA:true" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+  "$KEYTOOL" -importcert -noprompt -alias "root-$x" -file "root-$x.pem" -keystore roots.jks -storetype JKS -storepass "$PASS" >/dev/null 2>&1
+done
 cat leaf-v1.pem leaf.key > with-key.pem
 "$JAR" --create --no-manifest --file bundle.zip leaf-v1.pem int.pem root.pem
 
-rm -f cas.pem ./*.srl int.csr
-for f in chain-v1.pem leaf-v1.der chain-v1.p7b leaf-v2.pfx leaf-v2.jks truststore.jks with-key.pem leaf.csr bundle.zip; do
+rm -f cas.pem ./*.srl int.csr root-a.key root-b.key
+for f in chain-v1.pem leaf-v1.der chain-v1.p7b leaf-v2.pfx leaf-v2.jks truststore.jks roots.jks with-key.pem leaf.csr bundle.zip; do
   [ -s "$f" ] || { echo "üretilemedi: $f" >&2; exit 1; }
 done
 echo "sertifika fikstürleri hazır: $OUT"

@@ -1167,9 +1167,48 @@ class CertificateControllerTest {
     }
 
     @Test
-    @DisplayName("manuel: check-preview 409 MANUAL_CERT — canlı el sıkışma yok")
-    void checkPreview_manualRow_409() throws Exception {
+    @DisplayName("manuel: check-preview ÇEVRİM-DIŞI önizleme (2026-10-07) — el sıkışma / kayıt / alarm yok; ağa özgü hüküm NA, HOSTNAME_MISMATCH yok")
+    void checkPreview_manualRow_offlinePreview() throws Exception {
         when(inventoryRepo.findByDomain("api-takip")).thenReturn(java.util.Optional.of(manualInv("api-takip", null)));
+        java.util.Map<String, Object> built = new java.util.LinkedHashMap<>();
+        built.put("domain", "api-takip");
+        built.put("status", "valid");
+        built.put("san", List.of("baska.example.test"));   // takip adı SAN'da yok — yine de HOSTNAME_MISMATCH olmamalı
+        built.put("signature_algorithm", "SHA256withRSA");
+        built.put("public_key_algorithm", "RSA");
+        built.put("public_key_size", 1024);
+        built.put("trust_status", "UNTRUSTED");
+        built.put("chain", List.of(Map.of("position", 0, "is_leaf", true, "is_root", false)));
+        built.put("via", "upload");
+        built.put("manual", true);
+        when(manualCertEvaluation.previewCurrent(any())).thenReturn(built);
+        mvc.perform(get("/api/check-preview/api-takip").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.via").value("upload"))
+                .andExpect(jsonPath("$.data.manual").value(true))
+                .andExpect(jsonPath("$.data.chain[0].is_leaf").value(true))
+                .andExpect(jsonPath("$.data.assessment.hostname").value("NA"))
+                .andExpect(jsonPath("$.data.assessment.protocol").value("NA"))
+                .andExpect(jsonPath("$.data.assessment.cipher").value("NA"))
+                .andExpect(jsonPath("$.data.assessment.pfs").value("NA"))
+                .andExpect(jsonPath("$.data.assessment.signature").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.key_size").value("FAIL"))
+                .andExpect(jsonPath("$.data.security_flags", org.hamcrest.Matchers.contains("UNTRUSTED_CA")))
+                // "Hiyerarşi" görünümü (2026-10-07) sürüm zincirini kayıt kimliğiyle çeker
+                .andExpect(jsonPath("$.data.inventory_id").value(31))
+                .andExpect(jsonPath("$.data.port").doesNotExist());
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+        verify(manualCertEvaluation, never()).evaluateNow(any(), anyString());
+        verify(certService, never()).saveResult(any());
+        verify(certService, never()).evictAllCaches();
+    }
+
+    @Test
+    @DisplayName("manuel: check-preview geçerli sürüm değerlendirilemezse 409 MANUAL_CERT — canlı el sıkışmaya düşmez")
+    void checkPreview_manualRow_noVersion_409() throws Exception {
+        when(inventoryRepo.findByDomain("api-takip")).thenReturn(java.util.Optional.of(manualInv("api-takip", null)));
+        when(manualCertEvaluation.previewCurrent(any())).thenReturn(null);
         mvc.perform(get("/api/check-preview/api-takip").session(authSession()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.success").value(false))

@@ -360,7 +360,7 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
   // -- A5: sertifika silme (dashboard karti) --------------------------------
   // Modal'da tek silme akisi NOT silmekti; sertifikanin kendisi buradan silinemiyordu.
   // Yeni dugme YENI uc acmaz: mevcut DELETE /admin/inventory/{id} cagrilir, boylece denetim
-  // kaydi + soft-delete + acik alarmlarin kapatilmasi kendiliginden miras kalir.
+  // kaydi + KALICI silme (2026-10-07) + acik alarmlarin kapatilmasi kendiliginden miras kalir.
 
   it('A5: silme yetkisi VARSA sil dugmesi cizilir ve onay sonrasi mevcut ucu cagirir', async () => {
     api.admin.deleteInventory = vi.fn().mockResolvedValue({ success: true })
@@ -373,10 +373,11 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
     const btn = await screen.findByRole('button', { name: /^sil$|^delete$/i })
     fireEvent.click(btn)
 
-    // Onay diyalogu: onayla. Baslik dugmesi de ayni ada sahip (title="Sil") -> SON eslesme
-    // diyalogun onay dugmesidir (diyalog sonradan aciliyor).
-    await screen.findByText(/domain sil|delete domain/i)
-    fireEvent.click(screen.getAllByRole('button', { name: /^sil$|^delete$/i }).at(-1))
+    // Onay diyalogu (2026-10-07): silme KALICI — metin bunu açıkça söyler, onay düğmesi "Kalıcı olarak sil".
+    const dlg = await screen.findByRole('dialog', { name: /kalıcı olarak sil|delete permanently/i })
+    expect(dlg.textContent).toMatch(/kalıcı olarak silinecek|permanently deleted/i)
+    expect(dlg.textContent).toMatch(/geri alınamaz|can't be undone/i)
+    fireEvent.click(within(dlg).getByRole('button', { name: /^kalıcı olarak sil$|^delete permanently$/i }))
 
     await waitFor(() => expect(api.admin.getInventoryByDomain).toHaveBeenCalledWith('example.com'))
     await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalled())

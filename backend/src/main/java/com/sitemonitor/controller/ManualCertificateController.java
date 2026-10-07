@@ -14,8 +14,10 @@ import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.UserService;
 import com.sitemonitor.service.manualcert.CertificateFileParser;
+import com.sitemonitor.service.manualcert.ExtractedUpload;
 import com.sitemonitor.service.manualcert.ManualCertificateAnalyzer;
 import com.sitemonitor.service.manualcert.ManualCertificateEvaluationService;
+import com.sitemonitor.service.manualcert.ManualCertificateHierarchy;
 import com.sitemonitor.service.manualcert.ManualCertificateKeys;
 import com.sitemonitor.service.manualcert.ManualCertificateService;
 import com.sitemonitor.util.Msg;
@@ -31,6 +33,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+import org.springframework.web.util.WebUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -40,7 +44,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -63,8 +66,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * kapılarından geçer ({@link AdminController#createInventoryRecord} — takım, grup + etiket, yazma kapsamı, mass
  * assignment, damga).
  *
- * <p><b>Gizlilik:</b> dosya parolası yalnız ayrıştırma süresince bellekte tutulur, sıfırlanır; özel anahtar hiç
- * okunmaz. İkisi de kaydedilmez, loglanmaz, denetime yazılmaz, yanıtta dönmez. İstek gövdesi TRACE logunda bile
+ * <p><b>Gizlilik (2026-10-08, kullanıcı isteği: "keystore yüklemesinde özel anahtar için kesinlikle bir yükleme
+ * yapmayalım"):</b> arayüz dosyayı TARAYICIDA açar ve yükleme uçlarına (analiz, oluştur, toplu, yeni sürüm) yalnız
+ * {@code extracted} gönderir — açık sertifikalar (Base64 DER) + CSR PEM + sayaçlar ({@link ExtractedUpload}, sıkı
+ * doğrulama). Sunucu parola ALMAZ ({@code password} alanı bağlanmaz, yok sayılır) ve anahtar deposu açmaz. Ham yol
+ * ({@code file} / {@code text}, API istemcileri) yalnız anahtarsız içeriği kabul eder; PKCS#12, JKS / JCEKS / BKS ya da
+ * herhangi bir özel anahtar (ZIP içinde de) 400 {@code PRIVATE_KEY_NOT_ACCEPTED}. İstek gövdesi TRACE logunda bile
  * yazılmaz ({@code RequestLoggingFilter.BODY_NEVER_LOGGED}).
  */
 @Slf4j
@@ -135,21 +142,23 @@ public class ManualCertificateController {
     public ResponseEntity<Map<String, Object>> analyze(
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "text", required = false) String text,
-            @RequestParam(value = "password", required = false) String password,
-            HttpSession session) {
+            HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "inventory.crud", "edit");
         ResponseEntity<Map<String, Object>> limited = rateLimit("a:" + actor(session));
         if (limited != null) return limited;
         Map<String, String> errors = new LinkedHashMap<>();
-        Upload up = readUpload(file, text, errors);
+        Upload up = readUpload(file, text, request, errors);
         if (up == null) return badRequest(errors, null);
         ManualCertificateAnalyzer.Analysis a;
         try {
-            a = analyzeUpload(up, password);
+            a = analyzeUpload(up);
         } catch (ParseFailure pf) {
             return pf.response;
         }
-        return ok(a.toJson());
+        // Girdi başına SSL sekmesiyle AYNI biçimli çevrim-dışı sonuç (2026-10-07): İnceleme adımı zinciri ağ sertifikasının
+        // zincir görünümüyle çizer. Ağa çıkmaz, yazmaz.
+        return ok(a.toJson(e -> evaluation.previewChain(
+                e.suggestedKey() != null ? e.suggestedKey() : e.cn(), e.cert, e.chain)));
     }
 
     // ── Oluşturma ────────────────────────────────────────────────────────────
@@ -159,7 +168,6 @@ public class ManualCertificateController {
     public ResponseEntity<Map<String, Object>> create(
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "text", required = false) String text,
-            @RequestParam(value = "password", required = false) String password,
             @RequestParam(value = "ref", required = false) String ref,
             @RequestParam(value = "domain", required = false) String domain,
             @RequestParam(value = "inventory", required = false) String inventory,
@@ -169,14 +177,14 @@ public class ManualCertificateController {
         ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
         if (limited != null) return limited;
         Map<String, String> errors = new LinkedHashMap<>();
-        Upload up = readUpload(file, text, errors);
+        Upload up = readUpload(file, text, request, errors);
         checkNote(note, errors);
         CertificateInventory item = parseInventory(inventory, errors);
         String key = validateKey(domain, "domain", errors);
         if (up == null) return badRequest(errors, null);
         ManualCertificateAnalyzer.Analysis a;
         try {
-            a = analyzeUpload(up, password);
+            a = analyzeUpload(up);
         } catch (ParseFailure pf) {
             return pf.response;
         }
@@ -205,12 +213,15 @@ public class ManualCertificateController {
         return ok(data);
     }
 
-    /** Toplu oluşturma (truststore'dan birden çok CA): {@code items=[{ref, domain}]} (≤ 20), ortak {@code inventory}. Hep ya da hiç. */
+    /**
+     * Toplu oluşturma (dosyada birden çok BAĞIMSIZ zincir başı — ör. ilgisiz kökleri taşıyan truststore):
+     * {@code items=[{ref, domain}]} (≤ 20), ortak {@code inventory}. Hep ya da hiç. Bir zincirin ara / kök üyesi ayrı
+     * kalem olamaz ({@code items[i].ref} hatası).
+     */
     @PostMapping(value = "/batch", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> createBatch(
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "text", required = false) String text,
-            @RequestParam(value = "password", required = false) String password,
             @RequestParam(value = "items", required = false) String itemsJson,
             @RequestParam(value = "inventory", required = false) String inventory,
             @RequestParam(value = "note", required = false) String note,
@@ -219,7 +230,7 @@ public class ManualCertificateController {
         ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
         if (limited != null) return limited;
         Map<String, String> errors = new LinkedHashMap<>();
-        Upload up = readUpload(file, text, errors);
+        Upload up = readUpload(file, text, request, errors);
         checkNote(note, errors);
         parseInventory(inventory, errors);   // yalnız doğrulama — her kalem kendi kopyasını ayrıştırır
         List<String[]> items = parseItems(itemsJson, errors);
@@ -227,7 +238,7 @@ public class ManualCertificateController {
         if (!errors.isEmpty()) return badRequest(errors, null);
         ManualCertificateAnalyzer.Analysis a;
         try {
-            a = analyzeUpload(up, password);
+            a = analyzeUpload(up);
         } catch (ParseFailure pf) {
             return pf.response;
         }
@@ -243,8 +254,7 @@ public class ManualCertificateController {
             String prefix = "items[" + i + "].";
             String[] it = items.get(i);
             ManualCertificateAnalyzer.Entry entry = a.find(it[0]);
-            if (entry == null) errors.put(prefix + "ref", Msg.t("Seçilen sertifika dosyada bulunamadı.",
-                    "The selected certificate wasn't found in the file."));
+            if (entry == null) errors.put(prefix + "ref", refError(a, it[0]));
             else if (!seenRefs.add(entry.ref)) errors.put(prefix + "ref", Msg.t("Aynı sertifika iki kez seçildi.",
                     "The same certificate was selected twice."));
             String key = validateKey(it[1], prefix + "domain", errors);
@@ -320,10 +330,11 @@ public class ManualCertificateController {
             @PathVariable Long inventoryId,
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "text", required = false) String text,
-            @RequestParam(value = "password", required = false) String password,
             @RequestParam(value = "ref", required = false) String ref,
             @RequestParam(value = "note", required = false) String note,
             @RequestParam(value = "confirm", required = false, defaultValue = "false") boolean confirm,
+            // "Yine de yükle" (2026-10-07): güncel sürümle AYNI sertifika yeni sürüm olarak kaydedilir (yoksa 409 SAME_CERTIFICATE)
+            @RequestParam(value = "allow_same", required = false, defaultValue = "false") boolean allowSame,
             HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "inventory.crud", "edit");
         CertificateInventory inv = loadManual(inventoryId);
@@ -335,12 +346,12 @@ public class ManualCertificateController {
         ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
         if (limited != null) return limited;
         Map<String, String> errors = new LinkedHashMap<>();
-        Upload up = readUpload(file, text, errors);
+        Upload up = readUpload(file, text, request, errors);
         checkNote(note, errors);
         if (up == null) return badRequest(errors, null);
         ManualCertificateAnalyzer.Analysis a;
         try {
-            a = analyzeUpload(up, password);
+            a = analyzeUpload(up);
         } catch (ParseFailure pf) {
             return pf.response;
         }
@@ -352,7 +363,7 @@ public class ManualCertificateController {
         try {
             outcome = tx.execute(status -> {
                 ManualCertificateService.RenewOutcome o = manualService.renew(inv, entry, a.fileName(), a.format(),
-                        actor(session), displayName(session), note, confirm);
+                        actor(session), displayName(session), note, confirm, allowSame);
                 inv.setUpdatedAt(ISO.format(Instant.now()));
                 monitorHistory.stampUpdated(inv, session);
                 inventoryRepo.save(inv);
@@ -367,12 +378,18 @@ public class ManualCertificateController {
             return ResponseEntity.status(409).body(body);
         }
         int previous = outcome.previous() != null ? outcome.previous().getVersion() : 0;
+        boolean same = outcome.sameCertificate();
         auditService.recordAction("CERT_MANUAL_RENEW", session, request, "CERTIFICATE", inv.getDomain(),
-                AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "version", outcome.created().getVersion(),
-                        "previous_version", previous, "fingerprint", outcome.created().getFingerprint(),
-                        "file_format", a.format()));
+                same
+                        ? AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "version", outcome.created().getVersion(),
+                                "previous_version", previous, "fingerprint", outcome.created().getFingerprint(),
+                                "file_format", a.format(), "same_certificate", true)
+                        : AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "version", outcome.created().getVersion(),
+                                "previous_version", previous, "fingerprint", outcome.created().getFingerprint(),
+                                "file_format", a.format()));
         adminController.recordInventoryUpdateHistory(before, inv,
-                "Yeni sertifika sürümü yüklendi: v" + outcome.created().getVersion()
+                (same ? "Aynı sertifika yeni sürüm olarak yeniden yüklendi: v" : "Yeni sertifika sürümü yüklendi: v")
+                        + outcome.created().getVersion()
                         + (previous > 0 ? " (önceki v" + previous + ")" : ""), session);
         try {
             evaluation.evaluateNow(inv, "manual");
@@ -384,7 +401,55 @@ public class ManualCertificateController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("version", outcome.created().getVersion());
         data.put("previous_version", previous > 0 ? previous : null);
+        data.put("same_certificate", same);
         data.put("warnings", outcome.warnings().stream().map(CertificateFileParser.Warning::toJson).toList());
+        return ok(data);
+    }
+
+    // ── Eski sürümü kalıcı silme (2026-10-07, kullanıcı isteği) ──────────────
+
+    /**
+     * GÜNCEL OLMAYAN bir sürümü kalıcı siler. Kapı yenilemeyle aynı ({@code inventory.crud/edit} + takımın yazma kapsamı).
+     * 404: sürüm bu kaydın değil / kayıt manuel değil; 409 {@code CURRENT_VERSION}: güncel sürüm (takibi bırakmak için kayıt
+     * silinir). Kalan sürüm numaraları değişmez; değerlendirme geçmişi kalır. Denetim {@code CERT_MANUAL_VERSION_DELETE}.
+     */
+    @DeleteMapping("/{inventoryId}/versions/{versionId}")
+    public ResponseEntity<Map<String, Object>> deleteVersion(@PathVariable Long inventoryId, @PathVariable Long versionId,
+                                                             HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "inventory.crud", "edit");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
+        if (!SessionScope.canWriteInventory(session, inv.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok.",
+                    "You don't have write access to this record's team."));
+        }
+        ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
+        if (limited != null) return limited;
+        CertificateInventory before = copyForHistory(inv);
+        ManualCertificateVersion deleted;
+        try {
+            deleted = tx.execute(status -> {
+                ManualCertificateVersion d = manualService.deleteVersion(inv, versionId);
+                inv.setUpdatedAt(ISO.format(Instant.now()));
+                monitorHistory.stampUpdated(inv, session);
+                inventoryRepo.save(inv);
+                return d;
+            });
+        } catch (ManualCertificateService.VersionDeleteRejected r) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("code", r.code());
+            body.put("error", r.getMessage());
+            return ResponseEntity.status(r.status()).body(body);
+        }
+        auditService.recordAction("CERT_MANUAL_VERSION_DELETE", session, request, "CERTIFICATE", inv.getDomain(),
+                AuditDetail.of("domain", inv.getDomain(), "inventory_id", inv.getId(), "version", deleted.getVersion(),
+                        "fingerprint", deleted.getFingerprint()));
+        adminController.recordInventoryUpdateHistory(before, inv,
+                "Eski sertifika sürümü kalıcı olarak silindi: v" + deleted.getVersion(), session);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("deleted_version", deleted.getVersion());
+        data.put("versions_count", manualService.versionCount(inv.getId()));
         return ok(data);
     }
 
@@ -439,6 +504,36 @@ public class ManualCertificateController {
                 .body(v.getChainPem().getBytes(StandardCharsets.US_ASCII));
     }
 
+    /**
+     * Sürümün sertifika HİYERARŞİSİ (2026-10-07, kullanıcı isteği: tarayıcıdaki gibi kök → ara → yaprak alt alta) —
+     * saklanan açık zincirden ÇEVRİM-DIŞI kurulur ({@link ManualCertificateHierarchy}): ağ yok, yazma yok, alarm yok.
+     * Kapı PEM indirme / ayrıntıyla aynı ({@code inventory.list/view} + görüş kapsamı); başka kaydın sürümü, manuel olmayan
+     * kayıt ya da kapsam dışı takım 404. Saklanan zincir okunamazsa 422 {@code CHAIN_UNREADABLE}.
+     */
+    @GetMapping("/{inventoryId}/versions/{versionId}/chain")
+    public ResponseEntity<Map<String, Object>> versionChain(@PathVariable Long inventoryId, @PathVariable Long versionId,
+                                                            HttpSession session) {
+        permissionService.require(session, "inventory.list", "view");
+        CertificateInventory inv = loadManual(inventoryId);
+        if (inv == null || !canRead(session, inv)) return notFound();
+        ManualCertificateVersion v = versionRepo.findById(versionId).orElse(null);
+        if (v == null || !inventoryId.equals(v.getInventoryId()) || v.getChainPem() == null) return notFound();
+        List<java.security.cert.X509Certificate> chain = CertificateFileParser.readPemChain(v.getChainPem());
+        if (chain.isEmpty()) {
+            return ResponseEntity.status(422).body(Map.of("success", false, "code", "CHAIN_UNREADABLE",
+                    "error", Msg.t("Bu sürümün saklanan sertifika zinciri okunamadı.",
+                            "The stored certificate chain of this version couldn't be read.")));
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("inventory_id", inv.getId());
+        data.put("domain", inv.getDomain());
+        data.put("version_id", v.getId());
+        data.put("version", v.getVersion());
+        data.put("current", Boolean.TRUE.equals(v.getCurrent()));
+        data.putAll(ManualCertificateHierarchy.view(chain, Instant.now()));
+        return ok(data);
+    }
+
     /** Şimdi yeniden değerlendir — ağsız; yalnız kapanış uzlaştırması (yeni alarm açmaz). Yanıt {@code /check/{domain}} biçimi. */
     @PostMapping("/{inventoryId}/evaluate")
     public ResponseEntity<Map<String, Object>> evaluate(@PathVariable Long inventoryId, HttpSession session,
@@ -468,17 +563,60 @@ public class ManualCertificateController {
 
     // ── Yükleme / analiz yardımcıları ────────────────────────────────────────
 
-    private record Upload(byte[] bytes, String name, boolean pasted) { }
+    /**
+     * Yükleme: ya tarayıcıda ayıklanmış AÇIK sertifikalar ({@code extracted} — arayüzün tek yolu) ya da ham dosya / metin
+     * (API istemcileri; yalnız anahtarsız içerik). {@code invalid}: {@code extracted} sözleşmeye uymadı (400).
+     */
+    private record Upload(byte[] bytes, String name, boolean pasted, CertificateFileParser.Result extracted, String invalid) { }
 
-    /** Dosya ya da yapıştırılan metin (biri zorunlu). Hatada null + {@code errors.file}. */
-    private Upload readUpload(MultipartFile file, String text, Map<String, String> errors) {
+    /**
+     * {@code extracted} (dosya parçası ya da form alanı) YA DA dosya / yapıştırılan metin — biri zorunlu, ikisi birden
+     * olmaz. Hatada null + {@code errors.file}. Parola alanı yoktur (gelirse bağlanmaz). {@code extracted} istekten
+     * okunur (aynı adla iki farklı tipte {@code @RequestParam} bağlamak kırılgan: Spring dosya parçasını metin parametresine
+     * de verir).
+     */
+    private Upload readUpload(MultipartFile file, String text, HttpServletRequest request, Map<String, String> errors) {
+        MultipartHttpServletRequest mp = request == null ? null
+                : WebUtils.getNativeRequest(request, MultipartHttpServletRequest.class);
+        MultipartFile extractedPart = mp != null ? mp.getFile("extracted") : null;
+        String extractedField = request != null ? request.getParameter("extracted") : null;
+        boolean hasExtracted = (extractedPart != null && !extractedPart.isEmpty())
+                || (extractedField != null && !extractedField.isBlank());
+        boolean hasRaw = (file != null && !file.isEmpty()) || (text != null && !text.isBlank());
+        if (hasExtracted && hasRaw) {
+            errors.put("file", Msg.t("Ya ayıklanmış sertifikaları ya da dosyayı / metni gönderin; ikisi birlikte gönderilemez.",
+                    "Send either the extracted certificates or the file / text, not both."));
+            return null;
+        }
+        if (hasExtracted) {
+            byte[] json;
+            try {
+                if (extractedPart != null && !extractedPart.isEmpty()) {
+                    if (extractedPart.getSize() > ExtractedUpload.MAX_JSON_BYTES) {
+                        return new Upload(null, null, false, null, Msg.t("Gönderilen sertifika bilgisi çok büyük.",
+                                "The submitted certificate data is too large."));
+                    }
+                    json = extractedPart.getBytes();
+                } else {
+                    json = extractedField.getBytes(StandardCharsets.UTF_8);
+                }
+            } catch (Exception e) {
+                errors.put("file", Msg.t("Dosya okunamadı.", "The file couldn't be read."));
+                return null;
+            }
+            try {
+                return new Upload(null, null, false, ExtractedUpload.parse(json, objectMapper), null);
+            } catch (ExtractedUpload.Invalid inv) {
+                return new Upload(null, null, false, null, inv.getMessage());
+            }
+        }
         try {
-            if (file != null && !file.isEmpty()) return new Upload(file.getBytes(), file.getOriginalFilename(), false);
+            if (file != null && !file.isEmpty()) return new Upload(file.getBytes(), file.getOriginalFilename(), false, null, null);
         } catch (Exception e) {
             errors.put("file", Msg.t("Dosya okunamadı.", "The file couldn't be read."));
             return null;
         }
-        if (text != null && !text.isBlank()) return new Upload(text.getBytes(StandardCharsets.UTF_8), null, true);
+        if (text != null && !text.isBlank()) return new Upload(text.getBytes(StandardCharsets.UTF_8), null, true, null, null);
         errors.put("file", Msg.t("Bir sertifika dosyası seçin ya da sertifika metnini yapıştırın.",
                 "Choose a certificate file or paste the certificate text."));
         return null;
@@ -493,11 +631,25 @@ public class ManualCertificateController {
         }
     }
 
-    /** Parola yalnız bu çağrı boyunca bir char dizisinde yaşar ve sıfırlanır; hiçbir yere yazılmaz. */
-    private ManualCertificateAnalyzer.Analysis analyzeUpload(Upload up, String password) {
-        char[] pw = password == null || password.isEmpty() ? null : password.toCharArray();
+    /**
+     * Analiz: ayıklanmış yükleme doğrudan; ham yükleme zaman kutulu ayrıştırmadan geçer. Ham yükleme özel anahtar /
+     * anahtar deposu taşıyorsa 400 {@code PRIVATE_KEY_NOT_ACCEPTED} (sunucu açmaz); geçersiz {@code extracted} 400
+     * {@code EXTRACTED_INVALID}. İki yanıt da {@code errors.file} taşır (arayüz alanın altında gösterir).
+     */
+    private ManualCertificateAnalyzer.Analysis analyzeUpload(Upload up) {
+        if (up.invalid() != null) throw new ParseFailure(uploadRejected("EXTRACTED_INVALID", up.invalid()));
+        if (up.extracted() != null) return analyzer.analyzeExtracted(up.extracted());
         try {
-            return analyzer.analyze(up.bytes(), up.name(), pw, up.pasted());
+            return analyzer.analyze(up.bytes(), up.name(), up.pasted());
+        } catch (ManualCertificateAnalyzer.PrivateMaterialRejected pm) {
+            log.info("Manuel sertifika ham yüklemesi reddedildi (gizli malzeme: {})", pm.kind());
+            throw new ParseFailure(uploadRejected("PRIVATE_KEY_NOT_ACCEPTED", Msg.t(
+                    "Özel anahtar ya da anahtar deposu (PFX/P12, JKS/JCEKS/BKS) sunucuya yüklenemez. Dosyayı Site Monitor "
+                            + "arayüzünden seçin — sertifikalar tarayıcınızda ayıklanır, özel anahtar ve parola tarayıcıdan "
+                            + "çıkmaz — ya da yalnız açık sertifikaları (PEM / DER / P7B) gönderin.",
+                    "Private keys and keystores (PFX/P12, JKS/JCEKS/BKS) can't be uploaded to the server. Choose the file in "
+                            + "the Site Monitor interface — the certificates are extracted in your browser and the private key "
+                            + "and password never leave it — or send only the public certificates (PEM / DER / P7B).")));
         } catch (ManualCertificateAnalyzer.TimeoutExceededException te) {
             throw new ParseFailure(ResponseEntity.status(422).body(Map.of("success", false, "code", "PARSE_TIMEOUT",
                     "error", Msg.t("Dosya " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " saniyede çözümlenemedi.",
@@ -506,22 +658,22 @@ public class ManualCertificateController {
             throw new ParseFailure(ResponseEntity.status(429).body(Map.of("success", false, "code", "BUSY",
                     "error", Msg.t("Çözümleyici şu anda meşgul; birkaç saniye sonra yeniden deneyin.",
                             "The analyser is busy; try again in a few seconds."))));
-        } finally {
-            if (pw != null) Arrays.fill(pw, '\0');
         }
     }
 
-    /** Seçilen girdi. Yoksa alan hatası (şifre gerekli/yanlış ise {@code password} alanına). */
+    /** 400 — yükleme kabul edilmedi ({@code code} + {@code error} + {@code errors.file}). */
+    private static ResponseEntity<Map<String, Object>> uploadRejected(String code, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", code);
+        body.put("error", message);
+        body.put("errors", Map.of("file", message));
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    /** Seçilen girdi. Yoksa alan hatası ({@code file} / {@code ref}). */
     private ManualCertificateAnalyzer.Entry requireEntry(ManualCertificateAnalyzer.Analysis a, String ref, String field,
                                                          Map<String, String> errors) {
-        if (a.parsed.needsPassword()) {
-            errors.put("password", Msg.t("Dosya şifreli — şifreyi girin.", "The file is password-protected — enter the password."));
-            return null;
-        }
-        if (a.parsed.passwordError()) {
-            errors.put("password", Msg.t("Şifre yanlış.", "The password is wrong."));
-            return null;
-        }
         if (a.entries.isEmpty()) {
             errors.put("file", Msg.t("Dosyada izlenebilir bir sertifika yok.", "The file contains no certificate that can be tracked."));
             return null;
@@ -530,9 +682,25 @@ public class ManualCertificateController {
         if (e == null) {
             errors.put(field, ref == null || ref.isBlank()
                     ? Msg.t("İzlenecek sertifikayı seçin.", "Choose the certificate to track.")
-                    : Msg.t("Seçilen sertifika dosyada bulunamadı.", "The selected certificate wasn't found in the file."));
+                    : refError(a, ref));
         }
         return e;
+    }
+
+    /**
+     * Seçilen {@code ref} girdi değil: bir zincir başına katlanmış ara / kök sertifikaysa (2026-10-07: dosyadaki zincir TEK
+     * kayıt olarak izlenir) bunu söyler ve başı adlandırır; yoksa "dosyada bulunamadı".
+     */
+    private static String refError(ManualCertificateAnalyzer.Analysis a, String ref) {
+        ManualCertificateAnalyzer.Entry head = a.headOf(ref);
+        if (head != null) {
+            String name = head.cn() != null ? head.cn() : head.cert.getSubjectX500Principal().getName();
+            return Msg.t("Bu sertifika dosyadaki “" + name + "” sertifikasının zincirinde (ara / kök sertifika); ayrı "
+                            + "takip edilmez. Zincirin başındaki sertifikayı seçin — zincir onunla birlikte izlenir.",
+                    "This certificate is part of the chain of “" + name + "” in the file (intermediate / root); it isn't "
+                            + "tracked on its own. Choose the certificate at the head of the chain — the chain is tracked with it.");
+        }
+        return Msg.t("Seçilen sertifika dosyada bulunamadı.", "The selected certificate wasn't found in the file.");
     }
 
     private static String validateKey(String raw, String field, Map<String, String> errors) {
@@ -622,7 +790,10 @@ public class ManualCertificateController {
 
     private ResponseEntity<Map<String, Object>> keyClash(String key) {
         if (key == null) return null;
-        return inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(key).isPresent() ? keyExists(key) : null;
+        // Silme KALICI (2026-10-07): silinen kayıt adı TUTMAZ — eski sürümden kalmış çöp satırı çakışma sayılmaz (kayıt
+        // anında AdminController.createInventoryRecord onu kalıcı siler).
+        return inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(key)
+                .filter(i -> i.getDeletedAt() == null).isPresent() ? keyExists(key) : null;
     }
 
     private static ResponseEntity<Map<String, Object>> keyExists(String key) {
@@ -631,8 +802,8 @@ public class ManualCertificateController {
         body.put("code", "KEY_EXISTS");
         body.put("field", "domain");
         body.put("domain", key);
-        body.put("error", Msg.t("Bu takip adı envanterde zaten kullanılıyor (silinmiş kayıtlar dahil). Başka bir ad seçin.",
-                "This tracking name is already used in the inventory (deleted records included). Choose another name."));
+        body.put("error", Msg.t("Bu takip adı envanterde zaten kullanılıyor. Başka bir ad seçin.",
+                "This tracking name is already used in the inventory. Choose another name."));
         return ResponseEntity.status(409).body(body);
     }
 

@@ -1,12 +1,12 @@
 import { lazy, Suspense, useState } from 'react'
-import { Eye, ArrowRightLeft, ArchiveRestore, Send } from 'lucide-react'
+import { Eye, ArrowRightLeft, Send } from 'lucide-react'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
-import { api, formatDateOnly } from '../../api/client'
+import { api } from '../../api/client'
 import { Button } from '@/components/shadcn/button'
 import { conflictActions } from './domainConflictModel.js'
 
@@ -36,17 +36,15 @@ const BANNER_GRID = 'mb-0 grid-cols-[0_minmax(0,1fr)_auto] has-[>svg]:grid-cols-
  *   <li>Kaydı görüntüle — salt okunur sertifika penceresi (org geneli görünürlükteki yabancı satır görünümüyle aynı),
  *       formun ÜSTÜNDE açılır; kapatınca form ve bant yerinde.</li>
  *   <li>'X' ekibine aktar — global yönetici + aktarım izni: iki takımı adıyla söyleyen onay → mevcut
- *       `POST /inventory/{id}/transfer`; çöp kutusundaysa `restore: true` ile geri yükleme AYNI istekte (Ek 3/5 — sunucu
- *       silinmiş kayda düz aktarımı reddeder; eskiden aktar + ayrı geri yükle, ikinci adım düşerse kayıt yeni takımın
- *       çöpünde kalıyordu). Başarıda `onResolved`.</li>
- *   <li>Çöp kutusundan geri yükle — geri yükleme kapısı olan: mevcut `POST /inventory/{id}/restore`.</li>
+ *       `POST /inventory/{id}/transfer`. Başarıda `onResolved`.</li>
  *   <li>Aktarım talebi oluştur — aktaramayan: "Sorun Bildir" penceresi aktarım kipinde (tür DOMAIN_TRANSFER,
  *       alan adı + mevcut / istenen ekip önceden dolu, gerekçe zorunlu) → global yöneticilerin Sorun Bildirimleri'ne.</li>
  * </ul>
+ * Silme KALICI (2026-10-07): çakışan kayıt her zaman canlıdır — çöp kutusu iletisi ve "geri yükle" eylemleri kaldırıldı.
  *
  * @param {{message:string, existing:object}} conflict  `domainConflictOf(res)` çıktısı
  * @param {{id:number|string, name:string}|null} targetTeam  formda seçili ekip
- * @param {(outcome:{kind:'transferred'|'restored', domain:string, record:object|null}) => void} onResolved
+ * @param {(outcome:{kind:'transferred', domain:string, record:object|null}) => void} onResolved
  * @param {() => void} [onDismiss]
  * @param {() => void} [onLeave]  kaydın penceresindeki "Envanterde aç" formdan AYRILIR: pencereyle birlikte formu da kapatır
  *   (Ek 3/4, 2026-09-28 — form açık kalınca Envanter'de açılan kayıt formun ARKASINDA kalıyor, "hiçbir şey olmadı" gibi görünüyordu).
@@ -56,7 +54,7 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
-  const [busy, setBusy] = useState(null)            // 'transfer' | 'restore' | null
+  const [busy, setBusy] = useState(null)            // 'transfer' | null
   const [viewing, setViewing] = useState(false)
   const [requesting, setRequesting] = useState(false)
   const [requestRef, setRequestRef] = useState('')  // gönderilen talebin referansı — ikinci talep düğmesi gizlenir
@@ -66,14 +64,12 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
   const a = conflictActions(ex, targetTeam?.id)
   const owner = ex.team_name || null
   const ownerLabel = owner || t('dupx.noTeam')
-  const guide = a.sameTeam
-    ? (a.deleted ? (a.restore ? t('dupx.guideBinSame') : t('dupx.askManager')) : t('dupx.guideSame'))
-    : (a.transfer ? t('dupx.guideAdmin') : t('dupx.guideTransfer'))
+  const guide = a.sameTeam ? t('dupx.guideSame') : (a.transfer ? t('dupx.guideAdmin') : t('dupx.guideTransfer'))
 
   async function transfer() {
     const ok = await showConfirm({
       title: t('dupx.transferTitle'),
-      message: t(a.deleted ? 'dupx.restoreTransferMsg' : 'dupx.transferMsg', ex.domain, ownerLabel, targetTeam.name),
+      message: t('dupx.transferMsg', ex.domain, ownerLabel, targetTeam.name),
       confirmText: t('dupx.transferConfirm'),
       cancelText: t('inv.cancel'),
       variant: 'warning',
@@ -81,10 +77,7 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
     if (!ok) return
     setBusy('transfer')
     try {
-      // Çöp kutusundaki kayıt: geri yükleme + aktarım TEK istek (`restore: true`) — yarım kalan iki adım yok.
-      const res = a.deleted
-        ? await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id), { restore: true })
-        : await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id))
+      const res = await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id))
       if (!res?.success) { toast.error(res?.error || t('dupx.transferError')); return }
       const record = res.data ?? null
       toast.success(t('dupx.transferred', ex.domain, targetTeam.name))
@@ -96,43 +89,18 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
     }
   }
 
-  async function restore() {
-    const ok = await showConfirm({
-      title: t('inv.restoreTitle'),
-      message: t('inv.restoreMsg', ex.domain),
-      confirmText: t('inv.restoreConfirm'),
-      cancelText: t('inv.cancel'),
-      variant: 'warning',
-    })
-    if (!ok) return
-    setBusy('restore')
-    try {
-      const res = await api.admin.restoreInventory(ex.inventory_id)
-      if (!res?.success) { toast.error(res?.error || t('dupx.restoreError')); return }
-      toast.success(t('inv.restored'))
-      onResolved?.({ kind: 'restored', domain: ex.domain, record: res.data ?? null })
-    } catch (e) {
-      toast.error(e?.message || t('dupx.restoreError'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
   return (
     <>
       <AlertBanner tone="warning" role="alert" className={BANNER_GRID}
-        title={a.deleted ? t('dupx.titleBin') : t('dupx.title')}
+        title={t('dupx.title')}
         onDismiss={onDismiss} dismissLabel={t('app.close')}>
-        <div data-slot="domain-conflict" data-deleted={a.deleted || undefined} className="flex w-full min-w-0 flex-col gap-2">
+        <div data-slot="domain-conflict" className="flex w-full min-w-0 flex-col gap-2">
           <p className="m-0">{conflict.message}</p>
           <div data-slot="domain-conflict-owner" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-muted-foreground">{t('dupx.owner')}:</span>
             {owner
               ? <TeamBadge teamId={ex.team_id} teamName={owner} />
               : <span className="font-semibold">{ownerLabel}</span>}
-            {a.deleted && ex.deleted_at && (
-              <span className="text-xs text-muted-foreground">{t('dupx.deletedAt', formatDateOnly(ex.deleted_at))}</span>
-            )}
           </div>
           <p className="m-0 text-xs text-muted-foreground">
             {guide}{owner && ex.team_id != null && !a.sameTeam ? ` ${t('dupx.contactHint')}` : ''}
@@ -144,17 +112,11 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
                 <Eye aria-hidden="true" />{t('dupx.view')}
               </Button>
             )}
-            {a.restore && (
-              <Button type="button" size="sm" variant="outline" className={ACTION_BTN} onClick={restore}
-                disabled={!!busy} aria-busy={busy === 'restore' || undefined}>
-                {busy === 'restore' ? <Spinner decorative inline /> : <ArchiveRestore aria-hidden="true" />}{t('dupx.restore')}
-              </Button>
-            )}
             {a.transfer && (
               <Button type="button" size="sm" className={ACTION_BTN} onClick={transfer}
                 disabled={!!busy} aria-busy={busy === 'transfer' || undefined}>
                 {busy === 'transfer' ? <Spinner decorative inline /> : <ArrowRightLeft aria-hidden="true" />}
-                {t(a.deleted ? 'dupx.restoreTransferTo' : 'dupx.transferTo', targetTeam?.name ?? '')}
+                {t('dupx.transferTo', targetTeam?.name ?? '')}
               </Button>
             )}
             {a.request && !requestRef && (
@@ -180,7 +142,6 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
               inventoryId: ex.inventory_id,
               fromTeam: { id: ex.team_id, name: owner },
               toTeam: { id: targetTeam?.id, name: targetTeam?.name },
-              deleted: a.deleted,
             }} />
         </Suspense>
       )}

@@ -85,7 +85,7 @@ describe('Envanter — sekme açıkken derin bağlantı (sm:tab-params)', () => 
     window.history.replaceState(null, '', '/?tab=domains')
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'Takım A' }, { id: 6, name: 'Takım B' }] })
     api.admin.getAlerts.mockResolvedValue({ success: true, total: 0 })
-    api.admin.getInventory.mockImplementation(async (_all, scope) => (scope === 'all'
+    api.admin.getInventory.mockImplementation(async (scope) => (scope === 'all'
       ? { success: true, data: [OWN, FOREIGN], scope: 'all', visible_to_all: true }
       : { success: true, data: [OWN], scope: 'mine', visible_to_all: true }))
   })
@@ -103,7 +103,7 @@ describe('Envanter — sekme açıkken derin bağlantı (sm:tab-params)', () => 
     render(<LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 5, name: 'Takım A' }]} /></LangProvider>)
     await screen.findByText('own-a.example.com')
     tabParams({ domain: 'foreign.example.com', i_scope: 'all' })
-    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all'))
+    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith('all'))
     expect(await screen.findByRole('dialog', { name: 'foreign.example.com' })).toBeInTheDocument()
   })
 

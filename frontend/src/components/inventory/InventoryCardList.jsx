@@ -8,7 +8,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import { Spinner } from '../ui/Progress.jsx'
-import { ActiveBadge, CertCell, ContactsCell, DeletedBadge, ExpiryCell, GroupChip, StatusDot, TagChip, TierBadge, platformLabel, rowMenuItems, tagList } from './InventoryTable.jsx'
+import { ActiveBadge, CertCell, ContactsCell, ExpiryCell, GroupChip, StatusDot, TagChip, TierBadge, platformLabel, rowMenuItems, tagList } from './InventoryTable.jsx'
 import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
 import { isManualCert } from '../manualcert/manualCertModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -30,7 +30,7 @@ const stop = (e) => e.stopPropagation()
  */
 export default function InventoryCardList({
   rows, canManage, canEditRow = () => canManage, canManageRow = () => true, isAdmin, teamsCount, teamMap = {}, selected, onToggle,
-  onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick,
+  onShow, onEdit, onDuplicate, onTransfer, onDelete, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick,
   platformNames = {}, onClearFilters = null,
 }) {
   const t = useT()
@@ -52,7 +52,6 @@ export default function InventoryCardList({
   return (
     <ul data-slot="inv-cards" aria-label={t('inv.cardList')} className="m-0 flex list-none flex-col gap-2 p-0">
       {rows.map((r) => {
-        const del = !!r.deleted_at
         const ro = !canManageRow(r)
         const editable = !ro && canEditRow(r)
         const port = r.port ?? 443
@@ -60,13 +59,13 @@ export default function InventoryCardList({
         const team = r.team_name || teamMap[String(r.team_id)]
         const menu = ro
           ? rowMenuItems({ r, t, ro, onShow })
-          : rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow: checkNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge })
+          : rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow: checkNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete })
         return (
           <li key={r.id}>
-            <Card data-inv-card={r.domain} data-state={isSel ? 'selected' : undefined} data-deleted={del ? 'true' : undefined}
-              className={cn('gap-2.5 rounded-[10px] px-3 py-3 shadow-none', isSel && 'border-primary bg-primary/5', del && 'opacity-70')}>
+            <Card data-inv-card={r.domain} data-state={isSel ? 'selected' : undefined}
+              className={cn('gap-2.5 rounded-[10px] px-3 py-3 shadow-none', isSel && 'border-primary bg-primary/5')}>
               <div className="flex items-start gap-2.5">
-                {canManage && !del && !ro && (
+                {canManage && !ro && (
                   <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} className="mt-1.5 size-5" aria-label={t('bulk.selectOneFor', r.domain)} />
                 )}
                 <div className="min-w-0 flex-1">
@@ -75,7 +74,7 @@ export default function InventoryCardList({
                     <Button type="button" variant="link" data-inv-domain="true" onClick={() => onShow(r)}
                       // `shrink`: Button tabanı `shrink-0` taşır → uzun alan adı satırı tek parça kalıp kartı telefonda 260 px
                       // taşırıyordu (e2e responsive domains@phone/tablet, 2026-09-27); break-all ancak daralabilirse işler.
-                      className={cn('h-auto min-w-0 shrink p-0 text-left text-[1.02em] font-bold break-all whitespace-normal text-foreground', del && 'line-through')}>
+                      className="h-auto min-w-0 shrink p-0 text-left text-[1.02em] font-bold break-all whitespace-normal text-foreground">
                       {r.domain}
                     </Button>
                     {port !== 443 && <Badge variant="outline" className="px-1.5 font-mono text-[.72em] text-muted-foreground">:{port}</Badge>}
@@ -116,7 +115,7 @@ export default function InventoryCardList({
 
               {/* Alt satır: anahtar + rozet solda; "Kontrol et" (telefonda yalnız ikon, ad aria-label'da) + Düzenle sağda — tek satır */}
               <div className="flex flex-wrap items-center gap-2 border-t pt-2.5">
-                {del ? <DeletedBadge r={r} t={t} /> : ro ? (
+                {ro ? (
                   <ReadOnlyBadge compact teamId={r.team_id} teamName={team} />
                 ) : canManage ? (
                   <label className="inline-flex min-h-10 cursor-pointer items-center gap-2" title={t('inv.inlineEditTip')}>
@@ -124,13 +123,13 @@ export default function InventoryCardList({
                     <ActiveBadge r={r} t={t} />
                   </label>
                 ) : <ActiveBadge r={r} t={t} />}
-                {!del && !ro && (
+                {!ro && (
                   <Button type="button" variant="outline" size="sm" className="ml-auto size-10 sm:w-auto" disabled={busy.has(r.domain)} aria-busy={busy.has(r.domain) || undefined}
                     onClick={() => checkNow(r)} aria-label={`${r.domain} — ${(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}`}>
                     {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}<span className="hidden sm:inline">{(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}</span>
                   </Button>
                 )}
-                {!del && !ro && editable && (
+                {editable && (
                   <Button type="button" variant="secondary" size="sm" className="h-10" onClick={() => onEdit(r)}
                     aria-label={t('a11y.rowAction', r.domain, t('inv.edit'))}>{t('inv.edit')}</Button>
                 )}

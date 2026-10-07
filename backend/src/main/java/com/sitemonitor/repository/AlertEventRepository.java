@@ -163,16 +163,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     int releaseFromStormAsNotified(@Param("id") Long id, @Param("fromStormId") Long fromStormId,
                                    @Param("notifiedAt") String notifiedAt);
 
-    @Query("""
-            SELECT a FROM AlertEvent a
-             WHERE a.resolved = false
-               AND EXISTS (
-                   SELECT 1 FROM CertificateInventory i
-                    WHERE i.domain = a.domain
-                      AND i.deletedAt IS NOT NULL
-               )
-            """)
-    List<AlertEvent> findOpenAlertsOnSoftDeletedDomains();
+    // 2026-10-07: findOpenAlertsOnSoftDeletedDomains KALDIRILDI — envanter silmesi kalıcı (alarmlar silme anında kapanır),
+    // eski çöp kutusu tek seferlik temizlikte (DeletedRecordsPurge) alarmlarıyla birlikte kapandı; açılış telafisi ölüydü.
 
     @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND NOT EXISTS (SELECT n FROM NotificationLog n WHERE n.alertEventId = e.id AND n.emailStatus = 'SENT')")
     List<String> findDomainsWithUnnotifiedOpenAlerts();

@@ -32,7 +32,7 @@ function CertificateSummary({ record, readOnly, onCheckNow, platformNames }) {
     return (
       <StatusBlock tone="info" icon={ShieldCheck} title={t('inv.certNever')} description={t('inv.certNoData')}
         actions={<>
-          {!readOnly && !record.deleted_at && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</Button>}
+          {!readOnly && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</Button>}
           <Button type="button" variant="outline" size="sm" onClick={openCert} title={t('inv.openCertHint')}><ExternalLink aria-hidden="true" /> {t('inv.openCert')}</Button>
         </>} />
     )
@@ -91,8 +91,8 @@ export default function InventoryDrawer({
   })
   if (!record) return null
   const teamName = record.team_name || teamMap?.[String(record.team_id)]
-  const del = !!record.deleted_at
-  const canAct = !readOnly && !del
+  // Silme KALICI (2026-10-07): çekmece yalnız canlı kayıt açar — "silindi" rozeti / kipi yok.
+  const canAct = !readOnly
   const port = record.port || 443
 
   return (
@@ -118,8 +118,7 @@ export default function InventoryDrawer({
               <TierBadge tier={record.tier} />
               {teamName && !readOnly && <TeamBadge teamId={record.team_id} teamName={teamName} />}
               {readOnly && <ReadOnlyBadge teamId={record.team_id} teamName={teamName} />}
-              {!del && <ActiveBadge r={record} t={t} />}
-              {del && <Badge variant="secondary">{t('inv.deletedBadge')}</Badge>}
+              <ActiveBadge r={record} t={t} />
             </div>
           </div>
           <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground pointer-coarse:size-10"

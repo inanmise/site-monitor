@@ -11,9 +11,10 @@ import ReviewStep from './wizard/ReviewStep.jsx'
 import TrackStep from './wizard/TrackStep.jsx'
 import ResultStep from './wizard/ResultStep.jsx'
 import {
-  EMPTY_TRACKING, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, NOTE_MAX, compareWithCurrent, defaultRef, inventoryPayload,
-  splitServerErrors, trackingErrors, trackingKeyError, uploadFormData,
+  EMPTY_TRACKING, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, NOTE_MAX, compareWithCurrent, defaultRef, extractedFormData, extractionErrorKey,
+  inventoryPayload, splitServerErrors, trackingErrors, trackingKeyError,
 } from './manualCertModel.js'
+import { extractCertificates } from './extract/index.js'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
@@ -58,6 +59,12 @@ function StepIndicator({ step }) {
  * toplu oluştur / yeni sürüm. 400 alan hataları alanların altına, 409 kodları açıklamalı bant ya da alan hatası olur.
  * Şifre yalnız bu bileşenin belleğinde, pencere kapanınca (bileşen sökülünce) gider.
  *
+ * <p><b>Özel anahtar tarayıcıdan çıkmaz (2026-10-08, kullanıcı isteği):</b> "Analiz et" dosyayı / metni önce TARAYICIDA açar
+ * (`extract/` — PKCS#12 / JKS / JCEKS / PEM / ZIP; mümkünse Web Worker'da). Sunucuya giden her yükleme isteği (analiz,
+ * oluştur, toplu, yeni sürüm) yalnız `extracted` taşır: açık sertifikalar (Base64 DER) + CSR PEM + sayaçlar. Orijinal dosya,
+ * yapıştırılan metin ve şifre hiçbir istekte yoktur. Şifre gerekli / yanlış, BKS, tanınmayan biçim → sunucuya hiç gitmeden
+ * alanın altında hata. Tarayıcının notları (ZIP atlanan girdi, JKS bütünlük uyumsuzluğu …) sunucu uyarılarının önüne eklenir.
+ *
  * @param {object}   [renewTarget]   `{ inventory_id, domain }` — satırın "Yeni sürüm yükle"sinden: kip sabit "yenile"
  * @param {Array}    [renewCandidates] liste satırları (yenilenebilecek manuel kayıtlar; `can_manage === false` hariç)
  * @param {Array}    [teams]         takım seçici (USER = üyesi olduğu takımlar)
@@ -76,6 +83,10 @@ export default function UploadWizard({
   const [password, setPassword] = useState('')
   const [passwordNeeded, setPasswordNeeded] = useState(false)
   const [analysis, setAnalysis] = useState(null)
+  // Tarayıcıdaki ayıklama sonucu (yalnız AÇIK sertifikalar + sayaçlar) — oluştur / toplu / yeni sürüm aynısını gönderir
+  const [extraction, setExtraction] = useState(null)
+  const [extractIssue, setExtractIssue] = useState(null)   // unsupported.reason (BKS → keytool yönergesi)
+  const [phase, setPhase] = useState(null)                 // 'extract' | 'analyze' — meşgul metni
   const [busy, setBusy] = useState(false)
   const [banner, setBanner] = useState(null)   // { tone, title?, text, target? }
   const fe = useFormErrors(step)
@@ -94,6 +105,8 @@ export default function UploadWizard({
   const [confirmOlder, setConfirmOlder] = useState(false)
   // Sunucu OLDER_THAN_CURRENT dediyse (güncel sürüm okunamadığı için istemci karşılaştıramadıysa da) onay kutusu çıkar.
   const [serverOlder, setServerOlder] = useState(false)
+  // Sunucu SAME_CERTIFICATE dediyse (istemci karşılaştıramadıysa da) "aynı sertifika" uyarısı + "Yine de yükle" (2026-10-07)
+  const [serverSame, setServerSame] = useState(false)
   const [result, setResult] = useState(null)
   const renewFixed = !!renewTarget
   // Adım değişince kaydırılan gövde başa sarılır (önceki adımda aşağı kaydırılmış konum yeni adımın ortasından başlatmasın)
@@ -129,8 +142,9 @@ export default function UploadWizard({
 
   const cmp = useMemo(() => (mode === 'renew' && current?.status === 'ready' && picked[0]
     ? compareWithCurrent(current.version, picked[0]) : null), [mode, current, picked])
-  useEffect(() => { setConfirmOlder(false); setServerOlder(false) }, [target?.inventory_id, selected])
+  useEffect(() => { setConfirmOlder(false); setServerOlder(false); setServerSame(false) }, [target?.inventory_id, selected])
   const needsConfirm = (!!cmp?.older && !cmp?.same) || serverOlder
+  const sameCert = !!cmp?.same || serverSame
 
   /** Yenilenebilecek kayıtlar: seçilen girdinin aynı konu adaylarını önde, sonra yönetilebilen diğer manuel kayıtlar. */
   const renewOptions = useMemo(() => {
@@ -141,16 +155,36 @@ export default function UploadWizard({
     return [...same, ...others]
   }, [picked, renewCandidates])
 
-  const src = { source, file, text, password }
-
   async function analyze() {
     const errs = source === 'file'
       ? { file: !file ? t('mcert.file.required') : file.size > MAX_UPLOAD_BYTES ? t('mcert.file.tooLarge', MAX_UPLOAD_MB) : null }
       : { text: !text.trim() && t('mcert.text.required') }
     if (fe.check(errs)) return
-    setBusy(true); setBanner(null)
+    setBusy(true); setBanner(null); setExtractIssue(null); setPhase('extract')
+    // 1) TARAYICIDA ayıkla — özel anahtar ve şifre buradan çıkmaz
+    let ex = null
+    try {
+      ex = await extractCertificates(source === 'file' ? { file, password } : { text, password })
+    } catch {
+      ex = { unsupported: { reason: 'UNREADABLE' } }
+    }
+    if (!ex || ex.unsupported || ex.needs_password || ex.password_error) {
+      setBusy(false); setPhase(null); setExtraction(null)
+      if (ex?.needs_password || ex?.password_error) {
+        setPasswordNeeded(true)
+        fe.check({ password: ex.password_error ? t('mcert.pw.wrong') : t('mcert.pw.required') })
+        return
+      }
+      const [key, arg] = extractionErrorKey(ex?.unsupported)
+      setExtractIssue(ex?.unsupported?.reason || 'UNKNOWN')
+      fe.check({ [source === 'file' ? 'file' : 'text']: t(key, arg) })
+      return
+    }
+    setExtraction(ex)
+    // 2) Sunucu analizi YALNIZ açık sertifikalarla
+    setPhase('analyze')
     let res = null
-    try { res = await api.manualCerts.analyze(uploadFormData(src)) } catch (e) { res = { success: false, error: e?.message } } finally { setBusy(false) }
+    try { res = await api.manualCerts.analyze(extractedFormData(ex)) } catch (e) { res = { success: false, error: e?.message } } finally { setBusy(false); setPhase(null) }
     if (res == null) return
     if (!res.success) {
       if (transientFailure(res)) return
@@ -167,10 +201,12 @@ export default function UploadWizard({
       fe.check({ password: data.password_error ? t('mcert.pw.wrong') : t('mcert.pw.required') })
       return
     }
-    // JKS/JCEKS/BKS: yanlış şifrede sertifikalar yine okunur (password_error false, yalnız PASSWORD_WRONG uyarısı) — şifre
-    // alanı görünür kalsın; İnceleme'de "Şifreyi düzelt" geri götürür.
-    if ((data.warnings || []).some((w) => PASSWORD_CODES.has(w?.code))) setPasswordNeeded(true)
-    setAnalysis(data)
+    // Tarayıcının notları (ZIP atlanan girdi, JKS bütünlük uyumsuzluğu …) sunucu uyarılarının önünde
+    const merged = { ...data, warnings: [...(Array.isArray(ex.notes) ? ex.notes : []), ...(Array.isArray(data.warnings) ? data.warnings : [])] }
+    // JKS/JCEKS: yanlış şifrede sertifikalar yine okunur (yalnız PASSWORD_WRONG notu) — şifre alanı görünür kalsın;
+    // İnceleme'de "Şifreyi düzelt" geri götürür.
+    if (merged.warnings.some((w) => PASSWORD_CODES.has(w?.code))) setPasswordNeeded(true)
+    setAnalysis(merged)
     setPrefilled(null)   // yeni dosya: takip adları ve kip yeniden önerilsin
     const def = defaultRef(data)
     setSelected(def)
@@ -248,7 +284,8 @@ export default function UploadWizard({
       return
     }
     if (code === 'OLDER_THAN_CURRENT') { setServerOlder(true); setConfirmOlder(false); fe.check({ confirm: t('mcert.renew.confirmRequired') }); return }
-    if (code === 'SAME_CERTIFICATE') { setBanner({ tone: 'danger', title: t('mcert.renew.sameTitle'), text: t('mcert.renew.sameBody') }); return }
+    // Aynı sertifika: engel değil — Takip adımında uyarı + "Yine de yükle" (allow_same ile yeniden gönderir)
+    if (code === 'SAME_CERTIFICATE') { setServerSame(true); return }
     const split = splitServerErrors(res.errors)
     // Bu adımda alanı olmayan hatalar (şifre, dosya, seçim) alan yerine bantta — görünmeyen alana hata yazılmasın.
     const fields = {}
@@ -264,7 +301,12 @@ export default function UploadWizard({
     }
   }
 
-  async function submit() {
+  /**
+   * @param {{ allowSame?: boolean }} [opts] `allowSame` — "Yine de yükle": güncel sürümle AYNI sertifika yeni sürüm olarak
+   *   kaydedilir (`allow_same=true`; bitiş tarihi değişmez). Yalnız yenileme kipinde anlamlı.
+   */
+  async function submit(opts = {}) {
+    const allowSame = opts.allowSame === true
     setBanner(null)
     const noteErr = note.length > NOTE_MAX && t('mcert.track.noteTooLong', NOTE_MAX)
     let res = null
@@ -276,11 +318,14 @@ export default function UploadWizard({
         confirm: needsConfirm && !confirmOlder && t('mcert.renew.confirmRequired'),
         note: noteErr,
       })) return
-      if (cmp?.same) { setBanner({ tone: 'danger', title: t('mcert.renew.sameTitle'), text: t('mcert.renew.sameBody') }); return }
+      if (sameCert && !allowSame) return   // uyarı bandı ekranda; ilerlemek için "Yine de yükle"
       setBusy(true)
       try {
         res = await api.manualCerts.renew(target.inventory_id,
-          uploadFormData(src, { ref: picked[0]?.ref, note: note.trim() || undefined, confirm: confirmOlder ? 'true' : undefined }))
+          extractedFormData(extraction, {
+            ref: picked[0]?.ref, note: note.trim() || undefined, confirm: confirmOlder ? 'true' : undefined,
+            allow_same: allowSame ? 'true' : undefined,
+          }))
       } catch (e) { res = { success: false, error: e?.message } }
     } else if (multi) {
       kind = 'batch'
@@ -296,7 +341,7 @@ export default function UploadWizard({
       if (fe.check({ ...rowErr, ...errs })) return
       setBusy(true)
       try {
-        res = await api.manualCerts.createBatch(uploadFormData(src, {
+        res = await api.manualCerts.createBatch(extractedFormData(extraction, {
           items: picked.map((e, i) => ({ ref: e.ref, domain: keys[i] })), inventory: inventoryPayload(form), note: note.trim() || undefined,
         }))
       } catch (e) { res = { success: false, error: e?.message } }
@@ -305,7 +350,7 @@ export default function UploadWizard({
       if (fe.check({ domain: keyErr && t(keyErr), ...trackingErrors(form, t), note: noteErr })) return
       setBusy(true)
       try {
-        res = await api.manualCerts.create(uploadFormData(src, {
+        res = await api.manualCerts.create(extractedFormData(extraction, {
           ref: picked[0]?.ref, domain: keyValue, inventory: inventoryPayload(form), note: note.trim() || undefined,
         }))
       } catch (e) { res = { success: false, error: e?.message } }
@@ -321,8 +366,9 @@ export default function UploadWizard({
 
   function restart() {
     setStep('file'); setFile(null); setText(''); setPassword(''); setPasswordNeeded(false); setAnalysis(null); setBanner(null)
+    setExtraction(null); setExtractIssue(null)
     setMulti(false); setSelected(null); setSelectedSet(new Set()); setPrefilled(null); setKeyValue(''); setBatchKeys({}); setRowErrors({})
-    setNote(''); setConfirmOlder(false); setResult(null)
+    setNote(''); setConfirmOlder(false); setServerOlder(false); setServerSame(false); setResult(null)
     setMode(renewTarget ? 'renew' : 'new'); setTarget(renewTarget)
   }
 
@@ -332,7 +378,7 @@ export default function UploadWizard({
     : null
 
   const title = renewFixed ? t('mcert.wizard.renewTitle', renewTarget.domain) : t('mcert.wizard.title')
-  const busyLabel = step === 'file' ? t('mcert.wizard.analyzing') : t('mcert.wizard.saving')
+  const busyLabel = phase === 'extract' ? t('mcert.wizard.extracting') : step === 'file' ? t('mcert.wizard.analyzing') : t('mcert.wizard.saving')
   const stepSelectedOk = multi ? selectedSet.size > 0 : !!selected
   const trackedBlocked = !multi && mode === 'new' && !!picked[0]?.matches?.already_tracked
 
@@ -362,7 +408,7 @@ export default function UploadWizard({
           <Button type="button" variant="secondary" className={NAV_BTN} onClick={() => { setBanner(null); setStep('review') }} disabled={busy}>
             <ArrowLeft aria-hidden="true" />{t('mcert.wizard.back')}
           </Button>
-          <Button type="button" data-slot="mcert-submit" className={NAV_BTN} onClick={submit} disabled={busy || trackedBlocked || (mode === 'renew' && cmp?.same)}
+          <Button type="button" data-slot="mcert-submit" className={NAV_BTN} onClick={() => submit()} disabled={busy || trackedBlocked || (mode === 'renew' && !multi && sameCert)}
             aria-busy={busy || undefined}>
             <Upload aria-hidden="true" />
             {mode === 'renew' && !multi ? t('mcert.wizard.saveVersion') : multi ? t('mcert.wizard.trackMany', picked.length) : t('mcert.wizard.track')}
@@ -408,8 +454,11 @@ export default function UploadWizard({
           <AlertBanner tone="info" className="mb-3">{t('mcert.wizard.renewIntro', renewTarget.domain)}</AlertBanner>
         )}
         {step === 'file' && (
-          <FileStep source={source} onSource={setSource} file={file} onFile={(f) => { setFile(f); setPasswordNeeded(false) }}
-            text={text} onText={setText} password={password} onPassword={setPassword} passwordNeeded={passwordNeeded} fe={fe} />
+          <FileStep source={source} onSource={(v) => { setSource(v); setExtraction(null); setExtractIssue(null) }} file={file}
+            onFile={(f) => { setFile(f); setPasswordNeeded(false); setExtraction(null); setExtractIssue(null) }}
+            text={text} onText={(v) => { setText(v); setExtraction(null); setExtractIssue(null) }}
+            password={password} onPassword={(v) => { setPassword(v); setExtraction(null) }} passwordNeeded={passwordNeeded} fe={fe}
+            extraction={extraction} issue={extractIssue} />
         )}
         {step === 'review' && (
           <ReviewStep analysis={analysis} multi={multi} onMulti={(v) => { setMulti(v); if (!v && !selected) setSelected(defaultRef(analysis)) }}
@@ -417,7 +466,7 @@ export default function UploadWizard({
             onToggle={(ref) => setSelectedSet((s) => { const n = new Set(s); if (n.has(ref)) n.delete(ref); else n.add(ref); return n })}
             renewMode={renewFixed} renewTargetId={renewTarget?.inventory_id ?? null}
             onOpenCert={onOpenCert ? openCert : undefined} onRenewTarget={renewFromEntry}
-            onFixPassword={() => { setBanner(null); setPasswordNeeded(true); setPwFix(true); setStep('file') }} />
+            onFixPassword={() => { setBanner(null); setPasswordNeeded(true); setPwFix(true); setStep('file') }} extraction={extraction} />
         )}
         {step === 'track' && (
           <>
@@ -432,7 +481,8 @@ export default function UploadWizard({
               keyValue={keyValue} onKey={setKeyValue} batchKeys={batchKeys}
               onBatchKey={(ref, v, i) => { setBatchKeys((b) => ({ ...b, [ref]: v })); setRowErrors((r) => { if (!r[i]) return r; const n = { ...r }; delete n[i]; return n }) }}
               rowErrors={rowErrors} form={form} onField={onField} teams={teams} canOpenSettings={canOpenSettings}
-              note={note} onNote={setNote} confirmOlder={confirmOlder} onConfirmOlder={setConfirmOlder} fe={fe} />
+              note={note} onNote={setNote} confirmOlder={confirmOlder} onConfirmOlder={setConfirmOlder} fe={fe}
+              sameDetected={serverSame} onUploadAnyway={() => submit({ allowSame: true })} busy={busy} />
           </>
         )}
         {step === 'result' && <ResultStep result={result} />}

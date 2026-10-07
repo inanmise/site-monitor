@@ -1,4 +1,4 @@
-import { Download, Eye, FileUp, Inbox } from 'lucide-react'
+import { Download, Eye, FileUp, Inbox, Pencil } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
 import KebabMenu from '../ui/KebabMenu.jsx'
@@ -51,7 +51,7 @@ function VersionCell({ row, t }) {
  * <p>Test kancaları: kök `data-slot="mcert-list"` + `data-view="table|cards"`, satır/kart `data-mcert-row=<takip adı>` +
  * `data-status`.
  */
-export default function ManualCertList({ rows, onOpen, onRenew, onDownload, emptyActions, canUpload = true }) {
+export default function ManualCertList({ rows, onOpen, onRenew, onDownload, onEdit, emptyActions, canUpload = true }) {
   const t = useT()
   const [ref, width] = useElementWidth()
   const cards = width > 0 && width < CARD_BELOW_PX
@@ -68,6 +68,8 @@ export default function ManualCertList({ rows, onOpen, onRenew, onDownload, empt
   const menuOf = (r) => [
     { label: t('mcert.act.open'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(r) },
     canUpload && r.can_manage !== false && { label: t('mcert.act.renew'), icon: <FileUp aria-hidden="true" />, onClick: () => onRenew(r) },
+    // Takip adı + envanter bilgileri sonradan düzenlenir (2026-10-07, kullanıcı isteği)
+    onEdit && canUpload && r.can_manage !== false && { label: t('mcert.act.edit'), icon: <Pencil aria-hidden="true" />, onClick: () => onEdit(r) },
     { label: t('mcert.act.pem'), icon: <Download aria-hidden="true" />, onClick: () => onDownload(r) },
   ].filter(Boolean)
 

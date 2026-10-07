@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { api, getRecentFailures } from '../api/client.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import { extractedFormData } from '../components/manualcert/manualCertModel.js'
 
 /**
  * `api.manualCerts.*` (2026-10-06) — çok parçalı yükleme uçları: yol + yöntem + FormData gövdesi (Content-Type'ı
@@ -58,6 +59,16 @@ describe('api.manualCerts', () => {
     expect(api.manualCerts.pemUrl(7, 3)).toBe('/api/manual-certs/7/versions/3/pem')
   })
 
+  it('deleteVersion: DELETE /api/manual-certs/{id}/versions/{vid}; 409 CURRENT_VERSION kodla + durumla döner', async () => {
+    const f = captureFetch(200, { success: true, data: { deleted_version: 2, versions_count: 2 } })
+    const ok = await api.manualCerts.deleteVersion(7, 103)
+    const [url, opts] = f.mock.calls[0]
+    expect(`${opts.method} ${url}`).toBe('DELETE /api/manual-certs/7/versions/103')
+    expect(ok).toMatchObject({ success: true, data: { deleted_version: 2 } })
+    captureFetch(409, { success: false, code: 'CURRENT_VERSION', error: 'güncel' })
+    expect(await api.manualCerts.deleteVersion(7, 104)).toMatchObject({ success: false, code: 'CURRENT_VERSION', status: 409 })
+  })
+
   it('409 gövdesi kodla ve durumla döner (KEY_EXISTS); 400 alan hataları korunur', async () => {
     captureFetch(409, { success: false, code: 'KEY_EXISTS', error: 'var' })
     const r409 = await api.manualCerts.create(new FormData())
@@ -65,6 +76,25 @@ describe('api.manualCerts', () => {
     captureFetch(400, { success: false, errors: { domain: 'geçersiz' } })
     const r400 = await api.manualCerts.create(new FormData())
     expect(r400).toMatchObject({ status: 400, errors: { domain: 'geçersiz' } })
+  })
+
+  it('2026-10-08: yükleme uçlarının gövdesi yalnız `extracted` (+ ek alanlar) — dosya, metin, şifre, özel anahtar YOK', async () => {
+    const f = captureFetch()
+    const extraction = { format: 'PKCS12', file_name: 'a.pfx', size_bytes: 9, entries: [{ alias: 'srv', key_entry: true, certs: ['QUJD'] }],
+      csr_pem: [], private_keys_removed: 1, password_used: true, notes: [] }
+    await api.manualCerts.analyze(extractedFormData(extraction))
+    await api.manualCerts.create(extractedFormData(extraction, { ref: 'AB', domain: 'x' }))
+    await api.manualCerts.createBatch(extractedFormData(extraction, { items: [{ ref: 'AB', domain: 'x' }] }))
+    await api.manualCerts.renew(4, extractedFormData(extraction, { ref: 'AB', allow_same: 'true' }))
+    expect(f).toHaveBeenCalledTimes(4)
+    for (const [, opts] of f.mock.calls) {
+      const fd = opts.body
+      expect(fd).toBeInstanceOf(FormData)
+      for (const k of ['file', 'text', 'password']) expect(fd.has(k), k).toBe(false)
+      const raw = await fd.get('extracted').text()
+      expect(raw).not.toMatch(/PRIVATE KEY|password/)
+      expect(JSON.parse(raw).entries[0].certs).toEqual(['QUJD'])
+    }
   })
 
   it('şifre başarısız çağrı halkasına girmez (yalnız yol + durum)', async () => {

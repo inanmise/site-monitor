@@ -3,9 +3,12 @@
  *
  * <p>Sunucu (AdminController ekle / yeniden adlandır) alan adı envanterde zaten kayıtlıysa 409 döner:
  * `{ success:false, error, code:'DOMAIN_EXISTS', existing:{ domain, inventory_id, team_id, team_name, ug_team_id,
- * ug_team_name, deleted, deleted_at, same_team, can_view, can_restore, can_transfer } }`. `error` sahibi takımı adıyla
- * söyleyen, istek dilinde (X-Lang) hazır iletidir. `can_*` bayrakları ilgili uçların kapılarının AYNASIDIR — asıl kapı
- * yine sunucuda; arayüz yalnız 403'e gidecek ölü düğme çizmemek için okur.
+ * ug_team_name, same_team, can_view, can_transfer } }`. `error` sahibi takımı adıyla söyleyen, istek dilinde (X-Lang)
+ * hazır iletidir. `can_*` bayrakları ilgili uçların kapılarının AYNASIDIR — asıl kapı yine sunucuda; arayüz yalnız 403'e
+ * gidecek ölü düğme çizmemek için okur.
+ *
+ * <p>Silme KALICI (2026-10-07, kullanıcı kararı): çakışan kayıt her zaman CANLI bir kayıttır — silinen kayıt adı tutmaz.
+ * Çöp kutusu dalı (`deleted`, `can_restore`, "geri yükle", "geri yükle ve aktar") kaldırıldı.
  */
 
 export const DOMAIN_EXISTS = 'DOMAIN_EXISTS'
@@ -20,28 +23,21 @@ export function domainConflictOf(res) {
 /**
  * Bantta hangi eylemler çizilir.
  *
- * - `view`     : silinmemiş ve çağıran okuyabiliyor (kendi kapsamı ya da org geneli okuma).
- * - `restore`  : çöp kutusunda + geri yükleme kapısı (takım yönetimi + inventory.crud).
+ * - `view`     : çağıran okuyabiliyor (kendi kapsamı ya da org geneli okuma).
  * - `transfer` : başka takımın kaydı + global yönetici aktarım izni + formda hedef takım seçili.
- *                Çöp kutusundaysa "geri yükle ve aktar" (iki çağrı: aktar → geri yükle).
  * - `request`  : başka takımın kaydı, aktarım yetkisi yok → Sorun Bildir akışıyla aktarım talebi.
- * - `askManager`: kendi (seçili) takımının çöp kutusunda ama geri yükleme yetkisi yok → yöneticiye yönlendir.
  */
 export function conflictActions(existing, targetTeamId) {
   const ex = existing || {}
-  const deleted = !!ex.deleted
   const hasTarget = targetTeamId != null && String(targetTeamId) !== ''
   const sameTeam = ex.same_team === true
     || (hasTarget && ex.team_id != null && String(ex.team_id) === String(targetTeamId))
   const transfer = !sameTeam && hasTarget && ex.can_transfer === true && ex.inventory_id != null
   return {
-    deleted,
     sameTeam,
-    view: !deleted && ex.can_view === true,
-    restore: deleted && ex.can_restore === true,
+    view: ex.can_view === true,
     transfer,
     request: !sameTeam && hasTarget && !transfer,
-    askManager: deleted && sameTeam && ex.can_restore !== true,
   }
 }
 
@@ -52,7 +48,7 @@ export const JUSTIFICATION_MAX = 2000
  * Aktarım talebinin Sorun Bildirimleri'ne düşen İLETİSİ — yöneticinin tek bakışta işleyebileceği düz metin
  * (alan adı + kayıt no + mevcut / istenen ekip + gerekçe). Talep eden kişinin arayüz dilinde yazılır.
  *
- * @param {{domain:string, inventoryId?:number, fromTeam?:{id?:number,name?:string}, toTeam?:{id?:number,name?:string}, deleted?:boolean}} req
+ * @param {{domain:string, inventoryId?:number, fromTeam?:{id?:number,name?:string}, toTeam?:{id?:number,name?:string}}} req
  */
 export function composeTransferRequest(req, justification, t) {
   const team = (tm) => (tm?.name ? (tm.id != null ? `${tm.name} (#${tm.id})` : tm.name) : t('dupx.noTeam'))
@@ -62,7 +58,6 @@ export function composeTransferRequest(req, justification, t) {
     `${t('dupx.reqDomain')}: ${req.domain}${record}`,
     `${t('dupx.reqMsgFrom')}: ${team(req.fromTeam)}`,
     `${t('dupx.reqMsgTo')}: ${team(req.toTeam)}`,
-    ...(req.deleted ? [t('dupx.reqMsgBin')] : []),
     '',
     `${t('dupx.reqWhy')}:`,
     String(justification ?? '').trim(),

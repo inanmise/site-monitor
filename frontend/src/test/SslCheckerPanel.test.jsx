@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within, fireEvent } from './test-utils.jsx'
 import SslCheckerPanel from '../components/SslCheckerPanel.jsx'
-import { healthyPreview } from './helpers/sslPreviewFixture.js'
+import { healthyPreview, uploadPreview } from './helpers/sslPreviewFixture.js'
 
 /**
  * SSL Kontrol sekmesi (2026-09-28 shadcn yeniden tasarım): hüküm kartı + gruplu kontroller + zincir kartları.
@@ -104,6 +104,35 @@ describe('SslCheckerPanel — hüküm, gruplar, zincir', () => {
     const banner = document.querySelector('[data-slot="alert"][data-tone="warning"]')
     expect(within(banner).getByText('Failed to fetch')).toBeInTheDocument()
     expect(document.querySelector('[data-slot="ssl-verdict"]')).not.toBeNull()
+  })
+
+  it('dosyadan yüklenen sertifika: aynı hüküm + Sertifika · Güven grupları + 3 kartlı zincir; Bağlantı / hostname / bağlantı ayrıntısı YOK; "Re-evaluate"', () => {
+    const onRecheck = vi.fn()
+    render(<SslCheckerPanel data={uploadPreview()} onRecheck={onRecheck} />)
+    const panel = document.querySelector('[data-slot="ssl-panel"]')
+    expect(panel).toHaveAttribute('data-source', 'upload')
+    expect([...document.querySelectorAll('[data-slot="ssl-check-group"]')].map((g) => g.dataset.group)).toEqual(['cert', 'trust'])
+    expect(check('hostname')).toBeNull()
+    expect(check('dns')).toBeNull()
+    expect(check('protocol')).toBeNull()
+    expect(document.querySelector('[data-slot="ssl-connection"]')).toBeNull()
+    const nodes = [...document.querySelectorAll('[data-slot="ssl-chain"] [data-slot="ssl-chain-node"]')].map((n) => n.dataset.role)
+    expect(nodes).toEqual(['leaf', 'intermediate', 'root'])
+    expect(document.querySelector('[data-slot="ssl-chain"]')).toHaveTextContent('From the certificate up to the root')
+    const verdict = document.querySelector('[data-slot="ssl-verdict"]')
+    expect(verdict).not.toHaveTextContent(/Live check|direct connection/)
+    expect(verdict).toHaveTextContent(/Evaluated from the uploaded file/)
+    expect(within(verdict).queryByRole('button', { name: 'Check again' })).toBeNull()
+    fireEvent.click(within(verdict).getByRole('button', { name: 'Re-evaluate' }))
+    expect(onRecheck).toHaveBeenCalledTimes(1)
+  })
+
+  it('dosyadan yüklenen yaprak, kök dosyada yoksa: "kök dosyada yok" notu (sunucu dili değil)', () => {
+    const d = uploadPreview()
+    render(<SslCheckerPanel data={uploadPreview({ trust_status: 'UNKNOWN', security_flags: [], chain: d.chain.slice(0, 2) })} />)
+    const store = document.querySelector('[data-slot="ssl-chain-node"][data-role="root-store"]')
+    expect(store).toHaveTextContent("The root certificate isn't in the file")
+    expect(store).not.toHaveTextContent(/server/)
   })
 
   it('yeniden kontrol sürerken düğme meşgul ve devre dışı', () => {

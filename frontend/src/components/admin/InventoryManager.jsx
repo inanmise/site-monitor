@@ -2,6 +2,8 @@ import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } fr
 import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Globe, Building2, Clock, X, Trash2, Power, PowerOff, UserPlus, CheckSquare, Square, AlertTriangle, Inbox, FileUp } from 'lucide-react'
 import AddCertSplitButton from '../manualcert/AddCertSplitButton.jsx'
 import { navigateTo } from '../../utils/navigate.js'
+import { filterDeleted, markDeleted, markManyDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
+import { deleteConfirmMessage, namesPreview } from '../../utils/deleteInventory.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -128,7 +130,11 @@ const NO_TEAMS = []
  * tablo (kap ≥ 720 px) / kart listesi (telefon ya da dar kap) / takım görünümü → sayfalama. Çekmece (Sheet), form (ModalShell) ve toplu
  * pencereler durum sahibi burada.
  *
- * Sözleşmeler (korunur): `api.admin.getInventory(showDeleted, scope)`; URL `i_*` süzgeçleri + `i_scope` + `i_view` +
+ * Silme KALICI (2026-10-07, kullanıcı kararı): çöp kutusu yok (silinmiş süzgeci / kartı / rozeti / geri yükleme / kalıcı
+ * sil kaldırıldı). Başarılı silmede satır HEMEN listeden çıkar ve `recentlyDeleted` ile işaretlenir — arka plan
+ * tazelemesi (ya da başka pod'un bayat önbelleği) onu geri getiremez.
+ *
+ * Sözleşmeler (korunur): `api.admin.getInventory(scope)`; URL `i_*` süzgeçleri + `i_scope` + `i_view` +
  * `i_sort` + `stat` + `page/ps`; localStorage `inventory-view`; satır `can_manage === false` → tamamen salt okunur;
  * panodan gelen `openAddSignal` / `onAddConsumed`; `domain` derin bağlantısı çekmeceyi açar (açık çekmece adrese yazılır).
  *
@@ -158,7 +164,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // asıl kapı her yazma ucunda sunucuda.
   const rowManageable = useCallback((r) => r?.can_manage !== false, [])
   const canEditRow = useCallback((r) => rowManageable(r) && (canManage || (canAdd && r?.team_id != null && myTeamIdSet.has(String(r.team_id)))), [rowManageable, canManage, canAdd, myTeamIdSet])
-  const [items, setItems]             = useState([])
+  const [rawItems, setItems]          = useState([])
+  // Yakın zamanda silinenler (iyimser + bayat yanıta karşı kalıcı): başka yüzeyde (form, çekmece, kart) silinen kayıt da
+  // anında düşer. Sürüm bağımlılığı işaret eklendikçe/kalktıkça yeniden süzer.
+  const deletedVersion = useDeletedMarksVersion()
+  const items = useMemo(() => filterDeleted('cert', rawItems, (i) => i.domain), [rawItems, deletedVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loadState, setLoadState]     = useState('loading')   // 'loading' | 'ready' | 'error' (yalnız ilk yükleme başarısızsa)
   const [refreshing, setRefreshing]   = useState(false)
   const [lastSync, setLastSync]       = useState(null)
@@ -236,12 +246,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   async function doExport(kind) {
     setExporting(true)
     try {
-      const res = await api.admin.getInventory(false, scope)   // dışa aktarma ekrandaki kapsamı taşır
+      const res = await api.admin.getInventory(scope)   // dışa aktarma ekrandaki kapsamı taşır
       if (!res?.success) {
         toast.error(t('inv.exportError'))
         return
       }
-      const all = res.data ?? []
+      const all = filterDeleted('cert', res.data ?? [], (i) => i.domain)
       if (all.length === 0) {
         toast.error(t('inv.exportNoData'))
         return
@@ -265,7 +275,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   async function load() {
     const my = ++loadSeq.current
     try {
-      const res = await api.admin.getInventory(true, scope)
+      const res = await api.admin.getInventory(scope)
       if (my !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
         setItems(res.data ?? [])
@@ -275,7 +285,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         loadedScopeRef.current = scope
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (res.scope && normalizeScope(res.scope) !== scope) setScopeRaw(normalizeScope(res.scope))
-        return res.data ?? []
+        return filterDeleted('cert', res.data ?? [], (i) => i.domain)
       } else {
         toast.error(res?.error || t('inv.loadError'))
         setLoadState((s) => (s === 'ready' ? s : 'error'))
@@ -291,18 +301,18 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     try { await Promise.all([load(), loadHygiene()]) } finally { setRefreshing(false) }
   }
 
+  // Silme KALICI (2026-10-07): sunucu yalnız canlı kayıt döner; eski sürümden kalmış çöp satırı (deleted_at) olursa
+  // savunma olarak yine gösterilmez — görünmeyen bir "silinmiş" süzgeci / kartı artık yok.
   const liveItems = useMemo(() => items.filter(i => !i.deleted_at), [items])
-  const stats = useMemo(() => ({ deleted: items.length - liveItems.length }), [items, liveItems])
   const teamCount = useMemo(() => new Set(liveItems.filter(i => i.team_id != null).map(i => String(i.team_id))).size, [liveItems])
 
   const statusItems = useMemo(() => {
     switch (statusFilter) {
-      case 'active':   return items.filter(i => i.active   && !i.deleted_at)
-      case 'inactive': return items.filter(i => !i.active  && !i.deleted_at)
-      case 'deleted':  return items.filter(i => !!i.deleted_at)
-      default:         return items.filter(i => !i.deleted_at)
+      case 'active':   return liveItems.filter(i => i.active)
+      case 'inactive': return liveItems.filter(i => !i.active)
+      default:         return liveItems
     }
-  }, [items, statusFilter])
+  }, [liveItems, statusFilter])
   const hygieneIdx = useMemo(() => hygieneIndex(hygiene), [hygiene])
   const visibleItems = useMemo(() => sortItems(applyFilters(statusItems, filters, hygieneIdx), sort), [statusItems, filters, hygieneIdx, sort])
   const overlaps = useMemo(() => detectOverlaps(items), [items])
@@ -327,7 +337,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [selected, setSelected] = useState(() => new Set())
   const [contactsModal, setContactsModal] = useState(null)   // E5: toplu sorumlu ekip atama
   // Yabancı (salt okunur) satır toplu işleme SEÇİLEMEZ — sayaçlar ve "tümünü seç" onları atlar.
-  const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at && rowManageable(i)), [visibleItems, rowManageable])
+  const selectableItems = useMemo(() => visibleItems.filter(i => rowManageable(i)), [visibleItems, rowManageable])
   const setScope = (v) => { const n = normalizeScope(v); setScopeRaw(n); writeView({ scope: n }); setSelected(new Set()) }
   // Sekme ZATEN açıkken gelen derin bağlantı (Ek 3/4, 2026-09-28): App aynı sekmede paramları adrese yazıp `sm:tab-params`
   // yayar (sekme yeniden bağlanmaz). `domain` yalnız mount'ta okunuyordu → mükerrer alan adı bandının penceresindeki
@@ -376,13 +386,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (pendingScopeRef.current && loadedScopeRef.current !== pendingScopeRef.current) return   // istenen kapsamın listesi yolda
     pendingScopeRef.current = null
     const want = pendingDomain.toLowerCase()
-    const hit = items.find(i => (i.domain || '').toLowerCase() === want)
-    if (hit) {
-      if (hit.deleted_at) setStatusFilter('deleted')
-      setShowItem(hit)
-    }
+    const hit = liveItems.find(i => (i.domain || '').toLowerCase() === want)
+    if (hit) setShowItem(hit)
     setPendingDomain(null)
-  }, [pendingDomain, loadState, items])
+  }, [pendingDomain, loadState, liveItems])
 
   const allOnPage = selectableItems.length > 0 && selectableItems.every(i => selected.has(i.id))
   const toggleSel = (id) => setSelected(s => {
@@ -437,10 +444,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   async function bulkAction(action) {
     const ids = [...selected]
     if (ids.length === 0) return
+    // Silme KALICI (2026-10-07): onay hangi kayıtların gittiğini ADIYLA söyler (ilk birkaçı + "+N").
+    const chosen = items.filter((i) => selected.has(i.id))
     const cfg = {
       activate:   { title: t('inv.bulkActivateTitle'),   msg: t('inv.bulkActivateMsg', ids.length),   confirm: t('inv.bulkActivateBtn'),   variant: 'warning' },
       deactivate: { title: t('inv.bulkDeactivateTitle'), msg: t('inv.bulkDeactivateMsg', ids.length), confirm: t('inv.bulkDeactivateBtn'), variant: 'warning' },
-      delete:     { title: t('inv.bulkDeleteTitle'),     msg: t('inv.bulkDeleteMsg', ids.length),     confirm: t('inv.bulkDeleteBtn'),     variant: 'danger'  },
+      delete:     { title: t('inv.bulkDeleteTitle'),     msg: t('inv.bulkDeleteMsg', ids.length, namesPreview(chosen.map((i) => i.domain), t)),
+                    confirm: t('inv.bulkDeleteConfirm'), variant: 'danger' },
     }[action]
     const ok = await showConfirm({
       title: cfg.title, message: cfg.msg, variant: cfg.variant,
@@ -450,9 +460,19 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     const res = await api.admin.bulkInventory(ids, action)
     if (res?.success) {
       const d = res.data || {}
-      toast.success(t('inv.bulkDone', d.processed ?? 0, d.skipped ?? 0))
+      if (action === 'delete') {
+        // Kalıcı silindi: sunucunun GERÇEKTEN sildiği kayıtlar HEMEN düşer (atlanan — kapsam dışı / yok — listede kalır).
+        // Eski sunucu listeyi dönmezse atlanan yoksa seçimin tamamı.
+        const gone = Array.isArray(d.deleted_domains) ? d.deleted_domains
+          : ((d.skipped ?? 0) === 0 ? chosen.map((i) => i.domain) : [])
+        markManyDeleted('cert', gone)
+        setShowItem((s) => (s && gone.includes(s.domain) ? null : s))
+        toast.success(t('inv.bulkDeleteDone', d.processed ?? 0, d.skipped ?? 0))
+      } else {
+        toast.success(t('inv.bulkDone', d.processed ?? 0, d.skipped ?? 0))
+      }
       setSelected(new Set())
-      load()
+      load()   // arka planda — arayüz beklemez
       onInventoryChange?.()
     } else {
       toast.error(res?.error || t('inv.saveError'))
@@ -509,10 +529,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     const hit = (list || []).find(i => rec?.id != null && i.id === rec.id)
       ?? (list || []).find(i => (i.domain || '').toLowerCase() === want)
       ?? rec
-    if (hit) {
-      if (hit.deleted_at) setStatusFilter('deleted')
-      setShowItem(hit)
-    }
+    if (hit) setShowItem(hit)
   }
 
   function openAdd() { setFormModal({ mode: 'add', record: null }) }
@@ -549,91 +566,36 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       if (r?.success) openAlertCount = r.total ?? 0
     } catch { /* sayım hatasını yut, varsayılan mesajla devam */ }
 
-    const baseMessage = t('inv.deleteMsg', domain)
-    const message = openAlertCount > 0
-      ? `${baseMessage}\n\n⚠ ${t('inv.deleteHasAlerts', openAlertCount)}\n${t('inv.deleteAlertWarning')}`
-      : baseMessage
-
+    // KALICI silme (2026-10-07): onay geri alınamaz olduğunu ve neyin birlikte gittiğini söyler; açık alarm varsa sayısı.
     const ok = await showConfirm({
       title: t('inv.deleteTitle'),
-      message,
-      variant: openAlertCount > 0 ? 'warning' : 'danger',
+      message: deleteConfirmMessage(t, domain, openAlertCount),
+      variant: 'danger',
       confirmText: t('inv.deleteConfirm'),
       cancelText: t('inv.deleteCancel'),
     })
     if (!ok) return
 
-    const res = await api.admin.deleteInventory(id)
+    let res
+    try {
+      res = await api.admin.deleteInventory(id)
+    } catch (e) {
+      toast.error(e?.message || t('inv.deleteError'))
+      return
+    }
     if (res?.success) {
+      // İyimser + kalıcı: satır HEMEN düşer (tam liste yüklemesi beklenmez), açık çekmece kapanır; tazeleme arka planda.
+      markDeleted('cert', domain)
+      setItems((list) => list.filter((i) => i.id !== id))
+      setSelected((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n })
+      setShowItem((s) => (s?.id === id ? null : s))
       toast.success((res.alertsClosed ?? 0) > 0
         ? t('inv.deleteWithAlerts', domain, res.alertsClosed)
         : t('inv.deleted', domain))
-      setShowItem((s) => (s?.id === id ? null : s))
-    } else {
-      toast.error(res?.error || 'Error')
-    }
-    load()
-    onInventoryChange?.()
-  }
-
-  async function restore(id) {
-    const item = items.find(i => i.id === id)
-    const ok = await showConfirm({
-      title: t('inv.restoreTitle'),
-      message: t('inv.restoreMsg', item?.domain ?? id),
-      variant: 'warning',
-      confirmText: t('inv.restoreConfirm'),
-      cancelText: t('inv.deleteCancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.restoreInventory(id)
-    if (res?.success) {
-      toast.success(t('inv.restored'))
       load()
       onInventoryChange?.()
     } else {
-      toast.error(res?.error || 'Error')
-    }
-  }
-
-  // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi silinir.
-  async function purge(id) {
-    const item = items.find(i => i.id === id)
-    const ok = await showConfirm({
-      title: t('inv.purgeTitle'),
-      message: t('inv.purgeMsg', item?.domain ?? id),
-      variant: 'danger',
-      confirmText: t('inv.purgeConfirm'),
-      cancelText: t('inv.deleteCancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.purgeInventory(id)
-    if (res?.success) {
-      toast.success(t('inv.purged', item?.domain ?? id))
-      load()
-      onInventoryChange?.()
-    } else {
-      toast.error(res?.error || 'Error')
-    }
-  }
-
-  // Toplu kalıcı sil — tüm silinmiş kayıtlar + kontrol geçmişleri. Yalnız admin.
-  async function purgeAll() {
-    const ok = await showConfirm({
-      title: t('inv.purgeAllTitle'),
-      message: t('inv.purgeAllMsg', stats.deleted),
-      variant: 'danger',
-      confirmText: t('inv.purgeAllConfirm'),
-      cancelText: t('inv.deleteCancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.purgeDeletedInventory()
-    if (res?.success) {
-      toast.success(t('inv.purgedAll', res.data?.purged ?? 0))
-      load()
-      onInventoryChange?.()
-    } else {
-      toast.error(res?.error || 'Error')
+      toast.error(res?.error || t('inv.deleteError'))
     }
   }
 
@@ -665,7 +627,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const rowProps = {
     canManage, canEditRow, canManageRow: rowManageable, isAdmin, teamsCount: teams.length, teamMap, selected, onToggle: toggleSel,
     onShow: (r) => setShowItem(r), onEdit: openEdit, onDuplicate: openDuplicate, onTransfer: openTransfer,
-    onDelete: del, onRestore: restore, onPurge: purge,
+    onDelete: del,
     onDiagnose: (r) => setDiag({ domain: r.domain, port: r.port || 443 }),
     onCheckNow: checkNow, onInline: inlineUpdate,
     onTagClick: (tag) => setFilters(f => ({ ...f, q: tag })),
@@ -766,13 +728,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         </div>
       )}
 
-      {isAdmin && statusFilter === 'deleted' && stats.deleted > 0 && (
-        <AlertBanner tone="danger" icon={AlertTriangle} className="mb-2.5"
-          actions={<Button variant="destructive" size="sm" onClick={purgeAll}>{t('inv.purgeAllBtn')}</Button>}>
-          {t('inv.purgeAllHint', stats.deleted)}
-        </AlertBanner>
-      )}
-
       {loadState === 'loading' ? (
         <InventorySkeleton label={t('inv.loading')} />
       ) : loadState === 'error' ? (
@@ -801,7 +756,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             ? <InventoryCardList rows={pager.pageItems} {...rowProps} />
             : (
               <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
-                statusFilter={statusFilter} onToggleAll={toggleAll} allOnPage={allOnPage}
+                onToggleAll={toggleAll} allOnPage={allOnPage}
                 filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters}
                 {...rowProps} />
             )}
@@ -841,7 +796,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           onClose={() => setShowItem(null)} onEdit={(r) => { setShowItem(null); openEdit(r) }} onCheckNow={checkNow} onDelete={del} onNavigate={setShowItem} />
       )}
       {importOpen && (
-        <InventoryImportModal onClose={() => setImportOpen(false)} onDone={() => { load(); loadHygiene(); onInventoryChange?.() }} />
+        <InventoryImportModal onClose={() => setImportOpen(false)} onDone={(res) => {
+          // Az önce silinen bir ad içe aktarmayla yeniden eklendiyse "yakın zamanda silindi" işareti kalkar (kayıt hemen görünür).
+          // onDone yalnız GERÇEK koşudan sonra çağrılır (kuru koşu planı modalda kalır).
+          for (const row of res?.rows || []) if (row.action === 'create') unmarkDeleted('cert', row.domain)
+          load(); loadHygiene(); onInventoryChange?.()
+        }} />
       )}
       {/* ── Transfer Modalı (ModalShell / shadcn Dialog) ── */}
       {transferModal && (

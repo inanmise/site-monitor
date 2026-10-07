@@ -116,6 +116,8 @@ class InventoryOrgVisibilityAdminTest {
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
     @MockitoBean com.sitemonitor.service.MonitoringGroupService monitoringGroupService;
     @MockitoBean com.sitemonitor.service.SchedulerService schedulerService;
+    /** Kalıcı silme (2026-10-07) — tablo düzeyi PermanentDeletionServiceTest'te; burada yalnız kapı + çağrı. */
+    @MockitoBean com.sitemonitor.service.PermanentDeletionService permanentDeletion;
 
     private static final long OWN_TEAM = 5L, SUB_TEAM = 6L, FOREIGN_TEAM = 9L;
 
@@ -488,20 +490,26 @@ class InventoryOrgVisibilityAdminTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("managerWriters")
-    @DisplayName("DELETE / restore / kalıcı sil: başka takımın kaydı 403 — kendi takımında 200 (7/24 operatörü dahil)")
-    void deleteRestorePurge_foreignRejected(String role, Supplier<MockHttpSession> session) throws Exception {
+    @DisplayName("KALICI silme (2026-10-07): başka takımın kaydı 403 — kendi takımında 200 ve servis çağrılır (7/24 operatörü dahil); çöp kutusu uçları yok")
+    void deletePermanent_foreignRejected(String role, Supplier<MockHttpSession> session) throws Exception {
+        when(permanentDeletion.deleteInventory(any())).thenAnswer(i -> {
+            CertificateInventory c = i.getArgument(0);
+            return new com.sitemonitor.service.PermanentDeletionService.InventoryDeletion(
+                    c.getId(), c.getDomain(), c.getTeamId(), 0, 0, java.util.Map.of());
+        });
         mvc.perform(delete("/api/admin/inventory/2").session(session.get())).andExpect(status().isForbidden());
-        mvc.perform(post("/api/admin/inventory/3/restore").session(session.get())).andExpect(status().isForbidden());
-        mvc.perform(delete("/api/admin/inventory/3/permanent").session(session.get())).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/inventory/3").session(session.get())).andExpect(status().isForbidden());   // başka takımın eski çöp satırı
+        verify(permanentDeletion, never()).deleteInventory(any());
         verify(inventoryRepo, never()).save(any());
         verify(inventoryRepo, never()).delete(any());
-        assertThat(foreign.getDeletedAt()).isNull();
-        assertThat(goneForeign.getDeletedAt()).isNotNull();
 
         mvc.perform(delete("/api/admin/inventory/1").session(session.get())).andExpect(status().isOk());
-        mvc.perform(post("/api/admin/inventory/4/restore").session(session.get())).andExpect(status().isOk());
-        assertThat(own.getDeletedAt()).isNotNull();
-        assertThat(goneOwn.getDeletedAt()).isNull();
+        verify(permanentDeletion).deleteInventory(own);
+        assertThat(own.getDeletedAt()).as("yumuşak silme yazılmaz").isNull();
+        // Geri yükleme / kalıcı sil uçları kaldırıldı — hiçbir rol için kayıt değişmez.
+        mvc.perform(post("/api/admin/inventory/4/restore").session(session.get()))
+                .andExpect(r -> assertThat(r.getResponse().getStatus()).isIn(404, 405));
+        assertThat(goneOwn.getDeletedAt()).isNotNull();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -552,7 +560,7 @@ class InventoryOrgVisibilityAdminTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("scopedRoles")
-    @DisplayName("ekle: başka takımda (ya da çöp kutusunda) VAR olan alan adını kendi takımına 'yeniden eklemek' 409 — devralma yok")
+    @DisplayName("ekle: başka takımda VAR olan (canlı) alan adını kendi takımına 'yeniden eklemek' 409 — devralma yok; silinen ad serbest (2026-10-07)")
     void add_existingForeignDomain_conflictNoTakeover(String role, Supplier<MockHttpSession> session) throws Exception {
         String body = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"%s\",\"port\":443,\"team_id\":5}";
         mvc.perform(post("/api/admin/inventory").session(session.get()).contentType(MediaType.APPLICATION_JSON)
@@ -562,9 +570,6 @@ class InventoryOrgVisibilityAdminTest {
         mvc.perform(post("/api/admin/inventory").session(session.get()).contentType(MediaType.APPLICATION_JSON)
                         .content(String.format(body, "Foreign.Example.COM")))
                 .andExpect(status().isConflict());
-        mvc.perform(post("/api/admin/inventory").session(session.get()).contentType(MediaType.APPLICATION_JSON)
-                        .content(String.format(body, "gone.example.com")))
-                .andExpect(status().isConflict());
         verify(inventoryRepo, never()).save(any());
         assertThat(foreign.getTeamId()).isEqualTo(FOREIGN_TEAM);
 
@@ -572,6 +577,13 @@ class InventoryOrgVisibilityAdminTest {
                         .content(String.format(body, "new.example.com")))
                 .andExpect(status().isOk());
         verify(inventoryRepo, times(1)).save(any());
+        // Silinen kayıt adı TUTMAZ: eski sürümden kalmış çöp satırının adı yeni kayıt olarak eklenir (devralma değil —
+        // eski satır kalıcı silinir, verisi/geçmişi yeni kayda taşınmaz).
+        mvc.perform(post("/api/admin/inventory").session(session.get()).contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format(body, "gone.example.com")))
+                .andExpect(status().isOk());
+        verify(inventoryRepo, times(2)).save(any());
+        verify(permanentDeletion).purgeLegacyBinRows("gone.example.com");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -663,8 +675,8 @@ class InventoryOrgVisibilityAdminTest {
 
     /** `existing` beyaz listesi — bunun DIŞINDA anahtar yanıtta olamaz (sorumlu kişi, açıklama, IP, platform…). */
     private static final java.util.Set<String> EXISTING_KEYS = java.util.Set.of(
-            "domain", "inventory_id", "team_id", "team_name", "ug_team_id", "ug_team_name", "deleted", "deleted_at",
-            "same_team", "can_view", "can_restore", "can_transfer");
+            "domain", "inventory_id", "team_id", "team_name", "ug_team_id", "ug_team_name",
+            "same_team", "can_view", "can_transfer");   // 2026-10-07: deleted / deleted_at / can_restore kalktı (silme kalıcı)
 
     private static final String ADD_BODY = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"%s\",\"port\":443,\"team_id\":5}";
 
@@ -679,8 +691,8 @@ class InventoryOrgVisibilityAdminTest {
         assertThat(json.keySet()).containsExactlyInAnyOrder("success", "error", "code", "existing");
         java.util.Map<String, Object> ex = (java.util.Map<String, Object>) json.get("existing");
         assertThat(ex.keySet()).isSubsetOf(EXISTING_KEYS)
-                .contains("domain", "inventory_id", "team_id", "team_name", "deleted", "same_team",
-                        "can_view", "can_restore", "can_transfer");
+                .contains("domain", "inventory_id", "team_id", "team_name", "same_team",
+                        "can_view", "can_transfer");
         // Kaydın iç/kişisel alanları (sorumlu e-postası, açıklama, IP, platform) 409 yanıtına SIZMAZ.
         assertThat(body).doesNotContain("destek@example.com", "ödeme sitesi", "10.0.0.2", "IIS", "svc_mgmt", "created_ip");
     }
@@ -699,10 +711,10 @@ class InventoryOrgVisibilityAdminTest {
                 .andExpect(jsonPath("$.existing.inventory_id").value(2))
                 .andExpect(jsonPath("$.existing.team_id").value(9))
                 .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
-                .andExpect(jsonPath("$.existing.deleted").value(false))
+                .andExpect(jsonPath("$.existing.deleted").doesNotExist())       // silme kalıcı (2026-10-07)
                 .andExpect(jsonPath("$.existing.same_team").value(false))
                 .andExpect(jsonPath("$.existing.can_view").value(true))        // org geneli okuma açık
-                .andExpect(jsonPath("$.existing.can_restore").value(false))
+                .andExpect(jsonPath("$.existing.can_restore").doesNotExist())
                 .andExpect(jsonPath("$.existing.can_transfer").value(false))   // takım kapsamlı rol aktaramaz
                 .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         assertWhitelisted(body);
@@ -726,25 +738,17 @@ class InventoryOrgVisibilityAdminTest {
     }
 
     @Test
-    @DisplayName("mükerrer (ekle): ÇÖP KUTUSUNDAKİ başka takımın kaydı → deleted=true + deleted_at, geri yükleme/aktarım ileti; USER geri yükleyemez")
-    void duplicateAdd_foreignInBin() throws Exception {
-        String body = add(user(), "gone.example.com", "tr")
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
-                .andExpect(jsonPath("$.existing.deleted").value(true))
-                .andExpect(jsonPath("$.existing.deleted_at").value("2026-09-01T00:00:00"))
-                .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
-                .andExpect(jsonPath("$.existing.can_view").value(false))       // çöp kutusu org geneli okunmaz
-                .andExpect(jsonPath("$.existing.can_restore").value(false))
-                .andExpect(jsonPath("$.error").value(
-                        "Bu alan adı çöp kutusunda ('Takım B' ekibinin kaydı). Mükerrer kayıt oluşturulamaz; kaydın geri "
-                        + "yüklenmesi ya da ekibinize aktarılması gerekir."))
-                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        assertWhitelisted(body);
+    @DisplayName("Silme KALICI (2026-10-07): BAŞKA takımın eski çöp satırıyla aynı ad engel DEĞİL — 409 yok, eski satır önce kalıcı silinir, kayıt açılır")
+    void add_sameNameAsForeignLegacyBinRow_succeeds() throws Exception {
+        add(user(), "gone.example.com", "tr")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").doesNotExist());
+        verify(permanentDeletion).purgeLegacyBinRows("gone.example.com");
+        verify(inventoryRepo, times(1)).save(any());
     }
 
     @Test
-    @DisplayName("mükerrer (ekle): AYNI takım — kayıt varsa 'mevcut kaydı düzenleyin', çöp kutusundaysa 'geri yükleyin' + can_restore (yönetici)")
+    @DisplayName("mükerrer (ekle): AYNI takım — kayıt varsa 'mevcut kaydı düzenleyin'; kendi eski çöp satırı engel değil (silme kalıcı)")
     void duplicateAdd_sameTeam() throws Exception {
         when(permissionService.allows(any(HttpSession.class), eq("inventory.crud"), eq("edit"))).thenReturn(true);
         add(user(), "own.example.com", "tr")
@@ -754,15 +758,11 @@ class InventoryOrgVisibilityAdminTest {
                 .andExpect(jsonPath("$.existing.can_view").value(true))
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(
                         "seçtiğiniz 'Takım A' ekibinin envanterinde zaten kayıtlı. Mükerrer kayıt oluşturulamaz; mevcut kaydı açıp düzenleyin")));
-        add(teamAdmin(), "gone-own.example.com", "tr")
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.existing.same_team").value(true))
-                .andExpect(jsonPath("$.existing.deleted").value(true))
-                .andExpect(jsonPath("$.existing.can_restore").value(true))
-                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("seçtiğiniz 'Takım A' ekibinin çöp kutusunda")));
-        add(user(), "gone-own.example.com", "tr")   // USER restore kapısından (takım yönetimi) geçmez
-                .andExpect(jsonPath("$.existing.can_restore").value(false));
         verify(inventoryRepo, never()).save(any());
+        add(teamAdmin(), "gone-own.example.com", "tr")
+                .andExpect(status().isOk());
+        verify(permanentDeletion).purgeLegacyBinRows("gone-own.example.com");
+        verify(inventoryRepo, times(1)).save(any());
     }
 
     @Test

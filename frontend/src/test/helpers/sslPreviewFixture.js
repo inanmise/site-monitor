@@ -34,3 +34,40 @@ export function healthyPreview(over = {}) {
   }
 }
 
+/**
+ * Dosyadan yüklenen (manuel) sertifikanın `/check-preview` yanıtı (2026-10-07) — ManualCertificateEvaluationService'in
+ * çevrim-dışı sonuç haritası + CertificateController.putManualPreviewAssessment: `via: 'upload'`, ağa özgü alanlar null,
+ * ağa özgü hükümler NA; dosyadaki zincir yaprak → ara → kök (kök dosyada → rootSent).
+ */
+export function uploadPreview(over = {}) {
+  return {
+    domain: 'odeme-api.example.test', subject: 'odeme-api.example.test', issuer: 'Example Test', issuer_cn: 'Test Issuing CA',
+    not_before: '2026-09-17T00:00:00', not_after: '2027-10-19T00:00:00', days_remaining: 377, warning: false, status: 'valid',
+    san: ['odeme-api.example.test', 'odeme-api-internal.example.test'], checked_at: '2026-10-07T09:15:00',
+    serial_number: '5F3A', signature_algorithm: 'SHA256withRSA', public_key_algorithm: 'RSA', public_key_size: 2048,
+    subject_dn: 'CN=odeme-api.example.test,O=Example Test,L=Istanbul,C=TR', issuer_dn: 'CN=Test Issuing CA,O=Example Test',
+    key_usage: ['digitalSignature'], ext_key_usage: ['serverAuth', 'clientAuth'], is_ca: false,
+    ocsp_url: null, crl_url: null, cert_type: 'Domain Validated (DV) — Multi-Domain (SAN)',
+    source_ip: null, source_port: null, peer_ip: null, peer_port: null, tls_version: null, cipher_suite: null, alpn: null,
+    chain_status: 'VALID', intermediate_expiry: '2031-10-06T00:00:00', intermediate_days_remaining: 1825,
+    chain: [
+      { position: 0, subject: 'CN=odeme-api.example.test,O=Example Test,L=Istanbul,C=TR', issuer: 'CN=Test Issuing CA,O=Example Test',
+        not_after: '2027-10-19T00:00:00', days_remaining: 377, is_root: false, is_leaf: true, not_before: '2026-09-17T00:00:00',
+        serial_number: '5F3A', signature_algorithm: 'SHA256withRSA', expired: false },
+      { position: 1, subject: 'CN=Test Issuing CA,O=Example Test', issuer: 'CN=Test Root CA,O=Example Test',
+        not_after: '2031-10-06T00:00:00', days_remaining: 1825, is_root: false, is_leaf: false, not_before: '2026-10-07T00:00:00',
+        serial_number: '1001', signature_algorithm: 'SHA256withRSA', expired: false },
+      { position: 2, subject: 'CN=Test Root CA,O=Example Test', issuer: 'CN=Test Root CA,O=Example Test',
+        not_after: '2036-10-05T00:00:00', days_remaining: 3650, is_root: true, is_leaf: false, not_before: '2026-10-07T00:00:00',
+        serial_number: '01', signature_algorithm: 'SHA256withRSA', expired: false },
+    ],
+    fingerprint: 'CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34',
+    revocation_status: 'UNKNOWN', trust_status: 'UNTRUSTED', deployment_status: 'UNKNOWN',
+    resolved_ip: null, hsts: null, http_status: null, via: 'upload', tls_mode_used: null, elapsed_ms: 6,
+    manual: true, manual_version: 2,
+    assessment: { hostname: 'NA', protocol: 'NA', protocol_latest: false, cipher: 'NA', pfs: 'NA', signature: 'OK', key_size: 'OK' },
+    security_flags: ['UNTRUSTED_CA'],
+    ...over,
+  }
+}
+

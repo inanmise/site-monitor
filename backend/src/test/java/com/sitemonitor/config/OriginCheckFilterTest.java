@@ -49,7 +49,7 @@ class OriginCheckFilterTest {
     @Test
     @DisplayName("Aynı köken: Origin, isteğin Host'uyla eşleşir → geçer")
     void sameOrigin_hostHeader_allowed() throws Exception {
-        MockHttpServletRequest r = post("/api/admin/inventory/purge-deleted");
+        MockHttpServletRequest r = post("/api/admin/inventory/bulk");
         r.removeHeader("Host");
         r.addHeader("Host", "sitemonitor.example.com");          // TLS'i vekil sonlandırdı, port yok
         r.addHeader("Origin", "https://sitemonitor.example.com");

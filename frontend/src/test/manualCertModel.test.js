@@ -3,8 +3,9 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   WARNING_CODES, compareWithCurrent, defaultRef, fillParams, filterManualRows, inventoryPayload, isManualCert,
-  looksLikeTruststore, manualKpis, passwordLikely, sortManualRows, splitServerErrors, trackingKeyError, uploadFormData,
-  warningText, withoutManualCerts, discouragedExtension, knownExtension, validitySpan, teamFilterOptions,
+  looksLikeTruststore, manualKpis, passwordLikely, sortManualRows, splitServerErrors, trackingKeyError, extractedFormData,
+  warningText, withoutManualCerts, discouragedExtension, knownExtension, validitySpan, teamFilterOptions, wirePayload,
+  extractionErrorKey, CLIENT_NOTE_CODES,
 } from '../components/manualcert/manualCertModel.js'
 import { eventLabel } from '../components/admin/audit/auditFormat.js'
 
@@ -78,7 +79,8 @@ describe('manualCertModel — uyarı kodları', () => {
   })
   it('sözleşmenin parametre adları metinde geçer (gate: sunucu bunları doldurur)', () => {
     const PARAMS = {
-      PRIVATE_KEY_IGNORED: ['count'], CSR_NOT_CERTIFICATE: ['cn'], PASSWORD_REQUIRED: ['format'], PASSWORD_WRONG: ['format'],
+      PRIVATE_KEY_KEPT_LOCAL: ['count'], CSR_NOT_CERTIFICATE: ['cn'], PASSWORD_REQUIRED: ['format'], PASSWORD_WRONG: ['format'],
+      KEYSTORE_PARTIAL: ['format'],
       UNSUPPORTED_FORMAT: ['name'], FILE_TOO_LARGE: ['max_mb'], ZIP_LIMIT: ['max_entries', 'max_mb'], ZIP_SKIPPED_ENTRY: ['name'],
       EXPIRED: ['days'], NOT_YET_VALID: ['date'], EXPIRES_SOON: ['days'], CHAIN_INCOMPLETE: ['missing_issuer'],
       CHAIN_EXPIRED_INTERMEDIATE: ['subject', 'date'], WEAK_SIGNATURE: ['algorithm'], WEAK_KEY: ['algorithm', 'size'],
@@ -160,19 +162,35 @@ describe('manualCertModel — analiz ve yenileme', () => {
 })
 
 describe('manualCertModel — istek gövdeleri', () => {
-  it('uploadFormData: dosya ya da metin + şifre + JSON alanlar; boş değerler girmez', () => {
-    const file = new File(['-----BEGIN CERTIFICATE-----'], 'a.pem', { type: 'application/x-pem-file' })
-    const fd = uploadFormData({ source: 'file', file, password: 's3cret' }, { ref: 'AB', inventory: { team_id: 1 }, note: undefined })
-    expect(fd.get('file')).toBeInstanceOf(File)
-    expect(fd.get('text')).toBeNull()
-    expect(fd.get('password')).toBe('s3cret')
+  it('extractedFormData (2026-10-08): yalnız `extracted` (JSON dosya parçası) + ek alanlar; dosya / metin / şifre / notlar GİRMEZ', async () => {
+    const extraction = {
+      format: 'PKCS12', file_name: 'a.pfx', size_bytes: 10, entries: [{ alias: 'srv', key_entry: true, certs: ['QUJD'], extra: 'x' }],
+      csr_pem: [], private_keys_removed: 1, password_used: true, notes: [{ code: 'ZIP_LIMIT' }], unsupported: null, password: 's3cret',
+    }
+    const fd = extractedFormData(extraction, { ref: 'AB', inventory: { team_id: 1 }, note: undefined })
+    for (const k of ['file', 'text', 'password', 'note']) expect(fd.has(k), k).toBe(false)
     expect(fd.get('ref')).toBe('AB')
     expect(JSON.parse(fd.get('inventory'))).toEqual({ team_id: 1 })
-    expect(fd.has('note')).toBe(false)
-    const fd2 = uploadFormData({ source: 'text', text: 'PEM', file })
-    expect(fd2.get('text')).toBe('PEM')
-    expect(fd2.get('file')).toBeNull()
-    expect(fd2.has('password')).toBe(false)
+    const part = fd.get('extracted')
+    expect(part.name).toBe('extracted.json')
+    expect(part.type).toMatch(/application\/json/)
+    const body = JSON.parse(await part.text())
+    expect(body).toEqual({ format: 'PKCS12', file_name: 'a.pfx', size_bytes: 10,
+      entries: [{ alias: 'srv', key_entry: true, certs: ['QUJD'] }], csr_pem: [], private_keys_removed: 1 })
+    expect(wirePayload(null)).toEqual({ format: null, file_name: null, size_bytes: 0, entries: [], csr_pem: [], private_keys_removed: 0 })
+  })
+  it('extractionErrorKey: her ayıklama hatası TR + EN sözlükte; tanınmayan neden → UNKNOWN; tarayıcı not kodları sözlükte', () => {
+    for (const reason of ['TOO_LARGE', 'BKS', 'PKCS12_ALGORITHM', 'PKCS12_FORMAT', 'TOO_MANY_CERTS', 'TIMEOUT', 'ZIP_UNREADABLE', 'UNREADABLE', 'UNKNOWN', 'NOPE']) {
+      const [key] = extractionErrorKey({ reason })
+      expect(TR[key], key).toBeTruthy()
+      expect(EN[key], key).toBeTruthy()
+    }
+    expect(extractionErrorKey({ reason: 'NOPE' })[0]).toBe('mcert.extract.UNKNOWN')
+    expect(extractionErrorKey({ reason: 'TOO_MANY_CERTS', max: 200 })).toEqual(['mcert.extract.TOO_MANY_CERTS', 200])
+    for (const code of CLIENT_NOTE_CODES) {
+      expect(TR[`mcert.warn.${code}`], code).toBeTruthy()
+      expect(EN[`mcert.warn.${code}`], code).toBeTruthy()
+    }
   })
   it('inventoryPayload: envanter ekleme gövdesiyle aynı snake_case; ağ alanları varsayılan', () => {
     const p = inventoryPayload({ team_id: '3', group_name: ' G ', tags: 't1,t2', tier: '2', description: ' d ', owner: 'o',

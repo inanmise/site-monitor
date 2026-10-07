@@ -14,14 +14,12 @@ import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
 import RetentionRunsPanel from './retention/RetentionRunsPanel.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import Field from '../ui/Field.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import CollapsibleSection from '../ui/CollapsibleSection.jsx'
 import { KpiCard } from './HealthUi.jsx'
-import { helpLabel, SETTINGS_STACK, SettingsHeader, SettingsSection, ToggleRow } from './SettingsControls.jsx'
+import { SETTINGS_STACK, SettingsHeader, SettingsSection, ToggleRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
-import { Input } from '@/components/shadcn/input'
 import { cn } from '@/lib/utils'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
@@ -205,15 +203,7 @@ export default function RetentionSettings({ readOnly = false }) {
     else toast.error(res?.error || t('settings.saveError'))
   }
 
-  // Envanter çöp kutusu otomatik boşaltma (2026-09-12, envanter #10) — tek sayı, anında kaydedilir
-  const [invPurge, setInvPurge] = useState('')
-  useEffect(() => { if (data) setInvPurge(String(data.inventory_auto_purge_days ?? 0)) }, [data])
-  async function saveInvPurge() {
-    const v = Math.max(0, parseInt(invPurge, 10) || 0)
-    const res = await api.admin.saveRetentionSettings({ 'site.monitor.inventory.auto-purge-days': String(v) })
-    if (res?.success) { toast.success(res.message); load(false) }
-    else toast.error(res?.error || t('settings.saveError'))
-  }
+  // (2026-10-07) Envanter çöp kutusu otomatik boşaltma kartı kalktı: silme kalıcı, çöp kutusu yok.
 
   if (!data) {
     // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
@@ -348,24 +338,6 @@ export default function RetentionSettings({ readOnly = false }) {
           children: <RetentionChangeLog rows={changes} />,
         })}
       </div>
-
-      {/* ── Envanter çöp kutusu (#10) ── */}
-      <SettingsSection title={<span className="inline-flex items-center gap-2"><Trash2 size={15} aria-hidden="true" /> {t('ret.invPurgeTitle')}</span>}
-        description={t('ret.invPurgeDesc')}>
-        <Field label={helpLabel(t('ret.invPurgeDays'), 'help.set.site.monitor.inventory.auto-purge-days')} className="mb-0 sm:max-w-md"
-          hint={<code className="font-mono">site.monitor.inventory.auto-purge-days</code>}>
-          {({ id, describedBy }) => (
-            <div className="flex items-center gap-2">
-              <Input id={id} aria-describedby={describedBy} type="number" min={0} max={3650} className="w-28"
-                value={invPurge} disabled={readOnly} onChange={e => setInvPurge(e.target.value)} />
-              <Button type="button" size="sm" onClick={saveInvPurge}
-                disabled={readOnly || String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)}>
-                {t('ret.invPurgeApply')}
-              </Button>
-            </div>
-          )}
-        </Field>
-      </SettingsSection>
 
       {/* ── Legal hold ── */}
       <SettingsSection title={<span className="inline-flex items-center gap-2"><ShieldAlert size={15} aria-hidden="true" /> {t('ret.holdTitle')}</span>}

@@ -113,13 +113,22 @@ class ExecutiveStatsServiceTest {
         assertThat(teams).hasSize(1);
     }
     @Test
-    @DisplayName("2026-09-12 #7: son 7 gün — yeni alan (created_at), silinen (deleted_at), yenilenen (parmak izi), açılan/çözülen alarm; kapsam")
+    @DisplayName("2026-09-12 #7: son 7 gün — yeni alan (created_at), silinen (2026-10-07: geçmişteki DELETE satırı), yenilenen (parmak izi), açılan/çözülen alarm; kapsam")
     void recentChanges() {
         CertificateInventory fresh = inv("new.example.com", 1L); fresh.setCreatedAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        fresh.setId(101L);
         CertificateInventory old = inv("ok1.example.com", 1L); old.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.DAYS)));
-        CertificateInventory gone = inv("gone.example.com", 1L); gone.setDeletedAt(ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
+        old.setId(102L);
         CertificateInventory foreign = inv("f.example.com", 2L); foreign.setCreatedAt(ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
-        when(inventoryRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(fresh, old, gone, foreign));
+        foreign.setId(103L);
+        when(inventoryRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(fresh, old, foreign));
+        // Silme KALICI: satır yok — sayaç ürün geçmişinden. 201 (takım 1) iki kez silinmiş (eski çöp kutusu) → BİR sayılır;
+        // 202 başka takımın → sayılmaz; 102 silinip geri yüklenmiş (hâlâ canlı) → sayılmaz.
+        com.sitemonitor.repository.MonitorChangeLogRepository changeLog =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.MonitorChangeLogRepository.class);
+        when(changeLog.findInventoryDeletesSince(anyString())).thenReturn(List.of(
+                new Object[]{201L, 1L}, new Object[]{201L, 1L}, new Object[]{202L, 2L}, new Object[]{102L, 1L}));
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "changeLogRepo", changeLog);
         when(certificateCheckRepo.domainsWithFingerprintChangeSince(anyString())).thenReturn(List.of("ok1.example.com", "f.example.com"));
         Map<String, Object> c = svc.recentChanges(7, t -> t != null && t == 1L);
         assertThat(c).containsEntry("days", 7).containsEntry("added", 1).containsEntry("removed", 1).containsEntry("renewed", 1)

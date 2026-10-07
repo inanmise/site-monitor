@@ -88,19 +88,22 @@ class StandaloneMonitorSoftDeleteTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    @DisplayName("Mükerrer/canlandırma sorguları: duraklatılmış engel, silinmiş engel DEĞİL; DNS'te en son silinmiş canlandırılır")
-    void duplicateAndReviveQueries() {
+    @DisplayName("Mükerrer sorguları: duraklatılmış engel, (eski sürümden kalmış) silinmiş engel DEĞİL; temizlik sorgusu yalnız silinmişleri okur")
+    void duplicateQueries_andLegacyPurgeFinder() {
         port("durdu.example.com", true, false, null, null);
-        port("silindi.example.com", true, false, NOW, null);
+        PortMonitor goneP = port("silindi.example.com", true, false, NOW, null);
         assertThat(portRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull("durdu.example.com", 443)).isTrue();
         assertThat(portRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull("silindi.example.com", 443)).isFalse();
         assertThat(portRepo.existsByHostAndPortAndActiveTrue("silindi.example.com", 443)).isFalse();
 
-        dns("iki.example.com", true, false, "2026-09-01T00:00:00");
+        // 2026-10-07: canlandırma sorgusu kalktı (silme kalıcı); eski silinmiş satırları yalnız tek seferlik temizlik okur.
+        DnsMonitor older = dns("iki.example.com", true, false, "2026-09-01T00:00:00");
         DnsMonitor newer = dns("iki.example.com", true, false, "2026-09-02T00:00:00");
         assertThat(dnsRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull("iki.example.com", "A")).isEmpty();
-        assertThat(dnsRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc("iki.example.com", "A"))
-                .get().extracting(DnsMonitor::getId).isEqualTo(newer.getId());
+        assertThat(dnsRepo.findByDeletedAtIsNotNullOrderByIdAsc()).extracting(DnsMonitor::getId)
+                .containsExactly(older.getId(), newer.getId());
+        assertThat(portRepo.findByDeletedAtIsNotNullOrderByIdAsc()).extracting(PortMonitor::getId)
+                .containsExactly(goneP.getId());
         DnsMonitor paused = dns("uc.example.com", true, false, null);
         assertThat(dnsRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull("uc.example.com", "A"))
                 .get().extracting(DnsMonitor::getId).isEqualTo(paused.getId());

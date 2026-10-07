@@ -94,6 +94,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.PublicSuffixService publicSuffixService;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.sitemonitor.service.EscalationService escalationService;
+    /** Bağımsız Port/DNS kalıcı silmesi (2026-10-07) — servis kendi testinde (PermanentDeletionServiceTest) H2 ile sınanır. */
+    @MockitoBean com.sitemonitor.service.PermanentDeletionService permanentDeletion;
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;
     @MockitoBean com.sitemonitor.service.MonitoringOutageService monitoringOutageService;   // canlı teyit endpoint'i (2026-08-03)
     @MockitoBean com.sitemonitor.service.AlertKeyOwnershipService alertKeyOwnership;       // teyit listesi kapsamı (A4, 2026-09-28)
@@ -3992,40 +3994,24 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /dns/{id}: TEAM_ADMIN siler — ama KALICI DEĞİL, satır pasifleşir")
-    void deleteDns_teamAdmin_deactivatesInsteadOfHardDelete() throws Exception {
-        // B3: eskiden standalone dalı dnsMonitorRepo.delete(m) çağırıyordu. standalone, isteği
-        // yapanın AYNI akışta çevirebildiği bir alan (updateDns → detachIfIdentityChanged), yani
-        // iki çağrı geri alınabilir bir duraklatmayı KALICI silmeye yükseltiyordu.
+    @DisplayName("DELETE /dns/{id}: TEAM_ADMIN bağımsız izlemeyi KALICI siler (2026-10-07) — servis tek işlemde siler, satır pasifleştirilmez")
+    void deleteDns_teamAdmin_standalonePermanent() throws Exception {
         com.sitemonitor.model.DnsMonitor m = standaloneDns(32L);
         when(dnsMonitorRepo.findById(32L)).thenReturn(java.util.Optional.of(m));
-        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mvc.perform(delete("/api/monitoring/dns/32").session(teamSession("TEAM_ADMIN", 5L, 5L)))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true))
+                .andExpect(jsonPath("$.data.permanent").value(true));
 
-        verify(dnsMonitorRepo, never()).delete(any());   // satır TABLODA KALIR
-        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
-                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
-        verify(dnsMonitorRepo).save(cap.capture());
-        assertThat(cap.getValue().getActive()).isFalse();
+        verify(permanentDeletion).deleteStandaloneDns(m);   // alarmlar + kayıt serisi + satır (PermanentDeletionServiceTest)
+        verify(dnsMonitorRepo, never()).save(any());        // yumuşak silme / pasifleştirme YOK
+        verify(auditService).recordAction(eq("MONITOR_DELETE"), any(), eq("DNS_MONITOR"), eq("32"), any(), any());
     }
 
     @Test
-    @DisplayName("POST /dns: SİLİNMİŞ domain+tip yeniden eklenebilir — satır canlanır, deleted_at temizlenir, eski ayarlar sızmaz")
-    void createDns_revivesDeletedRow() throws Exception {
-        // Yeni satır DEĞİL canlandırma: standalone'da uq_dnsm_domain yok; id + geçmiş korunur (2026-09-27: yalnız
-        // SİLİNMİŞ satır canlanır, duraklatılmış satır engeldir — bkz. createDns_pausedDuplicate_blocked).
-        com.sitemonitor.model.DnsMonitor dead = standaloneDns(33L);
-        dead.setActive(false);
-        dead.setDeletedAt("2026-09-01T00:00:00");
-        dead.setCreatedAt("2026-01-01T00:00:00");
-        dead.setAlertLevel("CRITICAL");          // silinmiş izlemenin ayarları — yeni izlemeye SIZMAMALI
-        dead.setIntervalSeconds(3600);
-        dead.setConfirmAttempts(9);
-        dead.setExpectedValue("192.0.2.9");
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc("own.example.com", "A"))
-                .thenReturn(java.util.Optional.of(dead));
+    @DisplayName("POST /dns: silinen domain+tip yeniden eklenince TEMİZ yeni satır açılır — canlandırma yok (2026-10-07)")
+    void createDns_afterDelete_createsFreshRow() throws Exception {
         when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mvc.perform(post("/api/monitoring/dns").session(teamSession("TEAM_ADMIN", 5L, 5L))
@@ -4037,14 +4023,12 @@ class MonitoringControllerTest {
                 org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
         verify(dnsMonitorRepo).save(cap.capture());
         com.sitemonitor.model.DnsMonitor saved = cap.getValue();
-        assertThat(saved.getId()).isEqualTo(33L);                                  // AYNI satır (geçmiş kesintisiz)
-        assertThat(saved.getActive()).isTrue();                                    // canlandı
-        assertThat(saved.getDeletedAt()).as("silinmiş işareti temizlenmeli").isNull();
-        assertThat(saved.getCreatedAt()).isEqualTo("2026-01-01T00:00:00");         // özgün tarih korundu
-        assertThat(saved.getAlertLevel()).isNull();
+        assertThat(saved.getId()).as("yeni satır — eski kimlik canlandırılmaz").isNull();
+        assertThat(saved.getActive()).isTrue();
+        assertThat(saved.getDeletedAt()).isNull();
+        assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getIntervalSeconds()).isEqualTo(300);
         assertThat(saved.getConfirmAttempts()).isEqualTo(3);
-        assertThat(saved.getExpectedValue()).isNull();
     }
 
     @Test
@@ -4641,37 +4625,49 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("SOFT-DELETE: DELETE /port — standalone satıra deleted_at yazılır; envanter-türevi yalnız duraklar")
-    void deletePort_standaloneMarkedDeleted_derivedOnlyPaused() throws Exception {
-        when(portMonitorRepo.findById(43L)).thenReturn(Optional.of(standalonePort(43L, "sil.example.com", true, null)));
+    @DisplayName("KALICI SİLME (2026-10-07): DELETE /port — bağımsız satır servisle KALICI silinir; envanter-türevi yalnız duraklar")
+    void deletePort_standalonePermanent_derivedOnlyPaused() throws Exception {
+        com.sitemonitor.model.PortMonitor standalone = standalonePort(43L, "sil.example.com", true, null);
+        when(portMonitorRepo.findById(43L)).thenReturn(Optional.of(standalone));
         when(portMonitorRepo.findById(44L)).thenReturn(Optional.of(inventoryPort(44L, "turev.example.com", 3L)));
         when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        mvc.perform(delete("/api/monitoring/port/43").session(session("ADMIN"))).andExpect(status().isOk());
-        mvc.perform(delete("/api/monitoring/port/44").session(session("ADMIN"))).andExpect(status().isOk());
+        mvc.perform(delete("/api/monitoring/port/43").session(session("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.permanent").value(true));
+        mvc.perform(delete("/api/monitoring/port/44").session(session("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.permanent").value(false));
 
+        verify(permanentDeletion).deleteStandalonePort(standalone);   // alarmlar + seri + satır (PermanentDeletionServiceTest)
+        verify(permanentDeletion, never()).deleteStandalonePort(org.mockito.ArgumentMatchers.argThat(p -> p.getId() == 44L));
         org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap =
                 org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
-        verify(portMonitorRepo, org.mockito.Mockito.times(2)).save(cap.capture());
-        assertThat(cap.getAllValues().get(0).getActive()).isFalse();
-        assertThat(cap.getAllValues().get(0).getDeletedAt()).as("standalone silindi").isNotNull();
-        assertThat(cap.getAllValues().get(1).getActive()).isFalse();
-        assertThat(cap.getAllValues().get(1).getDeletedAt()).as("envanter-türevi yalnız duraklar").isNull();
+        verify(portMonitorRepo).save(cap.capture());   // YALNIZ türev satır (duraklatma); bağımsız satıra yumuşak silme yazılmaz
+        assertThat(cap.getValue().getId()).isEqualTo(44L);
+        assertThat(cap.getValue().getActive()).isFalse();
+        assertThat(cap.getValue().getDeletedAt()).as("envanter-türevi yalnız duraklar").isNull();
     }
 
     @Test
-    @DisplayName("SOFT-DELETE: DELETE /dns — standalone satıra deleted_at yazılır")
-    void deleteDns_standaloneMarkedDeleted() throws Exception {
-        when(dnsMonitorRepo.findById(45L)).thenReturn(Optional.of(standaloneDns(45L)));
+    @DisplayName("KALICI SİLME (2026-10-07): DELETE /dns — bağımsız satır servisle silinir; envanter-türevi yalnız duraklar")
+    void deleteDns_standalonePermanent_derivedOnlyPaused() throws Exception {
+        com.sitemonitor.model.DnsMonitor standalone = standaloneDns(45L);
+        com.sitemonitor.model.DnsMonitor derived = standaloneDns(46L);
+        derived.setStandalone(false);
+        when(dnsMonitorRepo.findById(45L)).thenReturn(Optional.of(standalone));
+        when(dnsMonitorRepo.findById(46L)).thenReturn(Optional.of(derived));
         when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
         mvc.perform(delete("/api/monitoring/dns/45").session(session("ADMIN"))).andExpect(status().isOk());
+        mvc.perform(delete("/api/monitoring/dns/46").session(session("ADMIN"))).andExpect(status().isOk());
 
+        verify(permanentDeletion).deleteStandaloneDns(standalone);
+        verify(permanentDeletion, never()).deleteStandaloneDns(derived);
         org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
                 org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
         verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getId()).isEqualTo(46L);
         assertThat(cap.getValue().getActive()).isFalse();
-        assertThat(cap.getValue().getDeletedAt()).isNotNull();
+        assertThat(cap.getValue().getDeletedAt()).isNull();
     }
 
     @Test

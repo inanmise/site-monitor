@@ -382,8 +382,9 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // Onay artık PROJENİN diyaloğu (window.confirm değil): tarayıcı-varsayılanı kutu tasarım
       // sisteminin dışındaydı ve jsdom'da hiç çalışmadığı için bu yol yalnız spy ile test
       // edilebiliyordu — yani gerçek onay akışı test EDİLMİYORDU.
-      // Onay penceresi form penceresinin ÜSTÜNDE açılır — adıyla (başlık "Sil") ayırt edilir.
-      const dlg = await screen.findByRole('dialog', { name: /^(sil|delete)$/i })
+      // Onay penceresi form penceresinin ÜSTÜNDE açılır — adıyla (başlık "İzlemeyi kalıcı olarak sil", 2026-10-07) ayırt edilir.
+      const dlg = await screen.findByRole('dialog', { name: /^(İzlemeyi kalıcı olarak sil|Delete monitor permanently)$/ })
+      expect(dlg).toHaveTextContent(/llm-test/)
       fireEvent.click(within(dlg).getByRole('button', { name: /^sil$|^delete$/i }))
       await waitFor(() => expect(api.monitoring.deleteScriptedMonitor).toHaveBeenCalled())
 

@@ -37,7 +37,7 @@ import { MAX_MESSAGE, EMAIL_RE, browserLabel, processImageFiles, imagesFromClipb
  * aynı akışı kullanır ama bölüm 1 salt-okunur özet (alan adı, mevcut / istenen ekip) + zorunlu "Gerekçe" olur; önem
  * kartları ve ekran görüntüsü bölümü çizilmez. Gönderimde tür `DOMAIN_TRANSFER`, ileti `composeTransferRequest` —
  * talep global yöneticilerin Sorun Bildirimleri ekranına bu türle düşer (tür süzgeci). Şekil:
- * `{ domain, inventoryId, fromTeam:{id,name}, toTeam:{id,name}, deleted }`.
+ * `{ domain, inventoryId, fromTeam:{id,name}, toTeam:{id,name} }` (2026-10-07: `deleted` kalktı — silme kalıcı, çöp kutusu yok).
  */
 export default function IssueReportModal({ open, onClose, errorText = '', linkedReference = '', onSubmitted, domainTransfer = null }) {
   const t = useT()
@@ -322,7 +322,6 @@ function TransferSummary({ transfer, t }) {
         <dd className="m-0 min-w-0 font-mono text-[13px] font-semibold [overflow-wrap:anywhere]">{transfer.domain}</dd></div>
       <div className={row}><dt className={dt}>{t('dupx.reqFrom')}</dt><dd className="m-0 min-w-0">{team(transfer.fromTeam)}</dd></div>
       <div className={row}><dt className={dt}>{t('dupx.reqTo')}</dt><dd className="m-0 min-w-0">{team(transfer.toTeam)}</dd></div>
-      {transfer.deleted && <p className="m-0 text-xs text-amber-700 dark:text-amber-300">{t('dupx.reqBin')}</p>}
     </dl>
   )
 }

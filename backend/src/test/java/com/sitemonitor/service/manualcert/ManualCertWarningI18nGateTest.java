@@ -40,10 +40,11 @@ class ManualCertWarningI18nGateTest {
     }
 
     @Test
-    @DisplayName("katalog sözleşmedeki 28 kodu taşır, tekrar yok")
+    @DisplayName("katalog sözleşmedeki 28 kodu taşır, tekrar yok (2026-10-08: PRIVATE_KEY_IGNORED → PRIVATE_KEY_KEPT_LOCAL)")
     void catalogMatchesContract() {
         assertThat(CertificateFileParser.WARNING_CODES).hasSize(28).doesNotHaveDuplicates()
-                .contains("PRIVATE_KEY_IGNORED", "ZIP_LIMIT", "CHAIN_INCOMPLETE", "SAN_CHANGED", "OLDER_THAN_CURRENT");
+                .contains("PRIVATE_KEY_KEPT_LOCAL", "ZIP_LIMIT", "CHAIN_INCOMPLETE", "SAN_CHANGED", "OLDER_THAN_CURRENT")
+                .doesNotContain("PRIVATE_KEY_IGNORED");
     }
 
     @Test

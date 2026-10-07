@@ -17,7 +17,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
-import { ActiveBadge, DeletedBadge, TierBadge } from './InventoryTable.jsx'
+import { ActiveBadge, TierBadge } from './InventoryTable.jsx'
 import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
 import { isManualCert } from '../manualcert/manualCertModel.js'
 import {
@@ -97,7 +97,6 @@ function InventorySummary({ record, teamName, ugTeamName, platformName, compact,
   const contactsN = filledContactFields(record).length
   const total = CONTACT_FIELDS.length
   const missing = missingFields(record)
-  const deleted = !!record.deleted_at
   const actions = (onOpenInventory || onEdit) && (
     <div data-slot="inv-summary-actions" className="flex w-full min-w-0 gap-2 @xl:w-auto @xl:shrink-0">
       {onOpenInventory && (
@@ -148,8 +147,7 @@ function InventorySummary({ record, teamName, ugTeamName, platformName, compact,
             </span>
           )
           : <Badge variant="outline" data-slot="inv-tier" data-tier="none" className={cn(CHIP, TONE.warn)}>{t('inv.det.tierNone')}</Badge>}
-        {!compact && !deleted && <ActiveBadge r={record} t={t} />}
-        {!compact && deleted && <DeletedBadge r={record} t={t} />}
+        {!compact && <ActiveBadge r={record} t={t} />}
         {isManualCert(record) && <ManualCertBadge version={record.manual_version ?? null} uploadedAt={record.manual_uploaded_at ?? null} rowLabel={record.domain} />}
         {platformName && <Badge variant="outline" data-slot="inv-platform-chip" className={cn(CHIP, TONE.muted)}><Server aria-hidden="true" />{platformName}</Badge>}
         {record.group_name && <Badge variant="outline" data-slot="inv-group-chip" className={cn(CHIP, TONE.muted)}><FolderOpen aria-hidden="true" />{record.group_name}</Badge>}
@@ -383,7 +381,7 @@ export function InventoryTab({ domain, onEdit, onLeave }) {
     return <StatusBlock tone="neutral" icon={PackageSearch} title={t('modal.inventoryEmpty')} description={t('inv.det.notFoundHint')} />
   }
   const record = state.record
-  const canEdit = !!onEdit && record.can_manage !== false && !record.deleted_at
+  const canEdit = !!onEdit && record.can_manage !== false && !record.deleted_at   // eski sürümden kalmış çöp satırı (savunma)
   const openInventory = onLeave
     ? () => { onLeave(); navigateTo('domains', inventoryDeepLinkParams(record)) }
     : undefined

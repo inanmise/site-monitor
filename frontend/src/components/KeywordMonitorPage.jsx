@@ -36,6 +36,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -133,7 +134,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — her açılış Zengin başlar; Kompakt seçimi yalnız sayfada kalındıkça
   // geçerli, KALICI DEĞİL (kullanıcı kararı: sayfa değişip dönünce ya da yenileyince yeniden Zengin)
   const [density, setDensity] = useCardDensity('keyword')
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
+  const monitors = useWithoutDeleted(monitorKind('keyword'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
@@ -410,9 +413,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
+      // Kart HEMEN düşer (işaret), açık detay kapanır; liste arka planda tazelenir — arayüz beklemez.
+      markMonitorDeleted('keyword', m.id, res)
+      setSelected((s) => (s?.id === m.id ? null : s))
       toast.success(t('keyword.deleted'))
 
-      await load()
+      load()
     } finally {
       setDeleting(null)
     }
@@ -421,10 +427,16 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   async function del() {
     if (!modal || modal === 'new') return
+    // Kalıcı silme (2026-10-07): düzenleme penceresinden de ADIYLA ve geri alınamaz olduğu söylenerek onay alınır.
+    if (!await showConfirm({ title: t('mon.deleteTitle'), message: t('mon.deleteMsg', modal.name || modal.url),
+      confirmText: t('keyword.delete'), cancelText: t('keyword.cancel'), variant: 'danger' })) return
     const res = await api.monitoring.deleteKeywordMonitor(modal.id)
-    await load()
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    const id = modal.id
+    markMonitorDeleted('keyword', id, res)   // anında düşer; tazeleme arka planda
+    setSelected((s) => (s?.id === id ? null : s))
     toast.success(t('keyword.deleted')); closeEdit()
+    load()
   }
 
   async function checkNow(m) {

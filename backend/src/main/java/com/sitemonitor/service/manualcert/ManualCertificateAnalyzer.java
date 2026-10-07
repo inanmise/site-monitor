@@ -41,6 +41,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Yüklenen sertifika dosyasının ANALİZİ (2026-10-06) — ayrıştırma ({@link CertificateFileParser}) + girdi başına zincir,
  * durum, uyarı, zayıflık, güven, önerilen takip adı ve mevcut kayıtlarla eşleşme.
  *
+ * <p><b>Zincir başına TEK girdi (2026-10-07, kullanıcı isteği):</b> dosyadaki yaprak + ara + kök gibi parçalar ayrı ayrı
+ * takip kartı olmaz. Her tekil sertifikanın zinciri kurulur; BAŞKA bir sertifikanın zincirinde (veren / ara / kök
+ * olarak) yer alan sertifika ayrı girdi DEĞİLDİR, o zincirin başına katlanır. Girdiler = zincir başları:
+ * yaprak + ara + kök → 1 (yaprak); ara + kök → 1 (ara); ortak arayı paylaşan iki yaprak → 2; ilgisiz iki kök → 2;
+ * tek sertifika → 1. Döngülü (çapraz imzalı) bir küme hiç baş bırakmazsa dosya sırasındaki ilk kapsanmayan sertifika
+ * baş olur — hiçbir sertifika kaybolmaz. Katlanan sertifika {@code ref} olarak seçilemez ({@link Analysis#headOf}).
+ *
  * <p>Salt okuma: veritabanına YAZMAZ. Eşleşme sorguları TOPLUdur (girdi sayısından bağımsız, en çok beş sorgu).
  * Ayrıştırma {@value #PARSE_TIMEOUT_SECONDS} sn ile zaman kutusundadır (küçük, sınırlı bir iş havuzunda).
  */
@@ -90,6 +97,19 @@ public class ManualCertificateAnalyzer {
     /** Ayrıştırma havuzu dolu. */
     public static class BusyException extends RuntimeException {
         public BusyException() { super("parser busy"); }
+    }
+
+    /**
+     * Ham yükleme özel anahtar / anahtar deposu taşıyor (2026-10-08): sunucu bunu AÇMAZ ve kabul etmez — çağıran 400
+     * {@code PRIVATE_KEY_NOT_ACCEPTED} döner. {@link #kind()} yalnız tür ({@code PKCS12}, {@code JKS}, {@code PRIVATE_KEY} …).
+     */
+    public static class PrivateMaterialRejected extends RuntimeException {
+        private final String kind;
+        public PrivateMaterialRejected(String kind) {
+            super("private material rejected", null, false, false);
+            this.kind = kind;
+        }
+        public String kind() { return kind; }
     }
 
     // ── Sonuç modeli ─────────────────────────────────────────────────────────
@@ -230,61 +250,173 @@ public class ManualCertificateAnalyzer {
     /** Analiz sonucu. */
     public static final class Analysis {
         public final CertificateFileParser.Result parsed;
+        /** Zincir başları — takip edilebilecek girdiler (dosya sırasıyla). */
         public final List<Entry> entries;
         public final List<Warning> warnings;
         public final String defaultRef;
+        /** Dosyadaki TEKİL sertifika sayısı (zincir üyeleri dahil). */
+        public final int certificateCount;
+        /** Bir başın zincirine katlanan sertifikanın parmak izi → o başın parmak izi. */
+        final Map<String, String> folded;
         final int warningDays;
 
         Analysis(CertificateFileParser.Result parsed, List<Entry> entries, List<Warning> warnings, String defaultRef,
                  int warningDays) {
+            this(parsed, entries, warnings, defaultRef, entries.size(), Map.of(), warningDays);
+        }
+
+        Analysis(CertificateFileParser.Result parsed, List<Entry> entries, List<Warning> warnings, String defaultRef,
+                 int certificateCount, Map<String, String> folded, int warningDays) {
             this.parsed = parsed;
             this.entries = entries;
             this.warnings = warnings;
             this.defaultRef = defaultRef;
+            this.certificateCount = certificateCount;
+            this.folded = folded;
             this.warningDays = warningDays;
         }
 
+        /** Seçilebilir girdi (zincir başı); katlanan zincir üyesi için null — bkz. {@link #headOf}. */
         public Entry find(String ref) {
             if (ref == null) return null;
             for (Entry e : entries) if (e.ref.equalsIgnoreCase(ref.trim())) return e;
             return null;
         }
 
+        /**
+         * {@code ref} bir başın zincirine katlanmış (ara / kök) sertifikaysa o baş; değilse null. Oluşturma / toplu /
+         * yenileme bu durumda açık bir alan hatası döner ("zincirin başını seçin").
+         */
+        public Entry headOf(String ref) {
+            if (ref == null) return null;
+            String head = folded.get(ref.trim().toUpperCase(Locale.ROOT));
+            return head == null ? null : find(head);
+        }
+
         public String format() { return parsed.format(); }
         public String fileName() { return parsed.fileName(); }
 
         public Map<String, Object> toJson() {
+            return toJson(null);
+        }
+
+        /**
+         * @param preview girdi başına SSL sekmesiyle AYNI biçimli sonuç haritası (çevrim-dışı değerlendirme; arayüz zinciri
+         *                ağ sertifikasının zincir görünümüyle çizer) — null ise {@code preview} anahtarı yazılmaz
+         */
+        public Map<String, Object> toJson(java.util.function.Function<Entry, Map<String, Object>> preview) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("format", parsed.format());
             m.put("file_name", parsed.fileName());
             m.put("size_bytes", parsed.sizeBytes());
-            m.put("needs_password", parsed.needsPassword());
-            m.put("password_error", parsed.passwordError());
+            // Parola artık yalnız tarayıcıda (2026-10-08) — alanlar geriye uyum için sabit false
+            m.put("needs_password", false);
+            m.put("password_error", false);
             m.put("warnings", warnings.stream().map(Warning::toJson).toList());
             m.put("csr", parsed.csr() == null ? null : parsed.csr().toJson());
-            m.put("entries", entries.stream().map(e -> e.toJson(warningDays)).toList());
+            m.put("certificate_count", certificateCount);
+            List<Map<String, Object>> list = new ArrayList<>(entries.size());
+            for (Entry e : entries) {
+                Map<String, Object> ej = e.toJson(warningDays);
+                if (preview != null) ej.put("preview", safePreview(preview, e));
+                list.add(ej);
+            }
+            m.put("entries", list);
             m.put("default_ref", defaultRef);
             return m;
         }
+
+        private static Map<String, Object> safePreview(java.util.function.Function<Entry, Map<String, Object>> preview, Entry e) {
+            try {
+                return preview.apply(e);
+            } catch (Exception ex) {
+                log.debug("Manuel sertifika önizlemesi kurulamadı: {}", ex.toString());
+                return null;
+            }
+        }
+    }
+
+    /** Zincir gruplaması: başlar (dosya sırası) + her tekilin zinciri + katlanan üye → baş eşlemesi. */
+    record Grouping(List<String> heads, Map<String, List<X509Certificate>> chains, Map<String, String> folded) { }
+
+    /**
+     * Tekilleştirilmiş sertifikalardan zincir başlarını seçer (sınıf açıklamasındaki kural).
+     *
+     * @param unique parmak izi (büyük harf) → sertifika, dosya sırasıyla
+     */
+    static Grouping groupChains(LinkedHashMap<String, X509Certificate> unique) {
+        List<X509Certificate> pool = new ArrayList<>(unique.values());
+        Map<String, List<X509Certificate>> chains = new LinkedHashMap<>();
+        Map<String, List<String>> chainFps = new LinkedHashMap<>();
+        Set<String> members = new HashSet<>();
+        for (Map.Entry<String, X509Certificate> e : unique.entrySet()) {
+            List<X509Certificate> chain = ManualCertificateChains.buildChain(e.getValue(), pool);
+            chains.put(e.getKey(), chain);
+            List<String> fps = new ArrayList<>(chain.size());
+            for (X509Certificate c : chain) {
+                String fp = fingerprint(c);
+                if (fp != null && !fp.equals(e.getKey())) fps.add(fp);
+            }
+            chainFps.put(e.getKey(), fps);
+            members.addAll(fps);
+        }
+        List<String> heads = new ArrayList<>();
+        Set<String> covered = new HashSet<>();
+        for (String fp : unique.keySet()) {
+            if (members.contains(fp)) continue;
+            heads.add(fp);
+            covered.add(fp);
+            covered.addAll(chainFps.get(fp));
+        }
+        // Döngü koruması (çapraz imza): hiçbir başın zincirinde olmayan sertifika kendisi baş olur — kaybolmaz.
+        for (String fp : unique.keySet()) {
+            if (covered.contains(fp)) continue;
+            heads.add(fp);
+            covered.add(fp);
+            covered.addAll(chainFps.get(fp));
+        }
+        Set<String> headSet = new HashSet<>(heads);
+        Map<String, String> folded = new HashMap<>();
+        for (String h : heads) {
+            for (String m : chainFps.get(h)) {
+                if (!headSet.contains(m)) folded.putIfAbsent(m, h);
+            }
+        }
+        // Sıra: dosya sırası (döngü korumasıyla eklenen baş da kendi yerinde)
+        List<String> ordered = new ArrayList<>(heads.size());
+        for (String fp : unique.keySet()) if (headSet.contains(fp)) ordered.add(fp);
+        return new Grouping(ordered, chains, folded);
     }
 
     // ── Analiz ───────────────────────────────────────────────────────────────
 
     /**
-     * Ayrıştırır (zaman kutulu) ve analiz eder. Parola KOPYALANMAZ; sıfırlamak çağıranın işidir.
+     * HAM yüklemeyi (API istemcileri: anahtarsız PEM / DER / PKCS7 / ZIP) ayrıştırır (zaman kutulu) ve analiz eder.
+     * Parola parametresi YOK (2026-10-08): anahtar deposu / PKCS#12 / özel anahtar yalnız tanınır ve reddedilir.
      *
      * @throws TimeoutExceededException {@value #PARSE_TIMEOUT_SECONDS} sn aşıldı
      * @throws BusyException            ayrıştırma havuzu dolu
+     * @throws PrivateMaterialRejected  yükleme özel anahtar / anahtar deposu taşıyor
      */
-    public Analysis analyze(byte[] data, String fileName, char[] password, boolean pasted) {
-        CertificateFileParser.Result parsed = parseTimed(data, fileName, password, pasted);
+    public Analysis analyze(byte[] data, String fileName, boolean pasted) {
+        CertificateFileParser.Result parsed = parseTimed(data, fileName, pasted);
+        if (parsed.privateMaterial() != null) throw new PrivateMaterialRejected(parsed.privateMaterial());
         return analyzeParsed(parsed);
     }
 
-    CertificateFileParser.Result parseTimed(byte[] data, String fileName, char[] password, boolean pasted) {
+    /**
+     * Tarayıcıda ayıklanmış yükleme ({@link ExtractedUpload#parse} ile doğrulanmış AÇIK sertifikalar) — 2026-10-08. Ayrıştırma
+     * yok (sertifikalar doğrulamada çözüldü); analiz ham yolla birebir aynı (zincir gruplama, anahtar girdisi tercihi,
+     * eşleşmeler, öneriler).
+     */
+    public Analysis analyzeExtracted(CertificateFileParser.Result extracted) {
+        return analyzeParsed(extracted);
+    }
+
+    CertificateFileParser.Result parseTimed(byte[] data, String fileName, boolean pasted) {
         Future<CertificateFileParser.Result> f;
         try {
-            f = parsePool.submit(() -> CertificateFileParser.parse(data, fileName, password, pasted));
+            f = parsePool.submit(() -> CertificateFileParser.parse(data, fileName, pasted));
         } catch (RejectedExecutionException e) {
             throw new BusyException();
         }
@@ -300,8 +432,7 @@ public class ManualCertificateAnalyzer {
         } catch (ExecutionException e) {
             Throwable c = e.getCause() != null ? e.getCause() : e;
             log.warn("Sertifika dosyası ayrıştırılamadı: {}", c.getClass().getSimpleName());
-            CertificateFileParser.Result r = CertificateFileParser.parse(new byte[0], fileName, null, pasted);
-            return r;
+            return CertificateFileParser.parse(new byte[0], fileName, pasted);
         }
     }
 
@@ -328,17 +459,20 @@ public class ManualCertificateAnalyzer {
         if (duplicates > 0) fileWarnings.add(new Warning("DUPLICATE_IN_FILE", CertificateFileParser.SEV_INFO,
                 Map.of("count", duplicates)));
 
-        List<X509Certificate> pool = unique.values().stream().map(ParsedCert::cert).toList();
+        LinkedHashMap<String, X509Certificate> certs = new LinkedHashMap<>();
+        for (Map.Entry<String, ParsedCert> e : unique.entrySet()) certs.put(e.getKey(), e.getValue().cert());
 
-        // 2) Girdiler: zincir + güven.
+        // 2) Girdiler = zincir başları (yaprak + ara + kök → tek girdi); zincir + güven yalnız başlar için.
+        Grouping g = groupChains(certs);
         List<Entry> entries = new ArrayList<>();
-        for (Map.Entry<String, ParsedCert> e : unique.entrySet()) {
-            ParsedCert pc = e.getValue();
-            List<X509Certificate> chain = ManualCertificateChains.buildChain(pc.cert(), pool);
+        for (String fp : g.heads()) {
+            ParsedCert pc = unique.get(fp);
+            List<X509Certificate> chain = g.chains().get(fp);
             ManualCertificateChains.Trust trust = ManualCertificateChains.trust(trustEvaluator, pc.cert(), chain);
-            entries.add(new Entry(pc.cert(), chain, e.getKey(), pc.alias(), pc.keyEntry(), trust, now));
+            entries.add(new Entry(pc.cert(), chain, fp, pc.alias(), pc.keyEntry(), trust, now));
         }
 
+        // Birden çok bağımsız UÇ sertifika (CA olmayan zincir başı)
         long leaves = entries.stream().filter(en -> !en.isCa).count();
         if (leaves > 1) fileWarnings.add(new Warning("MULTIPLE_LEAVES", CertificateFileParser.SEV_INFO,
                 Map.of("count", (int) leaves)));
@@ -352,7 +486,7 @@ public class ManualCertificateAnalyzer {
             applySuggestions(entries);
         }
 
-        return new Analysis(parsed, entries, fileWarnings, defaultRef(entries), warningDays);
+        return new Analysis(parsed, entries, fileWarnings, defaultRef(entries), certs.size(), g.folded(), warningDays);
     }
 
     private void addEntryWarnings(Entry en) {
@@ -465,7 +599,7 @@ public class ManualCertificateAnalyzer {
         }
     }
 
-    /** Önerilen takip adı: CN/ilk SAN; envanterde (silinmiş dahil) varsa {@code -manuel}, {@code -manuel-2} … */
+    /** Önerilen takip adı: CN/ilk SAN; envanterde (canlı kayıt — silinen kayıt adı tutmaz, 2026-10-07) varsa {@code -manuel}, {@code -manuel-2} … */
     private void applySuggestions(List<Entry> entries) {
         Map<Entry, List<String>> cands = new LinkedHashMap<>();
         Set<String> all = new LinkedHashSet<>();
@@ -486,7 +620,8 @@ public class ManualCertificateAnalyzer {
                 String base = ce.getValue().get(0);
                 for (int i = 10; i < 1000 && pick == null; i++) {
                     String c = base + ManualCertificateKeys.SUFFIX + "-" + i;
-                    if (!used.contains(c) && inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(c).isEmpty()) pick = c;
+                    if (!used.contains(c) && inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(c)
+                            .filter(row -> row.getDeletedAt() == null).isEmpty()) pick = c;
                 }
             }
             if (pick != null) used.add(pick);
@@ -494,8 +629,9 @@ public class ManualCertificateAnalyzer {
         }
     }
 
-    /** Önerilen girdi: anahtar girdisinin yaprağı; yoksa (tek) uç sertifika; yoksa tek sertifika. */
+    /** Önerilen girdi: tek zincir başı varsa o; anahtar girdisinin yaprağı; yoksa (tek) uç sertifika; yoksa tek sertifika. */
     static String defaultRef(List<Entry> entries) {
+        if (entries.size() == 1) return entries.get(0).ref;
         for (Entry e : entries) if (e.keyEntry && !e.isCa) return e.ref;
         for (Entry e : entries) if (e.keyEntry) return e.ref;
         List<Entry> leaves = entries.stream().filter(e -> !e.isCa).toList();

@@ -281,7 +281,7 @@ export const INVENTORY = [
   invRow(7, { domain: 'status.example.org', tier: 3, team_id: 2, team_name: 'Takım B', can_manage: false, cert_days_remaining: 64, cert_not_after: invAt(64) }),
   invRow(8, { domain: 'portal.example.org', team_id: null, team_name: null, cert_status: 'high', cert_days_remaining: 12, cert_not_after: invAt(12), platform: 'IIS' }),
   invRow(9, { domain: 'shop.example.com', tier: 1, active: false, group_name: 'Ödeme Sistemleri', cert_days_remaining: 80, cert_not_after: invAt(80), ssl_pinning: true }),
-  invRow(10, { domain: 'mail.example.com', tier: 3, deleted_at: iso(5 * 24 * HOUR), cert_days_remaining: 40, cert_not_after: invAt(40) }),
+  invRow(10, { domain: 'mail.example.com', tier: 3, cert_days_remaining: 40, cert_not_after: invAt(40) }),   // 2026-10-07: çöp kutusu yok
   invRow(11, { domain: 'raporlama.example.com', team_id: 2, team_name: 'Takım B', can_manage: false, cert_status: 'warning', cert_days_remaining: 28, cert_not_after: invAt(28), platform: 'OpenShift' }),
   invRow(12, { domain: 'auth.example.com', tier: 1, cert_days_remaining: 45, cert_not_after: invAt(45), domain_expiry: invAt(20).slice(0, 10), domain_registrar: 'Örnek Tescil Ltd.', jks_keystore: true }),
   invRow(13, { domain: 'docs.example.org', tier: 4, cert_days_remaining: 200, cert_not_after: invAt(200), use_proxy: true, check_interval_hours: 24, tls_mode: 'browser' }),
@@ -507,7 +507,7 @@ function sqlMock(p, request) {
 const PERM_CATALOG = [
   { resource_key: 'inventory.list', group: 'certificates', actions: ['view'], sensitive: [] },
   { resource_key: 'inventory.crud', group: 'certificates', actions: ['edit'], sensitive: [] },
-  { resource_key: 'inventory.purge', group: 'certificates', actions: ['execute'], sensitive: ['execute'] },
+  { resource_key: 'inventory.transfer', group: 'certificates', actions: ['execute'], sensitive: ['execute'] },
   { resource_key: 'notification.groups', group: 'communication', actions: ['view'], sensitive: [] },
   { resource_key: 'notification.groups', group: 'communication', actions: ['edit'], sensitive: [] },
   { resource_key: 'monitoring.scripted', group: 'monitoring', actions: ['edit', 'execute'], sensitive: ['edit', 'execute'] },
@@ -943,10 +943,10 @@ export async function mockApi(page, opts = {}) {
       // Yanıt süresi serisi (ResponseTimeChart zarfı) — 24 saatlik kova, bir kesinti, p95 tepesi
       body = { success: true, data: RESPONSE_SERIES }
     } else if (p === '/api/admin/inventory') {
-      // Domain Envanteri (2026-09-27): scope=all başka takımın (salt okunur) kayıtlarını da döner; showDeleted silinmişleri
+      // Domain Envanteri (2026-09-27): scope=all başka takımın (salt okunur) kayıtlarını da döner (2026-10-07: silme kalıcı —
+      // çöp kutusu / showDeleted yok)
       const all = u.searchParams.get('scope') === 'all'
-      const showDeleted = u.searchParams.get('showDeleted') === 'true'
-      const rows = INVENTORY.filter((r) => (all || r.team_id !== 2) && (showDeleted || !r.deleted_at))
+      const rows = INVENTORY.filter((r) => all || r.team_id !== 2)
       body = { success: true, data: rows, scope: all ? 'all' : 'mine', visible_to_all: true }
     } else if (p === '/api/manual-certs' && route.request().method() === 'GET') {
       body = { success: true, data: MANUAL_CERTS }

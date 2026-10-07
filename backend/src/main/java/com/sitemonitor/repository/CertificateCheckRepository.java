@@ -92,11 +92,8 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
     @Query("UPDATE CertificateCheck c SET c.domain = :newDomain WHERE c.domain = :oldDomain")
     int renameDomain(@Param("oldDomain") String oldDomain, @Param("newDomain") String newDomain);
 
-    /** Kalıcı silme (purge): bir domain'in tüm geçmiş kontrol kayıtlarını sil.
-     *  Caller'da @Transactional zorunlu. Döndürülen değer silinen satır sayısı. */
-    @Modifying
-    @Query("DELETE FROM CertificateCheck c WHERE c.domain = :domain")
-    int deleteByDomain(@Param("domain") String domain);
+    // deleteByDomain KALDIRILDI (2026-10-07): kalıcı envanter silmesi kontrol geçmişini PermanentDeletionService'te
+    // (tek işlem, JDBC) siler; çöp kutusu purge uçları ve gece otomatik boşaltma yok.
 
     /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
      *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.

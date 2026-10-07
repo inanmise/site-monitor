@@ -99,7 +99,7 @@ Every scan captures and stores:
 | Key usage | Key Usage and Extended Key Usage extensions |
 | Response time | How long the handshake took |
 
-**Tracking a certificate from a file (6 October 2026).** Certificates that cannot be reached over the network are tracked too: keystore / truststore JKS files on OpenShift, `.pem` files returned by a CA, PFX files with a completed chain. You upload the file from the **Uploaded certificates** page or through the **Add certificate from file** option of the "Add domain" button. Supported formats: PEM / CRT / CER (Base64 or DER), DER, P7B / P7C, PFX / P12 (with the password), JKS / JCEKS / BKS, a ZIP holding several certificates, and pasted PEM text. Do not upload a CSR (certificate request) or a private key on its own; upload the certificate the CA returned or the PFX / JKS with the completed chain. The upload is analysed: validity dates, subject / SAN, key and signature algorithm, chain completeness, trust status and warnings (expired, not yet valid, self-signed, weak key, CSR or private key found …). Several CA certificates in one truststore can be tracked in one go. Tracking is identical to network-scanned certificates: the same thresholds and criticality tiers, the same alert / escalation / notification flow, dashboard, warnings, renewal advice, forecast, reports and inventory fields. These records carry an "Uploaded" badge. Renewing means uploading a new version: tracking moves to the new certificate, older versions are never deleted and stay visible in the **Versions** tab of the certificate window (fingerprint, validity, uploader, whether the key changed, SAN differences, PEM download). Private keys and passwords are never stored; only the public certificate chain is kept. Obtaining the certificate from the vendor stays outside Site Monitor; only the expiry is tracked here.
+**Tracking a certificate from a file (6 October 2026).** Certificates that cannot be reached over the network are tracked too: keystore / truststore JKS files on OpenShift, `.pem` files returned by a CA, PFX files with a completed chain. You upload the file from the **Uploaded certificates** page or through the **Add certificate from file** option of the "Add domain" button. Supported formats: PEM / CRT / CER (Base64 or DER), DER, P7B / P7C, PFX / P12 (with the password), JKS / JCEKS / BKS, a ZIP holding several certificates, and pasted PEM text. Do not upload a CSR (certificate request) or a private key on its own; upload the certificate the CA returned or the PFX / JKS with the completed chain. The upload is analysed: validity dates, subject / SAN, key and signature algorithm, chain completeness, trust status and warnings (expired, not yet valid, self-signed, weak key, CSR or private key found …). Several CA certificates in one truststore can be tracked in one go. Tracking is identical to network-scanned certificates: the same thresholds and criticality tiers, the same alert / escalation / notification flow, dashboard, warnings, renewal advice, forecast, reports and inventory fields. These records carry an "Uploaded" badge. Renewing means uploading a new version: tracking moves to the new certificate, older versions are never deleted and stay visible in the **Versions** tab of the certificate window (fingerprint, validity, uploader, whether the key changed, SAN differences, PEM download). When a file holds pieces of the same chain (root, intermediate, leaf), the certificate at the end of the chain is tracked as ONE record and the others are shown as its chain; the SSL tab of the certificate window draws that chain with the same cards as network-scanned certificates, and its "Hierarchy (browser style)" switch (also "View" on the Versions tab) shows it root-first like a browser, with the selected certificate's details and a per-certificate PEM download. The tracking name can be changed later from Edit (versions and history move to the new name). If a renewal uploads the same certificate as the current version, "Upload anyway" stores it as a new version; older versions can be deleted permanently from the Versions tab (the current one cannot). The file is opened in your browser: private keys and the PFX/JKS password never leave it, only the public certificates are sent to the server and only the public chain is stored. BKS cannot be opened in the browser; convert it to PEM with `keytool -exportcert -rfc` and upload that. Obtaining the certificate from the vendor stays outside Site Monitor; only the expiry is tracked here.
 
 ### 3.2 Chain and Revocation Checking
 
@@ -397,16 +397,16 @@ These append-only tables grow fastest and are the main target of the retention p
 | `sql_query_history` | SQL Playground query history |
 | `login_issue_reports` and related tables | Problem reports, screenshots and mail history |
 
-### 6.7 Soft Delete
+### 6.7 Deletion Is Permanent
 
-Inventory entries are never physically removed:
+Since 7 October 2026, deleting a certificate (network-scanned or uploaded from a file) or a monitor is always **permanent**; there is no bin and no restore. Deleting a certificate first closes its open alerts, then removes in one transaction its check history, latest result, notes, uploaded versions, the Port/DNS monitors derived from the inventory and their checks, uptime records, weak-algorithm exception and diagnostic history. Closed alert records, the audit log and the change history stay as a trace. A deleted record's name is free at once, so a new record can use it. To stop monitoring without deleting, switch "Active" off.
 
 ```sql
-deleted_at VARCHAR(255)  -- NULL = active, populated = deleted
-active     BOOLEAN       -- set to FALSE on delete
+active     BOOLEAN       -- FALSE = paused (record kept, not monitored)
+deleted_at VARCHAR(255)  -- legacy bin column; no longer written
 ```
 
-All the historical data is preserved, and you can restore a deleted certificate from the "show deleted" view.
+When upgrading to this version, records still in the old bin are permanently deleted once at the first start and their names are written to the audit log.
 
 ---
 
@@ -1088,7 +1088,7 @@ The analytical view of certificate expiry: headline cards (critical at 7 days or
 
 ### 14.12 Domain Inventory
 
-The register of domains to be monitored. The table shows domain and port, tier badge, team, owner, description, active state and the available actions — edit, transfer, delete and restore. A global administrator manages everything; a team administrator manages the teams they lead; managers and read-only roles can look but not touch.
+The register of domains to be monitored. The table shows domain and port, tier badge, team, owner, description, active state and the available actions — edit, transfer and delete. A global administrator manages everything; a team administrator manages the teams they lead; managers and read-only roles can look but not touch.
 
 Adding a domain means filling in a five-part form:
 
@@ -1098,7 +1098,7 @@ Adding a domain means filling in a five-part form:
 - Descriptions: a general description and a process note.
 - Advanced: the expected SHA-256 fingerprint and the expected subject, used for deployment compliance checking.
 
-Deletion is soft: the record is hidden but its history is preserved, and "show deleted" lets you restore it. Transfer moves a certificate to another team. Rename a domain and its entire history moves atomically with it (see §3.9).
+Deletion is permanent and cannot be undone: the confirmation names the records and what goes with them, and the card leaves the list as soon as you confirm. Transfer moves a certificate to another team. Rename a domain and its entire history moves atomically with it (see §3.9).
 
 ### 14.13 Weak Algorithm Report
 
@@ -1834,7 +1834,7 @@ Terms are used consistently throughout this guide; the Turkish equivalents used 
 | OCSP / CRL | Certificate revocation checking methods; OCSP is tried first, CRL is the fallback. |
 | Distributed lock | The database lock that keeps a sweep running on exactly one pod. |
 | Bootstrap administrator | The local administrator account defined at installation that always reaches the settings screen. |
-| Soft delete | Hiding and deactivating a record rather than physically removing it; it can be restored. |
+| Permanent deletion | Removing a record and its data irreversibly; every delete in Site Monitor is permanent (switch "Active" off to pause instead). |
 | Provisioning | Creating a directory user automatically on first sign-in and assigning their role and team. |
 | Webhook | An HTTP notification to a Teams or Slack channel. |
 | Inline image | An image embedded in an email by content reference, so it renders even when remote content is blocked. |

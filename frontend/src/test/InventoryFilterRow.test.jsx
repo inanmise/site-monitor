@@ -12,7 +12,7 @@ describe('InventoryFilterRow', () => {
   const renderRow = (props = {}) => {
     const onFilters = vi.fn()
     const cols = [...defaultCols(), 'port']   // port 2026-09-27'den beri varsayılan kapalı (alan adı hücresinde rozet); burada açık
-    render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={onFilters} allRows={rows} cols={cols} canManage statusFilter="default" {...props} /></thead></table>)
+    render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={onFilters} allRows={rows} cols={cols} canManage {...props} /></thead></table>)
     return { onFilters, cols }
   }
 
@@ -40,11 +40,11 @@ describe('InventoryFilterRow', () => {
     expect(screen.getByText('Takım B')).toBeInTheDocument()
   })
 
-  it('silinmişler görünümünde Aktif kolonu süzgeçsiz; canManage yokken seçim hücresi yok', () => {
+  it('canManage yokken seçim hücresi yok; Aktif kolonu her zaman süzgeçli (2026-10-07: çöp kutusu görünümü yok)', () => {
     const cols = defaultCols()
-    render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={() => {}} allRows={rows} cols={cols} canManage={false} statusFilter="deleted" /></thead></table>)
+    render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={() => {}} allRows={rows} cols={cols} canManage={false} /></thead></table>)
     const row = screen.getByTestId('inv-filter-row')
     expect(row.children).toHaveLength(cols.length + 1)
-    expect(row.lastElementChild.previousElementSibling.querySelector('button[role="combobox"]')).toBeNull()
+    expect(row.lastElementChild.previousElementSibling.querySelector('button[role="combobox"]')).not.toBeNull()
   })
 })

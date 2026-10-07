@@ -147,27 +147,24 @@ export async function waitPastHourlySweep(marginMin = 12) {
   return wait
 }
 
-/** `e2e-live-*` envanter kayıtları (silinmişler dahil). */
+/** `e2e-live-*` envanter kayıtları (silme kalıcı — 2026-10-07: çöp kutusu yok, liste yalnız canlı kayıt döner). */
 export async function liveInventoryRows(request) {
-  const r = await apiGet(request, '/api/admin/inventory?showDeleted=true&scope=all')
+  const r = await apiGet(request, '/api/admin/inventory?scope=all')
   if (r.status !== 200) throw new Error(`envanter listesi okunamadı: HTTP ${r.status}`)
   const rows = Array.isArray(r.json?.data) ? r.json.data : []
   return rows.filter((x) => String(x.domain || '').startsWith(LIVE_PREFIX))
 }
 
 /**
- * Canlı koşunun bıraktığı HER `e2e-live-*` kaydı: önce yumuşak silme (silinmemişse), sonra kalıcı silme. Kalan sayısı döner.
- * Ürünün kendi uçları (envanter çöp kutusu akışı) — veritabanına doğrudan dokunulmaz.
+ * Canlı koşunun bıraktığı HER `e2e-live-*` kaydını siler — silme KALICIDIR (kayıt, kontrol geçmişi, notlar, sürümler ve
+ * türev Port/DNS izlemeleri tek istekte gider). Kalan sayısı döner (0 beklenir — "hiçbir şey kalmadı" denetimi).
+ * Ürünün kendi ucu — veritabanına doğrudan dokunulmaz.
  */
 export async function purgeLiveRecords(request, log = () => {}) {
   const rows = await liveInventoryRows(request)
   for (const row of rows) {
-    if (!(row.deleted_at || row.deletedAt)) {
-      const d = await apiCall(request, 'DELETE', `/api/admin/inventory/${row.id}`)
-      log(`sil #${row.id} ${row.domain} → ${d.status}`)
-    }
-    const p = await apiCall(request, 'DELETE', `/api/admin/inventory/${row.id}/permanent`)
-    log(`kalıcı sil #${row.id} ${row.domain} → ${p.status}`)
+    const d = await apiCall(request, 'DELETE', `/api/admin/inventory/${row.id}`)
+    log(`kalıcı sil #${row.id} ${row.domain} → ${d.status}`)
   }
   return (await liveInventoryRows(request)).length
 }

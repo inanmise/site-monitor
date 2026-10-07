@@ -80,12 +80,18 @@ public class InventoryImportService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DerivedMonitorTeamSync derivedMonitorTeamSync;
+    /**
+     * Silme KALICI (2026-10-07): eski sürümden kalmış yumuşak silinmiş satır adı TUTMAZ — gerçek koşuda yeni kayıttan
+     * hemen önce kalıcı silinir. Alan enjeksiyonu (kurucu / @InjectMocks değişmesin); yokken (null) atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PermanentDeletionService permanentDeletion;
 
     /**
      * Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu.
      * {@code teamId}/{@code teamName} (2026-09-28): satır MEVCUT bir kayda çarptığında o kaydın sahibi takım
-     * ({@code duplicate_other_team}, {@code deleted}) — içe aktarma penceresi "hangi ekipte kayıtlı" bilgisini
-     * rozetle gösterir. Diğer satırlarda null ve JSON'a hiç yazılmaz.
+     * ({@code duplicate_other_team}) — içe aktarma penceresi "hangi ekipte kayıtlı" bilgisini rozetle gösterir. Diğer
+     * satırlarda null ve JSON'a hiç yazılmaz. ({@code deleted} nedeni 2026-10-07'de kalktı: silinen kayıt adı tutmaz.)
      */
     public record RowResult(int line, String domain, String action, String reason, List<String> changes,
                             @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Long teamId,
@@ -179,14 +185,16 @@ public class InventoryImportService {
             try { nocGroups = resolveNocGroups(r.get("noc_groups")); }
             catch (IllegalArgumentException e) { out.add(new RowResult(line, domain, "error", "unknown_noc_group", List.of())); errors++; continue; }
             if (nocGroups != null) r = withNocGroups(r, nocGroups);
-            Optional<CertificateInventory> existingOpt = inventoryRepo.findByDomain(domain);
+            // Silme KALICI (2026-10-07): eski sürümden kalmış yumuşak silinmiş satır adı TUTMAZ — eşleşme yalnız CANLI kayıt
+            // (eskiden "deleted" nedeniyle atlanıyordu; artık yeni kayıt açılır, çöp satırı oluşturmadan önce silinir).
+            Optional<CertificateInventory> existingOpt = inventoryRepo.findByDomain(domain).filter(c -> c.getDeletedAt() == null);
             // Harf duyarsız eşleşme (2026-09-28, ekleme ucuyla aynı kural): eski satır "Example.com" olarak kalmışsa
             // tam eşleşme kaçırır ve DB'nin harf-duyarlı UNIQUE'i ikinci (mükerrer) satırı kabul ederdi.
-            if (existingOpt.isEmpty()) existingOpt = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(domain);
+            if (existingOpt.isEmpty()) existingOpt = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(domain)
+                    .filter(c -> c.getDeletedAt() == null);
             if (existingOpt.isPresent()) {
                 CertificateInventory ex = existingOpt.get();
                 String owner = ex.getTeamId() != null ? teamNameById.get(ex.getTeamId()) : null;
-                if (ex.getDeletedAt() != null) { out.add(new RowResult(line, domain, "skip", "deleted", List.of(), ex.getTeamId(), owner)); skipped++; continue; }
                 // Başka takımın kaydı (2026-09-28): eskiden genel "scope" nedeniyle düşüyordu — kullanıcı alan adının
                 // HANGİ ekipte kayıtlı olduğunu göremiyordu. Kayıt yine YAZILMAZ; satır sahibi takımı taşır.
                 if (!canManage.test(ex.getTeamId())) {
@@ -226,6 +234,8 @@ public class InventoryImportService {
                 it.setTeamId(teamId);
                 List<String> changes = apply(it, r, teamId, ugTeamId, port, tier, platform, actor, true);
                 if (!dryRun) {
+                    // Aynı adlı eski çöp satırı (harf duyarsız) önce kalıcı silinir — DB'nin UNIQUE(domain) kısıtına çarpmasın.
+                    if (permanentDeletion != null) permanentDeletion.purgeLegacyBinRows(domain);
                     it.setCreatedAt(now); it.setUpdatedAt(now);
                     if (session != null) monitorHistory.stampCreated(it, session);
                     CertificateInventory saved = inventoryRepo.save(it);

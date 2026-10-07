@@ -42,6 +42,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
@@ -128,7 +129,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const sla = useSla('dns')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
   const [density, setDensity] = useCardDensity('dns')
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): kalıcı silinen bağımsız izlemenin kartı tam liste yüklemesini BEKLEMEDEN düşer.
+  const monitors = useWithoutDeleted(monitorKind('dns'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [detailMonitor, setDetailMonitor] = useState(null)
@@ -381,7 +384,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     // şeyi onaylatırdı.
     const derived = !m.standalone
     const ok = await showConfirm({
-      title: t('mon.deleteTitle'),
+      title: derived ? t('dns.deleteDerivedTitle') : t('mon.deleteTitle'),
       message: derived ? t('dns.deleteDerivedMsg', m.name || m.domain) : t('mon.deleteMsg', m.name || m.domain),
       confirmText: derived ? t('dns.deleteDerivedConfirm') : t('dns.delete'),
       cancelText: t('dns.cancel'),
@@ -391,7 +394,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     setDeleting(m.id)
     try {
       const res = await api.monitoring.deleteDnsMonitor(m.id)
-      if (res?.success) { toast.success(derived ? t('dns.deletedDerived') : t('dns.deleted')); await load() }
+      if (res?.success) {
+        toast.success(derived ? t('dns.deletedDerived') : t('dns.deleted'))
+        // Bağımsız izleme KALICI silindi (2026-10-07): kart HEMEN düşer, açık detay kapanır; türev satır (duraklatıldı)
+        // listede kalır — sunucu `permanent:false` döner. Tazeleme arka planda, arayüz beklemez.
+        if (markMonitorDeleted('dns', m.id, res)) { if (detailMonitor?.id === m.id) closeDetail() }
+        load()
+      }
       else toast.error(res?.error || 'Error')
     } finally {
       setDeleting(null)

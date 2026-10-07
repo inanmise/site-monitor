@@ -19,7 +19,9 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import DomainConflictBanner from './DomainConflictBanner.jsx'
 import { domainConflictOf } from './domainConflictModel.js'
-import { isManualCert } from '../manualcert/manualCertModel.js'
+import { markDeleted, unmarkDeleted } from '../../utils/recentlyDeleted.js'
+import { deleteConfirmMessage } from '../../utils/deleteInventory.js'
+import { isManualCert, trackingKeyError } from '../manualcert/manualCertModel.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import {
@@ -99,9 +101,13 @@ export function domainLooksInvalid(v) {
 }
 
 /** Alan-bazlı doğrulama: { domain?, team_id?, group_name?, tags? } — ilk hata alt çubuktaki özet bantta da görünür. */
-function fieldErrors(form, t) {
+function fieldErrors(form, t, manual = false) {
   const e = {}
-  if (!form.domain.trim()) e.domain = t('inv.domainRequired')
+  if (manual) {
+    // Manuel kayıt: anahtar bir host adı değil, takip adıdır — sunucudaki takip adı kuralı (2026-10-07: düzenlenebilir)
+    const k = trackingKeyError(form.domain.trim())
+    if (k) e.domain = t(k)
+  } else if (!form.domain.trim()) e.domain = t('inv.domainRequired')
   else if (domainLooksInvalid(form.domain)) e.domain = t('inv.domainInvalid')
   if (!form.team_id) e.team_id = t('inv.teamRequired')
   // Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme — dokuz türle aynı kural.
@@ -297,7 +303,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
   /** Kaydet öncesi: alan hatalarını işaretler, ilk hatayı döner (yoksa null). */
   function validate() {
-    const e = fieldErrors(form, t)
+    const e = fieldErrors(form, t, manual)
     setErrors(e)
     return Object.values(e)[0] ?? null
   }
@@ -359,13 +365,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     }
   }
 
-  /** Sil — mevcut DELETE /admin/inventory/{id}: denetim kaydı, soft-delete ve açık alarmların
-   *  kapatılması kendiliğinden miras kalır. Yeni uç YOK. */
+  /** Sil — DELETE /admin/inventory/{id}: KALICI (2026-10-07) — kayıt, kontrol geçmişi, notlar, yüklenen sürümler ve türev
+   *  Port/DNS izlemeleri gider, açık alarmlar kapanır. Başarıda kayıt "yakın zamanda silindi" işaretlenir: açık listeler
+   *  (Envanter, Genel Bakış, Tüm Sertifikalar) kartı ANINDA düşürür, arka plan tazelemesi onu geri getirmez. */
   async function del() {
     if (!record?.id) return
     const ok = await showConfirm({
       title: t('inv.deleteTitle'),
-      message: t('inv.deleteMsg', record.domain),
+      message: deleteConfirmMessage(t, record.domain),
       confirmText: t('inv.deleteConfirm'),
       cancelText: t('inv.deleteCancel'),
       variant: 'danger',
@@ -374,8 +381,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     setDeleting(true)
     try {
       const res = await api.admin.deleteInventory(record.id)
-      if (res?.success) { toast.success(t('inv.deleted', record.domain)); onSaved?.(); onClose?.() }
+      if (res?.success) {
+        markDeleted('cert', record.domain)
+        toast.success(t('inv.deleted', record.domain)); onSaved?.(); onClose?.()
+      }
       else toast.error(res?.error || t('inv.deleteError'))
+    } catch (e) {
+      toast.error(e?.message || t('inv.deleteError'))
     } finally {
       setDeleting(false)
     }
@@ -394,10 +406,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     // domain zaten dolu geliyor ve kullanıcının onu değiştirmesi BEKLENEN akış.
     if (mode === 'edit' && record?.domain && form.domain.trim() !== record.domain) {
       const confirmed = await showConfirm({
-        title: t('inv.renameTitle'),
-        message: t('inv.renameMessage', record.domain, form.domain.trim()),
-        confirmText: t('inv.renameConfirm'),
+        title: manual ? t('mcert.rename.title') : t('inv.renameTitle'),
+        message: manual ? t('mcert.rename.message', record.domain, form.domain.trim()) : t('inv.renameMessage', record.domain, form.domain.trim()),
+        confirmText: manual ? t('mcert.rename.confirm') : t('inv.renameConfirm'),
         cancelText: t('inv.cancel'),
+        variant: 'prompt',   // yeniden adlandırma silme değildir: kalem ikonu, birincil ton (çöp kutusu değil)
       })
       if (!confirmed) return
     }
@@ -482,6 +495,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
         // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
         const savedNow = form.domain.trim()
+        // Az önce silinen bir ad yeniden eklendi / ada taşındı: "yakın zamanda silindi" işareti kalkar, kayıt hemen görünür.
+        unmarkDeleted('cert', savedNow)
         // Manuel kayıt: canlı ilk kontrol yok (ağda adres yok) — kayıt bitti, form kapanır.
         if (manual) { onSaved?.(res, savedNow); return }
         setFirstRun(true)
@@ -609,10 +624,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <CheckField full checked={form.active} onCheckedChange={(v) => f('active', v)} label={t('inv.formActive')} />
 
           {manual ? (
-            // Manuel kayıt: takip adı envanter anahtarıdır — burada değiştirilmez (sertifika sürümleri bu ada bağlı).
-            <FormField label={t('mcert.key.label')} hint={t('mcert.form.keyLocked')} full>
-              {({ id, describedBy }) => (
-                <Input id={id} aria-describedby={describedBy} value={form.domain} readOnly className="font-mono" />
+            // Manuel kayıt: takip adı envanter anahtarıdır ve DÜZENLENEBİLİR (2026-10-07). Değişirse sunucu son durumu,
+            // geçmiş değerlendirmeleri, alarmları ve notları yeni ada taşır; sürümler kayıt kimliğine bağlı olduğundan kalır.
+            <FormField label={t('mcert.key.label')} hint={t('mcert.form.keyHint')} required error={errors.domain} full>
+              {({ id, describedBy, invalid }) => (
+                <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.domain}
+                  onChange={e => f('domain', e.target.value)} className="font-mono" autoComplete="off" spellCheck={false}
+                  onBlur={() => { const k = trackingKeyError(form.domain.trim()); if (k) setErrors(prev => ({ ...prev, domain: t(k) })) }} />
               )}
             </FormField>
           ) : (

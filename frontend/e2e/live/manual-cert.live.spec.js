@@ -1,19 +1,27 @@
 // CANLI: dosyadan sertifika takibi (20.110.0) — GERÇEK arayüz, GERÇEK yerel backend, route mock'u YOK. Mock'lu kapı
 // (e2e/manual-cert.spec.js) yerleşimi ölçer; bu suite frontend ↔ backend SÖZLEŞMESİNİ uçtan uca sürer:
-//   1. sayfa + rehber → chain-v1.pem → İnceleme (CN, zincir, EXPIRES_SOON) → YENİ kayıt (gerçek takım/grup/etiket seçicileri)
-//      → Sonuç → sertifika penceresi: "Manuel" rozeti, SSL sekmesi yok, Sürümler v1;
-//   2. Sürümler → yeni sürüm: önce YANLIŞ PFX şifresi (hata şifre alanının altında), sonra doğru → 2 sürüm, v2 güncel,
-//      "Aynı anahtar";
+//   1. sayfa + rehber → chain-v1.pem → İnceleme: yaprak + ara + kök TEK girdi (2026-10-07), zincir SSL sekmesiyle aynı 3 kart
+//      (yaprak → ara → kök), EXPIRES_SOON → YENİ kayıt (gerçek takım/grup/etiket seçicileri) → Sonuç → sertifika penceresi:
+//      "Manuel" rozeti, SSL sekmesi AÇILIŞ sekmesi (çevrim-dışı önizleme, 3 zincir kartı, bağlantı grubu yok), Sürümler v1;
+//   2. Sürümler → yeni sürüm: önce YANLIŞ PFX şifresi (TARAYICIDA anlaşılır — sunucuya istek YOK; hata şifre alanının
+//      altında), sonra doğru → 2 sürüm, v2 güncel, "Aynı anahtar";
 //   3. aynı kayıt Pano'da (Manuel + "Yüklenen dosya"), Tüm Sertifikalar'da ve Envanter'de (Manuel + "Yüklenen dosya · sürüm 2");
+//   3b. takip adı sonradan değişir (listeden Düzenle);
+//   3c. güncel sürümün dosyası yeniden → "zaten güncel sürüm" uyarısı → "Yine de yükle" → v3 (aynı parmak izi, "Aynı sertifika
+//      yeniden yüklendi"); eski v1 Sürümler'den KALICI silinir → 2 sürüm (v3 güncel, v2);
 //   4. sihirbazın olumsuz yolları gerçek yanıtlarla: CSR açıklama kartı, özel anahtar uyarısı, JKS yanlış şifre + "zaten
-//      takipte" engeli, truststore.jks çoklu seçim → 2 kayıt (toplu);
-//   5. 390×844: sayfa + sihirbaz adımları (Dosya → İnceleme → Takip) ekrana sığar, yatay kayma yok.
+//      takipte" engeli, truststore.jks (ara + kök) TEK girdi, roots.jks (iki bağımsız kök) çoklu seçim → 2 kayıt (toplu);
+//   5. 390×844: sayfa + sihirbaz adımları (Dosya → İnceleme → Takip) ve pencerenin SSL / Sürümler sekmeleri ekrana sığar.
+// ÖZEL ANAHTAR TARAYICIDAN ÇIKMAZ (2026-10-08, kullanıcı isteği): her testte TÜM yükleme istekleri (analiz, oluştur, toplu,
+//   yeni sürüm) yakalanır (`watchUploads`); hiçbirinin gövdesinde "PRIVATE KEY", PFX/JKS dosya baytları, with-key.pem'in
+//   anahtar satırı, şifre, `file` / `text` / `password` alanı yoktur — yalnız `extracted`. PFX / JKS / with-key.pem
+//   uçtan uca çalışmaya devam eder.
 // TEMİZLİK: afterAll HER durumda (hata dahil) `e2e-live-*` kayıtlarını siler + kalıcı temizler ve kalmadığını doğrular.
 // Sertifikalar SAHTE test CA'sından (*.example.test) — `bash e2e/live/make-cert-fixtures.sh <dizin>` + E2E_CERT_DIR.
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  test, expect, liveGate, openApp, apiGet, liveRequest, purgeLiveRecords, liveInventoryRows, waitPastHourlySweep,
+  test, expect, liveGate, openApp, apiGet, apiCall, liveRequest, purgeLiveRecords, liveInventoryRows, waitPastHourlySweep,
   expectFits, expectDialogFits, expectCleanText, stopwatch, LIVE_PREFIX,
 } from './fixtures.js'
 
@@ -89,6 +97,91 @@ async function analyzeFile(page, dlg, file, password) {
   return r.json()
 }
 
+/**
+ * Dosya + YANLIŞ / eksik şifre → hata TARAYICIDA (2026-10-08): şifre alanının altında, adım değişmez ve sunucuya HİÇ
+ * yükleme isteği gitmez.
+ */
+async function analyzeExpectPasswordError(page, dlg, file, password, re) {
+  await dlg.locator('[data-slot="mcert-file-input"]').setInputFiles(cert(file))
+  await expect(dlg.locator('[data-slot="mcert-file-chip"]')).toContainText(file)
+  const pw = dlg.locator('[data-slot="mcert-password"]')
+  await pw.waitFor()
+  await pw.fill(password)
+  let sent = 0
+  const count = (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname.startsWith('/api/manual-certs')) sent++ }
+  page.on('request', count)
+  await dlg.locator('[data-slot="mcert-analyze"]').click()
+  const pwField = dlg.locator('[data-field="password"]')
+  await expect(pwField).toHaveAttribute('data-invalid', 'true')
+  await expect(pwField).toContainText(re)
+  await expect(dlg.locator('[data-slot="mcert-password"]')).toHaveAttribute('aria-invalid', 'true')
+  await expect(dlg.locator('[data-slot="mcert-wizard"]')).toHaveAttribute('data-step', 'file')
+  await page.waitForTimeout(300)
+  page.off('request', count)
+  expect(sent, `${file}: yanlış şifrede sunucuya yükleme isteği gitmez`).toBe(0)
+}
+
+/** Sunucuya ASLA gitmemesi gereken baytlar: anahtar depolarının ortasından 48 bayt + with-key.pem'in anahtar satırı. */
+function secretNeedles() {
+  const out = []
+  for (const f of ['leaf-v2.pfx', 'leaf-v2.jks', 'truststore.jks', 'roots.jks']) {
+    const b = fs.readFileSync(cert(f))
+    const mid = Math.floor(b.length / 2)
+    out.push({ label: `${f} baytları`, buf: b.subarray(mid, mid + 48) })
+  }
+  const keyText = fs.readFileSync(cert('with-key.pem'), 'utf8').split(/-----BEGIN [A-Z ]*PRIVATE KEY-----/)[1] || ''
+  const keyLine = keyText.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length >= 40)
+  if (keyLine) out.push({ label: 'with-key.pem anahtar satırı', buf: Buffer.from(keyLine) })
+  return out
+}
+
+/**
+ * Sayfanın TÜM manuel sertifika yükleme isteklerini (analiz / oluştur / toplu / yeni sürüm) yakalar. `check()`: her gövde
+ * yalnız `extracted` taşır; "PRIVATE KEY", şifre, anahtar deposu baytları, ham `file` / `text` / `password` alanı YOK.
+ * Döner: denetlenen istek sayısı.
+ *
+ * <p>Gövde `page.route` ile yakalanır: Chromium, Blob içeren multipart gövdeyi `page.on('request')` olayında GÖSTERMEZ
+ * (`postDataBuffer()` null → denetim boşa çalışırdı). İstek değiştirilmeden gerçek backend'e iletilir.
+ */
+async function watchUploads(page) {
+  const bodies = []
+  const pattern = '**/api/manual-certs**'
+  const handler = async (route) => {
+    const r = route.request()
+    const p = new URL(r.url()).pathname
+    if (r.method() === 'POST' && /^\/api\/manual-certs(\/analyze|\/batch|\/\d+\/versions)?$/.test(p)) {
+      bodies.push({ path: p, body: r.postDataBuffer() || Buffer.alloc(0) })
+    }
+    await route.continue()
+  }
+  await page.route(pattern, handler)
+  return {
+    async check(label) {
+      await page.unroute(pattern, handler)
+      expect(bodies.every((b) => b.body.length > 0), `${label}: yakalanan gövde boş (denetim boşa çalışmasın)`).toBe(true)
+      const needles = secretNeedles()
+      for (const { path: p, body } of bodies) {
+        const text = body.toString('latin1')
+        expect(text, `${label} ${p}: extracted alanı`).toContain('name="extracted"')
+        for (const bad of ['PRIVATE KEY', PFX_PASS, 'name="password"', 'name="file"', 'name="text"']) {
+          expect(text, `${label} ${p}: "${bad}" gövdede olmamalı`).not.toContain(bad)
+        }
+        for (const n of needles) expect(body.indexOf(n.buf), `${label} ${p}: ${n.label} gövdede olmamalı`).toBe(-1)
+      }
+      return bodies.length
+    },
+  }
+}
+
+/** Zincir görünümündeki kartların rolleri (SslChainView: leaf | intermediate | root | root-store). */
+const chainRoles = (chain) => chain.locator('[data-slot="ssl-chain-node"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-role')))
+
+/** Katlanır bölümlerin (SAN listesi, teknik ayrıntılar) hepsini açar — her tıklamada liste yeniden sayılır. */
+async function expandAll(container) {
+  const closed = container.locator('button[aria-expanded="false"]')
+  for (let i = 0; i < 12 && (await closed.count()) > 0; i++) await closed.first().click()
+}
+
 /** Sertifika penceresinde bir sekmeye geç (geniş ekranda sekme çubuğu, telefonda seçici). */
 async function certTab(page, box, value) {
   const vw = page.viewportSize().width
@@ -145,8 +238,9 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     }
   })
 
-  test('1 · yükle → incele → yeni kayıt → sonuç → pencere (Manuel, SSL yok, Sürümler v1) @1280', async ({ page }) => {
+  test('1 · yükle → incele (tek girdi, 3 kartlı zincir) → yeni kayıt → sonuç → pencere (Manuel, SSL açılış sekmesi + zincir, Sürümler v1) @1280', async ({ page }) => {
     const done = stopwatch('1 yeni kayıt')
+    const uploads = await watchUploads(page)
     await page.setViewportSize(DESKTOP)
     await openApp(page, '/?tab=manualcerts')
     await page.locator('[data-slot="manualcerts-page"]').waitFor()
@@ -161,18 +255,27 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     const dlg = await openWizard(page)
     const analysis = await analyzeFile(page, dlg, 'chain-v1.pem')
     expect(analysis?.data?.format, 'biçim').toBe('PEM')
+    // 2026-10-07: yaprak + ara + kök TEK takip girdisi (ara ve kök yaprağın zincirinde); önizleme SSL sekmesi biçiminde
+    expect(analysis?.data?.entries?.length, 'zincir başına tek girdi').toBe(1)
+    expect(analysis?.data?.certificate_count, 'dosyadaki tekil sertifika').toBe(3)
+    expect(analysis?.data?.entries?.[0]?.preview?.via, 'girdi önizlemesi (çevrim-dışı)').toBe('upload')
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
     await expect(dlg.locator('[data-slot="mcert-format"]')).toHaveText('PEM')
+    await expect(dlg.locator('[data-slot="mcert-entry"]')).toHaveCount(1)
+    await expect(dlg.locator('[data-slot="mcert-grouped"]')).toContainText('3 sertifika')
+    await expect(dlg.getByRole('button', { name: /^Birden çok/ }), 'tek zincir: "birden çok" anahtarı yok').toHaveCount(0)
 
-    // Varsayılan seçili girdi = yaprak (CN), zincir tam, EXPIRES_SOON
+    // Varsayılan seçili girdi = yaprak (CN), zincir tam, EXPIRES_SOON; zincir ağ sertifikasının SSL sekmesiyle AYNI kartlar
     const leaf = dlg.locator('[data-slot="mcert-entry"][data-selected="true"]')
     await expect(leaf).toHaveCount(1)
     await expect(leaf).toContainText(CN)
     await expect(leaf.locator('[data-slot="mcert-chain-state"]')).toHaveAttribute('data-complete', 'true')
     await expect(leaf.locator('[data-slot="mcert-warning"][data-code="EXPIRES_SOON"]')).toBeVisible()
-    await leaf.locator('[data-slot="mcert-chain"] button').first().click()
-    await expect(leaf.locator('[data-slot="mcert-chain-link"]')).toHaveCount(2)
-    await expect(leaf.locator('[data-slot="mcert-chain"]')).toContainText('Test Issuing CA')
+    const wizChain = leaf.locator('[data-slot="mcert-chain"] [data-slot="ssl-chain"]')
+    expect(await chainRoles(wizChain), 'İnceleme: yaprak → ara → kök').toEqual(['leaf', 'intermediate', 'root'])
+    await expect(wizChain.locator('[data-slot="ssl-chain-node"][data-role="intermediate"]')).toContainText('Test Issuing CA')
+    await expect(wizChain.locator('[data-slot="ssl-chain-node"][data-role="root"]')).toContainText('Test Root CA')
+    await expandAll(wizChain)
     await expectCleanText(dlg.locator('[data-slot="mcert-wizard"]'), 'İnceleme adımı')
 
     await dlg.locator('[data-slot="mcert-next"]').click()
@@ -204,9 +307,45 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await box.waitFor()
     await expect(box.locator('[data-slot="cert-modal-title"]')).toContainText(KEY)
     await expect(box.locator('[data-slot="cert-modal-title"] [data-slot="manual-cert-badge"]')).toContainText('Manuel')
-    await expect(box.locator('[role="tab"][id$="-trigger-ssl"]'), 'manuel kayıtta SSL sekmesi yok').toHaveCount(0)
-    // Detaylar (manuel kayıt burada açılır): gerçek veriyle temiz metin
-    await expect(box.locator('[role="tab"][id$="-trigger-details"]')).toHaveAttribute('data-state', 'active')
+    // SSL sekmesi (2026-10-07): manuelde de AÇILIŞ sekmesi — çevrim-dışı önizleme, ağ sertifikasıyla aynı zincir kartları,
+    // bağlantı grubu / alan adı eşleşmesi yok, canlı kontrol dili yok
+    await expect(box.locator('[role="tab"][id$="-trigger-ssl"]')).toHaveAttribute('data-state', 'active')
+    const ssl = box.locator('[data-slot="ssl-panel"][data-source="upload"]')
+    await ssl.waitFor({ timeout: 20_000 })
+    expect(await chainRoles(ssl.locator('[data-slot="ssl-chain"]')), 'SSL sekmesi: yaprak → ara → kök').toEqual(['leaf', 'intermediate', 'root'])
+    await expect(ssl.locator('[data-slot="ssl-check-group"][data-group="conn"]')).toHaveCount(0)
+    await expect(ssl.locator('[data-slot="ssl-check"][data-check="hostname"]')).toHaveCount(0)
+    await expect(ssl).not.toContainText('Canlı kontrol')
+    await expect(ssl.locator('[data-slot="ssl-verdict"]').getByRole('button', { name: 'Yeniden değerlendir' })).toBeVisible()
+    await expandAll(ssl.locator('[data-slot="ssl-chain"]'))
+    await expectCleanText(ssl, 'Sertifika penceresi · SSL (manuel)')
+    // Hiyerarşi görünümü (2026-10-07): tarayıcı gibi kök → ara → yaprak — GERÇEK sürüm zinciri ucundan
+    // (`/api/manual-certs/{id}/versions/{vid}/chain`, önizlemenin inventory_id + manual_version_id'si); yaprağı seçince SAN
+    const viewSwitch = ssl.getByRole('group', { name: 'Zincir görünümü' })
+    const chainResp = page.waitForResponse((r) => /\/api\/manual-certs\/\d+\/versions\/\d+\/chain$/.test(new URL(r.url()).pathname))
+    await viewSwitch.getByRole('button', { name: 'Hiyerarşi (tarayıcı gibi)' }).click()
+    expect((await chainResp).status(), 'sürüm zinciri ucu').toBe(200)
+    const hier = ssl.locator('[data-slot="cert-hierarchy"]')
+    await hier.waitFor({ timeout: 20_000 })
+    const hNodes = hier.getByRole('treeitem')
+    expect(await hNodes.evaluateAll((els) => els.map((e) => e.getAttribute('data-role'))), 'hiyerarşi: kök → ara → yaprak')
+      .toEqual(['root', 'intermediate', 'leaf'])
+    await expect(hNodes.nth(0)).toContainText('Test Root CA')
+    await expect(hNodes.nth(1)).toContainText('Test Issuing CA')
+    await expect(hNodes.nth(2)).toContainText(CN)
+    const hDetails = hier.locator('[data-slot="cert-hierarchy-details"]')
+    await hNodes.nth(0).click()
+    await expect(hDetails).toHaveAttribute('data-role', 'root')
+    await hNodes.nth(2).click()
+    await expect(hNodes.nth(2)).toHaveAttribute('aria-selected', 'true')
+    await expect(hDetails).toHaveAttribute('data-role', 'leaf')
+    await expect(hDetails.locator('[data-slot="cert-hierarchy-san"]')).toContainText('odeme-api-internal.example.test')
+    await expectCleanText(hier, 'Sertifika penceresi · SSL (hiyerarşi)')
+    // Sonraki adımlar ağ tarzı zinciri bekler — görünüm geri alınır (seçim pencere oturumunda hatırlanır)
+    await viewSwitch.getByRole('button', { name: 'Zincir', exact: true }).click()
+    await expect(ssl.locator('[data-slot="ssl-chain"]')).toBeVisible()
+    // Detaylar: gerçek veriyle temiz metin
+    await certTab(page, box, 'details')
     await expect(box.locator('[role="tabpanel"][data-state="active"]')).toContainText(CN)
     await expectCleanText(box, 'Sertifika penceresi · Detaylar')
     // Sağlık: ağa özgü satırlar "Uygulanmaz — dosyadan yüklendi", sertifika satırları değerlendirilir
@@ -223,11 +362,13 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     // Liste satırı (tablo) — kayıt sayfada görünür
     await box.getByRole('button', { name: /^(Kapat|Close)$/ }).first().click()
     await expect(page.locator(`[data-mcert-row="${KEY}"]`)).toBeVisible()
+    expect(await uploads.check('1'), 'analiz + oluştur denetlendi').toBe(2)
     done()
   })
 
   test('2 · Sürümler → yanlış şifre alanın altında → PFX v2 → 2 sürüm, v2 güncel, aynı anahtar @1280', async ({ page }) => {
     const done = stopwatch('2 yeni sürüm')
+    const uploads = await watchUploads(page)
     await page.setViewportSize(DESKTOP)
     await openApp(page, `/?tab=manualcerts&mc_q=${encodeURIComponent(KEY)}`)
     const row = page.locator(`[data-mcert-row="${KEY}"]`)
@@ -240,22 +381,20 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
 
     const dlg = page.locator(WIZARD)
     await dlg.locator('[data-slot="mcert-wizard"][data-step="file"]').waitFor()
-    // Yanlış şifre → sunucu password_error; hata ŞİFRE alanının altında, adım değişmez
-    const bad = await analyzeFile(page, dlg, 'leaf-v2.pfx', 'yanlis-sifre')
-    expect(bad?.data?.password_error, 'sunucu: password_error').toBe(true)
-    await expect(dlg.locator('[data-slot="mcert-wizard"]')).toHaveAttribute('data-step', 'file')
-    const pwField = dlg.locator('[data-field="password"]')
-    await expect(pwField).toHaveAttribute('data-invalid', 'true')
-    await expect(pwField).toContainText(/Şifre yanlış/)
-    await expect(dlg.locator('[data-slot="mcert-password"]')).toHaveAttribute('aria-invalid', 'true')
+    // Yanlış şifre → PKCS#12 MAC'i TARAYICIDA tutmaz; hata ŞİFRE alanının altında, adım değişmez, sunucuya istek YOK
+    await analyzeExpectPasswordError(page, dlg, 'leaf-v2.pfx', 'yanlis-sifre', /Şifre yanlış/)
 
-    // Doğru şifre → İnceleme → Takip (kip sabit: yenile) → karşılaştırma → kaydet
+    // Doğru şifre → (tarayıcıda açılır, yalnız açık sertifikalar gider) İnceleme → Takip (kip sabit: yenile) → kaydet
     await dlg.locator('[data-slot="mcert-password"]').fill(PFX_PASS)
     const resp = page.waitForResponse(isPath('/api/manual-certs/analyze'))
     await dlg.locator('[data-slot="mcert-analyze"]').click()
     const good = await (await resp).json()
     expect(good?.data?.format).toBe('PKCS12')
+    expect((good?.data?.warnings || []).find((w) => w.code === 'PRIVATE_KEY_KEPT_LOCAL')?.params?.count, 'anahtar tarayıcıda kaldı').toBe(1)
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
+    await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toHaveAttribute('data-keys', '1')
+    await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toHaveAttribute('data-password', 'used')
+    await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toContainText('Parola da yalnız tarayıcıda kullanıldı')
     await expect(dlg.locator('[data-slot="mcert-entry"][data-selected="true"]')).toContainText(CN)
     await dlg.locator('[data-slot="mcert-next"]').click()
     await dlg.locator('[data-slot="mcert-wizard"][data-step="track"]').waitFor()
@@ -294,6 +433,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     const pem = fs.readFileSync(await file.path(), 'utf8')
     expect(pem).toContain('-----BEGIN CERTIFICATE-----')
     expect(pem).not.toContain('PRIVATE KEY')
+    expect(await uploads.check('2'), 'analiz + yeni sürüm denetlendi (yanlış şifrede istek yok)').toBe(2)
     done()
   })
 
@@ -354,8 +494,137 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     done()
   })
 
-  test('4 · olumsuz yollar: CSR, özel anahtar, JKS yanlış şifre + zaten takipte, eski sürüm onayı, KEY_EXISTS (tekil + toplu), truststore toplu → 2 kayıt @1280', async ({ page }) => {
+  test('3b · takip adı sonradan değişir: listeden Düzenle → geçersiz ad alanın altında → yeni ad + onay → sürümler korunur → eski ada dönülür @1280', async ({ page }) => {
+    const done = stopwatch('3b yeniden adlandırma')
+    await page.setViewportSize(DESKTOP)
+    const NEW_KEY = `${RUN}-yeni-ad.example.test`
+    await openApp(page, `/?tab=manualcerts&mc_q=${encodeURIComponent(KEY)}`)
+    const row = page.locator(`[data-mcert-row="${KEY}"]`)
+    await row.waitFor()
+    await row.getByRole('button', { name: `${KEY} — İşlemler` }).first().click()
+    await page.getByRole('menuitem', { name: /Düzenle \(takip adı/ }).click()
+    const form = page.locator('[role="dialog"]:has([data-slot="inv-form-actions"])')
+    await form.locator('[data-slot="inv-form-manual"]').waitFor()
+    const key = form.getByLabel(/^Takip adı/)
+    await expect(key).toHaveValue(KEY)
+    await expect(key).toBeEditable()
+    // Geçersiz ad: istemci kuralı, alanın altında; istek gitmez
+    let puts = 0
+    const countPut = (r) => { if (/\/api\/admin\/inventory\/\d+$/.test(new URL(r.url()).pathname) && r.method() === 'PUT') puts++ }
+    page.on('request', countPut)
+    await key.fill('Yanlis Ad')
+    await form.locator('[data-slot="inv-form-actions"]').getByRole('button', { name: 'Kaydet', exact: true }).click()
+    await expect(key).toHaveAttribute('aria-invalid', 'true')
+    expect(puts, 'geçersiz adla istek gitmemeli').toBe(0)
+    page.off('request', countPut)
+    // Geçerli yeni ad → onay ("Takip adı değiştirilsin mi?") → PUT 200
+    await key.fill(NEW_KEY)
+    const put = page.waitForResponse((r) => /\/api\/admin\/inventory\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PUT')
+    await form.locator('[data-slot="inv-form-actions"]').getByRole('button', { name: 'Kaydet', exact: true }).click()
+    // Onay penceresi (ui/Dialog confirm → role=dialog; yalnız alert tipi alertdialog) — başlığından bulunur
+    const confirm = page.getByRole('dialog').filter({ hasText: 'Takip adı değiştirilsin mi?' })
+    await expect(confirm).toContainText('Takip adı değiştirilsin mi?')
+    await expect(confirm).toContainText(NEW_KEY)
+    await confirm.getByRole('button', { name: 'Adı değiştir' }).click()
+    const pr = await put
+    expect(pr.status(), `yeniden adlandır: ${JSON.stringify((await pr.json())?.error || '')}`).toBe(200)
+    await expect(form).toHaveCount(0)
+    // Liste yeni adla; sürümler (2) ve güncel sürüm korunur
+    await openApp(page, `/?tab=manualcerts&mc_q=${encodeURIComponent(NEW_KEY)}`)
+    await expect(page.locator(`[data-mcert-row="${NEW_KEY}"]`)).toBeVisible()
+    const list = await apiGet(page.request, '/api/manual-certs')
+    const mine = (list.json?.data || []).find((r) => r.domain === NEW_KEY)
+    expect(mine?.current_version?.version, 'yeniden adlandırma sürümü değiştirmez').toBe(2)
+    expect(mine?.versions_count).toBe(2)
+    expect((list.json?.data || []).some((r) => r.domain === KEY), 'eski ad listede kalmamalı').toBe(false)
+    // Sonraki adımlar KEY'e bağlı — API ile eski ada geri dön (aynı uç, aynı kural)
+    const rec = await apiGet(page.request, `/api/admin/inventory/by-domain?domain=${encodeURIComponent(NEW_KEY)}`)
+    const back = await apiCall(page.request, 'PUT', `/api/admin/inventory/${rec.json?.data?.id}`, { ...rec.json?.data, domain: KEY })
+    expect(back.status, 'eski ada dönüş').toBe(200)
+    done()
+  })
+
+  test('3c · aynı sertifika "Yine de yükle" → v3 (aynı parmak izi) → eski v1 kalıcı silinir → 2 sürüm, güncel v3 @1280', async ({ page }) => {
+    const done = stopwatch('3c yine de yükle + sürüm sil')
+    const uploads = await watchUploads(page)
+    await page.setViewportSize(DESKTOP)
+    const mineNow = async () => ((await apiGet(page.request, '/api/manual-certs')).json?.data || []).find((r) => r.domain === KEY)
+    const before = await mineNow()
+    expect(before?.current_version?.version, 'başlangıç: v2 güncel').toBe(2)
+    const fpV2 = before?.current_version?.fingerprint
+    expect(fpV2).toBeTruthy()
+
+    await openApp(page, `/?tab=manualcerts&mc_q=${encodeURIComponent(KEY)}`)
+    const row = page.locator(`[data-mcert-row="${KEY}"]`)
+    await row.waitFor()
+    await row.locator('[data-slot="mcert-open"]').first().click()
+    const box = page.locator(CERT_MODAL)
+    await box.waitFor()
+    await certTab(page, box, 'versions')
+    await box.locator('[data-slot="mcert-version"][data-current="true"]').waitFor()
+    await expect(box.locator('[data-slot="mcert-version"]')).toHaveCount(2)
+    await box.locator('[data-slot="mcert-renew-btn"]').click()
+
+    // Güncel sürümün AYNISI (leaf-v2.pfx): engel değil uyarı — "Yine de yükle"
+    const dlg = page.locator(WIZARD)
+    await dlg.locator('[data-slot="mcert-wizard"][data-step="file"]').waitFor()
+    await analyzeFile(page, dlg, 'leaf-v2.pfx', PFX_PASS)
+    await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
+    await dlg.locator('[data-slot="mcert-next"]').click()
+    await dlg.locator('[data-slot="mcert-wizard"][data-step="track"]').waitFor()
+    const same = dlg.locator('[data-slot="mcert-same"]')
+    await expect(same).toContainText('Bu sertifika zaten güncel sürüm')
+    await expect(same).toContainText('Yine de yükle')
+    await expect(dlg.locator('[data-slot="mcert-submit"]'), 'aynı sertifikada normal kaydet kapalı').toBeDisabled()
+    await expectCleanText(dlg.locator('[data-slot="mcert-wizard"]'), 'Takip · aynı sertifika uyarısı')
+    const renewed = page.waitForResponse((r) => /\/api\/manual-certs\/\d+\/versions$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST')
+    await same.locator('[data-slot="mcert-upload-anyway"]').click()
+    const rr = await renewed
+    const rb = await rr.json()
+    expect(rr.status(), `yine de yükle: ${JSON.stringify(rb?.error || rb?.code || '')}`).toBe(200)
+    expect(rb.data).toMatchObject({ version: 3, previous_version: 2, same_certificate: true })
+    const result = dlg.locator('[data-slot="mcert-result"][data-same="true"]')
+    await expect(result).toContainText('Aynı sertifika yeni sürüm olarak kaydedildi (sürüm 3)')
+    await expect(result).toContainText('bitiş tarihi değişmedi')
+    await dlg.locator('[data-slot="mcert-wizard-actions"]').getByRole('button').last().click()
+    await expect(dlg).toHaveCount(0)
+
+    await expect(box.locator('[data-slot="mcert-version"]')).toHaveCount(3)
+    const cur = box.locator('[data-slot="mcert-version"][data-current="true"]')
+    await expect(cur).toHaveAttribute('data-version', '3')
+    await expect(cur.locator('[data-slot="mcert-same-reupload"]')).toContainText('Aynı sertifika yeniden yüklendi')
+    const mid = await mineNow()
+    expect(mid?.current_version?.fingerprint, 'yeni sürüm aynı parmak izi').toBe(fpV2)
+    expect(mid?.versions_count).toBe(3)
+
+    // Eski v1 KALICI silinir: "Sil" yalnız eski sürümlerde; onay → DELETE → sayı düşer, güncel v3 aynen kalır
+    await expect(cur.locator('[data-slot="mcert-version-delete"]'), 'güncel sürümde Sil yok').toHaveCount(0)
+    await expect(box.locator('[data-slot="mcert-version-delete"]')).toHaveCount(2)
+    const deleted = page.waitForResponse((r) => /\/api\/manual-certs\/\d+\/versions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE')
+    await box.locator('[data-slot="mcert-version"][data-version="1"] [data-slot="mcert-version-delete"]').click()
+    const confirm = page.getByRole('dialog').filter({ hasText: 'Sürüm v1 silinsin mi?' })
+    await expect(confirm).toContainText('kalıcı olarak silinecek; geri alınamaz')
+    await confirm.getByRole('button', { name: 'Kalıcı olarak sil' }).click()
+    const dr = await deleted
+    const db = await dr.json()
+    expect(dr.status(), `sürüm sil: ${JSON.stringify(db?.error || db?.code || '')}`).toBe(200)
+    expect(db.data).toMatchObject({ deleted_version: 1, versions_count: 2 })
+    await expect(box.locator('[data-slot="mcert-version"]')).toHaveCount(2)
+    await expect(box.locator('[data-slot="mcert-version"][data-version="1"]')).toHaveCount(0)
+    await expect(cur).toHaveAttribute('data-version', '3')
+    await expect(page.getByText('Sürüm v1 silindi').first()).toBeVisible()
+    await expectCleanText(box.locator('[data-slot="mcert-versions"]'), 'Sürümler (v1 silindi)')
+    const after = await mineNow()
+    expect(after?.current_version?.version, 'güncel sürüm değişmedi').toBe(3)
+    expect(after?.current_version?.fingerprint).toBe(fpV2)
+    expect(after?.versions_count).toBe(2)
+    expect(await uploads.check('3c'), 'analiz + yine de yükle denetlendi').toBe(2)
+    done()
+  })
+
+  test('4 · olumsuz yollar: CSR, özel anahtar, JKS yanlış şifre + zaten takipte, eski sürüm onayı, KEY_EXISTS (tekil + toplu), truststore tek girdi, iki bağımsız kök toplu → 2 kayıt @1280', async ({ page }) => {
     const done = stopwatch('4 olumsuz yollar + toplu')
+    const uploads = await watchUploads(page)
     await page.setViewportSize(DESKTOP)
     // Giriş noktası: Envanter → "Ekle ▾" → "Dosyadan sertifika ekle" → Manuel Sertifikalar sayfası + sihirbaz açık
     await openApp(page, '/?tab=domains')
@@ -381,17 +650,22 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await expect(dlg.locator('[data-slot="mcert-next"]')).toBeDisabled()
     await back()
 
-    // b) PEM + özel anahtar: "özel anahtar yok sayıldı" uyarısı; anahtar yanıtta yok
+    // b) PEM + özel anahtar: anahtar TARAYICIDA ayıklanır (sunucu yalnız sayıyı bilir: PRIVATE_KEY_KEPT_LOCAL 1);
+    //    İnceleme'de "Özel anahtar (1) tarayıcınızda ayıklandı; sunucuya gönderilmedi." notu; anahtar yanıtta da yok
     const wk = await analyzeFile(page, dlg, 'with-key.pem')
     expect(JSON.stringify(wk)).not.toContain('PRIVATE KEY')
+    expect((wk.data.warnings || []).find((w) => w.code === 'PRIVATE_KEY_KEPT_LOCAL')?.params?.count).toBe(1)
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
-    await expect(dlg.locator('[data-slot="mcert-warning"][data-code="PRIVATE_KEY_IGNORED"]')).toBeVisible()
-    await expect(dlg.locator('[data-slot="mcert-warning"][data-code="PRIVATE_KEY_IGNORED"]')).toContainText('özel anahtar')
+    const kept = dlg.locator('[data-slot="mcert-kept-local"]')
+    await expect(kept).toHaveAttribute('data-keys', '1')
+    await expect(kept).toContainText('Özel anahtar (1) tarayıcınızda ayıklandı; sunucuya gönderilmedi.')
+    await expect(dlg.locator('[data-slot="mcert-warning"][data-code="PRIVATE_KEY_KEPT_LOCAL"]'), 'aynı bilgi listede tekrarlanmaz').toHaveCount(0)
     await expectCleanText(dlg.locator('[data-slot="mcert-wizard"]'), 'İnceleme · özel anahtar')
     await back()
+    await expect(dlg.locator('[data-slot="mcert-kept-local"]'), 'Dosya adımına dönünce de not görünür').toHaveAttribute('data-keys', '1')
 
-    // c) JKS + YANLIŞ şifre: sertifikalar yine okunur (PASSWORD_WRONG uyarısı + "Şifreyi düzelt"); güncel sürümle aynı
-    //    sertifika → "zaten takipte" kartı; Takip adımında yeni kayıt engellenir
+    // c) JKS + YANLIŞ şifre: sertifikalar parolasız okunur; bütünlük denetimi TARAYICIDA tutmaz → PASSWORD_WRONG notu +
+    //    "Şifreyi düzelt"; sunucuya şifre gitmez. Güncel sürümle aynı sertifika → "zaten takipte"; yeni kayıt engellenir
     await dlg.locator('[data-slot="mcert-file-input"]').setInputFiles(cert('leaf-v2.jks'))
     const pw = dlg.locator('[data-slot="mcert-password"]')
     await pw.waitFor()
@@ -400,7 +674,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await dlg.locator('[data-slot="mcert-analyze"]').click()
     const jks = await (await jr).json()
     expect(jks.data.format).toBe('JKS')
-    expect((jks.data.warnings || []).map((w) => w.code)).toContain('PASSWORD_WRONG')
+    expect((jks.data.warnings || []).map((w) => w.code), 'sunucu şifreyi bilmez — bütünlük notu tarayıcının').not.toContain('PASSWORD_WRONG')
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
     await expect(dlg.locator('[data-slot="mcert-warning"][data-code="PASSWORD_WRONG"]')).toBeVisible()
     await expect(dlg.locator('[data-slot="mcert-fix-password"]')).toBeVisible()
@@ -452,9 +726,20 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
     await back()
 
-    // d) truststore.jks: iki CA → "birden çok seç" → iki takip adı → toplu oluştur (hep ya da hiç)
+    // d) truststore.jks (ara CA + onu imzalayan kök): 2026-10-07 → TEK girdi (ara), kök onun zincirinde; "birden çok" yok
     const ts = await analyzeFile(page, dlg, 'truststore.jks', PFX_PASS)
-    expect(ts.data.entries.length, 'truststore girdileri').toBe(2)
+    expect(ts.data.entries.length, 'truststore: ara + kök tek zincir').toBe(1)
+    expect(ts.data.certificate_count).toBe(2)
+    await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
+    await expect(dlg.locator('[data-slot="mcert-entry"]')).toHaveCount(1)
+    await expect(dlg.locator('[data-slot="mcert-entry"]')).toContainText('Test Issuing CA')
+    expect(await chainRoles(dlg.locator('[data-slot="mcert-entry"] [data-slot="ssl-chain"]')), 'ara → kök').toEqual(['intermediate', 'root'])
+    await expect(dlg.getByRole('button', { name: /^Birden çok/ })).toHaveCount(0)
+    await back()
+
+    // e) roots.jks: iki BAĞIMSIZ kök → iki girdi → "birden çok seç" → iki takip adı → toplu oluştur (hep ya da hiç)
+    const rs = await analyzeFile(page, dlg, 'roots.jks', PFX_PASS)
+    expect(rs.data.entries.length, 'iki bağımsız kök').toBe(2)
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
     await expect(dlg.locator('[data-slot="mcert-entry"]')).toHaveCount(2)
     await dlg.getByRole('button', { name: /^Birden çok/ }).click()
@@ -492,11 +777,13 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await dlg.getByRole('button', { name: /^(Kapat|Close)$/ }).first().click()
     await expect(dlg).toHaveCount(0)
     for (const k of CA_KEYS) await expect(page.locator(`[data-mcert-row="${k}"]`)).toBeVisible()
+    expect(await uploads.check('4'), 'olumsuz yolların yükleme istekleri denetlendi').toBeGreaterThanOrEqual(9)
     done()
   })
 
   test('5 · telefon 390×844: sayfa + sihirbaz adımları ekrana sığar (gerçek veriyle)', async ({ page }) => {
     const done = stopwatch('5 telefon')
+    const uploads = await watchUploads(page)
     await page.setViewportSize(PHONE)
     await openApp(page, '/?tab=manualcerts')
     await page.locator('[data-slot="manualcerts-page"]').waitFor()
@@ -511,7 +798,10 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await expectDialogFits(page, dlg, PHONE, 'sihirbaz dosya @390')
     await analyzeFile(page, dlg, 'chain-v1.p7b')
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
-    await dlg.locator('[data-slot="mcert-entry"][data-selected="true"] [data-slot="mcert-chain"] button').first().click()
+    // Zincir kartları (yaprak → ara → kök) en geniş hâliyle: SAN + teknik ayrıntılar açık
+    const phoneChain = dlg.locator('[data-slot="mcert-entry"][data-selected="true"] [data-slot="mcert-chain"]')
+    expect(await chainRoles(phoneChain)).toEqual(['leaf', 'intermediate', 'root'])
+    await expandAll(phoneChain)
     await expectDialogFits(page, dlg, PHONE, 'sihirbaz inceleme @390')
     await dlg.locator('[data-slot="mcert-next"]').click()
     await dlg.locator('[data-slot="mcert-wizard"][data-step="track"]').waitFor()
@@ -522,13 +812,21 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     // Kaydetmeden kapat (yalnız yerleşim)
     await dlg.getByRole('button', { name: /^(Kapat|Close)$/ }).first().click()
     await expect(dlg).toHaveCount(0)
+    expect(await uploads.check('5'), 'P7B analizi denetlendi').toBe(1)
 
-    // Sertifika penceresi → Sürümler (gerçek 2 sürüm: uzun DN'ler, parmak izleri) telefonda sığar
+    // Sertifika penceresi → SSL (açılış sekmesi, zincir kartları açık) ve Sürümler (gerçek 2 sürüm: v3 güncel + v2;
+    // uzun DN'ler, parmak izleri, "Sil") telefonda sığar
     await page.locator(`[data-mcert-row="${KEY}"] [data-slot="mcert-open"]`).first().click()
     const certBox = page.locator(CERT_MODAL)
     await certBox.waitFor()
+    const ssl = certBox.locator('[data-slot="ssl-panel"][data-source="upload"]')
+    await ssl.waitFor({ timeout: 20_000 })
+    expect(await chainRoles(ssl.locator('[data-slot="ssl-chain"]'))).toEqual(['leaf', 'intermediate', 'root'])
+    await expandAll(ssl.locator('[data-slot="ssl-chain"]'))
+    await expectDialogFits(page, certBox, PHONE, 'SSL (manuel) @390')
     await certTab(page, certBox, 'versions')
     await expect(certBox.locator('[data-slot="mcert-version"]')).toHaveCount(2)
+    await expect(certBox.locator('[data-slot="mcert-version-delete"]')).toHaveCount(1)
     await expectDialogFits(page, certBox, PHONE, 'Sürümler @390')
     done()
   })
@@ -538,7 +836,8 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     expect(rows.map((r) => r.domain).sort()).toEqual([KEY, ...CA_KEYS].sort())
     const list = await apiGet(page.request, '/api/manual-certs')
     const mine = (list.json?.data || []).find((r) => r.domain === KEY)
-    expect(mine?.current_version?.version).toBe(2)
+    // 3c: "Yine de yükle" → v3 güncel; eski v1 kalıcı silindi → v3 + v2
+    expect(mine?.current_version?.version).toBe(3)
     expect(mine?.versions_count).toBe(2)
     // Yükleme / yeni sürüm / yeniden değerlendirme yalnız toparlanma yapar: açık alarm YOK
     const alerts = await apiGet(page.request, `/api/history/${encodeURIComponent(KEY)}/alerts`)

@@ -17,6 +17,7 @@ import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { copyText } from '../utils/copyText.js'
 import { downloadCsv } from '../utils/csvExport.js'
+import { countDeleted, filterDeleted, useDeletedMarksVersion } from '../utils/recentlyDeleted.js'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CertTableToolbar from './certtable/CertTableToolbar.jsx'
 import CertBulkBar from './certtable/CertBulkBar.jsx'
@@ -114,7 +115,11 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   const [colFilters, setColFilters] = useState(() => !!readView()?.colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
   const [presets, setPresets] = useState(() => readPresets())
 
-  const [certs, setCerts] = useState([])
+  const [rawCerts, setCerts] = useState([])
+  // Silme KALICI + iyimser (2026-10-07): az önce silinen kayıt (bu ya da başka bir yüzeyde) sayfadan ANINDA düşer; başka
+  // pod'un bayat önbelleğinden gelen satır da gösterilmez. Gösterilen toplam düşenler kadar azaltılır (aşağıda).
+  const deletedVersion = useDeletedMarksVersion()
+  const certs = useMemo(() => filterDeleted('cert', rawCerts, (c) => c.domain), [rawCerts, deletedVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const [pagination, setPagination] = useState({ current_page: 1, total: 0, total_pages: 1 })
   const [facets, setFacets] = useState(null)
   const [shared, setShared] = useState({})
@@ -145,7 +150,11 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
       if (data?.success) {
         setCerts(data.data || [])
         setPagination(data.pagination || { current_page: 1, total: 0, total_pages: 1 })
-        bindTotal(data)   // { pagination: { total } } zarfı
+        // { pagination: { total } } zarfı — bayat yanıtta hâlâ duran, az önce silinmiş satırlar sayfa toplamından düşülür.
+        const stale = countDeleted('cert', data.data || [], (c) => c.domain)
+        bindTotal(stale > 0 && data.pagination
+          ? { ...data, pagination: { ...data.pagination, total: Math.max(0, (data.pagination.total ?? 0) - stale) } }
+          : data)
         setVisibleToAll(!!data.visible_to_all)
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (data.scope && normalizeScope(data.scope) !== scope) setScopeRaw(normalizeScope(data.scope))
@@ -229,7 +238,8 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   const exportUrl = api.certExportUrl(toQuery(queryFilters, { page, perPage, sortBy, scope }), csvColumnsFor(cols))   // CSV ekrandaki kapsamı taşır
   const activeStatusLabel = t(STATUS_OPTIONS.find((o) => o.value === filters.status)?.labelKey ?? 'tbl.filterAll')
   const [sortKey, sortDir] = sortBy.split('|')
-  const p = pagination
+  // Gösterilen toplam: sayfadan iyimser düşen (yakın zamanda silinen) satırlar kadar az — sunucu tazelemesi gelince eşitlenir.
+  const p = { ...pagination, total: Math.max(0, (pagination.total ?? 0) - (rawCerts.length - certs.length)) }
   const hasFilters = Object.keys(EMPTY_FILTERS).some((k) => filters[k] !== EMPTY_FILTERS[k])
   const showSelect = true   // seçim: kontrol herkese açık (/check yalnız oturum ister); yönetim eylemleri rol kapılı
   const helpBullets = useMemo(() => [t('tbl.how1'), t('tbl.how2'), t('tbl.how3'), t('tbl.how4'), t('tbl.how5')], [t])

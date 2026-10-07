@@ -89,8 +89,7 @@ public class LoginIssueController {
     /**
      * Raporu KALICI siler — rapor + resimleri + GİDEN MAİLLERİN saklanan kopyası.
      *
-     * <p>Yetki AYRI ve "hassas" ({@code issues.login-reports.purge}, {@code inventory.purge}
-     * emsali): raporun DURUMUNU değiştirmek ile kaydı YOK ETMEK farklı yetkilerdir. İkincisi
+     * <p>Yetki AYRI ve "hassas" ({@code issues.login-reports.purge}): raporun DURUMUNU değiştirmek ile kaydı YOK ETMEK farklı yetkilerdir. İkincisi
      * güvenlik bildirimlerini de ("bu girişi ben yapmadım") silebildiği için "raporları yönetsin
      * ama kanıt silemesin" ayrımı mümkün kalmalı. Varsayılan: yalnız ADMIN.
      *

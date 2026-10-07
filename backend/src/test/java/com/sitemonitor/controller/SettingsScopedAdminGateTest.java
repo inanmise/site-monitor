@@ -105,12 +105,13 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
-    @DisplayName("2026-09-28: veri saklama anahtarları GLOBAL_ONLY — yasal saklama, parti boyutu, envanter oto-boşaltma, HER politikanın süre + onay anahtarı")
+    @DisplayName("2026-09-28: veri saklama anahtarları GLOBAL_ONLY — yasal saklama, parti boyutu, HER politikanın süre + onay anahtarı")
     void retentionKeys_globalOnly() {
+        // Envanter çöp kutusu oto-boşaltma anahtarı 2026-10-07'de kalktı (silme kalıcı) — katalogda da yok.
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).doesNotContain("site.monitor.inventory.auto-purge-days");
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
                 com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY,
                 com.sitemonitor.service.retention.RetentionCatalog.BATCH_KEY,
-                com.sitemonitor.service.InventoryAutoPurgeService.KEY,
                 "site.monitor.activity.retention-days",
                 "site.monitor.audit.retention-days",
                 "site.monitor.failed-login.retention-days");

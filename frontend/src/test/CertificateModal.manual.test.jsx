@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 
 /**
- * Sertifika penceresi — manuel (dosyadan yüklenen) kayıt (2026-10-06): canlı SSL sekmesi YOK, açılış Detaylar, tanılama
- * yok, "Çalıştır" = "Yeniden değerlendir", "Sürümler" sekmesi (güncel + önceki sürümler, PEM indir, yeni sürüm yükle →
- * sihirbaz yenileme kipinde). Satır bilgisi olmadan açılınca canlı kontrolün 409 MANUAL_CERT yanıtından anlaşılır.
- * Ağ kaydı birebir aynı (SSL sekmesi ilk, canlı kontrol koşar).
+ * Sertifika penceresi — manuel (dosyadan yüklenen) kayıt. 2026-10-06: tanılama yok, "Çalıştır" = "Yeniden değerlendir",
+ * "Sürümler" sekmesi (güncel + önceki sürümler, PEM indir, yeni sürüm yükle → sihirbaz yenileme kipinde).
+ * 2026-10-07: SSL sekmesi manuelde de VAR ve açılış sekmesidir — `/check-preview` çevrim-dışı sonucu (`via: 'upload'`)
+ * aynı panelle (bağlantı grubu yok) ve aynı zincir kartlarıyla çizilir. Satır bilgisi olmadan açılınca önizlemenin
+ * `via`'sından (ya da değerlendirilemezse 409 MANUAL_CERT'ten) anlaşılır. Ağ kaydı birebir aynı.
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -34,6 +35,7 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
 
 import { api } from '../api/client'
 import CertificateModal from '../components/CertificateModal.jsx'
+import { uploadPreview } from './helpers/sslPreviewFixture.js'
 
 const VERSIONS = [
   { id: 13, version: 3, current: true, fingerprint: 'F3F3', subject: 'CN=keystore.example.test', subject_dn: 'CN=keystore.example.test,O=Example',
@@ -55,19 +57,36 @@ describe('CertificateModal — manuel kayıt', () => {
     api.manualCerts.get.mockResolvedValue({ success: true, data: { inventory_id: 77, can_manage: true, versions: VERSIONS } })
   })
 
-  it('SSL sekmesi yok, Detaylar açık, Sürümler var; canlı kontrol yok; tanılama yok; "Yeniden değerlendir"; başlıkta Manuel rozeti', async () => {
+  it('SSL sekmesi İLK ve açık: çevrim-dışı önizleme, aynı zincir kartları (yaprak → ara → kök), bağlantı grubu yok; Sürümler var; tanılama yok', async () => {
+    api.checkDomainPreview.mockResolvedValueOnce({ success: true, data: uploadPreview({ domain: 'keystore.example.test' }) })
     render(<CertificateModal domain="keystore.example.test" manual manualMeta={{ version: 3, uploadedAt: '2026-09-30T08:00:00' }}
       onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" onCheckNow={vi.fn()} onEdit={vi.fn()} />)
     const dlg = await screen.findByRole('dialog')
     const names = tabNames(dlg)
-    expect(names).not.toContain('ssl')
+    expect(names[0]).toBe('ssl')
     expect(names).toContain('versions')
     expect(names.indexOf('versions')).toBe(names.indexOf('details') + 1)
-    expect(within(dlg).getByRole('tab', { name: /details|detay/i })).toHaveAttribute('aria-selected', 'true')
-    expect(api.checkDomainPreview).not.toHaveBeenCalled()
+    // Yanıt süresi grafiği manuelde yok (ağ yok) → şerit 9 sekmede kalır (1200 px'e sığar)
+    expect(names).not.toContain('chart')
+    expect(names).toHaveLength(9)
+    expect(within(dlg).getByRole('tab', { name: /ssl/i })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('keystore.example.test'))
+    const panel = await waitFor(() => { const el = dlg.querySelector('[data-slot="ssl-panel"]'); if (!el) throw new Error('yok'); return el })
+    expect(panel).toHaveAttribute('data-source', 'upload')
+    expect([...panel.querySelectorAll('[data-slot="ssl-chain-node"]')].map((n) => n.dataset.role)).toEqual(['leaf', 'intermediate', 'root'])
+    expect([...panel.querySelectorAll('[data-slot="ssl-check-group"]')].map((g) => g.dataset.group)).toEqual(['cert', 'trust'])
+    expect(panel.querySelector('[data-slot="ssl-check"][data-check="hostname"]')).toBeNull()
+    expect(panel).not.toHaveTextContent(/Live check|Canlı kontrol/)
     expect(dlg.querySelector('[data-slot="cert-diagnose"]')).toBeNull()
-    expect(within(dlg).getByRole('button', { name: /^(Re-evaluate|Yeniden değerlendir)$/ })).toBeInTheDocument()
+    // Başlıktaki kalıcı değerlendirme + panelin önizleme düğmesi: ikisi de "Yeniden değerlendir"
+    const actions = dlg.querySelector('[data-slot="cert-modal-actions"]')
+    expect(within(actions).getByRole('button', { name: /^(Re-evaluate|Yeniden değerlendir)$/ })).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: /^(Re-evaluate|Yeniden değerlendir)$/ })).toBeInTheDocument()
     expect(dlg.querySelector('[data-slot="cert-modal-title"] [data-slot="manual-cert-badge"]')).toHaveAttribute('data-version', '3')
+    // Panelin "Yeniden değerlendir"i önizlemeyi yeniden ister (kayıt yazmaz)
+    api.checkDomainPreview.mockResolvedValueOnce({ success: true, data: uploadPreview({ domain: 'keystore.example.test' }) })
+    fireEvent.click(within(panel).getByRole('button', { name: /^(Re-evaluate|Yeniden değerlendir)$/ }))
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledTimes(2))
   })
 
   it('Sürümler: güncel kart vurgulu + önceki sürüm (kim/ne zaman yenilendi), anahtar ve SAN farkı, sürüm başına PEM; yeni sürüm → sihirbaz', async () => {
@@ -99,14 +118,29 @@ describe('CertificateModal — manuel kayıt', () => {
     expect(dlg.querySelector('[data-slot="mcert-renew-btn"]')).toBeNull()
   })
 
-  it('satır bilgisi yokken (derin bağlantı): canlı kontrol 409 MANUAL_CERT → manuel kipe geçer, hata çizilmez', async () => {
-    api.checkDomainPreview.mockResolvedValueOnce({ success: false, code: 'MANUAL_CERT', error: 'manuel' })
+  it('satır bilgisi yokken (derin bağlantı): önizleme via=upload → manuel kip (Sürümler, rozet sürümü); SSL sekmesi açık kalır', async () => {
+    api.getHistory.mockResolvedValueOnce({ success: true, data: [] })
+    api.checkDomainPreview.mockResolvedValueOnce({ success: true, data: uploadPreview({ domain: 'keystore.example.test', manual_version: 5 }) })
     render(<CertificateModal domain="keystore.example.test" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
     const dlg = await screen.findByRole('dialog')
     await waitFor(() => expect(tabNames(dlg)).toContain('versions'))
-    expect(tabNames(dlg)).not.toContain('ssl')
-    expect(within(dlg).getByRole('tab', { name: /details|detay/i })).toHaveAttribute('aria-selected', 'true')
-    expect(within(dlg).queryByText('manuel')).toBeNull()
+    expect(tabNames(dlg)[0]).toBe('ssl')
+    expect(within(dlg).getByRole('tab', { name: /ssl/i })).toHaveAttribute('aria-selected', 'true')
+    expect(dlg.querySelector('[data-slot="ssl-panel"]')).toHaveAttribute('data-source', 'upload')
+    expect(dlg.querySelector('[data-slot="cert-modal-title"] [data-slot="manual-cert-badge"]')).toHaveAttribute('data-version', '5')
+  })
+
+  it('geçerli sürüm değerlendirilemezse (409 MANUAL_CERT): manuel kip + SSL sekmesinde sunucu iletisi ve "Yeniden dene"', async () => {
+    api.getHistory.mockResolvedValueOnce({ success: true, data: [] })
+    api.checkDomainPreview.mockResolvedValueOnce({ success: false, code: 'MANUAL_CERT', error: 'Geçerli sürüm değerlendirilemedi (sunucu)' })
+    render(<CertificateModal domain="keystore.example.test" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    const dlg = await screen.findByRole('dialog')
+    await waitFor(() => expect(tabNames(dlg)).toContain('versions'))
+    expect(await within(dlg).findByText('Geçerli sürüm değerlendirilemedi (sunucu)')).toBeInTheDocument()
+    expect(within(dlg).getByText(/The evaluation failed|Couldn't run the evaluation|Değerlendirme yapılamadı/)).toBeInTheDocument()
+    api.checkDomainPreview.mockResolvedValueOnce({ success: true, data: uploadPreview({ domain: 'keystore.example.test' }) })
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(Try again|Retry|Yeniden dene)$/ }))
+    await waitFor(() => expect(dlg.querySelector('[data-slot="ssl-panel"]')).not.toBeNull())
   })
 
   it('ağ kaydı DEĞİŞMEZ: SSL sekmesi ilk ve açık, canlı kontrol koşar, Sürümler yok', async () => {
@@ -115,6 +149,7 @@ describe('CertificateModal — manuel kayıt', () => {
     const dlg = await screen.findByRole('dialog')
     expect(tabNames(dlg)[0]).toBe('ssl')
     expect(tabNames(dlg)).not.toContain('versions')
+    expect(tabNames(dlg)).toContain('chart')
     await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('net.example.test'))
     expect(within(dlg).getByRole('button', { name: /^(Run|Çalıştır)$/ })).toBeInTheDocument()
     expect(dlg.querySelector('[data-slot="manual-cert-badge"]')).toBeNull()

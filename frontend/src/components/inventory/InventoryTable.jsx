@@ -209,32 +209,18 @@ export function ActiveBadge({ r, t }) {
   )
 }
 
-/** Silinmiş kaydın künyesi: "Silindi · N gün önce · kim". */
-export function DeletedBadge({ r, t }) {
-  const ago = daysBetween(r.deleted_at)
-  return (
-    <Badge variant="secondary" data-slot="inv-deleted" title={formatDate(r.deleted_at)} className="whitespace-normal">
-      {t('inv.deletedBadge')}{ago != null ? ` · ${t('inv.deletedAgo', ago)}` : ''}{r.updated_by_name ? ` · ${r.updated_by_name}` : ''}
-    </Badge>
-  )
-}
+// (2026-10-07) "Silindi · N gün önce" künyesi (DeletedBadge) kalktı: silme kalıcı, çöp kutusu satırı listelenmez.
 
 export const tagList = (r) => String(r.tags || '').split(',').map((x) => x.trim()).filter(Boolean)
 export const platformLabel = (code, names = {}) => names[code] || code
 
 /**
  * Satır/kart "İşlem" menüsü — tablo ve telefon kartı AYNI listeyi kullanır. Salt okunur (başka takımın) kayıtta yalnız
- * "Göster"; silinmişte Göster / Geri getir / Kalıcı sil; canlıda Göster / Kontrol et / Tanılama / Düzenle / Kopyala / Devret / Sil.
+ * "Göster"; aksi hâlde Göster / Kontrol et / Tanılama / Düzenle / Kopyala / Devret / Sil (KALICI — 2026-10-07; çöp kutusu,
+ * geri getir ve ayrı "kalıcı sil" yok).
  */
-export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge }) {
+export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete }) {
   if (ro) return [{ label: t('inv.show'), onClick: () => onShow(r) }]
-  if (r.deleted_at) {
-    return [
-      { label: t('inv.show'), onClick: () => onShow(r) },
-      { label: t('inv.restore'), onClick: () => onRestore(r.id), hidden: !canManage },
-      { label: t('inv.purge'), danger: true, onClick: () => onPurge(r.id), hidden: !isAdmin },
-    ]
-  }
   return [
     { label: t('inv.show'), onClick: () => onShow(r) },
     { label: (isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow')), onClick: () => onCheckNow(r) },
@@ -259,7 +245,7 @@ const stop = (e) => e.stopPropagation()
 
 /**
  * Envanter tablosu (#3 canlı durum · #4 sütun seçici + sıralama · #5 ikonlar · #8 satır-içi düzenleme · #9 alan adı bitişi ·
- * #10 çöp kutusu künyesi · #11 şimdi kontrol et · #14 etiket çipleri · #15 yoğunluk). 2026-09-27 yeniden tasarım: satıra
+ * #11 şimdi kontrol et · #14 etiket çipleri · #15 yoğunluk). 2026-09-27 yeniden tasarım: satıra
  * tıklamak/Enter çekmeceyi açar, ↑/↓ satırlar arasında gezer; başlık ve alan adı sütunu kendi kaydırma kabında YAPIŞKAN
  * (kap `max-h` ile dikey kayar); alan adı hücresi durum noktası + 443 dışı port rozeti + açıklama; bitiş göreli + tarih;
  * sorumlular baş harf avatarları + sayaç. Telefonda bu tablo çizilmez (InventoryCardList).
@@ -270,7 +256,7 @@ const stop = (e) => e.stopPropagation()
 export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   canManageRow = () => true,   // org geneli görünürlük (2026-09-26): false → başka takımın kaydı, HER değiştiren kontrol gizli + salt okunur rozet
-  onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick, statusFilter,
+  onShow, onEdit, onDuplicate, onTransfer, onDelete, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick,
   filters = null, onFilters = null, allRows = [], showFilters = false, onClearFilters = null,   // kolon süzgeç satırı (2026-09-22)
   platformNames = {},   // kod → ad (Ayarlar → Platformlar); yoksa kod gösterilir
 }) {
@@ -327,7 +313,7 @@ export default function InventoryTable({
           <TableRow className="hover:bg-transparent">
             {canManage && (
               <TableHead className={cn(headCls, 'w-7')}>
-                <Checkbox checked={allOnPage} onCheckedChange={onToggleAll} disabled={rows.filter((r) => !r.deleted_at && canManageRow(r)).length === 0}
+                <Checkbox checked={allOnPage} onCheckedChange={onToggleAll} disabled={rows.filter((r) => canManageRow(r)).length === 0}
                   aria-label={t('inv.bulkSelectAll')} />
               </TableHead>
             )}
@@ -347,16 +333,15 @@ export default function InventoryTable({
             {show('tags') && header('tags', 'inv.colTags')}
             {show('platform') && header('platform', 'inv.colPlatform')}
             {show('updated') && header('updated', 'inv.colUpdated')}
-            {header('active', statusFilter === 'deleted' ? 'inv.colDeleted' : 'inv.colActive')}
+            {header('active', 'inv.colActive')}
             <TableHead className={cn(headCls, 'text-right')}>{t('inv.colActions')}</TableHead>
           </TableRow>
           {showFilters && filters && onFilters && (
-            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} statusFilter={statusFilter} platformNames={platformNames} />
+            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} platformNames={platformNames} />
           )}
         </TableHeader>
         <TableBody>
           {rows.map((r) => {
-            const del = !!r.deleted_at
             const ro = !canManageRow(r)              // başka takımın kaydı: salt okunur satır
             const editable = !ro && canEditRow(r)
             const dexp = r.domain_expiry ? -daysBetween(r.domain_expiry) : null
@@ -365,7 +350,7 @@ export default function InventoryTable({
             const isSel = selected.has(r.id)
             return (
               // Satır: tıkla / Enter / Boşluk → çekmece; ↑↓ satırlar arasında gezer. Hücre içi kontroller yayılımı durdurur.
-              <TableRow key={r.id} tabIndex={0} data-inv-row={r.domain} data-deleted={del ? 'true' : undefined}
+              <TableRow key={r.id} tabIndex={0} data-inv-row={r.domain}
                 data-state={isSel ? 'selected' : undefined}
                 onClick={() => onShow(r)}
                 onKeyDown={(e) => {
@@ -374,10 +359,10 @@ export default function InventoryTable({
                   else if (e.key === 'ArrowDown') { e.preventDefault(); focusRow(e.currentTarget, 1) }
                   else if (e.key === 'ArrowUp') { e.preventDefault(); focusRow(e.currentTarget, -1) }
                 }}
-                className={cn('group/row cursor-pointer outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset', del && '[&>td]:opacity-55')}>
+                className="group/row cursor-pointer outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset">
                 {canManage && (
                   <TableCell className={cellCls} onClick={stop}>
-                    {!del && !ro && <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} aria-label={t('bulk.selectOneFor', r.domain)} />}
+                    {!ro && <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} aria-label={t('bulk.selectOneFor', r.domain)} />}
                   </TableCell>
                 )}
                 <TableCell className={cn(cellCls, STICKY, 'max-w-[26rem]')}>
@@ -388,7 +373,7 @@ export default function InventoryTable({
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5 whitespace-normal">
                       <span className="min-w-0">
                         <Button type="button" variant="link" data-inv-domain="true" onClick={(e) => { e.stopPropagation(); onShow(r) }}
-                          className={cn('inline h-auto p-0 text-left leading-snug font-bold break-all whitespace-normal text-foreground hover:text-primary', del && 'line-through')}>
+                          className="inline h-auto p-0 text-left leading-snug font-bold break-all whitespace-normal text-foreground hover:text-primary">
                           {r.domain}
                         </Button>
                         {port !== 443 && <Badge variant="outline" className="ml-1.5 px-1.5 align-middle font-mono text-[.72em] text-muted-foreground">:{port}</Badge>}
@@ -406,11 +391,11 @@ export default function InventoryTable({
                 </TableCell>
                 {show('port') && <TableCell className={cn(cellCls, 'tabular-nums')}>{port}</TableCell>}
                 {show('tier') && (
-                  <TableCell className={cellCls} onClick={stop} onDoubleClick={() => editable && !del && setEditing({ id: r.id, field: 'tier' })}>
+                  <TableCell className={cellCls} onClick={stop} onDoubleClick={() => editable && setEditing({ id: r.id, field: 'tier' })}>
                     {editing?.id === r.id && editing.field === 'tier' ? inlineTier(r) : (
                       <Button type="button" variant="ghost" size="xs" data-inv-tier-edit="true"
                         className="h-auto rounded p-0 text-muted-foreground hover:bg-transparent disabled:opacity-100 has-[>svg]:px-0"
-                        disabled={!editable || del} onClick={() => setEditing({ id: r.id, field: 'tier' })}
+                        disabled={!editable} onClick={() => setEditing({ id: r.id, field: 'tier' })}
                         title={editable ? t('inv.inlineEditTip') : undefined}
                         aria-label={t('a11y.rowAction', r.domain, `${t('inv.colTier')}: ${r.tier ? `T${r.tier}` : t('tier.unclassified')}`)}>
                         {r.tier ? <TierBadge tier={r.tier} /> : '—'}
@@ -432,16 +417,14 @@ export default function InventoryTable({
                 {show('platform') && <TableCell className={cellCls}>{r.platform ? <span className="whitespace-nowrap" title={r.platform_detail || ''}>{platformLabel(r.platform, platformNames)}{r.platform_detail ? <span className="text-muted-foreground"> · {r.platform_detail}</span> : null}</span> : <span className="text-muted-foreground">—</span>}</TableCell>}
                 {show('updated') && <TableCell className={cn(dim, 'whitespace-nowrap')}>{r.updated_at ? formatDate(r.updated_at) : '—'}{r.updated_by_name ? <span> · {r.updated_by_name}</span> : null}</TableCell>}
                 <TableCell className={cellCls} onClick={stop}>
-                  {del
-                    ? <DeletedBadge r={r} t={t} />
-                    : canManage && !ro
-                      ? (
-                        // Anahtarın kendisi durumu taşır (görsel + role=switch, erişilebilir ad satırı içerir); rozet yalnız salt okunurda
-                        // (2026-09-27: ayrı "Aktif/Pasif" rozeti sütunu 1440'ta tabloyu taşırıyordu)
-                        <Switch size="sm" checked={!!r.active} onCheckedChange={(on) => onInline(r, { active: on })}
-                          title={t('inv.inlineEditTip')} aria-label={`${r.domain} — ${t('inv.colActive')}`} />
-                      )
-                      : <ActiveBadge r={r} t={t} />}
+                  {canManage && !ro
+                    ? (
+                      // Anahtarın kendisi durumu taşır (görsel + role=switch, erişilebilir ad satırı içerir); rozet yalnız salt okunurda
+                      // (2026-09-27: ayrı "Aktif/Pasif" rozeti sütunu 1440'ta tabloyu taşırıyordu)
+                      <Switch size="sm" checked={!!r.active} onCheckedChange={(on) => onInline(r, { active: on })}
+                        title={t('inv.inlineEditTip')} aria-label={`${r.domain} — ${t('inv.colActive')}`} />
+                    )
+                    : <ActiveBadge r={r} t={t} />}
                 </TableCell>
                 <TableCell className={cn(cellCls, 'text-right')} onClick={stop}>
                   {ro ? (
@@ -453,17 +436,15 @@ export default function InventoryTable({
                     </div>
                   ) : (
                     <div className="inline-flex items-center justify-end gap-1">
-                      {!del && (
-                        <SimpleTooltip content={(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
-                          <Button type="button" variant="ghost" size="icon-sm" disabled={busy.has(r.domain)} aria-busy={busy.has(r.domain) || undefined}
-                            className="text-muted-foreground pointer-coarse:size-10"
-                            onClick={() => checkNow(r)} aria-label={`${r.domain} — ${(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}`}>
-                            {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}
-                          </Button>
-                        </SimpleTooltip>
-                      )}
+                      <SimpleTooltip content={(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
+                        <Button type="button" variant="ghost" size="icon-sm" disabled={busy.has(r.domain)} aria-busy={busy.has(r.domain) || undefined}
+                          className="text-muted-foreground pointer-coarse:size-10"
+                          onClick={() => checkNow(r)} aria-label={`${r.domain} — ${(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}`}>
+                          {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}
+                        </Button>
+                      </SimpleTooltip>
                       <KebabMenu label={t('inv.colActions')} rowLabel={r.domain}
-                        items={rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow: checkNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge })} />
+                        items={rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow: checkNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete })} />
                     </div>
                   )}
                 </TableCell>

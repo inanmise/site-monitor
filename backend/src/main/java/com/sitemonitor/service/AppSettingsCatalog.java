@@ -437,7 +437,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.retention.purge-batch-size",        "retention", Type.INT),
         new Setting("site.monitor.network-outage.retention-days",     "retention", Type.INT),
         new Setting("site.monitor.incident.retention-days",           "retention", Type.INT),
-        new Setting("site.monitor.inventory.auto-purge-days",          "retention", Type.INT),   // 0 = kapalı; çöp kutusu otomatik boşaltma (envanter #10)
+        // site.monitor.inventory.auto-purge-days KALDIRILDI (2026-10-07): envanter silmesi kalıcı, çöp kutusu yok.
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),
@@ -586,14 +586,13 @@ public final class AppSettingsCatalog {
 
     /**
      * Veri saklama anahtarları — {@code RetentionCatalog}'daki her politikanın süre anahtarı + uyum onayı anahtarı,
-     * yasal saklama, parti boyutu ve envanter çöp kutusu otomatik boşaltma. Elle liste DEĞİL (yeni politika sessizce
-     * dışarıda kalmasın).
+     * yasal saklama ve parti boyutu. Elle liste DEĞİL (yeni politika sessizce dışarıda kalmasın). Envanter çöp kutusu
+     * otomatik boşaltma anahtarı 2026-10-07'de kalktı (silme kalıcı).
      */
     public static java.util.Set<String> retentionKeys() {
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         out.add(RetentionCatalog.HOLD_KEY);
         out.add(RetentionCatalog.BATCH_KEY);
-        out.add(InventoryAutoPurgeService.KEY);
         for (var p : RetentionCatalog.ALL) {
             if (p.settingKey() != null) out.add(p.settingKey());
             out.add(RETENTION_APPROVAL_PREFIX + p.id());

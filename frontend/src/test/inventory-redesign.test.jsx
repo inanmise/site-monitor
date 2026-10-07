@@ -125,22 +125,23 @@ describe('Envanter yeniden tasarımı — başlık ve özet kartları', () => {
     expect(tile('expiring')).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('kartlar arasında TEK seçim: "Hatalı" → "T1 kritik" öncekini geri alır; "Silinmiş" çöp kutusu görünümüne geçer; "Toplam" kart süzgecini kaldırır', async () => {
+  it('kartlar arasında TEK seçim: "Hatalı" → "T1 kritik" öncekini geri alır; "Toplam" kart süzgecini kaldırır; "Silinmiş" kartı YOK (silme kalıcı)', async () => {
     renderIm()
     await screen.findByText('a.example.com')
+    // 2026-10-07: çöp kutusu yok — eski sunucudan gelen deleted_at satırı (gone) ne kartta ne listede
+    expect(tile('deleted')).toBeNull()
+    expect(rowsShown()).not.toContain('gone.example.com')
     fireEvent.click(tile('errors'))
     await waitFor(() => expect(rowsShown()).toEqual(['foreign.example.com']))
     fireEvent.click(tile('tier1'))
     await waitFor(() => expect(rowsShown()).toEqual(['a.example.com', 'foreign.example.com']))
     expect(tile('errors')).toHaveAttribute('aria-pressed', 'false')
-    fireEvent.click(tile('deleted'))
-    await waitFor(() => expect(rowsShown()).toEqual(['gone.example.com']))
     fireEvent.click(tile('total'))
     await waitFor(() => expect(rowsShown()).toHaveLength(4))
     expect(tile('total')).not.toHaveAttribute('aria-pressed')   // eylem kartı
   })
 
-  it('veri desteklemeyen kart çizilmez: hiç platform / katman / pasif / silinmiş yoksa o kartlar yok', async () => {
+  it('veri desteklemeyen kart çizilmez: hiç platform / katman / pasif yoksa o kartlar yok ("Silinmiş" kartı hiç yok)', async () => {
     api.admin.getInventory.mockResolvedValue({ success: true, data: [{ id: 1, domain: 'x.example.com', active: true, team_id: 5, cert_status: 'valid', cert_days_remaining: 90 }] })
     renderIm()
     await screen.findByText('x.example.com')
@@ -376,7 +377,10 @@ describe('inventoryModel — özet kartları, fasetler, çipler (saf)', () => {
   const live = ITEMS.filter((r) => !r.deleted_at)
   it('tileCounts her kartı applyFilters ile AYNI kuralla sayar (kart sayısı = kart basılınca görünen satır sayısı)', () => {
     const c = tileCounts(ITEMS)
-    expect(c).toMatchObject({ total: 4, active: 3, inactive: 1, valid: 1, expiring: 1, expired: 1, errors: 1, noContacts: 3, noPlatform: 1, tier1: 2, deleted: 1 })
+    expect(c).toMatchObject({ total: 4, active: 3, inactive: 1, valid: 1, expiring: 1, expired: 1, errors: 1, noContacts: 3, noPlatform: 1, tier1: 2 })
+    // 2026-10-07: silme kalıcı — "Silinmiş" kartı ve sayacı yok; eski çöp satırı hiçbir karta sayılmaz
+    expect(c).not.toHaveProperty('deleted')
+    expect(TILES.map((x) => x.key)).not.toContain('deleted')
     for (const tl of TILES.filter((x) => x.filters)) {
       expect(applyFilters(live, { ...EMPTY_FILTERS, ...tl.filters }).length, tl.key).toBe(c[tl.key])
     }
@@ -390,7 +394,7 @@ describe('inventoryModel — özet kartları, fasetler, çipler (saf)', () => {
     expect(s).toMatchObject({ statusFilter: 'inactive', filters: { days: '', q: 'x' } })
     s = applyTile('inactive', s.statusFilter, s.filters)
     expect(s.statusFilter).toBe('default')
-    s = applyTile('total', 'deleted', { ...base, tier: '1' })
+    s = applyTile('total', 'inactive', { ...base, tier: '1' })
     expect(s).toMatchObject({ statusFilter: 'default', filters: { tier: '', q: 'x' } })
   })
   it('facetCounts + çipler: sayaçlar durum listesinden; bayrak çipi tek bayrağı kaldırır', () => {

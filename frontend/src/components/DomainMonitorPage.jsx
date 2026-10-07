@@ -41,6 +41,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
@@ -163,7 +164,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
   const failRows = useFailureRows()
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
+  const monitors = useWithoutDeleted(monitorKind('domain'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -441,9 +444,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
       if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
+      // Kart HEMEN düşer (işaret), açık detay kapanır; liste arka planda tazelenir — arayüz beklemez.
+      markMonitorDeleted('domain', m.id, res)
+      setSelected((s) => (s?.id === m.id ? null : s))
       toast.success(t('dom.deleted'))
 
-      await load()
+      load()
     } finally {
       setDeleting(null)
     }
@@ -452,10 +458,16 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
   async function del() {
     if (!modal || modal === 'new') return
+    // Kalıcı silme (2026-10-07): düzenleme penceresinden de ADIYLA ve geri alınamaz olduğu söylenerek onay alınır.
+    if (!await showConfirm({ title: t('mon.deleteTitle'), message: t('mon.deleteMsg', modal.name || modal.domain),
+      confirmText: t('dom.delete'), cancelText: t('dom.cancel'), variant: 'danger' })) return
     const res = await api.monitoring.deleteDomainMonitor(modal.id)
-    await load()
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    const id = modal.id
+    markMonitorDeleted('domain', id, res)   // anında düşer; tazeleme arka planda
+    setSelected((s) => (s?.id === id ? null : s))
     toast.success(t('dom.deleted')); closeEdit()
+    load()
   }
 
   async function checkNow(m) {

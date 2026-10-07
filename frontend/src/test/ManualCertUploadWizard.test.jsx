@@ -1,10 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act, fillGroupAndTags } from './test-utils.jsx'
 
 /**
  * Yükleme sihirbazı (2026-10-06): Dosya → İnceleme → Takip → Sonuç. Hiçbir adım kendiliğinden gönderilmez; şifre
  * hatası alanın altında; uyarılar ve CSR kartı; tek / toplu / yenileme yolları; 400 alan hataları alana, 409 kodları
  * açıklamalı. API tümüyle mock — gerçek istek kaçmaz.
+ *
+ * <p>2026-10-08 (kullanıcı isteği: özel anahtar sunucuya hiç gitmez): dosya TARAYICIDA açılır (`extract/` — gerçek
+ * çekirdek, ana iş parçacığında); her yükleme isteği yalnız `extracted` taşır — FormData'da `file` / `text` / `password`
+ * YOK, gövdede "PRIVATE KEY" yok. Şifre gerekli / yanlış, BKS, tanınmayan biçim sunucuya gitmeden alanın altında.
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -18,9 +22,37 @@ vi.mock('../api/client', () => ({
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ perms: {}, canView: () => true, canEdit: () => true, canExecute: () => true, refresh: () => {} }),
 }))
+// Gerçek ayıklayıcı (Worker'sız) — tek tek testler sonucu `mockResolvedValueOnce` ile ezebilir
+vi.mock('../components/manualcert/extract/index.js', async (importOriginal) => {
+  const real = await importOriginal()
+  return { ...real, extractCertificates: vi.fn((input, opts) => real.extractCertificates(input, { ...opts, inline: true })) }
+})
 
 import { api } from '../api/client'
 import UploadWizard from '../components/manualcert/UploadWizard.jsx'
+import { extractCertificates } from '../components/manualcert/extract/index.js'
+import { uploadPreview } from './helpers/sslPreviewFixture.js'
+import { bksLike, keyPem, makeChain, makeRoot, zipBytes } from './helpers/certFixtures.js'
+
+let CH
+let OTHER
+beforeAll(() => {
+  CH = makeChain('api.example.test')
+  OTHER = makeRoot('Example Independent Root')
+})
+
+/** Gönderilen FormData'nın `extracted` gövdesi (JSON) — ve ham alanların YOKLUĞU. */
+async function sentExtracted(fd) {
+  expect(fd.get('file')).toBeNull()
+  expect(fd.get('text')).toBeNull()
+  expect(fd.get('password')).toBeNull()
+  const part = fd.get('extracted')
+  expect(part).toBeTruthy()
+  expect(part.name).toBe('extracted.json')
+  const raw = await part.text()
+  expect(raw).not.toMatch(/PRIVATE KEY/)
+  return JSON.parse(raw)
+}
 
 const entry = (over = {}) => ({
   ref: 'AB12', alias: null, is_key_entry: true, is_ca: false, self_signed: false,
@@ -37,15 +69,22 @@ const entry = (over = {}) => ({
 })
 const analysis = (over = {}) => ({
   format: 'PKCS12', file_name: 'store.pfx', size_bytes: 4096, needs_password: false, password_error: false,
-  warnings: [{ code: 'PRIVATE_KEY_IGNORED', severity: 'info', params: { count: 1 } }],
+  warnings: [{ code: 'PRIVATE_KEY_KEPT_LOCAL', severity: 'info', params: { count: 1 } }],
   csr: null, entries: [entry()], default_ref: 'AB12', ...over,
+})
+/** Tarayıcı ayıklamasının (mock) sonucu — `extractCertificates.mockResolvedValueOnce` için. */
+const extraction = (over = {}) => ({
+  format: 'PKCS12', file_name: 'store.pfx', size_bytes: 4096, entries: [{ alias: 'srv', key_entry: true, certs: ['QUJD'] }],
+  csr_pem: [], private_keys_removed: 1, certificate_count: 1, needs_password: false, password_error: false, password_used: true,
+  unsupported: null, notes: [], ...over,
 })
 
 const TEAMS = [{ id: 1, name: 'Takım A' }]
 const dialog = () => screen.getByRole('dialog')
 const step = () => document.querySelector('[data-slot="mcert-wizard"]')?.getAttribute('data-step')
 const fileInput = () => document.querySelector('[data-slot="mcert-file-input"]')
-const pick = (name, body = 'x') => fireEvent.change(fileInput(), { target: { files: [new File([body], name)] } })
+/** Varsayılan içerik GERÇEK bir PEM sertifikası (tarayıcıdaki ayıklayıcı onu okur). */
+const pick = (name, body) => fireEvent.change(fileInput(), { target: { files: [new File([body ?? CH.leaf.pem], name)] } })
 const btn = (re) => within(dialog()).getByRole('button', { name: re })
 
 async function toReview(over) {
@@ -89,39 +128,104 @@ describe('UploadWizard — Dosya adımı', () => {
     expect(api.manualCerts.analyze).not.toHaveBeenCalled()
   })
 
-  it('şifre gerekli → alanın altında hata; şifre girilince ikinci analizde gövdede, sonra İnceleme', async () => {
+  it('PKCS#12 şifre gerekli / yanlış → TARAYICIDA anlaşılır, alanın altında hata, sunucuya HİÇ istek yok; doğru şifreyle yalnız açık sertifikalar gider', async () => {
     renderWizard()
-    api.manualCerts.analyze
-      .mockResolvedValueOnce({ success: true, data: { ...analysis({ entries: [] }), needs_password: true } })
-      .mockResolvedValueOnce({ success: true, data: { ...analysis(), password_error: true, entries: [] } })
-      .mockResolvedValueOnce({ success: true, data: analysis() })
+    extractCertificates
+      .mockResolvedValueOnce(extraction({ entries: [], needs_password: true, password_used: false }))
+      .mockResolvedValueOnce(extraction({ entries: [], password_error: true }))
+      .mockResolvedValueOnce(extraction())
+    api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis() })
     pick('store.pfx')
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await screen.findByText(/This file is password-protected|Bu dosya şifreli/)
     expect(step()).toBe('file')
+    expect(api.manualCerts.analyze).not.toHaveBeenCalled()
     fireEvent.change(document.querySelector('[data-slot="mcert-password"]'), { target: { value: 'yanlis' } })
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await screen.findByText(/The password is wrong|Şifre yanlış/)
+    expect(document.querySelector('[data-slot="mcert-password"]')).toHaveAttribute('aria-invalid', 'true')
+    expect(api.manualCerts.analyze).not.toHaveBeenCalled()
     fireEvent.change(document.querySelector('[data-slot="mcert-password"]'), { target: { value: 'dogru' } })
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await waitFor(() => expect(step()).toBe('review'))
-    const fd = api.manualCerts.analyze.mock.calls[2][0]
-    expect(fd.get('password')).toBe('dogru')
-    expect(fd.get('file').name).toBe('store.pfx')
+    // Şifre yalnız TARAYICIDAKİ ayıklayıcıya verildi; sunucu isteğinde yok
+    expect(extractCertificates.mock.calls[2][0]).toMatchObject({ password: 'dogru' })
+    expect(api.manualCerts.analyze).toHaveBeenCalledTimes(1)
+    const fd = api.manualCerts.analyze.mock.calls[0][0]
+    const body = await sentExtracted(fd)
+    expect(body).toEqual({ format: 'PKCS12', file_name: 'store.pfx', size_bytes: 4096,
+      entries: [{ alias: 'srv', key_entry: true, certs: ['QUJD'] }], csr_pem: [], private_keys_removed: 1 })
+    expect(JSON.stringify(body)).not.toContain('dogru')
+    // İnceleme: "özel anahtar (1) tarayıcınızda ayıklandı … parola da yalnız tarayıcıda" notu; sunucunun aynı bilgili uyarısı listede tekrarlanmaz
+    const note = document.querySelector('[data-slot="mcert-kept-local"]')
+    expect(note).toHaveAttribute('data-keys', '1')
+    expect(note).toHaveAttribute('data-password', 'used')
+    expect(note).toHaveTextContent(/Private keys \(1\) were removed in your browser; they were not sent to the server\. The password was also used only in your browser\./)
+    expect(document.querySelector('[data-slot="mcert-warning"][data-code="PRIVATE_KEY_KEPT_LOCAL"]')).toBeNull()
   })
 
-  it('metin yapıştır: metin gövdede, dosya yok', async () => {
+  it('özel anahtarlı PEM: anahtar tarayıcıda ayıklanır — gövdede "PRIVATE KEY" yok, yalnız sertifika; not (1)', async () => {
+    renderWizard()
+    api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis({ format: 'PEM', file_name: 'with-key.pem' }) })
+    pick('with-key.pem', CH.leaf.pem + keyPem(CH.leaf.keys))
+    fireEvent.click(btn(/^(Analyse|Analiz et)$/))
+    await waitFor(() => expect(step()).toBe('review'))
+    const body = await sentExtracted(api.manualCerts.analyze.mock.calls[0][0])
+    expect(body.format).toBe('PEM')
+    expect(body.file_name).toBe('with-key.pem')
+    expect(body.private_keys_removed).toBe(1)
+    expect(body.entries).toHaveLength(1)
+    expect(body.entries[0].certs[0]).toBe(Buffer.from(CH.leaf.der).toString('base64'))
+    expect(document.querySelector('[data-slot="mcert-kept-local"]')).toHaveAttribute('data-keys', '1')
+    expect(document.querySelector('[data-slot="mcert-kept-local"]')).not.toHaveAttribute('data-password')
+  })
+
+  it('metin yapıştır: metin TARAYICIDA ayıklanır — gövdede metin yok, yalnız extracted (biçim TEXT)', async () => {
     renderWizard()
     fireEvent.click(btn(/^(Paste text|Metin yapıştır)$/))
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await screen.findByText(/Paste the certificate text\.|Sertifika metnini yapıştırın\./)
-    fireEvent.change(document.querySelector('[data-slot="mcert-paste"]'), { target: { value: '-----BEGIN CERTIFICATE-----\nMIIB' } })
+    fireEvent.change(document.querySelector('[data-slot="mcert-paste"]'), { target: { value: CH.root.pem } })
     api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis({ format: 'TEXT', file_name: null }) })
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await waitFor(() => expect(step()).toBe('review'))
-    const fd = api.manualCerts.analyze.mock.calls[0][0]
-    expect(fd.get('text')).toMatch(/BEGIN CERTIFICATE/)
-    expect(fd.get('file')).toBeNull()
+    const body = await sentExtracted(api.manualCerts.analyze.mock.calls[0][0])
+    expect(body).toMatchObject({ format: 'TEXT', file_name: null, private_keys_removed: 0 })
+    expect(body.entries[0].certs[0]).toBe(Buffer.from(CH.root.der).toString('base64'))
+    expect(document.querySelector('[data-slot="mcert-kept-local"]')).toHaveTextContent(/only the public certificates were sent/)
+  })
+
+  it('BKS: tarayıcıda açılamaz → dosya alanının altında hata + keytool yönergesi; sunucuya istek yok', async () => {
+    renderWizard()
+    pick('truststore.bks', bksLike())
+    fireEvent.click(btn(/^(Analyse|Analiz et)$/))
+    await screen.findByText(/BKS \/ UBER keystores cannot be opened in the browser/)
+    expect(document.querySelector('[data-slot="mcert-bks-help"]')).toHaveTextContent(/keytool -exportcert -rfc/)
+    expect(api.manualCerts.analyze).not.toHaveBeenCalled()
+    expect(step()).toBe('file')
+    // Tanınmayan içerik de alanın altında
+    pick('rastgele.bin', new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]))
+    expect(document.querySelector('[data-slot="mcert-bks-help"]')).toBeNull()
+    fireEvent.click(btn(/^(Analyse|Analiz et)$/))
+    await screen.findByText(/The file format was not recognised/)
+    expect(api.manualCerts.analyze).not.toHaveBeenCalled()
+  })
+
+  it('ZIP: girdiler tarayıcıda toplanır (2 sertifika, .key sayılır); tarayıcının notları sunucu uyarılarının önünde', async () => {
+    renderWizard()
+    api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis({ format: 'ZIP', file_name: 'paket.zip',
+      warnings: [{ code: 'PRIVATE_KEY_KEPT_LOCAL', severity: 'info', params: { count: 1 } }, { code: 'MULTIPLE_LEAVES', severity: 'info', params: { count: 2 } }] }) })
+    pick('paket.zip', zipBytes({ 'leaf.pem': CH.leaf.pem, 'other.pem': OTHER.pem, 'leaf.key': keyPem(CH.leaf.keys), 'README.txt': 'not' }))
+    fireEvent.click(btn(/^(Analyse|Analiz et)$/))
+    await waitFor(() => expect(step()).toBe('review'))
+    const body = await sentExtracted(api.manualCerts.analyze.mock.calls[0][0])
+    expect(body.format).toBe('ZIP')
+    expect(body.entries).toHaveLength(2)
+    expect(body.private_keys_removed).toBe(1)
+    const codes = [...document.querySelectorAll('[data-slot="mcert-warning"]')].map((w) => w.getAttribute('data-code'))
+    expect(codes).toEqual(expect.arrayContaining(['ZIP_SKIPPED_ENTRY', 'MULTIPLE_LEAVES']))
+    expect(codes).not.toContain('PRIVATE_KEY_KEPT_LOCAL')
+    expect(document.querySelector('[data-slot="mcert-warning"][data-code="ZIP_SKIPPED_ENTRY"]')).toHaveTextContent('README.txt')
   })
 
   it('429 → bilgilendirici bant (yalnız bildirim değil); BUSY / PARSE_TIMEOUT sunucu iletisiyle', async () => {
@@ -139,10 +243,11 @@ describe('UploadWizard — Dosya adımı', () => {
     expect(step()).toBe('file')
   })
 
-  it('JKS yanlış şifre: sertifikalar okunur (password_error false) → İnceleme; "Şifreyi gir" Dosya adımına döner, alan işaretli', async () => {
+  it('JKS yanlış şifre: tarayıcı bütünlük notu (PASSWORD_WRONG) — sertifikalar yine okunur → İnceleme; "Şifreyi gir" Dosya adımına döner, alan işaretli', async () => {
     renderWizard()
-    api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis({ format: 'JKS', file_name: 'trust.jks',
-      warnings: [{ code: 'PASSWORD_WRONG', severity: 'warn', params: { format: 'JKS' } }] }) })
+    extractCertificates.mockResolvedValueOnce(extraction({ format: 'JKS', file_name: 'trust.jks',
+      notes: [{ code: 'PASSWORD_WRONG', severity: 'warn', params: { format: 'JKS' } }] }))
+    api.manualCerts.analyze.mockResolvedValueOnce({ success: true, data: analysis({ format: 'JKS', file_name: 'trust.jks', warnings: [] }) })
     pick('trust.jks')
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
     await waitFor(() => expect(step()).toBe('review'))
@@ -158,20 +263,42 @@ describe('UploadWizard — Dosya adımı', () => {
 describe('UploadWizard — İnceleme adımı', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('dosya ve girdi uyarıları, künye, SAN "+N", zincir; CSR kartı ve girdi yoksa İleri kapalı', async () => {
+  it('dosya ve girdi uyarıları, güven rozeti, zincir SSL sekmesiyle AYNI kartlarla (önizleme yoksa girdinin alanlarından); SAN katlanır', async () => {
     renderWizard()
     await toReview()
     const warns = [...document.querySelectorAll('[data-slot="mcert-warning"]')].map((w) => w.getAttribute('data-code'))
-    expect(warns).toEqual(expect.arrayContaining(['PRIVATE_KEY_IGNORED', 'EXPIRES_SOON']))
+    expect(warns).toEqual(expect.arrayContaining(['EXPIRES_SOON']))
+    // Sunucunun PRIVATE_KEY_KEPT_LOCAL bilgisi listede değil, tarayıcının "ayıklandı" notunda
+    expect(warns).not.toContain('PRIVATE_KEY_KEPT_LOCAL')
+    expect(document.querySelector('[data-slot="mcert-kept-local"]')).toBeTruthy()
     expect(document.querySelector('[data-slot="mcert-warning"][data-code="EXPIRES_SOON"]')).toHaveTextContent(/87/)
     const card = document.querySelector('[data-slot="mcert-entry"]')
-    expect(card).toHaveTextContent('CN=api.example.test,O=Example Ltd')
-    expect(card.querySelectorAll('[data-slot="mcert-san"]')).toHaveLength(5)
-    expect(card.querySelector('[data-slot="mcert-san-more"]')).toHaveTextContent('+2')
     expect(card.querySelector('[data-slot="mcert-trust"]')).toHaveAttribute('data-trust', 'TRUSTED')
-    fireEvent.click(within(card).getByRole('button', { name: /Chain certificates: 1|Zincir: 1/ }))
-    await waitFor(() => expect(card.querySelector('[data-slot="mcert-chain-link"]')).toHaveTextContent('CN=Example CA'))
-    expect(card.querySelector('[data-slot="mcert-chain-link"]')).toHaveTextContent('CN=Example Root')
+    const chain = card.querySelector('[data-slot="mcert-chain"] [data-slot="ssl-chain"]')
+    expect([...chain.querySelectorAll('[data-slot="ssl-chain-node"]')].map((n) => n.dataset.role)).toEqual(['leaf', 'intermediate', 'root-store'])
+    expect(chain.querySelector('[data-slot="ssl-chain-node"][data-role="intermediate"]')).toHaveTextContent('Example CA')
+    // 7 SAN: liste KAPALI başlar, tetik sayıyı söyler (ağ sertifikasının zincir kartıyla aynı)
+    const sanBtn = within(chain).getByRole('button', { name: /Alternative names \(SAN\)\s*7/ })
+    expect(sanBtn).toHaveAttribute('aria-expanded', 'false')
+    expect(btn(/^(Next|İleri)$/)).not.toBeDisabled()
+    // Tek girdi: "birden çok" anahtarı yok; gruplama notu yok (dosyada tek sertifika sayılmadı)
+    expect(within(dialog()).queryByRole('button', { name: /Several \(truststore\)|Birden çok/ })).toBeNull()
+    expect(document.querySelector('[data-slot="mcert-grouped"]')).toBeNull()
+  })
+
+  it('yaprak + ara + kök TEK girdi: sunucu önizlemesiyle 3 kartlı zincir (yaprak → ara → kök), gruplama notu, sertifika sayısı', async () => {
+    renderWizard()
+    await toReview({ certificate_count: 3, entries: [entry({ preview: uploadPreview({ domain: 'api.example.test' }) })] })
+    expect(document.querySelectorAll('[data-slot="mcert-entry"]')).toHaveLength(1)
+    const card = document.querySelector('[data-slot="mcert-entry"]')
+    const roles = [...card.querySelectorAll('[data-slot="ssl-chain-node"]')].map((n) => n.dataset.role)
+    expect(roles).toEqual(['leaf', 'intermediate', 'root'])
+    expect(card.querySelector('[data-slot="ssl-chain"]')).toHaveAttribute('data-source', 'upload')
+    expect(document.querySelector('[data-slot="mcert-file-summary"]')).toHaveTextContent('Certificates found: 3')
+    expect(document.querySelector('[data-slot="mcert-grouped"]')).toHaveTextContent(/The 3 certificates in the file were grouped into 1 tracking record/)
+    expect(within(dialog()).queryByRole('button', { name: /Several \(truststore\)|Birden çok/ })).toBeNull()
+    // Tek girdi varsayılan seçili → İleri açık
+    expect(card).toHaveAttribute('data-selected', 'true')
     expect(btn(/^(Next|İleri)$/)).not.toBeDisabled()
   })
 
@@ -210,7 +337,10 @@ describe('UploadWizard — Takip adımı ve gönderim', () => {
     const fd = api.manualCerts.create.mock.calls[0][0]
     expect(fd.get('ref')).toBe('AB12')
     expect(fd.get('domain')).toBe('api.example.test-manuel')
-    expect(fd.get('file').name).toBe('server.pem')
+    // Oluşturma da analizle AYNI ayıklanmış gövdeyi gönderir (dosya yeniden okunmaz, ham dosya gitmez)
+    const body = await sentExtracted(fd)
+    expect(body).toMatchObject({ format: 'PEM', file_name: 'server.pem' })
+    expect(body.entries[0].certs[0]).toBe(Buffer.from(CH.leaf.der).toString('base64'))
     expect(JSON.parse(fd.get('inventory'))).toMatchObject({ team_id: 1, group_name: 'Grup A', tags: 't1', port: 443, use_proxy: false })
     expect(document.querySelector('[data-slot="mcert-result"]')).toHaveAttribute('data-kind', 'created')
     expect(h.onDone).toHaveBeenCalledTimes(1)
@@ -271,6 +401,7 @@ describe('UploadWizard — Takip adımı ve gönderim', () => {
     await waitFor(() => expect(step()).toBe('result'))
     const fd = api.manualCerts.createBatch.mock.calls[0][0]
     expect(JSON.parse(fd.get('items'))).toEqual([{ ref: 'R1', domain: 'root-one' }, { ref: 'R2', domain: 'root-two' }])
+    expect((await sentExtracted(fd)).format).toBe('PEM')
     expect(document.querySelector('[data-slot="mcert-result"]')).toHaveAttribute('data-kind', 'batch')
     expect(document.querySelector('[data-slot="mcert-result"]')).toHaveTextContent('root-two')
   })
@@ -311,6 +442,7 @@ describe('UploadWizard — Takip adımı ve gönderim', () => {
     expect(id).toBe(5)
     expect(fd.get('confirm')).toBe('true')
     expect(fd.get('ref')).toBe('AB12')
+    expect((await sentExtracted(fd)).entries).toHaveLength(1)
     expect(document.querySelector('[data-slot="mcert-result"]')).toHaveAttribute('data-kind', 'renewed')
     expect(document.querySelector('[data-slot="mcert-warning"][data-code="KEY_CHANGED"]')).toBeTruthy()
   })
@@ -332,8 +464,46 @@ describe('UploadWizard — Takip adımı ve gönderim', () => {
     fireEvent.click(btn(/^(Save new version|Yeni sürümü kaydet)$/))
     await waitFor(() => expect(api.manualCerts.renew).toHaveBeenCalledTimes(2))
     expect(api.manualCerts.renew.mock.calls[1][1].get('confirm')).toBe('true')
+    expect(api.manualCerts.renew.mock.calls[1][1].get('allow_same')).toBeNull()
     await screen.findByText(/already the current version|zaten güncel sürüm/)
     await act(async () => {})
     expect(step()).toBe('track')
+    // 2026-10-07: sunucu 409'u engel değil — uyarı bandındaki "Yine de yükle" allow_same ile yeniden gönderir
+    const same = document.querySelector('[data-slot="mcert-same"]')
+    expect(same.querySelector('[data-slot="alert"]')).toHaveAttribute('data-tone', 'warning')
+    expect(btn(/^(Save new version|Yeni sürümü kaydet)$/)).toBeDisabled()
+    api.manualCerts.renew.mockResolvedValueOnce({ success: true, data: { version: 4, previous_version: 3, same_certificate: true,
+      warnings: [{ code: 'KEY_SAME', severity: 'info', params: {} }] } })
+    fireEvent.click(within(same).getByRole('button', { name: /^(Upload anyway|Yine de yükle)$/ }))
+    await waitFor(() => expect(step()).toBe('result'))
+    expect(api.manualCerts.renew).toHaveBeenCalledTimes(3)
+    expect(api.manualCerts.renew.mock.calls[2][1].get('allow_same')).toBe('true')
+    const result = document.querySelector('[data-slot="mcert-result"]')
+    expect(result).toHaveAttribute('data-same', 'true')
+    expect(result).toHaveTextContent('The same certificate was saved as a new version (version 4)')
+    expect(result).toHaveTextContent('the expiry date did not change')
+  })
+
+  it('istemci aynı sertifikayı görürse (aynı parmak izi): uyarı + "Yine de yükle" → allow_same=true, onay sorulmaz → sonuç "aynı sertifika"', async () => {
+    renderWizard({ renewTarget: { inventory_id: 5, domain: 'api.example.test' } })
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { versions: [{ id: 30, version: 2, current: true, not_after: '2027-01-01T00:00:00',
+      fingerprint: 'AB12', issuer: 'Example CA', subject: 'CN=api.example.test', key_alg: 'RSA', key_size: 2048, san: entry().san }] } })
+    await toReview()
+    fireEvent.click(btn(/^(Next|İleri)$/))
+    await waitFor(() => expect(step()).toBe('track'))
+    const same = await waitFor(() => { const el = document.querySelector('[data-slot="mcert-same"]'); if (!el) throw new Error('yok'); return el })
+    expect(same).toHaveTextContent(/This certificate is already the current version/)
+    expect(same).toHaveTextContent(/Upload anyway/)
+    expect(document.querySelector('[data-slot="mcert-confirm-older"]')).toBeNull()   // aynı sertifikada "eski bitiş" sorulmaz
+    expect(btn(/^(Save new version|Yeni sürümü kaydet)$/)).toBeDisabled()
+    api.manualCerts.renew.mockResolvedValueOnce({ success: true, data: { version: 3, previous_version: 2, same_certificate: true, warnings: [] } })
+    fireEvent.click(within(same).getByRole('button', { name: /^(Upload anyway|Yine de yükle)$/ }))
+    await waitFor(() => expect(step()).toBe('result'))
+    const [id, fd] = api.manualCerts.renew.mock.calls[0]
+    expect(id).toBe(5)
+    expect(fd.get('allow_same')).toBe('true')
+    expect(fd.get('confirm')).toBeNull()
+    expect(fd.get('ref')).toBe('AB12')
+    expect(document.querySelector('[data-slot="mcert-result"]')).toHaveAttribute('data-same', 'true')
   })
 })

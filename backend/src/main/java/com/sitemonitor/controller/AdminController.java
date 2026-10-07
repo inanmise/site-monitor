@@ -236,26 +236,26 @@ public class AdminController {
 
     /**
      * Mükerrer alan adı 409'u (2026-09-28, kullanıcı isteği): ileti kaydın HANGİ ekipte olduğunu söyler, yapısal
-     * {@code existing} arayüze aktarım / geri yükleme / aktarım talebi yolunu açar. Ekleme ve yeniden adlandırma
-     * AYNI yardımcıyı kullanır.
+     * {@code existing} arayüze kaydı açma / aktarım yolunu açar. Ekleme ve yeniden adlandırma AYNI yardımcıyı kullanır.
      *
      * <p>{@code existing} BEYAZ LİSTEDİR — kimlik, ad, durum ve ÇAĞIRANIN bu kayıttaki eylem bayrakları:
-     * {@code domain, inventory_id, team_id, team_name, ug_team_id, ug_team_name, deleted, deleted_at, same_team,
-     * can_view, can_restore, can_transfer}. Sorumlu kişiler, açıklama, notlar, IP, platform ASLA taşınmaz. Takım
-     * ADI org geneli görünürlük kapalıyken de söylenir (ürün kuralı 2026-09-26: hangi alan adının hangi takıma
-     * kayıtlı olduğunu herkes bilebilir; aksi hâlde kullanıcı kime başvuracağını bilemez).
+     * {@code domain, inventory_id, team_id, team_name, ug_team_id, ug_team_name, same_team, can_view, can_transfer}.
+     * Sorumlu kişiler, açıklama, notlar, IP, platform ASLA taşınmaz. Takım ADI org geneli görünürlük kapalıyken de
+     * söylenir (ürün kuralı 2026-09-26: hangi alan adının hangi takıma kayıtlı olduğunu herkes bilebilir; aksi hâlde
+     * kullanıcı kime başvuracağını bilemez).
      *
-     * <p>Bayraklar ilgili uçların kapılarının AYNASI — asıl kapı yine her uçta:
-     * {@code can_view} = silinmemiş + okunabilir (by-domain kuralı); {@code can_restore} = çöp kutusunda + restore
-     * kapısı (takım yönetimi + {@code inventory.crud/edit}); {@code can_transfer} = transfer kapısı (GLOBAL admin +
-     * {@code inventory.transfer/execute} — kapsamlı müdür rol dizesinden global sayılmaz).
+     * <p>Silme KALICI (2026-10-07, kullanıcı kararı): çakışan kayıt her zaman CANLI bir kayıttır — silinen kayıt adı
+     * tutmaz, "çöp kutusunda" iletisi, {@code deleted}/{@code can_restore} alanları ve geri yükleme yolu kaldırıldı.
+     *
+     * <p>Bayraklar ilgili uçların kapılarının AYNASI — asıl kapı yine her uçta: {@code can_view} = okunabilir (by-domain
+     * kuralı); {@code can_transfer} = transfer kapısı (GLOBAL admin + {@code inventory.transfer/execute} — kapsamlı müdür
+     * rol dizesinden global sayılmaz).
      */
     private com.sitemonitor.config.GlobalExceptionHandler.DomainExistsException domainExists(
             CertificateInventory clash, Long targetTeamId, HttpSession session) {
         Map<Long, String> names = new HashMap<>();
         for (Team tm : userService.listTeams()) if (tm.getId() != null) names.put(tm.getId(), tm.getName());
         String team = clash.getTeamId() != null ? names.get(clash.getTeamId()) : null;
-        boolean deleted = clash.getDeletedAt() != null;
         boolean sameTeam = targetTeamId != null && targetTeamId.equals(clash.getTeamId());
         Map<String, Object> ex = new LinkedHashMap<>();   // null değer taşır (Map.of almaz)
         ex.put("domain", clash.getDomain());
@@ -264,41 +264,51 @@ public class AdminController {
         ex.put("team_name", team);
         ex.put("ug_team_id", clash.getUgTeamId());
         ex.put("ug_team_name", clash.getUgTeamId() != null ? names.get(clash.getUgTeamId()) : null);
-        ex.put("deleted", deleted);
-        ex.put("deleted_at", clash.getDeletedAt());
         ex.put("same_team", sameTeam);
-        ex.put("can_view", !deleted && (inventoryVisibility != null
-                ? inventoryVisibility.canRead(session, clash) : SessionScope.canView(session, clash.getTeamId())));
-        ex.put("can_restore", deleted && canManageTeamResource(session, clash.getTeamId())
-                && permissionService.allows(session, "inventory.crud", "edit"));
+        ex.put("can_view", inventoryVisibility != null
+                ? inventoryVisibility.canRead(session, clash) : SessionScope.canView(session, clash.getTeamId()));
         ex.put("can_transfer", isAdmin(session) && permissionService.allows(session, "inventory.transfer", "execute"));
         String msg;
         if (team == null) {
-            msg = deleted
-                    ? com.sitemonitor.util.Msg.t(
-                        "Bu alan adı çöp kutusunda (hiçbir ekibe atanmamış bir kayıt). Mükerrer kayıt oluşturulamaz; kaydın geri yüklenmesi ya da ekibinize aktarılması gerekir.",
-                        "This domain is in the bin (a record that isn't assigned to any team). A duplicate record can't be created; the record needs to be restored or transferred to your team.")
-                    : com.sitemonitor.util.Msg.t(
-                        "Bu alan adı envanterde, hiçbir ekibe atanmamış bir kayıt olarak zaten kayıtlı. Mükerrer kayıt oluşturulamaz; kaydın ekibinize aktarılması (transfer) gerekir.",
-                        "This domain is already in the inventory as a record that isn't assigned to any team. A duplicate record can't be created; the record needs to be transferred to your team.");
+            msg = com.sitemonitor.util.Msg.t(
+                    "Bu alan adı envanterde, hiçbir ekibe atanmamış bir kayıt olarak zaten kayıtlı. Mükerrer kayıt oluşturulamaz; kaydın ekibinize aktarılması (transfer) gerekir.",
+                    "This domain is already in the inventory as a record that isn't assigned to any team. A duplicate record can't be created; the record needs to be transferred to your team.");
         } else if (sameTeam) {
-            msg = deleted
-                    ? com.sitemonitor.util.Msg.t(
-                        "Bu alan adı, seçtiğiniz '" + team + "' ekibinin çöp kutusunda. Mükerrer kayıt oluşturulamaz; kaydı çöp kutusundan geri yükleyin.",
-                        "This domain is in the bin of the team you selected, '" + team + "'. A duplicate record can't be created; restore the record from the bin instead.")
-                    : com.sitemonitor.util.Msg.t(
-                        "Bu alan adı, seçtiğiniz '" + team + "' ekibinin envanterinde zaten kayıtlı. Mükerrer kayıt oluşturulamaz; mevcut kaydı açıp düzenleyin.",
-                        "This domain is already registered in the inventory of the team you selected, '" + team + "'. A duplicate record can't be created; open the existing record and edit it instead.");
+            msg = com.sitemonitor.util.Msg.t(
+                    "Bu alan adı, seçtiğiniz '" + team + "' ekibinin envanterinde zaten kayıtlı. Mükerrer kayıt oluşturulamaz; mevcut kaydı açıp düzenleyin.",
+                    "This domain is already registered in the inventory of the team you selected, '" + team + "'. A duplicate record can't be created; open the existing record and edit it instead.");
         } else {
-            msg = deleted
-                    ? com.sitemonitor.util.Msg.t(
-                        "Bu alan adı çöp kutusunda ('" + team + "' ekibinin kaydı). Mükerrer kayıt oluşturulamaz; kaydın geri yüklenmesi ya da ekibinize aktarılması gerekir.",
-                        "This domain is in the bin (a record belonging to the '" + team + "' team). A duplicate record can't be created; the record needs to be restored or transferred to your team.")
-                    : com.sitemonitor.util.Msg.t(
-                        "Bu alan adı zaten '" + team + "' ekibinin envanterinde kayıtlı. Mükerrer kayıt oluşturulamaz; alan adının sizin ekibinizde olması gerekiyorsa kaydın ekibinize aktarılması (transfer) gerekir.",
-                        "This domain is already registered in the '" + team + "' team's inventory. A duplicate record can't be created; if the domain should belong to your team, the record needs to be transferred to it.");
+            msg = com.sitemonitor.util.Msg.t(
+                    "Bu alan adı zaten '" + team + "' ekibinin envanterinde kayıtlı. Mükerrer kayıt oluşturulamaz; alan adının sizin ekibinizde olması gerekiyorsa kaydın ekibinize aktarılması (transfer) gerekir.",
+                    "This domain is already registered in the '" + team + "' team's inventory. A duplicate record can't be created; if the domain should belong to your team, the record needs to be transferred to it.");
         }
         return new com.sitemonitor.config.GlobalExceptionHandler.DomainExistsException(msg, ex);
+    }
+
+    /**
+     * Kalıcı silme (2026-10-07, kullanıcı kararı). İsteğe bağlı enjeksiyon: {@code @WebMvcTest} dilimlerinde bean yoksa
+     * silme uçları 500 verir ({@link #requireDeletion}); üretimde bean her zaman vardır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.PermanentDeletionService permanentDeletion;
+
+    private com.sitemonitor.service.PermanentDeletionService requireDeletion() {
+        if (permanentDeletion == null) throw new IllegalStateException("PermanentDeletionService yok");
+        return permanentDeletion;
+    }
+
+    /**
+     * Mükerrer ad denetiminden ÖNCE: aynı adı taşıyan, eski sürümden kalmış yumuşak silinmiş satır kalıcı silinir (silinen
+     * kayıt adı TUTMAZ). Tek seferlik temizlikten sonra tek ucuz SELECT; bean yoksa (dilimli test) no-op.
+     */
+    private void purgeLegacyBinClash(String domain) {
+        if (permanentDeletion != null) permanentDeletion.purgeLegacyBinRows(domain);
+    }
+
+    /** Ad çakışması = CANLI kayıt (harf duyarsız). Yumuşak silinmiş eski satır sayılmaz (savunma; yukarıda zaten silinir). */
+    private CertificateInventory liveClash(String domain) {
+        return inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(domain)
+                .filter(i -> i.getDeletedAt() == null).orElse(null);
     }
 
     /**
@@ -306,26 +316,23 @@ public class AdminController {
      *
      * <p>{@code scope}: {@code mine} (varsayılan — bugünkü davranış: global görüntüleyici hepsini, diğerleri
      * görüş kapsamındaki takımların kayıtlarını) ya da {@code all} (2026-09-26, org geneli görünürlük: ayar
-     * açık ve {@code inventory.list/view} izni varsa silinmemiş TÜM kayıtlar). Ayar kapalıyken {@code all}
-     * {@code mine}'a düşer; yanıttaki {@code scope} GERÇEKTE uygulananı söyler. {@code showDeleted} yalnız
-     * global görüntüleyicide (admin/AUDIT) etkili — değişmedi.
+     * açık ve {@code inventory.list/view} izni varsa TÜM kayıtlar). Ayar kapalıyken {@code all}
+     * {@code mine}'a düşer; yanıttaki {@code scope} GERÇEKTE uygulananı söyler. Silme KALICI (2026-10-07): çöp
+     * kutusu yok, {@code showDeleted} parametresi kaldırıldı (eski istemcinin gönderdiği değer yok sayılır).
      *
      * <p>Her satır {@code can_manage} taşır ({@link SessionScope#canWriteInventory}; küme istek başına bir kez
      * kurulur). Takım adları ve son kontrol haritası tek okumayla çözülür — {@code all} N+1 eklemez.
      */
     @GetMapping("/inventory")
     public ResponseEntity<Map<String, Object>> listInventory(
-            @RequestParam(defaultValue = "false") boolean showDeleted,
             @RequestParam(defaultValue = "mine") String scope,
             HttpSession session) {
         requirePerm(session, "inventory.list", "view");
         List<CertificateInventory> items;
         boolean orgWide = false;
         if (isAdminOrAudit(session)) {                     // global admin / AUDIT → all
-            items = showDeleted
-                    ? inventoryRepo.findAllByOrderByDomainAsc()
-                    : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
-        } else if (wantsAllInventory(session, scope)) {    // org geneli okuma (silinmişler hariç)
+            items = inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
+        } else if (wantsAllInventory(session, scope)) {    // org geneli okuma
             items = inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
             orgWide = true;
         } else {                                           // scoped (müdür/PO/USER)
@@ -372,14 +379,14 @@ public class AdminController {
 
     /** Tek domain'in envanter kaydı (kart modalındaki "Envanter Bilgileri" tab'ı için).
      *  listInventory ile AYNI izin + kapsam; domain tekil → en fazla tek kayıt (yoksa data:null).
-     *  2026-09-26: org geneli görünürlük açıksa başka takımın SİLİNMEMİŞ kaydı da TAM döner (salt okunur,
-     *  {@code can_manage=false}); kendi kapsamı dışındaki silinmiş kayıt yine {@code null}. */
+     *  2026-09-26: org geneli görünürlük açıksa başka takımın kaydı da TAM döner (salt okunur, {@code can_manage=false}).
+     *  2026-10-07: silme KALICI — eski sürümden kalmış çöp satırı kimseye dönmez ({@code null}). */
     @GetMapping("/inventory/by-domain")
     public ResponseEntity<Map<String, Object>> getInventoryByDomain(
             @RequestParam String domain,
             HttpSession session) {
         requirePerm(session, "inventory.list", "view");
-        CertificateInventory rec = inventoryRepo.findByDomain(domain).orElse(null);
+        CertificateInventory rec = inventoryRepo.findByDomain(domain).filter(i -> i.getDeletedAt() == null).orElse(null);
         boolean foreign = false;
         // Kapsam: admin/audit değilse yalnız kendi görüş kapsamındaki takımın kaydı görünür
         // (çapraz-takım sızıntısı olmasın — listInventory'deki viewScope semantiği) — ya da org geneli okuma.
@@ -508,11 +515,12 @@ public class AdminController {
         requireInventoryWriter(session, item.getTeamId());
         requireExistingTeam(item.getTeamId());   // O3: olmayan takıma yazılan kayıt hiçbir alıcıya ulaşmaz (2026-09-28)
         // Devralma YOK (2026-09-26, org geneli görünürlük): alan adı envanterde zaten varsa — başka takımın
-        // kaydı ya da çöp kutusundaki bir kayıt dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün
-        // olmamalı. DB UNIQUE kısıtı bunu zaten reddederdi ama harf farkında (Example.com) kısıt kör kalıyor,
-        // ileti de kaydın var olduğunu söylemiyordu. Açık 409; mevcut kayda dokunulmaz.
-        // 2026-09-28: 409 kaydın SAHİBİ takımı adıyla söyler + yapısal `existing` (aktarım/geri yükleme yolu).
-        CertificateInventory clash = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(item.getDomain()).orElse(null);
+        // kaydı dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün olmamalı. DB UNIQUE kısıtı bunu zaten
+        // reddederdi ama harf farkında (Example.com) kısıt kör kalıyor, ileti de kaydın var olduğunu söylemiyordu.
+        // Açık 409; mevcut kayda dokunulmaz. 2026-09-28: 409 kaydın SAHİBİ takımı adıyla söyler + yapısal `existing`.
+        // 2026-10-07 (silme KALICI): silinmiş kayıt adı TUTMAZ — eski sürümden kalan çöp satırı önce kalıcı silinir.
+        purgeLegacyBinClash(item.getDomain());
+        CertificateInventory clash = liveClash(item.getDomain());
         if (clash != null) throw domainExists(clash, item.getTeamId(), session);
         String now = now();
         item.setId(null);
@@ -628,8 +636,10 @@ public class AdminController {
                 && !newDomain.equalsIgnoreCase(oldDomain);
         if (renamed) {
             // Ekleme ucuyla AYNI 409 (2026-09-28): çakışan kaydın sahibi takım + yapısal `existing`. Hedef takım
-            // kaydın (düzenlemeyle taşınıyorsa yeni) takımı — "aynı takım" iletisi ona göre seçilir.
-            CertificateInventory clash = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(newDomain).orElse(null);
+            // kaydın (düzenlemeyle taşınıyorsa yeni) takımı — "aynı takım" iletisi ona göre seçilir. Silinmiş kayıt adı
+            // TUTMAZ (2026-10-07): eski çöp satırı önce kalıcı silinir (hemen yazılır — UNIQUE'e çarpmaz).
+            purgeLegacyBinClash(newDomain);
+            CertificateInventory clash = liveClash(newDomain);
             if (clash != null && !java.util.Objects.equals(clash.getId(), existing.getId())) {
                 throw domainExists(clash, item.getTeamId() != null ? item.getTeamId() : existing.getTeamId(), session);
             }
@@ -716,21 +726,9 @@ public class AdminController {
         return ok(Map.of("data", saved, "alertsClosed", alertsClosed));
     }
 
-    /**
-     * Kalıcı purge'ün domain-anahtarlı çocukları: notlar + revizyonları. Eskiden yalnız
-     * certificate_checks/latest_checks siliniyor, notlar kalıyordu; aynı domain haftalar sonra
-     * yeniden eklenince eski notlar yeni kaydın altında "diriliyordu" (retention da notları
-     * hiç kırpmaz). Çağıran @Transactional — hepsi ya birlikte gider ya hiç.
-     */
     /** Elle yüklenen sertifika sürümleri (2026-10-06) — isteğe bağlı (dilimli test bağlamında yok). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
-
-    /** Kalıcı purge'ün manuel sertifika çocuğu: sürümler envanter satırıyla birlikte gider (çağıran @Transactional). */
-    private void purgeManualVersions(CertificateInventory inv) {
-        if (manualVersionRepo == null || inv == null || inv.getId() == null || !inv.isManual()) return;
-        manualVersionRepo.deleteByInventoryId(inv.getId());
-    }
 
     /**
      * Liste/tekil okuma: manuel satırların geçerli sürüm numarası + yüklenme anı — TEK sorgu; manuel satır yoksa sorgu
@@ -757,16 +755,9 @@ public class AdminController {
     private void rejectManualTarget(String rawDomain) {
         if (rawDomain == null || rawDomain.isBlank()) return;
         inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(rawDomain.trim())
+                .filter(i -> i.getDeletedAt() == null)   // silme KALICI (2026-10-07) — eski çöp satırı hedef sayılmaz
                 .filter(CertificateInventory::isManual)
                 .ifPresent(i -> { throw CertificateController.manualCertConflict(); });
-    }
-
-    private void purgeDomainNotes(String domain) {
-        List<com.sitemonitor.model.CertificateNote> notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
-        if (notes == null || notes.isEmpty()) return;
-        List<Long> ids = notes.stream().map(com.sitemonitor.model.CertificateNote::getId).filter(Objects::nonNull).toList();
-        if (!ids.isEmpty()) noteRevisionRepo.deleteByNoteIdIn(ids);
-        noteRepo.deleteAll(notes);
     }
 
     private String buildInventoryDiff(CertificateInventory o, CertificateInventory n, boolean isAdmin) {
@@ -1168,35 +1159,64 @@ public class AdminController {
         return clientIpResolver.resolve(request);
     }
 
+    /**
+     * Envanter kaydını KALICI siler (2026-10-07, kullanıcı kararı: "silme işlemi her şekilde kalıcı olsun"). Çöp kutusu
+     * YOK: kayıt, kontrol geçmişi, notlar, elle yüklenen sürümler, türev Port/DNS izlemeleri ve ilgili seriler tek işlemde
+     * gider ({@link com.sitemonitor.service.PermanentDeletionService}); açık alarmlar önce sessizce kapanır (sahip anahtarı
+     * kuralıyla). Kalan iz: kapanmış alarm geçmişi, denetim ({@code DOMAIN_DELETE}, "permanent":true) ve ürün geçmişindeki
+     * {@code DELETE} satırı (silme anının tam görüntüsü). Kapılar değişmedi: takım kapsamlı yönetici + {@code inventory.crud/edit}.
+     */
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @DeleteMapping("/inventory/{id}")
+    @Transactional
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         return inventoryRepo.findById(id).map(inv -> {
             requireTeamScopedAdmin(session, inv.getTeamId());
             requirePerm(session, "inventory.crud", "edit");
-            Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
-            inv.setDeletedAt(now());
-            inv.setActive(false);
-            monitorHistory.stampUpdated(inv, session);   // "kim sildi" çöp kutusunda görünsün (envanter #10)
-            inventoryRepo.save(inv);
-            int alertsClosed = escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
-            auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
-                    "CERTIFICATE", inv.getDomain(),
-                    "{\"teamId\":" + inv.getTeamId() + ",\"alertsClosed\":" + alertsClosed + "}");
+            Map<String, Object> snapshot = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
+            // Geçmiş satırı silmeden ÖNCE ve AYNI işlemde: silme geri alınırsa "silindi" izi de kalmaz.
             monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
-                    MonitorHistoryService.DELETE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
-            return ok(Map.of("message", "Deleted", "alertsClosed", alertsClosed));
+                    MonitorHistoryService.DELETE, snapshot, snapshot, PERMANENT_DELETE_NOTE, session);
+            var result = requireDeletion().deleteInventory(inv);
+            auditService.recordAction("DOMAIN_DELETE", session, request,
+                    "CERTIFICATE", result.domain(), deleteAuditDetail(result));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("message", "Deleted");
+            body.put("permanent", true);
+            body.put("id", result.id());            // arayüz kaydı ANINDA listeden düşürür (iyimser kaldırma, 2026-10-07)
+            body.put("domain", result.domain());
+            body.put("alertsClosed", result.alertsClosed());
+            body.put("checksDeleted", result.checksDeleted());
+            return ok(body);
         }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Ürün geçmişindeki DELETE satırının notu — silmenin kalıcı olduğunu satırın kendisi söyler. */
+    private static final String PERMANENT_DELETE_NOTE = "kalıcı silme";
+
+    /** Tekil silmenin denetim ayrıntısı — kalıcı olduğu, kapanan alarm ve silinen satır sayıları (forensics). */
+    private static String deleteAuditDetail(com.sitemonitor.service.PermanentDeletionService.InventoryDeletion r) {
+        StringBuilder sb = new StringBuilder("{\"permanent\":true,\"teamId\":").append(r.teamId())
+                .append(",\"inventoryId\":").append(r.id())
+                .append(",\"alertsClosed\":").append(r.alertsClosed())
+                .append(",\"derivedMonitorsDeleted\":").append(r.derivedMonitors())
+                .append(",\"rowsDeleted\":{");
+        boolean first = true;
+        for (Map.Entry<String, Integer> e : r.rows().entrySet()) {
+            if (!first) sb.append(',');
+            sb.append('"').append(e.getKey()).append("\":").append(e.getValue());
+            first = false;
+        }
+        return sb.append("}}").toString();
     }
 
     /**
      * Toplu envanter işlemi — seçili domain'leri tek istekte aktif/pasif yapar ya da siler.
      * action ∈ {activate, deactivate, delete}. Yetki tekil uçlarla aynı: girişte
      * admin/team-admin şartı, ardından her kayıt için takım kapsamı (yetkisiz/yok olan
-     * kayıt atlanır; tek kaydın yetkisizliği partiyi düşürmez). "delete" tekil soft-delete
-     * ile birebir (deletedAt+active=false + alarm kapatma). Zaten silinmiş/silinmiş kayıtlar
-     * activate/deactivate için atlanır (geri yükleme ayrı akıştır).
+     * kayıt atlanır; tek kaydın yetkisizliği partiyi düşürmez). "delete" tekil silmeyle birebir:
+     * KALICI (2026-10-07) — kayıt ve verisi gider, açık alarmlar kapanır; tüm parti tek işlemdir.
      *
      * <p>QA ISSUE-001 (2026-09-13): {@code @CacheEvict} bu javadoc ile metot arasına giren
      * {@code applyBulkContacts} yardımcısına kaymıştı (2026-08-25) — özel metotta proxy çalışmaz,
@@ -1248,7 +1268,8 @@ public class AdminController {
         if (!delete && AuditDiff.diff(before, after) == null) return;
         monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
                 delete ? MonitorHistoryService.DELETE : MonitorHistoryService.UPDATE, before, after,
-                BULK_HISTORY_NOTE.get(action), session);
+                delete ? BULK_HISTORY_NOTE.get(action) + " (" + PERMANENT_DELETE_NOTE + ")" : BULK_HISTORY_NOTE.get(action),
+                session);
     }
 
     @PostMapping("/inventory/bulk")
@@ -1293,17 +1314,20 @@ public class AdminController {
         }
 
         int processed = 0, skipped = 0, alertsClosed = 0;
+        List<String> deletedDomains = new ArrayList<>();
         String ts = now();
         for (Long id : ids) {
             CertificateInventory inv = inventoryRepo.findById(id).orElse(null);
             if (inv == null || !canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
+            // Silme KALICI (2026-10-07): yumuşak silinmiş satır yalnız eski sürümden kalabilir — tek seferlik temizlik
+            // onları da alır; o arada hiçbir eylem (silme dâhil) ona yazmaz.
             boolean deleted = inv.getDeletedAt() != null;
             // Ürün geçmişi (İzleme Değişiklikleri) için işlem ÖNCESİ durum — tekil uçlarla aynı alan listesi.
             Map<String, Object> histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
             int processedBefore = processed;
             switch (action) {
                 case "activate" -> {
-                    if (deleted) { skipped++; }            // silinmiş kayıt → "geri yükle" akışı kullanılmalı
+                    if (deleted) { skipped++; }
                     else { inv.setActive(true);  inv.setUpdatedAt(ts); inventoryRepo.save(inv); processed++; }
                 }
                 case "deactivate" -> {
@@ -1339,17 +1363,17 @@ public class AdminController {
                     }
                 }
                 case "delete" -> {
-                    if (deleted) { skipped++; }            // zaten silinmiş → no-op
-                    else {
-                        inv.setDeletedAt(ts); inv.setActive(false); inv.setUpdatedAt(ts);
-                        monitorHistory.stampUpdated(inv, session);   // "kim sildi" çöp kutusunda görünsün — tekil silmeyle aynı
-                        inventoryRepo.save(inv);
-                        alertsClosed += escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
-                        processed++;
-                    }
+                    // KALICI (2026-10-07) — tekil silmeyle aynı servis. Geçmiş satırı silmeden ÖNCE, aynı işlemde.
+                    // Eski sürümden kalmış çöp satırı da (deleted) burada kalıcı silinir: görünmeyen kayıt ad tutmasın.
+                    recordBulkInventoryHistory(inv, action, histBefore, session);
+                    var removed = requireDeletion().deleteInventory(inv);
+                    alertsClosed += removed.alertsClosed();
+                    deletedDomains.add(removed.domain());
+                    processed++;
+                    continue;   // geçmiş yukarıda yazıldı
                 }
             }
-            // YALNIZ gerçekten işlenen kayıt için (atlanan / kapsam dışı / zaten silinmiş → satır YOK).
+            // YALNIZ gerçekten işlenen kayıt için (atlanan / kapsam dışı → satır YOK).
             if (processed > processedBefore) recordBulkInventoryHistory(inv, action, histBefore, session);
         }
         // Her eylemin KENDI denetim adi olmali. Eskiden default -> DOMAIN_BULK_DELETE'ti; yeni bir
@@ -1365,13 +1389,22 @@ public class AdminController {
             case "set-team"     -> "DOMAIN_BULK_SET_TEAM";
             default             -> "DOMAIN_BULK_" + action.toUpperCase(java.util.Locale.ROOT).replace('-', '_');
         };
-        auditService.recordAction(auditAction, session, request, "CERTIFICATE",
-                processed + " domain",
-                "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"alertsClosed\":" + alertsClosed + "}");
+        // Toplu silme KALICI (2026-10-07): geri dönüş yok — silinen alan adları denetimde forensics'in tek dayanağı.
+        String auditDetail = "delete".equals(action)
+                ? "{\"permanent\":true,\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"alertsClosed\":" + alertsClosed
+                        + ",\"domains\":" + toJsonArray(deletedDomains) + "}"
+                : "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"alertsClosed\":" + alertsClosed + "}";
+        auditService.recordAction(auditAction, session, request, "CERTIFICATE", processed + " domain", auditDetail);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("processed", processed);
         data.put("skipped", skipped);
         data.put("alertsClosed", alertsClosed);
+        if ("delete".equals(action)) {
+            data.put("permanent", true);
+            // Gerçekten silinen alan adları (2026-10-07): arayüz onları ANINDA listeden düşürür (iyimser kaldırma) —
+            // atlanan (kapsam dışı / yok) kayıtlar burada yoktur.
+            data.put("deleted_domains", deletedDomains);
+        }
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
     }
 
@@ -1399,110 +1432,11 @@ public class AdminController {
         return ok(Map.of("message", "Deleted"));
     }
 
-    // F3 (2026-09-28): geri yükleme de envanteri değiştirir — eksikti; 409 DOMAIN_EXISTS "çöp kutusundan geri yükle"
-    // akışından sonra alan adı Genel Bakış'ta cert-latest TTL'i (300 sn) boyunca görünmüyordu.
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
-    @PostMapping("/inventory/{id}/restore")
-    public ResponseEntity<Map<String, Object>> restoreInventory(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        return inventoryRepo.findById(id).map(inv -> {
-            requireTeamScopedAdmin(session, inv.getTeamId());
-            requirePerm(session, "inventory.crud", "edit");
-            Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
-            inv.setDeletedAt(null);
-            inv.setActive(true);
-            inv.setUpdatedAt(now());
-            inventoryRepo.save(inv);
-            auditService.recordAction("DOMAIN_RESTORE", session, request,
-                    "CERTIFICATE", inv.getDomain(),
-                    "{\"teamId\":" + inv.getTeamId() + "}");
-            monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
-                    MonitorHistoryService.RESTORE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
-            return ok(Map.of("data", inv, "message", "Restored"));
-        }).orElse(ResponseEntity.notFound().build());
-    }
-
-    /**
-     * Kalıcı sil (purge) — yalnız SOFT-DELETE edilmiş bir envanter kaydını ve o domain'in
-     * tüm kontrol verisini (latest_checks + certificate_checks) GERİ ALINAMAZ şekilde siler.
-     * Alarmlar zaten soft-delete sırasında kapandığı için burada ek alarm işlemi yok.
-     *
-     * <p>İKİ KAPI: {@code inventory.purge} izni VE kaydın takımı üzerinde yönetim yetkisi.
-     * İkincisi eskiden yoktu ve bu sessiz bir yetki aşımıydı: {@code requirePerm} yalnız
-     * {@code systemRole} dizesine bakar ({@code PermissionService.require}) ve
-     * {@code adminDefaults()} ADMIN'e her kaynağı açar. AD üzerinden gelen ADMIN ("müdür") ise
-     * global DEĞİLDİR — {@code UserService.computeViewTeamIds} ona kendi + astlarının takımlarını
-     * verir, yani {@code SessionScope.isGlobalAdmin} false kalır. Sonuç: müdür, başka takımın
-     * kaydını soft-delete EDEMEZKEN ({@code deleteInventory} → {@code requireTeamScopedAdmin})
-     * aynı kaydı KALICI silebiliyordu — geri alınamaz olan yol, kapsamsız olan yoldu.
-     */
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
-    @DeleteMapping("/inventory/{id}/permanent")
-    @Transactional
-    public ResponseEntity<Map<String, Object>> purgeInventory(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requirePerm(session, "inventory.purge", "execute"); // dedike sensitive yetki (varsayılan ADMIN-only, matristen yönetilebilir)
-        return inventoryRepo.findById(id).map(inv -> {
-            // Kapsam kontrolü deletedAt kontrolünden ÖNCE: yabancı takımın kaydı için 400 ile 403
-            // farkı, id numaralandırmasına "bu kayıt var ve silinmemiş" sinyali verirdi.
-            requireTeamScopedAdmin(session, inv.getTeamId());
-            if (inv.getDeletedAt() == null) {
-                throw new IllegalArgumentException("Yalnız önce silinmiş (soft-delete) kayıtlar kalıcı silinebilir");
-            }
-            String domain = inv.getDomain();
-            int checks = certificateCheckRepo.deleteByDomain(domain);
-            latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
-            purgeDomainNotes(domain);
-            purgeManualVersions(inv);
-            inventoryRepo.delete(inv);
-            auditService.recordAction("DOMAIN_PURGE", session, request, "CERTIFICATE", domain,
-                    "{\"teamId\":" + inv.getTeamId() + ",\"checksDeleted\":" + checks + "}");
-            return ok(Map.of("message", "Purged", "checksDeleted", checks));
-        }).orElse(ResponseEntity.notFound().build());
-    }
-
-    /**
-     * Toplu kalıcı sil — soft-delete edilmiş envanter kayıtlarını ve ilgili kontrol verisini
-     * tek istekte GERİ ALINAMAZ şekilde temizler.
-     *
-     * <p>KAYIT BAŞINA kapsam uygulanır — {@code bulkInventoryAction} ile AYNI desen. Tekil purge'ün
-     * (yukarıda) aksine burada id bilmeye bile gerek yok, yani kapsamsız bırakılması daha ağırdı:
-     * tek istek tüm organizasyonun çöp kutusunu silerdi. Atlananlar yanıtta ve denetim kaydında
-     * görünür ki kullanıcı "312 vardı, 40 gitti" ile sessizce karşılaşmasın.
-     *
-     * <p>Silinen domain listesi denetime YAZILIR: geri dönüş yok, forensics'in tek dayanağı bu.
-     */
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
-    @PostMapping("/inventory/purge-deleted")
-    @Transactional
-    public ResponseEntity<Map<String, Object>> purgeAllDeleted(
-            HttpSession session, HttpServletRequest request) {
-        requirePerm(session, "inventory.purge", "execute");
-        List<CertificateInventory> deleted = inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc();
-        int purged = 0, checksDeleted = 0, skipped = 0;
-        List<String> purgedDomains = new ArrayList<>();
-        for (CertificateInventory inv : deleted) {
-            if (!canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
-            String domain = inv.getDomain();
-            checksDeleted += certificateCheckRepo.deleteByDomain(domain);
-            latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
-            purgeDomainNotes(domain);
-            purgeManualVersions(inv);
-            inventoryRepo.delete(inv);
-            purged++;
-            purgedDomains.add(domain);
-        }
-        auditService.recordAction("DOMAIN_BULK_PURGE", session, request, "CERTIFICATE",
-                purged + " domain",
-                "{\"purged\":" + purged + ",\"skipped\":" + skipped
-                        + ",\"checksDeleted\":" + checksDeleted
-                        + ",\"domains\":" + toJsonArray(purgedDomains) + "}");
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("purged", purged);
-        data.put("skipped", skipped);
-        data.put("checksDeleted", checksDeleted);
-        return ok(Map.of("data", data, "message", "Purge complete"));
-    }
+    // Silme KALICI (2026-10-07, kullanıcı kararı): çöp kutusu uçları KALDIRILDI — POST /inventory/{id}/restore,
+    // DELETE /inventory/{id}/permanent, POST /inventory/purge-deleted ve inventory.purge izni. Silme ucu artık kaydı ve
+    // verisini doğrudan kalıcı siler (deleteInventory); eski sürümden kalan çöp kutusu bir kez temizlenir
+    // (DeletedRecordsPurge). Eski denetim türleri (DOMAIN_SOFT_DELETE / DOMAIN_RESTORE / DOMAIN_PURGE / DOMAIN_BULK_PURGE)
+    // geçmiş satırlar için katalogda kalır.
 
     /** Denetim ayrıntısı için minimal JSON dizisi — tırnak ve ters bölü kaçırılır. */
     private static String toJsonArray(List<String> values) {
@@ -1546,47 +1480,25 @@ public class AdminController {
         }
         requireExistingTeam(newTeamId);
         CertificateInventory inv = inventoryRepo.findById(id)
+                .filter(i -> i.getDeletedAt() == null)   // silme KALICI (2026-10-07): eski çöp satırı aktarılamaz → 404
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
-        // Çöp kutusundaki kayıt (Ek 3/5, 2026-09-28): DÜZ aktarım 409. Silinmiş kayda yazılan UPDATE satırı ürün geçmişinde
-        // onu "canlı"ya çeviriyordu (findDeletedAmong = son olay DELETE; o tabloya yalnız canlı kayda yazım düşer). Mükerrer
-        // alan adı bandının "geri yükle + aktar"ı `restore: true` ile TEK adımda gelir: takım + geri yükleme tek kayıt, tek
-        // RESTORE satırı (eskiden aktar → ayrı /restore; ikinci adım düşerse kayıt yeni takımın çöpünde kalıyordu).
-        // Geri yükleme kapısı /restore ile AYNI (inventory.crud/edit; takım kapsamını global admin zaten geçer).
-        boolean deleted = inv.getDeletedAt() != null;
-        boolean restore = deleted && Boolean.TRUE.equals(body.get("restore"));
-        if (deleted && !restore) {
-            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu kayıt çöp kutusunda — aktarmadan önce geri yükleyin.",
-                    "This record is in the bin — restore it before transferring it."));
-        }
-        if (restore) requirePerm(session, "inventory.crud", "edit");
         Long oldTeamId = inv.getTeamId();
         Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
         inv.setTeamId(newTeamId);
-        if (restore) {
-            inv.setDeletedAt(null);
-            inv.setActive(true);
-        }
         inv.setUpdatedAt(now());
         inventoryRepo.save(inv);
         // Ürün geçmişi (2026-09-28): takım değişikliği düzenleme (PUT) ve toplu set-team yolunda UPDATE olarak yazılıyor,
         // bu uçta yazılmıyordu — aynı olay hangi düğmeden yapıldığına göre İzleme Değişiklikleri'nde var/yok oluyordu.
         monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
-                restore ? MonitorHistoryService.RESTORE : MonitorHistoryService.UPDATE,
-                _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
+                MonitorHistoryService.UPDATE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
         // Türev izlemelerin takımı da tazelenir: aksi hâlde yeni takım kendi kaydını
         // düzenleyemez, ESKİ takım listede göremediği satırı yönetmeye devam eder ve kesinti
         // alarmları eski takıma gider (zamanlayıcı oturumsuz çalışır, sütunu okur).
         int synced = derivedMonitorTeamSync.syncTeam(inv.getDomain(), newTeamId);
         auditService.recordAction("DOMAIN_TRANSFER_SY", session, request,
                 "CERTIFICATE", inv.getDomain(),
-                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + ",\"derivedMonitorsSynced\":" + synced
-                        + (restore ? ",\"restored\":true" : "") + "}");
-        if (restore) {
-            auditService.recordAction("DOMAIN_RESTORE", session, request,
-                    "CERTIFICATE", inv.getDomain(), "{\"teamId\":" + newTeamId + "}");
-        }
-        return ok(Map.of("data", inv, "message", restore ? "Restored and transferred" : "Transferred"));
+                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + ",\"derivedMonitorsSynced\":" + synced + "}");
+        return ok(Map.of("data", inv, "message", "Transferred"));
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
@@ -1601,13 +1513,8 @@ public class AdminController {
         // uydurma kimlik kaydı hiçbir takımın görmediği bir UG'ye bağlıyordu.
         requireExistingTeam(newUgTeamId);
         CertificateInventory inv = inventoryRepo.findById(id)
+                .filter(i -> i.getDeletedAt() == null)   // silme KALICI (2026-10-07): eski çöp satırı → 404
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
-        // Çöp kutusundaki kayda UG aktarımı 409 — silinmiş kayda yazılan UPDATE satırı onu ürün geçmişinde "canlı"ya çeviriyordu.
-        if (inv.getDeletedAt() != null) {
-            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu kayıt çöp kutusunda — UG takımını değiştirmeden önce geri yükleyin.",
-                    "This record is in the bin — restore it before changing its UG team."));
-        }
         Long oldUgTeamId = inv.getUgTeamId();
         Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
         inv.setUgTeamId(newUgTeamId);

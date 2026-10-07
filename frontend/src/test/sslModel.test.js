@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   ST, parseDn, colonHex, prettyTls, hostnameStatus, buildSslGroups, buildVerdict, buildChain, buildConnectionError,
+  entryChainData, isUploadResult,
 } from '../components/certmodal/sslModel.js'
-import { healthyPreview } from './helpers/sslPreviewFixture.js'
+import { healthyPreview, uploadPreview } from './helpers/sslPreviewFixture.js'
 
 /** SSL Kontrol sekmesinin saf modeli (2026-09-28) — fixture gerçek tel biçiminde (helpers/sslPreviewFixture.js). */
 
@@ -122,6 +123,60 @@ describe('buildChain', () => {
     const self = buildChain({ ...base, chain: [{ ...base.chain[0], is_root: true }] })
     expect(self.nodes[0].selfSigned).toBe(true)
     expect(self.rootSent).toBe(true)
+  })
+})
+
+describe('dosyadan yüklenen sertifika (via: upload, 2026-10-07)', () => {
+  it('Bağlantı grubu ve alan adı eşleşmesi satırı YOK; zincir / iptal metinleri dosyaya göre', () => {
+    const d = uploadPreview()
+    expect(isUploadResult(d)).toBe(true)
+    expect(isUploadResult(healthyPreview())).toBe(false)
+    const groups = buildSslGroups(d)
+    expect(groups.map((g) => g.key)).toEqual(['cert', 'trust'])
+    const keys = groups.flatMap((g) => g.rows).map((r) => r.key)
+    expect(keys).not.toContain('hostname')
+    expect(keys).not.toContain('protocol')
+    expect(rowOf(groups, 'chain')).toMatchObject({ status: ST.OK, textKey: 'sslv.m.chain.ok', value: 3 })
+    expect(rowOf(groups, 'revocation')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.m.rev.unknown' })
+    const unknown = buildSslGroups(uploadPreview({ chain_status: 'UNKNOWN', chain: [d.chain[0]] }))
+    expect(rowOf(unknown, 'chain')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.m.chain.unknown' })
+    // Ağ sonucunda metinler değişmez
+    expect(rowOf(buildSslGroups(healthyPreview()), 'chain').textKey).toBe('sslv.chain.ok')
+  })
+
+  it('zincir: yaprak → ara → kök (kök dosyada → rootSent); CA başı kendi rolüyle; upload işareti', () => {
+    const c = buildChain(uploadPreview())
+    expect(c.nodes.map((n) => n.role)).toEqual(['leaf', 'intermediate', 'root'])
+    expect(c.rootSent).toBe(true)
+    expect(c.upload).toBe(true)
+    const inter = uploadPreview({
+      is_ca: true, subject: 'Test Issuing CA', subject_dn: 'CN=Test Issuing CA,O=Example Test', san: [],
+      chain: [{ position: 0, subject: 'CN=Test Issuing CA,O=Example Test', issuer: 'CN=Test Root CA,O=Example Test', is_leaf: true, is_root: false },
+        { position: 1, subject: 'CN=Test Root CA,O=Example Test', issuer: 'CN=Test Root CA,O=Example Test', is_leaf: false, is_root: true }],
+    })
+    expect(buildChain(inter).nodes.map((n) => n.role)).toEqual(['intermediate', 'root'])
+    const root = uploadPreview({ is_ca: true, chain: [{ position: 0, subject: 'CN=R', issuer: 'CN=R', is_leaf: true, is_root: true }] })
+    expect(buildChain(root).nodes.map((n) => n.role)).toEqual(['root'])
+    // Ağ sonucunda CA yaprağı bile "leaf" kalır (davranış aynı)
+    expect(buildChain(healthyPreview({ is_ca: true })).nodes[0].role).toBe('leaf')
+  })
+
+  it('entryChainData: önizleme varsa o; yoksa girdinin alanlarından aynı biçim (yaprak + zincir halkaları)', () => {
+    const preview = uploadPreview()
+    expect(entryChainData({ ref: 'X', preview })).toBe(preview)
+    const fallback = entryChainData({
+      ref: 'AB', cn: 'api.example.test', subject_dn: 'CN=api.example.test,O=Example', issuer_dn: 'CN=Example CA,O=Example',
+      not_before: '2026-01-01T00:00:00', not_after: '2027-01-01T00:00:00', days_remaining: 87, serial_number: '01',
+      san: ['api.example.test'], key_alg: 'RSA', key_size: 2048, signature_algorithm: 'SHA256withRSA', is_ca: false, self_signed: false,
+      trust_status: 'UNKNOWN',
+      chain: [{ subject: 'Example CA', issuer: 'Example Root', not_after: '2030-01-01T00:00:00', is_ca: true, days_remaining: 1200 },
+        { subject: 'Example Root', issuer: 'Example Root', not_after: '2035-01-01T00:00:00', is_ca: true, days_remaining: 3000 }],
+    })
+    expect(isUploadResult(fallback)).toBe(true)
+    const c = buildChain(fallback)
+    expect(c.nodes.map((n) => n.role)).toEqual(['leaf', 'intermediate', 'root'])
+    expect(c.nodes[0]).toMatchObject({ cn: 'api.example.test', fingerprint: 'AB', keyAlg: 'RSA', keySize: 2048 })
+    expect(c.nodes[1]).toMatchObject({ cn: 'Example CA', days: 1200 })
   })
 })
 

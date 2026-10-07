@@ -67,11 +67,8 @@ class RepositoryWriteTransactionGuardTest {
             "CertificateCheckRepository#renameDomain",
             "CertificateNoteRepository#renameDomain",
             "LatestCheckRepository#renameDomain",
-            // Kalıcı purge — AdminController#purgeInventory / #purgeAllDeleted (@Transactional):
-            // kontrol geçmişi + latest_checks + notlar + envanter satırı tek adım. Gece otomatik boşaltma
-            // InventoryAutoPurgeService#purgeOlderThan (@Transactional) — zamanlayıcı onu ARTIK kendi proxy'si
-            // üzerinden çağırıyor (BO4 kardeşi, 2026-09-27; eskiden this. ile tx'siz koşup her gece düşüyordu).
-            "CertificateCheckRepository#deleteByDomain",
+            // (2026-10-07) CertificateCheckRepository#deleteByDomain kaldırıldı: kalıcı envanter silmesi çocuk tabloları
+            // PermanentDeletionService'te (@Transactional, JDBC) siler — çöp kutusu purge uçları ve gece boşaltma yok.
             // Haftalık rapor — WeeklyReportService (@Transactional): rapor + görsel + mail kaydı + kilitler birlikte.
             "WeeklyReportImageRepository#deleteByReportId",
             "WeeklyReportMailRepository#deleteByReportId",

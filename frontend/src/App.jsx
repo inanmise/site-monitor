@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { deleteInventoryByDomain } from './utils/deleteInventory.js'
+import { filterDeleted, useDeletedMarksVersion } from './utils/recentlyDeleted.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
@@ -352,7 +353,13 @@ export default function App() {
     }
     setTab(id)
   }
-  const [certs, setCerts] = useState([])
+  const [certs, setCertsRaw] = useState([])
+  // Silme KALICI + iyimser (2026-10-07): sunucudan gelen her sertifika listesi "yakın zamanda silindi" işaretleriyle süzülür
+  // (başka pod'un bayat önbelleği silinen kartı geri getiremez); bir yüzeyde (envanter, form, kart, Tüm Sertifikalar)
+  // silinen kayıt Genel Bakış'tan ANINDA düşer — tam liste yüklemesi beklenmez.
+  const setCerts = useCallback((data) => setCertsRaw(filterDeleted('cert', data || [], (c) => c.domain)), [])
+  const deletedMarks = useDeletedMarksVersion()
+  useEffect(() => { setCertsRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)

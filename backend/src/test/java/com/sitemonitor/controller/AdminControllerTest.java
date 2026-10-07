@@ -168,8 +168,19 @@ class AdminControllerTest {
     @MockitoBean
     com.sitemonitor.repository.ManualCertificateVersionRepository manualVersionRepo;
 
+    /** Kalıcı silme (2026-10-07) — tablo düzeyindeki silme PermanentDeletionServiceTest'te (H2) sınanır. */
+    @MockitoBean
+    com.sitemonitor.service.PermanentDeletionService permanentDeletion;
+
+    /** Silme servisinin yanıtı: {@code alerts} kapanan alarm, 5 kontrol satırı. */
+    static com.sitemonitor.service.PermanentDeletionService.InventoryDeletion deletionOf(CertificateInventory c, int alerts) {
+        return new com.sitemonitor.service.PermanentDeletionService.InventoryDeletion(
+                c.getId(), c.getDomain(), c.getTeamId(), alerts, 0, Map.of("certificate_checks", 5, "certificate_inventory", 1));
+    }
+
     @BeforeEach
     void setup() {
+        when(permanentDeletion.deleteInventory(any())).thenAnswer(i -> deletionOf(i.getArgument(0), 0));
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
         // Takım varlık denetimi (2026-09-28, O3): varsayılan 'takım var'; olmayan takım testleri kendi stub'ını verir.
         when(teamRepo.existsById(anyLong())).thenReturn(true);
@@ -1015,36 +1026,67 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /api/admin/inventory/{id} soft-deletes the inventory item")
-    void deleteInventory_authenticated_returns200() throws Exception {
+    @DisplayName("KALICI SİLME (2026-10-07): DELETE /inventory/{id} kaydı servisle kalıcı siler — yumuşak silme yazılmaz; geçmiş + denetim")
+    void deleteInventory_authenticated_permanent() throws Exception {
         CertificateInventory inv = inventory("example.com");
         inv.setId(1L);
         when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inv));
-        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
         mvc.perform(delete("/api/admin/inventory/1").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.alertsClosed").value(0));
+                .andExpect(jsonPath("$.permanent").value(true))
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.domain").value("example.com"))   // arayüz iyimser kaldırma
+                .andExpect(jsonPath("$.alertsClosed").value(0))
+                .andExpect(jsonPath("$.checksDeleted").value(5));
 
-        org.mockito.Mockito.verify(inventoryRepo).save(any());
+        verify(permanentDeletion).deleteInventory(inv);
+        verify(inventoryRepo, never()).save(any());   // deleted_at / active=false YAZILMAZ — satır gider
+        assertThat(inv.getDeletedAt()).isNull();
+        // Ürün geçmişi: DELETE satırı (silme anının tam görüntüsü) + "kalıcı silme" notu; denetim DOMAIN_DELETE permanent.
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.INVENTORY), eq(1L), eq("example.com"),
+                any(), eq(com.sitemonitor.service.MonitorHistoryService.DELETE), any(), any(), eq("kalıcı silme"), any());
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("DOMAIN_DELETE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
+                eq("CERTIFICATE"), eq("example.com"), detail.capture());
+        assertThat(detail.getValue()).contains("\"permanent\":true").contains("\"certificate_checks\":5");
+        verify(auditService, never()).recordAction(eq("DOMAIN_SOFT_DELETE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
+                any(), any(), any());
     }
 
     @Test
-    @DisplayName("DELETE /api/admin/inventory/{id} closes open alerts and returns count")
+    @DisplayName("DELETE /api/admin/inventory/{id}: kapanan alarm sayısı servisten döner")
     void deleteInventory_withOpenAlerts_closesAndReturnsCount() throws Exception {
         CertificateInventory inv = inventory("stuck.example.com");
         inv.setId(7L);
         when(inventoryRepo.findById(7L)).thenReturn(Optional.of(inv));
-        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(escalationService.closeAlertsOnInventoryDelete("stuck.example.com")).thenReturn(3);
+        when(permanentDeletion.deleteInventory(inv)).thenReturn(deletionOf(inv, 3));
 
         mvc.perform(delete("/api/admin/inventory/7").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.alertsClosed").value(3));
+    }
 
-        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("stuck.example.com");
+    @Test
+    @DisplayName("KALICI SİLME: yok olan kayıt 404; çöp kutusu uçları KALDIRILDI (restore / permanent / purge-deleted)")
+    void deleteInventory_missing404_binEndpointsGone() throws Exception {
+        when(inventoryRepo.findById(99L)).thenReturn(Optional.empty());
+        mvc.perform(delete("/api/admin/inventory/99").session(authSession())).andExpect(status().isNotFound());
+        verify(permanentDeletion, never()).deleteInventory(any());
+
+        CertificateInventory inv = inventory("x.example.com"); inv.setId(3L);
+        when(inventoryRepo.findById(3L)).thenReturn(Optional.of(inv));
+        // Eşlenmemiş yol/yöntem: POST /restore ve /purge-deleted → 404; DELETE /{id}/permanent → 404 (eşleme yok).
+        org.springframework.test.web.servlet.MvcResult r1 = mvc.perform(post("/api/admin/inventory/3/restore").session(authSession())).andReturn();
+        org.springframework.test.web.servlet.MvcResult r2 = mvc.perform(delete("/api/admin/inventory/3/permanent").session(authSession())).andReturn();
+        org.springframework.test.web.servlet.MvcResult r3 = mvc.perform(post("/api/admin/inventory/purge-deleted").session(authSession())).andReturn();
+        assertThat(List.of(r1.getResponse().getStatus(), r2.getResponse().getStatus(), r3.getResponse().getStatus()))
+                .allMatch(s -> s == 404 || s == 405);
+        verify(permanentDeletion, never()).deleteInventory(any());
+        verify(inventoryRepo, never()).save(any());
+        verify(inventoryRepo, never()).delete(any());
     }
 
     // ── Bulk inventory actions ────────────────────────────────────────────────
@@ -1095,25 +1137,47 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/admin/inventory/bulk delete closes alerts and reports count")
-    void bulkInventory_delete_closesAlerts() throws Exception {
+    @DisplayName("KALICI SİLME: POST /inventory/bulk delete — her kayıt servisle kalıcı silinir, alarm sayıları toplanır, denetimde alan adları")
+    void bulkInventory_delete_permanent_closesAlerts() throws Exception {
         CertificateInventory a = inventory("d1.com"); a.setId(1L);
         CertificateInventory b = inventory("d2.com"); b.setId(2L);
         when(inventoryRepo.findById(1L)).thenReturn(Optional.of(a));
         when(inventoryRepo.findById(2L)).thenReturn(Optional.of(b));
-        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(escalationService.closeAlertsOnInventoryDelete("d1.com")).thenReturn(2);
-        when(escalationService.closeAlertsOnInventoryDelete("d2.com")).thenReturn(1);
+        when(permanentDeletion.deleteInventory(a)).thenReturn(deletionOf(a, 2));
+        when(permanentDeletion.deleteInventory(b)).thenReturn(deletionOf(b, 1));
 
         mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"delete\",\"ids\":[1,2]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.processed").value(2))
+                .andExpect(jsonPath("$.data.permanent").value(true))
                 .andExpect(jsonPath("$.data.alertsClosed").value(3));
 
-        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("d1.com");
-        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("d2.com");
+        verify(permanentDeletion).deleteInventory(a);
+        verify(permanentDeletion).deleteInventory(b);
+        verify(inventoryRepo, never()).save(any());   // yumuşak silme yazılmaz
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("DOMAIN_BULK_DELETE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
+                eq("CERTIFICATE"), eq("2 domain"), detail.capture());
+        assertThat(detail.getValue()).contains("\"permanent\":true").contains("\"domains\":[\"d1.com\",\"d2.com\"]");
+    }
+
+    @Test
+    @DisplayName("KALICI SİLME: yanıt gerçekten silinen alan adlarını taşır (arayüz iyimser kaldırma) — atlanan kayıt listede yok")
+    void bulkInventory_delete_returnsDeletedDomains() throws Exception {
+        CertificateInventory own   = inventory("own.com");   own.setId(1L);   own.setTeamId(2L);
+        CertificateInventory other = inventory("other.com"); other.setId(2L); other.setTeamId(7L);   // kapsam dışı
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(own));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(other));
+        mvc.perform(post("/api/admin/inventory/bulk").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"delete\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted_domains.length()").value(1))
+                .andExpect(jsonPath("$.data.deleted_domains[0]").value("own.com"))
+                .andExpect(jsonPath("$.data.skipped").value(1));
+        verify(permanentDeletion, never()).deleteInventory(other);
     }
 
     @Test
@@ -1343,7 +1407,7 @@ class AdminControllerTest {
     // "silinmiş" rozetini (findDeletedAmong = kaynağın son olayı DELETE) alamıyordu.
 
     @Test
-    @DisplayName("bulk delete: işlenen HER kayıt için tekil silmeyle aynı DELETE satırı (tür/kimlik/ad/takım + not); zaten silinmiş, kapsam dışı ve bilinmeyen kimlik için satır YOK")
+    @DisplayName("bulk delete: işlenen HER kayıt için tekil silmeyle aynı DELETE satırı (tür/kimlik/ad/takım + not) ve kalıcı silme; kapsam dışı ve bilinmeyen kimlik için satır YOK")
     @SuppressWarnings("unchecked")
     void bulkDelete_writesDeleteHistoryForEachProcessedRecord() throws Exception {
         CertificateInventory a = inventory("d1.example.com"); a.setId(1L); a.setTeamId(2L);
@@ -1359,25 +1423,26 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"delete\",\"ids\":[1,2,3,4,99]}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.processed").value(2))
-                .andExpect(jsonPath("$.data.skipped").value(3));
+                // Silme KALICI (2026-10-07): eski sürümden kalmış çöp satırı (gone) da kalıcı silinir; yalnız kapsam
+                // dışı (other) ve yok olan (99) atlanır.
+                .andExpect(jsonPath("$.data.processed").value(3))
+                .andExpect(jsonPath("$.data.skipped").value(2));
 
         ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
         verify(monitorHistory).record(eq("INVENTORY"), eq(1L), eq("d1.example.com"), eq(2L), eq("DELETE"),
-                before.capture(), after.capture(), eq("toplu silme"), any(jakarta.servlet.http.HttpSession.class));
-        // Tekil silmeyle aynı snapshot: önce canlı, sonra silinmiş + pasif
+                before.capture(), after.capture(), eq("toplu silme (kalıcı silme)"), any(jakarta.servlet.http.HttpSession.class));
+        // Silme anının tam görüntüsü: canlı kayıt (yumuşak silme alanları yazılmaz — satır gider)
         assertThat(before.getValue()).containsEntry("deletedAt", null).containsEntry("active", true);
-        assertThat(after.getValue().get("deletedAt")).isNotNull();
-        assertThat(after.getValue()).containsEntry("active", false);
+        assertThat(after.getValue()).containsEntry("deletedAt", null).containsEntry("active", true);
         verify(monitorHistory).record(eq("INVENTORY"), eq(2L), eq("d2.example.com"), eq(2L), eq("DELETE"),
-                any(), any(), eq("toplu silme"), any(jakarta.servlet.http.HttpSession.class));
-        verify(monitorHistory, org.mockito.Mockito.times(2)).record(any(), any(), any(), any(), any(), any(), any(), any(), any());
-        // "Kim sildi" damgası tekil silmedeki gibi YALNIZ silinen kayıtlara
-        verify(monitorHistory).stampUpdated(eq(a), any(jakarta.servlet.http.HttpSession.class));
-        verify(monitorHistory).stampUpdated(eq(b), any(jakarta.servlet.http.HttpSession.class));
-        verify(monitorHistory, never()).stampUpdated(eq(gone), any());
-        verify(monitorHistory, never()).stampUpdated(eq(other), any());
+                any(), any(), eq("toplu silme (kalıcı silme)"), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory, org.mockito.Mockito.times(3)).record(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(permanentDeletion).deleteInventory(a);
+        verify(permanentDeletion).deleteInventory(b);
+        verify(permanentDeletion).deleteInventory(gone);
+        verify(permanentDeletion, never()).deleteInventory(other);   // IDOR: kapsam dışı kayda dokunulmaz
+        verify(monitorHistory, never()).stampUpdated(any(), any());   // yumuşak silme damgası yok
     }
 
     @Test
@@ -1536,45 +1601,33 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("Ek 3/5: çöp kutusundaki kayda DÜZ SY / UG aktarımı 409 — UPDATE satırı kaydı ürün geçmişinde 'canlı'ya çevirmez")
-    void transfer_deletedRecord_409_nothingChanges() throws Exception {
+    @DisplayName("Silme KALICI (2026-10-07): eski sürümden kalmış çöp satırına SY / UG aktarımı 404; 'restore:true' geri yüklemez")
+    void transfer_legacyBinRow_404_noRestore() throws Exception {
         CertificateInventory d = inventory("gone.example.com"); d.setId(31L); d.setTeamId(1L); d.setUgTeamId(3L);
         d.setDeletedAt("2026-09-20T10:00:00"); d.setActive(false);
         when(inventoryRepo.findById(31L)).thenReturn(Optional.of(d));
         mvc.perform(post("/api/admin/inventory/31/transfer").session(authSession())
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":9}"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.error").isNotEmpty());
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":9,\"restore\":true}"))
+                .andExpect(status().isNotFound());
         mvc.perform(post("/api/admin/inventory/31/transfer-ug").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"ug_team_id\":9}"))
-                .andExpect(status().isConflict());
+                .andExpect(status().isNotFound());
         assertThat(d.getTeamId()).isEqualTo(1L);
         assertThat(d.getUgTeamId()).isEqualTo(3L);
-        assertThat(d.getDeletedAt()).isNotNull();
+        assertThat(d.getDeletedAt()).as("geri yükleme yolu yok").isNotNull();
         verify(inventoryRepo, never()).save(any());
         verify(derivedMonitorTeamSync, never()).syncTeam(any(), any());
         verify(monitorHistory, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any(jakarta.servlet.http.HttpSession.class));
+        verify(auditService, never()).recordAction(eq("DOMAIN_RESTORE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
+                any(), any(), any());
     }
 
     @Test
-    @DisplayName("Ek 3/5: restore:true — çöp kutusundaki kayıt TEK adımda geri yüklenip aktarılır; tek RESTORE satırı; geri yükleme kapısı")
-    void transfer_deletedRecord_restoreTrue_restoresAndTransfers() throws Exception {
-        CertificateInventory d = inventory("back.example.com"); d.setId(32L); d.setTeamId(1L);
-        d.setDeletedAt("2026-09-20T10:00:00"); d.setActive(false);
-        when(inventoryRepo.findById(32L)).thenReturn(Optional.of(d));
-        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        mvc.perform(post("/api/admin/inventory/32/transfer").session(authSession())
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":9,\"restore\":true}"))
-                .andExpect(status().isOk());
-        assertThat(d.getTeamId()).isEqualTo(9L);
-        assertThat(d.getDeletedAt()).isNull();
-        assertThat(d.getActive()).isTrue();
-        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("inventory.crud"), eq("edit"));
-        verify(monitorHistory).record(eq("INVENTORY"), eq(32L), eq("back.example.com"), eq(9L), eq("RESTORE"),
-                any(), any(), isNull(), any(jakarta.servlet.http.HttpSession.class));
-        verify(monitorHistory, never()).record(any(), any(), any(), any(), eq("UPDATE"), any(), any(), any(), any(jakarta.servlet.http.HttpSession.class));
-        verify(derivedMonitorTeamSync).syncTeam("back.example.com", 9L);
+    @DisplayName("tekil silme @Transactional — geçmiş satırı + alarm kapanışı + kalıcı silme tek işlem")
+    void deleteInventory_isTransactional() throws Exception {
+        java.lang.reflect.Method m = AdminController.class.getMethod("deleteInventory",
+                Long.class, jakarta.servlet.http.HttpSession.class, jakarta.servlet.http.HttpServletRequest.class);
+        assertThat(m.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
     }
 
     @Test
@@ -4335,8 +4388,52 @@ class AdminControllerTest {
                         .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"DUP.example.com\",\"port\":443,\"team_id\":1}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
-                .andExpect(jsonPath("$.existing.inventory_id").value(9));
+                .andExpect(jsonPath("$.existing.inventory_id").value(9))
+                // Silme KALICI (2026-10-07): çöp kutusu alanları / geri yükleme yolu yok
+                .andExpect(jsonPath("$.existing.deleted").doesNotExist())
+                .andExpect(jsonPath("$.existing.deleted_at").doesNotExist())
+                .andExpect(jsonPath("$.existing.can_restore").doesNotExist());
         verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Silme KALICI (2026-10-07): silinen adın yeniden eklenmesi serbest — eski çöp satırı çakışma sayılmaz, önce kalıcı silinir")
+    void addInventory_sameNameAsLegacyBinRow_succeeds() throws Exception {
+        CertificateInventory bin = inventory("old.example.com");
+        bin.setId(12L); bin.setTeamId(7L); bin.setDeletedAt("2026-09-01T00:00:00"); bin.setActive(false);
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("old.example.com")).thenReturn(Optional.of(bin));
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(13L); return i; });
+
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(13));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(permanentDeletion, inventoryRepo);
+        order.verify(permanentDeletion).purgeLegacyBinRows("old.example.com");   // aynı adlı eski satır ÖNCE gider
+        order.verify(inventoryRepo).save(any());
+    }
+
+    @Test
+    @DisplayName("Silme KALICI (2026-10-07): yeniden adlandırma eski çöp satırının adına engellenmez")
+    void updateInventory_renameToLegacyBinName_succeeds() throws Exception {
+        CertificateInventory existing = inventory("cur.example.com");
+        existing.setId(20L); existing.setTeamId(1L); existing.setGroupName("Grup A"); existing.setTags("t1");
+        CertificateInventory bin = inventory("was.example.com");
+        bin.setId(21L); bin.setTeamId(1L); bin.setDeletedAt("2026-09-01T00:00:00");
+        when(inventoryRepo.findById(20L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("was.example.com")).thenReturn(Optional.of(bin));
+        when(inventoryRepo.save(any())).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/20")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"was.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isOk());
+        verify(permanentDeletion).purgeLegacyBinRows("was.example.com");
+        assertThat(existing.getDomain()).isEqualTo("was.example.com");
     }
 
     @Test
@@ -4378,24 +4475,15 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("manuel: kalıcı silme sürümleri de siler; ağ kaydında sürüm deposuna dokunulmaz")
-    void purge_manualRowDeletesVersions() throws Exception {
+    @DisplayName("manuel: silme de KALICI (2026-10-07) — aynı uç, aynı servis (sürümler servis içinde gider: PermanentDeletionServiceTest)")
+    void delete_manualRow_permanent() throws Exception {
         CertificateInventory manual = manualInventory(3L, "api-takip");
-        manual.setDeletedAt("2026-10-01T00:00:00");
         when(inventoryRepo.findById(3L)).thenReturn(Optional.of(manual));
-        mvc.perform(delete("/api/admin/inventory/3/permanent").session(authSession())).andExpect(status().isOk());
-        verify(manualVersionRepo).deleteByInventoryId(3L);
-
-        CertificateInventory net = inventory("net.example.com");
-        net.setId(4L);
-        net.setDeletedAt("2026-10-01T00:00:00");
-        when(inventoryRepo.findById(4L)).thenReturn(Optional.of(net));
-        mvc.perform(delete("/api/admin/inventory/4/permanent").session(authSession())).andExpect(status().isOk());
-        verify(manualVersionRepo, never()).deleteByInventoryId(4L);
-
-        when(inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()).thenReturn(List.of(manual));
-        mvc.perform(post("/api/admin/inventory/purge-deleted").session(authSession())).andExpect(status().isOk());
-        verify(manualVersionRepo, org.mockito.Mockito.times(2)).deleteByInventoryId(3L);
+        mvc.perform(delete("/api/admin/inventory/3").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.permanent").value(true));
+        verify(permanentDeletion).deleteInventory(manual);
+        verify(inventoryRepo, never()).save(any());
     }
 
     @Test

@@ -395,7 +395,7 @@ public class AuthController {
             // setSameSite'ı yok; bayrak sessizce eksik kalıyordu. AuthInterceptor bu çerezle
             // TAM OTURUMU yeniden kurduğu için, Lax-varsayılanı uygulamayan bir tarayıcıda
             // cross-site POST kimlikli çalışıyor ve oturum çerezindeki Strict etkisiz kalıyordu.
-            // (Gövdesiz POST uçları düz HTML formuyla tetiklenebilir — purge-deleted dâhil.)
+            // (Gövdesiz POST uçları düz HTML formuyla tetiklenebilir.)
             ResponseCookie cookie = ResponseCookie.from(RememberMeService.COOKIE_NAME, token)
                     .maxAge(rememberTtlSeconds)
                     .httpOnly(true)

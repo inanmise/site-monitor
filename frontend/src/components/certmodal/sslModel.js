@@ -16,6 +16,13 @@
 /** Satır durumu — `data-status` değeri ve simge/ton seçimi. */
 export const ST = Object.freeze({ OK: 'ok', WARN: 'warn', FAIL: 'fail', UNKNOWN: 'unknown', INFO: 'info' })
 
+/**
+ * Sonuç DOSYADAN yüklenen (manuel) bir sertifikanın çevrim-dışı değerlendirmesi mi (2026-10-07) — `via: 'upload'` /
+ * `manual: true` (ManualCertificateEvaluationService). Ağa özgü satırlar (DNS, protokol, şifre, PFS, HSTS) ve alan adı
+ * eşleşmesi bu sonuçta ÖLÇÜLMEZ: "bilinmiyor" diye çizilmez, hiç çizilmez. Ağ sonucu hiçbir zaman bu işareti taşımaz.
+ */
+export const isUploadResult = (data) => data?.via === 'upload' || data?.manual === true
+
 const RULE = { OK: ST.OK, WARN: ST.WARN, FAIL: ST.FAIL, UNKNOWN: ST.UNKNOWN, NA: ST.UNKNOWN }
 
 /** CertificateHealthRules.Status adı → satır durumu; tanınmayan/eksik değer UNKNOWN. */
@@ -113,6 +120,9 @@ function leafOnly(data) {
 /**
  * Kontrol grupları. Her satır: { key, status, textKey, args, value?, mono?, advice? } — `advice` satırı (HSTS, ileri
  * gizlilik, CBC şifre) sunucu SERTLEŞTİRME önerisidir; hükmü "sorun" yapmaz, ayrı sayılır.
+ *
+ * <p>Dosyadan yüklenen sertifikada (`isUploadResult`) "Bağlantı" grubu ve alan adı eşleşmesi satırı YOKTUR (takip adı
+ * bir host adı değil, el sıkışma yok); zincir / iptal metinleri dosyaya göre yazılır. Ağ sonucu birebir aynı.
  */
 export function buildSslGroups(data) {
   const d = data || {}
@@ -120,6 +130,7 @@ export function buildSslGroups(data) {
   const domain = d.domain || ''
   const days = num(d.days_remaining)
   const tls = prettyTls(d.tls_version)
+  const upload = isUploadResult(d)
 
   // ── Bağlantı ──
   const conn = []
@@ -152,8 +163,10 @@ export function buildSslGroups(data) {
   else if (d.warning === true) cert.push(row('expiry', ST.WARN, 'sslv.expiry.soon', [days], { value: days }))
   else cert.push(row('expiry', ST.OK, 'sslv.expiry.ok', [days], { value: days }))
 
-  const host = hostnameStatus(d)
-  cert.push(row('hostname', host, `sslv.host.${host === ST.WARN ? ST.UNKNOWN : host}`, [domain]))
+  if (!upload) {
+    const host = hostnameStatus(d)
+    cert.push(row('hostname', host, `sslv.host.${host === ST.WARN ? ST.UNKNOWN : host}`, [domain]))
+  }
 
   const sig = a.signature != null ? ruleStatus(a.signature) : ST.UNKNOWN
   cert.push(row('signature', sig, `sslv.sig.${sig === ST.WARN ? ST.UNKNOWN : sig}`, [],
@@ -176,18 +189,18 @@ export function buildSslGroups(data) {
   const cs = String(d.chain_status || '').toUpperCase()
   if (cs === 'BROKEN') trust.push(row('chain', ST.FAIL, 'sslv.chain.broken', [chainLen], { value: chainLen || null }))
   else if ((cs === 'VALID' || cs === 'REVOKED') && leafOnly(d)) trust.push(row('chain', ST.WARN, 'sslv.chain.leafOnly', [], { value: chainLen }))
-  else if (cs === 'VALID' || cs === 'REVOKED') trust.push(row('chain', ST.OK, 'sslv.chain.ok', [chainLen], { value: chainLen || null }))
-  else trust.push(row('chain', ST.UNKNOWN, 'sslv.chain.unknown'))
+  else if (cs === 'VALID' || cs === 'REVOKED') trust.push(row('chain', ST.OK, upload ? 'sslv.m.chain.ok' : 'sslv.chain.ok', [chainLen], { value: chainLen || null }))
+  else trust.push(row('chain', ST.UNKNOWN, upload ? 'sslv.m.chain.unknown' : 'sslv.chain.unknown'))
 
   const rs = String(d.revocation_status || '').toUpperCase()
   if (rs === 'VALID') trust.push(row('revocation', ST.OK, 'sslv.rev.ok'))
   else if (rs === 'REVOKED') trust.push(row('revocation', ST.FAIL, 'sslv.rev.fail'))
-  else trust.push(row('revocation', ST.UNKNOWN, 'sslv.rev.unknown'))
+  else trust.push(row('revocation', ST.UNKNOWN, upload ? 'sslv.m.rev.unknown' : 'sslv.rev.unknown'))
 
   return [
     { key: 'cert', rows: cert },
     { key: 'trust', rows: trust },
-    { key: 'conn', rows: conn },
+    ...(upload ? [] : [{ key: 'conn', rows: conn }]),
   ]
 }
 
@@ -220,16 +233,22 @@ export function buildVerdict(groups) {
 /**
  * Zincir dizisi: yaprak (üst düzey alanlardan — SAN, parmak izi, anahtar yalnız orada) → ara sertifikalar → kök.
  * `rootSent` false ise sunucu kökü göndermemiş demektir (olağan: istemci kendi güven deposundan tamamlar).
+ *
+ * <p>Dosyadan yüklenen sertifika (`upload: true`, 2026-10-07): zincir dosyadaki parçalardan kurulur ve AYNI kartlarla
+ * çizilir. Takip edilen baş bir CA sertifikasıysa (ör. truststore'daki ara + kök) ilk kartın rolü "Sunucu sertifikası"
+ * değil, gerçek rolüdür (ara / kök). `rootSent` false = kök dosyada yok.
  */
 export function buildChain(data) {
   const d = data || {}
+  const upload = isUploadResult(d)
   const chain = (Array.isArray(d.chain) ? d.chain : []).slice().sort((x, y) => (x.position ?? 0) - (y.position ?? 0))
   const leafRaw = chain.find((c) => c.is_leaf) || null
   const subj = parseDn(d.subject_dn)
   const iss = parseDn(d.issuer_dn)
   const days = num(d.days_remaining)
+  const headRole = upload && d.is_ca === true ? (leafRaw?.is_root ? 'root' : 'intermediate') : 'leaf'
   const nodes = [{
-    role: 'leaf',
+    role: headRole,
     cn: d.subject || subj.CN || d.domain || '',
     org: subj.O || null,
     issuerCn: d.issuer_cn || iss.CN || null,
@@ -276,7 +295,38 @@ export function buildChain(data) {
       issuerDn: c.issuer || null,
     })
   }
-  return { nodes, rootSent: nodes.some((n) => n.role === 'root' || n.selfSigned) }
+  return { nodes, rootSent: nodes.some((n) => n.role === 'root' || n.selfSigned), upload }
+}
+
+/**
+ * Analiz girdisinin (sihirbaz İnceleme adımı) zincir görünümü verisi: sunucunun çevrim-dışı önizlemesi (`entry.preview` —
+ * SSL sekmesiyle aynı sonuç haritası) varsa o; yoksa (eski sunucu / önizleme kurulamadı) girdinin kendi alanlarından
+ * aynı biçim kurulur — görünüm her durumda SslChainView.
+ */
+export function entryChainData(entry) {
+  const e = entry || {}
+  if (e.preview && typeof e.preview === 'object' && Array.isArray(e.preview.chain)) return e.preview
+  const links = Array.isArray(e.chain) ? e.chain : []
+  return {
+    via: 'upload', manual: true, domain: e.suggested_key || e.cn || '',
+    subject: e.cn || null, subject_dn: e.subject_dn || null, issuer_dn: e.issuer_dn || null, issuer: null,
+    not_before: e.not_before || null, not_after: e.not_after || null, days_remaining: num(e.days_remaining),
+    serial_number: e.serial_number || null, fingerprint: e.ref || null, signature_algorithm: e.signature_algorithm || null,
+    public_key_algorithm: e.key_alg || null, public_key_size: num(e.key_size), san: Array.isArray(e.san) ? e.san : [],
+    key_usage: e.key_usage, ext_key_usage: e.ext_key_usage, cert_type: e.cert_type || null, is_ca: !!e.is_ca,
+    trust_status: e.trust_status || null,
+    chain: [
+      { position: 0, is_leaf: true, is_root: !!e.self_signed, subject: e.subject_dn || '', issuer: e.issuer_dn || '' },
+      ...links.map((c, i) => {
+        const d = num(c.days_remaining)
+        return {
+          position: i + 1, is_leaf: false, is_root: !!c.is_ca && !!c.subject && c.subject === c.issuer,
+          subject: c.subject || '', issuer: c.issuer || '', not_after: c.not_after || null,
+          days_remaining: d, expired: d != null && d < 0,
+        }
+      }),
+    ],
+  }
 }
 
 /** Bağlantı hatası özeti (status = error): sınıf anahtarı + aşama + çözülen IP'ler + deneme sayısı. */

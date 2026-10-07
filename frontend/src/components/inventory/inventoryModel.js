@@ -28,7 +28,7 @@ export const INVENTORY_COLUMNS = [
   { key: 'tags',         labelKey: 'inv.colTags',         def: false,   sort: (r) => (r.tags || '').toLowerCase() },
   { key: 'platform',     labelKey: 'inv.colPlatform',     def: true,    sort: (r) => (r.platform || 'zz').toLowerCase() },   // 2026-09-22
   { key: 'updated',      labelKey: 'inv.colUpdated',      def: false,   sort: (r) => r.updated_at || '' },
-  { key: 'active',       labelKey: 'inv.colActive',       fixed: true,  sort: (r) => (r.deleted_at ? 2 : r.active ? 0 : 1) },
+  { key: 'active',       labelKey: 'inv.colActive',       fixed: true,  sort: (r) => (r.active ? 0 : 1) },
 ]
 
 export const FLAG_ICONS = {
@@ -92,9 +92,9 @@ export function daysUntil(iso) {
 }
 
 // ── Özet kartları (2026-09-27 yeniden tasarım) — her kart mevcut bir süzgece eşlenir, YENİ süzgeç anahtarı yoktur ──
-// `status` = durum süzgeci (aktif/pasif/silinmiş), `filters` = süzgeç nesnesine yama. Tek doğruluk kaynağı: kart
+// `status` = durum süzgeci (aktif/pasif), `filters` = süzgeç nesnesine yama. Tek doğruluk kaynağı: kart
 // basınca yama uygulanır, kartın "basılı" hâli de AYNI yamadan türetilir (URL/kayıtlı görünümle gelen süzgeç de kartı
-// basılı gösterir). Sıra ekrandaki sırayla aynı.
+// basılı gösterir). Sıra ekrandaki sırayla aynı. (2026-10-07: "Silinmiş" kartı kalktı — silme kalıcı, çöp kutusu yok.)
 export const TILES = [
   { key: 'total' },
   { key: 'active',     status: 'active' },
@@ -106,13 +106,12 @@ export const TILES = [
   { key: 'noPlatform', filters: { platform: 'none' } },
   { key: 'tier1',      filters: { tier: '1' } },
   { key: 'inactive',   status: 'inactive' },
-  { key: 'deleted',    status: 'deleted' },
 ]
 
-/** Kart sayaçları — canlı (silinmemiş) kayıtlar üstünden; `deleted` çöp kutusu. Kesin kural: `applyFilters` ile aynı. */
+/** Kart sayaçları — canlı kayıtlar üstünden (eski sürümden kalmış çöp satırı sayılmaz). Kesin kural: `applyFilters` ile aynı. */
 export function tileCounts(items) {
   const live = (items || []).filter((r) => !r.deleted_at)
-  const c = { total: live.length, active: 0, inactive: 0, valid: 0, expiring: 0, expired: 0, errors: 0, noContacts: 0, noPlatform: 0, tier1: 0, deleted: (items || []).length - live.length }
+  const c = { total: live.length, active: 0, inactive: 0, valid: 0, expiring: 0, expired: 0, errors: 0, noContacts: 0, noPlatform: 0, tier1: 0 }
   for (const r of live) {
     if (r.active) c.active++; else c.inactive++
     const s = (r.cert_status || '').toLowerCase()
