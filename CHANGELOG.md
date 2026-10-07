@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.110.1] — 2026-10-07
+
 ### Changed
 - Manuel Sertifikalar sayfasındaki "Hangi dosyayı yüklemeliyim?" rehberi varsayılan olarak KAPALI gelir (liste boşken de);
   açılınca tercih tarayıcıda hatırlanır.
@@ -2325,7 +2327,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.1...HEAD
+[20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0
 [20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0
