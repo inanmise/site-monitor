@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.111.0] — 2026-10-07
+
 ### Added
 - **Manuel sertifikanın takip adı sonradan değiştirilebilir:** envanter düzenleme formunda (ve Manuel Sertifikalar
   listesindeki "Düzenle" eylemiyle) takip adı düzenlenir; takip adı kuralı alanın altında anında denetlenir, çakışan ad
@@ -2374,7 +2376,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.111.0...HEAD
+[20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
 [20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0

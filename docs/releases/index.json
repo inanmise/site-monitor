@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-07T06:18:26Z",
+  "generatedAt": "2026-10-07T23:54:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 711,
+  "count": 712,
   "releases": [
+    {
+      "version": "20.111.0",
+      "tag": "v20.111.0",
+      "releasedAt": "2026-10-07T23:53:59Z",
+      "commit": "6485fc005ff05de48c3408fa748cf7fff395820a",
+      "prevVersion": "20.110.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6485fc00",
+          "subject": "manuel sertifikada zincir = tek takip + tarayıcı tarzı hiyerarşi, özel anahtar tarayıcıdan çıkmaz, kalıcı silme, sürüm silme, \"Yine de yükle\", takip adı düzenleme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.110.1",
       "tag": "v20.110.1",
