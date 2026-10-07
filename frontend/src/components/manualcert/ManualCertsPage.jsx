@@ -189,7 +189,7 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
         <MonitorStatsBar items={statItems} activeFilter={activeKpi} onStatClick={onStat} />
       )}
 
-      <UploadGuidance forceOpen={empty} />
+      <UploadGuidance />
 
       {loadState === 'loading' ? (
         <LoadingBlock label={t('mcert.loading')} fullWidth />

@@ -83,12 +83,12 @@ describe('Envanter', () => {
     expect(document.querySelector('[data-inv-card="net.example.test"] [data-slot="manual-cert-badge"]')).toBeNull()
   })
 
-  it('satır menüsü: manuel kayıtta tanılama ve kopyala yok; ağ kaydında aynı kalır', () => {
+  it('satır menüsü: manuel kayıtta tanılama ve kopyala yok, eylem adı "Yeniden değerlendir"; ağ kaydında aynı kalır', () => {
     const t = (k) => k
     const args = { t, ro: false, isAdmin: true, canManage: true, canEditRow: () => true, teamsCount: 2, onShow: () => {} }
     const visible = (r) => rowMenuItems({ r, ...args }).filter((i) => !i.hidden).map((i) => i.label)
     expect(visible(rows[1])).toEqual(['inv.show', 'inv.checkNow', 'inv.diagnose', 'inv.edit', 'mon.duplicate', 'inv.transfer', 'inv.delete'])
-    expect(visible(rows[0])).toEqual(['inv.show', 'inv.checkNow', 'inv.edit', 'inv.transfer', 'inv.delete'])
+    expect(visible(rows[0])).toEqual(['inv.show', 'mcert.reevaluate', 'inv.edit', 'inv.transfer', 'inv.delete'])
   })
 
   it('detay: manuel kayıtta rozet + "Kaynak: yüklenen dosya · sürüm"; port / TLS / sıklık / zaman aşımı ve "siteyi aç" yok', () => {

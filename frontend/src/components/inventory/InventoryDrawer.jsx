@@ -14,6 +14,7 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetTitle } from '@/components/shadcn/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { isManualCert } from '../manualcert/manualCertModel.js'
 
 const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
 // Kontroller sekmesi = sertifika penceresinin zengin Kontrol Geçmişi (2026-09-28; eski düz 4 sütunlu upt-rt-* satırlar kalktı).
@@ -31,7 +32,7 @@ function CertificateSummary({ record, readOnly, onCheckNow, platformNames }) {
     return (
       <StatusBlock tone="info" icon={ShieldCheck} title={t('inv.certNever')} description={t('inv.certNoData')}
         actions={<>
-          {!readOnly && !record.deleted_at && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {t('inv.checkNow')}</Button>}
+          {!readOnly && !record.deleted_at && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</Button>}
           <Button type="button" variant="outline" size="sm" onClick={openCert} title={t('inv.openCertHint')}><ExternalLink aria-hidden="true" /> {t('inv.openCert')}</Button>
         </>} />
     )
@@ -156,9 +157,9 @@ export default function InventoryDrawer({
           // Telefonda tek satır: [▶][🗑][Düzenle ———] (ikon düğmeleri 40 px, ad aria-label'da); sm+ metinli. Sağ dolgu (pe-16)
           // uygulamanın sabit Yardım düğmesinin altında düğme kalmasın diye.
           <SheetFooter data-slot="inv-drawer-actions" className="mt-0 flex-row flex-nowrap items-center gap-2 border-t py-3 ps-3 pe-16 pb-[max(.75rem,env(safe-area-inset-bottom))] sm:ps-4">
-            <SimpleTooltip content={t('inv.checkNow')}>
+            <SimpleTooltip content={(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
               <Button type="button" variant="outline" className="size-10 sm:h-10 sm:w-auto" onClick={() => onCheckNow(record)}
-                aria-label={t('a11y.rowAction', record.domain, t('inv.checkNow'))}><Play aria-hidden="true" /><span className="hidden sm:inline">{t('inv.checkNow')}</span></Button>
+                aria-label={t('a11y.rowAction', record.domain, (isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow')))}><Play aria-hidden="true" /><span className="hidden sm:inline">{(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</span></Button>
             </SimpleTooltip>
             <span className="hidden flex-1 sm:block" />
             {canManage && onDelete && (

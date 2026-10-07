@@ -15,6 +15,24 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.110.1] — 2026-10-07
+
+### Changed
+- Manuel Sertifikalar sayfasındaki "Hangi dosyayı yüklemeliyim?" rehberi varsayılan olarak KAPALI gelir (liste boşken de);
+  açılınca tercih tarayıcıda hatırlanır.
+
+### Fixed
+- Sertifika penceresinin "Sürümler" sekmesinden yeni sürüm yüklenince sihirbaz sonuç ekranı yerine boş 1. adıma
+  dönüyordu (kayıt yapılmış olsa da başarısız sanılabiliyordu); liste artık arka planda tazelenir.
+- Envanter tablosu / kart listesi / ayrıntı çekmecesi dosyadan yüklenen sertifikada "Şimdi kontrol et" yerine diğer
+  ekranlardaki gibi "Yeniden değerlendir" der.
+- Hata ayrıntısı saklanmadan önceki DNS geçmiş satırları (hata metni de yoktu) "ad çözümlenemedi" diye yanlış tahmin
+  ediliyordu; artık "neden bilinmiyor" + uçtan uca tanılamaya yönlendirme gösterilir.
+
+### Added
+- Canlı uçtan uca test takımı (`frontend/playwright.live.config.js`, `e2e/live/`): gerçek arayüz + gerçek backend —
+  dosyadan sertifika yolculuğu, kontrol geçmişi hata paneli, uçtan uca tanılama pencereleri. Yalnız `E2E_LIVE=1` ile koşar.
+
 ## [20.110.0] — 2026-10-06
 
 ### Added
@@ -2309,7 +2327,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.1...HEAD
+[20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0
 [20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0

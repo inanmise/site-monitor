@@ -107,17 +107,24 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
   const [state, setState] = useState({ status: 'loading' })
   const [wizard, setWizard] = useState(false)
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' })
+  /**
+   * `silent` (yeni sürüm kaydedildikten sonra): mevcut liste ekranda kalır, "yükleniyor" durumuna GEÇİLMEZ ve hata
+   * eldeki veriyi ezmez. Eskiden tazeleme önce `loading` durumuna geçiyordu → bileşen erken dönüşle yükleme sihirbazını
+   * SÖKÜYOR, `wizard` hâlâ açık olduğu için sihirbaz SIFIRDAN (1. adım "Dosya") yeniden açılıyordu: kullanıcı sonuç
+   * adımını hiç görmüyor, boş bir yükleme penceresiyle karşılaşıyordu (canlı e2e, 2026-10-07).
+   */
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setState({ status: 'loading' })
+    const fail = (message) => setState((s) => (silent && s.status === 'ready' ? s : { status: 'error', message }))
     try {
       const inv = await api.admin.getInventoryByDomain(domain)
-      if (!inv?.success) { setState({ status: 'error', message: inv?.error }); return }
-      if (!inv.data?.id) { setState({ status: 'missing' }); return }
+      if (!inv?.success) { fail(inv?.error); return }
+      if (!inv.data?.id) { if (!silent) setState({ status: 'missing' }); return }
       const res = await api.manualCerts.get(inv.data.id)
-      if (!res?.success) { setState({ status: 'error', message: res?.error }); return }
+      if (!res?.success) { fail(res?.error); return }
       setState({ status: 'ready', id: inv.data.id, detail: res.data || {}, canManage: (res.data?.can_manage ?? inv.data.can_manage) !== false })
     } catch (e) {
-      setState({ status: 'error', message: e?.message })
+      fail(e?.message)
     }
   }, [domain])
 
@@ -127,7 +134,7 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
   if (state.status === 'error') {
     return (
       <StatusBlock tone="danger" icon={FileStack} role="alert" title={t('mcert.ver.loadError')} description={state.message || undefined}
-        actions={<Button type="button" variant="outline" className="h-10" onClick={load}><RefreshCw aria-hidden="true" />{t('mcert.retry')}</Button>} />
+        actions={<Button type="button" variant="outline" className="h-10" onClick={() => load()}><RefreshCw aria-hidden="true" />{t('mcert.retry')}</Button>} />
     )
   }
   if (state.status === 'missing') return <StatusBlock tone="neutral" icon={FileStack} title={t('mcert.ver.missing')} />
@@ -168,7 +175,7 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
       {wizard && (
         <Suspense fallback={null}>
           <UploadWizard renewTarget={{ inventory_id: state.id, domain }} onClose={() => setWizard(false)}
-            onDone={() => { load(); onRenewed?.() }} onOpenCert={onOpenCert} />
+            onDone={() => { load({ silent: true }); onRenewed?.() }} onOpenCert={onOpenCert} />
         </Suspense>
       )}
     </div>

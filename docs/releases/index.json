@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-06T22:19:36Z",
+  "generatedAt": "2026-10-07T06:18:26Z",
   "repo": "inanmise/site-monitor",
-  "count": 710,
+  "count": 711,
   "releases": [
+    {
+      "version": "20.110.1",
+      "tag": "v20.110.1",
+      "releasedAt": "2026-10-07T06:18:17Z",
+      "commit": "e5098f11a0bccd5e0fbee819b8ac8e292aa6fefa",
+      "prevVersion": "20.110.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e5098f11",
+          "subject": "canlı uçtan uca testlerde bulunan hatalar — Sürümler sekmesinden yenilemede sihirbaz sıfırlanması, envanterde \"Yeniden değerlendir\" etiketi, eski DNS satırında yanlış neden tahmini; rehber varsayılan…"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.110.0",
       "tag": "v20.110.0",
