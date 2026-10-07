@@ -190,8 +190,18 @@ describe('checkFailureModel — eski satırlar (kod yok): mevcut kart sınıflan
     expectClean(proxy)
   })
 
-  it('dns: eski satırda hata metni yok → ad çözümlenemedi; metin varsa rcode', () => {
-    expect(legacy('dns', { value: '' }, DNS)).toMatchObject({ code: 'DNS_RESOLVE', legacy: true, phase: 'DNS' })
+  it('dns: eski satırda hata metni yok → neden BİLİNMİYOR (tahmin yok, 2026-10-07 canlı e2e bulgusu); metin varsa rcode', () => {
+    expect(legacy('dns', { value: '' }, DNS)).toMatchObject({ code: 'UNKNOWN', legacy: true, noText: true })
+    const f = failureTexts('dns', { value: '' }, DNS, t)
+    expect(f).toMatchObject({ code: 'UNKNOWN', legacy: true, noText: true })
+    expect(f.why).toBe(EN['chkhist.noText.why'])
+    expect(f.fix).toBe(EN['chkhist.noText.fix'])
+    expectClean(f)
+    expectClean(failureTexts('dns', { value: '' }, DNS, tTr))
+    // Hata metni olan eski satır ve sunucu kodlu yeni satır "metinsiz" sayılmaz
+    expect(failureOf('dns', { value: '', error: 'NXDOMAIN' }, DNS).noText).toBe(false)
+    expect(failureOf('dns', { value: '', failure_reason: 'DNS_TIMEOUT' }, DNS)).toMatchObject({ code: 'DNS_TIMEOUT', noText: false })
+    expect(failureTexts('dns', { value: '', error: 'SERVFAIL' }, DNS, t).why).not.toBe(EN['chkhist.noText.why'])
     expect(legacy('dns', { value: '', error: 'NXDOMAIN' }, DNS).code).toBe('DNS_NXDOMAIN')
     expect(legacy('dns', { value: '', error: 'SERVFAIL' }, DNS).code).toBe('DNS_SERVFAIL')
     expect(legacy('dns', { value: '', error: 'REFUSED' }, DNS).code).toBe('DNS_REFUSED')

@@ -237,7 +237,7 @@ export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCo
   }
   return [
     { label: t('inv.show'), onClick: () => onShow(r) },
-    { label: t('inv.checkNow'), onClick: () => onCheckNow(r) },
+    { label: (isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow')), onClick: () => onCheckNow(r) },
     // Manuel (dosyadan yüklenen) kayıt (2026-10-06): ağ tanılaması ve kopyalama yok — adres yok, sertifika dosyadan.
     { label: t('inv.diagnose'), onClick: () => onDiagnose(r), hidden: !isAdmin || isManualCert(r) },
     // Düzenle/Kopyala satır bazlı (2026-09-18): USER kendi takımının kaydını düzenler; silme canManage'de kalır
@@ -454,10 +454,10 @@ export default function InventoryTable({
                   ) : (
                     <div className="inline-flex items-center justify-end gap-1">
                       {!del && (
-                        <SimpleTooltip content={t('inv.checkNow')}>
+                        <SimpleTooltip content={(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
                           <Button type="button" variant="ghost" size="icon-sm" disabled={busy.has(r.domain)} aria-busy={busy.has(r.domain) || undefined}
                             className="text-muted-foreground pointer-coarse:size-10"
-                            onClick={() => checkNow(r)} aria-label={`${r.domain} — ${t('inv.checkNow')}`}>
+                            onClick={() => checkNow(r)} aria-label={`${r.domain} — ${(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}`}>
                             {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}
                           </Button>
                         </SimpleTooltip>

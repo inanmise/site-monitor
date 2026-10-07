@@ -74,6 +74,9 @@ for (const vp of VIEWPORTS) {
       await page.goto('/?tab=manualcerts')
       await page.locator('[data-slot="manualcerts-page"]').waitFor({ timeout: 20_000 })
       await page.locator('[data-mcert-row]').first().waitFor({ timeout: 20_000 })
+      // Rehber varsayılan KAPALI (2026-10-07); ölçüm açık hâliyle yapılır.
+      await expect(page.locator('[data-slot="mcert-guide-body"]')).toHaveCount(0)
+      await page.locator('[data-slot="mcert-guide"]').getByRole('button', { name: /Which file should I upload|Hangi dosyayı/ }).click()
       await expect(page.locator('[data-slot="mcert-guide-body"]')).toBeVisible()
       const view = await page.locator('[data-slot="mcert-list"]').getAttribute('data-view')
       if (vp.name === 'phone') expect(view, 'telefonda kart listesi').toBe('cards')

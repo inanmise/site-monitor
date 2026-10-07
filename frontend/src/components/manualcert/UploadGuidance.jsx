@@ -14,7 +14,7 @@ import { MAX_UPLOAD_MB } from './manualCertModel.js'
 const STORAGE_KEY = 'sm.mcert.guide'
 
 function readOpen() {
-  try { return localStorage.getItem(STORAGE_KEY) !== 'closed' } catch { return true }
+  try { return localStorage.getItem(STORAGE_KEY) === 'open' } catch { return false }   // varsayılan KAPALI
 }
 function writeOpen(open) {
   try { localStorage.setItem(STORAGE_KEY, open ? 'open' : 'closed') } catch { /* depolama yok */ }
@@ -66,25 +66,19 @@ function Section({ icon: Icon, title, children, className, slot }) {
  * sürece KATILMAZ, yalnız bitişi izler; rehber hangi aşamada hangi dosyanın yükleneceğini, neyin yüklenmeyeceğini (CSR,
  * tek başına özel anahtar), gizliliği ve yenilemeyi anlatır.
  *
- * <p>Katlanır şerit (ui/CollapsibleSection); ilk ziyarette açık, kullanıcının kapatma tercihi tarayıcıda hatırlanır.
- * `forceOpen` (boş liste): her zaman açık, tercih yazılmaz. Test kancası `data-slot="mcert-guide"`.
+ * <p>Katlanır şerit (ui/CollapsibleSection); VARSAYILAN KAPALI (2026-10-07, kullanıcı isteği — liste boşken de), kullanıcı
+ * açarsa tercihi tarayıcıda hatırlanır. Test kancası `data-slot="mcert-guide"`.
  */
-export default function UploadGuidance({ forceOpen = false, className }) {
+export default function UploadGuidance({ className }) {
   const t = useT()
-  const [openPref, setOpenPref] = useState(readOpen)
-  const open = forceOpen || openPref
-  const onOpenChange = (next) => { setOpenPref(next); writeOpen(next) }
+  const [open, setOpen] = useState(readOpen)
+  const onOpenChange = (next) => { setOpen(next); writeOpen(next) }
 
   return (
-    <CollapsibleSection data-slot="mcert-guide" open={open} onOpenChange={forceOpen ? undefined : onOpenChange}
-      showTrigger={!forceOpen} icon={CircleHelp} label={t('mcert.guide.title')} hint={t('mcert.guide.hint')}
+    <CollapsibleSection data-slot="mcert-guide" open={open} onOpenChange={onOpenChange}
+      icon={CircleHelp} label={t('mcert.guide.title')} hint={t('mcert.guide.hint')}
       className={cn('mb-4', className)} triggerClassName="mb-2">
       <Card data-slot="mcert-guide-body" className="gap-5 rounded-[10px] px-4 py-4 shadow-none sm:px-5">
-        {forceOpen && (
-          <h3 className="m-0 flex items-center gap-2 text-base font-semibold">
-            <CircleHelp aria-hidden="true" className="size-5 shrink-0 text-primary" />{t('mcert.guide.title')}
-          </h3>
-        )}
         <p className="m-0 text-sm text-muted-foreground">{t('mcert.guide.intro')}</p>
 
         <Section icon={Workflow} title={t('mcert.guide.whenTitle')} slot="mcert-guide-when">

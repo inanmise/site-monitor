@@ -96,11 +96,15 @@ describe('ManualCertsPage', () => {
     await waitFor(() => expect(rowsShown()).toHaveLength(3))
   })
 
-  it('rehber açık gelir, biçimler + yüklenmemesi gerekenler + gizlilik; kapatma tercihi hatırlanır', async () => {
+  it('rehber varsayılan KAPALI; açılınca biçimler + yüklenmemesi gerekenler + gizlilik; açma/kapama tercihi hatırlanır', async () => {
     renderPage()
     await waitFor(() => expect(rowsShown()).toHaveLength(3))
     const guide = document.querySelector('[data-slot="mcert-guide"]')
     expect(guide).toBeTruthy()
+    expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeNull()   // varsayılan kapalı (2026-10-07)
+    fireEvent.click(within(guide).getByRole('button', { name: /Which file should I upload|Hangi dosyayı/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeTruthy())
+    expect(localStorage.getItem('sm.mcert.guide')).toBe('open')
     expect(document.querySelectorAll('[data-slot="mcert-guide-formats"] [data-format]')).toHaveLength(7)
     expect(document.querySelector('[data-format="pfx"] [data-slot="mcert-fmt-pw"]')).toHaveAttribute('data-value', 'yes')
     expect(document.querySelector('[data-slot="mcert-guide-dont"]')).toHaveTextContent(/CSR/)
@@ -111,13 +115,13 @@ describe('ManualCertsPage', () => {
     expect(localStorage.getItem('sm.mcert.guide')).toBe('closed')
   })
 
-  it('boş liste: rehber zorla açık (kapatılamaz), yükleme düğmesi; yetkisiz kullanıcıda yükleme yok', async () => {
+  it('boş liste: rehber yine varsayılan kapalı ama açılabilir; yükleme düğmesi; yetkisiz kullanıcıda yükleme yok', async () => {
     api.manualCerts.list.mockResolvedValue({ success: true, data: [] })
-    try { localStorage.setItem('sm.mcert.guide', 'closed') } catch { /* yok */ }
     const { unmount } = renderPage()
     await screen.findByText(/No uploaded certificates yet|Henüz dosyadan/)
-    expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeTruthy()
-    expect(document.querySelector('[data-slot="mcert-guide"] [data-slot="stats-toggle"]')).toBeNull()
+    expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeNull()
+    fireEvent.click(within(document.querySelector('[data-slot="mcert-guide"]')).getByRole('button', { name: /Which file should I upload|Hangi dosyayı/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeTruthy())
     expect(screen.getAllByRole('button', { name: /Upload certificate|Sertifika yükle/ }).length).toBeGreaterThanOrEqual(1)
     unmount()
     perms.value = {}

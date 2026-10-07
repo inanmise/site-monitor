@@ -126,8 +126,8 @@ export default function InventoryCardList({
                 ) : <ActiveBadge r={r} t={t} />}
                 {!del && !ro && (
                   <Button type="button" variant="outline" size="sm" className="ml-auto size-10 sm:w-auto" disabled={busy.has(r.domain)} aria-busy={busy.has(r.domain) || undefined}
-                    onClick={() => checkNow(r)} aria-label={`${r.domain} — ${t('inv.checkNow')}`}>
-                    {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}<span className="hidden sm:inline">{t('inv.checkNow')}</span>
+                    onClick={() => checkNow(r)} aria-label={`${r.domain} — ${(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}`}>
+                    {busy.has(r.domain) ? <Spinner size={12} inline decorative /> : <Play size={12} aria-hidden="true" />}<span className="hidden sm:inline">{(isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow'))}</span>
                   </Button>
                 )}
                 {!del && !ro && editable && (

@@ -112,7 +112,7 @@ export function CheckFailurePanel({ type, check, monitor, id, showRaw = true, ca
 
       {f.legacy && (
         <div data-slot="chkfail-legacy">
-          <AlertBanner tone="info" icon={Info} className="mb-0">{t('chkhist.legacy')}</AlertBanner>
+          <AlertBanner tone="info" icon={Info} className="mb-0">{t(f.noText ? 'chkhist.legacyNoText' : 'chkhist.legacy')}</AlertBanner>
         </div>
       )}
 

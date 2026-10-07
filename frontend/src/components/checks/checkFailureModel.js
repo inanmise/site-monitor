@@ -125,6 +125,8 @@ function legacyTcp(row, protocol, expect) {
 
 function legacyDns(row) {
   const e = str(row.error)
+  // 2026-10-05 öncesi DNS satırlarında hata metni HİÇ saklanmazdı — metin yoksa neden bilinmez (tahmin yürütülmez).
+  if (!e) return 'UNKNOWN'
   if (/NXDOMAIN/i.test(e)) return 'DNS_NXDOMAIN'
   if (/SERVFAIL/i.test(e)) return 'DNS_SERVFAIL'
   if (/REFUSED/i.test(e)) return 'DNS_REFUSED'
@@ -232,7 +234,9 @@ export function failureOf(type, row, monitor) {
     legacy = true
   }
   const phase = CHECK_FAILURE_PHASES.includes(detail.phase) ? detail.phase : CHECK_FAILURE_PHASE[code]
-  return { code, legacy, phase, detail }
+  // Eski DNS satırı + boş hata metni: neyin olduğu kayıtlı değil — panel tahmin yerine "bilinmiyor" anlatır.
+  const noText = legacy && type === 'dns' && !str(row.error)
+  return { code, legacy, noText, phase, detail }
 }
 
 /** Neden tonu (ToneBadge dili): ayar/politika/ortam kökenli → uyarı, diğerleri → tehlike. */
@@ -326,16 +330,18 @@ export function failureTexts(type, row, monitor, t) {
   if (!f) return null
   const p = failureParams(type, row, monitor, t, f)
   const k = `chkfail.${f.code}`
+  const n = f.noText ? 'chkhist.noText' : k   // metinsiz eski satır: neden/etki/öneri "bilinmiyor"a göre
   return {
     code: f.code,
     legacy: f.legacy,
+    noText: !!f.noText,
     phase: f.phase,
     detail: f.detail,
     tone: failureTone(f.code),
     short: interpolate(t(`${k}.short`), p),
-    why: interpolate(t(`${k}.why`), p),
-    effect: interpolate(t(`${k}.effect`), p),
-    fix: interpolate(t(`${k}.fix`), p),
+    why: interpolate(t(`${n}.why`), p),
+    effect: interpolate(t(`${n}.effect`), p),
+    fix: interpolate(t(`${n}.fix`), p),
   }
 }
 
