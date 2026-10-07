@@ -203,6 +203,18 @@ public class GlobalExceptionHandler {
                 .body(Map.of("success", false, "error", "Kaynak bulunamadı"));
     }
 
+    /**
+     * Yol var ama yöntem yok — 405 (2026-10-07). Kaldırılmış bir uca (ör. çöp kutusu {@code POST /inventory/purge-deleted};
+     * yol {@code /inventory/{id}} kalıbına düşer) eski bir istemciden gelen istek jenerik 500 + ERROR yığını üretiyordu.
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotAllowed(
+            org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        log.debug("Desteklenmeyen HTTP yöntemi: {}", e.getMessage());
+        return ResponseEntity.status(405)
+                .body(Map.of("success", false, "error", "Bu işlem bu adreste desteklenmiyor"));
+    }
+
     /** Controller'lardan elle fırlatılmış status hatası — passthrough. */
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, Object>> handleResponseStatus(ResponseStatusException e) {

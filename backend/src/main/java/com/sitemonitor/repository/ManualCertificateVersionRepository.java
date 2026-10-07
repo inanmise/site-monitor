@@ -38,9 +38,18 @@ public interface ManualCertificateVersionRepository extends JpaRepository<Manual
     List<Object[]> countByInventoryIds(@Param("ids") Collection<Long> inventoryIds);
 
     /**
-     * Kalıcı silme (purge) — envanter satırıyla birlikte sürümleri de gider. Kendi işlemini taşır: çağıranın
-     * işlemi varsa ona katılır (AdminController#purgeInventory / #purgeAllDeleted, InventoryAutoPurgeService — hepsi
-     * {@code @Transactional}), yoksa kendi açar. Dönüş: silinen satır sayısı.
+     * Tek bir ESKİ sürümü kalıcı siler (2026-10-07, kullanıcı isteği) — koşullu: yalnız bu kayda ait ve GÜNCEL OLMAYAN
+     * satır. Güncel sürüm asla silinmez (0 döner). Kendi işlemini taşır; çağıranın işlemi varsa ona katılır
+     * ({@code ManualCertificateController#deleteVersion} → {@code ManualCertificateService#deleteVersion}).
+     * Dönüş: silinen satır sayısı (0 ya da 1). Türetilmiş silme (JPQL'de {@code current} sözcüğü yok).
+     */
+    @Transactional
+    long deleteByIdAndInventoryIdAndCurrentFalse(Long id, Long inventoryId);
+
+    /**
+     * Kayıtla birlikte sürümleri silme. Kendi işlemini taşır: çağıranın işlemi varsa ona katılır, yoksa kendi açar.
+     * Dönüş: silinen satır sayısı. (2026-10-07: kalıcı envanter silmesi sürümleri PermanentDeletionService'te JDBC ile
+     * aynı işlemde siler; bu metot o yolun dışında kalan çağıranlar içindir.)
      */
     @Transactional
     @Modifying

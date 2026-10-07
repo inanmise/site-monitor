@@ -41,6 +41,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import PageSpeedMonitorCard from './pagespeed/PageSpeedMonitorCard.jsx'
 import { budgetFor } from './pagespeed/pageSpeedCardModel.js'
@@ -206,7 +207,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     const runId = readUrlInt('psdx', null), monitorId = readUrlInt('monitor', null)
     return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
   })
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
+  const monitors = useWithoutDeleted(monitorKind('pagespeed'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -536,9 +539,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
+      // Kart HEMEN düşer (işaret), açık detay kapanır; liste arka planda tazelenir — arayüz beklemez.
+      markMonitorDeleted('pagespeed', m.id, res)
+      setSelected((s) => (s?.id === m.id ? null : s))
       toast.success(t('pspd.deleted'))
 
-      await load()
+      load()
     } finally {
       setDeleting(null)
     }
@@ -547,10 +553,16 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   async function del() {
     if (!modal || modal === 'new') return
+    // Kalıcı silme (2026-10-07): düzenleme penceresinden de ADIYLA ve geri alınamaz olduğu söylenerek onay alınır.
+    if (!await showConfirm({ title: t('mon.deleteTitle'), message: t('mon.deleteMsg', modal.name || modal.url),
+      confirmText: t('pspd.delete'), cancelText: t('pspd.cancel'), variant: 'danger' })) return
     const res = await api.monitoring.deletePageSpeedMonitor(modal.id)
-    await load()
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    const id = modal.id
+    markMonitorDeleted('pagespeed', id, res)   // anında düşer; tazeleme arka planda
+    setSelected((s) => (s?.id === id ? null : s))
     toast.success(t('pspd.deleted')); closeEdit()
+    load()
   }
 
   async function checkNow(m, { silent = false } = {}) {

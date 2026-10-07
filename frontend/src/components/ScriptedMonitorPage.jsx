@@ -49,6 +49,7 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
@@ -264,7 +265,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   const sparks = useSparklines('scripted')   // kart mini trendi (2026-09-12)
   const sla = useSla('scripted')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
+  const monitors = useWithoutDeleted(monitorKind('scripted'), rawMonitors)
   // Şablon kütüphanesi (Genel + takım). Yükleme hatası sayfayı DÜŞÜRMEZ: liste boş kalsa bile
   // script'i elle yazmak her zaman mümkün olmalı.
   const { templates: scriptTemplates } = useScriptedTemplates()
@@ -1003,9 +1006,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
       if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
+      // Kart HEMEN düşer (işaret), açık detay kapanır; liste arka planda tazelenir — arayüz beklemez.
+      markMonitorDeleted('scripted', m.id, res)
+      setSelected((s) => (s?.id === m.id ? null : s))
       toast.success(t('scripted.deleted'))
 
-      await load()
+      load()
     } finally {
       setDeleting(null)
     }
@@ -1015,11 +1021,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   async function del() {
     if (!modal?.id) return
     if (!await showConfirm({
-      title: t('scripted.delete'), message: t('scripted.confirmDelete'),
-      confirmText: t('scripted.delete'), variant: 'danger',
+      title: t('mon.deleteTitle'), message: t('mon.deleteMsg', modal.name),
+      confirmText: t('scripted.delete'), cancelText: t('scripted.cancel'), variant: 'danger',
     })) return
     const res = await api.monitoring.deleteScriptedMonitor(modal.id)
     if (res?.success) {
+      const id = modal.id
+      markMonitorDeleted('scripted', id, res)   // kart anında düşer (2026-10-07); tazeleme arka planda
+      setSelected((s) => (s?.id === id ? null : s))
       // skipDraft: silinen monitör için taslak yazılırsa hiçbir arayüzden erişilemeyen
       // bir yetim satır kalır ("devam et" şeridi yalnız 'new'e, teklif yalnız açılan
       // monitöre bakıyor) ve sonsuza kadar taşınır.

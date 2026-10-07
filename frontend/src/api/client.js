@@ -519,6 +519,15 @@ export const api = {
     get: (inventoryId) => request(`/manual-certs/${encodeURIComponent(inventoryId)}`, { withStatus: true }),
     /** Şimdi yeniden değerlendir — ağsız; yalnız toparlanma (yeni alarm açmaz). */
     evaluate: (inventoryId) => request(`/manual-certs/${encodeURIComponent(inventoryId)}/evaluate`, { method: 'POST' }),
+    /** ESKİ (güncel olmayan) bir sürümü kalıcı siler (2026-10-07) — güncel sürümde 409 CURRENT_VERSION. */
+    deleteVersion: (inventoryId, versionId) =>
+      request(`/manual-certs/${encodeURIComponent(inventoryId)}/versions/${encodeURIComponent(versionId)}`, { method: 'DELETE', withStatus: true }),
+    /**
+     * Sürümün sertifika HİYERARŞİSİ (2026-10-07) — tarayıcı gibi kök → ara → yaprak düğümleri (kök ilk), çevrim-dışı;
+     * düğüm başına tek açık sertifika PEM'i. 404: kapsam dışı / başka kaydın sürümü; 422 CHAIN_UNREADABLE.
+     */
+    versionChain: (inventoryId, versionId) =>
+      request(`/manual-certs/${encodeURIComponent(inventoryId)}/versions/${encodeURIComponent(versionId)}/chain`, { withStatus: true }),
     /** Sürümün PUBLIC zinciri (PEM) — indirme bağlantısı; özel anahtar hiçbir zaman saklanmaz. */
     pemUrl: (inventoryId, versionId) =>
       `${BASE}/manual-certs/${encodeURIComponent(inventoryId)}/versions/${encodeURIComponent(versionId)}/pem`,
@@ -808,9 +817,10 @@ export const api = {
       exportUrl:    (params) => `/api/admin/user-push/deliveries/export?${new URLSearchParams(params)}`,
     },
     // Inventory
-    // scope 'mine' (varsayılan, bugünkü URL) | 'all' (org geneli görünürlük, 2026-09-26): yanıt `scope` + `visible_to_all` taşır
-    getInventory: (showDeleted = false, scope = 'mine') =>
-      request(`/admin/inventory?showDeleted=${showDeleted}${scope === 'all' ? '&scope=all' : ''}`),
+    // scope 'mine' (varsayılan) | 'all' (org geneli görünürlük, 2026-09-26): yanıt `scope` + `visible_to_all` taşır.
+    // 2026-10-07: silme KALICI — çöp kutusu yok, `showDeleted` parametresi kalktı.
+    getInventory: (scope = 'mine') =>
+      request(`/admin/inventory${scope === 'all' ? '?scope=all' : ''}`),
     // Envanter zenginleştirme (2026-09-12): hijyen bandı + CSV içe aktarma (dry_run varsayılan true)
     getInventoryHygiene: () => request('/admin/inventory/hygiene'),
     importInventory: (rows, dryRun = true) =>
@@ -824,11 +834,9 @@ export const api = {
     // withStatus (2026-09-28): hata gövdesi HTTP durumunu taşır — form 409'u satır içi gösterir (DOMAIN_EXISTS ayrıca `code` ile)
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item), withStatus: true }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item), withStatus: true }),
+    // KALICI silme (2026-10-07): kayıt + kontrol geçmişi + notlar + sürümler + türev Port/DNS izlemeleri gider; çöp kutusu,
+    // geri yükleme ve "kalıcı sil" uçları kaldırıldı.
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
-    restoreInventory: (id) => request(`/admin/inventory/${id}/restore`, { method: 'POST' }),
-    // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi.
-    purgeInventory: (id) => request(`/admin/inventory/${id}/permanent`, { method: 'DELETE' }),
-    purgeDeletedInventory: () => request('/admin/inventory/purge-deleted', { method: 'POST' }),
     /** extra: yalniz set-contacts icin — GONDERILEN alanlar yazilir, otekilere dokunulmaz. */
     bulkInventory: (ids, action, extra) => request('/admin/inventory/bulk', {
       method: 'POST', body: JSON.stringify({ ids, action, ...(extra ?? {}) }),
@@ -1050,10 +1058,9 @@ export const api = {
       request(`/admin/system/weekly-availability/history?limit=${limit}&includeTest=${includeTest}`),
     getWeeklyAvailHistoryItem: (id) =>
       request(`/admin/system/weekly-availability/history/${encodeURIComponent(id)}`),
-    // `restore: true` (Ek 3/5, 2026-09-28): çöp kutusundaki kaydı TEK adımda geri yükleyip aktarır (mükerrer alan adı
-    // bandı). Sunucu silinmiş kayda DÜZ aktarımı 409 ile reddeder.
-    transferCertSy: (id, teamId, opts = {}) => request(`/admin/inventory/${id}/transfer`, {
-      method: 'POST', body: JSON.stringify({ team_id: teamId, ...(opts.restore ? { restore: true } : {}) }),
+    // 2026-10-07: silme KALICI — çöp kutusu yok, "geri yükle + aktar" (`restore`) seçeneği kalktı.
+    transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
+      method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),
     transferCertUg: (id, ugTeamId) => request(`/admin/inventory/${id}/transfer-ug`, {
       method: 'POST', body: JSON.stringify({ ug_team_id: ugTeamId }),

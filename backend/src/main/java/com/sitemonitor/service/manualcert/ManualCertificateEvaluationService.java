@@ -111,12 +111,59 @@ public class ManualCertificateEvaluationService {
      * @param allowRevocationFetch iptal durumu önbellekte yoksa CA'ya şimdi sorulsun mu (yalnız arka plan süpürmesi)
      */
     public Map<String, Object> buildResult(CertificateInventory inv, ManualCertificateVersion v, boolean allowRevocationFetch) {
-        long start = System.currentTimeMillis();
         List<X509Certificate> chain = CertificateFileParser.readPemChain(v.getChainPem());
         if (chain.isEmpty()) return null;
+        Map<String, Object> r = buildFromChain(inv.getDomain(), chain,
+                allowRevocationFetch ? RevocationMode.FETCH : RevocationMode.CACHED_WARM);
+        r.put("manual_version", v.getVersion());
+        return r;
+    }
+
+    /** İptal durumu nereden okunur: CA'ya sor / önbellek + arka planda ısıt / YALNIZ önbellek (hiç ağ yok). */
+    enum RevocationMode { FETCH, CACHED_WARM, CACHED_ONLY }
+
+    // ── Önizleme (yazmaz, alarm yok) ─────────────────────────────────────────
+
+    /**
+     * Kayıtlı manuel satırın sertifika penceresi "SSL" sekmesi için ÖNİZLEME (2026-10-07): geçerli sürümden aynı sonuç
+     * haritası — {@code certificate_checks} satırı YOK, alarm / uzlaştırma YOK, önbellek boşaltma YOK. İptal durumu
+     * elle tetikteki gibi önbellekten (yoksa {@code UNKNOWN} + arka planda ısıtma).
+     *
+     * @return geçerli sürüm yoksa, zincir okunamazsa ya da kayıt manuel değilse null
+     */
+    public Map<String, Object> previewCurrent(CertificateInventory inv) {
+        if (inv == null || inv.getId() == null || !inv.isManual()) return null;
+        ManualCertificateVersion v = versionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(inv.getId()).orElse(null);
+        if (v == null) return null;
+        Map<String, Object> r = buildResult(inv, v, false);
+        // Yalnız önizlemede (kaydedilen sonuçta YOK): SSL sekmesinin "Hiyerarşi" görünümü sürüm zincirini bu kimlikle çeker
+        if (r != null) r.put("manual_version_id", v.getId());
+        return r;
+    }
+
+    /**
+     * Yükleme analizindeki zincir başı için ÖNİZLEME (2026-10-07): sihirbazın İnceleme adımı zinciri ağ sertifikasının SSL
+     * sekmesindeki görünümle çizer. Hiçbir şey YAZMAZ ve AĞA ÇIKMAZ (iptal durumu yalnız önbellekten; ısıtma da yok —
+     * analiz edilen dosya henüz takipte değil).
+     *
+     * @param key     önerilen takip adı (sonuç haritasının {@code domain} alanı)
+     * @param leaf    zincirin başı
+     * @param issuers başın zinciri (kendisi HARİÇ, yapraktan köke)
+     */
+    public Map<String, Object> previewChain(String key, X509Certificate leaf, List<X509Certificate> issuers) {
+        if (leaf == null) return null;
+        List<X509Certificate> full = new ArrayList<>(1 + (issuers == null ? 0 : issuers.size()));
+        full.add(leaf);
+        if (issuers != null) full.addAll(issuers);
+        return buildFromChain(key, full, RevocationMode.CACHED_ONLY);
+    }
+
+    /** Sonuç haritası — {@code chain[0]} yaprak (baş), ardından verenler. */
+    Map<String, Object> buildFromChain(String domain, List<X509Certificate> chain, RevocationMode revocationMode) {
+        long start = System.currentTimeMillis();
         X509Certificate leaf = chain.get(0);
         Instant now = Instant.now();
-        Map<String, Object> r = CertificateFacts.leafResult(leaf, inv.getDomain(), warningDays, chainValidator, now);
+        Map<String, Object> r = CertificateFacts.leafResult(leaf, domain, warningDays, chainValidator, now);
         // Ağa özgü alanlar — anahtar VAR, değer yok (sonuç biçimi ağ kontrolüyle aynı kalsın).
         r.put("source_ip", null);
         r.put("source_port", null);
@@ -142,7 +189,7 @@ public class ManualCertificateEvaluationService {
         String fingerprint = chainValidator.calculateFingerprint(leaf);
         r.put("fingerprint", fingerprint);
 
-        String revocation = revocationStatus(fingerprint, arr, allowRevocationFetch);
+        String revocation = revocationStatus(fingerprint, arr, revocationMode);
         r.put("revocation_status", revocation);
         if ("REVOKED".equals(revocation)) r.put("chain_status", "REVOKED");
 
@@ -157,7 +204,6 @@ public class ManualCertificateEvaluationService {
         r.put("tls_mode_used", null);
         r.put("elapsed_ms", System.currentTimeMillis() - start);
         r.put("manual", true);
-        r.put("manual_version", v.getVersion());
         return r;
     }
 
@@ -250,10 +296,15 @@ public class ManualCertificateEvaluationService {
     // ── İptal durumu (önbellekli) ────────────────────────────────────────────
 
     String revocationStatus(String fingerprint, Certificate[] chain, boolean allowFetch) {
+        return revocationStatus(fingerprint, chain, allowFetch ? RevocationMode.FETCH : RevocationMode.CACHED_WARM);
+    }
+
+    String revocationStatus(String fingerprint, Certificate[] chain, RevocationMode mode) {
         if (fingerprint == null || chain == null || chain.length < 2) return "UNKNOWN";
         CachedRevocation c = revocationCache.get(fingerprint);
         if (c != null && Duration.between(c.at(), Instant.now()).toHours() < REVOCATION_TTL_HOURS) return c.status();
-        if (!allowFetch) {
+        if (mode == RevocationMode.CACHED_ONLY) return c != null ? c.status() : "UNKNOWN";
+        if (mode == RevocationMode.CACHED_WARM) {
             warmRevocation(fingerprint, chain);
             return c != null ? c.status() : "UNKNOWN";
         }

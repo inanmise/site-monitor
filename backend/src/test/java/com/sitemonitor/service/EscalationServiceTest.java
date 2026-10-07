@@ -642,39 +642,9 @@ class EscalationServiceTest {
         verifyNoInteractions(emailService);
     }
 
-    @Test
-    @DisplayName("catchUpAlertsOnDeletedDomains: silently closes stuck alerts on soft-deleted domains")
-    void catchUpAlertsOnDeletedDomains_closesStuckAlerts_silently() {
-        AlertEvent stuck1 = existingOpenAlert("legacy1.example.com", "EXPIRY", "HIGH", false);
-        AlertEvent stuck2 = existingOpenAlert("legacy2.example.com", "CHAIN_BROKEN", "CRITICAL", false);
-        when(alertEventRepo.findOpenAlertsOnSoftDeletedDomains())
-                .thenReturn(List.of(stuck1, stuck2));
-        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        int closed = service.catchUpAlertsOnDeletedDomains();
-
-        assertThat(closed).isEqualTo(2);
-        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
-        verify(alertEventRepo, times(2)).save(captor.capture());
-        for (AlertEvent saved : captor.getAllValues()) {
-            assertThat(saved.getResolved()).isTrue();
-            assertThat(saved.getResolvedBy()).isEqualTo("inventory_delete");
-            assertThat(saved.getResolvedAt()).isNotNull();
-        }
-        verifyNoInteractions(emailService);
-    }
-
-    @Test
-    @DisplayName("catchUpAlertsOnDeletedDomains: returns 0 when nothing stuck (no-op)")
-    void catchUpAlertsOnDeletedDomains_noStuck_noOp() {
-        when(alertEventRepo.findOpenAlertsOnSoftDeletedDomains()).thenReturn(List.of());
-
-        int closed = service.catchUpAlertsOnDeletedDomains();
-
-        assertThat(closed).isZero();
-        verify(alertEventRepo, never()).save(any());
-        verifyNoInteractions(emailService);
-    }
+    // (2026-10-07) catchUpAlertsOnDeletedDomains testleri kaldırıldı: envanter silmesi kalıcı (PermanentDeletionService
+    // alarmları silme anında kapatır); eski çöp kutusunun alarmlarını tek seferlik DeletedRecordsPurge kapatır
+    // (DeletedRecordsPurgeTest / PermanentDeletionServiceTest).
 
     @Test
     @DisplayName("processResults: cert returning to OK sends auto-resolution email")

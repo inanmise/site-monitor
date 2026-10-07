@@ -178,6 +178,30 @@ class SchedulerServiceTest {
     // RetentionService içinde, RetentionCatalog politikalarından üretiliyor (2026-08).
 
     @Test
+    @DisplayName("çöp kutusu temizliği (2026-10-07): koşarsa TEK sistem denetim olayı; nişan varsa / başka pod aldıysa / düşerse denetim yok, açılış sürer")
+    void deletedRecordsPurge_singleAuditEvent_andSafeFailures() {
+        DeletedRecordsPurge purge = org.mockito.Mockito.mock(DeletedRecordsPurge.class);
+        ReflectionTestUtils.setField(scheduler, "deletedRecordsPurge", purge);
+        DeletedRecordsPurge.Result r = new DeletedRecordsPurge.Result(
+                List.of(new DeletedRecordsPurge.Purged(7L, "gone.example.com", 5L)), List.of(), List.of(), 2);
+        when(purge.applyOnce()).thenReturn(r);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runDeletedRecordsPurge");
+        verify(auditService).recordSystemEvent(eq(DeletedRecordsPurge.AUDIT_EVENT), eq("SYSTEM"), eq(DeletedRecordsPurge.KEY),
+                org.mockito.ArgumentMatchers.contains("gone.example.com"));
+
+        org.mockito.Mockito.clearInvocations(auditService);
+        when(purge.applyOnce()).thenReturn(null);                                   // nişan var
+        ReflectionTestUtils.invokeMethod(scheduler, "runDeletedRecordsPurge");
+        when(purge.applyOnce()).thenThrow(new org.springframework.dao.DuplicateKeyException("uq"));   // başka pod aldı
+        ReflectionTestUtils.invokeMethod(scheduler, "runDeletedRecordsPurge");
+        org.mockito.Mockito.reset(purge);
+        when(purge.applyOnce()).thenThrow(new IllegalStateException("db"));         // düştü → sonraki açılış yeniden dener
+        ReflectionTestUtils.invokeMethod(scheduler, "runDeletedRecordsPurge");
+        verify(auditService, never()).recordSystemEvent(eq(DeletedRecordsPurge.AUDIT_EVENT), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("rollupDailyStats: 8 tip (port/ping/keyword/http/page/scripted/pagespeed/uptime) için upsert çalıştırır")
     void rollupDailyStats_runsAllTypes() {
         when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);

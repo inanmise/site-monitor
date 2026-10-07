@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { ChevronDown, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, ShieldX, Unplug } from 'lucide-react'
+import { lazy, Suspense, useState } from 'react'
+import { ChevronDown, ListOrdered, ListTree, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, ShieldX, Unplug } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { Spinner } from './ui/Progress.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -11,7 +12,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils'
 import SslCheckGroups, { SslStatusIcon } from './certmodal/SslCheckGroups.jsx'
 import SslChainView from './certmodal/SslChainView.jsx'
-import { ST, buildChain, buildConnectionError, buildSslGroups, buildVerdict, prettyTls } from './certmodal/sslModel.js'
+import { ST, buildChain, buildConnectionError, buildSslGroups, buildVerdict, isUploadResult, prettyTls } from './certmodal/sslModel.js'
+import { previewTarget } from './certmodal/certHierarchyModel.js'
+
+// Tarayıcı gibi hiyerarşi (2026-10-07) yalnız manuel kayıtta ve istenince yüklenir — ağ satırının paketine girmez.
+const ManualCertHierarchy = lazy(() => import('./certmodal/ManualCertHierarchy.jsx'))
 
 /**
  * Sertifika penceresi → "SSL Kontrol" sekmesi (2026-09-28 shadcn yeniden tasarım). Canlı el sıkışmasının
@@ -28,7 +33,18 @@ import { ST, buildChain, buildConnectionError, buildSslGroups, buildVerdict, pre
  *
  * Props: `data` (check-preview yanıtı), `onRecheck` (isteğe bağlı — verilirse "Yeniden kontrol et"), `rechecking`,
  * `recheckError` (yeniden kontrol başarısız olduysa eski sonuç ekranda kalır, üstte uyarı).
- * Test kancaları: `data-slot="ssl-panel"`, hüküm `data-slot="ssl-verdict"` + `data-tone`, hata `data-slot="ssl-error"`.
+ * Test kancaları: `data-slot="ssl-panel"` (+ `data-source="upload"` manuelde), hüküm `data-slot="ssl-verdict"` + `data-tone`,
+ * hata `data-slot="ssl-error"`.
+ *
+ * MANUEL (dosyadan yüklenen) sertifika (2026-10-07): veri `/check-preview`'ın ÇEVRİM-DIŞI sonucudur (`via: 'upload'`) —
+ * aynı hüküm kartı, aynı Sertifika · Güven ve zincir grupları, aynı zincir kartları; "Bağlantı" grubu, alan adı eşleşmesi
+ * ve bağlantı ayrıntıları HİÇ çizilmez ("bilinmiyor" diye de değil). Canlı kontrol dili yok: düğme "Yeniden değerlendir".
+ *
+ * HİYERARŞİ görünümü (2026-10-07, kullanıcı isteği; YALNIZ manuel): zincir bölümünün üstünde "Zincir" (SslChainView —
+ * varsayılan) | "Hiyerarşi (tarayıcı gibi)" seçici (ui/SegmentedControl). Hiyerarşi, güncel sürümün zincirini
+ * `GET /manual-certs/{id}/versions/{vid}/chain` ile çeker (önizlemenin `inventory_id` + `manual_version_id`'si; yoksa
+ * kayıt alan adından) ve certmodal/CertHierarchyView ile kök → ara → yaprak çizer. Seçim `chainView` / `onChainViewChange`
+ * ile dışarıda tutulabilir (sertifika penceresi oturum boyunca hatırlar); verilmezse bileşen içi. Ağ satırında seçici YOK.
  */
 
 const VERDICT = {
@@ -39,13 +55,13 @@ const VERDICT = {
 }
 const BTN = 'max-sm:h-10'
 
-function RecheckButton({ onRecheck, rechecking, t, label }) {
+function RecheckButton({ onRecheck, rechecking, t, label, upload = false }) {
   if (!onRecheck) return null
   return (
     <Button type="button" variant="outline" size="sm" className={cn(BTN, 'gap-1.5')} onClick={onRecheck}
       disabled={rechecking} aria-busy={rechecking || undefined}>
       {rechecking ? <Spinner size={14} inline decorative /> : <RefreshCw aria-hidden="true" className="size-4" />}
-      {rechecking ? t('sslv.rechecking') : (label || t('sslv.recheck'))}
+      {rechecking ? t(upload ? 'sslv.m.rechecking' : 'sslv.rechecking') : (label || t(upload ? 'sslv.m.recheck' : 'sslv.recheck'))}
     </Button>
   )
 }
@@ -59,7 +75,11 @@ function Fact({ children, className }) {
 }
 
 function CheckedLine({ data, t }) {
-  const parts = [
+  const upload = isUploadResult(data)
+  const parts = upload ? [
+    data.checked_at ? t('sslv.m.checkedAt', formatDate(data.checked_at)) : null,
+    data.manual_version != null ? t('sslv.m.version', data.manual_version) : null,
+  ].filter(Boolean) : [
     data.checked_at ? t('sslv.checkedAt', formatDate(data.checked_at)) : null,
     data.via ? t(data.via === 'proxy' ? 'sslv.via.proxy' : 'sslv.via.direct') : null,
     Number.isFinite(data.elapsed_ms) ? t('sslv.elapsed', data.elapsed_ms) : null,
@@ -70,6 +90,7 @@ function CheckedLine({ data, t }) {
 
 function Verdict({ data, verdict, onRecheck, rechecking, t }) {
   const v = VERDICT[verdict.tone] ?? VERDICT.ok
+  const upload = isUploadResult(data)
   const reasons = verdict.tone === ST.FAIL ? verdict.problems : verdict.tone === ST.WARN ? verdict.attention : []
   const days = typeof data.days_remaining === 'number' ? data.days_remaining : null
   const tls = prettyTls(data.tls_version)
@@ -95,7 +116,9 @@ function Verdict({ data, verdict, onRecheck, rechecking, t }) {
             </ul>
           ) : (
             <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-              {t(verdict.tone === ST.UNKNOWN ? 'sslv.verdict.unknownDetail' : 'sslv.verdict.okDetail', data.domain || '')}
+              {t(verdict.tone === ST.UNKNOWN
+                ? (upload ? 'sslv.m.verdict.unknownDetail' : 'sslv.verdict.unknownDetail')
+                : (upload ? 'sslv.m.verdict.okDetail' : 'sslv.verdict.okDetail'), data.domain || '')}
             </p>
           )}
           <p data-slot="ssl-verdict-score" className="text-xs text-muted-foreground">
@@ -105,7 +128,7 @@ function Verdict({ data, verdict, onRecheck, rechecking, t }) {
           </p>
         </div>
         <div className="flex shrink-0 sm:self-start">
-          <RecheckButton onRecheck={onRecheck} rechecking={rechecking} t={t} />
+          <RecheckButton onRecheck={onRecheck} rechecking={rechecking} t={t} upload={upload} />
         </div>
       </div>
       <div data-slot="ssl-facts" className="flex min-w-0 flex-wrap gap-1.5">
@@ -195,12 +218,42 @@ function ConnectionError({ data, onRecheck, rechecking, t }) {
   )
 }
 
-export default function SslCheckerPanel({ data, onRecheck, rechecking = false, recheckError = null }) {
+/**
+ * Manuel kaydın zincir bölümü: görünüm seçici + seçilen görünüm. Hiyerarşi tembel yüklenir (yalnız seçilince).
+ */
+function UploadChainArea({ data, chain, view, onViewChange, t }) {
+  const target = previewTarget(data)
+  return (
+    <div data-slot="ssl-chain-area" data-view={view} className="flex min-w-0 flex-col gap-3">
+      <SegmentedControl value={view} onChange={onViewChange} ariaLabel={t('chier.viewToggle')}
+        className="max-w-full self-start" itemClassName="max-sm:h-10 pointer-coarse:h-10"
+        options={[
+          { value: 'chain', label: t('chier.view.chain'), icon: ListOrdered },
+          { value: 'hierarchy', label: t('chier.view.hierarchy'), icon: ListTree },
+        ]} />
+      {view === 'hierarchy' ? (
+        <Suspense fallback={<LoadingBlock label={t('chier.loading')} fullWidth />}>
+          <ManualCertHierarchy domain={data.domain || null}
+            inventoryId={target?.inventoryId ?? null} versionId={target?.versionId ?? null} />
+        </Suspense>
+      ) : (
+        <SslChainView chain={chain} trustStatus={data.trust_status} />
+      )}
+    </div>
+  )
+}
+
+export default function SslCheckerPanel({ data, onRecheck, rechecking = false, recheckError = null, chainView, onChainViewChange }) {
   const t = useT()
+  // Manuel kayıtta zincir görünümü: dışarıdan denetlenebilir (pencere oturum boyunca hatırlar), yoksa bileşen içi
+  const [ownView, setOwnView] = useState('chain')
+  const view = chainView === 'hierarchy' || chainView === 'chain' ? chainView : ownView
+  const setView = onChainViewChange || setOwnView
   if (!data) return null
+  const upload = isUploadResult(data)
 
   const banner = recheckError != null && (
-    <AlertBanner tone="warning" title={t('sslv.recheckFailed')} className="mb-0">{recheckError || t('sslv.loadFailedHint')}</AlertBanner>
+    <AlertBanner tone="warning" title={t(upload ? 'sslv.m.recheckFailed' : 'sslv.recheckFailed')} className="mb-0">{recheckError || t('sslv.loadFailedHint')}</AlertBanner>
   )
 
   if (data.status === 'error') {
@@ -217,14 +270,17 @@ export default function SslCheckerPanel({ data, onRecheck, rechecking = false, r
   const verdict = buildVerdict(groups)
   const chain = buildChain(data)
   return (
-    <div data-slot="ssl-panel" className="flex min-w-0 flex-col gap-4">
+    <div data-slot="ssl-panel" data-source={upload ? 'upload' : undefined} className="flex min-w-0 flex-col gap-4">
       {banner}
       <Verdict data={data} verdict={verdict} onRecheck={onRecheck} rechecking={rechecking} t={t} />
       <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <SslCheckGroups groups={groups} />
-        <SslChainView chain={chain} trustStatus={data.trust_status} />
+        {upload
+          ? <UploadChainArea data={data} chain={chain} view={view} onViewChange={setView} t={t} />
+          : <SslChainView chain={chain} trustStatus={data.trust_status} />}
       </div>
-      <ConnectionDetails data={data} t={t} />
+      {/* Dosyadan yüklenen sertifikada bağlantı yok — ayrıntı bölümü hiç çizilmez */}
+      {!upload && <ConnectionDetails data={data} t={t} />}
     </div>
   )
 }

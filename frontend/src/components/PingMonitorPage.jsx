@@ -37,6 +37,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import PingProtocol from './ui/PingProtocol.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
@@ -119,7 +120,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [density, setDensity] = useCardDensity('ping')
   // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
   const failRows = useFailureRows()
-  const [monitors, setMonitors] = useState([])
+  const [rawMonitors, setMonitors] = useState([])
+  // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
+  const monitors = useWithoutDeleted(monitorKind('ping'), rawMonitors)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -385,9 +388,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
+      // Kart HEMEN düşer (işaret), açık detay kapanır; liste arka planda tazelenir — arayüz beklemez.
+      markMonitorDeleted('ping', m.id, res)
+      setSelected((s) => (s?.id === m.id ? null : s))
       toast.success(t('ping.deleted'))
 
-      await load()
+      load()
     } finally {
       setDeleting(null)
     }
@@ -396,10 +402,16 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   async function del() {
     if (!modal || modal === 'new') return
+    // Kalıcı silme (2026-10-07): düzenleme penceresinden de ADIYLA ve geri alınamaz olduğu söylenerek onay alınır.
+    if (!await showConfirm({ title: t('mon.deleteTitle'), message: t('mon.deleteMsg', modal.name || modal.host),
+      confirmText: t('ping.delete'), cancelText: t('ping.cancel'), variant: 'danger' })) return
     const res = await api.monitoring.deletePingMonitor(modal.id)
-    await load()
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    const id = modal.id
+    markMonitorDeleted('ping', id, res)   // anında düşer; tazeleme arka planda
+    setSelected((s) => (s?.id === id ? null : s))
     toast.success(t('ping.deleted')); closeEdit()
+    load()
   }
 
   async function checkNow(m) {

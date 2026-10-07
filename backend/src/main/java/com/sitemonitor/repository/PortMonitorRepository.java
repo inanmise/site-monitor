@@ -16,6 +16,8 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
      * Yerini aldığı {@code findByStandaloneTrueAndActiveTrue} duraklatılanı da gizliyordu (silme ile aynı durum).
      */
     List<PortMonitor> findByStandaloneTrueAndDeletedAtIsNull();
+    /** Eski sürümden kalmış yumuşak silinmiş satırlar — yalnız tek seferlik kalıcı temizlik okur (DeletedRecordsPurge, 2026-10-07). */
+    List<PortMonitor> findByDeletedAtIsNotNullOrderByIdAsc();
 
     /** Mükerrer guard'ı: aynı host:port için DURAKLATILMIŞ (silinmemiş) standalone satır var mı? Artık listede görünür. */
     boolean existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(String host, int port);

@@ -47,7 +47,7 @@ const FOREIGN = [
 ]
 
 function stubInventory({ visible = true } = {}) {
-  api.admin.getInventory.mockImplementation((del, scope) => Promise.resolve({
+  api.admin.getInventory.mockImplementation((scope) => Promise.resolve({
     success: true, data: scope === 'all' && visible ? [...OWN, ...FOREIGN] : OWN, scope: scope === 'all' && visible ? 'all' : 'mine', visible_to_all: visible,
   }))
 }
@@ -69,7 +69,7 @@ describe('Envanter — org geneli görünürlük', () => {
   it('anahtar YALNIZ sunucu visible_to_all derse çizilir; varsayılan "Takımlarım" ve istek scope=mine', async () => {
     renderIm()
     await screen.findByText('own-a.example.com')
-    expect(api.admin.getInventory).toHaveBeenCalledWith(true, 'mine')
+    expect(api.admin.getInventory).toHaveBeenCalledWith('mine')
     expect(scopeGroup()).not.toBeNull()
     expect(within(scopeGroup()).getByRole('button', { name: /takımlarım|my teams/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByText('foreign.example.com')).toBeNull()
@@ -87,14 +87,14 @@ describe('Envanter — org geneli görünürlük', () => {
     await screen.findByText('own-a.example.com')
     fireEvent.click(allTeamsBtn())
     expect(await screen.findByText('foreign.example.com')).toBeInTheDocument()
-    expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all')
+    expect(api.admin.getInventory).toHaveBeenLastCalledWith('all')
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('i_scope')).toBe('all'))
     expect(JSON.parse(localStorage.getItem('inventory-view')).scope).toBe('all')
     unmount()
     window.history.replaceState(null, '', '/')
     renderIm()
     await screen.findByText('foreign.example.com')
-    expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all')
+    expect(api.admin.getInventory).toHaveBeenLastCalledWith('all')
   })
 
   it('adresteki i_scope=all kayıtlı görünümü EZER (paylaşılan bağlantı kazanır)', async () => {
@@ -102,7 +102,7 @@ describe('Envanter — org geneli görünürlük', () => {
     window.history.replaceState(null, '', '/?tab=domains&i_scope=all')
     renderIm()
     await screen.findByText('foreign.example.com')
-    expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all')
+    expect(api.admin.getInventory).toHaveBeenLastCalledWith('all')
   })
 
   it('yabancı satır SALT OKUNUR: kutu / kontrol et / satır-içi katman / aktif anahtarı yok, rozet var, menüde yalnız "Göster"; kendi satırı değişmez', async () => {

@@ -158,6 +158,28 @@ public class SchedulerService {
     /** Fırtına devri geriye dönük günlük yaması (2026-09-30) — isteğe bağlı: bean yoksa (test) atlanır. */
     @Autowired(required = false)
     private StormSuppressionBackfill stormSuppressionBackfill;
+    /** Eski çöp kutusunun tek seferlik kalıcı temizliği (2026-10-07) — isteğe bağlı: bean yoksa (test) atlanır. */
+    @Autowired(required = false)
+    private DeletedRecordsPurge deletedRecordsPurge;
+
+    /**
+     * Tek seferlik çöp kutusu temizliği + TEK sistem denetim olayı (silinen adlar/kimlikler — forensics). Denetim işlem
+     * commit olduktan SONRA yazılır: düşen ya da başka pod'a kaybedilen koşu "temizlendi" izi bırakmaz.
+     */
+    private void runDeletedRecordsPurge() {
+        if (deletedRecordsPurge == null) return;
+        try {
+            DeletedRecordsPurge.Result r = deletedRecordsPurge.applyOnce();
+            if (r == null) return;   // nişan var — daha önce (ya da başka pod'da) koştu
+            auditService.recordSystemEvent(DeletedRecordsPurge.AUDIT_EVENT, "SYSTEM", DeletedRecordsPurge.KEY, r.auditDetail());
+            log.info("Eski çöp kutusu kalıcı temizlendi: {} envanter, {} Port, {} DNS kaydı; {} alarm kapandı",
+                    r.inventory().size(), r.ports().size(), r.dns().size(), r.alertsClosed());
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            log.info("Eski çöp kutusu temizliğini eşzamanlı açılan başka bir pod uyguladı — bu pod atlıyor");
+        } catch (Exception e) {
+            log.warn("Eski çöp kutusu temizliği uygulanamadı (sonraki açılışta yeniden denenecek): {}", e.getMessage());
+        }
+    }
     /** 7/24 İzleme Ekibi (NOC) şema yamaları (2026-09-27) — isteğe bağlı: bean yoksa (test) atlanır. */
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocSchemaPatches nocSchemaPatches;
@@ -353,6 +375,10 @@ public class SchedulerService {
             patchRun.runExclusive(this::applySchemaPatches);
             patchRun.finish();
             auditService.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "başlangıç şema yamaları uygulandı");
+            // Silme KALICI (2026-10-07, kullanıcı kararı): eski sürümün çöp kutusu (yumuşak silinmiş envanter + bağımsız
+            // Port/DNS) TEK SEFER kalıcı silinir — şema yamalarından SONRA (tüm tablolar hazır). Nişanlı, çoklu pod güvenli;
+            // hata açılışı düşürmez, nişan yazılmadığı için sonraki açılış yeniden dener.
+            runDeletedRecordsPurge();
             // Dağıtım kaydı: şema yamalarından SONRA (tablo/indeks hazır). Hata içeride yutulur — açılışı
             // hiçbir koşulda durdurmaz (K2). Tür (UPGRADE/RESTART/ROLLBACK) satırlardan türetilir, burada değil.
             if (deploymentHistory != null) deploymentHistory.recordStartup();
@@ -408,8 +434,7 @@ public class SchedulerService {
             }
             try { escalationService.catchUpMissedDailyAlerts(); }
             catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
-            try { escalationService.catchUpAlertsOnDeletedDomains(); }
-            catch (Exception e) { log.warn("Startup catch-up (deleted) failed: {}", e.getMessage()); }
+            // (2026-10-07) catchUpAlertsOnDeletedDomains kaldırıldı: silme kalıcı, yumuşak silinmiş envanter kalmaz.
             runCheck();
         }, "startup-check");
         t.setDaemon(true);
@@ -2586,7 +2611,7 @@ public class SchedulerService {
      * {@code false} if another instance holds an unexpired lock.
      * Gracefully degrades to {@code true} (allow) if the lock table is unavailable.
      */
-    public boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {   // InventoryAutoPurgeService de kullanır
+    public boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {
         try {
             String now   = ISO.format(Instant.now());
             String until = ISO.format(Instant.now().plusSeconds(ttlMinutes * 60L));

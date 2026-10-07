@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 
 /**
  * Sertifika penceresi → "Sürümler" sekmesi (2026-10-06) — yeni sürüm kaydedildikten sonra sihirbaz AÇIK kalır ve sonuç
@@ -9,17 +9,18 @@ import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
  * sonucu hiç görmüyor, boş "Yeni sürüm yükle / Dosya" penceresiyle kalıyordu. Liste arkada SESSİZCE tazelenmeli.
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+const perm = vi.hoisted(() => ({ edit: true }))
 vi.mock('../api/client', () => ({
   api: withApiFallback({
     admin: { getInventoryByDomain: vi.fn() },
-    manualCerts: { get: vi.fn(), pemUrl: (id, v) => `/api/manual-certs/${id}/versions/${v}/pem` },
+    manualCerts: { get: vi.fn(), deleteVersion: vi.fn(), pemUrl: (id, v) => `/api/manual-certs/${id}/versions/${v}/pem` },
   }),
   formatDate: (s) => String(s ?? ''),
   formatDateOnly: (s) => String(s ?? ''),
   formatDateSec: (s) => String(s ?? ''),
 }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
-  usePermissions: () => ({ perms: { 'inventory.crud': { edit: true } }, canView: () => true, canEdit: () => true, canExecute: () => true, refresh: () => {} }),
+  usePermissions: () => ({ perms: { 'inventory.crud': { edit: perm.edit } }, canView: () => true, canEdit: () => perm.edit, canExecute: () => true, refresh: () => {} }),
 }))
 // Sihirbaz: kendi iç durumu (adım) olan saplama — yeniden bağlanırsa adım "file"a döner, bu da hatanın imzası
 vi.mock('../components/manualcert/UploadWizard.jsx', () => ({
@@ -100,5 +101,98 @@ describe('ManualCertVersions — yeni sürüm sonrası sihirbaz', () => {
     const retry = await screen.findByRole('button', { name: /Try again|Yeniden dene/i })
     fireEvent.click(retry)
     await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(1))
+  })
+})
+
+/**
+ * Eski sürümü kalıcı silme (2026-10-07, kullanıcı isteği) — yalnız GÜNCEL OLMAYAN sürümde ve "Yeni sürüm yükle" ile aynı
+ * koşulda; tehlike onayı → DELETE → bildirim + SESSİZ tazeleme (bileşen sökülmez). 409 CURRENT_VERSION açıklanır.
+ * "Yine de yükle" ile yeniden yüklenen aynı sertifika sürümü notla işaretlenir.
+ */
+describe('ManualCertVersions — eski sürümü sil + aynı sertifika notu', () => {
+  const three = () => [ver(3, true), { ...ver(2, false), superseded_at: '2026-10-06T00:00:00', superseded_by: 'kisia' }, ver(1, false)]
+  const delBtns = () => [...document.querySelectorAll('[data-slot="mcert-version-delete"]')]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    perm.edit = true
+    api.admin.getInventoryByDomain.mockResolvedValue({ success: true, data: { id: 7, domain: 'keystore.example.test', can_manage: true } })
+    api.manualCerts.get.mockReset()
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { can_manage: true, versions: three() } })
+  })
+
+  it('"Sil" yalnız eski sürümlerde; güncel sürümde yok; yazma izni / kayıt yönetimi / salt okunur yoksa hiç yok', async () => {
+    const { unmount } = render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(3))
+    expect(delBtns().map((b) => b.closest('[data-slot="mcert-version"]').dataset.version)).toEqual(['2', '1'])
+    expect(document.querySelector('[data-slot="mcert-version"][data-current="true"] [data-slot="mcert-version-delete"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'v2 — Delete' })).toBeInTheDocument()
+    unmount()
+
+    perm.edit = false
+    const r2 = render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(3))
+    expect(delBtns()).toHaveLength(0)
+    r2.unmount()
+
+    perm.edit = true
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { can_manage: false, versions: three() } })
+    const r3 = render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(3))
+    expect(delBtns()).toHaveLength(0)
+    r3.unmount()
+
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { can_manage: true, versions: three() } })
+    render(<ManualCertVersions domain="keystore.example.test" readOnly />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(3))
+    expect(delBtns()).toHaveLength(0)
+  })
+
+  it('onay → DELETE (kayıt + sürüm id) → bildirim + liste sessizce tazelenir; bileşen sökülmez; iptal istek atmaz', async () => {
+    render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(delBtns()).toHaveLength(2))
+    const root = document.querySelector('[data-slot="mcert-versions"]')
+
+    // İptal: istek yok
+    fireEvent.click(screen.getByRole('button', { name: 'v1 — Delete' }))
+    let dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveTextContent("Version v1 will be deleted permanently; this can't be undone.")
+    fireEvent.click(within(dlg).getByRole('button', { name: /Cancel/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.manualCerts.deleteVersion).not.toHaveBeenCalled()
+
+    // Onay: DELETE → tazeleme
+    api.manualCerts.deleteVersion.mockResolvedValueOnce({ success: true, data: { deleted_version: 1, versions_count: 2 } })
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { can_manage: true, versions: three().slice(0, 2) } })
+    fireEvent.click(screen.getByRole('button', { name: 'v1 — Delete' }))
+    dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Delete permanently' }))
+    await waitFor(() => expect(api.manualCerts.deleteVersion).toHaveBeenCalledWith(7, 101))
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(2))
+    expect(await screen.findByText('Version v1 deleted')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="mcert-versions"]')).toBe(root)   // sökülmedi, yeniden kurulmadı
+    expect(document.querySelector('[data-slot="mcert-version"][data-current="true"]')).toHaveAttribute('data-version', '3')
+  })
+
+  it('409 CURRENT_VERSION → açık ileti; liste tazelenir', async () => {
+    render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(delBtns()).toHaveLength(2))
+    api.manualCerts.deleteVersion.mockResolvedValueOnce({ success: false, status: 409, code: 'CURRENT_VERSION', error: 'x' })
+    fireEvent.click(screen.getByRole('button', { name: 'v2 — Delete' }))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete permanently' }))
+    expect(await screen.findByText(/The current version can't be deleted/)).toBeInTheDocument()
+    await waitFor(() => expect(api.manualCerts.get).toHaveBeenCalledTimes(2))
+  })
+
+  it('"Yine de yükle" ile aynı sertifika: sürüm kartında "Aynı sertifika yeniden yüklendi" notu (aynı anahtar rozeti yerine)', async () => {
+    api.manualCerts.get.mockResolvedValue({ success: true, data: { can_manage: true, versions: [
+      { ...ver(3, true), fingerprint: 'FP2', same_as_previous: true, key_changed: false }, { ...ver(2, false), same_as_previous: false }, ver(1, false),
+    ] } })
+    render(<ManualCertVersions domain="keystore.example.test" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="mcert-version"]')).toHaveLength(3))
+    const cur = document.querySelector('[data-slot="mcert-version"][data-version="3"]')
+    expect(cur.querySelector('[data-slot="mcert-same-reupload"]')).toHaveTextContent('Same certificate uploaded again')
+    expect(cur.querySelector('[data-slot="mcert-key-same"]')).toBeNull()
+    expect(document.querySelectorAll('[data-slot="mcert-same-reupload"]')).toHaveLength(1)
   })
 })

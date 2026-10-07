@@ -67,8 +67,16 @@ public class ManualCertificateService {
         public Map<String, Object> extra() { return extra; }
     }
 
-    /** Yenileme sonucu. */
-    public record RenewOutcome(ManualCertificateVersion created, ManualCertificateVersion previous, List<Warning> warnings) { }
+    /**
+     * Yenileme sonucu. {@code sameCertificate}: güncel sürümle AYNI sertifika "yine de yükle" ile yeni sürüm olarak
+     * kaydedildi (2026-10-07) — bitiş tarihi değişmedi.
+     */
+    public record RenewOutcome(ManualCertificateVersion created, ManualCertificateVersion previous, List<Warning> warnings,
+                               boolean sameCertificate) {
+        public RenewOutcome(ManualCertificateVersion created, ManualCertificateVersion previous, List<Warning> warnings) {
+            this(created, previous, warnings, false);
+        }
+    }
 
     // ── Sürüm kurma ──────────────────────────────────────────────────────────
 
@@ -124,14 +132,28 @@ public class ManualCertificateService {
     @Transactional
     public RenewOutcome renew(CertificateInventory inv, ManualCertificateAnalyzer.Entry entry, String fileName,
                               String fileFormat, String username, String displayName, String note, boolean confirm) {
+        return renew(inv, entry, fileName, fileFormat, username, displayName, note, confirm, false);
+    }
+
+    /**
+     * @param allowSame "yine de yükle" (2026-10-07, kullanıcı isteği): güncel sürümle AYNI sertifika reddedilmez, yeni sürüm
+     *                  olarak kaydedilir (yeni dosya adı / biçim / not / yükleyen / zaman; önceki sürüm her zamanki gibi
+     *                  düşürülür). Bitiş aynı olduğundan {@code OLDER_THAN_CURRENT} AYNI sertifikada sorulmaz — ama FARKLI
+     *                  bir sertifikanın eski bitişini asla geçmez (orada yine {@code confirm} gerekir).
+     */
+    @Transactional
+    public RenewOutcome renew(CertificateInventory inv, ManualCertificateAnalyzer.Entry entry, String fileName,
+                              String fileFormat, String username, String displayName, String note, boolean confirm,
+                              boolean allowSame) {
         ManualCertificateVersion current = versionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(inv.getId())
                 .orElse(null);
-        if (current != null && entry.ref.equalsIgnoreCase(current.getFingerprint())) {
+        boolean same = current != null && entry.ref.equalsIgnoreCase(current.getFingerprint());
+        if (same && !allowSame) {
             throw new RenewRejected("SAME_CERTIFICATE", com.sitemonitor.util.Msg.t(
                     "Yüklenen sertifika zaten güncel sürüm.", "The uploaded certificate is already the current version."), null);
         }
         String newNotAfter = CertificateFacts.iso(entry.cert.getNotAfter().toInstant());
-        if (current != null && !confirm && current.getNotAfter() != null && newNotAfter.compareTo(current.getNotAfter()) <= 0) {
+        if (!same && current != null && !confirm && current.getNotAfter() != null && newNotAfter.compareTo(current.getNotAfter()) <= 0) {
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("current_date", current.getNotAfter());
             extra.put("new_date", newNotAfter);
@@ -153,7 +175,64 @@ public class ManualCertificateService {
         }
         ManualCertificateVersion created = buildVersion(inv.getId(), next, entry, fileName, fileFormat, username, displayName, note);
         created = versionRepo.save(created);
-        return new RenewOutcome(created, current, renewWarnings(current, created));
+        return new RenewOutcome(created, current, renewWarnings(current, created), same);
+    }
+
+    // ── Eski sürümü kalıcı silme (2026-10-07, kullanıcı isteği) ──────────────
+
+    /** Sürüm silmenin reddi — kodlu (404 / 409). */
+    public static class VersionDeleteRejected extends RuntimeException {
+        private final String code;
+        private final int status;
+        public VersionDeleteRejected(String code, int status, String message) {
+            super(message);
+            this.code = code;
+            this.status = status;
+        }
+        public String code() { return code; }
+        public int status() { return status; }
+    }
+
+    /**
+     * GÜNCEL OLMAYAN bir sürümü kalıcı siler. Kalan sürümlerin numaraları DEĞİŞMEZ; fark ({@code key_changed},
+     * {@code san_*}) okunurken her sürüm kalan bir sonraki ESKİ sürümle karşılaştırılır ({@link #detail}). Değerlendirme
+     * geçmişi ({@code certificate_checks}) silinmez. Koşullu silme: sürüm bu arada güncel olduysa satır silinmez.
+     *
+     * @return silinen sürüm
+     * @throws VersionDeleteRejected {@code NOT_FOUND} (404: sürüm bu kaydın değil) / {@code CURRENT_VERSION} (409)
+     */
+    @Transactional
+    public ManualCertificateVersion deleteVersion(CertificateInventory inv, Long versionId) {
+        ManualCertificateVersion v = versionId == null ? null : versionRepo.findById(versionId).orElse(null);
+        if (v == null || inv == null || !inv.getId().equals(v.getInventoryId())) {
+            throw new VersionDeleteRejected("NOT_FOUND", 404, com.sitemonitor.util.Msg.t(
+                    "Sertifika sürümü bulunamadı.", "Certificate version not found."));
+        }
+        if (Boolean.TRUE.equals(v.getCurrent())) throw currentVersionRejected();
+        long n = versionRepo.deleteByIdAndInventoryIdAndCurrentFalse(v.getId(), inv.getId());
+        if (n == 0) {
+            // Yarış: bu arada silinmiş ya da güncel olmuş
+            ManualCertificateVersion again = versionRepo.findById(v.getId()).orElse(null);
+            if (again != null && Boolean.TRUE.equals(again.getCurrent())) throw currentVersionRejected();
+            throw new VersionDeleteRejected("NOT_FOUND", 404, com.sitemonitor.util.Msg.t(
+                    "Sertifika sürümü bulunamadı.", "Certificate version not found."));
+        }
+        return v;
+    }
+
+    private static VersionDeleteRejected currentVersionRejected() {
+        return new VersionDeleteRejected("CURRENT_VERSION", 409, com.sitemonitor.util.Msg.t(
+                "Güncel sürüm silinemez — takip bu sürümle sürüyor. Takibi bırakmak için kaydı silin.",
+                "The current version can't be deleted — tracking runs on it. Delete the record to stop tracking."));
+    }
+
+    /** Kaydın kalan sürüm sayısı. */
+    public long versionCount(Long inventoryId) {
+        long n = 0;
+        for (Object[] r : versionRepo.countByInventoryIds(List.of(inventoryId))) {
+            if (r != null && r.length >= 2 && r[1] instanceof Number c) n += c.longValue();
+        }
+        return n;
     }
 
     /** Yenileme farkları: anahtar değişti/aynı, konu değişti, SAN değişti. */
@@ -318,6 +397,9 @@ public class ManualCertificateService {
         m.put("superseded_at", v.getSupersededAt());
         m.put("superseded_by", v.getSupersededBy());
         m.put("note", v.getNote());
+        // "Yine de yükle" ile aynı sertifika yeniden yüklendi (2026-10-07): önceki (kalan) sürümle aynı parmak izi
+        m.put("same_as_previous", previous != null && v.getFingerprint() != null
+                && v.getFingerprint().equalsIgnoreCase(previous.getFingerprint()));
         if (previous == null) {
             m.put("key_changed", null);
             m.put("san_added", List.of());

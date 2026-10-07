@@ -18,6 +18,13 @@ export default defineConfig({
   // Vite varsayılanı her lazy sekmenin kendine özel ağır bağımlılığını (recharts/md-editor/
   // jspdf) o sekmenin async chunk'ına koyar → ilk (eager) paket küçülür. Manuel chunk
   // bölmesi döngüsel chunk'a yol açtığı için kullanılmıyor.
+  // Manuel sertifika ayıklayıcısı (2026-10-08, components/manualcert/extract): forge alt modülleri + fflate YALNIZ
+  // tembel parçadan / Web Worker'dan yüklenir. Geliştirme sunucusu bunları ilk kullanımda keşfedip sayfayı yenilemesin
+  // (açık sihirbaz kapanırdı) diye baştan ön-paketlenir. Üretim paketine etkisi yok.
+  optimizeDeps: {
+    include: ['fflate', ...['forge', 'util', 'md', 'sha1', 'sha256', 'sha512', 'hmac', 'pbkdf2', 'cipher', 'cipherModes', 'aes', 'des', 'rc2']
+      .map((m) => `node-forge/lib/${m}.js`)],
+  },
   test: {
     globals: true,
     environment: 'jsdom',

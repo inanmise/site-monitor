@@ -5,6 +5,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import EntryCard from './EntryCard.jsx'
+import KeptLocalNote from './KeptLocalNote.jsx'
 import WarningList from './WarningList.jsx'
 import { MAX_BATCH, entryTitle, looksLikeTruststore, sizeLabel } from '../manualCertModel.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -38,17 +39,28 @@ function CsrCard({ csr }) {
 
 /**
  * Sihirbaz 2. adım — "İnceleme" (2026-10-06). Dosya özeti (biçim · ad · boyut), dosya düzeyi uyarılar, CSR açıklama
- * kartı, girdiler. Tek girdi seçimi radyo (RadioGroup); birden çok girdi varsa — yeni kayıt kipinde — "birden çok seç"
- * (truststore: her CA sertifikası ayrı kayıt, en çok 20) kutularla. Girdi yoksa açıklamalı boş durum.
+ * kartı, girdiler. Girdi = ZİNCİR BAŞI (2026-10-07): yaprak + ara + kök tek girdidir, zinciri kartın içinde ağ
+ * sertifikasının SSL sekmesindeki görünümle çizilir; katlanan sertifika sayısı özet altında söylenir. Tek girdi seçimi
+ * radyo (RadioGroup); birden çok BAĞIMSIZ girdi varsa — yeni kayıt kipinde — "birden çok seç" (ör. ilgisiz kökleri taşıyan
+ * truststore: her biri ayrı kayıt, en çok 20) kutularla. Girdi yoksa açıklamalı boş durum.
+ *
+ * <p>2026-10-08: özetin altında "özel anahtar (N) tarayıcınızda ayıklandı; sunucuya gönderilmedi" notu (`extraction` —
+ * tarayıcıdaki ayıklamanın sonucu); sunucunun aynı bilgiyi taşıyan PRIVATE_KEY_KEPT_LOCAL uyarısı bu notla çizilir, listede
+ * ikinci kez gösterilmez.
  */
 export default function ReviewStep({
   analysis, multi, onMulti, selected, onSelect, selectedSet, onToggle, renewMode, renewTargetId, onOpenCert, onRenewTarget, onFixPassword,
+  extraction = null,
 }) {
   const t = useT()
   const uid = useId()
   const entries = Array.isArray(analysis?.entries) ? analysis.entries : []
+  const fileWarnings = (Array.isArray(analysis?.warnings) ? analysis.warnings : [])
+    .filter((w) => !(extraction && w?.code === 'PRIVATE_KEY_KEPT_LOCAL'))
+  // Birden çok seçim yalnız BAĞIMSIZ zincir başları arasında (tek baş varsa anahtar hiç çizilmez)
   const canMulti = !renewMode && entries.length > 1
   const full = selectedSet.size >= MAX_BATCH
+  const grouped = entries.length > 0 && Number(analysis?.certificate_count) > entries.length
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -56,10 +68,17 @@ export default function ReviewStep({
         {analysis?.format && <Badge variant="secondary" data-slot="mcert-format" className="font-mono">{analysis.format}</Badge>}
         {analysis?.file_name && <span className="min-w-0 truncate font-semibold" title={analysis.file_name}>{analysis.file_name}</span>}
         {analysis?.size_bytes != null && <span className="text-xs text-muted-foreground tabular-nums">{sizeLabel(analysis.size_bytes)}</span>}
-        <span className="text-xs text-muted-foreground">· {t('mcert.review.found', entries.length)}</span>
+        <span className="text-xs text-muted-foreground">· {t('mcert.review.found', grouped ? Number(analysis.certificate_count) : entries.length)}</span>
       </div>
+      {/* 2026-10-07: dosyadaki ara / kök sertifikalar ayrı kayıt değil — takip edilen sertifikanın zinciri olarak gösterilir */}
+      {grouped && (
+        <p data-slot="mcert-grouped" className="m-0 text-xs text-muted-foreground">
+          {t('mcert.review.grouped', analysis.certificate_count, entries.length)}
+        </p>
+      )}
 
-      <WarningList warnings={analysis?.warnings} label={t('mcert.review.fileWarnings')} />
+      {extraction && <KeptLocalNote extraction={extraction} />}
+      <WarningList warnings={fileWarnings} label={t('mcert.review.fileWarnings')} />
       {/* JKS/JCEKS/BKS yanlış şifre: sertifikalar yine okundu — devam edilebilir ya da şifre düzeltilip yeniden analiz edilir */}
       {onFixPassword && (analysis?.warnings || []).some((w) => w?.code === 'PASSWORD_WRONG' || w?.code === 'PASSWORD_REQUIRED') && (
         <div data-slot="mcert-fix-password" className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center">

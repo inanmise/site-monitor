@@ -104,7 +104,7 @@ Her taramada şu bilgiler elde edilip kaydedilir:
 | Dağıtım durumu | `OK` / `INCOMPLETE` |
 | OCSP / CRL URL | Canlı iptal kontrolü ve iptal listesi adresleri |
 
-**Dosyadan sertifika takibi (2026-10-06).** Ağ üzerinden erişilemeyen sertifikalar da takip edilir: OpenShift'teki keystore / truststore JKS'leri, CA'dan gelen `.pem` dosyaları, zinciri tamamlanmış PFX'ler. **Manuel Sertifikalar** sayfasından ya da "Domain Ekle" düğmesindeki **Dosyadan sertifika ekle** seçeneğinden dosyayı yüklersiniz. Desteklenen biçimler: PEM / CRT / CER (Base64 ya da DER), DER, P7B / P7C, PFX / P12 (parolayla), JKS / JCEKS / BKS, birden çok sertifika içeren ZIP ve yapıştırılan PEM metni. CSR (sertifika isteği) ya da yalnız özel anahtar yüklemeyin; CA'dan dönen sertifikayı ya da zinciri tamamlanmış PFX / JKS'yi yükleyin. Yüklenen dosya analiz edilir: geçerlilik tarihleri, konu / SAN, anahtar ve imza algoritması, zincirin tamlığı, güven durumu ve uyarılar (süresi dolmuş, henüz geçerli değil, kendinden imzalı, zayıf anahtar, CSR ya da özel anahtar bulundu …). Bir truststore'daki birden çok CA sertifikası tek seferde takibe alınabilir. Takip ağdan taranan sertifikalarla birebir aynıdır: aynı eşikler ve kritiklik katmanı, aynı alarm / eskalasyon / bildirim akışı, dashboard, uyarılar, yenileme tavsiyesi, öngörü, raporlar ve envanter alanları. Bu kayıtlar "Manuel" rozetiyle işaretlenir. Yenileme yeni sürüm yüklemektir: takip yeni sertifikaya geçer, eski sürümler silinmez ve sertifika penceresindeki **Sürümler** sekmesinde (parmak izi, geçerlilik, yükleyen, anahtar değişti mi, SAN farkı, PEM indirme) görülür. Özel anahtarlar ve parolalar hiçbir zaman saklanmaz; yalnız açık sertifika zinciri tutulur. Sertifikanın firmalar arasındaki temin süreci Site Monitor'ün dışındadır; burada yalnız son kullanma tarihi takip edilir.
+**Dosyadan sertifika takibi (2026-10-06).** Ağ üzerinden erişilemeyen sertifikalar da takip edilir: OpenShift'teki keystore / truststore JKS'leri, CA'dan gelen `.pem` dosyaları, zinciri tamamlanmış PFX'ler. **Manuel Sertifikalar** sayfasından ya da "Domain Ekle" düğmesindeki **Dosyadan sertifika ekle** seçeneğinden dosyayı yüklersiniz. Desteklenen biçimler: PEM / CRT / CER (Base64 ya da DER), DER, P7B / P7C, PFX / P12 (parolayla), JKS / JCEKS / BKS, birden çok sertifika içeren ZIP ve yapıştırılan PEM metni. CSR (sertifika isteği) ya da yalnız özel anahtar yüklemeyin; CA'dan dönen sertifikayı ya da zinciri tamamlanmış PFX / JKS'yi yükleyin. Yüklenen dosya analiz edilir: geçerlilik tarihleri, konu / SAN, anahtar ve imza algoritması, zincirin tamlığı, güven durumu ve uyarılar (süresi dolmuş, henüz geçerli değil, kendinden imzalı, zayıf anahtar, CSR ya da özel anahtar bulundu …). Bir truststore'daki birden çok CA sertifikası tek seferde takibe alınabilir. Takip ağdan taranan sertifikalarla birebir aynıdır: aynı eşikler ve kritiklik katmanı, aynı alarm / eskalasyon / bildirim akışı, dashboard, uyarılar, yenileme tavsiyesi, öngörü, raporlar ve envanter alanları. Bu kayıtlar "Manuel" rozetiyle işaretlenir. Yenileme yeni sürüm yüklemektir: takip yeni sertifikaya geçer, eski sürümler silinmez ve sertifika penceresindeki **Sürümler** sekmesinde (parmak izi, geçerlilik, yükleyen, anahtar değişti mi, SAN farkı, PEM indirme) görülür. Dosyada aynı zincirin parçaları (root, intermediate, leaf) varsa zincirin ucundaki sertifika TEK kayıt olarak takip edilir, diğerleri onun zinciri olarak gösterilir; sertifika penceresinin SSL sekmesi zinciri ağdan izlenen sertifikalarla aynı kartlarla çizer; "Hiyerarşi (tarayıcı gibi)" geçişiyle (ve Sürümler sekmesindeki "Görüntüle" ile) zincir tarayıcılardaki gibi kökten yaprağa alt alta, seçilen sertifikanın ayrıntıları ve tek tek PEM indirme ile görüntülenir. Takip adı sonradan Düzenle'den değiştirilebilir (sürümler ve geçmiş yeni ada taşınır). Yenilemede güncel sürümle aynı sertifika yüklenirse "Yine de yükle" ile yeni sürüm olarak kaydedilebilir; eski sürümler Sürümler sekmesinden kalıcı olarak silinebilir (güncel sürüm silinmez). Dosya tarayıcınızda açılır: özel anahtarlar ve PFX/JKS parolası tarayıcıdan hiç çıkmaz, sunucuya yalnız açık sertifikalar gönderilir ve yalnız açık sertifika zinciri saklanır. BKS biçimi tarayıcıda açılamaz; `keytool -exportcert -rfc` ile PEM'e çevirip yükleyin. Sertifikanın firmalar arasındaki temin süreci Site Monitor'ün dışındadır; burada yalnız son kullanma tarihi takip edilir.
 
 ### 3.2 Zincir Doğrulama ve İptal Kontrolü
 
@@ -467,16 +467,16 @@ Bunlar sistemin en hızlı büyüyen tablolarıdır ve saklama politikasının a
 | `sql_query_history` | SQL Playground sorgu geçmişi |
 | `login_issue_reports` / `login_issue_report_images` / `login_issue_mail_logs` | "Sorun Bildir" kayıtları, ekran görüntüleri ve posta geçmişi |
 
-### 6.7 Soft Delete
+### 6.7 Silme Kalıcıdır
 
-Envanter kayıtları fiziksel olarak silinmez:
+2026-10-07'den beri sertifika (ağdan izlenen ya da dosyadan yüklenen) ve izleme silme her durumda **kalıcıdır**; çöp kutusu ve geri yükleme yoktur. Sertifika silinirken önce açık alarmları kapatılır, ardından tek işlemde kontrol geçmişi, son durum, notlar, yüklenen sürümler, envanterden türeyen Port/DNS izlemeleri ve kontrolleri, uptime kayıtları, zayıf algoritma istisnası ve tanılama geçmişi silinir. Kapalı alarm kayıtları, denetim kaydı ve değişiklik geçmişi iz olarak kalır. Silinen bir kaydın adı hemen boşalır; aynı adla yeni kayıt eklenebilir. Kaydı silmeden izlemeyi durdurmak için "Aktif" anahtarını kapatın.
 
 ```sql
-deleted_at VARCHAR(255)  -- NULL = aktif, dolu = silinmiş
-active     BOOLEAN       -- silinince FALSE yapılır
+active     BOOLEAN       -- FALSE = duraklatıldı (kayıt durur, izleme yapılmaz)
+deleted_at VARCHAR(255)  -- eski çöp kutusu kolonu; artık yazılmaz
 ```
 
-Böylece tüm geçmiş veri korunur ve silinen sertifikaları "Silinenleri Göster" görünümünden geri yükleyebilirsiniz.
+Bu sürüme geçişte çöp kutusunda kalan eski kayıtlar ilk açılışta bir defaya mahsus kalıcı olarak silinir ve adları denetim kaydına yazılır.
 
 ---
 
@@ -1229,7 +1229,7 @@ Sertifika vadelerinin analitik panelidir: KPI kartları (Kritik ≤7 gün / Yük
 
 ### 14.12 Sertifika Envanteri
 
-İzlenecek domainlerin kayıt defteridir. Tabloda domain+port, tier rozeti, takım, sahip, açıklama, aktiflik ve aksiyonlar (Düzenle / Devret / Sil / Geri Yükle) görünür. Global admin tüm envanteri yönetir; PO liderlik ettiği takımların kayıtlarını yönetir; müdür ve USER/AUDIT salt-okuma görür.
+İzlenecek domainlerin kayıt defteridir. Tabloda domain+port, tier rozeti, takım, sahip, açıklama, aktiflik ve aksiyonlar (Düzenle / Devret / Sil) görünür. Global admin tüm envanteri yönetir; PO liderlik ettiği takımların kayıtlarını yönetir; müdür ve USER/AUDIT salt-okuma görür.
 
 Yeni domain eklerken beş bölümlü form doldurursunuz:
 
@@ -1239,7 +1239,7 @@ Yeni domain eklerken beş bölümlü form doldurursunuz:
 - Açıklamalar: genel açıklama + süreç notu.
 - Gelişmiş: beklenen parmak izi (SHA-256, dağıtım kontrolü için) ve beklenen subject.
 
-Silme yumuşaktır (soft delete): kayıt gizlenir ama geçmişi korunur; "Silinenleri Göster" ile geri yüklersiniz. Devret aksiyonu sertifikayı başka takıma taşır. Domain adını değiştirirseniz tüm geçmiş atomik taşınır (bkz. §3.9).
+Silme kalıcıdır ve geri alınamaz: onay penceresi silinecek kayıtları ve neyin birlikte silineceğini söyler; kart onay anında listeden kalkar. Devret aksiyonu sertifikayı başka takıma taşır. Domain adını değiştirirseniz tüm geçmiş atomik taşınır (bkz. §3.9).
 
 ### 14.13 Zayıf Algoritma Raporu
 
@@ -2010,7 +2010,7 @@ Kılavuz boyunca terimler tek biçimde kullanılır; İngilizce arayüz metinler
 | OCSP / CRL | Sertifika iptal kontrol yöntemleri; OCSP birincil, CRL yedektir. |
 | Dağıtık kilit | Çok replikalı ortamda taramanın tek pod'da çalışmasını sağlayan veritabanı kilidi. |
 | Bootstrap admin | `SITE_MONITOR_USERNAME` ile tanımlı, ayarlar ekranına her zaman erişebilen yerel yönetici hesabı. |
-| Soft delete | Kaydı fiziksel silmek yerine pasifleyip gizleme; geri yüklenebilir. |
+| Kalıcı silme | Kaydın ve ona bağlı verinin geri alınamaz biçimde silinmesi; Site Monitor'de her silme kalıcıdır (durdurmak için "Aktif" kapatılır). |
 | Provizyon | LDAP/AD kullanıcısının ilk girişte otomatik oluşturulması ve rol/takım atanması. |
 | Webhook | Slack/Teams kanallarına yapılan HTTP bildirimi. |
 | CID inline | E-posta içine gömülü görsel eki (`cid:` referansı); harici kaynak engelli istemcilerde de görünür. |

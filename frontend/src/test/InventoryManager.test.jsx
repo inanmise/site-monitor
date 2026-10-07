@@ -27,9 +27,6 @@ vi.mock('../api/client', () => ({
     getAlerts: vi.fn(),
     bulkInventory: vi.fn(),
     deleteInventory: vi.fn(),
-    restoreInventory: vi.fn(),
-    purgeInventory: vi.fn(),
-    purgeDeletedInventory: vi.fn(),
     transferCertSy: vi.fn(),
   } }),
 }))
@@ -56,6 +53,7 @@ vi.mock('../utils/exportInventory', () => ({
 
 import { api } from '../api/client'
 import InventoryManager from '../components/admin/InventoryManager.jsx'
+import { __resetDeletedMarks } from '../utils/recentlyDeleted.js'
 
 const ITEMS = [
   { id: 1, domain: 'aktif-bir.example.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
@@ -88,10 +86,8 @@ describe('InventoryManager', () => {
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
     api.admin.getAlerts.mockResolvedValue({ success: true, total: 0 })
     api.admin.bulkInventory.mockResolvedValue({ success: true, data: { processed: 2, skipped: 0 } })
-    api.admin.deleteInventory.mockResolvedValue({ success: true })
-    api.admin.purgeInventory.mockResolvedValue({ success: true })
-    api.admin.purgeDeletedInventory.mockResolvedValue({ success: true, data: { purged: 1 } })
-    api.admin.restoreInventory.mockResolvedValue({ success: true })
+    api.admin.deleteInventory.mockResolvedValue({ success: true, permanent: true })
+    __resetDeletedMarks()
   })
 
   it('silinmemiş kayıtları listeler; silinmiş kayıt varsayılan görünümde GİZLİ', async () => {
@@ -101,59 +97,67 @@ describe('InventoryManager', () => {
     expect(screen.queryByText('silinmis.example.com')).toBeNull()
   })
 
-  // ── Geri alınamaz: kalıcı silme ──────────────────────────────────────────────
+  // ── Geri alınamaz: silme KALICI (2026-10-07) — çöp kutusu yok ──────────────────
 
-  it('KALICI SİL onay ister; iptal edilirse uç ÇAĞRILMAZ (geri dönüşü yok)', async () => {
-    confirmMock.mockResolvedValue(false)
+  it('çöp kutusu arayüzü YOK: "Silinmiş" kartı / süzgeci, "Geri Getir", "Kalıcı Sil" ve "Tümünü kalıcı sil" bandı çizilmez', async () => {
     renderIm()
     await screen.findByText('aktif-bir.example.com')
-
-    fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))   // 'deleted' filtre pili
-    await openRowMenu('silinmis.example.com')
-    fireEvent.click(await screen.findByText(/^Kalıcı Sil$|^Permanent Delete$/))
-
-    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
-    expect(api.admin.purgeInventory).not.toHaveBeenCalled()
-  })
-
-  it('kalıcı silme onaylanınca TAM OLARAK o satırın id\'si gider', async () => {
-    renderIm()
-    await screen.findByText('aktif-bir.example.com')
-
-    fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
-    await openRowMenu('silinmis.example.com')
-    fireEvent.click(await screen.findByText(/^Kalıcı Sil$|^Permanent Delete$/))
-
-    await waitFor(() => expect(api.admin.purgeInventory).toHaveBeenCalledWith(4))
-    expect(api.admin.purgeInventory).toHaveBeenCalledTimes(1)
-  })
-
-  it('TÜMÜNÜ kalıcı sil onay ister; iptalde toplu purge ucu çağrılmaz', async () => {
-    confirmMock.mockResolvedValue(false)
-    renderIm()
-    await screen.findByText('aktif-bir.example.com')
-    fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
-
-    fireEvent.click(await screen.findByRole('button', { name: /Tüm Silinmişleri|Permanently Delete All/i }))
-
-    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
-    expect(api.admin.purgeDeletedInventory).not.toHaveBeenCalled()
-  })
-
-  it('KALICI SİL yalnız ADMIN\'e görünür — TEAM_ADMIN menüsünde yok', async () => {
-    renderIm('TEAM_ADMIN')
-    await screen.findByText('aktif-bir.example.com')
-
-    fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
-    await openRowMenu('silinmis.example.com')
-
+    expect(tile('deleted')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Tüm Silinmişleri|Permanently Delete All/i })).toBeNull()
+    await openRowMenu('aktif-bir.example.com')
+    expect(await screen.findByText(/^Sil$|^Delete$/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Geri Getir$|^Restore$/)).toBeNull()
     expect(screen.queryByText(/^Kalıcı Sil$|^Permanent Delete$/)).toBeNull()
-    expect(await screen.findByText(/^Geri Getir$|^Restore$/)).toBeInTheDocument()   // geri getirme açık
+  })
+
+  it('silme onayı KALICI olduğunu söyler (danger, ad + geri alınamaz); iptalde uç ÇAĞRILMAZ', async () => {
+    confirmMock.mockResolvedValue(false)
+    renderIm()
+    await openRowMenu('aktif-bir.example.com')
+    fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
+    const arg = confirmMock.mock.calls[0][0]
+    expect(arg.variant).toBe('danger')
+    expect(arg.title).toMatch(/Kalıcı olarak sil|Delete permanently/)
+    expect(arg.confirmText).toMatch(/Kalıcı olarak sil|Delete permanently/)
+    expect(arg.message).toContain('aktif-bir.example.com')
+    expect(arg.message).toMatch(/geri alınamaz|can't be undone/)
+    expect(arg.message).not.toMatch(/Silinmişleri göster|Show deleted/)
+    expect(api.admin.deleteInventory).not.toHaveBeenCalled()
+  })
+
+  it('onaylanınca TAM o id gider; satır liste yüklemesi BEKLENMEDEN düşer, bayat yükleme onu GERİ GETİRMEZ', async () => {
+    renderIm()
+    await screen.findByText('aktif-bir.example.com')
+    let release
+    api.admin.getInventory.mockImplementation(() => new Promise((r) => { release = r }))   // tazeleme askıda
+    await openRowMenu('aktif-iki.example.com')
+    fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
+
+    await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalledWith(2))
+    await waitFor(() => expect(screen.queryByText('aktif-iki.example.com')).toBeNull())   // tazeleme hâlâ askıda
+    expect(release).toBeTypeOf('function')
+    release({ success: true, data: ITEMS })   // başka pod'un bayat önbelleği: silinen kayıt hâlâ listede
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('aktif-iki.example.com')).toBeNull()
+    expect(screen.getByText('aktif-bir.example.com')).toBeInTheDocument()
+  })
+
+  it('silme sunucuda reddedilirse satır KALIR ve hata söylenir', async () => {
+    api.admin.deleteInventory.mockResolvedValue({ success: false, error: 'yetki yok' })
+    renderIm()
+    await openRowMenu('aktif-bir.example.com')
+    fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('yetki yok'))
+    expect(screen.getByText('aktif-bir.example.com')).toBeInTheDocument()
   })
 
   // ── Toplu eylemler: yanlış küme = görünmeyen domainlerin silinmesi ───────────
 
-  it('toplu silme SEÇİLİ id kümesini ve doğru aksiyonu gönderir', async () => {
+  it('toplu silme SEÇİLİ id kümesini ve doğru aksiyonu gönderir; onay KALICI ve adları sayar; silinenler ANINDA düşer', async () => {
+    api.admin.bulkInventory.mockResolvedValue({ success: true, data: { processed: 2, skipped: 0, permanent: true,
+      deleted_domains: ['aktif-bir.example.com', 'pasif.example.com'] } })
     renderIm()
     await screen.findByText('aktif-bir.example.com')
 
@@ -162,9 +166,17 @@ describe('InventoryManager', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Sil$|^Delete$/ }))
 
     await waitFor(() => expect(api.admin.bulkInventory).toHaveBeenCalled())
+    const opts = confirmMock.mock.calls[0][0]
+    expect(opts.variant).toBe('danger')
+    expect(opts.message).toContain('aktif-bir.example.com')
+    expect(opts.message).toContain('pasif.example.com')
+    expect(opts.message).toMatch(/geri alınamaz|can't be undone/)
     const [ids, action] = api.admin.bulkInventory.mock.calls[0]
     expect([...ids].sort()).toEqual([1, 3])
     expect(action).toBe('delete')
+    await waitFor(() => expect(screen.queryByText('pasif.example.com')).toBeNull())
+    expect(screen.queryByText('aktif-bir.example.com')).toBeNull()
+    expect(screen.getByText('aktif-iki.example.com')).toBeInTheDocument()
   })
 
   it('toplu silme onay ister; iptalde HİÇBİR kayıt gitmez', async () => {
@@ -206,7 +218,7 @@ describe('InventoryManager', () => {
 
   // ── Tekil silme: açık alarm uyarısı ─────────────────────────────────────────
 
-  it('açık alarmı olan domain silinirken sayım okunur ve UYARI varyantıyla onay istenir', async () => {
+  it('açık alarmı olan domain silinirken sayım okunur ve onay metninde söylenir (kalıcı silme: hep danger)', async () => {
     api.admin.getAlerts.mockResolvedValue({ success: true, total: 3 })
     renderIm()
     await openRowMenu('aktif-bir.example.com')
@@ -214,7 +226,7 @@ describe('InventoryManager', () => {
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     const arg = confirmMock.mock.calls[0][0]
-    expect(arg.variant).toBe('warning')
+    expect(arg.variant).toBe('danger')
     expect(arg.message).toContain('3')
     await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalledWith(1))
   })
@@ -431,7 +443,7 @@ describe('InventoryManager — shadcn üst çubuk ve Devret penceresi', () => {
     pressMenuTrigger(screen.getByRole('button', { name: /^Export$|Dışa Aktar/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/i }))
     await waitFor(() => expect(exportInventoryCsv).toHaveBeenCalled())
-    expect(api.admin.getInventory).toHaveBeenCalledWith(false, 'mine')   // dışa aktarma ekrandaki kapsamı taşır (2026-09-26)
+    expect(api.admin.getInventory).toHaveBeenCalledWith('mine')   // dışa aktarma ekrandaki kapsamı taşır (2026-09-26); çöp kutusu parametresi yok (2026-10-07)
   })
 
   it('Devret: satır menüsünden açılan pencerede yeni takım seçilir ve TAM o kayıt aktarılır', async () => {

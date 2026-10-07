@@ -1,9 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { Download, FileStack, FileUp, KeyRound, Layers, RefreshCw } from 'lucide-react'
+import { Copy, Download, Eye, FileStack, FileUp, KeyRound, Layers, RefreshCw, Trash2 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
-import { LoadingBlock } from '../ui/Progress.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import { LoadingBlock, Spinner } from '../ui/Progress.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import { dateOnly } from '../certcard/certCardModel.js'
@@ -15,6 +17,8 @@ import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 
 const UploadWizard = lazy(() => import('./UploadWizard.jsx'))
+// "Görüntüle" (2026-10-07): sürümün tarayıcı gibi sertifika hiyerarşisi — iç içe pencere, yalnız açılınca yüklenir
+const VersionHierarchyDialog = lazy(() => import('./VersionHierarchyDialog.jsx'))
 
 const CHIP = 'h-auto min-h-5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold whitespace-normal'
 
@@ -34,29 +38,53 @@ function daysFrom(iso) {
   return Number.isFinite(end) ? Math.floor((end - Date.now()) / 86400000) : null
 }
 
-/** Tek sürüm kartı — güncel olan vurgulu; önceki sürüme göre fark (anahtar, SAN) ve PEM indirme. */
-function VersionCard({ v, inventoryId, current }) {
+/**
+ * Tek sürüm kartı — güncel olan vurgulu; önceki (kalan) sürüme göre fark (anahtar, SAN), "aynı sertifika yeniden
+ * yüklendi" notu, PEM indirme ve — yalnız ESKİ sürümde, yönetebilen kullanıcıya — kalıcı "Sil" (`onDelete`).
+ */
+function VersionCard({ v, inventoryId, current, onDelete, onView, deleting = false }) {
   const t = useT()
   const added = Array.isArray(v.san_added) ? v.san_added : []
   const removed = Array.isArray(v.san_removed) ? v.san_removed : []
   const d = current ? daysFrom(v.not_after) : null
+  const label = t('mcert.versionShort', v.version)
   return (
     <Card data-slot="mcert-version" data-version={v.version} data-current={v.current ? 'true' : 'false'}
       className={cn('min-w-0 gap-3 rounded-[10px] px-3 py-3 shadow-none sm:px-4', v.current && 'border-primary bg-primary/5 ring-1 ring-primary/30')}>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <Badge variant={v.current ? 'default' : 'secondary'} className="h-6 rounded-md px-2 text-xs font-bold tabular-nums">{t('mcert.versionShort', v.version)}</Badge>
+        <Badge variant={v.current ? 'default' : 'secondary'} className="h-6 rounded-md px-2 text-xs font-bold tabular-nums">{label}</Badge>
         {v.current
           ? <Badge variant="outline" data-slot="mcert-version-current" className={cn(CHIP, 'border-success/40 bg-success/10 text-success dark:bg-success/20')}>{t('mcert.ver.current')}</Badge>
           : <span className="text-xs text-muted-foreground">{t('mcert.ver.superseded', v.superseded_at ? formatDate(v.superseded_at) : '—', v.superseded_by || '—')}</span>}
+        {v.same_as_previous === true && (
+          <Badge variant="outline" data-slot="mcert-same-reupload" className={cn(CHIP, 'border-sky-500/35 bg-sky-500/10 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300')}>
+            <Copy aria-hidden="true" className="size-3" />{t('mcert.ver.sameAsPrevious')}
+          </Badge>
+        )}
         {v.key_changed === true && <Badge variant="outline" data-slot="mcert-key-changed" className={cn(CHIP, 'border-violet-500/35 bg-violet-500/10 text-violet-800 dark:bg-violet-500/20 dark:text-violet-300')}><KeyRound aria-hidden="true" className="size-3" />{t('mcert.ver.keyChanged')}</Badge>}
-        {v.key_changed === false && <Badge variant="outline" data-slot="mcert-key-same" className={cn(CHIP, 'border-amber-500/35 bg-amber-500/10 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300')}><KeyRound aria-hidden="true" className="size-3" />{t('mcert.ver.keySame')}</Badge>}
-        <Button asChild variant="outline" size="sm" className="ml-auto h-9 pointer-coarse:h-10">
-          <a href={api.manualCerts.pemUrl(inventoryId, v.id)} download data-slot="mcert-pem"
-            aria-label={t('a11y.rowAction', t('mcert.versionShort', v.version), t('mcert.act.pem'))}
-            onClick={(e) => { e.preventDefault(); downloadFromUrl(api.manualCerts.pemUrl(inventoryId, v.id)) }}>
-            <Download aria-hidden="true" />{t('mcert.act.pemShort')}
-          </a>
-        </Button>
+        {v.key_changed === false && v.same_as_previous !== true && <Badge variant="outline" data-slot="mcert-key-same" className={cn(CHIP, 'border-amber-500/35 bg-amber-500/10 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300')}><KeyRound aria-hidden="true" className="size-3" />{t('mcert.ver.keySame')}</Badge>}
+        <span className="ml-auto flex flex-wrap items-center gap-1.5">
+          {onView && v.id != null && (
+            <Button type="button" variant="outline" size="sm" data-slot="mcert-version-view" className="h-9 pointer-coarse:h-10"
+              aria-label={t('a11y.rowAction', label, t('chier.viewVersion'))} onClick={() => onView(v)}>
+              <Eye aria-hidden="true" />{t('chier.viewAction')}
+            </Button>
+          )}
+          <Button asChild variant="outline" size="sm" className="h-9 pointer-coarse:h-10">
+            <a href={api.manualCerts.pemUrl(inventoryId, v.id)} download data-slot="mcert-pem"
+              aria-label={t('a11y.rowAction', label, t('mcert.act.pem'))}
+              onClick={(e) => { e.preventDefault(); downloadFromUrl(api.manualCerts.pemUrl(inventoryId, v.id)) }}>
+              <Download aria-hidden="true" />{t('mcert.act.pemShort')}
+            </a>
+          </Button>
+          {onDelete && !v.current && (
+            <Button type="button" variant="outline" size="sm" data-slot="mcert-version-delete" disabled={deleting} aria-busy={deleting || undefined}
+              className="h-9 text-destructive hover:bg-destructive/10 hover:text-destructive pointer-coarse:h-10"
+              aria-label={t('a11y.rowAction', label, t('mcert.ver.delete'))} onClick={() => onDelete(v)}>
+              {deleting ? <Spinner size={12} inline decorative /> : <Trash2 aria-hidden="true" />}{t('mcert.ver.delete')}
+            </Button>
+          )}
+        </span>
       </div>
       <dl className="m-0 grid min-w-0 grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
         <Fact label={t('mcert.entry.subject')} full>{v.subject_dn || v.subject}</Fact>
@@ -97,15 +125,30 @@ function VersionCard({ v, inventoryId, current }) {
  * (`GET /admin/inventory/by-domain`), ayrıntı `GET /manual-certs/{id}`: güncel sürüm kartı (vurgulu) + önceki sürümler
  * (yeniden eskiye) — parmak izi (kopyala), geçerlilik, veren, yükleyen/zaman, dosya/biçim, not, kim/ne zaman yerini aldı,
  * önceki sürüme göre anahtar değişimi ve SAN farkı, her sürüm için PEM indir. "Yeni sürüm yükle" sihirbazı yenileme
- * kipinde açar (salt okunurda yok). Eski sürümler hiçbir zaman silinmez; her an tek sertifika (güncel) izlenir.
+ * kipinde açar (salt okunurda yok). Her an tek sertifika (güncel) izlenir.
  *
- * <p>Test kancaları: `data-slot="mcert-versions"`, kart `mcert-version` (+ `data-current`, `data-version`), `mcert-pem`.
+ * <p>Eski sürümü kalıcı silme (2026-10-07, kullanıcı isteği): yalnız GÜNCEL OLMAYAN sürümde ve "Yeni sürüm yükle" ile aynı
+ * koşulda (yazma izni + kaydın takım kapsamı) "Sil" → tehlike onayı → `DELETE /manual-certs/{id}/versions/{vid}` →
+ * bildirim + liste SESSİZ tazelenir (bileşen sökülmez, açık hiçbir şey sıfırlanmaz). 409 CURRENT_VERSION açıklanır.
+ * "Yine de yükle" ile aynı sertifikanın yeniden yüklendiği sürüm "Aynı sertifika yeniden yüklendi" notunu taşır.
+ *
+ * <p>"Görüntüle" (2026-10-07, kullanıcı isteği): her sürüm kartında — sürümün sertifika hiyerarşisini tarayıcı gibi
+ * (kök → ara → yaprak, seçili sertifikanın ayrıntısı, tek sertifika PEM indirme) iç içe pencerede açar
+ * (VersionHierarchyDialog → certmodal/ManualCertHierarchy; okuma izniyle, salt okunurda da).
+ *
+ * <p>Test kancaları: `data-slot="mcert-versions"`, kart `mcert-version` (+ `data-current`, `data-version`), `mcert-pem`,
+ * `mcert-version-delete`, `mcert-same-reupload`, `mcert-version-view`.
  */
 export default function ManualCertVersions({ domain, readOnly = false, onRenewed, onOpenCert }) {
   const t = useT()
   const canEditInventory = usePermissions().canEdit('inventory.crud')
+  const { showConfirm } = useDialog()
+  const toast = useToast()
   const [state, setState] = useState({ status: 'loading' })
   const [wizard, setWizard] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
+  // "Görüntüle" ile açılan sürüm (tarayıcı gibi hiyerarşi penceresi) — null = kapalı
+  const [viewing, setViewing] = useState(null)
 
   /**
    * `silent` (yeni sürüm kaydedildikten sonra): mevcut liste ekranda kalır, "yükleniyor" durumuna GEÇİLMEZ ve hata
@@ -129,6 +172,35 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
   }, [domain])
 
   useEffect(() => { load() }, [load])
+
+  /** Eski sürümü kalıcı sil — onay, istek, bildirim, sessiz tazeleme. */
+  async function deleteVersion(v) {
+    if (!v || v.current || deletingId != null || state.status !== 'ready') return
+    const ok = await showConfirm({
+      title: t('mcert.ver.deleteTitle', v.version),
+      message: t('mcert.ver.deleteMessage', v.version),
+      confirmText: t('mcert.ver.deleteConfirm'),
+      variant: 'danger',
+    })
+    if (!ok) return
+    setDeletingId(v.id)
+    let res = null
+    try {
+      res = await api.manualCerts.deleteVersion(state.id, v.id)
+    } catch (e) {
+      res = { success: false, error: e?.message }
+    } finally {
+      setDeletingId(null)
+    }
+    if (res?.success) {
+      toast.success(t('mcert.ver.deleted', v.version))
+      load({ silent: true })
+      return
+    }
+    if (res == null) return   // oturum düştü / bakım — istemci kendi akışını yürütür
+    toast.error(res.code === 'CURRENT_VERSION' ? t('mcert.ver.deleteCurrent') : (res.error || t('mcert.ver.deleteFailed')))
+    if (res.code === 'CURRENT_VERSION' || res.status === 404) load({ silent: true })
+  }
 
   if (state.status === 'loading') return <LoadingBlock label={t('modal.loading')} fullWidth />
   if (state.status === 'error') {
@@ -162,13 +234,18 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
         )}
       </div>
       {current
-        ? <VersionCard v={current} inventoryId={state.id} current />
+        ? <VersionCard v={current} inventoryId={state.id} current onView={setViewing} />
         : <StatusBlock tone="neutral" icon={FileStack} title={t('mcert.ver.none')} />}
       {older.length > 0 && (
         <section className="flex min-w-0 flex-col gap-2" aria-label={t('mcert.ver.history')}>
           <h4 className="m-0 text-sm font-semibold text-muted-foreground">{t('mcert.ver.history')}</h4>
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
-            {older.map((v) => <li key={v.id ?? v.version}><VersionCard v={v} inventoryId={state.id} current={false} /></li>)}
+            {older.map((v) => (
+              <li key={v.id ?? v.version}>
+                <VersionCard v={v} inventoryId={state.id} current={false} onView={setViewing}
+                  onDelete={canRenew ? deleteVersion : undefined} deleting={deletingId != null && deletingId === v.id} />
+              </li>
+            ))}
           </ol>
         </section>
       )}
@@ -176,6 +253,11 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
         <Suspense fallback={null}>
           <UploadWizard renewTarget={{ inventory_id: state.id, domain }} onClose={() => setWizard(false)}
             onDone={() => { load({ silent: true }); onRenewed?.() }} onOpenCert={onOpenCert} />
+        </Suspense>
+      )}
+      {viewing && (
+        <Suspense fallback={null}>
+          <VersionHierarchyDialog inventoryId={state.id} version={viewing} onClose={() => setViewing(null)} />
         </Suspense>
       )}
     </div>

@@ -28,10 +28,11 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     /** Kaynağa göre AKTİF kayıtlar (manuel sertifika çevrim-dışı süpürmesi). */
     List<CertificateInventory> findByCertSourceAndActiveTrueOrderByDomainAsc(String certSource);
     /**
-     * Verilen adlardan envanterde (silinmiş dahil) zaten bulunanlar — küçük harfle; takip adı önerisinin çakışma
-     * denetimi tek sorguda yapılır (satır başına sorgu yok). Çağıran boş koleksiyonla çağırmamalı.
+     * Verilen adlardan envanterde zaten bulunanlar — küçük harfle; takip adı önerisinin çakışma denetimi tek sorguda
+     * yapılır (satır başına sorgu yok). Çağıran boş koleksiyonla çağırmamalı. Silme KALICI (2026-10-07): eski sürümden
+     * kalmış yumuşak silinmiş satır bir adı tutmaz (kayıt anında {@code PermanentDeletionService.purgeLegacyBinRows} siler).
      */
-    @Query("SELECT LOWER(c.domain) FROM CertificateInventory c WHERE LOWER(c.domain) IN :keys")
+    @Query("SELECT LOWER(c.domain) FROM CertificateInventory c WHERE LOWER(c.domain) IN :keys AND c.deletedAt IS NULL")
     List<String> findExistingDomainsLower(@Param("keys") Collection<String> keys);
     /** Aktif envanter (alan adı, SY takımı) çiftleri — alarm gürültü analizinin kapsam/takım eşlemesi (2026-10-01,
      *  performans: tam entity yerine iki sütun). Sütunlar: {@code [domain, teamId]}. */
@@ -48,8 +49,15 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     /**
      * Mükerrer alan adı (2026-09-28): çakışan kaydın KENDİSİ — 409 yanıtı sahibi takımı adıyla söyler
      * ({@code DOMAIN_EXISTS}). Harf duyarsız: eski satırlar karışık harfle kalmış olabilir; birden çoksa en eskisi.
+     * Silme KALICI (2026-10-07): çağıranlar eski sürümden kalmış yumuşak silinmiş satırı ({@code deletedAt != null})
+     * çakışma SAYMAZ — önce {@link #findByDomainIgnoreCaseAndDeletedAtIsNotNull} ile kalıcı silinir, sonra bu sorgu koşar.
      */
     Optional<CertificateInventory> findFirstByDomainIgnoreCaseOrderByIdAsc(String domain);
+    /**
+     * ESKİ sürümden kalmış yumuşak silinmiş satırlar (harf duyarsız) — aynı ad yeniden kullanılırken kalıcı silinir
+     * ({@code PermanentDeletionService.purgeLegacyBinRows}). Tek seferlik temizlikten sonra hep boş döner.
+     */
+    List<CertificateInventory> findByDomainIgnoreCaseAndDeletedAtIsNotNull(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */

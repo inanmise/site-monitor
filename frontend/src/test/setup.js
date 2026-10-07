@@ -56,3 +56,8 @@ import { afterEach } from 'vitest'
 afterEach(() => {
   try { window.history.replaceState({}, '', '/') } catch { /* jsdom */ }
 })
+
+// Silme işaretleri (utils/recentlyDeleted, 2026-10-07) modül düzeyinde yaşar: bir testin sildiği izleme/sertifika
+// sonraki testte AYNI kimlikle çizilen kartı gizlemesin.
+import { __resetDeletedMarks } from '../utils/recentlyDeleted.js'
+afterEach(() => { __resetDeletedMarks() })

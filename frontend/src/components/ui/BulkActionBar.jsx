@@ -11,6 +11,8 @@ import { ButtonGroup } from '@/components/shadcn/button-group'
 import { Input } from '@/components/shadcn/input'
 import { unwrap } from '../noc/nocModel.js'
 import { bulkToast, chunk, mergeBulkResults } from '../noc/forms/nocFormModel.js'
+import { markMonitorDeleted } from '../../utils/recentlyDeleted.js'
+import { namesPreview } from '../../utils/deleteInventory.js'
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -74,9 +76,20 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
   async function del() {
     const targets = chosen.filter(canDelete)
     if (targets.length === 0) { toast.error(t('bulk.noDeleteRight')); return }
-    const ok = await showConfirm({ title: t('bulk.deleteTitle'), message: t('bulk.deleteMsg', targets.length), confirmText: t('bulk.deleteConfirm'), cancelText: t('app.cancel'), variant: 'danger' })
+    // KALICI silme (2026-10-07): onay hangi izlemelerin gittiğini ADIYLA söyler; envanter türevi Port/DNS satırı silinmez,
+    // duraklatılır — seçimde varsa bu da yazılır.
+    const names = namesPreview(targets.map((m) => m.name || m.host || m.domain || m.url || `#${m.id}`), t)
+    const derived = (nocType === 'PORT' || nocType === 'DNS') && targets.some((m) => m.standalone !== true)
+    const ok = await showConfirm({ title: t('bulk.deleteTitle'),
+      message: t('bulk.deleteMsg', targets.length, names) + (derived ? `\n\n${t('bulk.deleteDerivedNote')}` : ''),
+      confirmText: t('bulk.deleteConfirm'), cancelText: t('app.cancel'), variant: 'danger' })
     if (!ok) return
-    run('delete', (m) => api.remove(m.id), canDelete)
+    // Her başarılı kalıcı silme ANINDA işaretlenir: kart sayfadan hemen düşer, sonraki (bayat) liste yüklemesi geri getiremez.
+    run('delete', async (m) => {
+      const r = await api.remove(m.id)
+      if (r?.success !== false && nocType) markMonitorDeleted(nocType, m.id, r)
+      return r
+    }, canDelete)
   }
 
   // Alan bölmesi: ikon + kontrol + "Uygula" — solunda ince ayraç (eski .bulkbar-field dili).

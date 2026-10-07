@@ -221,29 +221,25 @@ describe('api.getHistory', () => {
 // ── api.admin ─────────────────────────────────────────────────────────────────
 
 describe('api.admin.getInventory', () => {
-  it('GETs /api/admin/inventory with showDeleted=false by default', async () => {
+  // Silme KALICI (2026-10-07): çöp kutusu yok — `showDeleted` parametresi kalktı.
+  it('GETs /api/admin/inventory (çöp kutusu parametresi yok)', async () => {
     mockFetch({ success: true, data: [] })
     await api.admin.getInventory()
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/admin/inventory?showDeleted=false',
-      expect.any(Object)
-    )
+    expect(global.fetch).toHaveBeenCalledWith('/api/admin/inventory', expect.any(Object))
+    expect(String(global.fetch.mock.calls[0][0])).not.toContain('showDeleted')
   })
-  it('GETs /api/admin/inventory with showDeleted=true when passed', async () => {
+  // Org geneli görünürlük (2026-09-26): scope yalnız 'all' iken param üretir — 'mine' URL'i değiştirmez
+  it('scope=all → ?scope=all eklenir; scope=mine → URL değişmez', async () => {
     mockFetch({ success: true, data: [] })
-    await api.admin.getInventory(true)
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/admin/inventory?showDeleted=true',
-      expect.any(Object)
-    )
+    await api.admin.getInventory('all')
+    expect(global.fetch).toHaveBeenCalledWith('/api/admin/inventory?scope=all', expect.any(Object))
+    await api.admin.getInventory('mine')
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/admin/inventory', expect.any(Object))
   })
-  // Org geneli görünürlük (2026-09-26): scope yalnız 'all' iken param üretir — 'mine' bugünkü URL'i değiştirmez
-  it('scope=all → &scope=all eklenir; scope=mine → URL değişmez', async () => {
-    mockFetch({ success: true, data: [] })
-    await api.admin.getInventory(true, 'all')
-    expect(global.fetch).toHaveBeenCalledWith('/api/admin/inventory?showDeleted=true&scope=all', expect.any(Object))
-    await api.admin.getInventory(false, 'mine')
-    expect(global.fetch).toHaveBeenLastCalledWith('/api/admin/inventory?showDeleted=false', expect.any(Object))
+  it('çöp kutusu uçları istemcide yok (restore / kalıcı sil / tümünü boşalt)', () => {
+    expect(api.admin.restoreInventory).toBeUndefined()
+    expect(api.admin.purgeInventory).toBeUndefined()
+    expect(api.admin.purgeDeletedInventory).toBeUndefined()
   })
 })
 

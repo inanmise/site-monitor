@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarClock, CalendarX2, FileKey2, FileUp, Layers, Loc
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { filterDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import { readUrlInt, readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
@@ -62,7 +63,11 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
   const canUpload = perms.canEdit('inventory.crud')
   const permsLoaded = Object.keys(perms.perms || {}).length > 0
 
-  const [rows, setRows] = useState([])
+  const [rawRows, setRows] = useState([])
+  // Silme KALICI + iyimser (2026-10-07): sertifika penceresinden ya da düzenleme formundan silinen kayıt listeden ANINDA düşer;
+  // arka plan tazelemesi (başka pod'un bayat yanıtı) onu geri getiremez.
+  const deletedVersion = useDeletedMarksVersion()
+  const rows = useMemo(() => filterDeleted('cert', rawRows, (r) => r.domain), [rawRows, deletedVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loadState, setLoadState] = useState('loading')   // loading | ready | error | forbidden
   const [loadError, setLoadError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -242,6 +247,7 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
           </div>
           <ManualCertList rows={pager.pageItems} onOpen={openCert} onDownload={downloadPem} canUpload={canUpload}
             onRenew={(r) => setWizard({ renewTarget: { inventory_id: r.inventory_id, domain: r.domain } })}
+            onEdit={canUpload ? (r) => setEditDomain(r.domain) : undefined}
             emptyActions={filtered ? <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={clearFilters}>{t('mcert.clearFilters')}</Button> : null} />
           {pager.pageItems.length > 0 && <PaginationBar {...pager} />}
         </>
@@ -251,7 +257,12 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
         <Suspense fallback={null}>
           <UploadWizard renewTarget={wizard.renewTarget} renewCandidates={rows} teams={teams} canOpenSettings={globalAdmin}
             onClose={() => setWizard(null)}
-            onDone={() => { load(); onInventoryChange?.() }}
+            onDone={(out) => {
+              // Az önce silinen bir takip adı yeniden yüklendiyse "yakın zamanda silindi" işareti kalkar (kayıt hemen görünür).
+              if (out?.domain) unmarkDeleted('cert', out.domain)
+              for (const c of (Array.isArray(out?.data?.created) ? out.data.created : [])) unmarkDeleted('cert', c?.domain)
+              load(); onInventoryChange?.()
+            }}
             onOpenCert={(target) => openCert({ ...target, cert_source: 'MANUAL' })}
             onEditInventory={canUpload ? (d) => setEditDomain(d) : undefined} />
         </Suspense>

@@ -21,7 +21,10 @@ public final class PermissionCatalog {
         // ── Sertifika Yönetimi ────────────────────────────────────────────
         r("inventory.list",     "certificates", VIEW),
         r("inventory.crud",     "certificates", EDIT),
-        r("inventory.purge",    "certificates", EXECUTE, Set.of(EXECUTE)),   // kalıcı (geri-alınamaz) silme — dedike + sensitive
+        // inventory.purge KALDIRILDI (2026-10-07): silme artık her zaman kalıcı, kapısı inventory.crud/edit. Çöp kutusu
+        // ve ayrı "kalıcı sil" yetkisi yok. (Bu yorumda kapanan parantezden sonra noktalı virgül YAZMAYIN —
+        // permission-labels-sync.test.jsx ALL bloğunu ilk o dizide bitirir.) DB'de kalan eski grant satırları zararsızdır — katalogda olmayan anahtar
+        // matriste çizilmez ve hiçbir uç onu sormaz.
         r("inventory.transfer", "certificates", "execute", Set.of(EXECUTE)),
         r("notes.read",         "certificates", VIEW),
         r("notes.crud",         "certificates", EDIT),
@@ -123,7 +126,7 @@ public final class PermissionCatalog {
         // Anahtar bilinçli korunuyor: rename mevcut grant'leri kaybettirir (bootstrap seed'i yeniden koşmaz).
         r("issues.login-reports", "issues", VIEW),   // listeleme/görüntüleme
         r("issues.login-reports", "issues", EDIT),   // durum değiştirme (İşleme Al / Çözümlendi / Yeniden Aç)
-        // KALICI (geri-alınamaz) silme — DEDİKE + sensitive, inventory.purge emsali.
+        // KALICI (geri-alınamaz) silme — DEDİKE + sensitive.
         // Durumu değiştirmek ile kaydı YOK ETMEK farklı yetkilerdir: ikincisi güvenlik
         // bildirimlerini de silebilir, o yüzden "raporları yönetsin ama kanıt silemesin"
         // ayrımı mümkün kalmalı. Varsayılan: yalnız ADMIN (diğer rollerin listesine EKLENMEZ).

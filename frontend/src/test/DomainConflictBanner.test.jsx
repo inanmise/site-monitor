@@ -11,7 +11,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
   api: withApiFallback({
-    admin: { transferCertSy: vi.fn(), restoreInventory: vi.fn() },
+    admin: { transferCertSy: vi.fn() },
     getMe: vi.fn(),
     sendIssueReport: vi.fn(),
   }),
@@ -36,7 +36,7 @@ import DomainConflictBanner from '../components/inventory/DomainConflictBanner.j
 
 const FOREIGN = {
   domain: 'shop.example.com', inventory_id: 2, team_id: 9, team_name: 'Takım B', ug_team_id: null, ug_team_name: null,
-  deleted: false, deleted_at: null, same_team: false, can_view: true, can_restore: false, can_transfer: false,
+  same_team: false, can_view: true, can_transfer: false,
 }
 const MSG = "This domain is already registered in the 'Takım B' team's inventory. A duplicate record can't be created; if the domain should belong to your team, the record needs to be transferred to it."
 const TARGET = { id: 5, name: 'Takım A' }
@@ -84,7 +84,6 @@ describe('DomainConflictBanner', () => {
     expect(opts.message).toContain('shop.example.com')
     expect(opts.message).toContain("'Takım B'")
     expect(opts.message).toContain("'Takım A'")
-    expect(api.admin.restoreInventory).not.toHaveBeenCalled()
     await waitFor(() => expect(onResolved).toHaveBeenCalledWith({
       kind: 'transferred', domain: 'shop.example.com', record: { id: 2, domain: 'shop.example.com', team_id: 5 } }))
   })
@@ -137,44 +136,31 @@ describe('DomainConflictBanner', () => {
     expect(modal.textContent).toContain('Takım B')
   })
 
-  it('çöp kutusu + AYNI takım + geri yükleme yetkisi: "Çöp kutusundan geri yükle" → onay → restore(id) → onResolved; aktar/talep yok', async () => {
-    api.admin.restoreInventory.mockResolvedValue({ success: true, data: { id: 4, domain: 'shop.example.com' } })
-    const gone = { ...FOREIGN, inventory_id: 4, team_id: 5, team_name: 'Takım A', deleted: true, deleted_at: '2026-09-01T00:00:00',
-      same_team: true, can_view: false, can_restore: true }
-    const { onResolved, banner } = show(gone)
-    expect(screen.getByRole('alert').textContent).toMatch(/This domain is in the bin/)
-    expect(banner.textContent).toContain('Moved to the bin: 2026-09-01')
-    expect(btn('View record')).toBeNull()
-    expect(btn('Request a transfer')).toBeNull()
-    fireEvent.click(btn('Restore from the bin'))
-    await waitFor(() => expect(api.admin.restoreInventory).toHaveBeenCalledWith(4))
-    await waitFor(() => expect(onResolved).toHaveBeenCalledWith({ kind: 'restored', domain: 'shop.example.com', record: { id: 4, domain: 'shop.example.com' } }))
-  })
-
-  it('çöp kutusu + AYNI takım + yetki YOK: yöneticiye yönlendirir, düğme yok', () => {
-    show({ ...FOREIGN, team_id: 5, team_name: 'Takım A', deleted: true, same_team: true, can_view: false })
-    expect(screen.getByRole('alert').textContent).toMatch(/ask your team's manager to restore it/)
-    expect(btn('Restore from the bin')).toBeNull()
-  })
-
   /*
-   * Ek 3/5 (2026-09-28): sunucu çöp kutusundaki kayda DÜZ aktarımı 409 ile reddeder — "Geri yükle ve aktar" TEK istek
-   * (`restore: true`): eskiden aktar → ayrı /restore; ikinci adım düşerse kayıt yeni takımın çöpünde kalıyordu.
+   * Silme KALICI (2026-10-07): silinen kayıt adı tutmaz, bant hep CANLI bir kayıt için çizilir — çöp kutusu başlığı,
+   * "taşındı" künyesi, "Çöp kutusundan geri yükle" ve "Geri yükle ve aktar" eylemleri kaldırıldı. Eski bir sunucu çöp
+   * kutusu alanlarını gönderse bile bant onları yok sayar.
    */
-  it('çöp kutusu + BAŞKA takım: yetkisize talep; global yöneticiye "Geri yükle ve aktar" TEK istekte (restore: true)', async () => {
-    const gone = { ...FOREIGN, deleted: true, deleted_at: '2026-09-01T00:00:00', can_view: false }
-    const { unmount } = render(<DomainConflictBanner conflict={{ message: MSG, existing: gone }} targetTeam={TARGET} onResolved={() => {}} />)
-    expect(btn('Request a transfer')).toBeInTheDocument()
+  it('çöp kutusu YOK: eski sunucunun deleted / can_restore alanları yok sayılır — geri yükleme eylemi ve iletisi çizilmez', () => {
+    const legacy = { ...FOREIGN, team_id: 5, team_name: 'Takım A', deleted: true, deleted_at: '2026-09-01T00:00:00',
+      same_team: true, can_restore: true, can_transfer: true }
+    const { banner } = show(legacy)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/This domain is already registered/)
+    expect(alert.textContent).not.toMatch(/bin/i)
+    expect(banner.textContent).not.toContain('Moved to the bin')
     expect(btn('Restore from the bin')).toBeNull()
-    unmount()
+    expect(btn(/Restore and move/)).toBeNull()
+    expect(banner).not.toHaveAttribute('data-deleted')
+  })
 
-    api.admin.transferCertSy.mockResolvedValue({ success: true, data: { id: 2, deleted_at: null, team_id: 5 } })
-    const { onResolved } = show({ ...gone, can_transfer: true, can_restore: true })
-    fireEvent.click(btn("Restore and move to 'Takım A'"))
-    await waitFor(() => expect(api.admin.transferCertSy).toHaveBeenCalledWith(2, 5, { restore: true }))
-    expect(api.admin.restoreInventory).not.toHaveBeenCalled()   // ikinci adım YOK
-    expect(confirmMock.mock.calls[0][0].message).toMatch(/restored from the bin and moved from 'Takım B' to 'Takım A'/)
-    await waitFor(() => expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'transferred', record: { id: 2, deleted_at: null, team_id: 5 } })))
+  it('başka takımın kaydına global yönetici aktarımı TEK, restore\'suz istek (geri yükleme bayrağı gönderilmez)', async () => {
+    api.admin.transferCertSy.mockResolvedValue({ success: true, data: { id: 2, team_id: 5 } })
+    const { onResolved } = show({ ...FOREIGN, can_transfer: true })
+    fireEvent.click(btn("Move to 'Takım A'"))
+    await waitFor(() => expect(api.admin.transferCertSy).toHaveBeenCalledTimes(1))
+    expect(api.admin.transferCertSy.mock.calls[0]).toEqual([2, 5])
+    await waitFor(() => expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'transferred' })))
   })
 
   it('AYNI takım (kayıt var): düzenleme yönlendirmesi; aktar/talep yok', () => {

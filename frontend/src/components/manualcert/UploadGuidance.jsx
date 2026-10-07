@@ -64,7 +64,8 @@ function Section({ icon: Icon, title, children, className, slot }) {
  * "Hangi dosyayı yüklemeliyim?" — yükleme sayfasının ve boş durumun rehberi (2026-10-06). Kullanıcının süreci: iç talep
  * ile CSR → harici CA → `xxxx.pem` → zincir tamamlama → PFX/JKS → OpenShift'te keystore/truststore. Site Monitor bu
  * sürece KATILMAZ, yalnız bitişi izler; rehber hangi aşamada hangi dosyanın yükleneceğini, neyin yüklenmeyeceğini (CSR,
- * tek başına özel anahtar), gizliliği ve yenilemeyi anlatır.
+ * tek başına özel anahtar), gizliliği ve yenilemeyi anlatır. Gizlilik (2026-10-08): dosya tarayıcıda açılır — özel anahtar
+ * ayıklanır ve sunucuya gitmez, parola yalnız tarayıcıda kullanılır (biçim tablosunun şifre / anahtar rozetleri de bunu söyler).
  *
  * <p>Katlanır şerit (ui/CollapsibleSection); VARSAYILAN KAPALI (2026-10-07, kullanıcı isteği — liste boşken de), kullanıcı
  * açarsa tercihi tarayıcıda hatırlanır. Test kancası `data-slot="mcert-guide"`.

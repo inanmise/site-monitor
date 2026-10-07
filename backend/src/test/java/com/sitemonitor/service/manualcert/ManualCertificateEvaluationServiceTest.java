@@ -241,6 +241,60 @@ class ManualCertificateEvaluationServiceTest {
         assertThat(svc.activeManualRows()).extracting(CertificateInventory::getDomain).containsExactly("a");
     }
 
+    // ── Önizleme (2026-10-07) ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("previewCurrent: geçerli sürümden aynı sonuç haritası — kayıt / önbellek boşaltma / alarm hattı YOK")
+    void previewCurrent_sideEffectFree() {
+        when(versionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(5L))
+                .thenReturn(Optional.of(version(5, 4, chain.leaf(), chain.inter(), chain.root())));
+        Map<String, Object> r = svc.previewCurrent(manual(5, "api-takip"));
+        assertThat(r).containsEntry("domain", "api-takip").containsEntry("via", "upload").containsEntry("manual", true)
+                .containsEntry("manual_version", 4).containsEntry("chain_status", "VALID")
+                .containsEntry("manual_version_id", 104L);   // yalnız önizlemede — "Hiyerarşi" görünümü (2026-10-07)
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ch = (List<Map<String, Object>>) r.get("chain");
+        assertThat(ch).hasSize(3);
+        assertThat(ch.get(0)).containsEntry("is_leaf", true);
+        assertThat(ch.get(2)).containsEntry("is_root", true);
+        verify(certService, never()).saveResult(any());
+        verify(certService, never()).evictAllCaches();
+        verify(escalation, never()).resolveVerifiedStaleCertAlerts(anyList());
+        verify(escalation, never()).processResults(anyList());
+        verify(chainValidator, never()).checkRevocation(any());
+
+        when(versionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(6L)).thenReturn(Optional.empty());
+        assertThat(svc.previewCurrent(manual(6, "surumsuz"))).isNull();
+        CertificateInventory net = manual(7, "net.example.test");
+        net.setCertSource(null);
+        assertThat(svc.previewCurrent(net)).isNull();
+    }
+
+    @Test
+    @DisplayName("previewChain (analiz): ağa HİÇ çıkmaz — iptal yalnız önbellekten, ısıtma da yok; baş + zincir sırası korunur")
+    void previewChain_noNetwork() {
+        java.util.List<Runnable> warmed = new java.util.ArrayList<>();
+        ReflectionTestUtils.setField(svc, "certCheckExecutor", (java.util.concurrent.Executor) warmed::add);
+        Map<String, Object> r = svc.previewChain("api.example.test", chain.leaf(), List.of(chain.inter(), chain.root()));
+        assertThat(r).containsEntry("domain", "api.example.test").containsEntry("via", "upload")
+                .containsEntry("revocation_status", "UNKNOWN").doesNotContainKey("manual_version");
+        assertThat(r.get("fingerprint")).isEqualTo(ManualCertificateAnalyzer.fingerprint(chain.leaf()));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ch = (List<Map<String, Object>>) r.get("chain");
+        assertThat(ch).extracting(m -> m.get("position")).containsExactly(0, 1, 2);
+        assertThat(warmed).as("analiz önizlemesi iptal sorgusunu ısıtmaz").isEmpty();
+        verify(chainValidator, never()).checkRevocation(any());
+
+        // Karşılaştırma: kayıtlı satırın elle tetiği (CACHED_WARM) ısıtır
+        svc.buildResult(manual(1, "api-takip"), version(1, 1, chain.leaf(), chain.inter()), false);
+        assertThat(warmed).hasSize(1);
+
+        // Tek sertifika (kök) da önizlenir; zincir 1 halka
+        Map<String, Object> root = svc.previewChain("kok", chain.root(), List.of());
+        assertThat((List<?>) root.get("chain")).hasSize(1);
+        assertThat(svc.previewChain("x", null, List.of())).isNull();
+    }
+
     @SuppressWarnings("unused")
     private static Map<String, Object> map() { return new LinkedHashMap<>(); }
 

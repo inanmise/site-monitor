@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { ArrowRight, FilePlus2, Info, RefreshCw } from 'lucide-react'
+import { ArrowRight, FilePlus2, Info, RefreshCw, Upload } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import SearchableSelect from '../../ui/SearchableSelect.jsx'
@@ -9,6 +9,7 @@ import TrackingFields from './TrackingFields.jsx'
 import { dateOnly } from '../../certcard/certCardModel.js'
 import { NOTE_MAX, entryTitle, warningText } from '../manualCertModel.js'
 import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
@@ -94,14 +95,16 @@ function RenewCompare({ current, entry, cmp }) {
  * Sihirbaz 3. adım — "Takip" (2026-10-06). Kip: "Yeni takip kaydı" ya da "Mevcut kaydı yenile (yeni sürüm)" (çoklu
  * seçimde yalnız yeni). Yeni: takip adı (sunucunun önerisi doldurulmuş, istemci deseni) + envanter alanları + sürüm notu;
  * çoklu: her girdi için ayrı takip adı + ortak alanlar. Yenile: hedef kayıt (aynı konu adı adayları önde), güncel ↔ yeni
- * karşılaştırma, daha eski bitişte açık onay (OLDER_THAN_CURRENT), aynı sertifikada engel (SAME_CERTIFICATE).
+ * karşılaştırma, daha eski bitişte açık onay (OLDER_THAN_CURRENT), aynı sertifikada UYARI + "Yine de yükle"
+ * (SAME_CERTIFICATE → `onUploadAnyway`, 2026-10-07; `sameDetected` = sunucu 409'u istemci karşılaştıramadıysa).
  */
 export default function TrackStep({
   entries, multi, mode, onMode, renewFixed, renewOptions, target, onTarget, current, cmp, needsConfirm = false,
   keyValue, onKey, batchKeys, onBatchKey, rowErrors, form, onField, teams, canOpenSettings,
-  note, onNote, confirmOlder, onConfirmOlder, fe,
+  note, onNote, confirmOlder, onConfirmOlder, fe, sameDetected = false, onUploadAnyway, busy = false,
 }) {
   const t = useT()
+  const same = !!cmp?.same || sameDetected
   const first = entries[0]
   const canRenew = !multi && (renewFixed || renewOptions.length > 0)
 
@@ -157,10 +160,23 @@ export default function TrackStep({
           {target && current?.status === 'ready' && current.version && first && cmp && (
             <RenewCompare current={current.version} entry={first} cmp={cmp} />
           )}
-          {cmp?.same && (
-            <AlertBanner tone="danger" role="alert" className="mb-0" title={t('mcert.renew.sameTitle')}>{t('mcert.renew.sameBody')}</AlertBanner>
+          {/* Aynı sertifika (istemci karşılaştırması ya da sunucunun 409 SAME_CERTIFICATE'i): engel DEĞİL uyarı — "Yine de
+              yükle" aynı sertifikayı yeni sürüm olarak kaydeder (allow_same; bitiş tarihi değişmez). 2026-10-07 */}
+          {same && (
+            <div data-slot="mcert-same">
+              <AlertBanner tone="warning" role="alert" className="mb-0" title={t('mcert.renew.sameTitle')}
+                actions={onUploadAnyway ? (
+                  <Button type="button" data-slot="mcert-upload-anyway" size="sm" className="pointer-coarse:h-10"
+                    disabled={busy} aria-busy={busy || undefined} onClick={onUploadAnyway}>
+                    <Upload aria-hidden="true" />{t('mcert.renew.uploadAnyway')}
+                  </Button>
+                ) : null}>
+                <p className="m-0">{t('mcert.renew.sameBody')}</p>
+                <p className="m-0 mt-1">{t('mcert.renew.sameHint')}</p>
+              </AlertBanner>
+            </div>
           )}
-          {needsConfirm && !cmp?.same && (
+          {needsConfirm && !same && (
             <div data-field="confirm" className="flex min-w-0 flex-col gap-2">
               <AlertBanner tone="warning" className="mb-0" title={t('mcert.renew.olderTitle')}>
                 {warningText(t, { code: 'OLDER_THAN_CURRENT', params: { current_date: current?.version?.not_after, new_date: first?.not_after } })}

@@ -67,7 +67,20 @@ class ManualCertificateAnalyzerTest {
     }
 
     private Analysis analyze(String pemText) {
-        return analyzer.analyze(utf8(pemText), "dosya.pem", null, false);
+        return analyzer.analyze(utf8(pemText), "dosya.pem", false);
+    }
+
+    /**
+     * Tarayıcıda ayıklanmış yükleme (2026-10-08) — anahtar deposunun AÇIK sertifikaları: ilk sertifika anahtar girdisinin
+     * yaprağı (key_entry), takma ad korunur. Özel anahtar sunucuya hiç gelmez; yalnız sayısı.
+     */
+    private Analysis extracted(String format, String alias, List<X509Certificate> keyChain, Map<String, X509Certificate> trusted,
+                               int privateKeys) {
+        List<CertificateFileParser.ParsedCert> certs = new java.util.ArrayList<>();
+        for (int i = 0; i < keyChain.size(); i++) certs.add(new CertificateFileParser.ParsedCert(keyChain.get(i), alias, i == 0, null));
+        trusted.forEach((a, c) -> certs.add(new CertificateFileParser.ParsedCert(c, a, false, null)));
+        return analyzer.analyzeExtracted(CertificateFileParser.fromExtracted(format, "depo." + format.toLowerCase(), 4096,
+                certs, null, privateKeys));
     }
 
     private static Entry entry(Analysis a, X509Certificate c) {
@@ -95,6 +108,128 @@ class ManualCertificateAnalyzerTest {
         assertThat(leaf.trust.status()).isEqualTo("UNTRUSTED");
     }
 
+    // ── Zincir başına TEK girdi (2026-10-07) ─────────────────────────────────
+
+    @Test
+    @DisplayName("yaprak + ara + kök → TEK girdi (yaprak); ara ve kök zincire katlanır, ayrı girdi değil")
+    void leafInterRoot_oneEntry() {
+        Analysis a = analyze(pem(chain.root(), chain.inter(), chain.leaf()));
+        assertThat(a.entries).hasSize(1);
+        assertThat(a.certificateCount).isEqualTo(3);
+        Entry leaf = a.entries.get(0);
+        assertThat(leaf.ref).isEqualTo(ManualCertificateAnalyzer.fingerprint(chain.leaf()));
+        assertThat(leaf.chain).containsExactly(chain.inter(), chain.root());
+        assertThat(a.defaultRef).isEqualTo(leaf.ref);
+        assertThat(entry(a, chain.inter())).isNull();
+        assertThat(entry(a, chain.root())).isNull();
+        assertThat(a.headOf(ManualCertificateAnalyzer.fingerprint(chain.inter()))).isSameAs(leaf);
+        assertThat(a.headOf(ManualCertificateAnalyzer.fingerprint(chain.root()).toLowerCase())).isSameAs(leaf);
+        assertThat(a.headOf(leaf.ref)).isNull();   // baş katlanmış değildir
+        assertThat(fileCodes(a)).doesNotContain("MULTIPLE_LEAVES");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> json = (List<Map<String, Object>>) a.toJson().get("entries");
+        assertThat(json).hasSize(1);
+        assertThat((List<?>) json.get(0).get("chain")).hasSize(2);
+        assertThat(a.toJson()).containsEntry("certificate_count", 3);
+    }
+
+    @Test
+    @DisplayName("ara + kök (yaprak yok) → TEK girdi (ara); varsayılan seçim o")
+    void interRoot_oneEntry() {
+        Analysis a = analyze(pem(chain.root(), chain.inter()));
+        assertThat(a.entries).hasSize(1);
+        Entry inter = a.entries.get(0);
+        assertThat(inter.cert).isEqualTo(chain.inter());
+        assertThat(inter.chain).containsExactly(chain.root());
+        assertThat(inter.trust.chainComplete()).isTrue();
+        assertThat(a.defaultRef).isEqualTo(inter.ref);
+        assertThat(a.headOf(ManualCertificateAnalyzer.fingerprint(chain.root()))).isSameAs(inter);
+    }
+
+    @Test
+    @DisplayName("ortak arayı paylaşan iki yaprak (tarayıcıda ayıklanmış anahtar deposu) → İKİ girdi, ikisi de ortak zinciri taşır; anahtar girdisi tercih; MULTIPLE_LEAVES")
+    void twoLeavesSharingIntermediate_twoEntries() {
+        X509Certificate other = leaf("other.example.test", List.of("other.example.test"), freshRsa(), chain.inter(),
+                chain.interKey().getPrivate(), days(-5), days(300));
+        // Güvenilen girdi ÖNCE (dosya sırası): varsayılan seçim yine anahtar girdisinin yaprağı olmalı
+        List<CertificateFileParser.ParsedCert> certs = List.of(
+                new CertificateFileParser.ParsedCert(other, "diger", false, null),
+                new CertificateFileParser.ParsedCert(chain.leaf(), "sunucu", true, null),
+                new CertificateFileParser.ParsedCert(chain.inter(), "sunucu", false, null),
+                new CertificateFileParser.ParsedCert(chain.root(), "sunucu", false, null));
+        Analysis a = analyzer.analyzeExtracted(CertificateFileParser.fromExtracted("JKS", "depo.jks", 4096, certs, null, 1));
+        assertThat(a.format()).isEqualTo("JKS");
+        assertThat(entry(a, chain.leaf()).alias).isEqualTo("sunucu");
+        assertThat(entry(a, chain.leaf()).keyEntry).isTrue();
+        assertThat(a.warnings.stream().filter(w -> w.code().equals("PRIVATE_KEY_KEPT_LOCAL")).findFirst().orElseThrow().params())
+                .containsEntry("count", 1);
+        assertThat(a.entries).hasSize(2);
+        assertThat(a.certificateCount).isEqualTo(4);
+        assertThat(entry(a, chain.leaf()).chain).containsExactly(chain.inter(), chain.root());
+        assertThat(entry(a, other).chain).containsExactly(chain.inter(), chain.root());
+        assertThat(entry(a, chain.inter())).isNull();
+        assertThat(a.defaultRef).isEqualTo(entry(a, chain.leaf()).ref);   // anahtar girdisi
+        assertThat(a.warnings.stream().filter(w -> w.code().equals("MULTIPLE_LEAVES")).findFirst().orElseThrow().params())
+                .containsEntry("count", 2);
+    }
+
+    @Test
+    @DisplayName("ilgisiz iki kendinden imzalı kök → İKİ girdi (bağımsız zincirler); uç yok → MULTIPLE_LEAVES yok, seçim kullanıcıda")
+    void twoUnrelatedRoots_twoEntries() {
+        X509Certificate other = root("Example Other Root CA", freshRsa(), days(-10), days(1000));
+        Analysis a = analyze(pem(chain.root(), other));
+        assertThat(a.entries).hasSize(2);
+        assertThat(entry(a, chain.root()).chain).isEmpty();
+        assertThat(entry(a, other).chain).isEmpty();
+        assertThat(fileCodes(a)).doesNotContain("MULTIPLE_LEAVES");
+        assertThat(a.defaultRef).isNull();
+        assertThat(a.headOf(entry(a, other).ref)).isNull();
+    }
+
+    @Test
+    @DisplayName("tek sertifika → tek girdi, varsayılan seçim o (CA olsa da)")
+    void singleCertificate_oneEntry() {
+        Analysis a = analyze(pem(chain.root()));
+        assertThat(a.entries).hasSize(1);
+        assertThat(a.certificateCount).isEqualTo(1);
+        assertThat(a.defaultRef).isEqualTo(ManualCertificateAnalyzer.fingerprint(chain.root()));
+        assertThat(codes(a.entries.get(0))).contains("CA_CERTIFICATE", "SELF_SIGNED");
+        assertThat(a.entries.get(0).warnings().stream().filter(w -> w.code().equals("SELF_SIGNED")).findFirst()
+                .orElseThrow().severity()).isEqualTo("info");
+    }
+
+    @Test
+    @DisplayName("döngülü (çapraz imzalı) küme baş bırakmasa da sertifika kaybolmaz: dosyadaki ilk sertifika baş olur")
+    void crossSignedCycle_neverLosesCertificates() {
+        java.security.KeyPair ka = freshRsa();
+        java.security.KeyPair kb = freshRsa();
+        X509Certificate seedB = root("Cycle B", kb, days(-10), days(1000));
+        X509Certificate certA = intermediate("Cycle A", ka, seedB, kb.getPrivate(), days(-10), days(1000));
+        X509Certificate certB = intermediate("Cycle B", kb, certA, ka.getPrivate(), days(-10), days(1000));
+        Analysis a = analyze(pem(certA, certB));
+        assertThat(a.entries).hasSize(1);
+        assertThat(a.entries.get(0).cert).isEqualTo(certA);
+        assertThat(a.entries.get(0).chain).containsExactly(certB);
+        assertThat(a.headOf(ManualCertificateAnalyzer.fingerprint(certB))).isSameAs(a.entries.get(0));
+    }
+
+    @Test
+    @DisplayName("JSON: preview verilirse girdi başına eklenir (hata → null, analiz düşmez); verilmezse anahtar yok")
+    void previewHook() {
+        Analysis a = analyze(pem(chain.leaf(), chain.inter(), chain.root()));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> plain = ((List<Map<String, Object>>) a.toJson().get("entries")).get(0);
+        assertThat(plain).doesNotContainKey("preview");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> withPreview = ((List<Map<String, Object>>) a.toJson(e -> Map.of("chain_len", e.chain.size()))
+                .get("entries")).get(0);
+        assertThat(withPreview.get("preview")).isEqualTo(Map.of("chain_len", 2));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> failing = ((List<Map<String, Object>>) a.toJson(e -> { throw new IllegalStateException("x"); })
+                .get("entries")).get(0);
+        assertThat(failing).containsEntry("preview", null);
+    }
+
     @Test
     @DisplayName("güven deposu zinciri doğrularsa TRUSTED")
     void trusted_whenEvaluatorTrusts() {
@@ -118,17 +253,14 @@ class ManualCertificateAnalyzerTest {
     }
 
     @Test
-    @DisplayName("CA girdileri: CA_CERTIFICATE; kök SELF_SIGNED (info); CA güvenilmese de UNKNOWN")
+    @DisplayName("CA girdileri: CA_CERTIFICATE; ara + kök tek girdi (ara); CA güvenilmese de UNKNOWN")
     void caEntries() {
         Analysis a = analyze(pem(chain.inter(), chain.root()));
-        Entry root = entry(a, chain.root());
+        assertThat(entry(a, chain.root())).isNull();   // 2026-10-07: kök aranın zincirinde — ayrı girdi değil
         Entry inter = entry(a, chain.inter());
-        assertThat(codes(root)).contains("CA_CERTIFICATE", "SELF_SIGNED");
-        assertThat(root.warnings().stream().filter(w -> w.code().equals("SELF_SIGNED")).findFirst().orElseThrow().severity())
-                .isEqualTo("info");
         assertThat(codes(inter)).contains("CA_CERTIFICATE").doesNotContain("SELF_SIGNED");
         assertThat(inter.trust.status()).isEqualTo("UNKNOWN");
-        assertThat(a.defaultRef).isNull();   // birden çok CA, uç sertifika yok → kullanıcı seçer
+        assertThat(a.defaultRef).isEqualTo(inter.ref);   // tek zincir başı → önerilen
     }
 
     @Test
@@ -191,7 +323,8 @@ class ManualCertificateAnalyzerTest {
     @DisplayName("aynı sertifika iki kez → tek girdi + DUPLICATE_IN_FILE {count}")
     void duplicates() {
         Analysis a = analyze(pem(chain.leaf(), chain.leaf(), chain.inter()));
-        assertThat(a.entries).hasSize(2);
+        assertThat(a.entries).hasSize(1);   // yaprak (ara onun zincirinde)
+        assertThat(a.certificateCount).isEqualTo(2);
         assertThat(a.warnings.stream().filter(w -> w.code().equals("DUPLICATE_IN_FILE")).findFirst().orElseThrow().params())
                 .containsEntry("count", 1);
     }
@@ -249,21 +382,23 @@ class ManualCertificateAnalyzerTest {
         Analysis a = analyze(pem(chain.leaf(), twin, chain.inter()));
         assertThat(entry(a, chain.leaf()).suggestedKey()).isEqualTo("api.example.test-manuel-2");
         assertThat(entry(a, twin).suggestedKey()).isEqualTo("api.example.test-manuel-3");
-        assertThat(entry(a, chain.inter()).suggestedKey()).isEqualTo("example-test-issuing-ca");
+        assertThat(entry(a, chain.inter())).isNull();   // ara iki yaprağın da zincirinde — öneri yalnız başlara
+        // CA başının önerisi CN'den: tek başına yüklenen ara
+        assertThat(analyze(pem(chain.inter())).entries.get(0).suggestedKey()).isEqualTo("example-test-issuing-ca");
     }
 
     @Test
-    @DisplayName("PKCS#12: anahtar girdisinin yaprağı varsayılan seçim; is_key_entry + alias JSON'da")
+    @DisplayName("PKCS#12 (tarayıcıda ayıklanmış): anahtar girdisinin yaprağı varsayılan seçim; is_key_entry + alias JSON'da; parola alanları sabit false")
     void pkcs12_defaultRefIsKeyEntry() {
-        char[] pw = "p".toCharArray();
-        byte[] pfx = pkcs12("sunucu", chain.leafKey().getPrivate(), pw, chain.leaf(), chain.inter(), chain.root());
-        Analysis a = analyzer.analyze(pfx, "x.pfx", "p".toCharArray(), false);
+        Analysis a = extracted("PKCS12", "sunucu", List.of(chain.leaf(), chain.inter(), chain.root()), Map.of(), 1);
         Entry leaf = entry(a, chain.leaf());
         assertThat(a.defaultRef).isEqualTo(leaf.ref);
         assertThat(leaf.keyEntry).isTrue();
+        assertThat(leaf.alias).isEqualTo("sunucu");
         Map<String, Object> json = a.toJson();
         assertThat(json).containsKeys("format", "file_name", "size_bytes", "needs_password", "password_error", "warnings",
                 "csr", "entries", "default_ref");
+        assertThat(json).containsEntry("format", "PKCS12").containsEntry("needs_password", false).containsEntry("password_error", false);
         @SuppressWarnings("unchecked")
         Map<String, Object> ej = ((List<Map<String, Object>>) json.get("entries")).get(0);
         assertThat(ej).containsKeys("ref", "alias", "is_key_entry", "is_ca", "self_signed", "subject", "subject_dn", "cn",

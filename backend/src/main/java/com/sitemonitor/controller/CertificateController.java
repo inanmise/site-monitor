@@ -59,12 +59,59 @@ public class CertificateController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.manualcert.ManualCertificateEvaluationService manualCertEvaluation;
 
-    /** 409 {@code MANUAL_CERT}: ağa bağlanan uçlar (önizleme, tanılama) elle yüklenen sertifikada çalışmaz. */
+    /**
+     * 409 {@code MANUAL_CERT}: ağa bağlanan uçlar (tanılama) elle yüklenen sertifikada çalışmaz. Önizleme (2026-10-07'den
+     * beri) çevrim-dışı değerlendirmeyi döner — bkz. {@code manualPreviewResponse}.
+     */
     static com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException manualCertConflict() {
         return new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("MANUAL_CERT",
                 com.sitemonitor.util.Msg.t(
                         "Bu sertifika dosyadan yüklendi; ağ üzerinden kontrol edilemez. Yenilemek için yeni sürümü yükleyin.",
                         "This certificate was uploaded from a file and cannot be checked over the network. Upload a new version to renew it."));
+    }
+
+    /**
+     * {@code /check-preview/{domain}} yanıtı, manuel kayıt için (2026-10-07): geçerli sürümün çevrim-dışı sonuç haritası
+     * + yalnız SERTİFİKAYA ait değerlendirme (imza, anahtar). Ağa özgü hükümler (hostname, protokol, şifre, PFS) {@code NA};
+     * güvenlik bayraklarında HOSTNAME_MISMATCH asla yok (takip adı bir host adı değil). Hiçbir şey YAZMAZ. Geçerli sürüm
+     * yoksa 409 {@code MANUAL_CERT}.
+     */
+    private ResponseEntity<Map<String, Object>> manualPreviewResponse(CertificateInventory inv) {
+        Map<String, Object> built = manualCertEvaluation == null ? null : manualCertEvaluation.previewCurrent(inv);
+        if (built == null) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "code", "MANUAL_CERT",
+                    "error", com.sitemonitor.util.Msg.t("Manuel sertifikanın geçerli sürümü değerlendirilemedi.",
+                            "The current version of the manual certificate could not be evaluated.")));
+        }
+        Map<String, Object> result = new LinkedHashMap<>(built);
+        putManualPreviewAssessment(result);
+        // SSL sekmesinin "Hiyerarşi" görünümü (2026-10-07) sürüm zincirini tek istekle çeksin: kayıt + sürüm kimliği
+        result.put("inventory_id", inv.getId());
+        return ok(Map.of("success", true, "data", result, "timestamp", now()));
+    }
+
+    /** Manuel önizlemenin değerlendirmesi — {@link #putPreviewAssessment} ile aynı anahtarlar, ağa özgüler {@code NA}. */
+    static void putManualPreviewAssessment(Map<String, Object> result) {
+        List<String> san = result.get("san") instanceof List<?> l
+                ? l.stream().filter(String.class::isInstance).map(String.class::cast).toList()
+                : List.of();
+        String sigAlg = result.get("signature_algorithm") instanceof String s ? s : null;
+        String keyAlg = result.get("public_key_algorithm") instanceof String s ? s : null;
+        Integer keySize = result.get("public_key_size") instanceof Number n ? n.intValue() : null;
+        String trust = result.get("trust_status") instanceof String s ? s : null;
+        String na = CertificateHealthRules.Status.NA.name();
+        Map<String, Object> a = new LinkedHashMap<>();
+        a.put("hostname", na);
+        a.put("protocol", na);
+        a.put("protocol_latest", false);
+        a.put("cipher", na);
+        a.put("pfs", na);
+        a.put("signature", CertificateHealthRules.signatureStatus(sigAlg).name());
+        a.put("key_size", CertificateHealthRules.keySizeStatus(keyAlg, keySize).name());
+        result.put("assessment", a);
+        Object domain = result.get("domain");
+        result.put("security_flags", CertificateHealthRules.securityFlags(domain == null ? null : domain.toString(), san,
+                trust, true));
     }
 
     /** {@code /check/{domain}} yanıtı, manuel kayıt için (ağsız değerlendirme; biçim ağ yanıtıyla aynı). */
@@ -371,8 +418,10 @@ public class CertificateController {
         // kaydında da açılır. Önizleme HİÇBİR ŞEY yazmaz (kayıt/önbellek/denetim yok); aynı el sıkışma envanterde
         // OLMAYAN her host için zaten herkese açık. Kalıcı "şimdi kontrol et" (/check) özgün kapıda kalır.
         if (inv.isPresent()) requireReadableDomain(session, domain);
-        // Elle yüklenen sertifikanın ağ adresi yok (takip adı) — canlı el sıkışma anlamsız (2026-10-06).
-        if (inv.isPresent() && inv.get().isManual()) throw manualCertConflict();
+        // Elle yüklenen sertifikanın ağ adresi yok (takip adı) — canlı el sıkışma anlamsız (2026-10-06). 2026-10-07: SSL
+        // sekmesi manuel kayıtta da var; önizleme geçerli sürümün ÇEVRİM-DIŞI değerlendirmesidir (aynı sonuç haritası,
+        // via=upload) — kayıt / alarm / önbellek boşaltma YOK. Ağ satırının yolu aşağıda birebir aynı.
+        if (inv.isPresent() && inv.get().isManual()) return manualPreviewResponse(inv.get());
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
         int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);

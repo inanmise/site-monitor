@@ -3,7 +3,8 @@ import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 
 /**
  * Envanter formu — manuel (dosyadan yüklenen) kayıt (2026-10-06): ağa özgü alanlar (port, vekil, TLS kipi, zaman aşımı,
- * sıklık) ve "Test et" yok; takip adı salt okunur; "Çalıştır" = "Yeniden değerlendir"; kaydedince canlı ilk kontrol KOŞMAZ.
+ * sıklık) ve "Test et" yok; takip adı DÜZENLENEBİLİR (2026-10-07, kullanıcı isteği — takip adı kuralı + yeniden adlandırma
+ * onayı); "Çalıştır" = "Yeniden değerlendir"; kaydedince canlı ilk kontrol KOŞMAZ.
  * Gövde ağ alanlarını kayıttaki gibi taşır. Ağ kaydında form birebir aynı (aynı dosyadaki ikinci senaryo).
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -18,8 +19,9 @@ vi.mock('../api/client', () => ({
   }),
   formatDateOnly: (s) => String(s ?? ''),
 }))
+const showConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 vi.mock('../components/ui/Dialog.jsx', () => ({
-  useDialog: () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }),
+  useDialog: () => ({ showConfirm }),
   DialogProvider: ({ children }) => children,
 }))
 vi.mock('@uiw/react-md-editor', () => ({
@@ -38,16 +40,16 @@ const RECORD = {
 describe('InventoryFormModal — manuel kayıt kipi', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('ağ alanları ve "Test et" yok; takip adı salt okunur; bilgi bandı; "Yeniden değerlendir"', () => {
+  it('ağ alanları ve "Test et" yok; takip adı düzenlenebilir; bilgi bandı; "Yeniden değerlendir"', () => {
     render(<InventoryFormModal mode="edit" record={{ ...RECORD, cert_source: 'MANUAL' }} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} />)
     expect(document.querySelector('[data-slot="inv-form-manual"]')).toBeTruthy()
     expect(screen.queryByLabelText(/^(Port)$/)).toBeNull()
     expect(screen.queryByText(/^(TLS Mode|TLS Modu)$/i)).toBeNull()
     expect(screen.queryByRole('switch', { name: /proxy|vekil/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^(Test|Test et)$/ })).toBeNull()
-    const key = screen.getByLabelText(/^(Tracking name|Takip adı)$/)
+    const key = screen.getByLabelText(/^(Tracking name|Takip adı)/)
     expect(key).toHaveValue('keystore.example.test')
-    expect(key).toHaveAttribute('readonly')
+    expect(key).not.toHaveAttribute('readonly')
     expect(screen.getByRole('button', { name: /Re-evaluate|Yeniden değerlendir/ })).toBeInTheDocument()
   })
 
@@ -59,6 +61,32 @@ describe('InventoryFormModal — manuel kayıt kipi', () => {
     expect(api.refreshCertificateHealth).not.toHaveBeenCalled()
     const [, payload] = api.admin.updateInventory.mock.calls[0]
     expect(payload).toMatchObject({ domain: 'keystore.example.test', port: 443, tls_mode: 'browser', timeout_seconds: 9, check_interval_hours: 6 })
+  })
+
+  it('takip adı değiştirilir: manuel onay metni, gövdede yeni ad, canlı kontrol yok', async () => {
+    const onSaved = vi.fn()
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, cert_source: 'MANUAL' }} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} onSaved={onSaved} />)
+    fireEvent.change(screen.getByLabelText(/^(Tracking name|Takip adı)/), { target: { value: '*.odeme-keystore.example.test' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(showConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringMatching(/Change the tracking name|Takip adı değiştirilsin/),
+      message: expect.stringContaining('*.odeme-keystore.example.test'),
+    }))
+    expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ domain: '*.odeme-keystore.example.test' })
+    expect(api.refreshCertificateHealth).not.toHaveBeenCalled()
+  })
+
+  it('geçersiz takip adı alanın altında hata verir, kaydetmez (büyük harf / boşluk / "/")', async () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, cert_source: 'MANUAL' }} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} />)
+    const key = screen.getByLabelText(/^(Tracking name|Takip adı)/)
+    for (const bad of ['Keystore.Example.Test', 'key store', 'a/b']) {
+      fireEvent.change(key, { target: { value: bad } })
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+      await waitFor(() => expect(key).toHaveAttribute('aria-invalid', 'true'))
+    }
+    expect(api.admin.updateInventory).not.toHaveBeenCalled()
+    expect(showConfirm).not.toHaveBeenCalled()
   })
 
   it('ağ kaydı DEĞİŞMEZ: port, TLS kipi, Test et var; kaydedince ilk kontrol koşar', async () => {

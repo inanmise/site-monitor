@@ -154,15 +154,16 @@ function ChainNode({ node, index, t }) {
 
 export default function SslChainView({ chain, trustStatus }) {
   const t = useT()
-  const { nodes, rootSent } = chain
+  // `upload` (2026-10-07): dosyadan yüklenen sertifikanın zinciri — kartlar AYNI, yalnız yön ve "kök yok" metni dosyaya göre.
+  const { nodes, rootSent, upload = false } = chain
   const untrusted = String(trustStatus || '').toUpperCase() === 'UNTRUSTED'
   const titleId = useId()
   return (
-    <section data-slot="ssl-chain" aria-labelledby={titleId} className="flex min-w-0 flex-col gap-2">
+    <section data-slot="ssl-chain" data-source={upload ? 'upload' : undefined} aria-labelledby={titleId} className="flex min-w-0 flex-col gap-2">
       <h4 id={titleId} className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         <ShieldCheck aria-hidden="true" className="size-3.5" />
         {t('sslv.chainTitle')}
-        <span className="ml-auto font-medium tracking-normal normal-case">{t('sslv.chainDirection')}</span>
+        <span className="ml-auto font-medium tracking-normal normal-case">{upload ? t('sslv.m.chainDirection') : t('sslv.chainDirection')}</span>
       </h4>
       <ol className="flex min-w-0 flex-col">
         {nodes.map((n, i) => (
@@ -183,7 +184,7 @@ export default function SslChainView({ chain, trustStatus }) {
             <Card data-slot="ssl-chain-node" data-role="root-store"
               className="min-w-0 flex-row items-start gap-2.5 border-dashed bg-transparent px-4 py-3 text-[13px] text-muted-foreground shadow-none">
               <ShieldQuestion aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-              <span>{untrusted ? t('sslv.rootMissingUntrusted') : t('sslv.rootNotSent')}</span>
+              <span>{untrusted ? t('sslv.rootMissingUntrusted') : upload ? t('sslv.m.rootNotSent') : t('sslv.rootNotSent')}</span>
             </Card>
           </li>
         )}

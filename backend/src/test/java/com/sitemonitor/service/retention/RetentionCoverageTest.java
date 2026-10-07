@@ -51,11 +51,11 @@ class RetentionCoverageTest {
             Map.entry("noc_settings", "7/24 yapılandırması — tekil satır (id=1)."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),
-            Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (soft delete)."),
+            Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (silme kalıcı, 2026-10-07)."),
             Map.entry("manual_certificate_versions",
                     "Elle yüklenen sertifikanın sürüm geçmişi (2026-10-06) — envanter satırının PARÇASI: satır yaşadıkça "
-                    + "saklanır (yenileme eskisini silmez, geçmişte görüntülenir); kalıcı silme (AdminController purge, "
-                    + "InventoryAutoPurgeService) sürümleri de aynı işlemde siler. Satır başına yenileme sayısı kadar "
+                    + "saklanır (yenileme eskisini silmez, geçmişte görüntülenir); kalıcı silme (PermanentDeletionService) "
+                    + "sürümleri de aynı işlemde siler. Satır başına yenileme sayısı kadar "
                     + "(yılda birkaç) — zaman serisi değil, birikmez."),
             Map.entry("latest_checks", "Domain başına TEK satır (PK = domain)."),
             Map.entry("smtp_settings", "Tekil ayar satırı."),

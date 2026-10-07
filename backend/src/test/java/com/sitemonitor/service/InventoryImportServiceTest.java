@@ -124,24 +124,43 @@ class InventoryImportServiceTest {
     }
 
     @Test
-    @DisplayName("kapsam SATIR BAŞINA: yabancı takım skip:scope, batch durmaz; silinmiş kayıt skip:deleted; aynı domain ikinci kez skip:duplicate_row")
+    @DisplayName("kapsam SATIR BAŞINA: yabancı takım skip:scope, batch durmaz; aynı domain ikinci kez skip:duplicate_row; SİLİNEN ad yeniden eklenir (2026-10-07)")
     void scopeDeletedDuplicate() {
+        PermanentDeletionService deletion = org.mockito.Mockito.mock(PermanentDeletionService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "permanentDeletion", deletion);
         CertificateInventory del = new CertificateInventory(); del.setId(1L); del.setDomain("gone.example.com"); del.setTeamId(5L); del.setDeletedAt("2026-09-01T00:00:00");
         when(inventoryRepo.findByDomain("gone.example.com")).thenReturn(Optional.of(del));
         var r = service.commit(List.of(
                 row("domain", "foreign.example.com", "team", "9"),
                 row("domain", "mine.example.com", "team", "5"),
                 row("domain", "mine.example.com", "team", "5"),
-                row("domain", "gone.example.com", "tier", "1"),
+                row("domain", "gone.example.com", "team", "5", "tier", "1"),
                 row("domain", "noteam.example.com"),
                 row("domain", "not a domain !", "team", "5"),
                 row("domain", "x.example.com", "team", "Takım Yok")),
                 t -> t != null && t == 5L, "po", null);
-        assertThat(r.created()).isEqualTo(1);
-        assertThat(r.skipped()).isEqualTo(3);
+        // Silme KALICI: eski sürümden kalmış çöp satırı adı tutmaz — "deleted" nedeni yok, satır YENİ kayıt olarak açılır.
+        assertThat(r.created()).isEqualTo(2);
+        assertThat(r.skipped()).isEqualTo(2);
         assertThat(r.errors()).isEqualTo(3);
-        assertThat(r.rows()).extracting("reason").containsExactly("scope", null, "duplicate_row", "deleted", "team_required", "invalid_domain", "unknown_team");
-        verify(inventoryRepo, times(1)).save(any());
+        assertThat(r.rows()).extracting("reason").containsExactly("scope", null, "duplicate_row", null, "team_required", "invalid_domain", "unknown_team");
+        assertThat(r.rows()).extracting("action").contains("create").doesNotContain("deleted");
+        verify(inventoryRepo, times(2)).save(any());
+        verify(deletion).purgeLegacyBinRows("gone.example.com");   // eski satır yeni kayıttan ÖNCE kalıcı silinir
+        verify(deletion, never()).purgeLegacyBinRows("foreign.example.com");   // kapsam dışı satır hiçbir şey silmez
+    }
+
+    @Test
+    @DisplayName("Silme KALICI (2026-10-07): kuru koşu (plan) silinen adı 'oluştur' gösterir ama HİÇBİR ŞEY silmez")
+    void plan_legacyBinRow_showsCreate_noPurge() {
+        PermanentDeletionService deletion = org.mockito.Mockito.mock(PermanentDeletionService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "permanentDeletion", deletion);
+        CertificateInventory del = new CertificateInventory(); del.setId(1L); del.setDomain("gone.example.com"); del.setTeamId(9L); del.setDeletedAt("2026-09-01T00:00:00");
+        when(inventoryRepo.findByDomain("gone.example.com")).thenReturn(Optional.of(del));
+        var r = service.plan(List.of(row("domain", "gone.example.com", "team", "5")), t -> t != null && t == 5L, "po", null);
+        assertThat(r.rows()).extracting("action", "reason").containsExactly(org.assertj.core.groups.Tuple.tuple("create", null));
+        org.mockito.Mockito.verifyNoInteractions(deletion);
+        verify(inventoryRepo, never()).save(any());
     }
 
     @Test
@@ -174,7 +193,7 @@ class InventoryImportServiceTest {
     }
 
     @Test
-    @DisplayName("mükerrer (2026-09-28): çöp kutusundaki kayıt skip:deleted + sahibi takım; eski KARIŞIK HARFLİ satır da bulunur (mükerrer satır açılmaz)")
+    @DisplayName("mükerrer (2026-09-28): eski KARIŞIK HARFLİ satır da bulunur (mükerrer satır açılmaz); başka takımın SİLİNMİŞ kaydı engel değil (2026-10-07)")
     void deletedCarriesOwner_andLegacyMixedCaseRowIsMatched() {
         CertificateInventory gone = new CertificateInventory();
         gone.setId(3L); gone.setDomain("gone.example.com"); gone.setTeamId(9L); gone.setDeletedAt("2026-09-01T00:00:00");
@@ -188,11 +207,12 @@ class InventoryImportServiceTest {
                 row("domain", "gone.example.com", "team", "5"),
                 row("domain", "legacy.example.com", "team", "5", "tier", "1")), manager5, "po", null);
 
-        assertThat(r.created()).isZero();
+        assertThat(r.created()).isEqualTo(1);
         assertThat(r.rows()).extracting("action", "reason", "teamId", "teamName").containsExactly(
-                org.assertj.core.groups.Tuple.tuple("skip", "deleted", 9L, "Takım B"),
+                org.assertj.core.groups.Tuple.tuple("create", null, null, null),
                 org.assertj.core.groups.Tuple.tuple("skip", "duplicate_other_team", 9L, "Takım B"));
-        verify(inventoryRepo, never()).save(any());
+        verify(inventoryRepo, times(1)).save(argThat(c -> "gone.example.com".equals(c.getDomain()) && c.getTeamId() == 5L));
+        org.mockito.Mockito.clearInvocations(inventoryRepo);
 
         // Kendi takımının karışık harfli satırı → GÜNCELLENİR (ikinci satır yaratılmaz)
         legacy.setTeamId(5L);

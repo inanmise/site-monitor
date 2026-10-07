@@ -43,7 +43,7 @@ describe('Envanter — kapsam geçişi fetch yarışı', () => {
   it('"Tüm takımlar" yanıtı "Takımlarım"a dönüldükten SONRA gelirse listeyi ezmez', async () => {
     const all = deferred(), mine2 = deferred()
     let mineCalls = 0
-    api.admin.getInventory.mockImplementation((del, scope) => {
+    api.admin.getInventory.mockImplementation((scope) => {
       if (scope === 'all') return all.p
       mineCalls += 1
       return mineCalls === 1 ? Promise.resolve({ success: true, data: OWN, scope: 'mine', visible_to_all: true }) : mine2.p
@@ -52,9 +52,9 @@ describe('Envanter — kapsam geçişi fetch yarışı', () => {
     await screen.findByText('own-a.example.com')
 
     fireEvent.click(scopeBtn(/tüm takımlar|all teams/i))
-    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all'))
+    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith('all'))
     fireEvent.click(scopeBtn(/takımlarım|my teams/i))
-    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'mine'))
+    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith('mine'))
 
     // Yeni ("mine") yanıt önce, eski ("all") yanıt SONRA döner.
     await act(async () => { mine2.resolve({ success: true, data: OWN, scope: 'mine', visible_to_all: true }) })

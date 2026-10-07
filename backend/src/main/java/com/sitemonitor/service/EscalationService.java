@@ -1994,7 +1994,8 @@ public class EscalationService {
     /**
      * Silent close for inventory delete path — does NOT trigger resolution email.
      * Admin is intentionally decommissioning the domain; monitoring stops, so
-     * spamming contacts with a "resolved" email would be noise.
+     * spamming contacts with a "resolved" email would be noise. Since 2026-10-07 the delete is
+     * PERMANENT ({@link PermanentDeletionService}); this runs first, in the same transaction.
      */
     public int closeAlertsOnInventoryDelete(String domain) {
         return closeOpenAlerts(domain, "inventory_delete", "envanter silindi");
@@ -2040,30 +2041,9 @@ public class EscalationService {
         return false;
     }
 
-    /**
-     * Startup safety net — closes any alarms that are still open on domains
-     * already soft-deleted from inventory. Legacy state from before the live
-     * inventory-delete close hook shipped (v18.9.0) is cleaned up automatically
-     * on next application start. Silent (no resolution email), idempotent.
-     */
-    public int catchUpAlertsOnDeletedDomains() {
-        int closed = 0;
-        for (AlertEvent event : alertEventRepo.findOpenAlertsOnSoftDeletedDomains()) {
-            if (!closableByInventory(event, "envanter silindi — açılış telafisi")) continue;   // Y-A3-1: bağımsız olay dokunulmaz
-            event.setResolved(true);
-            event.setResolvedAt(now());
-            event.setResolvedBy("inventory_delete");
-            event.setResolvedSilently(true);   // O-b2
-            alertEventRepo.save(event);
-            log.info("Startup catch-up: closed stale alarm {} [{}] for soft-deleted domain {}",
-                    event.getId(), event.getAlertType(), event.getDomain());
-            closed++;
-        }
-        if (closed > 0) {
-            log.info("Startup catch-up complete — closed {} stale alarm(s) on soft-deleted domains", closed);
-        }
-        return closed;
-    }
+    // 2026-10-07: catchUpAlertsOnDeletedDomains (açılışta yumuşak silinmiş envanterin açık alarmlarını kapatan emniyet ağı)
+    // KALDIRILDI — envanter silmesi artık KALICI (PermanentDeletionService alarmları silme anında kapatır) ve eski çöp kutusu
+    // tek seferlik temizlikte (DeletedRecordsPurge) alarmlarıyla birlikte kapandı; yumuşak silinmiş satır kalmaz.
 
     @Async("certCheckExecutor")
     public void sendResolutionNotificationAsync(AlertEvent event, String resolvedBy, String trigger) {

@@ -21,12 +21,12 @@ public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);
     /** Liste ucu (2026-09-27): SİLİNMEMİŞ standalone satırlar — duraklatılmışlar DÂHİL (bkz. PortMonitorRepository). */
     List<DnsMonitor> findByStandaloneTrueAndDeletedAtIsNull();
+    /** Eski sürümden kalmış yumuşak silinmiş satırlar — yalnız tek seferlik kalıcı temizlik okur (DeletedRecordsPurge, 2026-10-07). */
+    List<DnsMonitor> findByDeletedAtIsNotNullOrderByIdAsc();
 
     /** Mükerrer guard'ı: aynı (domain, tip) için CANLI (aktif ya da duraklatılmış, silinmemiş) standalone satır. */
     Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(String domain, String recordType);
-
-    /** Yeniden ekleme: aynı (domain, tip) için en son SİLİNMİŞ standalone satır — canlandırılır (id ve geçmiş korunur). */
-    Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc(String domain, String recordType);
+    // 2026-10-07: silinmiş satırı canlandırma sorgusu KALDIRILDI — bağımsız DNS silmesi kalıcı, yeniden ekleme yeni satır açar.
 
     /** [teamId, grup adı, sayı] — TAKIM-bazlı grup listesi (boş/null hariç); satır çekmeden DB-side GROUP BY. */
     // Silinmiş standalone satır grup sayısına girmez (2026-09-27).

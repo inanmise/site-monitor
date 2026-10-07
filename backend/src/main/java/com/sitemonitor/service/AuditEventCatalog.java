@@ -84,6 +84,7 @@ public final class AuditEventCatalog {
             "CERT_LIST_EXPORT",
             "CERT_MANUAL_RENEW",
             "CERT_MANUAL_UPLOAD",
+            "CERT_MANUAL_VERSION_DELETE",   // manuel sertifikanın ESKİ sürümü kalıcı silindi (2026-10-07)
             "CERT_NOTE_ADD",
             "CERT_NOTE_DELETE",
             "CERT_NOTE_EDIT",
@@ -105,20 +106,21 @@ public final class AuditEventCatalog {
             "DIAGNOSTICS_RUN",
             "DNS_DIAGNOSTICS_RUN",        // DNS izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "DOMAIN_ADD",
-            "DOMAIN_AUTO_PURGE",
+            "DOMAIN_AUTO_PURGE",          // eski (gece çöp kutusu boşaltma) — geçmiş satırlar için; 2026-10-07'den beri yazılmaz
             "DOMAIN_BULK_ACTIVATE",
             "DOMAIN_BULK_DEACTIVATE",
-            "DOMAIN_BULK_DELETE",
-            "DOMAIN_BULK_PURGE",
+            "DOMAIN_BULK_DELETE",         // 2026-10-07'den beri KALICI toplu silme ("permanent":true + alan adları)
+            "DOMAIN_BULK_PURGE",          // eski (çöp kutusunu boşalt) — geçmiş satırlar için
             "DOMAIN_BULK_SET_CONTACTS",
             "DOMAIN_BULK_SET_TEAM",
             "DOMAIN_BULK_SET_TIER",
+            "DOMAIN_DELETE",              // envanter kaydı KALICI silindi (2026-10-07)
             "DOMAIN_DELETE_CHECK",
             "DOMAIN_EDIT",
             "DOMAIN_IMPORT",
-            "DOMAIN_PURGE",
-            "DOMAIN_RESTORE",
-            "DOMAIN_SOFT_DELETE",
+            "DOMAIN_PURGE",               // eski (çöp kutusundan kalıcı sil) — geçmiş satırlar için
+            "DOMAIN_RESTORE",             // eski (çöp kutusundan geri yükle) — geçmiş satırlar için
+            "DOMAIN_SOFT_DELETE",         // eski (çöp kutusuna taşı) — geçmiş satırlar için
             "DOMAIN_TRANSFER_SY",
             "DOMAIN_TRANSFER_UG",
             "GENERAL_SETTINGS_SAVE",
@@ -238,6 +240,7 @@ public final class AuditEventCatalog {
             "SMTP_TEST_EMAIL",
             "SQL_EXECUTE",
             "STORM_SETTINGS_SAVE",
+            "SYSTEM_DELETED_RECORDS_PURGE",   // eski çöp kutusunun tek seferlik kalıcı temizliği (2026-10-07, DeletedRecordsPurge)
             "SYSTEM_DEPLOYMENT_BACKFILL",
             "SYSTEM_DEPLOYMENT_DELETE",
             "SYSTEM_DEPLOYMENT_EXPORT",

@@ -360,8 +360,7 @@ Tüm istekler HTTP Basic Auth veya oturum çerezi gerektirir.
 | GET | `/api/admin/inventory` | Envanter listesi (`?showDeleted=true` ile silinenleri dahil et) |
 | POST | `/api/admin/inventory` | Domain ekle |
 | PUT | `/api/admin/inventory/{id}` | Domain güncelle |
-| DELETE | `/api/admin/inventory/{id}` | Domain'i soft-delete ile işaretle |
-| POST | `/api/admin/inventory/{id}/restore` | Silinen domain'i geri getir |
+| DELETE | `/api/admin/inventory/{id}` | Domain'i KALICI olarak sil (geri alınamaz; geçmiş kontroller, notlar, türetilmiş Port/DNS izlemeleri dahil) |
 | POST | `/api/admin/inventory/{id}/transfer` | SY ekibi transferi |
 | POST | `/api/admin/inventory/{id}/transfer-ug` | UG ekibi transferi |
 
@@ -533,7 +532,7 @@ PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırı
 |-------|----------|
 | `certificate_checks` | Tüm kontrol geçmişi |
 | `latest_checks` | Domain başına en son sonuç |
-| `certificate_inventory` | Yönetilen domain envanteri (soft-delete destekli) |
+| `certificate_inventory` | Yönetilen domain envanteri (silme kalıcıdır) |
 | `alert_thresholds` | Uyarı eşik tanımları |
 | `alert_events` | Uyarı olayları ve durumları |
 | `escalation_contacts` | Bildirim alıcıları |

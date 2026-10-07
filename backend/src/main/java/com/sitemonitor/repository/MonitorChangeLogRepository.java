@@ -39,6 +39,15 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
             String resourceKind, Long resourceId);
 
     /**
+     * Pencere içinde silinen envanter kayıtları — {@code [resourceId, teamId]} (2026-10-07: envanter silmesi KALICI; Dashboard
+     * "son N günde silinen alan" sayacı satır yerine geçmişten sayar). Aynı kimliğin birden çok satırı olabilir (eski çöp
+     * kutusu: sil → geri yükle → sil); çağıran kimlik başına bir kez sayar.
+     */
+    @Query("SELECT c.resourceId, c.teamId FROM MonitorChangeLog c "
+            + "WHERE c.resourceKind = 'INVENTORY' AND c.eventType = 'DELETE' AND c.createdAt >= :since")
+    List<Object[]> findInventoryDeletesSince(@Param("since") String since);
+
+    /**
      * Yönetici konsolu ve takım akışı — süzgeçler null geçilebilir (tek sorgu, dallanma yok).
      *
      * <p>Geri doldurmanın {@code SYSTEM} nişan satırı DIŞLANIR: o bir izleme değişikliği değil,

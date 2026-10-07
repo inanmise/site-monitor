@@ -39,6 +39,14 @@ public class ExecutiveStatsService {
     private final AppSettingsService appSettings;
     private final com.sitemonitor.repository.CertificateCheckRepository certificateCheckRepo;
 
+    /**
+     * "Silinen alan" sayacının kaynağı (2026-10-07): envanter silmesi KALICI — satır gidiyor, {@code deleted_at} ile
+     * sayılamaz; ürün geçmişindeki {@code INVENTORY/DELETE} satırlarından sayılır. Alan enjeksiyonu (kurucu değişmesin);
+     * yokken (dilimli test) sayaç 0.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.MonitorChangeLogRepository changeLogRepo;
+
     public Map<String, Object> build(Predicate<Long> canViewTeam) {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<Long, String> teamNames = new LinkedHashMap<>();
@@ -164,15 +172,31 @@ public class ExecutiveStatsService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("days", d);
         Set<String> visibleDomains = new HashSet<>();
+        Set<Long> liveIds = new HashSet<>();
         int added = 0, removed = 0;
         try {
             for (CertificateInventory i : inventoryRepo.findAllByOrderByDomainAsc()) {
+                if (i.getDeletedAt() != null) continue;   // eski sürümden kalmış çöp satırı (tek seferlik temizlik siler)
+                liveIds.add(i.getId());
                 if (!canViewTeam.test(i.getTeamId())) continue;
-                if (i.getDeletedAt() != null) { if (i.getDeletedAt().compareTo(since) >= 0) removed++; continue; }
                 visibleDomains.add(i.getDomain());
                 if (i.getCreatedAt() != null && i.getCreatedAt().compareTo(since) >= 0) added++;
             }
         } catch (Exception e) { log.debug("changes: envanter düştü: {}", e.toString()); }
+        // Silinen (2026-10-07, silme KALICI): pencerede DELETE satırı olan ve BUGÜN envanterde olmayan kayıtlar — kimlik başına
+        // bir kez; takım kapsamı satırın (silme anındaki) takımıyla. Eski çöp kutusundan geri yüklenmiş kayıt hâlâ canlıdır →
+        // sayılmaz. Tek gruplu sorgu (pencere ≤ 90 gün).
+        if (changeLogRepo != null) {
+            try {
+                Set<Long> counted = new HashSet<>();
+                for (Object[] row : changeLogRepo.findInventoryDeletesSince(since)) {
+                    Long id = row[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+                    Long team = row[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+                    if (id == null || liveIds.contains(id) || !canViewTeam.test(team)) continue;
+                    if (counted.add(id)) removed++;
+                }
+            } catch (Exception e) { log.debug("changes: silinen kayıt sorgusu düştü: {}", e.toString()); }
+        }
         int renewed = 0;
         try { for (String dom : certificateCheckRepo.domainsWithFingerprintChangeSince(since)) if (visibleDomains.contains(dom)) renewed++; }
         catch (Exception e) { log.debug("changes: parmak izi sorgusu düştü: {}", e.toString()); }

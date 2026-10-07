@@ -127,8 +127,10 @@ class CertificateServiceCacheEvictionTest {
         Map<String, String> admin = publicEndpointBodies(sourceOf("controller/AdminController.java"));
         // createInventoryRecord (2026-10-06): ekleme kapıları + kayıt, ağ eklemesi ve manuel sertifika için ortak çekirdek
         // (gövdesi inventoryRepo.save yapar) — onu çağıran uç da envanteri yazar.
+        // Kalıcı silme (2026-10-07): satırı PermanentDeletionService siler — requireDeletion().deleteInventory( da yazmadır.
         java.util.regex.Pattern write = java.util.regex.Pattern.compile(
-                "inventoryRepo\\.(save|saveAll|delete|deleteById|deleteAll)\\(|teamAdminService\\.moveAll\\(|createInventoryRecord\\(");
+                "inventoryRepo\\.(save|saveAll|delete|deleteById|deleteAll)\\(|teamAdminService\\.moveAll\\(|createInventoryRecord\\("
+                        + "|requireDeletion\\(\\)\\.deleteInventory\\(");
         List<String> writers = new ArrayList<>();
         List<String> offenders = new ArrayList<>();
         for (var e : admin.entrySet()) {
@@ -148,9 +150,10 @@ class CertificateServiceCacheEvictionTest {
             if (!found) offenders.add(e.getKey() + " (public metot yansımada yok)");
         }
         // Tarama boş geçmesin: bilinen yazarların HEPSİ bulunmalı (desen bozulursa kapı sessizce yeşil kalmasın).
+        // restoreInventory / purgeInventory / purgeAllDeleted 2026-10-07'de kalktı (silme kalıcı, çöp kutusu yok).
         assertThat(writers).as("envanteri yazan uç taraması — desen bozuk").contains(
-                "addInventory", "updateInventory", "deleteInventory", "bulkInventoryAction", "restoreInventory",
-                "purgeInventory", "purgeAllDeleted", "transferInventory", "transferInventoryUg", "teamMove");
+                "addInventory", "updateInventory", "deleteInventory", "bulkInventoryAction",
+                "transferInventory", "transferInventoryUg", "teamMove");
         assertThat(offenders).as("envanteri yazıp önbellek boşaltmayan uç — Genel Bakış 300 sn'ye kadar eski kalır")
                 .isEmpty();
 

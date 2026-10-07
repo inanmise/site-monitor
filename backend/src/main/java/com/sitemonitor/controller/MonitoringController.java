@@ -251,6 +251,18 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired
     private SchedulerService schedulerService;
 
+    /**
+     * Bağımsız Port/DNS izlemesinin KALICI silinmesi (2026-10-07, kullanıcı kararı) — isteğe bağlı: dilimli test bağlamında
+     * bean yoksa standalone silme 500 verir; üretimde her zaman vardır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.PermanentDeletionService permanentDeletion;
+
+    private com.sitemonitor.service.PermanentDeletionService requireDeletion() {
+        if (permanentDeletion == null) throw new IllegalStateException("PermanentDeletionService yok");
+        return permanentDeletion;
+    }
+
     /** Sayfa-bütünlüğü (9. tür) — @RequiredArgsConstructor'ı büyütmemek için alan enjeksiyonu (schedulerService deseni). */
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageMonitorRepository pageMonitorRepo;
@@ -1778,8 +1790,8 @@ public class MonitoringController {
         if (portMonitorRepo.existsByHostAndPortAndActiveTrue(host, port))
             return badRequest(portDuplicateMsg(host, port, null, "Bu host:port zaten izleniyor"));   // sahibi takım adıyla (2026-09-28)
         // DURAKLATILMIŞ standalone kopya da engeldir (2026-09-27): artık listede görünüyor; ikinci satır açmak yerine
-        // kullanıcı onu sürdürmeli. SİLİNMİŞ satır engel DEĞİLDİR → yeni satır açılır (silinen izleme kendi
-        // geçmişiyle silinmiş kalır; standalone'da uq_pm_host_port yok, ikinci satır DB'ce serbest).
+        // kullanıcı onu sürdürmeli. Silinen izleme engel DEĞİLDİR: silme KALICI (2026-10-07) — satır yok; eski sürümden
+        // kalmış yumuşak silinmiş satır da sayılmaz (sorgu deleted_at IS NULL) ve tek seferlik temizlikle gider.
         if (portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(host, port))
             return badRequest(portDuplicateMsg(host, port, null, "Bu host:port için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün"));
         Long teamId = resolveWriteTeam(session, body);
@@ -1897,19 +1909,26 @@ public class MonitoringController {
             // göstermiyordu, dolayısıyla bu yalnız API-only boşluğu kapatır.
             Long team = effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
             if (!SessionScope.canManage(session, team)) return forbidden("Bu izleme üzerinde yetkiniz yok");
-            m.setActive(false);
-            // 2026-09-27: standalone satırda silme ARTIK duraklatmadan ayrı — deleted_at yazılır (listeden kalkar,
-            // hiçbir yerde görünmez/çalışmaz). Envanter-türevi satırın "silmesi" duraklatmadır (envanterle yaşar).
-            if (Boolean.TRUE.equals(m.getStandalone())) m.setDeletedAt(ISO.format(Instant.now()));
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            monitorHistory.stampUpdated(m, session);
-            portMonitorRepo.save(m);
+            boolean standalone = Boolean.TRUE.equals(m.getStandalone());
+            if (standalone) {
+                // 2026-10-07 (kullanıcı kararı): bağımsız izleme silmesi KALICI — diğer yedi türle aynı. Açık alarmları
+                // (yalnız BU izlemenin) sessizce kapanır, kontrol serisi / özetleri / tanılamaları ve satır tek işlemde gider.
+                // Eskiden deleted_at yazılıyordu (görünmez ama DB'de duran satır).
+                requireDeletion().deleteStandalonePort(m);
+            } else {
+                // Envanter-türevi satırın "silmesi" duraklatmadır (envanterle yaşar; envanter kaydı silinince o da gider).
+                m.setActive(false);
+                m.setUpdatedAt(ISO.format(Instant.now()));
+                monitorHistory.stampUpdated(m, session);
+                portMonitorRepo.save(m);
+            }
             activityLog.recordLifecycle(ActivityLogService.PORT, m.getId(), m.getName(),
                     m.getHost() + ":" + m.getPort(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             monitorHistory.record(MonitorHistoryService.PORT, m.getId(), m.getName(), m.getTeamId(),
-                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
-            return ok(Map.of("deleted", true));
+                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS),
+                    standalone ? "kalıcı silme" : null, session);
+            return ok(Map.of("deleted", true, "permanent", standalone));
         }).orElse(notFound("Port monitor not found"));
     }
 
@@ -2238,37 +2257,19 @@ public class MonitoringController {
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
         // Aynı (domain, recordType) standalone monitör zaten varsa hata dön; sessizce mevcut kaydı
         // dönmek "kaydedildi" izlenimi verip Kopyala akışını fark edilmeden boşa düşürüyordu (Ping/Port ile aynı davranış).
-        // PASİF satır engel DEĞİLDİR, CANLANDIRILIR. Silme artık her zaman pasifleştirme olduğu
-        // için (bkz. deleteDns) satır tabloda kalıyor; guard "aktif mi" diye bakmasaydı kullanıcı
-        // sildiği domain'i bir daha ekleyemez ve sebebini anlamadığı bir "zaten var" hatası alırdı.
+        // CANLI satır (aktif YA DA duraklatılmış — duraklatılan listede görünür, kullanıcı onu sürdürmeli) ENGELDİR.
         //
-        // Neden yeni satır değil de canlandırma: standalone satırlarda uq_dnsm_domain YOK (o indeks
-        // "WHERE standalone IS NOT TRUE"), yani ikinci bir satır DB'ce engellenmez ve o andan sonra
-        // findFirst... hangi satırı döndüreceği belirsiz hâle gelir — düzenleme guard'ı yanlış
-        // satırı yakalayabilirdi. Canlandırma tek satırı korur, geçmişi ve id'yi de saklar.
-        //
-        // 2026-09-27 (silinmiş ≠ duraklatılmış): CANLI satır (aktif YA DA duraklatılmış) ENGELDİR — duraklatılan artık
-        // listede görünüyor; eskisi gibi onu "canlandırmak" kullanıcının görünür bir izlemesinin ayarlarını sessizce
-        // ezerdi. Yalnız SİLİNMİŞ satır canlandırılır ve TEMİZ başlar: silinmiş izlemenin ayarları (alarm seviyesi,
-        // aralık, teyit/kurtarma, kanal, beklenen değer…) yeni izlemeye sızmaz; korunan yalnız kimliktir (id + ilk
-        // oluşturma künyesi) — geçmiş aynı id'de kesintisiz kalır.
+        // 2026-10-07 (kullanıcı kararı: silme KALICI): silinen izleme satırıyla birlikte gider, dolayısıyla engel olamaz ve
+        // CANLANDIRILMAZ — her ekleme TEMİZ yeni satırdır. (Eskiden yumuşak silinmiş satır kimliği + ilk oluşturma künyesiyle
+        // canlandırılıyordu; eski sürümden kalan böyle bir satır tek seferlik temizlikle kalıcı silinir ve sorgu onu zaten
+        // saymaz: deleted_at IS NULL.)
         DnsMonitor live = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(domain, recordType)
                 .orElse(null);
         if (live != null) return badRequest(dnsDuplicateMsg(live, Boolean.TRUE.equals(live.getActive())   // sahibi takım adıyla (2026-09-28)
                 ? "Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz."
                 : "Bu (domain, kayıt tipi) için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün."));
-        DnsMonitor deleted = dnsMonitorRepo
-                .findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc(domain, recordType)
-                .orElse(null);
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();   // varsayılan ayarlarla; deletedAt = null
-        if (deleted != null) {
-            m.setId(deleted.getId());
-            m.setCreatedAt(deleted.getCreatedAt());
-            m.setCreatedBy(deleted.getCreatedBy());
-            m.setCreatedByName(deleted.getCreatedByName());
-            m.setCreatedIp(deleted.getCreatedIp());
-        }
         m.setName(blank(body.get("name")) ? domain : body.get("name").toString().trim());
         m.setDomain(domain);
         m.setRecordType(recordType);
@@ -2303,8 +2304,7 @@ public class MonitoringController {
         if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(clampInterval(cn.intValue()));
         if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(clampRecovery(cn.intValue()));
         if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
-        // Canlandırılan satırda özgün oluşturma tarihi KORUNUR (yalnız yeni satırda yazılır).
-        if (m.getCreatedAt() == null) m.setCreatedAt(now);
+        m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
         activityLog.recordLifecycle(ActivityLogService.DNS, saved.getId(), saved.getName(),
@@ -2410,28 +2410,29 @@ public class MonitoringController {
             // düzenleyebiliyor ve formdaki "aktif" anahtarıyla duraklatabiliyor.
             Long team = effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId());
             if (!SessionScope.canManage(session, team)) return forbidden("Bu monitörü silme yetkiniz yok");
-            // HER ZAMAN pasifleştirme (deletePort ile simetri). Eskiden dal standalone'a bakıyordu
-            // ve KALICI silme oradan geliyordu; ama standalone, isteği yapanın AYNI AKIŞTA
-            // çevirebildiği bir alan: updateDns'teki detachIfIdentityChanged bir türev satırın
-            // domain'i değişince onu standalone yapıyor. İki çağrı (önce domain düzenle, sonra sil)
-            // geri alınabilir bir duraklatmayı kalıcı silmeye yükseltiyordu — üstelik kart düğmesi
-            // türev satırda "İzlemeyi durdur (envanter-türevi kayıt silinmez)" vaadini veriyordu.
-            // Kalıcılığı artık kullanıcının çevirebildiği bir alan belirlemiyor.
+            // Envanter-türevi satırda silme = DURAKLATMA (kart düğmesi "İzlemeyi durdur (envanter-türevi kayıt silinmez)"
+            // vaadini verir; satır envanterle yaşar, envanter kaydı silinince o da gider).
             //
-            // 2026-09-27 (kullanıcı kararı): standalone satırda silme duraklatmadan AYRI — deleted_at yazılır. Bu da
-            // YUMUŞAK silmedir (satır ve geçmişi DB'de kalır; aynı domain+tip yeniden eklenince canlandırılır), yani
-            // yukarıdaki "geri alınamaz kalıcı silmeye yükseltme" riskini geri getirmez. Envanter-türevi satırda
-            // silme = duraklatma olarak kalır.
-            m.setActive(false);
-            if (Boolean.TRUE.equals(m.getStandalone())) m.setDeletedAt(ISO.format(Instant.now()));
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            dnsMonitorRepo.save(m);
+            // 2026-10-07 (kullanıcı kararı: "silme işlemi her şekilde kalıcı olsun"): bağımsız satırda silme KALICI — diğer
+            // yedi türle aynı. Açık alarmları (yalnız BU izlemenin) sessizce kapanır, DNS kayıt serisi / tanılamaları ve
+            // satır tek işlemde gider; aynı domain+tip yeniden eklenince TEMİZ yeni satır açılır (canlandırma kaldırıldı).
+            // Not: updateDns'teki detachIfIdentityChanged türev satırı alan adı değişince standalone yapar — o andan sonra
+            // satır gerçekten bağımsız bir izlemedir ve silmesi de kalıcıdır (kullanıcı onay penceresinde bunu görür).
+            boolean standalone = Boolean.TRUE.equals(m.getStandalone());
+            if (standalone) {
+                requireDeletion().deleteStandaloneDns(m);
+            } else {
+                m.setActive(false);
+                m.setUpdatedAt(ISO.format(Instant.now()));
+                dnsMonitorRepo.save(m);
+            }
             activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
                     m.getDomain() + " " + m.getRecordType(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             monitorHistory.record(MonitorHistoryService.DNS, m.getId(), m.getName(), m.getTeamId(),
-                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
-            return ok(Map.of("deleted", true));
+                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS),
+                    standalone ? "kalıcı silme" : null, session);
+            return ok(Map.of("deleted", true, "permanent", standalone));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -4146,7 +4147,7 @@ public class MonitoringController {
      *  için ikinci silme lock/statement timeout'a düşerse kaynak kırılımı ZATEN kalıcı gitmiş,
      *  monitör hâlâ duruyor ve kullanıcı 500 alıyordu. Ters sırada ise öksüz keep_reason='LATEST'
      *  satırları retention'ın yaş kuralı dışında kalıp sonsuza kadar birikiyordu.
-     *  Desen AdminController.purgeInventory'de zaten uygulanmış. */
+     *  Desen kalıcı envanter silmesinde de (PermanentDeletionService) uygulanıyor. */
     @org.springframework.transaction.annotation.Transactional
     @DeleteMapping("/pagespeed/{id}")
     public ResponseEntity<Map<String, Object>> deletePageSpeed(@PathVariable Long id, HttpSession session) {

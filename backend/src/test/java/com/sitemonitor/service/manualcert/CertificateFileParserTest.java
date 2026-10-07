@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 
 import java.security.KeyPair;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,8 +18,12 @@ import static com.sitemonitor.service.manualcert.TestCerts.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Manuel sertifika dosyası ayrıştırıcısı (2026-10-06): biçim İÇERİKTEN tanınır; özel anahtarlar sayılır ama okunmaz;
- * parola yanlış/eksik ayrımı; ZIP sınırları ve bomba koruması. Fikstürler testte üretilir.
+ * Manuel sertifika dosyası ayrıştırıcısı (2026-10-06): biçim İÇERİKTEN tanınır; ZIP sınırları ve bomba koruması.
+ *
+ * <p>2026-10-08 (kullanıcı isteği: özel anahtar sunucuya gelmez): ham yolda PKCS#12, JKS / JCEKS / BKS ve her türden özel
+ * anahtar (ZIP içinde de) yalnız TANINIR — {@code privateMaterial} işaretlenir, hiçbir sertifika kullanılmaz (çağıran
+ * 400 döner); parola parametresi yoktur. Ayıklanmış yükleme {@link CertificateFileParser#fromExtracted}. Fikstürler
+ * testte üretilir.
  */
 class CertificateFileParserTest {
 
@@ -47,38 +50,39 @@ class CertificateFileParserTest {
     // ── PEM ──────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("PEM: çoklu CERTIFICATE bloğu sırasıyla okunur; biçim PEM")
+    @DisplayName("PEM: çoklu CERTIFICATE bloğu sırasıyla okunur; biçim PEM; gizli malzeme yok")
     void pem_multipleCertificates() {
-        Result r = CertificateFileParser.parse(utf8(pem(chain.leaf(), chain.inter(), chain.root())), "tam-zincir.pem", null, false);
+        Result r = CertificateFileParser.parse(utf8(pem(chain.leaf(), chain.inter(), chain.root())), "tam-zincir.pem", false);
         assertThat(r.format()).isEqualTo("PEM");
         assertThat(certs(r)).containsExactly(chain.leaf(), chain.inter(), chain.root());
         assertThat(codes(r)).isEmpty();
         assertThat(r.fileName()).isEqualTo("tam-zincir.pem");
+        assertThat(r.privateMaterial()).isNull();
     }
 
     @Test
-    @DisplayName("PEM: her türden PRIVATE KEY bloğu SAYILIR ama okunmaz (PRIVATE_KEY_IGNORED {count})")
-    void pem_privateKeysCountedAndIgnored() {
+    @DisplayName("PEM: her türden PRIVATE KEY bloğu (kapanışı bozuk olsa da) gizli malzemedir — sertifikalar da KULLANILMAZ")
+    void pem_privateKeysRejected() {
         KeyPair kp = rsa();
         String text = privateKeyPem(kp)
                 + pemBlock("RSA PRIVATE KEY", new byte[] {1, 2, 3})
                 + pemBlock("EC PRIVATE KEY", new byte[] {4, 5})
                 + pemBlock("ENCRYPTED PRIVATE KEY", new byte[] {6})
                 + pemBlock("OPENSSH PRIVATE KEY", new byte[] {7})
+                + "-----BEGIN DSA PRIVATE KEY-----\nAAAA\n"            // kapanışsız
                 + pem(chain.leaf());
-        Result r = CertificateFileParser.parse(utf8(text), "anahtar-ve-sertifika.pem", null, false);
-        assertThat(certs(r)).containsExactly(chain.leaf());
-        Warning w = warning(r, "PRIVATE_KEY_IGNORED");
-        assertThat(w).isNotNull();
-        assertThat(w.severity()).isEqualTo("info");
-        assertThat(w.params()).containsEntry("count", 5);
+        Result r = CertificateFileParser.parse(utf8(text), "anahtar-ve-sertifika.pem", false);
+        assertThat(r.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PRIVATE_KEY);
+        assertThat(r.privateKeyCount()).isEqualTo(6);
+        assertThat(r.certs()).isEmpty();
+        assertThat(codes(r)).doesNotContain("PRIVATE_KEY_KEPT_LOCAL");
     }
 
     @Test
     @DisplayName("PEM: TRUSTED CERTIFICATE (OpenSSL güven ek bilgili) okunur")
     void pem_trustedCertificate() {
         byte[] withAux = concat(der(chain.root()), new byte[] {0x30, 0x00});   // DER sertifika + boş CertAux
-        Result r = CertificateFileParser.parse(utf8(pemBlock("TRUSTED CERTIFICATE", withAux)), "trusted.pem", null, false);
+        Result r = CertificateFileParser.parse(utf8(pemBlock("TRUSTED CERTIFICATE", withAux)), "trusted.pem", false);
         assertThat(certs(r)).containsExactly(chain.root());
     }
 
@@ -87,7 +91,7 @@ class CertificateFileParserTest {
     void pem_csrDetected() {
         KeyPair kp = rsa();
         String text = pemBlock("CERTIFICATE REQUEST", csr("csr.example.test", List.of("csr.example.test", "www.csr.example.test"), kp));
-        Result r = CertificateFileParser.parse(utf8(text), "istek.csr", null, false);
+        Result r = CertificateFileParser.parse(utf8(text), "istek.csr", false);
         assertThat(r.certs()).isEmpty();
         assertThat(r.csr()).isNotNull();
         assertThat(r.csr().cn()).isEqualTo("csr.example.test");
@@ -105,7 +109,7 @@ class CertificateFileParserTest {
     @Test
     @DisplayName("PEM bloğu içinde PKCS7 okunur")
     void pem_pkcs7Block() {
-        Result r = CertificateFileParser.parse(utf8(pemBlock("PKCS7", pkcs7(chain.leaf(), chain.inter()))), "zincir.p7b", null, false);
+        Result r = CertificateFileParser.parse(utf8(pemBlock("PKCS7", pkcs7(chain.leaf(), chain.inter()))), "zincir.p7b", false);
         assertThat(r.format()).isEqualTo("PEM");
         assertThat(certs(r)).containsExactlyInAnyOrder(chain.leaf(), chain.inter());
     }
@@ -113,7 +117,7 @@ class CertificateFileParserTest {
     @Test
     @DisplayName("Yapıştırılan metin: biçim TEXT, dosya adı yok")
     void pasted_isText() {
-        Result r = CertificateFileParser.parse(utf8("  \n" + pem(chain.leaf())), "yoksay.pem", null, true);
+        Result r = CertificateFileParser.parse(utf8("  \n" + pem(chain.leaf())), "yoksay.pem", true);
         assertThat(r.format()).isEqualTo("TEXT");
         assertThat(r.fileName()).isNull();
         assertThat(certs(r)).containsExactly(chain.leaf());
@@ -124,7 +128,7 @@ class CertificateFileParserTest {
     @Test
     @DisplayName("DER X.509 içerikten tanınır (uzantı .txt olsa bile)")
     void der_detectedByContent() {
-        Result r = CertificateFileParser.parse(der(chain.leaf()), "yanlis-uzanti.txt", null, false);
+        Result r = CertificateFileParser.parse(der(chain.leaf()), "yanlis-uzanti.txt", false);
         assertThat(r.format()).isEqualTo("DER");
         assertThat(certs(r)).containsExactly(chain.leaf());
     }
@@ -133,7 +137,7 @@ class CertificateFileParserTest {
     @DisplayName("Zırhsız Base64 DER okunur")
     void base64WithoutArmour() {
         String b64 = Base64.getMimeEncoder().encodeToString(der(chain.leaf()));
-        Result r = CertificateFileParser.parse(utf8(b64), "sertifika.cer", null, false);
+        Result r = CertificateFileParser.parse(utf8(b64), "sertifika.cer", false);
         assertThat(certs(r)).containsExactly(chain.leaf());
         assertThat(r.format()).isEqualTo("DER");
     }
@@ -141,99 +145,95 @@ class CertificateFileParserTest {
     @Test
     @DisplayName("PKCS#7 (DER, .p7b) tüm sertifikaları verir")
     void pkcs7_der() {
-        Result r = CertificateFileParser.parse(pkcs7(chain.leaf(), chain.inter(), chain.root()), "zincir.p7b", null, false);
+        Result r = CertificateFileParser.parse(pkcs7(chain.leaf(), chain.inter(), chain.root()), "zincir.p7b", false);
         assertThat(r.format()).isEqualTo("PKCS7");
         assertThat(certs(r)).containsExactlyInAnyOrder(chain.leaf(), chain.inter(), chain.root());
+        assertThat(r.privateMaterial()).isNull();
     }
 
     @Test
     @DisplayName("DER CSR: csr + CSR_NOT_CERTIFICATE")
     void der_csr() {
-        Result r = CertificateFileParser.parse(csr("der.example.test", List.of(), rsa()), "istek.der", null, false);
+        Result r = CertificateFileParser.parse(csr("der.example.test", List.of(), rsa()), "istek.der", false);
         assertThat(r.csr()).isNotNull();
         assertThat(codes(r)).contains("CSR_NOT_CERTIFICATE");
     }
 
-    // ── PKCS#12 ──────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("DER özel anahtar (PKCS#8 düz ve şifreli) yalnız ŞEKLİNDEN tanınır → gizli malzeme")
+    void der_privateKeyDetected() {
+        KeyPair kp = rsa();
+        Result plain = CertificateFileParser.parse(kp.getPrivate().getEncoded(), "anahtar.key", false);
+        assertThat(plain.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PRIVATE_KEY);
+        // EncryptedPrivateKeyInfo şekli: SEQUENCE { AlgorithmIdentifier, OCTET STRING }
+        byte[] enc = new byte[] {0x30, 0x14, 0x30, 0x0B, 0x06, 0x09, 0x2A, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xF7, 0x0D, 0x01,
+                0x05, 0x0D, 0x04, 0x05, 1, 2, 3, 4, 5};
+        Result encrypted = CertificateFileParser.parse(enc, "anahtar-sifreli.der", false);
+        assertThat(encrypted.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PRIVATE_KEY);
+        assertThat(encrypted.certs()).isEmpty();
+    }
+
+    // ── Anahtar depoları: yalnız TANINIR, açılmaz ────────────────────────────
 
     @Test
-    @DisplayName("PKCS#12 doğru parola: anahtar girdisinin zinciri okunur, alias ve anahtar girdisi işaretli; özel anahtar sayılır")
-    void pkcs12_correctPassword() {
+    @DisplayName("PKCS#12: parolasız da parolalı da AÇILMAZ — gizli malzeme PKCS12, sertifika yok, parola uyarısı yok")
+    void pkcs12_detectedNotOpened() {
         byte[] pfx = pkcs12("sunucu", chain.leafKey().getPrivate(), PW, chain.leaf(), chain.inter(), chain.root());
-        Result r = CertificateFileParser.parse(pfx, "sunucu.pfx", PW.clone(), false);
+        Result r = CertificateFileParser.parse(pfx, "sunucu.pfx", false);
         assertThat(r.format()).isEqualTo("PKCS12");
-        assertThat(r.needsPassword()).isFalse();
-        assertThat(r.passwordError()).isFalse();
-        assertThat(certs(r)).containsExactly(chain.leaf(), chain.inter(), chain.root());
-        CertificateFileParser.ParsedCert first = r.certs().get(0);
-        assertThat(first.keyEntry()).isTrue();
-        assertThat(first.alias()).isEqualTo("sunucu");
-        assertThat(warning(r, "PRIVATE_KEY_IGNORED").params()).containsEntry("count", 1);
-    }
-
-    @Test
-    @DisplayName("PKCS#12 yanlış parola: password_error + PASSWORD_WRONG {format}, sertifika yok, NO_CERTIFICATE yok")
-    void pkcs12_wrongPassword() {
-        byte[] pfx = pkcs12("sunucu", chain.leafKey().getPrivate(), PW, chain.leaf());
-        Result r = CertificateFileParser.parse(pfx, "sunucu.p12", "yanlis".toCharArray(), false);
-        assertThat(r.passwordError()).isTrue();
+        assertThat(r.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PKCS12);
         assertThat(r.certs()).isEmpty();
-        Warning w = warning(r, "PASSWORD_WRONG");
-        assertThat(w).isNotNull();
-        assertThat(w.params()).containsEntry("format", "PKCS12");
-        assertThat(codes(r)).doesNotContain("NO_CERTIFICATE");
+        assertThat(codes(r)).doesNotContain("PASSWORD_REQUIRED", "PASSWORD_WRONG", "NO_CERTIFICATE");
+        // Base64 metin olarak yapıştırılan PFX de tanınır
+        Result pasted = CertificateFileParser.parse(utf8(Base64.getMimeEncoder().encodeToString(pfx)), null, true);
+        assertThat(pasted.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PKCS12);
     }
 
     @Test
-    @DisplayName("PKCS#12 parola yok: needs_password + PASSWORD_REQUIRED {format}")
-    void pkcs12_missingPassword() {
-        byte[] pfx = pkcs12("sunucu", chain.leafKey().getPrivate(), PW, chain.leaf());
-        Result r = CertificateFileParser.parse(pfx, "sunucu.pfx", null, false);
-        assertThat(r.needsPassword()).isTrue();
-        assertThat(r.certs()).isEmpty();
-        assertThat(warning(r, "PASSWORD_REQUIRED").params()).containsEntry("format", "PKCS12");
+    @DisplayName("JKS / JCEKS / BKS: imzasından tanınır → gizli malzeme (truststore da — anahtar deposu biçimi reddedilir)")
+    void keystores_detected() {
+        byte[] jks = keystore("JKS", "uygulama", chain.leafKey().getPrivate(), PW, Map.of("kok", chain.root()), chain.leaf(), chain.inter());
+        assertThat(CertificateFileParser.parse(jks, "uygulama.jks", false).privateMaterial()).isEqualTo("JKS");
+        byte[] trust = keystore("JKS", "uygulama", null, PW, Map.of("kok", chain.root()));
+        Result tr = CertificateFileParser.parse(trust, "truststore.jks", false);
+        assertThat(tr.privateMaterial()).isEqualTo("JKS");
+        assertThat(tr.certs()).isEmpty();
+        byte[] jceks = keystore("JCEKS", "a", null, PW, Map.of("kok", chain.root()));
+        assertThat(CertificateFileParser.parse(jceks, "x.bin", false).privateMaterial()).isEqualTo("JCEKS");
+        byte[] bks = keystore("BKS", "a", null, PW, Map.of("kok", chain.root()));
+        Result b = CertificateFileParser.parse(bks, "truststore.bks", false);
+        assertThat(b.privateMaterial()).isEqualTo("BKS");
+        assertThat(b.format()).isEqualTo("BKS");
     }
 
-    // ── JKS / JCEKS / BKS ────────────────────────────────────────────────────
+    // ── Ayıklanmış yükleme ───────────────────────────────────────────────────
 
     @Test
-    @DisplayName("JKS parolasız: sertifikalar okunur (bütünlük atlanır) — anahtar zinciri + güvenilen girdi")
-    void jks_nullPassword() {
-        byte[] jks = keystore("JKS", "uygulama", chain.leafKey().getPrivate(), PW,
-                Map.of("kok", chain.root()), chain.leaf(), chain.inter());
-        Result r = CertificateFileParser.parse(jks, "uygulama.jks", null, false);
-        assertThat(r.format()).isEqualTo("JKS");
-        assertThat(certs(r)).contains(chain.leaf(), chain.inter(), chain.root());
-        assertThat(r.needsPassword()).isFalse();
-        assertThat(codes(r)).doesNotContain("PASSWORD_WRONG", "NO_CERTIFICATE");
-    }
-
-    @Test
-    @DisplayName("JKS yanlış parola: PASSWORD_WRONG uyarısı ama açık sertifikalar yine okunur")
-    void jks_wrongPassword_stillReads() {
-        byte[] jks = keystore("JKS", "uygulama", null, PW, Map.of("kok", chain.root()));
-        Result r = CertificateFileParser.parse(jks, "truststore.jks", "yanlis".toCharArray(), false);
-        assertThat(certs(r)).containsExactly(chain.root());
-        assertThat(warning(r, "PASSWORD_WRONG").severity()).isEqualTo("warn");
-        assertThat(r.passwordError()).isFalse();
-    }
-
-    @Test
-    @DisplayName("JCEKS: içerikten tanınır, parolasız okunur")
-    void jceks() {
-        byte[] ks = keystore("JCEKS", "a", null, PW, Map.of("kok", chain.root()));
-        Result r = CertificateFileParser.parse(ks, "x.bin", null, false);
-        assertThat(r.format()).isEqualTo("JCEKS");
-        assertThat(certs(r)).containsExactly(chain.root());
+    @DisplayName("fromExtracted: sertifikalar + takma ad + anahtar girdisi korunur; özel anahtar sayısı PRIVATE_KEY_KEPT_LOCAL {count} (bilgi)")
+    void fromExtracted_keptLocalWarning() {
+        Result r = CertificateFileParser.fromExtracted("PKCS12", "C:\\yol\\sunucu.pfx", 4321, List.of(
+                new CertificateFileParser.ParsedCert(chain.leaf(), "sunucu", true, null),
+                new CertificateFileParser.ParsedCert(chain.inter(), "sunucu", false, null)), null, 2);
+        assertThat(r.format()).isEqualTo("PKCS12");
+        assertThat(r.fileName()).isEqualTo("sunucu.pfx");
+        assertThat(r.sizeBytes()).isEqualTo(4321);
+        assertThat(r.privateMaterial()).isNull();
+        assertThat(certs(r)).containsExactly(chain.leaf(), chain.inter());
+        assertThat(r.certs().get(0).keyEntry()).isTrue();
+        Warning w = warning(r, "PRIVATE_KEY_KEPT_LOCAL");
+        assertThat(w.severity()).isEqualTo("info");
+        assertThat(w.params()).containsEntry("count", 2);
+        assertThat(CertificateFileParser.WARNING_CODES).contains("PRIVATE_KEY_KEPT_LOCAL").doesNotContain("PRIVATE_KEY_IGNORED");
     }
 
     @Test
-    @DisplayName("BKS (BouncyCastle) okunur")
-    void bks() {
-        byte[] ks = keystore("BKS", "a", null, PW, Map.of("kok", chain.root()));
-        Result r = CertificateFileParser.parse(ks, "truststore.bks", PW.clone(), false);
-        assertThat(r.format()).isEqualTo("BKS");
-        assertThat(certs(r)).containsExactly(chain.root());
+    @DisplayName("fromExtracted: sertifika yok + anahtar yok → NO_CERTIFICATE, uyarı yok; yalnız CSR → CSR_NOT_CERTIFICATE")
+    void fromExtracted_empty() {
+        Result empty = CertificateFileParser.fromExtracted("PEM", "x.pem", 10, List.of(), null, 0);
+        assertThat(codes(empty)).containsExactly("NO_CERTIFICATE");
+        CertificateFileParser.CsrInfo csr = CertificateFileParser.parseCsr(csr("csr.example.test", List.of(), rsa()));
+        Result c = CertificateFileParser.fromExtracted("PEM", "x.csr", 10, List.of(), csr, 0);
+        assertThat(codes(c)).containsExactly("CSR_NOT_CERTIFICATE");
     }
 
     // ── ZIP ──────────────────────────────────────────────────────────────────
@@ -246,8 +246,9 @@ class CertificateFileParserTest {
         entries.put("certs/chain.p7b", pkcs7(chain.inter(), chain.root()));
         entries.put("README.txt", utf8("bu bir sertifika değil"));
         entries.put("ic-ice.zip", zip(Map.of("x.pem", utf8(pem(chain.leaf())))));
-        Result r = CertificateFileParser.parse(zip(entries), "paket.zip", null, false);
+        Result r = CertificateFileParser.parse(zip(entries), "paket.zip", false);
         assertThat(r.format()).isEqualTo("ZIP");
+        assertThat(r.privateMaterial()).isNull();
         assertThat(certs(r)).contains(chain.leaf(), chain.inter(), chain.root());
         List<Object> skipped = r.warnings().stream().filter(w -> w.code().equals("ZIP_SKIPPED_ENTRY"))
                 .map(w -> w.params().get("name")).toList();
@@ -256,11 +257,27 @@ class CertificateFileParserTest {
     }
 
     @Test
+    @DisplayName("ZIP içinde özel anahtar (.key) ya da anahtar deposu (PFX) → tüm arşiv gizli malzeme, sertifika yok")
+    void zip_withSecretRejected() {
+        Map<String, byte[]> withKey = new LinkedHashMap<>();
+        withKey.put("leaf.pem", utf8(pem(chain.leaf())));
+        withKey.put("leaf.key", utf8(privateKeyPem(rsa())));
+        Result r = CertificateFileParser.parse(zip(withKey), "paket.zip", false);
+        assertThat(r.privateMaterial()).isEqualTo(CertificateFileParser.SECRET_PRIVATE_KEY);
+        assertThat(r.certs()).isEmpty();
+
+        Map<String, byte[]> withPfx = new LinkedHashMap<>();
+        withPfx.put("leaf.pem", utf8(pem(chain.leaf())));
+        withPfx.put("sunucu.pfx", pkcs12("sunucu", chain.leafKey().getPrivate(), PW, chain.leaf()));
+        assertThat(CertificateFileParser.parse(zip(withPfx), "paket.zip", false).privateMaterial()).isEqualTo("PKCS12");
+    }
+
+    @Test
     @DisplayName("ZIP: 50 girdi sınırı aşılınca okuma durur (ZIP_LIMIT {max_entries, max_mb})")
     void zip_entryLimit() {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         for (int i = 0; i < 51; i++) entries.put("c" + i + ".pem", utf8(pem(chain.root())));
-        Result r = CertificateFileParser.parse(zip(entries), "cok.zip", null, false);
+        Result r = CertificateFileParser.parse(zip(entries), "cok.zip", false);
         Warning w = warning(r, "ZIP_LIMIT");
         assertThat(w).isNotNull();
         assertThat(w.params()).containsEntry("max_entries", 50).containsEntry("max_mb", 5);
@@ -274,7 +291,7 @@ class CertificateFileParserTest {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         entries.put("a.pem", utf8(pem(chain.leaf())));
         entries.put("bomb.bin", zeros);
-        Result r = CertificateFileParser.parse(zip(entries), "bomba.zip", null, false);
+        Result r = CertificateFileParser.parse(zip(entries), "bomba.zip", false);
         assertThat(codes(r)).contains("ZIP_LIMIT");
         assertThat(certs(r)).containsExactly(chain.leaf());
     }
@@ -294,7 +311,7 @@ class CertificateFileParserTest {
         }
         byte[] archive = zip(entries);
         assertThat(archive.length).isLessThan(CertificateFileParser.MAX_BYTES);
-        Result r = CertificateFileParser.parse(archive, "buyuk.zip", null, false);
+        Result r = CertificateFileParser.parse(archive, "buyuk.zip", false);
         assertThat(codes(r)).contains("ZIP_LIMIT").doesNotContain("FILE_TOO_LARGE");
     }
 
@@ -304,7 +321,7 @@ class CertificateFileParserTest {
     @DisplayName("5 MB üstü: FILE_TOO_LARGE {max_mb} ve ayrıştırılmaz")
     void fileTooLarge() {
         byte[] big = new byte[CertificateFileParser.MAX_BYTES + 1];
-        Result r = CertificateFileParser.parse(big, "buyuk.pem", null, false);
+        Result r = CertificateFileParser.parse(big, "buyuk.pem", false);
         assertThat(warning(r, "FILE_TOO_LARGE").params()).containsEntry("max_mb", 5);
         assertThat(r.certs()).isEmpty();
     }
@@ -315,14 +332,15 @@ class CertificateFileParserTest {
         byte[] junk = new byte[256];
         new Random(7).nextBytes(junk);
         junk[0] = 0x01;
-        Result r = CertificateFileParser.parse(junk, "rastgele.bin", null, false);
+        Result r = CertificateFileParser.parse(junk, "rastgele.bin", false);
         assertThat(warning(r, "UNSUPPORTED_FORMAT").params()).containsEntry("name", "rastgele.bin");
+        assertThat(r.privateMaterial()).isNull();
     }
 
     @Test
     @DisplayName("Sertifikasız PEM metni: NO_CERTIFICATE")
     void pemWithoutCertificate() {
-        Result r = CertificateFileParser.parse(utf8(pemBlock("PUBLIC KEY", rsa().getPublic().getEncoded())), "pub.pem", null, false);
+        Result r = CertificateFileParser.parse(utf8(pemBlock("PUBLIC KEY", rsa().getPublic().getEncoded())), "pub.pem", false);
         assertThat(codes(r)).contains("NO_CERTIFICATE");
     }
 
@@ -349,7 +367,4 @@ class CertificateFileParserTest {
         System.arraycopy(b, 0, out, a.length, b.length);
         return out;
     }
-
-    @SuppressWarnings("unused")
-    private static List<String> list(String... s) { return new ArrayList<>(List.of(s)); }
 }

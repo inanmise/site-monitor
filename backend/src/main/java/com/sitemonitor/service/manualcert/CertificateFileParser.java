@@ -5,6 +5,7 @@ import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1InputStream;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
 import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.pkcs.Attribute;
@@ -13,7 +14,6 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.DefaultAlgorithmNameFinder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequest;
@@ -24,9 +24,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
 import java.security.PublicKey;
-import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -46,14 +44,14 @@ import java.util.zip.ZipInputStream;
 /**
  * Yüklenen sertifika dosyasını OKUR — biçim uzantıdan değil İÇERİKTEN tanınır (2026-10-06, manuel sertifika takibi).
  *
- * <p>Desteklenen: PEM (çoklu CERTIFICATE / TRUSTED CERTIFICATE / PKCS7 blokları; her türden PRIVATE KEY bloğu
- * sayılır ve YOK SAYILIR; CERTIFICATE REQUEST tanınır), zırhsız Base64 DER, DER X.509, PKCS#7 (PEM/DER),
- * PKCS#12 (.pfx/.p12, parola), JKS / JCEKS (parola verilirse bütünlük denetlenir; verilmezse sertifikalar parolasız
- * okunur — bütünlük denetimi atlanır), BKS (BouncyCastle) ve ZIP (sınırlarla, iç içe arşiv açılmaz).
- *
- * <p><b>Gizli malzeme:</b> özel anahtar hiçbir zaman okunmaz (anahtar deposunda yalnız sertifika zinciri istenir),
- * parola yalnız {@link KeyStore#load} çağrısına verilir; bu sınıf onu kopyalamaz, saklamaz, loglamaz. Parolayı
- * kullanımdan sonra sıfırlamak ÇAĞIRANIN işidir.
+ * <p><b>Özel anahtar sunucuya GELMEZ (2026-10-08, kullanıcı isteği: "keystore yüklemesi yapılmaya çalışıldığında kesinlikle
+ * private key için bir yükleme vs yapmayalım"):</b> arayüz dosyayı tarayıcıda açar ve yalnız açık sertifikaları
+ * ({@code extracted}) gönderir — bu yol {@link #fromExtracted}. Ham dosya yolu ({@code file} / {@code text}, API
+ * istemcileri için) yalnız ANAHTARSIZ içeriği kabul eder: PEM sertifika / PKCS7 / CSR blokları, zırhsız Base64 DER, DER
+ * X.509, PKCS#7 (PEM/DER) ve bunları taşıyan ZIP. PKCS#12, JKS / JCEKS / BKS anahtar deposu ya da HERHANGİ bir özel
+ * anahtar (her türden {@code PRIVATE KEY} PEM bloğu, PKCS#8 / PKCS#1 / SEC1 DER) — ZIP içinde de — yalnız TANINIR
+ * ({@link Result#privateMaterial()}), hiçbir şekilde açılmaz, çözülmez; çağıran isteği reddeder
+ * ({@code PRIVATE_KEY_NOT_ACCEPTED}). Sunucu artık parola almaz, anahtar deposu açmaz.
  *
  * <p>Saf ve durumsuz: ağ yok, veritabanı yok. Süre sınırı (zaman kutusu) çağıran serviste uygulanır.
  */
@@ -73,9 +71,11 @@ public final class CertificateFileParser {
     /**
      * Uyarı kodu KATALOĞU (sözleşme) — arayüz {@code mcert.warn.<KOD>} anahtarını dinamik çevirir; her kodun TR + EN
      * metni olmalı ({@code ManualCertWarningI18nGateTest}). Yeni kod buraya ve iki sözlüğe AYNI değişiklikte eklenir.
+     * {@code PASSWORD_REQUIRED} / {@code PASSWORD_WRONG}: sunucu artık üretmez (parola tarayıcıda kalır); arayüzün
+     * tarayıcı notları aynı sözlüğü kullanır (JKS bütünlük uyumsuzluğu).
      */
     public static final List<String> WARNING_CODES = List.of(
-            "PRIVATE_KEY_IGNORED", "CSR_NOT_CERTIFICATE", "NO_CERTIFICATE", "PASSWORD_REQUIRED", "PASSWORD_WRONG",
+            "PRIVATE_KEY_KEPT_LOCAL", "CSR_NOT_CERTIFICATE", "NO_CERTIFICATE", "PASSWORD_REQUIRED", "PASSWORD_WRONG",
             "UNSUPPORTED_FORMAT", "FILE_TOO_LARGE", "ZIP_LIMIT", "ZIP_SKIPPED_ENTRY", "EXPIRED", "NOT_YET_VALID",
             "EXPIRES_SOON", "SELF_SIGNED", "CHAIN_INCOMPLETE", "CHAIN_EXPIRED_INTERMEDIATE", "WEAK_SIGNATURE", "WEAK_KEY",
             "CA_CERTIFICATE", "MULTIPLE_LEAVES", "DUPLICATE_IN_FILE", "ALREADY_TRACKED", "SAME_SUBJECT_TRACKED",
@@ -84,6 +84,13 @@ public final class CertificateFileParser {
     public static final String SEV_INFO = "info";
     public static final String SEV_WARN = "warn";
     public static final String SEV_ERROR = "error";
+
+    /** Ham yolda tanınan (ve reddedilen) gizli malzeme türleri. */
+    public static final String SECRET_PKCS12 = "PKCS12";
+    public static final String SECRET_JKS = "JKS";
+    public static final String SECRET_JCEKS = "JCEKS";
+    public static final String SECRET_BKS = "BKS";
+    public static final String SECRET_PRIVATE_KEY = "PRIVATE_KEY";
 
     /** Dosya/girdi uyarısı — arayüz {@code mcert.warn.<code>} anahtarını parametrelerle çizer. */
     public record Warning(String code, String severity, Map<String, Object> params) {
@@ -119,10 +126,10 @@ public final class CertificateFileParser {
         String format;
         String fileName;
         long sizeBytes;
-        boolean needsPassword;
-        boolean passwordError;
         CsrInfo csr;
         int privateKeyCount;
+        /** Ham yolda görülen ilk gizli malzemenin türü ({@code SECRET_*}); yoksa null. */
+        String privateMaterial;
         boolean rejected;
         final List<Warning> warnings = new ArrayList<>();
         final List<ParsedCert> certs = new ArrayList<>();
@@ -130,23 +137,47 @@ public final class CertificateFileParser {
         public String format() { return format; }
         public String fileName() { return fileName; }
         public long sizeBytes() { return sizeBytes; }
-        public boolean needsPassword() { return needsPassword; }
-        public boolean passwordError() { return passwordError; }
         public CsrInfo csr() { return csr; }
         public int privateKeyCount() { return privateKeyCount; }
+        /** Ham yükleme özel anahtar / anahtar deposu taşıyor mu (taşıyorsa istek REDDEDİLİR) — tür ya da null. */
+        public String privateMaterial() { return privateMaterial; }
         public List<Warning> warnings() { return Collections.unmodifiableList(warnings); }
         public List<ParsedCert> certs() { return Collections.unmodifiableList(certs); }
+
+        void markSecret(String kind) {
+            if (privateMaterial == null) privateMaterial = kind;
+        }
     }
 
-    // ── Giriş ────────────────────────────────────────────────────────────────
+    // ── Tarayıcıda ayıklanmış yükleme ────────────────────────────────────────
+
+    /**
+     * Tarayıcının ayıkladığı AÇIK sertifikalar → sonuç (2026-10-08). Doğrulama çağıranda ({@link ExtractedUpload});
+     * burada yalnız sonuç kurulur: özel anahtar sayısı bilgi uyarısı {@code PRIVATE_KEY_KEPT_LOCAL {count}} olur.
+     */
+    public static Result fromExtracted(String format, String fileName, long sizeBytes, List<ParsedCert> certs, CsrInfo csr,
+                                       int privateKeysRemoved) {
+        Result r = new Result();
+        r.format = format;
+        r.fileName = sanitizeFileName(fileName);
+        r.sizeBytes = Math.max(0, sizeBytes);
+        r.csr = csr;
+        if (certs != null) r.certs.addAll(certs);
+        if (privateKeysRemoved > 0) {
+            r.warnings.add(new Warning("PRIVATE_KEY_KEPT_LOCAL", SEV_INFO, Map.of("count", privateKeysRemoved)));
+        }
+        finish(r);
+        return r;
+    }
+
+    // ── Ham yükleme (API istemcileri) ────────────────────────────────────────
 
     /**
      * @param data     dosya baytları ya da yapıştırılan metnin UTF-8 baytları
      * @param fileName istemcinin bildirdiği dosya adı (yalnız gösterim + uyarı; biçim İÇERİKTEN tanınır)
-     * @param password anahtar deposu parolası (null olabilir; KOPYALANMAZ)
      * @param pasted   girdi yapıştırılan metin mi (biçim {@code TEXT} raporlanır)
      */
-    public static Result parse(byte[] data, String fileName, char[] password, boolean pasted) {
+    public static Result parse(byte[] data, String fileName, boolean pasted) {
         Result r = new Result();
         r.fileName = pasted ? null : sanitizeFileName(fileName);
         r.sizeBytes = data == null ? 0 : data.length;
@@ -163,11 +194,11 @@ public final class CertificateFileParser {
         }
         if (isZip(data)) {
             r.format = "ZIP";
-            parseZip(data, r, password);
+            parseZip(data, r);
         } else {
-            String fmt = parseBlob(data, r, password, null, true);
+            String fmt = parseBlob(data, r, null, true);
             r.format = pasted ? "TEXT" : fmt;
-            if (fmt == null && !r.rejected) {
+            if (fmt == null && !r.rejected && r.privateMaterial == null) {
                 r.rejected = true;
                 r.warnings.add(new Warning("UNSUPPORTED_FORMAT", SEV_ERROR,
                         Map.of("name", r.fileName == null ? "" : r.fileName)));
@@ -178,18 +209,16 @@ public final class CertificateFileParser {
     }
 
     private static void finish(Result r) {
+        if (r.privateMaterial != null) r.rejected = true;   // gizli malzeme: hiçbir sertifika kullanılmaz, istek reddedilir
         if (r.rejected) {
             r.certs.clear();
             return;
-        }
-        if (r.privateKeyCount > 0) {
-            r.warnings.add(new Warning("PRIVATE_KEY_IGNORED", SEV_INFO, Map.of("count", r.privateKeyCount)));
         }
         if (r.certs.isEmpty()) {
             if (r.csr != null) {
                 r.warnings.add(new Warning("CSR_NOT_CERTIFICATE", SEV_ERROR,
                         Map.of("cn", r.csr.cn() == null ? "" : r.csr.cn())));
-            } else if (!r.needsPassword && !r.passwordError) {
+            } else {
                 r.warnings.add(new Warning("NO_CERTIFICATE", SEV_ERROR, Map.of()));
             }
         }
@@ -198,43 +227,45 @@ public final class CertificateFileParser {
     // ── Biçim tanıma ─────────────────────────────────────────────────────────
 
     /**
-     * Tek bir blob (dosya ya da ZIP girdisi) — tanınan biçimi döner; tanınmazsa null.
+     * Tek bir blob (dosya ya da ZIP girdisi) — tanınan biçimi döner; tanınmazsa null. Anahtar deposu / PKCS#12 / özel
+     * anahtar yalnız İMZASINDAN tanınır ve işaretlenir ({@link Result#markSecret}); içeriği okunmaz.
      *
      * @param allowBase64 zırhsız Base64 denemesine izin (özyinelemede bir kez)
      */
-    static String parseBlob(byte[] data, Result r, char[] password, String source, boolean allowBase64) {
+    static String parseBlob(byte[] data, Result r, String source, boolean allowBase64) {
         String text = asciiText(data);
         if (text != null && text.contains("-----BEGIN ")) {
             parsePem(text, r, source);
             return "PEM";
         }
         if (startsWith(data, 0xFE, 0xED, 0xFE, 0xED)) {
-            readKeystore("JKS", data, r, password, source);
+            r.markSecret(SECRET_JKS);
             return "JKS";
         }
         if (startsWith(data, 0xCE, 0xCE, 0xCE, 0xCE)) {
-            readKeystore("JCEKS", data, r, password, source);
+            r.markSecret(SECRET_JCEKS);
             return "JCEKS";
         }
         if ((data[0] & 0xFF) == 0x30) {
-            String der = parseDer(data, r, password, source);
+            String der = parseDer(data, r, source);
             if (der != null) return der;
         }
-        if (data.length > 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && (data[3] == 1 || data[3] == 2)) {
-            if (readKeystore("BKS", data, r, password, source)) return "BKS";
+        if (looksLikeBks(data)) {
+            r.markSecret(SECRET_BKS);
+            return "BKS";
         }
         if (allowBase64 && text != null) {
             byte[] decoded = decodeLooseBase64(text);
             if (decoded != null && decoded.length > 0) {
-                String inner = parseBlob(decoded, r, password, source, false);
+                String inner = parseBlob(decoded, r, source, false);
                 if (inner != null) return inner;
             }
         }
         return null;
     }
 
-    /** ASN.1 DER: X.509, PKCS#7 SignedData, PKCS#12 PFX ya da PKCS#10 CSR. */
-    private static String parseDer(byte[] data, Result r, char[] password, String source) {
+    /** ASN.1 DER: X.509, PKCS#7 SignedData, PKCS#12 PFX (yalnız tanınır), PKCS#10 CSR ya da özel anahtar (yalnız tanınır). */
+    private static String parseDer(byte[] data, Result r, String source) {
         ASN1Sequence seq;
         try (ASN1InputStream in = new ASN1InputStream(data)) {
             ASN1Primitive p = in.readObject();
@@ -253,10 +284,11 @@ public final class CertificateFileParser {
             }
             return null;
         }
-        // PKCS#12 PFX: SEQUENCE { version INTEGER (3), authSafe ContentInfo, macData? }
-        if (first instanceof ASN1Integer v && seq.size() >= 2 && v.getValue().intValue() == 3
-                && seq.getObjectAt(1) instanceof ASN1Sequence) {
-            readKeystore("PKCS12", data, r, password, source);
+        // PKCS#12 PFX: SEQUENCE { version INTEGER (3), authSafe ContentInfo, macData? } — AÇILMAZ, yalnız tanınır
+        if (first instanceof ASN1Integer v && seq.size() >= 2 && seq.size() <= 3 && v.getValue().intValue() == 3
+                && seq.getObjectAt(1) instanceof ASN1Sequence ci && ci.size() >= 1
+                && ci.getObjectAt(0) instanceof ASN1ObjectIdentifier) {
+            r.markSecret(SECRET_PKCS12);
             return "PKCS12";
         }
         // X.509 sertifikası ya da PKCS#10 CSR — ikisi de SEQUENCE { SEQUENCE, AlgorithmIdentifier, BIT STRING }
@@ -270,22 +302,65 @@ public final class CertificateFileParser {
             if (r.csr == null) r.csr = csr;
             return "DER";
         }
+        if (looksLikePrivateKey(seq)) {
+            r.privateKeyCount++;
+            r.markSecret(SECRET_PRIVATE_KEY);
+            return "DER";
+        }
         return null;
+    }
+
+    /** PKCS#8 (şifreli / şifresiz), PKCS#1 RSA, SEC1 EC, DSA özel anahtar ŞEKLİ — içerik okunmaz. */
+    static boolean looksLikePrivateKey(ASN1Sequence seq) {
+        try {
+            int n = seq.size();
+            ASN1Encodable a = seq.getObjectAt(0);
+            // EncryptedPrivateKeyInfo: SEQUENCE { AlgorithmIdentifier, OCTET STRING }
+            if (n == 2 && a instanceof ASN1Sequence alg && alg.size() >= 1 && alg.getObjectAt(0) instanceof ASN1ObjectIdentifier
+                    && seq.getObjectAt(1) instanceof ASN1OctetString) return true;
+            if (!(a instanceof ASN1Integer v)) return false;
+            int ver = v.getValue().bitLength() > 8 ? -1 : v.getValue().intValue();
+            // PKCS#8 PrivateKeyInfo / OneAsymmetricKey: SEQUENCE { INTEGER 0|1, AlgorithmIdentifier, OCTET STRING, … }
+            if ((ver == 0 || ver == 1) && n >= 3 && seq.getObjectAt(1) instanceof ASN1Sequence
+                    && seq.getObjectAt(2) instanceof ASN1OctetString) return true;
+            // SEC1 ECPrivateKey: SEQUENCE { INTEGER 1, OCTET STRING, [0]?, [1]? }
+            if (ver == 1 && n >= 2 && seq.getObjectAt(1) instanceof ASN1OctetString) return true;
+            // PKCS#1 RSAPrivateKey (9 tamsayı) / DSA (6 tamsayı)
+            if (ver == 0 && (n == 9 || n == 6)) {
+                for (int i = 0; i < n; i++) if (!(seq.getObjectAt(i) instanceof ASN1Integer)) return false;
+                return true;
+            }
+        } catch (Exception ignore) { /* tanınmadı */ }
+        return false;
+    }
+
+    /** BouncyCastle BKS / UBER başlığı: sürüm (1|2) + tuz uzunluğu (1..1024) + tuz + yineleme sayısı. */
+    static boolean looksLikeBks(byte[] b) {
+        if (b.length < 16 || b[0] != 0 || b[1] != 0 || b[2] != 0 || (b[3] != 1 && b[3] != 2)) return false;
+        int saltLen = ((b[4] & 0xFF) << 24) | ((b[5] & 0xFF) << 16) | ((b[6] & 0xFF) << 8) | (b[7] & 0xFF);
+        if (saltLen < 1 || saltLen > 1024 || 8L + saltLen + 4 > b.length) return false;
+        int o = 8 + saltLen;
+        long iter = (((long) (b[o] & 0xFF)) << 24) | ((b[o + 1] & 0xFF) << 16) | ((b[o + 2] & 0xFF) << 8) | (b[o + 3] & 0xFF);
+        return iter > 0 && iter < 10_000_000L;
     }
 
     // ── PEM ──────────────────────────────────────────────────────────────────
 
     private static final Pattern PEM_BLOCK = Pattern.compile(
             "-----BEGIN ([A-Z0-9 .]+)-----(.*?)-----END \\1-----", Pattern.DOTALL);
+    /** Her türden özel anahtar başlığı — kapanışı bozuk olsa da sayılır. */
+    private static final Pattern PRIVATE_BEGIN = Pattern.compile("-----BEGIN [A-Z0-9 .]*PRIVATE KEY[A-Z0-9 .]*-----");
 
     static void parsePem(String text, Result r, String source) {
+        Matcher pk = PRIVATE_BEGIN.matcher(text);
+        while (pk.find()) {                                     // RSA/EC/DSA/ENCRYPTED/OPENSSH/… — sayılır, OKUNMAZ
+            r.privateKeyCount++;
+            r.markSecret(SECRET_PRIVATE_KEY);
+        }
         Matcher m = PEM_BLOCK.matcher(text);
         while (m.find()) {
             String label = m.group(1).trim().toUpperCase(Locale.ROOT);
-            if (label.contains("PRIVATE KEY")) {          // RSA/EC/DSA/ENCRYPTED/OPENSSH/… — sayılır, okunmaz
-                r.privateKeyCount++;
-                continue;
-            }
+            if (label.contains("PRIVATE KEY")) continue;
             byte[] der = pemBody(m.group(2));
             if (der == null) continue;
             switch (label) {
@@ -346,130 +421,9 @@ public final class CertificateFileParser {
         }
     }
 
-    // ── Anahtar depoları ─────────────────────────────────────────────────────
-
-    private static final class BcHolder {
-        static final BouncyCastleProvider BC = new BouncyCastleProvider();
-    }
-
-    private static KeyStore newKeyStore(String type) throws Exception {
-        return "BKS".equals(type) ? KeyStore.getInstance("BKS", BcHolder.BC) : KeyStore.getInstance(type);
-    }
-
-    /**
-     * Anahtar deposundaki sertifikaları okur. Özel anahtar İSTENMEZ — anahtar girdisinin yalnız zinciri okunur.
-     *
-     * @return depo açılabildi mi
-     */
-    static boolean readKeystore(String type, byte[] data, Result r, char[] password, String source) {
-        boolean hasPassword = password != null && password.length > 0;
-        KeyStore ks = null;
-        if ("PKCS12".equals(type)) {
-            if (hasPassword) {
-                try {
-                    ks = load(type, data, password);
-                } catch (Exception e) {
-                    if (isPasswordError(e)) {
-                        r.passwordError = true;
-                        r.warnings.add(new Warning("PASSWORD_WRONG", SEV_ERROR, Map.of("format", type)));
-                    }
-                    return false;
-                }
-            } else {
-                // Parolasız PFX yaygın (boş parola) — önce boş, sonra null (bütünlük atlanır, şifresiz torbalar okunur).
-                try { ks = load(type, data, new char[0]); } catch (Exception ignore) { ks = null; }
-                if (ks == null || !hasCertificates(ks)) {
-                    try { ks = load(type, data, null); } catch (Exception ignore) { ks = null; }
-                }
-                if (ks == null || !hasCertificates(ks)) {
-                    r.needsPassword = true;
-                    r.warnings.add(new Warning("PASSWORD_REQUIRED", SEV_ERROR, Map.of("format", type)));
-                    return ks != null;
-                }
-            }
-        } else {
-            // JKS / JCEKS / BKS: sertifikalar parolasız okunabilir (bütünlük denetimi atlanır). Parola verildiyse
-            // önce onunla denenir; yanlışsa uyarı + parolasız okuma (açık sertifikaları okumak için parola gerekmez).
-            if (hasPassword) {
-                try {
-                    ks = load(type, data, password);
-                } catch (Exception e) {
-                    if (isPasswordError(e)) {
-                        r.warnings.add(new Warning("PASSWORD_WRONG", SEV_WARN, Map.of("format", type)));
-                    }
-                    ks = null;
-                }
-            }
-            if (ks == null) {
-                try {
-                    ks = load(type, data, null);
-                } catch (Exception e) {
-                    return false;
-                }
-            }
-        }
-        collect(ks, r, source);
-        return true;
-    }
-
-    private static KeyStore load(String type, byte[] data, char[] password) throws Exception {
-        KeyStore ks = newKeyStore(type);
-        try (InputStream in = new ByteArrayInputStream(data)) {
-            ks.load(in, password);
-        }
-        return ks;
-    }
-
-    private static boolean hasCertificates(KeyStore ks) {
-        try {
-            for (String alias : Collections.list(ks.aliases())) {
-                if (ks.isCertificateEntry(alias)) return true;
-                Certificate[] chain = ks.getCertificateChain(alias);
-                if (chain != null && chain.length > 0) return true;
-            }
-        } catch (Exception ignore) { /* boş say */ }
-        return false;
-    }
-
-    private static void collect(KeyStore ks, Result r, String source) {
-        try {
-            for (String alias : Collections.list(ks.aliases())) {
-                if (ks.isKeyEntry(alias)) {
-                    Certificate[] chain = ks.getCertificateChain(alias);
-                    if (chain == null || chain.length == 0) continue;   // gizli anahtar girdisi (JCEKS) — sertifika yok
-                    r.privateKeyCount++;                                // anahtar OKUNMAZ; yalnız "yok sayıldı" bilgisi
-                    for (int i = 0; i < chain.length; i++) {
-                        if (chain[i] instanceof X509Certificate x)
-                            r.certs.add(new ParsedCert(x, alias, i == 0, source));
-                    }
-                } else if (ks.isCertificateEntry(alias)) {
-                    Certificate c = ks.getCertificate(alias);
-                    if (c instanceof X509Certificate x) r.certs.add(new ParsedCert(x, alias, false, source));
-                }
-            }
-        } catch (Exception ignore) {
-            // Okunabilen kadarı kalır.
-        }
-    }
-
-    /** Parola yanlış mı — JDK/BC iletisi sürüme göre değişir; neden zinciri taranır. */
-    static boolean isPasswordError(Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof UnrecoverableKeyException) return true;
-            if (t instanceof javax.crypto.BadPaddingException) return true;
-            String m = t.getMessage();
-            if (m != null) {
-                String l = m.toLowerCase(Locale.ROOT);
-                if (l.contains("password") || l.contains("mac invalid") || l.contains("integrity check")) return true;
-            }
-            if (t.getCause() == t) break;
-        }
-        return false;
-    }
-
     // ── ZIP ──────────────────────────────────────────────────────────────────
 
-    private static void parseZip(byte[] data, Result r, char[] password) {
+    private static void parseZip(byte[] data, Result r) {
         int entries = 0;
         long total = 0;
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(data))) {
@@ -502,13 +456,14 @@ public final class CertificateFileParser {
                     continue;
                 }
                 int certs = r.certs.size(), keys = r.privateKeyCount;
-                boolean hadCsr = r.csr != null, needPw = r.needsPassword, pwErr = r.passwordError;
+                boolean hadCsr = r.csr != null;
+                String hadSecret = r.privateMaterial;
                 String fmt = null;
                 try {
-                    fmt = parseBlob(buf, r, password, name, true);
+                    fmt = parseBlob(buf, r, name, true);
                 } catch (Exception ignore) { /* bozuk girdi atlanır */ }
                 boolean contributed = r.certs.size() > certs || r.privateKeyCount > keys
-                        || (r.csr != null && !hadCsr) || r.needsPassword != needPw || r.passwordError != pwErr;
+                        || (r.csr != null && !hadCsr) || !java.util.Objects.equals(hadSecret, r.privateMaterial);
                 if (fmt == null || !contributed) {
                     r.warnings.add(new Warning("ZIP_SKIPPED_ENTRY", SEV_INFO, Map.of("name", name == null ? "" : name)));
                 }

@@ -37,6 +37,7 @@ import OverviewSections, { SummaryChip, parseOpenSections, openSectionsParam } f
 import { pctText } from './monitoring/OverviewParts.jsx'
 import OverviewKpiDialog, { KPI_DIALOG_KINDS } from './monitoring/OverviewKpiDialog.jsx'
 import { OverviewCards, OverviewTable, TABLE_MIN_WIDTH } from './monitoring/OverviewList.jsx'
+import { isRecentlyDeleted, monitorKind, useDeletedMarksVersion } from '../utils/recentlyDeleted.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
@@ -176,7 +177,15 @@ export default function MonitoringOverviewPage() {
   const refresh = () => { setState((s) => ({ ...s, loading: true })); load(true) }
 
   const data = state.data
-  const rows = useMemo(() => data?.monitors || [], [data])
+  // Silme anında (2026-10-07): bir tür sayfasında yeni silinen izleme listede görünmez — sunucu özeti 30 sn önbellekli,
+  // bayat yanıt silinen satırı geri getiremez.
+  const deletedVersion = useDeletedMarksVersion()
+  const rows = useMemo(() => {
+    const all = data?.monitors || []
+    return all.some((r) => isRecentlyDeleted(monitorKind(r.type), r.id))
+      ? all.filter((r) => !isRecentlyDeleted(monitorKind(r.type), r.id))
+      : all
+  }, [data, deletedVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const teams = useMemo(() => {
     const m = new Map()
     for (const r of rows) if (r.team_id != null && r.team_name) m.set(String(r.team_id), r.team_name)

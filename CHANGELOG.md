@@ -15,6 +15,55 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.111.0] — 2026-10-07
+
+### Added
+- **Manuel sertifikanın takip adı sonradan değiştirilebilir:** envanter düzenleme formunda (ve Manuel Sertifikalar
+  listesindeki "Düzenle" eylemiyle) takip adı düzenlenir; takip adı kuralı alanın altında anında denetlenir, çakışan ad
+  409 ile reddedilir. Onaydan sonra sürümler, geçmiş değerlendirmeler, alarmlar ve notlar yeni ada taşınır.
+- **"Yine de yükle":** yenilemede yüklenen sertifika güncel sürümle aynıysa akış durmaz; "Yine de yükle" ile aynı
+  sertifika yeni sürüm olarak kaydedilir (bitiş tarihi değişmez, sürüm "Aynı sertifika yeniden yüklendi" rozetiyle
+  görünür). Farklı ve daha eski bir sertifika yine onay ister.
+- **Eski sürümler kalıcı olarak silinebilir:** Sürümler sekmesinde güncel olmayan her sürümde "Sil" (yeni sürüm
+  yükleyebilen kullanıcılar; güncel sürüm silinemez). Denetim `CERT_MANUAL_VERSION_DELETE`.
+
+### Changed
+- **⚠ Davranış — zincir tek sertifikadır:** yüklenen dosyadaki root / intermediate / leaf parçaları artık ayrı ayrı
+  takip kaydı olmaz; zincirin ucundaki sertifika TEK kayıt olarak takip edilir, diğerleri onun zinciri olarak gösterilir.
+  Birbiriyle ilgisiz sertifikalar (ör. farklı kök CA'lar) yine ayrı ayrı seçilebilir. Zincirin bir parçası tek başına
+  seçilirse 400.
+- Manuel sertifikanın penceresinde SSL sekmesi geri geldi (varsayılan sekme): saklanan sertifikadan ağsız önizleme —
+  ağdan izlenen sertifikalarla AYNI hüküm kartı, sertifika/güven kontrolleri ve zincir kartları; bağlantı kontrolleri ve
+  host adı satırı yok. Sihirbazın inceleme adımı da aynı zincir görünümünü kullanır. Manuel kayıtta Grafik sekmesi yok.
+- Yeniden adlandırma onayı silme ikonu yerine düzenleme tonuyla açılır.
+- **Tarayıcı gibi sertifika hiyerarşisi:** manuel sertifikanın SSL sekmesinde "Zincir | Hiyerarşi (tarayıcı gibi)" geçişi
+  ve Sürümler sekmesinde her sürüm için "Görüntüle": kök → ara → yaprak alt alta, girintili ağaç; seçilen sertifikanın
+  konu, düzenleyen, geçerlilik, seri numarası, algoritmalar, SAN, anahtar kullanımı, SHA-256/SHA-1 parmak izi ve tek
+  sertifikayı PEM olarak indirme. Kök dosyada yoksa açıkça belirtilir.
+- **⚠ Davranış — silme KALICIDIR:** sertifika (ağ + manuel) ve izleme silme her durumda kalıcıdır; çöp kutusu, geri
+  yükleme, "kalıcı sil", otomatik temizleme ayarı (`site.monitor.inventory.auto-purge-days`) ve `inventory.purge` izni
+  kaldırıldı. Sertifika silinince açık alarmları kapatılır; kontrol geçmişi, notlar, yüklenen sürümler, envanterden
+  türeyen Port/DNS izlemeleri ve kontrolleri, uptime kayıtları, zayıf algoritma istisnası ve tanılama geçmişi silinir;
+  kapalı alarm kayıtları, denetim ve değişiklik geçmişi iz olarak kalır. Bağımsız Port/DNS izlemeleri de artık kalıcı
+  silinir (alarmları kapanır). Onay pencereleri silmenin kalıcı olduğunu ve neyin silineceğini söyler.
+- **⚠ Mevcut çöp kutusu temizlenir:** yeni sürümün ilk açılışında daha önce silinmiş (çöp kutusundaki) sertifika ve
+  Port/DNS kayıtları bir defaya mahsus kalıcı olarak silinir; adlar denetim kaydına (`SYSTEM_DELETED_RECORDS_PURGE`) yazılır.
+- Silinen bir sertifikanın / izlemenin adı artık yeni kayıt eklemeyi engellemez ("zaten var" uyarısı çıkmaz).
+
+### Security
+- **⚠ Özel anahtar ve keystore parolası tarayıcıdan hiç çıkmaz:** dosyadan sertifika yüklemede PEM, DER, P7B, JKS /
+  JCEKS, PFX / P12 ve ZIP tarayıcıda açılır; sunucuya YALNIZ açık sertifikalar gider. PFX/P12 parolası yalnız tarayıcıda
+  kullanılır; yanlış parola istek gönderilmeden alanın altında söylenir. Sunucu özel anahtar ya da ham keystore içeren her
+  yüklemeyi 400 `PRIVATE_KEY_NOT_ACCEPTED` ile reddeder (API ile PFX/JKS gönderen istemciler için uyumsuz değişiklik).
+  BKS/UBER tarayıcıda açılmaz; keytool ile PEM'e çevirme rehberi gösterilir.
+
+### Fixed
+- Silme onaylanınca kart / satır hemen kaybolur (eskiden liste yenilenene kadar duruyordu); başka bir sunucudan eski
+  liste gelse de silinen kayıt geri gelmez. Pano, Tüm Sertifikalar, Envanter, Manuel Sertifikalar, dokuz izleme sayfası
+  (tekil + toplu) ve İzleme Genel Bakış.
+- HTTP, Anahtar Kelime, Ping, Alan Adı, Sayfa Bütünlüğü ve Sayfa Hızı düzenleme penceresindeki "Sil" onay sormadan
+  siliyordu; artık onay ister.
+
 ## [20.110.1] — 2026-10-07
 
 ### Changed
@@ -2327,7 +2376,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.111.0...HEAD
+[20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
 [20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0

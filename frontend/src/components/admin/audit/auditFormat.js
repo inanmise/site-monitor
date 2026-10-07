@@ -149,8 +149,9 @@ const SPECIAL = {
   MONITOR_DIAGNOSE: 'audit.ev.MONITOR_DIAGNOSE',
   MAINTENANCE_QUICK: 'audit.ev.MAINTENANCE_QUICK',
   LDAP_QUERY_USER: 'audit.ev.LDAP_QUERY_USER',
-  DOMAIN_SOFT_DELETE: 'audit.ev.DOMAIN_SOFT_DELETE',
+  DOMAIN_SOFT_DELETE: 'audit.ev.DOMAIN_SOFT_DELETE',   // eski (çöp kutusu) — 2026-10-07'den beri yazılmaz
   DOMAIN_DELETE_CHECK: 'audit.ev.DOMAIN_DELETE_CHECK',
+  SYSTEM_DELETED_RECORDS_PURGE: 'audit.ev.SYSTEM_DELETED_RECORDS_PURGE',   // eski çöp kutusunun tek seferlik kalıcı temizliği
   USER_PASSWORD_AUTO_RESET: 'audit.ev.USER_PASSWORD_AUTO_RESET',
   USER_PUSH_OPT_OUT: 'audit.ev.USER_PUSH_OPT_OUT',
   USER_PUSH_QUIET_HOURS: 'audit.ev.USER_PUSH_QUIET_HOURS',
@@ -208,6 +209,8 @@ const SPECIAL = {
   // Manuel (dosyadan yüklenen) sertifika: ilk yükleme / yeni sürüm (2026-10-06) — "_UPLOAD"/"_RENEW" eylem sözlüğünde yok
   CERT_MANUAL_UPLOAD: 'audit.ev.CERT_MANUAL_UPLOAD',
   CERT_MANUAL_RENEW: 'audit.ev.CERT_MANUAL_RENEW',
+  // Eski sürümün kalıcı silinmesi (2026-10-07) — "_VERSION_DELETE" nesne sözlüğünde yok
+  CERT_MANUAL_VERSION_DELETE: 'audit.ev.CERT_MANUAL_VERSION_DELETE',
 }
 
 /**

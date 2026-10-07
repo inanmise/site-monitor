@@ -98,7 +98,7 @@ class ManualCertificateRepositoriesTest {
     }
 
     @Test
-    @DisplayName("envanter: kaynağa göre listeler; çakışma denetimi harf duyarsız + silinmişler dahil; pano kuralı manuel hariç")
+    @DisplayName("envanter: kaynağa göre listeler; çakışma denetimi harf duyarsız, SİLİNMİŞ satır ad tutmaz (2026-10-07); pano kuralı manuel hariç")
     void inventoryQueries() {
         inv("net.example.test", null, true, null);
         inv("api-takip", "MANUAL", true, null);
@@ -109,8 +109,9 @@ class ManualCertificateRepositoriesTest {
                 .extracting(CertificateInventory::getDomain).containsExactly("api-takip");
         assertThat(inventoryRepo.findByCertSourceAndDeletedAtIsNullOrderByDomainAsc("MANUAL"))
                 .extracting(CertificateInventory::getDomain).containsExactly("api-takip", "pasif-takip");
+        // Silme KALICI (2026-10-07): eski sürümden kalmış çöp satırı (silinmis-takip) önerilen takip adını tutmaz.
         assertThat(inventoryRepo.findExistingDomainsLower(List.of("api-takip", "silinmis-takip", "yok-takip", "net.example.test")))
-                .containsExactlyInAnyOrder("api-takip", "silinmis-takip", "net.example.test");
+                .containsExactlyInAnyOrder("api-takip", "net.example.test");
         // İzleme Panosu envanter-pasif kuralı süpürmeyi yansıtır: manuel kayıt ağ hedefi değil.
         assertThat(inventoryRepo.findActiveDomains()).containsExactly("net.example.test");
         assertThat(inventoryRepo.findByActiveTrueOrderByDomainAsc()).extracting(CertificateInventory::isManual)

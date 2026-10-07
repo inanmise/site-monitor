@@ -109,6 +109,10 @@ describe('ManualCertsPage', () => {
     expect(document.querySelector('[data-format="pfx"] [data-slot="mcert-fmt-pw"]')).toHaveAttribute('data-value', 'yes')
     expect(document.querySelector('[data-slot="mcert-guide-dont"]')).toHaveTextContent(/CSR/)
     expect(document.querySelector('[data-slot="mcert-guide-privacy"]')).toHaveTextContent(/never stored|saklanmaz/)
+    // 2026-10-08: özel anahtar tarayıcıda ayıklanır, parola yalnız tarayıcıda — rehber bunu söyler
+    expect(document.querySelector('[data-slot="mcert-guide-privacy"]')).toHaveTextContent(/never sent to the server|sunucuya hiç gönderilmez/)
+    expect(document.querySelector('[data-format="pfx"] [data-slot="mcert-fmt-pw"]')).toHaveTextContent(/used only in your browser|yalnız tarayıcınızda/)
+    expect(document.querySelector('[data-format="jks"] [data-slot="mcert-fmt-key"]')).toHaveTextContent(/removed in the browser|tarayıcıda ayıklanır/)
     expect(document.querySelectorAll('[data-slot="mcert-guide-when"] [data-upload="true"]')).toHaveLength(2)
     fireEvent.click(within(guide).getByRole('button', { name: /Which file should I upload|Hangi dosyayı/ }))
     await waitFor(() => expect(document.querySelector('[data-slot="mcert-guide-body"]')).toBeNull())
@@ -146,6 +150,8 @@ describe('ManualCertsPage', () => {
     expect(api.manualCerts.pemUrl).toHaveBeenCalledWith(2, 91)
 
     pressMenuTrigger(within(row).getByRole('button', { name: /gone\.example\.test — (Actions|İşlemler)/ }))
+    // Takip adı sonradan düzenlenir (2026-10-07): yazma izni + kendi kaydı → "Düzenle" menüde
+    expect(await screen.findByRole('menuitem', { name: /Edit \(tracking name|Düzenle \(takip adı/ })).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('menuitem', { name: /Upload new version|Yeni sürüm yükle/ }))
     const title = await screen.findByText(/Upload new version: gone\.example\.test|Yeni sürüm yükle: gone\.example\.test/)
     expect(title).toBeInTheDocument()
@@ -162,6 +168,7 @@ describe('ManualCertsPage', () => {
     await screen.findByRole('menuitem', { name: /Download PEM|PEM indir/ })
     expect(screen.getByRole('menuitem', { name: /^(Open|Aç)$/ })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /Upload new version|Yeni sürüm yükle/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Edit \(tracking name|Düzenle \(takip adı/ })).toBeNull()
   })
 
   it('başka takımın kaydında yeni sürüm yok (salt okunur)', async () => {
@@ -171,6 +178,7 @@ describe('ManualCertsPage', () => {
     pressMenuTrigger(within(row).getByRole('button', { name: /soon\.example\.test — (Actions|İşlemler)/ }))
     await screen.findByRole('menuitem', { name: /Download PEM|PEM indir/ })
     expect(screen.queryByRole('menuitem', { name: /Upload new version|Yeni sürüm yükle/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Edit \(tracking name|Düzenle \(takip adı/ })).toBeNull()
   })
 
   it('?mc_upload=1 sihirbazı açar ve parametre adresten silinir', async () => {

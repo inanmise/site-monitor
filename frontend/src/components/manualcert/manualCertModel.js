@@ -12,7 +12,8 @@ import { nocGroupIdsBody } from '../noc/forms/nocFormModel.js'
  * <p>Sözleşme (backend ile ortak): `/api/manual-certs` — analiz (yazmaz), oluştur, toplu oluştur, yeni sürüm, liste,
  * ayrıntı, PEM indirme, yeniden değerlendirme. Envanter satırı `cert_source === 'MANUAL'` taşır; ağ satırlarında alan
  * yoktur (null) ve hiçbir davranış değişmez. Özel anahtar ve şifre ASLA saklanmaz, loglanmaz, yanıtta dönmez — istemci de
- * şifreyi yalnız sihirbaz açıkken bellekte tutar.
+ * şifreyi yalnız sihirbaz açıkken bellekte tutar. 2026-10-08: dosya TARAYICIDA açılır (`extract/`); sunucuya yalnız açık
+ * sertifikalar (`extracted`) gider — özel anahtar ve şifre tarayıcıdan hiç çıkmaz.
  */
 
 export const CERT_SOURCE_MANUAL = 'MANUAL'
@@ -81,12 +82,17 @@ export function trackingKeyError(key) {
 
 // ── Uyarı kodları (sunucu `{code, severity, params}` döner; metin `mcert.warn.<CODE>`) ─────────────────────────
 export const WARNING_CODES = Object.freeze([
-  'PRIVATE_KEY_IGNORED', 'CSR_NOT_CERTIFICATE', 'NO_CERTIFICATE', 'PASSWORD_REQUIRED', 'PASSWORD_WRONG',
+  'PRIVATE_KEY_KEPT_LOCAL', 'CSR_NOT_CERTIFICATE', 'NO_CERTIFICATE', 'PASSWORD_REQUIRED', 'PASSWORD_WRONG',
   'UNSUPPORTED_FORMAT', 'FILE_TOO_LARGE', 'ZIP_LIMIT', 'ZIP_SKIPPED_ENTRY', 'EXPIRED', 'NOT_YET_VALID',
   'EXPIRES_SOON', 'SELF_SIGNED', 'CHAIN_INCOMPLETE', 'CHAIN_EXPIRED_INTERMEDIATE', 'WEAK_SIGNATURE', 'WEAK_KEY',
   'CA_CERTIFICATE', 'MULTIPLE_LEAVES', 'DUPLICATE_IN_FILE', 'ALREADY_TRACKED', 'SAME_SUBJECT_TRACKED',
   'NETWORK_MONITORED', 'KEY_CHANGED', 'KEY_SAME', 'SUBJECT_CHANGED', 'OLDER_THAN_CURRENT', 'SAN_CHANGED',
 ])
+/**
+ * Yalnız TARAYICIDAKİ ayıklamanın ürettiği not kodları (sunucu üretmez; aynı `mcert.warn.<CODE>` sözlüğüyle çizilir).
+ * Tarayıcı ayrıca ZIP_SKIPPED_ENTRY / ZIP_LIMIT / PASSWORD_WRONG (JKS bütünlüğü) notlarını da üretir.
+ */
+export const CLIENT_NOTE_CODES = Object.freeze(['KEYSTORE_PARTIAL'])
 
 /** Önem → AlertBanner / ikon tonu. Bilinmeyen önem "info" sayılır. */
 export const SEVERITY_TONE = Object.freeze({ info: 'info', warn: 'warning', error: 'danger' })
@@ -265,22 +271,50 @@ export function teamFilterOptions(rows) {
 
 // ── İstek gövdeleri ──────────────────────────────────────────────────────────────────────────────────────────────
 /**
- * Çok parçalı yükleme gövdesi: dosya YA DA yapıştırılan metin + (varsa) şifre + ek alanlar (nesne → JSON). Şifre
- * yalnız gövdeye girer; hiçbir yere yazılmaz.
+ * Sunucuya giden `extracted` gövdesi (2026-10-08): tarayıcıda ayıklanan YALNIZ açık sertifikalar (Base64 DER) + CSR
+ * PEM'leri + sayaçlar. Parola, özel anahtar, ham dosya, istemci notları ASLA bu gövdeye girmez.
  */
-export function uploadFormData({ source = 'file', file = null, text = '', password = '' } = {}, extra = {}) {
-  const fd = new FormData()
-  if (source === 'text') {
-    if (String(text).trim()) fd.append('text', String(text))
-  } else if (file) {
-    fd.append('file', file, file.name)
+export function wirePayload(extraction) {
+  const r = extraction || {}
+  return {
+    format: r.format ?? null,
+    file_name: r.file_name ?? null,
+    size_bytes: Number(r.size_bytes) || 0,
+    entries: (Array.isArray(r.entries) ? r.entries : []).map((e) => ({
+      alias: e?.alias ?? null, key_entry: !!e?.key_entry, certs: (Array.isArray(e?.certs) ? e.certs : []).map(String),
+    })),
+    csr_pem: (Array.isArray(r.csr_pem) ? r.csr_pem : []).map(String),
+    private_keys_removed: Number(r.private_keys_removed) || 0,
   }
-  if (password) fd.append('password', password)
+}
+
+/**
+ * Çok parçalı yükleme gövdesi (2026-10-08): `extracted` (JSON, dosya parçası olarak — form alanı boyut sınırına
+ * takılmasın) + ek alanlar (nesne → JSON). Orijinal dosya, yapıştırılan metin ve şifre GÖNDERİLMEZ.
+ */
+export function extractedFormData(extraction, extra = {}) {
+  const fd = new FormData()
+  fd.append('extracted', new Blob([JSON.stringify(wirePayload(extraction))], { type: 'application/json' }), 'extracted.json')
   for (const [k, v] of Object.entries(extra || {})) {
     if (v === undefined || v === null) continue
     fd.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v))
   }
   return fd
+}
+
+/** Tarayıcıda ayıklama başarısızsa alan hatasının sözlük anahtarı + parametresi (`unsupported.reason`). */
+export function extractionErrorKey(unsupported) {
+  switch (unsupported?.reason) {
+    case 'TOO_LARGE': return ['mcert.file.tooLarge', MAX_UPLOAD_MB]
+    case 'BKS': return ['mcert.extract.BKS']
+    case 'PKCS12_ALGORITHM': return ['mcert.extract.PKCS12_ALGORITHM']
+    case 'PKCS12_FORMAT': return ['mcert.extract.PKCS12_FORMAT']
+    case 'TOO_MANY_CERTS': return ['mcert.extract.TOO_MANY_CERTS', unsupported.max ?? 200]
+    case 'TIMEOUT': return ['mcert.extract.TIMEOUT']
+    case 'ZIP_UNREADABLE': return ['mcert.extract.ZIP_UNREADABLE']
+    case 'UNREADABLE': return ['mcert.extract.UNREADABLE']
+    default: return ['mcert.extract.UNKNOWN']
+  }
 }
 
 /** Takip alanlarının boş durumu (sihirbaz "Yeni takip kaydı"). */

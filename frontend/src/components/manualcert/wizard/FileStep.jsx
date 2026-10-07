@@ -9,9 +9,13 @@ import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
 import { cn } from '@/lib/utils'
+import KeptLocalNote from './KeptLocalNote.jsx'
 import {
   ACCEPT_ATTR, ACCEPT_EXTENSIONS, MAX_UPLOAD_MB, discouragedExtension, fileExtension, knownExtension, passwordLikely, sizeLabel,
 } from '../manualCertModel.js'
+
+/** BKS / UBER için yönerge komutu (dil bağımsız; yer tutucular büyük harf). */
+const BKS_COMMAND = 'keytool -exportcert -rfc -alias ALIAS -keystore truststore.bks -storetype BKS -providerpath bcprov.jar -provider org.bouncycastle.jce.provider.BouncyCastleProvider -file cert.pem'
 
 /**
  * Sihirbaz 1. adım — "Dosya" (2026-10-06). İki kaynak (SegmentedControl): dosya seç (sürükle-bırak alanı + gerçek dosya
@@ -19,9 +23,15 @@ import {
  * yanlış" dediğinde de görünür; hata alanın altında (yalnız bildirim değil). Şifre saklanmaz — ipucu bunu söyler.
  * Yükleme öncesi uyarılar: CSR / tek başına özel anahtar uzantısı, tanınmayan uzantı, 5 MB sınırı.
  *
+ * <p>2026-10-08: dosya TARAYICIDA açılır — güvence satırı (`mcert-local-hint`) bunu söyler; ayıklama yapıldıysa (İnceleme'den
+ * dönüldü) "özel anahtar (N) tarayıcıda ayıklandı" notu (`mcert-kept-local`). BKS / UBER tarayıcıda açılamaz → alan hatası +
+ * keytool yönergesi (`mcert-bks-help`).
+ *
  * <p>Test kancaları: `mcert-dropzone` (+ `data-drag`), `mcert-file-input`, `mcert-file-chip`, `mcert-paste`, `mcert-password`.
  */
-export default function FileStep({ source, onSource, file, onFile, text, onText, password, onPassword, passwordNeeded, fe }) {
+export default function FileStep({
+  source, onSource, file, onFile, text, onText, password, onPassword, passwordNeeded, fe, extraction = null, issue = null,
+}) {
   const t = useT()
   const inputRef = useRef(null)
   const inputId = useId()
@@ -109,6 +119,15 @@ export default function FileStep({ source, onSource, file, onFile, text, onText,
         </Field>
       )}
 
+      {issue === 'BKS' && (
+        <AlertBanner tone="info" className="mb-0" title={t('mcert.extract.bksTitle')}>
+          <div data-slot="mcert-bks-help" className="flex min-w-0 flex-col gap-1.5">
+            <p className="m-0">{t('mcert.extract.bksHow')}</p>
+            <code className="block max-w-full overflow-x-auto rounded bg-muted px-2 py-1 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{BKS_COMMAND}</code>
+          </div>
+        </AlertBanner>
+      )}
+
       {showPassword && (
         <Field label={t('mcert.pw.label')} hint={t('mcert.pw.hint')} {...fe.fieldProps('password')} className="mb-0">
           {({ id, describedBy, invalid }) => (
@@ -121,6 +140,8 @@ export default function FileStep({ source, onSource, file, onFile, text, onText,
           )}
         </Field>
       )}
+
+      <KeptLocalNote extraction={extraction} />
     </div>
   )
 }

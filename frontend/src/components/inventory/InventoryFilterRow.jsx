@@ -23,7 +23,7 @@ const FILTER_COL = { ugTeam: 'ug_team', flag: 'flags', domainExp: 'domain_exp', 
  */
 const CELL = 'bg-muted/40 px-1.5 py-1 align-middle border-b-2 border-border'
 
-export default function InventoryFilterRow({ filters, onFilters, allRows = [], cols, canManage, statusFilter, platformNames = {} }) {
+export default function InventoryFilterRow({ filters, onFilters, allRows = [], cols, canManage, platformNames = {} }) {
   const t = useT()
   const show = (k) => cols.includes(k)
   const set = (patch) => onFilters({ ...filters, ...patch })
@@ -104,7 +104,7 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
       {show('updated') && cell('updated', sel('updated', [
         { value: '24', label: t('inv.colFilterLast24h') }, { value: '168', label: t('inv.colFilterLast7d') }, { value: '720', label: t('inv.colFilterLast30d') },
       ]))}
-      {cell('active', statusFilter === 'deleted' ? null : sel('active', [{ value: 'yes', label: t('inv.colFilterActiveYes') }, { value: 'no', label: t('inv.colFilterActiveNo') }]))}
+      {cell('active', sel('active', [{ value: 'yes', label: t('inv.colFilterActiveYes') }, { value: 'no', label: t('inv.colFilterActiveNo') }]))}
       <TableCell className={CELL} />
     </TableRow>
   )
