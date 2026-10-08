@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, useId, Fragment, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, useId, Fragment, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -176,6 +177,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const [infoOpen, setInfoOpen] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [defaults, setDefaults] = useState(null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
@@ -193,7 +197,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getDnsMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
       setLoadError(e?.message || 'network error')
@@ -205,7 +209,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updateDnsMonitor, (r) => {
-    load(); setDetailMonitor((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setDetailMonitor((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -255,7 +260,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const teamSelectOptions = [...(isAdmin ? [{ value: '', label: t('app.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))]
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds })
@@ -282,7 +291,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       active: m.active !== false,
     }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setDupSource(null)
     setForm(formFrom(m))
     setTestResult(null)
@@ -292,12 +305,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız domain alanını değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
+    cancelTest()
     setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.domain) })
     setTestResult(null)
     setModal('new')
   }
-  function closeEditModal() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
+  function closeEditModal() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
     // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
@@ -344,6 +358,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       }
       await load()
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setDetailMonitor((prev) => mergeSavedRow(prev, res.data))
       toast.success(t('dns.saved'))
       // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
       // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
@@ -410,6 +427,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Canlı DNS testi — kaydetmeden formdaki domain/kayıt-tipi ile bir kez çözer; URL girilse host ayıklanır.
   async function runTest() {
     if (!form.domain.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testDnsMonitor({
@@ -417,9 +435,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         expectedValue: (form.expectedValue || '').trim() || null,
         slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('dns.testError') })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -502,7 +521,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const s = search.toLowerCase()
+    const s = search.trim().toLowerCase()
     return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
@@ -860,7 +879,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           resuming={isResuming(detailMonitor.id)}
           // Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında (başlık düğmesi + geçmiş paneli)
           canDiagnose={canDiagnoseRow(detailMonitor)} onDiagnose={() => openDiagnose(detailMonitor)}
-          histReload={histReload}>
+          histReload={histReload}
+          // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+          onRestored={() => reloadAndSyncDetail(load, detailMonitor.id, setDetailMonitor)}>
           {/* Tanılama penceresi detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
           {dnsDx && dnsDx.monitorId === detailMonitor.id && canDiagnoseRow(detailMonitor) && (
             <Suspense fallback={null}>

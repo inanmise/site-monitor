@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -238,6 +239,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
@@ -270,7 +274,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getPageSpeedMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
       setLoadError(e?.message || 'network error')
@@ -281,7 +285,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updatePageSpeedMonitor, (r) => {
-    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -377,7 +382,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -405,16 +414,21 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       active: m.active !== false,
     }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm(formFrom(m)); setChangeNote(''); setModal(m)
   }
   function openDuplicate(m) {
+    cancelTest()
     setTestResult(null); setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
+  function closeEdit() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   /** Eşik alanı: boş dize → null (eşiği kaldır), sayı → sayı. */
   const thresholdValue = (v) => (v === '' || v == null ? null : Number(v))
@@ -449,12 +463,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   async function runTest() {
     if (!form.url.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testPageSpeed(payloadFromForm())
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('pspd.testError') })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -475,6 +491,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
         : await api.monitoring.updatePageSpeedMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setSelected((prev) => mergeSavedRow(prev, res.data))
       toast.success(t('pspd.saved')); closeEdit()
       // İlk / taze ölçüm (2026-09-28): yeni kart boş kalmasın, hedefi/bütçesi değişen kart eski ölçümü göstermesin. Gizli
       // parola/başlık satırda geri okunamaz → yazıldıysa ayrıca bildirilir. Sessiz: bekleme süresi (429) ya da hata
@@ -1267,7 +1286,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                     teamNames / canManage. Yanlis adla gecmek sessiz degil — t cagrilinca
                     "t is not a function" ile sekme comple cokuyor. */}
                 <ChangeHistoryTab t={t} kind="pagespeed" monitorId={selected.id}
-                  teamNames={teamNameById} canManage={canManageRow(selected)} />
+                  teamNames={teamNameById} canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

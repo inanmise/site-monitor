@@ -13680,6 +13680,8 @@ export const TR = {
   'dns.monitorCount':     '{0} monitör',
   'dns.close':            'Kapat',
   'dns.status':           'Durum',
+  'dns.liveOk':           'Başarılı',
+  'dns.liveFail':         'Sorgu başarısız',
   'dns.noRecords':        'Bu tip için kayıt bulunamadı.',
   'dns.ttl':              'TTL',
   'dns.responseMs':       'Yanıt',

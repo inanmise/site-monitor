@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -145,6 +146,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
@@ -191,7 +195,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getPingMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
       setLoadError(e?.message || 'network error')
@@ -202,7 +206,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updatePingMonitor, (r) => {
-    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -244,7 +249,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setPingDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -263,7 +272,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       slowBaselineWindowMinutes: m.slow_baseline_window_minutes ?? 10,
       slowThresholdPercent: m.slow_threshold_percent ?? 20 }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setDupSource(null)
     setForm(formFrom(m))
     setChangeNote('')
@@ -272,11 +285,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız host alanını değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
+    cancelTest()
     setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.host) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setDupSource(null); setChangeNote('') }
+  function closeEdit() { cancelTest(); setModal(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
     // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
@@ -311,6 +325,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         : await api.monitoring.updatePingMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setSelected((prev) => mergeSavedRow(prev, res.data))
       toast.success(t('ping.saved')); closeEdit()
       // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi değişen kart eski sonucu göstermesin. Liste
       // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
@@ -323,15 +340,17 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kaydetmeden formdaki host/parametrelerle bir kez ping atar; ping atılabildi mi + koşul (erişilebilirlik) sağlandı mı.
   async function runTest() {
     if (!form.host.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testPingMonitor({
         host: form.host.trim(), ipVersion: form.ipVersion,
         packetCount: Number(form.packetCount), timeoutMs: Number(form.timeoutMs),
       })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('ping.testError') })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -844,7 +863,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="ping" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)} />
+                  canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

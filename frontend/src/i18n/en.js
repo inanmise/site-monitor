@@ -13650,6 +13650,8 @@ export const EN = {
   'dns.monitorCount':     '{0} monitors',
   'dns.close':            'Close',
   'dns.status':           'Status',
+  'dns.liveOk':           'Succeeded',
+  'dns.liveFail':         'Lookup failed',
   'dns.noRecords':        'No records found for this type.',
   'dns.ttl':              'TTL',
   'dns.responseMs':       'Response',

@@ -37,8 +37,12 @@ import MaskedValue from '../ui/MaskedValue.jsx'
  * `getChangeDetail` — liste yanıtı snapshot taşımaz), yönetebilene "eski hâline dön". Takım kapsamı dışı /
  * hata → StatusBlock (kırmızı ton) + yeniden dene. Test kancaları: satır `data-chg-row`, IP `data-slot="chg-ip"`,
  * panel `data-slot="chg-panel"`, aç/kapa `data-open-detail` (aria-expanded), snapshot `data-slot="chg-snapshot"`.
+ *
+ * <p>`onRestored` (isteğe bağlı, 2026-10-09): başarılı geri almadan SONRA geri alma yanıtıyla çağrılır. İzleme sayfası
+ * listesini yeniden yükleyip açık detay penceresinin kopyasını tazeler — aksi halde aynı pencereden "Düzenle" bayat
+ * kopyadan kurulur ve kaydetme geri alınan değerleri yeniden yazardı. Verilmezse davranış eskisiyle birebir aynı.
  */
-export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, canManage = false }) {
+export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, canManage = false, onRestored }) {
   const isMobile = useIsMobile()
   const [rows, setRows] = useState(null)
   const [total, setTotal] = useState(0)
@@ -119,6 +123,10 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
       // Atlanan gizli alanlar SESSİZ geçilmez: kullanıcı parolanın dönmediğini bilmeli.
       if (skipped.length) toast.info(t('chg.restoreMasked', skipped.length))
       load()
+      // Sayfanın açık detay kopyası da tazelensin (bkz. bileşen notu). Sayfanın hatası geri alma sonucunu bozmaz.
+      if (onRestored) {
+        try { Promise.resolve(onRestored(r.data)).catch(() => {}) } catch { /* sayfanın tazelemesi — en iyi çaba */ }
+      }
     } finally {
       setRestoring(false)
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -188,6 +189,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
@@ -225,7 +229,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getDomainMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
       setLoadError(e?.message || 'network error')
@@ -236,7 +240,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updateDomainMonitor, (r) => {
-    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -281,7 +286,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   function openDetail(m) { setSelected(m); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -305,7 +314,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       blacklistEnabled: m.blacklist_enabled === true,
       changeAlert: m.change_alert !== false, notifyWebhook: m.notify_webhook !== false }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm(formFrom(m))
     setChangeNote('')
@@ -314,22 +327,25 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız alan adını değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
+    cancelTest()
     setTestResult(null); setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.domain) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
+  function closeEdit() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   async function runTest() {
     if (!form.domain.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testDomain({
         domain: normalizeDomainInput(form.domain), warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
       })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('dom.testError'), status: 'UNKNOWN' })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -375,6 +391,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       // altindaki ipucu bunu yaziyor ama surpriz KAYDETTIKTEN sonra yasaniyor: kullanici
       // "www yazdim, silindi" diye okuyor. Indirgeme olduysa SUNUCUNUN dondurdugu degerle
       // soylenir — kural ikinci kez (bu kez JS'te) yazilmaz, kopyalar kaciniilmaz olarak ayrisir.
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setSelected((prev) => mergeSavedRow(prev, res.data))
       const savedDomain = res?.data?.domain
       const typed = normalizeDomainInput(form.domain)
       if (savedDomain && typed && savedDomain !== typed) {
@@ -1048,7 +1067,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="domain" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)} />
+                  canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>
