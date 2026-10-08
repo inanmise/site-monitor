@@ -11,7 +11,8 @@ import {
   CopyValue, DefItem, DefList, DetailSection, HexValue, LinkValue, StatusChip, ToneChip, UsageBadges,
 } from './CertDetailsParts.jsx'
 import {
-  clean, detailTone, formatRelative, isBlank, issuerOf, keyInfo, lifetimeOf, sanEntries, statusChip, subjectOf, tlsInfo, trustCode, usageItems,
+  clean, detailTone, formatRelative, isBlank, issuerOf, keyInfo, lifetimeOf, revocationChipCode, sanEntries, statusChip, subjectOf, tlsInfo,
+  trustCode, usageItems,
 } from './certDetailsModel.js'
 
 /**
@@ -85,7 +86,7 @@ export default function CertDetailsPanel({ d, tone: toneProp, now: nowProp }) {
   const chips = {
     trust: statusChip('trust', trustCode(d)),
     chain: statusChip('chain', d.chain_status),
-    rev: statusChip('rev', d.revocation_status),
+    rev: statusChip('rev', revocationChipCode(d)),
     dep: statusChip('dep', d.deployment_status),
   }
   const error = clean(d.error)
@@ -96,7 +97,11 @@ export default function CertDetailsPanel({ d, tone: toneProp, now: nowProp }) {
   const showValidity = [d.not_before, d.not_after, d.days_remaining, d.checked_at, d.intermediate_expiry].some((v) => !isBlank(v))
   const showKey = [key.alg, key.sig, d.is_ca, ku, eku].some((v) => !isBlank(v))
   const showSecurity = [d.fingerprint, chips.trust, chips.chain, chips.rev, chips.dep, flags, tls.version, tls.cipher].some((v) => !isBlank(v))
-  const showInfra = [d.ocsp_url, d.crl_url, d.via, d.tls_mode_used].some((v) => !isBlank(v))
+  // OCSP / CRL satırları sertifika OKUNDUYSA boşken de görünür (2026-10-08, kullanıcı: "boş da olsa ekleyelim, boş
+  // olduğunu bilelim") — "Sertifikada tanımlı değil". Okunamamış kayıtta (hata) adresin yokluğu bilgi değildir.
+  const certRead = !isBlank(d.fingerprint) || !isBlank(d.serial_number)
+  const showInfra = certRead || [d.ocsp_url, d.crl_url, d.via, d.tls_mode_used].some((v) => !isBlank(v))
+  const notInCert = certRead ? <span data-slot="cert-detail-empty" className="text-muted-foreground">{t('cdp.notInCert')}</span> : null
   const port = typeof d.port === 'number' && d.port > 0 ? d.port : null
 
   return (
@@ -252,10 +257,10 @@ export default function CertDetailsPanel({ d, tone: toneProp, now: nowProp }) {
           <DetailSection slot="infra" icon={Network} title={t('modal.secInfra')} className="lg:col-span-2">
             <DefList>
               <DefItem slot="ocsp" label={t('modal.ocspUrl')} full>
-                {clean(d.ocsp_url) && <LinkValue value={clean(d.ocsp_url)} label={t('modal.ocspUrl')} />}
+                {clean(d.ocsp_url) ? <LinkValue value={clean(d.ocsp_url)} label={t('modal.ocspUrl')} /> : notInCert}
               </DefItem>
               <DefItem slot="crl" label={t('modal.crlUrl')} full>
-                {clean(d.crl_url) && <LinkValue value={clean(d.crl_url)} label={t('modal.crlUrl')} />}
+                {clean(d.crl_url) ? <LinkValue value={clean(d.crl_url)} label={t('modal.crlUrl')} /> : notInCert}
               </DefItem>
               {port && <DefItem slot="port" label={t('sslv.f.port')} mono>{String(port)}</DefItem>}
               {clean(d.via) && (

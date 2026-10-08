@@ -8,6 +8,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
+import { REVOCATION_REASONS, attemptText } from '../utils/revocationInfo.js'
 
 /**
  * Sertifika Sağlık Kontrol Listesi.
@@ -45,6 +46,30 @@ function evidenceText(value) {
   if (value == null) return '—'
   const s = String(value)
   return s.length > 160 ? s.slice(0, 160) + '…' : s
+}
+
+/** Değeri boşken "sertifikada tanımlı değil" yazılan kanıt alanları (2026-10-08: boş da olsa gösterilir). */
+const NOT_IN_CERT_KEYS = new Set(['ocsp_url', 'crl_url'])
+
+/**
+ * Kanıt değeri. İptal satırı (2026-10-08): boş OCSP/CRL adresi "Sertifikada tanımlı değil", neden kodu okunur cümle,
+ * denemeler (ulaşılamayan adresler) satır satır "CRL · adres — HTTP 404 döndü".
+ */
+function EvidenceValue({ k, v, t }) {
+  if (v == null && NOT_IN_CERT_KEYS.has(k)) {
+    return <span data-slot="hlth-ev-empty" className="text-muted-foreground">{t('hlth.ev.notInCert')}</span>
+  }
+  if (k === 'revocation_reason' && REVOCATION_REASONS.includes(String(v))) {
+    return <span data-slot="hlth-ev-reason" data-reason={String(v)}>{t(`hlth.revReason.${v}`)}</span>
+  }
+  if (k === 'revocation_attempts' && Array.isArray(v)) {
+    return (
+      <ul data-slot="hlth-ev-attempts" className="m-0 flex list-none flex-col gap-0.5 p-0">
+        {v.map((a, i) => <li key={i} className="[overflow-wrap:anywhere]">{attemptText(a, t)}</li>)}
+      </ul>
+    )
+  }
+  return evidenceText(v)
 }
 
 export default function CertHealthPanel({ domain, canRefresh = true }) {
@@ -298,7 +323,7 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
           {Object.entries(evidence).map(([k, v]) => (
             <div key={k} className="hlth-evidence-row">
               <dt>{t(`hlth.ev.${k}`) === `hlth.ev.${k}` ? k : t(`hlth.ev.${k}`)}</dt>
-              <dd>{evidenceText(v)}</dd>
+              <dd><EvidenceValue k={k} v={v} t={t} /></dd>
             </div>
           ))}
         </dl>

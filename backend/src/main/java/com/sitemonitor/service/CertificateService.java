@@ -111,6 +111,9 @@ public class CertificateService {
             check.setFingerprint(servedFingerprint);
             check.setChainStatus((String) result.get("chain_status"));
             check.setRevocationStatus((String) result.get("revocation_status"));
+            // İptal durumunun NEDENİ + denemeler (2026-10-08) — yalnız açıklama, durum hükmünü değiştirmez.
+            check.setRevocationReason(textOrNull(result.get("revocation_reason")));
+            check.setRevocationDetail(textOrNull(result.get("revocation_detail")));
             check.setTrustStatus((String) result.get("trust_status"));
             check.setDeploymentStatus(deploymentStatus);
             check.setIntermediateExpiry((String) result.get("intermediate_expiry"));
@@ -165,6 +168,8 @@ public class CertificateService {
             latest.setIntermediateExpiry((String) result.get("intermediate_expiry"));
             latest.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
             latest.setRevocationStatus((String) result.get("revocation_status"));
+            latest.setRevocationReason(textOrNull(result.get("revocation_reason")));
+            latest.setRevocationDetail(textOrNull(result.get("revocation_detail")));
             latest.setChainDetails(chainDetailsJson);
             latest.setSerialNumber((String) result.get("serial_number"));
             latest.setSignatureAlgorithm((String) result.get("signature_algorithm"));
@@ -1186,7 +1191,8 @@ public class CertificateService {
                 checkerService.deserializeSan(c.getSan()),
                 checkerService.deserializeSan(c.getKeyUsage()),
                 checkerService.deserializeSan(c.getExtKeyUsage()))
-                .applyTls(c.getTlsVersion(), c.getCipherSuite());
+                .applyTls(c.getTlsVersion(), c.getCipherSuite())
+                .applyRevocation(c.getRevocationReason(), c.getRevocationDetail());
     }
 
     private String issuerStr(CertificateDto c) {
@@ -1215,6 +1221,12 @@ public class CertificateService {
         if (v == null) return null;
         if (v instanceof Boolean b) return b;
         return Boolean.parseBoolean(v.toString());
+    }
+
+    /** Boş olmayan metin ya da null — iptal nedeni / denemeleri (kod 40 karakteri geçmez; JSON TEXT kolonunda). */
+    static String textOrNull(Object v) {
+        if (!(v instanceof String s) || s.isBlank()) return null;
+        return s.length() > 4000 ? null : s.trim();
     }
 
     /** Hata aşaması — kolon VARCHAR(32); boş/uzun değer yazılmaz (kayıt asla bu yüzden düşmesin). */

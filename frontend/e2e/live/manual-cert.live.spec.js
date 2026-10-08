@@ -365,6 +365,10 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await expect(ssl.locator('[data-slot="ssl-check"][data-check="hostname"]')).toHaveCount(0)
     await expect(ssl).not.toContainText('Canlı kontrol')
     await expect(ssl.locator('[data-slot="ssl-verdict"]').getByRole('button', { name: 'Yeniden değerlendir' })).toBeVisible()
+    // İptal (2026-10-08): fikstürde OCSP/CRL adresi YOK → bilgi satırı, "denetlenemedi" sayılmaz, yanıltıcı "ulaşılamadı" yok
+    await expect(ssl.locator('[data-slot="ssl-check"][data-check="revocation"]')).toContainText('Sertifikada OCSP/CRL adresi yok')
+    await expect(ssl).not.toContainText('denetlenemedi')
+    await expect(ssl).not.toContainText('OCSP/CRL hizmetine ulaşılamadı')
     await expandAll(ssl.locator('[data-slot="ssl-chain"]'))
     await expectCleanText(ssl, 'Sertifika penceresi · SSL (manuel)')
     // Hiyerarşi görünümü (2026-10-07): tarayıcı gibi kök → ara → yaprak — GERÇEK sürüm zinciri ucundan
@@ -396,10 +400,24 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await certTab(page, box, 'details')
     await expect(box.locator('[role="tabpanel"][data-state="active"]')).toContainText(CN)
     await expectCleanText(box, 'Sertifika penceresi · Detaylar')
+    // Adres alanları boşken de görünür (2026-10-08, kullanıcı: "boş da olsa ekleyelim, boş olduğunu bilelim")
+    for (const slot of ['ocsp', 'crl']) {
+      await expect(box.locator(`[data-slot="cert-detail-field"][data-field="${slot}"]`)).toContainText('Sertifikada tanımlı değil')
+    }
+    await expect(box.locator('[data-slot="cert-detail-field"][data-field="revocation"]')).toContainText('İptal adresi yok')
     // Sağlık: ağa özgü satırlar "Uygulanmaz — dosyadan yüklendi", sertifika satırları değerlendirilir
     await certTab(page, box, 'health')
     await box.locator('[data-slot="hlth-value"]').first().waitFor({ timeout: 20_000 })
     await expect(box.locator('[data-slot="hlth-value"]').filter({ hasText: 'Uygulanmaz — dosyadan yüklendi' }).first()).toBeVisible()
+    // İptal satırı: adres yok → "Adres yok — denetlenemez" (NA), "erişimi kontrol edin" önerisi YOK; açılınca iki adres alanı
+    const revHead = box.locator('[data-slot="hlth-row-head"]').filter({ hasText: 'Sertifika iptal edilmemiş' })
+    await expect(revHead).toContainText('Adres yok — denetlenemez')
+    await expect(revHead).toContainText('İşlem gerekmez')
+    await expect(box).not.toContainText('OCSP/CRL adresine ulaşılamadı')
+    await revHead.click()
+    await expect(box.locator('[data-slot="hlth-ev-empty"]')).toHaveCount(2)
+    await expect(box.locator('[data-slot="hlth-ev-reason"]')).toHaveAttribute('data-reason', 'NO_ENDPOINTS')
+    await expect(box.locator('[data-slot="hlth-ev-reason"]')).toContainText('OCSP ya da CRL adresi yayımlamıyor')
     await expectCleanText(box.locator('[role="tabpanel"][data-state="active"]'), 'Sertifika penceresi · Sağlık')
     await certTab(page, box, 'versions')
     await box.locator('[data-slot="mcert-version"][data-current="true"]').waitFor()

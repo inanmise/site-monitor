@@ -84,6 +84,30 @@ describe('buildSslGroups + buildVerdict', () => {
     expect(v.unknown).toBe(2)
   })
 
+  // 2026-10-08 (kullanıcı: "yanıltıcı uyarıları kaldıralım"): "bilinmiyor" NEDENİNE göre ayrılır
+  it('iptal nedeni: adres yok → INFO (paydaya ve "denetlenemedi"ye girmez); diğer nedenler kendi metniyle', () => {
+    const noAddr = buildSslGroups(healthyPreview({ revocation_status: 'UNKNOWN', revocation_reason: 'NO_ENDPOINTS', ocsp_url: null, crl_url: null }))
+    expect(rowOf(noAddr, 'revocation')).toMatchObject({ status: ST.INFO, textKey: 'sslv.rev.noEndpoints' })
+    const v = buildVerdict(noAddr)
+    expect(v.unknown).toBe(0)
+    expect(v.total).toBe(noAddr.flatMap((g) => g.rows).length - 1)
+    expect(v.passed).toBe(v.total)
+    expect(v.tone).toBe(ST.OK)
+
+    const reason = (r) => rowOf(buildSslGroups(healthyPreview({ revocation_status: 'UNKNOWN', revocation_reason: r })), 'revocation')
+    expect(reason('UNREACHABLE')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.unknown' })
+    expect(reason('UNSUPPORTED_SCHEME')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.ldapOnly' })
+    expect(reason('NO_ISSUER')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.noIssuer' })
+    expect(reason('NOT_CHECKED')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.notChecked' })
+  })
+
+  it('eski sonuç (neden yok): sertifika okunmuş + iki adres boş → "adres yok"; adres varsa ya da okunmamışsa eski metin', () => {
+    const legacy = (over) => rowOf(buildSslGroups(healthyPreview({ revocation_status: 'UNKNOWN', ...over })), 'revocation')
+    expect(legacy({ ocsp_url: null, crl_url: null })).toMatchObject({ status: ST.INFO, textKey: 'sslv.rev.noEndpoints' })
+    expect(legacy({})).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.unknown' })   // fikstürde adresler dolu
+    expect(legacy({ ocsp_url: null, crl_url: null, fingerprint: null })).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.rev.unknown' })
+  })
+
   it('yalnız yaprak gönderilmiş (kendinden imzalı değil) → zincir WARN; ara sertifika dolmuş → FAIL', () => {
     const base = healthyPreview()
     expect(rowOf(buildSslGroups({ ...base, chain: [base.chain[0]] }), 'chain')).toMatchObject({ status: ST.WARN, textKey: 'sslv.chain.leafOnly' })
@@ -137,7 +161,10 @@ describe('dosyadan yüklenen sertifika (via: upload, 2026-10-07)', () => {
     expect(keys).not.toContain('hostname')
     expect(keys).not.toContain('protocol')
     expect(rowOf(groups, 'chain')).toMatchObject({ status: ST.OK, textKey: 'sslv.m.chain.ok', value: 3 })
-    expect(rowOf(groups, 'revocation')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.m.rev.unknown' })
+    // Fikstürde OCSP/CRL adresi yok → "adres yok" bilgi satırı (2026-10-08); adres var + sorgu bekleniyor → eski metin
+    expect(rowOf(groups, 'revocation')).toMatchObject({ status: ST.INFO, textKey: 'sslv.rev.noEndpoints' })
+    const pending = buildSslGroups(uploadPreview({ crl_url: 'http://crl.example.test/ca.crl', revocation_reason: 'PENDING' }))
+    expect(rowOf(pending, 'revocation')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.m.rev.unknown' })
     const unknown = buildSslGroups(uploadPreview({ chain_status: 'UNKNOWN', chain: [d.chain[0]] }))
     expect(rowOf(unknown, 'chain')).toMatchObject({ status: ST.UNKNOWN, textKey: 'sslv.m.chain.unknown' })
     // Ağ sonucunda metinler değişmez

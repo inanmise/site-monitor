@@ -9,6 +9,7 @@ import com.sitemonitor.service.CertificateFacts;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.ChainValidationService;
 import com.sitemonitor.service.EscalationService;
+import com.sitemonitor.service.RevocationReason;
 import com.sitemonitor.service.TrustEvaluator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,7 +76,7 @@ public class ManualCertificateEvaluationService {
     @Qualifier("certCheckExecutor")
     private Executor certCheckExecutor;
 
-    private record CachedRevocation(String status, Instant at) { }
+    private record CachedRevocation(ChainValidationService.RevocationCheck check, Instant at) { }
 
     private final Map<String, CachedRevocation> revocationCache = new ConcurrentHashMap<>();
     private final Set<String> revocationInFlight = ConcurrentHashMap.newKeySet();
@@ -189,8 +190,12 @@ public class ManualCertificateEvaluationService {
         String fingerprint = chainValidator.calculateFingerprint(leaf);
         r.put("fingerprint", fingerprint);
 
-        String revocation = revocationStatus(fingerprint, arr, revocationMode);
+        ChainValidationService.RevocationCheck rev = revocationCheck(fingerprint, arr, revocationMode);
+        String revocation = rev.status();
         r.put("revocation_status", revocation);
+        // NEDEN (2026-10-08): adres yok / yalnız LDAP / ulaşılamadı / sorgu bekleniyor — arayüz doğru açıklamayı seçer.
+        if (rev.reason() != null) r.put("revocation_reason", rev.reason());
+        if (rev.detail() != null) r.put("revocation_detail", rev.detail());
         if ("REVOKED".equals(revocation)) r.put("chain_status", "REVOKED");
 
         ManualCertificateChains.Trust trust = ManualCertificateChains.trust(trustEvaluator, leaf, new ArrayList<>(issuers));
@@ -296,29 +301,40 @@ public class ManualCertificateEvaluationService {
     // ── İptal durumu (önbellekli) ────────────────────────────────────────────
 
     String revocationStatus(String fingerprint, Certificate[] chain, boolean allowFetch) {
-        return revocationStatus(fingerprint, chain, allowFetch ? RevocationMode.FETCH : RevocationMode.CACHED_WARM);
+        return revocationCheck(fingerprint, chain, allowFetch ? RevocationMode.FETCH : RevocationMode.CACHED_WARM).status();
     }
 
-    String revocationStatus(String fingerprint, Certificate[] chain, RevocationMode mode) {
-        if (fingerprint == null || chain == null || chain.length < 2) return "UNKNOWN";
+    ChainValidationService.RevocationCheck revocationCheck(String fingerprint, Certificate[] chain, RevocationMode mode) {
+        // Ağsız ön karar (adres yok / yalnız desteklenmeyen şema / veren yok): önbellek ve ısıtma BEKLETMEZ — adresi
+        // olmayan sertifikaya "sorgu bekleniyor" denmez (2026-10-08).
+        ChainValidationService.RevocationCheck pre;
+        try {
+            pre = chainValidator.revocationPrecheck(chain);
+        } catch (Exception e) {
+            pre = null;
+        }
+        if (pre != null) return pre;
+        if (fingerprint == null) return ChainValidationService.RevocationCheck.unknown(null, null);
         CachedRevocation c = revocationCache.get(fingerprint);
-        if (c != null && Duration.between(c.at(), Instant.now()).toHours() < REVOCATION_TTL_HOURS) return c.status();
-        if (mode == RevocationMode.CACHED_ONLY) return c != null ? c.status() : "UNKNOWN";
+        if (c != null && Duration.between(c.at(), Instant.now()).toHours() < REVOCATION_TTL_HOURS) return c.check();
+        ChainValidationService.RevocationCheck pending =
+                ChainValidationService.RevocationCheck.unknown(RevocationReason.PENDING, null);
+        if (mode == RevocationMode.CACHED_ONLY) return c != null ? c.check() : pending;
         if (mode == RevocationMode.CACHED_WARM) {
             warmRevocation(fingerprint, chain);
-            return c != null ? c.status() : "UNKNOWN";
+            return c != null ? c.check() : pending;
         }
         return fetchRevocation(fingerprint, chain);
     }
 
-    private String fetchRevocation(String fingerprint, Certificate[] chain) {
-        String s;
+    private ChainValidationService.RevocationCheck fetchRevocation(String fingerprint, Certificate[] chain) {
+        ChainValidationService.RevocationCheck s;
         try {
-            s = chainValidator.checkRevocation(chain);
+            s = chainValidator.checkRevocationDetailed(chain);
         } catch (Exception e) {
-            s = "UNKNOWN";
+            s = null;
         }
-        if (s == null || s.isBlank()) s = "UNKNOWN";
+        if (s == null || s.status() == null || s.status().isBlank()) s = ChainValidationService.RevocationCheck.unknown(null, null);
         if (revocationCache.size() > REVOCATION_CACHE_MAX) revocationCache.clear();
         revocationCache.put(fingerprint, new CachedRevocation(s, Instant.now()));
         return s;

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   DAY_MS, clean, detailTone, filterSan, formatRelative, hexGroups, hostCoverage, isBlank, issuerOf, keyInfo, lifetimeOf,
   relativeUnit, safeHttpUrl, sanCovers, sanEntries, statusChip, subjectOf, tlsInfo, trustCode, trustSummary, usageItems, KU_IDS, EKU_IDS,
+  revocationChipCode,
 } from '../components/certmodal/certDetailsModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -155,6 +156,19 @@ describe('durum çipleri', () => {
     expect(trustSummary({ chain_status: 'VALID', revocation_status: 'UNKNOWN' }).tone).toBe('ok')
     expect(trustSummary({ chain_status: 'UNKNOWN' }).tone).toBe('muted')
     expect(trustSummary({}).chips).toEqual([])
+  })
+
+  // 2026-10-08: "İptal durumu bilinmiyor" yerine nedeni belliyse onu söyler (adres yok / yalnız LDAP)
+  it('iptal çipi nedeni gösterir: adres yok → NO_ENDPOINTS, LDAP → UNSUPPORTED_SCHEME; ulaşılamadı → UNKNOWN; ton nötr', () => {
+    const noAddr = { revocation_status: 'UNKNOWN', fingerprint: 'AB', ocsp_url: null, crl_url: null }
+    expect(revocationChipCode(noAddr)).toBe('NO_ENDPOINTS')
+    expect(revocationChipCode({ revocation_status: 'UNKNOWN', revocation_reason: 'UNSUPPORTED_SCHEME' })).toBe('UNSUPPORTED_SCHEME')
+    expect(revocationChipCode({ revocation_status: 'UNKNOWN', revocation_reason: 'UNREACHABLE' })).toBe('UNKNOWN')
+    expect(revocationChipCode({ revocation_status: 'VALID', revocation_reason: 'CRL' })).toBe('VALID')
+    const chip = trustSummary({ chain_status: 'VALID', ...noAddr }).chips.find((c) => c.kind === 'rev')
+    expect(chip).toMatchObject({ code: 'NO_ENDPOINTS', tone: 'muted', labelKey: 'cdp.rev.NO_ENDPOINTS' })
+    expect(TR['cdp.rev.NO_ENDPOINTS']).toBe('İptal adresi yok')
+    expect(EN['cdp.rev.UNSUPPORTED_SCHEME']).toBeTruthy()
   })
 })
 

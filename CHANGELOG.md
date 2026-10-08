@@ -15,6 +15,29 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.112.2] — 2026-10-08
+
+### Security
+- **Haftalık rapor onay bağlantısının anahtarı API yanıtlarında görünüyordu.** Rapor ekranının aldığı yanıt, PO'ya
+  e-postayla giden giriş gerektirmeyen onay bağlantısının anahtarını da içeriyordu. Raporu gönderen takım üyesi bu
+  anahtarla kendi raporunu PO yerine onaylayabilirdi. Anahtar artık hiçbir yanıtta yer almıyor; yalnız PO'ya giden
+  e-postada bulunuyor.
+
+### Fixed
+- **İptal durumu (OCSP/CRL) "bilinmiyor" artık nedenini söylüyor; yanıltıcı uyarı kalktı.** Eskiden sertifikada
+  hiç OCSP/CRL adresi yokken de Sağlık satırı "Doğrulanamadı — OCSP/CRL erişimini kontrol edin (proxy)" diyordu ve adres
+  alanları hiç görünmüyordu. Şimdi:
+  - **Adres yoksa:** Sağlık satırı "Adres yok — denetlenemez / İşlem gerekmez" der ve sorunlu satırlar arasında
+    sayılmaz. SSL Kontrol'de bilgi satırıdır, "kontrol denetlenemedi" sayısına girmez. Detaylar'da "İptal adresi
+    yok" yazar. Kurum içi sertifika altyapılarında bu durum olağandır.
+  - **Adres alanları her zaman görünür:** OCSP ve CRL adresi boş olsa da Sağlık satırında ve Sertifika Detayları →
+    Altyapı'da "Sertifikada tanımlı değil" diye gösterilir.
+  - **Adres var ama ulaşılamadıysa:** erişim önerisi (vekil, NO_PROXY, güvenlik duvarı) ile birlikte her deneme okunur
+    biçimde listelenir (ör. "CRL · http://… — HTTP 404 döndü", "zaman aşımı", "alan adı çözülemedi").
+  - **Diğer durumlar da adıyla anılır:** yalnız LDAP adresi var, veren (ara) sertifika eksik, hızlı kontrol, ilk sorgu
+    bekleniyor.
+  - **Eski kayıtlar beklemeden düzelir:** adresi olmayan sertifikalar yeni bir kontrol beklemeden doğru gösterilir.
+
 ## [20.112.1] — 2026-10-08
 
 ### Fixed
@@ -2412,7 +2435,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.2...HEAD
+[20.112.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.2
 [20.112.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.1
 [20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
 [20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0

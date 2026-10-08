@@ -47,6 +47,12 @@ public class CertificateCheck {
     private String fingerprint;
     private String chainStatus;
     private String revocationStatus;
+    /** İptal durumunun NEDENİ ({@code RevocationReason}) — null = eski kayıt (bkz. LatestCheck). */
+    @Column(length = 40)
+    private String revocationReason;
+    /** Ulaşılamayan / desteklenmeyen OCSP-CRL denemeleri (kısa JSON). */
+    @Column(columnDefinition = "TEXT")
+    private String revocationDetail;
     /** TRUSTED / UNTRUSTED / UNKNOWN — zincir cacerts veya admin CA paketiyle güven köküne bağlanıyor mu. */
     private String trustStatus;
     private String deploymentStatus;

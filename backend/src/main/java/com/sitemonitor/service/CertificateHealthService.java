@@ -192,19 +192,45 @@ public class CertificateHealthService {
         return new HealthRow("expiry", GROUP_CERTIFICATE, st, "daysLeft", List.of(days), "none", List.of(), ev);
     }
 
+    /**
+     * İptal satırı (2026-10-08, kullanıcı isteği: "boş da olsa adres alanlarını gösterelim, yanıltıcı uyarıları kaldıralım").
+     * OCSP / CRL adresi kanıtta HER ZAMAN var (null = sertifikada tanımlı değil — arayüz öyle yazar). UNKNOWN artık
+     * nedenine göre ayrılır: sertifikada adres yoksa denetlenecek bir şey yoktur → NA (sorun sayılmaz, "erişimi kontrol
+     * edin" denmez); erişim önerisi yalnız adres var ama ulaşılamadıysa çıkar.
+     */
     private HealthRow revocationRow(LatestCheck lc) {
         Status st = CertificateHealthRules.fromStatusLabel(lc.getRevocationStatus(), "VALID", "REVOKED");
-        Map<String, Object> ev = ev("ocsp_url", lc.getOcspUrl(), "crl_url", lc.getCrlUrl(),
-                "raw", lc.getRevocationStatus());
+        String reason = RevocationReason.effective(lc.getRevocationReason(), lc.getRevocationStatus(),
+                lc.getOcspUrl(), lc.getCrlUrl(), lc.getFingerprint() != null);
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("ocsp_url", blankToNull(lc.getOcspUrl()));
+        ev.put("crl_url", blankToNull(lc.getCrlUrl()));
+        if (reason != null) ev.put("revocation_reason", reason);
+        List<Map<String, Object>> attempts = RevocationReason.parse(lc.getRevocationDetail());
+        if (!attempts.isEmpty()) ev.put("revocation_attempts", attempts);
+        if (lc.getRevocationStatus() != null && !lc.getRevocationStatus().isBlank()) ev.put("raw", lc.getRevocationStatus());
         if (st == Status.FAIL) {
             return new HealthRow("revocation", GROUP_CERTIFICATE, st, "revoked", List.of(), "replaceNow", List.of(), ev);
         }
         if (st == Status.UNKNOWN) {
-            // Kurumsal proxy arkasında OCSP/CRL sık sık erişilemez — bu bir sertifika sorunu DEĞİL.
-            return new HealthRow("revocation", GROUP_CERTIFICATE, st, "unverified", List.of(),
-                    "checkNetworkAccess", List.of(), ev);
+            if (RevocationReason.NO_ENDPOINTS.equals(reason)) {
+                // Sertifika iptal adresi yayımlamıyor: hiçbir istemci denetleyemez, düzeltilecek erişim de yok.
+                return new HealthRow("revocation", GROUP_CERTIFICATE, Status.NA, "revNoEndpoints", List.of(),
+                        "none", List.of(), ev);
+            }
+            String value = "unverified";
+            String action = "checkNetworkAccess";   // adres var ama yanıt yok (ya da eski kayıtta sebep bilinmiyor)
+            if (RevocationReason.UNSUPPORTED_SCHEME.equals(reason)) { value = "revLdapOnly"; action = "revLdapOnly"; }
+            else if (RevocationReason.NO_ISSUER.equals(reason)) action = "revNoIssuer";
+            else if (RevocationReason.NOT_CHECKED.equals(reason)) { value = "notChecked"; action = "revFullCheck"; }
+            else if (RevocationReason.PENDING.equals(reason)) { value = "revPending"; action = "revPending"; }
+            return new HealthRow("revocation", GROUP_CERTIFICATE, st, value, List.of(), action, List.of(), ev);
         }
         return new HealthRow("revocation", GROUP_CERTIFICATE, st, "valid", List.of(), "none", List.of(), ev);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
     }
 
     private HealthRow chainRow(LatestCheck lc) {

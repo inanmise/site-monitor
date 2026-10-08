@@ -1206,6 +1206,12 @@ public class SchedulerService {
         // Sertifika geçmişi: checker'ın hesaplayıp attığı aşama + çözümlenen IP'ler (yalnız hatalı kontrolde dolu).
         patch("ALTER TABLE certificate_checks ADD COLUMN error_stage VARCHAR(32)");
         patch("ALTER TABLE certificate_checks ADD COLUMN resolved_ips TEXT");
+        // İptal durumunun NEDENİ + denemeler (2026-10-08): "UNKNOWN" tek başına sebebi söylemiyordu (adres yok / LDAP /
+        // ulaşılamadı). NULL'lanabilir; eski satırlarda null = arayüz adreslerden türetir (RevocationReason.effective).
+        patch("ALTER TABLE certificate_checks ADD COLUMN revocation_reason VARCHAR(40)");
+        patch("ALTER TABLE certificate_checks ADD COLUMN revocation_detail TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN revocation_reason VARCHAR(40)");
+        patch("ALTER TABLE latest_checks ADD COLUMN revocation_detail TEXT");
         // İstek Gezgini durum kodu dağılımı (2026-09-28): dolu tabloya SONRADAN eklenen NULL'lanabilir kolon. ddl-auto
         // normalde ekler ama ona güvenilmez — ALTER düşerse her dakikanın saveAll'u kolonsuz tabloya yazmaya çalışır,
         // flushPending istisnayı yutar ve İstek Gezgini / top_endpoints KALICI boş kalırdı (2026-09-28c, B3).

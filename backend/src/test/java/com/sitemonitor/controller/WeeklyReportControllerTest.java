@@ -215,6 +215,25 @@ class WeeklyReportControllerTest {
     }
 
     @Test
+    @DisplayName("GÜVENLİK (2026-10-08): rapor yanıtı onay token'ını TAŞIMAZ — gönderen üye login'siz onay bağlantısını okuyup kendi raporunu PO yerine onaylayamaz")
+    void reportResponse_neverCarriesApprovalToken() throws Exception {
+        WeeklyReport pending = report(5L, 2L, "PENDING_APPROVAL");
+        pending.setApprovalToken("gizli-onay-anahtari-0123456789abcdef");
+        pending.setApprovalTokenExpiresAt("2026-06-20T09:00:00Z");
+        var team = new com.sitemonitor.model.Team(); team.setId(2L); team.setName("Takım A");
+        when(teamRepo.findById(2L)).thenReturn(java.util.Optional.of(team));
+        when(service.get(eq(5L), any())).thenReturn(pending);
+        when(service.imagesMeta(5L)).thenReturn(List.of());
+        String body = mvc.perform(get("/api/weekly-reports/5").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.report.status").value("PENDING_APPROVAL"))
+                .andExpect(jsonPath("$.data.report.approval_token").doesNotExist())
+                .andExpect(jsonPath("$.data.report.approval_token_expires_at").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("gizli-onay-anahtari");
+    }
+
+    @Test
     @DisplayName("GET /api/weekly-reports without auth returns 401")
     void list_unauthenticated_401() throws Exception {
         mvc.perform(get("/api/weekly-reports"))
