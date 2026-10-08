@@ -46,9 +46,15 @@ public class LdapMembershipController {
     private final PermissionService permissionService;
     private final AuditService auditService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.userref.UserPublicIds userPublicIds;
+
     @GetMapping("/users/{id}/team-membership")
-    public ResponseEntity<Map<String, Object>> membership(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<Map<String, Object>> membership(@PathVariable("id") String idRef, HttpSession session) {
         permissionService.require(session, "users.list", "view");
+        // Opak kimlik (2026-10-08): kapsamlı rol yalnız opak kimlikle sorar; sayı yalnız global admin'den.
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, idRef, session);
+        if (id == null) throw new java.util.NoSuchElementException("User not found");
         AppUser u = membershipService.requireUser(id);
         requireCanView(session, u);
         return ok(membershipService.membership(u));
@@ -157,7 +163,7 @@ public class LdapMembershipController {
         boolean visible = scope != null && (
                 (u.getTeamId() != null && scope.contains(u.getTeamId()))
                 || (u.getTeamIds() != null && u.getTeamIds().stream().anyMatch(scope::contains)));
-        if (!visible) throw new java.util.NoSuchElementException("User not found: " + u.getId());
+        if (!visible) throw new java.util.NoSuchElementException("User not found");   // sayısal id yankılanmaz (2026-10-08)
     }
 
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {

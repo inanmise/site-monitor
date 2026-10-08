@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/ta
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
+import { sameUser } from '../../utils/userRef'
 
 // Kaydırma kilidi sayaçlı (ModalShell / IssueDetailSheet ile aynı sözleşme): iç içe pencerede erken açılmaz.
 let scrollLocks = 0
@@ -73,7 +74,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin
   })
   const contacts = useSection(`c:${user.id}`, async () => {
     const r = unwrap(await api.admin.getContacts(), t('ud.errContacts'))
-    return (r.data || []).filter((c) => Number(c.user_id) === Number(user.id))
+    return (r.data || []).filter((c) => sameUser(c.user_id, user.id))
   })
   const matrix = useSection(`p:${user.id}`, async () => {
     const r = unwrap(await api.admin.getPermissionMatrix(), t('ud.errPerms'))

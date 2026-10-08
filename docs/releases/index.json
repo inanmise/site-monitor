@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T16:24:10Z",
+  "generatedAt": "2026-10-08T17:44:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 716,
+  "count": 717,
   "releases": [
+    {
+      "version": "20.114.0",
+      "tag": "v20.114.0",
+      "releasedAt": "2026-10-08T17:44:46Z",
+      "commit": "e5fa7f6f435a1c7dd76630a5772faede3bf8f824",
+      "prevVersion": "20.113.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "security",
+          "breaking": false,
+          "sha": "e5fa7f6f",
+          "subject": "kullanıcı kimlikleri global yönetici dışındakilere opak (UUID) — sıralı id ile kullanıcı taraması kapandı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.113.0",
       "tag": "v20.113.0",

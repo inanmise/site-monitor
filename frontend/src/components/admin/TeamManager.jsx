@@ -40,6 +40,7 @@ import { useFormErrors } from '../../hooks/useFormErrors.js'
 import { EMPTY_QUIET, quietFromTeam, quietEqual, quietErrors, quietTeamPayload } from '../../utils/quietHours.js'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import { userRefValue } from '../../utils/userRef'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 // quiet: sessiz saat form değeri (2026-10-01) — yalnız DEĞİŞTİYSE gövdeye girer (dokunulmamış form = bugünkü gövde).
@@ -317,8 +318,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         email: form.email.trim(),
         description: form.description,
         active: form.active,
-        leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
-        manager_id: form.manager_id ? Number(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
+        leader_id: form.leader_id ? userRefValue(form.leader_id) : null,  // PO optional; opak kimlik (2026-10-08)
+        manager_id: form.manager_id ? userRefValue(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
         weekly_reminder_enabled: !!form.weekly_reminder_enabled,
         weekly_availability_enabled: !!form.weekly_availability_enabled,
         ...(quietDirty ? quietTeamPayload(form.quiet) : {}),
@@ -449,7 +450,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           </span>
           {isAdmin && (
             <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
-              <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : Number(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
+              <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : userRefValue(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
                 options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />
             </span>
           )}

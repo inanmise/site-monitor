@@ -1,5 +1,7 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.service.userref.UserPublicIds;
+import com.sitemonitor.service.userref.UserRef;
 import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.AlertActionNote;
@@ -62,6 +64,23 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 public class AdminController {
+
+    /** Opak kullanıcı kimliği çözücüsü (2026-10-08). Bean'siz dilim/birim testinde null → eski sayısal ayrıştırma. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPublicIds userPublicIds;
+
+    /** Yoldaki/gövdedeki kullanıcı referansı → sayısal id; çözülemezse (bilinmeyen, izinsiz sayısal) 404. */
+    private Long userRef(Object raw, HttpSession session) {
+        Long id = UserPublicIds.resolve(userPublicIds, raw, session);
+        if (id == null) throw new NoSuchElementException("User not found");
+        return id;
+    }
+
+    /** İsteğe bağlı kullanıcı referansı (lider/müdür): boş → null; dolu ama çözülemez → 404. */
+    private Long optUserRef(Object raw, HttpSession session) {
+        if (raw == null || String.valueOf(raw).isBlank()) return null;
+        return userRef(raw, session);
+    }
 
     /** 7/24 İzleme Ekibi (NOC) alanları (2026-09-27) — isteğe bağlı: dilimli test bağlamında yokken grup kimliği olduğu gibi kalır. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -1454,7 +1473,8 @@ public class AdminController {
      * Kapı: takım kapsamlı admin (kendi takımı) ya da global admin. Denetim: USER_TOUR_RESET.
      */
     @PostMapping("/users/{id}/tour-reset")
-    public ResponseEntity<Map<String, Object>> resetUserTour(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> resetUserTour(@PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         requireAdminOrTeamAdmin(session);
         AppUser target = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -1969,7 +1989,16 @@ public class AdminController {
     }
 
     private void applyContactFields(EscalationContact c, Map<String, Object> body, HttpSession session) {
-        Long userId = toLong(body.get("user_id"));
+        // Opak kimlik (2026-10-08): global olmayan yazar yalnız opak kimlik gönderebilir; dolu ama çözülemeyen bağ
+        // sessizce "elle girilen kişi"ye dönmesin — aynı alan hatası (global admin'in davranışı değişmez).
+        Object rawUser = body.get("user_id");
+        boolean hasUserRef = rawUser != null && !String.valueOf(rawUser).isBlank();
+        Long userId = hasUserRef ? UserPublicIds.resolve(userPublicIds, rawUser, session) : null;
+        if (hasUserRef && userId == null && !isAdmin(session)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("user_id", com.sitemonitor.util.Msg.t(
+                    "Seçilen kullanıcı bulunamadı ya da yönetim kapsamınızda değil. Listeden kendi takımlarınızdaki bir kullanıcıyı seçin; liste eskiyse sayfayı yenileyin.",
+                    "The selected user wasn’t found or isn’t in your scope. Pick a user from your own teams in the list; reload the page if the list is out of date."));
+        }
         if (userId != null) {
             // Kapsam (2026-10-08, güvenlik denetimi): kişi kullanıcının ad + e-postasını KOPYALAR; global olmayan yazar
             // (kapsamlı müdür / takım yöneticisi) herhangi bir kimlik vererek kapsamı dışındaki bir kullanıcının adını ve
@@ -2798,8 +2827,8 @@ public class AdminController {
                 (String) body.get("name"),
                 (String) body.get("email"),
                 (String) body.get("description"),
-                toLong(body.get("leader_id")));
-        if (body.containsKey("manager_id")) team = userService.updateTeamManager(team.getId(), toLong(body.get("manager_id")));
+                optUserRef(body.get("leader_id"), session));
+        if (body.containsKey("manager_id")) team = userService.updateTeamManager(team.getId(), optUserRef(body.get("manager_id"), session));
         if (quietCfg != null && quietCfg.isSet()) {
             team = userService.updateTeamQuietHours(team.getId(), quietCfg);
             if (teamQuietHours != null) teamQuietHours.invalidate();
@@ -2831,9 +2860,13 @@ public class AdminController {
             case "activate" -> patch.put("active", true);
             case "deactivate" -> patch.put("active", false);
             case "set_manager" -> {
-                Long managerId = toLong(body.get("manager_id"));
-                if (managerId != null && !userRepo.existsById(managerId)) throw new IllegalArgumentException("Manager user not found: " + managerId);
-                patch.put("manager_id", managerId);   // null = AD zincirine geri dön
+                Object managerRaw = body.get("manager_id");
+                Long managerId = managerRaw == null || String.valueOf(managerRaw).isBlank() ? null
+                        : UserPublicIds.resolve(userPublicIds, managerRaw, session);   // opak kimlik (2026-10-08)
+                if (managerRaw != null && !String.valueOf(managerRaw).isBlank()
+                        && (managerId == null || !userRepo.existsById(managerId))) throw new IllegalArgumentException("Manager user not found");
+                // Ham referans aktarılır: applyTeamUpdate aynı çözücüden geçirir (global olmayan için sayısal reddedilir)
+                patch.put("manager_id", managerId == null ? null : managerRaw);   // null = AD zincirine geri dön
             }
             case "weekly_reminder_on" -> patch.put("weekly_reminder_enabled", true);
             case "weekly_reminder_off" -> patch.put("weekly_reminder_enabled", false);
@@ -2887,12 +2920,12 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
-                toLong(body.get("leader_id")),
+                optUserRef(body.get("leader_id"), session),
                 bool(body.get("weekly_reminder_enabled")),
                 bool(body.get("weekly_availability_enabled")));
         // manager_id: anahtar gövdede VARSA uygulanır (null = temizle). leader_id'den farklı: lider null'da
         // dokunulmaz, müdür ise bilinçli olarak temizlenebilmeli (AD zincirine geri dönmek için).
-        if (body.containsKey("manager_id")) team = userService.updateTeamManager(id, toLong(body.get("manager_id")));
+        if (body.containsKey("manager_id")) team = userService.updateTeamManager(id, optUserRef(body.get("manager_id"), session));
         if (quietCfg != null) {
             team = userService.updateTeamQuietHours(id, quietCfg);
             if (teamQuietHours != null) teamQuietHours.invalidate();
@@ -2968,8 +3001,10 @@ public class AdminController {
 
     /** A user's AD photo (JPEG) for avatars; 404 when none. Visible to admins/team-admins. */
     @GetMapping("/users/{id}/photo")
-    public ResponseEntity<byte[]> userPhoto(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<byte[]> userPhoto(@PathVariable("id") String idRef, HttpSession session) {
         requireAdminOrTeamAdmin(session);
+        Long id = UserPublicIds.resolve(userPublicIds, idRef, session);
+        if (id == null) return ResponseEntity.notFound().build();
         return userRepo.findById(id)
                 // IDOR: takım yöneticisi id deneyerek HERHANGİ takımdaki kullanıcının fotoğrafını
                 // çekebiliyordu. Kapsam kuralı listTeamUsers ile aynı: global viewer her kullanıcıyı,
@@ -3066,9 +3101,9 @@ public class AdminController {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "users.crud", "edit");
         requireTeamManageScope(session, id);
-        Long userId = toLong(body.get("user_id"));
-        if (userId == null) throw new IllegalArgumentException("user_id is required");
-        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        if (body.get("user_id") == null || String.valueOf(body.get("user_id")).isBlank()) throw new IllegalArgumentException("user_id is required");
+        Long userId = userRef(body.get("user_id"), session);   // opak kimlik (2026-10-08)
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found"));
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
         if (u.getTeamId() != null) ids.add(u.getTeamId());
         boolean added = ids.add(id);
@@ -3080,12 +3115,13 @@ public class AdminController {
 
     /** Üye çıkar — kullanıcının SON takımı çıkarılamaz (ADMIN hariç: takımsız olabilir). */
     @DeleteMapping("/teams/{id}/members/{userId}")
-    public ResponseEntity<Map<String, Object>> removeTeamMember(@PathVariable Long id, @PathVariable Long userId,
+    public ResponseEntity<Map<String, Object>> removeTeamMember(@PathVariable Long id, @PathVariable("userId") String userRefRaw,
                                                                 HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "users.crud", "edit");
         requireTeamManageScope(session, id);
-        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        Long userId = userRef(userRefRaw, session);   // opak kimlik (2026-10-08)
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found"));
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
         if (u.getTeamId() != null) ids.add(u.getTeamId());
         boolean removed = ids.remove(id);
@@ -3246,7 +3282,10 @@ public class AdminController {
         requirePerm(session, "users.crud", "edit");
         String action = String.valueOf(body.get("action"));
         List<Long> ids = new ArrayList<>();
-        if (body.get("ids") instanceof java.util.Collection<?> c) for (Object o : c) { Long v = toLong(o); if (v != null) ids.add(v); }
+        if (body.get("ids") instanceof java.util.Collection<?> c) for (Object o : c) {
+            Long v = UserPublicIds.resolve(userPublicIds, o, session);   // opak kimlik (2026-10-08)
+            if (v != null) ids.add(v);
+        }
         if (ids.isEmpty()) throw new IllegalArgumentException("ids is required");
         if (ids.size() > 200) throw new IllegalArgumentException("En fazla 200 kullanıcı");
         Map<String, Object> patch = new LinkedHashMap<>();
@@ -3268,7 +3307,7 @@ public class AdminController {
         int okCount = 0;
         for (Long id : ids) {
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("id", id);
+            row.put("id", UserRef.of(id));   // kullanıcı kimliği: global olmayana opak (UserRefWire)
             try {
                 AppUser u = applyUserUpdate(id, patch, session);
                 row.put("ok", true); row.put("username", u.getUsername());
@@ -3287,7 +3326,8 @@ public class AdminController {
 
     @PutMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(
-            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+            @PathVariable("id") String idRef, @RequestBody Map<String, Object> body, HttpSession session) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         return ok(Map.of("data", applyUserUpdate(id, body, session)));
     }
 
@@ -3365,8 +3405,9 @@ public class AdminController {
 
     @PostMapping("/users/{id}/auto-reset-password")
     public ResponseEntity<Map<String, Object>> autoResetPassword(
-            @PathVariable Long id, @RequestBody Map<String, String> body,
+            @PathVariable("id") String idRef, @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3396,7 +3437,8 @@ public class AdminController {
 
     @PostMapping("/users/{id}/unlock")
     public ResponseEntity<Map<String, Object>> unlockUser(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3414,7 +3456,8 @@ public class AdminController {
     /** Rol-kilidini kaldır → kullanıcının systemRole'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserRole(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3430,7 +3473,8 @@ public class AdminController {
     /** Takım kilidini kaldır → kullanıcının takım üyelikleri tekrar AD (LDAP) yönetimine döner (2026-09-18). */
     @PostMapping("/users/{id}/team-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserTeams(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3451,8 +3495,9 @@ public class AdminController {
      */
     @PostMapping("/users/{id}/field-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserField(
-            @PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+            @PathVariable("id") String idRef, @RequestBody(required = false) Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         requireAdmin(session);
         requirePerm(session, "users.crud", "edit");
         AppUser target = userRepo.findById(id)
@@ -3478,7 +3523,8 @@ public class AdminController {
      */
     @PostMapping("/users/{id}/push-snooze/clear")
     public ResponseEntity<Map<String, Object>> clearUserPushSnooze(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3494,7 +3540,8 @@ public class AdminController {
     /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/org-role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserOrgRole(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -3508,7 +3555,8 @@ public class AdminController {
 
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
-            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+            @PathVariable("id") String idRef, HttpSession session, HttpServletRequest request) {
+        Long id = userRef(idRef, session);   // opak kimlik herkesten, sayı yalnız global admin'den (2026-10-08)
         Long selfId = userIdFromSession(session);
         if (selfId != null && selfId.equals(id)) {
             throw new SecurityException("You cannot delete your own account");

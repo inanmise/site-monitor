@@ -127,7 +127,7 @@ public class TeamDirectoryController {
     /** Beyaz-liste projeksiyonu — yeni alan eklerken kurum-geneli görünürlüğü düşün (telefon/sicil YOK). */
     static Map<String, Object> project(AppUser u, Map<Long, AppUser> byId) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", u.getId());
+        m.put("id", com.sitemonitor.service.userref.UserRef.of(u.getId()));   // global olmayana opak kimlik (UserRefWire)
         m.put("username", u.getUsername());
         m.put("display_name", displayName(u));
         m.put("first_name", u.getFirstName());

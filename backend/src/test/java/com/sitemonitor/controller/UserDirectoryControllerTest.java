@@ -60,7 +60,7 @@ class UserDirectoryControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         List<Map<String, Object>> data = (List<Map<String, Object>>) resp.getBody().get("data");
         assertThat(data).hasSize(1);
-        assertThat(data.get(0)).containsEntry("id", 1L)
+        assertThat(data.get(0)).containsEntry("id", com.sitemonitor.service.userref.UserRef.of(1L))   // yazılırken global admin'e sayı, diğerlerine opak (2026-10-08)
                 .containsEntry("username", "aylin")
                 .containsEntry("display_name", "Aylin Y.")
                 .containsEntry("email", "aylin@example.com");
@@ -89,7 +89,7 @@ class UserDirectoryControllerTest {
     void photo_unknownId_returns404() {
         when(userRepo.findById(999L)).thenReturn(Optional.empty());
 
-        ResponseEntity<byte[]> resp = controller.photo(999L);
+        ResponseEntity<byte[]> resp = controller.photo("999", null);   // bean'siz (elle kurulan) denetleyici: eski sayısal ayrıştırma
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }

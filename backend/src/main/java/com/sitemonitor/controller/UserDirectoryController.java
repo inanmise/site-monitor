@@ -2,6 +2,8 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.AppUser;
 import com.sitemonitor.repository.AppUserRepository;
+import com.sitemonitor.service.userref.UserPublicIds;
+import com.sitemonitor.service.userref.UserRef;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +31,10 @@ public class UserDirectoryController {
 
     private final AppUserRepository userRepo;
 
+    /** Opak kullanıcı kimliği (2026-10-08). Bean'siz dilim testinde null → eski sayısal ayrıştırma. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPublicIds userPublicIds;
+
     /** Tüm kullanıcılar: [{id, username, display_name}] — frontend username→{id,display_name} haritası. */
     @GetMapping("/directory")
     public ResponseEntity<Map<String, Object>> directory() {
@@ -36,7 +42,7 @@ public class UserDirectoryController {
                 .filter(u -> u.getUsername() != null)
                 .map(u -> {
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", u.getId());
+                    m.put("id", UserRef.of(u.getId()));   // global olmayana opak kimlik (UserRefWire)
                     m.put("username", u.getUsername());
                     m.put("display_name", displayName(u));
                     m.put("email", u.getEmail());   // alıcı/eskalasyon kontağı eşleştirmesi (e-posta zaten o ekranlarda görünür)
@@ -48,7 +54,10 @@ public class UserDirectoryController {
 
     /** Kullanıcının AD fotoğrafı (JPEG) — yoksa 404. Authenticated erişim (admin gerekmez). */
     @GetMapping("/{id}/photo")
-    public ResponseEntity<byte[]> photo(@PathVariable Long id) {
+    public ResponseEntity<byte[]> photo(@PathVariable("id") String idRef, jakarta.servlet.http.HttpSession session) {
+        // Opak kimlik (2026-10-08): sıralı sayıyla fotoğraf taraması kapalı — sayı yalnız global admin'den.
+        Long id = UserPublicIds.resolve(userPublicIds, idRef, session);
+        if (id == null) return ResponseEntity.notFound().build();
         return userRepo.findById(id)
                 .map(u -> AuthController.photoResponse(u.getPhotoBase64()))
                 .orElse(ResponseEntity.notFound().build());

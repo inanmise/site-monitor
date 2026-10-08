@@ -26,6 +26,7 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import { userRefValue } from '../../utils/userRef'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -184,7 +185,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     setSaving(true)
     try {
       const payload = {
-        user_id: form.user_id ? Number(form.user_id) : null,
+        user_id: form.user_id ? userRefValue(form.user_id) : null,   // opak kimlik Number()'a çevrilmez (2026-10-08)
         role: form.role,
         min_alert_level: form.min_alert_level,
         webhook_url: form.webhook_url || null,
