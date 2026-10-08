@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, formatDate, formatDateSec, formatTime, formatDateOnly } from '../api/client.js'
+import { api, formatDate, formatDateSec, formatTime, formatDateOnly, fetchWithTimeout } from '../api/client.js'
 
 // ── fetch mock helpers ────────────────────────────────────────────────────────
 
@@ -110,6 +110,42 @@ describe('request timeout resilience', () => {
     mockFetch({ success: true })
     await api.runScheduler()
     expect(global.fetch.mock.calls[0][1].signal).toBeUndefined()
+  })
+
+  // 2026-10-08 ("zaman aşımı olmayan servis çağrısı" denetimi): okuma istekleri artık sonsuza dek asılı kalmaz
+  it('okuma isteği (GET) varsayılan 90 sn sonra yumuşak "timeout" ile döner; yazma ve açık 0 sınırsız kalır', async () => {
+    vi.useFakeTimers()
+    global.fetch = vi.fn((url, opts) => new Promise((_, reject) => {
+      opts?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+    }))
+    const p = api.getCertificates()
+    await vi.advanceTimersByTimeAsync(89_000)
+    let settled = false
+    p.then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_500)
+    const res = await p
+    expect(res).toEqual(expect.objectContaining({ success: false }))
+    expect(global.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
+    vi.useRealTimers()
+
+    mockFetch({ success: true })
+    await api.checkDomainPreview('a.example.com')   // canlı kontrol: açık timeoutMs: 0
+    expect(global.fetch.mock.calls[0][1].signal).toBeUndefined()
+  })
+
+  it('çağıranın iptal sinyali varsayılan süre sınırıyla EZİLMEZ — iptal isteğe ulaşır', async () => {
+    let seen = null
+    global.fetch = vi.fn((url, opts) => new Promise((_, reject) => {
+      seen = opts.signal
+      opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+    }))
+    const ctl = new AbortController()
+    const p = fetchWithTimeout('/api/certificates', { signal: ctl.signal }, 90_000)
+    ctl.abort()
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' })
+    expect(seen.aborted).toBe(true)
   })
 
   it('login: ağ hatasında yumuşak {success:false} döner (yakalanmamış throw yok)', async () => {
