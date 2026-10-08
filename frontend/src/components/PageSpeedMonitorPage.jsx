@@ -263,7 +263,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
   const [density, setDensity] = useCardDensity('pagespeed')
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // Hata dalı ŞART: API düşerse liste boş kalır ve ekran "henüz izleme yok" der —
     // kullanıcı izlemelerinin silindiğini sanır (sayfa bütünlüğünde yaşanmış hata).
     // AG HATASI DA BU DALA DUSMELI: api/client.js request() ag hatasinda {success:false} DONDURMEZ,
@@ -274,12 +278,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getPageSpeedMonitors()
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
       if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem

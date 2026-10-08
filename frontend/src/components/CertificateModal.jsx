@@ -211,9 +211,14 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     if (isNew && silent) toastRef.current.success(tRef.current('modal.newCheck'))
   }, [])
 
-  // Envanter formu kaydedince (başlıktaki Düzenle) modal verisi hemen tazelenir. 0 = ilk mount,
-  // tazeleme yok.
-  useEffect(() => { if (refreshSignal) refreshCert(false) }, [refreshSignal, refreshCert])
+  // Envanter formu kaydedince (başlıktaki Düzenle) modal verisi hemen tazelenir. Yalnız sinyal DEĞİŞİNCE: pencere artık
+  // yalnız açıkken bağlı (2026-10-09) — yeniden bağlanırken sıfır olmayan sayaç ilk yüklemeye ek, gereksiz bir istek atmasın.
+  const refreshSeenRef = useRef(refreshSignal)
+  useEffect(() => {
+    if (!refreshSignal || refreshSignal === refreshSeenRef.current) return
+    refreshSeenRef.current = refreshSignal
+    refreshCert(false)
+  }, [refreshSignal, refreshCert])
 
   // Modal açıkken yeni bir kontrol geçmişi kaydı düşerse kendiliğinden tazelenir. Cadence ve
   // görünürlük kuralı Kontrol Geçmişi sekmesinin canlı yenilemesiyle AYNI (30 sn, gizli sekmede

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Search, ListFilter, SlidersHorizontal, Columns3, Rows3, Bookmark, Link2, Users, Table2, X, Layers, ShieldCheck, Server, FolderOpen, Tag } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import TeamScopeSwitch from '../ui/TeamScopeSwitch.jsx'
@@ -65,8 +65,19 @@ export default function InventoryToolbar({
   const [qDraft, setQDraft] = useState(filters.q || '')
   const idBase = useId()
 
-  // Arama: 250 ms sessizlikten sonra uygula (her tuşta 1000 satırı süzme)
-  useEffect(() => { const id = setTimeout(() => { if (qDraft !== (filters.q || '')) onFilters({ ...filters, q: qDraft }) }, 250); return () => clearTimeout(id) }, [qDraft]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Arama: 250 ms sessizlikten sonra uygula (her tuşta 1000 satırı süzme). Zamanlayıcı GÜNCEL süzgeçleri ref'ten okur
+  // (2026-10-09): yazarken 250 ms içinde seçilen takım/kademe, gecikmeli arama tarafından eski süzgeçle ezilmesin.
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
+  const onFiltersRef = useRef(onFilters)
+  onFiltersRef.current = onFilters
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const cur = filtersRef.current
+      if (qDraft !== (cur.q || '')) onFiltersRef.current({ ...cur, q: qDraft })
+    }, 250)
+    return () => clearTimeout(id)
+  }, [qDraft])
   useEffect(() => { setQDraft(filters.q || '') }, [filters.q])
 
   const set = (patch) => onFilters({ ...filters, ...patch })

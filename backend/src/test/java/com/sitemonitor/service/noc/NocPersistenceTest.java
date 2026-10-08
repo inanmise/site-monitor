@@ -145,6 +145,20 @@ class NocPersistenceTest {
     // ── Kapsam ───────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("yalnız özet (withItems=false, 2026-10-09): items YOK, özet sayıları tam yanıtla BİREBİR aynı")
+    void summaryOnlyMatchesFull() {
+        group("NOC Ana", true, true);
+        ping("p-on.example.com", A, true, true, null);
+        ping("p-off.example.com", A, true, false, null);
+        ping("p-paused.example.com", A, false, true, null);
+        inv("www.a.example.com", A, null, true, null, true);
+        Map<String, Object> full = cov(null, null);
+        Map<String, Object> onlySummary = coverage.compute(null, null, r -> true, r -> true, Map.of(), false);
+        assertThat(onlySummary).doesNotContainKey("items");
+        assertThat(onlySummary.get("summary")).isEqualTo(full.get("summary"));
+    }
+
+    @Test
     @DisplayName("kapsam: nedenler (PAUSED/MONITOR_OFF/TYPE_DISABLED/NO_ACTIVE_GROUP), özet ve tür kırılımı")
     void reasonsAndSummary() {
         group("NOC Ana", true, true);

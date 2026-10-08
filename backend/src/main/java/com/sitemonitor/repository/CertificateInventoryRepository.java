@@ -102,6 +102,12 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     // Faz 3b — çok-takım kapsamı (müdür/PO): teamId VEYA ugTeamId ∈ ids
     List<CertificateInventory> findByTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> teamIds);
 
+    /** Planlanmış yenilemeler (2026-10-09): Yenileme Önerileri satırları plan rozetini ve plan penceresinin mevcut
+     *  değerini buradan alır. Sıra: domain, renewalPlannedAt, renewalPlannedNote — yalnız planı olan satırlar (küçük). */
+    @Query("SELECT c.domain, c.renewalPlannedAt, c.renewalPlannedNote FROM CertificateInventory c"
+            + " WHERE c.renewalPlannedAt IS NOT NULL AND c.domain IS NOT NULL")
+    List<Object[]> findRenewalPlans();
+
     /** Aynı süzgecin yalnız alan adı sütunu (2026-10-09, performans): kapsamlı kullanıcının Pano/liste yoklamasında tam
      *  envanter varlığı (TEXT sütunlarıyla) hidrate edilmesin. */
     @Query("SELECT c.domain FROM CertificateInventory c WHERE c.teamId IN :teamIds AND c.active = true AND c.domain IS NOT NULL")

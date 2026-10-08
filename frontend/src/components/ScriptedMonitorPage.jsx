@@ -357,11 +357,16 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // saniyordu (HttpMonitorPage'de yorumla belgelenmis hatanin kopyaya tasinmamis hali).
   const [loadError, setLoadError] = useState(null)
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // AG HATASI DA BU DALA DUSMELI: request() ag hatasinda {success:false} DONDURMEZ, throw eder
     // ve timeoutMs verilmedigi icin abort yolu da devrede degil.
     try {
       const res = await api.monitoring.getScriptedMonitors()
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
       if (res?.success) {
         const d = res.data || {}
         setMonitors(d.monitors || [])
@@ -371,9 +376,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         return d.monitors || []   // geri alma sonrası açık detayı tazelemek için (diğer çağıranlar dönüşü yok sayar)
       } else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
 

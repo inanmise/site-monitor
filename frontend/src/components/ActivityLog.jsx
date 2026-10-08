@@ -215,7 +215,8 @@ export default function ActivityLog({ refreshTrigger }) {
       })
       .catch(() => { if (seq === loadSeq.current) setError(true) })
       .finally(() => { if (seq === loadSeq.current) setLoading(false) })
-    api.getActivitySummary(params).then((res) => { if (res?.success) setSummary(res) }).catch(() => {})
+    // Özet de aynı sıra damgasıyla (2026-10-09): eski süzgecin geç gelen özeti yeni listenin sayaçlarını ezmesin
+    api.getActivitySummary(params).then((res) => { if (res?.success && seq === loadSeq.current) setSummary(res) }).catch(() => {})
   }, [params, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Süzgeç değişince URL'yi güncelle + açık detayı kapat; sayfa sıfırlamasını useServerPagination yapar.

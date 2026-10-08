@@ -227,6 +227,16 @@ describe('MaintenanceWindowsPage — ajanda ve takvim', () => {
     const cal = await waitFor(() => { const c = document.querySelector('[data-slot="month-calendar"]'); expect(c).toBeInTheDocument(); return c })
     expect(cal.querySelectorAll('[data-slot="month-calendar-event"]').length).toBeGreaterThan(5)
   })
+
+  it('GÜNLÜK pencere sonraki ayda da her gün çizilir (2026-10-09: oluşum sınırı 40 → ~10 gün sonra kayboluyordu)', async () => {
+    setup()
+    await screen.findByText('Ödeme gece bakımı')
+    tab(/Calendar|Takvim/)
+    const cal = await waitFor(() => { const c = document.querySelector('[data-slot="month-calendar"]'); expect(c).toBeInTheDocument(); return c })
+    fireEvent.click(within(cal).getByRole('button', { name: /Next month|Sonraki ay/ }))
+    const daily = () => [...document.querySelectorAll('[data-slot="month-calendar-event"]')].filter((e) => e.textContent.includes('Günlük yedekleme'))
+    await waitFor(() => expect(daily().length).toBeGreaterThanOrEqual(20))
+  })
 })
 
 describe('MaintenanceWindowsPage — düzenleyici (ModalShell)', () => {

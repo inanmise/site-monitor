@@ -189,7 +189,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
     // "Henüz izleme yok, ekleyin" diyordu; kullanıcı monitörlerinin SİLİNDİĞİNİ sanıyordu.
     // Ayrıca useVisibleInterval her 60 sn sessizce başarısız olmaya devam ediyordu.
@@ -201,13 +205,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getPortMonitors()
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
       if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false)
-      setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem

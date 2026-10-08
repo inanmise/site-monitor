@@ -48,6 +48,17 @@ public class NocCoverageService {
      */
     public Map<String, Object> compute(Long teamFilter, NocType typeFilter, Predicate<NocMonitorDirectory.Row> visible,
                                        Predicate<NocMonitorDirectory.Row> canEdit, Map<Long, String> teamNames) {
+        return compute(teamFilter, typeFilter, visible, canEdit, teamNames, true);
+    }
+
+    /**
+     * {@code withItems=false} (2026-10-09, performans): yalnız özet — Genel Bakış şeridi her Pano tazelemesinde yalnız
+     * sayıyı okuyor; satır başına grup/etiket/yetki haritası kurulmaz ve yanıtta {@code items} yer almaz. Özet sayıları
+     * {@code withItems=true} ile BİREBİR aynıdır.
+     */
+    public Map<String, Object> compute(Long teamFilter, NocType typeFilter, Predicate<NocMonitorDirectory.Row> visible,
+                                       Predicate<NocMonitorDirectory.Row> canEdit, Map<Long, String> teamNames,
+                                       boolean withItems) {
         NocConfigService.Config cfg = config.get();
         List<NocNotificationGroup> all = groups.list();
         boolean anyGroup = NocGroupService.anyUsable(all);
@@ -81,7 +92,7 @@ public class NocCoverageService {
             c.merge("total", 1, Integer::sum);
             if (isCovered) c.merge("covered", 1, Integer::sum);
 
-            items.add(item(r, reason, all, anyGroup, canEdit.test(r), teamNames));
+            if (withItems) items.add(item(r, reason, all, anyGroup, canEdit.test(r), teamNames));
         }
 
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -98,7 +109,7 @@ public class NocCoverageService {
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("summary", summary);
-        out.put("items", items);
+        if (withItems) out.put("items", items);
         return out;
     }
 

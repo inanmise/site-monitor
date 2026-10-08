@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import StormStatusPage from '../components/StormStatusPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -188,6 +188,22 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
     fireEvent.click(screen.getByRole('radio', { name: /son 7 gün|last 7 days/i }))
     await waitFor(() => expect(api.monitoring.storm.analytics).toHaveBeenLastCalledWith({ teamId: undefined, days: 7 }))
     await waitFor(() => expect(window.location.search).toContain('sf_days=7'))
+  })
+
+  it('Analiz yarışı (2026-10-09): 30 günlük GEÇ yanıt, sonradan seçilen 7 günün tablosunu ezmez', async () => {
+    let resolve30
+    api.monitoring.storm.analytics.mockImplementation(({ days }) => (days === 30
+      ? new Promise((r) => { resolve30 = r })
+      : Promise.resolve({ success: true, data: { ...ANALYTICS.data, days: 7, total: 77 } })))
+    const { container } = render(<StormStatusPage />)
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="sf-team"]').length).toBe(3))
+    pickTab(/analiz|analysis/i)
+    await waitFor(() => expect(api.monitoring.storm.analytics).toHaveBeenCalledWith({ teamId: undefined, days: 30 }))
+    fireEvent.click(screen.getByRole('radio', { name: /son 7 gün|last 7 days/i }))
+    await waitFor(() => expect(api.monitoring.storm.analytics).toHaveBeenLastCalledWith({ teamId: undefined, days: 7 }))
+    await waitFor(() => expect(container.textContent).toMatch(/\b77\b/))
+    await act(async () => { resolve30({ success: true, data: { ...ANALYTICS.data, days: 30, total: 3 } }) })
+    expect(container.textContent).toMatch(/\b77\b/)
   })
 
   it('URL\'den açılış: sf_tab=history&sf_team=2 → geçmiş sekmesi o takımla yüklenir', async () => {

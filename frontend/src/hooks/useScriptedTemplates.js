@@ -27,6 +27,13 @@ export function useScriptedTemplates(scope) {
     try {
       const res = await api.monitoring.getScriptedTemplates(scope)
       if (my !== seq.current) return   // bayat yanıt — daha yeni bir istek yolda
+      // {success:false} (yetki/sunucu reddi) HATA olarak gösterilir (2026-10-09): eskiden boş liste "hiç şablon yok"
+      // gibi görünüyordu. Metin yoksa kod (başlık zaten "yüklenemedi" der).
+      if (res && res.success === false) {
+        setError(res.error || res.message || res.code || 'ERROR')
+        setTemplates([])
+        return
+      }
       const d = res?.data || {}
       setTemplates(d.templates || [])
       setMeta({

@@ -331,6 +331,23 @@ class CertificateServiceTest {
     }
 
     @Test
+    @DisplayName("getRenewalAdvice: kayıtlı yenileme planı satırda (2026-10-09); planı olmayan satıra alan EKLENMEZ")
+    void getRenewalAdvice_carriesSavedPlan() {
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("planned.example.com", "warning", true, 20, "VALID", "OK"),
+                latestCheck("unplanned.example.com", "warning", true, 25, "VALID", "OK")));
+        when(inventoryRepo.findRenewalPlans()).thenReturn(java.util.Collections.singletonList(
+                new Object[]{"planned.example.com", "2026-10-20", "CSR onayda"}));
+
+        Map<String, Map<String, Object>> byDomain = new java.util.HashMap<>();
+        for (Map<String, Object> a : service.getRenewalAdvice()) byDomain.put((String) a.get("domain"), a);
+
+        assertThat(byDomain.get("planned.example.com"))
+                .containsEntry("renewal_planned_at", "2026-10-20").containsEntry("renewal_planned_note", "CSR onayda");
+        assertThat(byDomain.get("unplanned.example.com")).doesNotContainKeys("renewal_planned_at", "renewal_planned_note");
+    }
+
+    @Test
     @DisplayName("getRenewalAdvice: healthy cert (>60 days) not included")
     void getRenewalAdvice_healthyCert_notIncluded() {
         List<LatestCheck> checks = List.of(

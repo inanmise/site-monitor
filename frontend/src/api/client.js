@@ -890,10 +890,11 @@ export const api = {
      *  (sözleşmedeki düz dizi DEĞİL; NocController.groupOptions). E-posta YOK. */
     groupOptions: () => request('/noc/groups/options'),
     /** { summary: { total, covered, not_covered, paused, by_type, active_groups, disabled_types }, items: [...] } */
-    coverage: ({ teamId, type } = {}) => {
+    coverage: ({ teamId, type, summary } = {}) => {
       const qs = new URLSearchParams()
       if (teamId != null && teamId !== '') qs.set('team_id', String(teamId))
       if (type) qs.set('type', String(type))
+      if (summary) qs.set('summary', '1')   // yalnız sayılar (Genel Bakış şeridi) — items gelmez
       const q = qs.toString()
       return request(`/noc/coverage${q ? `?${q}` : ''}`)
     },

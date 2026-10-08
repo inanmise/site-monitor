@@ -236,6 +236,20 @@ class NocControllerTest {
     }
 
     @Test
+    @DisplayName("kapsam ?summary=1 (Genel Bakış şeridi): yalnız özet istenir — satır listesi kurulmaz, kapsam kuralları aynı")
+    void coverageSummaryOnly() throws Exception {
+        when(coverage.compute(any(), any(), any(), any(), any(), eq(false))).thenReturn(Map.of("summary", Map.of("not_covered", 2)));
+        mvc.perform(get("/api/noc/coverage").param("summary", "1").session(userA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.not_covered").value(2))
+                .andExpect(jsonPath("$.data.items").doesNotExist());
+        verify(coverage).compute(isNull(), isNull(), any(), any(), any(), eq(false));
+        verify(coverage, never()).compute(any(), any(), any(), any(), any());
+        mvc.perform(get("/api/noc/coverage").param("summary", "1").param("team_id", String.valueOf(TEAM_B)).session(userA))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("kapsam görünürlük yüklemi: kendi takımı + envanter kökenlide UG takımı; başka takım görünmez")
     void visibilityPredicate() {
         var own = new NocMonitorDirectory.Row(NocType.PING, 1, "a", "a", TEAM_A, null, true, true, null, false);

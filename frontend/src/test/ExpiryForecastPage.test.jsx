@@ -223,6 +223,28 @@ describe('ExpiryForecastPage — takvim ve gün paneli', () => {
     expect(within(again).getByRole('button', { name: /Renewal plan — crit\.example\.com|Yenileme planı — crit\.example\.com/ })).toHaveTextContent(/Edit plan|Planı düzenle/)
   })
 
+  it('plan sonrası geri gelen gün paneli SÜZGEÇLERE uyar (2026-10-09): takım süzgecinin dışındaki aynı günlü sertifika eklenmez', async () => {
+    api.getForecast.mockResolvedValue({ success: true, data: { ...DATA, certs: [...DATA.certs, cert('crit-b.example.com', 3, { team_id: 2, team_name: 'Takım B' })] } })
+    api.forecastPlan.mockResolvedValue({ success: true, data: { domain: 'crit.example.com', renewal_planned_at: '2026-09-20', renewal_planned_by: 'Admin', renewal_planned_note: null } })
+    window.history.replaceState(null, '', '/?f_team=1')
+    await renderLoaded()
+    const day = inDays(3)
+    fireEvent.change(screen.getByRole('combobox', { name: /Go to month|Aya git/ }), { target: { value: day.slice(0, 7) } })
+    fireEvent.click(document.querySelector(`[data-slot="month-calendar-day"][data-day="${day}"] [data-slot="month-calendar-day-open"]`))
+    const sheet = await screen.findByRole('dialog')
+    expect(within(sheet).getByText('crit.example.com')).toBeInTheDocument()
+    expect(within(sheet).queryByText('crit-b.example.com')).toBeNull()
+    fireEvent.click(within(sheet).getByRole('button', { name: /Renewal plan — crit\.example\.com|Yenileme planı — crit\.example\.com/ }))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.change(within(dlg).getByLabelText(/Planned renewal date|Planlanan yenileme tarihi/), { target: { value: '2026-09-20' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: /Save plan|Planı kaydet/ }))
+    await waitFor(() => expect(api.forecastPlan).toHaveBeenCalled())
+    const again = await screen.findByRole('dialog')
+    await waitFor(() => expect(again.textContent).toContain(day))
+    expect(within(again).getByText('crit.example.com')).toBeInTheDocument()
+    expect(within(again).queryByText('crit-b.example.com')).toBeNull()
+  })
+
   it('derin bağlantı ?f_day=… veri gelince paneli açar; kapatınca f_day silinir; takvim önceki/sonraki/bugün düğmeleri klavye erişilebilir gerçek düğmeler', async () => {
     const day = inDays(10)
     window.history.replaceState(null, '', `/?tab=forecast&f_day=${day}`)
