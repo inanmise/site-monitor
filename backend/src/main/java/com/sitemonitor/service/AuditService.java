@@ -138,19 +138,88 @@ public class AuditService {
     AuditLog persist(AuditLog e) {
         chainLock.lock();
         try {
-            AuditLog last = auditLogRepo.findTopByOrderBySeqDesc().orElse(null);
-            long seq = (last != null && last.getSeq() != null) ? last.getSeq() + 1 : 1L;
-            String prev = (last != null && last.getRowHash() != null) ? last.getRowHash() : GENESIS;
-            e.setSeq(seq);
-            e.setPrevHash(prev);
-            e.setRowHash(sha256(canonical(e) + SEP + prev));
-            return auditLogRepo.save(e);
+            if (useDbChainLock()) {
+                // Çok pod (2026-10-09): son satırı okuma + ekleme TEK işlemde, PostgreSQL işlem-düzeyi advisory lock
+                // altında — kilit COMMIT'te bırakılır, sıradaki pod (JVM kilidi pod'lar arası geçmez) yeni satırı görür.
+                return chainTx.execute(st -> {
+                    chainJdbc.execute(SQL_CHAIN_LOCK);
+                    return appendToChain(e);
+                });
+            }
+            return appendToChain(e);
         } catch (Exception ex) {
             writeFallback(e, ex);
             return null;
         } finally {
             chainLock.unlock();
         }
+    }
+
+    /** Zincire ekleme: son satırdan seq + prev_hash, kendi hash'i, INSERT (bugünkü gövde birebir). */
+    private AuditLog appendToChain(AuditLog e) {
+        AuditLog last = auditLogRepo.findTopByOrderBySeqDesc().orElse(null);
+        long seq = (last != null && last.getSeq() != null) ? last.getSeq() + 1 : 1L;
+        String prev = (last != null && last.getRowHash() != null) ? last.getRowHash() : GENESIS;
+        e.setSeq(seq);
+        e.setPrevHash(prev);
+        e.setRowHash(sha256(canonical(e) + SEP + prev));
+        return auditLogRepo.save(e);
+    }
+
+    // ── Çok pod'lu zincir kilidi (2026-10-09) ────────────────────────────────────
+    //
+    // seq / prev_hash yalnız JVM kilidi altında hesaplanıyordu: iki pod aynı anda yazınca ikisi de aynı "son satırı"
+    // okuyup aynı seq + prev_hash ile ekliyor, zincir çatallanıyor ve verifyChain sahte bir KURCALAMA alarmı veriyordu.
+
+    /** PostgreSQL işlem-düzeyi advisory lock anahtarı ("SMAUDCHN") — tüm pod'lar aynı anahtarı kilitler. */
+    static final long CHAIN_LOCK_KEY = 0x534D_4155_4443_484EL;
+    static final String SQL_CHAIN_LOCK = "SELECT pg_advisory_xact_lock(" + CHAIN_LOCK_KEY + ")";
+
+    /** İsteğe bağlı (yapıcıyla kurulan birim testlerinde yok → bugünkü davranış); ilk yazımda tembel çözülür. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<org.springframework.jdbc.core.JdbcTemplate> chainJdbcProvider;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<org.springframework.transaction.PlatformTransactionManager> chainTxProvider;
+
+    private volatile org.springframework.jdbc.core.JdbcTemplate chainJdbc;
+    private volatile org.springframework.transaction.support.TransactionTemplate chainTx;
+    /** Veritabanı PostgreSQL mi — ilk başarılı okumada bir kez belirlenir (null = henüz bilinmiyor). */
+    private volatile Boolean chainPostgres;
+
+    /** Test kancası: kilit altyapısını elle bağlar (veritabanı türü yeniden belirlenir). */
+    void setChainLockSupport(org.springframework.jdbc.core.JdbcTemplate jdbc,
+                             org.springframework.transaction.PlatformTransactionManager tx) {
+        this.chainJdbc = jdbc;
+        this.chainTx = tx == null ? null : new org.springframework.transaction.support.TransactionTemplate(tx);
+        this.chainPostgres = null;
+    }
+
+    /**
+     * Veritabanı kilidi kullanılsın mı: yalnız PostgreSQL'de ve AÇIK BİR İŞLEMİN DIŞINDA. Dış işlemin içinde kilit o
+     * işlemin COMMIT'ine dek tutulurdu (diğer tüm denetim yazıcıları beklerdi; JVM kilidiyle çapraz kilitlenme riski) —
+     * orada bugünkü davranış sürer. H2 / diğer veritabanlarında da bugünkü davranış birebir.
+     */
+    private boolean useDbChainLock() {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return false;
+        if (chainJdbc == null || chainTx == null) {
+            var j = chainJdbcProvider == null ? null : chainJdbcProvider.getIfUnique();
+            var t = chainTxProvider == null ? null : chainTxProvider.getIfUnique();
+            if (j == null || t == null) return false;
+            chainJdbc = j;
+            chainTx = new org.springframework.transaction.support.TransactionTemplate(t);
+        }
+        Boolean pg = chainPostgres;
+        if (pg == null) {
+            try {
+                String product = chainJdbc.execute(
+                        (org.springframework.jdbc.core.ConnectionCallback<String>) c -> c.getMetaData().getDatabaseProductName());
+                pg = product != null && product.toLowerCase(java.util.Locale.ROOT).contains("postgres");
+                chainPostgres = pg;
+            } catch (RuntimeException ex) {
+                return false;   // veritabanına ulaşılamadı — tür bir sonraki yazımda yeniden belirlenir
+            }
+        }
+        return pg.booleanValue();
     }
 
     /** Hash kapsamı: DEĞİŞMEZ çekirdek alanlar. Geo/PTR (async backfill) ve id/rowHash HARİÇ. */

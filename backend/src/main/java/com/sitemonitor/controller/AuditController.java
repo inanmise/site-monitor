@@ -58,10 +58,29 @@ public class AuditController {
         return id == null ? Long.valueOf(NO_USER) : id;
     }
 
+    /** Yalnız rakam — sayısal kullanıcı id'si biçimi (çözücü yalnız global admin'e izin verir). */
+    private static final java.util.regex.Pattern ALL_DIGITS = java.util.regex.Pattern.compile("^[0-9]+$");
+
     /** {@code resource_type = USER} iken kaynak kimliği de bir kullanıcı referansıdır (opak kimlik kabul edilir). */
     private String resourceRef(String type, String raw, HttpSession session) {
+        return resourceRef(userPublicIds, type, raw, session);
+    }
+
+    /**
+     * USER kaynağında yalnız rakam (sayısal id) ve UUID (opak kimlik) biçimleri çözülür (çözülemezse {@link #NO_USER}).
+     * Başka her değer AYNEN geçer: SESSION_TERMINATE / ACCOUNT_LOCKED / SESSION_ENDED_INACTIVE /
+     * SESSION_ENDED_MAINTENANCE satırları kaynak kimliği olarak KULLANICI ADI tutar — eskiden -1'e dönüp "bu kaynağa
+     * süz" boş sonuç veriyordu (2026-10-09).
+     */
+    static String resourceRef(com.sitemonitor.service.userref.UserPublicIds svc, String type, String raw,
+                              HttpSession session) {
         if (raw == null || raw.isBlank() || type == null || !"USER".equalsIgnoreCase(type.trim())) return raw;
-        return String.valueOf(actorRef(raw, session));
+        String s = raw.trim();
+        boolean userRef = ALL_DIGITS.matcher(s).matches()
+                || com.sitemonitor.service.userref.UserPublicIds.FORMAT.matcher(s.toLowerCase(Locale.ROOT)).matches();
+        if (!userRef) return raw;
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(svc, s, session);
+        return String.valueOf(id == null ? NO_USER : id.longValue());
     }
 
     private static final DateTimeFormatter ISO =

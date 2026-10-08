@@ -633,4 +633,64 @@ class AuditControllerTest {
         verify(auditLogRepo, org.mockito.Mockito.never()).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), eq(true), any(), any(), any(), any());
     }
+
+    // ── USER kaynağı: kullanıcı adıyla tutulan satırlar (2026-10-09) ─────────────────────────────────────
+
+    @Test
+    @DisplayName("USER kaynağı: kullanıcı adı (SESSION_TERMINATE/ACCOUNT_LOCKED satırları) -1'e dönmez, aynen süzülür")
+    void resourceHistory_usernameResourceIdPassesThrough() throws Exception {
+        AuditLog kicked = auditRow(20, null, null, "admin");
+        kicked.setEventType("SESSION_TERMINATE");
+        kicked.setResourceType("USER");
+        kicked.setResourceId("N11111");
+        when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("USER"), eq("N11111"), any()))
+                .thenReturn(List.of(kicked));
+
+        mvc.perform(get("/api/admin/audit/resource/USER/N11111").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
+        verify(auditLogRepo, org.mockito.Mockito.never())
+                .findByResourceTypeAndResourceIdOrderByEventTimeDesc(any(), eq("-1"), any());
+
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(kicked), PageRequest.of(0, 50), 1));
+        mvc.perform(get("/api/admin/audit?resourceType=USER&resourceId=N11111").session(session("AUDIT")))
+                .andExpect(status().isOk());
+        verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), eq("USER"), eq("N11111"), any(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("USER kaynağı: rakam yalnız global admin'de sayı, UUID çözülür, başka değer (kullanıcı adı) aynen geçer")
+    void resourceRef_onlyDigitsAndUuidGoThroughResolver() {
+        var ids = org.mockito.Mockito.mock(com.sitemonitor.service.userref.UserPublicIds.class);
+        String p5 = "00000000-0000-4000-8000-000000000005";
+        when(ids.resolve(eq("5"), eq(true))).thenReturn(5L);
+        when(ids.resolve(eq("5"), eq(false))).thenReturn(null);
+        when(ids.resolve(eq(p5), anyBoolean())).thenReturn(5L);
+        // bilinmeyen opak kimlik → çözücü null (Mockito'nun Long varsayılanı 0 olduğundan açıkça)
+        when(ids.resolve(eq("00000000-0000-4000-8000-000000000099"), anyBoolean())).thenReturn(null);
+        MockHttpSession global = session("ADMIN");
+        MockHttpSession audit = session("AUDIT");
+
+        // rakam: global admin sayıyı görür, diğerleri -1 (bugünkü davranış)
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "USER", "5", global)).isEqualTo("5");
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "USER", "5", audit)).isEqualTo("-1");
+        // UUID: çözülen id; bilinmeyen UUID -1
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "USER", p5, audit)).isEqualTo("5");
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "user",
+                "00000000-0000-4000-8000-000000000099", audit)).isEqualTo("-1");
+        // kullanıcı adı: çözücüye hiç gitmez, aynen geçer
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "USER", "N11111", audit)).isEqualTo("N11111");
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "USER", "ali.veli", global)).isEqualTo("ali.veli");
+        verify(ids, org.mockito.Mockito.never()).resolve(eq("N11111"), anyBoolean());
+        verify(ids, org.mockito.Mockito.never()).resolve(eq("ali.veli"), anyBoolean());
+        // USER olmayan tür: dokunulmaz
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(ids, "PORT_MONITOR", "7", audit)).isEqualTo("7");
+        // bean'siz (dilim testi) yol: rakam sayısal, kullanıcı adı aynen, UUID çözülemez → -1
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(null, "USER", "5", audit)).isEqualTo("5");
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(null, "USER", "N11111", audit)).isEqualTo("N11111");
+        org.assertj.core.api.Assertions.assertThat(AuditController.resourceRef(null, "USER", p5, audit)).isEqualTo("-1");
+    }
 }

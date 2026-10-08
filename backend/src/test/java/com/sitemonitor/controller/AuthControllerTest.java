@@ -1267,4 +1267,96 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.noc_teams").isEmpty())
                 .andExpect(jsonPath("$.noc_can_write").value(false));
     }
+
+    // ── 2026-10-09: uzun kullanıcı adı 500'ü + kilitlenme yanıtıyla kullanıcı adı tahmini ──────────────────────
+
+    @Test
+    @DisplayName("100 karakterden uzun ad: denetime kırpılarak yazılır; denetim yazılamasa (null) bile 500 değil genel 401")
+    void failedLogin_longUsername_truncatedAndNullAuditSafe() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.77.0.1");
+        String longName = "x".repeat(150);
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt(), any())).thenReturn(null);   // persist fallback'e düştü
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + longName + "\",\"password\":\"bad\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verify(auditService).recordLogin(eq("X".repeat(100)), any(), any(), any(), any(), any(), any(),
+                eq(false), eq("UNKNOWN_USER"), any(), anyInt(), any());
+        verify(userService, never()).applyProgressiveLockout(any());
+    }
+
+    @Test
+    @DisplayName("Kullanıcı adı tahmini: kaba kuvvet eşiğinde BİLİNMEYEN ad mevcut hesabın 1. kademe yanıtını alır; ACCOUNT_LOCKED yazılmaz")
+    void bruteForce_unknownUser_sameResponseAsExistingLevel1() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.77.0.2");
+        AuditLog brute = new AuditLog();
+        brute.setAnomalyFlags("BRUTE_FORCE");
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt(), any())).thenReturn(brute);
+        when(userService.applyProgressiveLockout("testuser")).thenReturn(new UserService.LockoutStatus(false, 30));
+
+        String existing = mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked())
+                .andReturn().getResponse().getContentAsString();
+        String unknown = mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"ghost-enum-1\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.wait_seconds").value(30))
+                .andReturn().getResponse().getContentAsString();
+
+        // Gövde bayt bayt aynı (eskiden bilinmeyen ad wait_seconds:0 alıyordu).
+        assertThat(unknown).isEqualTo(existing);
+        // Mevcut hesap: bugünkü yol aynen (DB kilidi + ACCOUNT_LOCKED).
+        verify(userService).applyProgressiveLockout("testuser");
+        verify(auditService).recordAction(eq("ACCOUNT_LOCKED"), eq("testuser"), any(), any(), any(), eq("USER"),
+                eq("testuser"), any(), any(), any(), any());
+        // Olmayan hesap: DB kilidi denenmez, ACCOUNT_LOCKED denetimi YAZILMAZ.
+        verify(userService, never()).applyProgressiveLockout("GHOST-ENUM-1");
+        verify(auditService, never()).recordAction(eq("ACCOUNT_LOCKED"), eq("GHOST-ENUM-1"), any(), any(), any(),
+                any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Kullanıcı adı tahmini: sahte kilit sürerken bilinmeyen ad da mevcut kilitli hesap gibi 423 alır (parola denenmez)")
+    void bruteForce_unknownUser_pseudoLockBlocksLikeExisting() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.77.0.3");
+        AuditLog brute = new AuditLog();
+        brute.setAnomalyFlags("BRUTE_FORCE");
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt(), any())).thenReturn(brute);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"ghost-enum-2\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked());
+
+        // Sonraki deneme (farklı harf de aynı anahtar): kilit sürüyor → 423 + kalan süre, parola DENENMEZ.
+        String unknownBlocked = mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"Ghost-Enum-2\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.wait_seconds").value(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.greaterThan(0), org.hamcrest.Matchers.lessThanOrEqualTo(30))))
+                .andReturn().getResponse().getContentAsString();
+        verify(userService, never()).authenticate(eq("Ghost-Enum-2"), any());
+        verify(auditService).recordRateLimited(eq("Ghost-Enum-2"), any(), any(), any());
+
+        // Mevcut kilitli hesabın yanıtıyla AYNI biçim (yalnız kalan saniye farklı olabilir).
+        when(userService.checkLockout("testuser")).thenReturn(new UserService.LockoutStatus(false, 29));
+        String existingBlocked = mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(unknownBlocked.replaceAll("\"wait_seconds\":\\d+", "\"wait_seconds\":N"))
+                .isEqualTo(existingBlocked.replaceAll("\"wait_seconds\":\\d+", "\"wait_seconds\":N"));
+    }
 }

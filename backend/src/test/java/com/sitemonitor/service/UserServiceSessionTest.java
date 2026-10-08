@@ -258,16 +258,62 @@ class UserServiceSessionTest {
     // ── F2/F3 (CPU denetimi): supersede TTL cache + touch debounce ────────────
 
     @Test
-    @DisplayName("F2: TTL içinde ikinci supersede kontrolü DB'ye gitmez; sonuç cache'ten aynı")
+    @DisplayName("F2: TTL içinde canlı oturumun (eşleşen sid) ikinci supersede kontrolü DB'ye gitmez; sonuç cache'ten aynı")
     void supersede_cachedWithinTtl_singleSelect() {
+        // 2026-10-09: önbellek yalnız EŞLEŞME cevabında güvenilir (canlı oturumun her isteği = sıcak yol, tek SELECT).
+        // Eskiden önbellekteki FARKLI sid de DB'ye gitmeden "geçersiz kılındı" sayılıyordu — çok pod'da yeni oturumu
+        // öldüren hata; o yol artık yeniden okur (bkz. supersede_cachedMismatch_reReadsDbBeforeKilling).
         ReflectionTestUtils.setField(service, "supersedeCacheMs", 5_000L);
         when(userRepo.findActiveSessionIdByUsername("ALICE")).thenReturn(Optional.of("NEWSID"));
 
-        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isTrue();
-        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isTrue();
+        assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();
         assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();   // cache'ten karşılaştırma
+        assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();
 
         verify(userRepo, times(1)).findActiveSessionIdByUsername("ALICE");
+    }
+
+    @Test
+    @DisplayName("Çok pod (2026-10-09): önbellekteki sid FARKLIYSA oturum öldürülmeden önce DB yeniden okunur ve önbellek tazelenir")
+    void supersede_cachedMismatch_reReadsDbBeforeKilling() {
+        ReflectionTestUtils.setField(service, "supersedeCacheMs", 5_000L);
+        // Pod A önbelleği eski oturumu (OLDSID) tutuyor; kullanıcı pod B'den zorla giriş yaptı → DB'de NEWSID.
+        when(userRepo.findActiveSessionIdByUsername("ALICE"))
+                .thenReturn(Optional.of("OLDSID"))
+                .thenReturn(Optional.of("NEWSID"));
+        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isFalse();   // önbellek: OLDSID
+
+        // Yeni oturumun ilk isteği pod A'ya düşer: önbellek farklı der → DB'den doğrulanır → öldürülMEZ.
+        assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();
+        // Önbellek tazelendi: yeni oturumun sonraki istekleri DB'ye gitmez, eski oturum ise (DB'den doğrulanmış) kapanır.
+        assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();
+        verify(userRepo, times(2)).findActiveSessionIdByUsername("ALICE");
+        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isTrue();
+        verify(userRepo, times(3)).findActiveSessionIdByUsername("ALICE");
+    }
+
+    @Test
+    @DisplayName("Supersede önbelleği yeni girişte COMMIT'ten sonra da boşaltılır (commit öncesi okunan bayat sid kalmaz)")
+    void supersede_evictedAgainAfterCommit() {
+        ReflectionTestUtils.setField(service, "supersedeCacheMs", 5_000L);
+        ReflectionTestUtils.setField(service, "stampDedupeSeconds", 30L);
+        when(userRepo.findByUsername("ALICE")).thenReturn(Optional.of(user("ALICE", "OLDSID")));
+        when(userRepo.findActiveSessionIdByUsername("ALICE")).thenReturn(Optional.of("OLDSID"));
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.recordSuccessfulLogin("ALICE", "NEWSID", "10.0.0.1", UserService.LoginMethod.PASSWORD);
+            // Commit'ten ÖNCE eşzamanlı istek DB'deki eski değeri okuyup önbelleğe yazar.
+            assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isFalse();
+            var syncs = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            assertThat(syncs).isNotEmpty();
+            syncs.forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+        // Commit sonrası boşaltma: sonraki kontrol önbellekten değil DB'den.
+        service.isSessionSuperseded("ALICE", "OLDSID");
+        verify(userRepo, times(2)).findActiveSessionIdByUsername("ALICE");
     }
 
     @Test
