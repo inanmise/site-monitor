@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.114.0] — 2026-10-08
+
 ### Security
 - **Bir kullanıcı başka bir kullanıcının kimliğini (id) artık okuyamaz.**
   - Global yönetici dışındaki herkes (denetçi / AUDIT ve kapsamlı müdür dahil) yanıtlarda kullanıcıların sıralı
@@ -2514,7 +2516,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.113.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.114.0...HEAD
+[20.114.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.114.0
 [20.113.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.113.0
 [20.112.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.2
 [20.112.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.1
