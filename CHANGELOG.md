@@ -15,6 +15,17 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Paylaşılan sertifika penceresinde takım / grup görünümü ve PDF / Excel.** Karttaki "N alan adında ortak" çipiyle
+  açılan pencerede:
+  - **Görünüm:** Liste / Takıma göre / Gruba göre. Bölümler A→Z sıralanır; takımı ya da grubu olmayanlar sonda durur
+    ve her başlıkta alan sayısı yazar. Tabloya "Grup" sütunu eklendi.
+  - **PDF indir:** A4 yatay, marka başlıklı. Sertifika bilgisi ve seçili görünümdeki alan adı tablosu.
+  - **Excel indir:** gerçek `.xlsx`. "Alan adları" sayfasında başlık sabit ve süzgeç açık; "Sertifika" sayfasında
+    parmak izi, SAN ve bitiş bilgisi.
+  - Dışa aktarılan dosya pencerede seçili görünümle aynı düzendedir. Yeni bağımlılık eklenmedi; dışa aktarma kodu
+    yalnız düğmeye basılınca yüklenir.
+
 ## [20.115.0] — 2026-10-08
 
 ### Added
