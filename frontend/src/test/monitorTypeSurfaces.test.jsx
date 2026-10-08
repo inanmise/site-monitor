@@ -102,8 +102,9 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
 
   it('VALID_TABS her izleme türünü kabul eder (derin bağlantı ?tab=)', () => {
     // Eksik tür: maildeki/paylaşılan bağlantı sessizce dashboard'a düşer.
-    const tabs = valuesIn(read('App.jsx'),
-      'const VALID_TABS = new Set([', '])', /'([\w-]+)'/g, 'VALID_TABS')
+    // VALID_TABS 2026-10-08'den beri tek kaynakta: utils/appRoutes.js (404 / bilinmeyen sekme paneli de oradan okur).
+    const tabs = valuesIn(read('utils/appRoutes.js'),
+      'export const VALID_TABS = new Set([', '])', /'([\w-]+)'/g, 'VALID_TABS')
     expect(tabs).toEqual(expect.arrayContaining(MONITOR_TYPES))
   })
 

@@ -102,8 +102,6 @@ class IdentityLeakGuardTest {
                     "yukarıdaki şablonun bekçisi — JSON ile AYNI değeri beklemek zorunda"),
 
             // ── Ürün içeriği / marka ──
-            Map.entry("backend/src/main/java/com/sitemonitor/controller/WeeklyReportController.java",
-                    "rapor altbilgisinde görünen kurum adı — marka metni, ayrı karar"),
             Map.entry("backend/src/test/java/com/sitemonitor/service/WeeklyReportServiceTest.java",
                     "yukarıdaki tohum verinin bekçisi — kaynakla AYNI değeri beklemek zorunda"),
             // EmailNotificationService muafiyeti DÜŞTÜ (2026-09-26): kurumsal vurgu rengini adlandıran yorum,

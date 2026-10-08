@@ -93,6 +93,14 @@ public class StormStatusController {
 
     @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
     public ResponseEntity<Map<String, Object>> forbidden(SecurityException e) {
-        return ResponseEntity.status(403).body(Map.of("success", false, "error", e.getMessage() != null ? e.getMessage() : "forbidden"));
+        // 2026-10-08: ham ileti yerine istek dilinde açıklayıcı metin (bilinen kısa iletiler ErrorTexts'te; teknik/boş → genel 403)
+        String raw = e.getMessage();
+        String known = com.sitemonitor.util.ErrorTexts.localizeKnown(raw);
+        String msg = known != null ? known : com.sitemonitor.util.ErrorTexts.isTechnical(raw)
+                ? com.sitemonitor.util.Msg.t(
+                        "Fırtına durumunu görme yetkiniz yok. Gerekiyorsa takım yöneticinizden alarm görüntüleme izni isteyin.",
+                        "You don’t have permission to view the storm status. If you need it, ask your team manager for alert view access.")
+                : raw;
+        return ResponseEntity.status(403).body(Map.of("success", false, "code", "FORBIDDEN", "error", msg));
     }
 }

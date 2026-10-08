@@ -465,8 +465,17 @@ public class AuthController {
                 "error", "Account temporarily locked."));
         }
         if (ldapLoginOff) return ldapDisabledResponse();
+        // 2026-10-08: istek dilinde ve ne yapılacağını söyleyen genel ileti (eskiden yalnız İngilizce). Yapı AYNI —
+        // kod alanı yok, pasif / bilinmeyen / yanlış parola aynı gövdeyi alır (numaralandırma yok).
         return ResponseEntity.status(401)
-                .body(Map.of("success", false, "error", "Invalid username or password"));
+                .body(Map.of("success", false, "error", invalidCredentialsMessage()));
+    }
+
+    /** Genel "kullanıcı adı ya da parola hatalı" iletisi — tüm kimlik doğrulama hatalarında AYNI metin. */
+    static String invalidCredentialsMessage() {
+        return com.sitemonitor.util.Msg.t(
+                "Kullanıcı adı ya da parola hatalı. Büyük harf kilidini ve klavye dilini kontrol edip tekrar deneyin; art arda hatalı denemelerden sonra hesap kısa süreliğine kilitlenir.",
+                "Incorrect username or password. Check caps lock and your keyboard layout, then try again; after repeated failed attempts the account is locked for a short while.");
     }
 
     // ── Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02, kullanıcı isteği) ─────────────────────────────

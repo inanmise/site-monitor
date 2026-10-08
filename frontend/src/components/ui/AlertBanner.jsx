@@ -2,6 +2,7 @@ import { Info, CheckCircle2, AlertTriangle, AlertOctagon, X } from 'lucide-react
 import { Alert, AlertTitle, AlertDescription } from '@/components/shadcn/alert'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
+import ErrorDetails from './ErrorDetails.jsx'
 
 /**
  * Satır içi durum bildirimi — bilgi / başarı / uyarı / hata. Çizim shadcn Alert; dört ton
@@ -19,6 +20,9 @@ import { cn } from '@/lib/utils'
  * (shadcn Alert kendi başına role="alert" basar; burada bilinçli olarak ezilir.)
  *
  * Test kancası: kök `data-slot="alert"` + `data-tone`.
+ *
+ * `details` (2026-10-08): hata afişinde katlanır "Teknik ayrıntı" (HTTP durumu · kod · istek kimliği). Verilmezse ve
+ * ton `danger` + metin düz string ise künye istemcinin metin→künye kaydından bulunur (ErrorDetails); yoksa çizilmez.
  */
 const TONES = {
   info:    Info,
@@ -29,9 +33,10 @@ const TONES = {
 
 export default function AlertBanner({
   tone = 'info', title, children, icon, actions,
-  onDismiss, dismissLabel, role = 'status', className = '',
+  onDismiss, dismissLabel, role = 'status', className = '', details,
 }) {
   const key = TONES[tone] ? tone : 'info'
+  const showDetails = key === 'danger' && (details != null || typeof children === 'string')
   const Icon = icon ?? TONES[key]
   const side = Boolean(actions || onDismiss)
   return (
@@ -50,7 +55,12 @@ export default function AlertBanner({
     >
       <Icon aria-hidden="true" />
       {title && <AlertTitle className="line-clamp-none font-bold">{title}</AlertTitle>}
-      {children && <AlertDescription className="[overflow-wrap:anywhere]">{children}</AlertDescription>}
+      {children && (
+        <AlertDescription className="[overflow-wrap:anywhere]">
+          {children}
+          {showDetails && <ErrorDetails info={details} message={typeof children === 'string' ? children : undefined} />}
+        </AlertDescription>
+      )}
       {side && (
         <div data-slot="alert-actions" className="col-start-3 row-start-1 flex items-center gap-1.5 self-start">
           {actions}

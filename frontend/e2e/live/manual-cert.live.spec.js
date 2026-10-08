@@ -4,7 +4,8 @@
 //      (yaprak → ara → kök), EXPIRES_SOON → YENİ kayıt (gerçek takım/grup/etiket seçicileri) → Sonuç → sertifika penceresi:
 //      "Manuel" rozeti, SSL sekmesi AÇILIŞ sekmesi (çevrim-dışı önizleme, 3 zincir kartı, bağlantı grubu yok), Sürümler v1;
 //   2. Sürümler → yeni sürüm: önce YANLIŞ PFX şifresi (TARAYICIDA anlaşılır — sunucuya istek YOK; hata şifre alanının
-//      altında), sonra doğru → 2 sürüm, v2 güncel, "Aynı anahtar";
+//      altında), sonra doğru → 2 sürüm, v2 güncel, "Aynı anahtar"; 2026-10-08: gerçek PFX analizinde ve kayıtta yükleme
+//      durumu paneli (Dosya okunuyor → ayıklanıyor → gönderiliyor → sunucu / kaydediliyor) göründü, yalnız ileri gitti, bitti;
 //   3. aynı kayıt Pano'da (Manuel + "Yüklenen dosya"), Tüm Sertifikalar'da ve Envanter'de (Manuel + "Yüklenen dosya · sürüm 2");
 //   3b. takip adı sonradan değişir (listeden Düzenle);
 //   3c. güncel sürümün dosyası yeniden → "zaten güncel sürüm" uyarısı → "Yine de yükle" → v3 (aynı parmak izi, "Aynı sertifika
@@ -170,6 +171,53 @@ async function watchUploads(page) {
       }
       return bodies.length
     },
+  }
+}
+
+/**
+ * YÜKLEME DURUMU kaydı (2026-10-08): sihirbazın ilerleme panelindeki aşama durumlarını (ve ayrıntı satırını) her DOM
+ * değişiminde anlık görüntü olarak toplar — gerçek koşu hızlı olduğu için ara durumlar beklemeyle yakalanamaz.
+ * `take()`: [{ stages: 'read:done,extract:active,…', detail }] (ardışık aynılar tek) + canlı bölgenin son metni.
+ */
+async function recordProgress(page) {
+  await page.evaluate(() => {
+    const log = []
+    const snap = () => {
+      const p = document.querySelector('[data-slot="mcert-progress"]')
+      if (!p || p.dataset.status !== 'running') return          // önceki başarısız koşunun özeti sayılmaz
+      const stages =[...p.querySelectorAll('[data-slot="mcert-progress-stage"]')].map((e) => `${e.dataset.stage}:${e.dataset.state}`).join(',')
+      const detail = p.querySelector('[data-slot="mcert-progress-detail"]')?.textContent || ''
+      const last = log[log.length - 1]
+      if (!last || last.stages !== stages || last.detail !== detail) log.push({ kind: p.dataset.kind, stages, detail })
+    }
+    const mo = new MutationObserver(snap)
+    mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ['data-state'] })
+    window.__mcertProgress = { log, stop: () => mo.disconnect() }
+  })
+  return {
+    async take() {
+      return page.evaluate(() => {
+        window.__mcertProgress?.stop()
+        return {
+          log: window.__mcertProgress?.log || [],
+          live: document.querySelector('[data-slot="mcert-progress-live"]')?.textContent || '',
+          panel: !!document.querySelector('[data-slot="mcert-progress"]'),
+        }
+      })
+    },
+  }
+}
+
+/** Aşamalar YALNIZ ileri gider (bekliyor → sürüyor → tamam) — kayıttaki her görüntü bir öncekinin gerisine düşmez. */
+function expectForwardOnly(log, label) {
+  const rank = { pending: 0, active: 1, done: 2, error: 2 }
+  const prev = {}
+  for (const { stages } of log) {
+    for (const part of stages.split(',')) {
+      const [s, st] = part.split(':')
+      expect(rank[st] ?? -1, `${label}: ${s} geri gitti (${stages})`).toBeGreaterThanOrEqual(prev[s] ?? 0)
+      prev[s] = rank[st]
+    }
   }
 }
 
@@ -384,14 +432,29 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     // Yanlış şifre → PKCS#12 MAC'i TARAYICIDA tutmaz; hata ŞİFRE alanının altında, adım değişmez, sunucuya istek YOK
     await analyzeExpectPasswordError(page, dlg, 'leaf-v2.pfx', 'yanlis-sifre', /Şifre yanlış/)
 
+    // Yanlış şifrede yükleme durumu paneli "ayıklama" aşamasında durduğunu söyler (hata alanın altında)
+    await expect(dlg.locator('[data-slot="mcert-progress"]')).toHaveAttribute('data-status', 'failed')
+    await expect(dlg.locator('[data-slot="mcert-progress-stage"][data-stage="extract"]')).toHaveAttribute('data-state', 'error')
+
     // Doğru şifre → (tarayıcıda açılır, yalnız açık sertifikalar gider) İnceleme → Takip (kip sabit: yenile) → kaydet
     await dlg.locator('[data-slot="mcert-password"]').fill(PFX_PASS)
+    const progress = await recordProgress(page)
     const resp = page.waitForResponse(isPath('/api/manual-certs/analyze'))
     await dlg.locator('[data-slot="mcert-analyze"]').click()
     const good = await (await resp).json()
     expect(good?.data?.format).toBe('PKCS12')
     expect((good?.data?.warnings || []).find((w) => w.code === 'PRIVATE_KEY_KEPT_LOCAL')?.params?.count, 'anahtar tarayıcıda kaldı').toBe(1)
     await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor()
+    // YÜKLEME DURUMU (2026-10-08): gerçek PFX koşusunda aşamalar göründü, yalnız ileri gitti ve bitti (panel kalktı)
+    const ap = await progress.take()
+    expect(ap.log.length, 'yükleme durumu paneli göründü').toBeGreaterThan(0)
+    expect(ap.log[0].kind).toBe('analyze')
+    expect(ap.log[0].stages.split(',').map((s) => s.split(':')[0])).toEqual(['read', 'extract', 'upload', 'analyze'])
+    expectForwardOnly(ap.log, 'analiz')
+    expect(ap.log.some((e) => /extract:active/.test(e.stages)), 'ayıklama aşaması görüldü').toBe(true)
+    expect(ap.log.some((e) => /upload:active|analyze:active/.test(e.stages)), 'gönderim / sunucu aşaması görüldü').toBe(true)
+    expect(ap.panel, 'koşu bitince panel kalkar').toBe(false)
+    expect(ap.live).toBe('Tamamlandı.')
     await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toHaveAttribute('data-keys', '1')
     await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toHaveAttribute('data-password', 'used')
     await expect(dlg.locator('[data-slot="mcert-kept-local"]')).toContainText('Parola da yalnız tarayıcıda kullanıldı')
@@ -403,6 +466,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await expect(dlg.locator('[data-slot="mcert-compare-row"][data-key="notAfter"]')).toHaveAttribute('data-changed', 'true')
     await expectCleanText(dlg.locator('[data-slot="mcert-wizard"]'), 'Yenileme karşılaştırması')
 
+    const saveProgress = await recordProgress(page)
     const renewed = page.waitForResponse((r) => /\/api\/manual-certs\/\d+\/versions$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST')
     await dlg.locator('[data-slot="mcert-submit"]').click()
     const rr = await renewed
@@ -413,6 +477,14 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
 
     // Sonuç adımı görünür kalmalı (kaydın sürümleri arkada tazelenirken sihirbaz sıfırlanmamalı)
     await expect(dlg.locator('[data-slot="mcert-result"][data-kind="renewed"]')).toBeVisible()
+    // Kayıt koşusu: "Sunucuya gönderiliyor" → "Yeni sürüm kaydediliyor"; bitti, panel kalktı
+    const sp = await saveProgress.take()
+    expect(sp.log.length, 'kayıt koşusunda panel göründü').toBeGreaterThan(0)
+    expect(sp.log[0].kind).toBe('save')
+    expect(sp.log[0].stages.split(',').map((s) => s.split(':')[0])).toEqual(['upload', 'save'])
+    expectForwardOnly(sp.log, 'kayıt')
+    expect(sp.panel).toBe(false)
+    expect(sp.live).toBe('Tamamlandı.')
     await expect(dlg.locator('[data-slot="mcert-wizard"]')).toHaveAttribute('data-step', 'result')
     await dlg.locator('[data-slot="mcert-wizard-actions"]').getByRole('button').last().click()
     await expect(dlg).toHaveCount(0)

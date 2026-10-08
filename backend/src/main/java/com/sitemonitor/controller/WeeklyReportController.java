@@ -683,6 +683,11 @@ public class WeeklyReportController {
         String html = "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             + "<title>" + esc(title) + " — Site Monitor</title>"
+            // Sayfa meta'sı + favicon seti (2026-10-08): e-posta bağlantısıyla açılan girişsiz sayfa da açıklama ve marka
+            // ikonunu taşır (BRAND.md §7) — sekmede/yer iminde jenerik dünya ikonu görünmesin.
+            + "<meta name='description' content='Site Monitor haftalık hizmet raporu onayı: e-postadaki bağlantıyla"
+            + " raporu giriş yapmadan onaylayın ya da gerekçesiyle iade edin.'>"
+            + "<link rel='icon' href='/favicon.ico' sizes='32x32'><link rel='icon' href='/favicon.svg' type='image/svg+xml'>"
             + "<style>"
             + "body{margin:0;background:#eef1f4;font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#1F2937;-webkit-font-smoothing:antialiased}"
             + ".card{max-width:480px;margin:56px auto;background:#fff;border-radius:14px;overflow:hidden;"
@@ -711,7 +716,7 @@ public class WeeklyReportController {
             + "<div class='kick'>Haftalık Rapor Onayı</div><div class='t'>" + esc(title) + "</div></div>"
             + "<div class='strip'></div>"
             + "<div class='bd'>" + bodyHtml + "</div>"
-            + "<div class='ft'>Site Monitor — Akbank Sertifika &amp; İzleme Platformu</div>"
+            + "<div class='ft'>Site Monitor — Sertifika &amp; İzleme Platformu</div>"   // kurum adı YOK (kimlik sızıntısı kuralı)
             + "</div></body></html>";
         return ResponseEntity.ok().contentType(MediaType.valueOf("text/html;charset=UTF-8")).body(html);
     }

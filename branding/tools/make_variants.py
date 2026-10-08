@@ -98,13 +98,9 @@ for v in VARIANTS:
     save_sizes(out[v], f"logo-{v}", [512, 192, 64, 32])
     out[v].resize((320, 320), Image.LANCZOS).save(f"{OUT}/email-{v}.png")  # mailde 160px @2x
 
-# favicon.ico (varsayılan = ok)
-out["ok"].resize((48, 48), Image.LANCZOS).save(
-    f"{OUT}/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
-# apple-touch-icon: opak beyaz zemin ister
-at = Image.new("RGBA", (1024, 1024), (255, 255, 255, 255))
-at.paste(out["ok"], (0, 0), out["ok"])
-at.convert("RGB").resize((180, 180), Image.LANCZOS).save(f"{OUT}/apple-touch-icon.png")
+# favicon.ico / apple-touch-icon.png / PWA ikonları BURADA ÜRETİLMEZ (2026-10-08): ayrıntılı logo 16 px'te okunmuyordu.
+# Kaynak artık küçük boyuta göre yeniden çizilmiş favicon.svg; set `node branding/tools/make_favicon.mjs` ile üretilir
+# (BRAND.md §7). Bu betik onları ezmesin diye kaldırıldı.
 
 # ---------- 5) Marka paleti (baskın doygun renkler) ----------
 arr = np.asarray(master_sq).astype(np.float32)

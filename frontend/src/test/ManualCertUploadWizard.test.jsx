@@ -228,18 +228,20 @@ describe('UploadWizard — Dosya adımı', () => {
     expect(document.querySelector('[data-slot="mcert-warning"][data-code="ZIP_SKIPPED_ENTRY"]')).toHaveTextContent('README.txt')
   })
 
-  it('429 → bilgilendirici bant (yalnız bildirim değil); BUSY / PARSE_TIMEOUT sunucu iletisiyle', async () => {
+  it('429 → bilgilendirici bant (yalnız bildirim değil); BUSY / PARSE_TIMEOUT istemcinin açıklamasıyla, kod "Teknik ayrıntı"da', async () => {
     renderWizard()
     api.manualCerts.analyze.mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED' })
     pick('a.pem')
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
-    await screen.findByText(/Too many files were analysed|çok fazla dosya/)
+    await screen.findByText(/Too many analyse or save requests were sent in the last minute/)
+    expect(document.querySelector('[data-slot="mcert-banner"]')).toHaveAttribute('data-code', 'RATE_LIMITED')
     api.manualCerts.analyze.mockResolvedValueOnce({ success: false, status: 429, code: 'BUSY', error: 'Çözümleyici meşgul (sunucu)' })
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
-    await screen.findByText('Çözümleyici meşgul (sunucu)')
+    await screen.findByText(/The certificate analyser on the server is busy with other files/)
+    expect(document.querySelector('[data-slot="mcert-banner"]')).toHaveAttribute('data-code', 'BUSY')
     api.manualCerts.analyze.mockResolvedValueOnce({ success: false, status: 422, code: 'PARSE_TIMEOUT' })
     fireEvent.click(btn(/^(Analyse|Analiz et)$/))
-    await screen.findByText(/could not be analysed within 10 seconds|10 saniyede çözümlenemedi/)
+    await screen.findByText(/could not analyse the certificates within 10 seconds/)
     expect(step()).toBe('file')
   })
 

@@ -383,9 +383,13 @@ class AuthControllerOtpTest {
         when(ldapDirectory.authenticate("adbad", "bad")).thenReturn(Optional.empty());
         mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(loginBody("adbad", "bad")))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("Invalid username or password"))
+                .andExpect(jsonPath("$.error").value(AuthController.invalidCredentialsMessage()))
                 .andExpect(jsonPath("$.error_code").doesNotExist());
         verify(ldapDirectory).authenticate("adbad", "bad");
         verify(auditService, never()).recordLdapDisabledLogin(any(), any(), any());
+        // 2026-10-08: genel ileti istek dilini izler (X-Lang: en)
+        mvc.perform(post("/api/login").header("X-Lang", "en").contentType(MediaType.APPLICATION_JSON).content(loginBody("adbad", "bad")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.startsWith("Incorrect username or password.")));
     }
 }

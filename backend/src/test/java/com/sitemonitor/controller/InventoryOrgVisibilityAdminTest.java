@@ -688,7 +688,10 @@ class InventoryOrgVisibilityAdminTest {
     @SuppressWarnings("unchecked")
     private static void assertWhitelisted(String body) {
         java.util.Map<String, Object> json = com.jayway.jsonpath.JsonPath.parse(body).read("$", java.util.Map.class);
-        assertThat(json.keySet()).containsExactlyInAnyOrder("success", "error", "code", "existing");
+        // 2026-10-08: ortak hata sözleşmesi istek kimliğini de taşır (X-Request-Id ile aynı; kişisel/iç veri değil).
+        java.util.Set<String> keys = new java.util.HashSet<>(json.keySet());
+        keys.remove("request_id");
+        assertThat(keys).containsExactlyInAnyOrder("success", "error", "code", "existing");
         java.util.Map<String, Object> ex = (java.util.Map<String, Object>) json.get("existing");
         assertThat(ex.keySet()).isSubsetOf(EXISTING_KEYS)
                 .contains("domain", "inventory_id", "team_id", "team_name", "same_team",

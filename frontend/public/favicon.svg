@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>SiteMonitor</title>
+  <!--
+    SiteMonitor favicon master (BRAND.md §7). The turnip brand mark redrawn for 16-48 px: round purple body
+    (#813387, never changes), three green leaves (#64A64F) and a white monitoring pulse over a hexagon accent.
+    At 24 px and below the fine detail (hexagon, highlight, end dot) is hidden and the pulse gets thicker.
+    In a dark browser theme a pale rim separates the body from dark tab strips; the body colour stays fixed.
+    Raster set (ico/png/PWA) is generated from this file: node branding/tools/make_favicon.mjs
+  -->
+  <style>
+    .rim { display: none; }
+    @media (prefers-color-scheme: dark) { .rim { display: inline; } }
+    @media (max-width: 24px) { .detail { display: none; } .pulse { stroke-width: 4.6px; } }
+  </style>
+  <path fill="#64A64F" d="M27.5 57 L32 63.5 L36.5 57 Z" stroke="#64A64F" stroke-width="1.5" stroke-linejoin="round"/>
+  <g fill="#64A64F">
+    <path transform="translate(29 25) rotate(-40)" d="M0 0 C-6.5 -5 -6.5 -13 0 -18 C6.5 -13 6.5 -5 0 0 Z"/>
+    <path transform="translate(35 25) rotate(40)" d="M0 0 C-6.5 -5 -6.5 -13 0 -18 C6.5 -13 6.5 -5 0 0 Z"/>
+  </g>
+  <path fill="#4E9440" transform="translate(32 24)" d="M0 0 C-7 -6 -7 -15 0 -21.5 C7 -15 7 -6 0 0 Z"/>
+  <circle class="rim" cx="32" cy="40" r="20.25" fill="none" stroke="#F3E6F4" stroke-width="2.5"/>
+  <circle cx="32" cy="40" r="19.5" fill="#813387"/>
+  <path class="detail" fill="#9C52A2" d="M32 28.5 L42 34.25 L42 45.75 L32 51.5 L22 45.75 L22 34.25 Z"/>
+  <ellipse class="detail" cx="23.5" cy="30.5" rx="5.5" ry="3.2" transform="rotate(-35 23.5 30.5)" fill="#FFFFFF" fill-opacity="0.16"/>
+  <polyline class="pulse" points="16,42 23.5,42 27.5,32 33.5,50.5 37.5,40 47,40" fill="none" stroke="#FFFFFF"
+    stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle class="detail" cx="47" cy="40" r="3" fill="#FFFFFF"/>
+</svg>

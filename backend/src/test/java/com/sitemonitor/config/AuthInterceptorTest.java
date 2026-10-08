@@ -105,6 +105,8 @@ class AuthInterceptorTest {
 
         assertThat(allowed).isFalse();
         assertThat(res.getStatus()).isEqualTo(403);
+        // 2026-10-08: kararlı kod + ne yapılacağını söyleyen istek dilinde metin
+        assertThat(res.getContentAsString()).contains("PASSWORD_CHANGE_REQUIRED").contains("parolanızı değiştirmeniz gerekiyor");
     }
 
     @Test

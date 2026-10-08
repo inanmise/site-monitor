@@ -106,6 +106,7 @@ async function fromBlob(bytes, acc, ctx, allowBase64 = true) {
   if (text != null && text.includes('-----BEGIN ')) { fromPem(text, acc); return 'PEM' }
   const b0 = bytes[0]; const b1 = bytes[1]; const b2 = bytes[2]; const b3 = bytes[3]
   if ((b0 === 0xfe && b1 === 0xed && b2 === 0xfe && b3 === 0xed) || (b0 === 0xce && b1 === 0xce && b2 === 0xce && b3 === 0xce)) {
+    progress(ctx, { phase: 'keystore', format: b0 === 0xfe ? 'JKS' : 'JCEKS' })
     const ks = readJavaKeystore(bytes, ctx.password)
     acc.entries.push(...ks.entries)
     acc.keys += ks.keys
@@ -145,7 +146,9 @@ function looksLikeBks(b) {
 
 async function fromPkcs12(bytes, acc, ctx) {
   try {
-    const r = await readPkcs12(bytes, ctx.password, ctx.subtle)
+    // İlerleme: parola tabanlı anahtar türetme (KDF) başında / şifre çözme başında (pkcs12.js) ve sonunda
+    const r = await readPkcs12(bytes, ctx.password, ctx.subtle, (p) => progress(ctx, p))
+    progress(ctx, { phase: 'pkcs12', step: 'done' })
     acc.entries.push(...r.entries)
     acc.keys += r.keys
     if (r.passwordUsed) acc.passwordUsed = true
@@ -182,7 +185,10 @@ async function fromZip(bytes, acc, ctx) {
     acc.unsupported = acc.unsupported || { reason: 'ZIP_UNREADABLE' }
     return
   }
-  for (const { index, name } of plan) {
+  // İlerleme: "n / N dosya" — açılacak girdi sayısı bilinir (plan), her girdiden SONRA bir adım
+  progress(ctx, { phase: 'zip', done: 0, total: plan.length })
+  for (const [pos, { index, name }] of plan.entries()) {
+    if (pos > 0) progress(ctx, { phase: 'zip', done: pos, total: plan.length })
     let data = null
     try {
       let i = -1
@@ -202,12 +208,24 @@ async function fromZip(bytes, acc, ctx) {
       || acc.needsPassword !== before.np || acc.passwordError !== before.pe
     if (!fmt || !contributed) note(acc, 'ZIP_SKIPPED_ENTRY', 'info', { name })
   }
+  progress(ctx, { phase: 'zip', done: plan.length, total: plan.length })
   if (limited) note(acc, 'ZIP_LIMIT', 'warn', { max_entries: ZIP_MAX_ENTRIES, max_mb: MAX_MB })
 }
 
 /**
+ * İlerleme bildirimi (2026-10-08, yükleme durumu): `{ phase: 'zip', done, total }` (girdi başına), `{ phase: 'pkcs12', step:
+ * 'kdf' | 'decrypt' | 'done' }` (parola tabanlı anahtar türetme / şifre çözme), `{ phase: 'keystore', format }`. Yalnız
+ * sayaç ve biçim adı taşır — parola, anahtar ya da sertifika içeriği ASLA. Dinleyici hatası ayıklamayı durdurmaz.
+ */
+function progress(ctx, p) {
+  if (typeof ctx?.onProgress !== 'function') return
+  try { ctx.onProgress(p) } catch { /* dinleyici hatası yok sayılır */ }
+}
+
+/**
  * @param {{ bytes?: Uint8Array|null, name?: string|null, text?: string|null, password?: string }} input
- * @param {{ subtle?: SubtleCrypto|null }} [opts] WebCrypto (verilmezse ortamınki; null = saf JS)
+ * @param {{ subtle?: SubtleCrypto|null, onProgress?: Function }} [opts] WebCrypto (verilmezse ortamınki; null = saf JS);
+ *   `onProgress` — ilerleme bildirimleri ({@link progress})
  * @returns {Promise<object>} ayıklama sonucu — sunucuya gidecek kısmı `manualCertModel.wirePayload` seçer
  */
 export async function extractCore(input = {}, opts = {}) {
@@ -219,9 +237,10 @@ export async function extractCore(input = {}, opts = {}) {
   const result = (format) => finish(acc, {
     format, file_name: pasted ? null : sanitizeName(input.name), size_bytes: bytes.length,
   })
-  if (!bytes.length) return result(pasted ? 'TEXT' : null)
+  // Boş dosya / metin: sunucuya boş gövde gönderilmez — açıklamalı alan hatası (EMPTY)
+  if (!bytes.length) { acc.unsupported = { reason: 'EMPTY' }; return result(pasted ? 'TEXT' : null) }
   if (bytes.length > MAX_BYTES) { acc.unsupported = { reason: 'TOO_LARGE', max_mb: MAX_MB }; return result(pasted ? 'TEXT' : null) }
-  const ctx = { password, subtle }
+  const ctx = { password, subtle, onProgress: opts.onProgress }
   let format = null
   try {
     if (!pasted && bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5)) {

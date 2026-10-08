@@ -340,8 +340,10 @@ public class ManualCertificateController {
         CertificateInventory inv = loadManual(inventoryId);
         if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
         if (!SessionScope.canWriteInventory(session, inv.getTeamId())) {
-            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok.",
-                    "You don't have write access to this record's team."));
+            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok; başka bir takımın kaydını yalnız "
+                            + "görüntüleyebilirsiniz. Kaydın takımından birine ya da takım yöneticinize başvurun.",
+                    "You don't have write access to this record's team; another team's record can only be viewed. "
+                            + "Ask someone in the record's team or your team manager."));
         }
         ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
         if (limited != null) return limited;
@@ -420,8 +422,10 @@ public class ManualCertificateController {
         CertificateInventory inv = loadManual(inventoryId);
         if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
         if (!SessionScope.canWriteInventory(session, inv.getTeamId())) {
-            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok.",
-                    "You don't have write access to this record's team."));
+            throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok; başka bir takımın kaydını yalnız "
+                            + "görüntüleyebilirsiniz. Kaydın takımından birine ya da takım yöneticinize başvurun.",
+                    "You don't have write access to this record's team; another team's record can only be viewed. "
+                            + "Ask someone in the record's team or your team manager."));
         }
         ResponseEntity<Map<String, Object>> limited = rateLimit("w:" + actor(session));
         if (limited != null) return limited;
@@ -593,15 +597,18 @@ public class ManualCertificateController {
             try {
                 if (extractedPart != null && !extractedPart.isEmpty()) {
                     if (extractedPart.getSize() > ExtractedUpload.MAX_JSON_BYTES) {
-                        return new Upload(null, null, false, null, Msg.t("Gönderilen sertifika bilgisi çok büyük.",
-                                "The submitted certificate data is too large."));
+                        return new Upload(null, null, false, null, Msg.t("Gönderilen sertifika bilgisi çok büyük (en çok "
+                                        + (ExtractedUpload.MAX_JSON_BYTES / (1024 * 1024)) + " MB). Daha az sertifika içeren bir "
+                                        + "dosya yükleyin ya da büyük bir truststore'u birkaç dosyaya bölün.",
+                                "The submitted certificate data is too large (at most " + (ExtractedUpload.MAX_JSON_BYTES / (1024 * 1024))
+                                        + " MB). Upload a file with fewer certificates or split a large truststore into several files."));
                     }
                     json = extractedPart.getBytes();
                 } else {
                     json = extractedField.getBytes(StandardCharsets.UTF_8);
                 }
             } catch (Exception e) {
-                errors.put("file", Msg.t("Dosya okunamadı.", "The file couldn't be read."));
+                errors.put("file", UNREADABLE_UPLOAD.get());
                 return null;
             }
             try {
@@ -613,7 +620,7 @@ public class ManualCertificateController {
         try {
             if (file != null && !file.isEmpty()) return new Upload(file.getBytes(), file.getOriginalFilename(), false, null, null);
         } catch (Exception e) {
-            errors.put("file", Msg.t("Dosya okunamadı.", "The file couldn't be read."));
+            errors.put("file", UNREADABLE_UPLOAD.get());
             return null;
         }
         if (text != null && !text.isBlank()) return new Upload(text.getBytes(StandardCharsets.UTF_8), null, true, null, null);
@@ -621,6 +628,11 @@ public class ManualCertificateController {
                 "Choose a certificate file or paste the certificate text."));
         return null;
     }
+
+    /** Yükleme gövdesi sunucuda okunamadı (aktarım yarıda kesildi …) — ne oldu + ne yapılmalı (2026-10-08). */
+    private static final java.util.function.Supplier<String> UNREADABLE_UPLOAD = () -> Msg.t(
+            "Yüklenen veri sunucuda okunamadı; aktarım yarıda kesilmiş olabilir. Dosyayı yeniden seçip tekrar deneyin.",
+            "The uploaded data couldn't be read on the server; the transfer may have been interrupted. Choose the file again and retry.");
 
     /** Ayrıştırma hatası yanıtı (süre aşımı / meşgul) — çağıran aynen döner. */
     private static final class ParseFailure extends RuntimeException {
@@ -652,12 +664,16 @@ public class ManualCertificateController {
                             + "and password never leave it — or send only the public certificates (PEM / DER / P7B).")));
         } catch (ManualCertificateAnalyzer.TimeoutExceededException te) {
             throw new ParseFailure(ResponseEntity.status(422).body(Map.of("success", false, "code", "PARSE_TIMEOUT",
-                    "error", Msg.t("Dosya " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " saniyede çözümlenemedi.",
-                            "The file couldn't be analysed within " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " seconds."))));
+                    "error", Msg.t("Dosya " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " saniyede çözümlenemedi; dosyada çok "
+                                    + "sayıda sertifika olabilir ya da sunucu yoğun. Bir dakika sonra yeniden deneyin ya da yalnız "
+                                    + "izlemek istediğiniz sertifikaları içeren daha küçük bir dosya yükleyin.",
+                            "The file couldn't be analysed within " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " seconds; it may "
+                                    + "hold a very large number of certificates or the server is busy. Try again in a minute, or upload "
+                                    + "a smaller file with only the certificates you want to track."))));
         } catch (ManualCertificateAnalyzer.BusyException be) {
             throw new ParseFailure(ResponseEntity.status(429).body(Map.of("success", false, "code", "BUSY",
-                    "error", Msg.t("Çözümleyici şu anda meşgul; birkaç saniye sonra yeniden deneyin.",
-                            "The analyser is busy; try again in a few seconds."))));
+                    "error", Msg.t("Sertifika çözümleyicisi şu anda başka dosyaları işliyor; birkaç saniye bekleyip yeniden deneyin.",
+                            "The certificate analyser is busy with other files; wait a few seconds and try again."))));
         }
     }
 
@@ -675,7 +691,10 @@ public class ManualCertificateController {
     private ManualCertificateAnalyzer.Entry requireEntry(ManualCertificateAnalyzer.Analysis a, String ref, String field,
                                                          Map<String, String> errors) {
         if (a.entries.isEmpty()) {
-            errors.put("file", Msg.t("Dosyada izlenebilir bir sertifika yok.", "The file contains no certificate that can be tracked."));
+            errors.put("file", Msg.t("Dosyada izlenebilir bir sertifika yok (yalnız CSR, özel anahtar ya da sertifika olmayan "
+                            + "içerik var). CA'nın gönderdiği sertifika dosyasını ya da zinciri tamamlanmış PFX/JKS'yi yükleyin.",
+                    "The file contains no certificate that can be tracked (only a CSR, a private key or non-certificate content). "
+                            + "Upload the certificate file the CA sent, or a PFX/JKS with the complete chain."));
             return null;
         }
         ManualCertificateAnalyzer.Entry e = a.find(ref);
@@ -700,7 +719,10 @@ public class ManualCertificateController {
                     "This certificate is part of the chain of “" + name + "” in the file (intermediate / root); it isn't "
                             + "tracked on its own. Choose the certificate at the head of the chain — the chain is tracked with it.");
         }
-        return Msg.t("Seçilen sertifika dosyada bulunamadı.", "The selected certificate wasn't found in the file.");
+        return Msg.t("Seçilen sertifika dosyada bulunamadı; dosya analizden sonra değişmiş olabilir. Dosyayı yeniden analiz "
+                        + "edip sertifikayı listeden seçin.",
+                "The selected certificate wasn't found in the file; the file may have changed after it was analysed. Analyse "
+                        + "the file again and pick the certificate from the list.");
     }
 
     private static String validateKey(String raw, String field, Map<String, String> errors) {
@@ -734,7 +756,10 @@ public class ManualCertificateController {
                 errors.putIfAbsent("tags", Msg.t("En az bir etiket zorunludur.", "At least one tag is required."));
             return item;
         } catch (Exception e) {
-            errors.putIfAbsent("inventory", Msg.t("Envanter bilgileri okunamadı.", "The inventory details couldn't be read."));
+            errors.putIfAbsent("inventory", Msg.t("Envanter bilgileri okunamadı (gönderilen alanlar beklenen biçimde değil). "
+                            + "Sayfayı yenileyip (Ctrl+F5) yeniden deneyin.",
+                    "The inventory details couldn't be read (the fields sent aren't in the expected format). Reload the page "
+                            + "(Ctrl+F5) and try again."));
             return null;
         }
     }
@@ -763,7 +788,10 @@ public class ManualCertificateController {
                 out.add(new String[] { ref, domain });
             }
         } catch (Exception e) {
-            errors.put("items", Msg.t("Seçim listesi okunamadı.", "The selection list couldn't be read."));
+            errors.put("items", Msg.t("Seçim listesi okunamadı (gönderilen liste beklenen biçimde değil). Sayfayı yenileyip "
+                            + "(Ctrl+F5) sertifikaları yeniden seçin.",
+                    "The selection list couldn't be read (the list sent isn't in the expected format). Reload the page (Ctrl+F5) "
+                            + "and select the certificates again."));
         }
         return out;
     }
@@ -802,8 +830,12 @@ public class ManualCertificateController {
         body.put("code", "KEY_EXISTS");
         body.put("field", "domain");
         body.put("domain", key);
-        body.put("error", Msg.t("Bu takip adı envanterde zaten kullanılıyor. Başka bir ad seçin.",
-                "This tracking name is already used in the inventory. Choose another name."));
+        body.put("error", Msg.t("Bu takip adı envanterde zaten kullanılıyor (ağ üzerinden izlenen bir alan adı ya da başka bir "
+                        + "manuel kayıt). Sonuna ortamı ya da amacı ekleyerek farklı bir ad seçin; aynı sertifikanın yenisini "
+                        + "yüklüyorsanız mevcut kaydı yenileyin.",
+                "This tracking name is already used in the inventory (a domain monitored over the network or another manual "
+                        + "record). Choose a different name by adding the environment or purpose; if you are uploading the "
+                        + "renewal of the same certificate, renew the existing record."));
         return ResponseEntity.status(409).body(body);
     }
 
@@ -813,8 +845,11 @@ public class ManualCertificateController {
         body.put("code", "ALREADY_TRACKED");
         body.put("inventory_id", entry.alreadyTracked().get("inventory_id"));
         body.put("domain", entry.alreadyTracked().get("domain"));
-        body.put("error", Msg.t("Bu sertifika zaten takip ediliyor: " + entry.alreadyTracked().get("domain"),
-                "This certificate is already tracked: " + entry.alreadyTracked().get("domain")));
+        Object tracked = entry.alreadyTracked().get("domain");
+        body.put("error", Msg.t("Bu sertifika zaten “" + tracked + "” kaydıyla takip ediliyor; bir sertifika iki ayrı kayıtla "
+                        + "takip edilemez. O kaydı açın; yenilenmiş sertifikayı o kaydın yeni sürümü olarak yükleyin.",
+                "This certificate is already tracked as “" + tracked + "”; one certificate can't be tracked by two records. "
+                        + "Open that record and upload the renewed certificate as its new version."));
         return ResponseEntity.status(409).body(body);
     }
 
@@ -871,8 +906,10 @@ public class ManualCertificateController {
             while (!dq.isEmpty() && now - dq.peekFirst() > RATE_WINDOW_MS) dq.pollFirst();
             if (dq.size() >= RATE_PER_MIN) {
                 return ResponseEntity.status(429).body(Map.of("success", false, "code", "RATE_LIMITED",
-                        "error", Msg.t("Çok sık istek — dakikada en çok " + RATE_PER_MIN + ". Lütfen bekleyin.",
-                                "Too many requests — at most " + RATE_PER_MIN + " per minute. Please wait.")));
+                        "error", Msg.t("Çok sık istek: kullanıcı başına dakikada en çok " + RATE_PER_MIN + " analiz / kayıt "
+                                        + "isteği. Bir dakika bekleyip yeniden deneyin.",
+                                "Too many requests: at most " + RATE_PER_MIN + " analyse / save requests per user per minute. "
+                                        + "Wait a minute and try again.")));
             }
             dq.addLast(now);
         }
@@ -891,7 +928,10 @@ public class ManualCertificateController {
 
     private static ResponseEntity<Map<String, Object>> notFound() {
         return ResponseEntity.status(404).body(Map.of("success", false,
-                "error", Msg.t("Manuel sertifika kaydı bulunamadı.", "Manual certificate record not found.")));
+                "error", Msg.t("Manuel sertifika kaydı bulunamadı; silinmiş ya da görme yetkiniz dışında olabilir. Listeyi "
+                                + "yenileyip yeniden deneyin.",
+                        "Manual certificate record not found; it may have been deleted or is outside what you can see. "
+                                + "Refresh the list and try again.")));
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(Map<String, String> errors, ManualCertificateAnalyzer.Analysis a) {
@@ -902,7 +942,9 @@ public class ManualCertificateController {
                                                            String message) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", false);
-        body.put("error", message != null ? message : Msg.t("Gönderilen bilgiler geçersiz.", "The submitted details are invalid."));
+        body.put("error", message != null ? message : Msg.t("Gönderilen bilgilerin bazıları geçersiz; her sorun ilgili alanın "
+                        + "altında açıklanıyor. Düzeltip yeniden deneyin.",
+                "Some of the submitted details are invalid; each problem is explained next to its field. Fix them and try again."));
         body.put("errors", errors);
         if (a != null) body.put("warnings", a.warnings.stream().map(CertificateFileParser.Warning::toJson).toList());
         return ResponseEntity.badRequest().body(body);

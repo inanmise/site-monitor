@@ -90,7 +90,20 @@ public class OriginCheckFilter extends OncePerRequestFilter {
                 clip(req.getHeader("Host")), clip(req.getHeader("X-Forwarded-Host")));
         res.setStatus(HttpServletResponse.SC_FORBIDDEN);
         res.setContentType("application/json;charset=UTF-8");
-        res.getWriter().write("{\"success\":false,\"error\":\"İstek kaynağı doğrulanamadı (Origin uyuşmuyor)\"}");
+        res.getWriter().write(rejectionBody(req));
+    }
+
+    /**
+     * Ret gövdesi (2026-10-08): istek dilinde, ne olduğunu ve ne yapılacağını söyler; kararlı {@code code} + istek kimliği.
+     * Metinler sabit (kullanıcı girdisi yok) — yalnız istek kimliği (CorrelationIdFilter'ın güvenli değeri) eklenir.
+     */
+    static String rejectionBody(HttpServletRequest req) {
+        String msg = com.sitemonitor.util.Msg.t(req,
+                "İstek güvenlik denetiminden geçemedi: isteğin geldiği adres (Origin) bu sunucuyla eşleşmiyor. Uygulamayı kendi adresinden açıp sayfayı yenileyin ve tekrar deneyin.",
+                "The request failed a security check: the address it came from (Origin) doesn’t match this server. Open the app from its own address, reload the page and try again.");
+        String rid = CorrelationIdFilter.get(req);
+        return "{\"success\":false,\"code\":\"ORIGIN_MISMATCH\",\"error\":\"" + msg + "\""
+                + (rid != null ? ",\"request_id\":\"" + rid + "\"" : "") + "}";
     }
 
     /** Karar — paket görünür: testler doğrudan sınar. */

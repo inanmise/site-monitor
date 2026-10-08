@@ -420,8 +420,11 @@ public class AuthInterceptor implements HandlerInterceptor {
                 && !FORCED_CHANGE_WHITELIST.contains(path)) {
             res.setStatus(403);
             res.setContentType("application/json;charset=UTF-8");
-            mapper.writeValue(res.getWriter(),
-                    Map.of("success", false, "error", "Password change required"));
+            // 2026-10-08: istek dilinde + ne yapılacağı + kararlı kod (eskiden yalnız İngilizce "Password change required").
+            mapper.writeValue(res.getWriter(), Map.of("success", false, "code", "PASSWORD_CHANGE_REQUIRED",
+                    "error", com.sitemonitor.util.Msg.t(
+                            "Devam etmeden önce parolanızı değiştirmeniz gerekiyor. Açılan pencereden yeni parolanızı belirleyin; pencere görünmüyorsa sayfayı yenileyin.",
+                            "You need to change your password before continuing. Set a new password in the dialog; if you don’t see it, reload the page.")));
             return false;
         }
         return true;

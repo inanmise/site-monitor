@@ -77,6 +77,11 @@ import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
 import PageHeader from './components/ui/PageHeader.jsx'
 import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
+// Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
+import { VALID_TABS, NOT_FOUND_TAB, tabFromSearch, requestedTabParam } from './utils/appRoutes.js'
+import { appMetaKey } from './utils/pageMeta.js'
+import { usePageMeta } from './hooks/usePageMeta.js'
+import NotFoundPanel from './components/notfound/NotFoundPanel.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -179,12 +184,7 @@ export const TAB_PARAMS_EVENT = 'sm:tab-params'
 /** Programatik gezinme olayı — bkz. utils/navigate.js */
 export const NAVIGATE_EVENT = 'sm:navigate'
 
-const VALID_TABS = new Set([
-  'dashboard', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
-  'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
-])
+// VALID_TABS tek kaynak: utils/appRoutes.js (2026-10-08 — sayfa meta kapısı ve 404 yönlendirmesi de okur).
 /** Genel Bakış kart listesinin paylaşılabilir sayfa/boyut adresi (usePagination `url`; sabit referans). */
 const DASH_PAGE_URL = Object.freeze({ pageKey: 'page', sizeKey: 'ps' })
 
@@ -193,6 +193,15 @@ function initialTabFromUrl() {
     const t = new URLSearchParams(window.location.search).get('tab')
     return t && VALID_TABS.has(t) ? t : null
   } catch { return null }
+}
+
+/**
+ * Açılıştaki sekme: geçerli `?tab=` → kendisi; tanınmayan `?tab=` → NOT_FOUND_TAB (uygulama içi "Sayfa bulunamadı"
+ * paneli — eskiden sessizce Pano açılıyordu); `?tab=` yok → null. Açılış sekmesi tercihi yalnız adreste `?tab=` YOKKEN
+ * uygulanır (landingEligibleFromUrl), bayat bir tercih bu panele düşürmez — resolveLandingTab onu Pano'ya çevirir.
+ */
+function initialTabOrNotFound() {
+  return tabFromSearch(window.location.search)
 }
 
 /**
@@ -470,7 +479,7 @@ export default function App() {
         try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
         landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
-        const dl = initialTabFromUrl()
+        const dl = initialTabOrNotFound()   // tanınmayan ?tab= → "Sayfa bulunamadı" paneli (2026-10-08)
         if (dl) setTab(dl)
         // Olay satırına tıklama (cert alarmı): ?domain=<d> → panoyu o domaine filtrele. YALNIZ Pano hedefinde (Ek 3/4):
         // `?tab=domains&domain=` (Envanter çekmecesi) / `?tab=all&domain=` (Tüm Sertifikalar) kendi sayfasının anahtarı —
@@ -493,7 +502,8 @@ export default function App() {
       try {
         const p = new URLSearchParams(window.location.search)
         const nextTab = p.get('tab')
-        const target = nextTab && VALID_TABS.has(nextTab) ? nextTab : 'dashboard'
+        // Geri ile tanınmayan bir ?tab= adresine dönülürse yine panel (2026-10-08); ?tab= yoksa Pano
+        const target = nextTab ? (VALID_TABS.has(nextTab) ? nextTab : NOT_FOUND_TAB) : 'dashboard'
         setTab(target)
         const d = p.get('domain')
         if (d && target === 'dashboard') setSearch(d)   // başka sekmenin `domain`'i Pano aramasına sızmaz (Ek 3/4)
@@ -1115,7 +1125,7 @@ export default function App() {
     prefsMigrateRef.current = sameStorageOwner(userData.username)   // öneri 23: claim'den ÖNCE okunur
     claimPersonalStorage(userData.username)
     landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
-    setTab(initialTabFromUrl() || 'dashboard')
+    setTab(initialTabOrNotFound() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
     setGlobalAdmin(!!userData.global_admin)
@@ -1395,6 +1405,14 @@ export default function App() {
   // Durum-duyarlı görünüm istenirse: deriveGlobalStatus(stats, networkStatus?.alarm) buraya bağlanır
   // (utils/brandStatus.js + hook hazır bekliyor). Hook erken-return'lerin ÜSTÜNDE kalmalı.
   useStatusFavicon('ok')
+  // Sayfa başlığı + meta açıklaması (2026-10-08): her sekme, giriş/oturum ekranları ve "Sayfa bulunamadı" paneli kendi
+  // "<Sayfa> · SiteMonitor" başlığını ve tek cümlelik açıklamasını taşır; dil değişince tazelenir. Hook erken-return'lerden ÖNCE.
+  // Rolüne kapalı sekme (Ayarlar: ADMIN değil; SQL Playground: global admin değil) eskiden boş sayfaydı → "Erişim yok" paneli.
+  const restrictedTab = (tab === 'settings' && systemRole !== 'ADMIN') || (tab === 'sqlplayground' && !globalAdmin)
+  usePageMeta(appMetaKey({
+    authChecked, user, mustChangePwd, tab, validTabs: VALID_TABS, restricted: restrictedTab,
+    accountInactive: accountInactiveNotice, maintenance: maintNotice, sessionExpired: sessionExpiredNotice,
+  }))
 
   if (!authChecked) {
     return (
@@ -1916,6 +1934,11 @@ export default function App() {
             {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
+            {/* Markalı 404 (2026-10-08): tanınmayan ?tab= → "Sayfa bulunamadı"; rolüne kapalı sekme → "Erişim yok" (eskiden boş) */}
+            {tab === NOT_FOUND_TAB && (
+              <NotFoundPanel requested={requestedTabParam(window.location.search)} onNavigate={handleTabChange} />
+            )}
+            {restrictedTab && <NotFoundPanel kind="restricted" onNavigate={handleTabChange} />}
             </Suspense>
            </ErrorBoundary>
           </div>

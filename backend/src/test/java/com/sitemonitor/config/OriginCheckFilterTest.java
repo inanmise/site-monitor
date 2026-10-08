@@ -113,6 +113,22 @@ class OriginCheckFilterTest {
         assertThat(res.getStatus()).isEqualTo(403);
         assertThat(chain.getRequest()).as("uç çalışmamalı").isNull();
         assertThat(res.getContentAsString()).contains("\"success\":false");
+        // 2026-10-08: kararlı kod + istek dilinde açıklayıcı metin (ne oldu · ne yapmalı)
+        assertThat(res.getContentAsString()).contains("\"code\":\"ORIGIN_MISMATCH\"").contains("güvenlik denetiminden geçemedi");
+    }
+
+    @Test
+    @DisplayName("ret gövdesi: X-Lang en → İngilizce; istek kimliği varsa request_id; geçerli JSON")
+    void rejectionBody_languageAndRequestId() throws Exception {
+        MockHttpServletRequest r = post("/api/x");
+        r.addHeader("X-Lang", "en");
+        r.setAttribute(CorrelationIdFilter.ATTR, "rid-7");
+        String body = OriginCheckFilter.rejectionBody(r);
+        com.fasterxml.jackson.databind.JsonNode json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+        assertThat(json.get("success").asBoolean()).isFalse();
+        assertThat(json.get("code").asText()).isEqualTo("ORIGIN_MISMATCH");
+        assertThat(json.get("error").asText()).startsWith("The request failed a security check");
+        assertThat(json.get("request_id").asText()).isEqualTo("rid-7");
     }
 
     @Test

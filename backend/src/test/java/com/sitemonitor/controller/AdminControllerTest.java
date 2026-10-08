@@ -4583,7 +4583,9 @@ class AdminControllerTest {
                         .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"a_b.example.com\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fields.domain").value("Geçersiz domain formatı"))
-                .andExpect(jsonPath("$.error").value("Geçersiz alan(lar): domain"));
+                // 2026-10-08: ortak doğrulama iletisi alan + nedenini ve sonraki adımı söyler (GlobalExceptionHandler)
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("domain: Geçersiz domain formatı")));
         verify(inventoryRepo, never()).save(any());
         // Kayıt yoksa da (biçim hatası) yine 400 — eskiden olduğu gibi kayıt okunmadan önce reddedilir.
         mvc.perform(put("/api/admin/inventory/99").session(authSession()).contentType(MediaType.APPLICATION_JSON)
