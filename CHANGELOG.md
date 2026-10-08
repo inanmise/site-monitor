@@ -15,6 +15,69 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Dışarıdan çağrılabilen veritabanı sağlık kontrolü: `GET /api/public/health/db`** (oturum gerekmez). Kontrol
+  edilenler:
+  - bağlantı alınabiliyor mu;
+  - sorgu süresi;
+  - veritabanı yazılabilir mi (salt-okunur ya da yedek sunucu değil);
+  - bağlantı havuzu dolu mu;
+  - açılıştaki şema yamaları sorunsuz mu.
+
+  `UP` ya da `DEGRADED` → HTTP 200, `DOWN` → HTTP 503; dış izleyici yalnız HTTP koduna bakabilir. Yanıtta sunucu adı,
+  veritabanı adı ya da hata metni yoktur. Kontrol 4 sn ile sınırlıdır ve sonuç 5 sn önbellekte tutulur, yani sık
+  çağrı veritabanına yük bindirmez.
+- **Alarm Geçmişi'nde izleme tipi:** her satırda (masaüstü tablo, telefon kartı, açık alarm kartı) ve ayrıntıda
+  alarmın hangi izlemeden geldiği simge ve adla görünür: Sertifika, Manuel sertifika, HTTP, Port, DNS, Anahtar
+  kelime, Ping, Alan adı, Sayfa bütünlüğü, Sayfa hızı, Sentetik. Telefon kartında alarm tipi de artık gösteriliyor.
+- **Sağlık sekmesinde kapsamlı HSTS açıklaması.** "Şimdi kontrol et" sitenin gönderdiği HSTS başlığını ve
+  parametrelerini (`max-age`, `includeSubDomains`, `preload`, HTTP → HTTPS yönlendirmesi) kaydeder. Satır açılınca:
+  - **Bu sitede durum:** gönderilen başlık, yönerge yönerge değerlendirme, `preload` şartları, ne yapılmalı.
+  - **Sık sorulanlar:** HSTS nedir, eklenmezse ne olur, neden "Yok" görünebilir, nasıl eklenir (nginx / Apache / IIS /
+    yük dengeleyici örnekleri), `includeSubDomains` ve `preload` eklenmeli mi.
+
+  **⚠ Davranış:** `max-age` 180 günden kısaysa satır "Kısa (N gün)" uyarısı verir. `max-age=0` "Kapatılmış", `max-age`
+  içermeyen başlık "Geçersiz başlık" olarak ayrılır.
+
+### Security
+- **Girdi doğrulama sıkılaştırıldı.** Hatalı alan artık alan adıyla birlikte 400 `VALIDATION_FAILED` döner; kayıtlı
+  değerler düzenlemede engel olmaz.
+  - **Sentetik (k6) izlemelerin ortam değişkenleri:** ad kuralı ve yasak listesi var (`K6_*`, Go çalışma ayarları,
+    vekil / CA değişkenleri, `PATH`, `LD_*` …). En fazla 50 değişken, değer başına 8192 karakter. Sistemin CPU / bellek
+    / vekil / CA ayarları her zaman kazanır.
+    **⚠ Davranış:** kendi `HTTPS_PROXY` değişkenini tanımlamış kayıtlı bir sentetik izleme artık izlemenin Proxy
+    ayarına uyar. Bu değişken, güvenlik listesini (SSRF koruması) atlatmaya izin veriyordu.
+  - **Eskalasyon kişisi:** kapsamlı yönetici yalnız kendi kapsamındaki kullanıcıları ekleyebilir.
+  - **Rehber bağlantıları:** `javascript:` / `data:` / `vbscript:` adresleri reddedilir.
+  - **Ping:** ana bilgisayar adı / IP biçimi doğrulanır; `-` ile başlayan değer hiçbir zaman çalıştırılmaz. Paket
+    sayısı 1–10 aralığında tutulur.
+  - **E-posta biçimi:** kullanıcı, takım ve kişi e-postalarında yeni değerler denetlenir.
+  - **Toplu işlemler:** alarm ve envanter toplu işlemlerinde en fazla 2000 kayıt.
+  - **Ayrıca:** DNS kayıt türü güncellemede de izin listesinden geçer; yeniden uyarı aralığı en az 1 saat.
+- **Giriş yardımı formunun onay e-postası artık yazılan metni ve resimleri kopyalamıyor;** yalnız talep numarasını ve
+  zamanı içerir. Herkese açık form kurum e-postasıyla başkasına içerik göndermekte kullanılabiliyordu. Yöneticiye giden
+  bildirim değişmedi.
+- **Tip hatasında 500 yerine 400:** sayı beklenen alana metin gibi yanlış türde gönderilen alanlar artık 500 değil,
+  açıklayıcı bir 400 döner.
+
+### Performance
+- **Filtreleme ve sıralamada kullanılan alanlara 14 eksik index eklendi:** uptime son kontrol, Sayfa Hızı zaman
+  süzgeci, aktivite günlüğü, alarm geçmişi zenginleştirmesi, sentetik başarı listesi, 7/24 fırtına teslimi, denetim
+  kaydı / push geçmişi kullanıcı aramaları, değişiklik günlüğü, özet tabloları, bildirim günlüğü.
+  - Mevcut index'lere ve sorgulara dokunulmadı.
+  - PostgreSQL'de büyük tablolar açılışı bekletmesin diye index'ler pod trafiğe hazır olduktan sonra arka planda
+    (`CREATE INDEX CONCURRENTLY`, aynı anda tek pod) kurulur. Yarıda kalan bir kurulum sonraki açılışta onarılır.
+
+### Fixed
+- **Zaman aşımı olmayan servis çağrıları sınırlandı:**
+  - **Sertifika taraması:** askıda kalan tek bir kontrol artık bütün taramayı durdurmuyor. 900 sn boyunca hiçbir
+    kontrol bitmezse askıdaki kontrol ağ zaman aşımı olarak kaydedilir.
+  - **Toplam süre sınırı:** HSTS kontrolü, port (HTTP) kontrolü, HSTS tanılaması, RDAP yönlendirmesi, ters DNS
+    sorguları ve WHOIS okumaları artık toplamda süre sınırlı.
+  - **PostgreSQL:** bağlantılarına `socketTimeout` eklendi (varsayılan 1800 sn, `DB_SOCKET_TIMEOUT_SECONDS`).
+  - **Arayüz:** okuma istekleri en fazla 90 sn bekler, sonra açıklayıcı bir "zaman aşımı" iletisiyle döner.
+    Bileşen kapanınca isteğin iptali artık gerçekten ulaşıyor.
+
 ## [20.112.2] — 2026-10-08
 
 ### Security
