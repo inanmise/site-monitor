@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T06:51:53Z",
+  "generatedAt": "2026-10-08T14:17:36Z",
   "repo": "inanmise/site-monitor",
-  "count": 714,
+  "count": 715,
   "releases": [
+    {
+      "version": "20.112.2",
+      "tag": "v20.112.2",
+      "releasedAt": "2026-10-08T14:17:28Z",
+      "commit": "0bc10ecde1abb63466179083543ec16d7f441a68",
+      "prevVersion": "20.112.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "0bc10ecd",
+          "subject": "haftalık rapor onay anahtarı API yanıtlarına sızmıyor"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "82f41ad4",
+          "subject": "iptal durumu (OCSP/CRL) \"bilinmiyor\" artık nedenini söylüyor — adres yoksa \"Adres yok\", alanlar boşken de görünür, yanıltıcı \"erişimi kontrol edin\" kalktı"
+        },
+        {
+          "type": "ci",
+          "scope": null,
+          "breaking": false,
+          "sha": "6ba79e35",
+          "subject": "frontend birim testleri ve E2E 4 parçaya bölündü — 2 vCPU runner'da tek işçiyle 29–50 dk süren CI kısalır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.112.1",
       "tag": "v20.112.1",

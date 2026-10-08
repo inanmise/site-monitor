@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.112.2] — 2026-10-08
+
 ### Security
 - **Haftalık rapor onay bağlantısının anahtarı API yanıtlarında görünüyordu.** Rapor ekranının aldığı yanıt, PO'ya
   e-postayla giden giriş gerektirmeyen onay bağlantısının anahtarını da içeriyordu. Raporu gönderen takım üyesi bu
@@ -2433,7 +2435,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.2...HEAD
+[20.112.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.2
 [20.112.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.1
 [20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
 [20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
