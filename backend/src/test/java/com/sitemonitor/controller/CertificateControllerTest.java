@@ -147,6 +147,44 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/certificates/paused: oturumsuz 401; global kapsamda servisten paused=true satırlar (2026-10-08)")
+    void getPausedCertificates() throws Exception {
+        mvc.perform(get("/api/certificates/paused")).andExpect(status().isUnauthorized());
+        CertificateDto dto = new CertificateDto();
+        dto.setDomain("pasif.example.com");
+        dto.setPaused(Boolean.TRUE);
+        when(certService.getPausedForTeams(null)).thenReturn(List.of(dto));
+        mvc.perform(get("/api/certificates/paused").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].domain").value("pasif.example.com"))
+                .andExpect(jsonPath("$.data[0].paused").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/certificates/paused: takım kapsamlı oturum kendi görüş kapsamını servise geçirir")
+    void getPausedCertificates_teamScoped() throws Exception {
+        MockHttpSession s = authSession();
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("viewTeamIds", List.of(7L));
+        when(certService.getPausedForTeams(List.of(7L))).thenReturn(List.of());
+        mvc.perform(get("/api/certificates/paused").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+        org.mockito.Mockito.verify(certService).getPausedForTeams(List.of(7L));
+    }
+
+    @Test
+    @DisplayName("GET /api/certificates: aktif satır paused alanını YAZMAZ (yanıt bugünküyle aynı)")
+    void getCertificates_activeRowsHaveNoPausedField() throws Exception {
+        CertificateDto dto = new CertificateDto();
+        dto.setDomain("example.com");
+        when(certService.getAllLatestForTeams(null)).thenReturn(List.of(dto));
+        mvc.perform(get("/api/certificates").session(authSession()))
+                .andExpect(jsonPath("$.data[0].paused").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/warnings returns 200 with warning list")
     void getWarnings_authenticated_returns200() throws Exception {
         when(certService.getWarningsForTeams(null)).thenReturn(Collections.emptyList());

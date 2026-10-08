@@ -421,6 +421,8 @@ export default function App() {
   const [idleCfg, setIdleCfg] = useState(() => ({ totalMs: INACTIVITY_MS, warnMs: WARN_BEFORE_MS }))
   const [countdown, setCountdown] = useState(60)
   const [statsFilter, setStatsFilter] = useState(null)
+  // İzleme durumu süzgeci (2026-10-08, kullanıcı: "pasif sertifikalar da kartlarda görünsün, süzülebilsin"): all | active | paused
+  const [activityFilter, setActivityFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
   const [teamFilter, setTeamFilter] = useState('all')
@@ -1005,11 +1007,28 @@ export default function App() {
    *  değiştirirdi (state setter'ını okuma amaçlı çağırmak da gereksiz render üretir). */
   const certsRef = useRef(certs)
   useEffect(() => { certsRef.current = certs }, [certs])
+  // Pasif (izlemesi durdurulmuş) sertifikalar (2026-10-08): `certs` (aktif) İstatistik / Uyarılar / sayaçları da besler —
+  // pasifler oraya KARIŞMAZ; ayrı okunur ve yalnız Pano kart listesine katılır. Pano açıkken ve her veri tazelemesinde
+  // (lastUpdate) yeniden istenir. Hata Panoyu bozmaz: önceki liste kalır, uyarı çıkmaz.
+  const [pausedCerts, setPausedCerts] = useState([])
+  const pausedRef = useRef(pausedCerts)
+  useEffect(() => { pausedRef.current = pausedCerts }, [pausedCerts])
+  useEffect(() => {
+    if (!user || tab !== 'dashboard' || lastUpdate == null) return undefined
+    let alive = true
+    const req = api.getPausedCertificates?.()
+    if (req && typeof req.then === 'function') {
+      req.then((r) => { if (alive && r?.success && Array.isArray(r.data)) setPausedCerts(r.data) }).catch(() => {})
+    }
+    return () => { alive = false }
+  }, [user, tab, lastUpdate])
+  /** Alan adına göre kart satırı — önce aktif, sonra pasif liste (pencere / sağlık kısayolu pasif kartta da açılsın). */
+  const findCertRow = useCallback((d) => certsRef.current.find((x) => x.domain === d) ?? pausedRef.current.find((x) => x.domain === d), [])
   /** Zengin kart eylemleri (2026-09-19): sağlık sekmesiyle aç · planlı yenilemeyi onayla · yenileme planla. */
   const openCertHealth = useCallback((d) => {
-    const c = certsRef.current.find(x => x.domain === d)
+    const c = findCertRow(d)
     setModalCert(c ? { ...c, _tab: 'health' } : { domain: d, _tab: 'health' })
-  }, [])
+  }, [findCertRow])
   const confirmCardRenewal = useCallback(async (d) => {
     setConfirmingDomain(d)
     try {
@@ -1031,10 +1050,10 @@ export default function App() {
     // çağıran sessizce hiçbir şey açmıyordu (find hep undefined → modal kapalı), bu yüzden burada normalize
     // ediliyor — sınıfı tek yerde kapatır. (2026-09-22, paylaşılan sertifika penceresi)
     const domain = typeof d === 'string' ? d : d?.domain
-    setModalCert(certsRef.current.find(c => c.domain === domain) ?? null)
+    setModalCert(findCertRow(domain) ?? null)
     // Başlangıç listesi: ilk kart açıldı (sunucuya yalnız henüz işaretli değilse yazılır — TourProvider aynı kuralı sekmeler için uygular)
     const ts = readMirror(); if (ts && ts.status !== 'dismissed' && !ts.checklist?.card && !ts.checklist_hidden) persistTourRef.current?.({ checklist: { card: true } })
-  }, [])
+  }, [findCertRow])
 
   // Takip adı / alan adı değişti (2026-10-08): açık sertifika penceresi YENİ ada geçer, bulunduğu sekme korunur. Eskiden
   // pencere eski adla kalıyor, Sağlık / Kontrol geçmişi 404 dönüyordu. Olayı envanter formu yayar (utils/inventoryEvent.js).
@@ -1085,7 +1104,7 @@ export default function App() {
 
   function cardActions(cert) {
     return {
-      onCheckNow: () => runSingleCheck(cert.domain),
+      onCheckNow: cert.paused ? undefined : () => runSingleCheck(cert.domain),
       checking: checkingDomain === cert.domain || refreshing,
       // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
       onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
@@ -1278,6 +1297,15 @@ export default function App() {
   }
 
   const statFn   = statsFilter ? STAT_FILTER_FN[statsFilter] : null
+  // Pano kart kaynağı (2026-10-08): aktif + pasif. Aynı adın aktif kaydı varsa pasif ikizi gösterilmez (kart alan adıyla
+  // anahtarlı). Seçenek listeleri (takım/grup/etiket/platform) ve toplam sayı TÜM kartlardan; süzgeç `activityFilter`.
+  const pausedOnly = useMemo(() => {
+    if (!pausedCerts.length) return []
+    const act = new Set(certs.map((c) => c.domain))
+    return pausedCerts.filter((p) => p?.domain && !act.has(p.domain))
+  }, [certs, pausedCerts])
+  const dashAll = useMemo(() => (pausedOnly.length ? [...certs, ...pausedOnly] : certs), [certs, pausedOnly])
+  const dashSource = activityFilter === 'active' ? certs : activityFilter === 'paused' ? pausedOnly : dashAll
   const statusFn = STATUS_FILTER_FN[statusFilter] ?? (() => true)
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
@@ -1288,41 +1316,49 @@ export default function App() {
   const teamOptions = useMemo(() => {
     const names = new Set()
     let hasNone = false
-    for (const c of certs) { if (c.team_name) names.add(c.team_name); else hasNone = true }
+    for (const c of dashAll) { if (c.team_name) names.add(c.team_name); else hasNone = true }
     const opts = [{ value: 'all', label: t('app.allTeams') }]
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
     return opts
-  }, [certs, t])
+  }, [dashAll, t])
   const hasTeamOptions = teamOptions.some((o) => o.value !== 'all' && o.value !== '__none__')
   // Grup / etiket seçenekleri kart listesinden türer (envanter group_name/tags); "__none__" atanmamışları bulur.
   const groupOptions = useMemo(() => {
     const names = new Set(); let hasNone = false
-    for (const c of certs) { if (c.group_name) names.add(c.group_name); else hasNone = true }
+    for (const c of dashAll) { if (c.group_name) names.add(c.group_name); else hasNone = true }
     const opts = [{ value: 'all', label: t('app.allGroups') }]
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noGroup') })
     return opts
-  }, [certs, t])
+  }, [dashAll, t])
   const hasGroupOptions = groupOptions.length > 1
   const tagOptions = useMemo(() => {
-    const names = tagNamesOf(certs)
+    const names = tagNamesOf(dashAll)
     const opts = [{ value: 'all', label: t('mon.allTags') }]
     names.forEach((n) => opts.push({ value: n, label: n }))
-    if (certs.some((c) => !(c.tags || '').trim())) opts.push({ value: '__none__', label: t('mon.noTags') })
+    if (dashAll.some((c) => !(c.tags || '').trim())) opts.push({ value: '__none__', label: t('mon.noTags') })
     return opts
-  }, [certs, t])
+  }, [dashAll, t])
   const hasTagOptions = tagOptions.length > 1
   // "Filtreleri temizle" (2026-09-18): hepsini varsayılana döndürür — DashboardFilters çip satırında, çip varken görünür.
   const clearDashFilters = () => {
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
     setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([])
+    setActivityFilter('all')
   }
+  // İzleme süzgeci seçenekleri — sayılarla (kullanıcı pasif kart olup olmadığını süzmeden görür)
+  const activityOptions = useMemo(() => [
+    { value: 'all', label: t('dash.flt.actAll', dashAll.length) },
+    { value: 'active', label: t('dash.flt.actActive', certs.length) },
+    { value: 'paused', label: t('dash.flt.actPaused', pausedOnly.length) },
+  ], [dashAll.length, certs.length, pausedOnly.length, t])
 
   // Platform DIŞINDAKİ bütün süzgeçler (2026-09-25): platform seçeneklerinin sayıları buradan sayılır — her
   // seçenek "diğer süzgeçler + bu platform" ile kaç kart kalacağını söyler (faset sayısı; seçim sayıları kaydırmaz).
-  const preFiltered = useMemo(() => certs.filter((c) => {
-    if (statFn   && !statFn(c))   return false
+  const preFiltered = useMemo(() => dashSource.filter((c) => {
+    // İstatistik kartı süzgeci yalnız AKTİF kartları sayar (sayaçlar aktif envanterden) — pasif kart karışmaz
+    if (statFn   && (c.paused || !statFn(c))) return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
     if (teamFilter !== 'all') {
@@ -1340,11 +1376,11 @@ export default function App() {
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
   // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
   // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
-  }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])
+  }), [dashSource, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])
   const platformCounts = useMemo(() => countPlatforms(preFiltered), [preFiltered])
   const platformOptions = useMemo(() => buildPlatformOptions({
-    catalog: platformCatalog, certs, counts: platformCounts, selected: platformFilter, noneLabel: t('app.platformNone'),
-  }), [platformCatalog, certs, platformCounts, platformFilter, t])
+    catalog: platformCatalog, certs: dashAll, counts: platformCounts, selected: platformFilter, noneLabel: t('app.platformNone'),
+  }), [platformCatalog, dashAll, platformCounts, platformFilter, t])
   // Katalog boş + hiçbir kartta platform yoksa süzgeç gizli (tek seçenek "Belirtilmemiş" olurdu); URL'den gelen seçim
   // varsa HER ZAMAN görünür — kaldırılabilsin.
   const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
@@ -1388,6 +1424,9 @@ export default function App() {
   }
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
+    // Pasif (izlemesi durdurulmuş) kartlar her sıralamada SONDA — bayat bilgileri sorunlu aktif kartların önüne geçmez
+    const pz = (a.paused ? 1 : 0) - (b.paused ? 1 : 0)
+    if (pz !== 0) return pz
     if (sortOrder === 'asc')  return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
     if (sortOrder === 'desc') return (b.days_remaining ?? -1) - (a.days_remaining ?? -1)
     const pd = defaultPriority(a) - defaultPriority(b)
@@ -1400,7 +1439,7 @@ export default function App() {
   // `page`/`ps` adresi yalnız Genel Bakış sekmesindeyken okunur/yazılır (ps ön ayar listesine karşı doğrulanır).
   const dashPager = usePagination(sorted, {
     listKey: 'dashboard-certs', preset: 'page',
-    resetDeps: [search, sortOrder, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, statsFilter, platformFilter],
+    resetDeps: [search, sortOrder, activityFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, statsFilter, platformFilter],
     url: tab === 'dashboard' ? DASH_PAGE_URL : null,
   })
   // Uyarılar sekmesinin sayfalaması artık pages/WarningsPage içinde (aynı listKey 'warnings-certs', URL wa_page/wa_ps).
@@ -1522,7 +1561,10 @@ export default function App() {
             <PageHeader icon={LayoutDashboard} title={t('app.dashTitle')} description={t('app.dashDesc')}
               meta={(
                 <>
-                  <Badge variant="secondary" data-slot="dash-cert-count">{t('app.certCount', certs.length)}</Badge>
+                  <Badge variant="secondary" data-slot="dash-cert-count">
+                    {/* Pasif kart varsa ayrı sayılır (2026-10-08); yoksa bugünkü metin */}
+                    {pausedOnly.length > 0 ? t('app.certCountWithPaused', certs.length, pausedOnly.length) : t('app.certCount', certs.length)}
+                  </Badge>
                   <span data-slot="dash-last-update">
                     {t('app.lastUpdate')} {lastUpdate ? formatDate(lastUpdate) : t('app.neverUpdated')}
                   </span>
@@ -1606,10 +1648,10 @@ export default function App() {
                     "Süzgeçler (N)" alt Sheet'i), etkin süzgeç çipleri. Durum ve anlam BURADA kalır (boru hattı, URL q/platform,
                     sayfalama sıfırlama); bileşen yalnız değer + ayarlayıcı alır. */}
                 <DashboardFilters
-                  values={{ search, sort: sortOrder, status: statusFilter, expiry: expiryFilter, team: teamFilter, group: groupFilter, tag: tagFilter, platform: platformFilter }}
-                  setters={{ search: setSearch, sort: setSortOrder, status: setStatusFilter, expiry: setExpiryFilter, team: setTeamFilter, group: setGroupFilter, tag: setTagFilter, platform: setPlatformFilter }}
-                  options={{ team: hasTeamOptions ? teamOptions : null, group: hasGroupOptions ? groupOptions : null, tag: hasTagOptions ? tagOptions : null, platform: showPlatformFilter ? platformOptions : null }}
-                  onClearAll={clearDashFilters} shown={sorted.length} total={certs.length}
+                  values={{ search, sort: sortOrder, activity: activityFilter, status: statusFilter, expiry: expiryFilter, team: teamFilter, group: groupFilter, tag: tagFilter, platform: platformFilter }}
+                  setters={{ search: setSearch, sort: setSortOrder, activity: setActivityFilter, status: setStatusFilter, expiry: setExpiryFilter, team: setTeamFilter, group: setGroupFilter, tag: setTagFilter, platform: setPlatformFilter }}
+                  options={{ activity: activityOptions, team: hasTeamOptions ? teamOptions : null, group: hasGroupOptions ? groupOptions : null, tag: hasTagOptions ? tagOptions : null, platform: showPlatformFilter ? platformOptions : null }}
+                  onClearAll={clearDashFilters} shown={sorted.length} total={dashAll.length}
                   densityToggle={<CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} hideLabelsOnPhone />}
                   sslChecker={{ value: newDomain, onChange: setNewDomain, onSubmit: handleAddDomain, busy: checkLoading }} />
                 {/* İstatistik kartı süzgeci şeridi (davranış aynı; eskiden .dashboard-header içindeydi) */}
@@ -1642,7 +1684,7 @@ export default function App() {
                      lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
                   <StatusBlock tone="neutral" icon={Loader2} loading title={t('app.loadingCerts')} role="status" />
                 ) : sorted.length === 0 ? (
-                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={certs.length > 0 ? t('empty.hintFilter') : t('empty.hintCerts')} />
+                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={dashAll.length > 0 ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
                     {/* Sertifika kart ızgarası: en küçük kart 340 px (2026-09-24), dar kapta tek sütun (mobil-önce) */}
@@ -1652,7 +1694,8 @@ export default function App() {
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
                           warming={warmingDomains.has(cert.domain)} extrasPending={cardMode === 'rich' && warmingDomains.has(cert.domain)}
                           live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert, renewal: cardExtras[cert.domain].renewal } : undefined}
-                          onOpenHealth={openCertHealth} onConfirmRenewal={confirmCardRenewal} onPlanRenewal={planCardRenewal} confirming={confirmingDomain === cert.domain}
+                          onOpenHealth={openCertHealth} onConfirmRenewal={cert.paused ? undefined : confirmCardRenewal}
+                          onPlanRenewal={cert.paused ? undefined : planCardRenewal} confirming={confirmingDomain === cert.domain}
                           onOpenShared={setSharedCert}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}

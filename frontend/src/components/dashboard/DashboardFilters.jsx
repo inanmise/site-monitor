@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import {
-  ArrowUpDown, CalendarClock, Check, ChevronDown, CircleDot, FilterX, Folder, Layers, Search, SlidersHorizontal, Tag, Users, X,
+  Activity, ArrowUpDown, CalendarClock, Check, ChevronDown, CircleDot, FilterX, Folder, Layers, Search, SlidersHorizontal, Tag, Users, X,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
@@ -38,18 +38,19 @@ import { cn } from '@/lib/utils'
  * "dashboard-filter-chip" | "dashboard-result-count" | "dashboard-filters-trigger" | "dashboard-filter-sheet"`; tur kancaları
  * `data-tour="dash-filters"` (kök) ve `data-tour="add-domain"` (SSL Checker — komut paleti içindeki `input`'a odaklanır).
  *
- * @param values   { search, sort, status, expiry, team, group, tag, platform[] }
+ * @param values   { search, sort, activity, status, expiry, team, group, tag, platform[] }
+ *                 `activity` (2026-10-08): all | active | paused — izleme durumu (pasif = izlemesi durdurulmuş kayıt)
  * @param setters  aynı anahtarlarla App durum ayarlayıcıları
- * @param options  { team, group, tag, platform } — seçenek listeleri ({value,label}[]); `null` = seçici gizli (veride yok)
+ * @param options  { activity, team, group, tag, platform } — seçenek listeleri ({value,label}[]); `null` = seçici gizli
  * @param densityToggle  App'te çizilen `<CardDensityToggle>` (kart yoğunluğu standardı App.jsx'te pinli)
  * @param sslChecker     { value, onChange, onSubmit, busy }
  */
 export const DASH_FILTER_DEFAULTS = Object.freeze({
-  search: '', sort: 'default', status: 'all', expiry: 'all', team: 'all', group: 'all', tag: 'all', platform: Object.freeze([]),
+  search: '', sort: 'default', activity: 'all', status: 'all', expiry: 'all', team: 'all', group: 'all', tag: 'all', platform: Object.freeze([]),
 })
 
 /** Telefon Sheet'indeki seçiciler — "Süzgeçler (N)" ve Sheet'in "Temizle"si bunları kapsar (arama satırda kalır). */
-const SHEET_KEYS = ['sort', 'status', 'expiry', 'team', 'group', 'tag', 'platform']
+const SHEET_KEYS = ['sort', 'activity', 'status', 'expiry', 'team', 'group', 'tag', 'platform']
 
 const labelOf = (opts, v) => opts?.find((o) => String(o.value) === String(v))?.label ?? String(v)
 
@@ -81,6 +82,8 @@ export default function DashboardFilters({
 
   /** Tek seçimli süzgeçler — hap (geniş ekran) ve yerel seçici (Sheet) AYNI tanımdan çizilir. */
   const single = [
+    // İzleme durumu (2026-10-08): Tümü / Aktif / Pasif — App sayılarla verir; verilmezse (eski çağıran) seçici yok
+    options.activity && { key: 'activity', label: t('dash.flt.activity'), icon: Activity, options: options.activity },
     { key: 'status', label: t('dash.flt.status'), icon: CircleDot, options: statusOptions },
     { key: 'expiry', label: t('dash.flt.expiry'), icon: CalendarClock, options: expiryOptions },
     options.team && { key: 'team', label: t('dash.flt.team'), icon: Users, options: options.team, searchPlaceholder: t('dash.flt.teamSearch') },
@@ -93,11 +96,11 @@ export default function DashboardFilters({
   const platformSel = Array.isArray(values.platform) ? values.platform : []
   const chips = []
   if (values.search) chips.push({ id: 'search', key: 'search', label: t('dash.flt.search'), value: values.search, onRemove: () => setters.search('') })
-  const labels = { status: statusOptions, expiry: expiryOptions, team: options.team, group: options.group, tag: options.tag }
+  const labels = { activity: options.activity, status: statusOptions, expiry: expiryOptions, team: options.team, group: options.group, tag: options.tag }
   const noneLabel = { team: t('app.noTeam'), group: t('app.noGroup'), tag: t('mon.noTags') }
-  for (const key of ['status', 'expiry', 'team', 'group', 'tag']) {
+  for (const key of ['activity', 'status', 'expiry', 'team', 'group', 'tag']) {
     const v = values[key]
-    if (v === DASH_FILTER_DEFAULTS[key]) continue
+    if (v == null || v === DASH_FILTER_DEFAULTS[key]) continue
     // Seçici gizliyken de (seçenek listesi yok — ör. bildirimden gelen takım süzgeci) değer çipte görünür ve kaldırılabilir
     const shownValue = labels[key]?.find((o) => String(o.value) === String(v))?.label ?? (v === '__none__' ? noneLabel[key] : String(v))
     chips.push({ id: key, key, label: t(`dash.flt.${key}`), value: shownValue, onRemove: () => setters[key](DASH_FILTER_DEFAULTS[key]) })

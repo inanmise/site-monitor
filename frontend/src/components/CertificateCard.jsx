@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { CirclePause } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import CertificateCardExtras from './CertificateCardExtras.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
@@ -10,7 +11,7 @@ import {
   CertStatusBadge, CertTierBadge,
 } from './certcard/CertCardParts.jsx'
 import {
-  TONE_LABEL, certTone, nonStandardPort, planChipOf, reasonsOf, renewedDaysAgo, validityOf,
+  TONE_LABEL, certTone, isPausedCert, nonStandardPort, planChipOf, reasonsOf, renewedDaysAgo, validityOf,
 } from './certcard/certCardModel.js'
 import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
 import { isManualCert } from './manualcert/manualCertModel.js'
@@ -57,6 +58,8 @@ const CARD_TONE = {
   critical: 'border-destructive/50 bg-destructive/5 dark:border-destructive/60 dark:bg-destructive/10',
   expired: 'border-destructive/50 bg-destructive/5 dark:border-destructive/60 dark:bg-destructive/10',
   error: 'border-destructive/40 dark:border-destructive/55',
+  // Pasif (izleme durduruldu, 2026-10-08): kesikli kenar + soluk zemin — sol şerit YOK (kalıcı kural)
+  paused: 'border-dashed bg-muted/20 dark:bg-muted/10',
 }
 
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
@@ -71,9 +74,11 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                                           warming = false, extrasPending = false }) {
   const t = useT()
   const tone = certTone(cert)
+  // Pasif kart (2026-10-08): bilgi son kontrolden — bayat gerekçe/bildirim çipleri ve "yeni yenilendi" çizilmez
+  const paused = isPausedCert(cert)
   const validity = validityOf(cert)
-  const renewedDays = renewedDaysAgo(cert, tone)
-  const reasons = reasonsOf(cert, isWeak)
+  const renewedDays = paused ? null : renewedDaysAgo(cert, tone)
+  const reasons = paused ? [] : reasonsOf(cert, isWeak)
   const port = nonStandardPort(cert)
   // Plan verisi: zengin görünümde extra'dan, kompaktta live'dan (App aynı /card-extras satırından verir). İkisi de
   // yoksa bu kartın planı BİLİNMİYOR → kısayol gösterilmez.
@@ -84,7 +89,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
   const domain = cert.domain
 
   return (
-    <Card data-domain={domain} data-tour={tourId} data-status={tone}
+    <Card data-domain={domain} data-tour={tourId} data-status={tone} data-paused={paused ? 'true' : undefined}
       className={cn(
         'group/mcard relative min-w-0 gap-0 overflow-hidden rounded-xl px-4 pt-4 pb-3 shadow-none sm:px-5 sm:pt-[18px] sm:pb-3.5',
         'transition-[translate,box-shadow,border-color] duration-200 hover:-translate-y-[3px] hover:border-primary hover:shadow-lg',
@@ -115,6 +120,20 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
             </span>
           )}
         </div>
+
+        {/* Pasif kart (2026-10-08, kullanıcı: "kartın pasif olduğunu kart görünümünden anlamamız lazım"): rozetin hemen
+            altında kesikli şerit — izleme durduruldu, bilgiler son kontrolden. Rozet + kesikli kenar + gri kahramanla birlikte. */}
+        {paused && (
+          <p data-slot="cert-paused-note" role="note"
+            className="mb-2 flex min-w-0 items-start gap-1.5 rounded-md border border-dashed border-muted-foreground/40 bg-muted/60 px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            <CirclePause aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span className="min-w-0">
+              {t('certcard.pausedNote')}
+              {/* Nasıl sürdürülür — yalnız düzenleyebilene (Düzenle yetkisi yoksa yönlendirme yanıltır) */}
+              {onEdit && <span data-slot="cert-paused-howto"> {t('certcard.pausedHowTo')}</span>}
+            </span>
+          </p>
+        )}
 
         {/* ── Alan adı = kartın AÇMA düğmesi (::after tüm kartı örter) · port · kopyala ── */}
         <div className="mb-1.5 flex min-w-0 items-start gap-1">
@@ -147,10 +166,12 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
       <MonitorCardContent>
         <CertHero cert={cert} tone={tone} validity={validity} renewedDays={renewedDays}
           end={<CertPlanChip chip={planChip} cert={cert} onPlanRenewal={onPlanRenewal} />} />
-        <CertErrorNote error={cert.error} />
+        {!paused && <CertErrorNote error={cert.error} />}
         <CertReasons reasons={reasons} cert={cert} />
-        <CertNotices cert={cert} live={richUptime ? null : live} hasSilentAlert={hasSilentAlert} hasMailFailure={hasMailFailure}
-          onMailFailureClick={onMailFailureClick} />
+        {!paused && (
+          <CertNotices cert={cert} live={richUptime ? null : live} hasSilentAlert={hasSilentAlert} hasMailFailure={hasMailFailure}
+            onMailFailureClick={onMailFailureClick} />
+        )}
         {extra && (
           <CertificateCardExtras cert={cert} extra={extra} reasons={reasons} onOpenHealth={onOpenHealth}
             onConfirmRenewal={onConfirmRenewal} onEditContacts={onEditContacts} confirming={confirming} onOpenShared={onOpenShared} />

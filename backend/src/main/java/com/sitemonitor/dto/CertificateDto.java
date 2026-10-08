@@ -253,6 +253,15 @@ public class CertificateDto {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private String manualUploadedAt;
 
+    /**
+     * İzlemesi durdurulmuş kayıt (2026-10-08, kullanıcı: "pasif sertifikalar da kartlarda görünsün, süzülebilsin"):
+     * yalnız {@code GET /api/certificates/paused} satırlarında {@code true}. Aktif listede null → YAZILMAZ (Pano, İstatistik,
+     * Uyarılar yanıtları bugünküyle bayt bayt aynı). Bilgiler son kontrolden — durum/kalan gün bayat olabilir.
+     */
+    @JsonProperty("paused")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean paused;
+
     /** Sığ kopya + {@code can_manage}; önbellekteki paylaşılan nesneye DOKUNMAZ. */
     public CertificateDto withCanManage(boolean value) {
         CertificateDto copy = new CertificateDto();

@@ -15,6 +15,22 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Genel Bakış'ta pasif sertifika kartları.** İzlemesi durdurulmuş (pasif) sertifikalar artık kartlarda görünür ve
+  aktiflerin ardından, listenin sonunda durur.
+  - **Süzgeç:** yeni "İzleme" süzgeci: Tümü / Aktif / Pasif, her seçenekte kart sayısıyla. Telefonda "Süzgeçler"
+    çekmecesinde.
+  - **Görünüm:** pasif kart tek bakışta ayrılır:
+    - duraklat simgeli "Pasif" rozeti;
+    - kesikli kenar;
+    - rozetin altında "İzleme durduruldu — bilgiler son kontrolden" şeridi;
+    - gri kalan gün kutusu.
+  - **Eylemler:** pasif kartta "Şimdi kontrol et" ve yenileme planı kısayolları yok. Düzenleme yetkisi olana kart,
+    yeniden izlemek için Düzenle'deki "Aktif izleme" kutusunu gösterir.
+  - **Sayaç:** başlık pasif kart varsa "N aktif · M pasif sertifika" der.
+  - **Değişmeyenler:** İstatistik, Uyarılar ve sayaçlar yalnız aktif sertifikaları saymaya devam eder. Pasifler ayrı bir
+    uçtan (`GET /api/certificates/paused`) okunur ve oralara karışmaz.
+
 ## [20.114.0] — 2026-10-08
 
 ### Security

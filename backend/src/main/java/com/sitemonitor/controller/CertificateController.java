@@ -134,6 +134,16 @@ public class CertificateController {
     }
 
     /**
+     * İzlemesi durdurulmuş (pasif) sertifikalar — Pano kartları (2026-10-08). Kapsam {@code /certificates} ile aynı;
+     * her satır {@code paused=true}. Aktif liste değişmez (İstatistik / Uyarılar onu okur).
+     */
+    @GetMapping("/certificates/paused")
+    public ResponseEntity<Map<String, Object>> getPausedCertificates(HttpSession session) {
+        List<CertificateDto> data = certService.getPausedForTeams(SessionScope.monitoringViewTeamIds(session));
+        return ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
+    /**
      * Org geneli görünürlük (2026-09-26). İsteğe bağlı: @WebMvcTest dilimlerinde bean yoksa {@code scope=all}
      * {@code mine}'a düşer, detay okumaları bugünkü takım kapsamında kalır. Yazma kapıları bunu okumaz.
      */
