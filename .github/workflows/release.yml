@@ -40,7 +40,8 @@ jobs:
     name: Require CI green
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
-    timeout-minutes: 45
+    # 90 dk (2026-10-08): CI ~50 dk sürüyor (frontend işi); 45/40 dk sınırı her sürümde aşılıp elle rerun gerekiyordu.
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
@@ -102,16 +103,16 @@ jobs:
 
           # 3) Bitmesini bekle.
           STATUS=""; CONCLUSION=""
-          for i in $(seq 1 240); do           # 240 x 10 sn = 40 dk (job timeout 45 dk)
+          for i in $(seq 1 480); do           # 480 x 10 sn = 80 dk (job timeout 90 dk)
             read -r STATUS CONCLUSION <<<"$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" \
               --jq '"\(.status) \(.conclusion // "-")"')"
             [ "$STATUS" = "completed" ] && break
-            echo "CI durumu: ${STATUS} (${i}/240)…"
+            echo "CI durumu: ${STATUS} (${i}/480)…"
             sleep 10
           done
 
           if [ "$STATUS" != "completed" ]; then
-            echo "::error::CI 40 dakikada bitmedi — sürüm durduruldu: ${RUN_URL}"
+            echo "::error::CI 80 dakikada bitmedi — sürüm durduruldu: ${RUN_URL}"
             exit 1
           fi
           if [ "$CONCLUSION" != "success" ]; then
