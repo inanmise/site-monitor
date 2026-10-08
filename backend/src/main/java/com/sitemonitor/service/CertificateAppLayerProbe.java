@@ -77,6 +77,7 @@ public class CertificateAppLayerProbe {
             // UNKNOWN'un SEBEBİ saklanır: sağlık satırında "Doğrulanamadı" yazıp nedenini
             // söylememek, kullanıcıyı tam olarak buraya bakmaya zorlayan şeydi.
             lc.setHstsNote(hsts.note());
+            lc.setHstsPolicy(hsts.policy());   // ayrıntı (2026-10-08) — bağlanılamadıysa null (eski ayrıntı yanıltmasın)
             lc.setMixedContentStatus(mixed.status());
             lc.setMixedContentAt(now);
             // HSTS ile AYNI sözleşme: UNKNOWN'un sebebi saklanır. Sebep yazılmazsa satır
@@ -105,18 +106,42 @@ public class CertificateAppLayerProbe {
      * bu servis tekil (singleton) ve iki kullanıcı farklı domainler için aynı anda kontrol
      * tetikleyebilir — paylaşılan alan, birinin gerekçesini diğerinin satırına yazardı.
      */
-    private record ProbeOutcome(String status, String note) {}
+    private record ProbeOutcome(String status, String note, String policy) {
+        ProbeOutcome(String status, String note) { this(status, note, null); }
+    }
 
     private ProbeOutcome probeHsts(String domain, int port, boolean forceProxy) {
         // forceProxy YUKARIDAN iner: izlemenin "vekilsiz" tercihi burada yeniden türetilirse
         // sertifika kontrolüyle ayrışır ve aynı domain için iki farklı cevap çıkar.
         Map<String, Object> r = hstsService.diagnose(domain, port, forceProxy);
         String verdict = String.valueOf(r.get("verdict"));
-        if ("ENFORCED".equals(verdict)) return new ProbeOutcome(HSTS_ENABLED, null);
+        if ("ENFORCED".equals(verdict)) return new ProbeOutcome(HSTS_ENABLED, null, policyJson(r));
         if ("ABSENT".equals(verdict) || "NOT_ENFORCED".equals(verdict)) {
-            return new ProbeOutcome(HSTS_MISSING, null);
+            return new ProbeOutcome(HSTS_MISSING, null, policyJson(r));
         }
         return new ProbeOutcome(UNKNOWN, note(verdict, r));   // CONNECT_FAILED ve beklenmeyenler
+    }
+
+    /**
+     * HSTS politikasının ayrıntısı (2026-10-08): sunucunun gönderdiği HAM başlık + ayrıştırılmış yönergeler + HTTP→HTTPS
+     * yönlendirmesi. Sağlık satırı bunu "bu sitede durum" olarak açıklar (max-age kısa mı, alt alan adları kapsanıyor mu,
+     * preload şartları sağlanıyor mu). Başlık 512 karakterle sınırlı; bilinmeyen alan yazılmaz.
+     */
+    static String policyJson(Map<String, Object> r) {
+        try {
+            Map<String, Object> p = new java.util.LinkedHashMap<>();
+            Object raw = r.get("raw_value");
+            String header = raw == null ? null : String.valueOf(raw).trim();
+            if (header != null && header.length() > 512) header = header.substring(0, 512);
+            p.put("header", header == null || header.isEmpty() ? null : header);
+            p.put("max_age", r.get("max_age"));
+            p.put("include_subdomains", Boolean.TRUE.equals(r.get("include_subdomains")));
+            p.put("preload", Boolean.TRUE.equals(r.get("preload")));
+            if (r.get("http_redirects_to_https") instanceof Boolean b) p.put("http_redirects_to_https", b);
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(p);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** UNKNOWN'un okunur gerekçesi — sağlık satırının kanıtında gösterilir. */

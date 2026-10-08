@@ -1219,6 +1219,8 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_checks ADD COLUMN revocation_detail TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN revocation_reason VARCHAR(40)");
         patch("ALTER TABLE latest_checks ADD COLUMN revocation_detail TEXT");
+        // HSTS politikasının ayrıntısı (2026-10-08): ham başlık + max-age / includeSubDomains / preload / HTTP→HTTPS (JSON).
+        patch("ALTER TABLE latest_checks ADD COLUMN hsts_policy TEXT");
         // İstek Gezgini durum kodu dağılımı (2026-09-28): dolu tabloya SONRADAN eklenen NULL'lanabilir kolon. ddl-auto
         // normalde ekler ama ona güvenilmez — ALTER düşerse her dakikanın saveAll'u kolonsuz tabloya yazmaya çalışır,
         // flushPending istisnayı yutar ve İstek Gezgini / top_endpoints KALICI boş kalırdı (2026-09-28c, B3).

@@ -2446,6 +2446,26 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/admin/alerts → manuel sertifika alarmı cert_source=MANUAL taşır; ağ kaydında alan YAZILMAZ (izleme tipi rozeti, 2026-10-08)")
+    void listAlerts_enrichment_manualCertSource() throws Exception {
+        AlertEvent manual = new AlertEvent();
+        manual.setId(401L); manual.setDomain("odeme-imza"); manual.setAlertType("EXPIRY"); manual.setAlertLevel("HIGH");
+        AlertEvent network = new AlertEvent();
+        network.setId(402L); network.setDomain("api.example.com"); network.setAlertType("EXPIRY"); network.setAlertLevel("HIGH");
+        CertificateInventory mInv = inventory("odeme-imza");
+        mInv.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(manual, network)));
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(mInv, inventory("api.example.com")));
+        when(teamRepo.findAllById(any())).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].cert_source").value("MANUAL"))
+                .andExpect(jsonPath("$.data[1].cert_source").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/admin/alerts?alertType=ACCESSIBILITY filters by type and returns type_counts")
     void listAlerts_alertTypeFilter_passedToQueryWithCounts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());

@@ -457,6 +457,52 @@ class CertificateHealthServiceTest {
         assertThat(r.actionKey()).isEqualTo("enableHsts");
     }
 
+    // ── HSTS politika ayrıntısı (2026-10-08, kullanıcı: "ne işe yarıyor, neden yok, preload/includeSubDomains eklenmeli mi") ──
+
+    @Test
+    @DisplayName("HSTS açık + 1 yıl max-age → OK; politika kanıtta (arayüz açıklamayı bundan kurar)")
+    void hstsEnabled_carriesPolicy() {
+        LatestCheck lc = healthy();
+        lc.setHstsPolicy("{\"header\":\"max-age=31536000; includeSubDomains\",\"max_age\":31536000,\"include_subdomains\":true,\"preload\":false}");
+        var r = row(lc, "hsts");
+        assertThat(r.status()).isEqualTo(Status.OK);
+        assertThat(r.valueKey()).isEqualTo("enabled");
+        @SuppressWarnings("unchecked")
+        var policy = (java.util.Map<String, Object>) r.evidence().get("hsts_policy");
+        assertThat(policy).containsEntry("header", "max-age=31536000; includeSubDomains").containsEntry("include_subdomains", true);
+    }
+
+    @Test
+    @DisplayName("HSTS açık ama max-age < 180 gün → UYARI 'kısa' (gün argümanıyla), öneri max-age'i yükseltmek")
+    void hstsShortMaxAge_isWarning() {
+        LatestCheck lc = healthy();
+        lc.setHstsPolicy("{\"header\":\"max-age=86400\",\"max_age\":86400,\"include_subdomains\":false,\"preload\":false}");
+        var r = row(lc, "hsts");
+        assertThat(r.status()).isEqualTo(Status.WARN);
+        assertThat(r.valueKey()).isEqualTo("hstsShortMaxAge");
+        assertThat(r.valueArgs()).containsExactly(1L);
+        assertThat(r.actionKey()).isEqualTo("raiseHstsMaxAge");
+    }
+
+    @Test
+    @DisplayName("başlık gönderiliyor ama max-age=0 → 'bilerek kapatılmış'; max-age yok → 'geçersiz başlık'; başlık yok → 'Yok' (değişmedi)")
+    void hstsMissingVariants() {
+        LatestCheck lc = healthy();
+        lc.setHstsStatus("MISSING");
+        lc.setHstsPolicy("{\"header\":\"max-age=0\",\"max_age\":0,\"include_subdomains\":false,\"preload\":false}");
+        assertThat(row(lc, "hsts").valueKey()).isEqualTo("hstsDisabled");
+        lc.setHstsPolicy("{\"header\":\"includeSubDomains\",\"max_age\":null,\"include_subdomains\":true,\"preload\":false}");
+        var invalid = row(lc, "hsts");
+        assertThat(invalid.valueKey()).isEqualTo("hstsInvalid");
+        assertThat(invalid.actionKey()).isEqualTo("fixHstsHeader");
+        lc.setHstsPolicy("{\"header\":null,\"max_age\":null,\"include_subdomains\":false,\"preload\":false}");
+        assertThat(row(lc, "hsts").valueKey()).isEqualTo("missing");
+        lc.setHstsPolicy(null);   // eski kayıt — davranış birebir
+        var legacy = row(lc, "hsts");
+        assertThat(legacy.valueKey()).isEqualTo("missing");
+        assertThat(legacy.evidence()).doesNotContainKey("hsts_policy");
+    }
+
     @Test
     @DisplayName("HSTS doğrulanamadıysa SEBEBİ kanıtta taşınır (sebepsiz 'Doğrulanamadı' kör nokta)")
     void hstsUnverifiedCarriesReason() {

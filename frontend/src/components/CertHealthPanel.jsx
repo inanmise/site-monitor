@@ -9,6 +9,7 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import { REVOCATION_REASONS, attemptText } from '../utils/revocationInfo.js'
+import HstsExplainer from './certhealth/HstsExplainer.jsx'
 
 /**
  * Sertifika Sağlık Kontrol Listesi.
@@ -267,7 +268,11 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
   const style = STATUS_STYLE[row.status] || STATUS_STYLE.UNKNOWN
   const { Icon } = style
   const evidence = row.evidence && typeof row.evidence === 'object' ? row.evidence : {}
-  const hasEvidence = Object.keys(evidence).length > 0
+  // HSTS satırı (2026-10-08) HER ZAMAN açılır: kanıt olmasa da "HSTS nedir / eklenmeli mi" açıklaması okunabilsin.
+  // Politika ayrıntısı (hsts_policy) genel kanıt listesinde değil, açıklama panelinde çizilir.
+  const isHsts = row.key === 'hsts'
+  const evidenceRows = Object.entries(evidence).filter(([k]) => k !== 'hsts_policy')
+  const hasEvidence = evidenceRows.length > 0 || isHsts
   const noAction = row.action_key === 'none'
   const cipher = evidence.cipher_suite
 
@@ -318,9 +323,9 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
       )}
 
 
-      {expanded && hasEvidence && (
+      {expanded && evidenceRows.length > 0 && (
         <dl className="hlth-evidence">
-          {Object.entries(evidence).map(([k, v]) => (
+          {evidenceRows.map(([k, v]) => (
             <div key={k} className="hlth-evidence-row">
               <dt>{t(`hlth.ev.${k}`) === `hlth.ev.${k}` ? k : t(`hlth.ev.${k}`)}</dt>
               <dd><EvidenceValue k={k} v={v} t={t} /></dd>
@@ -328,6 +333,7 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
           ))}
         </dl>
       )}
+      {expanded && isHsts && <HstsExplainer policy={evidence.hsts_policy} />}
     </div>
   )
 }

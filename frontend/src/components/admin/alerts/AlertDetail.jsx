@@ -25,7 +25,7 @@ import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, RepeatBadge,
-  SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge,
+  SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge, AlertMonitorTypeBadge,
 } from './AlertBadges.jsx'
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
 import { StormPushSection, StormPushTimelineEntry } from './AlertStormPush.jsx'
@@ -176,6 +176,7 @@ export function AlertDetailBody({
             <span className="font-semibold">{a.domain || '—'}</span>
             {a.message && <div className="mt-0.5 text-xs text-muted-foreground">{a.message}</div>}
           </Fact>
+          <Fact label={t('alh.fact.monitorType')}><AlertMonitorTypeBadge alert={a} fallback="—" /></Fact>
           <Fact label={t('alh.fact.type')}><AlertTypeChip type={a.alert_type} className="text-[1em]" /></Fact>
           <Fact label={t('alh.fact.team')}>
             {a.team_id != null

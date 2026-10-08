@@ -24,7 +24,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
-  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge,
+  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge, AlertMonitorTypeBadge,
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
 import { NocCallIndicator } from './NocCallLog.jsx'
@@ -204,6 +204,7 @@ export function OpenAlertCard({
       {a.message && <p className="mt-1 line-clamp-2 px-3 text-[13px] text-muted-foreground [overflow-wrap:anywhere] sm:px-4" title={a.message}>{a.message}</p>}
 
       <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-muted-foreground sm:px-4">
+        <AlertMonitorTypeBadge alert={a} />
         <AlertTypeChip type={a.alert_type} />
         <span className={cn(LAYER, 'min-w-0')}><AlertTeam alert={a} teamName={teamName} onPickTeam={onPickTeam} /></span>
         <span className="inline-flex items-center gap-1 whitespace-nowrap" title={a.created_at}>
@@ -377,6 +378,10 @@ export function AlertRowsList({
                         <AlertTypeIcon type={a.alert_type} className="mt-px" />
                         <span className="line-clamp-2 min-w-0 pt-0.5 [overflow-wrap:anywhere]">{a.domain}</span>
                       </Button>
+                      <div data-slot="alert-card-types" className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 text-xs">
+                        <AlertMonitorTypeBadge alert={a} />
+                        <AlertTypeChip type={a.alert_type} />
+                      </div>
                       {a.message && <p className="mt-1 line-clamp-1 px-3 text-xs text-muted-foreground [overflow-wrap:anywhere]">{a.message}</p>}
                       <div className="mt-2 flex min-w-0 flex-col gap-1.5 border-t px-3 py-2 text-xs">
                         <span className={cn(LAYER, 'inline-flex min-w-0 items-center gap-1.5 text-muted-foreground')} data-slot="alert-team-line">
@@ -445,6 +450,7 @@ export function AlertRowsList({
                       <AlertTypeIcon type={a.alert_type} />
                       <div className="min-w-0">
                         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <AlertMonitorTypeBadge alert={a} />
                           <span className="line-clamp-2 font-semibold [overflow-wrap:anywhere]" title={a.domain}>{a.domain}</span>
                           <MaintenanceBadge target={a.domain} />
                           <RepeatBadge count={a.repeat_count} />

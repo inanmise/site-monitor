@@ -109,6 +109,12 @@ public class LatestCheck {
      *  Nullable: dolu tabloya NOT NULL kolon eklemek sessizce düşer ve her sorgu 500 verirdi. */
     private String hstsNote;
 
+    /** HSTS politikasının AYRINTISI (2026-10-08, kullanıcı: "HSTS çok bilinen bir konu değil; ne işe yarıyor, neden yok,
+     *  preload / includeSubDomains eklenmeli mi?"): ham başlık + max-age + includeSubDomains + preload + HTTP→HTTPS
+     *  yönlendirmesi, kısa JSON. Yalnız "Şimdi kontrol et" (CertificateAppLayerProbe) yazar; null = hiç bakılmadı / eski kayıt. */
+    @Column(columnDefinition = "TEXT")
+    private String hstsPolicy;
+
     /**
      * OTOMATİK parmak izi pini (TOFU — ilk görüşte güven). Kullanıcıdan hiçbir aksiyon istenmez:
      * sertifika ilk görüldüğünde sabitlenir, her kontrolde sunulanla karşılaştırılır ve DEĞİŞTİĞİ

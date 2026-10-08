@@ -123,6 +123,10 @@ public class AlertEvent {
     @Transient private Long    syTeamId;
     @Transient private Long    ugTeamId;
     @Transient private Integer certTier;
+    /** Sertifika alarmının kaynağı (2026-10-08, Alarm Geçmişi izleme tipi rozeti): yalnız dosyadan yüklenen (MANUAL)
+     *  kayıtta dolu — arayüz "Manuel sertifika" der. Ağ kaydında ve diğer alarm türlerinde YAZILMAZ (null). */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @Transient private String  certSource;
     @Transient private Long    emailSentCount;
     @Transient private Long    emailFailedCount;
     /** Kontak webhook'u (Teams/Slack) ile teslim edilen bildirim sayısı — O-A3-6: webhook-tek teslimat "kimseye ulaşmadı" değildir. */

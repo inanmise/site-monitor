@@ -2392,6 +2392,7 @@ public class AdminController {
                 ev.setSyTeamId(inv.getTeamId());
                 ev.setUgTeamId(inv.getUgTeamId());
                 ev.setCertTier(inv.getTier());
+                if (inv.isManual()) ev.setCertSource(inv.getCertSource());   // "Manuel sertifika" rozeti (2026-10-08)
             }
             long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0, 0});
             ev.setEmailSentCount(counts[0]);
