@@ -166,11 +166,28 @@ public class RdapDomainClient {
             if (!SafeRedirect.isRedirect(raw.statusCode())) return capped(raw);
             URI next = SafeRedirect.nextHop(current, raw.headers().firstValue("location").orElse(null));
             if (next == null) return capped(raw);   // takip edilemez sema/host -> 3xx oldugu gibi doner
-            try (java.io.InputStream is = raw.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* baglanti iadesi */ }
+            discardRedirectBody(raw);
             current = next;
         }
         throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");
     }
+
+    /**
+     * 3xx govdesini en cok 4 KB okuyup birakir (baglanti iadesi) — artik SURE sinirli (2026-10-08, "zaman asimi
+     * olmayan servis cagrisi" denetimi). Eskiden ciplak {@code readNBytes(4096)} vardi: java.net.http zaman asimi
+     * yalniz basliklara kadar isler, govdeyi bayt bayt damlatan (ya da hic bitirmeyen) bir yonlendirme yaniti
+     * lookup'i SURESIZ tutuyordu. Butce istegin kendi zaman asimi (HttpBodies.bodyBudgetMs); dolunca o ana kadar
+     * okunan atilir ve zincir eskisi gibi sonraki hop'a gecer — sonuc degismez.
+     */
+    static void discardRedirectBody(HttpResponse<java.io.InputStream> raw) {
+        try {
+            com.sitemonitor.util.HttpBodies.readPreview(raw.body(), 4096,
+                    com.sitemonitor.util.HttpBodies.bodyBudgetMs(raw, REDIRECT_BODY_BUDGET_MS), "RDAP yonlendirme");
+        } catch (Exception ignore) { /* baglanti iadesi — en iyi caba */ }
+    }
+
+    /** Istegin zaman asimi yoksa 3xx govdesi icin butce (ms). */
+    static final long REDIRECT_BODY_BUDGET_MS = 10_000L;
 
     /** Cozulemeyen host baglantiyi DURDURMAZ (proxy/split-DNS); blok kararlari aynen gecerlidir. */
     private void guard(String host) {

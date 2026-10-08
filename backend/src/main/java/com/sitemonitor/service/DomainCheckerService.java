@@ -302,19 +302,92 @@ public class DomainCheckerService {
         } catch (Exception ignore) { /* üst veri — kontrol sonucu olduğu gibi kalır */ }
     }
 
+    // ── Ters-DNS (PTR) süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ─────────────────────
+    //
+    // InetAddress.getCanonicalHostName() uygulama zaman aşımı ALMAZ: işletim sistemi çözücüsü yanıtsız bir PTR için
+    // saniyelerce (çözücü × deneme) bekler ve en fazla 8 IP SIRAYLA sorgulanıyordu — tek bir alan adı kontrolü (ve
+    // onu bekleyen sıralı günlük süpürme) PTR'ları yanıtsız bir ağda dakikalara uzayabiliyordu. AuditGeoEnricher bu
+    // çağrıyı zaten 1,5 sn ile sınırlıyordu. Sorgular artık SINIRLI bir havuzda paralel koşar ve hepsi ortak bir
+    // tavanla (REVERSE_DNS_TOTAL_MS) beklenir; süresi dolan ya da havuz dolu olduğu için yapılamayan sorgunun IP'si
+    // ADSIZ kalır — bugün başarısız bir sorgunun sonucuyla AYNI (IP listesi değişmez, yalnız hostname eksik).
+
+    /** Ters-DNS'te en fazla sorgulanan IP sayısı (eski davranış). */
+    static final int REVERSE_DNS_MAX_IPS = 8;
+
+    /** Tüm PTR sorgularının ortak bekleme tavanı (ms) — paralel koştukları için sorgu başına da tavandır. Normal bir PTR
+     *  milisaniyeler sürer; 8 sn, bir kayıp UDP paketinin çözücü yinelemesine bile pay bırakan cömert bir sınırdır. */
+    static final long REVERSE_DNS_TOTAL_MS = 8_000L;
+
+    /** Askıda kalan PTR sorguları için SINIRLI havuz (doğrudan devir, en fazla 64 iş parçacığı; taşarsa sorgu yapılmaz).
+     *  Zaman aşımına uğrayan sorgu işletim sistemi bırakana dek bir iş parçacığını tutar; sınır bu birikimi keser. */
+    private static final java.util.concurrent.ThreadPoolExecutor PTR_POOL = newPtrPool();
+
+    private static java.util.concurrent.ThreadPoolExecutor newPtrPool() {
+        java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return new java.util.concurrent.ThreadPoolExecutor(0, 64, 30, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.SynchronousQueue<>(),
+                r -> {
+                    Thread t = new Thread(r, "domain-ptr-" + seq.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
+
     /** Çözülen IP'ler için reverse-DNS (PTR) — best-effort, en fazla ilk 8 IP; PTR yoksa (host==ip) atlanır. */
     private static List<String> reverseDns(List<String> ips) {
-        List<String> out = new ArrayList<>();
-        int n = 0;
+        return reverseDns(ips, DomainCheckerService::canonicalHostName, REVERSE_DNS_TOTAL_MS);
+    }
+
+    /**
+     * {@link #reverseDns(List)} gövdesi — sorgu ve tavan testte değiştirilebilir. Sonuç sırası IP sırasıdır; süresi dolan,
+     * hata veren ya da havuz dolu olduğu için yapılamayan sorgu atlanır (eskiden başarısız sorgu da atlanıyordu).
+     */
+    static List<String> reverseDns(List<String> ips, java.util.function.UnaryOperator<String> lookup, long totalMs) {
+        List<String> targets = new ArrayList<>();
         for (String ip : ips) {
             if (ip == null || ip.isBlank()) continue;
-            if (n++ >= 8) break;
+            if (targets.size() >= REVERSE_DNS_MAX_IPS) break;
+            targets.add(ip);
+        }
+        List<java.util.concurrent.Future<String>> futures = new ArrayList<>(targets.size());
+        for (String ip : targets) {
             try {
-                String host = java.net.InetAddress.getByName(ip).getCanonicalHostName();
+                futures.add(PTR_POOL.submit(() -> lookup.apply(ip)));
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                futures.add(null);   // havuz askıda sorgularla dolu → bu IP adsız kalır
+            }
+        }
+        long deadline = System.nanoTime() + Math.max(0L, totalMs) * 1_000_000L;
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < targets.size(); i++) {
+            java.util.concurrent.Future<String> f = futures.get(i);
+            if (f == null) continue;
+            String ip = targets.get(i);
+            try {
+                long remainingMs = Math.max(0L, (deadline - System.nanoTime()) / 1_000_000L);
+                String host = f.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS);
                 if (host != null && !host.equalsIgnoreCase(ip)) out.add(host.toLowerCase(java.util.Locale.ROOT));
-            } catch (Exception ignore) {}
+            } catch (java.util.concurrent.TimeoutException e) {
+                f.cancel(true);
+                log.debug("Ters-DNS {} ms içinde bitmedi, IP adsız bırakıldı: {}", totalMs, ip);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                for (int j = i; j < futures.size(); j++) if (futures.get(j) != null) futures.get(j).cancel(true);
+                break;
+            } catch (Exception ignore) {
+                // sorgu hatası — eskisi gibi atlanır
+            }
         }
         return out;
+    }
+
+    private static String canonicalHostName(String ip) {
+        try {
+            return java.net.InetAddress.getByName(ip).getCanonicalHostName();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Map<String, Object> unknownResult(String domain, String error, String checkedAt) {

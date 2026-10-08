@@ -859,8 +859,7 @@ public class CertificateCheckerService {
             URI uri = URI.create(current);
             guardHstsHost(uri.getHost());
             HttpURLConnection hc = openHstsConnection(uri, useProxy, factory, method);
-            hc.connect();
-            int code = hc.getResponseCode();
+            int code = hstsResponseCode(hc);
             if (!SafeRedirect.isRedirect(code)) return hc;
             URI next = SafeRedirect.nextHop(uri, hc.getHeaderField("Location"));
             // Takip edilemeyen hedef (şema dışı/host'suz) ya da https→http düşürümü → son yanıtı
@@ -871,6 +870,37 @@ public class CertificateCheckerService {
             current = next.toString();
         }
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
+    }
+
+    /**
+     * HSTS HEAD'inin hop başına TOPLAM süresi (ms) — 2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi.
+     * connect/read zaman aşımları (4'er sn) yalnız TEK bir okumayı sınırlar: yanıt başlıklarını bayt bayt damlatan
+     * bir sunucu {@code getResponseCode()}'u süresiz uzatıp certCheckExecutor iş parçacığını rehin tutuyordu (OCSP/CRL'de
+     * kapatılan BO8 sınıfının aynısı). Meşru bir HEAD en kötü bağlantı 4 sn + okuma 4 sn sürer; 15 sn cömert pay.
+     */
+    static final long HSTS_HOP_TOTAL_MS = 15_000L;
+    long hstsHopTotalMs = HSTS_HOP_TOTAL_MS;
+
+    /**
+     * {@code connect()} + {@code getResponseCode()} toplam süre bekçisi altında. Süre dolunca bekçi bağlantıyı keser ve
+     * açık bir {@link com.sitemonitor.util.HttpBodies.BodyDeadlineException} (IOException) fırlatılır — çağıranın mevcut
+     * hata yolu (hsts=null, http_status=null) aynen işler. Yarıda kesilen başlıklardan JDK'nın yine de bir durum kodu
+     * döndürebildiği durumda da süre dolduysa sonuç KULLANILMAZ (eksik başlık "HSTS yok" diye raporlanmasın).
+     */
+    int hstsResponseCode(HttpURLConnection hc) throws java.io.IOException {
+        try (com.sitemonitor.util.HttpBodies.ConnectionDeadline dl =
+                     com.sitemonitor.util.HttpBodies.deadline(hc, hstsHopTotalMs, "HSTS")) {
+            int code;
+            try {
+                hc.connect();
+                code = hc.getResponseCode();
+            } catch (java.io.IOException | RuntimeException e) {
+                if (dl.expired()) throw dl.timeout();
+                throw e;
+            }
+            if (dl.expired()) throw dl.timeout();
+            return code;
+        }
     }
 
     /** Tek hop için bağlantı — vekil/doğrudan seçimi ve TLS factory'si korunur; takip KAPALI. */
@@ -953,7 +983,20 @@ public class CertificateCheckerService {
         return r;
     }
 
-    private Map<String, Object> error(String domain, String msg) {
+    /**
+     * Sweep'in beklemeyi bıraktığı (askıda kalan) kontrolün sonucu (2026-10-08, {@code SchedulerService.awaitCertCheck}).
+     * Checker'ın ağ zaman aşımıyla AYNI biçim: {@code status=error}, {@code error_class=NETWORK}, "Connection timeout…"
+     * iletisi — kayıt, toplu ağ kesintisi hesabı ve alarm hattı onu gerçek bir bağlantı zaman aşımı gibi işler. Takıldığı
+     * aşama bilinmediği için {@code error_stage} yazılmaz (uydurma aşama yok).
+     */
+    public static Map<String, Object> sweepWaitTimeoutResult(String domain, long waitedMs) {
+        Map<String, Object> r = error(domain, "Connection timeout: check did not complete within "
+                + Math.round(waitedMs / 1000.0) + "s (sweep wait limit)");
+        r.put("error_class", "NETWORK");
+        return r;
+    }
+
+    private static Map<String, Object> error(String domain, String msg) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("domain", domain);
         result.put("status", "error");

@@ -141,4 +141,32 @@ class HstsProbeRedirectGuardTest {
         service.guardHstsHost("intranet.example.com");   // fırlatmamalı
         verify(guard).validate("intranet.example.com");
     }
+
+    // ── TOPLAM süre (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ─────────────────────────────────
+
+    @Test
+    @DisplayName("KAPI (2026-10-08): başlıkları damlatan sunucu HSTS HEAD'ini süresiz tutamaz — hop bütçesinde kesilir")
+    void hstsHead_headerDrip_abortedWithinHopBudget() throws Exception {
+        service.hstsHopTotalMs = 1_000L;   // okuma zaman aşımı 4 sn (sabit) — bütçe ondan KISA
+        try (com.sitemonitor.util.DripServer drip = com.sitemonitor.util.DripServer.start(
+                true, "HTTP/1.1 200 OK\r\nX-Pad: ", 100)) {
+            long t0 = System.nanoTime();
+            assertThatThrownBy(() -> org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(15),
+                    () -> service.openHstsFollowingSafely("http://127.0.0.1:" + drip.port() + "/", false, null)))
+                    .isInstanceOf(com.sitemonitor.util.HttpBodies.BodyDeadlineException.class)
+                    .hasMessageContaining("HSTS");
+            assertThat((System.nanoTime() - t0) / 1_000_000L)
+                    .as("bütçe 1 sn; bekçisiz en erken 4 sn (okuma zaman aşımı), damla ulaşırsa ~60 sn").isLessThan(3_500L);
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: normal HEAD bütçeden etkilenmez — durum kodu ve başlıklar aynen okunur")
+    void hstsHead_normalResponse_unchanged() throws Exception {
+        String base = startServer(p -> "/next");
+        HttpURLConnection hc = service.openHstsFollowingSafely(base + "/next", false, null);
+        assertThat(hc.getResponseCode()).isEqualTo(200);
+        assertThat(hc.getHeaderField("Strict-Transport-Security")).isEqualTo("max-age=31536000");
+        assertThat(CertificateCheckerService.HSTS_HOP_TOTAL_MS).isEqualTo(15_000L);
+    }
 }

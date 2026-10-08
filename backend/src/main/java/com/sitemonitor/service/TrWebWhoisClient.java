@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.net.ssl.SSLContext;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -200,16 +199,10 @@ public class TrWebWhoisClient {
             OutputStream os = sock.getOutputStream();
             os.write((domain + "\r\n").getBytes(StandardCharsets.US_ASCII));
             os.flush();
-            StringBuilder sb = new StringBuilder();
-            try (InputStream is = sock.getInputStream()) {
-                byte[] buf = new byte[4096];
-                int n, total = 0;
-                while ((n = is.read(buf)) != -1 && total < 200_000) {
-                    sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
-                    total += n;
-                }
-            }
-            return extractWhois(sb.toString());   // BOM/başlık kırpar; "** Domain Name:"'den itibaren temiz blok
+            // TOPLAM süre sınırlı okuma (2026-10-08): SO_TIMEOUT yalnız tek okumayı sınırlar; damlatan bir sunucu
+            // döngüyü süresiz tutuyordu. Süre dolunca SocketTimeoutException → fetch()'in mevcut "sağlayıcı başarısız" yolu.
+            String raw = WhoisDomainClient.readPort43(sock, timeoutMs, WhoisDomainClient.port43TotalMs(timeoutMs));
+            return extractWhois(raw);   // BOM/başlık kırpar; "** Domain Name:"'den itibaren temiz blok
         }
     }
 

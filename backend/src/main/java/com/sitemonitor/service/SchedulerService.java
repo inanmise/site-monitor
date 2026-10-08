@@ -269,6 +269,13 @@ public class SchedulerService {
     @Value("${site.monitor.scheduler.lock-ttl-minutes:10}")
     private int lockTtlMinutes;
 
+    /** Sertifika süpürmesinde İLERLEMESİZ bekleme tavanı (sn) — bkz. {@link #awaitCertCheck} (2026-10-08). Tek kontrolün
+     *  meşru en kötü süresinin (kayıt başına ≤ 60 sn zaman aşımı × ≤ 5 deneme + OCSP/CRL/HSTS) üstünde, cömert seçildi. */
+    static final long CERT_CHECK_MAX_WAIT_SECONDS = 900L;
+
+    @Value("${site.monitor.check.sweep-max-wait-seconds:900}")
+    private long certCheckMaxWaitSeconds = CERT_CHECK_MAX_WAIT_SECONDS;
+
     /** Sweep-level distributed lock TTL. Kısa tutulur (2 dk) → crash sonrası kilit hızlı
      *  self-heal olur; startup temizliği (clearStaleLocksForThisHost) de ayrıca siler.
      *  İzleme sweep'leri hızlıdır; çok sayıda monitörde bir sweep bu süreyi aşarsa 2+ pod'da
@@ -2506,10 +2513,22 @@ public class SchedulerService {
                             (Integer) d.get("timeout_seconds")))
                     .toList();
 
-            List<Map<String, Object>> results = futures.stream()
-                    .map(CompletableFuture::join)
-                    .map(r -> { Map<String, Object> m = new LinkedHashMap<>(r); m.put("run_id", runId); return m; })
-                    .toList();
+            // Süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): burada süresiz join vardı —
+            // askıda kalan TEK bir kontrol sweep iş parçacığını, in-process "running" bayrağını (sonraki turlar
+            // "already in progress" ile atlanıyordu) ve cert-check kilidini süresiz tutuyordu. Bekleme İLERLEMEYE
+            // bağlıdır (bkz. awaitCertCheck): kuyrukta sırası gelmemiş ya da yavaş ama süren kontrol KESİLMEZ.
+            java.util.concurrent.atomic.AtomicLong lastProgressNanos =
+                    new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+            futures.forEach(f -> f.whenComplete((r, e) -> lastProgressNanos.set(System.nanoTime())));
+            long maxWaitMs = Math.max(1L, certCheckMaxWaitSeconds) * 1000L;
+            List<Map<String, Object>> results = new java.util.ArrayList<>(futures.size());
+            for (int i = 0; i < futures.size(); i++) {
+                Map<String, Object> r = awaitCertCheck(futures.get(i), (String) domains.get(i).get("domain"),
+                        lastProgressNanos, maxWaitMs);
+                Map<String, Object> m = new LinkedHashMap<>(r);
+                m.put("run_id", runId);
+                results.add(m);
+            }
 
             results.forEach(certService::saveResult);
             // Cache evict YALNIZ veri-değiştiren tam/manuel sweep sonrası (evictCaches=true).
@@ -2596,6 +2615,49 @@ public class SchedulerService {
             lastRunId.set(currentRunId.get());
             currentRunId.set("");
             releaseSchedulerLock("cert-check");
+        }
+    }
+
+    /**
+     * Tek sertifika kontrolünün sonucunu İLERLEMEYE bağlı bir tavanla bekler (2026-10-08).
+     *
+     * <p><b>Neden ilerlemeye bağlı.</b> Tüm kontroller tek seferde kuyruğa atılır; havuz (20 çekirdek) onları sırayla
+     * işler. Gönderim anına bağlı sabit bir tavan (diğer sweep'lerdeki 180 sn) büyük envanterde kuyrukta sırası
+     * gelmemiş SAĞLAM bir kontrolü keserdi. Bu yüzden süre, turdaki HERHANGİ bir kontrolün son bitişinden (ilk an =
+     * beklemenin başı) sayılır: kontroller bitmeye devam ettikçe bekleme sürer; yalnız {@code maxWaitMs} boyunca
+     * hiçbir kontrol bitmezse kalan (askıda) kontrol bırakılır.
+     *
+     * <p><b>Anlam {@code join()} ile aynı.</b> İstisnayla biten kontrol aynen fırlatır (turun mevcut catch'i yakalar);
+     * kesme bayrağı bekleme boyunca ertelenir ve sonunda geri konur. Bırakılan kontrol, checker'ın ağ zaman aşımıyla
+     * AYNI biçimde ({@code status=error}, {@code error_class=NETWORK}) kaydedilir — toplu ağ kesintisi hesabı ve alarm
+     * hattı onu gerçek bir bağlantı zaman aşımı gibi işler. Askıdaki iş parçacığı kendi süresiyle biter; sonucu atılır.
+     */
+    Map<String, Object> awaitCertCheck(CompletableFuture<Map<String, Object>> f, String domain,
+                                       java.util.concurrent.atomic.AtomicLong lastProgressNanos, long maxWaitMs) {
+        boolean interrupted = false;
+        try {
+            while (!f.isDone()) {
+                long idleMs = (System.nanoTime() - lastProgressNanos.get()) / 1_000_000L;
+                long remainingMs = maxWaitMs - idleMs;
+                if (remainingMs <= 0) {
+                    if (f.isDone()) break;
+                    log.warn("Sertifika kontrolü {} sn boyunca ilerleme olmadan bitmedi — sweep beklemeyi bıraktı, "
+                            + "ağ zaman aşımı olarak kaydediliyor: domain={}", maxWaitMs / 1000, domain);
+                    return CertificateCheckerService.sweepWaitTimeoutResult(domain, maxWaitMs);
+                }
+                try {
+                    f.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    // döngü: bu arada başka bir kontrol bittiyse kalan süre yeniden hesaplanır
+                } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException e) {
+                    break;   // istisnayla bitti — aşağıdaki join() aynı istisnayı fırlatır (eski davranış)
+                } catch (InterruptedException ie) {
+                    interrupted = true;   // join() gibi: bekleme sürer, bayrak sonunda geri konur
+                }
+            }
+            return f.join();
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
         }
     }
 
