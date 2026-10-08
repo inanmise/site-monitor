@@ -1,9 +1,86 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T14:17:36Z",
+  "generatedAt": "2026-10-08T16:24:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 715,
+  "count": 716,
   "releases": [
+    {
+      "version": "20.113.0",
+      "tag": "v20.113.0",
+      "releasedAt": "2026-10-08T16:24:03Z",
+      "commit": "3d9510b6fc6b8b9aaf2ae4f5d20935ff4f18fba6",
+      "prevVersion": "20.112.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 3,
+        "perf": 1,
+        "refactor": 0,
+        "docs": 1,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d9510b6",
+          "subject": "Manuel Sertifikalar — tembel yüklenen sihirbaz başlığı için bekleme 10 sn (CI kapsam ölçümü altında 1 sn yetmedi)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2b686f66",
+          "subject": "kimlik sızıntısı kapısı .claude/worktrees ajan kopyalarını taramaz (git dışı eski dosyalar yerel koşuyu düşürüyordu)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "7c3aec4c",
+          "subject": "CHANGELOG ve CLAUDE.md — veritabanı sağlık ucu, izleme tipi rozeti, HSTS ayrıntısı, doğrulama, zaman aşımları, ertelenmiş index'ler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "79f80605",
+          "subject": "arayüzde okuma istekleri artık süresiz asılı kalmaz (GET/HEAD varsayılan 90 sn), çağıranın iptal sinyali korunur"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "1faaa641",
+          "subject": "filtrelenen alanlara eksik index'ler — büyük tablolarda açılışı bekletmeden arka planda (CONCURRENTLY)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "72423a5c",
+          "subject": "doğrulanmadan alınan girdilere alan bazlı doğrulama — k6 env ayrılmış adları, eskalasyon kişisi kapsamı, nötr giriş-sorunu onayı, rehber bağlantı şeması, ping host/paket, yanlış JSON türü 400"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5250bbcf",
+          "subject": "dışarıdan çağrılan veritabanı sağlık ucu, alarm geçmişinde izleme tipi rozeti, Sağlık sekmesinde kapsamlı HSTS açıklaması"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c93d1bad",
+          "subject": "zaman aşımı olmayan servis çağrıları sınırlandı — sertifika sweep'i askıda kontrolü ilerlemeye bağlı 900 sn'de bırakır (NETWORK zaman aşımı olarak kaydedilir), HSTS HEAD/tanılama ve port HTTP toplam …"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.112.2",
       "tag": "v20.112.2",

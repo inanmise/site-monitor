@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.113.0] — 2026-10-08
+
 ### Added
 - **Dışarıdan çağrılabilen veritabanı sağlık kontrolü: `GET /api/public/health/db`** (oturum gerekmez). Kontrol
   edilenler:
@@ -2498,7 +2500,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.113.0...HEAD
+[20.113.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.113.0
 [20.112.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.2
 [20.112.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.1
 [20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
