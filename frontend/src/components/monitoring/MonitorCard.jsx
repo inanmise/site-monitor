@@ -5,6 +5,8 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/shadcn/c
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import HintPopover from '../ui/HintPopover.jsx'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer.js'
 import { Spinner } from '../ui/Progress.jsx'
 import NocStatus from '../noc/NocStatus.jsx'
 import FavoriteToggle from './FavoriteToggle.jsx'
@@ -92,12 +94,13 @@ export function MonitorCard({ status = 'unknown', alarm = false, inactive = fals
         // Aktif (çözülmemiş) alarm: TÜM kart kenarı (sol şerit değil) — alarm, monitör tekrar 'up' okusa
         // bile toparlanma penceresinde açık kalabilir.
         alarm && 'bg-destructive/5 outline-[1.5px] outline-offset-[-1.5px] outline-destructive/55 dark:bg-destructive/10',
-        // Duraklatılmış: kesik kenar + İÇERİK soluk; alt çubuk (rozet + Sürdür) TAM opak kalır — eskiden bütün
-        // kart opacity-55'ti, çocuk ebeveynden opak olamayacağı için Sürdür düğmesi de soluk çıkardı.
-        // Soluklaşma başlık/içerik KABINA verilir (tek tek çocuklara değil): opaklık yığın bağlamı açar; başlık
-        // kabı soluklaşınca kutu/kopyala (z-10) ile başlık düğmesinin ::after örtüsü AYNI bağlamda kalır, kutu
-        // örtünün üstünde tıklanabilir kalır. Üst satırı tek başına soluklaştırmak onu örtünün ALTINA iterdi.
-        inactive && 'border-dashed bg-muted/30 [&_[data-slot=card-content]]:opacity-60 [&_[data-slot=card-header]]:opacity-75',
+        // Duraklatılmış: kesik kenar + "Duraklatıldı" rozeti (alt çubuk) + gri durum rozeti. METİN SOLUKLAŞTIRILMAZ
+        // (2026-10-09): eskiden içerik kabı opacity-60'tı → bg-muted/30 üstünde soluk etiketler ~2,3:1 kontrasta iniyordu.
+        // Yalnız ölçü DEĞERLERİ (her türün `*-value` yuvası) son bilinen değer olduğunu söyleyen gri tona, trend çizgisi
+        // (Sparkline `svg.spark`) yarı saydama iner. Değerler RENKLE soluklaşır, opaklıkla değil: opaklık yığın bağlamı açıp
+        // değeri başlık düğmesinin ::after örtüsünün ÜSTÜNE çıkarır ve dokunuş detayı açmazdı; çizgi için aynı nedenle
+        // `pointer-events-none` (dokunuş alttaki örtüye ya da sarmalayan düğmeye geçer).
+        inactive && 'border-dashed bg-muted/30 [&_[data-slot$=-value]]:text-muted-foreground [&_svg.spark]:pointer-events-none [&_svg.spark]:opacity-60',
         className,
       )}
       {...rest}
@@ -235,13 +238,30 @@ export function MonitorCardMetrics({ className, children }) {
 /**
  * Tek ölçü: değer + küçük büyük harfli etiket (eski .upt-metric). `hint` verilirse ipucu (DetailMetric ile aynı);
  * ipucu hover/odak ister, bu yüzden ölçü örtünün üstüne çıkar ve klavyeyle odaklanabilir olur.
+ *
+ * <p>Dokunmatikte (2026-10-09) Tooltip hiç açılmıyordu → `pointer: coarse`'da ölçü `ui/HintPopover` tetiğidir (dokun-gör;
+ * NocStatus ile aynı desen). Fare/klavye görünümü ve davranışı DEĞİŞMEZ. Etiket en az 11 px (telefonda 12 px).
+ * Değer yuvası `monitor-metric-value` (duraklatılmış kartta gri tona iner — MonitorCard).
  */
+export const METRIC_LABEL = 'text-[11px] font-semibold tracking-[.05em] text-muted-foreground uppercase max-sm:text-xs'
+
 export function MonitorMetric({ value, label, hint, valueClassName, className }) {
+  const coarse = useCoarsePointer()
+  const valueEl = <span data-slot="monitor-metric-value" className={cn('text-[13px] leading-tight font-bold text-foreground tabular-nums', valueClassName)}>{value}</span>
+  const labelEl = <span className={METRIC_LABEL}>{label}</span>
+  if (hint && coarse) {
+    return (
+      <HintPopover content={hint} data-slot="monitor-metric"
+        triggerClassName={cn(CARD_LAYER, 'flex min-w-0 shrink flex-col items-start justify-start gap-0.5 rounded-sm text-left whitespace-normal', className)}>
+        {valueEl}{labelEl}
+      </HintPopover>
+    )
+  }
   const body = (
     <div data-slot="monitor-metric" tabIndex={hint ? 0 : undefined}
       className={cn('flex min-w-0 flex-col gap-0.5', hint && cn(CARD_LAYER, 'cursor-help rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'), className)}>
-      <span className={cn('text-[13px] leading-tight font-bold text-foreground tabular-nums', valueClassName)}>{value}</span>
-      <span className="text-[10px] font-semibold tracking-[.05em] text-muted-foreground uppercase">{label}</span>
+      {valueEl}
+      {labelEl}
     </div>
   )
   return hint ? <SimpleTooltip content={hint}>{body}</SimpleTooltip> : body
@@ -257,7 +277,7 @@ export function MonitorCardFooter({ actions, className, children }) {
   const { inactive } = useMonitorCard()
   const hasTime = children != null && children !== '' && children !== false
   return (
-    <CardFooter className={cn('min-w-0 flex-wrap justify-between gap-x-2 gap-y-2 border-t px-0 pt-2 text-[10.5px] text-muted-foreground [.border-t]:pt-2', className)}>
+    <CardFooter className={cn('min-w-0 flex-wrap justify-between gap-x-2 gap-y-2 border-t px-0 pt-2 text-[11px] text-muted-foreground max-sm:text-xs [.border-t]:pt-2', className)}>
       <span className="flex min-w-0 items-center gap-2">
         {inactive && <MonitorPausedBadge />}
         {hasTime && (
@@ -285,6 +305,8 @@ const BADGE = {
  * Durum rozeti: renkli nokta + metin. `status` paylaşılan sözlükten (up|down|warn|unknown). Duraklatılmış kartın
  * içinde rozet SON BİLİNEN durumu gri çizgili gösterir (`data-paused`): yeşil "Çalışıyor" rozeti, kontrol edilmeyen
  * bir izlemenin ayakta olduğunu iddia ediyordu. Detay penceresinde (kart dışı) davranış değişmez.
+ * Nokta YALNIZ sorunda (`down`) nabız atar (2026-10-09): 50 kartlık ızgarada her sağlıklı kartın yanıp sönmesi dikkati
+ * sorunlu karttan çalıyordu; onaylanmamış alarm kendi ikonunda (MonitorAlarmIcon) nabız atmaya devam eder.
  */
 export function MonitorStatusBadge({ status = 'unknown', className, children }) {
   const { inactive } = useMonitorCard()
@@ -294,7 +316,7 @@ export function MonitorStatusBadge({ status = 'unknown', className, children }) 
     <Badge variant={b.variant} data-status={key} data-paused={inactive ? 'true' : undefined}
       className={cn('gap-1.5 px-2.5 py-[3px] text-[11px] font-bold tracking-[.03em]', b.cls, className)}>
       <span aria-hidden="true"
-        className={cn('size-1.5 shrink-0 rounded-full bg-current', key === 'up' && !inactive && 'animate-pulse motion-reduce:animate-none')} />
+        className={cn('size-1.5 shrink-0 rounded-full bg-current', key === 'down' && !inactive && 'animate-pulse motion-reduce:animate-none')} />
       {children}
     </Badge>
   )
@@ -337,7 +359,7 @@ export const MonitorCardTag = forwardRef(function MonitorCardTag({ className, ch
 export function MonitorPausedBadge({ className }) {
   const t = useT()
   return (
-    <Badge variant="secondary" data-slot="monitor-paused" className={cn('gap-1 text-[10.5px] font-semibold', className)}>
+    <Badge variant="secondary" data-slot="monitor-paused" className={cn('gap-1 text-[11px] font-semibold', className)}>
       <Pause aria-hidden="true" className="size-3" /> {t('mon.paused')}
     </Badge>
   )

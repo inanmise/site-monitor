@@ -43,4 +43,14 @@ describe('SegmentedControl', () => {
     rerender(<SegmentedControl value="" onChange={onChange} options={opts} ariaLabel="süzgeç" />)
     expect(screen.getByRole('button', { name: 'Tümü' })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  // 2026-10-09: öğe 28 px (h-7) dokunmatikte 40 px hedef kuralının altındaydı; fare görünümü aynı kalır.
+  it('dokunmatikte öğe 40 px (pointer-coarse:h-10); fare görünümü h-7; itemClassName yine ekler', () => {
+    const { rerender } = render(<SegmentedControl value={1} onChange={() => {}} options={options} ariaLabel="aralık" />)
+    for (const b of screen.getAllByRole('button')) expect(b).toHaveClass('h-7', 'pointer-coarse:h-10')
+    rerender(<SegmentedControl value={1} onChange={() => {}} options={options} ariaLabel="aralık" itemClassName="h-9 flex-1" />)
+    const b = screen.getByRole('button', { name: 'Son 7 gün' })
+    expect(b).toHaveClass('h-9', 'flex-1', 'pointer-coarse:h-10')
+    expect(b).not.toHaveClass('h-7')
+  })
 })

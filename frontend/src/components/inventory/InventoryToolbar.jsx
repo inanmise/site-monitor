@@ -110,11 +110,12 @@ export default function InventoryToolbar({
   return (
     <div data-slot="inv-toolbar" className="mb-3 flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <InputGroup className="w-full sm:w-auto sm:max-w-[360px] sm:flex-[1_1_220px]">
+        {/* Telefon/tablet (< 768 px): kutu 40 px, temizle düğmesi 40 px dokunma hedefi (addon dikey boşluğu sıfır — taşmasın) */}
+        <InputGroup className="w-full sm:w-auto sm:max-w-[360px] sm:flex-[1_1_220px] max-md:h-10">
           <InputGroupInput type="search" value={qDraft} onChange={(e) => setQDraft(e.target.value)} placeholder={t('inv.searchPh')} aria-label={t('inv.search')} data-page-search="" />
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
           {qDraft && (
-            <InputGroupAddon align="inline-end">
+            <InputGroupAddon align="inline-end" className="max-md:py-0 max-md:[&>button]:size-10">
               <InputGroupButton size="icon-xs" onClick={() => { setQDraft(''); set({ q: '' }) }} aria-label={t('inv.filterClear')}>
                 <X aria-hidden="true" />
               </InputGroupButton>
@@ -133,7 +134,7 @@ export default function InventoryToolbar({
         </div>
 
         {/* Süzgeç paneli tetiği: telefonda "Süzgeçler (n)", geniş ekranda "Diğer süzgeçler" */}
-        <Button type="button" variant={active ? 'default' : 'outline'} size="sm" className="h-8" onClick={() => setSheetOpen(true)}
+        <Button type="button" variant={active ? 'default' : 'outline'} size="sm" className="h-8 pointer-coarse:h-10 max-md:h-10" onClick={() => setSheetOpen(true)}
           aria-haspopup="dialog" aria-expanded={sheetOpen} data-active={active ? 'true' : undefined}>
           <SlidersHorizontal aria-hidden="true" />
           <span className="md:hidden">{chips.length ? t('inv.filtersCount', chips.length) : t('inv.filters')}</span>
@@ -187,7 +188,7 @@ export default function InventoryToolbar({
         {/* Kayıtlı görünümler + bağlantı — shadcn Popover; kayıttan sonra açık kalır (hemen uygulanabilsin) */}
         <Popover open={viewsOpen} onOpenChange={(o) => { setViewsOpen(o); if (o) setColsOpen(false) }}>
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm" className="h-8">
+            <Button type="button" variant="outline" size="sm" className="h-8 pointer-coarse:h-10 max-md:h-10">
               <Bookmark aria-hidden="true" /> {t('inv.views')}{savedViews.length ? ` (${savedViews.length})` : ''}
             </Button>
           </PopoverTrigger>
@@ -223,16 +224,17 @@ export default function InventoryToolbar({
             {chips.map((chip) => {
               const label = chipText(chip)
               return (
-                <Badge key={`${chip.key}:${chip.value}`} variant="secondary" data-slot="inv-chip" data-key={chip.key} className="h-7 gap-0.5 pr-0.5 pl-2.5 font-normal text-foreground">
-                  <span className="max-w-[16rem] truncate">{label}</span>
-                  <Button type="button" variant="ghost" size="icon-xs" className="size-6 rounded-full text-muted-foreground hover:text-foreground"
+                // Dokunmatikte çip 40 px boy, kaldır (×) düğmesi 40 px hedef — fare görünümü (28 / 24 px) değişmez.
+                <Badge key={`${chip.key}:${chip.value}`} variant="secondary" data-slot="inv-chip" data-key={chip.key} className="h-7 max-w-full gap-0.5 pr-0.5 pl-2.5 font-normal text-foreground pointer-coarse:h-10">
+                  <span className="max-w-[16rem] min-w-0 truncate" title={label}>{label}</span>
+                  <Button type="button" variant="ghost" size="icon-xs" className="size-6 rounded-full text-muted-foreground hover:text-foreground pointer-coarse:size-10"
                     onClick={() => onFilters(removeFilterChip(filters, chip))} aria-label={t('inv.chipRemove', label)}>
                     <X aria-hidden="true" className="size-3" />
                   </Button>
                 </Badge>
               )
             })}
-            <Button type="button" variant="link" size="sm" className="h-7 px-1.5" onClick={() => onFilters({ ...EMPTY_FILTERS })}>{t('inv.clearAll')}</Button>
+            <Button type="button" variant="link" size="sm" className="h-7 px-1.5 pointer-coarse:h-10" onClick={() => onFilters({ ...EMPTY_FILTERS })}>{t('inv.clearAll')}</Button>
           </div>
         )}
       </div>

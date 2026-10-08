@@ -83,7 +83,20 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
   const [openSection, setOpenSection] = useState(initialSection)
   const sectionRefs = useRef({})
-  const toggleSection = useCallback((key) => setOpenSection((prev) => (prev === key ? null : key)), [])
+  // Tek açık bölüm: alttaki bir bölüm açılınca üstteki kapanır ve dokunulan başlık yukarı kayıp gözden kaçıyordu
+  // (2026-10-09) → AÇILAN bölümün başlığı görünüme getirilir (goSection gibi; azaltılmış harekette animasyonsuz).
+  // Açık mı, kabuk çizildikten sonra bölümün Collapsible kökünden okunur — kapatılan bölüm için kaydırma yok.
+  const toggleSection = useCallback((key) => {
+    setOpenSection((prev) => (prev === key ? null : key))
+    setTimeout(() => {
+      try {
+        const el = sectionRefs.current[key]
+        if (el?.querySelector?.(':scope > [data-state]')?.getAttribute('data-state') !== 'open') return
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+        el.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      } catch { /* jsdom */ }
+    }, 30)
+  }, [])
   /** KPI / sebep tıklaması: bölümü aç ve oraya kaydır. */
   const goSection = useCallback((key) => {
     setOpenSection(key)

@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   TABLE_COLUMNS, defaultCols, normalizeCols, moveCol, savePreset, PRESET_MAX, activeFilterChips, countActiveFilters,
   toQuery, toUrlMapping, filtersFromUrl, EMPTY_FILTERS, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp,
-  buildSelectionCsv, csvColumnsFor,
+  buildSelectionCsv, csvColumnsFor, STATUS_OPTIONS,
 } from '../components/certtable/certTableModel.js'
 
 // Tüm Sertifikalar modeli (2026-09-13): bileşenden bağımsız saf kurallar.
@@ -118,5 +121,24 @@ describe('certTableModel — seçim CSV', () => {
     expect(lines[0]).toBe('tbl.colDomain,tbl.colIssuer,tbl.colDays,tbl.colStatus,tbl.colSan,tbl.colShared')
     expect(lines[1]).toBe('a.example.com,"CA, Inc",5,critical,2,3')
     expect(lines[2]).toBe("'=b.example.com,Plain CA,90,valid,0,1")   // utils/csv.js sözleşmesi: formül öneki tek tırnakla nötrlenir
+  })
+})
+
+// 2026-10-09 (proje kuralı: ikonlar yalnız lucide, emoji YOK): durum seçeneklerinin ikonları lucide bileşenleri.
+describe('certTableModel — durum seçeneği ikonları', () => {
+  const EMOJI = /[\u2600-\u27BF\u26D4\u2713\u2717]|\p{Extended_Pictographic}/u
+  it('her durumun ikonu lucide bileşeni (dize/emoji değil); seçenek ve sıra aynı', () => {
+    expect(STATUS_OPTIONS.map((o) => o.value)).toEqual(['', 'expired', 'critical', 'high', 'warning', 'valid', 'error'])
+    for (const o of STATUS_OPTIONS.filter((x) => x.value)) {
+      expect(typeof o.icon, o.value).not.toBe('string')
+      expect(o.icon, o.value).toBeTruthy()
+      expect(o.icon.displayName || o.icon.render?.displayName || '', o.value).not.toBe('')
+    }
+    // Şekiller ayrı (renk tek sinyal değil)
+    expect(new Set(STATUS_OPTIONS.filter((x) => x.value).map((o) => o.icon)).size).toBe(6)
+  })
+  it('model dosyasında emoji kalmadı', () => {
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../components/certtable/certTableModel.js'), 'utf8')
+    expect(src).not.toMatch(EMOJI)
   })
 })

@@ -38,8 +38,9 @@ import { cn } from '@/lib/utils'
  * (`ct-filters`, `ct-presets`, `ct-columns`, `ct-csv`), alan kimlikleri `ct-f-*`, URL `c_*`, ön ayar / görünüm kayıtları.
  * Saf sunum: durum ve eylemler dışarıdan (CertificatesTable).
  */
-/** Aktif süzgeç çipi (eski .ct-chip): birincil tonlu hap düğme. */
-const CHIP = 'h-auto gap-1 rounded-full border-primary bg-primary/10 px-2.5 py-0.5 text-[.82em] font-semibold text-primary shadow-none hover:bg-primary/20 hover:text-primary dark:border-primary dark:bg-primary/15 dark:hover:bg-primary/25'
+/** Aktif süzgeç çipi (eski .ct-chip): birincil tonlu hap düğme. En fazla satır genişliği (uzun alan adı/veren taşmaz,
+ *  metin "…" ile kısalır); telefon/dokunmatikte 40 px yükseklik (2026-10-09). */
+const CHIP = 'h-auto max-w-full gap-1 rounded-full border-primary bg-primary/10 px-2.5 py-0.5 text-[.82em] font-semibold text-primary shadow-none hover:bg-primary/20 hover:text-primary dark:border-primary dark:bg-primary/15 dark:hover:bg-primary/25 max-md:h-10 pointer-coarse:h-10'
 /** Bas-bırak süzgeç: basılıyken birincil dolgu; sayaç rozeti içinde. */
 const TOGGLE_CHIP = 'h-9 gap-1.5 rounded-md px-3 text-[.86em] font-medium data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:[&_[data-slot=badge]]:bg-primary-foreground/20 data-[state=on]:[&_[data-slot=badge]]:text-primary-foreground'
 /** Facet kutusu: küçük büyük-harf başlık + kontrol. */
@@ -235,12 +236,12 @@ export default function CertTableToolbar({
         {chips.map((c) => (
           <Button key={c.key} type="button" variant="outline" size="xs" data-filter-chip={c.key} className={CHIP}
             onClick={() => set(c.key, EMPTY_FILTERS[c.key])} title={t('tbl.removeFilter')}>
-            {chipLabel(c)} <X aria-hidden="true" className="size-3" />
+            <span className="min-w-0 truncate" title={chipLabel(c)}>{chipLabel(c)}</span> <X aria-hidden="true" className="size-3" />
           </Button>
         ))}
         {chips.length > 0 && (
           <Button type="button" variant="outline" size="xs" data-filter-chip="clear" onClick={onReset}
-            className="h-auto rounded-full px-2.5 py-0.5 text-[.82em] font-semibold text-muted-foreground shadow-none">
+            className="h-auto rounded-full px-2.5 py-0.5 text-[.82em] font-semibold text-muted-foreground shadow-none max-md:h-10 pointer-coarse:h-10">
             {t('tbl.clearAll')}
           </Button>
         )}

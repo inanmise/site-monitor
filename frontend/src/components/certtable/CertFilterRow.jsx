@@ -43,7 +43,8 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
       case 'days': return sel('window', [
         { value: 'expired', label: t('tbl.winExpired') }, ...['7', '30', '60', '90'].map((d) => ({ value: d, label: t('tbl.winDays', d) })),
       ], 'days')
-      case 'status': return sel('status', STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: `${o.icon} ${t(o.labelKey)}` })), 'status')
+      // Seçici etiketi düz metin (aranır, tetikte yazılır) — durum ikonları sütun başlığı menüsünde (lucide), emoji yok.
+      case 'status': return sel('status', STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: t(o.labelKey) })), 'status')
       case 'tier': return sel('tier', TIER_OPTIONS.filter(Boolean).map((x) => ({ value: x, label: `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` })), 'tier')
       case 'port': return sel('port', portOpts, 'port')
       case 'trust': return (

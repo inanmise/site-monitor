@@ -31,6 +31,17 @@ export function isoWeekRange(year, week) {
   return { monday, sunday }
 }
 
+/**
+ * Komşu ISO hafta: (yıl, hafta) + `delta` hafta — TARİH aritmetiğiyle (2026-10-09). Eskiden yıl sınırında her ISO yılı
+ * 53 hafta sayılıyordu: 2026-W01 ◀ 2025-W53'e (yok; 2025 52 haftalık) gidiyordu, 2027-W52 ▶ 2027-W53'e. Haftanın
+ * PERŞEMBE'si UTC öğlende alınır: ISO hafta-yılını o gün belirler ve yerel saat diliminden bağımsızdır.
+ */
+export function shiftIsoWeek(year, week, delta) {
+  const { monday } = isoWeekRange(year, week)
+  const thursdayNoon = monday.getTime() + 3 * 86400000 + 12 * 3600000
+  return isoWeekInfo(new Date(thursdayNoon + delta * 7 * 86400000))
+}
+
 /** "6–12 Temmuz 2026", ay aşımında "29 Haziran – 5 Temmuz 2026",
  *  yıl aşımında iki taraf da tam yazılır. Geçersiz girişte '—'. Pzt–Paz tam hafta. */
 export function formatWeekRange(year, week, lang = 'tr') {

@@ -97,6 +97,32 @@ const SCROLL_BOX = 'flex max-h-[min(88vh,calc(100dvh-2rem))] flex-col overflow-h
 const SCROLL_BODY = '-mr-1 min-h-0 flex-1 overflow-y-auto pr-1'
 const PLAIN_BOX = 'max-h-[calc(100dvh-2rem)] overflow-y-auto'
 
+// Telefon (< 640 px, 2026-10-09): shadcn'in 24 px iç boşluğu ve 2 × 16 px kenarı 360 px ekranda içeriğe ~264 px
+// bırakıyordu → 16 px iç boşluk, 2 × 8 px kenar. sm+ HİÇ değişmez. Çağıranın VARYANTSIZ kendi iç boşluğu / genişlik
+// tavanı varsa (ör. SchemaDiagramModal `p-3 max-w-[…]`) eklenmez: twMerge farklı varyantları çakışma saymaz ve
+// `max-sm:p-4` telefonda çağıranın `p-3`'ünü ezerdi. `max-sm:` önekli çağıran sınıfları (PHONE_FULLSCREEN…) twMerge
+// ile zaten bunun yerine geçer.
+const PHONE_PAD = 'max-sm:p-4'
+const PHONE_WIDTH = 'max-sm:max-w-[calc(100%-1rem)]'
+const OWN_PAD = /(?:^|\s)p[xytrblse]?-/
+const OWN_MAX_W = /(?:^|\s)max-w-/
+function phoneBoxClass(className) {
+  const cls = typeof className === 'string' ? className : ''
+  return cn(!OWN_PAD.test(cls) && PHONE_PAD, !OWN_MAX_W.test(cls) && PHONE_WIDTH)
+}
+
+/**
+ * Düz metin başlık bir span'e sarılır: flex DialogTitle içindeki çıplak metin düğümü anonim flex öğesi olur ve en
+ * uzun kelimesinden (uzun alan adı) dar KÜÇÜLEMEZ → X'in altına girip telefonda yatay kaydırma açıyordu.
+ * Öğe olarak verilen başlık (ör. UploadWizard'ın `truncate` span'i) olduğu gibi kalır — çağıran kendi kısaltmasını yönetir.
+ */
+function titleNode(title) {
+  if (typeof title === 'string' || typeof title === 'number') {
+    return <span data-slot="modal-shell-title-text" className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
+  }
+  return title
+}
+
 /*
  * Ek (isteğe bağlı) kancalar — varsayılanlarıyla eski davranış birebir aynı:
  *   • `headerExtra`     başlık satırında, başlık ile kapat düğmesi arasında çizilir (ör. "Kaydediliyor… N sn"
@@ -186,7 +212,7 @@ export default function ModalShell({
           data-size={size}
           data-scroll-body={scrollBody ? 'true' : undefined}
           style={{ zIndex: z + 1 }}
-          className={cn(SIZE_CLASS[size] ?? SIZE_CLASS.md, scrollBody ? SCROLL_BOX : PLAIN_BOX, className)}
+          className={cn(SIZE_CLASS[size] ?? SIZE_CLASS.md, scrollBody ? SCROLL_BOX : PLAIN_BOX, phoneBoxClass(className), className)}
           // Dış tıklama / odağın dışarı (toast, portal'lı menü, üstte açılan ham modal) kayması
           // kabuğu KAPATMAZ — eski sözleşme: yalnız scrim, X ve Escape.
           onInteractOutside={(e) => e.preventDefault()}
@@ -198,7 +224,7 @@ export default function ModalShell({
           <DialogHeader className="shrink-0 flex-row items-center justify-between gap-3 text-left">
             <DialogTitle className="flex min-w-0 items-center gap-2 leading-snug">
               {Icon && <Icon size={18} aria-hidden="true" className="shrink-0" />}
-              {title}
+              {titleNode(title)}
             </DialogTitle>
             {headerExtra}
             {!hideClose && (

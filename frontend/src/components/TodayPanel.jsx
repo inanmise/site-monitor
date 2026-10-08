@@ -11,6 +11,7 @@ import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONIT
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card as UiCard } from '@/components/shadcn/card'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 
 // Kart tonu (ok|warn|bad|info) — başlık simgesi ve sayı rozetinin rengi. Kartta SOL RENK ŞERİDİ YOK (kullanıcı kuralı
@@ -32,6 +33,25 @@ const TONE_BADGE = {
  * 2026-09-23: "Susturulmuş ve bakımda" kartı (süren/yaklaşan bakım · duraklatılmış izleme · dolacak istisna) ve
  * "dünden bugüne": kart sayısının yanında dün bu saate göre ▲/▼ fark (sunucu `prev`), başlığın altında son 24 saat şeridi.
  */
+/**
+ * İlk yükleme yer tutucusu — KAPALI panelin başlığıyla aynı kutu (kenar, köşe, alt boşluk) ve aynı satır düzeni: ikon ·
+ * başlık · özet (telefonda özet alt satıra sarar, gerçek başlık gibi). Böylece veri gelince altındaki Pano kaymaz.
+ * Test kancası: `data-slot="today-skeleton"`.
+ */
+function TodayPanelSkeleton({ label }) {
+  return (
+    <section data-slot="today-skeleton" aria-label={label} aria-busy="true"
+      className="mb-4 rounded-[12px] border bg-(--bg-surface)">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3.5 py-2.5 sm:flex-nowrap">
+        <Skeleton className="size-4 shrink-0 rounded-full" />
+        <Skeleton className="h-5 w-40 max-w-[50%] flex-1 sm:flex-none" />
+        <Skeleton className="order-3 h-[18px] w-full sm:order-none sm:w-auto sm:flex-1" />
+        <Skeleton className="size-4 shrink-0" />
+      </div>
+    </section>
+  )
+}
+
 export default function TodayPanel({ onOpenDomain }) {
   const t = useT()
   const [data, setData] = useState(null)
@@ -40,12 +60,17 @@ export default function TodayPanel({ onOpenDomain }) {
   // Varsayılan KAPALI (2026-09-12, kullanıcı: "otomatik kapalı olsun"); açan kullanıcı tercihi saklanır.
   const [open, setOpen] = useState(() => { try { return localStorage.getItem('today-panel-open') === 'true' } catch { return false } })
 
+  // İlk yanıt geldi mi (başarılı ya da değil). Gelene kadar başlık boyunda iskelet: eskiden panel ilk yanıta kadar HİÇ
+  // çizilmiyor, gelince Pano ızgarası bir başlık boyu aşağı kayıyordu (2026-10-09). Uç başarısızsa panel eskisi gibi
+  // hiç çizilmez — iskelet de kalkar (yalnız İLK yüklemede görünür).
+  const [settled, setSettled] = useState(false)
+
   const load = useCallback(async () => {
-    try { const r = await api.me.today(); if (r?.success && r.data) setData(r.data) } catch { /* panel süs */ }
+    try { const r = await api.me.today(); if (r?.success && r.data) setData(r.data) } catch { /* panel süs */ } finally { setSettled(true) }
   }, [])
   useVisibleInterval(load, 120_000, true)
 
-  if (!data) return null
+  if (!data) return settled ? null : <TodayPanelSkeleton label={t('today.title')} />
   const certs = data.certs || {}, alerts = data.alerts || {}, weekly = data.weekly || {}
   const flapping = data.flapping || {}, slow = data.slow || {}, stale = data.stale || {}, domains = data.domains || {}
   const notif = data.notifications || {}, health = data.health || {}, quiet = data.quiet || {}, recent = data.recent || null

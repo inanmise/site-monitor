@@ -152,8 +152,17 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .app-body {
   max-width: none;
   padding: 12px;   /* telefon: 12px (mobil-önce, 2026-09-26) — 24+24+4px kenar boşluğu kartlara 286px bırakıyordu */
+  /* < 768 px (2026-10-09): sağ alttaki sabit Yardım düğmesi (42 px, alttan 18 px) sayfanın SON satırını — sayfalama,
+     liste sonu Kaydet/Gönder — örtüyordu. Alt boşluk düğmenin üstüne kadar (18 + 42 + 12) + güvenli alan. */
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
 }
-@media (min-width: 640px) { .app-body { padding: 20px 24px; } }
+@media (min-width: 640px) { .app-body { padding: 20px 24px calc(72px + env(safe-area-inset-bottom)); } }
+@media (min-width: 768px) { .app-body { padding-bottom: 20px; } }
+/* Yapışkan alt eylem çubuğu varken düğme zaten çubuğun ÜSTÜNE kalkar (aşağıdaki help-fab kuralı) ve sayfanın son öğesi
+   çubuğun kendisidir → eski alt boşluk. Büyük boşluk kalsaydı sayfa sonunda çubuk 72 px yukarıda durup kalkmış
+   düğmenin altına girerdi. */
+body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 12px; }
+@media (min-width: 640px) { body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 20px; } }
 
 /* ── Sidebar ─────────────────────────────────────────── */
 /* Kenar çubuğu shadcn Sidebar bileşeni (components/Nav.jsx, Tailwind) — legacy .sb-* ailesi kaldırıldı
@@ -205,10 +214,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 
 
-.stats-filter-bar { display: flex; align-items: center; gap: 12px; background: #e8f4ff; border: 1px solid #b3d4f5; border-radius: 6px; padding: 7px 14px; font-size: .9em; }
+/* Tema jetonlarından (2026-10-09): sabit #e8f4ff / #b3d4f5 Parchment ve Alloy temalarında kart zemininden kopuk bir
+   mavi şerit çiziyordu. Varsayılan temada eskisiyle aynı ton (birincil renk %8 / %30, kart zeminiyle karışık). */
+.stats-filter-bar { display: flex; align-items: center; gap: 12px; background: color-mix(in srgb, var(--primary) 8%, var(--bg-card)); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--bg-card)); border-radius: 6px; padding: 7px 14px; font-size: .9em; }
 
 /* ── Content / Tabs ─────────────────────────────────── */
-.content { background: #fff; border-radius: 8px; padding: 12px; box-shadow: var(--shadow); }   /* telefon 12px, sm+ 24px */
+.content { background: var(--bg-card); border-radius: 8px; padding: 12px; box-shadow: var(--shadow); }   /* telefon 12px, sm+ 24px; zemin tema jetonu (açık temada #fff) */
 @media (min-width: 640px) { .content { padding: 24px; } }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
@@ -1108,7 +1119,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* Stats panel */
 [data-scheme="dark"] .stats-panel { background: var(--bg-card); }
 [data-scheme="dark"] .stat-value { color: #e4e4e7; }
-[data-scheme="dark"] .stats-filter-bar { background: #1a2940; border-color: #3f3f46; color: var(--text); }
+[data-scheme="dark"] .stats-filter-bar { background: color-mix(in srgb, var(--primary) 14%, var(--bg-card)); border-color: #3f3f46; color: var(--text); }
 
 /* Content & cards */
 [data-scheme="dark"] .content { background: var(--bg-card); }

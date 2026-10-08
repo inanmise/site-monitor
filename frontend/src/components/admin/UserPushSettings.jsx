@@ -1203,7 +1203,9 @@ export default function UserPushSettings() {
       {!loading && (
         <Card role="region" data-dirty={dirty ? 'true' : undefined}
           aria-label={dirty ? t('userpush.unsavedTitle') : t('userpush.savedTitle')}
-          className={cn('sticky bottom-3 z-[5] mt-2 flex-row flex-wrap items-center justify-between gap-3 px-4 py-2.5 shadow-lg',
+          // `bottom-0` (2026-10-09; eskiden bottom-3): App.css'teki Yardım düğmesi kaldırma kuralı `.sticky.bottom-0`'ı
+          // tanır — bottom-3'te düğme telefonda şeridin sağ ucundaki Kaydet'in üstüne biniyordu. Alt boşluk güvenli alanı gözetir.
+          className={cn('sticky bottom-0 z-[5] mt-2 flex-row flex-wrap items-center justify-between gap-3 px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-lg',
             dirty && 'border-primary')}>
           <span className={cn('inline-flex items-center gap-2 font-semibold', dirty ? 'text-foreground' : 'text-muted-foreground')}>
             {dirty ? <Save size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}

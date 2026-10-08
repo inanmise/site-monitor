@@ -19,6 +19,9 @@ import { cn } from '@/lib/utils'
  *    seçim yapıyor; WAI-ARIA'da geçerli bir "toggle button group" kalıbıdır.
  *  • `itemClassName` (2026-10-03, isteğe bağlı): öğe sınıfına eklenir — ör. giriş ekranında telefonda tam genişlik ve
  *    40 px dokunma hedefi (`flex-1 max-sm:h-10`). Verilmezse çizim birebir eskisi gibi.
+ *  • Dokunmatik (2026-10-09): öğe `pointer-coarse:h-10` taşır — 28 px (h-7) dokunmatikte 40 px hedef kuralının
+ *    (RESPONSIVE.md §4) altındaydı. Fare/klavye (pointer: fine) görünümü DEĞİŞMEZ. Kapsayıcıdan öğeye inen
+ *    `[&_[data-slot=toggle-group-item]]:h-…` kuralları (yüksek özgüllük) bunu yine ezer.
  */
 export default function SegmentedControl({ value, onChange, options, ariaLabel, className = '', itemClassName = '' }) {
   const activeIdx = options.findIndex((o) => o.value === value)
@@ -49,7 +52,7 @@ export default function SegmentedControl({ value, onChange, options, ariaLabel, 
             aria-checked={undefined}
             title={o.title}
             disabled={o.disabled || undefined}
-            className={cn('h-7 gap-1.5 px-3 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50', itemClassName)}
+            className={cn('h-7 gap-1.5 px-3 pointer-coarse:h-10 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50', itemClassName)}
           >
             {Icon ? <Icon className="size-3.5" aria-hidden="true" /> : null}
             {o.label}

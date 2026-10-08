@@ -13,7 +13,7 @@ import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import WeekDatePicker from './ui/WeekDatePicker.jsx'
-import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
+import { isoWeekInfo, isEditableWeek, formatWeekRange, shiftIsoWeek } from '../utils/isoWeek'
 import { mailPreviewSrcDoc } from '../utils/mailPreview.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
@@ -125,7 +125,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [kpis, setKpis] = useState(null)          // executive KPI şeridi (GET /{id}/kpis) — canlı, read-only
   const [kpisLoading, setKpisLoading] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)  // Özet akordeonu — varsayılan KAPALI
-  const [monStats, setMonStats] = useState(null)         // İzleme göstergeleri (lazy, akordeon açılınca)
+  const [monStats, setMonStats] = useState(null)         // İzleme göstergeleri (lazy, akordeon açılınca): { rid, data } — hangi rapora ait
   const [monLoading, setMonLoading] = useState(false)
   const [managerMissing, setManagerMissing] = useState(false)
   const [teamChannels, setTeamChannels] = useState([])     // takım kanal şablonu (2026-09-13, ikinci tur)
@@ -375,18 +375,21 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   }, [report?.id])
   const prevContent = useMemo(() => parsePrevContent(prevReport?.content_json), [prevReport])
 
-  // İzleme göstergeleri — AĞIR 7-tür toplama; yalnız akordeon İLK açıldığında çekilir (tek pod'u koru). Rapor değişince sıfırla.
-  useEffect(() => { setMonStats(null) }, [report?.id])
+  // İzleme göstergeleri — AĞIR 7-tür toplama; yalnız akordeon İLK açıldığında çekilir (tek pod'u koru). Sonuç RAPOR
+  // KİMLİĞİYLE saklanır (2026-10-09): eskiden ayrı bir "rapor değişince sıfırla" efekti vardı ama aynı commit'te çalışan
+  // çekme efekti ESKİ raporun verisini görüp çıkıyordu → ◀/▶ sonrası göstergeler hiç yüklenmiyordu; yükleme sürerken ▶
+  // basılırsa temizlik `alive=false` yapıyor, `monLoading` hiç inmiyor ve şerit "…"da takılıyordu. Artık veri başka
+  // rapora aitse çekilir, temizlik yükleme bayrağını da indirir.
   useEffect(() => {
     const rid = report?.id
-    if (!summaryOpen || !rid || monStats || monLoading) return
+    if (!summaryOpen || !rid || monStats?.rid === rid) return
     let alive = true
     setMonLoading(true)
     api.weeklyReports.monitoringStats(rid)
-      .then((r) => { if (alive && r?.success) setMonStats(r.data) })
+      .then((r) => { if (alive && r?.success) setMonStats({ rid, data: r.data }) })
       .catch(() => {})
       .finally(() => { if (alive) setMonLoading(false) })
-    return () => { alive = false }
+    return () => { alive = false; setMonLoading(false) }
   }, [summaryOpen, report?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function patch(path, value) {
@@ -655,8 +658,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   // oklar kapalı.
   async function gotoWeek(dir) {
     if (!report || busy) return
-    let y = report.report_year, w = report.week_no + dir
-    if (w < 1) { y -= 1; w = 53 } else if (w > 53) { y += 1; w = 1 }
+    // Yıl sınırı tarih aritmetiğiyle (2026-10-09): her ISO yılını 53 hafta saymak 2026-W01 ◀'yi olmayan 2025-W53'e,
+    // 2027-W52 ▶'yi olmayan 2027-W53'e götürüyordu (52 haftalık yıllar).
+    const { year: y, week: w } = shiftIsoWeek(report.report_year, report.week_no, dir)
     const target = dir < 0 && prevReport ? prevReport.id
       : reports.find((r) => r.team_id === report.team_id && r.report_year === y && r.week_no === w)?.id
     if (target) {
@@ -1140,17 +1144,23 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 </Button>
               </div>
             )}
-            {loadingList ? (
+            {/* Yükleme bloğu yalnız GÖSTERİLECEK satır yokken (ilk yükleme). Satır eylemlerinden sonraki tazelemede (onay,
+                aktarım, silme…) satırlar yerinde kalır, soluklaşır ve `aria-busy` taşır — eskiden liste bloğa dönüşüp sayfa
+                boyu çöküyor, kaydırma konumu zıplıyordu (2026-10-09). */}
+            {loadingList && reports.length === 0 ? (
               <LoadingBlock label={t('app.loading')} fullWidth />
             ) : displayedReports.length ? (
-              <>
+              <div data-slot="wr-list-body" aria-busy={loadingList || undefined}
+                className={cn('flex min-w-0 flex-col gap-3 transition-opacity motion-reduce:transition-none', loadingList && 'opacity-60')}>
                 <WeeklyReportList rows={pager.pageItems} allRows={displayedReports} narrow={narrow} isAdmin={isAdmin}
                   selectedIds={selectedIds} onToggle={toggleSelect} onToggleAll={toggleSelectAll}
                   teamLabel={teamLabel} weekText={weekText} sort={listSort} onSort={setListSort}
                   onOpen={(r) => setSelectedId(r.id)} menuItems={menuItems} mailProblem={mailProblem} />
                 {/* Çubuk liste kabının DIŞINDA (telefonda tabloyla birlikte kayıp gitmesin) */}
                 <PaginationBar {...pager} />
-              </>
+              </div>
+            ) : loadingList ? (
+              <LoadingBlock label={t('app.loading')} fullWidth />
             ) : (
               <StatusBlock tone="neutral" icon={CalendarDays}
                 title={filterChips.length ? t('wr.noMatch') : weekFilter != null ? t('wr.noReportForWeek') : t('wr.noReportSelected')}
@@ -1260,7 +1270,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <div id={summaryBodyId} className={cn('border-t px-4 pt-4 pb-1', !summaryOpen && 'hidden print:block')}>
                   <WeeklySummaryBrief kpis={kpis} t={t} lang={lang} />
                   <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />
-                  <WeeklyMonitoringStrip stats={monStats} loading={monLoading} t={t} />
+                  <WeeklyMonitoringStrip stats={monStats?.rid === report.id ? monStats.data : null} loading={monLoading} t={t} />
                 </div>
               </Collapsible>
 
@@ -1369,7 +1379,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               <EditorOutline outline={outline} className="hidden xl:flex" />
               <ReportDetailsCard report={report} content={content} teamName={String(teamLabel(report.team_id) ?? '')} />
               {/* Yorum dizisi (2026-09-13, ikinci tur): PO ↔ takım gidiş-gelişi; durum geçişinde tazelenir */}
-              <WeeklyComments reportId={report.id} canWrite={!isAudit} nonce={report.status} />
+              {/* key: rapor değişince yorum kutusu SIFIRDAN kurulur — A'da yazılan taslak B'ye taşınıp orada gönderilebiliyordu */}
+              <WeeklyComments key={report.id} reportId={report.id} canWrite={!isAudit} nonce={report.status} />
             </aside>
           </div>
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from './test-utils.jsx'
 import { Globe } from 'lucide-react'
 import { createRef } from 'react'
@@ -160,6 +160,22 @@ describe('MonitorDetailModal — detay penceresi', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // 2026-10-09: sabit yükseklik yalnız sm+'daydı → telefonda pencere sekme içeriğiyle uzayıp kısalıyor, zıplıyordu.
+  it('telefonda TAM EKRAN (yükseklik sekmeden bağımsız 100dvh); sm+ sabit yükseklik aynı', () => {
+    render(<MonitorDetailModal onClose={() => {}} status="up" title="a.example.com" badge={null}>gövde</MonitorDetailModal>)
+    const dlg = screen.getByRole('dialog', { name: 'a.example.com' })
+    expect(dlg).toHaveClass('max-sm:h-[100dvh]', 'max-sm:top-0', 'max-sm:translate-y-0', 'max-sm:rounded-none', 'sm:h-[min(88vh,calc(100dvh-2rem))]')
+  })
+
+  it('sayfanın kendi telefon sınıfı (Alan adı: yapışkan başlıklı varyant) paylaşılan tam ekranı ezer', () => {
+    render(<MonitorDetailModal onClose={() => {}} status="up" title="a.example.com" badge={null}
+      className="max-sm:h-dvh max-sm:max-h-dvh max-sm:pt-0">gövde</MonitorDetailModal>)
+    const dlg = screen.getByRole('dialog', { name: 'a.example.com' })
+    expect(dlg).toHaveClass('max-sm:h-dvh', 'max-sm:max-h-dvh', 'max-sm:pt-0')
+    expect(dlg).not.toHaveClass('max-sm:h-[100dvh]')
+    expect(dlg).not.toHaveClass('max-sm:max-h-none')
+  })
+
   it('eylem grubu yoksa (Uptime) kabuğun i18n adlı X düğmesi kapatır', () => {
     const onClose = vi.fn()
     render(<MonitorDetailModal onClose={onClose} status="down" title="b.example.com" badge={null}>gövde</MonitorDetailModal>)
@@ -311,12 +327,17 @@ describe('MonitorCard — duraklatılmış kart, mobil ve paylaşılan parçalar
     expect(badge.querySelector('.animate-pulse')).toBeNull()
   })
 
-  it('soluklaşma yalnız başlık/içerik kabında — alt çubuk (Sürdür) opak; Sürdür birincil ve SOLUK DEĞİL', () => {
+  // 2026-10-09: METİN soluklaşmaz (içerik kabı opacity-60'ken bg-muted/30 üstünde etiketler ~2,3:1'e iniyordu) — yalnız
+  // ölçü değerleri gri tona, trend çizgisi yarı saydama iner; başlık/içerik kaplarına opaklık YOK.
+  it('duraklatılmış kart: metin soluk DEĞİL, yalnız değerler gri + trend çizgisi soluk; alt çubuk (Sürdür) birincil', () => {
     const onResume = vi.fn()
     paused(<MonitorCardActions onResume={onResume} rowLabel="a.example.com" onCheck={() => {}} onEdit={() => {}} onDuplicate={() => {}} checkTitle="Kontrol" editTitle="Düzenle" />)
     const card = document.querySelector('[data-slot="card"]')
-    expect(card.className).toMatch(/\[&_\[data-slot=card-content\]\]:opacity-60/)
-    expect(card.className).toMatch(/\[&_\[data-slot=card-header\]\]:opacity-75/)
+    expect(card.className).toMatch(/\[&_\[data-slot\$=-value\]\]:text-muted-foreground/)
+    expect(card.className).toMatch(/\[&_svg\.spark\]:opacity-60/)
+    expect(card.className).toMatch(/\[&_svg\.spark\]:pointer-events-none/)   // çizgi dokunuşu örtüye bırakır
+    expect(card.className).not.toMatch(/card-content\]\]:opacity|card-header\]\]:opacity/)
+    expect(card.className).toMatch(/border-dashed/)
     expect(card.className).not.toMatch(/(^|\s)opacity-/)            // kartın KENDİSİ soluk değil
     const btn = screen.getByRole('button', { name: /^a\.example\.com — (Sürdür|Resume)$/ })
     expect(btn).toHaveAttribute('data-variant', 'default')
@@ -370,6 +391,66 @@ describe('MonitorCard — duraklatılmış kart, mobil ve paylaşılan parçalar
     expect(metric).toHaveAttribute('tabindex', '0')
     act(() => { metric.focus() })
     expect(screen.getByRole('tooltip').textContent).toBe('Son kontrolün süresi')
+  })
+
+  // 2026-10-09: Tooltip dokunmatikte açılmaz → `pointer: coarse`'da ölçü dokun-gör HintPopover tetiği; etiket ≥ 11 px.
+  describe('dokunmatik işaretçi (pointer: coarse)', () => {
+    const orig = window.matchMedia
+    beforeEach(() => {
+      window.matchMedia = (q) => ({ ...orig(q), matches: q === '(pointer: coarse)' })
+    })
+    afterEach(() => { window.matchMedia = orig })
+
+    it('MonitorMetric: dokunuş ipucunu açar (hover gerekmez); ölçü örtünün üstünde, değer yuvası korunur', () => {
+      render(<MonitorMetric value="120ms" label="Yanıt" hint="Son kontrolün süresi" />)
+      const metric = document.querySelector('[data-slot="monitor-metric"]')
+      expect(metric.tagName).toBe('BUTTON')
+      expect(metric).toHaveClass('z-10')
+      expect(metric.querySelector('[data-slot="monitor-metric-value"]').textContent).toBe('120ms')
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      fireEvent.click(metric)
+      expect(screen.getByRole('tooltip').textContent).toBe('Son kontrolün süresi')
+    })
+
+    it('DetailMetric (detay özeti): dokunuş ipucunu açar', () => {
+      render(<DetailSummary items={[{ key: 'ok', value: '99%', label: 'Başarı', hint: 'Son 24 saat' }]} />)
+      const trigger = document.querySelector('[data-slot="detail-metric"]')
+      expect(trigger.tagName).toBe('BUTTON')
+      fireEvent.click(trigger)
+      expect(screen.getByRole('tooltip').textContent).toBe('Son 24 saat')
+    })
+
+    it('ipucu yoksa düz ölçü (düğme yok)', () => {
+      render(<MonitorMetric value="3" label="Toplam" />)
+      expect(document.querySelector('[data-slot="monitor-metric"]').tagName).toBe('DIV')
+      expect(screen.queryByRole('button')).toBeNull()
+    })
+  })
+
+  it('ölçü etiketi en az 11 px (telefonda 12 px); alt çubuk yazısı 11 px (10/10,5 px değil)', () => {
+    render(
+      <MonitorCard status="up">
+        <MonitorCardContent><MonitorMetric value="3" label="Toplam" /></MonitorCardContent>
+        <MonitorCardFooter>26/09/2026 12:00</MonitorCardFooter>
+      </MonitorCard>)
+    expect(screen.getByText('Toplam')).toHaveClass('text-[11px]', 'max-sm:text-xs')
+    const footer = document.querySelector('[data-slot="card-footer"]')
+    expect(footer).toHaveClass('text-[11px]', 'max-sm:text-xs')
+    expect(footer.className).not.toMatch(/text-\[10/)
+  })
+
+  // 2026-10-09: 50 kartlık ızgarada sağlıklı kartların noktası da nabız atıyordu — yalnız sorunda.
+  it('durum noktası YALNIZ sorunda (down) nabız atar; çalışan/uyarı/bilinmeyen sabit', () => {
+    const dot = (status) => {
+      const { unmount } = render(<MonitorStatusBadge status={status}>{status}</MonitorStatusBadge>)
+      const pulsing = !!document.querySelector(`[data-slot="badge"][data-status="${status}"] .animate-pulse`)
+      unmount()
+      return pulsing
+    }
+    expect(dot('down')).toBe(true)
+    expect(dot('up')).toBe(false)
+    expect(dot('warn')).toBe(false)
+    expect(dot('unknown')).toBe(false)
   })
 
   it('HintPopover: DOKUN-GÖR — tık/dokunuş açar (hover gerekmez), açıklama tetiğe bağlı; içerik yoksa çocuk olduğu gibi', () => {

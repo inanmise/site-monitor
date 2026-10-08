@@ -1,5 +1,23 @@
 import { describe, it, expect } from 'vitest'
-import { isoWeekInfo, isoWeekRange, formatWeekRange, isEditableWeek, monthGrid } from '../utils/isoWeek'
+import { isoWeekInfo, isoWeekRange, formatWeekRange, isEditableWeek, monthGrid, shiftIsoWeek } from '../utils/isoWeek'
+
+// 2026-10-09: komşu hafta TARİH aritmetiğiyle — eskiden her ISO yılı 53 hafta sayılıyordu.
+describe('shiftIsoWeek', () => {
+  it('52 haftalık yıl sınırı: 2026-W01 ◀ → 2025-W52; 2027-W52 ▶ → 2028-W01', () => {
+    expect(shiftIsoWeek(2026, 1, -1)).toEqual({ year: 2025, week: 52 })
+    expect(shiftIsoWeek(2027, 52, 1)).toEqual({ year: 2028, week: 1 })
+  })
+  it('53 haftalık yıl (2026): W52 ▶ → W53, W53 ▶ → 2027-W01, 2027-W01 ◀ → 2026-W53', () => {
+    expect(shiftIsoWeek(2026, 52, 1)).toEqual({ year: 2026, week: 53 })
+    expect(shiftIsoWeek(2026, 53, 1)).toEqual({ year: 2027, week: 1 })
+    expect(shiftIsoWeek(2027, 1, -1)).toEqual({ year: 2026, week: 53 })
+  })
+  it('yıl içinde ±1 ve sıfır kayma', () => {
+    expect(shiftIsoWeek(2026, 37, 1)).toEqual({ year: 2026, week: 38 })
+    expect(shiftIsoWeek(2026, 37, -1)).toEqual({ year: 2026, week: 36 })
+    expect(shiftIsoWeek(2026, 37, 0)).toEqual({ year: 2026, week: 37 })
+  })
+})
 
 describe('isoWeekInfo', () => {
   it('computes the ISO week of a mid-year date', () => {

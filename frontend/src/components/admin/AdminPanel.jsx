@@ -141,7 +141,7 @@ function GroupedTabStrip({ groups, t }) {
         <div key={group.groupKey} data-slot="admin-tab-group" data-group={group.groupKey}
           style={{ flexGrow: group.tabs.length }} className="flex min-w-0 basis-auto flex-col gap-1">
           <span aria-hidden="true"
-            className="px-1 text-[0.67em] font-bold tracking-wider whitespace-nowrap text-muted-foreground/80 uppercase">
+            className="px-1 text-[11px] font-bold tracking-wider whitespace-nowrap text-muted-foreground uppercase max-sm:text-xs">
             {t(group.groupKey)}
           </span>
           <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-[3px]">

@@ -216,6 +216,38 @@ describe('SystemHealth — KPI ızgarası', () => {
     expect(toggleOf('sched')).toHaveAttribute('aria-expanded', 'false')   // tek açık bölüm
     expect(document.querySelector('[data-slot="http-charts"]')).not.toBeNull()
   })
+
+  // 2026-10-09: alttaki bölüm açılınca üstteki kapanır ve dokunulan başlık yukarı kayıp gözden kaçıyordu.
+  it('bölüm başlığına dokununca AÇILAN bölüm görünüme kaydırılır (block:start); kapatınca kaydırma yok; azaltılmış harekette animasyonsuz', async () => {
+    const calls = []
+    const origScroll = HTMLElement.prototype.scrollIntoView
+    const origMatch = window.matchMedia
+    HTMLElement.prototype.scrollIntoView = function scrollIntoView(opts) { calls.push([this, opts]) }
+    try {
+      await renderLoaded()
+      calls.length = 0
+      fireEvent.click(toggleOf('http'))
+      await waitFor(() => expect(toggleOf('http')).toHaveAttribute('aria-expanded', 'true'))
+      await waitFor(() => expect(calls.length).toBe(1))
+      expect(calls[0][0]).toBe(document.querySelector('[data-section="http"]'))
+      expect(calls[0][1]).toEqual({ behavior: 'smooth', block: 'start' })
+
+      calls.length = 0
+      fireEvent.click(toggleOf('http'))                                  // kapat
+      await waitFor(() => expect(toggleOf('http')).toHaveAttribute('aria-expanded', 'false'))
+      await act(() => new Promise((r) => setTimeout(r, 80)))
+      expect(calls).toHaveLength(0)
+
+      window.matchMedia = (q) => ({ ...origMatch(q), matches: q === '(prefers-reduced-motion: reduce)' })
+      fireEvent.click(toggleOf('sched'))
+      await waitFor(() => expect(calls.length).toBe(1))
+      expect(calls[0][0]).toBe(document.querySelector('[data-section="sched"]'))
+      expect(calls[0][1]).toEqual({ behavior: 'auto', block: 'start' })
+    } finally {
+      HTMLElement.prototype.scrollIntoView = origScroll
+      window.matchMedia = origMatch
+    }
+  })
 })
 
 describe('SystemHealth — derin bağlantı ve aynı sekme param olayı', () => {

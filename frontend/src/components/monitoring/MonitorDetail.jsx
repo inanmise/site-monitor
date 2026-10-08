@@ -5,7 +5,10 @@ import {
 import { api } from '../../api/client'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import ModalShell from '../ui/ModalShell.jsx'
+import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import HintPopover from '../ui/HintPopover.jsx'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer.js'
 import NocStatus from '../noc/NocStatus.jsx'
 import FavoriteToggle from './FavoriteToggle.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -58,8 +61,11 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       // GENİŞLİK (2026-09-30, kullanıcı: "sentetik kartına tıklayınca üst sekmeler taşıyor, yatay kaydırma açılıyor"):
       // 7 sekme (ikon + sayaç) 960 px'e sığmıyordu → geniş ekranda 1140 px (ModalShell `xl` ile aynı ölçü); sekme
       // listesi de artık SARAR (DetailTabs), hiçbir genişlikte yatay kaydırma yok.
+      // TELEFON (2026-10-09): sabit yükseklik yalnız sm+'daydı; telefonda kutu etkin sekmenin içeriği kadar uzayıp kısalıyor,
+      // her sekme geçişinde zıplıyordu → telefonda TAM EKRAN (`PHONE_FULLSCREEN`, 100dvh; Alan adı detayı ve Sertifika
+      // penceresiyle aynı davranış). sm+ değişmedi. Sayfanın kendi `className`'i (Alan adı: yapışkan başlıklı varyant) sonra gelir, ezer.
       className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(1140px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
-        'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', className)}
+        'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', PHONE_FULLSCREEN, className)}
       title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
       headerExtra={(actions || noc) ? <>
         {noc && <NocStatus {...noc} />}
@@ -92,11 +98,26 @@ export function DetailSummary({ items, className }) {
   )
 }
 
+/**
+ * Dokunmatikte (2026-10-09) Tooltip hiç açılmıyordu → `pointer: coarse`'da ölçü `ui/HintPopover` tetiğidir (dokun-gör,
+ * MonitorMetric ile aynı). Fare/klavye görünümü ve davranışı DEĞİŞMEZ. Etiket en az 11 px (telefonda 12 px).
+ */
 export function DetailMetric({ value, label, hint, time = false, valueClassName }) {
+  const coarse = useCoarsePointer()
+  const valueEl = <span className={cn('leading-tight font-bold text-foreground', time ? 'text-xs font-semibold' : 'text-[15px]', valueClassName)}>{value}</span>
+  const labelEl = <span className="text-[11px] font-semibold tracking-[.05em] text-muted-foreground uppercase max-sm:text-xs">{label}</span>
+  if (hint && coarse) {
+    return (
+      <HintPopover content={hint} data-slot="detail-metric"
+        triggerClassName="flex shrink flex-col items-start justify-start gap-[3px] rounded-sm text-left whitespace-normal">
+        {valueEl}{labelEl}
+      </HintPopover>
+    )
+  }
   const body = (
     <div className={cn('flex flex-col gap-[3px]', hint && 'cursor-help')}>
-      <span className={cn('leading-tight font-bold text-foreground', time ? 'text-xs font-semibold' : 'text-[15px]', valueClassName)}>{value}</span>
-      <span className="text-[10px] font-semibold tracking-[.05em] text-muted-foreground uppercase">{label}</span>
+      {valueEl}
+      {labelEl}
     </div>
   )
   return hint ? <SimpleTooltip content={hint}>{body}</SimpleTooltip> : body
