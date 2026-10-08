@@ -26,7 +26,7 @@ function LaneHeader({ lane, count, id }) {
   )
 }
 
-function LaneBody({ lane, rows, nowMs, onOpen, selectedId, wide = false }) {
+function LaneBody({ lane, rows, onOpen, selectedId, wide = false }) {
   const t = useT()
   if (rows.length === 0) {
     return <p data-slot="lane-empty" className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">{t(LANE_META[lane].emptyKey)}</p>
@@ -36,7 +36,7 @@ function LaneBody({ lane, rows, nowMs, onOpen, selectedId, wide = false }) {
     <ul className={cn('m-0 flex list-none flex-col gap-2 p-0', wide && 'md:grid md:grid-cols-2 md:items-start lg:flex lg:flex-col')}>
       {rows.map((inc) => (
         <li key={inc.id} className="min-w-0">
-          <IncidentCard inc={inc} nowMs={nowMs} onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
+          <IncidentCard inc={inc} onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
         </li>
       ))}
     </ul>
@@ -62,7 +62,7 @@ export function BoardSkeleton() {
  * şeritlere dağıtılır (sayfalama çubuğu altta aynen durur). Telefonda şeritler shadcn Tabs olur (sekme başına sayı);
  * tablette 2, geniş ekranda 3 sütun. Şeritlerin kendi kaydırması yok: sayfa kayar (mobilde iç kaydırma tuzak).
  */
-export default function IncidentBoard({ rows, nowMs, onOpen, selectedId, phone = false }) {
+export default function IncidentBoard({ rows, onOpen, selectedId, phone = false }) {
   const t = useT()
   const uid = useId()
   const [tab, setTab] = useState('open')
@@ -85,7 +85,7 @@ export default function IncidentBoard({ rows, nowMs, onOpen, selectedId, phone =
         </TabsList>
         {LANES.map((lane) => (
           <TabsContent key={lane} value={lane} className="mt-1 min-w-0">
-            <LaneBody lane={lane} rows={byLane[lane]} nowMs={nowMs} onOpen={onOpen} selectedId={selectedId} />
+            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} />
           </TabsContent>
         ))}
       </Tabs>
@@ -102,7 +102,7 @@ export default function IncidentBoard({ rows, nowMs, onOpen, selectedId, phone =
           <section key={lane} data-slot="incident-lane" data-lane={lane} aria-labelledby={hid}
             className={cn('min-w-0 rounded-xl border bg-muted/30 p-2', wide && 'md:col-span-2 lg:col-span-1')}>
             <LaneHeader lane={lane} count={byLane[lane].length} id={hid} />
-            <LaneBody lane={lane} rows={byLane[lane]} nowMs={nowMs} onOpen={onOpen} selectedId={selectedId} wide={wide} />
+            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} wide={wide} />
           </section>
         )
       })}

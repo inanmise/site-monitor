@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { HelpCircle, BookOpen } from 'lucide-react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { useTour } from './tour/TourProvider.jsx'
 import { PAGE_TOURS } from './tour/tourSteps.js'
-import whitepaperTr from '../assets/whitepaper.md?raw'
-import whitepaperEn from '../assets/whitepaper.en.md?raw'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
+import { extractSection } from './help/helpSection.js'
 import { Button } from '@/components/shadcn/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
 
@@ -30,16 +28,14 @@ export const TAB_HELP_SECTION = {
   settings: '14.26', health: '14.27', sqlplayground: '14.28', help: '14.29', monitorchanges: '14.14', noc: '14.31',
 }
 
-/** "### 14.N …" başlığından bir sonraki "### " ya da "## " başlığına kadar olan parçayı döner. */
-export function extractSection(md, number) {
-  if (!md || !number) return null
-  const lines = md.split(/\r?\n/)
-  const start = lines.findIndex((l) => new RegExp(`^###\\s+${number.replace('.', '\\.')}(\\s|$)`).test(l))
-  if (start < 0) return null
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i++) { if (/^##\s|^###\s/.test(lines[i])) { end = i; break } }
-  return lines.slice(start, end).join('\n')
-}
+/** "### 14.N …" başlığından bir sonraki başlığa kadar olan parça — tembel gövdeyle ortak (help/helpSection.js). */
+export { extractSection }
+
+/**
+ * Gövde (markdown çizimi + etkin dilin kılavuzu) ilk açılışta yüklenir (2026-10-09): react-markdown, remark-gfm ve
+ * iki kılavuz metni açılış paketinden çıktı. Sheet içeriği yalnız açıkken çizildiği için parça ilk açılışta istenir.
+ */
+const HelpDrawerBody = lazy(() => import('./help/HelpDrawerBody.jsx'))
 
 export default function HelpDrawer({ tab }) {
   const t = useT()
@@ -55,7 +51,6 @@ export default function HelpDrawer({ tab }) {
   }, [])
 
   const number = section || TAB_HELP_SECTION[tab] || null
-  const md = useMemo(() => extractSection(lang === 'en' ? whitepaperEn : whitepaperTr, number), [lang, number])
 
   const go = (fn) => { setOpen(false); fn() }
 
@@ -88,7 +83,9 @@ export default function HelpDrawer({ tab }) {
           </SheetHeader>
           {/* Gövde: whitepaper tipografisi (.help-content — Yardım sekmesiyle ortak markdown biçimi; shadcn öğesi değil). */}
           <div className="helpd-body help-content min-h-0">
-            {md ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown> : <p className="text-muted-foreground">{t('helpd.none')}</p>}
+            <Suspense fallback={<LoadingBlock label={t('app.loading')} />}>
+              <HelpDrawerBody lang={lang} number={number} />
+            </Suspense>
           </div>
         </SheetContent>
       </Sheet>

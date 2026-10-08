@@ -16,7 +16,7 @@ import { LangProvider } from '../i18n/index.jsx'
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const toastMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 
-vi.mock('@uiw/react-md-editor', () => ({
+vi.mock('@uiw/react-md-editor/nohighlight', () => ({
   default: ({ value }) => <textarea readOnly value={value ?? ''} />,
   commands: { bold: {}, italic: {}, group: () => ({}) },
 }))

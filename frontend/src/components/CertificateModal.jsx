@@ -5,14 +5,11 @@ import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { Trash2, Globe, X, Pencil, History, Stethoscope, Play, RefreshCw, StickyNote,
   ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package, FileClock, Layers } from 'lucide-react'
-import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import CertNotesTab from './certmodal/CertNotesTab.jsx'
-import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { deleteInventoryByDomain } from '../utils/deleteInventory.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
-import { InventoryTab } from './inventory/InventoryDetails.jsx'
 import ReadOnlyBadge from './ui/ReadOnlyBadge.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import { CheckRunningStrip, MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
@@ -63,6 +60,11 @@ const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
 const CertChangesTab = lazy(() => import('./certmodal/CertChangesTab.jsx'))
 // Manuel (dosyadan yüklenen) kayıt (2026-10-06): sürüm geçmişi + "Yeni sürüm yükle" — yalnız o kayıtlarda yüklenir.
 const ManualCertVersions = lazy(() => import('./manualcert/ManualCertVersions.jsx'))
+// Yalnız kendi sekmesinde / düğmesinde görünenler de ilk kullanımda yüklenir (2026-10-09, açılış grafiği küçültme):
+// Alarm geçmişi (olay formu → Markdown editörü, gürültü grafiği), tanılama penceresi, envanter ayrıntısı.
+const AlertHistory = lazy(() => import('./admin/AlertHistory'))
+const DiagnosticsModal = lazy(() => import('./admin/DiagnosticsModal.jsx'))
+const InventoryTab = lazy(() => import('./inventory/InventoryDetails.jsx').then((m) => ({ default: m.InventoryTab })))
 
 /** Başlık durum rozeti tonu (eski .modal-status-*). */
 const STATUS_TONE = {
@@ -554,7 +556,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {!previewMode && !readOnly && (
           <TabsContent value="alerts">
-            <AlertHistory key={reloadKey} domain={domain} />
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <AlertHistory key={reloadKey} domain={domain} />
+            </Suspense>
           </TabsContent>
         )}
 
@@ -570,7 +574,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           <TabsContent value="inventory">
             {/* Envanter Bilgileri (2026-09-28 yeniden tasarım): "Kaydı düzenle" başlıktaki Düzenle ile AYNI işleyici (salt
                 okunurda yok); "Envanterde aç" pencereyi kapatıp Envanter ekranında kaydın panelini açar. */}
-            <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
+            </Suspense>
           </TabsContent>
         )}
 
@@ -593,7 +599,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       </Tabs>
     </ModalShell>
     {showDiag && (
-      <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
+      <Suspense fallback={null}>
+        <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
+      </Suspense>
     )}
     </>
   )

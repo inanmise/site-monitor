@@ -1,6 +1,6 @@
 import { ArrowUp, ArrowDown, ArrowUpDown, MessageSquare, Eye, ExternalLink, UserCheck, CheckCircle2, Trash2 } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
-import { durationMs, formatDuration, formatIncidentTime } from '../../utils/incidentMeta.js'
+import { formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
@@ -9,6 +9,7 @@ import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import IncidentCard from './IncidentCard.jsx'
+import LiveDuration from './LiveDuration.jsx'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
 import { isOpen, isAcked, incidentHref, rowName, isForeign, canActOn, canDeleteIncident } from './incidentsModel.js'
 
@@ -33,7 +34,7 @@ export function TableSkeleton({ phone = false }) {
  * onayla/çöz/sil ve (takım kapsamlı) izleme bağlantısı YOK.
  */
 export default function IncidentsTable({
-  rows, nowMs, sort, onSort, onOpen, selectedId, phone = false, isAdmin = false, onAck, onResolve, onDelete,
+  rows, sort, onSort, onOpen, selectedId, phone = false, isAdmin = false, onAck, onResolve, onDelete,
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
@@ -43,7 +44,7 @@ export default function IncidentsTable({
       <ul data-slot="incident-list" className="m-0 flex list-none flex-col gap-2 p-0">
         {rows.map((inc) => (
           <li key={inc.id} className="min-w-0">
-            <IncidentCard inc={inc} nowMs={nowMs} showStatus onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
+            <IncidentCard inc={inc} showStatus onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
           </li>
         ))}
       </ul>
@@ -144,7 +145,8 @@ export default function IncidentsTable({
                 </TableCell>
                 <TableCell className="text-[0.92em] whitespace-nowrap text-muted-foreground" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</TableCell>
                 <TableCell className="text-[0.95em] whitespace-nowrap">
-                  <span className="tabular-nums">{formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)}</span>
+                  {/* Süre kendi saatiyle tazelenir (yaprak) — tablo saniyede bir yeniden çizilmez (2026-10-09) */}
+                  <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open} />
                   {!open && inc.resolved_at && (
                     <span className="block text-[0.82em] whitespace-nowrap text-muted-foreground" title={inc.resolved_at}>
                       {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at, dateLocale)}

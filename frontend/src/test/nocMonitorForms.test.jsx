@@ -31,7 +31,12 @@ vi.mock('../api/client', () => ({
 vi.mock('../components/ui/CodeEditor.jsx', () => ({
   default: ({ value, onChange }) => <textarea data-testid="code-editor" value={value} onChange={(e) => onChange(e.target.value)} />,
 }))
-vi.mock('@uiw/react-md-editor', () => ({
+// Editör tembel parçadan iki girişle gelir (2026-10-09): envanter formu `common`, kılavuz/olay editörü `nohighlight`.
+vi.mock('@uiw/react-md-editor/common', () => ({
+  default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
+  commands: { divider: { name: 'divider' }, codeEdit: { name: 'edit' }, codePreview: { name: 'preview' }, fullscreen: { name: 'fullscreen' } },
+}))
+vi.mock('@uiw/react-md-editor/nohighlight', () => ({
   default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
   commands: { divider: { name: 'divider' }, codeEdit: { name: 'edit' }, codePreview: { name: 'preview' }, fullscreen: { name: 'fullscreen' } },
 }))

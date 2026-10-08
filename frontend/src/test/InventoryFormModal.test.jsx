@@ -30,7 +30,7 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
 }))
 // MDEditor jsdom'da ağır; forma dair iddialar onu gerektirmiyor.
 // extraCommands da çizilir: araç çubuğundaki "panoya kopyala" komutu (2026-09-22) gerçek editör gibi state.text ile çağrılır.
-vi.mock('@uiw/react-md-editor', () => ({
+vi.mock('@uiw/react-md-editor/common', () => ({
   default: ({ value, textareaProps, extraCommands = [] }) => (<>
     <div className="w-md-editor-toolbar">{extraCommands.filter(c => c && c.execute).map(c => (
       <button key={c.name} type="button" {...(c.buttonProps ?? {})} onClick={() => c.execute({ text: value ?? '' })}>{c.icon}</button>

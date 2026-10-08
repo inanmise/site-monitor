@@ -11,7 +11,7 @@ import { isoWeekInfo } from '../utils/isoWeek'
  */
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const toastMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
-vi.mock('@uiw/react-md-editor', () => ({ default: ({ value }) => <textarea readOnly value={value ?? ''} />, commands: { bold: {}, italic: {}, group: () => ({}) } }))
+vi.mock('@uiw/react-md-editor/nohighlight', () => ({ default: ({ value }) => <textarea readOnly value={value ?? ''} />, commands: { bold: {}, italic: {}, group: () => ({}) } }))
 vi.mock('react-markdown', () => ({ default: ({ children }) => <div>{children}</div> }))
 vi.mock('remark-gfm', () => ({ default: () => {} }))
 vi.mock('../components/WeeklyKpiStrip.jsx', () => ({ default: () => <div data-testid="kpi" /> }))

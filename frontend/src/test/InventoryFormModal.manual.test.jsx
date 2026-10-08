@@ -24,7 +24,7 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
   useDialog: () => ({ showConfirm }),
   DialogProvider: ({ children }) => children,
 }))
-vi.mock('@uiw/react-md-editor', () => ({
+vi.mock('@uiw/react-md-editor/common', () => ({
   default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
   commands: { divider: {}, codeEdit: {}, codePreview: {}, fullscreen: {} },
 }))

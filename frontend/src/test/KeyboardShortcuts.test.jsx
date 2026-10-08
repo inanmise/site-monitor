@@ -112,7 +112,8 @@ describe('KeyboardShortcuts — genel kısayollar ve liste', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     const ev = key('?', { shiftKey: true })
     expect(ev.defaultPrevented).toBe(true)
-    const dlg = screen.getByRole('dialog', { name: /Klavye kısayolları|Keyboard shortcuts/ })
+    // Liste penceresi ilk açılışta tembel yüklenir (2026-10-09) — dinleyici ilk tuştan itibaren çalışır (yukarıda).
+    const dlg = await screen.findByRole('dialog', { name: /Klavye kısayolları|Keyboard shortcuts/ })
     const row = (id) => dlg.querySelector(`[data-shortcut="${id}"]`)
     for (const id of ['help', 'search', 'palette', 'sidebar', 'escape', 'submit', 'palette-move', 'palette-open',
       'tour-next', 'tour-prev', 'tour-close', 'drawer-step', 'image-step']) expect(row(id), id).not.toBeNull()
@@ -134,10 +135,10 @@ describe('KeyboardShortcuts — genel kısayollar ve liste', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
-  it('`sm:shortcuts` olayı listeyi açar; görünmeyen sekmenin `g` satırı yok, SQL satırı yalnız SQL sekmesiyle', () => {
+  it('`sm:shortcuts` olayı listeyi açar; görünmeyen sekmenin `g` satırı yok, SQL satırı yalnız SQL sekmesiyle', async () => {
     render(<KeyboardShortcuts tabs={[{ id: 'dashboard', label: 'Pano' }, { id: 'sqlplayground', label: 'SQL' }]} onTabChange={vi.fn()} />)
     act(() => { window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT)) })
-    const dlg = screen.getByRole('dialog')
+    const dlg = await screen.findByRole('dialog')
     expect([...dlg.querySelectorAll('[data-group="go"] [data-slot="shortcut-row"]')].map((r) => r.getAttribute('data-shortcut'))).toEqual(['go-d'])
     expect(dlg.querySelector('[data-shortcut="sql"]')).not.toBeNull()
   })

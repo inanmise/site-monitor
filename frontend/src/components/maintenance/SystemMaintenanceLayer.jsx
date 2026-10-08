@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -6,7 +6,9 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { clientPhase, dismiss, isDismissed, secondsUntil, windowText } from '../../utils/systemMaintenance.js'
 import { MaintenanceAdminStrip, MaintenanceAnnounceStrip, MaintenanceEndedStrip, MaintenanceWarningStrip } from './MaintenanceStrips.jsx'
 import MaintenanceCountdownDialog from './MaintenanceCountdownDialog.jsx'
-import SysMaintExtendDialog from '../admin/sysmaint/SysMaintExtendDialog.jsx'
+// Süre uzatma penceresi (tarih/saat seçici → react-day-picker) yalnız global yönetici ve bakım sırasında açılır —
+// ilk açılışta yüklenir, sonra bağlı kalır (2026-10-09, açılış paketi küçültme).
+const SysMaintExtendDialog = lazy(() => import('../admin/sysmaint/SysMaintExtendDialog.jsx'))
 
 /**
  * Sistem Bakım Modu — UYGULAMA KATMANI (2026-10-02, kullanıcı kararı). App yalnız sunucu bloğunu (`maintenance`) ve saat
@@ -32,6 +34,7 @@ export default function SystemMaintenanceLayer({ block, offset = 0, globalAdmin 
   const [now, setNow] = useState(() => Date.now() + offset)
   const [, bump] = useState(0)          // kapatma sonrası yeniden çizim (localStorage okunur)
   const [extendOpen, setExtendOpen] = useState(false)
+  const [extendMounted, setExtendMounted] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const phase = clientPhase(block, now)
@@ -71,7 +74,7 @@ export default function SystemMaintenanceLayer({ block, offset = 0, globalAdmin 
     if (globalAdmin && (phase === 'warning' || phase === 'final' || phase === 'active')) {
       return (
         <MaintenanceAdminStrip block={block} phase={phase} secondsLeft={toStart} busy={busy}
-          onExtend={phase === 'active' ? () => setExtendOpen(true) : undefined}
+          onExtend={phase === 'active' ? () => { setExtendMounted(true); setExtendOpen(true) } : undefined}
           onEndNow={phase === 'active' ? endNow : undefined} onOpenSettings={onOpenSettings} />
       )
     }
@@ -93,10 +96,12 @@ export default function SystemMaintenanceLayer({ block, offset = 0, globalAdmin 
       {!globalAdmin && (
         <MaintenanceCountdownDialog open={dialogOpen} mode={dialogMode} seconds={toStart} block={block} onExpire={onExpire} />
       )}
-      {globalAdmin && block?.id && (
-        <SysMaintExtendDialog open={extendOpen} onClose={() => setExtendOpen(false)}
-          window={{ id: block.id, end_at: block.end_at }}
-          onSaved={() => { setExtendOpen(false); onChanged?.() }} />
+      {globalAdmin && block?.id && extendMounted && (
+        <Suspense fallback={null}>
+          <SysMaintExtendDialog open={extendOpen} onClose={() => setExtendOpen(false)}
+            window={{ id: block.id, end_at: block.end_at }}
+            onSaved={() => { setExtendOpen(false); onChanged?.() }} />
+        </Suspense>
       )}
     </>
   )

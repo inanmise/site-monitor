@@ -1,10 +1,25 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useAppVersion } from '../contexts/BrandingProvider.jsx'
 import { useT } from '../i18n/index.jsx'
 import { isNewVersion, readLastSeenVersion, writeLastSeenVersion } from '../utils/releaseUi.js'
-import VersionPopover from './VersionPopover.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
+
+// Popover gövdesi (dağıtım rozetleri, sürüm modeli) yalnız açılınca gerekir — ilk açılışta yüklenir (2026-10-09).
+const VersionPopover = lazy(() => import('./VersionPopover.jsx'))
+
+/** Gövde yüklenirken: gövdenin kendi "yükleniyor" görünümünün aynısı (sürüm satırı + yükleniyor). */
+function VersionPopoverFallback({ appVersion }) {
+  const t = useT()
+  return (
+    <div className="flex min-w-0 flex-col text-sm" role="status">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="font-mono text-lg font-bold">v{appVersion}</span>
+      </div>
+      <p className="py-1.5 text-muted-foreground">{t('version.loading')}</p>
+    </div>
+  )
+}
 
 /**
  * Nav'daki sürüm çipi (K1): tıklanınca "en son geçerli sürüm hangisi ve ne zaman devreye alındı?"
@@ -58,7 +73,11 @@ export default function VersionChip({ onTabChange }) {
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8} aria-label={t('version.chipTitle')}
         className="z-(--z-menu) w-80 text-sm">
-        {open && <VersionPopover appVersion={appVersion} previousSeen={sinceVersion} onNavigate={go} />}
+        {open && (
+          <Suspense fallback={<VersionPopoverFallback appVersion={appVersion} />}>
+            <VersionPopover appVersion={appVersion} previousSeen={sinceVersion} onNavigate={go} />
+          </Suspense>
+        )}
       </PopoverContent>
     </Popover>
   )

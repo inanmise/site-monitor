@@ -1,6 +1,6 @@
 import { MessageSquare, Clock } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
-import { durationMs, formatDuration, formatIncidentTime } from '../../utils/incidentMeta.js'
+import { formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { Card } from '@/components/shadcn/card'
@@ -8,6 +8,7 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
 import { isOpen, isAcked, laneOf, isForeign } from './incidentsModel.js'
+import LiveDuration from './LiveDuration.jsx'
 
 /** Örtünün (başlık düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard ile aynı desen). */
 const LAYER = 'relative z-10'
@@ -21,12 +22,11 @@ const LAYER = 'relative z-10'
  * Sol renk şeridi YOK; durum/önem rozetle. Seçili (açık detay / derin bağlantı) kart TÜM çerçevesiyle vurgulanır.
  * Başka ekibin olayı (`can_manage:false`, 2026-09-28) kilit rozeti taşır — kartın kendi eylemi yok, detay salt okunur.
  */
-export default function IncidentCard({ inc, nowMs, onOpen, selected = false, showStatus = false, className }) {
+export default function IncidentCard({ inc, onOpen, selected = false, showStatus = false, className }) {
   const t = useT()
   const dateLocale = useDateLocale()
   const name = inc.monitor?.name || inc.domain || '—'
   const open = isOpen(inc)
-  const dur = formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)
   const n = inc.comment_count ?? 0
   return (
     <Card data-slot="incident-card" data-status={inc.status} data-lane={laneOf(inc)} data-incident-id={inc.id}
@@ -41,7 +41,10 @@ export default function IncidentCard({ inc, nowMs, onOpen, selected = false, sho
         <RootCauseChip rc={inc.root_cause} withLabel={false} />
         {isForeign(inc) && <ReadOnlyBadge compact />}
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground tabular-nums" title={inc.started_at}>
-          <Clock aria-hidden="true" className="size-3" />{open ? t('incov.ongoingFor', dur) : t('incov.lastedFor', dur)}
+          <Clock aria-hidden="true" className="size-3" />
+          {/* Süre kendi saatiyle tazelenir (yaprak) — kart saniyede bir yeniden çizilmez (2026-10-09) */}
+          <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open}
+            format={(dur) => (open ? t('incov.ongoingFor', dur) : t('incov.lastedFor', dur))} />
         </span>
       </div>
 
