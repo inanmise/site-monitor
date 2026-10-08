@@ -27,13 +27,25 @@ const staticImports = (src) => [...src.matchAll(/^\s*import\s+(?:[^'"]*?\s+from\
 const anyImports = (src) => [...staticImports(src), ...[...src.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1])]
 
 describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
-  it('node-forge ve fflate yalnız extract/ altında içe aktarılır', () => {
-    const offenders = FILES.filter(({ f, src }) => !f.startsWith(EXTRACT)
-      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || s === 'fflate'))
+  it('node-forge ve fflate yalnız extract/ altında içe aktarılır (tek istisna: tembel Excel yazıcısı)', () => {
+    // İstisna (2026-10-08): `utils/xlsxWriter.js` fflate ile .xlsx paketler. O da açılış paketine GİRMEZ — aşağıdaki
+    // kapı yalnız tembel yüklenen dışa aktarma modülünün onu içe aktardığını denetler. node-forge için istisna YOK.
+    const XLSX_WRITER = 'utils/xlsxWriter.js'
+    const offenders = FILES.filter(({ f, rel: r, src }) => !f.startsWith(EXTRACT)
+      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || (s === 'fflate' && r !== XLSX_WRITER)))
       .map((x) => x.rel)
     expect(offenders).toEqual([])
     const users = FILES.filter(({ src }) => anyImports(src).some((s) => s.startsWith('node-forge') || s === 'fflate')).map((x) => x.rel).sort()
-    expect(users).toEqual(['components/manualcert/extract/core.js', 'components/manualcert/extract/crypto.js'])
+    expect(users).toEqual(['components/manualcert/extract/core.js', 'components/manualcert/extract/crypto.js', XLSX_WRITER])
+  })
+
+  it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modülünden gelir; o modül her yerde import() ile yüklenir', () => {
+    const writerUsers = FILES.filter(({ src }) => anyImports(src).some((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s))).map((x) => x.rel).sort()
+    expect(writerUsers).toEqual(['components/sharedcert/sharedCertExport.js'])
+    const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /sharedCertExport(\.js)?$/.test(s))).map((x) => x.rel)
+    expect(staticExportUsers).toEqual([])
+    const lazyExportUsers = FILES.filter(({ src }) => /import\(\s*'\.\/sharedcert\/sharedCertExport\.js'\s*\)/.test(src)).map((x) => x.rel)
+    expect(lazyExportUsers).toEqual(['components/SharedCertificateModal.jsx'])
   })
 
   it('extract/index.js statik içe aktarma YAPMAZ; çekirdek dinamik import ya da Worker ile gelir', () => {
