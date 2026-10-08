@@ -101,6 +101,11 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
 
     // Faz 3b — çok-takım kapsamı (müdür/PO): teamId VEYA ugTeamId ∈ ids
     List<CertificateInventory> findByTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> teamIds);
+
+    /** Aynı süzgecin yalnız alan adı sütunu (2026-10-09, performans): kapsamlı kullanıcının Pano/liste yoklamasında tam
+     *  envanter varlığı (TEXT sütunlarıyla) hidrate edilmesin. */
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.teamId IN :teamIds AND c.active = true AND c.domain IS NOT NULL")
+    List<String> findActiveDomainNamesByTeamIds(@Param("teamIds") Collection<Long> teamIds);
     List<CertificateInventory> findByUgTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> ugTeamIds);
     List<CertificateInventory> findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(Collection<Long> teamIds);
     List<CertificateInventory> findByUgTeamIdInAndDeletedAtIsNullOrderByDomainAsc(Collection<Long> ugTeamIds);

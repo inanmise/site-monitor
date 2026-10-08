@@ -60,7 +60,7 @@ public class UserRefResponseAdvice implements ResponseBodyAdvice<Object> {
         ObjectMapper mapper = json.getIfAvailable();
         if (svc == null || mapper == null) return body;
         try {
-            return UserRefWire.toOpaque(body, mapper, svc::publicIdOf);
+            return UserRefWire.toOpaqueFast(body, mapper, svc::publicIdOf);   // çevrilecek alan yoksa tek serileştirme
         } catch (RuntimeException e) {
             log.warn("Opak kullanıcı kimliği çevirisi başarısız ({}): {}", servlet.getServletRequest().getRequestURI(), e.toString());
             throw e;

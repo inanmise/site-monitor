@@ -212,12 +212,25 @@ public class WebConfig implements WebMvcConfigurer {
                     res.setHeader("Pragma", "no-cache");
                 } else if (uri.startsWith("/assets/")) {
                     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+                } else if (isRevalidatableStatic(uri)) {
+                    // Marka görselleri, yazı tipleri, favicon/simgeler ve teknik doküman PDF'leri (2026-10-09, performans):
+                    // tarayıcı saklar ama HER kullanımda sunucuya sorar (Last-Modified → 304). Değişen logo/PDF bir sonraki
+                    // yüklemede görünür; değişmeyen 1–2 MB PDF ve 515 KB yazı tipi PDF dışa aktarımında yeniden inmez.
+                    // "no-cache" paylaşımlı önbelleğe tazelemeden sunma izni VERMEZ (NetScaler eski sürümü gösteremez).
+                    res.setHeader("Cache-Control", "no-cache");
                 } else {
                     res.setHeader("Cache-Control", "no-store, must-revalidate");
                 }
                 chain.doFilter(req, res);
             }
         };
+    }
+
+    /** Yeniden doğrulanarak önbelleğe alınabilen statik dosyalar — SPA kabuğu ("/", index.html) BİLEREK dışarıda (no-store). */
+    static boolean isRevalidatableStatic(String uri) {
+        if (uri == null) return false;
+        if (uri.startsWith("/brand/") || uri.startsWith("/fonts/")) return true;
+        return uri.matches("/(favicon[^/]*|apple-touch-icon[^/]*|icon-[^/]*\\.png|site\\.webmanifest|whitepaper\\.[a-z]{2}\\.pdf)");
     }
 
     // Boot değerleri @Value'dan (env/Helm); sonrası Genel Ayarlar → "Görev Havuzu" grubundan CANLI

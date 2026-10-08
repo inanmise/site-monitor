@@ -88,6 +88,15 @@ public class WeakAlgorithmReportService {
     private final CertificateCheckRepository certificateCheckRepo;
     private final WeakAlgorithmExceptionRepository exceptionRepo;
 
+    /**
+     * Rapor belleği (2026-10-09, performans): Pano HER kullanıcının girişinde bu raporu ister; her çağrı tüm envanteri,
+     * son kontrolleri ve 30 günlük gözlem tablosunu tarıyordu. Görüş kapsamı başına {@code site.monitor.weak-algo.cache-ms};
+     * istisna eklenince/silinince temizlenir; 0 → kapalı (birim testinde varsayılan).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.weak-algo.cache-ms:120000}")
+    long cacheMs;
+    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> memo = new com.sitemonitor.util.TtlMemo<>(500);
+
     // ── Rapor gövdesi ──────────────────────────────────────────────────────────────────────
 
     /** Kapsamsız çağrı = TÜM takımlar. Yalnız sistem-geneli denetçi (global admin/AUDIT) içindir. */
@@ -113,6 +122,12 @@ public class WeakAlgorithmReportService {
      * tablosundan gelir ve kendi süzgecini ayrıca alır (aşağıya bakınız).
      */
     public Map<String, Object> build(List<Long> viewTeamIds) {
+        Map<String, Object> cached = memo.get(com.sitemonitor.util.TtlMemo.scopeKey(viewTeamIds == null, viewTeamIds),
+                cacheMs, false, () -> buildUncached(viewTeamIds));
+        return cached == null ? null : new java.util.LinkedHashMap<>(cached);   // üst düzey kopya: paylaşılan bellek değişmesin
+    }
+
+    Map<String, Object> buildUncached(List<Long> viewTeamIds) {
         Instant now = Instant.now();
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         if (viewTeamIds != null) {
@@ -448,13 +463,16 @@ public class WeakAlgorithmReportService {
         e.setUntil(u.toString());
         e.setCreatedBy(actor);
         e.setCreatedAt(ISO.format(Instant.now()));
-        return exceptionRepo.save(e);
+        WeakAlgorithmException saved = exceptionRepo.save(e);
+        memo.clear();   // rapor istisnayı hemen göstersin
+        return saved;
     }
 
     public boolean clearException(String domain) {
         Optional<WeakAlgorithmException> e = exceptionRepo.findByDomain(domain);
         if (e.isEmpty()) return false;
         exceptionRepo.deleteById(e.get().getId());
+        memo.clear();
         return true;
     }
 

@@ -50,7 +50,7 @@ class UserDirectoryControllerTest {
     @DisplayName("directory: username'i null olan kullanıcıyı ELER, id/username/display_name/email eşler")
     @SuppressWarnings("unchecked")
     void directory_filtersNullUsername_andMapsFields() {
-        when(userRepo.findAll()).thenReturn(List.of(
+        when(userRepo.findDirectoryRows()).thenReturn(rows(
                 user(1L, "aylin", "Aylin Y.", null, null, "aylin@example.com"),
                 user(2L, null, "Ghost", "G", "H", "ghost@example.com")   // username null → elenmeli
         ));
@@ -70,7 +70,7 @@ class UserDirectoryControllerTest {
     @DisplayName("directory: display_name yoksa 'Ad Soyad'a düşer; o da yoksa null (frontend username'e düşer)")
     @SuppressWarnings("unchecked")
     void directory_displayNameFallbackLadder() {
-        when(userRepo.findAll()).thenReturn(List.of(
+        when(userRepo.findDirectoryRows()).thenReturn(rows(
                 user(1L, "explicit", "Açık İsim", "X", "Y", null),   // displayName kazanır
                 user(2L, "nameparts", null, "Mehmet", "Demir", null), // ad+soyad
                 user(3L, "bare", null, null, null, null)              // hiçbiri → null
@@ -92,5 +92,12 @@ class UserDirectoryControllerTest {
         ResponseEntity<byte[]> resp = controller.photo("999", null);   // bean'siz (elle kurulan) denetleyici: eski sayısal ayrıştırma
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    /** Kullanıcıları dizin projeksiyon satırlarına çevirir (id, username, displayName, firstName, lastName, email). */
+    private static List<Object[]> rows(AppUser... users) {
+        List<Object[]> out = new java.util.ArrayList<>();
+        for (AppUser u : users) out.add(new Object[]{u.getId(), u.getUsername(), u.getDisplayName(), u.getFirstName(), u.getLastName(), u.getEmail()});
+        return out;
     }
 }

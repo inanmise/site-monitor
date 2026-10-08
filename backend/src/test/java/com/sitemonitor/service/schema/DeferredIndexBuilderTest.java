@@ -60,10 +60,12 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_mch_hour", "monitor_check_hourly(hour_bucket)");
         EXPECTED.put("idx_nl_trigger_sent", "notification_logs(trigger, sent_at)");
         EXPECTED.put("idx_psr_reason_checked", "pagespeed_resources(keep_reason, checked_at)");
+        EXPECTED.put("idx_app_users_upper_username", "app_users(UPPER(username))");   // oturum kapısı + ping (2026-10-09)
     }
     /** Fonksiyonel / kısmi — H2 karşılığı yok. */
     private static final Set<String> POSTGRES_ONLY =
-            Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created");
+            Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
+                    "idx_app_users_upper_username");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

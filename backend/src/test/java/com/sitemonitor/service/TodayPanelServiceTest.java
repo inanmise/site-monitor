@@ -142,6 +142,27 @@ class TodayPanelServiceTest {
     }
 
     @Test
+    @DisplayName("sertifika bölümü önbellekli aktif listeden okur (2026-10-09): latest_checks tablosu taranmaz, sonuç aynı")
+    void certsFromCachedActiveList() {
+        CertificateService certService = org.mockito.Mockito.mock(CertificateService.class);
+        java.util.function.BiFunction<String, Integer, com.sitemonitor.dto.CertificateDto> dto = (d, days) -> {
+            com.sitemonitor.dto.CertificateDto x = new com.sitemonitor.dto.CertificateDto();
+            x.setDomain(d); x.setDaysRemaining(days); x.setNotAfter("2026-12-01T00:00:00");
+            return x;
+        };
+        when(certService.getAllLatest()).thenReturn(List.of(dto.apply("soon.example.com", 12), dto.apply("exp.example.com", -3),
+                dto.apply("far.example.com", 200), dto.apply("other.example.com", 2)));
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "certService", certService);
+        org.mockito.Mockito.clearInvocations(latestCheckRepo);
+
+        Map<String, Object> certs = block(svc.build(t -> t != null && t == 1L, List.of(1L)), "certs");
+
+        assertThat(certs).containsEntry("count", 2).containsEntry("expired", 1);
+        assertThat(items(certs).get(0)).containsEntry("domain", "exp.example.com").containsEntry("team_name", "Takım A");
+        org.mockito.Mockito.verify(latestCheckRepo, org.mockito.Mockito.never()).findAll();
+    }
+
+    @Test
     @DisplayName("takım 1 kullanıcısı: 30 gün altı 2 (1 dolmuş, en az gün üstte), açık alarm 1 (takım 2'ninki elenir), izleme kartları takım/alan süzgeçli, haftalık DRAFT → eksik")
     void scopedPanel() {
         Map<String, Object> b = svc.build(t -> t != null && t == 1L, List.of(1L));

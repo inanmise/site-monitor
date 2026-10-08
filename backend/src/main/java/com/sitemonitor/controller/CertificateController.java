@@ -491,7 +491,10 @@ public class CertificateController {
     /** "Son 7 günde ne değişti" (2026-09-12, #7). */
     @GetMapping("/stats/changes")
     public ResponseEntity<Map<String, Object>> getRecentChanges(@RequestParam(defaultValue = "7") int days, HttpSession session) {
-        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canViewMonitoring(session, teamId)), "timestamp", now()));
+        // Bellek anahtarı = izleme görüş kapsamı (yüklem yalnız kapsama bağlı: canViewMonitoring ⇔ monitoringViewTeamIds)
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        String key = com.sitemonitor.util.TtlMemo.scopeKey(scope == null, scope);
+        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canViewMonitoring(session, teamId), key), "timestamp", now()));
     }
 
     @GetMapping("/stats/teams")

@@ -587,9 +587,7 @@ public class CertificateService {
     /** Distinct domains owned (SY slot) by any of the given teams. */
     private Set<String> getTeamDomains(java.util.Collection<Long> teamIds) {
         if (teamIds == null || teamIds.isEmpty()) return Set.of();
-        return inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(teamIds)
-                .stream().map(com.sitemonitor.model.CertificateInventory::getDomain)
-                .collect(Collectors.toSet());
+        return new HashSet<>(inventoryRepo.findActiveDomainNamesByTeamIds(teamIds));   // tek sütun (2026-10-09)
     }
 
     /** Eski sekiz parametreli biçim — {@link CertListQuery#of} üzerinden yeni yola düşer. */
@@ -661,7 +659,8 @@ public class CertificateService {
         int perPage = q.perPage(), page = q.page();
         int total = filtered.size();
         int totalPages = (int) Math.ceil((double) total / perPage);
-        int from = Math.min((page - 1) * perPage, total);
+        // long aritmetik (2026-10-09): page=500000 × per_page=5000 int taşıyıp negatif oluyor, subList 500 veriyordu
+        int from = (int) Math.min((long) Math.max(page - 1, 0) * perPage, total);
         int to = Math.min(from + perPage, total);
 
         // ── Facet'ler ──

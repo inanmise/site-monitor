@@ -63,7 +63,7 @@ class UserRefWebIntegrationTest {
         u.setId(5L);
         u.setUsername("ali");
         u.setDisplayName("Ali");
-        when(userRepo.findAll()).thenReturn(List.of(u));
+        when(userRepo.findDirectoryRows()).thenReturn(java.util.Collections.singletonList(new Object[]{5L, "ali", "Ali", null, null, null}));
         when(userRepo.findById(5L)).thenReturn(Optional.of(u));
         when(userPublicIds.publicIdOf(5L)).thenReturn(P5);
         when(userPublicIds.resolve(eq(P5), anyBoolean())).thenReturn(5L);

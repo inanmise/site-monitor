@@ -36,6 +36,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /** Yönetici özeti (2026-09-12, #20): pencere içinde AÇILAN alarmlar (delta hesabı). */
     List<AlertEvent> findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(String since);
 
+    /**
+     * Gelen kutusu "son 24 saatte çözülenler" (2026-10-09, performans): eskiden 30 günlük TÜM alarmlar yüklenip Java'da
+     * süzülüyordu (dakikada bir, her kullanıcı). Aynı anlam: çözülmüş + çözülme anı ≥ resolvedSince + oluşma ≥ createdSince
+     * (idx_ae_resolved_at). ISO sabit genişlik → sözlüksel karşılaştırma.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT e FROM AlertEvent e WHERE e.resolved = true AND e.resolvedAt >= :resolvedSince"
+            + " AND e.createdAt >= :createdSince ORDER BY e.createdAt DESC")
+    List<AlertEvent> findResolvedSinceCreatedSince(@org.springframework.data.repository.query.Param("resolvedSince") String resolvedSince,
+                                                   @org.springframework.data.repository.query.Param("createdSince") String createdSince);
+
     /** "Sizin için — bugün" son 24 saat şeridi (2026-09-23): pencere içinde ÇÖZÜLEN alarmlar. */
     List<AlertEvent> findByResolvedAtGreaterThanEqual(String since);
 

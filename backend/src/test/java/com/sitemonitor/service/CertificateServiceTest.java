@@ -624,7 +624,7 @@ class CertificateServiceTest {
         teamInv.setActive(true);
         teamInv.setTeamId(5L);
 
-        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(List.of(5L))).thenReturn(List.of(teamInv));
+        when(inventoryRepo.findActiveDomainNamesByTeamIds(List.of(5L))).thenReturn(List.of(teamInv.getDomain()));
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("team.domain.com", "warning", true, 10, "VALID", "OK"),
                 latestCheck("other.domain.com", "warning", true, 5, "VALID", "OK")

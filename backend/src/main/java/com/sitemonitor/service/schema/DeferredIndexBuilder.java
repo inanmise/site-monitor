@@ -157,7 +157,10 @@ public final class DeferredIndexBuilder {
             Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_nl_trigger_sent ON notification_logs(trigger, sent_at)"),
             // pagespeed_resources retention / BREACH temizliği: keep_reason = 'BREACH' AND checked_at < ? — eşitlik önde,
             // aralık arkada (checked_at tek başına yerine; aynı sorguya daha dar hizmet eder).
-            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_reason_checked ON pagespeed_resources(keep_reason, checked_at)"));
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_reason_checked ON pagespeed_resources(keep_reason, checked_at)"),
+            // 2026-10-09 (performans): oturum kapısı (pasif + süpersede), ping (lastSeen) ve giriş UPPER(username) = UPPER(?)
+            // ile arar; düz username indeksi bu ifadeye yaramaz → her istekte tam tablo taraması. İfade indeksi PG'ye özgü.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_app_users_upper_username ON app_users(UPPER(username))"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}
