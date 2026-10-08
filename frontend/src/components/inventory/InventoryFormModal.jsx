@@ -20,6 +20,7 @@ import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import DomainConflictBanner from './DomainConflictBanner.jsx'
 import { domainConflictOf } from './domainConflictModel.js'
 import { markDeleted, unmarkDeleted } from '../../utils/recentlyDeleted.js'
+import { announceInventoryRenamed } from '../../utils/inventoryEvent.js'
 import { deleteConfirmMessage } from '../../utils/deleteInventory.js'
 import { isManualCert, trackingKeyError } from '../manualcert/manualCertModel.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
@@ -494,9 +495,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         //
         // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
         // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
-        const savedNow = form.domain.trim()
+        // Sunucunun kaydettiği ad (küçük harfe çevrilmiş); yanıtta yoksa formdaki.
+        const savedNow = (typeof res.data?.domain === 'string' && res.data.domain.trim()) || form.domain.trim()
         // Az önce silinen bir ad yeniden eklendi / ada taşındı: "yakın zamanda silindi" işareti kalkar, kayıt hemen görünür.
         unmarkDeleted('cert', savedNow)
+        // Ad değişti (2026-10-08): eski adı tutan yüzeyler (açık sertifika penceresi, Manuel Sertifikalar, Envanter) yeni
+        // ada geçer — yoksa pencere eski adla Sağlık / Kontrol geçmişi isteyip 404 alıyordu. Kontrolü BEKLEMEDEN yayılır.
+        if (mode === 'edit' && record?.domain) announceInventoryRenamed(record.domain, savedNow)
         // Manuel kayıt: canlı ilk kontrol yok (ağda adres yok) — kayıt bitti, form kapanır.
         if (manual) { onSaved?.(res, savedNow); return }
         setFirstRun(true)

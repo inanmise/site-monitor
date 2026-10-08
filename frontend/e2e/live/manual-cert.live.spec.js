@@ -694,6 +694,89 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     done()
   })
 
+  test('3d · takip adı PENCEREDEN değişir: pencere yeni adla sürer (sekme korunur, Sağlık / Kontrol geçmişi hatasız, eski adla istek yok), liste yenilemeden yeni adı gösterir @1280', async ({ page }) => {
+    // 2026-10-08 (kullanıcı: "takip adı değiştirince Sağlık bilgisi yüklenemedi … 404", "Kontrol geçmişi yüklenemedi / Domain
+    // envanterde bulunamadı … 404", "Manuel Sertifikalar sayfasında takip adı değişikliği hemen görülmüyor"). 3b listeden
+    // düzenleyip sayfayı YENİDEN açıyordu — açık pencere ve açık liste yolunu hiç görmüyordu.
+    const done = stopwatch('3d pencereden yeniden adlandırma')
+    await page.setViewportSize(DESKTOP)
+    const NEW_KEY = `${RUN}-pencere-ad.example.test`
+    await openApp(page, `/?tab=manualcerts&mc_q=${encodeURIComponent(RUN)}`)
+    const row = page.locator(`[data-mcert-row="${KEY}"]`)
+    await row.waitFor()
+    await row.locator('[data-slot="mcert-open"]').first().click()
+    const box = page.locator(CERT_MODAL)
+    await box.waitFor()
+    await certTab(page, box, 'health')
+    const healthTab = box.locator('[role="tab"][id$="-trigger-health"]')
+    await expect(healthTab).toHaveAttribute('aria-selected', 'true')
+
+    // PUT yanıtından SONRA eski adla giden her API isteği ve her 4xx/5xx API yanıtı kaydedilir (olay sırası korunur)
+    const oldEnc = encodeURIComponent(KEY)
+    const isPut = (r) => /\/api\/admin\/inventory\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PUT'
+    let renamed = false
+    const stale = []
+    const failed = []
+    const onReq = (r) => {
+      const u = new URL(r.url())
+      if (renamed && u.pathname.startsWith('/api/') && (u.pathname.includes(`/${oldEnc}`) || u.search.includes(`=${oldEnc}`))) stale.push(`${r.method()} ${u.pathname}${u.search}`)
+    }
+    const onResp = (r) => {
+      if (isPut(r)) { renamed = true; return }
+      const u = new URL(r.url())
+      if (renamed && u.pathname.startsWith('/api/') && r.status() >= 400) failed.push(`${r.status()} ${u.pathname}`)
+    }
+    page.on('request', onReq)
+    page.on('response', onResp)
+
+    await box.getByRole('button', { name: 'Düzenle', exact: true }).first().click()
+    const form = page.locator('[role="dialog"]:has([data-slot="inv-form-actions"])')
+    await form.locator('[data-slot="inv-form-manual"]').waitFor()
+    const key = form.getByLabel(/^Takip adı/)
+    await expect(key).toHaveValue(KEY)
+    await key.fill(NEW_KEY)
+    const put = page.waitForResponse(isPut)
+    const newHealth = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/certificates/${encodeURIComponent(NEW_KEY)}/health`)
+    await form.locator('[data-slot="inv-form-actions"]').getByRole('button', { name: 'Kaydet', exact: true }).click()
+    const confirm = page.getByRole('dialog').filter({ hasText: 'Takip adı değiştirilsin mi?' })
+    await confirm.getByRole('button', { name: 'Adı değiştir' }).click()
+    const pr = await put
+    expect(pr.status(), `yeniden adlandır: ${JSON.stringify((await pr.json())?.error || '')}`).toBe(200)
+    await expect(form).toHaveCount(0)
+
+    // Pencere açık kalır: başlık YENİ ad, kullanıcı Sağlık sekmesinde kalır, sağlık YENİ adla 200, hata yok
+    await expect(box.locator('[data-slot="cert-modal-title"]')).toContainText(NEW_KEY)
+    await expect(box.locator('[data-slot="cert-modal-title"]')).not.toContainText(KEY)
+    await expect(healthTab).toHaveAttribute('aria-selected', 'true')
+    expect((await newHealth).status(), 'sağlık yeni adla').toBe(200)
+    await expect(box).not.toContainText('Sağlık bilgisi yüklenemedi')
+
+    // Kontrol geçmişi YENİ adla 200, hata yok
+    const newHist = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/monitoring/uptime/${encodeURIComponent(NEW_KEY)}/ssl-history`)
+    await certTab(page, box, 'history')
+    expect((await newHist).status(), 'kontrol geçmişi yeni adla').toBe(200)
+    await expect(box.locator('[data-slot="check-history"]')).toBeVisible()
+    await expect(box).not.toContainText('Kontrol geçmişi yüklenemedi')
+    await expect(box).not.toContainText('Domain envanterde bulunamadı')
+
+    // Pencere kapanır: liste sayfa YENİLENMEDEN yeni adı gösterir, eski ad yok
+    await page.keyboard.press('Escape')
+    await expect(box).toHaveCount(0)
+    await expect(page.locator(`[data-mcert-row="${NEW_KEY}"]`)).toBeVisible()
+    await expect(page.locator(`[data-mcert-row="${KEY}"]`)).toHaveCount(0)
+
+    page.off('request', onReq)
+    page.off('response', onResp)
+    expect(stale, 'yeniden adlandırmadan sonra eski adla API isteği gitmemeli').toEqual([])
+    expect(failed, 'yeniden adlandırmadan sonra başarısız API yanıtı olmamalı').toEqual([])
+
+    // Sonraki adımlar KEY'e bağlı — API ile eski ada geri dön (3b ile aynı)
+    const rec = await apiGet(page.request, `/api/admin/inventory/by-domain?domain=${encodeURIComponent(NEW_KEY)}`)
+    const back = await apiCall(page.request, 'PUT', `/api/admin/inventory/${rec.json?.data?.id}`, { ...rec.json?.data, domain: KEY })
+    expect(back.status, 'eski ada dönüş').toBe(200)
+    done()
+  })
+
   test('4 · olumsuz yollar: CSR, özel anahtar, JKS yanlış şifre + zaten takipte, eski sürüm onayı, KEY_EXISTS (tekil + toplu), truststore tek girdi, iki bağımsız kök toplu → 2 kayıt @1280', async ({ page }) => {
     const done = stopwatch('4 olumsuz yollar + toplu')
     const uploads = await watchUploads(page)

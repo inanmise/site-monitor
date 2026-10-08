@@ -15,6 +15,13 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Takip adı / alan adı değişince açık sertifika penceresi eski adda kalıyordu:** pencerenin Düzenle'sinden ad
+  değiştirilince Sağlık sekmesi "Sağlık bilgisi yüklenemedi (404)", Kontrol Geçmişi "Domain envanterde bulunamadı
+  (404)" gösteriyor, başlık eski adı taşıyordu. Pencere artık kayıttan hemen sonra yeni adla sürer ve kullanıcı
+  bulunduğu sekmede kalır. Manuel Sertifikalar ve Envanter listeleri (açık Envanter çekmecesi dâhil) yeni adı
+  sayfa yenilenmeden gösterir; Envanter çekmecesi kayıttan sonra eski alan değerlerini de artık göstermez.
+
 ## [20.112.0] — 2026-10-08
 
 ### Added

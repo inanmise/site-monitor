@@ -31,6 +31,7 @@ vi.mock('@uiw/react-md-editor', () => ({
 
 import { api } from '../api/client'
 import InventoryFormModal from '../components/inventory/InventoryFormModal.jsx'
+import { INVENTORY_RENAMED_EVENT } from '../utils/inventoryEvent.js'
 
 const RECORD = {
   id: 7, domain: 'keystore.example.test', port: 443, active: true, team_id: 1, group_name: 'Prod', tags: 'prod', tier: 2,
@@ -99,5 +100,55 @@ describe('InventoryFormModal — manuel kayıt kipi', () => {
     fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     expect(api.refreshCertificateHealth).toHaveBeenCalledWith('keystore.example.test')
+  })
+
+  // 2026-10-08 (kullanıcı: "takip adı değiştirince Sağlık / Kontrol geçmişi 404"): ad değişince eski adı tutan yüzeyler
+  // (açık sertifika penceresi, Manuel Sertifikalar, Envanter) olayla yeni ada geçer. Ad SUNUCUNUN kaydettiği addır.
+  describe('yeniden adlandırma olayı', () => {
+    function listen() {
+      const seen = []
+      const on = (e) => seen.push(e.detail)
+      window.addEventListener(INVENTORY_RENAMED_EVENT, on)
+      return { seen, stop: () => window.removeEventListener(INVENTORY_RENAMED_EVENT, on) }
+    }
+
+    it('manuel takip adı değişince eski → yeni (sunucunun döndürdüğü ad) yayılır, onSaved ÖNCESİ', async () => {
+      const ev = listen()
+      let seenAtSave = null
+      const onSaved = vi.fn(() => { seenAtSave = ev.seen.length })
+      api.admin.updateInventory.mockResolvedValueOnce({ success: true, data: { id: 7, domain: 'odeme-keystore', cert_source: 'MANUAL' } })
+      render(<InventoryFormModal mode="edit" record={{ ...RECORD, cert_source: 'MANUAL' }} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} onSaved={onSaved} />)
+      fireEvent.change(screen.getByLabelText(/^(Tracking name|Takip adı)/), { target: { value: 'odeme-keystore' } })
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+      await waitFor(() => expect(onSaved).toHaveBeenCalled())
+      ev.stop()
+      expect(ev.seen).toEqual([{ from: 'keystore.example.test', to: 'odeme-keystore' }])
+      expect(seenAtSave).toBe(1)
+      expect(onSaved.mock.calls[0][1]).toBe('odeme-keystore')
+    })
+
+    it('ağ kaydında alan adı değişince de yayılır; ilk kontrol YENİ adla koşar', async () => {
+      const ev = listen()
+      const onSaved = vi.fn()
+      api.admin.updateInventory.mockResolvedValueOnce({ success: true, data: { id: 7, domain: 'yeni.example.test' } })
+      render(<InventoryFormModal mode="edit" record={RECORD} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} onSaved={onSaved} />)
+      fireEvent.change(screen.getByLabelText(/^(Domain|Alan adı)/), { target: { value: 'Yeni.Example.Test' } })
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+      await waitFor(() => expect(onSaved).toHaveBeenCalled())
+      ev.stop()
+      expect(ev.seen).toEqual([{ from: 'keystore.example.test', to: 'yeni.example.test' }])
+      expect(api.refreshCertificateHealth).toHaveBeenCalledWith('yeni.example.test')
+    })
+
+    it('ad değişmeden kaydedilince olay YOK', async () => {
+      const ev = listen()
+      const onSaved = vi.fn()
+      api.admin.updateInventory.mockResolvedValueOnce({ success: true, data: { id: 7, domain: 'keystore.example.test', cert_source: 'MANUAL' } })
+      render(<InventoryFormModal mode="edit" record={{ ...RECORD, cert_source: 'MANUAL' }} teams={[{ id: 1, name: 'Takım A' }]} canManage onClose={() => {}} onSaved={onSaved} />)
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+      await waitFor(() => expect(onSaved).toHaveBeenCalled())
+      ev.stop()
+      expect(ev.seen).toEqual([])
+    })
   })
 })

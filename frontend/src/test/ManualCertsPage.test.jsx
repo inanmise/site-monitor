@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
@@ -44,6 +44,7 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
 
 import { api } from '../api/client'
 import ManualCertsPage from '../components/manualcert/ManualCertsPage.jsx'
+import { announceInventoryRenamed } from '../utils/inventoryEvent.js'
 
 const rowsShown = () => [...document.querySelectorAll('[data-mcert-row]')].map((el) => el.getAttribute('data-mcert-row'))
 
@@ -193,5 +194,35 @@ describe('ManualCertsPage', () => {
     api.manualCerts.list.mockResolvedValue({ success: false, status: 403, error: 'yasak' })
     renderPage()
     await screen.findByText(/not allowed to view this page|görme yetkiniz yok/)
+  })
+
+  // 2026-10-08 (kullanıcı: "Manuel Sertifikalar sayfasında takip adı değişikliği hemen görülmüyor"): ad sertifika
+  // penceresinin Düzenle'sinden değişince sayfa haberdar değildi. Olayla satır ANINDA yeni adı alır, liste tazelenir;
+  // geç dönen ESKİ yanıt yeni adı geri alamaz (yalnız en son istek uygulanır).
+  it('yeniden adlandırma olayı: satır tazeleme BEKLENMEDEN yeni adı alır, liste yeniden okunur', async () => {
+    renderPage()
+    await waitFor(() => expect(rowsShown()).toContain('ok.example.test'))
+    let release
+    api.manualCerts.list.mockReturnValueOnce(new Promise((r) => { release = r }))
+    act(() => announceInventoryRenamed('ok.example.test', 'odeme-imza'))
+    expect(rowsShown()).toContain('odeme-imza')
+    expect(rowsShown()).not.toContain('ok.example.test')
+    expect(api.manualCerts.list).toHaveBeenCalledTimes(2)
+    await act(async () => { release({ success: true, data: ROWS.map((r) => (r.domain === 'ok.example.test' ? { ...r, domain: 'odeme-imza' } : r)) }) })
+    expect(rowsShown()).toContain('odeme-imza')
+  })
+
+  it('geç dönen eski liste yanıtı yeni adı geri almaz', async () => {
+    renderPage()
+    await waitFor(() => expect(rowsShown()).toContain('ok.example.test'))
+    let releaseOld
+    api.manualCerts.list.mockReturnValueOnce(new Promise((r) => { releaseOld = r }))
+    fireEvent.click(screen.getAllByRole('button', { name: /^(Refresh|Yenile)$/ })[0])
+    api.manualCerts.list.mockResolvedValueOnce({ success: true, data: ROWS.map((r) => (r.domain === 'ok.example.test' ? { ...r, domain: 'odeme-imza' } : r)) })
+    act(() => announceInventoryRenamed('ok.example.test', 'odeme-imza'))
+    await waitFor(() => expect(api.manualCerts.list).toHaveBeenCalledTimes(3))
+    await act(async () => { releaseOld({ success: true, data: ROWS }) })
+    expect(rowsShown()).toContain('odeme-imza')
+    expect(rowsShown()).not.toContain('ok.example.test')
   })
 })

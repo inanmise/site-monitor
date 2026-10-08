@@ -80,6 +80,7 @@ import { TAB_META } from './components/palette/paletteModel.js'   // sekme başl
 // Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
 import { VALID_TABS, NOT_FOUND_TAB, tabFromSearch, requestedTabParam } from './utils/appRoutes.js'
 import { appMetaKey } from './utils/pageMeta.js'
+import { INVENTORY_RENAMED_EVENT, renameRow } from './utils/inventoryEvent.js'
 import { usePageMeta } from './hooks/usePageMeta.js'
 import NotFoundPanel from './components/notfound/NotFoundPanel.jsx'
 
@@ -1035,6 +1036,18 @@ export default function App() {
     const ts = readMirror(); if (ts && ts.status !== 'dismissed' && !ts.checklist?.card && !ts.checklist_hidden) persistTourRef.current?.({ checklist: { card: true } })
   }, [])
 
+  // Takip adı / alan adı değişti (2026-10-08): açık sertifika penceresi YENİ ada geçer, bulunduğu sekme korunur. Eskiden
+  // pencere eski adla kalıyor, Sağlık / Kontrol geçmişi 404 dönüyordu. Olayı envanter formu yayar (utils/inventoryEvent.js).
+  useEffect(() => {
+    const on = (e) => {
+      const { from, to } = e?.detail || {}
+      if (!from || !to) return
+      setModalCert((m) => (m && m.domain === from ? { ...renameRow(m, from, to), _renamedFrom: from } : m))
+    }
+    window.addEventListener(INVENTORY_RENAMED_EVENT, on)
+    return () => window.removeEventListener(INVENTORY_RENAMED_EVENT, on)
+  }, [])
+
   // SSL derin bağlantısı (2026-09-28, 7/24 Kapsamı): ?tab=dashboard&domain=<d>&open=cert → sertifika penceresi; open=noc →
   // envanter formu 7/24 alanına kaydırılmış. `domain` süzgeci yukarıda (getMe / sm:navigate) eskisi gibi. hooks/useCertDeepLink.js
   useCertDeepLink({
@@ -1955,7 +1968,7 @@ export default function App() {
           de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
       {/* Lazy (öneri 22) ama HER ZAMAN bağlı: kapalıyken null çizer; kendi sınırı — sekme sınırına bağlanmaz. */}
       <Suspense fallback={null}>
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab}
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab} renamedFrom={modalCert?._renamedFrom ?? null}
         manual={isManualCert(modalCert)} manualMeta={isManualCert(modalCert) ? { version: modalCert.manual_version ?? null, uploadedAt: modalCert.manual_uploaded_at ?? null } : null}
         refreshSignal={certModalRefresh}
         readOnly={!!modalCert?._readOnly}
