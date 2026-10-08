@@ -81,7 +81,8 @@ class IdentityLeakGuardTest {
 
     private static final Set<String> SKIP_DIRS = Set.of(
             "node_modules", "target", ".git", "dist", "coverage", "_to_delete", "email-previews",
-            ".gstack");   // gitignore'lu QA raporları/ekran görüntüleri — depoya girmez, kapı taramaz (2026-09-11)
+            ".gstack",    // gitignore'lu QA raporları/ekran görüntüleri — depoya girmez, kapı taramaz (2026-09-11)
+            "worktrees"); // .claude/worktrees: ajan çalışma kopyaları (git dışı, eski sürüm dosyaları) — 2026-10-08
 
     /**
      * Bilinen ve GEREKÇELİ kalıntılar. Anahtar: depo köküne göre yol (eğik bölü ile).

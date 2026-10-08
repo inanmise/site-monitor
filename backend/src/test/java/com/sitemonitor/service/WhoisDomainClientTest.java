@@ -140,4 +140,45 @@ class WhoisDomainClientTest {
         assertThat(r.get("source")).isEqualTo("NONE");
         assertThat(r.get("error")).isNotNull();
     }
+
+    // ── Port-43 okumasının TOPLAM süresi (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ──
+
+    @Test
+    @DisplayName("KAPI (2026-10-08): yanıtı damlatan WHOIS sunucusu okumayı süresiz tutamaz — toplam bütçede zaman aşımı")
+    void readPort43_drip_boundedByTotalBudget() throws Exception {
+        try (com.sitemonitor.util.DripServer drip = com.sitemonitor.util.DripServer.start(false, "Domain Name: x.com\n", 100);
+             java.net.Socket sock = new java.net.Socket(java.net.InetAddress.getLoopbackAddress(), drip.port())) {
+            long t0 = System.nanoTime();
+            // Okuma başına 5 sn (damla her okumayı canlı tutar), toplam bütçe 1 sn.
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                            java.time.Duration.ofSeconds(15), () -> WhoisDomainClient.readPort43(sock, 5_000, 1_000L)))
+                    .isInstanceOf(java.net.SocketTimeoutException.class)
+                    .hasMessageContaining("WHOIS yanıtı 1000 ms");
+            assertThat((System.nanoTime() - t0) / 1_000_000L)
+                    .as("bütçe 1 sn; bekçisiz damla ~60 sn sürerdi").isLessThan(3_500L);
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: normal port-43 yanıtı aynen okunur; ~200 KB tavanı ve bütçe (≥ 30 sn) değişmedi")
+    void readPort43_normalResponse_unchanged() throws Exception {
+        String body = "Domain Name: example.com\r\nRegistry Expiry Date: 2030-01-01T00:00:00Z\r\n";
+        try (java.net.ServerSocket ss = new java.net.ServerSocket(0, 5, java.net.InetAddress.getLoopbackAddress())) {
+            Thread t = new Thread(() -> {
+                try (java.net.Socket s = ss.accept()) {
+                    s.getOutputStream().write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    s.getOutputStream().write(new byte[300_000]);   // tavanı aşan kuyruk
+                } catch (java.io.IOException ignored) { /* istemci erken kapattı */ }
+            });
+            t.setDaemon(true);
+            t.start();
+            try (java.net.Socket sock = new java.net.Socket(java.net.InetAddress.getLoopbackAddress(), ss.getLocalPort())) {
+                String raw = WhoisDomainClient.readPort43(sock, 5_000, WhoisDomainClient.port43TotalMs(5_000));
+                assertThat(raw).startsWith(body);
+                assertThat(raw.length()).isBetween(WhoisDomainClient.PORT43_MAX_BYTES, WhoisDomainClient.PORT43_MAX_BYTES + 4096);
+            }
+        }
+        assertThat(WhoisDomainClient.port43TotalMs(8_000)).isEqualTo(30_000L);
+        assertThat(WhoisDomainClient.port43TotalMs(30_000)).isEqualTo(60_000L);
+    }
 }

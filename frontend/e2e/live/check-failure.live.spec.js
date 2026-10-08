@@ -58,6 +58,15 @@ test.describe('kontrol geçmişi hata teşhisi — canlı', () => {
       const dialog = page.getByRole('dialog').first()
       await dialog.waitFor({ timeout: 30_000 })
       if (c.historyTab) await dialog.getByRole('tab', { name: c.historyTab }).click()
+      // Tam takımda bir kez (2026-10-08) adresteki `range` diyalog açılırken uygulanmadı ve 1 gün görünümünde kalındı —
+      // başarısız satır o aralıkta olmadığı için test düştü. Aralık düğmesi basılı değilse aynı aralık elle seçilir.
+      if (hit.days > 1) {
+        const rangeBtn = dialog.getByRole('group', { name: /Zaman aralığı|Time range/ })
+          .getByRole('button', { name: new RegExp(`(Son ${hit.days} gün|Last ${hit.days} days)`) })
+        if (await rangeBtn.count()) {
+          if ((await rangeBtn.first().getAttribute('aria-pressed')) !== 'true') await rangeBtn.first().click()
+        }
+      }
 
       const cell = dialog.locator('[data-slot="chkfail-cell"]').first()
       await cell.waitFor({ timeout: 30_000 })

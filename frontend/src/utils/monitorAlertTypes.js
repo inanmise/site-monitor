@@ -31,3 +31,16 @@ export const MONITOR_ALERT_TYPES = {
 export function alertTypesFor(monitorType) {
   return MONITOR_ALERT_TYPES[monitorType] ?? []
 }
+
+/** Alarm tipi → izleme türü (MONITOR_ALERT_TYPES'ın TERSİ, tek kaynaktan türetilir). */
+const MONITOR_TYPE_OF_ALERT = Object.freeze(Object.fromEntries(
+  Object.entries(MONITOR_ALERT_TYPES).flatMap(([type, list]) => list.map((alertType) => [alertType, type])),
+))
+
+/**
+ * Alarmın hangi izleme türünden geldiği (2026-10-08, kullanıcı: "Alarm geçmişine düşen bir alarmın hangi izleme tipinden
+ * geldiği net görünmüyor") — `cert`, `http`, `port`, … ; bilinmeyen alarm tipi → null (rozet çizilmez).
+ */
+export function monitorTypeOfAlert(alertType) {
+  return MONITOR_TYPE_OF_ALERT[String(alertType || '').trim().toUpperCase()] ?? null
+}

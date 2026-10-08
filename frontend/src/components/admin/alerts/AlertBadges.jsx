@@ -1,4 +1,4 @@
-import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning, Headset } from 'lucide-react'
+import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning, Headset, FileUp } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { alertTypeMeta, alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { formatDuration } from '../../../utils/incidentMeta.js'
@@ -10,6 +10,8 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { levelClass, alertHref, alertSourceTab, closesAutomatically } from './alertHistoryModel.js'
 import { clockTime, fullTime } from './nocCallModel.js'
+import { monitorTypeOfAlert } from '../../../utils/monitorAlertTypes.js'
+import { MONITOR_TYPE_ICON } from '../../incidents/incidentsModel.js'
 
 /**
  * Alarm Geçmişi'nin küçük, tekrar eden rozetleri — Olaylar konsolu (incidents/IncidentBadges) ile AYNI görsel dil:
@@ -71,6 +73,28 @@ export function AlertTypeIcon({ type, className }) {
       <Icon aria-hidden="true" className="size-4" />
       <span className="sr-only">{label}</span>
     </span>
+  )
+}
+
+/**
+ * İzleme tipi rozeti (2026-10-08, kullanıcı: "alarmın hangi izleme tipinden geldiği net görünmüyor") — kenar
+ * çubuğuyla aynı simge + kısa ad: Sertifika / Manuel sertifika / HTTP / Port / DNS / … Alarm tipi bilinmiyorsa çizilmez.
+ * "Manuel sertifika" yalnız sertifika alarmında ve sunucu `cert_source=MANUAL` dediğinde (takip adı başka bir izlemenin
+ * hedefiyle çakışsa da HTTP alarmı manuel görünmez).
+ */
+export function AlertMonitorTypeBadge({ alert, className, fallback = null }) {
+  const t = useT()
+  const type = monitorTypeOfAlert(alert?.alert_type)
+  if (!type) return fallback
+  const manual = type === 'cert' && String(alert?.cert_source || '').toUpperCase() === 'MANUAL'
+  const Icon = manual ? FileUp : (MONITOR_TYPE_ICON[type] || MONITOR_TYPE_ICON.cert)
+  const label = t(manual ? 'alh.mtype.manualCert' : `alh.mtype.${type}`)
+  return (
+    <Badge variant="outline" data-slot="alert-monitor-type" data-type={manual ? 'manual-cert' : type}
+      title={t('alh.mtype.title', label)} className={cn('h-5 shrink-0 gap-1 px-1.5 text-[11px] font-semibold text-foreground', className)}>
+      <Icon aria-hidden="true" className="size-3" />
+      <span className="sr-only">{t('alh.fact.monitorType')}: </span>{label}
+    </Badge>
   )
 }
 

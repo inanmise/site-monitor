@@ -2127,6 +2127,80 @@ class SchedulerServiceTest {
         verify(escalationService, never()).resolveVerifiedStaleCertAlerts(anyList());
     }
 
+    // ── Süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): sertifika sweep'i süresiz join'liyordu ──
+
+    @Test
+    @DisplayName("2026-10-08: askıda kalan TEK sertifika kontrolü sweep'i kilitlemez — tavan dolunca NETWORK zaman aşımı olarak kaydedilir, running ve kilit bırakılır")
+    void certSweep_hungCheck_isBoundedAndRecordedAsNetworkTimeout() {
+        ReflectionTestUtils.setField(scheduler, "networkMinErrors", 3);
+        ReflectionTestUtils.setField(scheduler, "networkErrorRateThreshold", 0.50);
+        ReflectionTestUtils.setField(scheduler, "certCheckMaxWaitSeconds", 1L);
+        CertificateInventory hung = new CertificateInventory(); hung.setDomain("hung.example.com"); hung.setPort(443);
+        CertificateInventory ok = new CertificateInventory(); ok.setDomain("ok.example.com"); ok.setPort(443);
+        lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(hung, ok));
+        java.util.concurrent.CompletableFuture<Map<String, Object>> never = new java.util.concurrent.CompletableFuture<>();
+        lenient().when(checkerService.checkAsync(eq("hung.example.com"), anyInt(), anyBoolean(), any(), any())).thenReturn(never);
+        lenient().when(checkerService.checkAsync(eq("ok.example.com"), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(certResult("ok.example.com", "valid", null)));
+
+        long t0 = System.nanoTime();
+        // Eski kod: join süresiz → preemptif süre aşımı = KIRMIZI.
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(20), () -> scheduler.runCheck());
+        assertThat((System.nanoTime() - t0) / 1_000_000L).as("tavan 1 sn").isLessThan(10_000L);
+
+        // Askıdaki kontrol, checker'ın ağ zaman aşımıyla AYNI biçimde kaydedilir (status/error_class/ileti) ...
+        verify(certService).saveResult(org.mockito.ArgumentMatchers.argThat(m -> "hung.example.com".equals(m.get("domain"))
+                && "error".equals(m.get("status")) && "NETWORK".equals(m.get("error_class"))
+                && String.valueOf(m.get("error")).startsWith("Connection timeout")
+                && Boolean.TRUE.equals(m.get("warning")) && m.get("run_id") != null));
+        verify(certService).saveResult(org.mockito.ArgumentMatchers.argThat(m -> "ok.example.com".equals(m.get("domain"))));
+        // ... ve alarm hattına normal sonuç gibi gider (1 ağ hatası < min 3 → kesinti şüphesi yok, normal hat).
+        verify(escalationService).processResults(org.mockito.ArgumentMatchers.argThat(l -> l.size() == 2));
+        assertThat(scheduler.isRunning()).as("running finally'de sıfırlanır").isFalse();
+        verify(jdbcTemplate, org.mockito.Mockito.atLeastOnce()).update(
+                contains("DELETE FROM scheduler_lock WHERE name = ? AND locked_by"), eq("cert-check"), anyString());
+
+        // Sonraki tur "already in progress" ile ATLANMAZ.
+        org.mockito.Mockito.clearInvocations(checkerService);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(20), () -> scheduler.runCheck());
+        verify(checkerService).checkAsync(eq("ok.example.com"), anyInt(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: tavan İLERLEMEYE bağlı — diğer kontroller bitmeye devam ettikçe yavaş kontrol KESİLMEZ")
+    void awaitCertCheck_progressExtendsWait_slowButProgressingCheckNotCut() throws Exception {
+        java.util.concurrent.atomic.AtomicLong progress = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+        java.util.concurrent.CompletableFuture<Map<String, Object>> slow = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.ScheduledExecutorService ses = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        try {
+            // Başka kontroller 100 ms'de bir bitiyor (ilerleme); yavaş kontrol 900 ms'de biter — tavan 400 ms.
+            ses.scheduleAtFixedRate(() -> progress.set(System.nanoTime()), 100, 100, java.util.concurrent.TimeUnit.MILLISECONDS);
+            ses.schedule(() -> slow.complete(certResult("slow.example.com", "valid", null)), 900, java.util.concurrent.TimeUnit.MILLISECONDS);
+            Map<String, Object> r = scheduler.awaitCertCheck(slow, "slow.example.com", progress, 400L);
+            assertThat(r.get("status")).as("gerçek sonuç, zaman aşımı değil").isEqualTo("valid");
+        } finally {
+            ses.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: ilerleme yokken tavan dolar → ağ zaman aşımı sonucu; istisnayla biten kontrol join() gibi fırlatır")
+    void awaitCertCheck_noProgress_timesOut_andExceptionalCompletionPropagates() {
+        java.util.concurrent.atomic.AtomicLong progress = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+        long t0 = System.nanoTime();
+        Map<String, Object> r = scheduler.awaitCertCheck(new java.util.concurrent.CompletableFuture<>(), "dead.example.com", progress, 300L);
+        assertThat((System.nanoTime() - t0) / 1_000_000L).isBetween(250L, 5_000L);
+        assertThat(r).containsEntry("domain", "dead.example.com").containsEntry("status", "error")
+                .containsEntry("error_class", "NETWORK").containsEntry("chain_status", "UNKNOWN");
+        assertThat((String) r.get("error")).startsWith("Connection timeout").contains("sweep wait limit");
+        assertThat(r).doesNotContainKey("error_stage");   // aşama bilinmiyor — uydurma aşama yazılmaz
+
+        java.util.concurrent.CompletableFuture<Map<String, Object>> failed = new java.util.concurrent.CompletableFuture<>();
+        failed.completeExceptionally(new IllegalStateException("boom"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> scheduler.awaitCertCheck(failed, "x.example.com", progress, 300L))
+                .isInstanceOf(java.util.concurrent.CompletionException.class).hasRootCauseMessage("boom");
+    }
+
     // ── Elle kontrol sweep kararlarını TÜKETMEZ (2026-09-29) ─────────────────────────────────
 
     @Test

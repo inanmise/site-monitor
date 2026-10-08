@@ -1071,6 +1071,50 @@ class UserServiceTest {
         verify(userRepo, never()).save(any(AppUser.class));
     }
 
+    // ── E-posta biçimi (2026-10-08, "doğrulanmadan alınan veri") ─────────────────────────────────────
+
+    @Test
+    @DisplayName("2026-10-08: YENİ kullanıcı/takım e-postası biçimsizse 400 (fields.email); kayıt yazılmaz")
+    void newEmail_mustBeValid() {
+        when(userRepo.existsByUsername(anyString())).thenReturn(false);
+        for (String bad : List.of("ali@", "ali example.com", "a@b.com; c@d.com", "a@b", "a,b@c.com")) {
+            assertThatThrownBy(() -> service.createUser("u9", "pass1234", "U", bad, null, "USER", List.of(1L), null))
+                    .as(bad)
+                    .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class)
+                    .satisfies(e -> assertThat(((com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException) e)
+                            .getFields()).containsKey("email"));
+            assertThatThrownBy(() -> service.createTeam("Beta", bad, null, null))
+                    .as(bad)
+                    .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        }
+        verify(userRepo, never()).save(any(AppUser.class));
+        verify(teamRepo, never()).save(any(Team.class));
+    }
+
+    @Test
+    @DisplayName("2026-10-08: güncellemede yalnız DEĞİŞEN e-posta denetlenir — saklı eski biçimsiz değer düzenlemeyi kilitlemez")
+    void updateEmail_onlyChangedValueChecked() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setEmail("eski-bicimsiz");   // eski sürümden kalmış değer
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+        service.updateUser(1L, "Alice", "eski-bicimsiz", null, null, null, null, null);   // değişmedi → geçer
+        assertThatThrownBy(() -> service.updateUser(1L, "Alice", "yeni@", null, null, null, null, null))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        assertThat(u.getEmail()).isEqualTo("eski-bicimsiz");
+        service.updateUser(1L, null, "alice@example.com", null, null, null, null, null);
+        assertThat(u.getEmail()).isEqualTo("alice@example.com");
+
+        Team t = team(2L, "Alpha");
+        t.setEmail("takim-eski");
+        when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
+        service.updateTeam(2L, "Alpha2", "takim-eski", null, null, null, null, null);   // değişmedi → geçer
+        assertThat(t.getName()).isEqualTo("Alpha2");
+        assertThatThrownBy(() -> service.updateTeam(2L, "Alpha3", "a@b.com, c@d.com", null, null, null, null, null))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        assertThat(t.getName()).isEqualTo("Alpha2");   // hiçbir alan yarım yazılmadı
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private AppUser user(String username, String hash) {

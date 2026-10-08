@@ -117,17 +117,64 @@ public class WhoisDomainClient {
             OutputStream os = sock.getOutputStream();
             os.write((domain + "\r\n").getBytes(StandardCharsets.US_ASCII));
             os.flush();
-            StringBuilder sb = new StringBuilder();
-            try (InputStream is = sock.getInputStream()) {
-                byte[] buf = new byte[4096];
-                int n, total = 0;
-                while ((n = is.read(buf)) != -1 && total < 200_000) {
-                    sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
-                    total += n;
-                }
-            }
-            return sb.toString();
+            return readPort43(sock, timeout, port43TotalMs(timeout));
         }
+    }
+
+    // ── Port-43 okumasının TOPLAM süresi (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ─────────────
+    //
+    // SO_TIMEOUT yalnız TEK bir okumayı (okumalar ARASI süreyi) sınırlar: yanıtı bayt bayt damlatan bir WHOIS sunucusu
+    // (tavan 200 KB) okuma döngüsünü saatlerce tutabiliyordu — sıralı günlük alan adı süpürmesi de onunla birlikte.
+    // Döngü artık toplam süreyle de sınırlı; süre dolunca okuma bir okuma zaman aşımı gibi biter (SocketTimeoutException
+    // → çağıranın mevcut "whois başarısız" yolu). TrWebWhoisClient'ın ham TRABIS port-43 yolu da aynı yardımcıyı kullanır.
+
+    /** Port-43 yanıtı için toplam okuma süresi alt sınırı (ms). Meşru bir WHOIS yanıtı bir iki saniyede gelir. */
+    static final long PORT43_READ_TOTAL_MIN_MS = 30_000L;
+
+    /** Port-43 yanıtının ham bayt tavanı (eski davranış). */
+    static final int PORT43_MAX_BYTES = 200_000;
+
+    /** Toplam okuma bütçesi: en az 30 sn, okuma zaman aşımı uzun ayarlanmışsa onun 2 katı. */
+    static long port43TotalMs(int perReadTimeoutMs) {
+        return Math.max(PORT43_READ_TOTAL_MIN_MS, 2L * Math.max(1, perReadTimeoutMs));
+    }
+
+    /**
+     * Bağlı port-43 soketinden yanıtı okur: okuma başına {@code perReadTimeoutMs}, toplamda {@code totalMs}; ~200 KB tavan.
+     * Parçalar eskisi gibi UTF-8 ile çözülüp birleştirilir. Toplam süre dolarsa {@link java.net.SocketTimeoutException}.
+     */
+    static String readPort43(Socket sock, int perReadTimeoutMs, long totalMs) throws java.io.IOException {
+        long deadline = System.nanoTime() + Math.max(1L, totalMs) * 1_000_000L;
+        StringBuilder sb = new StringBuilder();
+        try (InputStream is = sock.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int total = 0;
+            while (total < PORT43_MAX_BYTES) {
+                long remainingMs = (deadline - System.nanoTime()) / 1_000_000L;
+                if (remainingMs <= 0) throw port43Deadline(totalMs);
+                // Tek okuma da kalan süreyi aşamaz (0 = sonsuz olduğundan en az 1 ms).
+                int perRead = Math.max(1, perReadTimeoutMs);
+                boolean cappedByDeadline = remainingMs < perRead;
+                sock.setSoTimeout((int) Math.max(1L, Math.min(perRead, remainingMs)));
+                int n;
+                try {
+                    n = is.read(buf);
+                } catch (java.net.SocketTimeoutException e) {
+                    // Okuma kalan süreyle kısaltıldıysa zaman aşımı TOPLAM sürenin dolmasıdır (ms yuvarlaması dahil).
+                    if (cappedByDeadline || System.nanoTime() - deadline >= 0) throw port43Deadline(totalMs);
+                    throw e;
+                }
+                if (n == -1) break;
+                sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                total += n;
+            }
+        }
+        return sb.toString();
+    }
+
+    private static java.net.SocketTimeoutException port43Deadline(long totalMs) {
+        return new java.net.SocketTimeoutException("WHOIS yanıtı " + totalMs
+                + " ms içinde tamamlanmadı — okuma kesildi (sunucu yanıtı çok yavaş gönderiyor)");
     }
 
     /** Tanılama adımı (Alan Adı Tanılama aracı): TCP/43 soketini dener, latency + hata sınıfı (CONNECT_TIMEOUT

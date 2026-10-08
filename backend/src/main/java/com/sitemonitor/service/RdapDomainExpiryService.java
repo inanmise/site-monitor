@@ -185,7 +185,8 @@ public class RdapDomainExpiryService {
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (next == null) return resp;   // takip edilemez sema/host -> 3xx oldugu gibi doner
-            try (java.io.InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* baglanti iadesi */ }
+            // SURE sinirli (2026-10-08): ciplak readNBytes(4096) govdeyi damlatan bir 3xx yanitinda SURESIZ bekliyordu.
+            RdapDomainClient.discardRedirectBody(resp);
             current = next;
         }
         throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");

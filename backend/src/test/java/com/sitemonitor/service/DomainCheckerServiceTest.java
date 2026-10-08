@@ -462,4 +462,39 @@ class DomainCheckerServiceTest {
         org.mockito.Mockito.verify(activityLog).recordCheck(anyString(), eq(13L), any(), any(), any(),
                 eq(false), eq("scheduler"), any());
     }
+
+    // ── Ters-DNS süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ──
+
+    @Test
+    @DisplayName("KAPI (2026-10-08): askıda kalan PTR sorgusu kontrolü tutmaz — tavanda IP adsız kalır, diğerleri ve sıra korunur")
+    void reverseDns_hungLookup_boundedAndOthersKept() {
+        java.util.function.UnaryOperator<String> lookup = ip -> switch (ip) {
+            case "10.0.0.1" -> "One.Example.com";
+            case "10.0.0.2" -> {   // asılı PTR (işletim sistemi çözücüsü saniyelerce bekler)
+                try { Thread.sleep(30_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                yield "slow.example.com";
+            }
+            case "10.0.0.3" -> "10.0.0.3";                // PTR yok → host == ip → atlanır
+            case "10.0.0.4" -> throw new IllegalStateException("çözücü hatası");   // hata → atlanır
+            default -> "three.example.com";
+        };
+        long t0 = System.nanoTime();
+        List<String> out = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(15),
+                () -> DomainCheckerService.reverseDns(java.util.Arrays.asList("10.0.0.1", null, "", "10.0.0.2", "10.0.0.3",
+                        "10.0.0.4", "10.0.0.5"), lookup, 500L));
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+        assertThat(out).containsExactly("one.example.com", "three.example.com");
+        assertThat(ms).as("tavan 0,5 sn; eskiden sıralı ve tavansızdı (~30 sn)").isLessThan(5_000L);
+    }
+
+    @Test
+    @DisplayName("2026-10-08: en fazla ilk 8 IP sorgulanır (eski davranış), varsayılan tavan cömert (8 sn)")
+    void reverseDns_firstEightIpsOnly() {
+        java.util.List<String> ips = new java.util.ArrayList<>();
+        for (int i = 1; i <= 10; i++) ips.add("10.0.1." + i);
+        List<String> out = DomainCheckerService.reverseDns(ips, ip -> "h" + ip.substring(ip.lastIndexOf('.') + 1) + ".example.com", 5_000L);
+        assertThat(out).hasSize(8).first().isEqualTo("h1.example.com");
+        assertThat(out.get(7)).isEqualTo("h8.example.com");
+        assertThat(DomainCheckerService.REVERSE_DNS_TOTAL_MS).isEqualTo(8_000L);
+    }
 }

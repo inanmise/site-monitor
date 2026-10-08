@@ -39,6 +39,7 @@ public class GuideLinkController {
         requireAdmin(session);
         permissionService.require(session, "guide_links.crud", "edit");
         validate(body);
+        validateUrl(body.getUrl(), null);
         body.setId(null);
         Instant now = Instant.now();
         body.setCreatedAt(now);
@@ -59,6 +60,7 @@ public class GuideLinkController {
         validate(body);
         GuideLink existing = repo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Guide link not found: " + id));
+        validateUrl(body.getUrl(), existing.getUrl());
         String[] gf = {"category", "title", "url", "description", "sortOrder"};
         java.util.Map<String, Object> _before = AuditDiff.snapshot(existing, gf);
         existing.setCategory(body.getCategory());
@@ -106,6 +108,48 @@ public class GuideLinkController {
     }
 
     private boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
+
+    // ── Adres şeması (2026-10-08, güvenlik denetimi) ─────────────────────────
+    // Adres her şemayı kabul ediyordu: `javascript:` / `data:` / `vbscript:` saklanıp rehber kartında bağlantı olarak
+    // çizilebiliyordu (ön yüz guideHref beyaz listesi ikinci savunma). Kural, formun (renewal/guideSteps.js
+    // validateLinkForm + normalizeUrl) bugün kabul ettikleriyle AYNI: http/https, mailto:, file: (ağ klasörü), UNC yolu
+    // (\\sunucu\paylaşım), şemasız adres (ön yüz https:// ekler) ve `ana-bilgisayar:port/yol`. Başka şema → 400.
+
+    private static final java.util.Set<String> ALLOWED_SCHEMES = java.util.Set.of("http", "https", "mailto", "file");
+    /** Hiçbir koşulda kabul edilmez (port muafiyeti dahil): betik/veri yürüten şemalar. */
+    private static final java.util.Set<String> DANGEROUS_SCHEMES =
+            java.util.Set.of("javascript", "vbscript", "data", "blob", "livescript", "mocha", "jar", "view-source");
+    private static final java.util.regex.Pattern SCHEME = java.util.regex.Pattern.compile("^([A-Za-z][A-Za-z0-9+.\\-]*):(.*)$", java.util.regex.Pattern.DOTALL);
+    /** `ana-bilgisayar:8443/yol` — şema sanılan önek aslında ana bilgisayar, devamı port. */
+    private static final java.util.regex.Pattern PORT_REST = java.util.regex.Pattern.compile("^\\d{1,5}(?:[/?#].*)?$", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * Yeni adresin şeması izinli mi; değilse 400 VALIDATION_FAILED ({@code fields.url}). Saklı değerle AYNI gelen eski
+     * adres muaf — eski bağlantının başka bir alanı düzenlenebilir kalır.
+     */
+    static void validateUrl(String url, String stored) {
+        if (url == null) return;   // boşluk/zorunluluk validate()'te
+        String s = url.trim();
+        if (stored != null && s.equals(stored.trim())) return;
+        if (!urlAllowed(s)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("url", com.sitemonitor.util.Msg.t(
+                    "Adres kabul edilmedi: yalnız http:// ya da https:// ile başlayan web adresleri, mailto: e-posta bağlantıları ve ağ klasörü yolları (\\\\sunucu\\paylaşım ya da file:) eklenebilir.",
+                    "The address wasn’t accepted: only web addresses starting with http:// or https://, mailto: e-mail links and network folder paths (\\\\server\\share or file:) can be added."));
+        }
+    }
+
+    static boolean urlAllowed(String s) {
+        if (s == null || s.isEmpty()) return false;
+        // Tarayıcı URL ayrıştırması sekme/satır sonunu SİLER ("java\tscript:" → "javascript:") — kontrol karakteri yok.
+        for (int i = 0; i < s.length(); i++) if (Character.isISOControl(s.charAt(i))) return false;
+        if (s.startsWith("\\\\") || s.startsWith("//")) return true;   // UNC yolu / şemasız (//host)
+        java.util.regex.Matcher m = SCHEME.matcher(s);
+        if (!m.matches()) return true;                                   // şemasız (ön yüz https:// ekler)
+        String scheme = m.group(1).toLowerCase(java.util.Locale.ROOT);
+        if (ALLOWED_SCHEMES.contains(scheme)) return true;
+        if (DANGEROUS_SCHEMES.contains(scheme)) return false;
+        return PORT_REST.matcher(m.group(2)).matches();                  // ana-bilgisayar:port[/yol]
+    }
 
     private void requireAuth(HttpSession session) {
         if (session.getAttribute("username") == null) {

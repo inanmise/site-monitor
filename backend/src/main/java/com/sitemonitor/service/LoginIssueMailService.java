@@ -126,6 +126,18 @@ public class LoginIssueMailService {
         saveLog(reportId, refCode, REPORTER_ACK, reporterTo, null, res, force);
     }
 
+    /**
+     * KİMLİKSİZ login "sorun bildir" akışında bildirene NÖTR "alındı" onayı (2026-10-08, ürün kararı): yalnız referans
+     * + zaman; kullanıcının açıklaması, hata metni, kullanıcı adı ve görselleri maile GİRMEZ (doğrulanmamış adrese
+     * içerik aktarımı = kurumsal SMTP üzerinden oltalama aktarması). Kayıt türü {@code REPORTER_ACK} aynı.
+     */
+    @Async("loginIssueMailExecutor")
+    public void dispatchAckNeutral(Long reportId, String refCode, String reporterTo, String reportedAt) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendLoginIssueAckNeutral(reporterTo, refCode, reportedAt, force));
+        saveLog(reportId, refCode, REPORTER_ACK, reporterTo, null, res, force);
+    }
+
     /** "Çözüldü" bildirimi — bildiren (To) + sistem yöneticisi (CC). Zenginleştirilmiş içerik:
      *  bildirim zamanı + orijinal sorun (hata + açıklama) + ekran görüntüleri + çözüm notu. */
     @Async("loginIssueMailExecutor")

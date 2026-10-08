@@ -154,7 +154,8 @@ describe('ManualCertsPage', () => {
     // Takip adı sonradan düzenlenir (2026-10-07): yazma izni + kendi kaydı → "Düzenle" menüde
     expect(await screen.findByRole('menuitem', { name: /Edit \(tracking name|Düzenle \(takip adı/ })).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('menuitem', { name: /Upload new version|Yeni sürüm yükle/ }))
-    const title = await screen.findByText(/Upload new version: gone\.example\.test|Yeni sürüm yükle: gone\.example\.test/)
+    // Sihirbaz tembel yüklenir (lazy chunk): CI'da kapsam ölçümü altında 1 sn yetmedi (2026-10-08, parça 2/4)
+    const title = await screen.findByText(/Upload new version: gone\.example\.test|Yeni sürüm yükle: gone\.example\.test/, {}, { timeout: 10_000 })
     expect(title).toBeInTheDocument()
     click.mockRestore()
   })

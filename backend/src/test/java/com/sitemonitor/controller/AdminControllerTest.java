@@ -2446,6 +2446,26 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/admin/alerts → manuel sertifika alarmı cert_source=MANUAL taşır; ağ kaydında alan YAZILMAZ (izleme tipi rozeti, 2026-10-08)")
+    void listAlerts_enrichment_manualCertSource() throws Exception {
+        AlertEvent manual = new AlertEvent();
+        manual.setId(401L); manual.setDomain("odeme-imza"); manual.setAlertType("EXPIRY"); manual.setAlertLevel("HIGH");
+        AlertEvent network = new AlertEvent();
+        network.setId(402L); network.setDomain("api.example.com"); network.setAlertType("EXPIRY"); network.setAlertLevel("HIGH");
+        CertificateInventory mInv = inventory("odeme-imza");
+        mInv.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(manual, network)));
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(mInv, inventory("api.example.com")));
+        when(teamRepo.findAllById(any())).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].cert_source").value("MANUAL"))
+                .andExpect(jsonPath("$.data[1].cert_source").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/admin/alerts?alertType=ACCESSIBILITY filters by type and returns type_counts")
     void listAlerts_alertTypeFilter_passedToQueryWithCounts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
@@ -4591,5 +4611,143 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/99").session(authSession()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"a_b.example.com\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── Girdi doğrulaması (2026-10-08, "doğrulanmadan alınan veri var mı? doğrulama ekle") ─────────────────────
+
+    private AppUser userInTeam(long id, long teamId, String email) {
+        AppUser u = new AppUser();
+        u.setId(id); u.setUsername("u" + id); u.setDisplayName("Kişi " + id); u.setEmail(email);
+        u.setTeamId(teamId); u.setActive(true);
+        when(userRepo.findById(id)).thenReturn(Optional.of(u));
+        return u;
+    }
+
+    @Test
+    @DisplayName("2026-10-08: kapsamlı müdür KAPSAMI DIŞINDAKİ kullanıcıyı eskalasyon kişisi yapamaz → 400 fields.user_id, kayıt yok")
+    void addContact_scopedAdmin_userOutsideScope_rejected() throws Exception {
+        userInTeam(501L, 9L, "dis@example.com");     // takım 9 — müdürün kapsamı [2]
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":501,\"role\":\"TECH\",\"team_id\":2}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fields.user_id").exists());
+        // bilinmeyen kimlik de aynı yanıt (kullanıcı varlığı sızmaz)
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":999999,\"role\":\"TECH\",\"team_id\":2}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.user_id").exists());
+        verify(contactRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: kapsam İÇİ kullanıcı (seçicinin gösterdiği) bugünkü gibi eklenir; ad + e-posta kopyalanır")
+    void addContact_scopedAdmin_userInScope_ok() throws Exception {
+        userInTeam(502L, 2L, "ic@example.com");
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":502,\"role\":\"TECH\",\"team_id\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.email").value("ic@example.com"));
+        // ikincil üyelik de kapsam sayılır (GET /admin/users ile aynı kural)
+        AppUser multi = userInTeam(503L, 9L, "cok@example.com");
+        multi.setTeamIds(new java.util.LinkedHashSet<>(List.of(9L, 2L)));
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":503,\"role\":\"TECH\",\"team_id\":2}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: kayıtlı bağ DEĞİŞMİYORSA (kullanıcı sonradan kapsam dışına taşınmış) düzenleme kilitlenmez")
+    void updateContact_scopedAdmin_unchangedLinkGrandfathered() throws Exception {
+        userInTeam(504L, 9L, "tasindi@example.com");
+        EscalationContact existing = contact("tasindi@example.com", "TECH");
+        existing.setId(31L); existing.setTeamId(2L); existing.setUserId(504L);
+        when(contactRepo.findById(31L)).thenReturn(Optional.of(existing));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/contacts/31").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":504,\"role\":\"MANAGER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.role").value("MANAGER"));
+    }
+
+    @Test
+    @DisplayName("2026-10-08: global yönetici davranışı DEĞİŞMEZ — kapsam denetimi yok")
+    void addContact_globalAdmin_anyUser_ok() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); when(teamRepo.findById(1L)).thenReturn(Optional.of(t1));
+        userInTeam(505L, 9L, "herhangi@example.com");
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(post("/api/admin/contacts").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":505,\"role\":\"TECH\",\"team_id\":1}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: elle girilen YENİ kişi e-postası biçimsizse 400 fields.email; saklı (değişmeyen) değer muaf")
+    void contactEmail_format() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); when(teamRepo.findById(1L)).thenReturn(Optional.of(t1));
+        mvc.perform(post("/api/admin/contacts").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@\",\"role\":\"TECH\",\"team_id\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.email").exists());
+        verify(contactRepo, never()).save(any());
+
+        EscalationContact legacy = contact("eski-bicimsiz", "TECH");
+        legacy.setId(32L); legacy.setTeamId(1L);
+        when(contactRepo.findById(32L)).thenReturn(Optional.of(legacy));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/contacts/32").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Yeni Ad\",\"email\":\"eski-bicimsiz\",\"role\":\"TECH\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: tekrar bildirim aralığı < 1 saat → 400 fields.re_alert_interval_hours (oluştur + güncelle); eski değer muaf")
+    void threshold_reAlertHours() throws Exception {
+        AlertThreshold existing = defaultThreshold();
+        when(thresholdRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(thresholdRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"re_alert_interval_hours\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fields.re_alert_interval_hours").exists());
+        mvc.perform(post("/api/admin/thresholds").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":3,\"warning_days\":30,\"high_days\":15,\"critical_days\":7,\"re_alert_interval_hours\":-5}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.re_alert_interval_hours").exists());
+        verify(thresholdRepo, never()).save(any());
+
+        existing.setReAlertIntervalHours(0);   // eski sürümden kalmış değer — değişmeden gelirse düzenleme kilitlenmez
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warning_days\":25,\"re_alert_interval_hours\":0}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: toplu uçlar en çok 2000 kayıt — fazlası 400 fields.ids, hiçbir kayıt işlenmez")
+    void bulk_capped() throws Exception {
+        StringBuilder ids = new StringBuilder("[");
+        for (int i = 1; i <= AdminController.BULK_MAX_ITEMS + 1; i++) ids.append(i == 1 ? "" : ",").append(i);
+        ids.append("]");
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"re-notify\",\"ids\":" + ids + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fields.ids").exists());
+        verify(escalationService, never()).reNotify(anyLong());
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":" + ids + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.ids").exists());
+        verify(inventoryRepo, never()).findById(anyLong());
     }
 }

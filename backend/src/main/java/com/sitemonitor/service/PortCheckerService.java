@@ -321,6 +321,15 @@ public class PortCheckerService {
         }
     }
 
+    /** HTTP türünün doğrudan yolda toplam süre tavanı alt sınırı (ms) — çok kısa zaman aşımında da TLS'e pay kalsın. */
+    static final long HTTP_TOTAL_MIN_MS = 10_000L;
+
+    /** Doğrudan HTTP kontrolünün TOPLAM süresi: bağlantı + TLS + yanıt için 3 × zaman aşımı (en az 10 sn). Paket-görünür
+     *  örnek yöntemi: kapı testi (PortCheckerHttpDeadlineTest) gerçek soketle kısa bir bütçe verir. */
+    long httpTotalMs(int timeoutMs) {
+        return Math.max(HTTP_TOTAL_MIN_MS, 3L * Math.max(1, timeoutMs));
+    }
+
     private void doHttp(InetAddress addr, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
         boolean https = port == 443 || port == 8443;
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
@@ -339,8 +348,19 @@ public class PortCheckerService {
         conn.setRequestProperty("User-Agent", "SiteMonitor-PortCheck");
         if (addr != null) conn.setRequestProperty("Host", (port == 80 || port == 443) ? host : host + ":" + port);   // IP'ye bağlan, vhost adı doğru kalsın
         int code;
-        try {
-            code = conn.getResponseCode();
+        // TOPLAM süre (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): connect/read zaman aşımları yalnız
+        // TEK okumayı sınırlar; durum satırını/başlıkları bayt bayt damlatan bir hedef getResponseCode()'u süresiz
+        // uzatıyordu. Vekil yolu (httpOver → readStatusLine) bunu zaten sınırlıyordu; doğrudan yol açıktı. Meşru en kötü
+        // süre bağlantı + TLS + yanıt ≈ 3 × timeoutMs; süre dolunca bekçi bağlantıyı keser → READ_TIMEOUT ile kapalı sonuç.
+        try (com.sitemonitor.util.HttpBodies.ConnectionDeadline dl =
+                     com.sitemonitor.util.HttpBodies.deadline(conn, httpTotalMs(timeoutMs), "Port HTTP")) {
+            try {
+                code = conn.getResponseCode();
+            } catch (java.io.IOException | RuntimeException e) {
+                if (dl.expired()) throw dl.timeout();
+                throw e;
+            }
+            if (dl.expired()) throw dl.timeout();   // yarıda kesilen başlıktan dönen kod kullanılmaz
         } finally {
             conn.disconnect();
         }

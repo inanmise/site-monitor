@@ -349,6 +349,18 @@ class NocPersistenceTest {
         jdbc.update("DELETE FROM alert_events WHERE id IN (9001, 9002)");
     }
     @Test
+    @DisplayName("şema yaması (2026-10-08): fırtına teslim izi indeksi (storm_id, phase, id) kurulur, ikinci koşu zararsız")
+    void stormPhaseIndexPatched() {
+        jdbc.execute("DROP INDEX IF EXISTS idx_noc_delivery_storm_phase");
+        patches.apply();
+        patches.apply();
+        assertThat(jdbc.queryForList("SELECT lower(column_name) FROM information_schema.index_columns "
+                        + "WHERE lower(index_name) = 'idx_noc_delivery_storm_phase' ORDER BY ordinal_position", String.class))
+                .as("findTopByStormIdAndPhaseOrderByIdDesc: eşitlikler önde, sıra kolonu (id) arkada")
+                .containsExactly("storm_id", "phase", "id");
+    }
+
+    @Test
     @DisplayName("şema yaması (2026-10-04): noc_settings'in 7/24 ekibi takım kolonları eksikse eklenir, ikinci koşu hiçbir şey yapmaz")
     void operatorTeamColumnsPatched() {
         jdbc.execute("ALTER TABLE noc_settings DROP COLUMN operator_team_ids");

@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -50,7 +52,9 @@ class SchemaPatchPostgresTest {
     private static final List<String> PATCH_SOURCES = List.of(
             "src/main/java/com/sitemonitor/service/SchedulerService.java",
             "src/main/java/com/sitemonitor/service/noc/NocSchemaPatches.java",
-            "src/main/java/com/sitemonitor/service/noc/NocCallLogSchemaPatch.java");
+            "src/main/java/com/sitemonitor/service/noc/NocCallLogSchemaPatch.java",
+            // 2026-10-08: açılışı bekletmeyen (hazır olduktan sonra arka planda kurulan) indeksler.
+            "src/main/java/com/sitemonitor/service/schema/DeferredIndexBuilder.java");
 
     private static JdbcTemplate jdbc() { return PostgresIt.app().jdbc(); }
 
@@ -141,7 +145,8 @@ class SchemaPatchPostgresTest {
 
     @Test
     @DisplayName("Kritik indeksler kurulu: kısmi UNIQUE (fırtına), text_pattern_ops (push), UNIQUE kilitler, created_at, PK")
-    void criticalIndexes_existWithPostgresSemantics() {
+    void criticalIndexes_existWithPostgresSemantics() throws Exception {
+        awaitDeferredIndexes();
         Map<String, String> defs = indexDefs();
 
         assertThat(defs).as("alert_events(created_at) — gürültü/pencere sorguları").containsKey("idx_ae_created_at");
@@ -175,6 +180,93 @@ class SchemaPatchPostgresTest {
         }
     }
 
+    @Test
+    @DisplayName("Ertelenmiş indeksler (2026-10-08): hazır olduktan sonra arka planda kurulur — hepsi var, 0 başarısız;"
+            + " INCLUDE / kısmi / fonksiyonel tanımlar PostgreSQL'de doğru")
+    void deferredIndexes_builtInBackground_withPostgresSemantics() throws Exception {
+        int n = DeferredIndexBuilder.CATALOG.size();
+        DeferredIndexBuilder.Result first = PostgresIt.app().firstBoot().deferredIndexes();
+        assertThat(first.locked()).as("açılış #1 kurucu kilidi").isTrue();
+        assertThat(first.failed()).as("açılış #1 ertelenmiş indeks başarısızlığı: %s", first).isZero();
+        assertThat(first.built()).as("boş veritabanı: açılış #1 katalogdaki HER indeksi kurmalı (tablosu yok → atlandı?): %s", first)
+                .isEqualTo(n);
+        DeferredIndexBuilder.Result second = awaitDeferredIndexes();
+        assertThat(second.locked()).isTrue();
+        assertThat(second.failed()).isZero();
+        assertThat(second.valid()).as("açılış #2: hepsi zaten geçerli, hiçbir DDL koşmaz (idempotent): %s", second).isEqualTo(n);
+
+        Map<String, String> defs = indexDefs();
+        for (DeferredIndexBuilder.Spec s : DeferredIndexBuilder.CATALOG) {
+            assertThat(defs).as("%s ON %s", s.name(), s.table()).containsKey(s.name());
+            assertThat(defs.get(s.name())).as(s.name()).doesNotStartWith("CREATE UNIQUE").containsPattern(" ON (\\w+\\.)?" + s.table() + " USING btree ");
+        }
+        assertThat(defs.get("idx_uc_domain_checked")).contains("(domain, checked_at)");
+        assertThat(defs.get("idx_ae_domain_type_created")).contains("(domain, alert_type, created_at) INCLUDE (resolved_at)");
+        assertThat(defs.get("idx_sc_success_monitor")).as("kısmi indeks yüklemi").contains("(monitor_id) WHERE (ok = true)");
+        assertThat(defs.get("idx_audit_lower_actor_type_time")).as("fonksiyonel: LOWER(a.actor) = :actor")
+                .containsPattern("lower\\(\\(?actor\\)?(::text)?\\), event_type, event_time\\)");
+        assertThat(defs.get("idx_push_lower_user_created")).as("fonksiyonel: LOWER(d.username) = LOWER(:username)")
+                .containsPattern("lower\\(\\(?username\\)?(::text)?\\), created_at\\)");
+        assertThat(defs.get("idx_noc_delivery_storm_phase")).as("NOC: fırtına turu sorgusu (NocSchemaPatches)")
+                .contains("(storm_id, phase, id)");
+    }
+
+    @Test
+    @DisplayName("Ertelenmiş kurucu gerçek PostgreSQL'de: başarısız kurulum geride INVALID bırakmaz; yarıda kalmış INVALID"
+            + " indeksi düşürüp yeniden kurar; geçerliye dokunmaz")
+    void deferredBuilder_cleansAndRepairsInvalidIndexes_onRealPostgres() throws Exception {
+        awaitDeferredIndexes();   // açılışın kurucusu kilidi bıraksın
+        JdbcTemplate jdbc = jdbc();
+        jdbc.execute("DROP TABLE IF EXISTS it_idx_probe");
+        jdbc.execute("CREATE TABLE it_idx_probe (v INTEGER)");
+        try {
+            jdbc.execute("INSERT INTO it_idx_probe VALUES (1), (1)");
+            String ddl = "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS it_idx_probe_v ON it_idx_probe(v)";
+            DeferredIndexBuilder b = new DeferredIndexBuilder(List.of(DeferredIndexBuilder.Spec.postgresOnly(ddl)),
+                    () -> true, () -> DeferredIndexBuilder.JdbcSession.open(jdbc.getDataSource()), Thread::sleep,
+                    10_000, 10_000, 100, 0);
+
+            // 1) Tekrarlı veri → CONCURRENTLY düşer (23505; tek yeniden deneme de düşer): geride INVALID kalıntı YOK.
+            DeferredIndexBuilder.Result failed = b.runBlocking();
+            assertThat(failed.failed()).isEqualTo(1);
+            assertThat(indexValidity("it_idx_probe_v")).as("başarısız kurulumdan kalan INVALID indeks").isNull();
+
+            // 2) Pod yarıda öldü senaryosu: elle bırakılmış INVALID indeks → kurucu düşürüp yeniden kurar.
+            try { jdbc.execute(ddl); } catch (Exception expected) { /* 23505 → INVALID indeks kalır */ }
+            assertThat(indexValidity("it_idx_probe_v")).as("hazırlık: INVALID indeks").isFalse();
+            jdbc.execute("DELETE FROM it_idx_probe");
+            jdbc.execute("INSERT INTO it_idx_probe VALUES (1)");
+            DeferredIndexBuilder.Result repaired = b.runBlocking();
+            assertThat(repaired.rebuilt()).as("%s", repaired).isEqualTo(1);
+            assertThat(indexValidity("it_idx_probe_v")).isTrue();
+
+            // 3) Sonraki açılış: geçerli indekse dokunulmaz.
+            assertThat(b.runBlocking().valid()).isEqualTo(1);
+        } finally {
+            jdbc.execute("DROP TABLE IF EXISTS it_idx_probe");
+        }
+    }
+
+    /**
+     * Ertelenmiş indeksler (2026-10-08) pod hazır olduktan SONRA arka planda kurulur; indeks iddialarından önce ikinci
+     * açılışın koşusu beklenir (PostgresIt açılışta zaten bekler; burada açık güvence — boş veritabanında milisaniyeler).
+     */
+    private static DeferredIndexBuilder.Result awaitDeferredIndexes() throws Exception {
+        CompletableFuture<DeferredIndexBuilder.Result> run = DeferredIndexBuilder.lastRun();
+        assertThat(run).as("PostgreSQL açılışı ertelenmiş indeks kurulumunu başlatmalı (SchedulerService.runOnStartup)").isNotNull();
+        DeferredIndexBuilder.Result r = run.get(5, TimeUnit.MINUTES);
+        assertThat(r).as("son koşu ikinci açılışınki olmalı").isEqualTo(PostgresIt.app().secondBoot().deferredIndexes());
+        return r;
+    }
+
+    /** İndeksin geçerliliği; yoksa {@code null}. */
+    private static Boolean indexValidity(String index) {
+        List<Boolean> v = jdbc().queryForList("SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                + "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = ?",
+                Boolean.class, index);
+        return v.isEmpty() ? null : v.getFirst();
+    }
+
     private static void assertUnique(Map<String, String> defs, String index, String table) {
         assertThat(defs).as("%s indeksi/kısıtı", index).containsKey(index);
         assertThat(defs.get(index)).as("%s", index).startsWith("CREATE UNIQUE INDEX")
@@ -183,7 +275,8 @@ class SchemaPatchPostgresTest {
 
     @Test
     @DisplayName("CONCURRENTLY kurulumları INVALID indeks bırakmadı (pg_index.indisvalid)")
-    void noInvalidIndexes() {
+    void noInvalidIndexes() throws Exception {
+        awaitDeferredIndexes();   // arka planda süren CONCURRENTLY kurulum o an INVALID görünür
         List<String> invalid = jdbc().queryForList(
                 "SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
               + "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND NOT i.indisvalid",
@@ -195,7 +288,8 @@ class SchemaPatchPostgresTest {
 
     @Test
     @DisplayName("Yamalarda adı geçen her indeks, tablosu varsa kurulmuş (42P01/42703 sessiz no-op'u yakalanır)")
-    void everyIndexNamedInPatches_existsWhereItsTableExists() throws IOException {
+    void everyIndexNamedInPatches_existsWhereItsTableExists() throws Exception {
+        awaitDeferredIndexes();   // DeferredIndexBuilder.CATALOG da PATCH_SOURCES'ta: hazır olduktan sonra kurulur
         String src = patchSource();
         Set<String> dropped = names(src, "DROP\\s+INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+EXISTS\\s+)?(\\w+)", 1);
         Matcher m = Pattern.compile(

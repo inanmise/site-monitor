@@ -718,6 +718,7 @@ public class UserService {
     public Team createTeam(String name, String email, String description, Long leaderId) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Team email is required");
+        requireEmailFormat(email);   // 2026-10-08: yeni değer tek, biçimce geçerli adres olmalı
         if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
         // Leader (PO) is OPTIONAL — a team may be created before its PO has logged in.
         if (leaderId != null && !userRepo.existsById(leaderId))
@@ -742,6 +743,8 @@ public class UserService {
     public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId,
                            Boolean weeklyReminderEnabled, Boolean weeklyAvailabilityEnabled) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        // E-posta biçimi (2026-10-08) — alan yazılmadan ÖNCE; yalnız DEĞİŞEN değer denetlenir (saklı eski değer muaf).
+        if (email != null && !email.isBlank() && !email.trim().equals(bodyStr(team.getEmail()))) requireEmailFormat(email);
         if (weeklyReminderEnabled != null) team.setWeeklyReminderEnabled(weeklyReminderEnabled);
         if (weeklyAvailabilityEnabled != null) team.setWeeklyAvailabilityEnabled(weeklyAvailabilityEnabled);
         if (name != null && !name.isBlank()) {
@@ -818,6 +821,7 @@ public class UserService {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
+        requireEmailFormat(email);   // 2026-10-08
         LinkedHashSet<Long> teams = normalizeTeams(teamIds);
         // Takım, ADMIN dışındaki roller için zorunlu (global admin bir takıma bağlı olmak zorunda değil).
         if (teams.isEmpty() && !"ADMIN".equals(systemRole)) throw new IllegalArgumentException("Team is required");
@@ -927,6 +931,9 @@ public class UserService {
                                String systemRole, Collection<Long> teamIds, Long primaryTeamId,
                                Boolean active, String orgRole) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        // E-posta biçimi (2026-10-08) — hiçbir alan yazılmadan ÖNCE; yalnız DEĞİŞEN değer denetlenir (AD'den gelen ya
+        // da saklı eski adres muaf, boş bugünkü gibi "dokunma").
+        if (email != null && !email.isBlank() && !Objects.equals(email.trim(), bodyStr(user.getEmail()))) requireEmailFormat(email);
         boolean ldap = LdapFieldLocks.isLdapUser(user);
         // Boş/boşluk değer null'a indirgenir (bodyStr ile aynı sözleşme, 2026-09-30): düzenleme formu her kayıtta
         // display_name/employee_id'yi '' olarak yollar; '' ile null'ı "değişti" saymak LDAP kullanıcısında
@@ -1146,6 +1153,20 @@ public class UserService {
         if (v == null) return null;
         String s = v.toString().trim();
         return s.isEmpty() ? null : s;
+    }
+
+    /**
+     * Yeni e-posta değeri (kullanıcı / takım) tek ve biçimce geçerli bir adres olmalı (2026-10-08, "doğrulanmadan alınan
+     * veri"). Eskiden "ali@" ya da "a@b.com; c@d.com" kaydediliyor, alarm maili o alıcıda sessizce düşüyordu. Kural
+     * {@link com.sitemonitor.util.EmailFormat} (bildirim gruplarıyla aynı gevşek desen). Çağıran yalnız YENİ/DEĞİŞEN değer
+     * için çağırır; LDAP/AD'den gelen adresler denetlenmez.
+     */
+    private static void requireEmailFormat(String email) {
+        if (!com.sitemonitor.util.EmailFormat.isValid(email)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("email", com.sitemonitor.util.Msg.t(
+                    "E-posta adresi geçersiz. Tek bir adres girin (ör. ad.soyad@ornek.com); birden çok adres ya da boşluk kabul edilmez.",
+                    "The e-mail address is invalid. Enter a single address (e.g. name.surname@example.com); multiple addresses or spaces aren’t accepted."));
+        }
     }
 
     @Transactional

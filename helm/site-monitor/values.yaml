@@ -70,6 +70,10 @@ config:
   # AKSİYON: prod Postgres max_connections'ı doğrula; düşük tier (25-50) ise buna göre kıs.
   # Çok-pod'a geçilirse (replica × 25) max_connections'ı aşmasın diye tekrar boyutlandır.
   dbPoolMax: "25"
+  # PostgreSQL JDBC socketTimeout (sn). pgjdbc varsayılanı sınırsız: sessizce düşen bir bağlantı (NAT/LB/yük devri)
+  # kullanımdaki sorguyu ve iş parçacığını sonsuza dek tutar. Cömert (30 dk) — açılış CREATE INDEX'leri kesilmesin.
+  # 0 = kapalı.
+  dbSocketTimeoutSeconds: "1800"
   emailEnabled: "true"
   smtpHost: smtp.gmail.com
   smtpPort: "587"

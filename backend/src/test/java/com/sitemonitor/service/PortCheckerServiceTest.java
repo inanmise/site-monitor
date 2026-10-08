@@ -168,4 +168,52 @@ class PortCheckerServiceTest {
                         PortCheckerService.readStatusLine(drip, System.nanoTime() - 1))
                 .isInstanceOf(java.net.SocketTimeoutException.class);
     }
+
+    // ── Doğrudan HTTP yolu TOPLAM süre (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ──
+
+    /** Testte doğrudan HTTP bütçesi kısaltılmış servis (okuma zaman aşımı ondan UZUN kalır). */
+    private static PortCheckerService shortHttpBudget(long totalMs) {
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        return new PortCheckerService(new SsrfGuard(s)) {
+            @Override long httpTotalMs(int timeoutMs) { return totalMs; }
+        };
+    }
+
+    @Test
+    @DisplayName("KAPI (2026-10-08): durum satırını damlatan hedef HTTP port kontrolünü süresiz tutamaz — bütçede READ_TIMEOUT ile kapalı")
+    void httpDirect_headerDrip_boundedByTotalBudget() throws Exception {
+        PortCheckerService svc = shortHttpBudget(1_000L);
+        try (com.sitemonitor.util.DripServer drip = com.sitemonitor.util.DripServer.start(true, "HTTP/1.1 200 OK\r\nX-Pad: ", 100)) {
+            long t0 = System.nanoTime();
+            Map<String, Object> r = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(15),
+                    () -> svc.check("127.0.0.1", drip.port(), 5_000, "HTTP", "/", null, "auto", false));
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(r.get("open")).isEqualTo(false);
+            assertThat((String) r.get("error")).contains("Port HTTP");
+            assertThat(r.get("failure_reason")).isEqualTo("READ_TIMEOUT");
+            assertThat(r.get("response_ms")).isNull();
+            assertThat(ms).as("bütçe 1 sn; bekçisiz en erken 5 sn (okuma zaman aşımı)").isLessThan(3_500L);
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: normal HTTP yanıtı bütçeden etkilenmez; bütçe = 3 × zaman aşımı, en az 10 sn")
+    void httpDirect_normalResponse_unchanged() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext("/", ex -> { ex.sendResponseHeaders(204, -1); ex.close(); });
+        server.start();
+        try {
+            Map<String, Object> r = service.check("127.0.0.1", server.getAddress().getPort(), 2_000, "HTTP", "/", null, "auto", false);
+            assertThat(r.get("open")).isEqualTo(true);
+            assertThat(r.get("detail")).isEqualTo("HTTP 204");
+        } finally {
+            server.stop(0);
+        }
+        assertThat(service.httpTotalMs(1_000)).isEqualTo(10_000L);
+        assertThat(service.httpTotalMs(5_000)).isEqualTo(15_000L);
+        assertThat(service.httpTotalMs(60_000)).isEqualTo(180_000L);
+    }
 }

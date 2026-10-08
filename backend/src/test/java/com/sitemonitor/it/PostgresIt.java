@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.AppenderBase;
 import com.sitemonitor.SiteMonitorApplication;
+import com.sitemonitor.service.schema.DeferredIndexBuilder;
 import com.sitemonitor.service.schema.SchemaPatchRunner;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ConditionEvaluationResult;
@@ -83,10 +84,13 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
     /**
      * Bir açılışın kanıtları: yama özeti, Hibernate şema aracı sorunları, ERROR günlükleri, runner'ın "beklenen hata"
      * sayıp sessizce yuttuğu yamalar (PostgreSQL mesajıyla; {@code failed} sayacına GİRMEZLER), runner'ın DEBUG satır
-     * sayısı (dinleyicinin her yamayı gerçekten gördüğünün kanıtı — sıfır "sessiz atlama" ancak böyle anlamlıdır) ve süre.
+     * sayısı (dinleyicinin her yamayı gerçekten gördüğünün kanıtı — sıfır "sessiz atlama" ancak böyle anlamlıdır), süre
+     * ve pod hazır olduktan sonra arka planda koşan ertelenmiş indeks kurulumunun özeti (2026-10-08; açılış onu bekler ki
+     * iki açılış yarışmasın ve indeks iddiaları belirli olsun).
      */
     public record BootRun(SchemaPatchRunner.Summary patches, List<String> schemaToolProblems,
-                          List<String> errorLogs, List<String> silentlySkippedPatches, int patchDebugLines, long millis) {}
+                          List<String> errorLogs, List<String> silentlySkippedPatches, int patchDebugLines, long millis,
+                          DeferredIndexBuilder.Result deferredIndexes) {}
 
     /** {@code -D} önce, ortam değişkeni sonra; URL ya da kullanıcı yoksa {@code null}. */
     public static Config config() {
@@ -187,7 +191,8 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
                     + r.schemaToolProblems().size() + ", ERROR günlüğü: " + r.errorLogs().size()
                     + ", yama DEBUG satırı: " + r.patchDebugLines()
                     + ", sessizce atlanan yama: " + r.silentlySkippedPatches().size()
-                    + (r.silentlySkippedPatches().isEmpty() ? "" : " " + r.silentlySkippedPatches());
+                    + (r.silentlySkippedPatches().isEmpty() ? "" : " " + r.silentlySkippedPatches())
+                    + "; ertelenmiş indeksler: " + r.deferredIndexes();
         }
 
         public ConfigurableApplicationContext context() { return context; }
@@ -218,6 +223,7 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
 
     private static Opened open(Config cfg) {
         SchemaPatchRunner.Summary before = SchemaPatchRunner.last();
+        var deferredBefore = DeferredIndexBuilder.lastRun();
         BootLogCapture capture = new BootLogCapture();
         long t0 = System.nanoTime();
         ConfigurableApplicationContext ctx;
@@ -235,8 +241,30 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
             throw new IllegalStateException("Açılış şema yamalarını koşmadı: SchemaPatchRunner.last() güncellenmedi"
                     + " (SchedulerService.runOnStartup ApplicationReadyEvent'te çalışmadı mı?)");
         }
+        DeferredIndexBuilder.Result deferred = awaitDeferredIndexes(ctx, deferredBefore);
         return new Opened(ctx, new BootRun(after, capture.schemaToolProblems(), capture.errors(), capture.skippedPatches(),
-                capture.patchDebugLines(), ms));
+                capture.patchDebugLines(), ms, deferred));
+    }
+
+    /**
+     * 2026-10-08: ertelenmiş indeksler pod HAZIR olduktan sonra arka planda kurulur. Açılış onu bekler: (1) bu açılış
+     * kurulumu gerçekten başlatmış olmalı, (2) birinci açılışın kurucusu bağlam kapanıp ikinci açılış yama koşarken hâlâ
+     * çalışmasın (yarış), (3) indeks iddiaları belirli olsun. Boş veritabanında milisaniyeler sürer.
+     */
+    private static DeferredIndexBuilder.Result awaitDeferredIndexes(ConfigurableApplicationContext ctx,
+                                                                   java.util.concurrent.CompletableFuture<?> before) {
+        var run = DeferredIndexBuilder.lastRun();
+        if (run == null || run == before) {
+            ctx.close();
+            throw new IllegalStateException("Açılış ertelenmiş indeks kurulumunu başlatmadı (SchedulerService.runOnStartup →"
+                    + " DeferredIndexBuilder.startInBackground PostgreSQL'de çağrılmadı mı?)");
+        }
+        try {
+            return run.get(5, java.util.concurrent.TimeUnit.MINUTES);
+        } catch (Exception e) {
+            ctx.close();
+            throw new IllegalStateException("Ertelenmiş indeks kurulumu 5 dk içinde bitmedi", e);
+        }
     }
 
     /**

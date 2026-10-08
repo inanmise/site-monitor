@@ -199,6 +199,35 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("2026-10-08: FieldValidationException → 400 VALIDATION_FAILED + fields{alan:ileti} + field; ileti aynen")
+    @SuppressWarnings("unchecked")
+    void fieldValidation() {
+        request("rid-fv", null);
+        ResponseEntity<Map<String, Object>> r = handler.handleBadRequest(
+                new GlobalExceptionHandler.FieldValidationException("host", "Host geçersiz: '-f'."));
+        assertEquals(400, r.getStatusCode().value());
+        assertEquals("VALIDATION_FAILED", r.getBody().get("code"));
+        assertEquals("Host geçersiz: '-f'.", error(r));
+        assertEquals("host", r.getBody().get("field"));
+        assertEquals("Host geçersiz: '-f'.", ((Map<String, String>) r.getBody().get("fields")).get("host"));
+        assertEquals("rid-fv", r.getBody().get("request_id"));
+    }
+
+    @Test
+    @DisplayName("2026-10-08: ClassCastException (yanlış JSON türü) → 500 değil 400 VALIDATION_FAILED; sınıf adı sızmaz, TR/EN")
+    void classCast() {
+        ClassCastException cce = new ClassCastException(
+                "class java.lang.String cannot be cast to class java.lang.Number (java.lang.String and java.lang.Number are in module java.base)");
+        ResponseEntity<Map<String, Object>> r = handler.handleClassCast(cce);
+        assertEquals(400, r.getStatusCode().value());
+        assertEquals("VALIDATION_FAILED", r.getBody().get("code"));
+        assertFalse(error(r).contains("java.lang"), error(r));
+        assertTrue(error(r).contains("türü yanlış"), error(r));
+        request(null, "en");
+        assertTrue(error(handler.handleClassCast(cce)).startsWith("A field you sent has the wrong type"));
+    }
+
+    @Test
     @DisplayName("SecurityException → 403; bilinen kısa iletiler istek dilinde açıklanır, ön yüzün eşlediği iletiler KORUNUR")
     void forbidden() {
         ResponseEntity<Map<String, Object>> r = handler.handleForbidden(new SecurityException("yetkisiz"), null);

@@ -211,15 +211,51 @@ class ScriptedProxyTest {
     }
 
     @Test
-    @DisplayName("Kullanıcının kendi HTTPS_PROXY'si EZİLMEZ (putIfAbsent sırası)")
-    void userEnvWins() {
+    @DisplayName("2026-10-08: kullanıcının HTTPS_PROXY'si ARTIK geçmez — sistem vekili kazanır (SSRF kara-liste atlatması kapandı)")
+    void userProxyDroppedSystemProxyWins() {
+        // Eskiden putIfAbsent sırası kullanıcının vekilini koruyordu: k6 hedefe değil o vekile bağlanır ve
+        // --blacklist-ip yalnız vekilin adresine bakardı → iç ağ hedefleri kendi vekiliyle erişilebilir olurdu.
         var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", ""));
 
         var e = svc.buildProcessEnv(
-                env(new ScriptedCheckerService.EnvVar("HTTPS_PROXY", "http://kendi:1234", false)),
+                env(new ScriptedCheckerService.EnvVar("HTTPS_PROXY", "http://kendi:1234", false),
+                        new ScriptedCheckerService.EnvVar("https_proxy", "http://kendi:1234", false)),
                 ScriptedCheckerService.ProxyUse.AUTO, null, new java.util.ArrayList<>());
 
-        assertThat(e).containsEntry("HTTPS_PROXY", "http://kendi:1234");
+        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.intranet.local:8080")
+                     .doesNotContainKey("https_proxy");
+
+        // Vekil KAPALIYKEN de kullanıcının vekili geçmez (doğrudan çıkış seçimi gerçekten doğrudan).
+        var off = svc.buildProcessEnv(
+                env(new ScriptedCheckerService.EnvVar("HTTPS_PROXY", "http://kendi:1234", false)),
+                ScriptedCheckerService.ProxyUse.DIRECT, null, new java.util.ArrayList<>());
+        assertThat(off).doesNotContainKey("HTTPS_PROXY");
+    }
+
+    @Test
+    @DisplayName("2026-10-08: saklı eski kayıttaki K6_*/LD_*/PATH/SSL_CERT_FILE koşumdan DÜŞER, koşum sürer; zararsız eski adlar kalır")
+    void reservedLegacyEnvDropped_harmlessKept() {
+        var svc = service(settings("", 0, "", "", ""));
+        var ca = java.nio.file.Path.of("/tmp/k6-ca-test.pem");
+
+        var e = svc.buildProcessEnv(env(
+                        new ScriptedCheckerService.EnvVar("K6_OUT", "json=/etc/passwd", false),
+                        new ScriptedCheckerService.EnvVar("LD_PRELOAD", "/tmp/x.so", false),
+                        new ScriptedCheckerService.EnvVar("PATH", "/tmp", false),
+                        new ScriptedCheckerService.EnvVar("SSL_CERT_FILE", "/tmp/evil.pem", false),
+                        new ScriptedCheckerService.EnvVar("BAD=NAME", "x", false),
+                        new ScriptedCheckerService.EnvVar("NODE_ENV", "prod", false),
+                        new ScriptedCheckerService.EnvVar("base.url", "https://x", false),
+                        new ScriptedCheckerService.EnvVar("MY_PROXY_URL", "https://p", false),
+                        new ScriptedCheckerService.EnvVar("BASE_URL", "https://x", false)),
+                ScriptedCheckerService.ProxyUse.DIRECT, ca, new java.util.ArrayList<>());
+
+        assertThat(e).doesNotContainKeys("K6_OUT", "LD_PRELOAD", "PATH", "BAD=NAME")
+                     .containsEntry("NODE_ENV", "prod")
+                     .containsEntry("base.url", "https://x")
+                     .containsEntry("MY_PROXY_URL", "https://p")
+                     .containsEntry("BASE_URL", "https://x");
+        assertThat(e.get("SSL_CERT_FILE")).endsWith("k6-ca-test.pem");   // sistem CA'sı kazanır
     }
 
     @Test
@@ -277,14 +313,17 @@ class ScriptedProxyTest {
     }
 
     @Test
-    @DisplayName("Kullanıcının kendi GOMAXPROCS'u EZİLMEZ (putIfAbsent) — bilinçli değer korunur")
-    void userSuppliedLimitWins() {
+    @DisplayName("2026-10-08: SERT tavan kullanıcı env'iyle kaldırılamaz — GOMAXPROCS/GOMEMLIMIT sistem değeri kazanır")
+    void hardLimitsWinOverUserEnv() {
+        // Eskiden putIfAbsent: kullanıcı GOMAXPROCS=64 / GOMEMLIMIT=off vererek tavanı kaldırabiliyordu.
         var svc = service(settings("", 0, "", "", ""));
 
-        var e = svc.buildProcessEnv(env(new ScriptedCheckerService.EnvVar("GOMAXPROCS", "2", false)),
+        var e = svc.buildProcessEnv(env(new ScriptedCheckerService.EnvVar("GOMAXPROCS", "64", false),
+                        new ScriptedCheckerService.EnvVar("GOMEMLIMIT", "off", false),
+                        new ScriptedCheckerService.EnvVar("GOGC", "off", false)),
                 ScriptedCheckerService.ProxyUse.DIRECT, null, new java.util.ArrayList<>());
 
-        assertThat(e).containsEntry("GOMAXPROCS", "2");
+        assertThat(e).containsEntry("GOMAXPROCS", "1").containsEntry("GOMEMLIMIT", "256MiB").doesNotContainKey("GOGC");
     }
 
     // ── "Her zaman vekil üzerinden" (ON) GERÇEKTEN vekilden geçirir ──────────────────────────

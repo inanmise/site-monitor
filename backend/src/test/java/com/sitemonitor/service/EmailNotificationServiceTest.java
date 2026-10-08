@@ -1216,6 +1216,26 @@ class EmailNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-08: kimliksiz login bildirimi NÖTR onayı — yalnız referans + zaman; kullanıcı girdisi ve görsel YOK")
+    void loginIssueAckNeutral_carriesNoUserContent() throws Exception {
+        String html = service.buildLoginIssueAckNeutralHtml("LIR-2026-000042", "2026-07-24T09:00:00");
+        assertThat(html).contains("LIR-2026-000042").contains("Sorun bildiriminiz alındı");
+        assertThat(html).doesNotContain("cid:shot").doesNotContain("Ekran Görüntü").doesNotContain("Açıklama").doesNotContain("Hata Mesajı")
+                .doesNotContain("Kullanıcı Adı");
+
+        // Gönderim: tek alıcı, ek/inline görsel YOK, konu sunucu üretimi referansı taşır.
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+        var res = service.sendLoginIssueAckNeutral("bildiren@example.com", "LIR-2026-000042", "2026-07-24T09:00:00", false);
+        assertThat(res.subject()).isEqualTo("[Site Monitor] Sorun bildiriminiz alındı — LIR-2026-000042");
+        assertThat(res.bodyHtml()).isEqualTo(html);
+        assertThat(service.sendLoginIssueAckNeutral(" ", "LIR-1", "2026-07-24T09:00:00", false).status())
+                .isEqualTo("SKIPPED_NO_RECIPIENT");
+    }
+
+    @Test
     @DisplayName("Çözüldü maili: bildiren To + admin CC; bildiren yoksa admin To olur")
     void loginIssueResolved_recipientArrangement() throws Exception {
         when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());

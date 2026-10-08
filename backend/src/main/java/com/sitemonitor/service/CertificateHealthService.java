@@ -484,15 +484,36 @@ public class CertificateHealthService {
         // ekranı bırakıp koda bakmaya zorlayan şeydi (vekil kararı sapması vakası).
         Map<String, Object> ev = ev("raw", status, "checked_at", lc.getHstsAt(),
                 "note", lc.getHstsNote());
+        // Politika ayrıntısı (2026-10-08): ham başlık + max-age / includeSubDomains / preload / HTTP→HTTPS — arayüz satırı
+        // açınca "bu sitede durum" ve "ne yapmalı" açıklamasını bundan kurar. Yoksa (eski kayıt) satır eskisi gibi.
+        Map<String, Object> policy = parseJsonMap(lc.getHstsPolicy());
+        if (!policy.isEmpty()) {
+            ev = new LinkedHashMap<>(ev);
+            ev.put("hsts_policy", policy);
+        }
+        Long maxAge = policy.get("max_age") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        boolean headerSent = policy.get("header") instanceof String h && !h.isBlank();
         if (status == null || status.isBlank()) {
             // Hiç bakılmamış: kullanıcı isteğiyle koşar (K4) — otomatik başlık çekmiyoruz.
             return new HealthRow("hsts", GROUP_APPLICATION, Status.UNKNOWN, "notChecked", List.of(),
                     "checkOnDemand", List.of(), ev);
         }
         if ("ENABLED".equalsIgnoreCase(status)) {
+            // Başlık var ama süre kısa (< 180 gün): tarayıcı politikayı çabuk unutur, koruma aralıklı kalır.
+            if (maxAge != null && maxAge > 0 && maxAge < HSTS_MIN_MAX_AGE_SECONDS) {
+                return new HealthRow("hsts", GROUP_APPLICATION, Status.WARN, "hstsShortMaxAge",
+                        List.of(maxAge / 86_400L), "raiseHstsMaxAge", List.of(), ev);
+            }
             return new HealthRow("hsts", GROUP_APPLICATION, Status.OK, "enabled", List.of(), "none", List.of(), ev);
         }
         if ("MISSING".equalsIgnoreCase(status)) {
+            // Başlık GÖNDERİLİYOR ama etkisiz: max-age=0 politikayı bilerek siler; max-age yoksa başlık geçersizdir.
+            if (headerSent && maxAge != null && maxAge == 0L) {
+                return new HealthRow("hsts", GROUP_APPLICATION, Status.WARN, "hstsDisabled", List.of(), "enableHsts", List.of(), ev);
+            }
+            if (headerSent && maxAge == null) {
+                return new HealthRow("hsts", GROUP_APPLICATION, Status.WARN, "hstsInvalid", List.of(), "fixHstsHeader", List.of(), ev);
+            }
             return new HealthRow("hsts", GROUP_APPLICATION, Status.WARN, "missing", List.of(), "enableHsts", List.of(), ev);
         }
         return new HealthRow("hsts", GROUP_APPLICATION, Status.UNKNOWN, "unverified", List.of(),
@@ -540,6 +561,23 @@ public class CertificateHealthService {
     // ── Yardımcılar ─────────────────────────────────────────────────────────
 
     /** null değerleri ELEYEN kanıt haritası — arayüzde boş satır çizilmesin. */
+    /** HSTS max-age alt sınırı (180 gün): altı "kısa" — yaygın kabul (OWASP / tarayıcı önerileri en az 6 ay, ideal 1 yıl). */
+    static final long HSTS_MIN_MAX_AGE_SECONDS = 15_552_000L;
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Kısa JSON nesnesi → harita; boş / bozuk → boş harita (satır asla düşmez). */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> parseJsonMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Object v = JSON.readValue(json, Map.class);
+            return v instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     private static Map<String, Object> ev(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {

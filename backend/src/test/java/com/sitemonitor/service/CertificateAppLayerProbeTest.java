@@ -214,6 +214,30 @@ class CertificateAppLayerProbeTest {
     }
 
     @Test
+    @DisplayName("HSTS politika ayrıntısı (2026-10-08) kaydedilir: ham başlık + max-age + includeSubDomains + preload + HTTP→HTTPS; bağlanılamazsa null")
+    void hstsPolicyIsPersisted() {
+        LatestCheck lc = stored();
+        Map<String, Object> diag = new java.util.HashMap<>();
+        diag.put("verdict", "ENFORCED");
+        diag.put("raw_value", "max-age=31536000; includeSubDomains");
+        diag.put("max_age", 31_536_000L);
+        diag.put("include_subdomains", true);
+        diag.put("preload", false);
+        diag.put("http_redirects_to_https", true);
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(diag);
+        when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+
+        probe.refresh("a.example.com", 443, false);
+        assertThat(lc.getHstsPolicy()).isEqualTo("{\"header\":\"max-age=31536000; includeSubDomains\",\"max_age\":31536000,"
+                + "\"include_subdomains\":true,\"preload\":false,\"http_redirects_to_https\":true}");
+
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "CONNECT_FAILED"));
+        probe.refresh("a.example.com", 443, false);
+        assertThat(lc.getHstsPolicy()).as("bağlanılamadı → eski ayrıntı yanıltmasın").isNull();
+    }
+
+    @Test
     @DisplayName("Bir probe patlarsa DİĞERİ yine koşar ve UNKNOWN olarak kaydedilir")
     void oneFailingProbeDoesNotBlockTheOther() {
         stored();

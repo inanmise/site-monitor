@@ -220,8 +220,7 @@ public class HstsDiagnosticsService {
             URI uri = URI.create(current);
             guardHost(uri.getHost(), useProxy);
             HttpURLConnection hc = open(current, useProxy, m, timeoutMs);
-            hc.connect();
-            int code = hc.getResponseCode();
+            int code = responseCodeWithin(hc, timeoutMs);
             if (!SafeRedirect.isRedirect(code)) return hc;
             URI next = SafeRedirect.nextHop(uri, hc.getHeaderField("Location"));
             if (next == null) return hc;   // takip edilemeyen hedef → yanıt olduğu gibi raporlanır
@@ -279,13 +278,43 @@ public class HstsDiagnosticsService {
         return hc;
     }
 
+    /**
+     * Hop başına TOPLAM süre (ms) — 2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi. connect/read zaman
+     * aşımları yalnız TEK okumayı sınırlar; başlıkları bayt bayt damlatan bir hedef tanılamayı (ve onu bekleyen Tomcat
+     * iş parçacığını) süresiz tutuyordu. Meşru en kötü süre bağlantı + TLS + yanıt ≈ 3 × zaman aşımı; en az 10 sn.
+     * Paket-görünür örnek yöntemi: kapı testi gerçek soketle kısa bir bütçe verir.
+     */
+    long hopTotalMs(int timeoutMs) {
+        return Math.max(10_000L, 3L * Math.max(1, timeoutMs));
+    }
+
+    /**
+     * {@code connect()} + {@code getResponseCode()} toplam süre bekçisi altında. Süre dolunca bekçi bağlantıyı keser ve açık
+     * bir süre istisnası fırlatılır — çağıranların mevcut hata yolu (CONNECT_FAILED / yönlendirme "belirlenemedi") aynen
+     * işler. Yarıda kesilen başlıklardan JDK'nın yine de döndürebildiği durum kodu süre dolduysa KULLANILMAZ.
+     */
+    private int responseCodeWithin(HttpURLConnection hc, int timeoutMs) throws java.io.IOException {
+        try (com.sitemonitor.util.HttpBodies.ConnectionDeadline dl =
+                     com.sitemonitor.util.HttpBodies.deadline(hc, hopTotalMs(timeoutMs), "HSTS tanılama")) {
+            int code;
+            try {
+                hc.connect();
+                code = hc.getResponseCode();
+            } catch (java.io.IOException | RuntimeException e) {
+                if (dl.expired()) throw dl.timeout();
+                throw e;
+            }
+            if (dl.expired()) throw dl.timeout();
+            return code;
+        }
+    }
+
     /** Düz HTTP'nin HTTPS'e yönlenip yönlenmediği (null = belirlenemedi). */
     private Boolean checkHttpRedirect(String domain, int timeoutMs, boolean useProxy) {
         HttpURLConnection hc = null;
         try {
             hc = open("http://" + domain + "/", useProxy, "HEAD", timeoutMs);
-            hc.connect();
-            int code = hc.getResponseCode();
+            int code = responseCodeWithin(hc, timeoutMs);
             String loc = hc.getHeaderField("Location");
             if (code >= 300 && code < 400 && loc != null) {
                 return loc.toLowerCase(Locale.ROOT).startsWith("https://");

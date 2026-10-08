@@ -404,6 +404,9 @@ final class EmailSamples {
         addHtml("issue-login-ack", "issue", "[Site Monitor] Sorun bildiriminiz alındı",
                 svc.buildLoginIssueHtml("LIR-2026-000042", "kullanici.a", "kullanici.a@example.com", "HTTP 423 Locked",
                         "Şifremi doğru girdiğim hâlde giriş yapamıyorum.", shots, null, null, "2026-09-26T07:00:00", true), "ok");
+        // Kimliksiz login "sorun bildir" onayı — NÖTR (2026-10-08): kullanıcı girdisi/görsel yok.
+        addHtml("issue-login-ack-neutral", "issue", "[Site Monitor] Sorun bildiriminiz alındı",
+                svc.buildLoginIssueAckNeutralHtml("LIR-2026-000042", "2026-09-26T07:00:00"), "ok");
         addHtml("issue-client-error", "issue", "[Site Monitor] 🐞 Uygulama Hatası",
                 svc.buildClientErrorHtml("CER-2026-000007", "kullanici.a",
                         "TypeError: Cannot read properties of undefined (reading 'map')\n    at CertificateTable (https://sitemonitor.example.com/assets/index-8f3a9c2d.js:1:48213)\n"

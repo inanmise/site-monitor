@@ -23,6 +23,8 @@ data:
   DB_USER: {{ .Values.config.dbUser | quote }}
   {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
+  # PostgreSQL JDBC soket okuma zaman aşımı (sn) — sessizce düşen DB bağlantısı iş parçacığını süresiz tutmasın.
+  DB_SOCKET_TIMEOUT_SECONDS: {{ .Values.config.dbSocketTimeoutSeconds | default "1800" | quote }}
   SITE_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
   FAILED_LOGIN_ALERT_ENABLED: {{ .Values.config.failedLoginAlertEnabled | default "true" | quote }}
   FAILED_LOGIN_ALERT_RECIPIENTS: {{ .Values.config.failedLoginAlertRecipients | default "" | quote }}

@@ -122,6 +122,38 @@ class HstsDiagnosticsServiceTest {
     }
 
     /**
+     * KAPI (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): yanıt vermeyen/damlatan bir hedef tanılamayı
+     * süresiz tutamaz. Sunucu TLS el sıkışmasına hiç yanıt vermez; okuma zaman aşımı 5 sn, hop bütçesi 1 sn — bekçi
+     * bağlantıyı bütçede keser ve sonuç eskisi gibi CONNECT_FAILED olur (yalnız ileti nedeni söyler).
+     */
+    @Test
+    @DisplayName("KAPI (2026-10-08): yanıtsız hedefte tanılama hop bütçesinde CONNECT_FAILED döner (süresiz bekleme yok)")
+    void diagnose_stalledServer_boundedByHopBudget() throws Exception {
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings(), permissiveGuard()) {
+            @Override long hopTotalMs(int timeoutMs) { return 1_000L; }
+        };
+        ReflectionTestUtils.setField(svc, "timeoutSeconds", 5);
+        try (com.sitemonitor.util.DripServer stall = com.sitemonitor.util.DripServer.start(false, null, 0)) {
+            long t0 = System.nanoTime();
+            Map<String, Object> r = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(15), () -> svc.diagnose("127.0.0.1", stall.port(), false));
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(r.get("verdict")).isEqualTo("CONNECT_FAILED");
+            assertThat((String) r.get("error")).contains("HSTS tanılama");
+            assertThat(ms).as("bütçe 1 sn; bekçisiz en erken 5 sn (okuma zaman aşımı)").isLessThan(3_500L);
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: hop bütçesi = 3 × zaman aşımı, en az 10 sn (meşru yavaş yanıt kesilmez)")
+    void hopTotalMs_generous() {
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings(), permissiveGuard());
+        assertThat(svc.hopTotalMs(1_000)).isEqualTo(10_000L);
+        assertThat(svc.hopTotalMs(5_000)).isEqualTo(15_000L);
+        assertThat(svc.hopTotalMs(20_000)).isEqualTo(60_000L);
+    }
+
+    /**
      * İzlemenin vekil tercihi KARARA girmeli.
      *
      * <p>Bu parametre yok sayıldığında ({@code use_proxy=Hayır} olsa bile vekilden geçmeye

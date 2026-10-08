@@ -86,17 +86,34 @@ function isHttpError(res) {
  * "Yükleniyor…" ekranını (pratikte beyaz ekran) önler. timeoutMs <= 0 → timeout uygulanmaz.
  */
 const DEFAULT_TIMEOUT_MS = 15000
+/**
+ * Okuma isteklerinin (GET / HEAD) varsayılan üst süresi (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi):
+ * önceden `request()` varsayılanı 0'dı — yarı açık bir bağlantı (pod yeniden başladı, vekil RST göndermeden bıraktı)
+ * döner simgeyi, kart kilidini ve uçuştaki-istek tekilleştirmesi olan yoklamaları (çevrimiçi sayısı, bakım rozeti, 7/24
+ * durumu) SONSUZA dek dondurabiliyordu. Cömert seçildi; yazma istekleri (POST/PUT/PATCH/DELETE) etkilenmez, açıkça
+ * `timeoutMs` veren çağrı (0 dahil) kendi değerini korur. Süre dolunca istek yumuşak `timeout` yüküyle döner.
+ */
+export const DEFAULT_READ_TIMEOUT_MS = 90_000
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   if (!(timeoutMs > 0) || typeof AbortController === 'undefined') {
     return fetch(url, options)
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  // Çağıranın kendi iptal sinyali KORUNUR (2026-10-08): eskiden süre sınırı onu eziyordu — bileşen kapanınca iptal edilen
+  // istek iptal edilmiyordu. İkisi bağlanır; hangisi önce gelirse istek kesilir (request() ayrımı abortKind ile yapar).
+  const outer = options.signal
+  const onOuterAbort = () => controller.abort()
+  if (outer) {
+    if (outer.aborted) controller.abort()
+    else outer.addEventListener('abort', onOuterAbort, { once: true })
+  }
   try {
     return await fetch(url, { ...options, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+    if (outer) outer.removeEventListener('abort', onOuterAbort)
   }
 }
 
@@ -158,7 +175,10 @@ async function request(path, options = {}) {
   // için (7/24 arama listesi: 403 → salt okunur). Genel davranış DEĞİŞMEZ.
   // transport (isteğe bağlı, 2026-10-08): fetch yerine aynı sözleşmeli taşıyıcı (`xhrTransport` — yükleme ilerlemesi).
   // Yanıtın işlenişi (401 / bakım / pasif hesap / JSON / withStatus / başarısız çağrı halkası) AYNEN aşağıdaki yoldan geçer.
-  const { timeoutMs = 0, withStatus = false, transport = null, ...opts } = options
+  const { timeoutMs: timeoutOpt, withStatus = false, transport = null, ...opts } = options
+  // Açık değer (0 dahil) kazanır; yoksa okuma istekleri DEFAULT_READ_TIMEOUT_MS, yazma istekleri sınırsız (eski davranış).
+  const method = String(opts.method || 'GET').toUpperCase()
+  const timeoutMs = timeoutOpt != null ? timeoutOpt : (method === 'GET' || method === 'HEAD' ? DEFAULT_READ_TIMEOUT_MS : 0)
   let res
   try {
     const init = {
@@ -620,8 +640,9 @@ export const api = {
 
   getDomainAlerts: (domain) => request(`/history/${encodeURIComponent(domain)}/alerts`),
 
-  checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`),
-  checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`),
+  // Canlı TLS kontrolü (OCSP/CRL/HSTS dahil) — sunucu tarafı süre sınırlı; istemci eskisi gibi beklemeyi kesmez.
+  checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
+  checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
   // Envanter formundaki "Test et": YAZILAN degerlerle canli el sikismasi, KAYIT YOK.
   // check-preview'dan farki portu/TLS modunu/proxy'yi envanterden degil GOVDEDEN almasi —
   // henuz kaydedilmemis bir kayitta formdaki 8443 ancak boyle test edilebiliyor.
