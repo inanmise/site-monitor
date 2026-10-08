@@ -358,6 +358,60 @@ class MonitorHistoryServiceTest {
         assertThat(res.get(1)).containsExactly("name");
     }
 
+    /** Gerçek geçmiş satırının yolu: snapshotJson (denetim sertleştirmesi) → JSON → harita. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> roundTrip(Map<String, Object> snapshot) throws Exception {
+        return new com.fasterxml.jackson.databind.ObjectMapper().readValue(AuditDiff.snapshotJson(snapshot), Map.class);
+    }
+
+    @Test
+    @DisplayName("KIRPILMIŞ değer (>512 karakter → <200>…(+N)) geri YAZILMAZ ve atlandığı bildirilir — betik kırpılmaz")
+    void applySnapshot_skipsTruncatedValue() throws Exception {
+        String longScript = "import http from 'k6/http';\n" + "x".repeat(700);
+        Map<String, Object> stored = roundTrip(map("name", longScript, "note", "kısa not"));
+        assertThat((String) stored.get("name")).contains(AuditDiff.TRUNCATION_MARK);   // gerçekten kırpılmış
+
+        Target bean = new Target();
+        bean.name = "canlı betik";
+        var res = MonitorHistoryService.applySnapshot(bean, stored, TARGET_FIELDS, null);
+
+        assertThat(bean.name).isEqualTo("canlı betik");
+        assertThat(bean.note).isEqualTo("kısa not");
+        assertThat(res.get(0)).containsExactly("note");
+        assertThat(res.get(1)).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("Gövdesi MASKELİ değer (kimlik bilgili URL → *****) geri YAZILMAZ — parola yıldızla ezilmez")
+    void applySnapshot_skipsBodyMaskedUrl() throws Exception {
+        Map<String, Object> stored = roundTrip(map("name", "https://svc:p4rola@api.example.com/x?token=abc"));
+        assertThat((String) stored.get("name")).contains(SecretMask.MASK);
+
+        Target bean = new Target();
+        bean.name = "https://svc:p4rola@api.example.com/x?token=abc";
+        var res = MonitorHistoryService.applySnapshot(bean, stored, TARGET_FIELDS, null);
+
+        assertThat(bean.name).isEqualTo("https://svc:p4rola@api.example.com/x?token=abc");
+        assertThat(res.get(1)).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("isLossy: kayıplı biçimler (maske, kırpma, ikili özet, '+N daha') tanınır; sıradan değerler değil")
+    void isLossy_recognisesAuditDiffOutputs() {
+        assertThat(AuditDiff.isLossy(AuditDiff.MASK)).isTrue();
+        assertThat(AuditDiff.isLossy("x".repeat(200) + AuditDiff.TRUNCATION_MARK + "312)")).isTrue();
+        assertThat(AuditDiff.isLossy("https://*****:*****@h/")).isTrue();
+        assertThat(AuditDiff.isLossy(Map.of("bytes", 1234))).isTrue();
+        assertThat(AuditDiff.isLossy(java.util.List.of("a", "b", "+5 daha"))).isTrue();
+        // Kırpma izi DEĞERİN ORTASINDA ise kayıp değil (yalnız uçta aranır).
+        assertThat(AuditDiff.isLossy("metin …(+3) devam")).isFalse();
+        assertThat(AuditDiff.isLossy("https://api.example.com/health")).isFalse();
+        assertThat(AuditDiff.isLossy(java.util.List.of("a", "b"))).isFalse();
+        assertThat(AuditDiff.isLossy(Map.of("a", 1))).isFalse();
+        assertThat(AuditDiff.isLossy(42)).isFalse();
+        assertThat(AuditDiff.isLossy(null)).isFalse();
+    }
+
     @Test
     @DisplayName("skip listesi ve izin listesi dışındaki alanlara DOKUNULMAZ")
     void applySnapshot_respectsSkipAndAllowList() {

@@ -1000,10 +1000,9 @@ class MonitoringControllerTest {
         when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(4L)).thenReturn(Optional.empty());
         com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
         open.setDomain("eski-ad"); open.setAlertType(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL);
-        when(alertEventRepo.findOpenAlert(eq("eski-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
-                .thenReturn(Optional.of(open));
-        when(alertEventRepo.findOpenAlert(eq("yeni-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
-                .thenReturn(Optional.empty());
+        // Rename artık TÜM açık olayları okuyup sahiplik süzgecinden geçirir (2026-10-09) — tekil findOpenAlert değil.
+        when(alertEventRepo.findOpenAlerts(eq("eski-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                .thenReturn(List.of(open));
 
         mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -1013,6 +1012,181 @@ class MonitoringControllerTest {
         // Alarm kaydının domain'i yeni ada çekilip kaydedildi (rename'de bağ kopmaz — delete akışının simetriği).
         verify(alertEventRepo).save(org.mockito.ArgumentMatchers.argThat(
                 (com.sitemonitor.model.AlertEvent a) -> "yeni-ad".equals(a.getDomain())));
+    }
+
+    // ── 2026-10-09 düzeltmeleri: rename sahipliği, Test özel başlığı, geri yükleme kaybı, alan adı silme türleri ──
+
+    private static com.sitemonitor.model.AlertEvent scriptedAlarm(String name, long monitorId, long teamId) {
+        com.sitemonitor.model.AlertEvent a = new com.sitemonitor.model.AlertEvent();
+        a.setDomain(name); a.setAlertType(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL);
+        a.setTeamId(teamId);
+        a.setContextJson("{\"monitor_id\":" + monitorId + ",\"team_id\":" + teamId + "}");
+        return a;
+    }
+
+    @Test
+    @DisplayName("PUT /scripted/{id} rename: AYNI addaki BAŞKA takımın açık alarmı TAŞINMAZ — yalnız bu izlemenin olayı yeni ada geçer")
+    void scriptedRename_doesNotMoveOtherTeamsAlarm() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(4L); m.setName("ortak-ad"); m.setTeamId(3L);
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(4L)).thenReturn(Optional.empty());
+        com.sitemonitor.model.AlertEvent foreign = scriptedAlarm("ortak-ad", 99L, 7L);   // başka takımın aynı adlı izlemesi
+        com.sitemonitor.model.AlertEvent own = scriptedAlarm("ortak-ad", 4L, 3L);
+        when(alertEventRepo.findOpenAlerts(eq("ortak-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                .thenReturn(List.of(foreign, own));
+
+        mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"yeni-ad\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(own.getDomain()).isEqualTo("yeni-ad");
+        assertThat(foreign.getDomain()).as("başka takımın alarmı yerinde kalmalı").isEqualTo("ortak-ad");
+        verify(alertEventRepo).save(own);
+        verify(alertEventRepo, never()).save(foreign);
+    }
+
+    @Test
+    @DisplayName("PUT /scripted/{id}: aynı takımda ZATEN kullanılan ada rename 400 — create ile aynı kural, alarm taşınmaz")
+    void scriptedRename_toDuplicateName_isRejected() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(4L); m.setName("eski-ad"); m.setTeamId(3L);
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.existsDuplicate("dolu-ad", 3L, 4L)).thenReturn(true);
+
+        mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"dolu-ad\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(scriptedMonitorRepo, never()).save(any());
+        verify(alertEventRepo, never()).findOpenAlerts(anyString(), anyString());
+        assertThat(m.getName()).isEqualTo("eski-ad");
+    }
+
+    @Test
+    @DisplayName("PUT /scripted/{id}: ad DEĞİŞMİYORSA mükerrer denetimi koşmaz — eski mükerrer kaydın ilgisiz düzenlemesi reddedilmez")
+    void scriptedUpdate_sameName_skipsDuplicateCheck() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(4L); m.setName("eski-ad"); m.setTeamId(3L);
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(4L)).thenReturn(Optional.empty());
+        when(scriptedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(true);   // eski veri: mükerrer zaten var
+
+        mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"eski-ad\",\"intervalSeconds\":600}"))
+                .andExpect(status().isOk());
+        verify(scriptedMonitorRepo, never()).existsDuplicate(anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST /keyword/test: özel başlık YALNIZ global admin — sıradan kullanıcının gönderdiği başlık isteğe GİRMEZ")
+    void testKeyword_customHeaders_onlyGlobalAdmin() throws Exception {
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+                .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
+        String body = "{\"url\":\"https://x.example.com\",\"keyword\":\"a\",\"customHeaders\":\"Host: ic.example.local\"}";
+
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk());
+        verify(keywordChecker).check(anyString(), anyString(), anyInt(), isNull(), anyBoolean(), anyBoolean(), any());
+
+        org.mockito.Mockito.clearInvocations(keywordChecker);
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN"))
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk());
+        verify(keywordChecker).check(anyString(), anyString(), anyInt(), eq("Host: ic.example.local"), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("Geri yükleme: SENTETİK izlemede monitoring.scripted/edit reddedilirse 403 — monitoring.crud ile atlatılamaz")
+    void restoreChange_scripted_requiresScriptedPermission() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("izin yok"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.scripted"), eq("edit"));
+
+        mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(session("ADMIN")))
+                .andExpect(status().isForbidden());
+        verify(scriptedMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Geri yükleme: SENTETİK izlemede script/description YAZILMAZ (snapshot'ta kırpılı) — diğer alanlar döner")
+    void restoreChange_scripted_doesNotWriteScriptOrDescription() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor live = new com.sitemonitor.model.ScriptedMonitor();
+        live.setId(4L); live.setName("canli-ad"); live.setTeamId(3L);
+        live.setScript("export default function () { /* uzun gerçek betik */ }");
+        live.setDescription("güncel açıklama");
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        com.sitemonitor.model.MonitorChangeLog row = new com.sitemonitor.model.MonitorChangeLog();
+        row.setId(1L); row.setResourceKind("SCRIPTED"); row.setResourceId(4L); row.setSeq(1); row.setTeamId(3L);
+        // Geçmişteki betik 512 karakteri aştığı için kırpılmış hâliyle duruyor.
+        row.setSnapshot("{\"name\":\"eski-ad\",\"script\":\"import http from 'k6/http';" + "x".repeat(150)
+                + "\u2026(+900)\",\"description\":\"eski açıklama\"}");
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("SCRIPTED", 4L, 1)).thenReturn(Optional.of(row));
+
+        mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.ScriptedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.ScriptedMonitor.class);
+        verify(scriptedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getName()).isEqualTo("eski-ad");
+        assertThat(cap.getValue().getScript()).as("betik kırpılmış snapshot'la ezilmemeli")
+                .isEqualTo("export default function () { /* uzun gerçek betik */ }");
+        assertThat(cap.getValue().getDescription()).isEqualTo("güncel açıklama");
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.scripted"), eq("edit"));
+    }
+
+    @Test
+    @DisplayName("Geri yükleme: maskeli (*****) ya da kırpılmış (…(+N)) değer geri YAZILMAZ ve atlananlarda bildirilir")
+    void restoreChange_lossyValuesAreSkippedAndReported() throws Exception {
+        com.sitemonitor.model.HttpMonitor live = new com.sitemonitor.model.HttpMonitor();
+        live.setId(6L); live.setName("api"); live.setTeamId(3L);
+        live.setUrl("https://svc:gercek-parola@api.example.com/health");
+        live.setIntervalSeconds(300);
+        when(httpMonitorRepo.findById(6L)).thenReturn(Optional.of(live));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        com.sitemonitor.model.MonitorChangeLog row = new com.sitemonitor.model.MonitorChangeLog();
+        row.setId(2L); row.setResourceKind("HTTP"); row.setResourceId(6L); row.setSeq(3); row.setTeamId(3L);
+        row.setSnapshot("{\"url\":\"https://*****:*****@api.example.com/eski\",\"intervalSeconds\":600}");
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("HTTP", 6L, 3)).thenReturn(Optional.of(row));
+
+        mvc.perform(post("/api/monitoring/changes/http/6/3/restore").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.skipped_masked[0]").value("url"));
+
+        assertThat(live.getUrl()).as("kimlik bilgili URL yıldızlarla ezilmemeli")
+                .isEqualTo("https://svc:gercek-parola@api.example.com/health");
+        assertThat(live.getIntervalSeconds()).isEqualTo(600);
+        verify(permissionService, never()).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.scripted"), anyString());
+    }
+
+    @Test
+    @DisplayName("DELETE /domain/{id}: duraklatmayla AYNI altı alarm türü sessizce kapanır (TRANSFER_LOCK + BLACKLIST dâhil)")
+    void deleteDomain_closesAllDomainAlarmTypes() throws Exception {
+        var m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(5L); m.setDomain("ornek.com.tr"); m.setTeamId(3L);
+        when(domainMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+
+        mvc.perform(delete("/api/monitoring/domain/5").session(session("ADMIN")))
+                .andExpect(status().isOk());
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<String>> types = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(escalationService).resolveOpenAlertsSilently(eq("ornek.com.tr"), types.capture(), anyString(), any());
+        assertThat(types.getValue()).containsExactlyInAnyOrder(
+                com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_EXPIRY, com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_STATUS, com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_CHANGED,
+                com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, com.sitemonitor.service.EscalationService.TYPE_DOMAINMON_BLACKLIST);
+        // Geçmiş katmanı da aynı sabiti okur (tek kaynak).
+        assertThat(MonitoringController.DOMAINMON_ALERT_TYPES).containsExactlyInAnyOrderElementsOf(types.getValue());
     }
 
     @Test

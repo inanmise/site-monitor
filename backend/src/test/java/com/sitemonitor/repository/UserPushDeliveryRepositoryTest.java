@@ -45,6 +45,38 @@ class UserPushDeliveryRepositoryTest {
         assertThat(repo.countRecentForUser("N00001", "2026-09-25T09:30:00")).isEqualTo(3L);
     }
 
+    @Test
+    @DisplayName("cancelPendingForResolved (2026-10-09): yalnız O alarmın PENDING, RESOLVE olmayan satırları iptal edilir")
+    void cancelPendingForResolved_onlyPendingNonResolveOfThatAlarm() {
+        UserPushDelivery open = delivery(500L, "OPEN", "PENDING", "N1");
+        open.setNextAttemptAt("2026-10-09T10:00:00");
+        open = repo.save(open);
+        UserPushDelivery esc = repo.save(delivery(500L, "ESCALATION", "PENDING", "N2"));
+        UserPushDelivery sent = repo.save(delivery(500L, "OPEN", "SENT", "N3"));
+        UserPushDelivery resolve = repo.save(delivery(500L, "RESOLVE", "PENDING", "N1"));
+        UserPushDelivery other = repo.save(delivery(501L, "OPEN", "PENDING", "N1"));
+
+        assertThat(repo.cancelPendingForResolved(500L, "SKIPPED_RESOLVED_BEFORE_SEND")).isEqualTo(2);
+
+        assertThat(repo.findById(open.getId()).orElseThrow().getStatus()).isEqualTo("SKIPPED_RESOLVED_BEFORE_SEND");
+        assertThat(repo.findById(open.getId()).orElseThrow().getNextAttemptAt()).isNull();   // kiralı tur da göndermez
+        assertThat(repo.findById(esc.getId()).orElseThrow().getStatus()).isEqualTo("SKIPPED_RESOLVED_BEFORE_SEND");
+        assertThat(repo.findById(sent.getId()).orElseThrow().getStatus()).isEqualTo("SENT");
+        assertThat(repo.findById(resolve.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+        assertThat(repo.findById(other.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+    }
+
+    private static UserPushDelivery delivery(long eventId, String trigger, String status, String username) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setTrigger(trigger);
+        d.setDedupeKey(trigger + ":" + username);
+        d.setAlertEventId(eventId);
+        d.setUsername(username);
+        d.setStatus(status);
+        d.setCreatedAt("2026-10-09T09:00:00");
+        return d;
+    }
+
     // ── 2026-09-28: outbox backoff satırda ────────────────────────────────────────────────────
     // "Şimdi" sorguya PARAMETRE olarak verilir (gerçek saat okunmaz) — sabit damgalar zaman bombası değil.
 

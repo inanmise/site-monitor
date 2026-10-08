@@ -3041,6 +3041,7 @@ class EscalationServiceTest {
         AlertEvent open = stampedCertAlert(domain, "CRITICAL", 5);
         open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
         when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(open));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(open));   // göndermeden önce taze satır (2026-10-09)
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
         service.catchUpMissedDailyAlerts();
@@ -3174,6 +3175,7 @@ class EscalationServiceTest {
         open.setCreatedAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));
         open.setLastReAlertAt(null);
         when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(open));
+        when(alertEventRepo.findById(902L)).thenReturn(Optional.of(open));   // göndermeden önce taze satır (2026-10-09)
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
 
@@ -3186,6 +3188,130 @@ class EscalationServiceTest {
         verify(userPushService, never()).enqueueAlert(any(), eq("DAILY_REALERT"), any(), any(), any());
         assertThat(open.getLastReAlertAt()).isNotNull();
         assertThat(open.getRealertCount()).isZero();
+    }
+
+    // ── 2026-10-09: bayat entity kaydı kullanıcının çözüm/onayını geri almaz ──────────────────────────────
+
+    private AlertEvent copyOf(AlertEvent e) {
+        AlertEvent c = new AlertEvent();
+        c.setId(e.getId()); c.setDomain(e.getDomain()); c.setAlertType(e.getAlertType()); c.setAlertLevel(e.getAlertLevel());
+        c.setTeamId(e.getTeamId()); c.setCreatedAt(e.getCreatedAt()); c.setLastReAlertAt(e.getLastReAlertAt());
+        c.setDaysRemaining(e.getDaysRemaining()); c.setRealertCount(e.getRealertCount());
+        c.setResolved(e.getResolved()); c.setAcknowledged(e.getAcknowledged());
+        return c;
+    }
+
+    private void noPacing() {
+        com.sitemonitor.model.SmtpSettings noPacing = new com.sitemonitor.model.SmtpSettings();
+        noPacing.setInterDomainDelayMs(0);
+        when(smtpSettings.getOrDefaults()).thenReturn(noPacing);
+    }
+
+    @Test
+    @DisplayName("Catch-up: liste yüklendikten SONRA çözülen alarm bildirilmez ve satırı YAZILMAZ (çözüm geri alınmaz)")
+    void catchUp_alarmResolvedMeanwhile_isSkippedAndNotRewritten() {
+        noPacing();
+        AlertEvent listed = stampedCertAlert("resolved-meanwhile.example.com", "CRITICAL", 5);
+        listed.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        AlertEvent fresh = copyOf(listed);
+        fresh.setResolved(true);   // kullanıcı önceki alarmın gönderimi/beklemesi sırasında çözdü
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(listed));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(fresh));
+
+        service.catchUpMissedDailyAlerts();
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+        verify(alertEventRepo, never()).stampNotificationSentIfOpen(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Catch-up: onaylanmış (ack) alarm da atlanır — tazede onaylıysa tekrar bildirimi gitmez")
+    void catchUp_alarmAcknowledgedMeanwhile_isSkipped() {
+        noPacing();
+        AlertEvent listed = stampedCertAlert("acked-meanwhile.example.com", "CRITICAL", 5);
+        listed.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        AlertEvent fresh = copyOf(listed);
+        fresh.setAcknowledged(true);
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(listed));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(fresh));
+
+        service.catchUpMissedDailyAlerts();
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).stampNotificationSentIfOpen(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Catch-up: gönderim sonrası HEDEFLİ damga (entity save YOK) — yalnız gönderim alanları, sayaç taze satırdan")
+    void catchUp_stampsWithTargetedUpdate_neverEntitySave() {
+        noPacing();
+        AlertEvent listed = stampedCertAlert("targeted.example.com", "CRITICAL", 5);
+        listed.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        listed.setRealertCount(1);
+        AlertEvent fresh = copyOf(listed);
+        fresh.setRealertCount(3);   // taze satır: liste yüklendikten sonra başka yol saydı
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(listed));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(fresh));
+        teamsAandB();
+
+        service.catchUpMissedDailyAlerts();
+
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+        verify(alertEventRepo).stampNotificationSentIfOpen(eq(900L), anyString(), eq(4), eq(5), any(), any());
+    }
+
+    @Test
+    @DisplayName("Catch-up: liste anlık görüntüsünde vakti gelmiş ama tazede BU ARADA bildirilmiş alarm ikinci kez gitmez")
+    void catchUp_alreadyNotifiedMeanwhile_isNotDoubleSent() {
+        noPacing();
+        AlertEvent listed = stampedCertAlert("notified-meanwhile.example.com", "CRITICAL", 5);
+        listed.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        AlertEvent fresh = copyOf(listed);
+        fresh.setLastReAlertAt(ISO.format(Instant.now().minus(1, ChronoUnit.MINUTES)));   // başka pod / sweep az önce gönderdi
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(listed));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(fresh));
+
+        service.catchUpMissedDailyAlerts();
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).stampNotificationSentIfOpen(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Sertifika turu RE-ALERT: gönderim sürerken çözülen alarmın bayat kopyası KAYDEDİLMEZ (çözüm geri alınmaz)")
+    void processResults_reAlert_resolvedDuringSend_isNotRewritten() {
+        String domain = "resolved-during-send.example.com";
+        teamsAandB();
+        AlertEvent open = stampedCertAlert(domain, "CRITICAL", 5);
+        AlertEvent fresh = copyOf(open);
+        fresh.setResolved(true);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(fresh));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));
+
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(open);
+    }
+
+    @Test
+    @DisplayName("Sertifika turu RE-ALERT: taze satır hâlâ açıksa kayıt eskisi gibi yazılır (davranış korunur)")
+    void processResults_reAlert_stillOpen_isSaved() {
+        String domain = "still-open.example.com";
+        teamsAandB();
+        AlertEvent open = stampedCertAlert(domain, "CRITICAL", 5);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(copyOf(open)));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));
+
+        verify(alertEventRepo).save(open);
+        assertThat(open.getRealertCount()).isEqualTo(1);
     }
 
     @Test

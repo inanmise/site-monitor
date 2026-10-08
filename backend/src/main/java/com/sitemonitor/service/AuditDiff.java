@@ -42,6 +42,40 @@ public final class AuditDiff {
     /** Bir koleksiyon değerinde yazılacak en fazla öğe; fazlası tek bir "+N daha" öğesiyle özetlenir. */
     static final int MAX_LIST_ITEMS = 20;
 
+    /**
+     * Kırpılan değerin kuyruk izi: {@code <ilk 200 karakter>…(+N)}. Tek kaynak — geçmişten geri
+     * yükleme ({@code MonitorHistoryService.applySnapshot}) bu izi taşıyan değeri GERİ YAZMAZ,
+     * yoksa 512 karakteri aşan bir k6 betiği ilk 200 karakterine kırpılmış hâliyle kaydedilirdi.
+     */
+    public static final String TRUNCATION_MARK = "…(+";
+
+    /** Kırpılmış değerin SONU — yalnız uçta aranır ki değerin ortasında geçen metin yanlış-pozitif olmasın. */
+    private static final java.util.regex.Pattern TRUNCATED_TAIL = java.util.regex.Pattern.compile(
+            java.util.regex.Pattern.quote(TRUNCATION_MARK) + "\\d+\\)$");
+
+    /** Koleksiyon özeti öğesi ({@link #listVal}): {@code "+N daha"}. */
+    private static final java.util.regex.Pattern LIST_OVERFLOW_ITEM = java.util.regex.Pattern.compile("^\\+\\d+ daha$");
+
+    /**
+     * Değer, snapshot'a KAYIPLI mı yazıldı? (anahtar maskesi {@link #MASK}, gövde maskesi
+     * {@link SecretMask#MASK} — örn. kimlik bilgisi taşıyan URL —, uzunluk kırpması, ikili boyut
+     * özeti {@code {"bytes":n}}, "+N daha" koleksiyon özeti). Böyle bir değer gerçek değerin
+     * kendisi DEĞİLDİR; geri yazmak gerçek değeri bozuk bir kopyayla ezmek olur.
+     */
+    public static boolean isLossy(Object value) {
+        if (value == null) return false;
+        if (value instanceof CharSequence cs) {
+            String s = cs.toString();
+            return MASK.equals(s) || s.contains(SecretMask.MASK) || TRUNCATED_TAIL.matcher(s).find();
+        }
+        if (value instanceof java.util.Map<?, ?> m) return m.size() == 1 && m.containsKey("bytes");
+        if (value instanceof java.util.List<?> l && !l.isEmpty()) {
+            Object last = l.get(l.size() - 1);
+            return last instanceof CharSequence cs && LIST_OVERFLOW_ITEM.matcher(cs).matches();
+        }
+        return false;
+    }
+
     /** Değeri ikili/gömülü varlık olan anahtarlar — içerik değil BOYUT yazılır. */
     private static final java.util.regex.Pattern BINARY_KEY = java.util.regex.Pattern.compile(
             "(?i)(^|[._-])(logo|icon|favicon|image|avatar)([._-]?data)?$|[._-]data$");
@@ -150,7 +184,7 @@ public final class AuditDiff {
         if (isBinary(key, s)) return "{\"bytes\":" + s.length() + "}";
         s = scrubCredentials(s);
         if (s.length() > MAX_VALUE_LEN) {
-            s = s.substring(0, TRUNCATED_HEAD) + "…(+" + (s.length() - TRUNCATED_HEAD) + ")";
+            s = s.substring(0, TRUNCATED_HEAD) + TRUNCATION_MARK + (s.length() - TRUNCATED_HEAD) + ")";
         }
         return jsonStr(s);
     }

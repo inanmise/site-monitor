@@ -119,6 +119,20 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             + "WHERE e.id = :id AND e.resolved = false")
     int markResolvedIfOpen(@Param("id") Long id, @Param("at") String at, @Param("by") String by);
 
+    /**
+     * Bildirim SONRASI damga (2026-10-09) — YALNIZ gönderimin değiştirdiği alanlar, yalnız hâlâ AÇIK satırda.
+     * Eskiden gönderim (SMTP + aralık beklemesi) bitince yüklü entity {@code save} ediliyordu: {@code AlertEvent}'te
+     * {@code @Version}/{@code @DynamicUpdate} yok, yani TÜM kolonlar yeniden yazılıyor ve gönderim sürerken kullanıcının
+     * yaptığı çözüm/onay geri alınıyordu (çözülen alarm yeniden açık). Değerler çağıranın taze okumasından gelir.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.lastReAlertAt = :at, e.realertCount = :realertCount, e.daysRemaining = :days, "
+            + "e.notAfter = :notAfter, e.notifiedContacts = :notified WHERE e.id = :id AND e.resolved = false")
+    int stampNotificationSentIfOpen(@Param("id") Long id, @Param("at") String at,
+                                    @Param("realertCount") Integer realertCount, @Param("days") Integer days,
+                                    @Param("notAfter") String notAfter, @Param("notified") String notified);
+
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.stormId = :stormId WHERE e.id = :id AND e.resolved = false AND e.stormId IS NULL")

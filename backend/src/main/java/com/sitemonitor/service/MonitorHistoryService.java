@@ -219,10 +219,15 @@ public class MonitorHistoryService {
      * sessizce kimlik doğrulayamaz hâle gelirdi. O alanlar olduğu gibi bırakılır ve
      * atlandıkları çağırana bildirilir ki kullanıcı uyarılabilsin.
      *
+     * <p><b>Kayıplı değer de geri YAZILMAZ</b> ({@link AuditDiff#isLossy}): 512 karakteri aşan
+     * değer snapshot'a {@code <200 karakter>…(+N)} olarak, kimlik bilgisi taşıyan URL
+     * {@code *****} maskesiyle girer. Bunları geri yazmak bir k6 betiğini ilk 200 karakterine
+     * kırpar ya da URL'deki parolayı yıldızla ezerdi. Maskeli alanlarla aynı listede bildirilir.
+     *
      * <p>Yalnız {@code allowed} listesindeki alanlara dokunulur: kimlik kolonları
      * ({@code createdBy}…), {@code id} ve zaman damgaları geçmişin konusu değildir.
      *
-     * @return [0] = geri yazılan alanlar, [1] = maskeli olduğu için atlananlar
+     * @return [0] = geri yazılan alanlar, [1] = maskeli/kayıplı olduğu için atlananlar
      */
     public static List<List<String>> applySnapshot(Object entity, Map<String, Object> snapshot,
                                                    String[] allowed, java.util.Set<String> skip) {
@@ -234,7 +239,7 @@ public class MonitorHistoryService {
             if (skip != null && skip.contains(field)) continue;
             if (!snapshot.containsKey(field)) continue;
             Object value = snapshot.get(field);
-            if (AuditDiff.MASK.equals(value)) { masked.add(field); continue; }
+            if (AuditDiff.MASK.equals(value) || AuditDiff.isLossy(value)) { masked.add(field); continue; }
 
             String setter = "set" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
             for (var m : entity.getClass().getMethods()) {

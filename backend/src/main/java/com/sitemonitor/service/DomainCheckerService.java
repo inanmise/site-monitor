@@ -190,7 +190,7 @@ public class DomainCheckerService {
                 if (registrar != null && prev.getRegistrar() != null && !registrar.equalsIgnoreCase(prev.getRegistrar()))
                     ch.append("registrar: ").append(prev.getRegistrar()).append(" → ").append(registrar).append("; ");
                 if (setChanged(prev.getNameservers(), nameservers)) ch.append("nameserver seti değişti; ");
-                if (setChanged(prev.getStatusCodes(), statusCodes)) ch.append("EPP status kodları değişti; ");
+                if (eppSetChanged(prev.getStatusCodes(), statusCodes)) ch.append("EPP status kodları değişti; ");
                 // DNSSEC geçişi (imzalıdan imzasıza) ciddi bir ele geçirme sinyali ve buraya
                 // hiç bakılmıyordu — sessizce kaçıyordu.
                 String prevSec = prev.getDnssec(), nowSec = (String) info.get("dnssec");
@@ -480,9 +480,23 @@ public class DomainCheckerService {
 
     /** Önceki CSV ile yeni liste (küçük harf, sıra bağımsız) farklı mı. */
     private static boolean setChanged(String prevCsv, List<String> now) {
+        return setChanged(prevCsv, now, s -> s.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * EPP statü seti değişti mi — {@link #normEpp} ile karşılaştırılır. RDAP kodu boşluklu
+     * ({@code client transfer prohibited}), WHOIS camelCase ({@code clientTransferProhibited}) verir; kaynak
+     * RDAP ↔ WHOIS arasında gidip gelince yalnız küçük harfe indirmek AYNI kodu "değişti" sayıp sahte
+     * DOMAINMON_CHANGED açıyordu. Nameserver seti bu normalleştirmeyi KULLANMAZ (rakam/nokta anlamlı).
+     */
+    static boolean eppSetChanged(String prevCsv, List<String> now) {
+        return setChanged(prevCsv, now, DomainCheckerService::normEpp);
+    }
+
+    private static boolean setChanged(String prevCsv, List<String> now, java.util.function.UnaryOperator<String> norm) {
         Set<String> prev = new LinkedHashSet<>();
-        if (prevCsv != null) for (String s : prevCsv.split(",")) { s = s.trim().toLowerCase(Locale.ROOT); if (!s.isEmpty()) prev.add(s); }
-        Set<String> cur = now == null ? Set.of() : now.stream().map(s -> s.trim().toLowerCase(Locale.ROOT)).filter(s -> !s.isEmpty()).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (prevCsv != null) for (String s : prevCsv.split(",")) { s = norm.apply(s); if (!s.isEmpty()) prev.add(s); }
+        Set<String> cur = now == null ? Set.of() : now.stream().filter(java.util.Objects::nonNull).map(norm).filter(s -> !s.isEmpty()).collect(Collectors.toCollection(LinkedHashSet::new));
         if (prev.isEmpty() || cur.isEmpty()) return false;   // veri eksikse "değişti" deme (gürültü önleme)
         return !prev.equals(cur);
     }
