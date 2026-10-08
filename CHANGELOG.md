@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.112.0] — 2026-10-08
+
 ### Added
 - **Site Monitor'e özel 404 sayfası:** bilinmeyen bir adres gerçek HTTP 404 ile markalı sayfayı açar (tüm temalar,
   telefona uygun): istenen adres, "Ana sayfaya dön" / "Geri" / "Yardım" ve sık kullanılan sayfalara kısa yollar.
@@ -2401,7 +2403,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.111.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.0...HEAD
+[20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
 [20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
 [20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0

@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-07T23:54:05Z",
+  "generatedAt": "2026-10-08T02:47:54Z",
   "repo": "inanmise/site-monitor",
-  "count": 712,
+  "count": 713,
   "releases": [
+    {
+      "version": "20.112.0",
+      "tag": "v20.112.0",
+      "releasedAt": "2026-10-08T02:47:47Z",
+      "commit": "791ef131f91997642909c505dbfa23d1d4aa0bd9",
+      "prevVersion": "20.111.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "791ef131",
+          "subject": "Site Monitor'e özel 404 sayfası, her sayfada başlık + meta açıklama, özel favicon seti, manuel yüklemede ilerleme durumu ve açıklayıcı hata mesajları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.111.0",
       "tag": "v20.111.0",
