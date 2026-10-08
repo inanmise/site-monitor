@@ -193,15 +193,7 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      # Kapsam eşiğini zorlayan koşu (vite.config.js test.coverage.thresholds) — taban altında FAIL eder.
-      - name: Test (with coverage gate)
-        run: npm run test:coverage
-
-      # Global eşik büyük+kapsamsız dosyaları ortalamanın arkasına gizliyordu (2026-08-19
-      # SystemHealth olayı: 2324 satır, %11.94). Bu adım dosya-bazlı tabanı zorlar.
-      - name: Coverage floor (large components)
-        run: npm run coverage:floor
-
+      # Birim testleri ve kapsam kapısı ayrı işlerde: `frontend-unit` (4 parça) + `frontend-coverage` (birleştirme).
       - name: Build
         run: npm run build
 
@@ -210,16 +202,119 @@ jobs:
         run: npm audit --audit-level=high --omit=dev || true
 
   # ──────────────────────────────────────────────
-  # 2b. Frontend E2E — GERÇEK tarayıcı
+  # 2a. Frontend birim testleri — 4 PARÇA (2026-10-08)
+  #
+  # Neden parçalı: private repoda standart runner 2 vCPU; vitest varsayılanı "CPU − 1" = TEK işçi, yani
+  # takım (580+ dosya, kapsamla) fiilen SIRAYLA koşuyor ve tek iş 29–50 dk sürüyordu (2026-10-05'e kadar
+  # runner 4 vCPU / 3 işçi idi: 15–21 dk; Playwright de aynı gün "2 workers" → "1 worker" oldu). Her parça
+  # ayrı runner'da 2 işçiyle koşar ve ham kapsamı blob raporuna yazar. VITEST_COVERAGE_SHARD=1 parçada
+  # eşik ve rapor üretimini kapatır (vite.config.js) — parça kapsamın yalnız bir kısmını görür. Global eşik
+  # ve dosya tabanı `frontend-coverage` işinde BİRLEŞTİRİLMİŞ kapsam üzerinde zorlanır: kapı zayıflamaz.
+  # ──────────────────────────────────────────────
+  frontend-unit:
+    name: Frontend unit (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test (shard ${{ matrix.shard }}/4, coverage collected)
+        env:
+          VITEST_COVERAGE_SHARD: "1"
+        run: npx vitest run --coverage --shard=${{ matrix.shard }}/4 --maxWorkers=2 --reporter=blob --reporter=dot
+
+      # `.vitest-reports` noktayla başlar: upload-artifact gizli dosyaları varsayılan olarak ATLAR.
+      - name: Upload blob report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: frontend/.vitest-reports/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # ──────────────────────────────────────────────
+  # 2b. Frontend kapsam kapısı — parçaların blob raporları birleştirilir
+  #
+  # `vitest --merge-reports --coverage` dört parçanın test sonuçlarını ve kapsamını tek raporda toplar ve
+  # vite.config.js test.coverage.thresholds eşiğini BURADA zorlar (taban altında FAIL); ardından dosya-bazlı
+  # taban (coverage:floor) aynı birleştirilmiş json-summary'den okunur.
+  # ──────────────────────────────────────────────
+  frontend-coverage:
+    name: Frontend coverage gate
+    needs: frontend-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download blob reports
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: vitest-blob-*
+          path: frontend/.vitest-reports
+          merge-multiple: true
+
+      # Kapsam eşiğini zorlayan adım (vite.config.js test.coverage.thresholds) — taban altında FAIL eder.
+      - name: Merge shards + coverage gate
+        run: npx vitest --merge-reports --coverage --reporter=dot
+
+      # Global eşik büyük+kapsamsız dosyaları ortalamanın arkasına gizliyordu (2026-08-19
+      # SystemHealth olayı: 2324 satır, %11.94). Bu adım dosya-bazlı tabanı zorlar.
+      - name: Coverage floor (large components)
+        run: npm run coverage:floor
+
+  # ──────────────────────────────────────────────
+  # 2c. Frontend E2E — GERÇEK tarayıcı
   #
   # Neden ayrı iş: jsdom düzen/boyama hesaplamaz; `position`, `overflow`, sarma, üst üste binme ve
   # kaydırma senkronu orada GÖRÜNMEZ. 2026-08-14'te k6 editörüne satır cetveli eklerken editör
   # kullanılamaz hâle geldi ve 664 vitest testi + `npm run build` yeşildi. Bu iş tam o sınıfı
   # kapsar. Ayrı tutulmasının sebebi tarayıcı indirmesinin `frontend` işini yavaşlatmaması.
+  #
+  # 4 PARÇA (2026-10-08): 2 vCPU runner'da Playwright tek işçiyle koşuyordu (~24 dk). `fullyParallel: true`
+  # olduğundan `--shard` testleri tek tek dağıtır; her parça kendi Vite sunucusunu ve Chromium'unu kurar.
   # ──────────────────────────────────────────────
   frontend-e2e:
-    name: Frontend E2E (Playwright / Chromium)
+    name: Frontend E2E (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: frontend
@@ -251,15 +346,16 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: E2E
-        run: npm run test:e2e
+      - name: E2E (shard ${{ matrix.shard }}/4)
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/4
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: frontend/playwright-report/
+          if-no-files-found: ignore
           retention-days: 7
 
   # ──────────────────────────────────────────────

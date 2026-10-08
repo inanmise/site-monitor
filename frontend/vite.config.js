@@ -7,6 +7,11 @@ import { resolve } from 'path'
 
 const version = readFileSync(resolve(__dirname, '../VERSION'), 'utf8').trim()
 
+// CI parçalı birim testi (2026-10-08, ci.yml `frontend-unit` matrisi): her parça kapsamın yalnız bir KISMINI görür.
+// Parçada eşik kontrolü haksız kırmızı verirdi, rapor üretmek de boşa zamandı — parça yalnız ham kapsamı blob'a
+// yazar; eşik ve raporlar (json-summary → coverage:floor) birleştirmede (`vitest --merge-reports --coverage`) uygulanır.
+const COVERAGE_SHARD = process.env.VITEST_COVERAGE_SHARD === '1'
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
@@ -45,13 +50,13 @@ export default defineConfig({
       provider: 'v8',
       // json-summary: scripts/check-coverage-floor.mjs dosya-bazlı tabanı bu çıktıdan okur
       // (global eşik büyük ve kapsamsız dosyaları ortalamanın arkasına gizliyordu).
-      reporter: ['text', 'html', 'json-summary'],
+      reporter: COVERAGE_SHARD ? [] : ['text', 'html', 'json-summary'],
       // Varsayılan coverage exclude'u yalnız 'node_modules'ü tanır; kilitli-dosya geçici
       // kopyaları (node_modules.stale) "all files" taramasına girip yüzdeleri ezmesin.
       // `src/components/shadcn/**`: shadcn CLI'nin ÜRETTİĞİ ilkel bileşenler (Radix + Tailwind sarmalayıcıları)
       // — kütüphane kodu gibi ele alınır; kullanan ekranlar kendi testleriyle kapsanır.
       exclude: ['**/node_modules*/**', 'src/components/shadcn/**', ...coverageConfigDefaults.exclude],
-      thresholds: {
+      thresholds: COVERAGE_SHARD ? undefined : {
         statements: 65,
         lines: 65,
         branches: 65,

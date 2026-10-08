@@ -10,6 +10,8 @@ frontend/node_modules/
 /node_modules/
 frontend/dist/
 frontend/coverage/
+# CI parçalı birim testinin blob raporları (vitest --shard … --reporter=blob)
+frontend/.vitest-reports/
 
 # ── SQLite ────────────────────────────────────────────
 data/*.db

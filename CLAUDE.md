@@ -412,7 +412,13 @@ Backend stores timestamps as UTC (audit, alerts, notifications). Log timestamps 
 
 ## CI gates (`.github/workflows/`)
 
-- `ci.yml` — Java 25 + Node 24. Backend runs `mvn -B clean verify` (uploads Surefire + Jacoco artifacts). Frontend runs `npm ci` → `lint --if-present` → `test --silent -- --run` → `build` → `npm audit --audit-level=high --omit=dev` (non-blocking). Helm-lint runs against all three env values files.
+- `ci.yml` — Java 25 + Node 24. Backend runs `mvn -B clean verify` (uploads Surefire + Jacoco artifacts). Frontend runs `npm ci` → `lint --if-present` → `build` → `npm audit --audit-level=high --omit=dev` (non-blocking). Helm-lint runs against all three env values files.
+  - **Sharded since 2026-10-08.** The private repo's standard runner has 2 vCPU, so vitest (CPU − 1) and Playwright (CPU / 2) each ran ONE worker and CI took 29–50 min.
+    - `frontend-unit` runs the vitest suite in 4 shards (`--shard=i/4 --maxWorkers=2 --reporter=blob --coverage`).
+    - `VITEST_COVERAGE_SHARD=1` turns off thresholds and reports inside a shard (`vite.config.js`).
+    - `frontend-coverage` downloads the blobs, runs `vitest --merge-reports --coverage` (the global threshold gate), then `coverage:floor`.
+    - `frontend-e2e` runs Playwright in 4 shards.
+    - Locally `npm run test:coverage` is unchanged.
 - `docker-build.yml` — multi-arch image build + Trivy scan (HIGH/CRITICAL, currently report-only).
 - `release.yml` — runs on `main`; detects bump from conventional commit prefix (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major), writes `VERSION`, publishes Helm chart. Does **not** re-run tests; trusts `ci.yml`.
 - `ci.yml` job `backend-postgres-it` (2026-10-02, gating): `postgres:16` service + `mvn -B -Ppostgres-it test` with `IT_DB_URL/USER/PASSWORD` and `IT_DB_REQUIRED=true`. The `@PostgresIntegration` suite (tag `postgres`, excluded from the default surefire run) refuses a non-empty database, boots the context twice and asserts 0 failed schema patches, real indexes, PostgreSQL-only SQL (ON CONFLICT, LATERAL, claims, rollup upserts) and the polled-screen queries. Locally: point `IT_DB_*` at an EMPTY throwaway database (the dev DB user has no CREATEDB).
