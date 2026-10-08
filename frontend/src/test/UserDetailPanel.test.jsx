@@ -132,7 +132,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   })
 
   it('sekmeler sayılarıyla: Takımlar 2 · Bildirimler 2 · Yetkiler 3 · Değişiklikler 25; Genel Bakış açık başlar', async () => {
-    await renderPanel()
+    await renderPanel({ globalAdmin: true })
     expect(tabByName(/Overview/)).toHaveAttribute('aria-selected', 'true')
     await waitFor(() => expect(tabByName(/^Teams/)).toHaveAccessibleName(/^Teams\s*2$/))
     await waitFor(() => expect(tabByName(/^Notifications/)).toHaveAccessibleName(/^Notifications\s*2$/))
@@ -153,6 +153,17 @@ describe('UserDetailPanel — yeniden tasarım', () => {
     expect(api.admin.userPush.explain).not.toHaveBeenCalled()
     openTab(/^Notifications/)
     expect(screen.queryByRole('heading', { name: 'Push notifications' })).toBeNull()
+  })
+
+  // Kapsamlı müdür (ADMIN + viewTeamIds): sunucu kullanıcı geçmişine 403 verir (requireNotScopedAdmin) → Değişiklikler
+  // sekmesi ve geçmiş isteği YOK; Yetkiler / Dizin (isAdmin kapıları) olduğu gibi kalır. initialTab="changes" Genel Bakış'a düşer.
+  it('kapsamlı müdür (isAdmin, globalAdmin değil): Değişiklikler sekmesi yok, geçmiş istenmez; diğer yönetici sekmeleri kalır', async () => {
+    await renderPanel({ globalAdmin: false, initialTab: 'changes' })
+    await waitFor(() => expect(tabByName(/^Permissions/)).toHaveAccessibleName(/^Permissions\s*3$/))
+    expect(tabByName(/Directory \(AD\)/)).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Changes/ })).toBeNull()
+    expect(tabByName(/Overview/)).toHaveAttribute('aria-selected', 'true')
+    expect(api.admin.history).not.toHaveBeenCalled()
   })
 
   it('Takımlar: üyelik başına kaynak rozeti + kanıt + birincil; yönetici ÜYE olarak listelenmez, ayrı kartta', async () => {
@@ -209,7 +220,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   })
 
   it('Değişiklikler: satırlar (işlem · kim · çipler), ayrıntı açılımı ve standart sayfalama', async () => {
-    await renderPanel()
+    await renderPanel({ globalAdmin: true })
     openTab(/^Changes/)
     const list = await findSlot('ud-changes')
     const rows = () => [...screen.getByTestId('user-detail').querySelectorAll('[data-slot="ud-change-row"]')]
@@ -252,7 +263,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   it('bölüm hatası: eskalasyon ve geçmiş hataları kendi bölümünde, sunucu mesajıyla', async () => {
     api.admin.getContacts.mockResolvedValue({ success: false, error: 'Yetkiniz yok' })
     api.admin.history.mockRejectedValue(new Error('Zaman aşımı'))
-    await renderPanel()
+    await renderPanel({ globalAdmin: true })
     openTab(/^Notifications/)
     expect(await screen.findByText('Could not load escalation records')).toBeInTheDocument()
     expect(screen.getByText('Yetkiniz yok')).toBeInTheDocument()
@@ -267,7 +278,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   it('kilit açma: YALNIZ verilen mevcut işleyiciler düğme olur; sonrası geçmiş tazelenir ve çağıran haberdar', async () => {
     const team = vi.fn().mockResolvedValue(undefined)
     const onChanged = vi.fn()
-    await renderPanel({ onUnlock: { team }, onChanged })
+    await renderPanel({ onUnlock: { team }, onChanged, globalAdmin: true })
     const locks = screen.getByTestId('user-detail').querySelector('[data-slot="ud-locks"]')
     expect([...locks.querySelectorAll('li[data-lock]')].map((e) => e.getAttribute('data-lock'))).toEqual(['org', 'team'])
     expect(within(locks).queryByRole('button', { name: /Return org role to AD/ })).toBeNull()
@@ -305,11 +316,12 @@ describe('UserDetailPanel — yeniden tasarım', () => {
     dlg = screen.getByTestId('user-detail')
     locks = dlg.querySelector('[data-slot="ud-locks"]')
     expect(within(locks).getAllByRole('button', { name: 'Return to AD' })).toHaveLength(2)
-    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(2))
+    // İlk çizim (kapsamlı müdür, globalAdmin yok) geçmiş istemez → sayaç yalnız bu çizimden
+    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(1))
     fireEvent.click(within(locks.querySelector('li[data-field="title"]')).getByRole('button', { name: 'Return to AD' }))
     await waitFor(() => expect(api.admin.unlockUserField).toHaveBeenCalledWith(7, 'title'))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(3))   // geçmiş tazelendi
+    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(2))   // geçmiş tazelendi
   })
 
   it('kilitsiz ve işleyicisiz: kilit kartı "kilit yok" der, düğme yok', async () => {

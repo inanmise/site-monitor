@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react'
 import {
   Users, LogIn, XCircle, ShieldAlert, UserCheck, UserX, Download, Link2, RefreshCw, ChevronDown, ChevronRight, Info, Check, BookOpen,
   Compass, Lock,
@@ -93,7 +93,10 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
   const [trendShowCustom, setTrendShowCustom] = useState(false)
   const [trendData, setTrendData] = useState(null)
   const [trendLoading, setTrendLoading] = useState(false)
+  // Yalnız EN SON trend isteği uygulanır: 7 → 30 → 1 gün hızlı seçilince geç gelen ağır seri seçili aralığı ezmesin.
+  const trendSeq = useRef(0)
   const loadTrend = useCallback(async () => {
+    const seq = ++trendSeq.current
     setTrendLoading(true)
     try {
       const iso = (d) => d.toISOString().slice(0, 19)
@@ -104,8 +107,8 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       else if (trendDays === 1) { toD = new Date(); fromD = new Date(toD.getTime() - 86_400_000); gran = 'hour' }
       else { toD = new Date(); fromD = new Date(toD.getTime() - trendDays * 86_400_000); gran = 'day' }
       const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
-      if (res?.success) setTrendData(res.data)
-    } catch { /* ağ hatası: eski seri kalır */ } finally { setTrendLoading(false) }
+      if (seq === trendSeq.current && res?.success) setTrendData(res.data)
+    } catch { /* ağ hatası: eski seri kalır */ } finally { if (seq === trendSeq.current) setTrendLoading(false) }
   }, [trendDays, trendDate, trendCustom, trendPreset])
   useEffect(() => { loadTrend() }, [loadTrend])
   // Özel aralık seçicisinin uçları KARARLI (2026-09-27 regresyon B1): panel 30 sn'de bir (`now`) yeniden çiziliyor;

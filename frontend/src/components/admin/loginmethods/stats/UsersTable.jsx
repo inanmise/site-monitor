@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, Download, Search, Users } from 'lucide-react'
 import { api, formatDateSec } from '../../../../api/client'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
@@ -105,10 +105,14 @@ export default function UsersTable({ days, channel, onChannelChange, refreshKey,
   }, [qInput])
 
   const { bind } = sp
+  // Yalnız EN SON isteğin yanıtı uygulanır (süzgeç / sayfa hızlı değişince geç gelen eski sayfa yenisini ezmesin).
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setLoading(true)
     try {
       const r = await api.loginMethodsAdmin.statsUsers({ days, q: q || null, channel: channel || null, sort, page: sp.apiPage, size: sp.pageSize })
+      if (seq !== seqRef.current) return
       if (r?.success && r.data) {
         setRes(r.data)
         setError(null)
@@ -117,9 +121,10 @@ export default function UsersTable({ days, channel, onChannelChange, refreshKey,
         setError(r?.error || t('lm.stats.users.err'))
       }
     } catch (e) {
+      if (seq !== seqRef.current) return
       setError(e?.message || t('lm.stats.users.err'))
     } finally {
-      setLoading(false)
+      if (seq === seqRef.current) setLoading(false)
     }
   }, [days, q, channel, sort, sp.apiPage, sp.pageSize, bind, t])
   useEffect(() => { load() }, [load, refreshKey])

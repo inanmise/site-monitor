@@ -153,6 +153,21 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     expect(screen.getByTestId('sec-general')).toBeInTheDocument()
   })
 
+  // Ayarlar ZATEN açıkken gelen derin bağlantı (2026-10-09): App param'ları adrese yazıp `sm:tab-params` yollar; `sec`
+  // eskiden yalnız mount'ta okunduğu için olay yok sayılıyordu (SystemHealth ile aynı desen). Bilinmeyen bölüm yok sayılır.
+  it('açıkken gelen sm:tab-params olayı bölümü değiştirir; bilinmeyen sec yok sayılır', async () => {
+    render(<AdminSettings />)
+    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { sec: 'storm' } })) })
+    expect(await screen.findByTestId('sec-storm')).toBeInTheDocument()
+    expect(screen.queryByTestId('sec-general')).toBeNull()
+    expect(screen.getAllByRole('tab').find((x) => x.getAttribute('aria-selected') === 'true')).toHaveAttribute('data-id', 'storm')
+
+    act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { sec: 'zzz-yok' } })) })
+    act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { view: 'smtp' } })) })
+    expect(screen.getByTestId('sec-storm')).toBeInTheDocument()
+  })
+
   it('bölüm değişince URL\'e ?sec= yazılır; varsayılana dönünce param SİLİNİR', async () => {
     render(<AdminSettings />)
     pressMenuTrigger(screen.getAllByRole('tab').find((x) => /Veri Saklama|Retention/.test(x.textContent)))

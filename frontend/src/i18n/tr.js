@@ -1206,6 +1206,8 @@ export const TR = {
   'wracc.searchPh': 'Takım ara…',
   'wracc.enabledCount': '{0} takımda açık',
   'wracc.loading': 'Takımlar yükleniyor…',
+  'wracc.loadError': 'Takım görünürlük listesi sunucudan okunamadı; bağlantıyı kontrol edip tekrar deneyin. Sorun sürerse sistem yöneticisine bildirin.',
+  'wracc.retry': 'Tekrar dene',
   'wracc.colTeam': 'Takım',
   'wracc.colReports': 'Rapor',
   'wracc.colState': 'Durum',
@@ -1882,6 +1884,8 @@ export const TR = {
   'grp.renamed':            '{0} monitör güncellendi',
   'grp.renameError':        'Grup yeniden adlandırılamadı; aynı adda bir grup zaten olabilir. Farklı bir ad deneyin.',
   'grp.empty':              'Henüz grup tanımlı değil.',
+  'grp.loadError':          'İzleme grupları sunucudan okunamadı; liste boş olduğu için değil, okuma başarısız olduğu için gösterilemiyor. Tekrar deneyin.',
+  'grp.retry':              'Tekrar dene',
   'grp.emptyNameError':     'Yeni grup adı boş olamaz; bir ad yazıp tekrar deneyin.',
 
   // ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" (yalnız admin) ──
@@ -1911,6 +1915,8 @@ export const TR = {
   'storm.pushGroupedNote':    "Push da fırtınaya devrediliyor: fırtına sürerken üye alarmlar için tek tek push gitmez, takım tek bir toplu fırtına push'u alır.",
   'storm.save':           'Kaydet',
   'storm.saved':          'Alarm fırtınası ayarları kaydedildi',
+  'storm.loadErrorHint':  'Fırtına ayarları sunucudan okunamadı. Kayıtlı yapılandırmanın üstüne varsayılanlar yazılmasın diye form gizlendi; bağlantıyı kontrol edip tekrar deneyin.',
+  'storm.retry':          'Tekrar dene',
 
   // ── Login Anomali (başarısız-login anomali uyarısı) ──
   'loginAnomaly.title':          'Başarısız Login Anomali Uyarısı',
@@ -2729,6 +2735,7 @@ export const TR = {
   'flt.sort':           'Sıralama',
   'userpush.testTemplateAria': 'Test bildirimi şablonu',
   'mini.expand':        'Büyütmek için tıklayın',
+  'mini.collecting':    'veri toplanıyor…',
   'app.checkColDomain': 'Alan adı',
   'app.checkColStart':  'Başlangıç',
   'app.checkColEnd':    'Bitiş',
@@ -4155,6 +4162,8 @@ export const TR = {
   'ng.delete':           'Sil',
   'ng.edit':             'Düzenle',
   'ng.loading':          'Yükleniyor...',
+  'ng.loadError':        'Bildirim grupları sunucudan okunamadı; grup olmadığı için değil, okuma başarısız olduğu için liste boş. Tekrar deneyin.',
+  'ng.retry':            'Tekrar dene',
   'ng.histTitle':        'Değişiklik Geçmişi',
   'ng.histDesc':         'Bu takımların bildirim gruplarında kim, ne zaman, neyi değiştirdi. Kaynak denetim kaydıdır (audit_log) ve sonradan düzenlenemez; silinmiş gruplar da listede kalır.',
   'ng.histShow':         'Geçmişi göster',
@@ -8348,6 +8357,9 @@ export const TR = {
   'dev.loginHistoryTitle': 'Giriş geçmişi',
   'dev.retentionNote':     'Son {0} günün kayıtları',
   'dev.noLogins':          'Giriş kaydı yok.',
+  'dev.devicesLoadFailed': 'Cihaz bilgileri yüklenemedi. Bağlantınızı kontrol edip tekrar deneyin; sorun sürerse sistem yöneticisine bildirin.',
+  'dev.loginsLoadFailed':  'Giriş geçmişi yüklenemedi. Bağlantınızı kontrol edip tekrar deneyin; sorun sürerse sistem yöneticisine bildirin.',
+  'dev.retry':             'Tekrar dene',
   'dev.toggleDetail':      'Ayrıntıyı aç/kapat',
   'dev.toggleDetailFor':   '{0} — ayrıntıyı aç/kapat',
   'dev.ip':                'IP',

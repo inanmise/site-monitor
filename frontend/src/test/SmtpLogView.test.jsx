@@ -141,6 +141,43 @@ describe('SmtpLogView', () => {
     window.removeEventListener('sm:navigate', nav)
   })
 
+  // Bayat detay (2026-10-09): zincirde başka kayda geçilince yeni yanıt gelene kadar ÖNCEKİ kaydın hatası, gövdesi ve
+  // "Yeniden gönder"i çizilmemeli — eskiden bayat FAILED kaydın düğmesi yeni kimlikle görünüyordu.
+  it('zincirde başka kayda geçince yanıt gelene kadar önceki kaydın içeriği ve "Yeniden gönder" çizilmez', async () => {
+    let resolveSecond
+    smtpLog.detail.mockImplementation((id) => (id === 1
+      ? new Promise((r) => { resolveSecond = r })
+      : Promise.resolve({ success: true, data: DETAIL })))
+    render(<SmtpLogView onBack={() => {}} />)
+    await screen.findByText('550 5.1.1 mailbox unavailable')
+    fireEvent.click(screen.getAllByText('[CRITICAL] a.example.com down', { selector: 'td' })[0])
+    const dlg = await screen.findByRole('dialog')
+    await within(dlg).findByText('FAILED: 550 5.1.1 mailbox unavailable')
+    expect(within(dlg).getByRole('button', { name: /^(Yeniden gönder|Resend)$/ })).toBeInTheDocument()
+
+    fireEvent.click(within(dlg).getAllByRole('button').find((b) => b.hasAttribute('data-chain-id') && !b.disabled))
+    await waitFor(() => expect(smtpLog.detail).toHaveBeenLastCalledWith(1))
+    expect(within(dlg).queryByText('FAILED: 550 5.1.1 mailbox unavailable')).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /^(Yeniden gönder|Resend)$/ })).toBeNull()
+    expect(dlg.querySelector('iframe')).toBeNull()
+
+    await act(async () => {
+      resolveSecond({ success: true, data: { ...DETAIL, ...ROWS[2], email_status: 'SENT', message: '<p>ilk</p>', chain: DETAIL.chain } })
+    })
+    await waitFor(() => expect(dlg.querySelector('iframe')).not.toBeNull())
+    expect(within(dlg).queryByText('FAILED: 550 5.1.1 mailbox unavailable')).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /^(Yeniden gönder|Resend)$/ })).toBeNull()   // SENT kayıt
+  })
+
+  it('aralık seçenekleri kendi kabında yatay kayar (telefonda kart/sayfa taşmaz)', async () => {
+    render(<SmtpLogView onBack={() => {}} />)
+    await screen.findByText('550 5.1.1 mailbox unavailable')
+    const range = screen.getByRole('group', { name: /Zaman aralığı|Time range/ })
+    const box = range.closest('.overflow-x-auto')
+    expect(box).not.toBeNull()
+    expect(box.className).toMatch(/(^|\s)max-w-full(\s|$)/)
+  })
+
   it('yeniden gönder: yalnız FAILED satırda düğme; onay diyaloğu → api.resend → başarı toast + liste tazelenir; sunucu reddi (ALERT_RESOLVED) hata toast', async () => {
     render(<SmtpLogView onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')

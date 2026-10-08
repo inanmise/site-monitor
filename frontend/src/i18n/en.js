@@ -1205,6 +1205,8 @@ export const EN = {
   'wracc.searchPh': 'Search teams…',
   'wracc.enabledCount': 'on for {0} teams',
   'wracc.loading': 'Loading teams…',
+  'wracc.loadError': 'The team visibility list couldn’t be read from the server. Check the connection and try again; if it keeps happening, tell a system administrator.',
+  'wracc.retry': 'Try again',
   'wracc.colTeam': 'Team',
   'wracc.colReports': 'Reports',
   'wracc.colState': 'State',
@@ -1881,6 +1883,8 @@ export const EN = {
   'grp.renamed':            '{0} monitors updated',
   'grp.renameError':        'The group couldn’t be renamed; a group with that name may already exist. Try a different name.',
   'grp.empty':              'No groups defined yet.',
+  'grp.loadError':          'The monitor groups couldn’t be read from the server — the list isn’t empty, the read failed. Try again.',
+  'grp.retry':              'Try again',
   'grp.emptyNameError':     'The new group name can’t be empty; type a name and try again.',
 
   // ── Alert Storm settings — "Alert Settings" (admin only) ──
@@ -1910,6 +1914,8 @@ export const EN = {
   'storm.pushGroupedNote':    'Push is handed over to the storm as well: while a storm lasts, member alerts aren\'t pushed one by one and the team gets a single summary storm push.',
   'storm.save':           'Save',
   'storm.saved':          'Alert storm settings saved',
+  'storm.loadErrorHint':  'The storm settings couldn’t be read from the server. The form is hidden so that defaults aren’t saved over the stored configuration; check the connection and try again.',
+  'storm.retry':          'Try again',
 
   // ── Login Anomaly (failed-login anomaly alert) ──
   'loginAnomaly.title':          'Failed-Login Anomaly Alert',
@@ -2726,6 +2732,7 @@ export const EN = {
   'flt.sort':           'Sort by',
   'userpush.testTemplateAria': 'Test notification template',
   'mini.expand':        'Click to expand',
+  'mini.collecting':    'collecting data…',
   'app.checkColDomain': 'Domain',
   'app.checkColStart':  'Start',
   'app.checkColEnd':    'End',
@@ -4152,6 +4159,8 @@ export const EN = {
   'ng.delete':           'Delete',
   'ng.edit':             'Edit',
   'ng.loading':          'Loading...',
+  'ng.loadError':        'The notification groups couldn’t be read from the server — there may well be groups; the read failed. Try again.',
+  'ng.retry':            'Try again',
   'ng.histTitle':        'Change history',
   'ng.histDesc':         'Who changed what, and when, in these teams’ notification groups. It is drawn from the audit log, which cannot be edited after the fact, and deleted groups stay on the list.',
   'ng.histShow':         'Show history',
@@ -8333,6 +8342,9 @@ export const EN = {
   'dev.loginHistoryTitle': 'Sign-in history',
   'dev.retentionNote':     'Records from the last {0} days',
   'dev.noLogins':          'No sign-ins recorded.',
+  'dev.devicesLoadFailed': 'Your device information couldn’t be loaded. Check your connection and try again; if it keeps happening, tell a system administrator.',
+  'dev.loginsLoadFailed':  'Your sign-in history couldn’t be loaded. Check your connection and try again; if it keeps happening, tell a system administrator.',
+  'dev.retry':             'Try again',
   'dev.toggleDetail':      'Show or hide details',
   'dev.toggleDetailFor':   '{0} — show or hide details',
   'dev.ip':                'IP',

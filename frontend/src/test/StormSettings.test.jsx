@@ -138,11 +138,38 @@ describe('StormSettings', () => {
       expect.objectContaining({ push_individual: false })))
   })
 
-  it('boş durumda API hatası toast atar, çökmez', async () => {
-    api.monitoring.storm.getSettings.mockResolvedValue({ success: false, error: 'boom' })
+  // Yüklenemeyen ayar formu ÇİZİLMEZ (2026-10-09): eskiden hata sonrası sabit varsayılanlar kayıtlıymış gibi görünüyor ve
+  // Kaydet gerçek yapılandırmanın üstüne yazabiliyordu. Artık hata bloğu + Tekrar dene; form yalnız başarılı okumadan sonra.
+  it('yükleme başarısız (success:false): form ve Kaydet YOK, sunucu iletisi + Tekrar dene; yeniden denemede form gelir', async () => {
+    api.monitoring.storm.getSettings.mockResolvedValueOnce({ success: false, error: 'Sunucu ayarları okuyamadı (deneme)' })
     render(<StormSettings />)
-    await waitFor(() => expect(api.monitoring.storm.getSettings).toHaveBeenCalled())
-    // yükleme başarısız → yine de kontroller varsayılanlarla render olur (çökme yok)
-    expect((await screen.findAllByRole('spinbutton'))[0]).toBeInTheDocument()
+    const block = await screen.findByRole('alert')
+    expect(block).toHaveTextContent('Sunucu ayarları okuyamadı (deneme)')
+    expect(screen.queryAllByRole('spinbutton')).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: /^(kaydet|save)$/i })).toBeNull()
+    expect(api.monitoring.storm.saveSettings).not.toHaveBeenCalled()
+
+    api.monitoring.storm.getSettings.mockResolvedValueOnce({ success: true, data: cfg })
+    fireEvent.click(within(block).getByRole('button', { name: /Tekrar dene|Try again/ }))
+    expect((await screen.findAllByRole('spinbutton'))[0]).toHaveValue(5)
+    expect(api.monitoring.storm.getSettings).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Sunucu ayarları okuyamadı (deneme)')).toBeNull()
+  })
+
+  it('yükleme istisna fırlatırsa (ağ) da varsayılan form çizilmez; kaydetme istisnası hata bildirimi verir', async () => {
+    api.monitoring.storm.getSettings.mockRejectedValueOnce(new Error('Sunucuya ulaşılamadı (ağ, deneme)'))
+    const { unmount } = render(<StormSettings />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sunucuya ulaşılamadı (ağ, deneme)')
+    expect(screen.queryAllByRole('spinbutton')).toHaveLength(0)
+    unmount()
+
+    api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })
+    api.monitoring.storm.saveSettings.mockRejectedValueOnce(new Error('Kayıt zaman aşımına uğradı (deneme)'))
+    render(<StormSettings />)
+    await screen.findAllByRole('spinbutton')
+    const save = screen.getByRole('button', { name: /^(kaydet|save)$/i })
+    fireEvent.click(save)
+    expect(await screen.findByText('Kayıt zaman aşımına uğradı (deneme)')).toBeInTheDocument()
+    await waitFor(() => expect(save).not.toBeDisabled())   // "kaydediliyor" durumunda takılı kalmaz
   })
 })

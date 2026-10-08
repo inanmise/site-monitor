@@ -217,6 +217,23 @@ describe('UserManager', () => {
     await waitFor(() => expect(api.admin.unlockUser).toHaveBeenCalledWith(3))
   })
 
+  // Kullanıcı değişiklik geçmişi sunucuda yalnız GLOBAL yönetici (requireNotScopedAdmin → kapsamlı müdüre 403):
+  // kapsamlı müdür (ADMIN, globalAdmin=false) satır menüsünde "Değişiklik Geçmişi"ni ve alttaki geçmiş bölümünü görmez.
+  it('kullanıcı geçmişi: kapsamlı müdürde menü öğesi ve geçmiş bölümü YOK; global yöneticide var', async () => {
+    const HIST_RE = /^(Değişiklik Geçmişi|Change History)$/
+    const first = renderUm({ globalAdmin: false })
+    await openRowMenu('ali')
+    expect(await screen.findByRole('menuitem', { name: /^(Düzenle|Edit)$/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: HIST_RE })).toBeNull()
+    expect(screen.queryByText(HIST_RE)).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    first.unmount()
+
+    renderUm({ globalAdmin: true })
+    await openRowMenu('ali')
+    expect(await screen.findByRole('menuitem', { name: HIST_RE })).toBeInTheDocument()
+  })
+
   it('takım kilidi: rozet yalnız team_locked kullanıcıda; menüden "AD-ye geri ver" doğru id ile çağrılır', async () => {
     api.admin.unlockUserTeams.mockResolvedValue({ success: true })
     renderUm()

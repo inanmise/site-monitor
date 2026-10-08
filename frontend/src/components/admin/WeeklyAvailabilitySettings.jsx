@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Send, Eye, RefreshCw, FileDown, CalendarClock } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -37,6 +37,8 @@ export default function WeeklyAvailabilitySettings() {
 
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState(null)
+  const historySeq = useRef(0)
   const [includeTest, setIncludeTest] = useState(false)
   const [openingId, setOpeningId] = useState(null)
 
@@ -68,14 +70,25 @@ export default function WeeklyAvailabilitySettings() {
     }
   }
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: "test gönderimlerini de göster" hızlı aç/kapa edilince geç gelen eski liste
+  // seçili süzgecin listesini ezmesin. Ağ hatası (request() throw eder) yakalanır; hata varken liste "boş" denmez.
   async function loadHistory() {
+    const seq = ++historySeq.current
     setHistoryLoading(true)
     try {
       const res = await api.admin.getWeeklyAvailHistory(50, includeTest)
-      if (res?.success) setHistory(res.data || [])
-      else toast.error(res?.error || t('weeklyavail.historyFail'))
+      if (seq !== historySeq.current) return
+      if (res?.success) { setHistory(res.data || []); setHistoryError(null) }
+      else {
+        const msg = res?.error || t('weeklyavail.historyFail')
+        setHistoryError(msg); toast.error(msg)
+      }
+    } catch (e) {
+      if (seq !== historySeq.current) return
+      const msg = e?.message || t('weeklyavail.historyFail')
+      setHistoryError(msg); toast.error(msg)
     } finally {
-      setHistoryLoading(false)
+      if (seq === historySeq.current) setHistoryLoading(false)
     }
   }
 
@@ -90,6 +103,9 @@ export default function WeeklyAvailabilitySettings() {
         setEnabled(!next) // geri al
         toast.error(res?.error || t('settings.saveError'))
       }
+    } catch (e) {
+      setEnabled(!next) // ağ hatası: iyimser değişikliği geri al (yoksa anahtar kaydedilmemiş durumu gösterirdi)
+      toast.error(e?.message || t('settings.saveError'))
     } finally {
       setSavingEnabled(false)
     }
@@ -316,7 +332,9 @@ export default function WeeklyAvailabilitySettings() {
         </CardHeader>
         <CardContent>
           {history.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{historyLoading ? t('settings.loading') : t('weeklyavail.historyEmpty')}</p>
+            historyError && !historyLoading
+              ? <p className="text-xs text-destructive" role="alert" data-slot="wa-history-error">{historyError}</p>
+              : <p className="text-xs text-muted-foreground">{historyLoading ? t('settings.loading') : t('weeklyavail.historyEmpty')}</p>
           ) : (
             <div className="overflow-hidden rounded-lg border">
               <Table data-testid="wa-history">

@@ -40,8 +40,8 @@ let savedOverflow = ''
  *
  * <p>Props sözleşmesi korunur: `{ user, teams, isAdmin, onClose, onEdit, onChanged }`; ek (isteğe bağlı) `onUnlock` =
  * UserManager'ın MEVCUT kilit açma işleyicileri `{ perm, role, org, team }` (yeni uç yok). Kapılar eskisiyle aynı:
- * yetki / push / geçmiş / AD ayakları yalnız `isAdmin`'e yüklenir; AD karşılaştırması yalnız LDAP hesapta (sunucu
- * ayrıca global yönetici ister).
+ * yetki / push / AD ayakları yalnız `isAdmin`'e yüklenir; değişiklik geçmişi ayrıca `globalAdmin` ister (sunucu kapsamlı
+ * müdüre 403 verir); AD karşılaştırması yalnız LDAP hesapta (sunucu ayrıca global yönetici ister).
  *
  * <p><b>`stacked` (2026-09-30):</b> pencere bir ModalShell'in (takım üyeleri penceresi, Üyeler sekmesi) ÜSTÜNE açılıyorsa
  * katman 2100/2101'e çıkar (ModalShell 2000; onay diyaloğu 9500, menü 9600, toast 9700 yine üstte) ve scrim tıklanabilir
@@ -55,9 +55,13 @@ let savedOverflow = ''
 export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin = false, onClose, onEdit, onChanged, onUnlock, stacked = false, initialTab = 'overview' }) {
   const t = useT()
   const showDirectory = !!isAdmin && user.auth_source === 'LDAP'
+  // Kullanıcı değişiklik geçmişi YALNIZ global yönetici: sunucu (`/api/admin/history?resource=USER`) kapsamlı müdüre
+  // 403 verir (`requireNotScopedAdmin`) — sekme ve istek kapsamlı müdürde hiç yok (eskiden 403 hatasıyla açılıyordu).
+  const canSeeHistory = !!isAdmin && !!globalAdmin
   const [tab, setTab] = useState(() => {
     if (initialTab === 'directory') return showDirectory ? 'directory' : 'overview'
-    if ((initialTab === 'permissions' || initialTab === 'changes') && !isAdmin) return 'overview'
+    if (initialTab === 'permissions' && !isAdmin) return 'overview'
+    if (initialTab === 'changes' && !canSeeHistory) return 'overview'
     return initialTab || 'overview'
   })
   const bodyRef = useRef(null)
@@ -88,7 +92,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin
   const sp = useServerPagination({ listKey: 'user-detail-history', preset: 'modal', resetDeps: [user.id], apiBase: 0 })
   const history = useSection(`h:${user.id}:${sp.apiPage}:${sp.pageSize}`, async () => (
     sp.bind(unwrap(await api.admin.history('USER', user.id, { page: sp.apiPage, size: sp.pageSize }), t('ud.errChanges')))
-  ), !!isAdmin)
+  ), canSeeHistory)
 
   const perms = useMemo(() => effectivePermissions(matrix.data, user.system_role), [matrix.data, user.system_role])
 
@@ -116,7 +120,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin
       count: membership.data ? membership.data.memberships.length : (membership.loading ? null : teamIds.length) },
     { key: 'notifications', label: t('ud.tabNotifications'), icon: BellRing, count: contacts.data ? contacts.data.length : null },
     isAdmin && { key: 'permissions', label: t('ud.tabPermissions'), icon: ShieldCheck, count: perms ? perms.granted : null },
-    isAdmin && { key: 'changes', label: t('ud.tabChanges'), icon: History, count: history.data ? Number(history.data.total ?? 0) : null },
+    canSeeHistory && { key: 'changes', label: t('ud.tabChanges'), icon: History, count: history.data ? Number(history.data.total ?? 0) : null },
     showDirectory && { key: 'directory', label: t('ud.tabDirectory'), icon: SearchCheck },
   ].filter(Boolean)
 
@@ -188,7 +192,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin
                 <PermissionsTab role={user.system_role} section={matrix} perms={perms} />
               </TabsContent>
             )}
-            {isAdmin && (
+            {canSeeHistory && (
               <TabsContent value="changes" className="mt-0">
                 <ChangesTab section={history} pagination={sp.bar} />
               </TabsContent>

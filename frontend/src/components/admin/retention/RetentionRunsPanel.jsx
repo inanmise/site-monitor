@@ -40,6 +40,17 @@ function isoLocalDay(d, endOfDay) {
   return x.toISOString().slice(0, 19)
 }
 
+/**
+ * `since`/`until` BÖLGESİZ UTC dizesidir (`isoLocalDay` → toISOString().slice(0, 19)). `new Date(x)` bölgesiz tarih-saati
+ * YEREL saat sayar → seçici günü saat farkı kadar kayık açıyordu (İstanbul'da 1 Ekim 00:00 seçimi 30 Eylül 21:00 görünürdü).
+ * MonitorChangesConsole ile aynı: 'Z' eklenir; zaten 'Z' / ±hh:mm taşıyan ya da saatsiz değer olduğu gibi ayrıştırılır.
+ */
+function parseUtc(s) {
+  const str = String(s)
+  const zoned = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(str)
+  return new Date(zoned || !str.includes('T') ? str : `${str}Z`)
+}
+
 export default function RetentionRunsPanel({ policies = [], holdOn = false, refreshKey = 0 }) {
   const t = useT()
   const [q, setQ]           = useState(() => readUrlParam('r_q', ''))
@@ -120,8 +131,8 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
   // geçmek seçicinin taslağını panelin her yeniden çiziminde (yükleme, arama) sıfırlıyordu.
   const customOpen = rangeKey === 'custom'
   const pickerRange = useMemo(() => (customOpen ? {
-    from: since ? new Date(since) : new Date(Date.now() - 29 * 864e5),
-    to: until ? new Date(until) : new Date(),
+    from: since ? parseUtc(since) : new Date(Date.now() - 29 * 864e5),
+    to: until ? parseUtc(until) : new Date(),
   } : null), [customOpen, since, until])
 
   const policyOptions = useMemo(() => [

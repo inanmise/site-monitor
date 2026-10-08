@@ -62,6 +62,20 @@ describe('NotificationGroups', () => {
     expect(await screen.findByText(/sy-a@example\.com/)).toBeTruthy()
   })
 
+  // Okunamayan liste (2026-10-09): `{success:false}` eskiden "henüz grup yok" + risk uyarısı çiziyordu (yanıltıcı); ağ
+  // hatası yakalanmıyordu. Artık hata + Tekrar dene; boş durum ve risk uyarısı ÇİZİLMEZ.
+  it('liste okunamazsa ({success:false}) boş durum / risk uyarısı yerine hata + Tekrar dene', async () => {
+    state.writable = ['1']; state.teamEmails = {}
+    api.notificationGroups.list.mockResolvedValueOnce({ success: false, error: 'Grup listesi okunamadı (deneme)' })
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    expect(await screen.findByText('Grup listesi okunamadı (deneme)')).toBeTruthy()
+    expect(screen.queryByText(/No notification groups yet|Henüz bildirim grubu yok/)).toBeNull()
+    expect(screen.queryByText(/Some alerts may reach nobody|kimseye ulaşmayabilir/i)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Tekrar dene)$/ }))
+    await waitFor(() => expect(api.notificationGroups.list).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText('Grup listesi okunamadı (deneme)')).toBeNull())
+  })
+
   it('Grupları listeler; varsayılan rozetli, adres sayısı görünür', async () => {
     state.groups = [group({ is_default: true })]
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)

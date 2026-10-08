@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import StormLivePanel from './storm/StormLivePanel.jsx'
-import { CloudLightning } from 'lucide-react'
+import { CircleAlert, CloudLightning } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import { SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow } from './SettingsControls.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -31,6 +32,10 @@ export default function StormSettings() {
   const toast = useToast()
 
   const [loading, setLoading] = useState(true)
+  // Yüklenemeyen ayar formu ÇİZİLMEZ: eskiden hata sonrası sabit varsayılanlar kayıtlıymış gibi görünüyor ve Kaydet gerçek
+  // yapılandırmanın üstüne yazabiliyordu. Yalnız sunucudan en az bir kez okunduysa (loaded) form + Kaydet görünür.
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [enabled, setEnabled] = useState(true)
   const [unit, setUnit] = useState('COUNT')
@@ -46,10 +51,13 @@ export default function StormSettings() {
 
   async function load() {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await api.monitoring.storm.getSettings()
-      if (res?.success) applyData(res.data)
-      else toast.error(res?.error || t('settings.loadError'))
+      if (res?.success) { applyData(res.data); setLoaded(true) }
+      else setLoadError(res?.error || t('storm.loadErrorHint'))
+    } catch (e) {
+      setLoadError(e?.message || t('storm.loadErrorHint'))
     } finally {
       setLoading(false)
     }
@@ -95,6 +103,8 @@ export default function StormSettings() {
       })
       if (res?.success) { applyData(res.data); toast.success(t('storm.saved')) }
       else toast.error(res?.error || res?.message || t('settings.saveError'))
+    } catch (e) {
+      toast.error(e?.message || t('settings.saveError'))
     } finally {
       setSaving(false)
     }
@@ -102,6 +112,17 @@ export default function StormSettings() {
 
   if (loading) {
     return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
+  }
+  if (!loaded) {
+    return (
+      <div className={SETTINGS_STACK} data-testid="storm-settings">
+        <SettingsHeader icon={CloudLightning} description={t('storm.desc')}
+          title={<>{t('storm.title')} <Badge variant="warning" className="font-bold tracking-wider">BETA</Badge></>} />
+        <StatusBlock tone="danger" role="alert" icon={CircleAlert} title={t('settings.loadError')}
+          description={loadError || t('storm.loadErrorHint')}
+          actions={<Button type="button" variant="outline" onClick={load}>{t('storm.retry')}</Button>} />
+      </div>
+    )
   }
 
   // Yüzde önizlemesi: ceil(value/100 × total), taban 2 (sunucu ile aynı round kuralı). 2026-09-29: fırtına TAKIM

@@ -116,7 +116,7 @@ describe('UserDetailPanel', () => {
   const renderAct = async (ui) => { let out; await act(async () => { out = render(ui) }); return out }
 
   it('admin: erişim, takımlar, eskalasyon kaydı, push kararı, ROLE göre etkin yetkiler ve son değişiklikler', async () => {
-    await renderAct(<UserDetailPanel user={USERS[0]} teams={TEAMS} isAdmin onClose={() => {}} />)
+    await renderAct(<UserDetailPanel user={USERS[0]} teams={TEAMS} isAdmin globalAdmin onClose={() => {}} />)
     expect(await screen.findByText('2026-09-19T10:00:00')).toBeInTheDocument()   // Genel Bakış: son giriş (tam zaman)
     expect(screen.getAllByText('Takım A').length).toBeGreaterThanOrEqual(1)
     openTab(/^(Bildirimler|Notifications)/)

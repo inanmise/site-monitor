@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Mail, CheckCircle2, XCircle, MinusCircle, HelpCircle, FlaskConical, CalendarClock, Copy, ChevronLeft, ChevronRight,
   Monitor, Smartphone, ExternalLink,
@@ -84,13 +84,19 @@ export default function WeeklyAvailLogDetail({ t, id, ids = [], onNavigate, onCl
   const [state, setState] = useState({ loading: true, error: null, item: null })
   const [view, setView] = useState('desktop')
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: önceki / sonraki ile hızlı gezinilince geç gelen eski kayıt, seçili kaydın
+  // yerine çizilmesin (başlık ve e-posta başka gönderimi gösterirdi).
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setState({ loading: true, error: null, item: null })
     try {
       const res = await api.admin.getWeeklyAvailHistoryItem(id)
+      if (seq !== seqRef.current) return
       if (res?.success && res.data) setState({ loading: false, error: null, item: res.data })
       else setState({ loading: false, error: res?.error || t('waLogs.detail.loadError'), item: null })
     } catch (e) {
+      if (seq !== seqRef.current) return
       setState({ loading: false, error: e?.message || t('waLogs.detail.loadError'), item: null })
     }
   }, [id, t])

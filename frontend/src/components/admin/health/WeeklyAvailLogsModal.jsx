@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Mail, CheckCircle2, XCircle, MinusCircle, FlaskConical, Search, RefreshCw, Download, CalendarClock, CalendarDays,
   ChevronRight, FilterX, CircleAlert,
@@ -134,13 +134,18 @@ export default function WeeklyAvailLogsModal({ t, onClose }) {
   const [q, setQ] = useState('')
   const [openId, setOpenId] = useState(null)
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: kayıt sınırı (limit) hızlı değişince geç gelen eski liste yenisini ezmesin.
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setState((s) => ({ ...s, loading: true }))
     try {
       const res = await api.admin.getWeeklyAvailHistory(limit, true)
+      if (seq !== seqRef.current) return
       if (res?.success) setState({ loading: false, error: null, rows: Array.isArray(res.data) ? res.data : [] })
       else setState((s) => ({ ...s, loading: false, error: res?.error || t('waLogs.loadError') }))
     } catch (e) {
+      if (seq !== seqRef.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('waLogs.loadError') }))
     }
   }, [limit, t])

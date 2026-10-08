@@ -275,3 +275,29 @@ describe('Sistem Bakımı — önizleme ve geçmiş', () => {
     expect(dlg).toHaveTextContent(/Email announcement\s*Not sent/)
   })
 })
+
+/**
+ * Ağ hatası takılı bırakmaz (2026-10-09): request() ağ hatasında throw eder; durum ve geçmiş yükleyicileri yakalamadığı için
+ * ekran sonsuza dek "yükleniyor" kalıyordu. Artık hata metni + Tekrar dene; yeniden deneme veriyi çizer.
+ */
+describe('Sistem Bakımı — ağ hatası takılı kalmaz', () => {
+  it('durum ucu REJECT ederse hata + Tekrar dene; yeniden deneme durum kartını çizer', async () => {
+    api.systemMaintenance.overview.mockRejectedValueOnce(new Error('Sunucuya ulaşılamadı (deneme)'))
+    render(<SystemMaintenanceSettings />)
+    expect(await screen.findByText('Sunucuya ulaşılamadı (deneme)')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Tekrar dene)$/ }))
+    const card = await screen.findByText((_, el) => el?.getAttribute?.('data-slot') === 'sysmaint-status')
+    expect(card).toHaveAttribute('data-status', 'none')
+    expect(screen.queryByText('Sunucuya ulaşılamadı (deneme)')).toBeNull()
+  })
+
+  it('geçmiş ucu REJECT ederse geçmişte hata + Tekrar dene; yeniden deneme hatayı kaldırır', async () => {
+    api.systemMaintenance.history.mockRejectedValueOnce(new Error('Geçmiş zaman aşımına uğradı (deneme)'))
+    render(<SystemMaintenanceSettings />)
+    expect(await screen.findByText('Geçmiş zaman aşımına uğradı (deneme)')).toBeInTheDocument()
+    const hist = document.querySelector('[data-slot="sysmaint-history"]')
+    fireEvent.click(within(hist).getByRole('button', { name: /^(Try again|Tekrar dene)$/ }))
+    await waitFor(() => expect(api.systemMaintenance.history).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText('Geçmiş zaman aşımına uğradı (deneme)')).toBeNull())
+  })
+})

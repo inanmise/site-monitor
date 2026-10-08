@@ -154,14 +154,19 @@ export default function SysMaintHistory({ refreshKey = 0 }) {
   const tableMode = listWidth === 0 || listWidth >= TABLE_MIN_WIDTH
   const { bind } = sp
 
+  // Ağ hatası (request() throw eder) da hata bloğuna düşer — eskiden yakalanmıyor, geçmiş sonsuza dek "yükleniyor" kalıyordu.
   const load = useCallback(async () => {
-    const r = await api.systemMaintenance.history(sp.apiPage, sp.pageSize)
-    if (r?.success) {
-      bind(r)
-      setRows(Array.isArray(r.data?.items) ? r.data.items : [])
-      setError(null)
-    } else {
-      setError(r?.error || t('sysmaint.err.generic'))
+    try {
+      const r = await api.systemMaintenance.history(sp.apiPage, sp.pageSize)
+      if (r?.success) {
+        bind(r)
+        setRows(Array.isArray(r.data?.items) ? r.data.items : [])
+        setError(null)
+      } else {
+        setError(r?.error || t('sysmaint.err.generic'))
+      }
+    } catch (e) {
+      setError(e?.message || t('sysmaint.err.generic'))
     }
   }, [sp.apiPage, sp.pageSize, bind, t])
   useEffect(() => { load() }, [load, refreshKey])
@@ -171,7 +176,8 @@ export default function SysMaintHistory({ refreshKey = 0 }) {
       description={t('sysmaint.history.desc')} contentClassName="flex min-w-0 flex-col gap-3">
       <div data-slot="sysmaint-history" ref={measureRef} className="min-w-0">
         {rows == null && !error && <LoadingBlock label={t('app.loading')} />}
-        {error && <StatusBlock tone="danger" title={t('sysmaint.err.generic')} description={error} />}
+        {error && <StatusBlock tone="danger" title={t('sysmaint.err.generic')} description={error}
+          actions={<Button type="button" variant="outline" onClick={() => load()} className="min-h-10">{t('sysmaint.retry')}</Button>} />}
         {rows && rows.length === 0 && <StatusBlock tone="neutral" icon={History} title={t('sysmaint.history.empty')} className="rounded-lg border py-8" />}
         {rows && rows.length > 0 && (tableMode ? (
           <Table className="table-fixed">

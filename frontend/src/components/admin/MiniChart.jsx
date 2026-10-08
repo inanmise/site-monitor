@@ -141,7 +141,7 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
         {/* No-data message */}
         {data.length === 0 && (
           <text x={W / 2} y={H / 2} textAnchor="middle"
-            fontSize="9" fill="var(--chart-label)">collecting…</text>
+            fontSize="9" fill="var(--chart-label)">{t('mini.collecting')}</text>
         )}
       </svg>
   )

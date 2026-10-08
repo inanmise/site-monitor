@@ -123,6 +123,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
+  // Kullanıcı değişiklik geçmişi yalnız GLOBAL yönetici: sunucu kapsamlı müdüre 403 verir (requireNotScopedAdmin).
+  const canSeeUserHistory = isAdmin && !!globalAdmin
   const isSelf = (u) => u?.username === currentUsername
   const isAudit = systemRole === 'AUDIT'
   const canSeeAllTeams = isAdmin || isAudit   // takım filtresi yalnız bunlara görünür
@@ -412,7 +414,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   )
   const menuItems = (u) => (canManage ? [
     { label: t('usr.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(u) },
-    { label: t('hist.title'), icon: <History size={14} />, onClick: () => setHistFilter({ id: u.id, name: nameOf(u) }), hidden: !isAdmin },
+    { label: t('hist.title'), icon: <History size={14} />, onClick: () => setHistFilter({ id: u.id, name: nameOf(u) }), hidden: !canSeeUserHistory },
     { label: t('usr.autoResetBtn'), icon: <KeyRound size={14} />, onClick: () => setAutoResetModal(u) },
     { label: t('usr.unlock'), icon: <LockOpen size={14} />, onClick: () => unlock(u.id), hidden: !u.permanent_lock },
     { label: t('usr.roleUnlock'), icon: <LockOpen size={14} />, onClick: () => roleUnlock(u.id), hidden: !u.role_locked },
@@ -528,10 +530,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         )}
       </div>
 
-      {/* Toplu işlem çubuğu — seçim varken; telefonda ekranın altına yapışık */}
+      {/* Toplu işlem çubuğu — seçim varken; telefonda ekranın altına yapışık. `sticky bottom-0` App.css'teki yardım düğmesi
+          kaldırma kuralını tetikler (SettingsSaveBar ile aynı) + güvenli alan dolgusu; çubuk 88 px'ten uzun olabildiği için
+          telefonda sağda yardım düğmesi payı (pr-14, WeeklyReportsPage çubuğuyla aynı) — sağ uçtaki denetimler örtülmez. */}
       {canManage && selected.size > 0 && (
         <div data-testid="bulk-bar" role="region" aria-label={t('bulk.aria')} aria-busy={bulkBusy || undefined}
-          className="sticky bottom-3 z-20 flex flex-wrap items-center gap-2 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg md:static md:bottom-auto md:shadow-none">
+          className="sticky bottom-0 z-20 flex flex-wrap items-center gap-2 rounded-[10px] border border-primary bg-card pt-2 pr-14 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-3 shadow-lg md:static md:bottom-auto md:pr-3 md:pb-2 md:shadow-none">
           <span className="mr-1 font-bold">{t('usr.selected', selected.size)}</span>
           <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</Button>
           <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('usr.bulkDeactivate')}</Button>
@@ -644,7 +648,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       <PaginationBar {...sp.bar} />
 
       {/* Kullanıcı geçmişi yalnız global ADMIN (rol/takım/parola sıfırlama kayıtları kişisel veri taşır). */}
-      <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={isAdmin} />
+      <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={canSeeUserHistory} />
 
       {/* Ekle / düzenle — paylaşılan kullanıcı düzenleyicisi (2026-10-02). Liste tazelenince (kilit açma, şifre sıfırlama)
           düzenlenen kişinin GÜNCEL satırı verilir: başlık rozetleri tazelenir, yazılanlar silinmez (taban güncellenir). */}
