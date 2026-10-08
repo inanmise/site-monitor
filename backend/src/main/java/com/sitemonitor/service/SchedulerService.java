@@ -136,6 +136,8 @@ public class SchedulerService {
     @Autowired(required = false)
     private DeploymentHistoryService deploymentHistory;
     @Autowired(required = false)
+    private com.sitemonitor.service.userref.UserPublicIds userPublicIds;
+    @Autowired(required = false)
     private BuildInfo buildInfo;
     /** Tablo kayıt defteri (SQL Playground "ne zaman oluştu / son değişim", 2026-09-11) — isteğe bağlı. */
     @Autowired(required = false)
@@ -391,6 +393,8 @@ public class SchedulerService {
             if (deploymentHistory != null) deploymentHistory.recordStartup();
             if (schemaRegistry != null) schemaRegistry.tick();   // yeni tablolar first_seen alsın (hata içeride yutulur)
             userService.ensureBootstrapped(adminUsername, adminPassword);
+            // Opak kullanıcı kimliği (2026-10-08): eski hesaplara kimlik + önbellek ısıtma; hata açılışı durdurmaz.
+            if (userPublicIds != null) userPublicIds.backfill();
             // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
             // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
             // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
@@ -1285,6 +1289,9 @@ public class SchedulerService {
         patch("ALTER TABLE alert_storms ADD COLUMN last_member_at VARCHAR(30)");
         // 2026-09-29 (A1-O1): LDAP kaynaklı profil alanlarının alan-başına kilidi (virgülle ayrılmış anahtarlar, NULL = kilit yok).
         patch("ALTER TABLE app_users ADD COLUMN locked_fields VARCHAR(400)");
+        // Opak kullanıcı kimliği (2026-10-08): global admin dışındaki görüntüleyiciye sayısal id yerine döner.
+        patch("ALTER TABLE app_users ADD COLUMN public_id VARCHAR(36)");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_app_users_public_id ON app_users (public_id)");
         // 2026-09-30: takım bazlı fırtına gözlem ekranı — açılış anlık görüntüsü (eşik/pencere/hedef sayısı/tetikleyen
         // alarm) ve kapanış nedeni fırtına satırında dondurulur; üyelik kalıcı tabloya yazılır (kapanışta storm_id
         // sıfırlansa da "kim hangi fırtınadaydı" geriye dönük okunabilir).

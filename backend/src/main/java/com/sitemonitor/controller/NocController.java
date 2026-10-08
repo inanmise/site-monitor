@@ -49,6 +49,10 @@ import java.util.function.Predicate;
 @RequiredArgsConstructor
 public class NocController {
 
+    /** Opak kullanıcı kimliği (2026-10-08) — bean'siz dilim testinde null → eski sayısal davranış. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.userref.UserPublicIds userPublicIds;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     /** Geçmiş/denetim diff'ine giren alanlar (MON_FIELDS / INVENTORY_FIELDS'taki adlar). */
@@ -409,8 +413,11 @@ public class NocController {
         if (!(body.get("userIds") instanceof List<?> raw)) return error(400, "userIds bir liste olmalı");
         List<Long> ids = new ArrayList<>();
         for (Object o : raw) {
-            Long v = o instanceof Number n ? Long.valueOf(n.longValue()) : parseLong(o);
-            if (v == null) return error(400, "Geçersiz kullanıcı kimliği: " + o);
+            // Opak kimlik (2026-10-08): takım yöneticisi listeyi opak kimlikle gönderir; sayı yalnız global admin'den.
+            Long v = userPublicIds != null
+                    ? com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, o, session)
+                    : (o instanceof Number n ? Long.valueOf(n.longValue()) : parseLong(o));
+            if (v == null) return error(400, "Geçersiz kullanıcı kimliği");
             ids.add(v);
         }
         List<Map<String, Object>> before = callLists.callListDto(teamId);

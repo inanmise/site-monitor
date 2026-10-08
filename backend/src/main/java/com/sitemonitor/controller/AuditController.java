@@ -42,6 +42,28 @@ public class AuditController {
     private final com.sitemonitor.service.EmailNotificationService emailService;
     private final com.sitemonitor.service.UserPushService userPushService;
 
+    /** Opak kullanıcı kimliği (2026-10-08) — bean'siz dilim testinde null → eski sayısal davranış. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.userref.UserPublicIds userPublicIds;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private tools.jackson.databind.ObjectMapper userRefJson;
+
+    /** Hiçbir kullanıcıyla eşleşmeyen kimlik — çözülemeyen süzgeç "boş sonuç" verir (tüm satırlar DEĞİL). */
+    private static final long NO_USER = -1L;
+
+    /** Süzgeç/yol kullanıcı referansı → sayısal id; verilmemişse null, çözülemezse {@link #NO_USER}. */
+    private Long actorRef(String raw, HttpSession session) {
+        if (raw == null || raw.isBlank()) return null;
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, raw, session);
+        return id == null ? Long.valueOf(NO_USER) : id;
+    }
+
+    /** {@code resource_type = USER} iken kaynak kimliği de bir kullanıcı referansıdır (opak kimlik kabul edilir). */
+    private String resourceRef(String type, String raw, HttpSession session) {
+        if (raw == null || raw.isBlank() || type == null || !"USER".equalsIgnoreCase(type.trim())) return raw;
+        return String.valueOf(actorRef(raw, session));
+    }
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -50,7 +72,7 @@ public class AuditController {
             @RequestParam(defaultValue = "0")     int     page,
             @RequestParam(defaultValue = "50")    int     size,
             @RequestParam(required = false)       String  actor,
-            @RequestParam(required = false)       Long    actorId,
+            @RequestParam(required = false)       String  actorId,     // opak kimlik (global admin: sayı da)
             @RequestParam(required = false)       String  eventType,   // CSV: çoklu tür
             @RequestParam(required = false)       String  resourceType,
             @RequestParam(required = false)       String  resourceId,
@@ -64,8 +86,8 @@ public class AuditController {
         TeamActorScope scope = auditReadScope(session);
 
         Page<AuditLog> result = auditLogRepo.findAdvanced(
-                like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
-                nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
+                like(actor), actorRef(actorId, session), !csv(eventType).isEmpty(), typesOrDummy(eventType),
+                nil(resourceType), nil(resourceRef(resourceType, resourceId, session)), nil(outcome), nil(ip),
                 nil(since), nil(until), anomalyOnly, like(q),
                 scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
@@ -83,9 +105,10 @@ public class AuditController {
     /** Bir kaynağın tüm değişiklik geçmişi ("bu izlemeye/kullanıcıya kim ne yaptı"). */
     @GetMapping("/audit/resource/{type}/{id}")
     public ResponseEntity<Map<String, Object>> resourceHistory(
-            @PathVariable String type, @PathVariable String id,
+            @PathVariable String type, @PathVariable("id") String idRaw,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
         TeamActorScope scope = auditReadScope(session);
+        String id = resourceRef(type, idRaw, session);   // USER kaynağı: opak kimlik (2026-10-08)
         var rows = scope.all()
                 ? auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
                         type, id, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
@@ -96,9 +119,10 @@ public class AuditController {
     /** Bir kullanıcının tüm eylemleri. */
     @GetMapping("/audit/actor/{actorId}")
     public ResponseEntity<Map<String, Object>> actorHistory(
-            @PathVariable Long actorId,
+            @PathVariable("actorId") String actorRaw,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
         TeamActorScope scope = auditReadScope(session);
+        Long actorId = actorRef(actorRaw, session);   // opak kimlik (2026-10-08)
         var rows = scope.all()
                 ? auditLogRepo.findByActorIdOrderByEventTimeDesc(actorId, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
                 : scopedHistory(scope, actorId, null, null, limit);
@@ -128,7 +152,7 @@ public class AuditController {
     public ResponseEntity<String> export(
             @RequestParam(defaultValue = "csv")   String  format,
             @RequestParam(required = false)       String  actor,
-            @RequestParam(required = false)       Long    actorId,
+            @RequestParam(required = false)       String  actorId,
             @RequestParam(required = false)       String  eventType,
             @RequestParam(required = false)       String  resourceType,
             @RequestParam(required = false)       String  resourceId,
@@ -155,12 +179,15 @@ public class AuditController {
         boolean json = "json".equalsIgnoreCase(format);
         try {
             rows = auditLogRepo.findAdvanced(
-                    like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
-                    nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
+                    like(actor), actorRef(actorId, session), !csv(eventType).isEmpty(), typesOrDummy(eventType),
+                    nil(resourceType), nil(resourceRef(resourceType, resourceId, session)), nil(outcome), nil(ip),
                     nil(since), nil(until), anomalyOnly, like(q),
                     scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
                     PageRequest.of(0, cap)).getContent();
-            body = json ? toJson(rows) : toCsv(rows);
+            // Opak kimlik (2026-10-08): elle yazılan dışa aktarım yanıt kapısından (UserRefResponseAdvice) geçmez —
+            // global olmayan görüntüleyicide USER kaynak kimliği ve detay/değişiklik metnindeki kimlikler burada çevrilir.
+            ExportView view = exportView(session);
+            body = json ? toJson(rows, view) : toCsv(rows, view);
         } finally {
             EXPORT_SLOTS.release();
         }
@@ -351,11 +378,12 @@ public class AuditController {
     // eylemleri bu yola HİÇ açılmaz; bir yönetici başkasının cihazını buradan düşüremez.
 
     @GetMapping("/users/{id}/devices")
-    public ResponseEntity<Map<String, Object>> userDevices(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<Map<String, Object>> userDevices(@PathVariable("id") String idRef, HttpSession session) {
         requireAuditAccess(session);
         permissionService.require(session, "audit_log.read", "view");
 
-        AppUser target = appUserRepo.findById(id).orElse(null);
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, idRef, session);   // opak kimlik (2026-10-08)
+        AppUser target = id == null ? null : appUserRepo.findById(id).orElse(null);
         if (target == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kullanıcı bulunamadı"));
 
         // currentTokenHash = null: yöneticinin tarayıcısı hedef kullanıcının cihazı DEĞİL,
@@ -365,7 +393,7 @@ public class AuditController {
 
     @GetMapping("/users/{id}/devices/logins")
     public ResponseEntity<Map<String, Object>> userDeviceLogins(
-            @PathVariable Long id,
+            @PathVariable("id") String idRef,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
             @RequestParam(defaultValue = "false") boolean failed,
@@ -373,7 +401,8 @@ public class AuditController {
         requireAuditAccess(session);
         permissionService.require(session, "audit_log.read", "view");
 
-        AppUser target = appUserRepo.findById(id).orElse(null);
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, idRef, session);   // opak kimlik (2026-10-08)
+        AppUser target = id == null ? null : appUserRepo.findById(id).orElse(null);
         if (target == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kullanıcı bulunamadı"));
 
         return ok(Map.of("data", deviceHistoryService.loginsFor(target, failed, page, size)));
@@ -495,17 +524,34 @@ public class AuditController {
         return c.isEmpty() ? List.of("") : c;
     }
 
-    private String toCsv(List<AuditLog> rows) {
+    /** Dışa aktarım görünümü: global admin (ya da bean'siz test) → değerler aynen; diğerleri → opak kimlik. */
+    private record ExportView(java.util.function.Function<Long, String> lookup, tools.jackson.databind.ObjectMapper json) {
+        String resourceId(AuditLog a) {
+            return lookup == null ? a.getResourceId()
+                    : com.sitemonitor.service.userref.UserRefWire.opaqueResourceId(a.getResourceType(), a.getResourceId(), lookup);
+        }
+
+        String text(String t) {
+            return lookup == null ? t : com.sitemonitor.service.userref.UserRefWire.rewriteText(t, json, lookup);
+        }
+    }
+
+    private ExportView exportView(HttpSession session) {
+        if (SessionScope.isGlobalAdmin(session) || userPublicIds == null || userRefJson == null) return new ExportView(null, null);
+        return new ExportView(userPublicIds::publicIdOf, userRefJson);
+    }
+
+    private String toCsv(List<AuditLog> rows, ExportView view) {
         StringBuilder sb = new StringBuilder("﻿");
         sb.append("seq,event_time,event_type,actor,actor_role,ip_address,resource_type,resource_id,outcome,failure_reason,detail,changes,correlation_id\n");
         for (AuditLog a : rows) {
             sb.append(csvCell(a.getSeq())).append(',').append(csvCell(a.getEventTime())).append(',')
               .append(csvCell(a.getEventType())).append(',').append(csvCell(a.getActor())).append(',')
               .append(csvCell(a.getActorRole())).append(',').append(csvCell(a.getIpAddress())).append(',')
-              .append(csvCell(a.getResourceType())).append(',').append(csvCell(a.getResourceId())).append(',')
+              .append(csvCell(a.getResourceType())).append(',').append(csvCell(view.resourceId(a))).append(',')
               .append(csvCell(a.getOutcome())).append(',').append(csvCell(a.getFailureReason())).append(',')
-              .append(csvCell(a.getDetail())).append(',')
-              .append(csvCell(a.getChanges())).append(',').append(csvCell(a.getCorrelationId())).append('\n');
+              .append(csvCell(view.text(a.getDetail()))).append(',')
+              .append(csvCell(view.text(a.getChanges()))).append(',').append(csvCell(a.getCorrelationId())).append('\n');
         }
         return sb.toString();
     }
@@ -518,7 +564,7 @@ public class AuditController {
         return com.sitemonitor.util.Csv.cell(o);
     }
 
-    private String toJson(List<AuditLog> rows) {
+    private String toJson(List<AuditLog> rows, ExportView view) {
         StringBuilder sb = new StringBuilder("[");
         boolean first = true;
         for (AuditLog a : rows) {
@@ -531,11 +577,11 @@ public class AuditController {
               .append(",\"actor_role\":").append(js(a.getActorRole()))
               .append(",\"ip_address\":").append(js(a.getIpAddress()))
               .append(",\"resource_type\":").append(js(a.getResourceType()))
-              .append(",\"resource_id\":").append(js(a.getResourceId()))
+              .append(",\"resource_id\":").append(js(view.resourceId(a)))
               .append(",\"outcome\":").append(js(a.getOutcome()))
               .append(",\"failure_reason\":").append(js(a.getFailureReason()))
-              .append(",\"detail\":").append(js(a.getDetail()))
-              .append(",\"changes\":").append(js(a.getChanges()))
+              .append(",\"detail\":").append(js(view.text(a.getDetail())))
+              .append(",\"changes\":").append(js(view.text(a.getChanges())))
               .append(",\"row_hash\":").append(js(a.getRowHash()))
               .append(",\"correlation_id\":").append(js(a.getCorrelationId()))
               .append('}');

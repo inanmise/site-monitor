@@ -33,6 +33,10 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class NocCallLogController {
 
+    /** Opak kullanıcı kimliği (2026-10-08) — bean'siz dilim testinde null → eski sayısal davranış. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.userref.UserPublicIds userPublicIds;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -72,12 +76,29 @@ public class NocCallLogController {
                                                       HttpSession session) {
         requireWriter(session);
         AlertEvent ev = calls.loadAlert(alertId);
-        Map<String, Object> row = calls.create(ev, body, session);
+        Map<String, Object> row = calls.create(ev, resolveContacted(body, session), session);
         auditService.recordAction("NOC_CALL_LOG_ADD", session, "ALERT_EVENT", String.valueOf(alertId),
                 AuditDetail.of("domain", ev.getDomain(), "call_id", row.get("id"),
                         "contacted_name", row.get("contacted_name"), "outcome", row.get("outcome"),
                         "channel", row.get("channel"), "contacted_at", row.get("contacted_at")), null);
         return ok(row);
+    }
+
+    /**
+     * Opak kimlik (2026-10-08): arama listesi kişileri global olmayan operatöre opak kimlikle gelir; servis sayısal id ile
+     * eşleştirdiği için kişi kimliği burada çözülür. Çözülemeyen (bilinmeyen / izinsiz sayısal) kimlik 400 olur.
+     */
+    private Map<String, Object> resolveContacted(Map<String, Object> body, HttpSession session) {
+        if (body == null || userPublicIds == null) return body;
+        Object raw = body.get("contactedUserId");
+        if (raw == null || (raw instanceof String rs && rs.isBlank())) return body;
+        Long id = com.sitemonitor.service.userref.UserPublicIds.resolve(userPublicIds, raw, session);
+        if (id == null) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Geçersiz kişi kimliği", "Invalid person id"));
+        }
+        Map<String, Object> copy = new java.util.LinkedHashMap<>(body);
+        copy.put("contactedUserId", id);
+        return copy;
     }
 
     @DeleteMapping("/noc-calls/{id}")

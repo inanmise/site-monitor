@@ -19,9 +19,22 @@ import java.util.Set;
 @NoArgsConstructor
 public class AppUser {
 
+    /** Global admin dışındaki görüntüleyiciye opak kimlik olarak yazılır ({@code UserRefWire}, 2026-10-08). */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @tools.jackson.databind.annotation.JsonSerialize(using = com.sitemonitor.service.userref.UserRef.LongSerializer.class)
     private Long id;
+
+    /** Opak, sıralı olmayan kimlik (UUID) — bir kez atanır, değişmez. Yanıtta ayrı alan olarak değil, global
+     *  olmayan görüntüleyicide {@code id}'nin yerine yazılır; bu yüzden kendisi serileştirilmez. */
+    @JsonIgnore
+    @Column(name = "public_id", length = 36)
+    private String publicId;
+
+    @PrePersist
+    void assignPublicId() {
+        if (publicId == null || publicId.isBlank()) publicId = com.sitemonitor.service.userref.UserPublicIds.newPublicId();
+    }
 
     @Column(nullable = false, unique = true)
     private String username;

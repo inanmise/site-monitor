@@ -15,6 +15,20 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Security
+- **Bir kullanıcı başka bir kullanıcının kimliğini (id) artık okuyamaz.**
+  - Global yönetici dışındaki herkes (denetçi / AUDIT ve kapsamlı müdür dahil) yanıtlarda kullanıcıların sıralı
+    sayısal kimliğini görmez. Onun yerine her kullanıcıya bir kez verilen, değişmeyen ve tahmin edilemeyen bir kimlik
+    (UUID) görür. Bu kural yönetici ekranları, takım üyeleri, eskalasyon kişileri, 7/24 arama listesi, denetim
+    kayıtları (değişiklik ayrıntısındaki kimlikler dahil) ve denetim dışa aktarımı (CSV / JSON) için geçerlidir.
+  - Uçlar bu kimliği kabul eder. Global yönetici olmayan bir oturumun gönderdiği sayısal kullanıcı kimliği
+    "bulunamadı" sayılır. Sıralı numarayla tarama (ör. `/api/users/5/photo`, `6`, `7` …) kapandı.
+  - Global yönetici için hiçbir şey değişmez: sayısal kimlikleri görür ve gönderebilir.
+
+  **⚠ Davranış:** Global yönetici olmayan bir hesapla API'yi çağırıp sayısal kullanıcı kimliği gönderen bir betik ya
+  da entegrasyon varsa artık 404 / 400 alır; yanıtlardaki opak kimliği kullanmalıdır. Mevcut hesaplara kimlik açılışta
+  otomatik verilir; yapılandırma gerekmez.
+
 ## [20.113.0] — 2026-10-08
 
 ### Added

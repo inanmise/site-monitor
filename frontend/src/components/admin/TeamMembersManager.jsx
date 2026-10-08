@@ -12,6 +12,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { SystemRoleBadge } from './ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
+import { userRefValue } from '../../utils/userRef'
 
 /**
  * Takım üyelerini tek yerden yönet (2026-09-20): listele, ekle, çıkar. Eskiden üyelik yalnız kullanıcı
@@ -43,7 +44,7 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
     if (!pick) return
     setBusy(true)
     try {
-      const res = await api.admin.addTeamMember(team.id, Number(pick))
+      const res = await api.admin.addTeamMember(team.id, userRefValue(pick))
       if (res?.success) { toast.success(t('team.memberAdded')); setPick(''); await load(); onChanged?.() }
       else toast.error(res?.error || 'Error')
     } finally { setBusy(false) }
