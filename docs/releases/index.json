@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T17:44:56Z",
+  "generatedAt": "2026-10-08T21:23:01Z",
   "repo": "inanmise/site-monitor",
-  "count": 717,
+  "count": 718,
   "releases": [
+    {
+      "version": "20.115.0",
+      "tag": "v20.115.0",
+      "releasedAt": "2026-10-08T21:22:56Z",
+      "commit": "5e3553d9eec0893ed0772d14c9273f3436aeb6c2",
+      "prevVersion": "20.114.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5e3553d9",
+          "subject": "Genel Bakış'ta pasif (izlemesi durdurulmuş) sertifika kartları — İzleme süzgeci (Tümü/Aktif/Pasif), kart görünümden ayrılır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.114.0",
       "tag": "v20.114.0",

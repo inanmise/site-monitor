@@ -14,6 +14,13 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByDomainIn(Collection<String> domains);
 
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
+
+    /** İzlemesi durdurulmuş (pasif) kayıtlar — Pano'nun "Pasif" kartları (2026-10-08). */
+    List<CertificateInventory> findByActiveFalseOrderByDomainAsc();
+
+    /** Aktif envanterin TÜM alan adları (manuel kayıtlar dahil) — pasif kart listesinden aktif ikizi düşürmek için. */
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.active = true AND c.domain IS NOT NULL")
+    List<String> findAllActiveDomainNames();
     /** Aktif envanterin alan adları (ham; normalizasyon çağıranda) — İzleme Panosu envanter-pasif kuralı (2026-10-01,
      *  performans: tam entity yerine tek sütun). */
     // 2026-10-06: elle yüklenen sertifika kayıtları (cert_source = MANUAL) HARİÇ — envanter türevi Port/DNS süpürmesi

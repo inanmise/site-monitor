@@ -502,6 +502,78 @@ public class CertificateService {
                         (a, b) -> a));
     }
 
+    /**
+     * İzlemesi durdurulmuş (pasif) sertifikalar — Pano kartları için (2026-10-08, kullanıcı: "aktif olmayan sertifikalar
+     * kartlarda gösterilmiyor; kullanıcı aktif ya da pasif kartları görebilmeli, süzebilmeli").
+     *
+     * <p>Aktif liste ({@link #getAllLatest}) BİLEREK değişmez: o liste İstatistik, Uyarılar, sayaçlar ve takım
+     * özetlerini de besler — pasif kayıtlar oralara karışmamalı. Bu okuma ayrı ve önbelleksizdir (pasif küme küçük;
+     * Pano yalnız kendi sekmesindeyken ve veri tazelenince çağırır).
+     *
+     * <p>Kapsam {@link #getAllLatestForTeams} ile AYNI: null = tümü, boş = hiçbiri, aksi hâlde sorumlu (SY) takım.
+     * Aynı alan adının aktif bir kaydı varsa pasif ikizi listelenmez (kart alan adıyla anahtarlı). Son kontrol satırı
+     * olmayan kayıt (hiç kontrol edilmemiş) envanter bilgisiyle döner. Her satır {@code paused=true} taşır; ton ve
+     * kalan gün son kontrolden hesaplanır (bayat olabilir — kart bunu söyler).
+     */
+    public List<CertificateDto> getPausedForTeams(java.util.Collection<Long> teamIds) {
+        if (teamIds != null && teamIds.isEmpty()) return List.of();
+        Set<String> activeDomains = new HashSet<>(inventoryRepo.findAllActiveDomainNames());
+        Map<String, CertificateInventory> byDomain = new java.util.LinkedHashMap<>();
+        for (CertificateInventory inv : inventoryRepo.findByActiveFalseOrderByDomainAsc()) {
+            String d = inv.getDomain();
+            if (d == null || d.isBlank() || inv.getDeletedAt() != null) continue;
+            if (activeDomains.contains(d)) continue;
+            if (teamIds != null && (inv.getTeamId() == null || !teamIds.contains(inv.getTeamId()))) continue;
+            byDomain.putIfAbsent(d, inv);
+        }
+        if (byDomain.isEmpty()) return List.of();
+        Set<Long> neededTeamIds = byDomain.values().stream()
+                .map(CertificateInventory::getTeamId).filter(id -> id != null).collect(Collectors.toSet());
+        Map<Long, String> teamNames = neededTeamIds.isEmpty() ? Map.of() : teamRepo.findAllById(neededTeamIds).stream()
+                .filter(tm -> tm.getId() != null && tm.getName() != null)
+                .collect(Collectors.toMap(Team::getId, Team::getName, (a, b) -> a));
+        Map<String, LatestCheck> latest = new HashMap<>();
+        for (LatestCheck c : latestRepo.findByDomainIn(byDomain.keySet())) {
+            if (c.getDomain() != null) latest.putIfAbsent(c.getDomain(), c);
+        }
+        Map<String, com.sitemonitor.model.ManualCertificateVersion> manualByDomain =
+                manualCurrentVersions(new java.util.ArrayList<>(byDomain.values()));
+        Map<String, String> platformNames = platformNameMap();
+        ThresholdResolution thresholds = ThresholdResolution.load(alertThresholdRepo, null);
+        List<CertificateDto> out = new java.util.ArrayList<>(byDomain.size());
+        for (Map.Entry<String, CertificateInventory> e : byDomain.entrySet()) {
+            String d = e.getKey();
+            CertificateInventory inv = e.getValue();
+            LatestCheck c = latest.get(d);
+            CertificateDto dto;
+            if (c != null) {
+                dto = toDto(c);
+            } else {
+                dto = new CertificateDto();   // hiç kontrol edilmemiş pasif kayıt: yalnız envanter bilgisi
+                dto.setDomain(d);
+            }
+            dto.setTier(inv.getTier());
+            dto.setPort(inv.getPort());
+            dto.setTeamId(inv.getTeamId());
+            dto.setTeamName(inv.getTeamId() == null ? null : teamNames.get(inv.getTeamId()));
+            if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) dto.setGroupName(inv.getGroupName());
+            if (inv.getTags() != null && !inv.getTags().isBlank()) dto.setTags(inv.getTags());
+            dto.setPlatform(inv.getPlatform());
+            if (inv.getPlatformDetail() != null && !inv.getPlatformDetail().isBlank()) dto.setPlatformDetail(inv.getPlatformDetail());
+            if (dto.getPlatform() != null) dto.setPlatformName(platformNames.get(dto.getPlatform()));
+            dto.setCheckIntervalHours(inv.getCheckIntervalHours());
+            applyNoc(dto, inv);
+            applyManual(dto, inv, manualByDomain.get(d));
+            if (c != null) {
+                int[] td = thresholds.days(inv.getTier());
+                dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
+            }
+            dto.setPaused(Boolean.TRUE);
+            out.add(dto);
+        }
+        return out;
+    }
+
     /** Certs visible to the given team scope. null = unrestricted (global); empty = none. */
     public List<CertificateDto> getAllLatestForTeams(java.util.Collection<Long> teamIds) {
         if (teamIds == null) return self.getAllLatest();

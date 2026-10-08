@@ -1,6 +1,6 @@
 import {
   BellOff, Building2, CalendarCheck, CalendarClock, CalendarPlus, Copy, FileUp, Globe, Info, KeyRound, Layers, Link2, Link2Off,
-  MailWarning, Network, Pencil, RefreshCw, Server, ShieldAlert, ShieldCheck, ShieldX, Trash2, WifiOff,
+  CirclePause, MailWarning, Network, Pencil, RefreshCw, Server, ShieldAlert, ShieldCheck, ShieldX, Trash2, WifiOff,
 } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -17,7 +17,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { dateOnly, issuerNameOf, keyLabelOf, planState, sigShort } from './certCardModel.js'
+import { baseTone, dateOnly, issuerNameOf, keyLabelOf, planState, sigShort } from './certCardModel.js'
 
 /**
  * Sertifika kartının parçaları (2026-09-27 yeniden tasarım) — izleme kartlarıyla aynı görsel dil: tonlu kahraman
@@ -67,13 +67,17 @@ const STATUS = {
   critical: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
   expired: 'bg-destructive text-white dark:bg-destructive/80',
   error: 'border-destructive/40 bg-transparent text-destructive',
+  // Pasif (izleme durduruldu, 2026-10-08): nötr — dikkat çekmez
+  paused: 'border-dashed border-muted-foreground/40 bg-muted text-muted-foreground',
 }
 
 export function CertStatusBadge({ tone, label }) {
   return (
-    <Badge variant={tone === 'error' ? 'outline' : 'secondary'} data-slot="cert-status" data-status={tone}
+    <Badge variant={tone === 'error' || tone === 'paused' ? 'outline' : 'secondary'} data-slot="cert-status" data-status={tone}
       className={cn('gap-1.5 px-2.5 py-[3px] text-[11px] font-bold tracking-[.03em]', STATUS[tone] ?? STATUS.valid)}>
-      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
+      {tone === 'paused'
+        ? <CirclePause aria-hidden="true" className="size-3 shrink-0" />
+        : <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />}
       {label}
     </Badge>
   )
@@ -101,10 +105,11 @@ const HERO_BOX = {
   critical: 'border-destructive/35 bg-destructive/5 dark:bg-destructive/10',
   expired: 'border-destructive/35 bg-destructive/5 dark:bg-destructive/10',
   error: 'bg-muted/40 dark:bg-muted/25',
+  paused: 'border-dashed bg-muted/30 dark:bg-muted/20',
 }
 const HERO_INK = {
   valid: 'text-success', warning: 'text-amber-600 dark:text-amber-400', high: 'text-orange-600 dark:text-orange-400',
-  critical: 'text-destructive', expired: 'text-destructive', error: 'text-muted-foreground',
+  critical: 'text-destructive', expired: 'text-destructive', error: 'text-muted-foreground', paused: 'text-muted-foreground',
 }
 /** ProgressBar tonu; "high" ton ailesinde yok → turuncu dolgu `--pg-fill` ile. */
 const BAR_TONE = { valid: 'ok', warning: 'warn', critical: 'crit' }
@@ -124,8 +129,10 @@ export function CertHero({ cert, tone, validity, renewedDays, end }) {
   const t = useT()
   const days = cert.days_remaining
   const known = days !== null && days !== undefined
-  const display = tone === 'error' || !known ? '—' : tone === 'expired' ? Math.abs(days) : days
-  const showBar = !!validity && tone !== 'expired' && tone !== 'error'
+  // Pasif kart: renk nötr (tone), metin son kontrolün tonundan (base) — "5 gün önce doldu" bilgisi kaybolmaz
+  const base = tone === 'paused' ? baseTone(cert) : tone
+  const display = base === 'error' || !known ? '—' : base === 'expired' ? Math.abs(days) : days
+  const showBar = !!validity && tone !== 'paused' && base !== 'expired' && base !== 'error'
   const renewed = renewedDays != null && (
     <Badge variant="secondary" data-slot="cert-renewed" title={t('card.renewedTip', dateOnly(cert.not_before))}
       className="h-5 gap-1 rounded-md bg-success/15 px-1.5 text-[10.5px] font-semibold text-success dark:bg-success/20">
@@ -138,12 +145,12 @@ export function CertHero({ cert, tone, validity, renewedDays, end }) {
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <div data-slot="cert-days" className={cn('text-[2rem] leading-none font-bold tracking-tight tabular-nums', HERO_INK[tone])}>{display}</div>
-          <div className="mt-1 text-xs font-medium text-muted-foreground">{heroLabel(tone, days, t)}</div>
+          <div className="mt-1 text-xs font-medium text-muted-foreground">{heroLabel(base, days, t)}</div>
         </div>
         {cert.not_after && (
           <div data-slot="cert-expiry" className="flex min-w-0 shrink-0 flex-col items-end gap-0.5 text-right">
             <span className="text-[10px] font-semibold tracking-[.06em] text-muted-foreground uppercase">
-              {tone === 'expired' ? t('certcard.expiredOn') : t('card.expiresShort')}
+              {base === 'expired' ? t('certcard.expiredOn') : t('card.expiresShort')}
             </span>
             <time dateTime={toUtc(cert.not_after)} className="text-sm font-semibold text-foreground tabular-nums">
               {dateOnly(cert.not_after)}

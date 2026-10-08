@@ -618,6 +618,8 @@ export const api = {
   sessionPing: (tab) => request(`/session/ping${tab ? '?tab=' + encodeURIComponent(tab) : ''}`, { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   getCertificates: () => request('/certificates'),
+  /** İzlemesi durdurulmuş (pasif) sertifikalar — yalnız Pano kartları (2026-10-08); her satır `paused: true`. */
+  getPausedCertificates: () => request('/certificates/paused'),
 
   // Paylaşılan sertifika ayrıntısı (2026-09-22): kart çipi → pencere
   getSharedCertificate: (domain) => request('/certificates/shared?domain=' + encodeURIComponent(domain)),

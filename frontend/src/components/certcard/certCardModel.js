@@ -21,8 +21,21 @@ export const TONES = ['valid', 'warning', 'high', 'critical', 'expired', 'error'
 
 const hasDays = (d) => d !== null && d !== undefined && Number.isFinite(Number(d))
 
-/** Sunucu hükmü (`alert_level`) varsa o; yoksa kartın eski düşüşü (bkz. dosya başı). */
+/**
+ * Pasif (izlemesi durdurulmuş) kart tonu (2026-10-08). Sunucu `paused: true` yalnız `/certificates/paused` satırına
+ * yazar; kart kırmızı/sarı tonla dikkat çekmez — bilgi son kontrolden, bayat olabilir. Durum/kalan gün metni yine son
+ * kontrolün tonundan ({@link baseTone}) okunur.
+ */
+export const PAUSED_TONE = 'paused'
+export const isPausedCert = (cert) => cert?.paused === true
+
+/** Kart tonu: pasif kayıt `paused`; aksi hâlde {@link baseTone}. */
 export function certTone(cert) {
+  return isPausedCert(cert) ? PAUSED_TONE : baseTone(cert)
+}
+
+/** Sunucu hükmü (`alert_level`) varsa o; yoksa kartın eski düşüşü (bkz. dosya başı). Pasif kartta son kontrolün tonu. */
+export function baseTone(cert) {
   const c = cert || {}
   const al = c.alert_level
   if (al) return TONES.includes(al) ? al : 'valid'
@@ -38,7 +51,7 @@ export function certTone(cert) {
 /** Durum rozetinin i18n anahtarı (sözcükle durum). */
 export const TONE_LABEL = {
   valid: 'card.valid', warning: 'card.warning', high: 'card.high', critical: 'card.critical',
-  expired: 'tbl.statusExpired', error: 'card.error',
+  expired: 'tbl.statusExpired', error: 'card.error', paused: 'certcard.paused',
 }
 
 /**
