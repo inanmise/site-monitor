@@ -235,6 +235,12 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       kalan derleme INVALID indeks bırakır ve `IF NOT EXISTS` onu bir daha kurmaz):
       `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE NOT i.indisvalid;` → boş olmalı.
       Satır dönerse: `DROP INDEX CONCURRENTLY <ad>;` ve pod'u yeniden başlatın (yama indeksi yeniden kurar).
+- [ ] **Ertelenmiş indeksler (2026-10-08):** filtre indeksleri (`DeferredIndexBuilder.CATALOG` — uptime_checks, audit_log,
+      activity_log, alert_events, push / bildirim günlükleri, rollup'lar…) açılışta DEĞİL, pod Ready olduktan sonra arka
+      planda `CONCURRENTLY` kurulur; readiness beklemez, büyük tabloda dakikalar sürebilir (sorgular o sırada indekssiz,
+      eskisi gibi çalışır). İlerleme: `grep -E 'deferred index built|Ertelenmiş indeks'`; özet satırı
+      `Ertelenmiş indeksler: N kuruldu …`. Yarıda kalan (pod öldü) INVALID indeksi bir sonraki açılış kendisi düşürüp
+      yeniden kurar — elle müdahale gerekmez. Oturum `application_name = sitemonitor-deferred-index` ile görünür.
 
 ### Duman testi (sırları da çözdürür)
 - [ ] Yerel admin girişi + bir LDAP kullanıcısı girişi; Ayarlar → LDAP test-bind.

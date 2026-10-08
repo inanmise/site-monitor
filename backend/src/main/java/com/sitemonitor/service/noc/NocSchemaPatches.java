@@ -35,7 +35,11 @@ public class NocSchemaPatches {
             "CREATE INDEX IF NOT EXISTS idx_noc_delivery_alert ON noc_deliveries(alert_event_id)",
             "CREATE INDEX IF NOT EXISTS idx_noc_delivery_created ON noc_deliveries(created_at)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_noc_call_team_user ON noc_team_call_list(team_id, user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_noc_call_team ON noc_team_call_list(team_id, position)");
+            "CREATE INDEX IF NOT EXISTS idx_noc_call_team ON noc_team_call_list(team_id, position)",
+            // 2026-10-08 indeks denetimi: her fırtına turunda NocNotificationService → findTopByStormIdAndPhaseOrderByIdDesc
+            // (storm_id = ? AND phase = ? ORDER BY id DESC LIMIT 1) — fırtına kimliğiyle hiç indeks yoktu. Tablo küçük
+            // (yalnız 7/24'e açık alarmların teslim izi, retention'lı) → diğer NOC indeksleri gibi düz kurulum yeterli.
+            "CREATE INDEX IF NOT EXISTS idx_noc_delivery_storm_phase ON noc_deliveries(storm_id, phase, id)");
 
     /** {@code noc_settings} — 7/24 izleme ekibi takımları (2026-10-04). */
     static final List<String[]> OPERATOR_COLUMNS = List.of(

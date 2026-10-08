@@ -427,6 +427,14 @@ public class SchedulerService {
             AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.ACCEPTING_TRAFFIC);
             log.info("Bootstrap complete — readiness=ACCEPTING_TRAFFIC [instance={}]", INSTANCE_ID);
         }
+        // 2026-10-08: filtrelenen alanlara eklenen indeksler trafiğe HAZIR olduktan SONRA arka planda kurulur
+        // (CONCURRENTLY, havuz dışı oturum, pod'lar arası tek kurucu, yarıda kalanı onarır) — readiness hiç beklemez;
+        // kurulana kadar sorgular bugünkü gibi indekssiz çalışır. Bkz. DeferredIndexBuilder.
+        try {
+            deferredIndexes().startInBackground();
+        } catch (Exception e) {
+            log.warn("Ertelenmiş indeks kurulumu başlatılamadı (sonraki açılış yeniden dener): {}", e.getMessage());
+        }
         // Ağır açılış işi (escalation catch-up + tam sertifika taraması) ANINDA
         // çalışırsa, CPU-sınırlı pod'da JVM ısınması + bu işin TLS/OCSP/CRL kriptosu
         // ilk interaktif isteği (login → BCrypt) aç bırakır → login ~1dk askıda kalır.
@@ -1717,6 +1725,15 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_otp_user_created ON login_otp_challenges(username, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_otp_user_failed ON login_otp_challenges(username, last_failed_at)");
 
+        // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
+        // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim
+        // günlükleri…) CONCURRENTLY bile açılışı dakikalarca bekletebilir: pod bu sürede REFUSING_TRAFFIC, startup probe
+        // ~300 sn sonra öldürür → INVALID indeks (IF NOT EXISTS bir daha kurmaz), --atomic sürümü geri alır. Bu yüzden
+        // PostgreSQL'de burada HİÇBİR ŞEY kurulmaz; DeferredIndexBuilder pod trafiğe HAZIR olduktan sonra arka planda
+        // kurar (runOnStartup). PostgreSQL dışında (H2) taşınabilir yedekler burada normal yama gibi koşar.
+        // Büyük tabloya yeni indeksi buraya patch() olarak DEĞİL, DeferredIndexBuilder.CATALOG'a ekleyin.
+        deferredIndexes().applyFallbacks(this::patch);
+
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
     }
@@ -1950,6 +1967,16 @@ public class SchedulerService {
     private com.sitemonitor.service.schema.SchemaPatchRunner patchRunner() {
         if (schemaPatchRunner == null) schemaPatchRunner = new com.sitemonitor.service.schema.SchemaPatchRunner(jdbcTemplate);
         return schemaPatchRunner;
+    }
+
+    private com.sitemonitor.service.schema.DeferredIndexBuilder deferredIndexBuilder;
+
+    /** Açılışı bekletmeyen indeksler (2026-10-08): H2'de yedekler senkron, PostgreSQL'de hazır olduktan sonra arka planda. */
+    private com.sitemonitor.service.schema.DeferredIndexBuilder deferredIndexes() {
+        if (deferredIndexBuilder == null) {
+            deferredIndexBuilder = new com.sitemonitor.service.schema.DeferredIndexBuilder(jdbcTemplate);
+        }
+        return deferredIndexBuilder;
     }
 
     /** Full sweep: runs at the top of every hour (configurable via site.monitor.scheduler.cron). */
