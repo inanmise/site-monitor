@@ -79,6 +79,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // başlıkta salt okunur rozet + sahibi takım (`readOnlyTeam: { id, name }`). Okuma sekmeleri (SSL, sağlık, geçmiş, envanter, notlar) açık.
   readOnly = false, readOnlyTeam = null,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
+  // Yeniden adlandırma (2026-10-08): pencere açıkken kayıt `renamedFrom` → `domain` adına geçtiyse veri yeni adla yeniden
+  // okunur ama kullanıcı bulunduğu sekmede kalır (yeni bir pencere açılmış gibi SSL'e atılmaz).
+  renamedFrom = null,
   // "Envanterde aç" (Envanter Bilgileri sekmesi) pencereden AYRILIR: varsayılan pencereyi kapatır. Pencereyi açan bir
   // form ise (mükerrer alan adı bandı) formu da kapatan işleyici verir — yoksa hedef kayıt formun arkasında açılırdı (Ek 3/4).
   onLeave,
@@ -103,6 +106,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   domainRef.current = domain
   const initialTabRef = useRef(initialTab)   // açılış sekmesi (tablo satır menüsü); ref: domain effect'inin bağımlılığı olmasın
   initialTabRef.current = initialTab
+  const renamedFromRef = useRef(renamedFrom)
+  renamedFromRef.current = renamedFrom
+  const prevDomainRef = useRef(null)   // domain effect'inin gördüğü son ad — yeniden adlandırmayı yeni açılıştan ayırır
   // Önizlemenin 409 MANUAL_CERT yanıtı (geçerli sürüm değerlendirilemedi; satır bilgisi olmadan açıldıysa)
   const [manualDetected, setManualDetected] = useState(false)
   // Canlı SSL probe'unun tur sayacı. domainRef TEK BAŞINA yetmiyordu: uçuşan yanıt "artık
@@ -225,10 +231,12 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     lastCheckedRef.current = null   // yeni domain = yeni damga çizgisi; ilk yükleme "yeni kontrol" sayılmaz
     setNoc(null)   // önceki alanın 7/24 durumu yeni alanın başlığında görünmesin (kapanış dâhil)
     setManualDetected(false)
+    const renamed = !!domain && prevDomainRef.current != null && renamedFromRef.current === prevDomainRef.current
+    prevDomainRef.current = domain || null
     if (!domain) return
     setCertData(null)
     setSslData(null)
-    setActiveTab(initialTabRef.current || 'ssl')   // satır menüsünden doğrudan sekmeye (alarm/kontrol geçmişi); manuel de SSL'de açılır
+    if (!renamed) setActiveTab(initialTabRef.current || 'ssl')   // satır menüsünden doğrudan sekmeye (alarm/kontrol geçmişi); manuel de SSL'de açılır
 
     if (initialData) {
       setCertData(initialData)

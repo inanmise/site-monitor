@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T02:47:54Z",
+  "generatedAt": "2026-10-08T06:51:53Z",
   "repo": "inanmise/site-monitor",
-  "count": 713,
+  "count": 714,
   "releases": [
+    {
+      "version": "20.112.1",
+      "tag": "v20.112.1",
+      "releasedAt": "2026-10-08T06:51:44Z",
+      "commit": "77594d83dda02c51d67442dbe42aa5235899a3aa",
+      "prevVersion": "20.112.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "77594d83",
+          "subject": "takip adı değişince açık sertifika penceresi yeni adla sürer (Sağlık / Kontrol geçmişi 404 yok), Manuel Sertifikalar ve Envanter yeni adı anında gösterir"
+        },
+        {
+          "type": "ci",
+          "scope": null,
+          "breaking": false,
+          "sha": "e16cb083",
+          "subject": "release kapısı CI'ı 80 dk bekler (job timeout 90) — CI ~50 dk sürüyor, 40 dk sınırı her sürümde aşılıyordu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.112.0",
       "tag": "v20.112.0",

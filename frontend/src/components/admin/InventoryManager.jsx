@@ -3,6 +3,7 @@ import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Glob
 import AddCertSplitButton from '../manualcert/AddCertSplitButton.jsx'
 import { navigateTo } from '../../utils/navigate.js'
 import { filterDeleted, markDeleted, markManyDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
+import { INVENTORY_RENAMED_EVENT, renameRow } from '../../utils/inventoryEvent.js'
 import { deleteConfirmMessage, namesPreview } from '../../utils/deleteInventory.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
@@ -361,6 +362,22 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     return () => window.removeEventListener('sm:tab-params', on)
   }, [])
 
+  // Alan adı / takip adı değişti (2026-10-08): ad sertifika penceresinin Düzenle'sinden de değişebilir. Satır ve açık
+  // çekmece ANINDA yeni adı alır (çekmece eski kayıt nesnesini tutuyordu), liste arkadan tazelenir.
+  const loadRef = useRef(null)
+  loadRef.current = load
+  useEffect(() => {
+    const on = (e) => {
+      const { from, to } = e?.detail || {}
+      if (!from || !to) return
+      setItems((list) => (Array.isArray(list) ? list.map((i) => renameRow(i, from, to)) : list))
+      setShowItem((s) => renameRow(s, from, to))
+      loadRef.current?.()
+    }
+    window.addEventListener(INVENTORY_RENAMED_EVENT, on)
+    return () => window.removeEventListener(INVENTORY_RENAMED_EVENT, on)
+  }, [])
+
   // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
   const filterKey = JSON.stringify(filters)
   const pager = usePagination(visibleItems, {
@@ -523,6 +540,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
    */
   async function afterFormSaved(domain, opts) {
     const list = await load()
+    // Açık çekmece kaydın ESKİ nesnesini tutuyordu (ad / alanlar kayıttan sonra eski kalıyordu): tazelenmiş satırla değişir.
+    if (list) setShowItem((s) => (s ? (list.find((i) => s.id != null && i.id === s.id) ?? s) : s))
     if (!opts?.open) return
     const rec = opts.record || null
     const want = String(domain || rec?.domain || '').toLowerCase()

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
@@ -54,6 +54,7 @@ vi.mock('../utils/exportInventory', () => ({
 import { api } from '../api/client'
 import InventoryManager from '../components/admin/InventoryManager.jsx'
 import { __resetDeletedMarks } from '../utils/recentlyDeleted.js'
+import { announceInventoryRenamed } from '../utils/inventoryEvent.js'
 
 const ITEMS = [
   { id: 1, domain: 'aktif-bir.example.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
@@ -95,6 +96,24 @@ describe('InventoryManager', () => {
     expect(await screen.findByText('aktif-bir.example.com')).toBeInTheDocument()
     expect(screen.getByText('pasif.example.com')).toBeInTheDocument()
     expect(screen.queryByText('silinmis.example.com')).toBeNull()
+  })
+
+  // 2026-10-08: ad sertifika penceresinin Düzenle'sinden değişince satır ve AÇIK çekmece (eski kayıt nesnesini tutuyordu)
+  // tazeleme beklenmeden yeni adı alır; liste arkadan yeniden okunur.
+  it('yeniden adlandırma olayı: satır ve açık çekmece yeni adı ANINDA alır, liste yeniden okunur', async () => {
+    renderIm()
+    await screen.findByText('aktif-bir.example.com')
+    act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { domain: 'aktif-bir.example.com' } })) })
+    expect(await screen.findByRole('dialog')).toHaveTextContent('aktif-bir.example.com')
+    api.admin.getInventory.mockClear()
+    // Tazeleme asılı: görünen ad iyimser olmalı. Kalıcı uygulama (Once değil) — sonraki testin beforeEach'i onu ezer;
+    // tüketilmeyen bir Once kuyruğu düzeltme yokken sonraki teste sızıyordu.
+    api.admin.getInventory.mockImplementation(() => new Promise(() => {}))
+    act(() => announceInventoryRenamed('aktif-bir.example.com', 'yeni-bir.example.com'))
+    expect(screen.getByRole('dialog')).toHaveTextContent('yeni-bir.example.com')
+    expect(screen.queryAllByText('aktif-bir.example.com')).toHaveLength(0)
+    expect(screen.getAllByText('yeni-bir.example.com').some((el) => el.closest('tr'))).toBe(true)
+    expect(api.admin.getInventory).toHaveBeenCalledTimes(1)
   })
 
   // ── Geri alınamaz: silme KALICI (2026-10-07) — çöp kutusu yok ──────────────────

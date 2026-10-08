@@ -1,9 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CalendarClock, CalendarX2, FileKey2, FileUp, Layers, Lock, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { filterDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
+import { INVENTORY_RENAMED_EVENT, renameRow } from '../../utils/inventoryEvent.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import { readUrlInt, readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
@@ -87,9 +88,14 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
     return () => { alive = false }
   }, [canManage, myTeams])
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: kayıt + yeniden adlandırma olayı art arda tazeler, geç dönen eski yanıt yeni
+  // adı geri almasın.
+  const loadSeq = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeq.current
     try {
       const res = await api.manualCerts.list()
+      if (my !== loadSeq.current) return
       if (res?.success) {
         setRows(Array.isArray(res.data) ? res.data : [])
         setLoadState('ready'); setLoadError(null)
@@ -101,11 +107,26 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
         if (res.error) toast.error(res.error)
       }
     } catch (e) {
+      if (my !== loadSeq.current) return
       setLoadError(e?.message || null)
       setLoadState((s) => (s === 'ready' ? s : 'error'))
     }
   }, [toast])
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps -- ilk açılış
+  // Takip adı değişti (2026-10-08): ad sertifika penceresinin Düzenle'sinden de değişebilir — sayfa kendi formu dışındaki
+  // değişikliği bilmiyor, eski ad yenilenene kadar kalıyordu. Satır ANINDA yeni adı alır, liste arkadan tazelenir.
+  const loadRef = useRef(load)
+  loadRef.current = load
+  useEffect(() => {
+    const on = (e) => {
+      const { from, to } = e?.detail || {}
+      if (!from || !to) return
+      setRows((list) => list.map((r) => renameRow(r, from, to)))
+      loadRef.current()
+    }
+    window.addEventListener(INVENTORY_RENAMED_EVENT, on)
+    return () => window.removeEventListener(INVENTORY_RENAMED_EVENT, on)
+  }, [])
 
   async function refresh() {
     setRefreshing(true)
