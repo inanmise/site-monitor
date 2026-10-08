@@ -27,17 +27,29 @@ public final class Msg {
     public static String lang() {
         try {
             RequestAttributes ra = RequestContextHolder.getRequestAttributes();
-            if (ra instanceof ServletRequestAttributes sra) {
-                HttpServletRequest req = sra.getRequest();
-                String x = req.getHeader(HEADER);
-                if (x != null && !x.isBlank()) return norm(x);
-                String al = req.getHeader("Accept-Language");
-                if (al != null && !al.isBlank()) return norm(al);
-            }
+            if (ra instanceof ServletRequestAttributes sra) return lang(sra.getRequest());
         } catch (Exception ignored) {
             // bağlam yok / erişilemez → varsayılan
         }
         return "tr";
+    }
+
+    /**
+     * Verilen isteğin dili — aynı çözüm sırası (X-Lang → Accept-Language → tr). İstek bağlamı (RequestContextHolder)
+     * henüz kurulmamış servlet FİLTRELERİ için (2026-10-08: OriginCheckFilter hata gövdesi).
+     */
+    public static String lang(HttpServletRequest req) {
+        if (req == null) return "tr";
+        String x = req.getHeader(HEADER);
+        if (x != null && !x.isBlank()) return norm(x);
+        String al = req.getHeader("Accept-Language");
+        if (al != null && !al.isBlank()) return norm(al);
+        return "tr";
+    }
+
+    /** {@link #t(String, String)}'in istek-açık karşılığı (filtreler). */
+    public static String t(HttpServletRequest req, String tr, String en) {
+        return "en".equals(lang(req)) ? en : tr;
     }
 
     public static boolean isEn() {

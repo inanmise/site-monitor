@@ -302,15 +302,22 @@ export function extractedFormData(extraction, extra = {}) {
   return fd
 }
 
-/** Tarayıcıda ayıklama başarısızsa alan hatasının sözlük anahtarı + parametresi (`unsupported.reason`). */
+/** Tarayıcıdaki ayıklamanın süre sınırı (sn) — `extract/index.js` EXTRACT_TIMEOUT_MS ile aynı (model extract/'ı içe aktarmaz). */
+export const EXTRACT_TIMEOUT_S = 60
+
+/**
+ * Tarayıcıda ayıklama başarısızsa alan hatasının sözlük anahtarı + parametreleri (`unsupported.reason`) —
+ * `t(...extractionErrorKey(u))`. Her metin ne olduğunu, olası nedeni ve yapılacak şeyi söyler (2026-10-08).
+ */
 export function extractionErrorKey(unsupported) {
   switch (unsupported?.reason) {
-    case 'TOO_LARGE': return ['mcert.file.tooLarge', MAX_UPLOAD_MB]
+    case 'TOO_LARGE': return ['mcert.file.tooLarge', unsupported.max_mb ?? MAX_UPLOAD_MB]
+    case 'EMPTY': return ['mcert.extract.EMPTY']
     case 'BKS': return ['mcert.extract.BKS']
     case 'PKCS12_ALGORITHM': return ['mcert.extract.PKCS12_ALGORITHM']
     case 'PKCS12_FORMAT': return ['mcert.extract.PKCS12_FORMAT']
     case 'TOO_MANY_CERTS': return ['mcert.extract.TOO_MANY_CERTS', unsupported.max ?? 200]
-    case 'TIMEOUT': return ['mcert.extract.TIMEOUT']
+    case 'TIMEOUT': return ['mcert.extract.TIMEOUT', unsupported.seconds ?? EXTRACT_TIMEOUT_S]
     case 'ZIP_UNREADABLE': return ['mcert.extract.ZIP_UNREADABLE']
     case 'UNREADABLE': return ['mcert.extract.UNREADABLE']
     default: return ['mcert.extract.UNKNOWN']

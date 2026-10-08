@@ -150,7 +150,10 @@ public class ManualCertificateService {
         boolean same = current != null && entry.ref.equalsIgnoreCase(current.getFingerprint());
         if (same && !allowSame) {
             throw new RenewRejected("SAME_CERTIFICATE", com.sitemonitor.util.Msg.t(
-                    "Yüklenen sertifika zaten güncel sürüm.", "The uploaded certificate is already the current version."), null);
+                    "Yüklenen sertifika zaten güncel sürüm (aynı parmak izi). Yenilenmiş sertifikayı yükleyin; aynısını yine de "
+                            + "yeni sürüm olarak saklamak için arayüzde “Yine de yükle”yi seçin (API: allow_same=true).",
+                    "The uploaded certificate is already the current version (same fingerprint). Upload the renewed certificate; "
+                            + "to store the same one as a new version anyway, choose “Upload anyway” (API: allow_same=true)."), null);
         }
         String newNotAfter = CertificateFacts.iso(entry.cert.getNotAfter().toInstant());
         if (!same && current != null && !confirm && current.getNotAfter() != null && newNotAfter.compareTo(current.getNotAfter()) <= 0) {

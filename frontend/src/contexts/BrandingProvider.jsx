@@ -9,7 +9,7 @@ const BrandingContext = (globalThis.__smBrandingCtx ??= createContext(null))
 /**
  * Branding (beyaz etiket): açılışta PUBLIC /api/branding'i çeker (auth GEREKMEZ — login sayfası da
  * markalanır, bu yüzden provider main.jsx'te App'in üstünde durur). Etkiler:
- *  - tab-title → document.title
+ *  - tab-title → belge başlığının marka kısmı (hooks/usePageMeta: "<Sayfa> · <tab-title>")
  *  - primary-color → :root'ta --brand-primary (App.css'te --primary buna bağlı)
  * Boş değerler = varsayılan SiteMonitor kimliği; tüketiciler (Login/Nav/banner) fallback uygular.
  */
@@ -40,7 +40,8 @@ export function BrandingProvider({ children }) {
 
   useEffect(() => {
     if (!branding) return
-    if (branding.tab_title) document.title = branding.tab_title
+    // tab_title artık belge başlığının MARKA kısmı ("<Sayfa> · <tab_title>") — tek yazar hooks/usePageMeta (2026-10-08);
+    // burada da yazılsaydı sayfa başlığını ezerdi.
     const root = document.documentElement
     if (branding.primary_color) root.style.setProperty('--brand-primary', branding.primary_color)
     else root.style.removeProperty('--brand-primary')

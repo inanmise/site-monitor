@@ -525,7 +525,10 @@ class WeeklyReportControllerTest {
                 .andExpect(content().string(containsString("Raporu Onayla")))
                 .andExpect(content().string(containsString("İade Et")))
                 .andExpect(content().string(containsString("name='reason'")))
-                .andExpect(content().string(containsString("approve-link/reject")));
+                .andExpect(content().string(containsString("approve-link/reject")))
+                // Sayfa meta'sı + favicon seti (2026-10-08): girişsiz sayfa da açıklama ve marka ikonunu taşır
+                .andExpect(content().string(containsString("<meta name='description' content='Site Monitor haftalık")))
+                .andExpect(content().string(containsString("<link rel='icon' href='/favicon.svg' type='image/svg+xml'>")));
     }
 
     @Test

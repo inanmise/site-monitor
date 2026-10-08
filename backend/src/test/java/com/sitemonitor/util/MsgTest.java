@@ -58,4 +58,18 @@ class MsgTest {
         bind("", "fr");
         assertThat(Msg.lang()).isEqualTo("tr");
     }
+
+    @Test
+    @DisplayName("istek-açık çözüm (filtreler, bağlam yokken): aynı sıra X-Lang > Accept-Language > tr; null istek → tr")
+    void explicitRequest_sameOrder() {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        assertThat(Msg.lang(req)).isEqualTo("tr");
+        req.addHeader("Accept-Language", "en-US");
+        assertThat(Msg.t(req, "Kaydedildi", "Saved")).isEqualTo("Saved");
+        req.addHeader(Msg.HEADER, "tr");
+        assertThat(Msg.t(req, "Kaydedildi", "Saved")).isEqualTo("Kaydedildi");
+        assertThat(Msg.lang(null)).isEqualTo("tr");
+        // bağlam yokken bağlamsız çağrı hâlâ tr (istek-açık çağrı bağlamı kurmaz)
+        assertThat(Msg.lang()).isEqualTo("tr");
+    }
 }

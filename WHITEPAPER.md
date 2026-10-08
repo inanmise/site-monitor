@@ -1322,6 +1322,8 @@ Global admin ve AUDIT rolüne açık, sistem genelindeki denetim kayıtları ekr
 
 Giriş ekranındaki "Sorun Bildir" akışıyla gelen kayıtların yönetim ekranı. Giriş yapamayan kullanıcı ekran görüntüsü ekleyerek kayıt bırakır; siz kayıtları OPEN → IN_PROGRESS → RESOLVED akışında yönetir, yanlış kapatılan kaydı yeniden açarsınız. Parola/kilit kaynaklı çağrı trafiğini yapılandırılmış kayda dönüştürür.
 
+**Hata mesajları ve istek kimliği (2026-10-08).** Uygulamadaki her hata ne olduğunu, olası nedenini ve ne yapmanız gerektiğini söyler; ağ kesintisi, zaman aşımı ya da yetki eksikliği gibi durumlar ayrı ayrı anlatılır. Hata bildiriminin altındaki **Teknik ayrıntı** bölümü HTTP durumunu, hata kodunu ve **istek kimliğini** gösterir; sorunu bildirirken bu kimliği kopyalayıp eklerseniz yöneticiler kaydı sunucu günlüğünde hemen bulur. Var olmayan bir adrese gittiğinizde Site Monitor'ün kendi 404 sayfası açılır; buradan ana sayfaya ya da sık kullanılan sayfalara dönebilirsiniz.
+
 ### 14.24 Yönetim Paneli
 
 Yönetim işlevlerinin merkezi: envanter, kullanıcılar, takımlar, eskalasyon kişileri ve alarm eşikleri alt sekmeleri.

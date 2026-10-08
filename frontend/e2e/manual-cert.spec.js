@@ -10,6 +10,9 @@
 //   - 2026-10-08 (kullanıcı isteği: özel anahtar sunucuya hiç gitmez): seçilen dosya sahte bir PRIVATE KEY bloğu taşır;
 //     dosya GERÇEK tarayıcıda (Web Worker) açılır, analiz isteğinin gövdesinde yalnız `extracted` vardır — "PRIVATE KEY",
 //     anahtar gövdesi, `file` / `password` alanı YOK; İnceleme'de "özel anahtar (1) tarayıcınızda ayıklandı" notu.
+//   - 2026-10-08 (kullanıcı isteği: "manuel yükleme yaparken yükleme durumunu gösterelim"): YAVAŞLATILMIŞ analiz yanıtında
+//     (route gecikmesi) yükleme durumu paneli görünür (aşamalar, çubuk, "Vazgeç"), telefonda (390×844) ve dizüstünde
+//     (1280×800) sığar, aşama değişirken altlık zıplamaz; "Vazgeç" isteği keser ve adıma temiz döner; ikinci deneme biter.
 // API tümüyle mock (route interception) — gerçek kişi/kurum adı yok (example.test).
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
@@ -293,6 +296,93 @@ for (const vp of VIEWPORTS) {
       await viewer.getByRole('button', { name: /^(Close|Kapat)$/ }).first().click()
       await expect(viewer).toHaveCount(0)
       await expect(box, 'iç pencere kapanınca sertifika penceresi yerinde').toBeVisible()
+    })
+  })
+}
+
+// ── Yükleme durumu (2026-10-08): yavaş sunucu yanıtında panel görünür, sığar, "Vazgeç" temiz döner ──────────────────
+for (const vp of VIEWPORTS.filter((v) => v.name !== 'tablet')) {
+  test.describe(`manuel sertifika yükleme durumu @${vp.name}`, () => {
+    test.use({ hasTouch: vp.width < 1024 })
+
+    test(`yavaş analiz: aşamalar + çubuk + Vazgeç görünür ve sığar; Vazgeç temiz döner; ikinci deneme biter @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+      test.setTimeout(120_000)
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await mockApi(page, { perms: PERMS })
+      await routeManualCerts(page)
+      // Sunucu yavaş: her analiz yanıtı 4 sn gecikir (kesilen istekte fulfill hata verir — yok sayılır)
+      let analyzeCalls = 0
+      await page.route((u) => new URL(u).pathname === '/api/manual-certs/analyze', async (route) => {
+        analyzeCalls++
+        await new Promise((r) => setTimeout(r, 4000))
+        try {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: ANALYSIS }) })
+        } catch { /* istemci "Vazgeç" ile kesti */ }
+      })
+
+      await page.goto('/?tab=manualcerts')
+      await page.locator('[data-slot="manualcerts-page"]').waitFor({ timeout: 20_000 })
+      await page.locator('[data-slot="mcert-upload"]').first().click()
+      const dlg = page.locator('[role="dialog"]:has([data-slot="mcert-wizard"])')
+      await dlg.waitFor()
+      await page.locator('[data-slot="mcert-file-input"]').setInputFiles({ name: 'server.pem', mimeType: 'application/x-pem-file', buffer: Buffer.from(PEM_WITH_FAKE_KEY) })
+      await dlg.locator('[data-slot="mcert-analyze"]').click()
+
+      // Panel: dört aşama baştan listede; ayıklama (Web Worker) bitti, istek yolda. Route kesmesinde tarayıcı istek gövdesini
+      // ağa vermeden durdurduğu için yükleme baytı bildirilmez: "gönderiliyor" ya da "sunucu analiz ediyor" sürer (gerçek
+      // sunucuda yüzde + aşama geçişi canlı suite'te). Gecikme boyunca panel ekranda kalır.
+      const panel = dlg.locator('[data-slot="mcert-progress"]')
+      await expect(panel).toBeVisible()
+      await expect(panel).toHaveAttribute('data-kind', 'analyze')
+      const stages = panel.locator('[data-slot="mcert-progress-stage"]')
+      await expect(stages).toHaveCount(4)
+      await expect(panel.locator('[data-slot="mcert-progress-stage"][data-stage="extract"]')).toHaveAttribute('data-state', 'done', { timeout: 10_000 })
+      const states = await stages.evaluateAll((els) => els.map((e) => `${e.dataset.stage}:${e.dataset.state}`))
+      expect(states.slice(0, 2)).toEqual(['read:done', 'extract:done'])
+      expect([['upload:active', 'analyze:pending'], ['upload:done', 'analyze:active']]).toContainEqual(states.slice(2))
+      await expect(panel.getByRole('progressbar')).toBeVisible()
+      await expect(dlg.locator('[data-slot="mcert-progress-live"]')).toHaveText(/Sending to the server|Sunucuya gönderiliyor|The server is analysing|Sunucu analiz ediyor/)
+      await expect(dlg.locator('[data-slot="mcert-analyze"]')).toBeDisabled()
+      const cancel = dlg.locator('[data-slot="mcert-cancel-run"]')
+      await expect(cancel).toBeEnabled()
+
+      // Sığar: pencere / panel ekran dışına taşmaz, gövde yatay kaymaz; altlık aşama sürerken zıplamaz; dokunma ≥ 40 px
+      const r = await page.evaluate(measure, '[role="dialog"]:has([data-slot="mcert-wizard"])')
+      expect(r.offenders, `yükleme durumu @${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(r.pageOverflow, `yükleme durumu @${vp.name}: yatay kayma (px)`).toBeLessThanOrEqual(1)
+      const pb = await panel.boundingBox()
+      expect(pb.x, 'panel solda taşıyor').toBeGreaterThanOrEqual(-1)
+      expect(pb.x + pb.width, 'panel sağda taşıyor').toBeLessThanOrEqual(vp.width + 1)
+      const hScroll = await dlg.locator('[data-slot="modal-shell-body"]').first().evaluate((el) => el.scrollWidth - el.clientWidth)
+      expect(hScroll, `yükleme durumu @${vp.name}: gövde yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+      const actions = dlg.locator('[data-slot="mcert-wizard-actions"]')
+      const y1 = (await actions.boundingBox()).y
+      const panelH1 = pb.height
+      await page.waitForTimeout(2200)                                      // saniye sayacı işledi ("· 2 sn")
+      await expect(panel.locator('[data-slot="mcert-progress-elapsed"]')).toBeVisible()
+      expect(Math.abs((await actions.boundingBox()).y - y1), 'altlık zıplamaz').toBeLessThanOrEqual(1)
+      expect(Math.abs((await panel.boundingBox()).height - panelH1), 'panel yüksekliği sabit').toBeLessThanOrEqual(1)
+      if (vp.width < 1024) {
+        const cb = await cancel.boundingBox()
+        expect(cb.height, 'Vazgeç dokunma yüksekliği').toBeGreaterThanOrEqual(39)
+      }
+
+      // "Vazgeç": istek kesilir, panel kalkar, Dosya adımına temiz dönülür (düğme açık, meşgul değil)
+      await cancel.click()
+      await expect(panel).toHaveCount(0)
+      await expect(dlg.locator('[data-slot="mcert-wizard"]')).toHaveAttribute('data-step', 'file')
+      await expect(dlg.locator('[data-slot="mcert-analyze"]')).toBeEnabled()
+      await expect(dlg.locator('[data-slot="mcert-analyze"]')).not.toHaveAttribute('aria-busy', 'true')
+      await expect(dlg.locator('[data-slot="mcert-banner"]')).toContainText(/Analysis stopped|Analiz durduruldu/)
+      await page.waitForTimeout(4500)                                      // kesilen isteğin geç yanıtı adımı değiştirmez
+      await expect(dlg.locator('[data-slot="mcert-wizard"]')).toHaveAttribute('data-step', 'file')
+
+      // İkinci deneme sonuna kadar: panel İnceleme'ye geçişte kalkar
+      await dlg.locator('[data-slot="mcert-analyze"]').click()
+      await expect(panel).toBeVisible()
+      await dlg.locator('[data-slot="mcert-wizard"][data-step="review"]').waitFor({ timeout: 15_000 })
+      await expect(panel).toHaveCount(0)
+      expect(analyzeCalls, 'iki analiz isteği (biri kesildi)').toBe(2)
     })
   })
 }

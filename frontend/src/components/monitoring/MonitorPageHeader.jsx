@@ -158,9 +158,11 @@ export default function MonitorPageHeader({
   const actions = showActions ? (
     <>
       {/* Araç kümesi TEK çocuk: telefonda PageHeader çocukları satırı eşit paylaştırır (flex-1) — küme bir satırı
-          doldurur, içinde Şimdi Kontrol Et esner, ikon düğmeler 40 px kalır. ≥640 px'te küme sarabilir (max-w-full). */}
+          doldurur, içinde Şimdi Kontrol Et esner, ikon düğmeler 40 px kalır. Küme HER boyda sarar (2026-10-08, canlı tur:
+          Alan Adı İzleme'de dışa aktarma + kayıtlı görünümler + "Şimdi Kontrol Et (N)" ile "Diğer işlemler" düğmesi
+          telefonda ekranın sağına taşıyordu — e2e/monitor-header-phone.spec.js). */}
       <div data-slot="monitor-header-tools"
-        className="flex min-w-0 max-w-full items-center gap-2 sm:flex-wrap sm:justify-end">
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end">
         {onRefresh && (
           <SimpleTooltip content={t('mon.hdr.refreshTip')}>
             <Button type="button" variant="outline" onClick={onRefresh} aria-label={t('app.refresh')}

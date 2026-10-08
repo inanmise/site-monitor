@@ -1170,7 +1170,8 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"pasif\",\"password\":\"yanlis\"}"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("Invalid username or password"))
+                // 2026-10-08: genel ileti istek dilinde (X-Lang yok → tr); metin her kimlik hatasında AYNI
+                .andExpect(jsonPath("$.error").value(AuthController.invalidCredentialsMessage()))
                 .andExpect(jsonPath("$.code").doesNotExist())
                 .andExpect(jsonPath("$.error_code").doesNotExist());
 

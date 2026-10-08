@@ -1,6 +1,7 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import { isKnownAppPath } from './utils/appRoutes.js'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { DialogProvider } from './components/ui/Dialog.jsx'
 import { ToastProvider } from './components/ui/Toast.jsx'
@@ -22,6 +23,12 @@ migrateStorageKeys()
 // tercih de okunur). Türkçe sözlük açılış paketinde; Türkçe kullanıcı için ek istek yok.
 preloadStoredLanguage()
 
+// Markalı 404 (2026-10-08): uygulama yalnız `/` (ve `/index.html`) yolunda açılır; sunucu bilinmeyen bir yola da aynı
+// kabuğu HTTP 404 ile döndürür. O durumda App (ve oturum açılışı /api/me) HİÇ başlamaz — herkese açık 404 sayfası çizilir.
+// Sayfa tembel parça: normal açılışta indirilmez.
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage.jsx'))
+const unknownPath = !isKnownAppPath(window.location.pathname)
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ThemeProvider>
@@ -36,7 +43,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               {/* Duyuru şeridi App'in İÇİNDE (içerik kolonunda) render edilir — burada olduğunda
                   tüm viewport'u kaplayıp sol menüdeki logonun üstüne çıkıyordu. */}
               <ErrorBoundary>
-                <App />
+                {unknownPath
+                  ? <Suspense fallback={null}><NotFoundPage /></Suspense>
+                  : <App />}
               </ErrorBoundary>
             </DialogProvider>
           </ToastProvider>

@@ -1181,6 +1181,8 @@ The security and compliance trail, open to global administrators and auditors on
 
 Where reports submitted through **Report a Problem** land, including those left by users who could not sign in. Each report carries the description, screenshots, the browser and the client address. Reports can be acknowledged and resolved, and a daily digest can be emailed.
 
+**Error messages and request id (8 October 2026).** Every error in the application says what happened, the likely cause and what to do next; network loss, timeouts and missing permissions are each explained on their own. The **Technical details** section under an error shows the HTTP status, the error code and the **request id**; copy that id into your report and the administrators can find the entry in the server log at once. Going to an address that does not exist opens Site Monitor's own 404 page, with links back to the home page and the most used pages.
+
 ### 14.24 Admin Panel
 
 The everyday administration screen, divided into sub-tabs:

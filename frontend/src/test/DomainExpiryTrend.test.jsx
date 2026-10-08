@@ -53,7 +53,7 @@ describe('DomainExpiryTrend', () => {
     await waitFor(() => expect(screen.getByText(/No days-left data/)).toBeInTheDocument())
     api.monitoring.getDomainTrend.mockResolvedValue({ success: false, error: 'boom' })
     rerender(<DomainExpiryTrend monitorId={7} days={30} reloadSignal={1} />)
-    await waitFor(() => expect(screen.getByText(/could not be loaded/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/couldn’t be loaded/)).toBeInTheDocument())
     expect(api.monitoring.getDomainTrend).toHaveBeenCalledTimes(3)
   })
 })

@@ -14,8 +14,14 @@ import {
   ACCEPT_ATTR, ACCEPT_EXTENSIONS, MAX_UPLOAD_MB, discouragedExtension, fileExtension, knownExtension, passwordLikely, sizeLabel,
 } from '../manualCertModel.js'
 
-/** BKS / UBER için yönerge komutu (dil bağımsız; yer tutucular büyük harf). */
-const BKS_COMMAND = 'keytool -exportcert -rfc -alias ALIAS -keystore truststore.bks -storetype BKS -providerpath bcprov.jar -provider org.bouncycastle.jce.provider.BouncyCastleProvider -file cert.pem'
+/**
+ * BKS / UBER için yönerge komutları (dil bağımsız; yer tutucular büyük harf / örnek dosya adı). 1) tüm depoyu PKCS#12'ye
+ * çevir (tarayıcı .p12'yi açar; anahtar yine tarayıcıda kalır), 2) tek sertifikayı anahtarsız PEM olarak dışa aktar.
+ */
+const BC_PROVIDER = '-providerpath bcprov.jar -provider org.bouncycastle.jce.provider.BouncyCastleProvider'
+const BKS_CONVERT_COMMAND = `keytool -importkeystore -srckeystore truststore.bks -srcstoretype BKS ${BC_PROVIDER} -destkeystore truststore.p12 -deststoretype PKCS12`
+const BKS_COMMAND = `keytool -exportcert -rfc -alias ALIAS -keystore truststore.bks -storetype BKS ${BC_PROVIDER} -file cert.pem`
+const CMD = 'block max-w-full overflow-x-auto rounded bg-muted px-2 py-1 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]'
 
 /**
  * Sihirbaz 1. adım — "Dosya" (2026-10-06). İki kaynak (SegmentedControl): dosya seç (sürükle-bırak alanı + gerçek dosya
@@ -27,10 +33,15 @@ const BKS_COMMAND = 'keytool -exportcert -rfc -alias ALIAS -keystore truststore.
  * dönüldü) "özel anahtar (N) tarayıcıda ayıklandı" notu (`mcert-kept-local`). BKS / UBER tarayıcıda açılamaz → alan hatası +
  * keytool yönergesi (`mcert-bks-help`).
  *
+ * <p>2026-10-08 (yükleme durumu): `disabled` — analiz koşarken dosya / metin / şifre değiştirilemez (ayıklanan sonuç ile
+ * ekrandaki dosya ayrışmasın); "Vazgeç" koşuyu durdurunca alanlar yeniden açılır. BKS yönergesi iki komut verir: depoyu
+ * PKCS#12'ye çevir ya da tek sertifikayı PEM olarak dışa aktar.
+ *
  * <p>Test kancaları: `mcert-dropzone` (+ `data-drag`), `mcert-file-input`, `mcert-file-chip`, `mcert-paste`, `mcert-password`.
  */
 export default function FileStep({
   source, onSource, file, onFile, text, onText, password, onPassword, passwordNeeded, fe, extraction = null, issue = null,
+  disabled = false,
 }) {
   const t = useT()
   const inputRef = useRef(null)
@@ -39,30 +50,30 @@ export default function FileStep({
   const showPassword = passwordNeeded || (source === 'file' && file && passwordLikely(file.name))
 
   const pick = (f) => {
-    if (!f) return
+    if (!f || disabled) return
     onFile(f)
     fe.clear('file')
   }
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <SegmentedControl value={source} onChange={(v) => { onSource(v); fe.clear('file'); fe.clear('text') }} ariaLabel={t('mcert.file.sourceLabel')}
+      <SegmentedControl value={source} onChange={(v) => { if (disabled) return; onSource(v); fe.clear('file'); fe.clear('text') }} ariaLabel={t('mcert.file.sourceLabel')}
         className="w-full sm:w-auto" itemClassName="flex-1 max-sm:h-10 pointer-coarse:h-10"
         options={[
-          { value: 'file', label: t('mcert.file.tabFile'), icon: FileUp },
-          { value: 'text', label: t('mcert.file.tabText'), icon: ClipboardPaste },
+          { value: 'file', label: t('mcert.file.tabFile'), icon: FileUp, disabled: disabled && source !== 'file' },
+          { value: 'text', label: t('mcert.file.tabText'), icon: ClipboardPaste, disabled: disabled && source !== 'text' },
         ]} />
 
       {source === 'file' ? (
         <div className="flex min-w-0 flex-col gap-2" data-field="file">
-          <div data-slot="mcert-dropzone" data-drag={drag ? 'true' : undefined}
-            onDragEnter={(e) => { e.preventDefault(); setDrag(true) }}
-            onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+          <div data-slot="mcert-dropzone" data-drag={drag ? 'true' : undefined} aria-disabled={disabled || undefined}
+            onDragEnter={(e) => { e.preventDefault(); if (!disabled) setDrag(true) }}
+            onDragOver={(e) => { e.preventDefault(); if (!disabled) setDrag(true) }}
             onDragLeave={() => setDrag(false)}
             onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer?.files?.[0]) }}
             className={cn('flex min-w-0 flex-col items-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors motion-reduce:transition-none sm:py-8',
               drag ? 'border-primary bg-primary/5' : 'border-border bg-muted/20',
-              fe.errors.file && 'border-destructive/60')}>
+              fe.errors.file && 'border-destructive/60', disabled && 'opacity-60')}>
             <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Upload className="size-6" />
             </span>
@@ -70,11 +81,11 @@ export default function FileStep({
               <p className="m-0 text-sm font-semibold">{t('mcert.file.dropTitle')}</p>
               <p className="m-0 text-xs text-muted-foreground">{t('mcert.file.dropHint', MAX_UPLOAD_MB)}</p>
             </div>
-            <Button type="button" variant="outline" className="h-10" onClick={() => inputRef.current?.click()}>
+            <Button type="button" variant="outline" className="h-10" disabled={disabled} onClick={() => inputRef.current?.click()}>
               <FileUp aria-hidden="true" />{t('mcert.file.choose')}
             </Button>
             <Input ref={inputRef} id={inputId} type="file" data-slot="mcert-file-input" accept={ACCEPT_ATTR} tabIndex={-1}
-              aria-label={t('mcert.file.choose')} className="sr-only"
+              aria-label={t('mcert.file.choose')} className="sr-only" disabled={disabled}
               onChange={(e) => { pick(e.target.files?.[0]); e.target.value = '' }} />
             <p className="m-0 flex flex-wrap justify-center gap-1">
               {ACCEPT_EXTENSIONS.filter((x) => x !== '.txt').map((x) => (
@@ -93,7 +104,7 @@ export default function FileStep({
                   {sizeLabel(file.size)}{fileExtension(file.name) ? ` · .${fileExtension(file.name)}` : ''}
                 </p>
               </div>
-              <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground"
+              <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground" disabled={disabled}
                 onClick={() => { onFile(null); fe.clear('file') }} aria-label={t('a11y.rowAction', file.name, t('mcert.file.remove'))}>
                 <X aria-hidden="true" />
               </Button>
@@ -112,7 +123,7 @@ export default function FileStep({
         <Field label={t('mcert.text.label')} hint={t('mcert.text.hint')} {...fe.fieldProps('text')} className="mb-0">
           {({ id, describedBy, invalid }) => (
             <Textarea id={id} data-slot="mcert-paste" aria-describedby={describedBy} aria-invalid={invalid} value={text} rows={8}
-              spellCheck={false} autoComplete="off" placeholder={t('mcert.text.placeholder')}
+              spellCheck={false} autoComplete="off" placeholder={t('mcert.text.placeholder')} readOnly={disabled}
               className="min-h-40 font-mono text-xs [overflow-wrap:anywhere] md:text-xs"
               onChange={(e) => { onText(e.target.value); fe.clear('text') }} />
           )}
@@ -122,8 +133,11 @@ export default function FileStep({
       {issue === 'BKS' && (
         <AlertBanner tone="info" className="mb-0" title={t('mcert.extract.bksTitle')}>
           <div data-slot="mcert-bks-help" className="flex min-w-0 flex-col gap-1.5">
+            <p className="m-0">{t('mcert.extract.bksConvert')}</p>
+            <code data-slot="mcert-bks-convert" className={CMD}>{BKS_CONVERT_COMMAND}</code>
             <p className="m-0">{t('mcert.extract.bksHow')}</p>
-            <code className="block max-w-full overflow-x-auto rounded bg-muted px-2 py-1 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{BKS_COMMAND}</code>
+            <code data-slot="mcert-bks-export" className={CMD}>{BKS_COMMAND}</code>
+            <p className="m-0 text-xs opacity-90">{t('mcert.extract.bksNote')}</p>
           </div>
         </AlertBanner>
       )}
@@ -134,7 +148,7 @@ export default function FileStep({
             <div className="relative flex min-w-0 items-center">
               <KeyRound aria-hidden="true" className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
               <Input id={id} type="password" data-slot="mcert-password" aria-describedby={describedBy} aria-invalid={invalid}
-                value={password} maxLength={256} autoComplete="new-password" spellCheck={false} className="pl-9"
+                value={password} maxLength={256} autoComplete="new-password" spellCheck={false} className="pl-9" readOnly={disabled}
                 onChange={(e) => { onPassword(e.target.value); fe.clear('password') }} />
             </div>
           )}

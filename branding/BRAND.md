@@ -11,10 +11,14 @@ boyutta** kullanılacağını tanımlar. Uygulama entegrasyonu `/logo-uygula` ko
 | `logo-{ok,warning,critical,muted}-1024.png` | Master'lar (şeffaf, kare tuval, 1024px) |
 | `logo-{durum}-{512,192,64,32}.png` | UI/PWA/navbar/favicon boyutları |
 | `email-{durum}.png` (320px) | E-postada 160px genişlikte @2x retina |
-| `favicon.ico` (16+32+48) | Varsayılan tarayıcı ikonu |
-| `apple-touch-icon.png` (180, opak beyaz) | iOS ana ekran |
+| `favicon.svg` | **Favicon master'ı** — turp logosunun küçük boyuta göre yeniden çizimi (§7) |
+| `favicon.ico` (16+32+48), `favicon-{16,32}.png` | Tarayıcı ikonu (SVG desteklemeyen istemciler) — `favicon.svg`'den üretilir |
+| `apple-touch-icon.png` (180, opak beyaz) | iOS ana ekran — `favicon.svg`'den üretilir |
+| `icon-{192,512}.png`, `icon-maskable-512.png`, `site.webmanifest` | PWA / Android ana ekran (§7) |
+| `favicon-sheet.png` | Favicon setinin açık/koyu zemin + 8x piksel kontrol sayfası (sunulmaz) |
 | `contact-sheet.png` | Açık/koyu zemin görsel kontrol sayfası |
-| `../tools/make_variants.py` | Tüm seti kaynak JPEG'den deterministik yeniden üretir |
+| `../tools/make_variants.py` | Logo setini kaynak JPEG'den deterministik yeniden üretir (favicon seti HARİÇ) |
+| `../tools/make_favicon.mjs` | Favicon + PWA setini `favicon.svg`'den üretir, sunulanları `frontend/public/`'e kopyalar |
 
 Şeffaflaştırma **yalnız dış arka plana** uygulanmıştır: yörünge şeridi, hekzagon içindeki grafik
 çizgisi ve nokta dolguları gibi iç beyazlar korunur — logo açık VE koyu temada bozulmadan çalışır.
@@ -48,7 +52,7 @@ ok/devre aksanlarıyla anlatılır. Böylece logo her durumda tanınır kalır (
 
 | Yer | Varyant | Boyut/format | Not |
 |---|---|---|---|
-| Tarayıcı favicon | dinamik `{durum}-32` | PNG swap (`link[rel=icon]`) | Sekmeden bakışta filo sağlığı — izleme ürünlerinde standart desen |
+| Tarayıcı favicon | `favicon.svg` (+ ico/png yedeği) | statik, §7 | Uygulama içinde daima nötr (kullanıcı kararı 2026-08-06); `useStatusFavicon('ok')` statik seti ezmez. Durum-duyarlı PNG swap (`{durum}-32`) hazır ama bağlı değil |
 | Navbar / üst bar | dinamik | 28–40px | Yanında rozet/sayı (renk körlüğü için renk tek sinyal OLMAZ) |
 | Login ekranı | `ok` (nötr) | 96–160px | Durum GÖSTERİLMEZ — henüz auth yok, bilgi sızdırma olur |
 | Yükleme/splash, boş durumlar | `muted` | 64–96px | |
@@ -59,7 +63,7 @@ ok/devre aksanlarıyla anlatılır. Böylece logo her durumda tanınır kalır (
 | Haftalık rapor / hatırlatma mailleri | `ok` | kart başlığında 32px | Nötr marka |
 | PDF dışa aktarımlar (jspdf) | `ok` | header, ~40px yükseklik | Rapor kapağında büyük kullanılabilir |
 | README / WHITEPAPER / docs | `ok` | 200px | Depo vitrini |
-| iOS/Android ana ekran, PWA | `ok` | apple-touch 180 / 192 / 512 | Statik — OS ikonları dinamik olamaz |
+| iOS/Android ana ekran, PWA | favicon master'ı | apple-touch 180 / 192 / 512 / maskable 512 | Statik — OS ikonları dinamik olamaz (§7) |
 
 **Kullanılmayacak yerler:** log satırları, k8s manifestleri, hata stack trace ekranları,
 tablo hücreleri gibi yoğun veri alanları. Logo bir durum LAMBASI değil, markadır; satır
@@ -133,4 +137,33 @@ Logo kaynağı değişirse:
 python3 branding/tools/make_variants.py <yeni-kaynak.jpg> branding/assets
 ```
 Script deterministiktir; tüm boyut ve varyantları yeniden üretir. Üretim sonrası
-`contact-sheet.png` açık/koyu zeminde gözle doğrulanır.
+`contact-sheet.png` açık/koyu zeminde gözle doğrulanır. Favicon seti bu betikle DEĞİL, §7'deki
+`make_favicon.mjs` ile üretilir.
+
+## 7. Favicon ve uygulama ikonları (2026-10-08)
+
+Ayrıntılı logo (hekzagon grafiği, devre uçları, yıldızlar) 16–32 px'te okunmaz bir lekeye dönüyordu.
+Favicon bu yüzden **aynı turp işaretinin küçük boyuta göre yeniden çizimidir** — yeni bir logo değil:
+
+- **Master:** `branding/assets/favicon.svg` (64×64 viewBox, elle yazılmış vektör). Mor yuvarlak gövde
+  `#813387` (SABİT), üç yeşil yaprak `#64A64F` (orta yaprak bir ton koyu, derinlik için), yeşil kök ucu,
+  gövdede beyaz izleme nabzı ve arkasında açık mor hekzagon aksanı.
+- **Küçük boyut kuralı:** SVG'nin kendi `@media (max-width: 24px)` kuralı 24 px ve altında ince ayrıntıyı
+  (hekzagon, parlama, uç noktası) gizler ve nabız çizgisini kalınlaştırır — 16 px'te siluet (mor top +
+  yeşil taç) ve tek beyaz nabız kalır.
+- **Koyu tarayıcı teması:** `prefers-color-scheme: dark`'ta gövdenin çevresine soluk bir kenar (`#F3E6F4`)
+  çizilir; koyu sekme şeridinde gövde kaybolmaz. Gövde rengi DEĞİŞMEZ (§2 temel ilke).
+- **Üretim:** `node branding/tools/make_favicon.mjs` — master'ı frontend'in Playwright Chromium'uyla
+  rasterleştirir (Python görüntü kütüphanesi gerekmez): `favicon.ico` (16/32/48, PNG çerçeveli),
+  `favicon-{16,32}.png`, `apple-touch-icon.png` (180, opak beyaz), `icon-{192,512}.png` (şeffaf),
+  `icon-maskable-512.png` (beyaz zemin, işaret %72 — Android'in %80 güvenli dairesi içinde),
+  `site.webmanifest` ve kontrol sayfası `favicon-sheet.png`. Sunulan dokuz dosya `frontend/public/`'e
+  kopyalanır. Master değişince betik yeniden koşulur, `favicon-sheet.png` gözle doğrulanır.
+- **Bağlantılar (`frontend/index.html`):** `favicon.ico` (sizes 32x32) + `favicon.svg` (image/svg+xml) +
+  `apple-touch-icon.png` + `site.webmanifest`; `theme-color` açıkta `#813387`, koyuda uygulama zemini.
+  Spring manifest'i `application/manifest+json` ile sunar (`server.mime-mappings.webmanifest`).
+- **Uygulama içi:** favicon daima nötrdür; `useStatusFavicon('ok')` statik seti olduğu gibi bırakır. Durum
+  varyantına (`/brand/logo-{durum}-32.png`) geçiş altyapısı hazır ama bağlı değil (§4).
+- **E-posta CID logoları değişmez** (§5.1) — favicon yalnız tarayıcı/OS ikonudur.
+- Bekçi: `frontend/src/test/brand-default.test.jsx` (dosyalar, boyutlar, ICO çerçeveleri, manifest,
+  `index.html` bağlantıları, master'ın marka renkleri).

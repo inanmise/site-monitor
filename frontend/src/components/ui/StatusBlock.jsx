@@ -1,5 +1,6 @@
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from '@/components/shadcn/empty'
 import { cn } from '@/lib/utils'
+import ErrorDetails from './ErrorDetails.jsx'
 
 /**
  * Ortalanmış durum bloğu — boş liste, hata ekranı, "sonuç yok" gibi tam-bölüm durumları.
@@ -14,6 +15,9 @@ import { cn } from '@/lib/utils'
  *
  * Saf sunum: metinler ve ikon dışarıdan gelir, içinde useT() yoktur.
  * Test kancası: kök `data-slot="empty"` + `data-tone`.
+ *
+ * `details` (2026-10-08): `danger` tonunda katlanır "Teknik ayrıntı" — verilmezse düz string `description` için
+ * istemcinin metin→künye kaydından bulunur (ErrorDetails); künye yoksa hiçbir şey çizilmez.
  */
 const TONE_INK = {
   neutral: 'text-muted-foreground',
@@ -23,9 +27,10 @@ const TONE_INK = {
 }
 
 export default function StatusBlock({
-  tone = 'neutral', icon: Icon, title, description, actions, children, role, loading = false, className = '',
+  tone = 'neutral', icon: Icon, title, description, actions, children, role, loading = false, className = '', details,
 }) {
   const key = TONE_INK[tone] ? tone : 'neutral'
+  const showDetails = key === 'danger' && (details != null || typeof description === 'string')
   return (
     <Empty
       role={role}
@@ -41,6 +46,10 @@ export default function StatusBlock({
           )}
           {title && <EmptyTitle className="text-[1.2em] font-semibold">{title}</EmptyTitle>}
           {description && <EmptyDescription>{description}</EmptyDescription>}
+          {showDetails && (
+            <ErrorDetails info={details} message={typeof description === 'string' ? description : undefined}
+              className="max-w-md text-left" />
+          )}
         </EmptyHeader>
       )}
       {actions && <EmptyContent className="max-w-none flex-row flex-wrap justify-center gap-2">{actions}</EmptyContent>}

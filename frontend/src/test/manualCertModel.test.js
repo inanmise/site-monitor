@@ -93,7 +93,11 @@ describe('manualCertModel — uyarı kodları', () => {
     }
   })
   it('warningText adlı yer tutucuları doldurur; boş değer "—"; bilinmeyen kod ham anahtar yerine genel metin', () => {
-    expect(warningText(t, { code: 'WEAK_KEY', params: { algorithm: 'RSA', size: 1024 } })).toBe('Zayıf anahtar: RSA 1024 bit.')
+    // 2026-10-08: uyarı ne olduğunu VE yapılacak şeyi söyler (zayıf anahtar → yeni CSR)
+    const weak = warningText(t, { code: 'WEAK_KEY', params: { algorithm: 'RSA', size: 1024 } })
+    expect(weak.startsWith('Zayıf anahtar: RSA 1024 bit.')).toBe(true)
+    expect(weak).toContain('RSA 2048')
+    expect(weak).not.toMatch(/\{\w+\}/)
     expect(warningText(t, { code: 'SAN_CHANGED', params: { added: 'a.example.test', removed: '' } })).toContain('çıkarılan: —')
     expect(warningText(t, { code: 'NOPE' })).toBe('Uyarı: NOPE')
   })

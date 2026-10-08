@@ -220,7 +220,7 @@ describe('DomainRegistrationTab — veri akışı', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^(Yenile|Refresh)$/ }))
     await waitFor(() => expect(onLiveRecord).toHaveBeenCalledWith(rdap))
     expect(api.monitoring.getDomainRegistration).toHaveBeenCalledWith(7, { live: true })
-    expect(await screen.findByText('Couldn’t load the reminders.')).toBeInTheDocument()
+    expect(await screen.findByText('The reminder history couldn’t be loaded. Close and reopen the dialog to try again.')).toBeInTheDocument()
     expect(screen.queryByText('No reminder has been sent for this expiry yet.')).toBeNull()
   })
 

@@ -7,6 +7,9 @@ import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCover
 import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventoryEvent.js'
 import { assignLocation, isAccountInactivePayload, signalAccountInactive } from '../utils/accountInactive.js'
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
+import {
+  ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, rememberErrorInfo,
+} from '../utils/errorMessages.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur.
@@ -19,18 +22,61 @@ function uiLang() {
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
-function nonJsonErrorPayload(status) {
-  return {
+/** Yanıt başlığı — test sahtelerinde `headers` olmayabilir. */
+function headerOf(res, name) {
+  try { return res?.headers?.get?.(name) ?? null } catch { return null }
+}
+
+/**
+ * JSON olmayan yanıt (proxy HTML hata sayfası / boş gövde) → açıklayıcı yük (2026-10-08: eskiden "Hata (HTTP 502)",
+ * "Geçersiz yanıt" gibi ne olduğunu da ne yapılacağını da söylemeyen ve İngilizce arayüzde de Türkçe çıkan metinler).
+ */
+function nonJsonErrorPayload(status, res) {
+  const body = {
     success: false,
     status,
-    error:
-      status === 504 ? 'Gateway timeout — sunucu yanıt vermedi'
-    : status === 502 ? 'Bad gateway — sunucu erişilemiyor'
-    : status === 503 ? 'Servis kullanılamıyor'
-    : status >= 500  ? `Sunucu hatası (HTTP ${status})`
-    : status >= 400  ? `Hata (HTTP ${status})`
-    :                  'Geçersiz yanıt',
+    error: nonJsonMessage(status, { lang: uiLang(), retryAfter: headerOf(res, 'Retry-After') }),
+    code: status >= 400 ? `HTTP_${status}` : 'NON_JSON_RESPONSE',
   }
+  const info = errorInfoOf({ ...body, requestId: headerOf(res, 'X-Request-Id') })
+  attachErrorInfo(body, info)
+  rememberErrorInfo(body.error, info)
+  return body
+}
+
+/** Yanıt gelmedi (zaman aşımı / iptal) → yumuşak yük; `kind` 'timeout' | 'aborted'. */
+function noResponsePayload(kind) {
+  const body = {
+    success: false,
+    status: 0,
+    error: networkMessage({ lang: uiLang(), kind }),
+    code: kind === 'aborted' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
+  }
+  const info = { status: 0, code: body.code }
+  attachErrorInfo(body, info)
+  rememberErrorInfo(body.error, info)
+  return body
+}
+
+/** Ağ hatası (sunucuya hiç ulaşılamadı) → kullanıcıya hazır metinli `ApiError` (eskiden ham "Failed to fetch"). */
+function networkError(cause) {
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+  const err = new ApiError(networkMessage({ lang: uiLang(), kind: 'network', offline }), {
+    status: 0, code: offline ? 'OFFLINE' : 'NETWORK_ERROR', kind: 'network', cause,
+  })
+  rememberErrorInfo(err.message, { status: 0, code: err.code })
+  return err
+}
+
+/** İptal sinyalinin nedeni zaman sınırı mı (deadlineSignal) yoksa çağıranın kendisi mi? */
+function abortKind(signal) {
+  if (!signal?.aborted) return 'timeout'          // fetchWithTimeout'un kendi zamanlayıcısı
+  return signal.reason?.name === 'TimeoutError' ? 'timeout' : 'aborted'
+}
+
+/** HTTP hata yanıtı mı (≥ 400)? Test sahteleri `ok` taşımayabilir; durum kodu esastır. */
+function isHttpError(res) {
+  return typeof res?.status === 'number' ? res.status >= 400 : res?.ok === false
 }
 
 /**
@@ -63,10 +109,14 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
 function deadlineSignal(signal, ms) {
   if (typeof AbortController === 'undefined') return { signal, done: () => {} }
   const c = new AbortController()
-  const timer = setTimeout(() => c.abort(), ms)
-  const onAbort = () => c.abort()
+  // Neden taşınır (2026-10-08): süre dolması "zaman aşımı", çağıranın iptali "iptal edildi" metnini alsın (abortKind).
+  const timeoutReason = () => {
+    try { return new DOMException('deadline', 'TimeoutError') } catch { return Object.assign(new Error('deadline'), { name: 'TimeoutError' }) }
+  }
+  const timer = setTimeout(() => c.abort(timeoutReason()), ms)
+  const onAbort = () => c.abort(signal.reason)
   if (signal) {
-    if (signal.aborted) c.abort()
+    if (signal.aborted) c.abort(signal.reason)
     else signal.addEventListener('abort', onAbort, { once: true })
   }
   return { signal: c.signal, done: () => { clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort) } }
@@ -106,26 +156,30 @@ async function request(path, options = {}) {
   // (getMe) açıkça bir timeout geçirir.
   // withStatus (isteğe bağlı): hata gövdesine HTTP durumu eklenir (`status`) — yalnız 403'ü ayırması gereken çağıranlar
   // için (7/24 arama listesi: 403 → salt okunur). Genel davranış DEĞİŞMEZ.
-  const { timeoutMs = 0, withStatus = false, ...opts } = options
+  // transport (isteğe bağlı, 2026-10-08): fetch yerine aynı sözleşmeli taşıyıcı (`xhrTransport` — yükleme ilerlemesi).
+  // Yanıtın işlenişi (401 / bakım / pasif hesap / JSON / withStatus / başarısız çağrı halkası) AYNEN aşağıdaki yoldan geçer.
+  const { timeoutMs = 0, withStatus = false, transport = null, ...opts } = options
   let res
   try {
-    res = await fetchWithTimeout(`${BASE}${path}`, {
+    const init = {
       credentials: 'include',
       // X-Lang: sunucu tost/hata metinlerini arayüz dilinde döner (backend Msg.t). Eskiden her
       // ayar sayfası İngilizce arayüzde Türkçe "Ayarlar kaydedildi…" basıyordu (QA ISSUE-001).
       headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...opts.headers },
       ...opts,
-    }, timeoutMs)
+    }
+    res = transport ? await transport(`${BASE}${path}`, init) : await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
   } catch (e) {
     // Timeout (abort) → asılı kalmak yerine yumuşak hata payload'ı döndür; böylece
     // çağıran (örn. App.jsx getMe.then) authChecked'i true yapıp login'i gösterir.
-    // Diğer ağ hataları mevcut davranışı korur (reject → çağıranın .catch'i).
-    if (e?.name === 'AbortError') {
+    // Diğer ağ hataları reject olmaya devam eder (çağıranın .catch'i) — ama ham "Failed to fetch" yerine kullanıcıya
+    // hazır metinli ApiError ile (status 0, code NETWORK_ERROR / OFFLINE; özgün hata `cause`ta).
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError') {
       recordFailure(path, 0)
-      return { success: false, status: 0, error: 'İstek zaman aşımına uğradı — sunucu yanıt vermedi' }
+      return noResponsePayload(e?.name === 'TimeoutError' ? 'timeout' : abortKind(opts.signal))
     }
     recordFailure(path, 0)
-    throw e
+    throw e instanceof ApiError ? e : networkError(e)
   }
   if (!res.ok) recordFailure(path, res.status)
   if (res.status === 401) {
@@ -164,10 +218,23 @@ async function request(path, options = {}) {
     json = await res.json()
   } catch {
     // Non-JSON response (HTML error page from proxy / empty body) — graceful fallback
-    return nonJsonErrorPayload(res.status)
+    return nonJsonErrorPayload(res.status, res)
   }
-  const plain = json != null && typeof json === 'object' && !Array.isArray(json)
+  let plain = json != null && typeof json === 'object' && !Array.isArray(json)
   if (withStatus && !res.ok && plain && json.status === undefined) json.status = res.status
+  // HTTP hata gövdesi (2026-10-08): anlamlı sunucu metni korunur; teknik/jenerik/eksik metin duruma göre açıklayıcı
+  // metne çevrilir; künye (durum · kod · istek kimliği) sayılamaz `errorInfo`da ve ortak bildirimin "Teknik ayrıntı"sında.
+  // Gövdeye sayılabilir `status` YİNE yalnız withStatus ile eklenir (yukarıda) — diğer uçların gövde şekli değişmez.
+  if (isHttpError(res)) {
+    json = normalizeErrorBody(json, {
+      status: res.status,
+      requestId: headerOf(res, 'X-Request-Id'),
+      retryAfter: headerOf(res, 'Retry-After'),
+      lang: uiLang(),
+      exposeStatus: false,
+    })
+    plain = true
+  }
   // 7/24 kapsamını değiştiren başarılı yazma → önbellekli yüzeyler (Pano şeridi, form seçenekleri) tazelensin
   if (res.ok && !(plain && json.success === false) && isNocCoverageWrite(path, opts)) announceNocCoverageChange()
   // Yeni kart doğuran başarılı yazma (ekle/aktar/geri yükle) → Genel Bakış o alan adının verisi gelene dek kısa aralıklarla tazelesin
@@ -190,13 +257,78 @@ async function otpPost(path, payload) {
     })
   } catch (e) {
     recordFailure(path, 0)
-    return { success: false, status: 0, networkError: true, timeout: e?.name === 'AbortError' }
+    const timeout = e?.name === 'AbortError'
+    return {
+      success: false, status: 0, networkError: true, timeout,
+      error: networkMessage({ lang: uiLang(), kind: timeout ? 'timeout' : 'network' }),
+    }
   }
   if (!r.ok) recordFailure(path, r.status)
   let body
-  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status) }
-  if (body == null || typeof body !== 'object' || Array.isArray(body)) body = nonJsonErrorPayload(r.status)
+  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
+  if (body == null || typeof body !== 'object' || Array.isArray(body)) body = nonJsonErrorPayload(r.status, r)
   return { ...body, status: r.status }
+}
+
+/**
+ * XMLHttpRequest taşıyıcısı (2026-10-08, manuel sertifika yükleme durumu): fetch'in veremediği GERÇEK yükleme ilerlemesi
+ * (`upload.onprogress`). `request()`'in `transport` kancasıyla kullanılır — 401 (oturum bitti / bakım / pasif hesap), JSON,
+ * withStatus, başarısız çağrı halkası işleyişi fetch yoluyla AYNIDIR. Dönen nesne Response'un request()'in kullandığı yüzü
+ * (`ok`, `status`, `headers.get`, `json()`). Ağ hatası TypeError, iptal (signal) AbortError olarak reddedilir (fetch gibi).
+ * İlerleme yalnız BAYT SAYISI taşır — gövde (sertifikalar) hiçbir yere yazılmaz.
+ *
+ * @param {{ onProgress?: Function, signal?: AbortSignal }} opts `onProgress({ phase: 'upload', loaded, total })` gövde
+ *   giderken, `onProgress({ phase: 'sent' })` gövde tamamen gönderildiğinde (artık sunucu işliyor)
+ */
+function xhrTransport({ onProgress, signal } = {}) {
+  return (url, init = {}) => new Promise((resolve, reject) => {
+    const abortError = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e }
+    if (signal?.aborted) { reject(abortError()); return }
+    const xhr = new XMLHttpRequest()
+    const onAbortSignal = () => { try { xhr.abort() } catch { /* yok */ } }
+    const cleanup = () => { try { signal?.removeEventListener?.('abort', onAbortSignal) } catch { /* yok */ } }
+    const report = (p) => { if (typeof onProgress === 'function') { try { onProgress(p) } catch { /* yok say */ } } }
+    xhr.open(init.method || 'GET', url, true)
+    xhr.withCredentials = init.credentials === 'include'
+    for (const [k, v] of Object.entries(init.headers || {})) { if (v != null) xhr.setRequestHeader(k, String(v)) }
+    // Yükleme dinleyicileri send()'den ÖNCE bağlanmalı (yoksa tarayıcı upload olaylarını hiç üretmez)
+    if (xhr.upload) {
+      xhr.upload.onprogress = (e) => report({ phase: 'upload', loaded: e.loaded, total: e.lengthComputable ? e.total : null })
+      xhr.upload.onload = () => report({ phase: 'sent' })
+    }
+    xhr.onload = () => {
+      cleanup()
+      const status = xhr.status
+      const text = xhr.responseText
+      resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: (n) => { try { return xhr.getResponseHeader(n) } catch { return null } } },
+        json: async () => JSON.parse(text),
+      })
+    }
+    xhr.onerror = () => { cleanup(); reject(new TypeError('Network request failed')) }
+    xhr.ontimeout = () => { cleanup(); reject(abortError()) }
+    xhr.onabort = () => { cleanup(); reject(abortError()) }
+    signal?.addEventListener?.('abort', onAbortSignal, { once: true })
+    xhr.send(init.body ?? null)
+  })
+}
+
+/**
+ * Manuel sertifika yükleme uçları (analiz / oluştur / toplu / yeni sürüm; 2026-10-08 yükleme durumu). `opts.onProgress`
+ * verilirse (sihirbaz) istek XMLHttpRequest ile gider — gerçek yükleme yüzdesi ({@link xhrTransport}); verilmezse fetch
+ * (aynı sonuç). `opts.signal` iptal eder → `{ success: false, status: 0, code: 'CANCELLED', cancelled: true }`. Sonuç
+ * biçimi iki yolda da `request()`'inki (`withStatus`: `{ success, status, code, error, errors, data }`; 401'de null).
+ */
+async function manualUpload(path, formData, { onProgress, signal } = {}) {
+  const useXhr = typeof onProgress === 'function' && typeof XMLHttpRequest !== 'undefined'
+  const res = await request(path, {
+    method: 'POST', body: formData, withStatus: true,
+    ...(useXhr ? { transport: xhrTransport({ onProgress, signal }) } : signal ? { signal } : {}),
+  })
+  if (signal?.aborted && res && res.success !== true) return { success: false, status: 0, code: 'CANCELLED', cancelled: true }
+  return res
 }
 
 export const api = {
@@ -303,7 +435,9 @@ export const api = {
       r = await fetchWithTimeout(`${BASE}/login`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        // X-Lang (2026-10-08): giriş hata metni de arayüz dilinde gelsin — başlık yokken sunucu tarayıcının
+        // Accept-Language'ına düşüyor, İngilizce arayüzde Türkçe "hatalı parola" çıkabiliyordu.
+        headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
         body: JSON.stringify({
           username, password,
           remember_me: String(rememberMe),
@@ -312,16 +446,16 @@ export const api = {
       })
     } catch (e) {
       // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
+      const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
       return {
         success: false,
         status: 0,
-        error: e?.name === 'AbortError'
-          ? 'Giriş zaman aşımına uğradı — sunucu yanıt vermedi'
-          : 'Sunucuya ulaşılamadı (ağ hatası)',
+        networkError: kind === 'network',
+        error: networkMessage({ lang: uiLang(), kind }),
       }
     }
     let body
-    try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status) }
+    try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
     // Flag a successful login so the 401 handler in request() knows that any
     // subsequent 401 is a *lost* session (worth a hard reload to /?session=
     // expired), not the initial unauthenticated bootstrap.
@@ -423,7 +557,7 @@ export const api = {
     try {
       const res = await fetch(`${BASE}/login-help`, {
         method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
         body: JSON.stringify(dto),
       })
       let data = null
@@ -502,19 +636,20 @@ export const api = {
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
 
   // Manuel (dosyadan yüklenen) sertifikalar (2026-10-06): ağ üzerinden erişilemeyen sertifika dosyadan yüklenir, süresi
-  // ağdakilerle AYNI kurallarla izlenir. Yükleme uçları çok parçalı (FormData: file | text, password, …) — Content-Type'ı
-  // tarayıcı belirler, X-Lang yine gider. Şifre YALNIZ gövdede taşınır; burada hiçbir yere yazılmaz ve loglanmaz (başarısız
-  // çağrı halkasına yalnız yol + durum düşer). withStatus: 400 alan hataları / 409 kodları / 429 sınırı ayırt edilsin.
+  // ağdakilerle AYNI kurallarla izlenir. Yükleme uçları çok parçalı (FormData: yalnız `extracted` — tarayıcıda ayıklanan
+  // AÇIK sertifikalar — + ek alanlar) — Content-Type'ı tarayıcı belirler, X-Lang yine gider. Özel anahtar ve şifre gövdede
+  // YOKTUR (2026-10-08). withStatus: 400 alan hataları / 409 kodları / 429 sınırı ayırt edilsin. Yükleme uçlarının son
+  // argümanı `{ onProgress, signal }` (isteğe bağlı): gerçek yükleme yüzdesi (XMLHttpRequest) + "Vazgeç" ({@link manualUpload}).
   manualCerts: {
     /** Dosyayı çözümler — kayıt YAZMAZ (dakikada 30 sınırı). */
-    analyze: (formData) => request('/manual-certs/analyze', { method: 'POST', body: formData, withStatus: true }),
+    analyze: (formData, opts) => manualUpload('/manual-certs/analyze', formData, opts),
     /** Tek kayıt: yükleme alanları + ref + domain (takip adı) + inventory (JSON) + note. */
-    create: (formData) => request('/manual-certs', { method: 'POST', body: formData, withStatus: true }),
+    create: (formData, opts) => manualUpload('/manual-certs', formData, opts),
     /** Toplu (truststore): yükleme alanları + items [{ref, domain}] (en çok 20) + ortak inventory — hep ya da hiç. */
-    createBatch: (formData) => request('/manual-certs/batch', { method: 'POST', body: formData, withStatus: true }),
+    createBatch: (formData, opts) => manualUpload('/manual-certs/batch', formData, opts),
     /** Yeni sürüm: yükleme alanları + ref + note + confirm (daha eski bitişli sürüm için). */
-    renew: (inventoryId, formData) =>
-      request(`/manual-certs/${encodeURIComponent(inventoryId)}/versions`, { method: 'POST', body: formData, withStatus: true }),
+    renew: (inventoryId, formData, opts) =>
+      manualUpload(`/manual-certs/${encodeURIComponent(inventoryId)}/versions`, formData, opts),
     list: () => request('/manual-certs', { withStatus: true }),
     get: (inventoryId) => request(`/manual-certs/${encodeURIComponent(inventoryId)}`, { withStatus: true }),
     /** Şimdi yeniden değerlendir — ağsız; yalnız toparlanma (yeni alarm açmaz). */

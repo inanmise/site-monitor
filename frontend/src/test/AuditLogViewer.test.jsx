@@ -136,7 +136,7 @@ describe('AuditLogViewer', () => {
   it('özet ucu düşerse uyarı + yeniden dene (sessiz değil)', async () => {
     api.admin.getAuditStats.mockResolvedValue({ success: false })
     render(<AuditLogViewer />)
-    expect(await screen.findByText(/Özet yüklenemedi|summary could not be loaded/)).toBeInTheDocument()
+    expect(await screen.findByText(/Özet kartları yüklenemedi|summary cards couldn’t be loaded/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Yeniden dene|Retry/ }))
     await waitFor(() => expect(api.admin.getAuditStats).toHaveBeenCalledTimes(2))
   })

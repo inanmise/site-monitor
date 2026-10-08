@@ -65,10 +65,13 @@ export class Pkcs12FormatError extends Error {
  * @param {Uint8Array} der      PFX baytları
  * @param {string}     password kullanıcının girdiği parola ('' = girilmedi)
  * @param {SubtleCrypto|null} subtle WebCrypto (yoksa saf JS)
+ * @param {Function} [onProgress] ilerleme (2026-10-08): `{ phase: 'pkcs12', step: 'kdf' }` bütünlük anahtarı türetilirken,
+ *   `{ phase: 'pkcs12', step: 'decrypt' }` şifreli sertifika torbası çözülürken — parola / içerik TAŞIMAZ
  * @returns {Promise<{ entries: Array<{alias, key_entry, certs: Uint8Array[]}>, keys: number, needsPassword: boolean,
  *   passwordError: boolean, passwordUsed: boolean }>}
  */
-export async function readPkcs12(der, password, subtle) {
+export async function readPkcs12(der, password, subtle, onProgress) {
+  const report = (step) => { if (typeof onProgress === 'function') { try { onProgress({ phase: 'pkcs12', step }) } catch { /* yok say */ } } }
   const pfx = readTlv(der)
   const top = children(der, pfx)
   if (!is(top[0], UNIVERSAL, T.INTEGER) || int(der, top[0]) !== 3 || !isSeq(top[1])) throw new Pkcs12FormatError('version')
@@ -94,6 +97,7 @@ export async function readPkcs12(der, password, subtle) {
       const salt = octets(der, m[1])
       const iterations = m[2] ? int(der, m[2]) : 1
       if (iterations < 1 || iterations > MAX_ITERATIONS) throw new UnsupportedAlgorithmError('mac iterations')
+      report('kdf')
       for (const cand of candidates) {
         const key = pkcs12Kdf(hashName, bmpPassword(cand), salt, 3, iterations, expected.length)
         if (equalBytes(await hmac(hashName, key, authSafe, subtle), expected)) { verified = cand; break }
@@ -134,6 +138,7 @@ export async function readPkcs12(der, password, subtle) {
     }
   }
   let usedPassword = verified
+  let decryptReported = false
   const contents = readTlv(authSafe)
   for (const ci of children(authSafe, contents)) {
     const c = children(authSafe, ci)
@@ -148,6 +153,7 @@ export async function readPkcs12(der, password, subtle) {
     const eci = children(authSafe, ed[1])
     if (!eci[2] || !isCtx(eci[2], 0)) continue
     const encrypted = octets(authSafe, eci[2])
+    if (!decryptReported) { decryptReported = true; report('decrypt') }
     const tries = verified !== undefined ? [verified] : candidates
     let plain = null
     for (const cand of tries) {

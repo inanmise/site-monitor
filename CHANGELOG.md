@@ -15,6 +15,33 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.112.0] — 2026-10-08
+
+### Added
+- **Site Monitor'e özel 404 sayfası:** bilinmeyen bir adres gerçek HTTP 404 ile markalı sayfayı açar (tüm temalar,
+  telefona uygun): istenen adres, "Ana sayfaya dön" / "Geri" / "Yardım" ve sık kullanılan sayfalara kısa yollar.
+  Uygulama içinde bilinmeyen bir `?tab=` "Sayfa bulunamadı", rolün açamadığı bir sekme "Erişim yok" paneli gösterir
+  (eskiden boş sayfa). Bilinmeyen API adresi JSON 404, eksik dosya düz 404 döner.
+- **Her sayfada başlık ve açıklama:** 40 sekmenin, giriş, oturum, bakım, parola değiştirme ve 404 durumlarının tarayıcı
+  başlığı ("Sayfa · SiteMonitor") ve meta açıklaması, kullanıcının dilinde.
+- **Site Monitor'e özel favicon seti:** turp markasının küçük boyutlarda net okunan sürümü — SVG, ICO (16/32/48), iOS
+  ikonu, PWA ikonları (192/512, maskeli) ve uygulama bildirimi (`site.webmanifest`).
+- **Manuel yüklemede ilerleme durumu:** dosya okuma → tarayıcıda ayıklama (ZIP'te n / N dosya) → sunucuya gönderme
+  (gerçek yüzde) → analiz / kaydetme aşamaları, geçen süre ve "Vazgeç".
+- **Hata ayrıntısı:** hata bildirimlerinde açılır "Teknik ayrıntı" (HTTP durumu, hata kodu, istek kimliği); sunucu her
+  hatada istek kimliği döndürür ve günlüğe yazar — kullanıcı bildirdiğinde kayıt hemen bulunur.
+
+### Changed
+- **Hata mesajları baştan yazıldı:** her hata ne olduğunu, olası nedenini ve ne yapılacağını söyler (TR + EN). Ağ
+  kesintisi, zaman aşımı ve her HTTP durumu için açıklayıcı metin; teknik metin (Java sınıf adları, SQL, "Failed to
+  fetch") artık ekrana düşmez. Manuel sertifika sihirbazının hata mesajları (yanlış parola, BKS, ZIP sınırı, çakışan ad
+  …) somut adımlar içerir. Belirsiz hata metinlerini engelleyen kural testi eklendi.
+
+### Fixed
+- Alan Adı İzleme sayfasında telefonda "Diğer işlemler" düğmesi ekranın dışına taşıyordu.
+- Eksik bir statik dosyanın 404 yanıtı bir yıllık önbellek başlığıyla dönüyordu.
+- Haftalık rapor onay sayfasının alt bilgisinde kurum adı sabit yazılıydı.
+
 ## [20.111.0] — 2026-10-07
 
 ### Added
@@ -2376,7 +2403,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.111.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.0...HEAD
+[20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
 [20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
 [20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
 [20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0

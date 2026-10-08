@@ -8,8 +8,10 @@ import { LANDING_TAB_ORDER, landingTabOptions } from '../utils/landingTabs.js'
  * düşerdi; App'e eklenen yeni sekme de seçicide unutulmasın — Pano dışındaki HER geçerli sekme listede.
  */
 function validTabs() {
-  const src = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8')
-  const start = src.indexOf('const VALID_TABS = new Set([')
+  // VALID_TABS 2026-10-08'den beri tek kaynakta: utils/appRoutes.js
+  const src = fs.readFileSync(path.resolve(__dirname, '../utils/appRoutes.js'), 'utf8')
+  const start = src.indexOf('export const VALID_TABS = new Set([')
+  if (start < 0) throw new Error('VALID_TABS utils/appRoutes.js içinde bulunamadı')
   const body = src.slice(start, src.indexOf('])', start))
   return [...body.matchAll(/'([\w-]+)'/g)].map((m) => m[1])
 }

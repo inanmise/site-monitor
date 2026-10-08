@@ -191,7 +191,9 @@ public final class ExtractedUpload {
     }
 
     private static Invalid invalid(String tr, String en) {
-        return new Invalid(Msg.t("Gönderilen sertifika bilgisi geçersiz (" + tr + "). Dosyayı yeniden seçip analiz edin.",
-                "The submitted certificate data is invalid (" + en + "). Choose the file again and analyse it."));
+        return new Invalid(Msg.t("Gönderilen sertifika bilgisi geçersiz (" + tr + "). Genellikle sayfanın eski bir sürümü açık "
+                        + "kaldığında olur: sayfayı yenileyip (Ctrl+F5) dosyayı yeniden seçin ve analiz edin.",
+                "The submitted certificate data is invalid (" + en + "). This usually means an old version of the page is "
+                        + "still open: reload the page (Ctrl+F5), choose the file again and analyse it."));
     }
 }

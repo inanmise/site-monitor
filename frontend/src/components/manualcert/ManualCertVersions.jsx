@@ -11,6 +11,7 @@ import CopyButton from '../ui/CopyButton.jsx'
 import { dateOnly } from '../certcard/certCardModel.js'
 import { toUtc } from '../../utils/localDay.js'
 import { daysText, downloadFromUrl } from './manualCertModel.js'
+import { describeVersionDeleteFailure, technicalDetail } from './manualCertErrors.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -188,7 +189,7 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
     try {
       res = await api.manualCerts.deleteVersion(state.id, v.id)
     } catch (e) {
-      res = { success: false, error: e?.message }
+      res = { success: false, thrown: true, status: 0, code: e?.code || 'NETWORK_ERROR', error: e?.message }
     } finally {
       setDeletingId(null)
     }
@@ -198,7 +199,8 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
       return
     }
     if (res == null) return   // oturum düştü / bakım — istemci kendi akışını yürütür
-    toast.error(res.code === 'CURRENT_VERSION' ? t('mcert.ver.deleteCurrent') : (res.error || t('mcert.ver.deleteFailed')))
+    // 2026-10-08: neden + yapılacak şey (güncel sürüm / yok / yetki / sınır / ağ / sunucu); künye "Teknik ayrıntı"da
+    toast.error(describeVersionDeleteFailure(res, t), { details: technicalDetail(res) })
     if (res.code === 'CURRENT_VERSION' || res.status === 404) load({ silent: true })
   }
 

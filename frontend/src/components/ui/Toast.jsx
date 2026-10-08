@@ -4,6 +4,7 @@ import { toast as sonner } from 'sonner'
 import { Toaster } from '@/components/shadcn/sonner'
 import { Badge } from '@/components/shadcn/badge'
 import { useT } from '@/i18n/index.jsx'
+import ErrorDetails from './ErrorDetails.jsx'
 
 // globalThis pin (2026-09-26): Vite HMR bu dosyayı iki modül örneği olarak yükleyince (yığında iki farklı `?t=`) sağlayıcı
 // ile useToast ayrı context'lere düşüyor ve "useToast must be used within ToastProvider" ile çöküyordu — i18n/Sidebar deseni.
@@ -20,15 +21,29 @@ const MAX_VISIBLE = 4
  * <p>{@code data-toast-id} kutuyu bizim kimliğimize bağlar: Sonner'ın `<li>`'si kimlik taşımıyor,
  * gövdeye tıklayınca kapatma (aşağıda) hangi kaydı düşüreceğini buradan okur.
  */
-function ToastBody({ id, message, count }) {
+function ToastBody({ id, type, message, count, details, onHold }) {
   return (
-    <span data-toast-id={id} className="flex items-center gap-2">
-      <span className="min-w-0">{message}</span>
-      {count > 1 && (
-        <Badge variant="outline" className="border-current/30 text-current tabular-nums">×{count}</Badge>
+    <div data-toast-id={id} className="flex min-w-0 flex-col gap-1">
+      <span className="flex items-center gap-2">
+        <span className="min-w-0">{message}</span>
+        {count > 1 && (
+          <Badge variant="outline" className="border-current/30 text-current tabular-nums">×{count}</Badge>
+        )}
+      </span>
+      {/* Hata bildiriminde katlanır "Teknik ayrıntı" (2026-10-08): künye açıkça verildiyse o, yoksa istemcinin
+          metin→künye kaydı. Açılınca kutu kendiliğinden kapanmaz — kullanıcı okuyup kopyalayabilsin. */}
+      {type === 'error' && (
+        <ErrorDetails info={details} message={typeof message === 'string' ? message : undefined}
+          onOpenChange={(open) => { if (open) onHold?.() }} />
       )}
-    </span>
+    </div>
   )
+}
+
+/** `toast.error(msg, 4000)` (eski) ya da `toast.error(msg, { duration, details })` — details: gövde / ApiError / künye. */
+function splitOpts(opts, fallbackDuration) {
+  if (opts != null && typeof opts === 'object') return { duration: opts.duration ?? fallbackDuration, details: opts.details ?? null }
+  return { duration: opts ?? fallbackDuration, details: null }
 }
 
 /**
@@ -95,6 +110,12 @@ export function ToastProvider({ children }) {
     visible.current = visible.current.filter(x => x.id !== id)
   }, [clearTimer])
 
+  /** Kullanıcı kutuyla ilgileniyor ("Teknik ayrıntı" açıldı): kendiliğinden kapanma durur, X ile kapanır. */
+  const hold = useCallback((id) => {
+    clearTimer(id)
+    visible.current = visible.current.map(x => (x.id === id ? { ...x, held: true } : x))
+  }, [clearTimer])
+
   /**
    * Bildirim gösterir.
    *
@@ -109,15 +130,15 @@ export function ToastProvider({ children }) {
    * <p>Tavan da var: farklı mesajlar da olsa aynı anda {@code MAX_VISIBLE} kutudan fazlası
    * ekranı kaplar — en eskisi düşer (zamanlayıcısıyla birlikte).
    */
-  const show = useCallback((type, message, duration = 3500) => {
+  const show = useCallback((type, message, duration = 3500, details = null) => {
     const cur = visible.current
     const same = cur.find(x => x.type === type && x.message === message)
     let entry
     if (same) {
-      entry = { ...same, count: same.count + 1 }
+      entry = { ...same, count: same.count + 1, details: details ?? same.details }
       visible.current = cur.map(x => (x.id === same.id ? entry : x))
     } else {
-      entry = { id: `sm-toast-${++_seq}`, type, message, count: 1 }
+      entry = { id: `sm-toast-${++_seq}`, type, message, count: 1, details }
       const next = [...cur, entry]
       // Düşen kutunun zamanlayıcısı da ölmeli: kalsaydı ekranda olmayan bir kutu için işleyip
       // haritayı şişirirdi (unmount temizliğinin kapsamı da gereksiz yere büyürdü).
@@ -128,16 +149,19 @@ export function ToastProvider({ children }) {
       }
       visible.current = next
     }
-    sonner[type](<ToastBody id={entry.id} message={message} count={entry.count} />, {
-      id: entry.id,
-      toasterId,
-      duration: Infinity,
-      onDismiss: (st) => forget(st.id),
-    })
-    clearTimer(entry.id)                    // tekrar geldi → süre baştan
-    if (duration > 0) timers.current.set(entry.id, setTimeout(() => remove(entry.id), duration))
-    return entry.id
-  }, [clearTimer, forget, remove, toasterId])
+    const id = entry.id
+    sonner[type](
+      <ToastBody id={id} type={type} message={message} count={entry.count} details={entry.details} onHold={() => hold(id)} />, {
+        id,
+        toasterId,
+        duration: Infinity,
+        onDismiss: (st) => forget(st.id),
+      })
+    clearTimer(id)                          // tekrar geldi → süre baştan
+    // "Teknik ayrıntı" açıldıysa (held) kutu kullanıcı kapatana dek kalır — tekrar gelen aynı hata da süreyi kurmaz.
+    if (duration > 0 && !entry.held) timers.current.set(id, setTimeout(() => remove(id), duration))
+    return id
+  }, [clearTimer, forget, remove, toasterId, hold])
 
   // Unmount: bekleyen her zamanlayıcı iptal edilir — sağlayıcı gittikten sonra hiçbir
   // güncelleme tetiklenmemeli. Görünen bildirimler Sonner'ın global deposunda da kapatılır:
@@ -161,7 +185,8 @@ export function ToastProvider({ children }) {
    */
   const dismissFromClick = useCallback((e) => {
     const el = e.target instanceof Element ? e.target : null
-    if (!el || el.closest('[data-close-button]')) return
+    // "Teknik ayrıntı" aç/kopyala tıklaması kutuyu kapatmaz.
+    if (!el || el.closest('[data-close-button]') || el.closest('[data-slot="error-details"]')) return
     const id = el.closest('[data-sonner-toast]')?.querySelector('[data-toast-id]')?.getAttribute('data-toast-id')
     if (id) remove(id)
   }, [remove])
@@ -174,7 +199,7 @@ export function ToastProvider({ children }) {
    */
   const api = useMemo(() => ({
     success: (msg, d) => show('success', msg, d),
-    error:   (msg, d) => show('error',   msg, d ?? 5000),
+    error:   (msg, opts) => { const o = splitOpts(opts, 5000); return show('error', msg, o.duration, o.details) },
     info:    (msg, d) => show('info',    msg, d),
     dismiss: remove,
   }), [show, remove])
