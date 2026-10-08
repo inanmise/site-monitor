@@ -12,6 +12,7 @@
  * <p><b>UNKNOWN, FAIL DEĞİLDİR:</b> ölçülemeyen (OCSP'ye ulaşılamadı, HSTS isteği düştü) satır gri çizilir ve hükmü
  * bozmaz. Metinler i18n anahtarı + argüman olarak döner; bileşen çevirir (model `t` almaz).
  */
+import { revocationReason } from '../../utils/revocationInfo.js'
 
 /** Satır durumu — `data-status` değeri ve simge/ton seçimi. */
 export const ST = Object.freeze({ OK: 'ok', WARN: 'warn', FAIL: 'fail', UNKNOWN: 'unknown', INFO: 'info' })
@@ -192,9 +193,18 @@ export function buildSslGroups(data) {
   else if (cs === 'VALID' || cs === 'REVOKED') trust.push(row('chain', ST.OK, upload ? 'sslv.m.chain.ok' : 'sslv.chain.ok', [chainLen], { value: chainLen || null }))
   else trust.push(row('chain', ST.UNKNOWN, upload ? 'sslv.m.chain.unknown' : 'sslv.chain.unknown'))
 
+  // İptal (2026-10-08): "bilinmiyor" NEDENİNE göre ayrılır. Sertifikada OCSP/CRL adresi yoksa denetlenecek bir şey
+  // yoktur → bilgi satırı (INFO: sorun sayılmaz, "denetlenemedi" sayacına ve paydaya girmez); "OCSP/CRL hizmetine
+  // ulaşılamadı" yalnız adres var ama yanıt alınamadıysa söylenir.
   const rs = String(d.revocation_status || '').toUpperCase()
+  const why = revocationReason(d)
   if (rs === 'VALID') trust.push(row('revocation', ST.OK, 'sslv.rev.ok'))
   else if (rs === 'REVOKED') trust.push(row('revocation', ST.FAIL, 'sslv.rev.fail'))
+  else if (why === 'NO_ENDPOINTS') trust.push(row('revocation', ST.INFO, 'sslv.rev.noEndpoints'))
+  else if (why === 'UNSUPPORTED_SCHEME') trust.push(row('revocation', ST.UNKNOWN, 'sslv.rev.ldapOnly'))
+  else if (why === 'NO_ISSUER') trust.push(row('revocation', ST.UNKNOWN, 'sslv.rev.noIssuer'))
+  else if (why === 'NOT_CHECKED') trust.push(row('revocation', ST.UNKNOWN, 'sslv.rev.notChecked'))
+  else if (why === 'UNREACHABLE') trust.push(row('revocation', ST.UNKNOWN, 'sslv.rev.unknown'))
   else trust.push(row('revocation', ST.UNKNOWN, upload ? 'sslv.m.rev.unknown' : 'sslv.rev.unknown'))
 
   return [
@@ -224,7 +234,8 @@ export function buildVerdict(groups) {
   if (tone === ST.OK && (!expiry || expiry.status === ST.UNKNOWN)) tone = ST.UNKNOWN
   return {
     tone, problems, attention, advice,
-    total: rows.length,
+    // Bilgi satırı (INFO — ör. sertifikada iptal adresi yok) bir kontrol değildir: paydaya girmez.
+    total: rows.filter((r) => r.status !== ST.INFO).length,
     passed: rows.filter((r) => r.status === ST.OK).length,
     unknown: rows.filter((r) => r.status === ST.UNKNOWN).length,
   }

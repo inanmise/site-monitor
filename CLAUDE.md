@@ -146,6 +146,11 @@ Per-resource permission model layered on top of `systemRole` (`USER` / `AUDIT` /
 - TLS handshake fingerprint: `TLS_MODE=browser` forces TLS 1.2 + ALPN `[h2,http/1.1]` so WAFs (Akamai/F5/Imperva) don't RST. Switch to `default` only to debug.
 - Outbound proxy: `HTTP_PROXY_HOST`/`PORT` + `NO_PROXY` (suffix match) — applies to OCSP/CRL fetches too.
 - `ChainValidationService` does chain + OCSP (primary) + CRL (fallback) via BouncyCastle. CRL responses are Caffeine-cached (`CRL_CACHE_TTL_HOURS`).
+- **Revocation reason (2026-10-08, user request: "show the address fields even when empty, remove misleading warnings").**
+  - **Backend:** `checkRevocationDetailed` returns status + reason (`RevocationReason`: OCSP, CRL, NO_ENDPOINTS, UNSUPPORTED_SCHEME, UNREACHABLE, NO_ISSUER, NOT_CHECKED, PENDING) + attempts JSON. These are stored in `latest_checks` / `certificate_checks` `revocation_reason|revocation_detail`. The status verdict and the network calls are unchanged.
+  - **Health row:** NO_ENDPOINTS is NA (not an issue, no "check access" advice). The OCSP/CRL evidence keys are ALWAYS present; null renders "Sertifikada tanımlı değil".
+  - **Legacy rows:** with no reason, a read certificate (fingerprint present) with both addresses blank is treated as NO_ENDPOINTS (`RevocationReason.effective` = `utils/revocationInfo.js`).
+  - **Adding a reason or attempt code:** add TR+EN `hlth.revReason.*` / `hlth.revFail.*` and keep the JS list in sync (`revocationInfo.test.js` reads the Java constants).
 - **Bulk network outage detection**: if `NETWORK_ERROR_THRESHOLD` (default 0.50) of a run fails with network errors and at least `NETWORK_MIN_ERRORS` (3) failed, individual cert alarms for that run are suppressed and a single `NetworkOutageEvent` + admin email is raised instead. This is intentional — don't "fix" it by always alerting.
 - **Per-domain proxy override (`use_proxy`)**: `CertificateInventory.useProxy` (column `use_proxy`, default false) flips a single domain to go through `HTTP_PROXY_HOST/PORT`. `SchedulerService.runCheckForDomains` builds a `domain→forceProxy` map and calls `checkAsync(domain, port, forceProxy)`. Decision: `forceProxy && proxyEnabled() && !shouldBypassProxy(domain)`. Direct outbound stays the default — added so production can route a couple of WAF-quirky domains through the corporate proxy without dragging the rest along.
 

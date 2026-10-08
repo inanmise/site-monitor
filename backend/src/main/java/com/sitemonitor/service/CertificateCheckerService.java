@@ -417,6 +417,7 @@ public class CertificateCheckerService {
                     result.put("chain", Collections.emptyList());
                     result.put("fingerprint", null);
                     result.put("revocation_status", "UNKNOWN");
+                    result.put("revocation_reason", RevocationReason.NOT_CHECKED);   // hafif kontrol iptal SORGULAMAZ
                     result.put("trust_status", "UNKNOWN");
                 } else {
                     // Full chain analysis
@@ -431,8 +432,12 @@ public class CertificateCheckerService {
                     result.put("fingerprint", fingerprint);
 
                     // Revocation (OCSP then CRL)
-                    revocation = chainValidator.checkRevocation(peerCerts);
+                    // + NEDEN (2026-10-08): "UNKNOWN" tek başına sebebi söylemiyordu (adres yok / LDAP / ulaşılamadı).
+                    ChainValidationService.RevocationCheck rc = chainValidator.checkRevocationDetailed(peerCerts);
+                    revocation = rc != null && rc.status() != null ? rc.status() : "UNKNOWN";
                     result.put("revocation_status", revocation);
+                    if (rc != null && rc.reason() != null) result.put("revocation_reason", rc.reason());
+                    if (rc != null && rc.detail() != null) result.put("revocation_detail", rc.detail());
 
                     // If chain is broken due to intermediate expiry, override chain_status
                     if ("BROKEN".equals(chainInfo.get("chain_status")) && !"REVOKED".equals(revocation)) {

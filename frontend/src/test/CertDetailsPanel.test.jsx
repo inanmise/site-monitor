@@ -297,3 +297,22 @@ describe('CertDetailsPanel — TLS sürümü ve şifre takımı', () => {
     expect(field('cipher')).toBeNull()
   })
 })
+
+// 2026-10-08 (kullanıcı: "herhangi bir adres göremedim. O alanları boş da olsa ekleyelim, boş olduğunu bilelim")
+describe('CertDetailsPanel — OCSP/CRL adresi yok', () => {
+  it('okunmuş sertifikada adres yoksa Altyapı görünür, iki alan "Not defined in the certificate"; iptal çipi "No revocation address"', () => {
+    render(<CertDetailsPanel d={rich({ ocsp_url: null, crl_url: '', revocation_status: 'UNKNOWN' })} now={NOW} />)
+    expect(section('Infrastructure')).toBeInTheDocument()
+    for (const slot of ['ocsp', 'crl']) {
+      expect(within(field(slot)).getByText('Not defined in the certificate')).toHaveAttribute('data-slot', 'cert-detail-empty')
+    }
+    expect(within(field('revocation')).getByText('No revocation address')).toBeInTheDocument()
+    expect(screen.queryByText('Revocation status unknown')).toBeNull()
+  })
+
+  it('adres varken bağlantı gösterilir; adres var + bilinmiyor → "Revocation status unknown" (ulaşılamadı) kalır', () => {
+    render(<CertDetailsPanel d={rich({ revocation_status: 'UNKNOWN', revocation_reason: 'UNREACHABLE' })} now={NOW} />)
+    expect(within(field('ocsp')).getByRole('link', { name: /ocsp\.example\.com/ })).toBeInTheDocument()
+    expect(within(field('revocation')).getByText('Revocation status unknown')).toBeInTheDocument()
+  })
+})

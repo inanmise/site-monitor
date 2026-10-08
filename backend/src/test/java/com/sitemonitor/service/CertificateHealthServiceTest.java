@@ -557,15 +557,118 @@ class CertificateHealthServiceTest {
     // ── Kanıt ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Boş kanıt alanları ELENİR — arayüzde boş satır çizilmez")
-    void blankEvidenceIsDropped() {
+    @DisplayName("Boş kanıt alanları ELENİR — iptal satırının OCSP/CRL adresi HARİÇ: o ikisi boşken de var (null = sertifikada yok)")
+    void blankEvidenceIsDropped_exceptRevocationAddresses() {
         LatestCheck lc = healthy();
         lc.setOcspUrl(null);
         lc.setCrlUrl("   ");
+        lc.setChainDetails(null);
+
+        assertThat(row(lc, "chain").evidence()).doesNotContainKey("chain_details").containsEntry("raw", "VALID");
+        // 2026-10-08 (kullanıcı: "o alanları boş da olsa ekleyelim, boş olduğunu bilelim")
+        var r = row(lc, "revocation");
+        assertThat(r.evidence()).containsKey("ocsp_url").containsKey("crl_url");
+        assertThat(r.evidence().get("ocsp_url")).isNull();
+        assertThat(r.evidence().get("crl_url")).isNull();
+        assertThat(r.evidence()).containsEntry("raw", "VALID");
+    }
+
+    // ── İptal NEDENİ (2026-10-08): "UNKNOWN" sebebine göre ayrılır, yanıltıcı "erişimi kontrol edin" kalkar ──
+
+    @Test
+    @DisplayName("sertifikada OCSP/CRL adresi YOK → NA (sorun sayılmaz), 'erişimi kontrol edin' DENMEZ, adres alanları null")
+    void revocation_noEndpoints_isNotApplicable() {
+        LatestCheck lc = healthy();
+        lc.setFingerprint("AA:BB:CC");
+        lc.setRevocationStatus("UNKNOWN");
+        lc.setRevocationReason(RevocationReason.NO_ENDPOINTS);
+        var result = service.evaluate(lc, inv(), true);
+        var r = result.rows().stream().filter(x -> x.key().equals("revocation")).findFirst().orElseThrow();
+
+        assertThat(r.status()).isEqualTo(Status.NA);
+        assertThat(r.valueKey()).isEqualTo("revNoEndpoints");
+        assertThat(r.actionKey()).isEqualTo("none");
+        assertThat(r.evidence()).containsEntry("revocation_reason", "NO_ENDPOINTS").containsEntry("raw", "UNKNOWN")
+                .containsKey("ocsp_url").containsKey("crl_url");
+        assertThat(r.evidence().get("ocsp_url")).isNull();
+        assertThat(r.evidence().get("crl_url")).isNull();
+        // NA sayaca girmez — sağlıklı tabanda diğer her satır OK
+        assertThat(result.evaluatedCount()).isEqualTo(result.okCount());
+    }
+
+    @Test
+    @DisplayName("eski kayıt (neden yok): sertifika okunmuş + iki adres boş → NO_ENDPOINTS türetilir; okunmamışsa türetilmez")
+    void revocation_legacyRowDerivesNoEndpoints_onlyWhenCertificateRead() {
+        LatestCheck lc = healthy();
+        lc.setRevocationStatus("UNKNOWN");
+        lc.setFingerprint("AA:BB:CC");
+        var derived = row(lc, "revocation");
+        assertThat(derived.status()).isEqualTo(Status.NA);
+        assertThat(derived.evidence()).containsEntry("revocation_reason", "NO_ENDPOINTS");
+
+        lc.setFingerprint(null);   // sertifika okunamadı (hata satırı) — adresler bu yüzden boş, sertifikada yok değil
+        var notDerived = row(lc, "revocation");
+        assertThat(notDerived.status()).isEqualTo(Status.UNKNOWN);
+        assertThat(notDerived.valueKey()).isEqualTo("unverified");
+        assertThat(notDerived.evidence()).doesNotContainKey("revocation_reason");
+    }
+
+    @Test
+    @DisplayName("adres var ama ulaşılamadı → UNKNOWN + erişim önerisi + denemeler kanıtta")
+    void revocation_unreachable_keepsNetworkAdvice_withAttempts() {
+        LatestCheck lc = healthy();
+        lc.setFingerprint("AA:BB:CC");
+        lc.setRevocationStatus("UNKNOWN");
+        lc.setCrlUrl("http://crl.example.test/ca.crl");
+        lc.setRevocationReason(RevocationReason.UNREACHABLE);
+        lc.setRevocationDetail(RevocationReason.toJson(java.util.List.of(
+                new RevocationReason.Attempt("CRL", "http://crl.example.test/ca.crl", RevocationReason.FAIL_HTTP, 404))));
         var r = row(lc, "revocation");
 
-        assertThat(r.evidence()).doesNotContainKey("ocsp_url").doesNotContainKey("crl_url");
-        assertThat(r.evidence()).containsEntry("raw", "VALID");
+        assertThat(r.status()).isEqualTo(Status.UNKNOWN);
+        assertThat(r.valueKey()).isEqualTo("unverified");
+        assertThat(r.actionKey()).isEqualTo("checkNetworkAccess");
+        assertThat(r.evidence()).containsEntry("crl_url", "http://crl.example.test/ca.crl")
+                .containsEntry("revocation_reason", "UNREACHABLE");
+        @SuppressWarnings("unchecked")
+        var attempts = (java.util.List<java.util.Map<String, Object>>) r.evidence().get("revocation_attempts");
+        assertThat(attempts).singleElement().satisfies(a -> {
+            assertThat(a).containsEntry("via", "CRL").containsEntry("code", "HTTP").containsEntry("status", 404);
+        });
+    }
+
+    @Test
+    @DisplayName("diğer nedenler kendi açıklamasını alır: LDAP, veren yok, hafif kontrol, sorgu bekleniyor")
+    void revocation_otherReasons_mapToOwnKeys() {
+        record Case(String reason, String value, String action) { }
+        for (Case c : java.util.List.of(
+                new Case(RevocationReason.UNSUPPORTED_SCHEME, "revLdapOnly", "revLdapOnly"),
+                new Case(RevocationReason.NO_ISSUER, "unverified", "revNoIssuer"),
+                new Case(RevocationReason.NOT_CHECKED, "notChecked", "revFullCheck"),
+                new Case(RevocationReason.PENDING, "revPending", "revPending"))) {
+            LatestCheck lc = healthy();
+            lc.setFingerprint("AA:BB:CC");
+            lc.setRevocationStatus("UNKNOWN");
+            lc.setCrlUrl("ldap:///CN=CA?certificateRevocationList");
+            lc.setRevocationReason(c.reason());
+            var r = row(lc, "revocation");
+            assertThat(r.status()).as(c.reason()).isEqualTo(Status.UNKNOWN);
+            assertThat(r.valueKey()).as(c.reason()).isEqualTo(c.value());
+            assertThat(r.actionKey()).as(c.reason()).isEqualTo(c.action());
+        }
+    }
+
+    @Test
+    @DisplayName("VALID kaynağıyla gelir (OCSP/CRL) — durum ve öneri değişmez")
+    void revocation_validCarriesSource() {
+        LatestCheck lc = healthy();
+        lc.setRevocationReason(RevocationReason.OCSP);
+        lc.setOcspUrl("http://ocsp.example.test");
+        var r = row(lc, "revocation");
+        assertThat(r.status()).isEqualTo(Status.OK);
+        assertThat(r.valueKey()).isEqualTo("valid");
+        assertThat(r.actionKey()).isEqualTo("none");
+        assertThat(r.evidence()).containsEntry("revocation_reason", "OCSP");
     }
 
     @Test

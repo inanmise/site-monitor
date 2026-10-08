@@ -44,13 +44,15 @@ export default function SslCheckGroups({ groups }) {
       {groups.map((g) => {
         const Icon = GROUP_ICON[g.key] ?? ShieldCheck
         const passed = g.rows.filter((r) => r.status === ST.OK).length
+        // Bilgi satırı (INFO — ör. sertifikada iptal adresi yok) kontrol sayılmaz: "3/3 sorunsuz", "3/4" değil.
+        const checked = g.rows.filter((r) => r.status !== ST.INFO).length
         const headId = `${baseId}-${g.key}`
         return (
           <div key={g.key} data-slot="ssl-check-group" data-group={g.key} className="flex min-w-0 flex-col gap-2">
             <h4 id={headId} className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
               <Icon aria-hidden="true" className="size-3.5" />
               {t(`sslv.group.${g.key}`)}
-              <span className="ml-auto font-medium tracking-normal normal-case tabular-nums">{t('sslv.groupScore', passed, g.rows.length)}</span>
+              <span className="ml-auto font-medium tracking-normal normal-case tabular-nums">{t('sslv.groupScore', passed, checked)}</span>
             </h4>
             <ItemGroup aria-labelledby={headId} className="rounded-lg border bg-card">
               {g.rows.map((r, i) => (

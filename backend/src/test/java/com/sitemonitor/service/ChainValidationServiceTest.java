@@ -157,6 +157,106 @@ class ChainValidationServiceTest {
         assertThat(result).isEqualTo("UNKNOWN");
     }
 
+    // ── Iptal NEDENI (2026-10-08): UNKNOWN'un sebebi ayrilir — durum hukmu DEGISMEZ ──────────────────
+
+    @Test
+    @DisplayName("NEDEN: sertifikada OCSP/CRL adresi yok → NO_ENDPOINTS (ag cagrisi yok), durum yine UNKNOWN")
+    void revocationReason_noEndpoints() throws Exception {
+        Certificate[] chain = { generateCert("leaf.example.com", 90), generateCert("ca.example.com", 300) };
+        ChainValidationService.RevocationCheck rc = service.checkRevocationDetailed(chain);
+        assertThat(rc.status()).isEqualTo("UNKNOWN");
+        assertThat(rc.reason()).isEqualTo(RevocationReason.NO_ENDPOINTS);
+        assertThat(rc.detail()).isNull();
+        assertThat(service.revocationPrecheck(chain)).isEqualTo(rc);
+        assertThat(service.checkRevocation(chain)).as("eski API ayni durumu verir").isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("NEDEN: yalniz ldap:// CRL → UNSUPPORTED_SCHEME + adres denemelerde (SCHEME), indirme yok")
+    void revocationReason_ldapOnly() throws Exception {
+        String ldap = "ldap:///CN=Test%20CA,CN=CDP?certificateRevocationList";
+        Certificate[] chain = { generateCertWithCrlDp("leaf.example.com", ldap), generateCert("ca.example.com", 300) };
+        ChainValidationService.RevocationCheck rc = service.checkRevocationDetailed(chain);
+        assertThat(rc.status()).isEqualTo("UNKNOWN");
+        assertThat(rc.reason()).isEqualTo(RevocationReason.UNSUPPORTED_SCHEME);
+        assertThat(RevocationReason.parse(rc.detail())).singleElement().satisfies(a ->
+                assertThat(a).containsEntry("via", "CRL").containsEntry("url", ldap).containsEntry("code", "SCHEME"));
+    }
+
+    @Test
+    @DisplayName("NEDEN: http CRL var ama veren sertifika yok → NO_ISSUER (eski davranis: sorgu yok, UNKNOWN)")
+    void revocationReason_noIssuer() throws Exception {
+        Certificate[] chain = { generateCertWithCrlDp("leaf.example.com", "http://crl.example.com/x.crl") };
+        ChainValidationService.RevocationCheck rc = service.checkRevocationDetailed(chain);
+        assertThat(rc.status()).isEqualTo("UNKNOWN");
+        assertThat(rc.reason()).isEqualTo(RevocationReason.NO_ISSUER);
+    }
+
+    @Test
+    @DisplayName("NEDEN: http CRL 404 donerse UNREACHABLE + deneme {CRL, HTTP 404}; ldap komsusu SCHEME olarak eklenir")
+    void revocationReason_unreachableHttp404() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/missing.crl", ex -> { ex.sendResponseHeaders(404, -1); ex.close(); });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/missing.crl";
+            String ldap = "ldap:///CN=Test%20CA?certificateRevocationList";
+            Certificate[] chain = { generateCertWithCrlDp("leaf.example.com", ldap, url), generateCert("ca.example.com", 300) };
+            ChainValidationService.RevocationCheck rc = service.checkRevocationDetailed(chain);
+
+            assertThat(rc.status()).isEqualTo("UNKNOWN");
+            assertThat(rc.reason()).isEqualTo(RevocationReason.UNREACHABLE);
+            assertThat(RevocationReason.parse(rc.detail())).extracting(a -> a.get("code"), a -> a.get("status"))
+                    .containsExactly(org.assertj.core.groups.Tuple.tuple("SCHEME", null),
+                            org.assertj.core.groups.Tuple.tuple("HTTP", 404));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("NEDEN: CRL host'u cozulemiyor → UNREACHABLE + DNS")
+    void revocationReason_unresolvableHost_isDns() throws Exception {
+        Certificate[] chain = {
+            generateCertWithCrlDp("leaf.example.com", "http://" + TestHosts.UNRESOLVABLE + "/ca.crl"),
+            generateCert("ca.example.com", 300),
+        };
+        ChainValidationService.RevocationCheck rc = service.checkRevocationDetailed(chain);
+        assertThat(rc.reason()).isEqualTo(RevocationReason.UNREACHABLE);
+        assertThat(RevocationReason.parse(rc.detail())).singleElement()
+                .satisfies(a -> assertThat(a).containsEntry("code", "DNS"));
+    }
+
+    @Test
+    @DisplayName("NEDEN: CRL gercekten danisildiysa durum + kaynak CRL, deneme ayrintisi yok")
+    void revocationReason_consultedCrl() throws Exception {
+        String url = "http://crl.example.com/ok.crl";
+        X509Certificate leaf = generateCertWithCrlDp("leaf.example.com", url);
+        primeCrlCache(url, buildCrl(leaf, null));
+        ChainValidationService.RevocationCheck rc =
+                service.checkRevocationDetailed(new Certificate[]{ leaf, generateCert("ca.example.com", 300) });
+        assertThat(rc).isEqualTo(new ChainValidationService.RevocationCheck("VALID", RevocationReason.CRL, null));
+    }
+
+    @Test
+    @DisplayName("ag hatasi → deneme kodu: zaman asimi, HTTP kodu, red, vekil")
+    void revocationFailureCodes() {
+        assertThat(ChainValidationService.failure("CRL", "u", new java.net.SocketTimeoutException("connect timed out")).code())
+                .isEqualTo("TIMEOUT");
+        RevocationReason.Attempt http = ChainValidationService.failure("CRL", "u",
+                new java.io.IOException("Server returned HTTP response code: 403 for URL: http://x/a.crl"));
+        assertThat(http.code()).isEqualTo("HTTP");
+        assertThat(http.status()).isEqualTo(403);
+        assertThat(ChainValidationService.failure("OCSP", "u", new java.net.ConnectException("Connection refused")).code())
+                .isEqualTo("REFUSED");
+        assertThat(ChainValidationService.failure("OCSP", "u",
+                new java.io.IOException("Unable to tunnel through proxy. Proxy returns \"HTTP/1.1 403\"")).code())
+                .isIn("PROXY", "HTTP");
+        assertThat(ChainValidationService.failure("CRL", "u", new java.io.IOException("desteklenmeyen OCSP/CRL şeması: ldap")).code())
+                .isEqualTo("SCHEME");
+    }
+
     // ── CRL iptal durumu: "VALID" yalniz DANISILMIS listeye dayanir ────────────
 
     /**

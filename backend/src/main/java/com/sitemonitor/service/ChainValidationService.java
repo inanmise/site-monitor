@@ -231,21 +231,97 @@ public class ChainValidationService {
      * VALID, REVOKED veya UNKNOWN döner.
      */
     public String checkRevocation(java.security.cert.Certificate[] peerCerts) {
-        if (peerCerts.length < 2) return "UNKNOWN";
-        if (!(peerCerts[0] instanceof X509Certificate leaf)) return "UNKNOWN";
-        if (!(peerCerts[1] instanceof X509Certificate issuer)) return "UNKNOWN";
-
-        // Önce OCSP dene, olmazsa CRL'e geri düş
-        String ocspResult = checkOcsp(leaf, issuer);
-        if (!"UNKNOWN".equals(ocspResult)) return ocspResult;
-
-        return checkCrl(leaf);
+        return checkRevocationDetailed(peerCerts).status();
     }
 
-    private String checkOcsp(X509Certificate cert, X509Certificate issuer) {
+    /**
+     * İptal sorgusunun sonucu: durum (VALID | REVOKED | UNKNOWN) + NEDEN kodu ({@link RevocationReason}) + denemeler
+     * (yalnız ulaşılamadığında / desteklenmeyen şemada; kısa JSON, {@link RevocationReason#toJson}).
+     */
+    public record RevocationCheck(String status, String reason, String detail) {
+        public static RevocationCheck unknown(String reason, String detail) {
+            return new RevocationCheck("UNKNOWN", reason, detail);
+        }
+    }
+
+    /**
+     * Ağa ÇIKMADAN verilebilen sonuç (2026-10-08): sertifikada adres yok, adreslerin hiçbiri http/https değil ya da
+     * veren sertifika yok → kesin UNKNOWN + neden. Sorgu gerekiyorsa {@code null}. Elle yüklenen sertifikada önbellek /
+     * arka plan ısıtması bu durumları "sorgu bekleniyor" diye göstermesin diye ayrı çağrılabilir.
+     */
+    public RevocationCheck revocationPrecheck(java.security.cert.Certificate[] peerCerts) {
+        if (peerCerts == null || peerCerts.length == 0 || !(peerCerts[0] instanceof X509Certificate leaf)) {
+            return RevocationCheck.unknown(null, null);
+        }
+        String ocspUrl = getOcspUrl(leaf);
+        List<String> crlUrls = getCrlUrls(leaf);
+        if (ocspUrl == null && crlUrls.isEmpty()) return RevocationCheck.unknown(RevocationReason.NO_ENDPOINTS, null);
+        boolean anyHttp = RevocationReason.isHttpUrl(ocspUrl) || crlUrls.stream().anyMatch(RevocationReason::isHttpUrl);
+        if (!anyHttp) {
+            List<RevocationReason.Attempt> attempts = new ArrayList<>();
+            if (ocspUrl != null) attempts.add(new RevocationReason.Attempt("OCSP", ocspUrl, RevocationReason.FAIL_SCHEME, null));
+            for (String u : crlUrls) attempts.add(new RevocationReason.Attempt("CRL", u, RevocationReason.FAIL_SCHEME, null));
+            return RevocationCheck.unknown(RevocationReason.UNSUPPORTED_SCHEME, RevocationReason.toJson(attempts));
+        }
+        if (peerCerts.length < 2 || !(peerCerts[1] instanceof X509Certificate)) {
+            return RevocationCheck.unknown(RevocationReason.NO_ISSUER, null);
+        }
+        return null;
+    }
+
+    /**
+     * {@link #checkRevocation} ile AYNI sorgu ve AYNI durum; ayrıca neden + denemeler. Önce OCSP, olmazsa CRL.
+     * Ağ çağrısı sayısı değişmedi: ön karar verilebilen durumlarda eski kod da hiçbir indirme yapmıyordu.
+     */
+    public RevocationCheck checkRevocationDetailed(java.security.cert.Certificate[] peerCerts) {
+        RevocationCheck pre = revocationPrecheck(peerCerts);
+        if (pre != null) return pre;
+        X509Certificate leaf = (X509Certificate) peerCerts[0];
+        X509Certificate issuer = (X509Certificate) peerCerts[1];
+        List<RevocationReason.Attempt> attempts = new ArrayList<>();
+
+        // Önce OCSP dene, olmazsa CRL'e geri düş
+        String ocspResult = checkOcsp(leaf, issuer, attempts);
+        if (!"UNKNOWN".equals(ocspResult)) return new RevocationCheck(ocspResult, RevocationReason.OCSP, null);
+
+        String crlResult = checkCrl(leaf, attempts);
+        if (!"UNKNOWN".equals(crlResult)) return new RevocationCheck(crlResult, RevocationReason.CRL, null);
+        return RevocationCheck.unknown(RevocationReason.UNREACHABLE, RevocationReason.toJson(attempts));
+    }
+
+    /**
+     * Ağ hatası → deneme kodu. {@link HttpFailureDiagnostics#classify} ile aynı sınıflandırma; HttpURLConnection'ın
+     * "Server returned HTTP response code: 404" istisnası HTTP koduna çevrilir.
+     */
+    static RevocationReason.Attempt failure(String via, String url, Throwable e) {
+        String msg = e == null || e.getMessage() == null ? "" : e.getMessage();
+        java.util.regex.Matcher m = HTTP_CODE.matcher(msg);
+        if (m.find()) return new RevocationReason.Attempt(via, url, RevocationReason.FAIL_HTTP, Integer.valueOf(m.group(1)));
+        // HttpURLConnection 404'ü (ve nadir 410'u) "response code" yerine FileNotFoundException(url) diye fırlatır.
+        if (e instanceof java.io.FileNotFoundException) return new RevocationReason.Attempt(via, url, RevocationReason.FAIL_HTTP, 404);
+        if (msg.startsWith(UNSUPPORTED_SCHEME_MSG)) return new RevocationReason.Attempt(via, url, RevocationReason.FAIL_SCHEME, null);
+        String code = switch (HttpFailureDiagnostics.classify(e)) {
+            case SSRF_BLOCKED -> RevocationReason.FAIL_BLOCKED;
+            case DNS_UNRESOLVED -> RevocationReason.FAIL_DNS;
+            case CONNECT_TIMEOUT, RESPONSE_TIMEOUT -> RevocationReason.FAIL_TIMEOUT;
+            case CONNECT_REFUSED, HOST_UNREACHABLE -> RevocationReason.FAIL_REFUSED;
+            case PROXY_CONNECT, PROXY_AUTH -> RevocationReason.FAIL_PROXY;
+            case TLS_CERT_UNTRUSTED, TLS_HOSTNAME_MISMATCH, TLS_HANDSHAKE -> RevocationReason.FAIL_TLS;
+            case CONNECTION_RESET, CONNECTION_CLOSED, PROTOCOL_ERROR -> RevocationReason.FAIL_NETWORK;
+            default -> msg.toLowerCase(Locale.ROOT).contains("timed out") || msg.contains("süre")
+                    ? RevocationReason.FAIL_TIMEOUT : RevocationReason.FAIL_OTHER;
+        };
+        return new RevocationReason.Attempt(via, url, code, null);
+    }
+
+    private static final java.util.regex.Pattern HTTP_CODE =
+            java.util.regex.Pattern.compile("(?i)response code:\\s*(\\d{3})");
+    private static final String UNSUPPORTED_SCHEME_MSG = "desteklenmeyen OCSP/CRL şeması";
+
+    private String checkOcsp(X509Certificate cert, X509Certificate issuer, List<RevocationReason.Attempt> attempts) {
+        String ocspUrl = getOcspUrl(cert);
+        if (ocspUrl == null) return "UNKNOWN";
         try {
-            String ocspUrl = getOcspUrl(cert);
-            if (ocspUrl == null) return "UNKNOWN";
 
             DigestCalculatorProvider digCalcProv = new JcaDigestCalculatorProviderBuilder().build();
             CertificateID certId = new CertificateID(
@@ -276,20 +352,30 @@ public class ChainValidationService {
                     // (setReadTimeout okumalar ARASI süredir — sürekli akan bir gövdede hiç tetiklenmez).
                     OCSPResp response = new OCSPResp(
                             com.sitemonitor.util.HttpBodies.readCapped(is, MAX_OCSP_BYTES, "OCSP"));
-                    if (response.getStatus() != OCSPRespBuilder.SUCCESSFUL) return "UNKNOWN";
+                    if (response.getStatus() != OCSPRespBuilder.SUCCESSFUL) {
+                        // Yanıtlayıcı durumu (1 malformedRequest, 2 internalError, 3 tryLater, 5 sigRequired, 6 unauthorized)
+                        attempts.add(new RevocationReason.Attempt("OCSP", ocspUrl, RevocationReason.FAIL_BAD_RESPONSE, response.getStatus()));
+                        return "UNKNOWN";
+                    }
                     BasicOCSPResp basicResp = (BasicOCSPResp) response.getResponseObject();
-                    SingleResp[] singleResps = basicResp.getResponses();
-                    if (singleResps.length == 0) return "UNKNOWN";
+                    SingleResp[] singleResps = basicResp == null ? new SingleResp[0] : basicResp.getResponses();
+                    if (singleResps.length == 0) {
+                        attempts.add(new RevocationReason.Attempt("OCSP", ocspUrl, RevocationReason.FAIL_BAD_RESPONSE, null));
+                        return "UNKNOWN";
+                    }
                     CertificateStatus status = singleResps[0].getCertStatus();
                     if (status == CertificateStatus.GOOD) return "VALID";
                     if (status instanceof RevokedStatus) return "REVOKED";
                 }
+                // Yanıtlayıcı sertifikayı TANIMIYOR (UnknownStatus) — CRL'e düşülür.
+                attempts.add(new RevocationReason.Attempt("OCSP", ocspUrl, RevocationReason.FAIL_UNKNOWN_CERT, null));
                 return "UNKNOWN";
             } finally {
                 conn.disconnect();
             }
         } catch (Exception e) {
             log.debug("OCSP check failed: {}", e.getMessage());
+            attempts.add(failure("OCSP", ocspUrl, e));
             return "UNKNOWN";
         }
     }
@@ -312,13 +398,18 @@ public class ChainValidationService {
      */
     // Paket-gorunur: kapi testi (ChainValidationServiceTest) dogrudan cagirir.
     String checkCrl(X509Certificate cert) {
+        return checkCrl(cert, new ArrayList<>());
+    }
+
+    /** {@link #checkCrl(X509Certificate)} + indirilemeyen her dağıtım noktası için bir deneme kaydı. */
+    String checkCrl(X509Certificate cert, List<RevocationReason.Attempt> attempts) {
         try {
             boolean consulted = false;
             for (String url : getCrlUrls(cert)) {
                 // Herhangi bir cache kilidi tutmadan kontrol et; bloklamayı önlemek için ayrı indir
                 X509CRL crl = crlCache.getIfPresent(url);
                 if (crl == null) {
-                    crl = downloadCrl(url);
+                    crl = downloadCrl(url, attempts);
                     if (crl != null) crlCache.put(url, crl);
                 }
                 if (crl == null) continue;   // indirilemedi → bu listeye DANIŞILMADI
@@ -382,7 +473,7 @@ public class ChainValidationService {
         return urls;
     }
 
-    private X509CRL downloadCrl(String url) {
+    private X509CRL downloadCrl(String url, List<RevocationReason.Attempt> attempts) {
         // BEKLENEN durum, hata değil: AD ortamlarında CRL dağıtım noktası çoğu kez ldap:// olur ve
         // bu istemci yalnız http/https konuşur (guardTarget şema allow-list'i). Her kontrolde, her
         // iç sertifika için WARN basmak kalıcı gürültü üretiyordu — asıl indirme hataları bu
@@ -390,8 +481,10 @@ public class ChainValidationService {
         String scheme = url == null ? "" : url.toLowerCase(Locale.ROOT);
         if (!scheme.startsWith("http://") && !scheme.startsWith("https://")) {
             log.debug("CRL atlandı (desteklenmeyen şema): {}", url);
+            attempts.add(new RevocationReason.Attempt("CRL", url, RevocationReason.FAIL_SCHEME, null));
             return null;
         }
+        byte[] der;
         try {
             HttpURLConnection conn = openWithProxy(url);
             // TOPLAM süre (BO8): CRL adresi sertifikanın CRL-DP'sinden gelir; yavaş damlatan uç 5 MB'lık tavana
@@ -407,15 +500,23 @@ public class ChainValidationService {
                     // demekti. AYRICA: indirilen CRL crlCache'e giriyor ve cache 200 KAYIT
                     // tutuyor (bayt değil) — tavan olmadan 200 büyük liste heap'i tek başına
                     // doldurabilirdi. Gerçek CRL'ler çoğunlukla < 1 MB.
-                    byte[] der = com.sitemonitor.util.HttpBodies.readCapped(is, MAX_CRL_BYTES, "CRL");
-                    CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                    return (X509CRL) cf.generateCRL(new java.io.ByteArrayInputStream(der));
+                    der = com.sitemonitor.util.HttpBodies.readCapped(is, MAX_CRL_BYTES, "CRL");
                 }
             } finally {
                 conn.disconnect();
             }
         } catch (Exception e) {
             log.warn("CRL download failed {}: {}", url, e.getMessage());
+            attempts.add(failure("CRL", url, e));
+            return null;
+        }
+        // Ayrıştırma AYRI: indirilen gövde CRL değilse bu bir ağ hatası değil, "yanıt bozuk" denemesidir.
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            return (X509CRL) cf.generateCRL(new java.io.ByteArrayInputStream(der));
+        } catch (Exception e) {
+            log.warn("CRL download failed {}: {}", url, e.getMessage());
+            attempts.add(new RevocationReason.Attempt("CRL", url, RevocationReason.FAIL_BAD_RESPONSE, null));
             return null;
         }
     }

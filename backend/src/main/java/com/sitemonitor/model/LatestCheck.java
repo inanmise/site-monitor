@@ -39,6 +39,12 @@ public class LatestCheck {
     private String intermediateExpiry;
     private Integer intermediateDaysRemaining;
     private String revocationStatus;
+    /** İptal durumunun NEDENİ ({@code RevocationReason}: OCSP, CRL, NO_ENDPOINTS, UNREACHABLE…) — null = eski kayıt. */
+    @Column(length = 40)
+    private String revocationReason;
+    /** Ulaşılamayan / desteklenmeyen OCSP-CRL denemeleri (kısa JSON) — yalnız UNREACHABLE / UNSUPPORTED_SCHEME'de dolu. */
+    @Column(columnDefinition = "TEXT")
+    private String revocationDetail;
     /** TRUSTED / UNTRUSTED / UNKNOWN — zincir cacerts veya admin CA paketiyle güven köküne bağlanıyor mu. */
     private String trustStatus;
 

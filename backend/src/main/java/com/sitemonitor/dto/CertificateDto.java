@@ -151,6 +151,30 @@ public class CertificateDto {
         return this;
     }
 
+    /**
+     * İptal durumunun NEDENİ ({@code RevocationReason}: OCSP, CRL, NO_ENDPOINTS, UNSUPPORTED_SCHEME, UNREACHABLE…) ve
+     * ulaşılamayan denemeler (2026-10-08). Yalnız /history yolu ({@link #applyRevocation}) yazar — listeler şişmez.
+     */
+    @JsonProperty("revocation_reason")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String revocationReason;
+
+    @JsonProperty("revocation_attempts")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    private java.util.List<java.util.Map<String, Object>> revocationAttempts;
+
+    /**
+     * İptal nedeni + denemeler (yalnız /history yolu). Eski satırda neden yoksa sertifika okunmuş ve iki adres boşsa
+     * NO_ENDPOINTS türetilir ({@link com.sitemonitor.service.RevocationReason#effective}).
+     */
+    public CertificateDto applyRevocation(String storedReason, String detailJson) {
+        this.revocationReason = com.sitemonitor.service.RevocationReason.effective(storedReason, this.revocationStatus,
+                this.ocspUrl, this.crlUrl, this.fingerprint != null);
+        java.util.List<java.util.Map<String, Object>> attempts = com.sitemonitor.service.RevocationReason.parse(detailJson);
+        this.revocationAttempts = attempts.isEmpty() ? null : attempts;
+        return this;
+    }
+
     /** Criticality tier from inventory (1–4, null = unclassified) */
     private Integer tier;
 

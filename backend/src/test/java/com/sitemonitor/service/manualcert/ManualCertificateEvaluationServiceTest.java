@@ -9,6 +9,7 @@ import com.sitemonitor.service.CertificateCheckerService;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.ChainValidationService;
 import com.sitemonitor.service.EscalationService;
+import com.sitemonitor.service.RevocationReason;
 import com.sitemonitor.service.TrustEvaluator;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -138,7 +139,7 @@ class ManualCertificateEvaluationServiceTest {
         assertThat(r.get("chain_status")).isEqualTo("UNKNOWN");
         assertThat(r.get("trust_status")).isEqualTo("UNKNOWN");
         assertThat(r.get("revocation_status")).isEqualTo("UNKNOWN");
-        verify(chainValidator, never()).checkRevocation(any());
+        verify(chainValidator, never()).checkRevocationDetailed(any());
     }
 
     @Test
@@ -154,26 +155,45 @@ class ManualCertificateEvaluationServiceTest {
     @Test
     @DisplayName("iptal sorgusu parmak izi başına önbellekli (6 sa); hata → UNKNOWN; elle tetik CA'yı BEKLEMEZ")
     void revocationCached() {
-        doReturn("REVOKED").when(chainValidator).checkRevocation(any());
+        // Test sertifikalarında OCSP/CRL adresi yok → ön karar NO_ENDPOINTS olurdu; önbellek yolunu ölçmek için kapatılır.
+        doReturn(null).when(chainValidator).revocationPrecheck(any());
+        doReturn(new ChainValidationService.RevocationCheck("REVOKED", RevocationReason.OCSP, null))
+                .when(chainValidator).checkRevocationDetailed(any());
         CertificateInventory inv = manual(1, "api-takip");
         ManualCertificateVersion v = version(1, 1, chain.leaf(), chain.inter());
 
         Map<String, Object> manualTrigger = svc.buildResult(inv, v, false);   // önbellek boş, ısıtma yürütücüsü yok
         assertThat(manualTrigger.get("revocation_status")).isEqualTo("UNKNOWN");
-        verify(chainValidator, never()).checkRevocation(any());
+        assertThat(manualTrigger.get("revocation_reason")).as("sorgu henüz yapılmadı").isEqualTo(RevocationReason.PENDING);
+        verify(chainValidator, never()).checkRevocationDetailed(any());
 
         Map<String, Object> first = svc.buildResult(inv, v, true);
         Map<String, Object> second = svc.buildResult(inv, v, true);
         Map<String, Object> third = svc.buildResult(inv, v, false);
         assertThat(first.get("revocation_status")).isEqualTo("REVOKED");
+        assertThat(first.get("revocation_reason")).isEqualTo(RevocationReason.OCSP);
         assertThat(first.get("chain_status")).isEqualTo("REVOKED");
         assertThat(second.get("revocation_status")).isEqualTo("REVOKED");
         assertThat(third.get("revocation_status")).isEqualTo("REVOKED");
-        verify(chainValidator, times(1)).checkRevocation(any());
+        verify(chainValidator, times(1)).checkRevocationDetailed(any());
 
         ManualCertificateVersion other = version(2, 1, chain.inter(), chain.root());
-        doThrow(new RuntimeException("ocsp down")).when(chainValidator).checkRevocation(any());
+        doThrow(new RuntimeException("ocsp down")).when(chainValidator).checkRevocationDetailed(any());
         assertThat(svc.buildResult(manual(2, "ara"), other, true).get("revocation_status")).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("iptal NEDENİ (2026-10-08): sertifikada OCSP/CRL adresi yok → NO_ENDPOINTS, sorgu ve 'bekleniyor' YOK")
+    void revocation_noEndpoints_reportedWithoutQuery() {
+        CertificateInventory inv = manual(1, "api-takip");
+        ManualCertificateVersion v = version(1, 1, chain.leaf(), chain.inter(), chain.root());
+        for (boolean fetch : new boolean[]{ false, true }) {
+            Map<String, Object> r = svc.buildResult(inv, v, fetch);
+            assertThat(r.get("revocation_status")).isEqualTo("UNKNOWN");
+            assertThat(r.get("revocation_reason")).as("fetch=" + fetch).isEqualTo(RevocationReason.NO_ENDPOINTS);
+            assertThat(r).doesNotContainKey("revocation_detail");
+        }
+        verify(chainValidator, never()).checkRevocationDetailed(any());
     }
 
     @Test
@@ -261,7 +281,7 @@ class ManualCertificateEvaluationServiceTest {
         verify(certService, never()).evictAllCaches();
         verify(escalation, never()).resolveVerifiedStaleCertAlerts(anyList());
         verify(escalation, never()).processResults(anyList());
-        verify(chainValidator, never()).checkRevocation(any());
+        verify(chainValidator, never()).checkRevocationDetailed(any());
 
         when(versionRepo.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(6L)).thenReturn(Optional.empty());
         assertThat(svc.previewCurrent(manual(6, "surumsuz"))).isNull();
@@ -283,9 +303,11 @@ class ManualCertificateEvaluationServiceTest {
         List<Map<String, Object>> ch = (List<Map<String, Object>>) r.get("chain");
         assertThat(ch).extracting(m -> m.get("position")).containsExactly(0, 1, 2);
         assertThat(warmed).as("analiz önizlemesi iptal sorgusunu ısıtmaz").isEmpty();
-        verify(chainValidator, never()).checkRevocation(any());
+        verify(chainValidator, never()).checkRevocationDetailed(any());
 
-        // Karşılaştırma: kayıtlı satırın elle tetiği (CACHED_WARM) ısıtır
+        // Karşılaştırma: kayıtlı satırın elle tetiği (CACHED_WARM) ısıtır — sorgu GEREKEN sertifikada (test sertifikalarında
+        // OCSP/CRL adresi yok; ön karar NO_ENDPOINTS'te ısıtma bilinçli olarak yapılmaz, bkz. revocation_noEndpoints_…)
+        doReturn(null).when(chainValidator).revocationPrecheck(any());
         svc.buildResult(manual(1, "api-takip"), version(1, 1, chain.leaf(), chain.inter()), false);
         assertThat(warmed).hasSize(1);
 

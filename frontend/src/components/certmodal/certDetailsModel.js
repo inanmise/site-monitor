@@ -1,6 +1,7 @@
 import { toUtc } from '../../utils/localDay.js'
 import { certTone, TONES, sigShort } from '../certcard/certCardModel.js'
 import { parseDn, prettyTls } from './sslModel.js'
+import { revocationReason } from '../../utils/revocationInfo.js'
 
 /**
  * Sertifika penceresi → "Sertifika Detayları" sekmesinin SAF modeli (2026-09-28 shadcn yeniden tasarım). React yok:
@@ -181,7 +182,8 @@ export function filterSan(entries, query) {
 const STATUS_TONES = {
   trust: { TRUSTED: 'ok', UNTRUSTED: 'bad', UNKNOWN: 'muted' },
   chain: { VALID: 'ok', BROKEN: 'bad', REVOKED: 'bad', INCOMPLETE: 'high', UNKNOWN: 'muted' },
-  rev: { VALID: 'ok', REVOKED: 'bad', UNKNOWN: 'muted' },
+  // NO_ENDPOINTS / UNSUPPORTED_SCHEME: "bilinmiyor"un NEDENİ belli (2026-10-08) — sertifikada adres yok / yalnız LDAP.
+  rev: { VALID: 'ok', REVOKED: 'bad', UNKNOWN: 'muted', NO_ENDPOINTS: 'muted', UNSUPPORTED_SCHEME: 'muted' },
   dep: { OK: 'ok', INCOMPLETE: 'high', MISMATCH: 'high', UNKNOWN: 'muted' },
 }
 
@@ -203,12 +205,21 @@ export function statusChip(kind, value) {
   return { kind, code, tone: tone ?? 'muted', labelKey: tone ? `cdp.${kind}.${code}` : null }
 }
 
+/**
+ * İptal çipi kodu: durum UNKNOWN ve nedeni belliyse (sertifikada adres yok / yalnız LDAP) nedenin kendisi — "İptal
+ * durumu bilinmiyor" yerine "İptal adresi yok" (2026-10-08). Diğer her durumda sunucunun `revocation_status`'u.
+ */
+export function revocationChipCode(d) {
+  const why = revocationReason(d)
+  return why === 'NO_ENDPOINTS' || why === 'UNSUPPORTED_SCHEME' ? why : d?.revocation_status
+}
+
 /** Güven + zincir + iptal + dağıtım çipleri ve özet ton: bad > high > ok; bilinen hiç yoksa muted. */
 export function trustSummary(d) {
   const chips = [
     statusChip('trust', trustCode(d)),
     statusChip('chain', d?.chain_status),
-    statusChip('rev', d?.revocation_status),
+    statusChip('rev', revocationChipCode(d)),
     statusChip('dep', d?.deployment_status),
   ].filter(Boolean)
   let tone = 'muted'

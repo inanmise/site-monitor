@@ -93,7 +93,8 @@ describe('CertHealthPanel', () => {
     expect(revocation.querySelector('.hlth-mark--unknown')).not.toBeNull()
     expect(revocation.querySelector('.hlth-mark--fail')).toBeNull()
     expect(within(revocation).getByText('Not verified')).toBeInTheDocument()
-    expect(within(revocation).getByText(/OCSP\/CRL reachability/)).toBeInTheDocument()
+    // 2026-10-08: öneri ne olduğunu ve nereye bakılacağını söyler (vekil, NO_PROXY, güvenlik duvarı)
+    expect(within(revocation).getByText(/Could not reach the OCSP\/CRL address — check proxy, NO_PROXY and firewall/)).toBeInTheDocument()
   })
 
   it('aksiyon gerekmeyen satır soluk "No action needed" gösterir', async () => {
@@ -338,5 +339,53 @@ describe('CertHealthPanel', () => {
 
     await screen.findByText('Certificate has not expired')
     expect(screen.queryByRole('button', { name: /Needs attention|Show all/i })).toBeNull()
+  })
+})
+
+// 2026-10-08 (kullanıcı: "herhangi bir adres göremedim. O alanları boş da olsa ekleyelim, boş olduğunu bilelim.
+// Yanıltıcı uyarıları kaldıralım"): iptal satırı adres yokken NA + "sertifikada tanımlı değil", ulaşılamadığında denemeler.
+describe('CertHealthPanel — iptal nedeni', () => {
+  const revRow = (over) => row({ key: 'revocation', ...over })
+
+  it('sertifikada adres yok: satır NA ("No address — cannot be checked"), sorun sayılmaz; adres alanları "Not defined in the certificate"', async () => {
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, rows: [
+      row(),
+      revRow({ status: 'NA', value_key: 'revNoEndpoints', value_args: [], action_key: 'none',
+        evidence: { ocsp_url: null, crl_url: null, revocation_reason: 'NO_ENDPOINTS', raw: 'UNKNOWN' } }),
+    ] } })
+    const { container } = draw()
+    await screen.findByText('Certificate has not been revoked')
+    expect(screen.getByText('No address — cannot be checked')).toBeInTheDocument()
+    expect(screen.queryByText(/check proxy, NO_PROXY/)).toBeNull()      // yanıltıcı erişim önerisi YOK
+    expect(screen.queryByRole('button', { name: /Needs attention/i })).toBeNull()   // NA sorun değil
+
+    const head = [...container.querySelectorAll('[data-slot="hlth-row-head"]')].find((r) => r.textContent.includes('has not been revoked'))
+    fireEvent.click(head)
+    expect(screen.getByText('OCSP endpoint')).toBeInTheDocument()
+    expect(screen.getAllByText('Not defined in the certificate')).toHaveLength(2)
+    expect(container.querySelector('[data-slot="hlth-ev-reason"]')).toHaveAttribute('data-reason', 'NO_ENDPOINTS')
+    expect(screen.getByText(/publishes no OCSP or CRL address/)).toBeInTheDocument()
+    expect(screen.getByText('UNKNOWN')).toBeInTheDocument()
+  })
+
+  it('adres var ama ulaşılamadı: erişim önerisi + denemeler satır satır, okunur hata', async () => {
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, rows: [
+      revRow({ status: 'UNKNOWN', value_key: 'unverified', value_args: [], action_key: 'checkNetworkAccess',
+        evidence: { ocsp_url: null, crl_url: 'http://crl.example.test/ca.crl', revocation_reason: 'UNREACHABLE',
+          revocation_attempts: [
+            { via: 'CRL', url: 'ldap:///CN=CA?certificateRevocationList', code: 'SCHEME' },
+            { via: 'CRL', url: 'http://crl.example.test/ca.crl', code: 'HTTP', status: 404 },
+          ], raw: 'UNKNOWN' } }),
+    ] } })
+    const { container } = draw()
+    await screen.findByText('Certificate has not been revoked')
+    expect(screen.getByText(/Could not reach the OCSP\/CRL address/)).toBeInTheDocument()
+    fireEvent.click(container.querySelector('[data-slot="hlth-row-head"]'))
+    expect(screen.getAllByText('Not defined in the certificate')).toHaveLength(1)   // yalnız OCSP boş
+    const list = container.querySelector('[data-slot="hlth-ev-attempts"]')
+    expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'CRL · ldap:///CN=CA?certificateRevocationList — unsupported address type (only http/https is queried)',
+      'CRL · http://crl.example.test/ca.crl — returned HTTP 404',
+    ])
   })
 })
