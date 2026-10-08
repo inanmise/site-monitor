@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.112.1] — 2026-10-08
+
 ### Fixed
 - **Takip adı / alan adı değişince açık sertifika penceresi eski adda kalıyordu:** pencerenin Düzenle'sinden ad
   değiştirilince Sağlık sekmesi "Sağlık bilgisi yüklenemedi (404)", Kontrol Geçmişi "Domain envanterde bulunamadı
@@ -2410,7 +2412,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.112.1...HEAD
+[20.112.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.1
 [20.112.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.112.0
 [20.111.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.111.0
 [20.110.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.1
