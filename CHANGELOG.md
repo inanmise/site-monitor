@@ -15,6 +15,12 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Security
+- **Haftalık rapor onay bağlantısının anahtarı API yanıtlarında görünüyordu.** Rapor ekranının aldığı yanıt, PO'ya
+  e-postayla giden giriş gerektirmeyen onay bağlantısının anahtarını da içeriyordu. Raporu gönderen takım üyesi bu
+  anahtarla kendi raporunu PO yerine onaylayabilirdi. Anahtar artık hiçbir yanıtta yer almıyor; yalnız PO'ya giden
+  e-postada bulunuyor.
+
 ### Fixed
 - **İptal durumu (OCSP/CRL) "bilinmiyor" artık nedenini söylüyor; yanıltıcı uyarı kalktı.** Eskiden sertifikada
   hiç OCSP/CRL adresi yokken de Sağlık satırı "Doğrulanamadı — OCSP/CRL erişimini kontrol edin (proxy)" diyordu ve adres

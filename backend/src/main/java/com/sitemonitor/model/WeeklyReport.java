@@ -1,5 +1,6 @@
 package com.sitemonitor.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -70,10 +71,15 @@ public class WeeklyReport {
 
     /** E-posta ile hızlı onay için tek-kullanımlık token (onaya gönderildiğinde üretilir,
      *  onaylanınca temizlenir). PO maildeki linke tıklayıp login'siz onaylar. */
+    // GÜVENLİK (2026-10-08): token LOGIN'SİZ onay yetkisi taşır — API yanıtlarında ASLA yer almaz. Rapor GET / submit
+    // yanıtları ham entity döndürüyordu; raporu gönderen takım üyesi token'ı okuyup kendi raporunu PO yerine
+    // onaylayabiliyordu (approve-link/confirm herkese açık). Token yalnız PO'ya giden e-postadaki bağlantıda bulunur.
+    @JsonIgnore
     @Column(name = "approval_token", length = 64)
     private String approvalToken;
 
     /** Onay token'ının son geçerlilik anı (ISO-8601, UTC). */
+    @JsonIgnore
     @Column(name = "approval_token_expires_at")
     private String approvalTokenExpiresAt;
 
