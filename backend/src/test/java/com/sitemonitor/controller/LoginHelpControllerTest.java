@@ -89,10 +89,10 @@ class LoginHelpControllerTest {
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1
                         && imgs.get(0).data().length == 6 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
-        // Bildiren kişiye ACK — admin'e gidenle benzer (hata + görsel) + referans no.
-        verify(loginIssueMailService).dispatchAck(eq(42L), eq("LIR-2026-000042"), eq(EMAIL), eq("N12345"),
-                eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
-                argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1), anyString());
+        // Bildiren kişiye ACK — NÖTR (2026-10-08, ürün kararı): yalnız referans + zaman. Adres formdaki doğrulanmamış
+        // alan; açıklama/hata/kullanıcı adı/görsel taşıyan eski onay kurumsal SMTP üzerinden oltalama aktarmasıydı.
+        verify(loginIssueMailService).dispatchAckNeutral(eq(42L), eq("LIR-2026-000042"), eq(EMAIL), anyString());
+        verify(loginIssueMailService, never()).dispatchAck(any(), any(), any(), any(), any(), any(), any(), any());
         verify(auditService).recordAction(eq("LOGIN_HELP_REPORT"), eq("N12345"),
                 any(), any(), any(), eq("LOGIN"), eq("10.1.2.3"), anyString(),
                 eq("10.1.2.3"), any(), any());

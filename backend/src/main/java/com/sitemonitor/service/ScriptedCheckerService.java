@@ -602,8 +602,18 @@ public class ScriptedCheckerService {
         // Elle kökenli kurtarma zinciri: sıra BEKLEMEZ (D-b11) — kota/havuz doluysa hemen SKIPPED; zincir biter, ardışık
         // sayaç korunur, sonraki zamanlanmış tur sürer. Beklese 2 iş parçacıklı kurtarma yürütücüsünü tıkardı.
         if (Boolean.TRUE.equals(MANUAL_QUOTA.get())) return runManual(m, 0);
-        return runGuarded(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds()),
+        return runGuarded(m.getScript(), monitorEnv(m), clampTimeout(m.getTimeoutSeconds()),
                 proxyUseFor(m.getUseProxy()));
+    }
+
+    /**
+     * Kayıtlı monitörün koşum env'i (2026-10-08): saklı eski kayıtlardaki AYRILMIŞ adlar ({@code K6_*}, Go çalışma
+     * zamanı, vekil, CA, {@code PATH} …) koşumdan DÜŞER — koşum durmaz, bir kez WARN (izleme kimliği/adıyla) loglanır.
+     * Bkz. {@link ScriptedEnvPolicy}. {@link #buildProcessEnv} aynı süzgeci bağlamsız yedek olarak tekrar uygular.
+     */
+    private List<EnvVar> monitorEnv(ScriptedMonitor m) {
+        return ScriptedEnvPolicy.forRuntime(parseEnv(m.getEnvJson(), true),
+                "izleme #" + m.getId() + " (" + m.getName() + ")");
     }
 
     /**
@@ -628,7 +638,7 @@ public class ScriptedCheckerService {
 
     private ScriptedResult runManual(ScriptedMonitor m, int queueWaitSec) {
         int timeoutSec = clampTimeout(m.getTimeoutSeconds());
-        List<EnvVar> env = parseEnv(m.getEnvJson(), true);
+        List<EnvVar> env = monitorEnv(m);
         ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
         if (!k6Available) return err("k6 bulunamadı — Sentetik İzleme devre dışı");
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(queueWaitSec);
@@ -683,7 +693,7 @@ public class ScriptedCheckerService {
     public Future<ScriptedResult> submit(ScriptedMonitor m) {
         queued.incrementAndGet();
         ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
-        return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), parseEnv(m.getEnvJson(), true),
+        return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), monitorEnv(m),
                 clampTimeout(m.getTimeoutSeconds()), viaProxy));
     }
 
@@ -790,8 +800,12 @@ public class ScriptedCheckerService {
      * ({@code ProcessProbe.run(..., isolatedEnv=true)}), yani burada dönen harita + küçük bir
      * sistem beyaz-listesi dışında k6 hiçbir şey görmez.
      *
-     * <p>Sıra bilinçli: önce kullanıcının kendi env'i, sonra {@code putIfAbsent} ile vekil ve CA —
-     * script kendi {@code HTTPS_PROXY}'sini tanımlamışsa ezilmez.
+     * <p>Sıra bilinçli: önce kullanıcının kendi env'i, SONRA sistemin vekil/CA/kaynak tavanı değişkenleri {@code put}
+     * ile — sistem değeri HER ZAMAN kazanır (2026-10-08, güvenlik denetimi). Eskiden {@code putIfAbsent} vardı ve
+     * "script kendi {@code HTTPS_PROXY}'sini tanımlamışsa ezilmez" deniyordu: kullanıcı kendi vekiliyle
+     * {@code --blacklist-ip} SSRF korumasını atlatabiliyor, {@code GOMAXPROCS}/{@code GOMEMLIMIT} vererek sert CPU/bellek
+     * tavanını kaldırabiliyordu. Ayrılmış adlar artık kayıtta reddedilir, saklı eski kayıtlarda koşumdan düşer
+     * ({@link ScriptedEnvPolicy#forRuntime}); bu metot süzgeci bağlamsız yedek olarak bir kez daha uygular.
      *
      * @param envVars      monitörün env değişkenleri (null ⇒ hiçbiri; doğrulama yolu secret geçirmez)
      * @param secretValues maskelenecek değerler bu listeye EKLENİR (çıkış parametresi)
@@ -799,8 +813,9 @@ public class ScriptedCheckerService {
     Map<String, String> buildProcessEnv(List<EnvVar> envVars, ProxyUse viaProxy, Path caFile,
                                         List<String> secretValues) {
         Map<String, String> env = new LinkedHashMap<>();
-        if (envVars != null) {
-            for (EnvVar v : envVars) {
+        List<EnvVar> allowed = ScriptedEnvPolicy.forRuntime(envVars, null);
+        if (allowed != null) {
+            for (EnvVar v : allowed) {
                 if (v.name() == null || v.name().isBlank()) continue;
                 env.put(v.name(), v.value() == null ? "" : v.value());
                 if (v.secret() && v.value() != null && !v.value().isBlank()) secretValues.add(v.value());
@@ -810,13 +825,13 @@ public class ScriptedCheckerService {
         if (viaProxy.on()) {
             String url = proxySettings.proxyUrl();
             if (url != null) {
-                env.putIfAbsent("HTTPS_PROXY", url);
-                env.putIfAbsent("HTTP_PROXY", url);
+                env.put("HTTPS_PROXY", url);
+                env.put("HTTP_PROXY", url);
                 // FORCED ⇒ NO_PROXY hiç konmaz. Go bu listeyi SONEK olarak uygular
                 // (`akbank.com` ⇒ tüm alt alanlar), yani liste verildiği sürece "her zaman vekil
                 // üzerinden" seçimi eşleşen hedeflerde sessizce doğrudan çıkışa dönüşüyordu.
                 String noProxy = proxySettings.noProxyList();
-                if (viaProxy != ProxyUse.FORCED && !noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
+                if (viaProxy != ProxyUse.FORCED && !noProxy.isBlank()) env.put("NO_PROXY", noProxy);
                 // Parola URL'in içinde: k6 hata mesajında vekil URL'ini basabiliyor
                 // (ör. "proxyconnect tcp: ..."). Maskelenmezse çıktı → error → alarm e-postası
                 // zincirinden sızardı. SecretMask kodlanmış biçimleri de kapsar.
@@ -824,7 +839,7 @@ public class ScriptedCheckerService {
                 if (pass != null) secretValues.add(pass);
             }
         }
-        if (caFile != null) env.putIfAbsent("SSL_CERT_FILE", caFile.toAbsolutePath().toString());
+        if (caFile != null) env.put("SSL_CERT_FILE", caFile.toAbsolutePath().toString());
 
         // ── L2 sert tavan: CPU + bellek ────────────────────────────────────────────────────
         // k6 bir Go programı; bu iki değişkeni Go runtime'ı doğrudan okur, yani k6 sürümünden
@@ -835,12 +850,13 @@ public class ScriptedCheckerService {
         //   GOMEMLIMIT — Go GC'sinin hedef bellek tavanı. YUMUŞAK tavandır: aşıldığında GC
         //     agresifleşir, süreç öldürülmez. Bu yüzden devasa ayırmalar AYRICA kaynakta
         //     engelleniyor (ScriptedSafetyRules BLOCK 4) — tek başına yeterli sayılmamalı.
-        // `putIfAbsent`: kullanıcı bilinçli olarak kendi değerini verdiyse ezilmez (env adları
-        // zaten kendi monitöründe görünür ve bu ikisi secret değildir).
+        // `put` (2026-10-08; eskiden putIfAbsent): SERT tavan kullanıcı env'iyle kaldırılamaz — tavanın tek amacı
+        // bir izlemenin diğer tüm kontrolleri aç bırakmasını engellemek; kullanıcının ezebildiği tavan tavan değildir.
+        // Yönetici tavanı ayarlardan değiştirir (0/boş ⇒ tavan yok).
         String maxProcs = appSettings.getString("site.monitor.scripted.max-procs", "1");
-        if (!maxProcs.isBlank() && !"0".equals(maxProcs.trim())) env.putIfAbsent("GOMAXPROCS", maxProcs.trim());
+        if (!maxProcs.isBlank() && !"0".equals(maxProcs.trim())) env.put("GOMAXPROCS", maxProcs.trim());
         String memLimit = appSettings.getString("site.monitor.scripted.mem-limit", "256MiB");
-        if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.putIfAbsent("GOMEMLIMIT", memLimit.trim());
+        if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.put("GOMEMLIMIT", memLimit.trim());
         return env;
     }
 

@@ -209,6 +209,13 @@ public class GlobalExceptionHandler {
     /** Validation errors from controllers (e.g. blank domain) — projenin doğrulama kanalı: iletisi KORUNUR. */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleBadRequest(IllegalArgumentException e) {
+        // Alan bazlı doğrulama (2026-10-08): @Valid'in VALIDATION_FAILED + fields sözleşmesinin elle yazılan kardeşi.
+        if (e instanceof FieldValidationException fe) {
+            Map<String, Object> body = errorBody("VALIDATION_FAILED", e.getMessage());
+            body.put("fields", fe.getFields());
+            if (!fe.getFields().isEmpty()) body.put("field", fe.getFields().keySet().iterator().next());
+            return ResponseEntity.status(400).body(body);
+        }
         // Öneri YAPISAL alanla taşınır: arayüz metni ayrıştırmak zorunda kalırsa TR/EN
         // arasında ya da mesaj her düzenlendiğinde sessizce kırılır.
         if (e instanceof UnresolvableTargetException ue && ue.getSuggestion() != null) {
@@ -255,6 +262,38 @@ public class GlobalExceptionHandler {
         }
         public String getHost() { return host; }
         public String getSuggestion() { return suggestion; }
+    }
+
+    /**
+     * Alan bazlı doğrulama hatası (2026-10-08, "doğrulanmadan alınan veri var mı? doğrulama ekle"): elle doğrulayan
+     * denetleyici/servis yolları ({@code Map} gövdeli uçlar) bunu fırlatır → 400 {@code VALIDATION_FAILED} + {@code fields}
+     * ({alan: ileti}) + {@code field} (ilk alan). İleti {@link Msg#t} ile istek dilindedir ve alan adını içerir: istemci
+     * {@code fields}'i okumasa da tost/şerit tek başına anlaşılır. {@link IllegalArgumentException} alt sınıfı — onu
+     * yakalayan eski yollar aynı 400'ü görmeye devam eder.
+     */
+    public static class FieldValidationException extends IllegalArgumentException {
+        private final Map<String, String> fields;
+        public FieldValidationException(String field, String message) {
+            super(message);
+            Map<String, String> f = new LinkedHashMap<>();
+            f.put(field, message);
+            this.fields = java.util.Collections.unmodifiableMap(f);
+        }
+        public Map<String, String> getFields() { return fields; }
+    }
+
+    /**
+     * Gövde alanı beklenen türde değil (2026-10-08): {@code Map} gövdeli uçlardaki {@code (Number) body.get(..)} gibi
+     * dönüşümler {@code {"intervalSeconds":"60"}} gövdesinde {@link ClassCastException} fırlatıp 500 üretiyordu.
+     * İstemci hatasıdır → 400 {@code VALIDATION_FAILED}; istisna metni (sınıf adları) ASLA dönmez, log'a WARN ile gider
+     * (sunucu içi gerçek bir tür hatası da böylece görünür kalır).
+     */
+    @ExceptionHandler(ClassCastException.class)
+    public ResponseEntity<Map<String, Object>> handleClassCast(ClassCastException e) {
+        log.warn("Gövde alanı beklenmeyen türde [istek={}]: {}", rid(), e.getMessage());
+        return respond(400, "VALIDATION_FAILED", Msg.t(
+                "Gönderilen alanlardan birinin türü yanlış (ör. sayı beklenen yerde metin ya da açık/kapalı beklenen yerde sayı). Formdaki değerleri kontrol edip tekrar deneyin; sorun sürerse sayfayı yenileyin.",
+                "A field you sent has the wrong type (for example text where a number is expected, or a number where on/off is expected). Check the values in the form and try again; if it keeps happening, reload the page."));
     }
 
     /** @Valid başarısız oldu — body bind sırasında alan kuralı kırıldı. {@code fields} haritası alan altı iletiler için. */

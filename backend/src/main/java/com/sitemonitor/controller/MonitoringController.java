@@ -1143,6 +1143,26 @@ public class MonitoringController {
     }
 
     /**
+     * Ping host'u (2026-10-08, güvenlik denetimi): host doğrudan {@code ping} argv'sine gider; '-' ile başlayan değer
+     * ping'e SEÇENEK olarak geçerdi. Yeni girdi ana bilgisayar adı / IPv4 / IPv6 olmalı → aksi 400 VALIDATION_FAILED
+     * ({@code fields.host}). Koşumda '-' ile başlayan saklı host ayrıca reddedilir ({@link PingCheckerService#check}).
+     */
+    private static void requireValidPingHost(String host) {
+        if (PingCheckerService.startsWithDash(host)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("host", com.sitemonitor.util.Msg.t(
+                    "Host '-' ile başlayamaz (ping komutu bunu bir seçenek olarak okur). Bir ana bilgisayar adı (ör. sunucu.ornek.com) ya da IP adresi girin.",
+                    "The host can’t start with '-' (the ping command would read it as an option). Enter a host name (e.g. server.example.com) or an IP address."));
+        }
+        if (!PingCheckerService.isValidHost(host)) {
+            String shown = host == null ? "" : host.replaceAll("\\p{Cntrl}", "?");
+            if (shown.length() > 80) shown = shown.substring(0, 80) + "…";
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("host", com.sitemonitor.util.Msg.t(
+                    "Host geçersiz: '" + shown + "'. Yalnız ana bilgisayar adı (ör. sunucu.ornek.com) ya da IP adresi girin — https://, yol, port ya da boşluk olmadan.",
+                    "Invalid host: '" + shown + "'. Enter only a host name (e.g. server.example.com) or an IP address — without https://, a path, a port or spaces."));
+        }
+    }
+
+    /**
      * Grup + etiket zorunlu (2026-09-18, ürün kararı): "grup bilgisi olmayan izleme olmamalı, etiketi
      * olmayan izleme olmamalı". Dokuz tür + envanter aynı kuralı uygular. Oluşturmada alan YOK ya da
      * boş → 400; güncellemede yalnız GÖNDERİLİP boş bırakılmışsa 400 (kısmi PUT'lar — ör. excludePatterns —
@@ -2333,6 +2353,18 @@ public class MonitoringController {
             // kullanıcı bunu yetki kuralı değil ARIZA sanıyordu.
             if (!canOperateTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu monitörü düzenleme yetkiniz yok");
+            // Kayıt tipi izin listesi (2026-10-08): createDns/testDns'teki DNS_RECORD_TYPES güncellemede yoktu — "SOA"/"x"
+            // gibi değerler saklanıp her taramada hata üretiyordu. Yan etkilerden (alarm kapatma) ÖNCE; saklı değerle AYNI
+            // gelen eski tip muaf (eski kayıt düzenlenebilir kalır).
+            if (body.get("recordType") != null) {
+                String rt = body.get("recordType").toString().trim().toUpperCase(java.util.Locale.ROOT);
+                if (!DNS_RECORD_TYPES.contains(rt) && !rt.equalsIgnoreCase(String.valueOf(m.getRecordType()).trim())) {
+                    String shown = rt.length() > 20 ? rt.substring(0, 20) + "…" : rt;
+                    throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("recordType", com.sitemonitor.util.Msg.t(
+                            "Geçersiz DNS kayıt tipi: '" + shown + "'. Şunlardan birini seçin: A, AAAA, CNAME, MX, TXT, NS.",
+                            "Invalid DNS record type: '" + shown + "'. Choose one of: A, AAAA, CNAME, MX, TXT, NS."));
+                }
+            }
             final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain") != null) {
@@ -2353,7 +2385,7 @@ public class MonitoringController {
                 }
                 m.setDomain(newDomain);
             }
-            if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
+            if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).trim().toUpperCase(java.util.Locale.ROOT));
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), DNS_ALERT_TYPES, ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
@@ -2929,6 +2961,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         String host = body.get("host") != null ? body.get("host").toString().trim() : "";
         if (host.isEmpty()) return badRequest("host zorunlu");
+        requireValidPingHost(host);   // 2026-10-08: kayıtla aynı kural
         String ipVersion = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         int count     = body.get("packetCount") instanceof Number cn ? cn.intValue() : 4;
         int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 5000);   // N3: test ucu da tavanlı
@@ -4707,6 +4740,9 @@ public class MonitoringController {
         if (scanErr != null) return badRequest(scanErr);
         var diag = validateScripted(body.get("script"), body.get("env"), body.get("timeoutSeconds"));
         if (diag.blocked()) return badRequest(diag.blocking());
+        // Env adı/boyutu (2026-10-08): ayrılmış ad (K6_*, GO*, *PROXY*, SSL_*, PATH …), geçersiz biçim, > 50 değişken
+        // ya da > 8192 karakterlik değer → 400 VALIDATION_FAILED (fields.env). Hiçbir yan etkiden ÖNCE.
+        com.sitemonitor.service.ScriptedEnvPolicy.validateForSave(body.get("env"), Map.of());
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
         m.setName(name);
@@ -4762,6 +4798,10 @@ public class MonitoringController {
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
+            // Env doğrulaması (2026-10-08) — ad değişikliği/alarm taşıma gibi yan etkilerden ÖNCE. Monitörde ZATEN kayıtlı
+            // adlar biçim kurallarından muaf (eski kayıt düzenlenebilir kalır); koşumu etkileyen ayrılmış adlar her zaman 400.
+            if (body.containsKey("env"))
+                com.sitemonitor.service.ScriptedEnvPolicy.validateForSave(body.get("env"), storedEnvValues(m.getEnvJson()));
             String oldName = m.getName();
             if (body.get("name")   != null) m.setName(body.get("name").toString().trim());
             // Rename: scripted alarm anahtarı monitör ADI (diğer türlerde gerçek hedef URL/host) — ad
@@ -5143,6 +5183,9 @@ public class MonitoringController {
         String script = body.get("script") != null ? body.get("script").toString() : "";
         if (script.isBlank()) return badRequest("script zorunlu");
         Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
+        // Ayrılmış env adı (2026-10-08): koşum onu yok sayacağı için test de reddeder — test sonucu kaydedilmiş monitörün
+        // koşumuyla aynı kalsın (biçim/sayı kuralları kayıtta; test hiçbir şey yazmaz).
+        com.sitemonitor.service.ScriptedEnvPolicy.validateForTest(body.get("env"));
         // Test env: frontend ham gönderir (secret değerler düz; henüz şifreli değil) → checker.test decrypt=false ile alır.
         String envJson = testEnvJson(body.get("env"));
         // MONITOR_TRIGGER değil MONITOR_TEST: tetikleme KAYITLI bir monitörü zorla koşturur (kontrol
@@ -5467,6 +5510,25 @@ public class MonitoringController {
             }
         }
         try { return SCRIPTED_MAPPER.writeValueAsString(out); } catch (Exception e) { return "[]"; }
+    }
+
+    /**
+     * Saklı env JSON'u → ad → saklı değer (sırlarda şifreli metin). Env doğrulamasının "zaten kayıtlı ad" muafiyeti için
+     * (2026-10-08); okunamayan kayıt boş harita döner (muafiyet yok — {@link #buildEnvJson} bozuk kaydı ayrıca ele alır).
+     */
+    private static Map<String, String> storedEnvValues(String json) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (json == null || json.isBlank()) return out;
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = SCRIPTED_MAPPER.readTree(json);
+            if (arr.isArray()) for (var n : arr) {
+                String name = n.path("name").asText("");
+                if (!name.isBlank()) out.put(name, n.path("value").asText(""));
+            }
+        } catch (Exception ex) {
+            log.debug("scripted env_json okunamadı (doğrulama muafiyeti yok): {}", ex.toString());
+        }
+        return out;
     }
 
     /** Test env (ham, şifresiz) → checker.test'in beklediği envJson (secret değerleri düz saklanır, decrypt=false). */
@@ -6079,6 +6141,7 @@ public class MonitoringController {
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String host = ((String) body.get("host")).trim();
+        requireValidPingHost(host);   // 2026-10-08: ad/IP biçimi, '-' ile başlayamaz → 400 fields.host
         if (pingMonitorRepo.existsDuplicate(host, teamId, null))
             return badRequest("Bu host bu takımda zaten izleniyor; mükerrer ping monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
@@ -6097,7 +6160,8 @@ public class MonitoringController {
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
-        if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+        // Paket sayısı 1..10'a kırpılır (2026-10-08) — test ucu ve koşumla aynı aralık.
+        if (body.get("packetCount")     != null) m.setPacketCount(PingCheckerService.clampPackets(((Number) body.get("packetCount")).intValue()));
         if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -6125,6 +6189,14 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = pingMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            // Host doğrulaması (2026-10-08) — alarm kapatma gibi yan etkilerden ÖNCE. DEĞİŞMEYEN eski host biçim
+            // kuralından muaf (eski kayıt düzenlenebilir kalır); '-' ile başlayan host ise her zaman 400 (koşumda zaten
+            // çalıştırılmıyor).
+            if (body.get("host") != null) {
+                String reqHost = ((String) body.get("host")).trim();
+                boolean unchanged = m.getHost() != null && reqHost.equals(m.getHost().trim());
+                if (!unchanged || PingCheckerService.startsWithDash(reqHost)) requireValidPingHost(reqHost);
+            }
             // Mükerrer guard: nihai host + takım ile (kendisi hariç) — host mutasyonu/alarm yan etkisinden ÖNCE.
             String intendedHost = body.get("host") != null ? ((String) body.get("host")).trim() : m.getHost();
             Long intendedTeam = body.containsKey("teamId") ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
@@ -6155,7 +6227,7 @@ public class MonitoringController {
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
-            if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+            if (body.get("packetCount")     != null) m.setPacketCount(PingCheckerService.clampPackets(((Number) body.get("packetCount")).intValue()));
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));

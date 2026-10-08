@@ -5595,4 +5595,237 @@ class MonitoringControllerTest {
         org.assertj.core.api.Assertions.assertThat(dns.getValue()).extracting(com.sitemonitor.model.DnsMonitor::getDomain)
                 .containsExactly("net.example.test");
     }
+
+    // ── Girdi doğrulaması (2026-10-08, "doğrulanmadan alınan veri var mı? doğrulama ekle") ─────────────────────
+    // Kural: YENİ girdi alan bazlı 400 (VALIDATION_FAILED + fields) alır; saklı eski değer düzenlemede kilitlenmez;
+    // geçerli istekler bugünküyle aynı.
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Girdi doğrulaması 2026-10-08")
+    class InputValidation20261008 {
+
+        private static final String JSON = "application/json";
+
+        private String scriptedCreate(String envJson) {
+            return "{\"name\":\"Senaryo\",\"teamId\":3,\"groupName\":\"Senaryolar\",\"tags\":\"t1\","
+                    + "\"script\":\"export default function(){}\",\"env\":" + envJson + "}";
+        }
+
+        private void stubScriptedSave() {
+            when(scriptedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+            when(scriptedMonitorRepo.save(any(com.sitemonitor.model.ScriptedMonitor.class)))
+                    .thenAnswer(a -> { com.sitemonitor.model.ScriptedMonitor s = a.getArgument(0); s.setId(90L); return s; });
+        }
+
+        @Test
+        @DisplayName("Sentetik env: ayrılmış ad (K6_OUT) → 400 VALIDATION_FAILED + fields.env; kayıt YOK")
+        void scriptedCreate_reservedEnv_rejected() throws Exception {
+            stubScriptedSave();
+            for (String name : List.of("K6_OUT", "GOMAXPROCS", "GOMEMLIMIT", "HTTPS_PROXY", "https_proxy", "SSL_CERT_FILE",
+                    "PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "HOME", "TMPDIR", "JAVA_TOOL_OPTIONS", "NODE_OPTIONS",
+                    "GODEBUG", "MY_PROXY_URL")) {
+                mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN")).contentType(JSON)
+                                .content(scriptedCreate("[{\"name\":\"" + name + "\",\"value\":\"x\"}]")))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.fields.env").exists())
+                        .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(name)));
+            }
+            verify(scriptedMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Sentetik env: geçersiz ad / > 50 değişken / > 8192 karakter değer → 400")
+        void scriptedCreate_badShape_rejected() throws Exception {
+            stubScriptedSave();
+            mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN")).contentType(JSON)
+                            .content(scriptedCreate("[{\"name\":\"base-url\",\"value\":\"x\"}]")))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.env").exists());
+            StringBuilder many = new StringBuilder("[");
+            for (int i = 0; i < 51; i++) many.append(i == 0 ? "" : ",").append("{\"name\":\"V").append(i).append("\",\"value\":\"x\"}");
+            mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN")).contentType(JSON)
+                            .content(scriptedCreate(many.append("]").toString())))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+            String big = "a".repeat(com.sitemonitor.service.ScriptedEnvPolicy.MAX_VALUE_CHARS + 1);
+            mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN")).contentType(JSON)
+                            .content(scriptedCreate("[{\"name\":\"BIG\",\"value\":\"" + big + "\"}]")))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.env").exists());
+            verify(scriptedMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Sentetik env: geçerli adlar (BASE_URL, GOOGLE_API_KEY, _X, 50 değişken) bugünkü gibi kaydedilir")
+        void scriptedCreate_validEnv_saved() throws Exception {
+            stubScriptedSave();
+            StringBuilder env = new StringBuilder("[{\"name\":\"BASE_URL\",\"value\":\"https://x.example.com\"},"
+                    + "{\"name\":\"GOOGLE_API_KEY\",\"value\":\"k\"},{\"name\":\"_X\",\"value\":\"" + "b".repeat(8192) + "\"}");
+            for (int i = 0; i < 47; i++) env.append(",{\"name\":\"V").append(i).append("\",\"value\":\"x\"}");
+            mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN")).contentType(JSON)
+                            .content(scriptedCreate(env.append("]").toString())))
+                    .andExpect(status().isOk());
+            verify(scriptedMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(org.mockito.ArgumentMatchers.argThat(
+                    sm -> sm.getEnvJson() != null && sm.getEnvJson().contains("GOOGLE_API_KEY")));
+        }
+
+        private com.sitemonitor.model.ScriptedMonitor storedScripted(long id, String envJson) {
+            com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+            m.setId(id); m.setName("eski-senaryo"); m.setEnvJson(envJson);
+            when(scriptedMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+            when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id)).thenReturn(Optional.empty());
+            return m;
+        }
+
+        @Test
+        @DisplayName("Sentetik env güncelleme: monitörde ZATEN kayıtlı eski adlar (base.url, NODE_ENV) düzenlemeyi kilitlemez")
+        void scriptedUpdate_legacyNamesGrandfathered() throws Exception {
+            storedScripted(61L, "[{\"name\":\"base.url\",\"value\":\"https://x\",\"secret\":false},"
+                    + "{\"name\":\"NODE_ENV\",\"value\":\"prod\",\"secret\":false}]");
+            mvc.perform(put("/api/monitoring/scripted/61").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"env\":[{\"name\":\"base.url\",\"value\":\"https://x\"},{\"name\":\"NODE_ENV\",\"value\":\"prod\"}]}"))
+                    .andExpect(status().isOk());
+            // Yeni eklenen ayrılmış ad ise reddedilir.
+            mvc.perform(put("/api/monitoring/scripted/61").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"env\":[{\"name\":\"base.url\",\"value\":\"https://x\"},{\"name\":\"JAVA_OPTS\",\"value\":\"-Xmx1g\"}]}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.env").exists());
+        }
+
+        @Test
+        @DisplayName("Sentetik env güncelleme: koşumu etkileyen kayıtlı ad (HTTPS_PROXY) her zaman 400 — yan etkiden ÖNCE")
+        void scriptedUpdate_runtimeReservedAlwaysRejected() throws Exception {
+            storedScripted(62L, "[{\"name\":\"HTTPS_PROXY\",\"value\":\"http://kendi:1234\",\"secret\":false}]");
+            mvc.perform(put("/api/monitoring/scripted/62").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"name\":\"yeni-ad\",\"env\":[{\"name\":\"HTTPS_PROXY\",\"value\":\"http://kendi:1234\"}]}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+            verify(scriptedMonitorRepo, never()).save(any());
+            verify(alertEventRepo, never()).findOpenAlert(eq("eski-senaryo"), anyString());   // ad değişikliği yan etkisi yok
+        }
+
+        @Test
+        @DisplayName("Sentetik test: koşumun yok sayacağı ad (GOMAXPROCS) → 400 ve k6 ÇALIŞMAZ")
+        void scriptedTest_runtimeReservedRejected() throws Exception {
+            when(scriptedChecker.isAvailable()).thenReturn(true);
+            mvc.perform(post("/api/monitoring/scripted/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"script\":\"export default function(){}\",\"env\":[{\"name\":\"GOMAXPROCS\",\"value\":\"8\"}]}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.env").exists());
+            verify(scriptedChecker, never()).test(any(), any(), any(), any());
+        }
+
+        // ── Ping ──
+
+        private void stubPingSave() {
+            when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+            when(pingMonitorRepo.save(any(com.sitemonitor.model.PingMonitor.class)))
+                    .thenAnswer(a -> { com.sitemonitor.model.PingMonitor p = a.getArgument(0); p.setId(77L); return p; });
+        }
+
+        private String pingBody(String host, String extra) {
+            return "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"" + host + "\",\"teamId\":3" + extra + "}";
+        }
+
+        @Test
+        @DisplayName("Ping host: '-' ile başlayan ya da biçimsiz host → 400 fields.host; kayıt YOK")
+        void createPing_badHost_rejected() throws Exception {
+            stubPingSave();
+            for (String h : List.of("-f", "-c 1000", "https://x.example.com/a", "x.example.com:80", "a b", "ağ.example.com")) {
+                mvc.perform(post("/api/monitoring/ping").session(session("ADMIN")).contentType(JSON).content(pingBody(h, "")))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.fields.host").exists());
+            }
+            verify(pingMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Ping host: ad, IPv4, IPv6 ve tek etiketli iç ad bugünkü gibi kabul; packetCount 1..10'a kırpılır")
+        void createPing_validHosts_andPacketClamp() throws Exception {
+            stubPingSave();
+            for (String h : List.of("svc.example.com", "10.0.0.9", "fe80::1", "2001:db8::8a2e:370:7334", "intranet-gw", "srv_01.corp.local.")) {
+                mvc.perform(post("/api/monitoring/ping").session(session("ADMIN")).contentType(JSON).content(pingBody(h, "")))
+                        .andExpect(status().isOk());
+            }
+            mvc.perform(post("/api/monitoring/ping").session(session("ADMIN")).contentType(JSON)
+                            .content(pingBody("svc.example.com", ",\"packetCount\":50")))
+                    .andExpect(status().isOk());
+            verify(pingMonitorRepo).save(org.mockito.ArgumentMatchers.argThat(
+                    (com.sitemonitor.model.PingMonitor p) -> Integer.valueOf(10).equals(p.getPacketCount())));
+            mvc.perform(post("/api/monitoring/ping").session(session("ADMIN")).contentType(JSON)
+                            .content(pingBody("svc.example.com", ",\"packetCount\":0")))
+                    .andExpect(status().isOk());
+            verify(pingMonitorRepo).save(org.mockito.ArgumentMatchers.argThat(
+                    (com.sitemonitor.model.PingMonitor p) -> Integer.valueOf(1).equals(p.getPacketCount())));
+        }
+
+        @Test
+        @DisplayName("Ping güncelleme: DEĞİŞMEYEN eski biçimsiz host muaf; yeni biçimsiz ya da '-' host 400 ve alarm kapatılmaz")
+        void updatePing_hostRules() throws Exception {
+            com.sitemonitor.model.PingMonitor m = new com.sitemonitor.model.PingMonitor();
+            m.setId(78L); m.setHost("https://legacy.example.com"); m.setTeamId(3L); m.setActive(true);
+            when(pingMonitorRepo.findById(78L)).thenReturn(Optional.of(m));
+            when(pingMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+            mvc.perform(put("/api/monitoring/ping/78").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"host\":\"https://legacy.example.com\",\"intervalSeconds\":300}"))
+                    .andExpect(status().isOk());
+            mvc.perform(put("/api/monitoring/ping/78").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"host\":\"-f\"}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.host").exists());
+            mvc.perform(put("/api/monitoring/ping/78").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"host\":\"yeni host\"}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.host").exists());
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("Ping test: '-' ile başlayan host → 400 ve ping ÇALIŞMAZ")
+        void testPing_dashHost_rejected() throws Exception {
+            mvc.perform(post("/api/monitoring/ping/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"host\":\"-f\"}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fields.host").exists());
+            verify(pingChecker, never()).check(anyString(), anyString(), anyInt(), anyInt());
+        }
+
+        // ── DNS kayıt tipi ──
+
+        @Test
+        @DisplayName("DNS güncelleme: izin listesi dışı kayıt tipi → 400 fields.recordType; küçük harf normalize; eski tip muaf")
+        void updateDns_recordTypeAllowlist() throws Exception {
+            com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+            m.setId(81L); m.setDomain("a.example.com"); m.setRecordType("A");
+            m.setTeamId(3L); m.setActive(true); m.setStandalone(true);
+            when(dnsMonitorRepo.findById(81L)).thenReturn(Optional.of(m));
+            when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            mvc.perform(put("/api/monitoring/dns/81").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"recordType\":\"SOA\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.fields.recordType").exists());
+            verify(dnsMonitorRepo, never()).save(any());
+
+            mvc.perform(put("/api/monitoring/dns/81").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"recordType\":\"aaaa\"}"))
+                    .andExpect(status().isOk());
+            assertThat(m.getRecordType()).isEqualTo("AAAA");
+
+            m.setRecordType("SOA");   // eski sürümden kalmış tip — değişmeden gelirse düzenleme kilitlenmez
+            mvc.perform(put("/api/monitoring/dns/81").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"recordType\":\"SOA\",\"intervalSeconds\":600}"))
+                    .andExpect(status().isOk());
+        }
+
+        // ── Yanlış JSON türü ──
+
+        @Test
+        @DisplayName("Yanlış alan türü ({\"intervalSeconds\":\"60\"}) → 500 değil 400 VALIDATION_FAILED; sınıf adı sızmaz")
+        void wrongJsonType_is400() throws Exception {
+            stubPingSave();
+            mvc.perform(post("/api/monitoring/ping").session(session("ADMIN")).contentType(JSON)
+                            .content(pingBody("svc.example.com", ",\"intervalSeconds\":\"60\"")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("java.lang"))));
+        }
+    }
 }

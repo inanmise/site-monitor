@@ -193,6 +193,59 @@ class GuideLinkControllerTest {
         verify(repo, never()).deleteById(any());
     }
 
+    // ── Adres şeması (2026-10-08) ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("2026-10-08: javascript:/data:/vbscript:/bilinmeyen şema → 400 VALIDATION_FAILED fields.url; kayıt YOK")
+    void create_dangerousScheme_rejected() throws Exception {
+        for (String url : List.of("javascript:alert(1)", "  JaVaScRiPt:alert(1)", "javascript:1//", "data:text/html,<b>x</b>",
+                "vbscript:msgbox", "java\\tscript:alert(1)", "ftp://files.example.com", "foo:bar")) {
+            mvc.perform(post("/api/guide-links")
+                            .session(adminSession())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"category\":\"X\",\"title\":\"Y\",\"url\":\"" + url + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.fields.url").exists());
+        }
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("2026-10-08: formun bugün kabul ettikleri kabul — http/https, mailto:, file:, UNC, şemasız, ana-bilgisayar:port")
+    void create_allowedForms_ok() throws Exception {
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        for (String url : List.of("https://wiki.example.com/x", "http://intra/x", "mailto:pki@example.com",
+                "file://srv/share", "\\\\\\\\srv\\\\share\\\\pki", "wiki.example.com/sayfa", "//cdn.example.com/a",
+                "localhost:8080/x", "portal.example.com:8443")) {
+            mvc.perform(post("/api/guide-links")
+                            .session(adminSession())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"category\":\"X\",\"title\":\"Y\",\"url\":\"" + url + "\"}"))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: güncellemede DEĞİŞMEYEN eski adres (ör. ftp:) muaf — başka alan düzenlenebilir; yeni javascript: 400")
+    void update_legacyUrlGrandfathered() throws Exception {
+        GuideLink existing = link(9L, "WAF", "Eski", "ftp://files.example.com/pki");
+        when(repo.findById(9L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/guide-links/9")
+                        .session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"WAF\",\"title\":\"Yeni\",\"url\":\"ftp://files.example.com/pki\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/guide-links/9")
+                        .session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"WAF\",\"title\":\"Yeni\",\"url\":\"javascript:alert(1)\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.url").exists());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private MockHttpSession adminSession() {

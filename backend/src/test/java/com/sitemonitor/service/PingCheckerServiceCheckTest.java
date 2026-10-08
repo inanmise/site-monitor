@@ -114,6 +114,48 @@ class PingCheckerServiceCheckTest {
     }
 
     @Test
+    @DisplayName("2026-10-08: '-' ile başlayan saklı host → ping ÇALIŞTIRILMAZ, açık hatayla başarısız (CONFIG_ERROR)")
+    void dashHost_neverExecuted() {
+        try (MockedStatic<ProcessProbe> probe = mockStatic(ProcessProbe.class)) {
+            Map<String, Object> r = svc.check(" -f", "auto", 3, 5000);
+            probe.verifyNoInteractions();
+            assertThat(r.get("up")).isEqualTo(false);
+            assertThat(String.valueOf(r.get("error"))).contains("Geçersiz host");
+            assertThat(r.get("failure_reason")).isEqualTo("CONFIG_ERROR");
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-08: paket sayısı koşumda 1..10'a kırpılır (saklı eski 50 → 10, 0 → 1)")
+    void packetCountClampedAtRuntime() {
+        try (MockedStatic<ProcessProbe> probe = mockStatic(ProcessProbe.class)) {
+            List<List<String>> seen = new java.util.ArrayList<>();
+            probe.when(() -> ProcessProbe.run(anyList(), (String) org.mockito.ArgumentMatchers.isNull(), anyInt()))
+                 .thenAnswer(i -> { seen.add(i.getArgument(0)); return new ProcessProbe.Result("rtt min/avg/max/mdev = 1/2/3/0 ms", 0, false); });
+            svc.check("example.com", "auto", 50, 5000);
+            svc.check("example.com", "auto", 0, 5000);
+            assertThat(seen.get(0)).contains("10").doesNotContain("50");
+            assertThat(seen.get(1)).contains("1");
+        }
+        assertThat(PingCheckerService.clampPackets(null)).isEqualTo(4);
+        assertThat(PingCheckerService.clampPackets(-3)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("2026-10-08: isValidHost — ad / IPv4 / IPv6 / tek etiket kabul; '-', şema, yol, port, boşluk, Unicode red")
+    void hostValidation() {
+        for (String ok : List.of("example.com", "10.0.0.1", "::1", "fe80::1%eth0", "2001:db8::1", "intranet", "srv_01.corp.", "a-b.example.com")) {
+            assertThat(PingCheckerService.isValidHost(ok)).as(ok).isTrue();
+        }
+        for (String bad : List.of("-f", "", " ", "https://x.example.com", "x.example.com/p", "x.example.com:80", "a b",
+                "ağ.example.com", "-x.example.com", "x..example.com", "a".repeat(254))) {
+            assertThat(PingCheckerService.isValidHost(bad)).as(bad).isFalse();
+        }
+        assertThat(PingCheckerService.startsWithDash("  -c")).isTrue();
+        assertThat(PingCheckerService.startsWithDash("a-b")).isFalse();
+    }
+
+    @Test
     @DisplayName("buildPingArgs: timeoutSec paket sayısına bölünür (Windows -w ms, min 1000)")
     void buildPingArgs_windowsTimeoutFloor() {
         // İşletim sistemine göre bayrak değişir; burada yalnız değişmezler: ping başta, host sonda.

@@ -1065,6 +1065,42 @@ public class EmailNotificationService {
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
+    /**
+     * Login sayfası (KİMLİKSİZ) "sorun bildir" akışında bildirene NÖTR "alındı" onayı (2026-10-08, ürün kararı).
+     *
+     * <p>Neden ayrı: alıcı adresi formdaki serbest alandır ve doğrulanmamıştır. Eski onay maili kullanıcının yazdığı
+     * açıklamayı, hata metnini, kullanıcı adını ve en çok 5 ekran görüntüsünü KOPYALIYORDU — herkes kurumsal SMTP'den
+     * istediği adrese istediği içeriği (oltalama) gönderebiliyordu. Bu mail yalnız sabit metin + sunucunun ürettiği
+     * referans numarası + zaman taşır; kullanıcı girdisinden TEK karakter içermez. Yöneticiye giden bildirim tam içerikle
+     * sürer. Oturumlu akışlar (cihaz geçmişi / uygulama içi bildirim) kendi adresine giden {@link #sendLoginIssueAck}'i
+     * kullanmaya devam eder. Best-effort (asla fırlatmaz).
+     */
+    public LoginIssueMailResult sendLoginIssueAckNeutral(String to, String refCode, String reportedAt, boolean force) {
+        if (to == null || to.isBlank()) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
+        String html = buildLoginIssueAckNeutralHtml(refCode, reportedAt);
+        String subject = "[Site Monitor] Sorun bildiriminiz alındı — " + nzs(refCode);
+        String status = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    /** Nötr onay gövdesi — yalnız referans + zaman; kullanıcı girdisi YOK (bkz. {@link #sendLoginIssueAckNeutral}). */
+    String buildLoginIssueAckNeutralHtml(String refCode, String reportedAt) {
+        MailDoc d = MailDoc.create("[Site Monitor] Sorun bildiriminiz alındı — " + nzs(refCode))
+                .preheader("Bildiriminiz kaydedildi — referans " + nzs(refCode))
+                .kicker("Sorun Bildirimi");
+        d.badges(Badge.tint("ALINDI", Tone.SUCCESS));
+        d.title("Sorun bildiriminiz alındı", "Bildiriminiz kaydedildi ve sistem yöneticilerine iletildi. Aşağıdaki referans "
+                + "numarasıyla durumu takip edebilir, bizimle iletişimde bu numarayı belirtebilirsiniz.");
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
+        rows.add(Row.of("Bildirim Zamanı", formatIso(reportedAt)));
+        d.keyValue(rows);
+        d.note("Bu bildirimi siz göndermediyseniz bu e-postayı dikkate almayın. Bu e-posta Site Monitor tarafından otomatik "
+                + "gönderilmiştir. Yanıtlamayınız.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi");
+        return d.html();
+    }
+
     /** "Çözüldü" bildirimi — hem bildiren kişiye (To) hem sistem yöneticisine (CC) gider. Best-effort.
      *  Zenginleştirilmiş: bildirim zamanı + orijinal sorun (hata + açıklama) + ekran görüntüleri (CID) +
      *  çözüm notu, yeşil "çözümlendi" başlığıyla. */

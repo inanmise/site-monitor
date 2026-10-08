@@ -173,8 +173,10 @@ public class LoginHelpController {
             log.info("Login sorun bildirimi {} kaydedildi; system-admin.email boş — admin maili atlandı (user='{}' ip={})",
                     refCode, username, ip);
         }
-        // Bildiren kişiye "alındı" onayı (benzer içerik + referans no) — ASYNC, best-effort + loglanır.
-        loginIssueMailService.dispatchAck(reportId, refCode, email, username, errorText, message, images, now);
+        // Bildiren kişiye "alındı" onayı — ASYNC, best-effort + loglanır. NÖTR (2026-10-08, ürün kararı): adres formdaki
+        // doğrulanmamış alan; mail yalnız referans + zaman taşır, kullanıcının yazdığı açıklama/hata/ad ve görseller GİRMEZ
+        // (aksi: kurumsal SMTP üzerinden herhangi bir adrese oltalama içeriği aktarma). Yönetici bildirimi tam içerikle sürer.
+        loginIssueMailService.dispatchAckNeutral(reportId, refCode, email, now);
         // Best-effort audit — kayıt zaten commit'lendi + referans verildi; audit-insert hatası
         // kullanıcıya 500 döndürüp gereksiz resubmit'e yol açmasın (mailler gibi swallow).
         try {

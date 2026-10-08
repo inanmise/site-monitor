@@ -1285,6 +1285,7 @@ public class AdminController {
         }
         // Tüm Sertifikalar tablosu (2026-09-13) alan adıyla çalışır, envanter kimliğini bilmez:
         // `domains` listesi kimliğe çözülür (bilinmeyen alan atlanır). `ids` ile birlikte de verilebilir.
+        requireBulkSize(body.get("ids"), body.get("domains"));   // 2026-10-08: tek istekte en çok BULK_MAX_ITEMS
         LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (body.get("ids") instanceof List<?> raw) {
             for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
@@ -1638,6 +1639,7 @@ public class AdminController {
         requirePerm(session, "thresholds.edit", "edit");
         t.setId(null);
         validateThreshold(t.getTier(), t.getWarningDays(), t.getHighDays(), t.getCriticalDays());
+        validateReAlertHours(t.getReAlertIntervalHours(), null);
         // Tier başına TEK aktif satır; varsayılan (tier'sız) da tek: ikinci satır çözümde sessizce yok sayılırdı.
         List<AlertThreshold> same = t.getTier() == null
                 ? thresholdRepo.findByActiveTrueAndTierIsNullOrderByIdAsc()
@@ -1709,6 +1711,35 @@ public class AdminController {
         }
     }
 
+    /**
+     * Toplu uçların (envanter / alarm) tek istekteki üst sınırı (2026-10-08). Sınırsız liste, kayıt başına sorgu ve
+     * (alarmda) bildirim çalıştırıyordu. Arayüz seçimi SAYFA başınadır (en çok birkaç yüz), yani cömert sınır normal
+     * bir işlemi asla engellemez.
+     */
+    static final int BULK_MAX_ITEMS = 2000;
+
+    private static void requireBulkSize(Object ids, Object domains) {
+        int n = (ids instanceof List<?> a ? a.size() : 0) + (domains instanceof List<?> b ? b.size() : 0);
+        if (n > BULK_MAX_ITEMS) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("ids", com.sitemonitor.util.Msg.t(
+                    "Tek seferde en çok " + BULK_MAX_ITEMS + " kayıt işlenebilir (gönderilen: " + n + "). Seçimi küçültüp işlemi parçalar hâlinde tekrarlayın.",
+                    "At most " + BULK_MAX_ITEMS + " records can be processed at once (sent: " + n + "). Select fewer records and repeat the action in parts."));
+        }
+    }
+
+    /**
+     * Tekrar-bildirim aralığı (2026-10-08, "doğrulanmadan alınan veri"): 0/negatif saat YENİ değer olarak kabul edilmez —
+     * alarm her taramada yeniden bildirilirdi. Saklı değerle AYNI gelen eski değer muaf (eski satır düzenlenebilir kalır).
+     */
+    private static void validateReAlertHours(Integer requested, Integer stored) {
+        if (requested != null && requested < 1 && !requested.equals(stored)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("re_alert_interval_hours",
+                    com.sitemonitor.util.Msg.t(
+                            "Tekrar bildirim aralığı en az 1 saat olmalı (girilen: " + requested + "). Önerilen değer 24 saattir.",
+                            "The re-alert interval must be at least 1 hour (entered: " + requested + "). The suggested value is 24 hours."));
+        }
+    }
+
     @PutMapping("/thresholds/{id}")
     public ResponseEntity<Map<String, Object>> updateThreshold(
             @PathVariable Long id, @RequestBody AlertThreshold t, HttpSession session) {
@@ -1723,6 +1754,7 @@ public class AdminController {
                 t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays(),
                 t.getHighDays() != null ? t.getHighDays() : existing.getHighDays(),
                 t.getCriticalDays() != null ? t.getCriticalDays() : existing.getCriticalDays());
+        validateReAlertHours(t.getReAlertIntervalHours(), existing.getReAlertIntervalHours());
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
         existing.setWarningDays(t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays());
         existing.setHighDays(t.getHighDays() != null ? t.getHighDays() : existing.getHighDays());
@@ -1939,15 +1971,41 @@ public class AdminController {
     private void applyContactFields(EscalationContact c, Map<String, Object> body, HttpSession session) {
         Long userId = toLong(body.get("user_id"));
         if (userId != null) {
-            userRepo.findById(userId).ifPresent(u -> {
+            // Kapsam (2026-10-08, güvenlik denetimi): kişi kullanıcının ad + e-postasını KOPYALAR; global olmayan yazar
+            // (kapsamlı müdür / takım yöneticisi) herhangi bir kimlik vererek kapsamı dışındaki bir kullanıcının adını ve
+            // adresini kendi takımının eskalasyonuna bağlayabiliyordu. Kural, seçicinin kaynağı GET /admin/users ile
+            // AYNI (viewScope + inScope) — normal bir seçim asla reddedilmez. Kayıtlı bağ DEĞİŞMİYORSA eski davranış
+            // aynen (silinmiş/kapsam dışına taşınmış kullanıcıya bağlı eski kişi düzenlenebilir kalır).
+            // Global yönetici davranışı DEĞİŞMEZ (bilinmeyen kimlik bugünkü gibi yok sayılır).
+            boolean unchanged = userId.equals(c.getUserId());
+            AppUser u = userRepo.findById(userId).orElse(null);
+            if (!unchanged && !isAdmin(session)) {
+                List<Long> scope = viewScope(session);
+                boolean visible = u != null && scope != null && inScope(u, scope);
+                if (!visible) {
+                    log.warn("Escalation contact user outside scope by user={} targetUser={}", actor(session), userId);
+                    throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("user_id", com.sitemonitor.util.Msg.t(
+                            "Seçilen kullanıcı bulunamadı ya da yönetim kapsamınızda değil. Listeden kendi takımlarınızdaki bir kullanıcıyı seçin; liste eskiyse sayfayı yenileyin.",
+                            "The selected user wasn’t found or isn’t in your scope. Pick a user from your own teams in the list; reload the page if the list is out of date."));
+                }
+            }
+            if (u != null) {
                 c.setUserId(userId);
                 c.setName(u.getDisplayName() != null && !u.getDisplayName().isBlank()
                         ? u.getDisplayName() : u.getUsername());
                 c.setEmail(u.getEmail());
-            });
+            }
         } else {
             String name = (String) body.get("name");
             String email = (String) body.get("email");
+            // Elle girilen e-posta (2026-10-08): YENİ değer biçim denetiminden geçer; boş bugünkü gibi serbest, saklı
+            // (değişmeyen) değer denetlenmez.
+            if (email != null && !email.isBlank() && !email.trim().equals(c.getEmail() == null ? null : c.getEmail().trim())
+                    && !com.sitemonitor.util.EmailFormat.isValid(email)) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("email", com.sitemonitor.util.Msg.t(
+                        "E-posta adresi geçersiz. Tek bir adres girin (ör. ad.soyad@ornek.com).",
+                        "The e-mail address is invalid. Enter a single address (e.g. name.surname@example.com)."));
+            }
             if (name != null) c.setName(name);
             if (email != null) c.setEmail(email);
             c.setUserId(null);
@@ -2535,6 +2593,7 @@ public class AdminController {
         if (!Set.of("acknowledge", "resolve", "re-notify").contains(action)) {
             throw new IllegalArgumentException("action must be one of: acknowledge, resolve, re-notify");
         }
+        requireBulkSize(body.get("ids"), null);   // 2026-10-08: tek istekte en çok BULK_MAX_ITEMS
         LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (body.get("ids") instanceof List<?> raw) {
             for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }

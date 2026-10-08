@@ -34,6 +34,41 @@ public class PingCheckerService {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 
+    // ── Girdi kuralları (2026-10-08, "doğrulanmadan alınan veri var mı?") ───────────────────────────
+    // Host doğrudan `ping` argv'sine gider (kabuk YOK, yani komut enjeksiyonu yok) — ama '-' ile başlayan bir host
+    // ping'e SEÇENEK olarak geçer (ör. "-f" flood). Paket sayısı kayıtta kırpılmıyordu; test ucu 1..10 kırparken
+    // zamanlayıcı/tanılama ham değeri geçiriyordu.
+
+    /** Paket sayısı sınırları — kayıt, test ucu ve koşum AYNI aralığı kullanır. */
+    public static final int MIN_PACKETS = 1;
+    public static final int MAX_PACKETS = 10;
+    public static final int DEFAULT_PACKETS = 4;
+
+    /** Ana bilgisayar adı (RFC 1123 etiketleri; iç ağ adları için '_' da kabul) — en çok 253 karakter, sondaki '.' serbest. */
+    private static final Pattern HOSTNAME = Pattern.compile(
+            "^(?=.{1,253}$)[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?(?:\\.[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)*\\.?$");
+    /** IPv6 değişmezi (köşeli parantezsiz; isteğe bağlı bölge kimliği {@code %eth0}). */
+    private static final Pattern IPV6 = Pattern.compile("^[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(?:%[A-Za-z0-9_.-]{1,32})?$");
+
+    /** Paket sayısını [1, 10] aralığına kırpar; null → 4. */
+    public static int clampPackets(Integer count) {
+        if (count == null) return DEFAULT_PACKETS;
+        return Math.max(MIN_PACKETS, Math.min(MAX_PACKETS, count));
+    }
+
+    /** Host '-' ile mi başlıyor (ping'e seçenek olarak geçerdi)? Baştaki boşluk yok sayılır. */
+    public static boolean startsWithDash(String host) {
+        return host != null && host.strip().startsWith("-");
+    }
+
+    /** Yeni girdi için host biçimi geçerli mi: ana bilgisayar adı, IPv4 ya da IPv6 (şema/yol/boşluk/port yok). */
+    public static boolean isValidHost(String host) {
+        if (host == null) return false;
+        String h = host.strip();
+        if (h.isEmpty() || h.length() > 253 || h.startsWith("-")) return false;
+        return HOSTNAME.matcher(h).matches() || (h.indexOf(':') >= 0 && IPV6.matcher(h).matches());
+    }
+
     public static List<String> buildPingArgs(String host, String ipVersion, int count, int timeoutSec) {   // public: ping uçtan uca tanılaması (2026-10-05) aynı komutu kullanır
         List<String> a = new ArrayList<>();
         a.add("ping");
@@ -60,9 +95,25 @@ public class PingCheckerService {
     public Map<String, Object> check(String host, String ipVersion, int count, int timeoutMs) {
         int timeoutSec = Math.max(2, (int) Math.ceil(timeoutMs / 1000.0) + 1);
         Map<String, Object> result = new LinkedHashMap<>();
+        // Paket sayısı HER çağıranda aynı tavanla (2026-10-08): saklı eski kayıtta 50 olsa bile 10 paket atılır.
+        int packets = clampPackets(count);
+
+        // Eski kayıt güvenliği (2026-10-08): '-' ile başlayan host ping'e SEÇENEK olarak geçerdi → komut ÇALIŞTIRILMAZ,
+        // kontrol açık bir hatayla başarısız sayılır (koşum düşmez; kullanıcı host'u düzeltince düzelir).
+        if (host == null || host.isBlank() || startsWithDash(host)) {
+            result.put("up", false);
+            result.put("error", "Geçersiz host (boş ya da '-' ile başlıyor) — ping çalıştırılmadı; izlemenin host alanını düzeltin");
+            try {
+                com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR)
+                        .with("target", host)
+                        .applyTo(result);
+            } catch (Exception ignore) { /* üst veri */ }
+            log.warn("Ping çalıştırılmadı — geçersiz host: '{}'", host);
+            return result;
+        }
 
         ProcessProbe.Result r = ProcessProbe.run(
-                buildPingArgs(host, ipVersion, Math.max(1, count), timeoutSec), null, timeoutSec + 2);
+                buildPingArgs(host, ipVersion, packets, timeoutSec), null, timeoutSec + 2);
         String out = r.output() != null ? r.output() : "";
         String low = out.toLowerCase(Locale.ROOT);
 
@@ -74,7 +125,7 @@ public class PingCheckerService {
             result.put("up", false);
             result.put("na", true);
             result.put("error", "ICMP bu ortamda kullanılamıyor (yetki/binary)");
-            classify(result, true, null, out, host, ipVersion, count, timeoutMs);
+            classify(result, true, null, out, host, ipVersion, packets, timeoutMs);
             log.debug("Ping unavailable for {}: {}", host, firstLine(out));
             return result;
         }
@@ -90,7 +141,7 @@ public class PingCheckerService {
             result.put("error", loss != null
                     ? "Yanıt yok (%" + loss + " paket kaybı)"
                     : firstLine(out));
-            classify(result, false, loss, out, host, ipVersion, count, timeoutMs);
+            classify(result, false, loss, out, host, ipVersion, packets, timeoutMs);
         }
         return result;
     }
