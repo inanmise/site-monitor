@@ -15,6 +15,23 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.118.0] — 2026-10-09
+
+### Added
+- **Sistem Sağlığı → Kullanıcı/Oturum → "Atıl hesaplar" yeniden tasarlandı (shadcn, telefon / tablet / masaüstü).**
+  Aynı kutucuktan açılır; mevcut işlevler (sayı, kullanıcı ayrıntısını açma, kimlik maskesi) korunur.
+  - Özet: toplam atıl hesap ve aktif hesaplara oranı, hiç giriş yapmamışlar (son 30 günde açılanlar), 180+ gün
+    (bir yıldan uzun), ortanca ve en uzun hareketsizlik; e-postası olmayan ve kalıcı kilitli hesap rozetleri.
+  - Kırılım: hareketsizlik aralığı (30–89 / 90–179 / 180–364 / 365+ / hiç), kimlik kaynağı, sistem rolü, ilk 5 takım;
+    her satır bir süzgeç düğmesi.
+  - Liste: arama, dört süzgeç (seçenek sayılarıyla), sıralama, kaldırılabilir süzgeç çipleri, CSV; masaüstünde tablo,
+    telefon ve tablette kart. Satır kullanıcı ayrıntısını açar.
+  - Sonraki adım: global yönetici için "Toplu pasife almada incele" (süzgeçlerden doldurulmuş ölçütlerle mevcut sihirbazı
+    açar; yöneticiler her zaman hariç, önizleme ve onay sihirbazda), her yönetici için "Kullanıcılar listesinde aç".
+    Bu görünüm hesap üzerinde değişiklik yapmaz.
+  - Sunucu: 30 sn'lik özet yine ilk 500 satırı taşır; tam liste (en çok 5000) pencere açılınca ayrı uçtan
+    (`GET /api/admin/system/user-activity/dormant`, 30 sn paylaşımlı önbellek, aynı okuma kapısı ve maske) gelir.
+
 ## [20.117.2] — 2026-10-09
 
 ### Fixed
@@ -2769,7 +2786,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.118.0...HEAD
+[20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0
 [20.117.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.2
 [20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
 [20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0

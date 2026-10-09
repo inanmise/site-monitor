@@ -1514,6 +1514,8 @@ export const api = {
     getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
     // Kullanıcı / oturum izleme
     getUserActivity: () => request('/admin/system/user-activity'),
+    // Atıl hesaplar TAM listesi (≤ 5000; yoklanan özet ilk 500'ü taşır) — yalnız pencere açılınca / Yenile ile, yoklanmaz
+    getDormantAccounts: () => request('/admin/system/user-activity/dormant'),
     // Esnek login serisi — aralık seçimi (1g/7g/30g), gün-navigasyonu, zoom
     getLoginSeries: (from, to, granularity = 'day') =>
       request(`/admin/system/user-activity/series?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${granularity}`),

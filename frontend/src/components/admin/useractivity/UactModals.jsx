@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Users, ShieldAlert, Clock, Eye, LogOut, Check, UserX, Compass, ExternalLink, UserCog, BarChart3 } from 'lucide-react'
+import { Users, ShieldAlert, Clock, Eye, LogOut, Check, Compass, ExternalLink, UserCog, BarChart3 } from 'lucide-react'
 import { Badge } from '@/components/shadcn/badge'
 import ChannelBadge from '../loginmethods/stats/ChannelBadge.jsx'
 import { channelChips, channelLabel, channelOfLoginMethod, loginStatsParams } from '../loginmethods/stats/loginStatsModel.js'
@@ -84,15 +84,15 @@ export function HeatCellModal({ cell, identityMasked = false, onClose, onUser })
   )
 }
 
-/** KPI kartı drill-down: active | logins | failed | anomalies | unique_users | dormant. */
+/** KPI kartı drill-down: active | logins | failed | anomalies | unique_users. Atıl hesaplar (dormant) 2026-10-09'dan beri
+ *  kendi görünümünde: ./dormant/DormantAccountsModal.jsx (istatistik + süzgeç + CSV + sonraki adım). */
 export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
   const t = useT()
   const kind = detail.kind
   const rows = kind === 'active' ? (data.active_users || []) : (data.details?.[kind] || [])
-  const isUsers = kind === 'unique_users', isDormant = kind === 'dormant', isActive = kind === 'active'
+  const isUsers = kind === 'unique_users', isActive = kind === 'active'
   const isFailed = kind === 'failed', isAnom = kind === 'anomalies'
   const masked = data.identity_masked === true   // kimlik izi yalnız global yönetici + denetçiye (2026-09-28c)
-  const rel = (iso) => { const r = relTime(iso); return r ? t(`uact.rel.${r.unit}`, r.n) : '—' }
   // 2026-09-20: giriş / anomali / tekil kullanıcı satırlarında ad + rol + takım (olay satırı taşımıyorsa login_status'tan)
   const byName = new Map((data.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))
   const who = (name, r = {}) => { const u = byName.get(String(name || '').toLowerCase()) || {}; return { ...u, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null)) } }
@@ -102,9 +102,9 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
   const teamCell = (name, r) => { const u = who(name, r); return u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : <span className="text-muted-foreground">—</span> }
   const head = (...cols) => <TableHeader><TableRow>{cols.filter(Boolean).map(([label, num]) => <TableHead key={label} className={num ? TH_NUM : TH}>{label}</TableHead>)}</TableRow></TableHeader>
   return (
-    <ModalShell open onClose={onClose} title={`${detail.title} · ${rows.length}`} icon={isDormant ? UserX : isAnom ? ShieldAlert : Users} size="lg">
-      <p className={MUTED_SM}>{isDormant ? t('uact.dormantHint') : isActive ? t('uact.kpiLive') : winLabel}</p>
-      {rows.length === 0 ? <div className="text-muted-foreground">{isDormant ? t('uact.noDormant') : t('uact.noLogins')}</div> : (
+    <ModalShell open onClose={onClose} title={`${detail.title} · ${rows.length}`} icon={isAnom ? ShieldAlert : Users} size="lg">
+      <p className={MUTED_SM}>{isActive ? t('uact.kpiLive') : winLabel}</p>
+      {rows.length === 0 ? <div className="text-muted-foreground">{t('uact.noLogins')}</div> : (
         <DataTable>
           {isActive ? (<>
             {head([t('uact.colUser')], [t('uact.colTeam')], [t('uact.colLoginAt')], [t('uact.colLastTab')], [t('uact.colLocation')])}
@@ -115,17 +115,6 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
                 <TableCell className={cn(TD, MONO_SM)}>{u.login_at ? formatDateSec(u.login_at) : '—'}</TableCell>
                 <TableCell className={cn(TD, 'text-xs')}>{u.last_tab ? tabLabel(u.last_tab, t) : '—'}</TableCell>
                 <TableCell className={cn(TD, 'text-xs')}>{idHidden(u, 'ip', masked) ? <MaskedValue /> : <>{u.ip || '—'} <span className="text-muted-foreground">{loc(u)}</span></>}</TableCell>
-              </TableRow>
-            ))}</TableBody>
-          </>) : isDormant ? (<>
-            {head([t('uact.colUser')], [t('uact.colRole')], [t('uact.colTeam')], [t('uact.colLastLogin')], [t('uact.colAuthSource')])}
-            <TableBody>{rows.map((u) => (
-              <TableRow key={u.username}>
-                <TableCell className={TD}><LinkButton onClick={() => onUser?.(u)}><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></LinkButton></TableCell>
-                <TableCell className={cn(TD, 'text-xs')}>{u.system_role || '—'}</TableCell>
-                <TableCell className={TD}>{u.team_name ? <TeamBadge teamName={u.team_name} /> : '—'}</TableCell>
-                <TableCell className={cn(TD, 'text-xs')}>{u.last_login_at ? <span title={formatDateSec(u.last_login_at)}>{rel(u.last_login_at)}</span> : <Pill tone="never" status="never">{t('uact.st.never')}</Pill>}</TableCell>
-                <TableCell className={cn(TD, 'text-xs')}>{u.auth_source || '—'}</TableCell>
               </TableRow>
             ))}</TableBody>
           </>) : isUsers ? (<>

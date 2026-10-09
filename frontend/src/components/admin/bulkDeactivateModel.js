@@ -72,6 +72,30 @@ export function isListChanged(res) {
   return !!res && res.success === false && res.code === LIST_CHANGED
 }
 
+/**
+ * Ön doldurma derin bağlantısı (2026-10-09, Atıl hesaplar görünümü): `g_bd=1` + `g_bd_days` / `g_bd_never` /
+ * `g_bd_src` / `g_bd_role` / `g_bd_teams` → sihirbaz formu (EMPTY_FORM üzerine). Geçersiz değer yok sayılır (o alan
+ * varsayılanda kalır); `g_bd` yoksa null. Sihirbaz yine Ölçüt adımında açılır — yönetici önizler ve onaylar.
+ *
+ * @param {(key: string, fallback?: any) => any} read  URL param okuyucu (readUrlParam)
+ */
+export const PREFILL_PARAMS = Object.freeze(['g_bd', 'g_bd_days', 'g_bd_never', 'g_bd_src', 'g_bd_role', 'g_bd_teams'])
+export function formFromParams(read) {
+  if (typeof read !== 'function' || read('g_bd', null) !== '1') return null
+  const form = { ...EMPTY_FORM }
+  const days = parseDays(read('g_bd_days', null))
+  if (days != null) { form.inactiveOn = true; form.days = String(days) }
+  const never = read('g_bd_never', null)
+  if (never === '0' || never === '1') form.includeNever = never === '1'
+  const src = read('g_bd_src', null)
+  if (SOURCES.includes(src)) form.source = src
+  const role = read('g_bd_role', null)
+  if (ROLES.includes(role)) form.role = role
+  const teams = String(read('g_bd_teams', '') || '').split(',').map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).slice(0, 200)
+  if (teams.length) { form.scope = 'teams'; form.teamIds = teams.map(Number) }
+  return form
+}
+
 /** Önizleme uygulanabilir mi (en az bir hedef, sınır içinde)? */
 export function canProceed(preview) {
   return !!preview && Number(preview.total) > 0 && !preview.over_limit

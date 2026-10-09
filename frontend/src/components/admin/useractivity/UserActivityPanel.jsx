@@ -20,6 +20,7 @@ import LoginHeatmap from '../LoginHeatmap'
 import { SessionDetailModal, HeatCellModal, KpiDetailModal, TerminateModal, AckModal } from './UactModals.jsx'
 import UserDirectoryModal from './UserDirectoryModal.jsx'
 import EventListModal from './EventListModal.jsx'
+import DormantAccountsModal from './dormant/DormantAccountsModal.jsx'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, hasActiveFilter, rowMatches, tabLabel, unusedTabs, idleBand, loginStatus,
   relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, FLAG_KEYS, splitFlags, sortRows,
@@ -560,7 +561,11 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       </SectionCard>
 
       {heatCell && <HeatCellModal cell={heatCell} identityMasked={idMasked} onClose={() => setHeatCell(null)} onUser={(u) => setSessionDetail({ username: u })} />}
-      {kpiDetail && ['logins', 'failed', 'anomalies'].includes(kpiDetail.kind)
+      {/* Atıl hesaplar (2026-10-09): ayrı, zengin görünüm — istatistik + süzgeç + CSV + sonraki adım; satır yine oturum detayını açar */}
+      {kpiDetail?.kind === 'dormant'
+        ? <DormantAccountsModal data={ua} isAdmin={isAdmin} globalAdmin={globalAdmin} refreshing={refreshing} onRefresh={onRefresh}
+            onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} />
+        : kpiDetail && ['logins', 'failed', 'anomalies'].includes(kpiDetail.kind)
         ? <EventListModal kind={kpiDetail.kind} title={kpiDetail.title} rows={ua.details?.[kpiDetail.kind] || []} winLabel={winLabel} identityMasked={idMasked}
             byName={new Map((ua.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))}
             onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} />
