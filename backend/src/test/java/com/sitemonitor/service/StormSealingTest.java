@@ -116,6 +116,7 @@ class StormSealingTest {
     @Test
     @DisplayName("Son üye katılımı 2 dk önce → fırtına taze: SUPPRESSED, üye sayacı + last_member_at güncellenir")
     void evaluate_freshStorm_attachesAndTouchesMemberClock() {
+        when(jdbcTemplate.update(startsWith("UPDATE alert_storms SET member_count = COALESCE"), any(Object[].class))).thenReturn(1);   // koşullu sayaç 1 satır = fırtına hâlâ aktif (kapanış yarışı yok, 2026-10-09)
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:14")).thenReturn(Optional.of(teamStorm(5, ago(600), ago(2), ago(600))));
 
         AlertEvent e = down(414, 14L, ago(0));

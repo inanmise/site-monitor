@@ -270,7 +270,8 @@ export function WhyOpenChips({ alert: a, push, className }) {
 
 /**
  * Sahiplen / Çöz / Tekrar bildir KAPALIYSA nedeni (alertHistoryModel.actBlockReason): başka takımın uyarısı (7/24
- * operatörü), izin yok (`alerts.actions`) ya da izin yok ama arama kaydı girilebilir (AUDIT 7/24 operatörü).
+ * operatörü), izin yok (`alerts.actions`), izin yok ama arama kaydı girilebilir (AUDIT 7/24 operatörü) ya da uyarı başka
+ * bir takımın bağımsız izlemesine ait (`'owner'`, 2026-10-09 — host'un envanteri kullanıcının takımında olsa da).
  * Kart ve detay aynı metni gösterir. Test kancası `data-slot="alert-act-blocked"` + `data-reason`.
  */
 export function ActBlockedNote({ reason, className }) {
@@ -278,7 +279,8 @@ export function ActBlockedNote({ reason, className }) {
   if (!reason) return null
   const text = reason === 'perm' ? t('alh.actNoPermission')
     : reason === 'permNoc' ? t('alh.actNoPermissionNoc')
-      : t('alh.actOtherTeam')
+      : reason === 'owner' ? t('alh.actStandaloneOwner')
+        : t('alh.actOtherTeam')
   return <p data-slot="alert-act-blocked" data-reason={reason} className={cn('basis-full text-xs text-muted-foreground', className)}>{text}</p>
 }
 

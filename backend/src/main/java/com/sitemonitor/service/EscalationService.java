@@ -1478,8 +1478,17 @@ public class EscalationService {
                 boolean pushIndividual = stormPushIndividual();
                 recordStormSuppression(event, domainTeamId, ugTeamId, pushIndividual);
                 if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, outageContext);
+                Long joinedStorm = event.getStormId();
                 log.info("🌩 İzleme alarmı storm'a eklendi (bireysel e-posta yok, push {}): {} [{}] → storm #{}",
-                        pushIndividual ? "bireysel" : "fırtınada", domain, alertType, event.getStormId());
+                        pushIndividual ? "bireysel" : "fırtınada", domain, alertType, joinedStorm);
+                // KAPANIŞ YARIŞI (2026-10-09): storm_id yukarıdaki save ile yazıldı; fırtına bu arada kapandıysa (yaşam
+                // döngüsü üye listesini bu kayıttan önce okudu) bağ HEDEFLİ koşullu UPDATE ile koparılır, lastReAlertAt
+                // sıfırlanır → sonraki tur bireysel İLK bildirimi gönderir (kapanışta duyurulmamış üyenin yolu; fırtına
+                // devri satırı bu yolda da durur). Bundan sonra olay varlığı KAYDEDİLMEZ — bayat varlık bağı geri yazardı.
+                if (stormService.closedAfterAttach(event)) {
+                    log.warn("🌩 Storm #{} bağlanma sırasında kapandı — {} [{}] fırtınadan ayrıldı, ilk bildirim sonraki turda bireysel",
+                            joinedStorm, domain, alertType);
+                }
             } else {
                 // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → sorgu yok; adım EscalationStepService'ten).
                 List<EscalationContact> contacts = teamOnly ? List.of()

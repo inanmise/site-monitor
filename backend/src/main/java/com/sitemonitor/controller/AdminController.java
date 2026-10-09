@@ -5,6 +5,7 @@ import com.sitemonitor.service.userref.UserRef;
 import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.AlertActionNote;
+import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
@@ -2152,6 +2153,7 @@ public class AdminController {
                         qEffective, levelEffective, acknowledged, teamId,
                         scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sortSpec));
         enrichAlerts(result.getContent());
+        markActScope(result.getContent(), session);   // act_scope: eylem düğmeleri yalnız sahip takımın satırında (2026-10-09)
         if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
         if (nocAlertFacts != null) nocAlertFacts.decorate(result.getContent());   // noc_sent_at / noc_via_storm — tek sorgu
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
@@ -2683,6 +2685,7 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
         List<AlertEvent> one = new ArrayList<>(List.of(ev));
         enrichAlerts(one);
+        markActScope(one, session);
         if (nocCallLog != null) nocCallLog.decorate(one);
         if (nocAlertFacts != null) nocAlertFacts.decorate(one);   // "7/24 ekibine iletildi · 14:05" (2026-10-04)
         Map<String, Object> body = new LinkedHashMap<>();
@@ -2747,9 +2750,12 @@ public class AdminController {
     }
 
     // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────
-    /** Bir alarmın ait olabileceği takım id'leri: kendi teamId'si (keyword/ping) + cert alarmında
-     *  domain→envanter (SY teamId + UG ugTeamId). cert alarmlarında teamId NULL olduğundan envanter şart. */
-    private Set<Long> alertTeamIds(AlertEvent ev) {
+    /**
+     * OKUMA kapsamının takımları — liste sorgusuyla ({@code AlertEventRepository.ALERT_LIST_FIND}) AYNI kural: damgalı
+     * teamId + alan adı → envanter (SY teamId + UG ugTeamId); sertifika alarmında teamId NULL olduğundan envanter şart.
+     * Listede görünen satır açılabilmeli; bu yüzden okuma uçları bunu, EYLEM uçları {@link #alertOwnerTeamIds}'i kullanır.
+     */
+    private Set<Long> alertReadTeamIds(AlertEvent ev) {
         Set<Long> ids = new HashSet<>();
         if (ev.getTeamId() != null) ids.add(ev.getTeamId());
         if (ev.getDomain() != null) {
@@ -2761,15 +2767,48 @@ public class AdminController {
         return ids;
     }
 
-    /** Alarm takıma-gizli: global viewer (admin/AUDIT) tümünü; aksi halde alarmın takım(lar)ından
-     *  biri çağıranın görüntüleme kapsamında olmalı (yoksa 403). Global olmayanda alarmı yükler. */
+    /**
+     * EYLEM kapsamının (sahiplen / çöz / tekrar bildir / alıcı önizlemesi / toplu işlem) takımları — alarmın SAHİBİ
+     * takımları (2026-10-09, {@link AlertOwnership}): bağımsız izleme alarmında YALNIZ damgalı takım; envanter gibi
+     * yönlenen alarmda (sertifika, ACCESSIBILITY, envanter türevi Port/DNS) damga + envanter SY/UG. Eskiden okuma kuralı
+     * kullanılıyordu: host'un sertifikasını envanterde tutan A takımı, B'nin aynı host'taki bağımsız Ping alarmını
+     * çözebiliyor (B'ye yanlış "çözüldü" postası) ve B'nin alıcılarını önizleyebiliyordu.
+     */
+    private Set<Long> alertOwnerTeamIds(AlertEvent ev) {
+        return AlertOwnership.ownerTeamIds(ev, inventoryRepo);
+    }
+
+    /** EYLEM kapısı: global viewer (admin/AUDIT) tümünü; aksi halde alarmın SAHİBİ takım(lar)ından biri çağıranın
+     *  görüntüleme kapsamında olmalı (yoksa 403). Global olmayanda alarmı yükler. */
     private void requireAlertScope(HttpSession session, Long id) {
         if (SessionScope.isGlobalViewer(session)) return;
         List<Long> v = SessionScope.viewTeamIds(session);
         AlertEvent ev = alertEventRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
-        if (v != null) for (Long t : alertTeamIds(ev)) if (v.contains(t)) return;
+        if (AlertOwnership.ownedByAny(alertOwnerTeamIds(ev), v)) return;
+        if (v != null && !AlertOwnership.routesLikeInventory(ev)
+                && AlertOwnership.ownedByAny(alertReadTeamIds(ev), v)) {
+            // Görüyor (host'un envanteri onun takımında) ama alarm başka takımın bağımsız izlemesine ait.
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu alarm başka bir takımın bağımsız izlemesine ait — sahiplenme, çözme ve yeniden bildirme yalnız o takıma açık",
+                    "This alert belongs to another team's standalone monitor — only that team can acknowledge, resolve or re-notify it"));
+        }
         throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
+    }
+
+    /**
+     * Sayfa satırlarına EYLEM kapsamı bayrağı ({@code act_scope}, 2026-10-09) — arayüz Sahiplen / Çöz / Tekrar bildir'i ve
+     * toplu seçimi yalnız sunucunun kabul edeceği satırda çizer (403'e giden düğme yok). {@link #requireAlertScope} ile
+     * AYNI kural; envanter takımları {@code enrichAlerts}'in toplu yüklediği SY/UG alanlarından okunur — sorgu atmaz.
+     * Global görüntüleyicide yazılmaz (alan yok = kısıt yok); çağıran {@code enrichAlerts}'ten SONRA çağırır.
+     */
+    private void markActScope(List<AlertEvent> events, HttpSession session) {
+        if (events == null || events.isEmpty() || SessionScope.isGlobalViewer(session)) return;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        for (AlertEvent ev : events) {
+            ev.setActScope(AlertOwnership.ownedByAny(
+                    AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId()), v));
+        }
     }
 
     /**
@@ -2781,21 +2820,27 @@ public class AdminController {
         return nocCallLog != null && nocCallLog.seesAllAlerts(session);
     }
 
-    /** {@link #requireAlertScope}'un OKUMA hâli — 7/24 operatörü tümünü görür. Yazma eylemleri requireAlertScope'ta kalır. */
+    /**
+     * OKUMA kapısı — 7/24 operatörü ve global görüntüleyici tümünü görür; diğerleri liste sorgusuyla aynı kuralla
+     * ({@link #alertReadTeamIds}). Yazma eylemleri {@link #requireAlertScope}'ta (sahip takım kuralı) kalır.
+     */
     private void requireAlertReadScope(HttpSession session, Long id) {
         if (seesAllAlerts(session)) return;
-        requireAlertScope(session, id);
+        List<Long> v = SessionScope.viewTeamIds(session);
+        AlertEvent ev = alertEventRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
+        if (AlertOwnership.ownedByAny(alertReadTeamIds(ev), v)) return;
+        throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
     }
 
-    /** requireAlertScope'un fırlatmayan sürümü — toplu işlemde kapsam-dışı/eksik id'yi atlamak için. */
+    /** requireAlertScope'un fırlatmayan sürümü — toplu işlemde kapsam-dışı/eksik id'yi atlamak için (sahip takım kuralı). */
     private boolean isAlertInScope(HttpSession session, Long id) {
         if (SessionScope.isGlobalViewer(session)) return true;
         List<Long> v = SessionScope.viewTeamIds(session);
         if (v == null) return false;
         AlertEvent ev = alertEventRepo.findById(id).orElse(null);
         if (ev == null) return false;
-        for (Long t : alertTeamIds(ev)) if (v.contains(t)) return true;
-        return false;
+        return AlertOwnership.ownedByAny(alertOwnerTeamIds(ev), v);
     }
 
     // ── Teams (ADMIN only) ────────────────────────────────────────────────────

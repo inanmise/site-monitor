@@ -390,8 +390,18 @@ public final class RetentionCatalog {
                 "Oturum öznitelikleri — ebeveyn spring_session satırıyla FK CASCADE silinir."),
         info("remember-me-tokens", "remember_me_tokens", Mode.EXTERNAL, DataClass.PERSONAL,
                 "RememberMeService saatlik olarak süresi dolmuş token'ları siler (site.monitor.remember.cleanup-interval-ms)."),
+        info("login-unknown-lockouts", "login_unknown_lockouts", Mode.EXTERNAL, DataClass.PERSONAL,
+                "Bilinmeyen kullanıcı adının ilerleyici giriş kilidi (2026-10-09): ad başına TEK satır — kanonik ad, kademe, "
+                + "kilit bitişi, son kilit anı (parola / IP yok). Satır yalnız kaba kuvvet eşiğinde doğar. UnknownUserLockoutService "
+                + "saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; "
+                + "mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve "
+                + "site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler."),
         info("password-history", "password_history", Mode.EXTERNAL, DataClass.PERSONAL,
-                "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı.")
+                "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı."),
+        info("monitor-check-schedule", "monitor_check_schedule", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Küme geneli izleme vadesi ve süpürme turu kaydı (2026-10-09): izleme başına TEK satır (sıradaki vade, son "
+                + "sahiplenen pod) + birkaç 'round:' satırı. Zaman serisi değil, birikmez; silinen izlemelerin satırlarını "
+                + "SchedulerService gece temizliği canlı izleme kümesiyle budar (tur satırları kalır). Kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */

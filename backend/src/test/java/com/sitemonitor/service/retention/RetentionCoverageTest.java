@@ -31,7 +31,7 @@ class RetentionCoverageTest {
      */
     private static final List<String> RAW_DDL_TABLES = List.of(
             "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack",
-            "schema_patch_markers");
+            "schema_patch_markers", "monitor_check_schedule");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(

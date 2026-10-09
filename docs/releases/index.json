@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T01:41:22Z",
+  "generatedAt": "2026-10-09T07:31:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 720,
+  "count": 721,
   "releases": [
+    {
+      "version": "20.116.2",
+      "tag": "v20.116.2",
+      "releasedAt": "2026-10-09T07:31:15Z",
+      "commit": "aa4c6e4b0c82ab3f1e4e638219760d4a6c3001de",
+      "prevVersion": "20.116.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "aa4c6e4b",
+          "subject": "küme cron tur kaydı JVM varsayılan dilimini okumaz — dilimsiz cron için UTC ve İstanbul adaylarından erken olan; CHANGELOG ve CLAUDE.md notları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a70614ec",
+          "subject": "çok pod'lu kurulumda izlemeler aralık başına bir kez ve tek pod'da yoklanır — zamanlama, tur kararı ve tarama liderliği veritabanında"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9c35ac7",
+          "subject": "bağımsız izleme alarmında yalnız sahibi takım işlem yapar; kapanan fırtınaya eklenen alarm sessiz kalmaz"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "10864de7",
+          "subject": "bilinmeyen kullanıcı adı her kilit kademesinde mevcut hesapla aynı yanıtı alır — kilit durumu veritabanında, tüm pod'larda ortak"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.116.1",
       "tag": "v20.116.1",

@@ -1504,6 +1504,67 @@ class EscalationServiceTest {
     }
 
     /**
+     * Fırtına KAPANIŞ YARIŞI (2026-10-09): alarm fırtınaya bağlandı ({@code SUPPRESSED}, {@code storm_id} kaydedildi) ama
+     * fırtına bu arada kapandı — yaşam döngüsünün üye listesinde yoktu. Eskiden {@code lastReAlertAt=now} damgasıyla
+     * bir yeniden uyarı aralığı (~24 sa) hiçbir bildirim gitmiyordu. Artık çağıran {@code closedAfterAttach} ile bağı
+     * koparır (hedefli UPDATE; olay varlığı bundan sonra kaydedilmez), fırtına devri satırı iz olarak kalır ve SONRAKİ tur
+     * "yarıda kalmış ilk bildirim" dalından bireysel INITIAL'ı gönderir.
+     */
+    @Test
+    @DisplayName("Kapanış yarışı: fırtına bağlandıktan sonra kapandı → bağ koparılır, e-posta şimdi gitmez; sonraki tur bireysel INITIAL gönderir")
+    void processConfirmedOutage_stormClosedAfterAttach_nextSweepSendsInitial() {
+        String name = "OIDC Login Akışı";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 14L);
+        ctx.put("monitor_id", 78);
+        ctx.put("name", name);
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(14L); team.setName("SY-Kurumsal Mimari"); team.setEmail("sy@example.com");
+        when(teamRepo.findById(14L)).thenReturn(Optional.of(team));
+        AlertEvent[] stored = new AlertEvent[1];
+        when(alertEventRepo.findOpenAlert(name, EscalationService.TYPE_SCRIPTED_FAIL))
+                .thenAnswer(inv -> Optional.ofNullable(stored[0]));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> {
+            AlertEvent e = inv.getArgument(0);
+            if (e.getId() == null) e.setId(415L);
+            stored[0] = e;
+            return e;
+        });
+        when(stormService.evaluate(any(), any())).thenAnswer(inv -> {
+            ((AlertEvent) inv.getArgument(0)).setStormId(7L);
+            return StormService.StormAction.SUPPRESSED;
+        });
+        // Fırtına kapanmış: servis bağı DB'de koparır (storm_id=NULL, last_re_alert_at=NULL) ve olayı eşler.
+        when(stormService.closedAfterAttach(any())).thenAnswer(inv -> {
+            AlertEvent e = inv.getArgument(0);
+            e.setStormId(null);
+            e.setLastReAlertAt(null);
+            return true;
+        });
+
+        // 1. tur: fırtınaya devredildi + kapanış yarışı
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "WARNING", ctx);
+
+        verify(stormService).closedAfterAttach(argThat(e -> e != null && Long.valueOf(415L).equals(e.getId())));
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> first = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(first.capture());
+        assertThat(first.getValue().getTrigger()).isEqualTo(EscalationService.TRIGGER_STORM_SUPPRESSED);   // iz kalır
+        assertThat(stored[0].getStormId()).isNull();
+        assertThat(stored[0].getLastReAlertAt()).as("bir yeniden uyarı aralığı susturmasın").isNull();
+        // Bağ koparıldıktan sonra olay varlığı YENİDEN kaydedilmez (bayat varlık bağı geri yazardı): iki save (açılış + damga).
+        verify(alertEventRepo, times(2)).save(any());
+
+        // 2. tur: arıza sürüyor → yarıda kalmış ilk bildirim dalı bireysel INITIAL'ı HEMEN gönderir.
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "WARNING", ctx);
+
+        verify(emailService).sendAlert(any(String[].class), not(contains("[RE-ALERT]")), anyString(), eq(name),
+                eq("WARNING"), eq(EscalationService.TYPE_SCRIPTED_FAIL), any(), any());
+        assertThat(stored[0].getLastReAlertAt()).isNotNull();
+        verify(stormService, times(1)).evaluate(any(), any());   // ikinci tur fırtına hunisine girmez (olay zaten açık)
+    }
+
+    /**
      * Sahipsiz kayıt kapısı (2026-09-28 kararı) da iz bırakır (2026-09-30): "SKIPPED: takım yok" günlük satırı +
      * SKIPPED_NO_TEAM push kararı — eskiden yalnız log satırıydı, ekranda hiçbir açıklama yoktu.
      */

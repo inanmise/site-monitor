@@ -3,6 +3,7 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.AlertComment;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.repository.*;
+import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -314,8 +315,10 @@ public class IncidentsController {
     }
 
     /**
-     * Sayfadaki hangi olaylar çağıranın KENDİ kapsamında — {@link #incidentTeamInScope}'un toplu hâli (satır başına
-     * sorgu yok). {@code own == null} (global görüntüleyici) → hepsi.
+     * Sayfadaki hangi olaylar çağıranın KENDİ (sahip olduğu) kapsamında — {@link #incidentOwnedBy}'ın toplu hâli (satır
+     * başına sorgu yok). {@code own == null} (global görüntüleyici) → hepsi. Bağımsız izleme olayında envanter kolu
+     * YOKTUR (2026-10-09, {@link AlertOwnership}): host'un envanterini tutan takım başka takımın Ping / HTTP … olayının
+     * sahibi sayılmaz — satır "Takımımın olayları"nda görünse de (liste sorgusu envanter kuralını taşır) salt okunurdur.
      */
     private static Set<Long> ownedIds(List<AlertEvent> events, List<Long> own,
                                       Map<String, List<com.sitemonitor.model.CertificateInventory>> inv) {
@@ -324,7 +327,7 @@ public class IncidentsController {
         Set<Long> scope = new HashSet<>(own);
         for (AlertEvent e : events) {
             if (e.getTeamId() != null && scope.contains(e.getTeamId())) { out.add(e.getId()); continue; }
-            if (e.getDomain() == null) continue;
+            if (e.getDomain() == null || !AlertOwnership.routesLikeInventory(e)) continue;
             for (com.sitemonitor.model.CertificateInventory i : inv.getOrDefault(e.getDomain(), List.of())) {
                 if ((i.getTeamId() != null && scope.contains(i.getTeamId()))
                         || (i.getUgTeamId() != null && scope.contains(i.getUgTeamId()))) { out.add(e.getId()); break; }
@@ -700,34 +703,50 @@ public class IncidentsController {
     }
 
     /**
-     * YAZMA kapısının takım kapsamı (IDOR): global viewer serbest; aksi halde alarmın takımı (teamId veya domain→envanter
-     * SY/UG) görüş kapsamında olmalı. Org geneli okuma ayarını BİLEREK sormaz — başka ekibin olayını okuyabilmek ona
-     * yorum yazma/silme hakkı vermez (2026-09-28).
+     * YAZMA kapısının takım kapsamı (IDOR): global viewer serbest; aksi halde olayın SAHİBİ takımı (teamId; envanter gibi
+     * yönlenen olayda domain→envanter SY/UG — {@link AlertOwnership}) görüş kapsamında olmalı. Org geneli okuma ayarını
+     * BİLEREK sormaz — başka ekibin olayını okuyabilmek ona yorum yazma/silme hakkı vermez (2026-09-28). Bağımsız izleme
+     * olayında envanter kolu yok (2026-10-09): host'un sertifikasını tutan takım başka takımın Ping olayına yazamaz.
      */
     private void requireIncidentScope(HttpSession session, AlertEvent ev) {
-        if (!inOwnScope(session, ev))
+        if (!ownsIncident(session, ev))
             throw new SecurityException("Bu incident üzerinde yetkiniz yok");
     }
 
-    /** Olay çağıranın KENDİ kapsamında mı (global görüntüleyici → her olay). Liste bayrağı {@code can_manage} ile aynı kural. */
-    private boolean inOwnScope(HttpSession session, AlertEvent ev) {
+    /** Olay çağıranın KENDİ (sahip olduğu) kapsamında mı (global görüntüleyici → her olay). Liste bayrağı {@code can_manage} ile aynı kural. */
+    private boolean ownsIncident(HttpSession session, AlertEvent ev) {
         if (SessionScope.isGlobalViewer(session)) return true;
-        return incidentTeamInScope(ev, SessionScope.viewTeamIds(session));
+        return incidentOwnedBy(ev, SessionScope.viewTeamIds(session));
     }
 
     /**
-     * OKUMA kapısı (tekil olay + yorum dizisi): kendi kapsamı YA DA org geneli salt okunur okuma (ayar açık). Aksi halde
-     * bugünkü gibi 403. Dönüş: olay KENDİ kapsamında mı (satır bayrakları için).
+     * OKUMA kapısı (tekil olay + yorum dizisi): kendi kapsamı, liste sorgusunun "Takımımın olayları" kümesi
+     * ({@link #incidentTeamInScope} — envanter kolu bağımsız olayda da) YA DA org geneli salt okunur okuma (ayar açık).
+     * Aksi halde bugünkü gibi 403. Dönüş: olay çağıranın SAHİP olduğu kapsamda mı (satır bayrakları için) — listede
+     * görünen başka takımın bağımsız olayı açılır ama salt okunurdur.
      */
     private boolean requireIncidentReadable(HttpSession session, AlertEvent ev) {
-        if (inOwnScope(session, ev)) return true;
-        if (orgWideReader(session)) return false;
+        if (ownsIncident(session, ev)) return true;
+        if (incidentTeamInScope(ev, SessionScope.viewTeamIds(session)) || orgWideReader(session)) return false;
         throw new SecurityException("Bu incident üzerinde yetkiniz yok");
     }
 
     /**
-     * Incident'ın takimi verilen kapsamda mi. Damgalanmis {@code teamId} önce; yoksa envanter
-     * kolu (envanter-türevi izlemelerde alarm takimsiz açılabiliyor).
+     * Olay verilen kapsamdaki bir takıma AİT mi (YAZMA / yönetim, 2026-10-09) — {@link AlertOwnership}: damgalı
+     * {@code teamId}; envanter gibi yönlenen olayda (sertifika, ACCESSIBILITY, envanter türevi Port/DNS) ayrıca
+     * domain→envanter SY/UG. Bağımsız izleme olayında envanter OKUNMAZ.
+     */
+    private boolean incidentOwnedBy(AlertEvent ev, List<Long> scope) {
+        if (scope == null || scope.isEmpty()) return false;
+        if (ev.getTeamId() != null && scope.contains(ev.getTeamId())) return true;
+        if (!AlertOwnership.routesLikeInventory(ev)) return false;
+        return incidentTeamInScope(ev, scope);
+    }
+
+    /**
+     * Incident'ın takimi verilen kapsamda mi — OKUMA kuralı (liste sorgusu {@code INCIDENTS_FILTER} ile aynı). Damgalanmis
+     * {@code teamId} önce; yoksa envanter kolu (envanter-türevi izlemelerde alarm takimsiz açılabiliyor). Yazma kapıları
+     * {@link #incidentOwnedBy}'ı kullanır.
      *
      * <p>Kapsam parametreli: OKUMA {@code viewTeamIds}, YAZMA {@code manageTeamIds} ile çağırır.
      * İkisi aynı şey değildir — müdürün görüş alanı astlarının takimlarını kapsar, yönetim
@@ -752,7 +771,7 @@ public class IncidentsController {
      */
     private boolean canManageIncident(HttpSession session, AlertEvent ev) {
         return SessionScope.isGlobalAdmin(session)
-                || incidentTeamInScope(ev, SessionScope.manageTeamIds(session));
+                || incidentOwnedBy(ev, SessionScope.manageTeamIds(session));
     }
 
     private Map<String, Object> deserialize(String json) {

@@ -306,8 +306,17 @@ public class StormService {
                             storm.getId(), memberClock(storm), quietMinutes(), event.getDomain(), event.getAlertType());
                     return StormAction.SEND_INDIVIDUAL;
                 }
+                // KAPANIŞ YARIŞI (2026-10-09): sayaç KOŞULLU (resolved=false). 0 satır = fırtına bulunduğu an ile bağlanma
+                // anı arasında yaşam döngüsü onu kapattı (FLOOR/SEALED). Bağlansaydı kapanışın üye listesinde olmayan alarm
+                // ne duyurulur ne bağı koparılırdı; lastReAlertAt=now damgasıyla bir yeniden uyarı aralığı (~24 sa) sessiz
+                // kalırdı. Bağlanma YOK, stormId damgalanmaz → çağıran bireysel İLK bildirimi şimdi gönderir.
+                if (bumpMemberCount(storm) <= 0) {
+                    event.setStormId(null);
+                    log.info("🌩 Storm #{} bağlanma anında kapanmış — {} [{}] fırtınaya bağlanmadı, bireysel gönderiliyor",
+                            storm.getId(), event.getDomain(), event.getAlertType());
+                    return StormAction.SEND_INDIVIDUAL;
+                }
                 event.setStormId(storm.getId());
-                bumpMemberCount(storm);
                 recordMember(storm.getId(), event.getId(), AlertStormMember.JOIN_ATTACH);
                 log.info("🌩 Storm üyesi eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
                         event.getDomain(), event.getAlertType(), storm.getId());
@@ -378,6 +387,43 @@ public class StormService {
         try {
             return stormRepo.findById(stormId).map(s -> !Boolean.TRUE.equals(s.getResolved())).orElse(false);
         } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Bağlanma SONRASI doğrulama (2026-10-09, kapanış yarışı) — çağıran {@code SUPPRESSED} kararından sonra olayı
+     * {@code storm_id} ile KAYDETTİKTEN sonra çağırır. Fırtına bu arada kapandıysa (yaşam döngüsü üye listesini bu
+     * kayıttan önce okudu, {@code resolved=true}'yu ise sonra yazdı) olay kapanışın listesinde yoktu: ne duyuruldu ne
+     * bağı koparıldı, {@code lastReAlertAt=now} ile bir yeniden uyarı aralığı (~24 sa) sessiz kalırdı. Bu durumda bağ
+     * HEDEFLİ KOŞULLU UPDATE ile koparılır ({@code storm_id=NULL}, {@code last_re_alert_at=NULL}; varlık save'i değil —
+     * bayat varlık başka alanları geri sarabilir) → sonraki tur bireysel İLK bildirimi gönderir; bu, kapanışta
+     * duyurulmamış üyenin ({@link #resolveStorm}) yoludur, bildirim günlüğündeki fırtına devri satırı da aynı kalır.
+     * Yarışın öbür yüzü (kayıt kapanıştan ÖNCE düştü ama listede yoktu) kapanışın {@link #unlinkLateJoiners} adımıdır.
+     *
+     * <p>Olumsuz adlı (true = kapanmış, bağ koparıldı) — taklit servis false döner ve bugünkü yol değişmez. Tek okuma
+     * (birincil anahtar); yazma yalnız yarışta. Hata alarm hattına yayılmaz (false).
+     */
+    public boolean closedAfterAttach(AlertEvent event) {
+        if (event == null || event.getId() == null || event.getStormId() == null) return false;
+        Long stormId = event.getStormId();
+        try {
+            boolean active = stormRepo.findById(stormId).map(s -> !Boolean.TRUE.equals(s.getResolved())).orElse(false);
+            if (active) return false;
+            int rows = alertEventRepo.unlinkFromStormIfLinked(event.getId(), stormId);
+            event.setStormId(null);
+            event.setLastReAlertAt(null);
+            if (rows == 1) {
+                List<Object[]> leaves = new ArrayList<>(1);
+                leave(leaves, stormId, event.getId(), now(), AlertStormMember.LEAVE_UNLINKED);
+                flushLeaves(stormId, leaves);
+            }
+            log.info("🌩 Storm #{} bağlanma sırasında kapandı — {} [{}] olay #{} fırtınadan ayrıldı ({}), sonraki turda bireysel ilk bildirim",
+                    stormId, event.getDomain(), event.getAlertType(), event.getId(),
+                    rows == 1 ? "bağ koparıldı" : "bağ zaten koparılmıştı");
+            return true;
+        } catch (Exception e) {
+            log.warn("Storm #{} bağlanma doğrulaması yapılamadı (olay {}): {}", stormId, event.getId(), e.getMessage());
             return false;
         }
     }
@@ -510,6 +556,7 @@ public class StormService {
         storm.setResolvedAt(closingAt);
         storm.setResolveReason(reasonCode);
         stormRepo.save(storm);
+        unlinkLateJoiners(storm, members);   // liste okunduktan sonra bağlanan üye (kapanış yarışı, 2026-10-09)
 
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
         log.info("🌩✅ Storm #{} çözüldü ({}) — {} kurtuldu, {} hâlâ down ({} duyurulmuş → bildirildi sayıldı, {} duyurulmamış → bireysel ilk bildirim)",
@@ -607,6 +654,9 @@ public class StormService {
         storm.setResolvedAt(closingAt);
         storm.setResolveReason(RESOLVE_DISABLED);
         stormRepo.save(storm);
+        List<AlertEvent> known = new ArrayList<>(stillDown);
+        known.addAll(recovered);
+        unlinkLateJoiners(storm, known);   // liste okunduktan sonra bağlanan üye (kapanış yarışı, 2026-10-09)
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
         log.info("🌩 Storm #{} kapatıldı ({}) — {} kurtulan için toplu çözüm gitti, "
                 + "{} üye bireysel alarmlamaya döndü", storm.getId(), reason, recovered.size(), stillDown.size());
@@ -1015,17 +1065,53 @@ public class StormService {
     }
 
     /**
+     * Kapanışta GEÇ KATILAN üyeleri bireysel hatta döndürür (2026-10-09, kapanış yarışı). Kapanış üye listesini
+     * {@code resolved=true} yazılmadan ÖNCE okur; o okuma ile kapanış arasında bağlanan alarm ({@code evaluate}'in koşullu
+     * sayacı fırtınayı henüz aktif gördü, çağıran {@code storm_id}'yi listeden sonra kaydetti) listede yoktur: ne
+     * duyurulur ne bağı koparılır, kapalı fırtınayı gösterir ve {@code lastReAlertAt=now} ile bir yeniden uyarı aralığı
+     * (~24 sa) sessiz kalırdı. Kapanış YAZILDIKTAN sonra TEK okuma: hâlâ bu fırtınaya bağlı açık ve listede olmayan olay
+     * geç katılandır → koşullu ayırma ({@code storm_id=NULL}, {@code last_re_alert_at=NULL}; sonraki tur bireysel İLK) +
+     * ayrılış kaydı ({@code UNLINKED}). Kayıt kapanıştan SONRA düştüyse çağıranın {@link #closedAfterAttach}
+     * denetimi yakalar. Yarış yoksa okuma boş döner, hiçbir şey yazılmaz. Hata kapanışı düşürmez.
+     */
+    private void unlinkLateJoiners(AlertStorm storm, List<AlertEvent> known) {
+        if (storm == null || storm.getId() == null) return;
+        try {
+            Set<Long> knownIds = new java.util.HashSet<>();
+            if (known != null) for (AlertEvent e : known) if (e != null && e.getId() != null) knownIds.add(e.getId());
+            List<Object[]> leaves = new ArrayList<>();
+            String at = now();
+            for (AlertEvent e : alertEventRepo.findByStormIdAndResolvedFalse(storm.getId())) {
+                if (e == null || e.getId() == null || knownIds.contains(e.getId())) continue;   // listedeki üye işlendi
+                if (alertEventRepo.unlinkFromStormIfLinked(e.getId(), storm.getId()) == 1) {
+                    leave(leaves, storm.getId(), e.getId(), at, AlertStormMember.LEAVE_UNLINKED);
+                    log.info("🌩 Storm #{} kapanırken geç katılan üye ayrıldı: {} [{}] olay #{} — sonraki turda bireysel ilk bildirim",
+                            storm.getId(), e.getDomain(), e.getAlertType(), e.getId());
+                }
+            }
+            flushLeaves(storm.getId(), leaves);
+        } catch (Exception ex) {
+            log.warn("Storm #{} geç katılan üye denetimi yapılamadı: {}", storm.getId(), ex.getMessage());
+        }
+    }
+
+    /**
      * Üye sayacı — KOŞULLU atomik UPDATE (2026-09-29, D-14). Eskiden okunan varlığın tamamı kaydediliyordu: kilitsiz
      * {@code evaluate} ile kilitli {@code lifecycleSweep} yarışırsa çözülmüş fırtına {@code resolved=false} ile geri
      * yazılabiliyor, ikinci toplu çözüm postası gidebiliyordu.
+     *
+     * <p>Dönüş (2026-10-09): güncellenen satır sayısı. {@code 0} = fırtına bu arada kapandı (koşul tutmadı) → çağıran
+     * bağlamaz, bireysel gönderir. {@code -1} = yazılamadı (DB hatası) — fırtına mantığının genel kuralı gibi güvenli
+     * taraf: bireysel gönderim.
      */
-    private void bumpMemberCount(AlertStorm storm) {
+    private int bumpMemberCount(AlertStorm storm) {
         try {
             // last_member_at: sessiz pencere saati her katılımda yeniden başlar (2026-09-30).
-            jdbcTemplate.update("UPDATE alert_storms SET member_count = COALESCE(member_count, 0) + 1, last_member_at = ? "
+            return jdbcTemplate.update("UPDATE alert_storms SET member_count = COALESCE(member_count, 0) + 1, last_member_at = ? "
                     + "WHERE id = ? AND resolved = false", now(), storm.getId());
         } catch (Exception e) {
-            log.debug("Storm #{} üye sayacı güncellenemedi: {}", storm.getId(), e.getMessage());
+            log.warn("Storm #{} üye sayacı güncellenemedi — alarm bireysel gönderilecek: {}", storm.getId(), e.getMessage());
+            return -1;
         }
     }
 

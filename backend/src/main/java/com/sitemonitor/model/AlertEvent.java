@@ -170,6 +170,15 @@ public class AlertEvent {
     @Transient private Boolean nocViaStorm;
 
     /**
+     * Sahiplen / Çöz / Tekrar bildir bu satırda sunucunun takım kapısından GEÇER mi (2026-10-09) — alarmın SAHİBİ
+     * takımlarından biri çağıranın kapsamında ({@code AlertOwnership}: bağımsız izleme alarmında yalnız damgalı takım).
+     * Alarm Geçmişi listesi / tekil uç yalnız global olmayan görüntüleyicide doldurur; global görüntüleyicide null (alan
+     * yok = kısıt yok). Kalıcı DEĞİL. JSON: {@code act_scope}.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @Transient private Boolean actScope;
+
+    /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
      *
      * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse

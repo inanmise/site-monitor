@@ -165,6 +165,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     int unlinkFromStorm(@Param("id") Long id);
 
     /**
+     * Fırtına kapanış yarışı (2026-10-09): {@link #unlinkFromStorm} ile aynı ayırma (bağ + ilk bildirim damgası sıfırlanır →
+     * sonraki tur bireysel İLK), ama YALNIZ satır hâlâ verilen fırtınaya bağlıysa — başka fırtınaya taşınmış ya da zaten
+     * ayrılmış üyeye dokunmaz. Kapanışın geç katılan adımı ve çağıranın bağlanma sonrası denetimi kullanır.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = null "
+            + "WHERE e.id = :id AND e.resolved = false AND e.stormId = :stormId")
+    int unlinkFromStormIfLinked(@Param("id") Long id, @Param("stormId") Long stormId);
+
+    /**
      * Eski (kuruluş geneli) fırtına üyesini takımının fırtınasına TAŞI (2026-09-29, O-3) — yalnız hâlâ AÇIK ve hâlâ eski
      * fırtınaya bağlı satırda (koşullu, atomik). {@code lastReAlertAt} korunur: üye fırtına postasıyla zaten bildirildi.
      */

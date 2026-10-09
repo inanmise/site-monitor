@@ -4500,6 +4500,7 @@ export const TR = {
   'alh.actOtherTeam':   'Bu uyarı sizin takımınızın değil — yalnız arama kaydı girebilirsiniz.',
   'alh.actNoPermission':    'Sahiplenme, çözme ve yeniden bildirme yetkiniz yok.',
   'alh.actNoPermissionNoc': 'Sahiplenme, çözme ve yeniden bildirme yetkiniz yok — yalnız arama kaydı girebilirsiniz.',
+  'alh.actStandaloneOwner': 'Bu uyarı başka bir takımın bağımsız izlemesine ait — sahiplenme, çözme ve yeniden bildirme yalnız o takıma açık.',
   'alh.sending':        'Gönderiliyor...',
   'alh.history':        'Geçmiş',
   'alh.resolve':        'Çözüldü',

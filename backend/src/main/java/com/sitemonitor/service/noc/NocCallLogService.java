@@ -138,7 +138,7 @@ public class NocCallLogService {
                 Msg.t("Uyarı bulunamadı: ", "Alert not found: ") + alertId));
     }
 
-    /** Uyarının ait olabileceği takımlar (AdminController.alertTeamIds ile aynı kural). */
+    /** Uyarının ait olabileceği takımlar — OKUMA kuralı (AdminController.alertReadTeamIds / liste sorgusuyla aynı). */
     Set<Long> alertTeamIds(AlertEvent ev) {
         Set<Long> ids = new HashSet<>();
         if (ev.getTeamId() != null) ids.add(ev.getTeamId());
@@ -151,10 +151,14 @@ public class NocCallLogService {
         return ids;
     }
 
-    /** Uyarının SAHİBİ takım: damgalı teamId; yoksa envanter SY, o da yoksa UG (IncidentsController ile aynı sıra). */
+    /**
+     * Uyarının SAHİBİ takım: damgalı teamId; yoksa envanter SY, o da yoksa UG (IncidentsController ile aynı sıra). Bağımsız
+     * izleme uyarısında envanter OKUNMAZ (2026-10-09, {@link com.sitemonitor.service.AlertOwnership}; bildirim yönlendirmesiyle
+     * aynı yüklem): damgasız bağımsız uyarının sahibi yoktur — arama kartı host'un envanterindeki başka takımı göstermez.
+     */
     public Long owningTeam(AlertEvent ev) {
         if (ev.getTeamId() != null) return ev.getTeamId();
-        if (ev.getDomain() == null) return null;
+        if (ev.getDomain() == null || !com.sitemonitor.service.AlertOwnership.routesLikeInventory(ev)) return null;
         return inventoryRepo.findByDomain(ev.getDomain())
                 .map(inv -> inv.getTeamId() != null ? inv.getTeamId() : inv.getUgTeamId())
                 .orElse(null);
