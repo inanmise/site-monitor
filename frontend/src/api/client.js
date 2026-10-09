@@ -6,6 +6,7 @@ import { toUtc, localDayKey } from '../utils/localDay.js'
 import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCoverageEvent.js'
 import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventoryEvent.js'
 import { assignLocation, isAccountInactivePayload, signalAccountInactive } from '../utils/accountInactive.js'
+import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpiry.js'
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, rememberErrorInfo,
@@ -229,7 +230,10 @@ async function request(path, options = {}) {
     if (typeof window !== 'undefined' &&
         sessionStorage.getItem('sm.session.active') === '1') {
       try { sessionStorage.removeItem('sm.session.active') } catch {}
-      assignLocation('/?session=expired')
+      // Döngü sigortası (2026-10-09): 60 sn içinde 2 yönlendirme olduysa sayfa yeniden YÜKLENMEZ; giriş formu yerinde
+      // açılır (utils/sessionExpiry.js — çok kopyalı yanlış kurulumda yükle → 401 → yükle döngüsü olmasın)
+      if (claimExpiredRedirect()) assignLocation('/?session=expired')
+      else signalSessionExpired()
     }
     return null
   }

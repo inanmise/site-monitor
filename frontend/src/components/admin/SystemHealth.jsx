@@ -110,7 +110,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const [hbModalOpen, setHbModalOpen] = useState(false)
   const [releasing, setReleasing] = useState(false)
   const [triggering, setTriggering] = useState(false)
-  const fastPollRef = useRef(null)
+  const fastPollRef = useRef(null)   // { timer } — tarama hızlı yoklamasının KUŞAĞI (null = durdu)
   const watchdogRef = useRef(null)   // id ref'te: iptal edilebilir, unmount'ta temizlenir, kuşak kontrolü
   const seenRunning = useRef(false)
   const [modalChart, setModalChart] = useState(null)
@@ -187,7 +187,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
   useVisibleInterval(load, paused ? 0 : 30000)   // gizli sekmede polling durur; Duraklat → aralık kapanır
   useEffect(() => () => {                         // scan fast-poll + watchdog temizliği
-    if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (fastPollRef.current) { clearTimeout(fastPollRef.current.timer); fastPollRef.current = null }   // uçuştaki yanıt da yok sayılır
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
   }, [])
 
@@ -301,31 +301,38 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     load()
   }
 
+  /**
+   * Tarama hızlı yoklaması (2 sn) — ZİNCİRLİ setTimeout (2026-10-09): bir sonraki istek ancak öncekinin yanıtından
+   * sonra planlanır. Eskiden setInterval + await, yavaş sunucuda (GET 90 sn zaman aşımı) 5 dk boyunca ~45 ağır isteği
+   * üst üste biriktirebiliyordu. Kuşak nesnesi: yeni tarama / watchdog / unmount eskisini durdurur, uçuştaki yanıt yok sayılır.
+   */
   const startScanPoll = useCallback((prevLastRun) => {
-    if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (fastPollRef.current) clearTimeout(fastPollRef.current.timer)
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
     seenRunning.current = false
-    const myTimer = setInterval(async () => {
-      const res = await api.admin.getSystemHealth()
-      if (!res?.success) return
-      setHealth(res.data)
-      const isRunning = res.data?.scheduler?.running
-      const newLastRun = res.data?.scan?.last_run
-      if (isRunning) seenRunning.current = true
-      // Tamamlandı: running false'a döndü VEYA last_run değişti (hızlı tarama)
-      const done = (seenRunning.current && !isRunning) || (newLastRun && newLastRun !== prevLastRun)
-      if (done) {
-        clearInterval(myTimer)
-        if (fastPollRef.current === myTimer) fastPollRef.current = null
-        load()
+    const gen = { timer: null }
+    const alive = () => fastPollRef.current === gen
+    const stop = () => { if (alive()) { clearTimeout(gen.timer); fastPollRef.current = null } }
+    const step = async () => {
+      if (!alive()) return
+      let res = null
+      try { res = await api.admin.getSystemHealth() } catch { res = null }
+      if (!alive()) return
+      if (res?.success) {
+        setHealth(res.data)
+        const isRunning = res.data?.scheduler?.running
+        const newLastRun = res.data?.scan?.last_run
+        if (isRunning) seenRunning.current = true
+        // Tamamlandı: running false'a döndü VEYA last_run değişti (hızlı tarama)
+        const done = (seenRunning.current && !isRunning) || (newLastRun && newLastRun !== prevLastRun)
+        if (done) { stop(); load(); return }
       }
-    }, 2000)
-    fastPollRef.current = myTimer
-    // KUŞAK KONTROLÜ: watchdog yalnız KENDİ interval'ini öldürür (eski tarama #1'in watchdog'u #2'yi susturuyordu).
-    watchdogRef.current = setTimeout(() => {
-      clearInterval(myTimer)
-      if (fastPollRef.current === myTimer) fastPollRef.current = null
-    }, 300_000)
+      gen.timer = setTimeout(step, 2000)
+    }
+    fastPollRef.current = gen
+    gen.timer = setTimeout(step, 2000)
+    // KUŞAK KONTROLÜ: watchdog yalnız KENDİ yoklamasını durdurur (eski tarama #1'in watchdog'u #2'yi susturuyordu).
+    watchdogRef.current = setTimeout(stop, 300_000)
   }, [load])
 
   const handleForceRun = async () => {

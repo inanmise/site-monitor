@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
+import { BUSY_MAX_MS, useVisibleInterval } from '../hooks/useVisibleInterval.js'
 
 // Görünürlük-farkındalıklı polling hook'u: gizli sekmede durur, görünürde 1 tazeleme + devam.
 // Sahte zamanlayıcı + document.hidden manipülasyonu ile deterministik.
@@ -73,5 +73,48 @@ describe('useVisibleInterval', () => {
     unmount()
     vi.advanceTimersByTime(5000)
     expect(fn).not.toHaveBeenCalled()
+  })
+
+  // ── Yığılma yok (2026-10-09): söz dönen fn bitmeden sonraki tur atlanır ──
+  it('söz dönen fn: önceki söz bitmeden turlar ATLANIR (üst üste istek yok); bitince sıradaki tur çalışır', async () => {
+    let release
+    const fn = vi.fn(() => new Promise((r) => { release = r }))
+    renderHook(() => useVisibleInterval(fn, 1000))
+    expect(fn).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(5000)
+    expect(fn).toHaveBeenCalledTimes(1)       // eskisi: 6 eşzamanlı çağrı
+    release()
+    await Promise.resolve(); await Promise.resolve()
+    vi.advanceTimersByTime(1000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('reddedilen söz de turu serbest bırakır (ret kancada yutulmaz, yeniden fırlatılır)', () => {
+    let fail
+    const thenable = { then(_ok, err) { fail = () => { try { err(new Error('x')) } catch { /* kancanın yeniden fırlatması */ } } } }
+    const fn = vi.fn(() => thenable)
+    renderHook(() => useVisibleInterval(fn, 1000))
+    vi.advanceTimersByTime(3000)
+    expect(fn).toHaveBeenCalledTimes(1)
+    fail()
+    vi.advanceTimersByTime(1000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('hiç sonuçlanmayan söz yoklamayı sonsuza dek durdurmaz: BUSY_MAX_MS sonra yeni tur', () => {
+    const fn = vi.fn(() => new Promise(() => {}))
+    renderHook(() => useVisibleInterval(fn, 1000))
+    vi.advanceTimersByTime(BUSY_MAX_MS - 1000)
+    expect(fn).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('görünürlük dönüşündeki tazeleme de sürmekte olan isteğin üstüne binmez', () => {
+    const fn = vi.fn(() => new Promise(() => {}))
+    renderHook(() => useVisibleInterval(fn, 1000))
+    setHidden(true)
+    setHidden(false)
+    expect(fn).toHaveBeenCalledTimes(1)
   })
 })

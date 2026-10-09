@@ -78,9 +78,16 @@ export default function TourOverlay({ active, onNext, onPrev, onStop, navigate }
   }
 
   // ── Konum tazeleme: kaydırma / yeniden boyutlandırma / 200 ms ──
+  // Yalnız konum/boyut DEĞİŞİNCE yazılır (2026-10-09): her 200 ms'de ve her kaydırma olayında yeni bir DOMRect nesnesi
+  // yazmak, hedef yerinde dururken bile balonu ve karartmayı sürekli yeniden çiziyordu.
   useEffect(() => {
     if (!ready || step?.center) return undefined
-    const update = () => { const el = findTarget(); if (el) setRect(el.getBoundingClientRect()) }
+    const update = () => {
+      const el = findTarget()
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setRect((prev) => (prev && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height ? prev : r))
+    }
     const id = setInterval(update, 200)
     window.addEventListener('scroll', update, true)
     window.addEventListener('resize', update)

@@ -1,5 +1,6 @@
 import { Component, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
+import { claimChunkReload } from '../utils/chunkReloadGuard.js'
 import { AlertOctagon, Bug, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -108,8 +109,8 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
 // Dinamik import / kod-bölme chunk'ı yüklenemedi mi? (deploy sonrası bayat bundle:
 // tarayıcı eski index.html'deki hash'li chunk'ı ister → 404 → ChunkLoadError). Lazy
 // sekmeler (Olaylar, Admin, Raporlar…) bu yüzden "Bir şey ters gitti" verebilir.
-const RELOAD_AT_KEY = 'eb-chunk-reloaded-at'
-const RELOAD_LOOP_MS = 15000   // bu süre içinde 2. chunk hatası → döngü; yenileme, fallback göster
+// Yenileme döngüsü koruması SAYAÇLA (2026-10-09) — `utils/chunkReloadGuard.js`: paket sürümü başına oturumda en çok
+// bir otomatik yenileme; sonrası bu hata ekranı.
 function isChunkLoadError(error) {
   const name = error?.name || ''
   const msg = error?.message || ''
@@ -137,16 +138,11 @@ export default class ErrorBoundary extends Component {
   componentDidCatch(error, info) {
     const stack = info?.componentStack || ''
     console.error('[ErrorBoundary]', error, stack)
-    // Bayat bundle → chunk yüklenemedi: bu oturumda bir kez zorla tam yenile (sonsuz
-    // döngü olmasın diye sessionStorage bayrağı ile korunur). Kalıcı hata ise fallback kalır.
-    if (isChunkLoadError(error)) {
-      let last = 0
-      try { last = Number(sessionStorage.getItem(RELOAD_AT_KEY)) || 0 } catch { /* yoksay */ }
-      if (Date.now() - last > RELOAD_LOOP_MS) {   // yakın zamanda yenilemediysek: tam yenile
-        try { sessionStorage.setItem(RELOAD_AT_KEY, String(Date.now())) } catch { /* yoksay */ }
-        window.location.reload()
-        return
-      }
+    // Bayat bundle → chunk yüklenemedi: bu paket sürümü için oturumda bir kez zorla tam yenile (sonsuz
+    // döngü olmasın diye sessionStorage sayacı ile korunur). Kalıcı hata ise fallback kalır.
+    if (isChunkLoadError(error) && claimChunkReload()) {
+      window.location.reload()
+      return
     }
     // Component stack'i de fallback'te göster (hangi bileşende patladığı görünür).
     if (stack) {
