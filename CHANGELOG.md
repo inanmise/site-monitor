@@ -15,6 +15,18 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Ayarlar → Veritabanı bilgileri yeniden tasarlandı (shadcn, telefon / tablet / masaüstü).** Eski alanların hepsi
+  korunur; sayfa tek istekle şunları gösterir:
+  - üstte durum, PostgreSQL sürümü, son güncelleme, "Sorgu analitiği" ve Yenile;
+  - dört özet kutucuk: durum + sorgu süresi, boyut + tablo sayısı, sunucu bağlantıları ve uygulama havuzu doluluğu;
+  - beş kart: Bağlantı (SSL/TLS dahil), Sağlık denetimleri (dış izleme ucu `/api/public/health/db` ile aynı sonuç,
+    adres kopyalanabilir), Sunucu, Bağlantı Havuzu (süreler dahil), JDBC / Sürücü (maskeli adres, kopyala).
+  - İlk yüklemede iskelet, hata bloğu ve "Tekrar dene"; yenileme hatasında son değerler kalır. Geç gelen yanıt yenisini ezmez.
+  - Sunucu: yanıta `health` bloğu ve yeni alanlar (saat dilimi, tablo sayısı, SSL, havuz süreleri, şema yaması sayıları)
+    eklendi; şema yamalarının SQL / hata metni dönmez. JDBC adres maskesi `sslpassword`, `pwd`, `token`, `*key` ve
+    `kullanıcı:parola@` biçimini de kapsar. Yetki kapısı değişmedi (yalnız global yönetici).
+
 ### Fixed
 - **Oturumlar yeniden veritabanında tutuluyor; prod'da yeniden başlatma herkesi düşürmüyor.** Spring Boot 3.3.6 → 4.1.0
   yükseltmesinden (2026-06-17) beri prod profilindeki `spring.session.store-type=jdbc` hiçbir şey yapmıyordu. Boot 4
