@@ -577,6 +577,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   })
 
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı (mtab/range DnsDetailModal içinde sync'lenir).
+  // mtab/range YALNIZ pencere bir kez açılıp KAPANDIKTAN sonra silinir (2026-10-09, hata düzeltmesi): derin bağlantıda
+  // (`?monitor=…&range=30` / `&mtab=changes`) liste yüklenip pencere açılana dek bu senkron ikisini de siliyordu → pencere
+  // 1 günle ve ilk sekmede açılıyordu (canlı e2e: başarısız satır 30 günlük aralıkta olduğu için görünmedi).
+  const dnsDetailOpenedRef = useRef(false)
+  if (detailMonitor) dnsDetailOpenedRef.current = true
   useUrlQuerySync({
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: detailMonitor?.id ?? null,
@@ -584,7 +589,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     dndx: detailMonitor && dnsDx?.monitorId === detailMonitor.id && canDiagnoseRow(detailMonitor) ? (dnsDx.runId ?? null) : null,
     // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
     // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).
-    ...(detailMonitor ? {} : { mtab: null, range: null }),
+    ...(detailMonitor || !dnsDetailOpenedRef.current ? {} : { mtab: null, range: null }),
   })
 
   // Canlı test sonucu uyarı tonunda mı (beklenmeyen değer / yavaş yanıt) — ton ve ikon aynı kararı paylaşır.

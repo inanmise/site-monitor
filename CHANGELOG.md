@@ -65,6 +65,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   - DNS "Şimdi kontrol et" alt sekmeyi ve geçmişi sıfırlamıyor.
   - Geç dönen eski liste yüklemesi dokuz sayfada da yeni listeyi ezmiyor.
   - İzleme Panosu'nda pencere değiştirmek eski yanıtla çakışmıyor.
+  - DNS derin bağlantısı (`?monitor=…&range=30` / `&mtab=…`) seçili aralık ve sekmeyle açılıyor; eskiden liste
+    yüklenirken adresten siliniyordu.
 - **Yönetim ekranları.**
   - Kapsamlı yöneticiye 403 veren kullanıcı geçmişi menüsü gizlendi.
   - Yüklenemeyen fırtına ayarı formu varsayılan değerlerle kaydedilemiyor; "Tekrar dene" var.
