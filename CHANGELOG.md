@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.116.3] — 2026-10-09
+
 ### Fixed
 - **Tüm Sertifikalar — Güven süzgeci sütunla uyumlu.** Sütun "Tam / Kısmen doğrulandı / Bilinmiyor / Sorun" gösterirken
   süzgeç yalnız "Herhangi / Yalnız güvensiz" sunuyordu.
@@ -2700,7 +2702,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.3...HEAD
+[20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
 [20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2
 [20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
 [20.116.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.0
