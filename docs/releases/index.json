@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T08:36:06Z",
+  "generatedAt": "2026-10-09T11:36:19Z",
   "repo": "inanmise/site-monitor",
-  "count": 722,
+  "count": 723,
   "releases": [
+    {
+      "version": "20.117.0",
+      "tag": "v20.117.0",
+      "releasedAt": "2026-10-09T11:36:13Z",
+      "commit": "77bee97393450cd9e4c0da9c6fc813d0b8ea81d1",
+      "prevVersion": "20.116.3",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "77bee973",
+          "subject": "CHANGELOG — Ayarlar → Veritabanı bilgileri yeniden tasarımı"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "577a016c",
+          "subject": "Ayarlar → Veritabanı bilgileri shadcn ile yeniden tasarlandı — telefon/tablet uyumlu, durum ve havuz özeti, sağlık denetimleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "61ecda37",
+          "subject": "oturumlar yeniden veritabanında (Spring Boot 4 oturum modülü + site.monitor.session.store anahtarı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.116.3",
       "tag": "v20.116.3",

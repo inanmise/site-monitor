@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.117.0] — 2026-10-09
+
 ### Added
 - **Ayarlar → Veritabanı bilgileri yeniden tasarlandı (shadcn, telefon / tablet / masaüstü).** Eski alanların hepsi
   korunur; sayfa tek istekle şunları gösterir:
@@ -2730,7 +2732,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.3...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.0...HEAD
+[20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
 [20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
 [20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2
 [20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
