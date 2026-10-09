@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.116.1] — 2026-10-09
+
 ### Performance
 - **Uygulama daha hızlı açılır.** Açılış paketi 850 KB'tan 647 KB'a indi (gzip, −%24). Sertifika penceresinin
   ilk yükü 674 KB'tan 100 KB'a, HTTP izleme sayfasınınki 663 KB'tan 265 KB'a düştü.
@@ -2642,7 +2644,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.1...HEAD
+[20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
 [20.116.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.0
 [20.115.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.115.0
 [20.114.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.114.0
