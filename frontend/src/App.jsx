@@ -174,6 +174,12 @@ function idleConfigFrom(res) {
  *  başka kullanıcılara da hizmet eder. */
 const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
 
+/** Pano veri dalgaları (2026-10-09, açılış performansı) — kaynak anahtarları App içindeki `loadSources`'ta. Sertifikalar
+ *  ilk sırada istenir. Tam dalga: giriş, 5 dk tazelemesi, Yenile, envanter değişikliği. Kontrol dalgası: "Şimdi Kontrol Et"
+ *  ve tek kart kontrolünden sonra (eskiden de yalnız bu üçü). */
+const FULL_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent', 'paused', 'mailFail', 'extras'])
+const CHECK_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent'])
+
 // Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
 // "oturum süresi doldu" bildirimi göstermek için bu bayrağı okuruz (AUTH-1).
 function initialSessionExpired() {
@@ -662,32 +668,66 @@ export default function App() {
   const loadAliveRef = useRef(true)
   useEffect(() => () => { loadAliveRef.current = false }, [])
 
-  const loadData = useCallback(async () => {
-    // allSettled: bir endpoint çökse de diğerleri yansısın
-    // network-status + weak-algorithms BURADAN çıkarıldı: network → 60 sn tick tek kaynak;
-    // weak-algorithms → login'de bir kez (aşağıda) çünkü zayıf-algoritma verisi ancak cert
-    // sweep'iyle (~saatlik) değişir → 5 dk'da 100 kullanıcı × tekrar gereksizdi.
-    // /stats/teams yalnız İstatistik sekmesinin (aşağıdaki effect); pasif liste ikinci bir tur beklemeden AYNI dalgada
-    // (2026-10-09, performans). Pasif uç istemcide yoksa (eski test sahtesi) atlanır.
-    const [certsRes, statsRes, silentRes, pausedRes, mailFailRes, extrasRes] = await Promise.allSettled([
-      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
-      typeof api.getPausedCertificates === 'function' ? api.getPausedCertificates() : Promise.resolve(null),
-      api.getMailFailureDomains(), api.getCardExtras(),
-    ])
-    if (!loadAliveRef.current) return // unmount/logout'ta state'i kirletme
-    const v = (s) => s.status === 'fulfilled' ? s.value : null
-    const certs = v(certsRes), stats = v(statsRes), silent = v(silentRes),
-          paused = v(pausedRes),
-          mailFail = v(mailFailRes)
-    if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
-    if (stats?.success) setStats(stats.data)
-    if (silent?.success) setSilentAlertDomains(new Set(silent.data))
-    if (mailFail?.success) setMailFailureDomains(new Set(mailFail.data ?? []))
-    const extras = v(extrasRes)
-    if (extras?.success) setCardExtras(extras.data || {})
-    if (paused?.success && Array.isArray(paused.data)) setPausedCerts(paused.data)
-    // networkStatus → 60 sn tick (dedup); weakAlgStats → login'de bir kez ayrı effect (aşağıda).
+  // Dalga sırası (2026-10-09, açılış performansı): her yükleme dalgası artan bir numara alır; her kaynak en son UYGULANAN
+  // dalganın numarasını tutar. Eski dalganın geç gelen yanıtı (iki kez Yenile; 5 dk tazelemesiyle elle tazelemenin
+  // çakışması; ısınma döngüsü) daha yeni dalganın verisini EZEMEZ — daha yeni dalga henüz gelmediyse eski yanıt yine
+  // gösterilir, yenisi gelince üzerine yazar. Oturum sıfırlanınca taban (`loadFloorRef`) yükselir: önceki oturumun
+  // uçuştaki dalgaları yeni oturuma hiç yazamaz.
+  const loadSeqRef = useRef(0)
+  const loadFloorRef = useRef(0)
+  const loadAppliedRef = useRef({})
+  const acceptLoad = useCallback((key, seq) => {
+    if (!loadAliveRef.current || seq <= loadFloorRef.current) return false   // unmount/logout'ta state'i kirletme
+    if ((loadAppliedRef.current[key] ?? 0) > seq) return false
+    loadAppliedRef.current[key] = seq
+    return true
   }, [])
+
+  // Pano veri kaynakları: istek + (yalnız başarılı yanıtta) uygulama. network-status + weak-algorithms burada YOK:
+  // network → 60 sn tick tek kaynak; weak-algorithms → login'de bir kez (zayıf-algoritma verisi ancak saatlik sertifika
+  // taramasıyla değişir). /stats/teams yalnız İstatistik sekmesinin (aşağıdaki effect). Pasif uç istemcide yoksa (eski
+  // test sahtesi) atlanır. `after`: aynı dalgada o kaynak yerleşmeden uygulanmaz — pasif kartlar aktif liste gelmeden tek
+  // başına çizilip aktifler sonradan üstlerine kaymasın (aktif liste düşerse pasifler yine gösterilir).
+  const loadSources = useMemo(() => ({
+    certs:    { fetch: () => api.getCertificates(), apply: (r) => { setCerts(r.data); setLastUpdate(r.timestamp) } },
+    stats:    { fetch: () => api.getStats(), apply: (r) => setStats(r.data) },
+    silent:   { fetch: () => api.getSilentAlertDomains(), apply: (r) => setSilentAlertDomains(new Set(r.data)) },
+    paused:   {
+      fetch: () => (typeof api.getPausedCertificates === 'function' ? api.getPausedCertificates() : null),
+      ok: (r) => r?.success && Array.isArray(r.data), apply: (r) => setPausedCerts(r.data), after: 'certs',
+    },
+    mailFail: { fetch: () => api.getMailFailureDomains(), apply: (r) => setMailFailureDomains(new Set(r.data ?? [])) },
+    extras:   { fetch: () => api.getCardExtras(), apply: (r) => setCardExtras(r.data || {}) },
+  }), [setCerts, setPausedCerts])
+
+  /**
+   * Bir veri dalgası (2026-10-09, kullanıcı bildirimi: "ilk açılışta sertifikalar yükleniyor yazısı uzun sürüyor"):
+   * eskiden altı istek `Promise.allSettled` ile BİRLİKTE beklenip sonra yazılıyordu — kartlar en yavaş ucu (ağır sunucu
+   * toplaması yapan /certificates/card-extras) bekliyordu. Artık her yanıt GELDİĞİ AN kendi durumunu yazar: sertifikalar
+   * gelince kartlar çizilir, zengin kart ekleri / istatistik / sessiz alarm / pasif / posta hatası sonradan zenginleştirir.
+   * Bir uç çökse de diğerleri yansır. Dönen söz TÜM dalga yerleşince `{ anahtar: yanıt | null }` ile çözülür, asla
+   * reddetmez. `alive` (isteğe bağlı): false dönerse bu dalganın yanıtları yazılmaz (ısınma döngüsünün nesil sınaması).
+   */
+  const runLoadWave = useCallback((keys, alive) => {
+    const seq = ++loadSeqRef.current
+    const jobs = {}
+    for (const key of keys) {
+      const src = loadSources[key]
+      jobs[key] = (async () => {
+        const res = await src.fetch()
+        if (src.after && jobs[src.after]) await jobs[src.after].catch(() => {})
+        if (!(src.ok ? src.ok(res) : res?.success)) return res ?? null
+        if (alive && !alive()) return res
+        if (acceptLoad(key, seq)) src.apply(res)
+        return res
+      })()
+    }
+    return Promise.allSettled(keys.map((k) => jobs[k])).then((settled) =>
+      Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null])))
+  }, [loadSources, acceptLoad])
+
+  /** Tam pano yüklemesi (giriş, 5 dk tazelemesi, Yenile, envanter değişikliği). Dalga bitince çözülür (değer yok). */
+  const loadData = useCallback(() => runLoadWave(FULL_LOAD_WAVE).then(() => undefined), [runLoadWave])
 
   // Tam veri yenilemesi (5 dk) GÖRÜNÜRLÜĞE DUYARLI (2026-10-01): gizli sekmede durur. Sekmeye dönünce yalnız süre
   // dolmuşsa yeniler — her sekme geçişinde 6 isteklik tam yükleme tetiklenmesin. İlk yükleme girişte (aşağıdaki effect).
@@ -711,15 +751,15 @@ export default function App() {
   // gösterir; veri gelene dek sertifika + kart ekleri kısa aralıklarla yeniden istenir. Döngü + oturuma bağlılık
   // hooks/useNewDomainWarmup.js'de. Hook auth kapısının (erken return) ÜSTÜNDE.
   const warmRefresh = useCallback(async (d, isAlive) => {
-    const [certsRes, extrasRes] = await Promise.allSettled([api.getCertificates(), api.getCardExtras()])
-    if (!isAlive() || !loadAliveRef.current) return false   // çıkış yapıldı: yeni oturumun durumuna yazma
-    const certs = certsRes.status === 'fulfilled' ? certsRes.value : null
-    const extras = extrasRes.status === 'fulfilled' ? extrasRes.value : null
-    if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
-    if (extras?.success) setCardExtras(extras.data || {})
+    // Aynı dalga düzeni (sıra numarası): ısınma yanıtı daha yeni bir tam yüklemeyi ezmez, eski bir tam yüklemenin geç
+    // gelen ekleri de ısınmanın taze verisini ezmez. isAlive false → çıkış yapıldı: yeni oturumun durumuna yazma.
+    const { certs, extras } = await runLoadWave(['certs', 'extras'], isAlive)
+    if (!isAlive() || !loadAliveRef.current) return false
     const cert = certs?.success ? (certs.data || []).find((c) => c.domain === d) : null
     return !!(cert?.checked_at && extras?.success && extras.data?.[d])
-  }, [])
+  }, [runLoadWave])
+  /** Yalnız zengin kart eklerini tazeler (yenileme onayı / planı sonrası) — aynı dalga düzeniyle. */
+  const reloadCardExtras = useCallback(() => runLoadWave(['extras']), [runLoadWave])
   const warmingDomains = useNewDomainWarmup(Boolean(user), warmRefresh, loadData)
 
   // Lightweight 60s poll just for network outage status — keeps banner in sync
@@ -913,6 +953,9 @@ export default function App() {
    */
   function resetSessionData() {
     loadAliveRef.current = false
+    // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
+    loadFloorRef.current = loadSeqRef.current
+    loadAppliedRef.current = {}
     setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setCardExtras({})
     setSilentAlertDomains(new Set()); setMailFailureDomains(new Set()); setWeakAlgStats(null)
     setNetworkStatus(null); setLastUpdate(null)
@@ -1003,14 +1046,8 @@ export default function App() {
         shouldStop: () => checkCancelRef.current,
       })
 
-      try {
-        const [certsRes, statsRes, silentRes] = await Promise.all([
-          api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
-        ])
-        if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
-        if (statsRes?.success) setStats(statsRes.data)
-        if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
-      } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
+      // Kontrol dalgası: her yanıt geldiği an yazılır (bkz. runLoadWave); tazeleme hatası yutulur — modal yine tamamlanır
+      await runLoadWave(CHECK_LOAD_WAVE)
       setActivityRefreshKey(k => k + 1)
       setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
     } finally {
@@ -1032,12 +1069,7 @@ export default function App() {
       }
       // Satır bazlı merge YAPILMAZ: /check yanıtı ham checker map'i; alert_level/team_name/tier
       // içermediği için merge kartın renk sınıfını, T rozetini ve takım satırını sessizce silerdi.
-      const [certsRes, statsRes, silentRes] = await Promise.all([
-        api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
-      ])
-      if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
-      if (statsRes?.success) setStats(statsRes.data)
-      if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+      await runLoadWave(CHECK_LOAD_WAVE)
       setActivityRefreshKey(k => k + 1)
     } catch (e) {
       toast.error(t('card.checkFailed', domain, e?.message || '—'))
@@ -1091,10 +1123,10 @@ export default function App() {
     setConfirmingDomain(d)
     try {
       const r = await api.confirmCertificateRenewal(d)
-      if (r?.success) { toast.success(t('ccx.confirmed', d)); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }
+      if (r?.success) { toast.success(t('ccx.confirmed', d)); await reloadCardExtras() }
       else toast.error(r?.error || t('mon.loadError'))
     } catch (e) { toast.error(String(e?.message || e)) } finally { setConfirmingDomain(null) }
-  }, [toast, t])
+  }, [toast, t, reloadCardExtras])
   const planCardRenewal = useCallback((cert, renewal) => {
     setPlanRow({ domain: cert.domain, renewal_planned_at: renewal?.planned_at || '', renewal_planned_note: renewal?.note || '',
       expiry_key: expiryKey(cert) })
@@ -2085,8 +2117,8 @@ export default function App() {
       {planRow && (
         <Suspense fallback={null}>
           <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
-            onSaved={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }}
-            onCleared={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }} />
+            onSaved={async () => { setPlanRow(null); await reloadCardExtras() }}
+            onCleared={async () => { setPlanRow(null); await reloadCardExtras() }} />
         </Suspense>
       )}
 
