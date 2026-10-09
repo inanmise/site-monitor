@@ -113,7 +113,7 @@ export function savePreset(list, preset) {
 }
 
 // ── Süzgeç durumu ──────────────────────────────────────────────────────────
-export const EMPTY_FILTERS = { domain: '', issuer: '', status: '', team: '', window: '', insecure: false, tier: '', port: '', fp: '' }
+export const EMPTY_FILTERS = { domain: '', issuer: '', status: '', team: '', window: '', insecure: false, tier: '', port: '', fp: '', trust: '' }
 // `icon`: lucide bileşeni (2026-10-09; eskiden emoji karakterleriydi — proje kuralı: ikonlar yalnız lucide). Renk çizen
 // yerin ton sınıfından (currentColor) gelir; şekiller ayrı: dolmuş = sekizgen X, kritik = sekizgen !, yüksek = daire !,
 // uyarı = üçgen !, geçerli = daire onay, hata = daire X (renk tek sinyal değil).
@@ -129,6 +129,18 @@ export const STATUS_OPTIONS = [
 export const WINDOW_OPTIONS = ['', 'expired', '7', '30', '60', '90']
 export const TIER_OPTIONS = ['', '1', '2', '3', '4']
 export const PORT_OPTIONS = ['', 'nonstd']
+/**
+ * "Güven" süzgeci (2026-10-09, kullanıcı: "sütunda 'Kısmen doğrulandı' var ama süzgeçte yalnız 'Herhangi' / 'Yalnız
+ * güvensiz' var"): sütunun dört hükmü + "Sorun"un üç türü. Sunucu `filter_trust` ile AYNI kuralla süzer
+ * (backend `CertTrustVerdict` = {@link trustOf}). "Yalnız güvensiz" (`insecure`, alan adı uyuşmazlığı dâhil) ayrı kalır.
+ */
+export const TRUST_FILTERS = ['ok', 'partial', 'unknown', 'bad', 'chain', 'untrusted', 'revoked']
+/** Süzgeç seçenekleri (facet sayılı); sorun türleri "Sorun"un altında girintili. */
+export function trustFilterOptions(t, facets) {
+  const n = (k) => (facets?.trust?.[k] != null ? ` (${facets.trust[k]})` : '')
+  const label = (k) => (k === 'chain' || k === 'untrusted' || k === 'revoked' ? `— ${t(`tbl.trust.${k}`)}` : t(`tbl.trust.${k}`))
+  return TRUST_FILTERS.map((k) => ({ value: k, label: `${label(k)}${n(k)}` }))
+}
 
 /** Aktif (varsayılan-dışı) süzgeçler → çip listesi [{key, value}]. */
 export function activeFilterChips(f) {
@@ -156,6 +168,7 @@ export function toQuery(f, { page, perPage, sortBy, scope }) {
   if (f.tier) q.filter_tier = f.tier
   if (f.port) q.filter_port = f.port
   if (f.fp) q.filter_fp = f.fp
+  if (f.trust) q.filter_trust = f.trust
   return q
 }
 
@@ -164,7 +177,7 @@ export function toQuery(f, { page, perPage, sortBy, scope }) {
  * 2026-09-26'dan beri standart `useServerPagination` tarafından okunur/yazılır (ps ön ayar listesine karşı doğrulanır,
  * sayfa > 1 ise ps de yazılır); burada yalnız süzgeç + sıralama kalır — iki yazıcı aynı anahtarda yarışmasın.
  */
-export const URL_KEYS = { domain: 'c_q', issuer: 'c_iss', status: 'c_st', team: 'c_team', window: 'c_win', insecure: 'c_sec', tier: 'c_tier', port: 'c_port', fp: 'c_fp' }
+export const URL_KEYS = { domain: 'c_q', issuer: 'c_iss', status: 'c_st', team: 'c_team', window: 'c_win', insecure: 'c_sec', tier: 'c_tier', port: 'c_port', fp: 'c_fp', trust: 'c_tr' }
 export function toUrlMapping(f, { sortBy, scope }) {
   const m = {}
   for (const [k, p] of Object.entries(URL_KEYS)) {
@@ -188,6 +201,7 @@ export function filtersFromUrl(readParam) {
   const tier = s('tier'); if (TIER_OPTIONS.includes(tier)) f.tier = tier
   const port = s('port'); if (port && (port === 'nonstd' || /^\d{1,5}$/.test(port))) f.port = port
   f.fp = s('fp') || ''
+  const tr = s('trust'); if (TRUST_FILTERS.includes(tr)) f.trust = tr
   return f
 }
 
@@ -223,6 +237,23 @@ export function trustOf(cert) {
   const known = [chain, trust, rev].filter((x) => x && x !== 'UNKNOWN').length
   if (known === 0) return { tone: 'unknown', issues: [] }
   return { tone: known === 3 ? 'ok' : 'partial', issues: [] }
+}
+
+/**
+ * Güven rozetinin AÇIKLAMASI (2026-10-09, kullanıcı: "Kısmen doğrulandı için neden bilgisi yok"): üç denetimin her biri
+ * için durum — `ok` (sonuçlandı, sorun yok) · `bad` (sorun) · `unknown` (sonuçlanmadı). {@link trustOf} ile AYNI kural:
+ * boş ya da UNKNOWN = sonuçlanmadı. İptal satırı sonuçlanmadıysa `reason` (revocationInfo) nedeni taşır.
+ * @returns {{ key: 'chain'|'ca'|'rev', state: 'ok'|'bad'|'unknown', raw: string, reason?: string|null }[]}
+ */
+export function trustChecks(cert, revReason = null) {
+  const up = (v) => String(v || '').trim().toUpperCase()
+  const chain = up(cert?.chain_status), ca = up(cert?.trust_status), rev = up(cert?.revocation_status)
+  const unknown = (v) => !v || v === 'UNKNOWN'
+  return [
+    { key: 'chain', raw: chain, state: unknown(chain) ? 'unknown' : chain === 'VALID' ? 'ok' : 'bad' },
+    { key: 'ca', raw: ca, state: unknown(ca) ? 'unknown' : ca === 'UNTRUSTED' ? 'bad' : 'ok' },
+    { key: 'rev', raw: rev, state: unknown(rev) ? 'unknown' : rev === 'REVOKED' ? 'bad' : 'ok', reason: unknown(rev) ? revReason : null },
+  ]
 }
 
 /** Ömrün tüketilen yüzdesi (not_before → not_after); veri yoksa null. 0..100 kırpılır. */

@@ -15,6 +15,26 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Tüm Sertifikalar — Güven süzgeci sütunla uyumlu.** Sütun "Tam / Kısmen doğrulandı / Bilinmiyor / Sorun" gösterirken
+  süzgeç yalnız "Herhangi / Yalnız güvensiz" sunuyordu.
+  - Süzgeç artık sütunun değerlerini sunar: Tam, Kısmen doğrulandı, Bilinmiyor, Sorun. Sorunun alt türleri (zincir
+    eksik, güvenilmeyen CA, iptal edildi) ayrıca seçilebilir.
+  - Her seçeneğin yanında sayısı yazar.
+  - Süzgeç sütun süzgeç satırında, masaüstünde süzgeç çubuğunda ve telefonda Süzgeçler çekmecesinde bulunur.
+  - Süzme sunucuda yapılır (`filter_trust`); hüküm kuralı sütunla aynıdır (`CertTrustVerdict` = `trustOf`). CSV dışa
+    aktarma aynı süzgeci uygular; adres parametresi `c_tr`.
+  - "Yalnız güvensiz" düğmesi (alan adı uyuşmazlığı dâhil) ayrı olarak kalır.
+
+### Added
+- **Güven rozetinde neden açıklaması.** Rozete dokununca ya da tıklayınca üç denetimin durumu açılır: zincir
+  bütünlüğü, CA güveni ve iptal (OCSP/CRL).
+  - Sonuçlanmayan ya da sorunlu denetimin altında neden ve yapılacak iş yazar.
+  - "Kısmen doğrulandı"nın en yaygın nedeni, sertifikanın OCSP/CRL adresi yayımlamamasıdır. Sağlık sekmesiyle aynı
+    metinle "yapılacak bir şey yok" der.
+  - "Sağlık denetimini aç" sertifikayı Sağlık sekmesinde açar.
+  - Telefonda dokunma hedefleri 40 px'tir; pencere ekrana sığar.
+
 ## [20.116.2] — 2026-10-09
 
 ### Security

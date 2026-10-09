@@ -348,7 +348,8 @@ class CertificateControllerTest {
 
         mvc.perform(get("/api/certificates/list").session(authSession())
                         .param("filter_status", "expired").param("filter_window", "30").param("filter_team", "3")
-                        .param("filter_insecure", "true").param("filter_tier", "2").param("filter_port", "nonstd").param("sort_by", "team"))
+                        .param("filter_insecure", "true").param("filter_tier", "2").param("filter_port", "nonstd").param("sort_by", "team")
+                        .param("filter_trust", "partial"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.facets.all").value(0));
@@ -362,6 +363,7 @@ class CertificateControllerTest {
         org.assertj.core.api.Assertions.assertThat(q.filterInsecure()).isTrue();
         org.assertj.core.api.Assertions.assertThat(q.filterTier()).isEqualTo(2);
         org.assertj.core.api.Assertions.assertThat(q.filterPort()).isEqualTo("nonstd");
+        org.assertj.core.api.Assertions.assertThat(q.filterTrust()).isEqualTo("partial");   // Güven süzgeci (2026-10-09)
         org.assertj.core.api.Assertions.assertThat(q.sortBy()).isEqualTo("team");
     }
 

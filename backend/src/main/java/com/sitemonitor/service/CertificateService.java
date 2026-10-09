@@ -641,11 +641,14 @@ public class CertificateService {
             try { return port == Integer.parseInt(fp); } catch (NumberFormatException e) { return true; }
         };
         java.util.function.Predicate<CertificateDto> byFp = c -> q.filterFp().isEmpty() || q.filterFp().equalsIgnoreCase(c.getFingerprint());
+        // Güven sütunu süzgeci (2026-10-09): sütunun gösterdiği hükmün AYNISI (CertTrustVerdict = arayüz trustOf)
+        java.util.function.Predicate<CertificateDto> byTrust = c -> CertTrustVerdict.matches(c, q.filterTrust());
 
         // Boyut adı → süzgeç; facet sayımında o boyut dışarıda bırakılır
         Map<String, java.util.function.Predicate<CertificateDto>> dims = new LinkedHashMap<>();
         dims.put("text", byText); dims.put("status", byStatus); dims.put("window", byWindow); dims.put("team", byTeam);
         dims.put("insecure", byInsecure); dims.put("tier", byTier); dims.put("port", byPort); dims.put("fp", byFp);
+        dims.put("trust", byTrust);
         java.util.function.Function<String, List<CertificateDto>> allBut = skip -> all.stream()
                 .filter(c -> dims.entrySet().stream().allMatch(e -> e.getKey().equals(skip) || e.getValue().test(c)))
                 .collect(Collectors.toList());
@@ -686,6 +689,13 @@ public class CertificateService {
         Map<String, Integer> tiers = new TreeMap<>();
         for (CertificateDto c : allBut.apply("tier")) if (c.getTier() != null) tiers.merge(String.valueOf(c.getTier()), 1, Integer::sum);
         int nonstd = (int) allBut.apply("port").stream().filter(c -> c.getPort() != null && c.getPort() != 443).count();
+        // Güven facet'i: dört hüküm + sorun türleri (bir satır birden çok sorun türünde sayılabilir)
+        Map<String, Integer> trust = new LinkedHashMap<>();
+        for (String f : CertTrustVerdict.FILTERS) trust.put(f, 0);
+        for (CertificateDto c : allBut.apply("trust")) {
+            trust.merge(CertTrustVerdict.tone(c), 1, Integer::sum);
+            for (String issue : CertTrustVerdict.issues(c)) trust.merge(issue, 1, Integer::sum);
+        }
 
         Map<String, Object> facets = new LinkedHashMap<>();
         facets.put("levels", levels);
@@ -695,6 +705,7 @@ public class CertificateService {
         facets.put("insecure", insecure);
         facets.put("tiers", tiers);
         facets.put("nonstd_port", nonstd);
+        facets.put("trust", trust);
         facets.put("all", all.size());
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -781,7 +792,8 @@ public class CertificateService {
     public String exportCsv(com.sitemonitor.dto.CertListQuery q, java.util.Collection<Long> teamIds, List<String> cols) {
         Map<String, Object> res = getPaginated(
                 new com.sitemonitor.dto.CertListQuery(1, 5000, q.sortBy(), q.sortDir(), q.filterDomain(), q.filterIssuer(),
-                        q.filterStatus(), q.filterTeam(), q.filterWindow(), q.filterInsecure(), q.filterTier(), q.filterPort(), q.filterFp()),
+                        q.filterStatus(), q.filterTeam(), q.filterWindow(), q.filterInsecure(), q.filterTier(), q.filterPort(), q.filterFp(),
+                        q.filterTrust()),
                 teamIds);
         @SuppressWarnings("unchecked")
         List<CertificateDto> rows = (List<CertificateDto>) res.get("data");
