@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -158,6 +159,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
@@ -184,7 +188,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const [statsVisible, setStatsVisible] = useState(false)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
     // "Henüz izleme yok, ekleyin" diyordu; kullanıcı monitörlerinin SİLİNDİĞİNİ sanıyordu.
     // Ayrıca useVisibleInterval her 60 sn sessizce başarısız olmaya devam ediyordu.
@@ -196,18 +204,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getKeywordMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updateKeywordMonitor, (r) => {
-    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -259,7 +269,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setKwDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -283,7 +297,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       customHeaders: '',
       active: m.active !== false }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm(formFrom(m))
     setChangeNote('')
@@ -292,15 +310,17 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız URL'i değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
+    cancelTest()
     setTestResult(null); setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
+  function closeEdit() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   // Canlı koşul testi — kaydetmeden formdaki değerlerle URL'yi çekip koşulu değerlendirir.
   async function runTest() {
     if (!form.url.trim() || !form.keyword.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testKeyword({
@@ -308,9 +328,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
         customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO',
       })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -351,6 +372,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         : await api.monitoring.updateKeywordMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setSelected((prev) => mergeSavedRow(prev, res.data))
       toast.success(t('keyword.saved')); closeEdit()
       // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi/kuralı değişen kart eski sonucu göstermesin. Gizli
       // başlıklar satırda geri okunamaz → yazıldıysa ayrıca bildirilir (bkz. utils/checkAfterSave).
@@ -992,7 +1016,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="keyword" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)} />
+                  canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

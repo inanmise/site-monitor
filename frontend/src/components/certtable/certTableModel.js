@@ -5,6 +5,7 @@
  * param eşlemesi (`c_*` öneki), satır türevleri (seviye, güven rozeti, ömür yüzdesi, bayatlık,
  * göreli zaman) ve CSV. Bileşen yalnız durum + çizim tutar; testler burayı doğrudan sınar.
  */
+import { CircleAlert, CircleCheck, CircleX, OctagonAlert, OctagonX, TriangleAlert } from 'lucide-react'
 import { csvRows } from '../../utils/csv.js'
 import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 import { roundedAgoParts } from '../../utils/relativeTime.js'
@@ -113,14 +114,17 @@ export function savePreset(list, preset) {
 
 // ── Süzgeç durumu ──────────────────────────────────────────────────────────
 export const EMPTY_FILTERS = { domain: '', issuer: '', status: '', team: '', window: '', insecure: false, tier: '', port: '', fp: '' }
+// `icon`: lucide bileşeni (2026-10-09; eskiden emoji karakterleriydi — proje kuralı: ikonlar yalnız lucide). Renk çizen
+// yerin ton sınıfından (currentColor) gelir; şekiller ayrı: dolmuş = sekizgen X, kritik = sekizgen !, yüksek = daire !,
+// uyarı = üçgen !, geçerli = daire onay, hata = daire X (renk tek sinyal değil).
 export const STATUS_OPTIONS = [
   { value: '',         labelKey: 'tbl.filterAll' },
-  { value: 'expired',  labelKey: 'tbl.filterExpired',  cls: 'cf-opt-crit', icon: '⛔' },
-  { value: 'critical', labelKey: 'tbl.filterCritical', cls: 'cf-opt-crit', icon: '🔴' },
-  { value: 'high',     labelKey: 'tbl.filterHigh',     cls: 'cf-opt-high', icon: '🟠' },
-  { value: 'warning',  labelKey: 'tbl.filterWarning',  cls: 'cf-opt-warn', icon: '⚠' },
-  { value: 'valid',    labelKey: 'tbl.filterValid',    cls: 'cf-opt-valid', icon: '✓' },
-  { value: 'error',    labelKey: 'tbl.filterError',    cls: 'cf-opt-err', icon: '✗' },
+  { value: 'expired',  labelKey: 'tbl.filterExpired',  cls: 'cf-opt-crit', icon: OctagonX },
+  { value: 'critical', labelKey: 'tbl.filterCritical', cls: 'cf-opt-crit', icon: OctagonAlert },
+  { value: 'high',     labelKey: 'tbl.filterHigh',     cls: 'cf-opt-high', icon: CircleAlert },
+  { value: 'warning',  labelKey: 'tbl.filterWarning',  cls: 'cf-opt-warn', icon: TriangleAlert },
+  { value: 'valid',    labelKey: 'tbl.filterValid',    cls: 'cf-opt-valid', icon: CircleCheck },
+  { value: 'error',    labelKey: 'tbl.filterError',    cls: 'cf-opt-err', icon: CircleX },
 ]
 export const WINDOW_OPTIONS = ['', 'expired', '7', '30', '60', '90']
 export const TIER_OPTIONS = ['', '1', '2', '3', '4']

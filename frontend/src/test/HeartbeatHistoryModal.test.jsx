@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import HeartbeatHistoryModal from '../components/admin/HeartbeatHistoryModal.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -96,6 +96,24 @@ describe('HeartbeatHistoryModal', () => {
       expect(args.length).toBeGreaterThan(1)
       expect(args.at(-1)).not.toBe(1)
     })
+  })
+
+  // Geç yanıt yarışı (2026-10-09): 1 gün isteği yoldayken başka aralık seçilir; yeni aralığın yanıtı önce gelir. Eski
+  // yanıt sonradan düşünce seçili aralığın çizelgesini EZMEMELİ (yalnız en son istek uygulanır).
+  it('geç gelen ESKİ aralık yanıtı yeni aralığın çizelgesini ezmez', async () => {
+    let resolveFirst
+    api.admin.getHeartbeatTimeline
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r }))
+      .mockResolvedValueOnce({ success: true, data: timeline({ buckets: [bucket('2026-09-08T10:00:00', 12, 12)] }) })
+    render(<HeartbeatHistoryModal onClose={() => {}} />)
+    await waitFor(() => expect(api.admin.getHeartbeatTimeline).toHaveBeenCalledTimes(1))
+    fireEvent.click(within(screen.getByRole('group', { name: /Zaman aralığı|Time range/ })).getAllByRole('button')[1])
+    const cells = () => document.querySelectorAll('[data-hb-cell]')
+    await waitFor(() => expect(cells()).toHaveLength(1))
+
+    await act(async () => { resolveFirst({ success: true, data: timeline() }) })   // eski (4 kovalı) yanıt geç düşer
+    expect(cells()).toHaveLength(1)
+    expect(document.querySelector('[data-hb-cell][data-status="missing"]')).toBeNull()
   })
 
   it('kovaya tıklamak ayrıntıyı açar, tekrar tıklamak kapatır', async () => {

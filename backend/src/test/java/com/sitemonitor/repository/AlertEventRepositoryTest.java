@@ -60,6 +60,33 @@ class AlertEventRepositoryTest {
     }
 
     @Test
+    @DisplayName("stampNotificationSentIfOpen (2026-10-09): yalnız gönderim alanları, yalnız AÇIK satır — çözülmüş satır dirilmez, onay korunur")
+    void stampNotificationSentIfOpen_onlyOpenRow_onlySendFields() {
+        AlertEvent open = alert("stamp-open.example.com", "EXPIRY", "2026-07-01T10:00:00", false);
+        open.setAcknowledgedNote("not");
+        open = repo.save(open);
+        AlertEvent resolved = alert("stamp-closed.example.com", "EXPIRY", "2026-07-01T10:00:00", true);
+        resolved.setResolvedBy("kullanici");
+        resolved = repo.save(resolved);
+
+        assertThat(repo.stampNotificationSentIfOpen(open.getId(), "2026-07-02T10:00:00", 2, 5, "2026-07-07T00:00:00", "[]"))
+                .isEqualTo(1);
+        assertThat(repo.stampNotificationSentIfOpen(resolved.getId(), "2026-07-02T10:00:00", 2, 5, null, null))
+                .isZero();
+
+        AlertEvent o = repo.findById(open.getId()).orElseThrow();
+        assertThat(o.getLastReAlertAt()).isEqualTo("2026-07-02T10:00:00");
+        assertThat(o.getRealertCount()).isEqualTo(2);
+        assertThat(o.getDaysRemaining()).isEqualTo(5);
+        assertThat(o.getNotAfter()).isEqualTo("2026-07-07T00:00:00");
+        assertThat(o.getAcknowledgedNote()).isEqualTo("not");   // gönderim dışı alan dokunulmadı
+        AlertEvent r = repo.findById(resolved.getId()).orElseThrow();
+        assertThat(r.getResolved()).isTrue();
+        assertThat(r.getResolvedBy()).isEqualTo("kullanici");
+        assertThat(r.getLastReAlertAt()).isNull();
+    }
+
+    @Test
     @DisplayName("linkToStormIfOpen links an OPEN unlinked alert but NOT a resolved one — no resurrection (M6)")
     void linkToStormIfOpen_onlyOpenUnlinked() {
         AlertEvent open     = repo.save(alert("open.example.com",   "HTTP_DOWN", "2026-07-01T10:00:00", false));

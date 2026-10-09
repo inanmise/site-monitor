@@ -215,6 +215,20 @@ describe('RenewalAdvice — yeniden tasarım', () => {
     expect(screen.queryByRole('button', { name: /Plan renewal|Yenilemeyi planla/ })).toBeNull()
   })
 
+  it('sunucudaki KAYITLI plan (2026-10-09): rozet oturum içi kayıt olmadan görünür; "Planla" kayıtlı notu/tarihi açar', async () => {
+    api.getRenewalAdvice.mockResolvedValue({ success: true, data: DATA.map((a) => (a.domain === 'd10.example.com'
+      ? { ...a, renewal_planned_at: '2026-10-20', renewal_planned_note: 'CSR onayda' } : a)), timestamp: '2026-09-26T09:30:00' })
+    render(<RenewalAdvice />)
+    const card = (await screen.findByText('d10.example.com')).closest('[data-slot="renewal-card"]')
+    expect(card.querySelector('[data-slot="rn-planned"]')).not.toBeNull()
+    expect(card.querySelector('[data-slot="rn-planned"]')).toHaveAttribute('title', 'CSR onayda')
+    fireEvent.click(screen.getByRole('button', { name: 'd10.example.com — Plan renewal' }))
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByRole('textbox', { name: /Not|Note/ })).toHaveValue('CSR onayda')
+    // planı olmayan kartta rozet yok
+    expect(screen.getByText('d11.example.com').closest('[data-slot="renewal-card"]').querySelector('[data-slot="rn-planned"]')).toBeNull()
+  })
+
   it('neden faseti (çoklu, sayılı) süzer, çip yazar, URL r_code taşır; arama veren adında da eşleşir', async () => {
     render(<RenewalAdvice />)
     await screen.findByText('d01.example.com')

@@ -1,5 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ImagePlus } from 'lucide-react'
@@ -18,6 +17,8 @@ import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Label } from '@/components/shadcn/label'
 import { cn } from '@/lib/utils'
+// Editör (~1 MB) ilk düzenlenebilir çizimde yüklenir — haftalık rapor sayfası onu açılışta taşımaz (2026-10-09).
+import LazyMdEditor from '../ui/mdEditor/LazyMdEditor.jsx'
 
 /*
  * Haftalık rapor düzenleyicisinin alan parçaları (2026-09-27, WeeklyReportsPage'ten ayrıldı — davranış aynı):
@@ -78,7 +79,8 @@ export function MdField({ value, onChange, editable, reportId, height = 220, lab
   const [uploading, setUploading] = useState(false)
   const chars = String(value ?? '').length
 
-  const editorCommands = useMemo(() => {
+  // Komut KURUCUSU: kütüphane tembel yüklenir, createMdEditor kurucuyu yüklendikten sonra çağırır (kimlik [t]'ye bağlı).
+  const editorCommands = useCallback((mdCommands) => {
     const tt = (key) => ({ 'aria-label': t(key), title: t(key) })
     return [
       // Word "Stiller" benzeri başlık menüsü (H1 rapor içinde fazla büyük)
@@ -191,7 +193,7 @@ export function MdField({ value, onChange, editable, reportId, height = 220, lab
   return (
     <div className="min-w-0" onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
       <div data-color-mode={isDark ? 'dark' : 'light'}>
-        <MDEditor
+        <LazyMdEditor
           value={value ?? ''}
           onChange={(v) => onChange(v ?? '')}
           preview="edit"
@@ -199,7 +201,7 @@ export function MdField({ value, onChange, editable, reportId, height = 220, lab
           visibleDragbar={true}
           highlightEnable={false}
           commands={editorCommands}
-          extraCommands={[mdCommands.codeEdit, mdCommands.codePreview,
+          extraCommands={(mdCommands) => [mdCommands.codeEdit, mdCommands.codePreview,
             mdCommands.divider, mdCommands.fullscreen]}
           textareaProps={label ? { 'aria-label': label } : undefined}
         />

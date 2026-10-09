@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -304,6 +305,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const [defaults, setDefaults] = useState(null)     // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
@@ -353,22 +357,28 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // saniyordu (HttpMonitorPage'de yorumla belgelenmis hatanin kopyaya tasinmamis hali).
   const [loadError, setLoadError] = useState(null)
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // AG HATASI DA BU DALA DUSMELI: request() ag hatasinda {success:false} DONDURMEZ, throw eder
     // ve timeoutMs verilmedigi icin abort yolu da devrede degil.
     try {
       const res = await api.monitoring.getScriptedMonitors()
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
       if (res?.success) {
         const d = res.data || {}
         setMonitors(d.monitors || [])
         setK6({ available: d.k6_available !== false, version: d.k6_version, canManage: !!d.can_manage })
         setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
         setLoadError(null)
+        return d.monitors || []   // geri alma sonrası açık detayı tazelemek için (diğer çağıranlar dönüşü yok sayar)
       } else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
 
@@ -605,7 +615,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     }
   }
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     smokeSeq.current++   // önceki formun uçuşan doğrulama koşumu bu formu DOLDURMASIN
     setForm({ ...emptyForm, teamId: isAdminish ? '' : defaultTeam,
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -632,7 +646,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       env: (m.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: e.secret ? '' : (e.value || ''), value_set: !!e.value_set })),
     }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     smokeSeq.current++   // önceki formun uçuşan doğrulama koşumu bu formu DOLDURMASIN
     // Seçicide monitörün KENDİ girdisi seçili gelir ve panel son kontrolüyle dolar: kullanıcı
     // neyi düzeltmesi gerektiğini modal açılır açılmaz görür (eskiden panel boş açılıyordu).
@@ -647,6 +665,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
    *  GİZLİ env değerleri geri okunamadığından kopyaya taşınamaz — value_set=false yapılır ki
    *  kullanıcı bu satırları yeniden doldurması gerektiğini görsün. Mükerrer koruması backend'de (ad+takım). */
   function openDuplicate(m) {
+    cancelTest()
     smokeSeq.current++   // önceki formun uçuşan doğrulama koşumu bu formu DOLDURMASIN
     const base = formFrom(m)
     setForm({ ...base, name: duplicateName(m.name), template: `saved:${m.id}`,
@@ -667,6 +686,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     // taslak kaydı MONİTÖRÜ DEĞİŞTİRMEZ, yalnız kaldığı yeri saklar.
     if (!skipDraft) flushDraft()
     smokeSeq.current++   // uçuşan doğrulama koşumunun sonucu kapanmış forma (ya da sonraki forma) yazılmasın
+    cancelTest()         // uçuşan form testi de (k6, 180 sn'ye kadar) kapanmış / sonraki forma yazılmasın
     setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([]); setSaveError(null)
     setPendingDraft(null); setDraftSavedAt(null); setBumpType('patch'); setSmoke(null)
   }
@@ -760,6 +780,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
    * Elle yazım paneli ETKİLEMEZ (bilinçli): kullanıcı hatayı okurken düzeltme yapabilsin.
    */
   function selectScriptSource(value) {
+    cancelTest()   // uçuşan test ÖNCEKİ kaynağın script'ine ait — sonucu yeni seçimin paneline düşmesin
     setSaveWarnings([]); setSaveError(null)
     if (!value) {                                   // yalnız yeni monitörde gösterilir
       setForm(f => ({ ...f, template: '', script: '', env: [] }))
@@ -873,6 +894,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // içerik olur. Kullanıcı tekrar yazmaya başlarsa doğal olarak yine kirli sayılır.
         setModal(m => ({ ...(m || {}), ...(res.data?.id ? res.data : {}),
                          script: payload.script, name: payload.name }))
+        // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+        // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+        setSelected((prev) => mergeSavedRow(prev, res.data))
         // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
         // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
         const w = res.data?.warnings
@@ -1039,6 +1063,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   async function runTest() {
     if (!form.script.trim()) { toast.error(t('scripted.scriptRequired')); return }
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testScripted({
@@ -1048,10 +1073,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         useProxy: form.useProxy || 'AUTO',
         env: form.env.filter(e => (e.name || '').trim()).map(e => ({ name: e.name.trim(), value: e.value || '' })),
       })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       const data = res?.success ? res.data : { status: 'ERROR', error: res?.error || t('scripted.testError') }
       setTestResult({ ...data, _source: 'test' })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -1410,7 +1436,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="scripted" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)} />
+                  canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import ActivityLog, { activityTarget } from '../components/ActivityLog.jsx'
 
 // Birleşik aktivite akışı — api mock'lanır. Durum/tür rozetleri dilden bağımsız CSS/enum ile doğrulanır.
@@ -95,6 +95,26 @@ describe('ActivityLog', () => {
       const lastCall = api.getActivity.mock.calls.at(-1)[0]
       expect(lastCall.type).toContain('HTTP')
     })
+  })
+})
+
+describe('ActivityLog — özet yarışı (2026-10-09)', () => {
+  it('eski süzgecin GEÇ gelen özeti yeni süzgecin sayaçlarını ezmez', async () => {
+    vi.clearAllMocks()
+    api.getActivity.mockResolvedValue({ success: true, page: 0, total: 0, data: [] })
+    let resolveOld
+    api.getActivitySummary
+      .mockImplementationOnce(() => new Promise((r) => { resolveOld = r }))
+      .mockResolvedValue({ success: true, total: 7, success_count: 7, warning: 0, error: 0 })
+    render(<ActivityLog />)
+    await waitFor(() => expect(api.getActivitySummary).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /HTTP/ }))
+    await waitFor(() => expect(api.getActivitySummary).toHaveBeenCalledTimes(2))
+    const total = () => [...document.querySelectorAll('[data-slot="stat-item"]')][0]
+    await waitFor(() => expect(total()).toHaveTextContent('7'))
+    await act(async () => { resolveOld({ success: true, total: 999, success_count: 999, warning: 0, error: 0 }) })
+    expect(total()).toHaveTextContent('7')
+    expect(total()).not.toHaveTextContent('999')
   })
 })
 

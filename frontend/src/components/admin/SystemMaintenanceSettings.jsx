@@ -57,6 +57,9 @@ export default function SystemMaintenanceSettings() {
       } else {
         setError(r?.error || t('sysmaint.err.generic'))
       }
+    } catch (e) {
+      // Ağ hatası (request() throw eder): eskiden yakalanmıyor, ilk yüklemede sayfa sonsuza dek "yükleniyor" kalıyordu.
+      setError(e?.message || t('sysmaint.err.generic'))
     } finally {
       setRefreshing(false)
     }
@@ -93,6 +96,9 @@ export default function SystemMaintenanceSettings() {
         toast.error(r?.error || t('sysmaint.err.generic'))
         load()
       }
+    } catch (e) {
+      toast.error(e?.message || t('sysmaint.err.generic'))
+      load()
     } finally {
       setBusy(false)
     }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Pencil, FolderTree } from 'lucide-react'
+import { Pencil, FolderTree, CircleAlert } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import { ToolbarSearch } from './ListToolbar.jsx'
 import { SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
@@ -29,12 +30,15 @@ export default function MonitorGroups() {
   const toast = useToast()
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)   // liste okunamadı — "henüz grup yok" denmez
   const [editing, setEditing] = useState(null)   // { id, value }
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
 
   useEffect(() => { load() }, [])
 
+  // Okunamayan liste "henüz grup yok" gibi görünmesin: `{success:false}` ve ağ hatası (request() throw eder) hata bloğu +
+  // Tekrar dene çizer (eskiden ağ hatası yakalanmıyor, başarısız yanıtta boş durum yazılıyordu).
   async function load() {
     setLoading(true)
     try {
@@ -49,7 +53,10 @@ export default function MonitorGroups() {
           name: g.name,
           count: g.count ?? 0,
         })))
-      } else toast.error(res?.error || t('settings.loadError'))
+        setLoadError(null)
+      } else setLoadError(res?.error || t('grp.loadError'))
+    } catch (e) {
+      setLoadError(e?.message || t('grp.loadError'))
     } finally {
       setLoading(false)
     }
@@ -75,6 +82,8 @@ export default function MonitorGroups() {
       const res = await api.monitoring.renameGroup(g.id, newName)
       if (res?.success) { setEditing(null); toast.success(t('grp.renamed', res.data?.affected ?? 0)); load() }
       else toast.error(res?.error || t('grp.renameError'))   // 409 çakışma mesajı backend'den gelir
+    } catch (e) {
+      toast.error(e?.message || t('grp.renameError'))
     } finally {
       setSaving(false)
     }
@@ -95,6 +104,9 @@ export default function MonitorGroups() {
 
       {loading ? (
         <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-4" />
+      ) : loadError ? (
+        <StatusBlock tone="danger" role="alert" icon={CircleAlert} className="py-6" description={loadError}
+          actions={<Button type="button" variant="outline" onClick={load}>{t('grp.retry')}</Button>} />
       ) : groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('grp.empty')}</p>
       ) : (

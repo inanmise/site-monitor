@@ -40,6 +40,15 @@ public class ExecutiveStatsService {
     private final com.sitemonitor.repository.CertificateCheckRepository certificateCheckRepo;
 
     /**
+     * "Son N günde ne değişti" belleği (2026-10-09, performans): Pano bu ucu her kullanıcı için 5 dakikada bir yokluyor ve
+     * her çağrı tüm envanteri + 7 günlük kontrol/alarm satırlarını (yüz binlerce satır) tarıyordu. Görüş kapsamı başına
+     * {@code site.monitor.stats-changes.cache-ms}; 0 → kapalı (birim testinde {@code new} ile kurulunca varsayılan).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.stats-changes.cache-ms:120000}")
+    long changesCacheMs;
+    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> changesMemo = new com.sitemonitor.util.TtlMemo<>(500);
+
+    /**
      * "Silinen alan" sayacının kaynağı (2026-10-07): envanter silmesi KALICI — satır gidiyor, {@code deleted_at} ile
      * sayılamaz; ürün geçmişindeki {@code INVENTORY/DELETE} satırlarından sayılır. Alan enjeksiyonu (kurucu değişmesin);
      * yokken (dilimli test) sayaç 0.
@@ -166,6 +175,12 @@ public class ExecutiveStatsService {
      * "Son N günde ne değişti" satırı (2026-09-12, #7): yeni alan, silinen alan, yenilenen sertifika (parmak izi
      * değişimi), açılan / çözülen alarm. Dashboard istatistik şeridinin altında tek satır.
      */
+    /** Kapsam anahtarlı (bellekli) sürüm — {@code scopeKey} aynı kapsamı gören kullanıcılar için aynı sonucu paylaşır. */
+    public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam, String scopeKey) {
+        return changesMemo.get(scopeKey == null ? null : scopeKey + "|d" + days, changesCacheMs, false,
+                () -> recentChanges(days, canViewTeam));
+    }
+
     public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam) {
         int d = Math.max(1, Math.min(90, days));
         String since = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));

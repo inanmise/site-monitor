@@ -70,6 +70,28 @@ class DomainCheckerServiceTest {
         return m;
     }
 
+    // ── EPP değişiklik tespiti: RDAP ↔ WHOIS yazımı sahte DOMAINMON_CHANGED üretmez (2026-10-09) ─────────────
+
+    @Test
+    @DisplayName("EPP seti: RDAP 'client transfer prohibited' ile WHOIS 'clientTransferProhibited' AYNI koddur — değişti denmez")
+    void eppSetChanged_rdapVsWhoisSpelling_isNotAChange() {
+        assertThat(DomainCheckerService.eppSetChanged("client transfer prohibited,server delete prohibited",
+                List.of("clientTransferProhibited", "serverDeleteProhibited"))).isFalse();
+        assertThat(DomainCheckerService.eppSetChanged("clientTransferProhibited",
+                List.of("client transfer prohibited"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("EPP seti: gerçek değişiklik (kod eklendi / kalktı) yine yakalanır; eksik veri 'değişti' sayılmaz")
+    void eppSetChanged_realChange_isDetected() {
+        assertThat(DomainCheckerService.eppSetChanged("client transfer prohibited",
+                List.of("clientTransferProhibited", "pendingDelete"))).isTrue();
+        assertThat(DomainCheckerService.eppSetChanged("clientTransferProhibited,clientHold",
+                List.of("client transfer prohibited"))).isTrue();
+        assertThat(DomainCheckerService.eppSetChanged(null, List.of("ok"))).isFalse();
+        assertThat(DomainCheckerService.eppSetChanged("ok", List.of())).isFalse();
+    }
+
     // ── Transfer kilidi (K1) ─────────────────────────────────────────────────
 
     /* ZONE'SUZ now() cagrisi YOK (2026-09-23): DomainCheckerService.daysUntil beklenen tarihi

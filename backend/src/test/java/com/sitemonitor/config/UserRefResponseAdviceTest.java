@@ -55,6 +55,15 @@ class UserRefResponseAdviceTest {
             return body;
         }
 
+        @GetMapping("/api/plain")
+        Map<String, Object> plain() {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("id", UserRef.of(5L));
+            body.put("team_id", 3L);
+            body.put("ratio", new java.math.BigDecimal("12.50"));
+            return body;
+        }
+
         @GetMapping(value = "/api/text", produces = "text/plain")
         String text() {
             return "{\"user_id\":5}";
@@ -119,6 +128,18 @@ class UserRefResponseAdviceTest {
         }
         mvc.perform(get("/api/probe"))
                 .andExpect(jsonPath("$.user_id").value(P5));
+    }
+
+    @Test
+    @DisplayName("hızlı yol (çevrilecek alan adı yok): gerçek dönüştürücü ham JSON'u yazar; kullanıcı kimliği yine opak, sayılar aynen")
+    void fastPathThroughRealConverter() throws Exception {
+        mvc.perform(get("/api/plain").session(session("USER", List.of(1L))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(P5))
+                .andExpect(jsonPath("$.team_id").value(3))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"ratio\":12.50")));
+        mvc.perform(get("/api/plain").session(session("ADMIN", null)))
+                .andExpect(jsonPath("$.id").value(5));
     }
 
     @Test

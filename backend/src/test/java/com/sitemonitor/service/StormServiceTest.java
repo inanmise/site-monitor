@@ -214,6 +214,29 @@ class StormServiceTest {
     }
 
     @Test
+    @DisplayName("Toplu alarm sonrası HEDEFLİ UPDATE (2026-10-09): bayat fırtına varlığı KAYDEDİLMEZ — last_member_at / resolved geri sarılmaz")
+    void sendStormAlert_persistsWithTargetedUpdate_notEntitySave() {
+        enabledAccountWide();
+        AlertStorm created = storm(210L);
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7"))
+                .thenReturn(Optional.empty()).thenReturn(Optional.of(created));
+        when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
+                .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
+                                    down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
+                                    down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class))).thenReturn(1);
+        teamWithEmail(7L);
+
+        assertThat(storm.evaluate(down(1, EscalationService.TYPE_HTTP_DOWN, 7L), null))
+                .isEqualTo(StormService.StormAction.SUPPRESSED);
+
+        verify(stormRepo, never()).save(any());
+        verify(jdbcTemplate).update(eq("UPDATE alert_storms SET notified_teams = ?, member_count = ?, last_re_alert_at = ? "
+                        + "WHERE id = ? AND resolved = false"),
+                any(), eq(3), anyString(), eq(210L));
+    }
+
+    @Test
     @DisplayName("Terfi çakışması (kaybeden, rows=0) → SUPPRESSED ama toplu alarm GÖNDERMEZ (idempotent)")
     void evaluate_promote_loser_noDuplicateAlert() {
         enabledAccountWide();

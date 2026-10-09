@@ -134,6 +134,17 @@ describe('SystemMaintenanceLayer — global yönetici', () => {
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled())
   })
 
+  it('Uzat: süre uzatma penceresi tıklanmadan bağlanmaz; ilk tıklamada (tembel parça) yüklenip açılır', async () => {
+    const active = block({ state: 'active', start_at: new Date(Date.now() - 60_000).toISOString(),
+      end_at: new Date(Date.now() + 3_600_000).toISOString() })
+    render(<SystemMaintenanceLayer globalAdmin block={active} offset={0} onExpire={vi.fn()} onChanged={vi.fn()}
+      onOpenSettings={vi.fn()} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(document.querySelector('[data-slot="maint-extend"]'))
+    // Parçanın ilk (soğuk) dönüşümü vitest'te tarih seçici zinciriyle birkaç saniye sürebilir
+    expect(await screen.findByRole('dialog', { name: /Extend maintenance|Bakımı uzat/ }, { timeout: 10_000 })).toBeInTheDocument()
+  })
+
   it('başlamak üzereyken bilgi şeridi (Uzat/Bitir yok), kullanıcı uyarı şeridi değil', () => {
     render(<SystemMaintenanceLayer globalAdmin block={block({ start_at: new Date(Date.now() + 5 * 60_000).toISOString(),
       end_at: new Date(Date.now() + 65 * 60_000).toISOString() })} offset={0} onExpire={vi.fn()} />)

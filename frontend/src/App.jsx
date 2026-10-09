@@ -14,6 +14,7 @@ import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
+import InactivityCountdownText from './components/ui/InactivityCountdownText.jsx'
 import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import { useUserPrefsController, UserPrefsContext } from './hooks/useUserPrefs.js'   // kişisel tercihler (2026-10-02, öneri 23)
 import { resolveLandingTab } from './hooks/userPrefsModel.js'
@@ -370,6 +371,12 @@ export default function App() {
   const setCerts = useCallback((data) => setCertsRaw(filterDeleted('cert', data || [], (c) => c.domain)), [])
   const deletedMarks = useDeletedMarksVersion()
   useEffect(() => { setCertsRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
+  // Pasif (izlemesi durdurulmuş) sertifikalar (2026-10-08): `certs` (aktif) İstatistik / Uyarılar / sayaçları da besler —
+  // pasifler oraya KARIŞMAZ; ayrı okunur (loadData içinde, aynı dalgada) ve yalnız Pano kart listesine katılır. Silinen
+  // pasif kart da "yakın zamanda silindi" işaretiyle ANINDA düşer (2026-10-09; eskiden sonraki yüklemeye kadar kalıyordu).
+  const [pausedCerts, setPausedRaw] = useState([])
+  const setPausedCerts = useCallback((data) => setPausedRaw(filterDeleted('cert', data || [], (c) => c.domain)), [])
+  useEffect(() => { setPausedRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
@@ -387,7 +394,9 @@ export default function App() {
   const prefsCtl = useUserPrefsController(mustChangePwd ? null : user, { canMigrate: () => prefsMigrateRef.current })
   const prefsFlushRef = useRef(null)
   prefsFlushRef.current = prefsCtl.flush
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  // `q` 12 izleme sayfası, Yenileme ve Alarm Geçmişi'nde de kullanılıyor: başka sekmede açılan adresin araması Pano
+  // kartlarını süzmesin (2026-10-09) — yalnız Pano adresinden okunur.
+  const [search, setSearch] = useState(() => ((initialTabFromUrl() ?? 'dashboard') === 'dashboard' ? readUrlParam('q', '') : ''))
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
   const [checkingDomain, setCheckingDomain] = useState(null)   // kart bazlı "çalıştır" kilidi
@@ -419,7 +428,7 @@ export default function App() {
   const [lastUpdate, setLastUpdate] = useState(null)
   const [inactivityWarning, setInactivityWarning] = useState(false)
   const [idleCfg, setIdleCfg] = useState(() => ({ totalMs: INACTIVITY_MS, warnMs: WARN_BEFORE_MS }))
-  const [countdown, setCountdown] = useState(60)
+  const [warnDeadline, setWarnDeadline] = useState(0)   // otomatik çıkış anı; saniye sayacı InactivityCountdownText'te
   const [statsFilter, setStatsFilter] = useState(null)
   // İzleme durumu süzgeci (2026-10-08, kullanıcı: "pasif sertifikalar da kartlarda görünsün, süzülebilsin"): all | active | paused
   const [activityFilter, setActivityFilter] = useState('all')
@@ -608,6 +617,7 @@ export default function App() {
       clearInterval(countdownInterval.current)
       const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23)
       await api.logout()
+      resetSessionData()
       try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
       clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
       setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
@@ -626,17 +636,8 @@ export default function App() {
       setInactivityWarning(false)
 
       warnTimer.current = setTimeout(() => {
+        setWarnDeadline(Date.now() + idleCfg.warnMs)
         setInactivityWarning(true)
-        setCountdown(Math.round(idleCfg.warnMs / 1000))
-        countdownInterval.current = setInterval(() => {
-          setCountdown((prev) => {
-            if (prev <= 1) {
-              clearInterval(countdownInterval.current)
-              return 0
-            }
-            return prev - 1
-          })
-        }, 1000)
       }, Math.max(1000, idleCfg.totalMs - idleCfg.warnMs))
 
       logoutTimer.current = setTimeout(doAutoLogout, idleCfg.totalMs)
@@ -665,14 +666,17 @@ export default function App() {
     // network-status + weak-algorithms BURADAN çıkarıldı: network → 60 sn tick tek kaynak;
     // weak-algorithms → login'de bir kez (aşağıda) çünkü zayıf-algoritma verisi ancak cert
     // sweep'iyle (~saatlik) değişir → 5 dk'da 100 kullanıcı × tekrar gereksizdi.
-    const [certsRes, statsRes, silentRes, teamStatsRes, mailFailRes, extrasRes] = await Promise.allSettled([
-      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
+    // /stats/teams yalnız İstatistik sekmesinin (aşağıdaki effect); pasif liste ikinci bir tur beklemeden AYNI dalgada
+    // (2026-10-09, performans). Pasif uç istemcide yoksa (eski test sahtesi) atlanır.
+    const [certsRes, statsRes, silentRes, pausedRes, mailFailRes, extrasRes] = await Promise.allSettled([
+      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+      typeof api.getPausedCertificates === 'function' ? api.getPausedCertificates() : Promise.resolve(null),
       api.getMailFailureDomains(), api.getCardExtras(),
     ])
     if (!loadAliveRef.current) return // unmount/logout'ta state'i kirletme
     const v = (s) => s.status === 'fulfilled' ? s.value : null
     const certs = v(certsRes), stats = v(statsRes), silent = v(silentRes),
-          teamStats = v(teamStatsRes),
+          paused = v(pausedRes),
           mailFail = v(mailFailRes)
     if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
     if (stats?.success) setStats(stats.data)
@@ -680,7 +684,7 @@ export default function App() {
     if (mailFail?.success) setMailFailureDomains(new Set(mailFail.data ?? []))
     const extras = v(extrasRes)
     if (extras?.success) setCardExtras(extras.data || {})
-    if (teamStats?.success) setTeamStats(teamStats.data)
+    if (paused?.success && Array.isArray(paused.data)) setPausedCerts(paused.data)
     // networkStatus → 60 sn tick (dedup); weakAlgStats → login'de bir kez ayrı effect (aşağıda).
   }, [])
 
@@ -725,6 +729,8 @@ export default function App() {
     if (res?.success) {
       setNetworkStatus(prev => {
         if (res.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
+        // Aynı içerik → aynı nesne (2026-10-09): her dakika tüm ağaç (50 kart) boşuna yeniden çizilmesin
+        try { if (prev && JSON.stringify(prev) === JSON.stringify(res.data)) return prev } catch { /* karşılaştırılamaz → yeni */ }
         return res.data
       })
     }
@@ -735,7 +741,11 @@ export default function App() {
   // verisi ancak cert sweep'iyle (~saatlik) değişir → sık çekmeye gerek yok; sayfa yenilenince tazelenir.
   useEffect(() => {
     if (!user) return
-    api.admin.getWeakAlgorithms().then(r => { if (r?.success) setWeakAlgStats(r) })
+    let alive = true
+    Promise.resolve(api.admin.getWeakAlgorithms())
+      .then(r => { if (alive && r?.success) setWeakAlgStats(r) })
+      .catch(() => { /* rozet en iyi-çaba: ağ hatası işlenmemiş ret bırakmasın (2026-10-09) */ })
+    return () => { alive = false }
   }, [user])
 
   // Platform kataloğu (pano platform süzgecinin seçenek adları/sırası): login'de BİR KEZ — aktif liste her oturuma
@@ -875,6 +885,22 @@ export default function App() {
   }, [])
 
 
+  /**
+   * Oturum verisini sıfırlar (2026-10-09, hata düzeltmesi): sekme içi çıkış (elle ya da hareketsizlik) yalnız kimliği
+   * temizliyordu; aynı sekmede giriş yapan SONRAKİ kullanıcı önceki kişinin (başka takımın) kartlarını, sayaçlarını ve
+   * açık kalan pencerelerini kendi verisi gelene kadar görüyordu. Geç gelen yanıtlar da (loadAliveRef) artık yazılmaz;
+   * sonraki girişte loadData etkisi bayrağı yeniden açar.
+   */
+  function resetSessionData() {
+    loadAliveRef.current = false
+    setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setCardExtras({})
+    setSilentAlertDomains(new Set()); setMailFailureDomains(new Set()); setWeakAlgStats(null)
+    setNetworkStatus(null); setLastUpdate(null)
+    setModalCert(null); setInvForm(null); setSharedCert(null); setPlanRow(null); setCaModal(false); setCheckRun(null)
+    setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all'); setTeamFilter('all')
+    setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([]); setActivityFilter('all')
+  }
+
   async function handleLogout() {
     const ok = await showConfirm({
       title: t('app.logoutTitle'),
@@ -890,6 +916,7 @@ export default function App() {
     clearInterval(refreshPollRef.current)
     const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23, ≤2 sn)
     await api.logout()
+    resetSessionData()
     try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı: çıkış yine tamamlanır */ }
     clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
     setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
@@ -1007,19 +1034,30 @@ export default function App() {
    *  değiştirirdi (state setter'ını okuma amaçlı çağırmak da gereksiz render üretir). */
   const certsRef = useRef(certs)
   useEffect(() => { certsRef.current = certs }, [certs])
+  // Sertifika penceresi parçasını ilk veri geldikten sonra BOŞTA önceden yükle (2026-10-09): pencere artık yalnız açıkken
+  // bağlı; ilk karta tıklama yine anında açılsın. requestIdleCallback yoksa kısa gecikmeli zamanlayıcı.
+  const firstDataReady = lastUpdate != null
+  useEffect(() => {
+    if (!firstDataReady) return undefined
+    const pre = () => { import('./components/CertificateModal').catch(() => {}) }
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(pre, { timeout: 5000 })
+      return () => window.cancelIdleCallback?.(id)
+    }
+    const id = window.setTimeout(pre, 2500)
+    return () => window.clearTimeout(id)
+  }, [firstDataReady])
   // Pasif (izlemesi durdurulmuş) sertifikalar (2026-10-08): `certs` (aktif) İstatistik / Uyarılar / sayaçları da besler —
   // pasifler oraya KARIŞMAZ; ayrı okunur ve yalnız Pano kart listesine katılır. Pano açıkken ve her veri tazelemesinde
   // (lastUpdate) yeniden istenir. Hata Panoyu bozmaz: önceki liste kalır, uyarı çıkmaz.
-  const [pausedCerts, setPausedCerts] = useState([])
   const pausedRef = useRef(pausedCerts)
   useEffect(() => { pausedRef.current = pausedCerts }, [pausedCerts])
+  // Takım kırılımı (/stats/teams) yalnız İstatistik sekmesi açıkken (2026-10-09, performans): eskiden her sekmede 5 dk'da
+  // bir isteniyordu, tek tüketicisi StatsView.
   useEffect(() => {
-    if (!user || tab !== 'dashboard' || lastUpdate == null) return undefined
+    if (!user || tab !== 'stats') return undefined
     let alive = true
-    const req = api.getPausedCertificates?.()
-    if (req && typeof req.then === 'function') {
-      req.then((r) => { if (alive && r?.success && Array.isArray(r.data)) setPausedCerts(r.data) }).catch(() => {})
-    }
+    Promise.resolve(api.getTeamStats?.()).then((r) => { if (alive && r?.success) setTeamStats(r.data) }).catch(() => {})
     return () => { alive = false }
   }, [user, tab, lastUpdate])
   /** Alan adına göre kart satırı — önce aktif, sonra pasif liste (pencere / sağlık kısayolu pasif kartta da açılsın). */
@@ -1513,8 +1551,8 @@ export default function App() {
         // Oturum zaman aşımı şeridi (eski .inactivity-warning) — Tailwind + shadcn Button; telefonda sarar.
         <div data-slot="inactivity-warning" ref={inactivityRef}
           className="fixed inset-x-0 top-0 z-(--z-critical) flex flex-wrap items-center justify-center gap-3 bg-linear-to-r from-[#e65c00] to-[#f9d423] px-4 py-3 text-[#1a1a1a] shadow-lg animate-in slide-in-from-top motion-reduce:animate-none sm:gap-5 sm:px-6 sm:py-3.5">
-          <span className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
-            dangerouslySetInnerHTML={{ __html: t('app.inactivityWarn', `<strong>${countdown}</strong>`) }} />
+          <InactivityCountdownText deadline={warnDeadline} className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
+            format={(sec) => t('app.inactivityWarn', `<strong>${sec}</strong>`)} />
           <Button type="button" size="sm" className="bg-[#1a1a1a] px-5 font-bold text-white hover:bg-zinc-800"
             onClick={() => setInactivityWarning(false)}>{t('app.stayLoggedIn')}</Button>
         </div>
@@ -1580,7 +1618,7 @@ export default function App() {
                     onClick={() => setTeamPickerOpen(true)} disabled={refreshing}
                     title={t('app.checkNowTip')} aria-busy={refreshing || undefined}>
                     {refreshing
-                      ? <><Spinner decorative inline />{t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)}</>
+                      ? <><Spinner decorative inline /><span className="tabular-nums">{t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)}</span></>
                       : <><PlayCircle aria-hidden="true" />{t('app.checkNow')}</>}
                   </Button>
                   {canAddInventory && (
@@ -1759,7 +1797,7 @@ export default function App() {
                   )} />
                 {/* refreshKey=lastUpdate: App'in 5 dk yenilemesi ve "Şimdi Kontrol Et" tabloya sessiz tazeleme olarak düşer (2026-09-13) */}
                 <CertificatesTable
-                  onRowClick={(d, tab) => { const c = certs.find(x => x.domain === d); setModalCert(c ? (tab ? { ...c, _tab: tab } : c) : null) }}
+                  onRowClick={(d, tab) => { const c = findCertRow(d) ?? { domain: d }; setModalCert(tab ? { ...c, _tab: tab } : c) }}
                   refreshKey={lastUpdate}
                   onCheckNow={runSingleCheck} checkingDomain={refreshing ? '*' : checkingDomain}
                   onEdit={canManageInventory ? (d) => setInvForm({ domain: d, mode: 'edit' }) : undefined}
@@ -2009,15 +2047,20 @@ export default function App() {
       {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
           kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
           de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
-      {/* Lazy (öneri 22) ama HER ZAMAN bağlı: kapalıyken null çizer; kendi sınırı — sekme sınırına bağlanmaz. */}
+      {/* Lazy (öneri 22) ve YALNIZ AÇIKKEN bağlı (2026-10-09, performans): eskiden kapalıyken de bağlıydı, bu yüzden Pano her
+          açıldığında pencere parçası + bağımlılıkları (~2 MB) indirilip çalıştırılıyordu. Pencere her açılışta durumunu zaten
+          sıfırlıyor; ilk tıklama gecikmesin diye parça ilk veri geldikten sonra boşta önceden yüklenir (aşağıdaki effect). */}
+      {modalCert && (
       <Suspense fallback={null}>
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab} renamedFrom={modalCert?._renamedFrom ?? null}
         manual={isManualCert(modalCert)} manualMeta={isManualCert(modalCert) ? { version: modalCert.manual_version ?? null, uploadedAt: modalCert.manual_uploaded_at ?? null } : null}
         refreshSignal={certModalRefresh}
+        onDataChanged={loadData}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
         {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
       </Suspense>
+      )}
       {caModal && <Suspense fallback={null}><CaDiversityModal certs={certs} onClose={() => setCaModal(false)} /></Suspense>}
       {planRow && (
         <Suspense fallback={null}>
@@ -2033,7 +2076,7 @@ export default function App() {
       {sharedCert && (
         <Suspense fallback={null}>
           <SharedCertificateModal domain={sharedCert} onClose={() => setSharedCert(null)}
-            onSelectDomain={(d) => { const c = certs.find((x) => x.domain === d); if (c) openCertModal(d); else setModalCert({ domain: d, _preview: true }) }} />
+            onSelectDomain={(d) => { const c = findCertRow(d); if (c) openCertModal(d); else setModalCert({ domain: d, _preview: true }) }} />
         </Suspense>
       )}
 

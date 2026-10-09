@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageSquare, Send, ArrowUpFromLine, CheckCircle, Undo2, RotateCcw } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -31,6 +31,13 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  // Açık rapor (gönderim sürerken rapor değişirse yanıt YENİ raporun dizisine eklenmesin).
+  const ridRef = useRef(reportId)
+  ridRef.current = reportId
+
+  // Rapor değişince taslak ve hata da sıfırlanır (2026-10-09): A'da yazılan yorum B'ye taşınıp orada gönderilebiliyordu.
+  // `nonce` (durum geçişi) taslağa DOKUNMAZ — yazarken onay/iade gelirse metin kaybolmasın.
+  useEffect(() => { setText(''); setErr(null) }, [reportId])
 
   useEffect(() => {
     let alive = true
@@ -48,12 +55,14 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
   async function send() {
     const v = text.trim()
     if (!v || busy) return
+    const rid = reportId
     setBusy(true); setErr(null)
     try {
-      const r = await api.weeklyReports.addComment(reportId, v)
+      const r = await api.weeklyReports.addComment(rid, v)
+      if (ridRef.current !== rid) return   // bu arada başka rapor açıldı — onun dizisine/taslağına dokunma
       if (r?.success && r.data) { setItems((p) => [...(p || []), r.data]); setText('') }
       else setErr(r?.error || t('wr.cm.failed'))
-    } catch { setErr(t('wr.cm.failed')) } finally { setBusy(false) }
+    } catch { if (ridRef.current === rid) setErr(t('wr.cm.failed')) } finally { setBusy(false) }
   }
 
   const list = items || []

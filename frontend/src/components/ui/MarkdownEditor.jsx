@@ -1,5 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
-import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
+import { useCallback, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ImagePlus } from 'lucide-react'
@@ -14,6 +13,8 @@ import { formatFileSize } from '../../utils/formatBytes.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
+// Editör (~1 MB) ilk düzenlenebilir çizimde yüklenir — bu sarmalayıcıyı içe aktaran ekranlar onu taşımaz (2026-10-09).
+import LazyMdEditor from './mdEditor/LazyMdEditor.jsx'
 
 const INDENT_ICON = (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -61,7 +62,9 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
   const [caption, setCaption] = useState('')
   const [uploading, setUploading] = useState(false)
 
-  const editorCommands = useMemo(() => {
+  // Komut KURUCUSU (kütüphane tembel yüklenir; createMdEditor onu yüklendikten sonra çağırır) — kimliği eskiden
+  // useMemo'lanan dizininkiyle aynı bağımlılıklara bağlı, editör komutları aynı anlarda yeniden kaydeder.
+  const editorCommands = useCallback((mdCommands) => {
     const tt = (key) => ({ 'aria-label': t(key), title: t(key) })
     const cmds = [
       mdCommands.group([mdCommands.title2, mdCommands.title3, mdCommands.title4], {
@@ -173,7 +176,7 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
   return (
     <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
       <div className="wr-editor" data-color-mode={isDark ? 'dark' : 'light'}>
-        <MDEditor
+        <LazyMdEditor
           value={value ?? ''}
           onChange={(v) => onChange(v ?? '')}
           preview="edit"
@@ -181,7 +184,7 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
           visibleDragbar={true}
           highlightEnable={false}
           commands={editorCommands}
-          extraCommands={[mdCommands.codeEdit, mdCommands.codePreview, mdCommands.divider, mdCommands.fullscreen]}
+          extraCommands={(mdCommands) => [mdCommands.codeEdit, mdCommands.codePreview, mdCommands.divider, mdCommands.fullscreen]}
         />
       </div>
       <div className="mt-1 text-xs text-muted-foreground">{t('wr.pasteHint')}</div>

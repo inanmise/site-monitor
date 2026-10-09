@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CalendarDays } from 'lucide-react'
+import { CalendarDays, CircleAlert } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -7,10 +7,12 @@ import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import { ToolbarSearch } from './ListToolbar.jsx'
 import { SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
 import { Switch } from '@/components/shadcn/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
@@ -102,13 +104,21 @@ export default function WeeklyReportAccessSettings() {
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [rows, setRows] = useState(null)
+  const [loadError, setLoadError] = useState(null)   // { message } — mesaj yoksa çizimde i18n yedeği
   const [q, setQ] = useState('')
   const [busyId, setBusyId] = useState(null)
 
+  // Hata artık görünür: eskiden ağ hatasında (request() throw eder) liste sonsuza dek "yükleniyor" kalıyor, başarısız
+  // yanıtta ise boş liste + "hiçbir takımda açık değil" bandı çiziliyordu (yanıltıcı). Hata bloğu + Tekrar dene.
   const load = useCallback(async () => {
-    const r = await api.weeklyReports.accessTeams()
-    if (r?.success && r.data) setRows(r.data.teams || [])
-    else setRows([])
+    setLoadError(null)
+    try {
+      const r = await api.weeklyReports.accessTeams()
+      if (r?.success && r.data) setRows(r.data.teams || [])
+      else setLoadError({ message: r?.error || null })
+    } catch (e) {
+      setLoadError({ message: e?.message || null })
+    }
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -156,7 +166,11 @@ export default function WeeklyReportAccessSettings() {
         <ToolbarSearch value={q} onChange={setQ} placeholder={t('wracc.searchPh')} ariaLabel={t('wracc.searchPh')}
           clearLabel={t('app.clear')} className="h-9 w-full sm:w-auto" />
       </div>
-      {rows == null ? (
+      {rows == null && loadError ? (
+        <StatusBlock tone="danger" role="alert" icon={CircleAlert} className="py-6"
+          description={loadError.message || t('wracc.loadError')}
+          actions={<Button type="button" variant="outline" onClick={load}>{t('wracc.retry')}</Button>} />
+      ) : rows == null ? (
         <LoadingBlock label={t('wracc.loading')} className="justify-start px-0 py-4" />
       ) : (
         <div className="overflow-hidden rounded-lg border">

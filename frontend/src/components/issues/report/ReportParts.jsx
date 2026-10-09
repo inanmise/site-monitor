@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils'
  * Telefonda (<640 px) ModalShell kutusunu TAM EKRAN yapar: köşe/kenar yok, yükseklik 100dvh, altlık sabit (scrollBody).
  * Geniş ekranda ModalShell'in boyut sınıfı geçerli kalır.
  */
-export const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:p-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]'
+export { PHONE_FULLSCREEN } from '../../ui/modalClasses.js'
 
 /** Numaralı form bölümü — `optional` rozetli; açıklama FieldDescription. */
 export function ReportSection({ n, title, hint, optional = false, children, className, ...rest }) {

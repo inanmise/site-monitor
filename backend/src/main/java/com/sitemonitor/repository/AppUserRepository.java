@@ -13,6 +13,15 @@ import java.util.List;
 import java.util.Optional;
 
 public interface AppUserRepository extends JpaRepository<AppUser, Long> {
+
+    /**
+     * Kullanıcı dizini satırları (2026-10-09, performans): {@code /api/users/directory} her girişte (ve komut paletinde)
+     * çağrılıyor; {@code findAll()} her kullanıcının AD fotoğrafını (base64 TEXT) ve takım koleksiyonunu yüklüyordu, uç
+     * yalnız id / kullanıcı adı / görünen ad / e-posta döndürüyor. Sıra: id, username, displayName, firstName, lastName, email.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.email"
+            + " FROM AppUser u WHERE u.username IS NOT NULL")
+    List<Object[]> findDirectoryRows();
     // Username eşleştirmesi CASE-INSENSITIVE (DB UPPER): canonical saklama BÜYÜK harf olsa da yazılan/eski
     // satırların case'i ne olursa olsun aynı kullanıcıya çözülür (Melih "N12345"/"n12345" tek satır) +
     // LDAP re-provision eski satırı bulur (dup yaratmaz). DB UPPER iki tarafta → collation-tutarlı.

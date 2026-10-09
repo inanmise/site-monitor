@@ -162,12 +162,18 @@ export default function MonitoringOverviewPage() {
   const setTeam = (v) => setTeamsSel(v ? [v] : [])
 
   // fresh: Yenile düğmesi — sunucu belleğini atlar (en fazla 5 sn'de bir); yoklama bellekten okur.
+  // Yalnız EN SON istek yazar (2026-10-09, UptimePage.fetchOverview deseni): pencere 24 sa ↔ 7 gün değişirken uçuşan
+  // eski pencerenin geç yanıtı yeni pencerenin verisini EZMESİN — seçici "7 gün" derken 24 saatlik rakamlar görünürdü.
+  const loadSeq = useRef(0)
   const load = useCallback(async (fresh = false) => {
+    const my = ++loadSeq.current
     try {
       const res = fresh === true ? await api.monitoring.getOverview(windowHours, true) : await api.monitoring.getOverview(windowHours)
+      if (my !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success && res.data) setState({ loading: false, error: null, data: res.data, at: new Date() })
       else setState((s) => ({ ...s, loading: false, error: res?.error || t('mo.loadError') }))
     } catch (e) {
+      if (my !== loadSeq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('mo.loadError') }))
     }
   }, [windowHours, t])

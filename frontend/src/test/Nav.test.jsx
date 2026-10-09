@@ -129,7 +129,7 @@ describe('Nav', () => {
     expect(screen.getByText(/alice/)).toBeInTheDocument()
   })
 
-  it('the search box is a BUTTON (not a text field) that opens the command palette; Ctrl K is shown', () => {
+  it('the search box is a BUTTON (not a text field) that opens the command palette; Ctrl K is shown', async () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     const search = container.querySelector('[data-tour="nav-search"]')
     expect(search.tagName).toBe('BUTTON')
@@ -141,8 +141,8 @@ describe('Nav', () => {
     fireEvent.click(search)
     window.removeEventListener('sm:palette', onPalette)
     expect(onPalette).toHaveBeenCalledTimes(1)
-    // Palet kenar çubuğunun DIŞINDA yaşar ve olayla açılır
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    // Palet kenar çubuğunun DIŞINDA yaşar ve olayla açılır (ilk istekte tembel yüklenir — 2026-10-09)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
   })
 
   it('Notifications is a normal menu button (no outline box) in the header', () => {

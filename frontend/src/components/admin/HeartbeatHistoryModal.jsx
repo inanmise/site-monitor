@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Activity } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -35,16 +35,22 @@ export default function HeartbeatHistoryModal({ onClose }) {
   // .catch YOKTU: request() ag hatasinda throw eder, promise reject olunca setLoading(false)
   // HIC calismiyor ve modal SONSUZA KADAR "yukleniyor" kaliyordu — kullanicinin tek cikisi
   // modali kapatmakti, hata hakkinda hicbir sey gormeden.
+  // Yalnız EN SON aralığın yanıtı uygulanır (1 → 30 → 7 gün hızlı seçilince geç gelen 30 günlük zaman çizelgesi
+  // seçili aralığı ezmesin); `loading` da yalnız en son istek bitince kapanır.
+  const seqRef = useRef(0)
   useEffect(() => {
+    const seq = ++seqRef.current
+    const latest = () => seq === seqRef.current
     setLoading(true)
     setSelected(null)
     api.admin.getHeartbeatTimeline(rangeDays)
       .then(res => {
+        if (!latest()) return
         if (res?.success) { setTimeline(res.data); setLoadError(null) }
         else setLoadError(res?.error || 'load failed')
       })
-      .catch(e => setLoadError(e?.message || 'network error'))
-      .finally(() => setLoading(false))
+      .catch(e => { if (latest()) setLoadError(e?.message || 'network error') })
+      .finally(() => { if (latest()) setLoading(false) })
   }, [rangeDays])
 
   const buckets = timeline?.buckets || []

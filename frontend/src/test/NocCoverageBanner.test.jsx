@@ -35,6 +35,23 @@ describe('NocCoverageBanner', () => {
     } finally { window.removeEventListener('sm:navigate', nav) }
   })
 
+  it('yalnız özet istenir; girişte damga yokken başlayan istek, damga gelince İKİNCİ kez atılmaz (2026-10-09)', async () => {
+    let resolve
+    api.noc.coverage.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const view = render(<NocCoverageBanner refreshKey={null} />)
+    expect(api.noc.coverage).toHaveBeenCalledWith({ summary: true })
+    view.rerender(<NocCoverageBanner refreshKey="ilk-damga" />)   // Pano verisi geldi, istek hâlâ uçuşta
+    expect(api.noc.coverage).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve({ success: true, data: { summary: { active_groups: 1, not_covered: 3 } } }) })
+    await waitFor(() => expect(banner()).not.toBeNull())
+    expect(screen.getByText(/^3 /)).toBeInTheDocument()   // items yok → özet sayısı
+    // Aynı damgayla yeniden bağlanma önbellekten okur
+    view.unmount()
+    render(<NocCoverageBanner refreshKey="ilk-damga" />)
+    await waitFor(() => expect(banner()).not.toBeNull())
+    expect(api.noc.coverage).toHaveBeenCalledTimes(1)
+  })
+
   it('tekil metin (1 izleme); hepsi kapsanıyorsa HİÇBİR ŞEY', async () => {
     api.noc.coverage.mockResolvedValueOnce(data([item(1)]))
     const r1 = render(<NocCoverageBanner refreshKey="a" />)

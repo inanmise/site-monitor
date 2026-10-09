@@ -210,7 +210,7 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
           </Button>
         )}
       </>}>
-      {fullCard && <UserDetailPanel user={{ ...u, id: u.user_id, team_ids: u.team_ids || [] }} teams={teamList} isAdmin={globalAdmin} onClose={() => setFullCard(false)} />}
+      {fullCard && <UserDetailPanel user={{ ...u, id: u.user_id, team_ids: u.team_ids || [] }} teams={teamList} isAdmin={globalAdmin} globalAdmin={globalAdmin} onClose={() => setFullCard(false)} />}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <Pill tone={status} status={status}>{t(`uact.st.${status}`)}</Pill>
         {u.system_role && <SystemRoleBadge role={u.system_role} />}

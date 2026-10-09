@@ -148,6 +148,10 @@ public class PermissionService {
     @Transactional
     public void seedDefaults() {
         repo.deleteAll();
+        // 2026-10-09: silmeler INSERT'lerden ÖNCE veritabanına yazılsın. deleteAll() yalnız kaldırmayı kuyruğa alır; IDENTITY
+        // kimlikli save() ise INSERT'i ANINDA atar → eski (role, resource_key, action) satırı hâlâ duruyorken
+        // uk_perm_role_resource_action ihlali ("Varsayılana dön" her seferinde 409 veriyordu).
+        repo.flush();
         String now = ISO.format(Instant.now());
         for (String role : new String[] {"ADMIN", "TEAM_ADMIN", "USER", "AUDIT"}) {
             Map<String, Map<String, Boolean>> defaults = PermissionCatalog.defaultsFor(role);

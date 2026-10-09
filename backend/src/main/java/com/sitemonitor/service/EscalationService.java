@@ -523,7 +523,7 @@ public class EscalationService {
                             event.setDaysRemaining(daysRemaining);
                             if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(sendMessage);
-                            alertEventRepo.save(event);
+                            saveUnlessClosedMeanwhile(event);
                             log.warn("🔴 Yarıda kalmış ilk sertifika bildirimi tamamlandı: {} [{}] — alarm {} tarihinde açılmıştı",
                                     domain, alertType, event.getCreatedAt());
                             continue;
@@ -541,7 +541,7 @@ public class EscalationService {
                             event.setDaysRemaining(daysRemaining);
                             if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(sendMessage);
-                            alertEventRepo.save(event);
+                            saveUnlessClosedMeanwhile(event);
                             log.info("Re-alert sent: {} [{}] — previous day: {}",
                                     domain, sendLevel, lastAlertTime.substring(0, 10));
                         } else {
@@ -910,19 +910,33 @@ public class EscalationService {
                 : latestCheckRepo.findByDomainIn(candidateDomains).stream().collect(
                     java.util.stream.Collectors.toMap(com.sitemonitor.model.LatestCheck::getDomain, l -> l, (a, b) -> a));
         int sent = 0;
-        for (AlertEvent event : openAlerts) {
+        for (AlertEvent listed : openAlerts) {
             // İzleme tiplerinin kadansının sahibi ilgili sweep'lerdir; restart
             // sonrası ilk sweep doğrulamadan bayat re-alert atılmasın.
-            if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) continue;
+            if (MONITORING_ALERT_TYPES.contains(listed.getAlertType())) continue;
+            // Ucuz ön süzgeç liste anlık görüntüsünden — vakti gelmeyen alarm için DB turu yok.
+            if (!catchUpDue(listed, reAlertIv)) {
+                log.debug("Catch-up: {} re-alert interval not elapsed, skipping", listed.getDomain());
+                continue;
+            }
+            // BAYAT ANLIK GÖRÜNTÜ KORUMASI (2026-10-09): liste döngü başında BİR kez yüklendi ve her gönderimden sonra
+            // aralık kadar bekleniyor — o arada kullanıcı alarmı çözmüş/onaylamış ya da başka bir yol (sweep, başka pod)
+            // bildirmiş olabilir. Göndermeden hemen önce TAZE satır okunur ve karar ona göre yeniden verilir.
+            AlertEvent event = listed.getId() == null ? null : alertEventRepo.findById(listed.getId()).orElse(null);
+            if (event == null || Boolean.TRUE.equals(event.getResolved()) || Boolean.TRUE.equals(event.getAcknowledged())) {
+                log.info("Catch-up: {} [{}] #{} artık açık/onaysız değil — bildirim atlandı",
+                        listed.getDomain(), listed.getAlertType(), listed.getId());
+                continue;
+            }
+            if (!catchUpDue(event, reAlertIv)) {
+                log.debug("Catch-up: {} bu arada bildirildi, skipping", event.getDomain());
+                continue;
+            }
             // E9: ilk bildirimi yarıda kalmış alarm (processResults'taki kurtarmanın açılış eşleniği) —
             // aralık beklenmez, INITIAL olarak BİR kez gider (damga aşağıda atılır).
             boolean initialMissing = initialNotificationMissing(event, now());
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
-            if (!initialMissing && !reAlertDueFor(event.getAlertType(), lastAlertTime, now(), reAlertIv)) {
-                log.debug("Catch-up: {} re-alert interval not elapsed, skipping", event.getDomain());
-                continue;
-            }
             var inventoryOpt  = Optional.ofNullable(invByDomain.get(event.getDomain()));
             // E10: damgalanmış takım önceliklidir (processResults, çözüm ve tekrar-bildir ile aynı kural).
             Long domainTeamId = event.getTeamId() != null ? event.getTeamId()
@@ -948,7 +962,10 @@ public class EscalationService {
             event.setLastReAlertAt(now());
             event.setDaysRemaining(effectiveDays);
             if (notAfterOf(certContext) != null) event.setNotAfter(notAfterOf(certContext));
-            alertEventRepo.save(event);
+            // Hedefli UPDATE (entity save DEĞİL): yalnız gönderimin değiştirdiği alanlar, yalnız hâlâ açık satırda —
+            // gönderim sürerken gelen çözüm/onay geri alınmaz.
+            alertEventRepo.stampNotificationSentIfOpen(event.getId(), event.getLastReAlertAt(), event.getRealertCount(),
+                    event.getDaysRemaining(), event.getNotAfter(), event.getNotifiedContacts());
             sent++;
             log.info("Startup catch-up: {} sent for {} [{}] — last was: {}",
                     initialMissing ? "interrupted INITIAL" : "alert", event.getDomain(), event.getAlertLevel(),
@@ -960,6 +977,36 @@ public class EscalationService {
             }
         }
         log.info("Startup catch-up complete — {} missed notification(s) sent", sent);
+    }
+
+    /**
+     * Gönderim SONRASI kayıt (sertifika turu, E9 INITIAL + DAILY_REALERT): olay tur başında toplu yüklendi ve arada
+     * SMTP gönderimi koştu. {@code AlertEvent}'te {@code @Version} yok — bayat kopyanın {@code save}'i tüm kolonları
+     * yazar ve o arada kullanıcının yaptığı çözümü/onayı geri alırdı (çözülen alarm yeniden açık görünür). Taze satır
+     * artık açık/onaysız değilse entity YAZILMAZ: bildirim gitti, ama kullanıcının kararı korunur. Satır okunamazsa
+     * (yok/arıza) eski davranış: kaydedilir.
+     */
+    private void saveUnlessClosedMeanwhile(AlertEvent event) {
+        if (event.getId() != null) {
+            try {
+                AlertEvent fresh = alertEventRepo.findById(event.getId()).orElse(null);
+                if (fresh != null && (Boolean.TRUE.equals(fresh.getResolved()) || Boolean.TRUE.equals(fresh.getAcknowledged()))) {
+                    log.info("Bildirim sonrası kayıt atlandı: {} [{}] #{} gönderim sürerken çözüldü/onaylandı",
+                            event.getDomain(), event.getAlertType(), event.getId());
+                    return;
+                }
+            } catch (Exception e) {
+                log.debug("Taze alarm satırı okunamadı (#{}), kaydediliyor: {}", event.getId(), e.toString());
+            }
+        }
+        alertEventRepo.save(event);
+    }
+
+    /** Catch-up adayı mı: ilk bildirimi yarıda kalmış (E9) ya da tür re-alert aralığı dolmuş. */
+    private boolean catchUpDue(AlertEvent e, int reAlertIv) {
+        if (initialNotificationMissing(e, now())) return true;
+        String last = e.getLastReAlertAt() != null ? e.getLastReAlertAt() : e.getCreatedAt();
+        return reAlertDueFor(e.getAlertType(), last, now(), reAlertIv);
     }
 
     // DB save is sync (atomic + fast), mail notification is dispatched async on certCheckExecutor.
@@ -1167,7 +1214,7 @@ public class EscalationService {
         return !sameOwner(e, TYPE_DNS_CHANGED, ctx);
     }
 
-    static boolean closableBy(AlertEvent e, Map<String, Object> ownerCtx) {
+    public static boolean closableBy(AlertEvent e, Map<String, Object> ownerCtx) {
         Object mid = ownerCtx == null ? null : ownerCtx.get("monitor_id");
         Long opener = contextMonitorId(e);
         if (opener != null && mid instanceof Number n) return opener == n.longValue();
@@ -1616,7 +1663,9 @@ public class EscalationService {
         ctx.put(CTX_DETECTED_IN_MAINTENANCE, now());
         if (ctx.get("alert_level") instanceof String lvl && !lvl.isBlank()) alertLevel = lvl;
         Object ctxTeam = ctx.get("team_id");
-        Long teamId = ctxTeam instanceof Number n ? n.longValue()
+        // İki dal da REFERANS (Long.valueOf): `long : Long` koşulu sayısal koşula döner ve null dalı kutudan
+        // çıkarırken NPE atar (javac'ta da; ECJ farkı için CLAUDE.md "Things that bite").
+        Long teamId = ctxTeam instanceof Number n ? Long.valueOf(n.longValue())
                 : isStandalone(alertType, ctx) ? null
                 : inventoryRepo.findByDomain(domain).map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
         AlertEvent event = newEvent(domain, alertLevel, alertType, monitoringMessage(domain, alertType, alertLevel, ctx), null);

@@ -45,7 +45,7 @@ describe('Klavye kısayolları — palet, kullanıcı menüsü, Nav', () => {
     await waitFor(() => expect(screen.getByRole('dialog', { name: /Keyboard shortcuts|Klavye kısayolları/ })).toBeInTheDocument())
   })
 
-  it('Nav: `g m` İzleme Panosu, `g s` Durum Sayfası, `g a` Alarm Geçmişi (menünün sekme listesi); `?` listeyi açar, açıkken `g` çalışmaz', () => {
+  it('Nav: `g m` İzleme Panosu, `g s` Durum Sayfası, `g a` Alarm Geçmişi (menünün sekme listesi); `?` listeyi açar, açıkken `g` çalışmaz', async () => {
     const onTabChange = vi.fn()
     render(withSidebar(<Nav {...NAV_PROPS} onTabChange={onTabChange} />))
     fireEvent.keyDown(window, { key: 'g' }); fireEvent.keyDown(window, { key: 'm' })
@@ -55,7 +55,8 @@ describe('Klavye kısayolları — palet, kullanıcı menüsü, Nav', () => {
     fireEvent.keyDown(window, { key: 'g' }); fireEvent.keyDown(window, { key: 'a' })
     expect(onTabChange).toHaveBeenLastCalledWith('alerthistory')
     fireEvent.keyDown(window, { key: '?', shiftKey: true })
-    expect(screen.getByRole('dialog', { name: /Keyboard shortcuts|Klavye kısayolları/ })).toBeInTheDocument()
+    // Liste penceresi ilk açılışta tembel yüklenir (2026-10-09)
+    expect(await screen.findByRole('dialog', { name: /Keyboard shortcuts|Klavye kısayolları/ })).toBeInTheDocument()
     // Pencere açıkken `g` dizisi çalışmaz
     const calls = onTabChange.mock.calls.length
     fireEvent.keyDown(window, { key: 'g' }); fireEvent.keyDown(window, { key: 'd' })

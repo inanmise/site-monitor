@@ -237,7 +237,8 @@ public class InboxService {
         // Son 24 saatte çözülenler
         try {
             String since = ISO.format(now.minus(24, ChronoUnit.HOURS));
-            for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(ISO.format(now.minus(30, ChronoUnit.DAYS)))) {
+            // Yalnız son 24 saatte çözülenler DB'de süzülür (2026-10-09); aşağıdaki denetim aynen kalır (savunma).
+            for (AlertEvent e : alertEventRepo.findResolvedSinceCreatedSince(since, ISO.format(now.minus(30, ChronoUnit.DAYS)))) {
                 if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
                 if (!visible(e, canViewTeam, domains)) continue;
                 resolvedRows.add(e);

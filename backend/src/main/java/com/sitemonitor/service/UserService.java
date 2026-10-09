@@ -372,7 +372,7 @@ public class UserService {
                     u.getLastLoginAt(), u.getLastLoginMethod(), u.getPrevLoginAt() == null);
         }).orElse(LoginStamp.empty());
 
-        activeSessionCache.remove(normalizeUsername(username));   // yeni login anında etkisin (F2 evict)
+        evictActiveSessionCache(username);   // yeni login anında etkisin (F2 evict; commit sonrası da)
         return stamp;
     }
 
@@ -463,16 +463,38 @@ public class UserService {
         String key = normalizeUsername(username);
         long now = System.currentTimeMillis();
         ActiveSidEntry e = activeSessionCache.get(key);
-        String active;
         if (e != null && now - e.atMs() < supersedeCacheMs) {
-            active = e.sid();   // taze cache — DB'ye gitme (istek başına SELECT debounce'u, F2)
-        } else {
-            // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
-            active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
-            if (activeSessionCache.size() > SESSION_MAP_MAX) activeSessionCache.clear();
-            activeSessionCache.put(key, new ActiveSidEntry(active, now));   // null sid de cache'lenir
+            // Taze cache yalnız "geçersiz KILINMADI" cevabında güvenilir (eşleşme / null = grandfather) — canlı oturumun
+            // her isteği buradan döner, DB'ye gitmez (istek başına SELECT debounce'u, F2).
+            String cached = e.sid();
+            if (cached == null || cached.equals(sessionId)) return false;
+            // FARKLI sid önbellekte (2026-10-09, çok pod): pod B'de zorla girişle kurulan YENİ oturum, pod A'nın ≤ 5 sn'lik
+            // bayat kaydı (eski sid) yüzünden 401 alıp öldürülüyordu. Oturumu kapatmadan önce DB'den yeniden okunur.
         }
+        // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
+        String active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
+        if (activeSessionCache.size() > SESSION_MAP_MAX) activeSessionCache.clear();
+        activeSessionCache.put(key, new ActiveSidEntry(active, now));   // null sid de cache'lenir
         return active != null && !active.equals(sessionId);
+    }
+
+    /**
+     * Supersede önbelleği boşaltma: hemen (bugünkü davranış) VE açık işlem varsa COMMIT'ten sonra bir kez daha. Yalnız
+     * hemen boşaltılsaydı, commit'ten önce gelen eşzamanlı bir istek DB'deki ESKİ değeri okuyup önbelleğe geri yazabilir
+     * ve yeni değer o pod'da ≤ TTL boyunca görünmezdi.
+     */
+    private void evictActiveSessionCache(String username) {
+        String key = normalizeUsername(username);
+        activeSessionCache.remove(key);
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            activeSessionCache.remove(key);
+                        }
+                    });
+        }
     }
 
     /** Çıkışta aktif oturum kaydını temizler — yalnız eşleşiyorsa (yarıştaki yeni oturumu silmesin). */
@@ -507,7 +529,7 @@ public class UserService {
             u.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
             userRepo.save(u);
         });
-        activeSessionCache.remove(normalizeUsername(username));   // kick anında etkisin (F2 evict)
+        evictActiveSessionCache(username);   // kick anında etkisin (F2 evict; commit sonrası da)
     }
 
     public Optional<Team> findTeamById(Long id) {

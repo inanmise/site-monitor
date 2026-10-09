@@ -146,12 +146,19 @@ export default function RetentionSettings({ readOnly = false }) {
     }
   }
 
+  // Eylemler try/catch/finally: request() ağ hatasında throw eder; eskiden `setBusy(null)` hiç çalışmıyor, düğmeler
+  // "çalışıyor" durumunda kilitli kalıyor ve hata görünmüyordu.
   async function dryRun() {
     setBusy('dry')
-    const res = await api.admin.retentionDryRun()
-    setBusy(null)
-    if (res?.success) { setLastRun(res.data); toast.success(res.message) }
-    else toast.error(res?.error || t('ret.actionFailed'))
+    try {
+      const res = await api.admin.retentionDryRun()
+      if (res?.success) { setLastRun(res.data); toast.success(res.message) }
+      else toast.error(res?.error || t('ret.actionFailed'))
+    } catch (e) {
+      toast.error(e?.message || t('ret.actionFailed'))
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function runNow() {
@@ -163,10 +170,15 @@ export default function RetentionSettings({ readOnly = false }) {
     })
     if (!ok) return
     setBusy('run')
-    const res = await api.admin.retentionRunNow()
-    setBusy(null)
-    if (res?.success) { setLastRun(res.data); setRunsNonce(n => n + 1); toast.success(res.message); load(true) }
-    else toast.error(res?.error || t('ret.actionFailed'))
+    try {
+      const res = await api.admin.retentionRunNow()
+      if (res?.success) { setLastRun(res.data); setRunsNonce(n => n + 1); toast.success(res.message); load(true) }
+      else toast.error(res?.error || t('ret.actionFailed'))
+    } catch (e) {
+      toast.error(e?.message || t('ret.actionFailed'))
+    } finally {
+      setBusy(null)
+    }
   }
 
   /** Saatlik özeti geriye doldurur. Ham seri hâlâ elde olduğu için tüm saklama penceresi tek
@@ -179,10 +191,15 @@ export default function RetentionSettings({ readOnly = false }) {
     })
     if (!ok) return
     setBusy('backfill')
-    const res = await api.admin.retentionBackfillHourly()
-    setBusy(null)
-    if (res?.success) { toast.success(res.message); load(true) }
-    else toast.error(res?.error || t('ret.actionFailed'))
+    try {
+      const res = await api.admin.retentionBackfillHourly()
+      if (res?.success) { toast.success(res.message); load(true) }
+      else toast.error(res?.error || t('ret.actionFailed'))
+    } catch (e) {
+      toast.error(e?.message || t('ret.actionFailed'))
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function approve(p) {

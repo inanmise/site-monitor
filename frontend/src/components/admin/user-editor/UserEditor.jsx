@@ -5,6 +5,7 @@ import { useT } from '../../../i18n/index.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { useDialog } from '../../ui/Dialog.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
+import { PHONE_FULLSCREEN as PHONE_FULLSCREEN_BASE } from '../../ui/modalClasses.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { useFormErrors } from '../../../hooks/useFormErrors.js'
 import { focusFormError } from '../../../utils/formErrors.js'
@@ -32,7 +33,7 @@ const FIXED = cn(
   'grid-cols-[minmax(0,1fr)] sm:h-[min(760px,calc(100dvh-2rem))] sm:w-full',
   '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]',
 )
-const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:p-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:[&_[data-slot=dialog-close]]:size-10'
+const PHONE_FULLSCREEN = `${PHONE_FULLSCREEN_BASE} max-sm:[&_[data-slot=dialog-close]]:size-10`
 const PHONE_TOUCH = 'max-sm:[&_[data-slot=input]]:h-10 max-sm:[&_[role=combobox]]:min-h-10'
 
 const TAB_ICON = { account: UserRound, teams: Users, profile: Contact, security: ShieldCheck }

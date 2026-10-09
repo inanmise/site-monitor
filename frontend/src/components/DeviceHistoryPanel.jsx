@@ -89,14 +89,29 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
   const FAILED_PREVIEW = 50   // "Başarısız denemeler" bölümü: son 50 kayıt (sınırlı önizleme, çubuksuz)
 
+  // Hata durumu ({ message }; mesaj yoksa çizimde i18n yedeği): request() ağ hatasında throw eder — eskiden
+  // `setLoading(false)` hiç çalışmıyor, panel sonsuza dek "yükleniyor" kalıyordu; başarısız yanıtta da "kayıt yok"
+  // gibi görünen boş kartlar çiziliyordu. Artık hata + Tekrar dene.
+  const [devicesError, setDevicesError] = useState(null)
+  const [loginsError, setLoginsError] = useState(null)
+
   const loadDevices = useCallback(async () => {
-    const res = isAdminView ? await api.admin.getUserDevices(userId) : await api.me.getMyDevices()
-    if (res?.success) {
-      setDevices(res.data || {})
-      if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
+    try {
+      const res = isAdminView ? await api.admin.getUserDevices(userId) : await api.me.getMyDevices()
+      if (res?.success) {
+        setDevices(res.data || {})
+        setDevicesError(null)
+        if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
+      } else {
+        setDevicesError({ message: res?.error || null })
+      }
+    } catch (e) {
+      setDevicesError({ message: e?.message || null })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [isAdminView, userId])
+  const retryDevices = () => { setLoading(true); loadDevices() }
 
   const loadLogins = useCallback(async () => {
     setLoginsLoading(true)
@@ -107,8 +122,13 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
       if (res?.success) {
         setLogins(res.data?.rows ?? [])
         setLoginTotal(res.data?.total ?? 0)
+        setLoginsError(null)
         if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
+      } else {
+        setLoginsError({ message: res?.error || null })
       }
+    } catch (e) {
+      setLoginsError({ message: e?.message || null })
     } finally {
       setLoginsLoading(false)
     }
@@ -195,9 +215,19 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
   const current = devices?.current ?? {}
   const remembered = devices?.remembered ?? []
+  // Cihaz bilgisi hiç okunamadıysa "kayıt yok" gibi görünen boş kartlar yerine hata + Tekrar dene (bölüm 1–2).
+  const devicesFailed = devicesError != null && devices == null
 
   return (
     <div className="dev-panel">
+      {devicesFailed ? (
+        <section className="dev-section" data-slot="dev-devices-error">
+          <h3 className="dev-section-title">{t('dev.thisDeviceTitle')}</h3>
+          <StatusBlock tone="danger" role="alert" icon={ShieldAlert}
+            description={devicesError.message || t('dev.devicesLoadFailed')}
+            actions={<Button type="button" variant="outline" onClick={retryDevices}>{t('dev.retry')}</Button>} />
+        </section>
+      ) : (<>
       {/* ── 1. Bu cihaz ─────────────────────────────────────────────────── */}
       <section className="dev-section">
         <h3 className="dev-section-title">{t('dev.thisDeviceTitle')}</h3>
@@ -267,6 +297,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
           </ul>
         )}
       </section>
+      </>)}
 
       {/* ── 3. Giriş geçmişi ────────────────────────────────────────────── */}
       <section className="dev-section">
@@ -275,7 +306,11 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
           {retentionDays && <span className="dev-retention">{t('dev.retentionNote', retentionDays)}</span>}
         </div>
         {loginsLoading ? <LoadingBlock label={t('app.loading')} className="dev-loading" />
-          : logins.length === 0 ? (
+          : loginsError ? (
+            <StatusBlock tone="danger" role="alert" icon={ShieldAlert}
+              description={loginsError.message || t('dev.loginsLoadFailed')}
+              actions={<Button type="button" variant="outline" onClick={() => loadLogins()}>{t('dev.retry')}</Button>} />
+          ) : logins.length === 0 ? (
             <StatusBlock tone="neutral" icon={Monitor} title={t('dev.noLogins')} />
           ) : (
             <ul className="dev-list">

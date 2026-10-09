@@ -1,3 +1,4 @@
+import { Children } from 'react'
 import { ArrowLeft, ChevronUp, ChevronDown, X } from 'lucide-react'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { TONE_CLASS } from './ToneBadge.jsx'
@@ -93,12 +94,22 @@ export function SortHead({ label, field, sort, onSort, className = '' }) {
   )
 }
 
-/** Etkin süzgeç çipi (tıklayınca kaldırır) — hap biçimli outline Button. */
+/** Çocuklar yalnız metin/sayıdan oluşuyorsa birleşik metin (çipin `title`'ı) — öğe varsa undefined. */
+function plainText(children) {
+  const parts = Children.toArray(children)
+  return parts.length && parts.every((p) => typeof p === 'string' || typeof p === 'number') ? parts.join('') : undefined
+}
+
+/**
+ * Etkin süzgeç çipi (tıklayınca kaldırır) — hap biçimli outline Button. Uzun değer (alıcı e-postası, alan adı) çipi
+ * kapsayıcıdan taşırmaz: çip en fazla satır genişliğinde, metin "…" ile kısalır, tamamı `title`'da (2026-10-09).
+ * Telefon/dokunmatikte 40 px yükseklik.
+ */
 export function FilterChip({ onClick, children }) {
   return (
     <Button type="button" variant="outline" size="xs" onClick={onClick}
-      className="rounded-full border-primary bg-primary/10 font-normal text-primary hover:bg-primary/15 hover:text-primary">
-      {children} <X size={11} aria-hidden="true" />
+      className="max-w-full rounded-full border-primary bg-primary/10 font-normal text-primary hover:bg-primary/15 hover:text-primary max-md:h-10 pointer-coarse:h-10">
+      <span className="min-w-0 truncate" title={plainText(children)}>{children}</span> <X size={11} aria-hidden="true" />
     </Button>
   )
 }

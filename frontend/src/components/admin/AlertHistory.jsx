@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense } from 'react'
 import {
   History, RefreshCcw, Download, Siren, OctagonAlert, TriangleAlert, CircleAlert, BellRing, UserCheck, Clock,
   CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall, CalendarSearch, CalendarRange,
@@ -19,7 +19,6 @@ import { VIEW_SPECS } from '../../hooks/userPrefsModel.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
-import AlertNoisePanel from './AlertNoisePanel.jsx'              // gürültü analizi (2026-09-12, #18)
 import AlertTeamStatsPanel from './alerts/AlertTeamStatsPanel.jsx'   // takım kırılımı (2026-09-16)
 import AlertToolbar from './alerts/AlertToolbar.jsx'
 import ReNotifyConfirmModal from './alerts/ReNotifyConfirmModal.jsx'
@@ -44,6 +43,27 @@ import { cn } from '@/lib/utils'
 
 // Testler ve diğer ekranlar bu adlarla içe aktarıyor — kaynak artık alarm modelinde.
 export { groupPushRows, statusLabel } from './alerts/alertHistoryModel.js'
+
+// Gürültü analizi (2026-09-12, #18) grafik kitaplığını (shadcn/chart → recharts) çeker ve yalnız tam sayfada (urlSync)
+// çizilir — tembel yüklenir (2026-10-09): sertifika penceresinin "Alarmlar" sekmesi ve izleme ayrıntıları onu taşımaz.
+const AlertNoisePanel = lazy(() => import('./AlertNoisePanel.jsx'))
+
+/** İstatistik şeridi yer tutucusu — MonitorStatsBar ile AYNI kap + 8 kart ölçüsü (veri gelince içerik zıplamaz). */
+function StatsBarSkeleton() {
+  return (
+    <div aria-hidden="true" data-slot="stats-panel-skeleton"
+      className="mb-4 flex flex-wrap gap-2 rounded-[10px] border bg-card p-2 shadow-xs sm:gap-3 sm:p-3">
+      {Array.from({ length: 8 }, (_, i) => (
+        <Skeleton key={i} className="min-h-24 min-w-0 grow basis-[calc(50%-4px)] rounded-lg sm:basis-[140px]" />
+      ))}
+    </div>
+  )
+}
+
+/** Gürültü paneli yüklenirken katlı başlığın yerini tutan şerit (kart kenarı + tetik satırı ≈ 48 px). */
+function NoisePanelSkeleton() {
+  return <Skeleton aria-hidden="true" data-slot="noise-panel-skeleton" className="h-12 w-full rounded-xl" />
+}
 
 /** Onay/çözüm yanıtından detaya taşınan alanlar (zenginleştirme alanları sunucu yanıtında yok — ezilmesin). */
 const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
@@ -667,16 +687,18 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       {/* İstatistikler EN ÜSTTE (2026-09-27 kullanıcı isteği) — kapsamdaki açık küme; kartlar süzgeç */}
       {urlSync && (tiles.length > 0
         ? <MonitorStatsBar items={tiles} activeFilter={activeTile} onStatClick={onStatClick} />
-        : summaryLoading && <Skeleton className="h-28 w-full rounded-[10px]" aria-hidden="true" />)}
+        : summaryLoading && <StatsBarSkeleton />)}
 
       {urlSync && (
         <div className="flex min-w-0 flex-col gap-2">
           <AlertTeamStatsPanel activeTeamId={filters.team}
             onPickTeam={(id) => patch({ team: String(id) })}
             onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
-          <AlertNoisePanel onPickDomain={(d) => patch({ q: d })}
-            onPickDay={(day) => { setTab('all'); patch({ from: day, to: day, range: '' }) }}
-            onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
+          <Suspense fallback={<NoisePanelSkeleton />}>
+            <AlertNoisePanel onPickDomain={(d) => patch({ q: d })}
+              onPickDay={(day) => { setTab('all'); patch({ from: day, to: day, range: '' }) }}
+              onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
+          </Suspense>
         </div>
       )}
 

@@ -15,6 +15,103 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.116.1] — 2026-10-09
+
+### Performance
+- **Uygulama daha hızlı açılır.** Açılış paketi 850 KB'tan 647 KB'a indi (gzip, −%24). Sertifika penceresinin
+  ilk yükü 674 KB'tan 100 KB'a, HTTP izleme sayfasınınki 663 KB'tan 265 KB'a düştü.
+  - Markdown düzenleyici, yardım belgesi, alarm gürültü grafiği, komut paleti, kısayol listesi, sürüm penceresi ve
+    sertifika penceresinin Alarm / Tanılama / Envanter sekmeleri ilk kullanımda yüklenir; yerlerinde aynı boyda iskelet
+    görünür, sayfa zıplamaz.
+  - Sertifika penceresi Pano verisi geldikten sonra boşta önceden yüklenir; ilk tıklamada bekletmez.
+- **Pano daha az istekle açılır.** Takım kırılımı (`/stats/teams`) yalnız İstatistik sekmesinde istenir. Pasif kart
+  listesi ilk veri dalgasıyla gelir. 7/24 şeridi yalnız sayıları ister (`/api/noc/coverage?summary=1`) ve girişte
+  iki kez istenmez.
+- **Gereksiz yeniden çizim kalktı.**
+  - Hareketsizlik geri sayımı, olay süresi sayacı ve izinler artık her saniye ya da her yoklamada tüm sayfayı
+    yeniden çizmez.
+  - Ağ durumu yoklaması, değişiklik yoksa sayfayı yeniden çizmez.
+- **Sunucu.**
+  - JavaScript yanıtları sıkıştırılır.
+  - Marka, yazı tipi ve PDF dosyaları yeniden doğrulamalı önbellekle sunulur.
+  - Kullanıcı kimliği kapısı yanıtı tek seferde serileştirir.
+  - Oturum sorguları için `UPPER(username)` indeksi eklendi; arka planda, kilitsiz kurulur.
+  - Sık yoklanan uçlar (değişiklikler, zayıf algoritma raporu, kullanıcı dizini, Bugün paneli, gelen kutusu) bellekten
+    ya da daraltılmış sorguyla döner.
+
+### Fixed
+- **Oturum.**
+  - Aynı sekmede çıkış yapıp başka kullanıcıyla girildiğinde önceki kullanıcının kartları, sayaçları ve açık
+    pencereleri yeni oturumda görünmüyor.
+  - Çıkış öncesi başlamış geç yanıtlar yeni oturuma yazılmıyor.
+- **Güvenlik ve denetim.**
+  - Kaba kuvvet eşiğinde bilinmeyen kullanıcı adı, mevcut hesabın ilk kilit kademesiyle aynı yanıtı alır. Yanıttan
+    "bu hesap var mı" okunamaz.
+  - 100 karakterden uzun kullanıcı adıyla yapılan girişte 500 hatası giderildi.
+  - Denetim kaydında kullanıcı adıyla süzme yeniden çalışıyor.
+  - Çok pod'lu kurulumda oturum önbelleği, başka pod'daki yeni girişi kontrol etmeden oturumu düşürmüyor.
+  - Denetim kaydı zinciri PostgreSQL'de pod'lar arasında kilitle yazılıyor.
+  - İzin matrisini varsayılana döndürmek 409 vermiyor.
+- **Alarm ve izleme.**
+  - Değişiklik geçmişinden geri yükleme kırpılmış ya da maskelenmiş değeri (uzun betik, gizli URL) yazmıyor;
+    atlananları bildiriyor.
+  - Kaçırılan günlük hatırlatmanın eski kopyası, bu arada çözülen veya onaylanan alarmı geri açmıyor.
+  - Sentetik izlemenin adını değiştirmek başka takımın alarmını taşımıyor.
+  - Alarm, gönderim kuyruğunda beklerken düzelirse "DÜZELDİ" push'u kaybolmuyor.
+  - Alan adı silinince 6 alarm türünün hepsi kapanıyor.
+  - EPP durumlarındaki yazım farkı sahte değişiklik alarmı üretmiyor.
+  - Keyword "Test" düğmesi özel başlıkları yalnız global yöneticide gönderiyor.
+- **İzleme sayfaları.**
+  - Açık detaydan yapılan ikinci düzenleme ilkini geri almıyor.
+  - Geç dönen "Test" sonucu başka bir forma düşmüyor.
+  - DNS "Şimdi kontrol et" alt sekmeyi ve geçmişi sıfırlamıyor.
+  - Geç dönen eski liste yüklemesi dokuz sayfada da yeni listeyi ezmiyor.
+  - İzleme Panosu'nda pencere değiştirmek eski yanıtla çakışmıyor.
+  - DNS derin bağlantısı (`?monitor=…&range=30` / `&mtab=…`) seçili aralık ve sekmeyle açılıyor; eskiden liste
+    yüklenirken adresten siliniyordu.
+- **Yönetim ekranları.**
+  - Kapsamlı yöneticiye 403 veren kullanıcı geçmişi menüsü gizlendi.
+  - Yüklenemeyen fırtına ayarı formu varsayılan değerlerle kaydedilemiyor; "Tekrar dene" var.
+  - SMTP günlüğünde önceki kaydın ayrıntısı yeni satırda görünmüyor.
+  - Saklama koşularının saat aralığı UTC'den doğru çevriliyor.
+  - Bir düzine ekranda yükleme hatası boş liste yerine hata ve yeniden dene olarak gösteriliyor.
+  - Bir düzine ekranda yükleme göstergesi takılı kalmıyor.
+- **Sertifika ve takvim.**
+  - Yenileme Önerileri'nde kayıtlı plan rozeti görünüyor; "Planla" kayıtlı tarih ve notla açılıyor.
+  - Vade Takvimi'nde plan sonrası geri gelen gün paneli takım, arama ve plan süzgeçlerine uyuyor.
+  - Manuel sertifikaya yeni sürüm yüklenince SSL sekmesi ve Pano kartı yeni sürümü gösteriyor.
+  - Bakım takvimi günlük pencereyi 91 günün tamamında çiziyor; eskiden ~10 gün sonra kayboluyordu.
+- **Haftalık raporlar.**
+  - Önceki/sonraki haftaya geçince izleme istatistikleri tazeleniyor.
+  - 52 haftalık yıllarda olmayan 53. haftaya atlanmıyor.
+  - Yorum taslağı başka rapora taşınmıyor.
+- **Geç gelen yanıtlar.** Hızlı süzgeç değişiminde eski yanıt yeni sonucu ezmiyor:
+  - Fırtına geçmişi ve analiz;
+  - Aktivite özeti;
+  - envanter araması (yazarken seçilen takım kaybolmuyor);
+  - yönetim panellerinde dokuz yükleme.
+- **Şablon kütüphanesi.** Reddedilen yükleme boş liste değil hata olarak görünüyor.
+
+### Changed
+- **Mobil ve düzen.**
+  - Uzun pencere başlıkları sığar.
+  - Telefonda pencere kenar boşlukları daraldı.
+  - İzleme detay penceresi telefonda tam ekran açılır ve zıplamaz.
+  - Pano üstündeki "Bugün" bölümü yüklenirken iskelet gösterir, içerik kaymaz.
+  - Dokunmatik ekranda segment, onay kutusu, toplu işlem, envanter araç çubuğu ve süzgeç çipleri en az 40 px.
+  - Yardım düğmesi kaydet çubuklarını örtmez.
+  - Sistem Sağlığı'nda açılan bölüm görünüme kaydırılır.
+  - Haftalık rapor listesi yenilenirken boşalmaz.
+- **İzleme kartı.**
+  - Dokunmatik ekranda metrik ipuçları dokununca açılır.
+  - Duraklatılmış kartta değerler okunur kalır.
+  - Durum noktası yalnız izleme çöktüğünde yanıp söner.
+- **Görünüm.**
+  - Sertifika tablosu durum seçeneklerinde emoji yerine simge kullanılır.
+  - En küçük yazı 11 px (telefonda 12 px).
+  - İçerik ve süzgeç çubuğu zemini temaya uyar.
+  - "Şimdi Kontrol Et" ilerleme metni sabit genişlikte; düğme her adımda kaymaz.
+
 ## [20.116.0] — 2026-10-08
 
 ### Added
@@ -2547,7 +2644,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.1...HEAD
+[20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
 [20.116.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.0
 [20.115.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.115.0
 [20.114.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.114.0

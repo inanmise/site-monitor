@@ -38,17 +38,17 @@ public class UserDirectoryController {
     /** Tüm kullanıcılar: [{id, username, display_name}] — frontend username→{id,display_name} haritası. */
     @GetMapping("/directory")
     public ResponseEntity<Map<String, Object>> directory() {
-        List<Map<String, Object>> list = userRepo.findAll().stream()
-                .filter(u -> u.getUsername() != null)
-                .map(u -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", UserRef.of(u.getId()));   // global olmayana opak kimlik (UserRefWire)
-                    m.put("username", u.getUsername());
-                    m.put("display_name", displayName(u));
-                    m.put("email", u.getEmail());   // alıcı/eskalasyon kontağı eşleştirmesi (e-posta zaten o ekranlarda görünür)
-                    return m;
-                })
-                .toList();
+        // Tek projeksiyon sorgusu (2026-10-09): fotoğraf / takım koleksiyonu yüklenmez
+        List<Map<String, Object>> list = new java.util.ArrayList<>();
+        for (Object[] r : userRepo.findDirectoryRows()) {
+            if (r == null || r.length < 6 || r[1] == null) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", UserRef.of(r[0] instanceof Number n ? Long.valueOf(n.longValue()) : null));   // global olmayana opak (UserRefWire)
+            m.put("username", r[1]);
+            m.put("display_name", displayName((String) r[2], (String) r[3], (String) r[4]));
+            m.put("email", r[5]);   // alıcı/eskalasyon kontağı eşleştirmesi (e-posta zaten o ekranlarda görünür)
+            list.add(m);
+        }
         return ResponseEntity.ok(Map.of("success", true, "data", list));
     }
 
@@ -64,10 +64,9 @@ public class UserDirectoryController {
     }
 
     /** display_name → yoksa "Ad Soyad" → yoksa null (frontend username'e düşer). */
-    private static String displayName(AppUser u) {
-        if (u.getDisplayName() != null && !u.getDisplayName().isBlank()) return u.getDisplayName();
-        String full = ((u.getFirstName() != null ? u.getFirstName() : "") + " "
-                     + (u.getLastName() != null ? u.getLastName() : "")).trim();
+    private static String displayName(String display, String first, String last) {
+        if (display != null && !display.isBlank()) return display;
+        String full = ((first != null ? first : "") + " " + (last != null ? last : "")).trim();
         return full.isEmpty() ? null : full;
     }
 }

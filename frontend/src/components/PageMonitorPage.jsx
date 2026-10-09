@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, Fragment } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -191,6 +192,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  // Form "Test" sırası (smokeSeq deseni, 2026-10-09): form açılışında/kapanışında artar → önceki formun geç dönen test
+  // sonucu yeni forma DÜŞMEZ; "test ediliyor" yalnız GÜNCEL sıranın isteği bitince söner.
+  const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('issues')
@@ -208,7 +212,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [statsVisible, setStatsVisible] = useState(false)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
+  // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
+  // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
+  const loadSeqRef = useRef(0)
   const load = useCallback(async () => {
+    const my = ++loadSeqRef.current
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
     // "Henüz izleme yok, ekleyin" diyordu; kullanıcı monitörlerinin SİLİNDİĞİNİ sanıyordu.
     // Ayrıca useVisibleInterval her 60 sn sessizce başarısız olmaya devam ediyordu.
@@ -220,18 +228,20 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     // hata turu ona hic ulasmiyordu.
     try {
       const res = await api.monitoring.getPageMonitors()
-      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      if (my !== loadSeqRef.current) return undefined   // bayat yanıt — daha yeni bir yükleme yolda
+      if (res?.success) { setMonitors(res.data); setLoadError(null); return res.data }
       else setLoadError(res?.error || 'load failed')
     } catch (e) {
-      setLoadError(e?.message || 'network error')
+      if (my === loadSeqRef.current) setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setLoadNonce((n) => n + 1)
+      if (my === loadSeqRef.current) { setLoading(false); setLoadNonce((n) => n + 1) }
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
   // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
   const { resume, isResuming } = useMonitorResume(api.monitoring.updatePageMonitor, (r) => {
-    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+    load(); setMonitors((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: true } : x)))
+    setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
   })
 
   const checkable = monitors.filter(canCheckRow)
@@ -332,7 +342,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
+  /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
+  function cancelTest() { testSeq.current++; setTesting(false) }
+
   function openNew() {
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
@@ -356,7 +370,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       active: m.active !== false }
   }
-  function openEdit(m) {
+  function openEdit(row) {
+    // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
+    // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
+    const m = freshestRow(row, monitors)
+    cancelTest()
     setTestResult(null); setDupSource(null)
     setForm(formFrom(m))
     setChangeNote('')
@@ -365,20 +383,23 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız URL'i değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
+    cancelTest()
     setTestResult(null); setDupSource(m)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
+  function closeEdit() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   async function runTest() {
     if (!form.url.trim()) return
+    const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs), useProxy: form.useProxy || 'AUTO' })
+      if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('page.testError') })
     } finally {
-      setTesting(false)
+      if (my === testSeq.current) setTesting(false)
     }
   }
 
@@ -415,6 +436,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         : await api.monitoring.updatePageMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
+      // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
+      setSelected((prev) => mergeSavedRow(prev, res.data))
       toast.success(t('page.saved')); closeEdit()
       // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi/tarama ayarı değişen kart eski sonucu göstermesin.
       // Liste YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
@@ -1135,7 +1159,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="page" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)} />
+                  canManage={canManageRow(selected)}
+                  // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
+                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

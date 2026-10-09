@@ -161,6 +161,15 @@ export default function AdminSettings({ globalAdmin = true }) {
   // param silinir (URL temiz kalır); yazma replaceState ile — sekmelerin pushState'i bozulmaz.
   useUrlQuerySync({ sec: active === DEFAULT_SECTION ? null : active })
 
+  // Ayarlar ZATEN açıkken gelen derin bağlantı (ör. kullanıcı etkinliğinden Giriş Yöntemleri → İstatistikler): sayfa
+  // yeniden bağlanmaz, `sec` yalnız mount'ta okunurdu. App param'ları adrese yazıp `sm:tab-params` yollar (SystemHealth
+  // ile aynı desen); bilinmeyen bölüm yok sayılır.
+  useEffect(() => {
+    const on = (e) => { const s = e?.detail?.sec; if (SECTION_IDS.has(s)) openSection(s) }
+    window.addEventListener('sm:tab-params', on)
+    return () => window.removeEventListener('sm:tab-params', on)
+  }, [openSection])
+
   /** Bölüm → en kötü yapılandırma durumu (bad/warn); kartın `checks[].tab` alanı bölüm kimliğidir. */
   const statusBySection = useMemo(() => {
     const out = {}

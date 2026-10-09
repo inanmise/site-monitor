@@ -79,12 +79,13 @@ describe('VersionChip', () => {
     render(<VersionChip onTabChange={onTabChange} />)
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
     await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: /Yenilikler|What's new/ }))
+    // Popover gövdesi ilk açılışta tembel yüklenir (2026-10-09) — düğmeler gövde gelince
+    fireEvent.click(await screen.findByRole('button', { name: /Yenilikler|What's new/ }))
     expect(onTabChange).toHaveBeenCalledWith('help', { view: 'releases' })
     expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()   // gezinince kapanır
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
     await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: /Dağıtım geçmişi|Deployment history/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Dağıtım geçmişi|Deployment history/ }))
     expect(onTabChange).toHaveBeenCalledWith('health', { sec: 'releases' })
   })
 
@@ -93,7 +94,7 @@ describe('VersionChip', () => {
     render(<VersionChip onTabChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
     await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
-    expect(screen.getByText(/alınamadı|Could not load/)).toBeInTheDocument()
+    expect(await screen.findByText(/alınamadı|Could not load/)).toBeInTheDocument()
     expect(document.querySelector('[data-version]').textContent).toBe('v20.54.0')
     await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
     expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()

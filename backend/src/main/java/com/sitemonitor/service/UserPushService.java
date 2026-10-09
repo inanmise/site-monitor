@@ -295,6 +295,10 @@ public class UserPushService {
     public void enqueueResolve(AlertEvent event, Map<String, Object> ctx, Long fallbackTeamId) {
         try {
             if (!enabled() || event == null || event.getId() == null) return;
+            // Hâlâ gönderilmemiş (PENDING) açılış/eskalasyon/tekrar push'u iptal edilir (2026-10-09): alarm düzeldikten
+            // sonra "DÜŞTÜ" gitmesin. Karar aşağıda AYNEN kalır — SENT satır yoksa çözüm de gitmez (SKIPPED_NO_PRIOR),
+            // telefon zaten hiç "düştü" görmedi; SENT varsa "DÜZELDİ" her zamanki gibi gider.
+            cancelPendingBeforeResolve(event);
             // Sistem bakımı (2026-10-02): bildirimler susturulmuşken çözüm push'u da gitmez — karar satırıyla.
             if (systemMaintenanceMuted()) {
                 skipRow(event, "RESOLVE", SystemMaintenanceService.PUSH_SKIPPED);
@@ -311,6 +315,19 @@ public class UserPushService {
             enqueueInternal(event, "RESOLVE", fallbackTeamId, ctx, Set.of());
         } catch (Exception e) {
             log.warn("user-push çözüm enqueue atlandı: {}", e.toString());
+        }
+    }
+
+    /** Alarm gönderilemeden düzeldi: bekleyen (PENDING) eski faz satırının durumu — push günlüğünde nedeniyle görünür. */
+    public static final String STATUS_SKIPPED_RESOLVED_BEFORE_SEND = "SKIPPED_RESOLVED_BEFORE_SEND";
+
+    /** Çözümde bekleyen eski faz satırlarını iptal eder — arıza çözüm kararını ASLA düşürmez. */
+    private void cancelPendingBeforeResolve(AlertEvent event) {
+        try {
+            int n = deliveryRepo.cancelPendingForResolved(event.getId(), STATUS_SKIPPED_RESOLVED_BEFORE_SEND);
+            if (n > 0) log.info("user-push: alarm #{} gönderilmeden düzeldi — {} bekleyen push iptal edildi", event.getId(), n);
+        } catch (Exception e) {
+            log.warn("user-push bekleyen satır iptali atlandı (olay #{}): {}", event.getId(), e.toString());
         }
     }
 

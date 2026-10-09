@@ -36,6 +36,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /** Yönetici özeti (2026-09-12, #20): pencere içinde AÇILAN alarmlar (delta hesabı). */
     List<AlertEvent> findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(String since);
 
+    /**
+     * Gelen kutusu "son 24 saatte çözülenler" (2026-10-09, performans): eskiden 30 günlük TÜM alarmlar yüklenip Java'da
+     * süzülüyordu (dakikada bir, her kullanıcı). Aynı anlam: çözülmüş + çözülme anı ≥ resolvedSince + oluşma ≥ createdSince
+     * (idx_ae_resolved_at). ISO sabit genişlik → sözlüksel karşılaştırma.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT e FROM AlertEvent e WHERE e.resolved = true AND e.resolvedAt >= :resolvedSince"
+            + " AND e.createdAt >= :createdSince ORDER BY e.createdAt DESC")
+    List<AlertEvent> findResolvedSinceCreatedSince(@org.springframework.data.repository.query.Param("resolvedSince") String resolvedSince,
+                                                   @org.springframework.data.repository.query.Param("createdSince") String createdSince);
+
     /** "Sizin için — bugün" son 24 saat şeridi (2026-09-23): pencere içinde ÇÖZÜLEN alarmlar. */
     List<AlertEvent> findByResolvedAtGreaterThanEqual(String since);
 
@@ -108,6 +118,20 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "
             + "WHERE e.id = :id AND e.resolved = false")
     int markResolvedIfOpen(@Param("id") Long id, @Param("at") String at, @Param("by") String by);
+
+    /**
+     * Bildirim SONRASI damga (2026-10-09) — YALNIZ gönderimin değiştirdiği alanlar, yalnız hâlâ AÇIK satırda.
+     * Eskiden gönderim (SMTP + aralık beklemesi) bitince yüklü entity {@code save} ediliyordu: {@code AlertEvent}'te
+     * {@code @Version}/{@code @DynamicUpdate} yok, yani TÜM kolonlar yeniden yazılıyor ve gönderim sürerken kullanıcının
+     * yaptığı çözüm/onay geri alınıyordu (çözülen alarm yeniden açık). Değerler çağıranın taze okumasından gelir.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.lastReAlertAt = :at, e.realertCount = :realertCount, e.daysRemaining = :days, "
+            + "e.notAfter = :notAfter, e.notifiedContacts = :notified WHERE e.id = :id AND e.resolved = false")
+    int stampNotificationSentIfOpen(@Param("id") Long id, @Param("at") String at,
+                                    @Param("realertCount") Integer realertCount, @Param("days") Integer days,
+                                    @Param("notAfter") String notAfter, @Param("notified") String notified);
 
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)

@@ -488,4 +488,93 @@ class AuditServiceTest {
         assertThat(cap.getValue().getOutcome()).isEqualTo("SUCCESS");
         assertThat(cap.getValue().getRowHash()).isNotBlank();   // zincir hash set edildi
     }
+
+    // ── Çok pod'lu zincir kilidi (2026-10-09) ─────────────────────────────────────────────────────────
+
+    private org.springframework.jdbc.core.JdbcTemplate chainJdbc(String product) {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        doReturn(product).when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        return jdbc;
+    }
+
+    private org.springframework.transaction.PlatformTransactionManager txManager() {
+        org.springframework.transaction.PlatformTransactionManager tx =
+                mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(tx.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        return tx;
+    }
+
+    @Test
+    @DisplayName("Çok pod: PostgreSQL'de son satırı okuma + ekleme TEK işlemde, önce pg_advisory_xact_lock alınır")
+    void persist_postgres_takesAdvisoryXactLockInSameTransaction() {
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot");
+        service.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "patch-1");
+
+        InOrder order = inOrder(tx, jdbc, auditLogRepo);
+        order.verify(tx).getTransaction(any());
+        order.verify(jdbc).execute(AuditService.SQL_CHAIN_LOCK);
+        order.verify(auditLogRepo).findTopByOrderBySeqDesc();
+        order.verify(auditLogRepo).save(any());
+        order.verify(tx).commit(any());
+        verify(jdbc, times(2)).execute(AuditService.SQL_CHAIN_LOCK);
+        // Veritabanı türü bir kez belirlenir.
+        verify(jdbc, times(1)).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        assertThat(AuditService.SQL_CHAIN_LOCK).isEqualTo("SELECT pg_advisory_xact_lock(" + AuditService.CHAIN_LOCK_KEY + ")");
+    }
+
+    @Test
+    @DisplayName("Çok pod: H2 / PostgreSQL olmayan veritabanında kilit ve ayrı işlem YOK (bugünkü davranış)")
+    void persist_nonPostgres_noAdvisoryLock() {
+        var jdbc = chainJdbc("H2");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        AuditLog saved = service.persist(new AuditLog());
+
+        assertThat(saved).isNotNull();
+        assertThat(saved.getSeq()).isEqualTo(1L);
+        verify(jdbc, never()).execute(anyString());
+        verify(tx, never()).getTransaction(any());
+        verify(auditLogRepo).save(any());
+    }
+
+    @Test
+    @DisplayName("Çok pod: açık bir dış işlemin içinde kilit alınmaz (kilit dış COMMIT'e dek tutulmasın) — bugünkü davranış")
+    void persist_insideOuterTransaction_noAdvisoryLock() {
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThat(service.persist(new AuditLog())).isNotNull();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verify(jdbc, never()).execute(anyString());
+        verify(tx, never()).getTransaction(any());
+    }
+
+    @Test
+    @DisplayName("Çok pod: kilit altında yazım başarısızsa kayıt yine fallback dosyaya düşer, istisna FIRLATILMAZ")
+    void persist_postgres_failureStillFallsBack(@TempDir Path tmp) throws IOException {
+        Path fb = tmp.resolve("audit-fallback.jsonl");
+        ReflectionTestUtils.setField(service, "fallbackFile", fb.toString());
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
+
+        assertThat(service.persist(new AuditLog())).isNull();
+        assertThat(Files.exists(fb)).isTrue();
+        verify(tx).rollback(any());
+    }
 }

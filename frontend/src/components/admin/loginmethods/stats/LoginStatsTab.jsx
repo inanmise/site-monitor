@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BarChart3, CircleHelp, RefreshCw } from 'lucide-react'
 import { api } from '../../../../api/client'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
@@ -64,10 +64,15 @@ export default function LoginStatsTab({ methods }) {
   useUrlQuerySync({ lm_p: days === DEFAULT_PERIOD ? null : days, lm_ch: channel || null, lm_user: user || null })
   useMinuteTick()
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: 7 → 90 → 1 gün hızlı seçilince ağır 90 günlük yanıt en son gelip seçili
+  // dönemin üstüne yazıyordu; `loading` da yalnız en son istek bitince kapanır.
+  const seqRef = useRef(0)
   const load = useCallback(async (fresh = false) => {
+    const seq = ++seqRef.current
     setLoading(true)
     try {
       const r = await api.loginMethodsAdmin.stats(days, fresh)
+      if (seq !== seqRef.current) return
       if (r?.success && r.data) {
         setData(r.data)
         setError(null)
@@ -75,9 +80,10 @@ export default function LoginStatsTab({ methods }) {
         setError(r?.error || t('lm.stats.err'))
       }
     } catch (e) {
+      if (seq !== seqRef.current) return
       setError(e?.message || t('lm.stats.err'))
     } finally {
-      setLoading(false)
+      if (seq === seqRef.current) setLoading(false)
     }
   }, [days, t])
   useEffect(() => { load(false) }, [load])

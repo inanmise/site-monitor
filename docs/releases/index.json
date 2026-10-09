@@ -1,9 +1,107 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-08T22:28:20Z",
+  "generatedAt": "2026-10-09T01:41:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 719,
+  "count": 720,
   "releases": [
+    {
+      "version": "20.116.1",
+      "tag": "v20.116.1",
+      "releasedAt": "2026-10-09T01:41:17Z",
+      "commit": "6fe133cceb0814d80ed1102c6aefe44efe97858f",
+      "prevVersion": "20.116.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 8,
+        "perf": 2,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6fe133cc",
+          "subject": "DNS derin bağlantısı aralığı ve sekmeyi korur — liste yüklenirken adresten silinmiyor"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9f077e8",
+          "subject": "2026-10-09 düzeltme ve performans turu — CHANGELOG ve CLAUDE.md notları; çıkış sırası bekçisinin penceresi genişletildi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "619d1023",
+          "subject": "manuel sertifikaya yeni sürüm yüklenince SSL sekmesi ve Pano kartı yeni sürümü gösterir"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "60287848",
+          "subject": "açılış paketleri küçüldü — Markdown düzenleyici, yardım belgesi, gürültü grafiği, komut paleti ve sertifika penceresi sekmeleri ihtiyaç anında yüklenir; izinler ve olay süresi gereksiz yeniden çizim …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "abb73757",
+          "subject": "oturum ve sayfa verisi — çıkışta önceki kullanıcının kartları temizlenir, yenileme planı kayıtlıdan açılır, geç yanıtlar yeni süzgeci ezmez, Pano daha az istekle açılır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "97fb884b",
+          "subject": "izleme sayfaları — açık detayda ikinci düzenleme ilkini geri almaz, geç gelen Test sonucu başka forma düşmez, DNS 'Şimdi kontrol et' geçmişi sıfırlamaz"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "5012d9c9",
+          "subject": "mobil ve düzen — uzun pencere başlığı sığar, telefonda detay pencereleri zıplamaz, Pano üstü yüklenirken kaymaz, dokunma hedefleri 40 px, yardım düğmesi kaydet çubuğunu örtmez, tema renkleri ve küçük…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "275fcb04",
+          "subject": "yönetim ekranları — kapsamlı müdüre 403 veren geçmiş gizlendi, yüklenemeyen ayar formu varsayılanla kaydedilmez, geç yanıt yarışları ve takılı kalan yüklemeler giderildi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e63bf023",
+          "subject": "güvenlik/denetim — kullanıcı adıyla tutulan denetim kaydı süzgeci, uzun kullanıcı adında 500, kilitlenme yanıtıyla kullanıcı adı tahmini, çok pod'da oturum önbelleği ve denetim zinciri, izin sıfırlam…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6daeae79",
+          "subject": "alarm ve izleme — geçmişten geri yükleme kırpılmış betiği yazmaz, eski kopya kaydı çözülen alarmı yeniden açmaz, yeniden adlandırma başka takımın alarmını taşımaz, Test özel başlığı yalnız global adm…"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "a5ecc21b",
+          "subject": "sunucu — JS sıkıştırması (text/javascript), marka/yazı tipi/PDF yeniden doğrulamalı önbellek, kullanıcı-id kapısı tek serileştirme, oturum sorguları için UPPER(username) indeksi, sık yoklanan uçlara …"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.116.0",
       "tag": "v20.116.0",

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import ModalShell from '../components/ui/ModalShell.jsx'
+import { PHONE_FULLSCREEN } from '../components/ui/modalClasses.js'
 import { useDialog } from '../components/ui/Dialog.jsx'
 
 // Scrim (shadcn örtüsü) rolsüz dekoratif bir yüzey: legacy sınıf yerine shadcn `data-slot` ile bulunur.
@@ -208,5 +209,50 @@ describe('ModalShell', () => {
     // Kaydet kaydırılan gövdede değil, altlıkta.
     const body = dlg.querySelector('[data-slot="modal-shell-body"]')
     expect(body.contains(screen.getByRole('button', { name: 'Kaydet' }))).toBe(false)
+  })
+})
+
+/**
+ * Telefon yerleşimi (2026-10-09). jsdom yerleşim yapmaz — kaynak sözleşmesi (sınıflar) pinlenir; ölçüm Playwright'ta.
+ */
+describe('ModalShell — telefon yerleşimi', () => {
+  const LONG = 'cok-uzun-bir-alt-alan.cok-uzun-bir-alan-adi-ornegi.example.com.tr'
+
+  it('düz metin başlık küçülebilen bir span\'e sarılır (uzun alan adı X\'in altına girip yatay kaydırma açmaz)', () => {
+    render(<ModalShell open title={LONG} closeLabel="Kapat">gövde</ModalShell>)
+    const span = document.querySelector('[data-slot="modal-shell-title-text"]')
+    expect(span).not.toBeNull()
+    expect(span.textContent).toBe(LONG)
+    expect(span).toHaveClass('min-w-0', '[overflow-wrap:anywhere]')
+    expect(span.closest('[data-slot="dialog-title"]')).not.toBeNull()
+    // Pencere adı değişmez (aria-labelledby → başlık)
+    expect(screen.getByRole('dialog', { name: LONG })).toBeInTheDocument()
+  })
+
+  it('öğe olarak verilen başlık SARILMAZ — çağıranın kendi kısaltması (truncate) bozulmaz', () => {
+    render(<ModalShell open title={<span data-testid="own" className="min-w-0 truncate">{LONG}</span>} closeLabel="Kapat">gövde</ModalShell>)
+    expect(document.querySelector('[data-slot="modal-shell-title-text"]')).toBeNull()
+    expect(screen.getByTestId('own').parentElement).toHaveAttribute('data-slot', 'dialog-title')
+  })
+
+  it('telefonda iç boşluk 16 px ve kenar 8 px (yalnız max-sm:); sm+ sınıfları aynı', () => {
+    render(<ModalShell open title="x" closeLabel="Kapat">gövde</ModalShell>)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg).toHaveClass('max-sm:p-4', 'max-sm:max-w-[calc(100%-1rem)]', 'p-6', 'sm:max-w-[min(620px,calc(100%-2rem))]')
+  })
+
+  it('çağıranın varyantsız iç boşluğu / genişlik tavanı varsa telefon sınıfları eklenmez (telefonda ezilmesin)', () => {
+    render(<ModalShell open title="x" closeLabel="Kapat" className="max-w-[calc(100%-1rem)] p-3 sm:p-5">gövde</ModalShell>)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg).toHaveClass('p-3')
+    expect(dlg).not.toHaveClass('max-sm:p-4')
+    expect(dlg).not.toHaveClass('max-sm:max-w-[calc(100%-1rem)]')
+  })
+
+  it('paylaşılan PHONE_FULLSCREEN telefon kenarını twMerge ile ezer (tam ekran, kenar payı yok)', () => {
+    render(<ModalShell open title="x" closeLabel="Kapat" className={PHONE_FULLSCREEN}>gövde</ModalShell>)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg).toHaveClass('max-sm:max-w-none', 'max-sm:h-[100dvh]', 'max-sm:p-4')
+    expect(dlg).not.toHaveClass('max-sm:max-w-[calc(100%-1rem)]')
   })
 })

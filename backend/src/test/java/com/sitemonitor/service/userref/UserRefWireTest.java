@@ -122,6 +122,29 @@ class UserRefWireTest {
     }
 
     @Test
+    @DisplayName("hızlı yol: çevrilecek özellik adı yoksa tek serileştirme (RawValue) ve UserRef yine opak; ad varsa tam yol")
+    void fastPath() {
+        Map<String, Object> plain = new LinkedHashMap<>();
+        plain.put("id", UserRef.of(5L));
+        plain.put("team_id", 3L);
+        plain.put("note", "user_id kelimesi değerde geçebilir");   // değer içindeki ad tetiklemez
+        Object out = UserRefWire.toOpaqueFast(plain, MAPPER, LOOKUP);
+        assertThat(out).isInstanceOf(tools.jackson.databind.util.RawValue.class);
+        JsonNode parsed = MAPPER.readTree(String.valueOf(((tools.jackson.databind.util.RawValue) out).rawValue()));
+        assertThat(parsed.get("id").stringValue()).isEqualTo(P5);
+        assertThat(parsed.get("team_id").asLong()).isEqualTo(3L);
+
+        Map<String, Object> keyed = Map.of("user_id", 7L);
+        Object slow = UserRefWire.toOpaqueFast(keyed, MAPPER, LOOKUP);
+        assertThat(slow).isInstanceOf(JsonNode.class);
+        assertThat(((JsonNode) slow).get("user_id").stringValue()).isEqualTo(P7);
+
+        Object detail = UserRefWire.toOpaqueFast(Map.of("detail", "{\"user_id\":5}"), MAPPER, LOOKUP);
+        assertThat(detail).isInstanceOf(JsonNode.class);
+        assertThat(((JsonNode) detail).get("detail").stringValue()).contains(P5);
+    }
+
+    @Test
     @DisplayName("JsonNode gövde kopyalanır — paylaşılan/önbellekteki ağaç değişmez")
     void jsonNodeBodyIsCopied() {
         ObjectNode orig = MAPPER.createObjectNode().put("user_id", 5);

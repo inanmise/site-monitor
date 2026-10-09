@@ -89,6 +89,25 @@ describe('ScriptedTemplatesTab — takıma indirme ağ hatası', () => {
     api.monitoring.getScriptedTemplates.mockResolvedValue({ success: true, data: { templates: [GENERAL], can_create_general: true, can_view_trash: false, writable_team_ids: [5], k6_version: 'v0.49.0' } })
   })
 
+  it('{success:false} yanıtı HATA olarak döner (2026-10-09): boş liste "hiç şablon yok" gibi görünmez; sonraki başarı temizler', async () => {
+    function ErrProbe() {
+      const { templates, error, loading, reload } = useScriptedTemplates('mine')
+      return <div data-testid="eprobe" data-loading={String(loading)} data-error={error || ''} data-count={templates.length}>
+        <button type="button" onClick={reload}>yenile</button></div>
+    }
+    api.monitoring.getScriptedTemplates
+      .mockResolvedValueOnce({ success: false, error: 'Bu kapsamı görme yetkiniz yok' })
+      .mockResolvedValueOnce(payload(['a']))
+    render(<ErrProbe />)
+    const el = () => screen.getByTestId('eprobe')
+    await waitFor(() => expect(el()).toHaveAttribute('data-loading', 'false'))
+    expect(el()).toHaveAttribute('data-error', 'Bu kapsamı görme yetkiniz yok')
+    expect(el()).toHaveAttribute('data-count', '0')
+    fireEvent.click(screen.getByRole('button', { name: 'yenile' }))
+    await waitFor(() => expect(el()).toHaveAttribute('data-count', '1'))
+    expect(el()).toHaveAttribute('data-error', '')
+  })
+
   it('demote REDDEDİLİRSE pencere kilitli kalmaz: kapanır ve hata bildirilir (işlenmemiş ret YOK)', async () => {
     api.monitoring.demoteScriptedTemplate.mockRejectedValue(new Error('Failed to fetch'))
     render(<ScriptedTemplatesTab t={t} lang="tr" teams={[{ id: 5, name: 'Kanal' }, { id: 6, name: 'Çekirdek' }]} teamName="Kanal" />)

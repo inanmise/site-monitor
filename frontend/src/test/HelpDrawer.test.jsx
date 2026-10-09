@@ -12,21 +12,22 @@ describe('HelpDrawer', () => {
     expect(extractSection(md, '14.99')).toBeNull()
     expect(TAB_HELP_SECTION.weakalgo).toBe('14.13')
   })
-  it('"?" düğmesi paneli açar, gerçek kılavuzun §14.13 bölümü gelir; "Tam kılavuz" help sekmesine gider', () => {
+  it('"?" düğmesi paneli açar, gerçek kılavuzun §14.13 bölümü gelir; "Tam kılavuz" help sekmesine gider', async () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
     render(<HelpDrawer tab="weakalgo" />)
     fireEvent.click(screen.getByRole('button', { name: /Bu sayfa için yardım|Help for this page/ }))
-    const md = screen.getByTestId('md')
+    // Gövde + etkin dilin kılavuzu ilk açılışta tembel yüklenir (2026-10-09)
+    const md = await screen.findByTestId('md')
     expect(md.textContent).toMatch(/^### 14\.13/)
     fireEvent.click(screen.getByRole('button', { name: /Tam kılavuz|Full guide/ }))
     expect(nav.mock.calls[0][0].detail.tab).toBe('help')
     expect(screen.queryByRole('dialog')).toBeNull()
     window.removeEventListener('sm:navigate', nav)
   })
-  it('bölümü olmayan sekme → "ayrı bölüm yok" metni; Esc kapatır', () => {
+  it('bölümü olmayan sekme → "ayrı bölüm yok" metni; Esc kapatır', async () => {
     render(<HelpDrawer tab="nonexistent" />)
     fireEvent.click(screen.getByRole('button', { name: /Bu sayfa için yardım|Help for this page/ }))
-    expect(screen.getByText(/ayrı bir kılavuz bölümü yok|no dedicated guide section/)).toBeInTheDocument()
+    expect(await screen.findByText(/ayrı bir kılavuz bölümü yok|no dedicated guide section/)).toBeInTheDocument()
     // Panel shadcn Sheet: Escape Radix'in katman yığınından (odaktaki öğeden belgeye kabarır).
     expect(screen.getByRole('dialog')).toHaveAttribute('data-slot', 'sheet-content')
     fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })

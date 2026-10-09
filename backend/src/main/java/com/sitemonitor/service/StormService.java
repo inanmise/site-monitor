@@ -1165,7 +1165,12 @@ public class StormService {
             storm.setNotifiedTeams(String.join(", ", teamNames));
             storm.setMemberCount(downMembers.size());
             storm.setLastReAlertAt(now());
-            stormRepo.save(storm);
+            // HEDEFLİ UPDATE (2026-10-09; varlık save'i DEĞİL): SMTP/webhook gönderimi sürerken katılan üyenin
+            // last_member_at damgası (sessiz pencere) ve sayacı bayat varlıkla geri sarılıyor, aynı anda kapanan fırtına
+            // resolved=false ile yeniden açılabiliyordu. Yalnız bu yolun değiştirdiği alanlar, yalnız açık fırtınada.
+            jdbcTemplate.update("UPDATE alert_storms SET notified_teams = ?, member_count = ?, last_re_alert_at = ? "
+                    + "WHERE id = ? AND resolved = false",
+                    storm.getNotifiedTeams(), storm.getMemberCount(), storm.getLastReAlertAt(), storm.getId());
             markAnnounced(storm.getId(), downMembers, storm.getLastReAlertAt());
         } catch (Exception e) {
             log.warn("Storm #{} toplu alarm gönderilemedi: {}", storm.getId(), e.getMessage());

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -287,5 +287,30 @@ describe('TodayPanel', () => {
     const { container } = render(<TodayPanel />)
     await new Promise((r) => setTimeout(r, 10))
     expect(container.querySelector('.today')).toBeNull()
+  })
+
+  // 2026-10-09: panel ilk yanıta kadar HİÇ çizilmiyordu → gelince Pano ızgarası bir başlık boyu aşağı kayıyordu.
+  it('ilk yanıt gelene kadar başlık boyunda iskelet; veri gelince yerini panel başlığı alır', async () => {
+    let resolve
+    api.me.today.mockImplementation(() => new Promise((r) => { resolve = r }))
+    render(<TodayPanel />)
+    const sk = document.querySelector('[data-slot="today-skeleton"]')
+    expect(sk).not.toBeNull()
+    expect(sk).toHaveAttribute('aria-busy', 'true')
+    expect(sk.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /Sizin için|For you/ })).toBeNull()
+    await act(async () => { resolve({ success: true, data: {
+      certs: { count: 0, items: [] }, alerts: { count: 0, items: [] }, ...EMPTY_MON, weekly: { count: 1, missing: 0, week: 37, items: [] },
+    } }) })
+    await screen.findByRole('button', { name: /Sizin için|For you/ })
+    expect(document.querySelector('[data-slot="today-skeleton"]')).toBeNull()
+  })
+
+  it('uç başarısızsa iskelet de kalkar — panel eskisi gibi hiç çizilmez (iskelet yalnız ilk yüklemede)', async () => {
+    api.me.today.mockRejectedValue(new Error('ağ'))
+    render(<TodayPanel />)
+    expect(document.querySelector('[data-slot="today-skeleton"]')).not.toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="today-skeleton"]')).toBeNull())
+    expect(screen.queryByRole('button', { name: /Sizin için|For you/ })).toBeNull()
   })
 })

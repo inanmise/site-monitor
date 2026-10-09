@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useId } from 'react'
-import { Users, Star, Mail, Plus, Trash2, Pencil, History } from 'lucide-react'
+import { Users, Star, Mail, Plus, Trash2, Pencil, History, CircleAlert } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -51,6 +51,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [writableTeamIds, setWritableTeamIds] = useState([])
   const [teamEmails, setTeamEmails] = useState({})
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)  // liste okunamadı (sunucu iletisi ya da i18n yedeği)
   const [modal, setModal] = useState(null)          // null | 'add' | 'edit'
   const [form, setForm] = useState(emptyForm)
   const [editing, setEditing] = useState(null)
@@ -78,6 +79,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
   useEffect(() => { load() }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Okunamayan liste "henüz grup yok" / "uyarılar kimseye gitmeyebilir" gibi görünmesin: `{success:false}` ve ağ hatası
+  // (request() throw eder) hata bloğu + Tekrar dene çizer.
   async function load() {
     setLoading(true)
     try {
@@ -86,7 +89,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         setGroups(res.data?.groups ?? [])
         setWritableTeamIds((res.data?.writable_team_ids ?? []).map(String))
         setTeamEmails(res.data?.team_emails ?? {})
+        setLoadError(null)
+      } else {
+        setLoadError(res?.error || t('ng.loadError'))
       }
+    } catch (e) {
+      setLoadError(e?.message || t('ng.loadError'))
     } finally {
       setLoading(false)
     }
@@ -288,7 +296,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         </div>
       </div>
 
-      {!loading && teamsAtRisk.length > 0 && (
+      {!loading && !loadError && teamsAtRisk.length > 0 && (
         <AlertBanner tone="warning" title={t('ng.riskTitle')} className="mb-0">
           {t('ng.riskBody').replace('{teams}', teamsAtRisk.join(', '))}
         </AlertBanner>
@@ -296,6 +304,9 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
       {loading ? (
         <StatusBlock tone="neutral" title={t('ng.loading')} />
+      ) : loadError ? (
+        <StatusBlock tone="danger" role="alert" icon={CircleAlert} description={loadError}
+          actions={<Button type="button" variant="outline" onClick={load}>{t('ng.retry')}</Button>} />
       ) : visible.length === 0 ? (
         <StatusBlock
           tone="neutral"

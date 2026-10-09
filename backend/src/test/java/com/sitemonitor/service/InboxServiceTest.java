@@ -64,6 +64,8 @@ class InboxServiceTest {
         CertificateInventory b = new CertificateInventory(); b.setDomain("b.example.com"); b.setTeamId(2L); b.setActive(true);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(ev(1, "a.example.com", 1L, "WARNING", false, 0), ev(2, "a.example.com", 1L, "CRITICAL", false, 0), ev(3, "b.example.com", 2L, "CRITICAL", false, 0)));
+        when(alertEventRepo.findResolvedSinceCreatedSince(anyString(), anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
+        // Gelen kutusu GEÇMİŞİ hâlâ 30 günlük sorguyu kullanır (yalnız 24 saatlik "çözülenler" daraldı)
         when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
         MaintenanceWindow active = new MaintenanceWindow(); active.setId(7L); active.setName("Gece bakımı"); active.setTeamId(1L); active.setActive(true); active.setStartAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));
         MaintenanceWindow soon = new MaintenanceWindow(); soon.setId(8L); soon.setName("Yarın"); soon.setTeamId(null); soon.setActive(true); soon.setStartAt(ISO.format(Instant.now().plus(5, ChronoUnit.HOURS)));

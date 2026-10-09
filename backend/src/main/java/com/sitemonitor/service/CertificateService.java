@@ -587,9 +587,7 @@ public class CertificateService {
     /** Distinct domains owned (SY slot) by any of the given teams. */
     private Set<String> getTeamDomains(java.util.Collection<Long> teamIds) {
         if (teamIds == null || teamIds.isEmpty()) return Set.of();
-        return inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(teamIds)
-                .stream().map(com.sitemonitor.model.CertificateInventory::getDomain)
-                .collect(Collectors.toSet());
+        return new HashSet<>(inventoryRepo.findActiveDomainNamesByTeamIds(teamIds));   // tek sütun (2026-10-09)
     }
 
     /** Eski sekiz parametreli biçim — {@link CertListQuery#of} üzerinden yeni yola düşer. */
@@ -661,7 +659,8 @@ public class CertificateService {
         int perPage = q.perPage(), page = q.page();
         int total = filtered.size();
         int totalPages = (int) Math.ceil((double) total / perPage);
-        int from = Math.min((page - 1) * perPage, total);
+        // long aritmetik (2026-10-09): page=500000 × per_page=5000 int taşıyıp negatif oluyor, subList 500 veriyordu
+        int from = (int) Math.min((long) Math.max(page - 1, 0) * perPage, total);
         int to = Math.min(from + perPage, total);
 
         // ── Facet'ler ──
@@ -1140,6 +1139,7 @@ public class CertificateService {
 
     private List<Map<String, Object>> computeRenewalAdvice(List<CertificateDto> all) {
         List<Map<String, Object>> advice = new ArrayList<>();
+        Map<String, String[]> plans = renewalPlans();
 
         for (CertificateDto cert : all) {
             Integer days = cert.getDaysRemaining();
@@ -1188,9 +1188,33 @@ public class CertificateService {
             }
         }
 
+        // Kayıtlı plan (2026-10-09, hata düzeltmesi): satırlar planı taşımıyordu → başka oturumda / sayfa yenilenince
+        // plan rozeti kayboluyor, "Planla" penceresi kayıtlı tarihi değil BOŞ formu açıyordu. Yalnız planlı satıra eklenir.
+        for (Map<String, Object> a : advice) {
+            String[] p = plans.get((String) a.get("domain"));
+            if (p == null) continue;
+            a.put("renewal_planned_at", p[0]);
+            if (p[1] != null) a.put("renewal_planned_note", p[1]);
+        }
         Map<String, Integer> order = Map.of("critical", 0, "warning", 1, "info", 2);
         advice.sort(Comparator.comparingInt(a -> order.getOrDefault((String) a.get("priority"), 9)));
         return advice;
+    }
+
+    /** domain → {planlanan gün, not}; okunamazsa boş (öneriler plansız da doğru). */
+    private Map<String, String[]> renewalPlans() {
+        Map<String, String[]> out = new HashMap<>();
+        try {
+            List<Object[]> rows = inventoryRepo.findRenewalPlans();
+            if (rows == null) return out;
+            for (Object[] r : rows) {
+                if (r == null || r.length < 3 || r[0] == null || r[1] == null) continue;
+                out.putIfAbsent(String.valueOf(r[0]), new String[]{String.valueOf(r[1]), r[2] == null ? null : String.valueOf(r[2])});
+            }
+        } catch (RuntimeException e) {
+            log.debug("Yenileme planları okunamadı: {}", e.toString());
+        }
+        return out;
     }
 
     private Map<String, Object> buildAdvice(String domain, String code, String priority,

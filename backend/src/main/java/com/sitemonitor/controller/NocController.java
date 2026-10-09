@@ -145,6 +145,7 @@ public class NocController {
     @GetMapping("/coverage")
     public ResponseEntity<Map<String, Object>> coverage(@RequestParam(name = "team_id", required = false) Long teamId,
                                                         @RequestParam(required = false) String type,
+                                                        @RequestParam(name = "summary", required = false, defaultValue = "false") boolean summaryOnly,
                                                         HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         NocType t = null;
@@ -157,6 +158,8 @@ public class NocController {
             return error(403, "Bu takımın kapsamını görme yetkiniz yok");
         Predicate<NocMonitorDirectory.Row> vis = r -> visible(session, r);
         Predicate<NocMonitorDirectory.Row> edit = r -> canEdit(session, r.type(), r.teamId());
+        // ?summary=1 (Genel Bakış şeridi): yalnız sayılar — satır listesi kurulmaz (2026-10-09, performans)
+        if (summaryOnly) return ok(coverage.compute(teamId, t, vis, edit, Map.of(), false));
         return ok(coverage.compute(teamId, t, vis, edit, teamNames()));
     }
 

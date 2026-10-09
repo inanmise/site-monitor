@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, History, ShieldCheck, UserX } from 'lucide-react'
 import { api, formatDateSec } from '../../../../api/client'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
@@ -79,14 +79,19 @@ export default function UserStatsSheet({ username, days, onClose }) {
   const [error, setError] = useState(null)
   const open = !!username
 
+  // Yalnız EN SON isteğin yanıtı uygulanır: kişi / dönem hızlı değişince önceki kişinin geç gelen yanıtı yenisini ezmesin.
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     if (!username) return
     setError(null)
     try {
       const r = await api.loginMethodsAdmin.statsUser(username, days)
+      if (seq !== seqRef.current) return
       if (r?.success && r.data) setData(r.data)
       else setError(r?.error || t('lm.stats.user.err'))
     } catch (e) {
+      if (seq !== seqRef.current) return
       setError(e?.message || t('lm.stats.user.err'))
     }
   }, [username, days, t])

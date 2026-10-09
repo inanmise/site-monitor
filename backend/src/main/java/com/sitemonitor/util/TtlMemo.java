@@ -3,6 +3,8 @@ package com.sitemonitor.util;
 import java.util.Collection;
 import java.util.StringJoiner;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -21,7 +23,9 @@ import java.util.function.Supplier;
  *   <li>Sınırlı: anahtar sayısı {@code maxKeys}'e ulaşınca önce süresi dolanlar atılır, yine doluysa tümü temizlenir
  *       (kapsam kombinasyonu sayısı kullanıcı sayısıyla sınırlı; bellek büyümesin).</li>
  * </ul>
- * Aynı anda iki ıskalama iki kez hesaplar (kilit yok, bilinçli — PublicStats ile aynı); {@code null} sonuç saklanmaz.
+ * Süre dolumunda aynı anahtar için eşzamanlı ıskalamalar TEK hesabı paylaşır (2026-10-09, performans: İzleme Panosu ~31
+ * sorgu — 09:00 giriş dalgasında ya da dağıtımdan sonra N istek N kez hesaplıyordu); sahibi hata alırsa bekleyen kendi
+ * hesabını yapar. {@code fresh} istekler beklemez (eylem sonrası tazeleme). {@code null} sonuç saklanmaz.
  * Saklanan değer ÇAĞIRANLAR ARASINDA PAYLAŞILIR — değiştirilmemelidir (çağıran üst düzeyi kopyalayıp ekler).
  */
 public final class TtlMemo<V> {
@@ -29,6 +33,8 @@ public final class TtlMemo<V> {
     private record Entry<V>(V value, long at) {}
 
     private final ConcurrentHashMap<String, Entry<V>> map = new ConcurrentHashMap<>();
+    /** Şu an hesaplanan anahtarlar — bekleyenler aynı sonucu alır. */
+    private final ConcurrentHashMap<String, CompletableFuture<V>> inflight = new ConcurrentHashMap<>();
     private final int maxKeys;
     private final LongSupplier clock;
 
@@ -45,16 +51,39 @@ public final class TtlMemo<V> {
     public V get(String key, long ttlMs, boolean fresh, Supplier<V> compute) {
         if (ttlMs <= 0 || key == null) return compute.get();
         long now = clock.getAsLong();
-        if (!fresh) {
-            Entry<V> e = map.get(key);
-            if (e != null && now - e.at() < ttlMs) return e.value();
+        if (fresh) {
+            V v = compute.get();
+            store(key, v, clock.getAsLong(), ttlMs);
+            return v;
         }
-        V v = compute.get();
-        if (v != null) {
-            if (map.size() >= maxKeys && !map.containsKey(key)) evict(now, ttlMs);
-            map.put(key, new Entry<>(v, now));
+        Entry<V> e = map.get(key);
+        if (e != null && now - e.at() < ttlMs) return e.value();
+        CompletableFuture<V> mine = new CompletableFuture<>();
+        CompletableFuture<V> running = inflight.putIfAbsent(key, mine);
+        if (running != null) {
+            try {
+                return running.join();
+            } catch (CompletionException | java.util.concurrent.CancellationException ex) {
+                return compute.get();   // sahibi başarısız: bekleyen kendi hesabını yapar (bugünkü davranış)
+            }
         }
-        return v;
+        try {
+            V v = compute.get();
+            store(key, v, clock.getAsLong(), ttlMs);
+            mine.complete(v);
+            return v;
+        } catch (RuntimeException | Error ex) {
+            mine.completeExceptionally(ex);
+            throw ex;
+        } finally {
+            inflight.remove(key, mine);
+        }
+    }
+
+    private void store(String key, V v, long now, long ttlMs) {
+        if (v == null) return;
+        if (map.size() >= maxKeys && !map.containsKey(key)) evict(now, ttlMs);
+        map.put(key, new Entry<>(v, now));
     }
 
     private void evict(long now, long ttlMs) {

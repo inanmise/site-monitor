@@ -82,4 +82,36 @@ class TtlMemoTest {
         assertThat(TtlMemo.scopeKey(false, List.of(3L, 14L))).isEqualTo(TtlMemo.scopeKey(false, List.of(14L, 3L)));
         assertThat(TtlMemo.scopeKey(false, List.of(1L, 23L))).isNotEqualTo(TtlMemo.scopeKey(false, List.of(12L, 3L)));
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("süre dolumunda eşzamanlı ıskalamalar TEK hesabı paylaşır; sahibi hata alırsa bekleyen kendisi hesaplar")
+    void concurrentMissesComputeOnce() throws Exception {
+        TtlMemo<String> memo = new TtlMemo<>(10);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            java.util.concurrent.Future<String> owner = pool.submit(() -> memo.get("k", 60_000, false, () -> {
+                calls.incrementAndGet();
+                inside.countDown();
+                try { release.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                return "v";
+            }));
+            inside.await();
+            java.util.List<java.util.concurrent.Future<String>> waiters = new java.util.ArrayList<>();
+            for (int i = 0; i < 3; i++) waiters.add(pool.submit(() -> memo.get("k", 60_000, false, () -> { calls.incrementAndGet(); return "x"; })));
+            Thread.sleep(100);
+            release.countDown();
+            org.assertj.core.api.Assertions.assertThat(owner.get()).isEqualTo("v");
+            for (var w : waiters) org.assertj.core.api.Assertions.assertThat(w.get()).isEqualTo("v");
+            org.assertj.core.api.Assertions.assertThat(calls.get()).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+        // sahibi hata alır → hata sahibine yükselir, sonraki çağrı yeniden hesaplar (hata saklanmaz)
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> memo.get("e", 60_000, false, () -> { throw new IllegalStateException("boom"); }))
+                .isInstanceOf(IllegalStateException.class);
+        org.assertj.core.api.Assertions.assertThat(memo.get("e", 60_000, false, () -> "ok")).isEqualTo("ok");
+    }
 }

@@ -82,7 +82,6 @@ export default function IncidentsPage({ systemRole, teamId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [summary, setSummary] = useState(null)          // null = henüz bilinmiyor / alınamadı → kartlar çizilmez (uydurma sayı yok)
-  const [nowMs, setNowMs] = useState(Date.now())
   const [selectedId, setSelectedId] = useState(null)    // açık detay
   const [fallback, setFallback] = useState(null)        // sayfada olmayan (derin bağlantı) olay
   const [focusComposer, setFocusComposer] = useState(false)
@@ -171,12 +170,8 @@ export default function IncidentsPage({ systemRole, teamId }) {
     return () => { alive = false }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Süren olay varken süreler canlı (1 sn).
-  useEffect(() => {
-    if (!rows.some((r) => r.status === 'ongoing') && fallback?.status !== 'ongoing') return undefined
-    const i = setInterval(() => setNowMs(Date.now()), 1000)
-    return () => clearInterval(i)
-  }, [rows, fallback])
+  // Süren olayların süreleri canlı (1 sn) — saat sayfada DEĞİL, her sürenin kendi yaprağında (incidents/LiveDuration,
+  // 2026-10-09): sayfa düzeyindeki saniyelik saat state'i panonun/tablonun tamamını her saniye yeniden çiziyordu.
 
   // Değişmeyen yama durumu YENİLEMEZ: aynı değerle yeni nesne yeni istek demekti (gereksiz yeniden yükleme = titreme).
   const patchFilters = useCallback((patch) => setFilters((f) => (Object.keys(patch).every((k) => f[k] === patch[k]) ? f : { ...f, ...patch })), [])
@@ -336,9 +331,9 @@ export default function IncidentsPage({ systemRole, teamId }) {
           ) : (
             <>
               {view === 'board'
-                ? <IncidentBoard rows={visibleRows} nowMs={nowMs} onOpen={openDetail} selectedId={selectedId} phone={phone} />
+                ? <IncidentBoard rows={visibleRows} onOpen={openDetail} selectedId={selectedId} phone={phone} />
                 : (
-                  <IncidentsTable rows={visibleRows} nowMs={nowMs} sort={sort} onSort={toggleSort} onOpen={openDetail} selectedId={selectedId}
+                  <IncidentsTable rows={visibleRows} sort={sort} onSort={toggleSort} onOpen={openDetail} selectedId={selectedId}
                     phone={phone} isAdmin={isAdmin} onAck={ack} onResolve={resolve} onDelete={del} />
                 )}
               {/* Standart sayfalama çubuğu — pano da yüklenen sayfayı dağıtır */}

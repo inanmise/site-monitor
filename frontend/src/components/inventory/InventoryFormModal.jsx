@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useId } from 'react'
 import { Copy, FlaskConical, Trash2, RefreshCw, ShieldCheck, Globe, Users, Server, FolderOpen, ToggleRight, NotebookPen, FileUp } from 'lucide-react'
 import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
-import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
+// Markdown editörü (~1 MB) form açılıp Notlar alanı çizilince yüklenir; Envanter sekmesi onu açılışta taşımaz (2026-10-09).
+import LazyMdEditor from '../ui/mdEditor/LazyMdEditor.jsx'
 import { api, formatDateOnly } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -853,13 +854,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <FormField label={t('inv.formChangeDesc')} full>
             {({ id }) => (
               <div className="md-editor-box" data-color-mode={isDark ? 'dark' : 'light'}>
-                <MDEditor
+                {/* highlight: yazarken markdown kaynağı renkli (kütüphane varsayılanı highlightEnable=true, `common` girişi) */}
+                <LazyMdEditor highlight
                   value={form.change_description}
                   onChange={(v) => f('change_description', v ?? '')}
                   preview="edit"
                   height={260}
                   visibleDragbar={false}
-                  extraCommands={[copyCommand, mdCommands.divider, mdCommands.codeEdit, mdCommands.codePreview, mdCommands.fullscreen]}
+                  extraCommands={(mdCommands) => [copyCommand, mdCommands.divider, mdCommands.codeEdit, mdCommands.codePreview, mdCommands.fullscreen]}
                   textareaProps={{ id }}
                 />
               </div>

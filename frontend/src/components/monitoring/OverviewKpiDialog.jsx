@@ -11,6 +11,8 @@ import { useT } from '../../i18n/index.jsx'
 import { navigateTo } from '../../utils/navigate.js'
 import { formatDuration } from '../../utils/incidentMeta.js'
 import ModalShell from '../ui/ModalShell.jsx'
+// Telefonda tam ekran: kenarsız, köşesiz, güvenli alan payı (paylaşılan sabit).
+import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
@@ -25,9 +27,6 @@ import OverviewMonitorItem, { ItemRowActions } from './OverviewMonitorItem.jsx'
 import {
   ageMs, alertLevelCounts, alertRows, attentionRows, breakdown, formatAge, staleDetail,
 } from './overviewModel.js'
-
-/** Telefonda tam ekran (IncidentFormModal / ReportParts deseni): kenarsız, köşesiz, güvenli alan payı. */
-const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:p-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]'
 
 /** Pencerede en fazla bu kadar satır çizilir; kalanı "Listede süz" ile tabloda. */
 export const DIALOG_ROW_LIMIT = 50

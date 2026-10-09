@@ -134,8 +134,9 @@ export default function MaintenanceWindowsPage({ systemRole, teamId, teamName, g
   const activeWindows = useMemo(() => enriched.filter(TILE_PRED.active).map((x) => x.w), [enriched])
   const filtered = useMemo(() => sortWindows(filter ? enriched.filter((x) => TILE_PRED[filter](x, now)) : enriched).map((x) => x.w), [enriched, filter, now])
   const pager = usePagination(filtered, { listKey: 'maintenance-windows', preset: 'page', resetDeps: [filter] })
-  // Takvim olayları: ±60 günlük oluşumlar (tekrarlayanlar açılır); süren oluşum amber, diğerleri mavi.
-  const calEvents = useMemo(() => (view !== 'calendar' ? [] : rows.flatMap((w) => occurrences(w, now - 30 * DAY_MS, now + 60 * DAY_MS, { limit: 40 }).map((o) => ({
+  // Takvim olayları: −30…+60 günlük oluşumlar (tekrarlayanlar açılır); süren oluşum amber, diğerleri mavi. Sınır 92 =
+  // 91 günlük aralığın tamamı (2026-10-09: 40'ta kesiliyordu → GÜNLÜK pencere takvimde ~10 gün sonra kayboluyordu).
+  const calEvents = useMemo(() => (view !== 'calendar' ? [] : rows.flatMap((w) => occurrences(w, now - 30 * DAY_MS, now + 60 * DAY_MS, { limit: 92 }).map((o) => ({
     date: toIso(o.start), label: w.name, title: `${w.name} · ${range(o.start, o.end, w.timezone)}`,
     tone: o.start <= now && o.end > now ? 'warn' : 'info', onClick: canManage ? () => openEdit(w) : undefined,
   })))), [view, rows, now, range, canManage])   // eslint-disable-line react-hooks/exhaustive-deps

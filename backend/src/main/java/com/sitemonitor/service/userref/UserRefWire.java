@@ -6,6 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.util.RawValue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,6 +50,20 @@ public final class UserRefWire {
 
     private static final Pattern DIGITS = Pattern.compile("^[0-9]{1,18}$");
 
+    /**
+     * Hızlı yol tetikleyicisi: yazılmış JSON'da çevrilecek bir ÖZELLİK ADI var mı ({@code "user_id":}, {@code "changes":},
+     * {@code "resource_type":} …). Yoksa {@link #rewrite} hiçbir şeyi değiştirmez — ağaç kurmaya gerek yok.
+     */
+    private static final Pattern TRIGGER_NAME;
+
+    static {
+        java.util.Set<String> names = new java.util.TreeSet<>(KEYS);
+        names.addAll(JSON_TEXT_KEYS);
+        names.add("resource_type");
+        names.add("resourceType");
+        TRIGGER_NAME = Pattern.compile("\"(?:" + String.join("|", names) + ")\":");
+    }
+
     /** Ağaç kurulurken etkin çevirici — yalnız {@link #toOpaque} içinde dolu (depolama serileştirmesi etkilenmez). */
     private static final ThreadLocal<Function<Long, String>> CTX = new ThreadLocal<>();
 
@@ -83,6 +98,25 @@ public final class UserRefWire {
         }
         rewrite(tree, json, lookup);
         return tree;
+    }
+
+    /**
+     * Performans yolu (2026-10-09): gövdeyi AYNI bağlamla ({@link UserRef} / {@code AppUser.id} opak) bir kez metne yazar;
+     * metinde çevrilecek özellik adı yoksa sonucu ham JSON ({@link RawValue}) olarak döndürür — dönüştürücü onu olduğu gibi
+     * yazar. Ad varsa {@link #toOpaque} (bugünkü tam yol). Çıktı iki yolda da aynıdır; hızlı yol yalnız ağaç kurma + ağacı
+     * yeniden yazma maliyetini (en büyük yoklanan yanıtlarda ~3× serileştirme CPU'su ve MB'larca çöp) atlar.
+     */
+    public static Object toOpaqueFast(Object body, ObjectMapper json, Function<Long, String> lookup) {
+        if (body instanceof JsonNode) return toOpaque(body, json, lookup);
+        String text;
+        CTX.set(lookup);
+        try {
+            text = json.writeValueAsString(body);
+        } finally {
+            CTX.remove();
+        }
+        if (!TRIGGER_NAME.matcher(text).find()) return new RawValue(text);
+        return toOpaque(body, json, lookup);
     }
 
     /** Ağacı yerinde çevirir (yalnız taze ağaç için). */

@@ -84,20 +84,23 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
   }
 
   const disabled = !!busy
-  // Alan bölmesi: ikon + seçici + "Uygula" — solunda ince ayraç (ui/BulkActionBar ile aynı dil).
-  const fieldCls = 'inline-flex items-center gap-1.5 border-l border-border pl-2 text-muted-foreground'
+  // Alan bölmesi: ikon + seçici + "Uygula" — solunda ince ayraç (ui/BulkActionBar ile aynı dil). Telefonda (< 640 px)
+  // bölmeler SARAR ve her biri satır başına iner: ayraç orada sol kenarda boşta kalan bir çizgiydi → yalnız sm+.
+  const fieldCls = 'inline-flex items-center gap-1.5 border-border text-muted-foreground sm:border-l sm:pl-2'
+  // Dokunmatikte (pointer: coarse) 40 px hedef — ui/BulkActionBar ile aynı; fare/klavyede yoğun görünüm değişmez.
+  const TOUCH = 'pointer-coarse:h-10'
   const selectAllLabel = allVisibleSelected ? t('bulk.unselectAll') : t('bulk.selectAll')
   return (
     // Görünüm Tailwind + shadcn (ui/BulkActionBar ile aynı yapışkan çubuk); eski App.css .bulkbar* ailesi yerine.
     <div data-slot="cert-bulk-bar" role="region" aria-label={t('bulk.aria')}
       className="sticky top-16 z-20 mb-2.5 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg md:top-2">
-      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground"
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground pointer-coarse:size-10"
         onClick={onToggleAll} title={selectAllLabel} aria-label={selectAllLabel}>
         {allVisibleSelected ? <CheckSquare size={15} /> : <Square size={15} />}
       </Button>
       <span className="font-bold">{t('bulk.selected', domains.length)}</span>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button type="button" size="sm" disabled={disabled} onClick={checkAll}>
+        <Button type="button" size="sm" className={TOUCH} disabled={disabled} onClick={checkAll}>
           {busy === 'check' ? <Spinner size={12} inline decorative /> : <Play size={13} />}
           {busy === 'check' && progress != null ? `${progress}/${domains.length}` : t('tbl.bulkCheck')}
         </Button>
@@ -108,7 +111,7 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
               <SearchableSelect value={tier} onChange={setTier} ariaLabel={t('tbl.colTier')}
                 options={[{ value: '', label: t('tbl.tierPick') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('tbl.tierClear') }]} />
             </span>
-            <Button type="button" variant="secondary" size="sm" disabled={disabled || !tier}
+            <Button type="button" variant="secondary" size="sm" className={TOUCH} disabled={disabled || !tier}
               onClick={() => bulk('tier', 'set-tier', tier === 'none' ? {} : { tier: Number(tier) })}>
               {busy === 'tier' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTier')}
             </Button>
@@ -121,20 +124,20 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
               <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('app.teamLabel')}
                 options={[{ value: '', label: t('tbl.teamPick') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
             </span>
-            <Button type="button" variant="secondary" size="sm" disabled={disabled || !teamId}
+            <Button type="button" variant="secondary" size="sm" className={TOUCH} disabled={disabled || !teamId}
               onClick={() => bulk('team', 'set-team', { team_id: Number(teamId) })}>
               {busy === 'team' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTeam')}
             </Button>
           </span>
         )}
         {canManage && (
-          <Button type="button" variant="destructive" size="sm" disabled={disabled} onClick={deactivate}>
+          <Button type="button" variant="destructive" size="sm" className={TOUCH} disabled={disabled} onClick={deactivate}>
             {busy === 'deactivate' ? <Spinner size={12} inline decorative /> : <PowerOff size={13} />}{t('tbl.bulkDeactivate')}
           </Button>
         )}
-        <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={csv}><Download size={13} />CSV</Button>
+        <Button type="button" variant="secondary" size="sm" className={TOUCH} disabled={disabled} onClick={csv}><Download size={13} />CSV</Button>
       </div>
-      <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground"
+      <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground pointer-coarse:size-10"
         onClick={onClear} aria-label={t('bulk.unselectAll')}>
         <X size={14} />
       </Button>

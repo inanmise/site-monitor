@@ -15,9 +15,9 @@ export const DISMISS_KEY = 'sm.noc.bannerDismissed'
  * Pano önbelleği: aynı `refreshKey` (Pano'nun son güncelleme damgası) için ikinci istek YOK — sekmeler arası gidip
  * gelmek kapsamı yeniden çekmez; Pano 5 dk'da bir tazelendiğinde (yeni damga) bir kez tazelenir. Kendi yoklaması YOK.
  */
-const cache = { key: undefined, data: null, at: 0 }
-/** Testler için: önbelleği sıfırla. */
-export function resetNocBannerCache() { cache.key = undefined; cache.data = null; cache.at = 0 }
+const cache = { key: undefined, data: null, at: 0, pending: null }
+/** Testler için: önbelleği sıfırla (uçuştaki istek de bırakılır — kapsam değiştiyse eski yanıt benimsenmez). */
+export function resetNocBannerCache() { cache.key = undefined; cache.data = null; cache.at = 0; cache.pending = null }
 /** Girişte Pano damgası henüz yokken (null) çekilen veri, damga ilk geldiğinde tekrar çekilmez (çift istek olmasın). */
 const ADOPT_MS = 60_000
 // Kapsam değişti (aç/kapa, toplu, izleme formu, 7/24 ayarları — utils/nocCoverageEvent): şerit o an Pano'da DEĞİLKEN de
@@ -51,14 +51,28 @@ export default function NocCoverageBanner({ globalAdmin = false, refreshKey = nu
     if (cache.data && cache.key === null && refreshKey != null && Date.now() - cache.at < ADOPT_MS) cache.key = refreshKey
     if (cache.key === refreshKey && cache.data) { setData(cache.data); return undefined }
     let alive = true
-    api.noc.coverage()
-      .then((res) => {
-        const r = unwrap(res)
-        if (!alive || !r.ok || !r.data) return
-        cache.key = refreshKey; cache.data = r.data; cache.at = Date.now()
-        setData(r.data)
-      })
-      .catch(() => { /* şerit en iyi-çaba: hata sessiz, Pano etkilenmez */ })
+    // Uçuştaki istek paylaşılır (2026-10-09): girişte damga yokken (null) başlayan istek, damga gelince İKİNCİ kez
+    // atılmaz — aynı yanıt yeni damgayla önbelleğe yazılır. Yalnız özet istenir (satır listesi şeride gerekmez).
+    let req = cache.pending
+    if (req && (req.key === refreshKey || req.key === null)) req.key = refreshKey
+    else {
+      req = { key: refreshKey, promise: null }
+      const mine = req
+      mine.promise = Promise.resolve(api.noc.coverage({ summary: true }))
+        .then((res) => {
+          const r = unwrap(res)
+          if (cache.pending === mine) {
+            cache.pending = null
+            if (r.ok && r.data) { cache.key = mine.key; cache.data = r.data; cache.at = Date.now() }
+          }
+          return r
+        })
+        .catch(() => { if (cache.pending === mine) cache.pending = null; return null })
+      cache.pending = mine
+    }
+    req.promise.then((r) => {
+      if (alive && r?.ok && r.data) setData(r.data)
+    }).catch(() => { /* şerit en iyi-çaba: hata sessiz, Pano etkilenmez */ })
     return () => { alive = false }
   }, [refreshKey, dismissed, changed])
 

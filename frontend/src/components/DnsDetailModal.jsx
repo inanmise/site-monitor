@@ -6,7 +6,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
 import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
-import { Clock, Server, FileText, Route, Stethoscope } from 'lucide-react'
+import { Clock, Server, FileText, Route, Stethoscope, CheckCircle2, XCircle } from 'lucide-react'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 import { Button } from '@/components/shadcn/button'
 import AlertHistory from './admin/AlertHistory'
@@ -137,16 +137,19 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                                         // Uçtan uca tanılama (2026-10-05): sayfa satırın `can_diagnose` bayrağına göre verir;
                                         // verilmezse başlıkta düğme ve geçmiş panelinde "Bu kontrolü tanıla" çizilmez.
                                         canDiagnose = false, onDiagnose,
+                                        // Değişiklik geçmişinden geri alma sonrası (2026-10-09): sayfa listeyi + bu pencerenin kopyasını tazeler.
+                                        onRestored,
                                         histReload = 0, children }) {
   const t = useT()
-  const [details, setDetails] = useState(null)
-  const [loadError, setLoadError] = useState(null)
+  // Ayrıntı yanıtı ve AİT OLDUĞU izleme (2026-10-09): { id, data, error }. Başka izlemenin yanıtı bu pencerede çizilmez.
+  const [detailsState, setDetailsState] = useState({ id: null, data: null, error: null })
   // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
   const failRows = useFailureRows()
-  // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.
-  const monitorIdRef = useRef(null)
-  monitorIdRef.current = monitor?.id ?? null
-  const [loading, setLoading] = useState(true)
+  // Yalnız EN SON istek yazar — D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın; aynı
+  // izlemede art arda "Şimdi kontrol et" yanıtları da sırayla gelmeyebilir.
+  const detailsSeq = useRef(0)
+  const monitorId = monitor?.id ?? null
+  const recordType = monitor?.record_type
   const [activeTab, setActiveTab] = useState(
     monitor?.record_type && RECORD_TYPES.includes(monitor.record_type) ? monitor.record_type : 'A'
   )
@@ -157,31 +160,40 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
     mtab: detailTab !== 'control' ? detailTab : null,
   })
 
-  // Details — bir kez yüklenir, monitor değişene kadar tutulur
+  // Kayıt türü alt sekmesi YALNIZ izleme ya da kayıt türü değişince izlenen türe döner (2026-10-09). Eskiden ayrıntı
+  // efektinin içindeydi ve `monitor` NESNESİNE bağlıydı: "Şimdi kontrol et" / "Sürdür" sayfanın kopyasını değiştirince
+  // kullanıcının seçtiği alt sekme sıfırlanıyordu.
+  useEffect(() => {
+    if (recordType && RECORD_TYPES.includes(recordType)) setActiveTab(recordType)
+  }, [monitorId, recordType])
+
+  // Ayrıntı: pencere açılınca ve sayfa kopyayı tazeleyince (Şimdi kontrol et / kayıt / geri alma) yeniden okunur — canlı
+  // kayıtlar ve özet yeni sonuçla gelsin. Ama SESSİZCE (2026-10-09): eldeki ayrıntı yeni yanıt gelene kadar çizili kalır.
+  // Eskiden her okumada Kontrol sekmesi bekleme göstergesine dönüyor, altındaki Kontrol Geçmişi SÖKÜLÜYORDU — seçilen
+  // aralık / sayfa / süzgeç ve adresteki parametreleri kayboluyordu.
+  // .catch ŞART: request() ağ hatasında throw eder; yoksa pencere "ayrıntılar yükleniyor"da asılı kalırdı.
   useEffect(() => {
     if (!monitor) return
-    setLoading(true)
-    if (monitor.record_type && RECORD_TYPES.includes(monitor.record_type)) {
-      setActiveTab(monitor.record_type)
-    }
     const reqId = monitor.id
-    // .catch YOKTU: request() ag hatasinda throw eder ve setLoading(false) hic calismiyordu —
-    // modal "ayrintilar yukleniyor"da asili kaliyordu. Yaris guard'ina DOKUNULMADI: bastirilan
-    // ESKI yanitta loading'i temizlemek YANLIS olurdu, cunku yeni istek hala ucusta ve onu o
-    // temizleyecek; guard yalnizca kendi sonucunu yazmaktan vazgeciyor.
-    api.monitoring.getDnsDetails(monitor.id)
+    const my = ++detailsSeq.current
+    const kept = (prev) => (prev.id === reqId ? prev.data : null)   // aynı izlemenin eldeki ayrıntısı hata anında kalır
+    api.monitoring.getDnsDetails(reqId)
       .then(d => {
-        if (reqId !== monitorIdRef.current) return   // D12: uçuşan yanıt guard'ı
-        if (d?.success) { setDetails(d.data); setLoadError(null) }
-        else setLoadError(d?.error || 'load failed')
-        setLoading(false)
+        if (my !== detailsSeq.current) return   // D12: uçuşan (bayat) yanıt guard'ı
+        setDetailsState(prev => (d?.success
+          ? { id: reqId, data: d.data, error: null }
+          : { id: reqId, data: kept(prev), error: d?.error || 'load failed' }))
       })
       .catch(e => {
-        if (reqId !== monitorIdRef.current) return
-        setLoadError(e?.message || 'network error')
-        setLoading(false)
+        if (my !== detailsSeq.current) return
+        setDetailsState(prev => ({ id: reqId, data: kept(prev), error: e?.message || 'network error' }))
       })
   }, [monitor])
+
+  const mine = monitorId != null && detailsState.id === monitorId
+  const details = mine ? detailsState.data : null
+  const loadError = mine ? detailsState.error : null
+  const loading = !mine   // bu izlemenin İLK yanıtı henüz gelmedi (yeniden okuma göstergesiz)
 
   if (!monitor) return null
 
@@ -239,10 +251,18 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
         </MonitorModalActions>
       }>
       <DetailDivider className="mt-0" />
-      {/* Canlı sorgu özeti (eski .dns-modal-summary). Yüklenirken sonuç henüz yok → "—" (eskiden "✗ ERROR" yanıp sönüyordu). */}
+      {/* Canlı sorgu özeti (eski .dns-modal-summary). Yüklenirken sonuç henüz yok → "—" (eskiden "✗ ERROR" yanıp sönüyordu).
+          Durum metni arayüz dilinde + lucide simgesi (2026-10-09; eskiden sabit "✓ SUCCESS" / "✗ ERROR"). */}
       <DetailSummary items={[
         { key: 'live', label: t('dns.status'),
-          value: loading ? '—' : live?.success ? '✓ SUCCESS' : `✗ ${live?.error || 'ERROR'}`,
+          value: loading ? '—' : (
+            <span data-slot="dns-live-status" data-ok={live?.success ? 'true' : 'false'} className="inline-flex items-center gap-1">
+              {live?.success
+                ? <CheckCircle2 size={15} aria-hidden="true" className="shrink-0" />
+                : <XCircle size={15} aria-hidden="true" className="shrink-0" />}
+              <span className="min-w-0 [overflow-wrap:anywhere]">{live?.success ? t('dns.liveOk') : (live?.error || t('dns.liveFail'))}</span>
+            </span>
+          ),
           valueClassName: loading ? undefined : live?.success ? 'text-success' : 'text-destructive' },
         { key: 'ms', value: live?.response_ms != null ? `${live.response_ms}ms` : '—', label: t('dns.responseMs') },
         { key: 'ttl', value: live?.ttl != null ? `${live.ttl}s` : '—', label: t('dns.ttl') },
@@ -254,12 +274,15 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
         tabs={[['control', t('dns.tabControl')], ['alerts', t('dns.tabAlerts')], ['chart', t('dns.tabChart')],
           ['notes', t('dns.tabGuide')], ['changes', t('chg.tab')]]}>
         <TabsContent value="control">
+          {/* Bekleme göstergesi YALNIZ bu izlemenin ilk ayrıntısı gelene kadar; sonraki okumalar içeriği (ve altındaki
+              Kontrol Geçmişi'ni) sökmez. Yeniden okuma düşerse eldeki ayrıntı kalır, hata üstte söylenir. */}
           {loading ? (
             <LoadingBlock label={t('dns.loadingDetails')} />
-          ) : loadError ? (
+          ) : loadError && !details ? (
             <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">{String(loadError)}</AlertBanner>
           ) : (
             <div className="flex flex-col gap-4">
+              {loadError && <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">{String(loadError)}</AlertBanner>}
               {/* Kayıt türleri — alt sekmeler (shadcn Tabs); boş tür soluk ama seçilebilir */}
               <DnsSection title={t('dns.recordTypes')}>
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-2.5">
@@ -441,7 +464,8 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
         <TabsContent value="changes">
           <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
             {/* Takım adları sayfadan gelir; modal takım listesini kendisi çekmez (tek istek yeter). */}
-            <ChangeHistoryTab t={t} kind="dns" monitorId={monitor.id} teamNames={teamNames} canManage={canManage} />
+            <ChangeHistoryTab t={t} kind="dns" monitorId={monitor.id} teamNames={teamNames} canManage={canManage}
+              onRestored={onRestored} />
           </Suspense>
         </TabsContent>
       </DetailTabs>

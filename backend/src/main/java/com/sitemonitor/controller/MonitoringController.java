@@ -481,6 +481,12 @@ public class MonitoringController {
                 .orElse(notFound("Kayıt bulunamadı"));
     }
 
+    /** Geri yüklemede HİÇ yazılmayan alanlar (gerekçe restoreChange içinde). */
+    private static final Set<String> RESTORE_SKIP = Set.of("teamId", "groupName", "standalone");
+    /** Sentetik izlemede ayrıca script/description: snapshot'ta kırpılırlar, betik sürüm geçmişinden döner. */
+    private static final Set<String> RESTORE_SKIP_SCRIPTED =
+            Set.of("teamId", "groupName", "standalone", "script", "description");
+
     /** Geri döndürülebilir türler → (kayıt bul, kaydet, snapshot alanları). Diğerleri 400 alır. */
     private java.util.Optional<?> findRestorable(String kind, Long id) {
         return switch (kind) {
@@ -553,6 +559,10 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         String resolved = MonitorHistoryService.KIND_BY_PATH.get(kind == null ? "" : kind.toLowerCase(Locale.ROOT));
         if (resolved == null) return badRequest("Bilinmeyen kaynak türü: " + kind);
+        // Sentetik izleme k6 = keyfi kod: oluşturma/güncelleme monitoring.scripted/edit ister
+        // (USER'a kapalı). Geri yükleme de bir güncellemedir — monitoring.crud ile atlatılamaz.
+        if (MonitorHistoryService.SCRIPTED.equals(resolved))
+            permissionService.require(session, "monitoring.scripted", "edit");
 
         var rowOpt = changeLogRepo.findByResourceKindAndResourceIdAndSeq(resolved, id, seq);
         if (rowOpt.isEmpty()) return notFound("Kayıt bulunamadı");
@@ -588,8 +598,10 @@ public class MonitoringController {
         // standalone: KİMLİK/YETKİ alanı — envanter-türevi DNS'i düzenlemek/silmek requireAdmin
         // isterken restore yalnız canManage istiyor. Geri yüklenebilseydi bir TEAM_ADMIN monitörün
         // yetki sınıfını çevirebilir (ve kısmi unique index ile çakışıp 500 üretebilirdi).
+        // script/description (yalnız SENTETİK): snapshot'ta 512 karakterde kırpılırlar; betik kendi
+        // sürüm geçmişinden (script versions → RESTORE) geri yüklenir, buradan YAZILMAZ.
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields,
-                java.util.Set.of("teamId", "groupName", "standalone"));
+                MonitorHistoryService.SCRIPTED.equals(resolved) ? RESTORE_SKIP_SCRIPTED : RESTORE_SKIP);
         List<String> maskedSkipped = result.get(1);
 
         // "Yazılan alan" ile "DEĞİŞEN alan" aynı şey değil: snapshot güncel değerin aynısını
@@ -2910,7 +2922,10 @@ public class MonitoringController {
         if (!KW_OPERATORS.contains(op)) op = "GTE";
         int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
         int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 10000);   // N3: test ucu da tavanlı
-        String customHeaders = body.get("customHeaders") != null ? body.get("customHeaders").toString() : null;
+        // Özel başlık YALNIZ global admin (kardeşleriyle aynı kural: keyword create/update, HTTP test, PageSpeed) —
+        // aksi hâlde "Test" ucu, kaydetmede reddedilen keyfi başlıkla (Host, Authorization …) istek attırırdı.
+        String customHeaders = SessionScope.isGlobalAdmin(session) && body.get("customHeaders") != null
+                ? body.get("customHeaders").toString() : null;
         boolean caseSensitive = Boolean.TRUE.equals(body.get("caseSensitive"));
         // N1: oturum başına tek eşzamanlı test — istek iş parçacığı havuzu tek oturumca tüketilemesin.
         String slot = testSlot(session, "keyword");
@@ -4803,16 +4818,30 @@ public class MonitoringController {
             if (body.containsKey("env"))
                 com.sitemonitor.service.ScriptedEnvPolicy.validateForSave(body.get("env"), storedEnvValues(m.getEnvJson()));
             String oldName = m.getName();
+            // Ad takım içinde TEKİLDİR (create ile aynı kural): alarm anahtarı monitör adı olduğu için aynı takımda iki
+            // aynı adlı izleme alarmlarını paylaşırdı. Yalnız ad ya da takım DEĞİŞİYORSA denetlenir — eski mükerrer kayıtların
+            // ilgisiz düzenlemesi (aralık vb.) reddedilmesin.
+            String intendedName = body.get("name") != null ? body.get("name").toString().trim() : oldName;
+            Long intendedTeam = body.containsKey("teamId")
+                    ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
+            if (intendedName != null
+                    && (!intendedName.equals(oldName) || !Objects.equals(intendedTeam, m.getTeamId()))
+                    && scriptedMonitorRepo.existsDuplicate(intendedName, intendedTeam, id))
+                return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer izleme oluşturulamaz.");
             if (body.get("name")   != null) m.setName(body.get("name").toString().trim());
             // Rename: scripted alarm anahtarı monitör ADI (diğer türlerde gerçek hedef URL/host) — ad
             // değişirse açık SCRIPTED_FAIL alarmının bağı kopar (delete akışı 'resolveOpenAlertsSilently'
-            // ile telafi ediyor ama rename etmiyordu). Açık alarmı yeni ada taşı.
+            // ile telafi ediyor ama rename etmiyordu). Açık alarmı yeni ada taşı — YALNIZ bu izlemenin
+            // olayını: ad yalnız takım içinde tekil, aynı addaki BAŞKA takımın açık alarmı taşınmaz
+            // (sahiplik kuralı silme/duraklatmadakiyle aynı: EscalationService.closableBy).
             if (oldName != null && !oldName.equals(m.getName())) {
+                Map<String, Object> owner = ownerCtx(m.getId(), m.getTeamId(), null);
                 for (String t : List.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW)) {
-                    alertEventRepo.findOpenAlert(oldName, t).ifPresent(a -> {
+                    for (com.sitemonitor.model.AlertEvent a : alertEventRepo.findOpenAlerts(oldName, t)) {
+                        if (!EscalationService.closableBy(a, owner)) continue;
                         a.setDomain(m.getName());
                         alertEventRepo.save(a);
-                    });
+                    }
                 }
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -5752,7 +5781,7 @@ public class MonitoringController {
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST), ownerCtx(m.getId(), m.getTeamId(), null));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), DOMAINMON_ALERT_TYPES, ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -5781,6 +5810,16 @@ public class MonitoringController {
         return t;
     }
 
+    /**
+     * Alan adı izlemesinin açtığı TÜM alarm türleri — duraklatma, silme ve kontrol geçmişi kesinti katmanı TEK listeden
+     * okur. Silme ve geçmiş eskiden dört türde kalmıştı: silinen izlemenin TRANSFER_LOCK / BLACKLIST alarmı sonsuza kadar
+     * açık kalıyor, geçmiş ekranı bu kesintileri hiç çizmiyordu.
+     */
+    static final Set<String> DOMAINMON_ALERT_TYPES = Set.of(
+            EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
+            EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED,
+            EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST);
+
     @DeleteMapping("/domain/{id}")
     public ResponseEntity<Map<String, Object>> deleteDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
@@ -5788,9 +5827,8 @@ public class MonitoringController {
         Map<String, Object> _before = domainMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return domainMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
-            escalationService.resolveOpenAlertsSilently(m.getDomain(),
-                    Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
-                           EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
+            // Duraklatmayla AYNI altı tür (tek sabit): TRANSFER_LOCK / BLACKLIST silmede kapanmıyor, sahipsiz kalıyordu.
+            escalationService.resolveOpenAlertsSilently(m.getDomain(), DOMAINMON_ALERT_TYPES,
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             if (domainReminderRepo != null) domainReminderRepo.deleteByMonitorId(m.getId());   // hatırlatma izleri de gider (2026-09-22)
             domainMonitorRepo.delete(m);
@@ -5825,8 +5863,7 @@ public class MonitoringController {
             public List<Object[]> bounds() { return domainCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "domain",
-                mon.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
-                        EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
+                mon.getDomain(), DOMAINMON_ALERT_TYPES,
                 from, to, days, status, page, size, format, "domain-history-" + id, List.of(
                 new CsvColumn<>("checked_at", DomainCheck::getCheckedAt),
                 new CsvColumn<>("status", DomainCheck::getStatus),

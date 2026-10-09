@@ -5,14 +5,11 @@ import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { Trash2, Globe, X, Pencil, History, Stethoscope, Play, RefreshCw, StickyNote,
   ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package, FileClock, Layers } from 'lucide-react'
-import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import CertNotesTab from './certmodal/CertNotesTab.jsx'
-import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { deleteInventoryByDomain } from '../utils/deleteInventory.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
-import { InventoryTab } from './inventory/InventoryDetails.jsx'
 import ReadOnlyBadge from './ui/ReadOnlyBadge.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import { CheckRunningStrip, MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
@@ -63,6 +60,11 @@ const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
 const CertChangesTab = lazy(() => import('./certmodal/CertChangesTab.jsx'))
 // Manuel (dosyadan yüklenen) kayıt (2026-10-06): sürüm geçmişi + "Yeni sürüm yükle" — yalnız o kayıtlarda yüklenir.
 const ManualCertVersions = lazy(() => import('./manualcert/ManualCertVersions.jsx'))
+// Yalnız kendi sekmesinde / düğmesinde görünenler de ilk kullanımda yüklenir (2026-10-09, açılış grafiği küçültme):
+// Alarm geçmişi (olay formu → Markdown editörü, gürültü grafiği), tanılama penceresi, envanter ayrıntısı.
+const AlertHistory = lazy(() => import('./admin/AlertHistory'))
+const DiagnosticsModal = lazy(() => import('./admin/DiagnosticsModal.jsx'))
+const InventoryTab = lazy(() => import('./inventory/InventoryDetails.jsx').then((m) => ({ default: m.InventoryTab })))
 
 /** Başlık durum rozeti tonu (eski .modal-status-*). */
 const STATUS_TONE = {
@@ -79,6 +81,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // başlıkta salt okunur rozet + sahibi takım (`readOnlyTeam: { id, name }`). Okuma sekmeleri (SSL, sağlık, geçmiş, envanter, notlar) açık.
   readOnly = false, readOnlyTeam = null,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
+  // Pencere içinden veri değişti (manuel sertifika yeni sürümü, 2026-10-09): çağıran (Pano) kart listesini tazeler.
+  onDataChanged,
   // Yeniden adlandırma (2026-10-08): pencere açıkken kayıt `renamedFrom` → `domain` adına geçtiyse veri yeni adla yeniden
   // okunur ama kullanıcı bulunduğu sekmede kalır (yeni bir pencere açılmış gibi SSL'e atılmaz).
   renamedFrom = null,
@@ -211,9 +215,14 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     if (isNew && silent) toastRef.current.success(tRef.current('modal.newCheck'))
   }, [])
 
-  // Envanter formu kaydedince (başlıktaki Düzenle) modal verisi hemen tazelenir. 0 = ilk mount,
-  // tazeleme yok.
-  useEffect(() => { if (refreshSignal) refreshCert(false) }, [refreshSignal, refreshCert])
+  // Envanter formu kaydedince (başlıktaki Düzenle) modal verisi hemen tazelenir. Yalnız sinyal DEĞİŞİNCE: pencere artık
+  // yalnız açıkken bağlı (2026-10-09) — yeniden bağlanırken sıfır olmayan sayaç ilk yüklemeye ek, gereksiz bir istek atmasın.
+  const refreshSeenRef = useRef(refreshSignal)
+  useEffect(() => {
+    if (!refreshSignal || refreshSignal === refreshSeenRef.current) return
+    refreshSeenRef.current = refreshSignal
+    refreshCert(false)
+  }, [refreshSignal, refreshCert])
 
   // Modal açıkken yeni bir kontrol geçmişi kaydı düşerse kendiliğinden tazelenir. Cadence ve
   // görünürlük kuralı Kontrol Geçmişi sekmesinin canlı yenilemesiyle AYNI (30 sn, gizli sekmede
@@ -278,6 +287,20 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       setSslLoading(false)
     }).catch((e) => { if (mySeq === sslSeq.current) { setSslError(e?.message || ''); setSslLoading(false) } })
   }, [])
+
+  // Manuel sertifikaya yeni sürüm yüklendi (2026-10-09, hata düzeltmesi): SSL sekmesi ESKİ sürümün çevrim-dışı önizlemesini
+  // göstermeye devam ediyordu (sslData doluyken yeniden probe edilmez). Uçuştaki probe geçersizlenir, veri boşaltılır →
+  // SSL sekmesi açıksa yeni sürümle yeniden çizilir; kart/geçmiş tazelenir; Pano kartı da (onDataChanged) güncellenir.
+  const onDataChangedRef = useRef(onDataChanged)
+  onDataChangedRef.current = onDataChanged
+  const handleRenewed = useCallback(() => {
+    sslSeq.current++
+    setSslLoading(false)
+    setSslError(null)
+    setSslData(null)
+    refreshCert(false)
+    try { onDataChangedRef.current?.() } catch { /* çağıranın tazelemesi pencereyi bozmasın */ }
+  }, [refreshCert])
 
   const sslUpload = isUploadResult(sslData)
   const isManual = !!manual || manualDetected || isManualCert(certData) || sslUpload
@@ -520,7 +543,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* Manuel kayıt (2026-10-06): sürümler — yeni sürüm yüklenince pencere verisi de tazelenir */}
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
               {/* key YALNIZ alan adı: tazeleme sayacıyla yeniden bağlansaydı açık yükleme sihirbazı (sonuç adımı) kapanırdı */}
-              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={() => refreshCert(false)} />
+              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={handleRenewed} />
             </Suspense>
           </TabsContent>
         )}
@@ -549,7 +572,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {!previewMode && !readOnly && (
           <TabsContent value="alerts">
-            <AlertHistory key={reloadKey} domain={domain} />
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <AlertHistory key={reloadKey} domain={domain} />
+            </Suspense>
           </TabsContent>
         )}
 
@@ -565,7 +590,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           <TabsContent value="inventory">
             {/* Envanter Bilgileri (2026-09-28 yeniden tasarım): "Kaydı düzenle" başlıktaki Düzenle ile AYNI işleyici (salt
                 okunurda yok); "Envanterde aç" pencereyi kapatıp Envanter ekranında kaydın panelini açar. */}
-            <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
+            </Suspense>
           </TabsContent>
         )}
 
@@ -588,7 +615,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       </Tabs>
     </ModalShell>
     {showDiag && (
-      <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
+      <Suspense fallback={null}>
+        <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
+      </Suspense>
     )}
     </>
   )

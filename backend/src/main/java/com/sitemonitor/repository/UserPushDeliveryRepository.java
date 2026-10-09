@@ -59,6 +59,19 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
                       @Param("httpStatus") Integer httpStatus, @Param("error") String error,
                       @Param("sentAt") String sentAt, @Param("nextAttemptAt") String nextAttemptAt);
 
+    /**
+     * Çözüm anında hâlâ GÖNDERİLMEMİŞ (PENDING — ağ geçidi yeniden denemesi / devre kesici bekletmesi) açılış, eskalasyon,
+     * tekrar satırlarını iptal eder (2026-10-09). Yoksa alarm düzeldikten SONRA "DÜŞTÜ" push'u gidiyor, açılışta SENT satır
+     * olmadığı için "DÜZELDİ" hiç gitmiyordu — telefon sonsuza kadar "düştü" gösteriyordu. Çözüm satırına dokunmaz.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.status = :status, d.nextAttemptAt = NULL
+           WHERE d.alertEventId = :eventId AND d.status = 'PENDING' AND d.trigger <> 'RESOLVE'
+           """)
+    int cancelPendingForResolved(@Param("eventId") Long eventId, @Param("status") String status);
+
     /** Dedupe ön-kontrolü (yarışta son söz UNIQUE kısıtın — bu yalnız gürültüsüz erken çıkış). */
     boolean existsByAlertEventIdAndDedupeKeyAndUsername(Long alertEventId, String dedupeKey, String username);
     /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */

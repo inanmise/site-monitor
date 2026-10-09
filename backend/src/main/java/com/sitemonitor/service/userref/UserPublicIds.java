@@ -41,6 +41,9 @@ public class UserPublicIds {
     private final JdbcTemplate jdbc;
     private final Cache<Long, String> byId = Caffeine.newBuilder().maximumSize(200_000).build();
     private final Cache<String, Long> byPublic = Caffeine.newBuilder().maximumSize(200_000).build();
+    /** Silinmiş / hiç olmamış sayısal id'ler (2026-10-09): denetim sayfasında silinmiş aktörün her satırı sorgu atmasın. */
+    private final Cache<Long, Boolean> missing = Caffeine.newBuilder().maximumSize(50_000)
+            .expireAfterWrite(java.time.Duration.ofSeconds(60)).build();
 
     public UserPublicIds(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -77,8 +80,12 @@ public class UserPublicIds {
         if (id == null) return null;
         String hit = byId.getIfPresent(id);
         if (hit != null) return hit;
+        if (missing.getIfPresent(id) != null) return null;
         List<String> rows = jdbc.queryForList("SELECT public_id FROM app_users WHERE id = ?", String.class, id);
-        if (rows.isEmpty()) return null;
+        if (rows.isEmpty()) {
+            missing.put(id, Boolean.TRUE);
+            return null;
+        }
         String pid = rows.get(0);
         if (pid == null) {
             jdbc.update("UPDATE app_users SET public_id = ? WHERE id = ? AND public_id IS NULL", newPublicId(), id);

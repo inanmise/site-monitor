@@ -161,13 +161,18 @@ export default function LoginMethodsSettings({ onOpenSection }) {
     setSaved({ ...(d?.settings || {}) })
   }, [])
 
+  // Ağ hatası (request() throw eder) da hata bloğuna düşer — eskiden yakalanmıyor, sayfa sonsuza dek "yükleniyor" kalıyordu.
   const load = useCallback(async () => {
-    const r = await api.loginMethodsAdmin.get()
-    if (r?.success && r.data) {
-      apply(r.data)
-      setError(null)
-    } else {
-      setError(r?.error || t('lm.err.load'))
+    try {
+      const r = await api.loginMethodsAdmin.get()
+      if (r?.success && r.data) {
+        apply(r.data)
+        setError(null)
+      } else {
+        setError(r?.error || t('lm.err.load'))
+      }
+    } catch (e) {
+      setError(e?.message || t('lm.err.load'))
     }
   }, [apply, t])
   useEffect(() => { load() }, [load])
@@ -218,6 +223,8 @@ export default function LoginMethodsSettings({ onOpenSection }) {
       } else {
         toast.error(r?.error || t('lm.err.save'))
       }
+    } catch (e) {
+      toast.error(e?.message || t('lm.err.save'))
     } finally {
       setSaving(false)
     }

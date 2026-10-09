@@ -289,4 +289,15 @@ class PermissionServiceTest {
         assertThat(snap.get("inventory.crud").get("edit")).isFalse();
         assertThat(service.snapshotForSession(plain)).doesNotContainKey("noc_calls.write");
     }
+
+    @Test
+    @DisplayName("seedDefaults ('Varsayılana dön', 2026-10-09): eski satırların silinmesi INSERT'lerden ÖNCE flush edilir — 409 olmasın")
+    void seedDefaults_flushesDeletesBeforeInserts() {
+        service.seedDefaults();
+
+        org.mockito.InOrder order = inOrder(repo);
+        order.verify(repo).deleteAll();
+        order.verify(repo).flush();
+        order.verify(repo, atLeastOnce()).save(org.mockito.ArgumentMatchers.any(PermissionGrant.class));
+    }
 }

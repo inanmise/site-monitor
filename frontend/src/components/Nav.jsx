@@ -1,7 +1,8 @@
 import {
   useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n/index.jsx'
-import CommandPalette from './CommandPalette.jsx'
+// Komut paleti (cmdk) ilk Ctrl/⌘+K ya da `sm:palette` isteğinde yüklenir — başlatıcı ilk basışı da karşılar (2026-10-09).
+import CommandPaletteLauncher from './CommandPaletteLauncher.jsx'
 import KeyboardShortcuts from './KeyboardShortcuts.jsx'
 import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import InboxBell from './InboxBell.jsx'
@@ -51,6 +52,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
   const { state, setOpen, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === 'collapsed' && !isMobile
   const [issueOpen, setIssueOpen] = useState(false)   // kalıcı "Sorun Bildir" modalı
+  // Modal ilk açılışta bağlanır, sonra kapalı hâliyle bağlı kalır (kapanış animasyonu/odak iadesi aynı) — 2026-10-09.
+  // Kodu açılış paketinde kalır: ErrorBoundary çökme ekranı onu parça indirmeden açabilmeli.
+  const [issueMounted, setIssueMounted] = useState(false)
   const [teamsOpen, setTeamsOpen] = useState(false)
   // Faz 3b: global-only sekmeler yalnız global admin'e; scoped müdür (ADMIN) görmez.
   const isGlobalAdmin = !!globalAdmin
@@ -262,7 +266,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
           <NavUser username={username} profile={profile} teamName={teamName} myTeams={myTeams} systemRole={systemRole} loginInfo={loginInfo}
             isMobile={isMobile} onGo={go}
             onOpenTeams={() => { closeMobile(); setTeamsOpen(true) }}
-            onReportIssue={() => { closeMobile(); setIssueOpen(true) }}
+            onReportIssue={() => { closeMobile(); setIssueMounted(true); setIssueOpen(true) }}
             onChangePassword={() => { closeMobile(); onChangePassword?.() }}
             onStartTour={() => { closeMobile(); tour.start('main') }}
             onShowShortcuts={() => { closeMobile(); window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT)) }}
@@ -272,10 +276,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       </Sidebar>
 
       {/* Kenar çubuğunun DIŞINDA: telefonda çekmece kapanınca içeriği DOM'dan çıkar — palet ve pencereler yaşasın. */}
-      <CommandPalette tabs={paletteTabs} onTabChange={go} globalAdmin={globalAdmin} systemRole={systemRole} />
+      <CommandPaletteLauncher tabs={paletteTabs} onTabChange={go} globalAdmin={globalAdmin} systemRole={systemRole} />
       {/* Genel klavye kısayolları (öneri 24): paletle AYNI sekme listesi → `g`+harf yalnız açık sekmelere gider */}
       <KeyboardShortcuts tabs={paletteTabs} onTabChange={go} />
-      <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
+      {issueMounted && <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />}
       <ModalShell open={teamsOpen} onClose={() => setTeamsOpen(false)} title={t('nav.myTeamsTitle')} icon={Users} size="sm">
         <p className="text-sm text-muted-foreground">{t('nav.myTeamsHint')}</p>
         <ul className="mt-3 flex flex-col gap-2">

@@ -55,7 +55,8 @@ const GROUP_ICON = { critical: AlertOctagon, warning: AlertTriangle, info: Calen
  *  - Yükleniyor: Skeleton; boş: StatusBlock; hata: AlertBanner + "Tekrar dene".
  *
  * Sayfalama standardı korunur: usePagination (panel ön ayarı) + `<PaginationBar {...pager} />`, `page`/`ps` adreste.
- * API: `/api/renewal-advice` plan bilgisi DÖNMEZ — plan rozeti yalnız bu oturumda kaydedilen plan için görünür.
+ * API: `/api/renewal-advice` satırı kayıtlı planı taşır (`renewal_planned_at` / `_note`, 2026-10-09); bu oturumda
+ * kaydedilen/kaldırılan plan onu ezer.
  */
 export default function RenewalAdvice({ onSelectDomain }) {
   const t = useT()
@@ -174,10 +175,14 @@ export default function RenewalAdvice({ onSelectDomain }) {
   ]
 
   const openCert = (d) => onSelectDomain?.(d)
+  // Plan: bu oturumda kaydedilen/kaldırılan önce, yoksa sunucunun kayıtlı planı (2026-10-09 — eskiden yalnız oturum içi
+  // plan görülüyordu; sayfa yenilenince rozet kayboluyor, pencere kayıtlı tarihi değil boş formu açıyordu).
+  const planOf = (a) => (Object.prototype.hasOwnProperty.call(plans, a.domain) ? plans[a.domain]
+    : (a.renewal_planned_at ? { renewal_planned_at: a.renewal_planned_at, renewal_planned_note: a.renewal_planned_note || '' } : undefined))
   const openPlan = canPlan ? (a) => setPlanRow({
     domain: a.domain,
-    renewal_planned_at: plans[a.domain]?.renewal_planned_at || '',
-    renewal_planned_note: plans[a.domain]?.renewal_planned_note || '',
+    renewal_planned_at: planOf(a)?.renewal_planned_at || '',
+    renewal_planned_note: planOf(a)?.renewal_planned_note || '',
     // Yerel gün (2026-09-27): `not_after.slice(0,10)` UTC günüydü → İstanbul'da gece bitenler bir gün erken görünürdü.
     expiry_key: expiryKey(a),
   }) : null
@@ -319,7 +324,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
                   </h3>
                 )}
                 <AdviceCard item={item} t={t} text={adviceText(item)} codeLabel={codeLabel(item.code)} shared={shared}
-                  plan={plans[item.domain]} onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain}
+                  plan={planOf(item)} onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain}
                   onFilterGroup={addTo(setGroups)} onFilterTag={addTo(setTags)} />
               </Fragment>
             )

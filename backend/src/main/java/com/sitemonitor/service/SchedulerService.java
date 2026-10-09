@@ -451,7 +451,10 @@ public class SchedulerService {
                 Thread.currentThread().interrupt();
                 return;
             }
-            try { escalationService.catchUpMissedDailyAlerts(); }
+            // Dağıtık kilit (2026-10-09): yuvarlanan dağıtımda N pod aynı anda açılıp AYNI kaçırılmış bildirimi N kez
+            // gönderiyordu. Kilit başka pod'daysa bu pod atlar (o pod gönderiyor); kilit TTL'i aşan uzun bir koşuda geç
+            // başlayan pod da göndermez — catch-up her alarmı göndermeden önce taze satırdan yeniden değerlendirir.
+            try { runWithSchedulerLock("startup-catchup", escalationService::catchUpMissedDailyAlerts); }
             catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
             // (2026-10-07) catchUpAlertsOnDeletedDomains kaldırıldı: silme kalıcı, yumuşak silinmiş envanter kalmaz.
             runCheck();

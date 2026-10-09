@@ -72,6 +72,14 @@ public class TodayPanelService {
     private final TodayMonitorInsightsService monitorInsights;
     private final TodayPanelSnapshotRepository snapshotRepo;
 
+    /**
+     * Sertifika bölümü için önbellekli aktif liste (2026-10-09, performans): eskiden her çağrıda (2 dakikada bir, her
+     * kullanıcı) {@code latest_checks} TAMAMI — TEXT sütunlarıyla — okunuyordu. Bean yoksa (birim testi) eski yol.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private CertificateService certService;
+
     /** "Dün bu saatte" görüntüsü — 10 dk'lık kovada bellekte (her panel isteği DB'ye gitmesin). */
     private record Prior(String bucket, String takenAt, Map<String, List<Map<String, Object>>> cards) { }
     private volatile Prior priorCache;
@@ -296,17 +304,38 @@ public class TodayPanelService {
         }
     }
 
+    /** Sertifika bölümünün okuduğu üç alan. */
+    private record CertRow(String domain, Integer days, String notAfter) {}
+
+    /** Önbellekli aktif liste (bean varsa) — yoksa eski tam tablo okuması. Bölüm zaten görünür AKTİF alanlarla süzülür. */
+    private List<CertRow> certRows() {
+        List<CertRow> out = new ArrayList<>();
+        if (certService != null) {
+            try {
+                for (com.sitemonitor.dto.CertificateDto d : certService.getAllLatest()) {
+                    out.add(new CertRow(d.getDomain(), d.getDaysRemaining(), d.getNotAfter()));
+                }
+                return out;
+            } catch (RuntimeException e) {
+                log.debug("today: önbellekli sertifika listesi okunamadı, tablo okunuyor: {}", e.toString());
+                out.clear();
+            }
+        }
+        for (LatestCheck lc : latestCheckRepo.findAll()) out.add(new CertRow(lc.getDomain(), lc.getDaysRemaining(), lc.getNotAfter()));
+        return out;
+    }
+
     /** 30 gün altı (ve dolmuş) sertifikalar — en az gün üstte. */
     private Map<String, Object> certs(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames, int limit) {
         List<Map<String, Object>> items = new ArrayList<>();
         int expired = 0;
-        for (LatestCheck lc : latestCheckRepo.findAll()) {
-            if (lc.getDomain() == null || !domains.contains(lc.getDomain()) || lc.getDaysRemaining() == null) continue;
-            if (lc.getDaysRemaining() > CERT_DAYS) continue;
-            if (lc.getDaysRemaining() < 0) expired++;
+        for (CertRow lc : certRows()) {
+            if (lc.domain() == null || !domains.contains(lc.domain()) || lc.days() == null) continue;
+            if (lc.days() > CERT_DAYS) continue;
+            if (lc.days() < 0) expired++;
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("domain", lc.getDomain()); m.put("days", lc.getDaysRemaining()); m.put("not_after", lc.getNotAfter());
-            Long tid = domainTeam.get(lc.getDomain());
+            m.put("domain", lc.domain()); m.put("days", lc.days()); m.put("not_after", lc.notAfter());
+            Long tid = domainTeam.get(lc.domain());
             m.put("team_id", tid); m.put("team_name", tid == null ? null : teamNames.get(tid));
             items.add(m);
         }

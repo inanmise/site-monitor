@@ -246,9 +246,10 @@ class CertificateListQueryTest {
     @DisplayName("org geneli görünürlük (2026-09-26): facet'ler GÖRÜNÜR küme üzerinden — 'Tüm takımlar' (null kapsam) diğer takımı sayar, 'kendi takımım' saymaz")
     void facetsFollowVisibleSet() {
         // Takım 1'in aktif envanteri (getTeamDomains) — 'mine' kapsamı bunu kullanır.
-        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(anyCollection())).thenAnswer(i -> {
+        when(inventoryRepo.findActiveDomainNamesByTeamIds(anyCollection())).thenAnswer(i -> {
             java.util.Collection<Long> teams = i.getArgument(0);
-            return inventory.stream().filter(inv -> inv.getTeamId() != null && teams.contains(inv.getTeamId())).toList();
+            return inventory.stream().filter(inv -> inv.getTeamId() != null && teams.contains(inv.getTeamId()))
+                    .map(CertificateInventory::getDomain).toList();
         });
         Map<String, Object> all = service.getPaginated(q("", "", "", false, null, "", ""), null);
         Map<String, Object> mine = service.getPaginated(q("", "", "", false, null, "", ""), List.of(1L));

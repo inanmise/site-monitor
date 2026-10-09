@@ -126,7 +126,11 @@ export default function SmtpLogView({ onBack, initial }) {
   const [error, setError] = useState(null)
   const [updatedAt, setUpdatedAt] = useState(null)
   const [detailId, setDetailId] = useState(() => readUrlInt('m_id', null))
-  const [detail, setDetail] = useState(null)
+  // Detay, İSTENEN kimlikle birlikte tutulur: zincirde / satırda başka kayda geçilince yeni yanıt gelene kadar önceki
+  // kaydın gövdesi ve "Yeniden gönder"i görünmesin (eskiden bayat detay yeni kimlikle çiziliyor, yeniden gönderim eski
+  // kayda gidebiliyordu). `detail` yalnız `detailId`'nin kendi yanıtıdır.
+  const [detailRes, setDetailRes] = useState(null)   // { id: istenen kimlik, data }
+  const detail = detailRes && detailId != null && String(detailRes.id) === String(detailId) ? detailRes.data : null
   const [busy, setBusy] = useState(false)
   const reqRef = useRef(0)
 
@@ -180,10 +184,12 @@ export default function SmtpLogView({ onBack, initial }) {
 
   // Satır detayı (URL m_id ile de açılır)
   useEffect(() => {
-    if (!detailId) { setDetail(null); return }
+    setDetailRes(null)
+    if (!detailId) return
     let alive = true
-    api.admin.smtpLog.detail(detailId)
-      .then((r) => { if (!alive) return; if (r?.success) setDetail(r.data); else { toast.error(r?.error || t('mon.loadError')); setDetailId(null) } })
+    const requested = detailId
+    api.admin.smtpLog.detail(requested)
+      .then((r) => { if (!alive) return; if (r?.success) setDetailRes({ id: requested, data: r.data }); else { toast.error(r?.error || t('mon.loadError')); setDetailId(null) } })
       .catch((e) => { if (alive) { toast.error(String(e?.message || e)); setDetailId(null) } })
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -276,8 +282,11 @@ export default function SmtpLogView({ onBack, initial }) {
       {error && <AlertBanner tone="danger" title={t('mon.loadError')}>{error}</AlertBanner>}
 
       {/* Süzgeç çubuğu */}
-      <Card className="gap-2.5 px-3.5 py-3 shadow-none">
-        <RangeControl value={f.range} onChange={pickRange} ranges={RANGES} label={t('sml.rangeLabel')} t={t} />
+      <Card className="min-w-0 gap-2.5 px-3.5 py-3 shadow-none">
+        {/* Aralık seçenekleri telefonda sığmaz (≈ 380 px) — kendi kabında yatay kayar, kart/sayfa taşmaz (PushLogView ile aynı) */}
+        <div className="-mx-1 max-w-full overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin]">
+          <RangeControl value={f.range} onChange={pickRange} ranges={RANGES} label={t('sml.rangeLabel')} t={t} />
+        </div>
         {pickerRange && (
           <DateTimeRangePicker from={pickerRange.from} to={pickerRange.to} onApply={(a, b) => patch({ range: 'custom', from: a, to: b })} />
         )}

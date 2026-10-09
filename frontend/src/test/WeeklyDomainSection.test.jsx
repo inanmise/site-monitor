@@ -10,7 +10,7 @@ import { pressMenuTrigger } from './helpers/dropdownMenu.js'
  * süzgeç. Veri biçimi aynı: channels [{ id, name, notes_md }].
  */
 const confirmMock = vi.fn(() => Promise.resolve(true))
-vi.mock('@uiw/react-md-editor', () => ({ default: ({ value }) => <textarea readOnly value={value ?? ''} />, commands: { bold: {}, italic: {}, group: () => ({}) } }))
+vi.mock('@uiw/react-md-editor/nohighlight', () => ({ default: ({ value }) => <textarea readOnly value={value ?? ''} />, commands: { bold: {}, italic: {}, group: () => ({}) } }))
 vi.mock('react-markdown', () => ({ default: ({ children }) => <div data-testid="md">{children}</div> }))
 vi.mock('remark-gfm', () => ({ default: () => {} }))
 vi.mock('../components/ui/Dialog.jsx', () => ({ useDialog: () => ({ showConfirm: confirmMock }), DialogProvider: ({ children }) => children }))

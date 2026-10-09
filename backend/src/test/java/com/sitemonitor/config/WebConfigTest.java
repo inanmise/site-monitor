@@ -106,6 +106,46 @@ class WebConfigTest {
     }
 
     /**
+     * 2026-10-09 (performans): marka görselleri, yazı tipleri, simgeler ve teknik doküman PDF'leri yeniden doğrulanarak
+     * önbelleğe alınır ("no-cache" → 304); SPA kabuğu ve index.html no-store KALIR; "public"/"max-age" yazılmaz.
+     */
+    @Test
+    @DisplayName("Cache-Control: marka/yazı tipi/simge/PDF no-cache (304 ile yeniden doğrulama); kabuk no-store")
+    void staticBrandFontsPdf_revalidate() throws Exception {
+        var filter = new WebConfig().securityHeadersFilter();
+        for (String uri : new String[]{"/brand/logo-ok-64.png", "/fonts/Roboto-Regular.ttf", "/favicon.ico", "/favicon.svg",
+                "/favicon-32.png", "/apple-touch-icon.png", "/icon-192.png", "/site.webmanifest", "/whitepaper.tr.pdf", "/whitepaper.en.pdf"}) {
+            var res = new org.springframework.mock.web.MockHttpServletResponse();
+            filter.doFilter(new org.springframework.mock.web.MockHttpServletRequest("GET", uri), res, new org.springframework.mock.web.MockFilterChain());
+            assertThat(res.getHeader("Cache-Control")).as(uri).isEqualTo("no-cache");
+        }
+        for (String uri : new String[]{"/", "/index.html", "/foo", "/brandx/a.png", "/x/whitepaper.tr.pdf", "/other.pdf"}) {
+            var res = new org.springframework.mock.web.MockHttpServletResponse();
+            filter.doFilter(new org.springframework.mock.web.MockHttpServletRequest("GET", uri), res, new org.springframework.mock.web.MockFilterChain());
+            assertThat(res.getHeader("Cache-Control")).as(uri).contains("no-store");
+        }
+    }
+
+    /** 2026-10-09: Boot 4 / Tomcat 11 .js'yi text/javascript sunar — sıkıştırma listesi bunu içermezse JS sıkıştırılmaz. */
+    @Test
+    @DisplayName("sıkıştırma: text/javascript, CSS, JSON, SVG ve webmanifest listede")
+    void compressionCoversJavascript() throws Exception {
+        java.util.Properties props = new java.util.Properties();
+        try (var in = getClass().getResourceAsStream("/application.properties")) {
+            props.load(in);
+        }
+        // test kaynaklarında aynı ad varsa ana dosyayı doğrudan oku
+        java.nio.file.Path main = java.nio.file.Path.of("src/main/resources/application.properties");
+        if (java.nio.file.Files.exists(main)) {
+            props = new java.util.Properties();
+            try (var in = java.nio.file.Files.newInputStream(main)) { props.load(in); }
+        }
+        assertThat(props.getProperty("server.compression.enabled")).isEqualTo("true");
+        assertThat(java.util.List.of(props.getProperty("server.compression.mime-types").split(",")))
+                .contains("text/javascript", "application/javascript", "text/css", "application/json", "image/svg+xml", "application/manifest+json");
+    }
+
+    /**
      * CSP (2026-10-01, onaylı öneri 5): betik yalnız aynı kaynaktan; satır içi betik ve olay işleyicisi izni YOK.
      * Stil tarafındaki 'unsafe-inline' bilerek kalır (shadcn Chart &lt;style&gt; enjekte eder, mail önizlemeleri).
      */

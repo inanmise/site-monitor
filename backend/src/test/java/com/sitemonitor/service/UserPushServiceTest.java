@@ -371,6 +371,56 @@ class UserPushServiceTest {
                 .extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_NO_PRIOR");
     }
 
+    @Test
+    @DisplayName("Çözüm: hâlâ PENDING açılış push'u iptal edilir (SKIPPED_RESOLVED_BEFORE_SEND); SENT yoksa çözüm kararı AYNEN SKIPPED_NO_PRIOR")
+    void resolve_cancelsPendingOpen_beforeSymmetryDecision() {
+        when(deliveryRepo.cancelPendingForResolved(1L, UserPushService.STATUS_SKIPPED_RESOLVED_BEFORE_SEND)).thenReturn(1);
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(false);
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(deliveryRepo);
+        order.verify(deliveryRepo).cancelPendingForResolved(1L, "SKIPPED_RESOLVED_BEFORE_SEND");
+        order.verify(deliveryRepo).existsByAlertEventIdAndStatus(1L, "SENT");
+        verify(resolver, never()).resolvePrior(any());
+        assertThat(savedRows()).singleElement()
+                .extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_NO_PRIOR");
+    }
+
+    @Test
+    @DisplayName("Çözüm: açılış SENT ise bekleyen eskalasyon iptal edilir VE \"DÜZELDİ\" her zamanki gibi gider")
+    void resolve_withPriorSent_cancelsPendingAndStillResolves() {
+        when(deliveryRepo.cancelPendingForResolved(1L, UserPushService.STATUS_SKIPPED_RESOLVED_BEFORE_SEND)).thenReturn(1);
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
+        when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001")));
+        when(resolver.resolvePrior(List.of("N00001"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00001", "Bir", null)));
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        verify(deliveryRepo).cancelPendingForResolved(1L, "SKIPPED_RESOLVED_BEFORE_SEND");
+        assertThat(store).extracting(UserPushDelivery::getTrigger).contains("RESOLVE");
+        assertThat(store).extracting(UserPushDelivery::getUsername).contains("N00001");
+    }
+
+    @Test
+    @DisplayName("Çözüm: bekleyen satır iptali arızalanırsa çözüm kararı yine verilir (push katmanı çözümü düşürmez)")
+    void resolve_cancelFailure_doesNotBlockDecision() {
+        when(deliveryRepo.cancelPendingForResolved(any(), anyString())).thenThrow(new RuntimeException("db yok"));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(false);
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        assertThat(savedRows()).singleElement()
+                .extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_NO_PRIOR");
+    }
+
+    @Test
+    @DisplayName("Yeni durum kodu push_status sütununa (40) sığar")
+    void resolvedBeforeSendStatus_fitsColumn() {
+        assertThat(UserPushService.STATUS_SKIPPED_RESOLVED_BEFORE_SEND.length()).isLessThanOrEqualTo(40);
+    }
+
     // ── Gövde sözleşmesi + yanıt işleme (gerçek HTTP) ──────────────────────────────────────
 
     @Test

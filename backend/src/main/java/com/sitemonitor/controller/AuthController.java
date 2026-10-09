@@ -167,6 +167,79 @@ public class AuthController {
     // Per-IP: absolute timestamp (ms) when the block expires
     private final ConcurrentHashMap<String, Long> blockedUntil = new ConcurrentHashMap<>();
 
+    /** {@code audit_logs.actor} sütun genişliği — daha uzun ad INSERT'i düşürüyordu (persist null → 500). */
+    static final int AUDIT_ACTOR_MAX = 100;
+
+    /** Denetime yazılacak ad: sütuna sığacak şekilde kırpılır (≤ 100 karakterde AYNEN — bugünkü kayıt birebir). */
+    static String auditName(String name) {
+        return name == null || name.length() <= AUDIT_ACTOR_MAX ? name : name.substring(0, AUDIT_ACTOR_MAX);
+    }
+
+    /**
+     * İlerleyici kilidin süreleri — {@link UserService} ile AYNI özellik. Bilinmeyen kullanıcı adının sahte kilidi
+     * 1. kademeyi ({@code [0]}) taklit eder.
+     */
+    @Value("${site.monitor.lockout.durations-seconds:30,120,600,1800}")
+    private List<Long> lockoutDurationsSecs;
+
+    /** Sahte kilit tablosunun sert üst sınırı (bellek). */
+    private static final int UNKNOWN_LOCK_MAX = 10_000;
+
+    /**
+     * BİLİNMEYEN kullanıcı adının sahte kilidi (2026-10-09, kullanıcı adı tahmini): kaba kuvvet eşiğinde mevcut hesap
+     * 423 + {@code wait_seconds} 30 (1. kademe) alırken bilinmeyen ad sonsuza dek {@code wait_seconds:0} alıyordu —
+     * yanıttan "bu hesap var mı" okunuyordu. Artık bilinmeyen ad da 1. kademenin yanıtını alır ve süre dolana dek
+     * mevcut hesap gibi 423 döner. Anahtar = kanonik ad (büyük harf, kırpılmış); değer = kilidin bittiği an. Pod başına
+     * bellek, süre = 1. kademe süresi (kendiliğinden düşer), sınırlı. Mevcut hesapların davranışı DEĞİŞMEZ (bu tabloya
+     * yalnız bilinmeyen ad yazılır).
+     */
+    private volatile com.github.benmanes.caffeine.cache.Cache<String, java.time.Instant> unknownUserLocks;
+
+    private long firstLockoutSeconds() {
+        List<Long> d = lockoutDurationsSecs;
+        Long first = d == null || d.isEmpty() ? null : d.get(0);
+        return first == null || first <= 0 ? 30L : first.longValue();
+    }
+
+    private com.github.benmanes.caffeine.cache.Cache<String, java.time.Instant> unknownUserLocks() {
+        var c = unknownUserLocks;
+        if (c == null) {
+            synchronized (this) {
+                c = unknownUserLocks;
+                if (c == null) {
+                    c = com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                            .maximumSize(UNKNOWN_LOCK_MAX)
+                            .expireAfterWrite(java.time.Duration.ofSeconds(firstLockoutSeconds()))
+                            .<String, java.time.Instant>build();
+                    unknownUserLocks = c;
+                }
+            }
+        }
+        return c;
+    }
+
+    /** Sahte kilidin anahtarı — {@link #failedLogin} bilinmeyen adı denetime bu biçimde yazar. */
+    private static String unknownLockKey(String username) {
+        return auditName(username.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    /** Bilinmeyen adın sahte kilidi sürüyorsa kalan saniye ({@link UserService#checkLockout} ile aynı hesap), yoksa 0. */
+    private UserService.LockoutStatus unknownUserLockStatus(String username) {
+        java.time.Instant until = unknownUserLocks().getIfPresent(unknownLockKey(username));
+        if (until == null) return new UserService.LockoutStatus(false, 0);
+        long remaining = java.time.Duration.between(java.time.Instant.now(), until).getSeconds();
+        return new UserService.LockoutStatus(false, Math.max(0L, remaining));
+    }
+
+    /** Bilinmeyen ad için 1. kademe sahte kilidi başlatır; süreyi döner (mevcut hesabın 1. kademe kilidiyle aynı). */
+    private long startUnknownUserLock(String username) {
+        long secs = firstLockoutSeconds();
+        // UserService gibi saniyeye kırpılmış bitiş anı → kalan süre hesabı aynı yuvarlamayla yürür.
+        unknownUserLocks().put(unknownLockKey(username),
+                java.time.Instant.now().plusSeconds(secs).truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
+        return secs;
+    }
+
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(
             @RequestBody Map<String, String> body,
@@ -181,7 +254,7 @@ public class AuthController {
         if (waitSecs > 0) {
             log.warn("Login rate limit exceeded: IP={} wait={}s", clientIp, waitSecs);
             auditService.recordRateLimited(
-                username.isBlank() ? null : username, clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
+                username.isBlank() ? null : auditName(username), clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
             return ResponseEntity.status(429).body(Map.of(
                 "success", false,
                 "error", "Too many login attempts. Please wait.",
@@ -191,8 +264,10 @@ public class AuthController {
         // 2. Per-user progressive lockout (DB-persisted)
         if (!username.isBlank()) {
             UserService.LockoutStatus ls = userService.checkLockout(username);
+            // Bilinmeyen adın sahte kilidi (2026-10-09): mevcut hesabın 1. kademe kilidiyle AYNI 423 yanıtı.
+            if (!ls.isBlocked()) ls = unknownUserLockStatus(username);
             if (ls.isBlocked()) {
-                auditService.recordRateLimited(username, clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
+                auditService.recordRateLimited(auditName(username), clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
                 if (ls.permanent()) {
                     return ResponseEntity.status(423).body(Map.of(
                         "success", false, "locked", true,
@@ -224,7 +299,7 @@ public class AuthController {
             recordFailedAttempt(clientIp);   // IP oran sınırı (numaralandırma denemesi de yavaşlasın)
             userService.burnPasswordCheck(password);
             auditService.recordLdapDisabledLogin(
-                    existing.map(AppUser::getUsername).orElse(username.toUpperCase(java.util.Locale.ROOT)),
+                    existing.map(AppUser::getUsername).orElse(auditName(username.toUpperCase(java.util.Locale.ROOT))),
                     clientIp, request.getHeader("User-Agent"));
             return ldapDisabledResponse();
         }
@@ -425,7 +500,8 @@ public class AuthController {
         // Sayaç KANONİK adla tutulur (prod kapısı 2026-09-25, O-1): kimlik doğrulama harf duyarsız ama deneme
         // sayacı (`a.actor = :actor`) duyarlıydı — "admin"/"ADMIN"/"Admin" ayrı sayılıp kilit hiç tetiklenmiyordu.
         // Kullanıcı varsa kayıtlı adı, yoksa büyük harf (kanonik saklama biçimi) kullanılır.
-        String auditActor = username.toUpperCase(java.util.Locale.ROOT);
+        // 100 karakterden uzun ad sütuna sığmaz (INSERT düşer) → kırpılır; sayaç da kırpılmış adla yürür.
+        String auditActor = unknownLockKey(username);
         if (!username.isBlank()) {
             var failedUser = userService.findByUsername(username);
             if (failedUser.isPresent()) {
@@ -447,8 +523,17 @@ public class AuthController {
                 request.getHeader("User-Agent"), null, false, reasonCode,
                 lastLockoutAt, failuresNeeded, channel);
 
-        if (!username.isBlank() && logged.getAnomalyFlags() != null
+        // logged == null: denetim yazılamadı (persist fallback'e düştü) — eskiden NPE → 500; artık genel 401 akışı.
+        if (!username.isBlank() && logged != null && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
+            if (!userExists) {
+                // BİLİNMEYEN ad (2026-10-09): mevcut hesabın 1. kademe kilidiyle AYNI yanıt (wait_seconds = 1. kademe),
+                // bellek içi sahte kilit; olmayan hesap için ACCOUNT_LOCKED denetimi YAZILMAZ ve DB'ye dokunulmaz.
+                long secs = startUnknownUserLock(username);
+                return ResponseEntity.status(423).body(Map.of(
+                    "success", false, "wait_seconds", secs,
+                    "error", "Account temporarily locked."));
+            }
             UserService.LockoutStatus ls = userService.applyProgressiveLockout(auditActor);
             // Hesap kilit GEÇİŞİ — ayrık denetim olayı (altında yatan failed-login zaten kaydedildi).
             auditService.recordAction("ACCOUNT_LOCKED", auditActor, null, null, null, "USER", auditActor,

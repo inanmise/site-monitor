@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Building2, Mail, PhoneCall, RefreshCw, ShieldAlert, UserRound, Users } from 'lucide-react'
 import ModalShell from './ModalShell.jsx'
+import { PHONE_FULLSCREEN } from './modalClasses.js'
 import TeamMemberCards, { PersonAvatar, adSoyadInitials, photoIdOf } from './TeamMemberCards.jsx'
 import { CallListPanel, EscalationPanel } from './TeamContactPanels.jsx'
 import AlertBanner from './AlertBanner.jsx'
@@ -48,8 +49,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/ta
  * ayrıca `TeamMemberCards` ve `TeamContactPanels` kancaları.
  */
 
-/** Telefonda (<640 px) tam ekran — ReportParts/DiagnosticsModal ile aynı kalıp; geniş ekranda ModalShell `lg`. */
-const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:p-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]'
+/* Telefonda (<640 px) tam ekran: paylaşılan `PHONE_FULLSCREEN` (ui/modalClasses.js); geniş ekranda ModalShell `lg`. */
 
 const EMPTY_STATE = { teamId: null, loading: true, data: null, error: null }
 const EMPTY_CALLS = { teamId: null, status: 'loading', rows: [], error: null }

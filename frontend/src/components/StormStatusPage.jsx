@@ -1,7 +1,7 @@
 // Alarm Fırtınası sayfası (2026-09-30, kullanıcı isteği): takım bazında "eşiğe ne kadar yakın / açık fırtına var mı /
 // kim ne zaman hangi eşikle aştı", geçmiş fırtınalar (süzgeç + sayfalama) ve analiz (gün serisi, takım özeti, kapanış
 // nedenleri). Görüş kapsamı sunucuda (Alarm Geçmişi kuralı); kullanıcı yalnız kendi takımlarını görür. URL: sf_*.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CloudLightning, RefreshCw, Users, Radar, Gauge, Timer, ShieldCheck, Settings2, FilterX, Eye, Activity } from 'lucide-react'
 import { api } from '../api/client'
 import { useT, useDateLocale } from '../i18n/index.jsx'
@@ -147,23 +147,31 @@ export default function StormStatusPage() {
   useEffect(() => { loadStatus() }, [loadStatus])
   useVisibleInterval(loadStatus, 30_000, false)
 
+  // Sıra damgaları (2026-10-09, yarış düzeltmesi): süzgeç/sayfa hızlı değişince GEÇ gelen eski yanıt yeni süzgecin
+  // tablosunu ezmesin — yalnız son isteğin yanıtı yazılır.
+  const historySeq = useRef(0)
+  const analyticsSeq = useRef(0)
   const loadHistory = useCallback(async () => {
+    const my = ++historySeq.current
     setHistory((h) => ({ ...h, loading: true, error: null }))
     try {
       const res = await api.monitoring.storm.history({ teamId: team || undefined, from: from || undefined, to: to || undefined, resolvedOnly, page: sp.apiPage, size: sp.pageSize })
+      if (my !== historySeq.current) return
       if (res?.success && res.data && !Array.isArray(res.data)) { sp.bind(res); setHistory({ loading: false, error: null, data: res.data }) }
       else setHistory({ loading: false, error: res?.error || t('sf.loadError'), data: null })
-    } catch (e) { setHistory({ loading: false, error: e?.message || t('sf.loadError'), data: null }) }
+    } catch (e) { if (my === historySeq.current) setHistory({ loading: false, error: e?.message || t('sf.loadError'), data: null }) }
   }, [team, from, to, resolvedOnly, sp.apiPage, sp.pageSize, t])
   useEffect(() => { if (tab === 'history') loadHistory() }, [tab, loadHistory])
 
   const loadAnalytics = useCallback(async () => {
+    const my = ++analyticsSeq.current
     setAnalytics((a) => ({ ...a, loading: true, error: null }))
     try {
       const res = await api.monitoring.storm.analytics({ teamId: team || undefined, days })
+      if (my !== analyticsSeq.current) return
       if (res?.success && res.data && !Array.isArray(res.data)) setAnalytics({ loading: false, error: null, data: res.data })
       else setAnalytics({ loading: false, error: res?.error || t('sf.loadError'), data: null })
-    } catch (e) { setAnalytics({ loading: false, error: e?.message || t('sf.loadError'), data: null }) }
+    } catch (e) { if (my === analyticsSeq.current) setAnalytics({ loading: false, error: e?.message || t('sf.loadError'), data: null }) }
   }, [team, days, t])
   useEffect(() => { if (tab === 'analytics') loadAnalytics() }, [tab, loadAnalytics])
 

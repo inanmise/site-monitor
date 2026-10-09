@@ -83,7 +83,20 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
   const [openSection, setOpenSection] = useState(initialSection)
   const sectionRefs = useRef({})
-  const toggleSection = useCallback((key) => setOpenSection((prev) => (prev === key ? null : key)), [])
+  // Tek açık bölüm: alttaki bir bölüm açılınca üstteki kapanır ve dokunulan başlık yukarı kayıp gözden kaçıyordu
+  // (2026-10-09) → AÇILAN bölümün başlığı görünüme getirilir (goSection gibi; azaltılmış harekette animasyonsuz).
+  // Açık mı, kabuk çizildikten sonra bölümün Collapsible kökünden okunur — kapatılan bölüm için kaydırma yok.
+  const toggleSection = useCallback((key) => {
+    setOpenSection((prev) => (prev === key ? null : key))
+    setTimeout(() => {
+      try {
+        const el = sectionRefs.current[key]
+        if (el?.querySelector?.(':scope > [data-state]')?.getAttribute('data-state') !== 'open') return
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+        el.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      } catch { /* jsdom */ }
+    }, 30)
+  }, [])
   /** KPI / sebep tıklaması: bölümü aç ve oraya kaydır. */
   const goSection = useCallback((key) => {
     setOpenSection(key)
@@ -248,13 +261,17 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     replaceUrl((p) => p.set('view', 'push'))
   }, [pushPeriod])
 
-  // Kart KPI'sı: seçili periyot için push özeti (60 sn önbellekli uç; görünürken 60 sn'de bir tazelenir)
+  // Kart KPI'sı: seçili periyot için push özeti (60 sn önbellekli uç; görünürken 60 sn'de bir tazelenir).
+  // Yalnız EN SON isteğin yanıtı uygulanır: periyot hızlı değişince (ya da aralık tiki) geç gelen eski periyodun özeti
+  // seçili periyodun KPI'sını ezmesin.
+  const pushKpiSeq = useRef(0)
   const loadPushKpi = useCallback(async () => {
+    const seq = ++pushKpiSeq.current
     try {
       const ms = pushPeriod === '24h' ? 24 * 3600e3 : pushPeriod === '30d' ? 30 * 86400e3 : 7 * 86400e3
       const r = await api.admin.pushLog.summary({ from: new Date(Date.now() - ms).toISOString().slice(0, 19) })
-      setPushKpi(r?.success ? (r.data?.kpi || {}) : null)
-    } catch { setPushKpi(null) }
+      if (seq === pushKpiSeq.current) setPushKpi(r?.success ? (r.data?.kpi || {}) : null)
+    } catch { if (seq === pushKpiSeq.current) setPushKpi(null) }
   }, [pushPeriod])
   useEffect(() => { loadPushKpi() }, [loadPushKpi])
   useVisibleInterval(loadPushKpi, 60_000, false)

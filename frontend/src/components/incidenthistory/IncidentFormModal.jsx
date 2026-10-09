@@ -6,6 +6,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
+import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { autoDurationMinutes } from '../../utils/incidentMeta.js'
@@ -36,7 +37,6 @@ const FIXED = cn(
   'grid-cols-[minmax(0,1fr)] sm:max-w-[min(1040px,calc(100%-2rem))] sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full',
   '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable] max-sm:[&_[data-slot=dialog-close]]:size-10',
 )
-const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:p-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]'
 const PHONE_TOUCH = 'max-sm:[&_[data-slot=input]]:h-10 max-sm:[&_[data-slot=native-select]]:h-10 max-sm:[&_[data-slot=date-picker-trigger]]:h-10 max-sm:[&_[role=combobox]]:min-h-10'
 const GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-3'
 

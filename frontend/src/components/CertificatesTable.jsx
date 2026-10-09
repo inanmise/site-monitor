@@ -72,7 +72,7 @@ const M_TABLE = 'max-sm:block'
 const M_ROW = 'max-sm:mb-2 max-sm:block max-sm:rounded-lg max-sm:border max-sm:bg-card max-sm:px-2.5 max-sm:py-2 max-sm:hover:bg-card'
 const M_CELL = cn(
   'max-sm:flex max-sm:w-full max-sm:items-center max-sm:justify-between max-sm:gap-2.5 max-sm:px-0 max-sm:py-[3px] max-sm:text-right max-sm:whitespace-normal',
-  'max-sm:before:flex-[0_0_40%] max-sm:before:text-left max-sm:before:text-[10.5px] max-sm:before:font-bold max-sm:before:tracking-[.06em] max-sm:before:text-muted-foreground max-sm:before:uppercase max-sm:before:content-[attr(data-label)]',
+  'max-sm:before:flex-[0_0_40%] max-sm:before:text-left max-sm:before:text-xs max-sm:before:font-bold max-sm:before:tracking-[.06em] max-sm:before:text-muted-foreground max-sm:before:uppercase max-sm:before:content-[attr(data-label)]',
 )
 const M_CELL_PLAIN = 'max-sm:flex max-sm:w-auto max-sm:justify-end max-sm:px-0 max-sm:py-[3px]'
 
@@ -270,7 +270,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                   {STATUS_OPTIONS.map((opt) => (
                     <DropdownMenuRadioItem key={opt.value || ALL} value={opt.value || ALL}
                       className={cn(opt.value && OPT_TONE[opt.value], filters.status === opt.value && 'font-semibold')}>
-                      {opt.icon && <span aria-hidden="true" className="w-4 shrink-0 text-center text-[.9em]">{opt.icon}</span>}
+                      {opt.icon && <opt.icon aria-hidden="true" className="size-4 shrink-0" />}
                       <span>{t(opt.labelKey)}</span>
                       {facets?.levels && opt.value && (
                         <span className="ml-auto pl-3 text-xs font-semibold tabular-nums text-muted-foreground">{facets.levels[opt.value] ?? 0}</span>

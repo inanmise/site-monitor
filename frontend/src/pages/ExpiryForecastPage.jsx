@@ -79,6 +79,18 @@ function freshen(desc, certs, dayCerts) {
 }
 
 // ── Sayfa ─────────────────────────────────────────────────────────────────────────────────────────
+/** Faset süzgeçleri (takım/UG/kritiklik/grup + arama + plan durumu) — KPI, içgörüler, takvim/liste ve plan sonrası gün
+ *  paneli AYNI hattı kullanır. */
+function facetCerts(all, filters, search, plan) {
+  const q = (search || '').trim().toLowerCase()
+  return applyFilters(all, filters).filter((c) => {
+    if (q && !((c.domain || '').toLowerCase().includes(q) || (c.team_name || '').toLowerCase().includes(q) || (c.issuer_cn || '').toLowerCase().includes(q))) return false
+    if (plan === 'planned') return c.renewal_plan_state === 'planned'
+    if (plan === 'unplanned') return c.renewal_plan_state !== 'planned' && c.renewal_plan_state !== 'done'
+    return true
+  })
+}
+
 export default function ExpiryForecastPage({ onSelectDomain }) {
   const t = useT(); const toast = useToast()
   const locale = dateLocale()
@@ -126,15 +138,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const th = useMemo(() => data?.thresholds || { warning: 30, high: 15, critical: 7 }, [data])
   const allCerts = useMemo(() => data?.certs || [], [data])
   // Faset süzgeçleri (takım/UG/kritiklik/grup + arama + plan durumu) → KPI, içgörüler ve takvim/liste tabanı
-  const certs = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return applyFilters(allCerts, filters).filter((c) => {
-      if (q && !((c.domain || '').toLowerCase().includes(q) || (c.team_name || '').toLowerCase().includes(q) || (c.issuer_cn || '').toLowerCase().includes(q))) return false
-      if (plan === 'planned') return c.renewal_plan_state === 'planned'
-      if (plan === 'unplanned') return c.renewal_plan_state !== 'planned' && c.renewal_plan_state !== 'done'
-      return true
-    })
-  }, [allCerts, filters, search, plan])
+  const certs = useMemo(() => facetCerts(allCerts, filters, search, plan), [allCerts, filters, search, plan])
   const kpi = useMemo(() => computeKpis(certs, th, today), [certs, th, today])
   const doneCount = useMemo(() => certs.filter((c) => c.renewal_plan_state === 'done').length, [certs])
   // Kutucuk süzgeci (aciliyet) → ufuk, takvim ve liste
@@ -226,7 +230,9 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   function closePlan(nextData) {
     setPlanRow(null)
     if (resumeDay) {
-      const base = nextData?.certs ?? allCerts
+      // Aynı süzgeç hattı (2026-10-09, hata düzeltmesi): eskiden HAM liste kullanılıyordu → plan sonrası geri açılan gün
+      // paneli kullanıcının takım/arama/plan süzgeçlerinin DIŞINDAKİ sertifikaları da listeliyordu.
+      const base = nextData?.certs ? facetCerts(nextData.certs, filters, search, plan) : certs
       const fresh = tile ? base.filter((c) => matchesTile(c, tile, th, today)) : base
       const byKey = (key) => fresh.filter((c) => expiryKey(c) === key || (c.renewal_plan_state === 'planned' && c.renewal_planned_at === key))
       setDay(freshen(resumeDay, fresh, byKey))
