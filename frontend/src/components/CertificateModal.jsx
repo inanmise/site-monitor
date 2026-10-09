@@ -81,6 +81,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // başlıkta salt okunur rozet + sahibi takım (`readOnlyTeam: { id, name }`). Okuma sekmeleri (SSL, sağlık, geçmiş, envanter, notlar) açık.
   readOnly = false, readOnlyTeam = null,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
+  // Pencere içinden veri değişti (manuel sertifika yeni sürümü, 2026-10-09): çağıran (Pano) kart listesini tazeler.
+  onDataChanged,
   // Yeniden adlandırma (2026-10-08): pencere açıkken kayıt `renamedFrom` → `domain` adına geçtiyse veri yeni adla yeniden
   // okunur ama kullanıcı bulunduğu sekmede kalır (yeni bir pencere açılmış gibi SSL'e atılmaz).
   renamedFrom = null,
@@ -285,6 +287,20 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       setSslLoading(false)
     }).catch((e) => { if (mySeq === sslSeq.current) { setSslError(e?.message || ''); setSslLoading(false) } })
   }, [])
+
+  // Manuel sertifikaya yeni sürüm yüklendi (2026-10-09, hata düzeltmesi): SSL sekmesi ESKİ sürümün çevrim-dışı önizlemesini
+  // göstermeye devam ediyordu (sslData doluyken yeniden probe edilmez). Uçuştaki probe geçersizlenir, veri boşaltılır →
+  // SSL sekmesi açıksa yeni sürümle yeniden çizilir; kart/geçmiş tazelenir; Pano kartı da (onDataChanged) güncellenir.
+  const onDataChangedRef = useRef(onDataChanged)
+  onDataChangedRef.current = onDataChanged
+  const handleRenewed = useCallback(() => {
+    sslSeq.current++
+    setSslLoading(false)
+    setSslError(null)
+    setSslData(null)
+    refreshCert(false)
+    try { onDataChangedRef.current?.() } catch { /* çağıranın tazelemesi pencereyi bozmasın */ }
+  }, [refreshCert])
 
   const sslUpload = isUploadResult(sslData)
   const isManual = !!manual || manualDetected || isManualCert(certData) || sslUpload
@@ -527,7 +543,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* Manuel kayıt (2026-10-06): sürümler — yeni sürüm yüklenince pencere verisi de tazelenir */}
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
               {/* key YALNIZ alan adı: tazeleme sayacıyla yeniden bağlansaydı açık yükleme sihirbazı (sonuç adımı) kapanırdı */}
-              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={() => refreshCert(false)} />
+              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={handleRenewed} />
             </Suspense>
           </TabsContent>
         )}

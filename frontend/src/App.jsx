@@ -2055,6 +2055,7 @@ export default function App() {
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab} renamedFrom={modalCert?._renamedFrom ?? null}
         manual={isManualCert(modalCert)} manualMeta={isManualCert(modalCert) ? { version: modalCert.manual_version ?? null, uploadedAt: modalCert.manual_uploaded_at ?? null } : null}
         refreshSignal={certModalRefresh}
+        onDataChanged={loadData}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
         {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
