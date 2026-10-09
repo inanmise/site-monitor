@@ -70,7 +70,7 @@ class CertificateCardExtrasServiceTest {
         when(healthService.thresholdResolution()).thenReturn(ThresholdResolution.fixed(null));   // tier bazlı çözüm (2026-09-20): 30/15/7
         when(healthService.evaluate(any(), any(), eq(false), anyInt(), anyInt())).thenReturn(new CertificateHealthService.HealthResult(List.of(), 0, 0));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
-        when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of());
+        when(alertEventRepo.findLatestForActiveInventoryDomains()).thenReturn(List.of());
         when(uptimeCheckRepo.hourlyHttpOkSince(anyString())).thenReturn(List.of());
         when(uptimeCheckRepo.findLatestPerDomainPort()).thenReturn(List.of());
         when(maintenanceService.windowInfoByTarget(any())).thenReturn(Map.of());
@@ -89,7 +89,7 @@ class CertificateCardExtrasServiceTest {
         AlertEvent c = new AlertEvent(); c.setId(6L); c.setDomain("a.example.com"); c.setAlertLevel("CRITICAL"); c.setAlertType("ACCESSIBILITY"); c.setAcknowledged(false);
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(w, c));
         AlertEvent last = new AlertEvent(); last.setId(9L); last.setDomain("a.example.com"); last.setAlertLevel("HIGH"); last.setAlertType("HTTP_DOWN"); last.setResolved(true); last.setCreatedAt(at(300)); last.setResolvedAt(at(200));
-        when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of(last));
+        when(alertEventRepo.findLatestForActiveInventoryDomains()).thenReturn(List.of(last));
 
         Map<String, Object> x = svc.compute(NOW).get("a.example.com");
         assertThat((Map<String, Object>) x.get("last_alert")).containsEntry("id", 9L).containsEntry("resolved", true).containsEntry("type", "HTTP_DOWN").containsEntry("resolved_at", at(200));
@@ -197,5 +197,18 @@ class CertificateCardExtrasServiceTest {
         // Önbellekteki blok kirlenmemeli: kapsamlı çağrıdan SONRA global yine tam listeyi vermeli.
         Map<String, Object> againGlobal = (Map<String, Object>) svc.forDomains(null).get("a.example.com").get("shared");
         assertThat(againGlobal).containsEntry("domains", List.of("z.example.com"));
+    }
+
+    @Test
+    @DisplayName("2026-10-09: envanter-sınırlı son alarm sorgusu düşerse eski tüm-geçmiş sorgusuna dönülür (kart şeridi boş kalmaz)")
+    @SuppressWarnings("unchecked")
+    void lastAlert_fallsBackToLegacyQuery() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.example.com", null, "dev@example.com")));
+        when(latestCheckRepo.findAll()).thenReturn(List.of(lc("a.example.com", "AA", "AA", null, null)));
+        when(alertEventRepo.findLatestForActiveInventoryDomains()).thenThrow(new RuntimeException("LATERAL desteklenmiyor"));
+        AlertEvent last = new AlertEvent(); last.setId(11L); last.setDomain("a.example.com"); last.setAlertLevel("HIGH"); last.setAlertType("HTTP_DOWN");
+        when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of(last));
+        Map<String, Object> x = svc.compute(NOW).get("a.example.com");
+        assertThat((Map<String, Object>) x.get("last_alert")).containsEntry("id", 11L);
     }
 }

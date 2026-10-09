@@ -64,6 +64,18 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT a FROM AlertEvent a WHERE a.id IN (SELECT MAX(b.id) FROM AlertEvent b WHERE b.domain IS NOT NULL GROUP BY b.domain)")
     List<AlertEvent> findLatestPerDomain();
 
+    /**
+     * Genel Bakış kartı "şu an" şeridi — YALNIZ aktif envanter alanları için alan başına en son alarm (2026-10-09, performans).
+     * {@link #findLatestPerDomain} kapanmış alarmlar dahil TÜM geçmişi alan adına göre grupluyordu (alarm satırları hiç
+     * silinmez → tablo büyüdükçe yavaşlar ve Genel Bakış ek verisini geciktirir). Küçük envanter üzerinden LATERAL ile alan
+     * başına tek indeks araması ({@code idx_ae_domain}); kart yalnız aktif envanter alanlarını gösterdiği için sonuç aynı.
+     * PostgreSQL'e özgü sözdizimi düşerse çağıran eski sorguya döner.
+     */
+    @Query(value = "SELECT a.* FROM certificate_inventory i CROSS JOIN LATERAL "
+         + "(SELECT * FROM alert_events e WHERE e.domain = i.domain ORDER BY e.id DESC LIMIT 1) a "
+         + "WHERE i.active = true", nativeQuery = true)
+    List<AlertEvent> findLatestForActiveInventoryDomains();
+
     List<AlertEvent> findByDomainOrderByCreatedAtDesc(String domain);
 
     List<AlertEvent> findByDomainAndResolvedFalse(String domain);

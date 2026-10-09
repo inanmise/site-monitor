@@ -326,6 +326,35 @@ class PolledQueriesPostgresTest {
     }
 
     @Test
+    @DisplayName("Kart 'son alarm' şeridi (2026-10-09): envanter-sınırlı LATERAL sorgu aktif alanın EN SON alarmını döner; pasif / envanter dışı alan yok")
+    void latestAlertForActiveInventoryDomains_returnsLatestPerActiveDomain() {
+        String act = "it-card-act-" + tag + ".example.test";
+        String off = "it-card-off-" + tag + ".example.test";
+        String stray = "it-card-stray-" + tag + ".example.test";
+        com.sitemonitor.model.CertificateInventory a = new com.sitemonitor.model.CertificateInventory();
+        a.setDomain(act); a.setActive(true);
+        com.sitemonitor.model.CertificateInventory o = new com.sitemonitor.model.CertificateInventory();
+        o.setDomain(off); o.setActive(false);
+        bean(CertificateInventoryRepository.class).save(a);
+        bean(CertificateInventoryRepository.class).save(o);
+        AlertEventRepository repo = bean(AlertEventRepository.class);
+        String t1 = iso(java.time.Instant.now().minus(20, ChronoUnit.MINUTES));
+        String t2 = iso(java.time.Instant.now().minus(5, ChronoUnit.MINUTES));
+        repo.save(alert(act, "EXPIRY", "WARNING", t1));
+        long latest = repo.save(alert(act, "HTTP_DOWN", "HIGH", t2)).getId();
+        repo.save(alert(off, "EXPIRY", "WARNING", t2));
+        repo.save(alert(stray, "EXPIRY", "WARNING", t2));
+
+        Map<String, Long> byDomain = new java.util.HashMap<>();
+        for (AlertEvent e : repo.findLatestForActiveInventoryDomains()) {
+            if (e.getDomain() != null && e.getDomain().contains(tag)) byDomain.put(e.getDomain(), e.getId());
+        }
+        assertThat(byDomain).as("yalnız aktif envanter alanı, en son alarmıyla").containsExactly(java.util.Map.entry(act, latest));
+        assertThat(repo.findLatestPerDomain().stream().filter(e -> act.equals(e.getDomain())).map(AlertEvent::getId).toList())
+                .as("eski tüm-geçmiş sorgusuyla aynı karar").containsExactly(latest);
+    }
+
+    @Test
     @DisplayName("İzleme Panosu servisi PostgreSQL'de yutulan SQL hatası üretmez ve tohum izlemelerini sayar")
     void monitoringOverviewService_hasNoSwallowedSqlErrors() {
         Map<String, Object> out;
