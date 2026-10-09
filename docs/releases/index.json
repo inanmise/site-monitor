@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T14:51:23Z",
+  "generatedAt": "2026-10-09T15:53:44Z",
   "repo": "inanmise/site-monitor",
-  "count": 725,
+  "count": 726,
   "releases": [
+    {
+      "version": "20.118.0",
+      "tag": "v20.118.0",
+      "releasedAt": "2026-10-09T15:53:35Z",
+      "commit": "326e4e1679b95c63a125f9bfaf94d7dcb58cc96a",
+      "prevVersion": "20.117.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 1,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "326e4e16",
+          "subject": "CHANGELOG — Atıl hesaplar görünümü yeniden tasarımı"
+        },
+        {
+          "type": "perf",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "19c6c787",
+          "subject": "atıl hesap tam listesi yoklanan özetten ayrıldı — pencere açılınca ayrı uçtan"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "825067d0",
+          "subject": "Atıl hesaplar görünümü shadcn ile yeniden tasarlandı — istatistik, süzgeç, CSV, mweb"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.117.2",
       "tag": "v20.117.2",

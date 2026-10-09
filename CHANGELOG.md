@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.118.0] — 2026-10-09
+
 ### Added
 - **Sistem Sağlığı → Kullanıcı/Oturum → "Atıl hesaplar" yeniden tasarlandı (shadcn, telefon / tablet / masaüstü).**
   Aynı kutucuktan açılır; mevcut işlevler (sayı, kullanıcı ayrıntısını açma, kimlik maskesi) korunur.
@@ -29,7 +31,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
     Bu görünüm hesap üzerinde değişiklik yapmaz.
   - Sunucu: 30 sn'lik özet yine ilk 500 satırı taşır; tam liste (en çok 5000) pencere açılınca ayrı uçtan
     (`GET /api/admin/system/user-activity/dormant`, 30 sn paylaşımlı önbellek, aynı okuma kapısı ve maske) gelir.
-
 
 ## [20.117.2] — 2026-10-09
 
@@ -2785,7 +2786,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.118.0...HEAD
+[20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0
 [20.117.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.2
 [20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
 [20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
