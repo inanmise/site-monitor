@@ -397,7 +397,11 @@ public final class RetentionCatalog {
                 + "mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve "
                 + "site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler."),
         info("password-history", "password_history", Mode.EXTERNAL, DataClass.PERSONAL,
-                "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı.")
+                "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı."),
+        info("monitor-check-schedule", "monitor_check_schedule", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Küme geneli izleme vadesi ve süpürme turu kaydı (2026-10-09): izleme başına TEK satır (sıradaki vade, son "
+                + "sahiplenen pod) + birkaç 'round:' satırı. Zaman serisi değil, birikmez; silinen izlemelerin satırlarını "
+                + "SchedulerService gece temizliği canlı izleme kümesiyle budar (tur satırları kalır). Kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */

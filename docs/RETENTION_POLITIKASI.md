@@ -113,6 +113,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `today_panel_snapshots` | sınırlı büyür | — | — | — | Sizin için — bugün paneli dünden bugüne görüntüsü (2026-09-23): saatte bir satır, kartların satır KİMLİKLERİ (JSON). TodayPanelService her kayıtta 72 saatten eskileri siler → en fazla ~72 satır. |
 | `system_maintenance_suppressions` | 365 gün | 30 g | `site.monitor.notification.retention-days` | `first_at < ?` | Sistem bakımında susturulan alarm bildirimleri (2026-10-02): bakım × alarm başına TEK satır — bitişteki bildirim telafisinin listesi ve kararı. Bildirim günlüğüyle (notification_logs) aynı süre: iz o günlükte, bu tablo onun bakım özetidir. Kişisel veri yok (alarm kimliği + tetik + sayaç). |
 | `schema_table_registry` | sınırlı büyür | — | — | — | Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur). |
+| `monitor_check_schedule` | harici yönetilir | — | — | — | Küme geneli izleme vadesi ve süpürme turu kaydı (2026-10-09): izleme başına TEK satır (sıradaki vade, son sahiplenen pod) + birkaç 'round:' satırı. Zaman serisi değil, birikmez; silinen izlemelerin satırlarını SchedulerService gece temizliği canlı izleme kümesiyle budar (tur satırları kalır). Kişisel veri yok. |
 
 ## Kapsam güvencesi
 
