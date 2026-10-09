@@ -197,10 +197,12 @@ describe('i18n — İngilizce sözlük ayrı chunk (öneri 22)', () => {
       expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
       expect(m.dateLocale.sessionLangOverride()).toBe('tr')
       expect(m.isLanguageLoaded('en')).toBe(false)
+      // Bildirim sahte saatte doğrulanır: gerçek saate dönüşte bekleyen sahte zamanlayıcılar (toast yerleşimi) düşer.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(screen.getByText(TR['lang.loadFailed'])).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
-    expect(await screen.findByText(TR['lang.loadFailed'])).toBeInTheDocument()
   })
 
   it('aynı anda gelen yüklemeler TEK indirmeyi paylaşır; inmiş sözlükle geçiş ANINDA (pending yok)', async () => {

@@ -36,7 +36,8 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
       .map((x) => x.rel)
     expect(offenders).toEqual([])
     const users = FILES.filter(({ src }) => anyImports(src).some((s) => s.startsWith('node-forge') || s === 'fflate')).map((x) => x.rel).sort()
-    expect(users).toEqual(['components/manualcert/extract/core.js', 'components/manualcert/extract/crypto.js', XLSX_WRITER])
+    // 2026-10-09: ZIP açma core.js'ten extract/zip.js'e taşındı (akışlı Inflate + kayıt sınırı) — yine extract/ altında.
+    expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', XLSX_WRITER])
   })
 
   it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modülünden gelir; o modül her yerde import() ile yüklenir', () => {
