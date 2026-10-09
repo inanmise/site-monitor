@@ -14,6 +14,8 @@ import { CARD_GRID, CHART_GRID, ERR_T, OK_T, WARN_T, KvList, SectionError, SubTi
  */
 export default function SystemSection({ t, health, metrics, metricsError, onRetry, onOpenChart }) {
   const { build, memory, scheduler } = health || {}
+  // Oturum deposu (2026-10-09): jdbc = veritabanı (pod yeniden başlayınca oturum sürer), memory = pod belleği
+  const sessionStore = health?.session_store
   const memLevel = !memory ? 'ok' : memory.used_pct >= MEMORY_PCT.crit ? 'crit' : memory.used_pct >= MEMORY_PCT.warn ? 'warn' : undefined
   const memTone = memLevel === 'crit' ? ERR_T : memLevel === 'warn' ? WARN_T : OK_T
   const mono = 'font-mono'
@@ -43,6 +45,21 @@ export default function SystemSection({ t, health, metrics, metricsError, onRetr
               {build?.started_at && <span className="text-muted-foreground"> · {t('health.uptimeSince', formatDate(build.started_at))}</span>}</dd>
             <dt>{t('sys.instanceId')}</dt>
             <dd className={monoSm}>{scheduler?.instance_id || '—'}</dd>
+            {sessionStore?.store && (
+              <>
+                <dt>{t('health.sessionStore')}</dt>
+                <dd data-slot="session-store" data-store={sessionStore.store} className="flex flex-wrap items-center gap-1.5">
+                  <ToneBadge tone={sessionStore.store === 'jdbc' ? 'success' : 'warning'} className="font-semibold">
+                    {t(sessionStore.store === 'jdbc' ? 'health.sessionStoreJdbc' : 'health.sessionStoreMemory')}
+                  </ToneBadge>
+                  <span className="text-muted-foreground">
+                    {sessionStore.store === 'jdbc'
+                      ? (sessionStore.live != null ? t('health.sessionStoreLive', sessionStore.live) : '')
+                      : t('health.sessionStoreMemoryHint')}
+                  </span>
+                </dd>
+              </>
+            )}
           </KvList>
         </SysCard>
 

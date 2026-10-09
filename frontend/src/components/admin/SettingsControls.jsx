@@ -42,10 +42,13 @@ export function helpLabel(text, helpKey) {
  * ui/PageHeader'ın bölüm ölçeğindeki karşılığı: sayfa başlığı h2 (kabuk), bölüm h3, kart başlıkları h4.
  * Test kancaları: data-slot="settings-header|settings-title|settings-description|settings-meta|settings-actions".
  */
-export function SettingsHeader({ icon: Icon, title, description, hint, meta, actions, level = 3, className = '', children, ...rest }) {
+export function SettingsHeader({ icon: Icon, title, description, hint, meta, actions, level = 3, className = '', rowClassName = '', children, ...rest }) {
+  // rowClassName (isteğe bağlı, 2026-10-09 Veritabanı Bilgileri): başlık + eylem satırının yan yana geçtiği eşiği çağıran
+  // belirler (ör. kap sorgusu `sm:flex-col @2xl/x:flex-row` — tablette kenar çubuğu açıkken içerik ~400 px kalıyordu).
+  // Verilmezse görünüm aynı.
   return (
     <header data-slot="settings-header" className={cn('flex min-w-0 flex-col gap-3', className)} {...rest}>
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className={cn('flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4', rowClassName)}>
         <div className="flex min-w-0 items-start gap-3">
           {Icon && (
             <span aria-hidden="true"

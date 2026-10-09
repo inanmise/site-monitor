@@ -523,6 +523,12 @@ public class UserService {
         activeSessionCache.remove(normalizeUsername(username));   // F2 evict
     }
 
+    /** Süpersede önbelleğini boşaltır — tek-oturum işaretleri bu servisin DIŞINDA (SQL ile) değiştiğinde
+     *  (JDBC açılış temizliği, {@code SessionStoreService}). */
+    public void evictActiveSessionCaches() {
+        activeSessionCache.clear();
+    }
+
     /** Açılışta: tüm stale activeSessionId kayıtlarını temizler (in-memory oturumlar restart'ı yaşamaz).
      *  Temizlenen satır sayısını döner. */
     @Transactional

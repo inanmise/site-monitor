@@ -398,7 +398,7 @@ public class StartupLogger {
     private static final String[] JPA_KEYS = {
             "spring.jpa.hibernate.ddl-auto", "spring.jpa.show-sql", "spring.jpa.open-in-view",
             "spring.jpa.properties.hibernate.default_batch_fetch_size", "spring.jpa.properties.hibernate.jdbc.batch_size",
-            "spring.session.store-type" };
+            "site.monitor.session.store", "spring.session.timeout" };
 
     private static final String[] LOG_KEYS = {
             "logging.level.root", "logging.level.com.sitemonitor", "logging.file.path",

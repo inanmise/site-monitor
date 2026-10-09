@@ -15,6 +15,36 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.117.0] — 2026-10-09
+
+### Added
+- **Ayarlar → Veritabanı bilgileri yeniden tasarlandı (shadcn, telefon / tablet / masaüstü).** Eski alanların hepsi
+  korunur; sayfa tek istekle şunları gösterir:
+  - üstte durum, PostgreSQL sürümü, son güncelleme, "Sorgu analitiği" ve Yenile;
+  - dört özet kutucuk: durum + sorgu süresi, boyut + tablo sayısı, sunucu bağlantıları ve uygulama havuzu doluluğu;
+  - beş kart: Bağlantı (SSL/TLS dahil), Sağlık denetimleri (dış izleme ucu `/api/public/health/db` ile aynı sonuç,
+    adres kopyalanabilir), Sunucu, Bağlantı Havuzu (süreler dahil), JDBC / Sürücü (maskeli adres, kopyala).
+  - İlk yüklemede iskelet, hata bloğu ve "Tekrar dene"; yenileme hatasında son değerler kalır. Geç gelen yanıt yenisini ezmez.
+  - Sunucu: yanıta `health` bloğu ve yeni alanlar (saat dilimi, tablo sayısı, SSL, havuz süreleri, şema yaması sayıları)
+    eklendi; şema yamalarının SQL / hata metni dönmez. JDBC adres maskesi `sslpassword`, `pwd`, `token`, `*key` ve
+    `kullanıcı:parola@` biçimini de kapsar. Yetki kapısı değişmedi (yalnız global yönetici).
+
+### Fixed
+- **Oturumlar yeniden veritabanında tutuluyor; prod'da yeniden başlatma herkesi düşürmüyor.** Spring Boot 3.3.6 → 4.1.0
+  yükseltmesinden (2026-06-17) beri prod profilindeki `spring.session.store-type=jdbc` hiçbir şey yapmıyordu. Boot 4
+  oturum yapılandırmasını ayrı bir modüle taşımıştı ve o modül projede yoktu. Bu yüzden oturumlar pod belleğindeydi:
+  her dağıtım ve yeniden başlatma herkesi oturumdan düşürüyor, birden çok pod oturumu paylaşamıyordu.
+  - Tek anahtar: `site.monitor.session.store` (ortam değişkeni `SPRING_SESSION_STORE_TYPE`). `jdbc` prod profilinin
+    varsayılanı; `memory` yerel geliştirme ve testlerin varsayılanı (davranış değişmedi).
+  - JDBC'de oturumlar `spring_session` tablosunda; pod yeniden başlayınca ve pod'lar arasında oturum sürer.
+  - Açılış temizliği JDBC'de yalnız depoda karşılığı kalmamış tek-oturum işaretlerini siler. Her pod açılışında
+    çevrimiçi sayımı ve tek-oturum koruması artık sıfırlanmıyor; yönetici sonlandırması korunur.
+  - Sistem Sağlığı → Uygulama kartında "Oturum deposu" satırı: Veritabanı (JDBC) + canlı oturum sayısı ya da Pod
+    belleği uyarısı. Dağıtımdan sonra buradan doğrulanır.
+  - **⚠ Davranış:** prod'da çerez adı `JSESSIONID` → `SESSION` olur. Bu sürümün dağıtımında herkes bir kez yeniden giriş
+    yapar ("beni hatırla" seçenler otomatik döner); sonraki dağıtımlarda oturum korunur.
+  - **Geri dönüş:** `SPRING_SESSION_STORE_TYPE=memory` (Helm `config.sessionStoreType`) ile kod değişmeden eski davranış.
+
 ## [20.116.3] — 2026-10-09
 
 ### Fixed
@@ -2702,7 +2732,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.3...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.0...HEAD
+[20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
 [20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
 [20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2
 [20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
