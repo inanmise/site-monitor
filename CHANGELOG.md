@@ -15,6 +15,19 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **Genel Bakış ilk yüklemesi hızlandı (kullanıcı bildirimi: "Sertifikalar yükleniyor" uzun sürüyordu).**
+  - Kartlar artık sertifika listesi gelir gelmez çiziliyor; zengin kart ekleri, istatistikler, sessiz alarm, pasif ve posta
+    hatası bilgileri geldikçe dolduruluyor. Eskiden altı isteğin EN YAVAŞI (sunucuda ağır toplama yapan kart ekleri)
+    beklenip sonra çiziliyordu. Eski bir yüklemenin geç gelen yanıtı yenisinin üzerine yazmıyor; çıkıştan sonra önceki
+    oturumun yanıtı yeni oturuma yazılmıyor.
+  - Sunucu Genel Bakış önbelleklerini (sertifika listesi, istatistikler, kart ekleri) açılışta ve her taramadan sonra arka
+    planda ısıtıyor; ilk kullanıcı boş önbelleği beklemiyor.
+  - Kart "son alarm" bilgisi artık tüm alarm geçmişini gruplamıyor; aktif envanter alanı başına tek indeks aramasıyla geliyor.
+  - Okuma isteği (GET) geçici bir bağlantı sıfırlanmasında (`ERR_CONNECTION_RESET`) bir kez yeniden deneniyor; yazma
+    istekleri, zaman aşımı, iptal ve çevrimdışı durumda yeniden deneme yok.
+
+
 ## [20.118.0] — 2026-10-09
 
 ### Added
