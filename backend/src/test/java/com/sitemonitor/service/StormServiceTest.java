@@ -173,6 +173,7 @@ class StormServiceTest {
     @Test
     @DisplayName("Aktif storm varsa → attach (SUPPRESSED, stormId damgalanır, e-posta yok)")
     void evaluate_activeStorm_attaches() {
+        when(jdbcTemplate.update(startsWith("UPDATE alert_storms SET member_count = COALESCE"), any(Object[].class))).thenReturn(1);   // koşullu sayaç 1 satır = fırtına hâlâ aktif (kapanış yarışı yok, 2026-10-09)
         when(appSettings.getBoolean(eq(StormService.KEY_ENABLED), anyBoolean())).thenReturn(true);
         when(appSettings.getBoolean(eq(StormService.KEY_PER_GROUP), anyBoolean())).thenReturn(false);
         AlertStorm active = storm(100L);
@@ -258,6 +259,7 @@ class StormServiceTest {
     @Test
     @DisplayName("N eşzamanlı arıza → tam olarak BİR toplu alarm (kalanı attach)")
     void evaluate_nFailures_exactlyOneAggregatedAlert() {
+        when(jdbcTemplate.update(startsWith("UPDATE alert_storms SET member_count = COALESCE"), any(Object[].class))).thenReturn(1);   // koşullu sayaç 1 satır = fırtına hâlâ aktif (kapanış yarışı yok, 2026-10-09)
         enabledAccountWide();
         AlertStorm created = storm(300L);
         // 1. çağrının aktif-kontrolü empty; sonrası hep aktif storm (post-insert + sonraki çağrıların aktif-kontrolü)

@@ -117,6 +117,7 @@ class StormObservabilityRecordTest {
     @Test
     @DisplayName("Aktif fırtınaya katılım ATTACH üyelik satırı bırakır — TEK cümle (exists sorgusu yok; çakışma DB'de yutulur)")
     void attach_recordsMemberOnce() {
+        when(jdbcTemplate.update(startsWith("UPDATE alert_storms SET member_count = COALESCE"), any(Object[].class))).thenReturn(1);   // koşullu sayaç 1 satır = fırtına hâlâ aktif (kapanış yarışı yok, 2026-10-09)
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:14")).thenReturn(Optional.of(teamStorm(5, ago(3), ago(1), ago(3))));
 
         assertThat(storm.evaluate(down(77, ago(0)), null)).isEqualTo(StormService.StormAction.SUPPRESSED);
@@ -175,6 +176,7 @@ class StormObservabilityRecordTest {
     @Test
     @DisplayName("Üyelik yazımı hata verse de terfi ve katılım aynen çalışır — gözlem asla karar mantığını düşürmez")
     void recordingFailure_stillWorks() {
+        when(jdbcTemplate.update(startsWith("UPDATE alert_storms SET member_count = COALESCE"), any(Object[].class))).thenReturn(1);   // koşullu sayaç 1 satır = fırtına hâlâ aktif (kapanış yarışı yok, 2026-10-09)
         when(jdbcTemplate.update(eq(StormService.SQL_MEMBER_INSERT), any(Object[].class))).thenThrow(new RuntimeException("tablo yok"));
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:14")).thenReturn(Optional.of(teamStorm(5, ago(3), ago(1), ago(3))));
         assertThat(storm.evaluate(down(77, ago(0)), null)).isEqualTo(StormService.StormAction.SUPPRESSED);

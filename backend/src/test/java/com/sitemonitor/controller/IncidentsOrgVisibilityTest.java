@@ -105,8 +105,14 @@ class IncidentsOrgVisibilityTest {
     private final AlertEvent ownEv = event(1L, OWN, "https://own.example.com");
     /** Başka takımın damgalı olayı. */
     private final AlertEvent foreignEv = event(2L, FOREIGN, "https://foreign.example.com");
-    /** Damgasız olay; envanterde SY başka takım, UG KENDİ takım → yine "kendi" (incidentTeamInScope kuralı). */
-    private final AlertEvent ugEv = event(3L, null, "ug.example.com");
+    /** Damgasız ENVANTER olayı (ACCESSIBILITY); envanterde SY başka takım, UG KENDİ takım → yine "kendi" (incidentOwnedBy
+     *  kuralı). Bağımsız izleme türü OLAMAZ: 2026-10-09'dan beri onun sahibi yalnız damgalı takımdır (AlertOwnership). */
+    private final AlertEvent ugEv = withType(event(3L, null, "ug.example.com"), "ACCESSIBILITY");
+
+    private static AlertEvent withType(AlertEvent e, String type) {
+        e.setAlertType(type);
+        return e;
+    }
 
     private void switchOn(boolean on) {
         when(appSettings.getBoolean(eq(IncidentsController.VISIBLE_TO_ALL_KEY), anyBoolean())).thenReturn(on);
@@ -460,5 +466,50 @@ class IncidentsOrgVisibilityTest {
         mvc.perform(delete("/api/monitoring/incidents/comments/41").session(nocOperator())).andExpect(status().isOk());
         mvc.perform(delete("/api/monitoring/incidents/2").session(nocOperator())).andExpect(status().isForbidden());
         verify(alertEventRepo, never()).deleteById(anyLong());
+    }
+
+    // ══ 2026-10-09: bağımsız izleme olayında yazma yalnız SAHİBİ takımın (AlertOwnership) ═══════════════════════════════
+
+    @Test
+    @DisplayName("bağımsız olay (FOREIGN'ın Ping'i), host'un envanter UG'si OWN: OWN okur (liste kuralı) ama salt okunur — yorum 403; 7/24 operatörü yorum yazar; envanter olayı (ACCESSIBILITY) eskisi gibi OWN'un")
+    void standaloneOnMyInventoryHost_readOnlyForInventoryTeam() throws Exception {
+        switchOn(false);   // org geneli okuma KAPALI: okuma yalnız liste kuralından (envanter kolu) gelir
+        AlertEvent ping = event(4L, FOREIGN, "ug.example.com");
+        ping.setAlertType("PING_DOWN");
+        ping.setContextJson("{\"team_id\":9,\"monitor_id\":31}");
+        when(alertEventRepo.findById(4L)).thenReturn(Optional.of(ping));
+        when(commentRepo.save(any(AlertComment.class))).thenAnswer(i -> { AlertComment c = i.getArgument(0); c.setId(91L); return c; });
+
+        mvc.perform(get("/api/monitoring/incidents/4").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_manage").value(false))
+                .andExpect(jsonPath("$.data.can_act").value(false))
+                .andExpect(jsonPath("$.data.can_comment").value(false));
+        mvc.perform(post("/api/monitoring/incidents/4/comments").session(user())
+                        .contentType("application/json").content("{\"body\":\"envanter takımı olarak yorum denemesi\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/monitoring/incidents/4/comments").session(nocOperator())
+                        .contentType("application/json").content("{\"body\":\"7/24 aradı: sahibi takım bakıyor\"}"))
+                .andExpect(status().isOk());
+        // Sahibi takımın üyesi (FOREIGN) yorum yazar.
+        mvc.perform(post("/api/monitoring/incidents/4/comments").session(session("kisif", "USER", List.of(FOREIGN), List.of()))
+                        .contentType("application/json").content("{\"body\":\"sahibi takım olarak bakıyoruz\"}"))
+                .andExpect(status().isOk());
+        // Envanter gibi yönlenen olay (#3, UG = OWN) değişmedi.
+        mvc.perform(post("/api/monitoring/incidents/3/comments").session(user())
+                        .contentType("application/json").content("{\"body\":\"UG takımı olarak bakıyoruz\"}"))
+                .andExpect(status().isOk());
+        verify(commentRepo, times(3)).save(any(AlertComment.class));
+
+        // Liste satırı: "Takımımın olayları"nda görünse de (sorgu envanter kuralını taşır) bayraklar kapalı.
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(ping, ugEv)));
+        mvc.perform(get("/api/monitoring/incidents").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(4))
+                .andExpect(jsonPath("$.data[0].can_manage").value(false))
+                .andExpect(jsonPath("$.data[0].can_comment").value(false))
+                .andExpect(jsonPath("$.data[1].id").value(3))
+                .andExpect(jsonPath("$.data[1].can_manage").value(true));
     }
 }

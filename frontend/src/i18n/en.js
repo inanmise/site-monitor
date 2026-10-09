@@ -4497,6 +4497,7 @@ export const EN = {
   'alh.actOtherTeam':   'This alert isn\'t your team\'s — you can only log calls against it.',
   'alh.actNoPermission':    'You don\'t have permission to acknowledge, resolve or re-notify alerts.',
   'alh.actNoPermissionNoc': 'You don\'t have permission to acknowledge, resolve or re-notify — you can only log calls against it.',
+  'alh.actStandaloneOwner': 'This alert belongs to another team\'s standalone monitor — only that team can acknowledge, resolve or re-notify it.',
   'alh.sending':        'Sending...',
   'alh.history':        'History',
   'alh.resolve':        'Resolved',

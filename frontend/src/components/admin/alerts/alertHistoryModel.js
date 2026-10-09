@@ -486,7 +486,9 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
  *
  * 7/24 operatörü (`noc_calls.write`, sunucunun `noc_can_write`'ı) TÜM takımların uyarılarını GÖRÜR, ama yazma eylemlerinin
  * kapsamı değişmedi: sunucu `requireAlertScope` = global görüntüleyici (global yönetici / AUDIT) ya da uyarının
- * takımlarından biri (`team_id`, envanterin SY `sy_team_id` ve UG `ug_team_id`'si) kullanıcının takımlarında. Dışındaki
+ * takımlarından biri (`team_id`, envanterin SY `sy_team_id` ve UG `ug_team_id`'si — 2026-10-09'dan beri envanter
+ * takımları yalnız envanter gibi yönlenen uyarıda; kesin karar sunucunun `act_scope` bayrağıdır, bkz. actBlockReason)
+ * kullanıcının takımlarında. Bu tahmin yalnız `act_scope` gelmediğinde (eski sunucu) kullanılır. Dışındaki
  * uyarıda düğmeler 403'e gider → gizlenir, yerine "yalnız arama kaydı" notu. Kapı YALNIZ operatörde ve takım listesi
  * biliniyorsa çalışır: operatör olmayan zaten yalnız kendi kapsamını görür (kapsamlı müdürün görüş listesi istemcide
  * yok — onu yanlışlıkla kısıtlamasın), gömülü kullanımda (takımlar verilmez) davranış değişmez.
@@ -501,10 +503,15 @@ export function outsideActScope(a, { nocCanWrite = false, globalViewer = false, 
  * Sahiplen / Çöz / Tekrar bildir neden kapalı? (2026-09-28) — `null` = açık; aksi halde neden anahtarı:
  * `'perm'` rolün `alerts.actions` izni yok (sunucunun `can_act`'ı; ör. AUDIT denetçi), `'permNoc'` aynı durumda 7/24
  * operatörü (AUDIT + `noc_calls.write`: yalnız arama kaydı girer), `'team'` operatör başka takımın uyarısında
- * ({@link outsideActScope}). `canAct` yanıtta yoksa (eski sunucu / gömülü kullanım) `true` sayılır — davranış değişmez.
+ * ({@link outsideActScope}), `'owner'` uyarı listede görünüyor (host'un envanteri kullanıcının takımında) ama başka bir
+ * takımın BAĞIMSIZ izlemesine ait — sunucunun satır bayrağı `act_scope === false` (2026-10-09; AdminController
+ * `markActScope`, kural `AlertOwnership`). Bayrak sunucunun kararıdır; varsa istemci tahmini ({@link outsideActScope})
+ * yerine o okunur. `canAct` / `act_scope` yanıtta yoksa (eski sunucu / gömülü kullanım / global görüntüleyici) kısıt
+ * sayılmaz — davranış değişmez.
  */
 export function actBlockReason(a, { canAct = true, nocCanWrite = false, globalViewer = false, myTeamIds = null } = {}) {
   if (!a) return null
   if (canAct === false) return nocCanWrite ? 'permNoc' : 'perm'
+  if (typeof a.act_scope === 'boolean') return a.act_scope ? null : (nocCanWrite ? 'team' : 'owner')
   return outsideActScope(a, { nocCanWrite, globalViewer, myTeamIds }) ? 'team' : null
 }

@@ -111,7 +111,8 @@ class IncidentsActionContextTest {
     private AlertEvent ownEv;
     /** Başka takımın olayı — Kişi B sahiplenmiş; bu ad, sayılar ve aramalar çağırana SIZMAMALI. */
     private AlertEvent foreignEv;
-    /** Damgasız; envanter SY başka takım, UG KENDİ takım → kendi satır (sahiplenilmemiş, bildirimi yok). */
+    /** Damgasız ENVANTER olayı (ACCESSIBILITY); envanter SY başka takım, UG KENDİ takım → kendi satır (sahiplenilmemiş,
+     *  bildirimi yok). Bağımsız izleme türü (HTTP_DOWN) OLAMAZ: 2026-10-09'dan beri onun sahibi yalnız damgalı takımdır. */
     private AlertEvent ugEv;
 
     private static boolean catalogAllows(Object session, String key, String action) {
@@ -128,6 +129,7 @@ class IncidentsActionContextTest {
         foreignEv.setAcknowledged(true); foreignEv.setAcknowledgedBy("kisi.b"); foreignEv.setAcknowledgedAt("2026-09-28T03:06:00");
         foreignEv.setResolvedBy("Kişi E");   // kişi çözdü → başka ekibe AD verilmez
         ugEv = event(3L, null, "ug.example.com");
+        ugEv.setAlertType("ACCESSIBILITY");   // envanter gibi yönlenen tür (AlertOwnership)
 
         when(appSettings.getBoolean(eq(IncidentsController.VISIBLE_TO_ALL_KEY), anyBoolean())).thenReturn(true);
         when(permissionService.allows(any(HttpSession.class), anyString(), anyString()))

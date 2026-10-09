@@ -246,6 +246,25 @@ class NocCallLogServiceTest {
         assertThat(svc.owningTeam(cert)).isEqualTo(TEAM_A);
     }
 
+    @Test
+    @DisplayName("bağımsız izleme uyarısı (2026-10-09, AlertOwnership): sahip takım YALNIZ damga — damgasızsa yok; host'un envanterindeki takım arama kartına girmez")
+    void standaloneAlertNeverOwnedViaInventory() {
+        CertificateInventory inv = new CertificateInventory();
+        inv.setDomain("api.example.com"); inv.setTeamId(TEAM_A); inv.setUgTeamId(TEAM_A);
+        when(inventoryRepo.findByDomain("api.example.com")).thenReturn(Optional.of(inv));
+        AlertEvent ping = new AlertEvent();
+        ping.setId(61L); ping.setDomain("api.example.com"); ping.setAlertType("PING_DOWN"); ping.setTeamId(TEAM_B);
+        assertThat(svc.owningTeam(ping)).isEqualTo(TEAM_B);
+        ping.setTeamId(null);   // sahipsiz bağımsız izleme
+        assertThat(svc.owningTeam(ping)).isNull();
+        AlertEvent port = new AlertEvent();
+        port.setId(62L); port.setDomain("api.example.com"); port.setAlertType("PORT_DOWN");
+        port.setContextJson("{\"standalone\":true,\"monitor_id\":4}");
+        assertThat(svc.owningTeam(port)).isNull();
+        port.setContextJson("{\"monitor_id\":4}");   // envanter türevi → envanter SY
+        assertThat(svc.owningTeam(port)).isEqualTo(TEAM_A);
+    }
+
     // ── Yazma / silme ────────────────────────────────────────────────────────
 
     @Test
