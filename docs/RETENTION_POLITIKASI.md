@@ -50,6 +50,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `spring_session` | harici yönetilir | — | — | — | Spring Session JDBC deposu — Spring'in kendi dakikalık cleanup job'ı süresi dolan oturumları siler (spring.session.timeout=24h). Bu uygulama dokunmaz. |
 | `spring_session_attributes` | harici yönetilir | — | — | — | Oturum öznitelikleri — ebeveyn spring_session satırıyla FK CASCADE silinir. |
 | `remember_me_tokens` | harici yönetilir | — | — | — | RememberMeService saatlik olarak süresi dolmuş token'ları siler (site.monitor.remember.cleanup-interval-ms). |
+| `login_unknown_lockouts` | harici yönetilir | — | — | — | Bilinmeyen kullanıcı adının ilerleyici giriş kilidi (2026-10-09): ad başına TEK satır — kanonik ad, kademe, kilit bitişi, son kilit anı (parola / IP yok). Satır yalnız kaba kuvvet eşiğinde doğar. UnknownUserLockoutService saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler. |
 | `password_history` | harici yönetilir | — | — | — | UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı. |
 
 ## Denetim ve Güvenlik

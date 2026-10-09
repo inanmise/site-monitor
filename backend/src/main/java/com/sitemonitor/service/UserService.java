@@ -158,10 +158,23 @@ public class UserService {
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastTouchAtMs =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * İlerleyici kilidin saati — yalnız kilit hesabı (kilit anı / bitişi / kalan süre) bunu okur. Varsayılan sistem UTC
+     * saati; kilit eşdeğerlik testi (mevcut hesap ↔ bilinmeyen ad) ortak sahte saat verir.
+     */
+    private java.time.Clock lockoutClock = java.time.Clock.systemUTC();
+
+    /**
+     * İlerleyici kilidin merdiveni (2026-10-09) — bilinmeyen kullanıcı adının kilidi ({@code UnknownUserLockoutService})
+     * AYNI yapılandırmayı buradan alır; kademe / süre / gereken hata hesabı tek yerde ({@link com.sitemonitor.service.lockout.LockoutLadder}).
+     */
+    public com.sitemonitor.service.lockout.LockoutLadder lockoutLadder() {
+        return new com.sitemonitor.service.lockout.LockoutLadder(lockoutDurationsSecs, lockoutFailuresNeeded);
+    }
+
     /** Returns how many failures are needed to trigger the next lockout for this account. */
     public int failuresNeededForLevel(Integer failedBlockCount) {
-        int level = (failedBlockCount == null ? 0 : failedBlockCount);
-        return level < lockoutFailuresNeeded.size() ? lockoutFailuresNeeded.get(level) : 1;
+        return lockoutLadder().failuresNeeded(failedBlockCount);
     }
 
     public record LockoutStatus(boolean permanent, long secondsRemaining) {
@@ -1366,11 +1379,10 @@ public class UserService {
             if (Boolean.TRUE.equals(u.getPermanentLock()))
                 return new LockoutStatus(true, 0);
             if (u.getLockoutUntil() != null) {
-                try {
-                    long remaining = Duration.between(
-                        Instant.now(), Instant.parse(u.getLockoutUntil() + "Z")).getSeconds();
-                    if (remaining > 0) return new LockoutStatus(false, remaining);
-                } catch (Exception ignored) {}
+                // Kalan süre bilinmeyen adın kilidiyle AYNI hesaptan (LockoutLadder); bozuk damga = dolmuş.
+                long remaining = com.sitemonitor.service.lockout.LockoutLadder.remainingSeconds(
+                        u.getLockoutUntil(), lockoutClock.instant());
+                if (remaining > 0) return new LockoutStatus(false, remaining);
                 // Lockout expired — clear it
                 u.setLockoutUntil(null);
                 userRepo.save(u);
@@ -1393,17 +1405,17 @@ public class UserService {
     @Transactional
     public LockoutStatus applyProgressiveLockout(String username) {
         return userRepo.findByUsername(username).map(u -> {
-            int offense = (u.getFailedBlockCount() == null ? 0 : u.getFailedBlockCount()) + 1;
-            u.setFailedBlockCount(offense);
+            // Son kademeden sonra son süre yinelenir (kalıcı kilide yükseltme yok). Hesap bilinmeyen adın kilidiyle
+            // AYNI merdivenden (LockoutLadder) — iki yol ayrışırsa kilit yanıtı hesabın varlığını ele verir.
+            var ladder = lockoutLadder();
+            var step = ladder.escalate(u.getFailedBlockCount(), lockoutClock.instant());
+            u.setFailedBlockCount(step.level());
             u.setUpdatedAt(now());
-            // Son kademeden sonra son süre yinelenir (kalıcı kilide yükseltme yok).
-            long secs = lockoutDurationsSecs.get(Math.min(offense, lockoutDurationsSecs.size()) - 1);
-            String lockedAt = ISO.format(Instant.now());
-            u.setLastLockoutAt(lockedAt);
-            u.setLockoutUntil(ISO.format(Instant.now().plusSeconds(secs)));
+            u.setLastLockoutAt(step.lockedAt());
+            u.setLockoutUntil(step.lockoutUntil());
             userRepo.save(u);
-            log.warn("Account locked level={}/{} for {}s: user='{}'", offense, lockoutDurationsSecs.size(), secs, username);
-            return new LockoutStatus(false, secs);
+            log.warn("Account locked level={}/{} for {}s: user='{}'", step.level(), ladder.levels(), step.seconds(), username);
+            return new LockoutStatus(false, step.seconds());
         }).orElse(new LockoutStatus(false, 0));
     }
 

@@ -1734,6 +1734,8 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_otp_ip_created ON login_otp_challenges(ip, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_otp_user_created ON login_otp_challenges(username, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_otp_user_failed ON login_otp_challenges(username, last_failed_at)");
+        // Bilinmeyen kullanıcı adının ilerleyici kilidi (2026-10-09) — LoginUnknownLockout / UnknownUserLockoutService.
+        patch("CREATE TABLE IF NOT EXISTS login_unknown_lockouts(username_key VARCHAR(100) PRIMARY KEY, lockout_level INTEGER, lockout_until VARCHAR(30), last_lockout_at VARCHAR(30), created_at VARCHAR(30), updated_at VARCHAR(30))");
 
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim

@@ -176,68 +176,67 @@ public class AuthController {
     }
 
     /**
-     * İlerleyici kilidin süreleri — {@link UserService} ile AYNI özellik. Bilinmeyen kullanıcı adının sahte kilidi
-     * 1. kademeyi ({@code [0]}) taklit eder.
+     * İlerleyici kilidin merdiveni — {@link UserService} ile AYNI özellikler. Yalnız bilinmeyen ad kilidinin bellek
+     * yedeği (servis bean'i olmayan bağlam) bunları okur; gerçek yol {@code UserService.lockoutLadder()}'ı kullanır.
      */
     @Value("${site.monitor.lockout.durations-seconds:30,120,600,1800}")
     private List<Long> lockoutDurationsSecs;
 
-    /** Sahte kilit tablosunun sert üst sınırı (bellek). */
-    private static final int UNKNOWN_LOCK_MAX = 10_000;
+    @Value("${site.monitor.lockout.failures-needed:5,3,2,1}")
+    private List<Integer> lockoutFailuresNeeded;
 
     /**
-     * BİLİNMEYEN kullanıcı adının sahte kilidi (2026-10-09, kullanıcı adı tahmini): kaba kuvvet eşiğinde mevcut hesap
-     * 423 + {@code wait_seconds} 30 (1. kademe) alırken bilinmeyen ad sonsuza dek {@code wait_seconds:0} alıyordu —
-     * yanıttan "bu hesap var mı" okunuyordu. Artık bilinmeyen ad da 1. kademenin yanıtını alır ve süre dolana dek
-     * mevcut hesap gibi 423 döner. Anahtar = kanonik ad (büyük harf, kırpılmış); değer = kilidin bittiği an. Pod başına
-     * bellek, süre = 1. kademe süresi (kendiliğinden düşer), sınırlı. Mevcut hesapların davranışı DEĞİŞMEZ (bu tabloya
-     * yalnız bilinmeyen ad yazılır).
+     * BİLİNMEYEN kullanıcı adının ilerleyici kilidi (2026-10-09, kullanıcı adı numaralandırması): mevcut ETKİN hesapla
+     * HER kademede aynı yanıt (gereken hata sayısı, {@code wait_seconds}, kalan süre) — durum veritabanında
+     * ({@code login_unknown_lockouts}), tüm pod'larda ortak; merdiven hesabı mevcut hesapla tek kaynak
+     * ({@link com.sitemonitor.service.lockout.LockoutLadder}). Olmayan hesap için {@code app_users} satırı ve
+     * {@code ACCOUNT_LOCKED} denetimi YAZILMAZ. İsteğe bağlı: {@code @WebMvcTest} dilimlerinde bean yok → bellek içi
+     * 1. kademe yedeği (2026-10-09 öncesi davranış); veritabanı hatasında servis aynı yedeğe düşer.
      */
-    private volatile com.github.benmanes.caffeine.cache.Cache<String, java.time.Instant> unknownUserLocks;
+    @Autowired(required = false)
+    private com.sitemonitor.service.lockout.UnknownUserLockoutService unknownLockouts;
 
-    private long firstLockoutSeconds() {
-        List<Long> d = lockoutDurationsSecs;
-        Long first = d == null || d.isEmpty() ? null : d.get(0);
-        return first == null || first <= 0 ? 30L : first.longValue();
-    }
+    /** Bean yokken kullanılan bellek-içi örnek (tembel). */
+    private volatile com.sitemonitor.service.lockout.UnknownUserLockoutService memoryUnknownLockouts;
 
-    private com.github.benmanes.caffeine.cache.Cache<String, java.time.Instant> unknownUserLocks() {
-        var c = unknownUserLocks;
-        if (c == null) {
+    /** Test kancası. */
+    void setUnknownLockouts(com.sitemonitor.service.lockout.UnknownUserLockoutService s) { this.unknownLockouts = s; }
+
+    private com.sitemonitor.service.lockout.UnknownUserLockoutService unknownLockouts() {
+        var s = unknownLockouts;
+        if (s != null) return s;
+        s = memoryUnknownLockouts;
+        if (s == null) {
             synchronized (this) {
-                c = unknownUserLocks;
-                if (c == null) {
-                    c = com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
-                            .maximumSize(UNKNOWN_LOCK_MAX)
-                            .expireAfterWrite(java.time.Duration.ofSeconds(firstLockoutSeconds()))
-                            .<String, java.time.Instant>build();
-                    unknownUserLocks = c;
+                s = memoryUnknownLockouts;
+                if (s == null) {
+                    s = com.sitemonitor.service.lockout.UnknownUserLockoutService.memoryOnly(
+                            () -> new com.sitemonitor.service.lockout.LockoutLadder(lockoutDurationsSecs, lockoutFailuresNeeded));
+                    memoryUnknownLockouts = s;
                 }
             }
         }
-        return c;
+        return s;
     }
 
-    /** Sahte kilidin anahtarı — {@link #failedLogin} bilinmeyen adı denetime bu biçimde yazar. */
+    /** Bilinmeyen adın kanonik anahtarı — {@link #failedLogin} denetim aktörü ve kilit satırı AYNI dizgeyi kullanır. */
     private static String unknownLockKey(String username) {
         return auditName(username.toUpperCase(java.util.Locale.ROOT));
     }
 
-    /** Bilinmeyen adın sahte kilidi sürüyorsa kalan saniye ({@link UserService#checkLockout} ile aynı hesap), yoksa 0. */
-    private UserService.LockoutStatus unknownUserLockStatus(String username) {
-        java.time.Instant until = unknownUserLocks().getIfPresent(unknownLockKey(username));
-        if (until == null) return new UserService.LockoutStatus(false, 0);
-        long remaining = java.time.Duration.between(java.time.Instant.now(), until).getSeconds();
-        return new UserService.LockoutStatus(false, Math.max(0L, remaining));
-    }
-
-    /** Bilinmeyen ad için 1. kademe sahte kilidi başlatır; süreyi döner (mevcut hesabın 1. kademe kilidiyle aynı). */
-    private long startUnknownUserLock(String username) {
-        long secs = firstLockoutSeconds();
-        // UserService gibi saniyeye kırpılmış bitiş anı → kalan süre hesabı aynı yuvarlamayla yürür.
-        unknownUserLocks().put(unknownLockKey(username),
-                java.time.Instant.now().plusSeconds(secs).truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
-        return secs;
+    /**
+     * 423 kilit yanıtı — kilit adımı, kaba kuvvet eşiği, mevcut ve bilinmeyen ad TEK gövde üreticisinden geçer (gövde
+     * bayt bayt aynı; yalnız {@code wait_seconds} kademeye / kalan süreye göre değişir).
+     */
+    private static ResponseEntity<Map<String, Object>> lockedResponse(UserService.LockoutStatus ls) {
+        if (ls.permanent()) {
+            return ResponseEntity.status(423).body(Map.of(
+                "success", false, "locked", true,
+                "error", "Account permanently locked. Contact administrator."));
+        }
+        return ResponseEntity.status(423).body(Map.of(
+            "success", false, "wait_seconds", ls.secondsRemaining(),
+            "error", "Account temporarily locked."));
     }
 
     @PostMapping("/login")
@@ -263,19 +262,15 @@ public class AuthController {
 
         // 2. Per-user progressive lockout (DB-persisted)
         if (!username.isBlank()) {
-            UserService.LockoutStatus ls = userService.checkLockout(username);
-            // Bilinmeyen adın sahte kilidi (2026-10-09): mevcut hesabın 1. kademe kilidiyle AYNI 423 yanıtı.
-            if (!ls.isBlocked()) ls = unknownUserLockStatus(username);
+            // Bilinmeyen ad (2026-10-09): kilit durumu login_unknown_lockouts'tan (tüm pod'larda ortak, mevcut hesapla aynı
+            // merdiven) — YALNIZ hesap yoksa; var olan hesabın kararı app_users'tan (bugünkü yol aynen). İki dal da iki
+            // okuma yapar (ad araması + kilit satırı).
+            UserService.LockoutStatus ls = userService.findByUsername(username).isPresent()
+                    ? userService.checkLockout(username)
+                    : unknownLockouts().status(unknownLockKey(username));
             if (ls.isBlocked()) {
                 auditService.recordRateLimited(auditName(username), clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
-                if (ls.permanent()) {
-                    return ResponseEntity.status(423).body(Map.of(
-                        "success", false, "locked", true,
-                        "error", "Account permanently locked. Contact administrator."));
-                }
-                return ResponseEntity.status(423).body(Map.of(
-                    "success", false, "wait_seconds", ls.secondsRemaining(),
-                    "error", "Account temporarily locked."));
+                return lockedResponse(ls);
             }
         }
 
@@ -324,6 +319,10 @@ public class AuthController {
         } else {
             userOpt = userService.authenticate(username, password);   // LDAP off → local only
             if (userOpt.isEmpty()) inactive = userService.findInactiveWithValidPassword(username, password).orElse(null);
+            // Zamanlama dengesi (2026-10-09): parola özeti olan hesap yukarıda TAM BİR BCrypt karşılaştırması öder (etkinse
+            // authenticate, pasifse findInactiveWithValidPassword); olmayan ad ve özetsiz hesap hiç ödemiyordu → yanıt
+            // süresinden "bu ad var mı" okunuyordu. Aynı maliyet burada ödenir; yanıt ve denetim değişmez.
+            if (existing.map(AppUser::getPasswordHash).isEmpty()) userService.burnPasswordCheck(password);
         }
 
         // Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler): AD bind yolu LDAP, yerel BCrypt yolu (bootstrap admin ve
@@ -514,6 +513,13 @@ public class AuthController {
                 // ÖNCE: o metot entity'yi yeniden yükleyip kaydediyor; ters sırada bayat kopya
                 // az önce artırılan sayacı ezerdi. UNKNOWN_USER'da güncellenecek satır yok.
                 userService.recordFailedLogin(u.getUsername(), clientIp, "BAD_PASSWORD");
+            } else {
+                // BİLİNMEYEN ad (2026-10-09): kilit bağlamı login_unknown_lockouts'tan — mevcut hesapla AYNI kural: sayım
+                // son kilitten başlar, eşik kademeyle daralır (5 → 3 → 2 → 1). Eskiden hep 0. kademe (5 hata, son kilit
+                // yok) sayılıyordu; kilit sonrası gereken hata sayısı hesabın varlığını ele veriyordu.
+                var ctx = unknownLockouts().context(auditActor);
+                lastLockoutAt = ctx.lastLockoutAt();
+                failuresNeeded = ctx.failuresNeeded();
             }
         }
         String reasonCode = userExists ? "BAD_PASSWORD" : "UNKNOWN_USER";
@@ -527,12 +533,10 @@ public class AuthController {
         if (!username.isBlank() && logged != null && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
             if (!userExists) {
-                // BİLİNMEYEN ad (2026-10-09): mevcut hesabın 1. kademe kilidiyle AYNI yanıt (wait_seconds = 1. kademe),
-                // bellek içi sahte kilit; olmayan hesap için ACCOUNT_LOCKED denetimi YAZILMAZ ve DB'ye dokunulmaz.
-                long secs = startUnknownUserLock(username);
-                return ResponseEntity.status(423).body(Map.of(
-                    "success", false, "wait_seconds", secs,
-                    "error", "Account temporarily locked."));
+                // BİLİNMEYEN ad (2026-10-09): mevcut hesapla AYNI merdivende bir sonraki kademe (30 → 120 → 600 → 1800 sn,
+                // sonra son süre yinelenir), durum veritabanında (tüm pod'lar). Olmayan hesap için app_users satırı ve
+                // ACCOUNT_LOCKED denetimi YAZILMAZ; yanıt mevcut hesabınkiyle aynı gövde.
+                return lockedResponse(unknownLockouts().escalate(auditActor));
             }
             UserService.LockoutStatus ls = userService.applyProgressiveLockout(auditActor);
             // Hesap kilit GEÇİŞİ — ayrık denetim olayı (altında yatan failed-login zaten kaydedildi).
@@ -540,14 +544,7 @@ public class AuthController {
                     ls.permanent() ? "{\"lock\":\"permanent\"}"
                             : "{\"lock\":\"temporary\",\"seconds\":" + ls.secondsRemaining() + "}",
                     auditService.resolveIp(request), auditService.resolveUa(request), null);
-            if (ls.permanent()) {
-                return ResponseEntity.status(423).body(Map.of(
-                    "success", false, "locked", true,
-                    "error", "Account permanently locked. Contact administrator."));
-            }
-            return ResponseEntity.status(423).body(Map.of(
-                "success", false, "wait_seconds", ls.secondsRemaining(),
-                "error", "Account temporarily locked."));
+            return lockedResponse(ls);
         }
         if (ldapLoginOff) return ldapDisabledResponse();
         // 2026-10-08: istek dilinde ve ne yapılacağını söyleyen genel ileti (eskiden yalnız İngilizce). Yapı AYNI —
