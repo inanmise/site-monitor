@@ -15,6 +15,17 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Açılıştaki şema yamaları artık tabloya gereksiz kilit almıyor ve süresiz beklemiyor.** Her açılışta koşulsuz çalışan
+  yamalar (kolon tipi, NOT NULL kaldırma, kısıt düşürme, autovacuum ayarı, `CREATE INDEX IF NOT EXISTS`) değişiklik zaten
+  yerindeyse hiç çalışmıyor; normal açılışta tabloya kilit alınmıyor. Çalışan bir yama başka bir oturumun kilidine en çok
+  20 saniye bekliyor; aşılırsa uyarıyla atlanıyor ve sonraki açılışta yeniden deneniyor. Önceden dağıtım anındaki uzun bir
+  sorgu yamayı süresiz bekletiyor, bekleyen kilit arkasındaki tüm sorguları (oturum denetimi dahil) durduruyordu.
+- **Tarama liderliği tek ve çok pod'da kararlı.** Lider kirası artık ayrı bir zamanlayıcıyla dakikada bir yenileniyor;
+  zamanlanmış işler bütün iş parçacıklarını uzun süre meşgul etse de liderlik el değiştirmiyor. Liderliği kaybeden pod'un
+  yarıda kalmış taramasının sonucu alarm durumuna yazılmıyor. Tek pod'da davranış aynı.
+
+
 ## [20.117.1] — 2026-10-09
 
 ### Fixed
