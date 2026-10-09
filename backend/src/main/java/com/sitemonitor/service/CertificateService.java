@@ -308,8 +308,18 @@ public class CertificateService {
         @CacheEvict(value = "card-extras", allEntries = true)
     })
     public void evictAllCaches() {
-        // metod gövdesi boş — annotation'lar Spring AOP'a iş yaptırır
+        // Boşaltmayı annotation'lar (Spring AOP) yapar. 2026-10-09: ısıtıcıya haber verilir — Genel Bakış önbellekleri
+        // birkaç saniye sonra ARKA PLANDA yeniden hesaplanır, ilk kullanıcı soğuk önbelleği beklemez (CertificateCacheWarmer).
+        if (cacheEvents != null) {
+            try { cacheEvents.publishEvent(new CachesEvictedEvent()); } catch (RuntimeException ignored) { /* ısıtma isteğe bağlı */ }
+        }
     }
+
+    /** Genel Bakış önbellekleri boşaltıldı (ısıtıcı dinler). */
+    public record CachesEvictedEvent() {}
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher cacheEvents;
 
     @Cacheable(value = "cert-latest", sync = true)
     public List<CertificateDto> getAllLatest() {

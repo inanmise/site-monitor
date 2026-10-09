@@ -183,9 +183,22 @@ public class CertificateCardExtrasService {
     private static int rank(String level) { int i = LEVEL_ORDER.indexOf(level); return i < 0 ? LEVEL_ORDER.size() : i; }
 
     /** "Şu an" şeridi: alanın en son alarm olayı — açıksa seviyesi, kapalıysa ne zaman çözüldüğü. */
+    /**
+     * Alan başına en son alarm (2026-10-09): önce aktif envanter alanlarıyla sınırlı LATERAL sorgu (alan başına indeks
+     * araması); sözdizimi desteklenmezse (ör. test veritabanı) eski tüm-geçmiş sorgusu — sonuç kart için aynı.
+     */
+    private List<AlertEvent> latestAlertsForCards() {
+        try {
+            return alertEventRepo.findLatestForActiveInventoryDomains();
+        } catch (Exception e) {
+            log.debug("card-extras: envanter-sınırlı son alarm sorgusu düştü, eski sorgu: {}", e.toString());
+            return alertEventRepo.findLatestPerDomain();
+        }
+    }
+
     private Map<String, Map<String, Object>> lastAlertByDomain() {
         Map<String, Map<String, Object>> out = new HashMap<>();
-        for (AlertEvent e : alertEventRepo.findLatestPerDomain()) {
+        for (AlertEvent e : latestAlertsForCards()) {
             if (e.getDomain() == null) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", e.getId()); m.put("level", e.getAlertLevel()); m.put("type", e.getAlertType());

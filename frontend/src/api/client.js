@@ -69,6 +69,36 @@ function networkError(cause) {
   return err
 }
 
+/**
+ * Geçici ağ kopmasında TEK yeniden deneme (2026-10-09, kullanıcı bildirimi: kurumsal yük dengeleyici arkasında açılışta
+ * `GET /api/alerts/silent-domains` → `net::ERR_CONNECTION_RESET`). Yalnız güvenle tekrarlanabilen okumalar (GET / HEAD),
+ * yalnız fetch'in REDDETTİĞİ ağ hatası (bugün `NETWORK_ERROR` olan) ve yalnız BİR kez, kısa bir beklemeden sonra.
+ * Denenmez: yazma istekleri, çağıranın iptali, zaman aşımı, çevrimdışı (`OFFLINE`), her HTTP durumu, `transport`
+ * (XHR yükleme) yolu. İkinci deneme de düşerse hata bugünkü yoldan aynen döner. Sınırlı: döngü değil, tek ek deneme.
+ */
+export const NETWORK_RETRY_DELAY_MS = 400
+
+export function isRetryableNetworkFailure(e, method, signal) {
+  if (method !== 'GET' && method !== 'HEAD') return false
+  if (e?.name === 'AbortError' || e?.name === 'TimeoutError') return false   // iptal ya da süre sınırı
+  if (signal?.aborted) return false
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false
+  return true
+}
+
+/** Yeniden deneme beklemesi; çağıranın iptali beklemeyi keser (AbortError → request'in "iptal edildi" yükü). */
+export function retryDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const abortError = () => {
+      try { return new DOMException('aborted', 'AbortError') } catch { return Object.assign(new Error('aborted'), { name: 'AbortError' }) }
+    }
+    if (signal?.aborted) { reject(abortError()); return }
+    const onAbort = () => { clearTimeout(timer); reject(abortError()) }
+    const timer = setTimeout(() => { signal?.removeEventListener?.('abort', onAbort); resolve() }, ms)
+    signal?.addEventListener?.('abort', onAbort, { once: true })
+  })
+}
+
 /** İptal sinyalinin nedeni zaman sınırı mı (deadlineSignal) yoksa çağıranın kendisi mi? */
 function abortKind(signal) {
   if (!signal?.aborted) return 'timeout'          // fetchWithTimeout'un kendi zamanlayıcısı
@@ -189,7 +219,17 @@ async function request(path, options = {}) {
       headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...opts.headers },
       ...opts,
     }
-    res = transport ? await transport(`${BASE}${path}`, init) : await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
+    if (transport) {
+      res = await transport(`${BASE}${path}`, init)
+    } else {
+      try {
+        res = await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
+      } catch (first) {
+        if (!isRetryableNetworkFailure(first, method, opts.signal)) throw first
+        await retryDelay(NETWORK_RETRY_DELAY_MS, opts.signal)   // TEK ek deneme (sınırlı; bkz. NETWORK_RETRY_DELAY_MS)
+        res = await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
+      }
+    }
   } catch (e) {
     // Timeout (abort) → asılı kalmak yerine yumuşak hata payload'ı döndür; böylece
     // çağıran (örn. App.jsx getMe.then) authChecked'i true yapıp login'i gösterir.
