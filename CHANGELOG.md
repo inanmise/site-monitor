@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.116.2] — 2026-10-09
+
 ### Security
 - **Kullanıcı adı tahmini kapandı.** Kaba kuvvet denemesinde bilinmeyen kullanıcı adı, mevcut aktif hesabın aldığı
   yanıtın aynısını alır: durum kodu, gövde ve `wait_seconds`, 30 → 120 → 600 → 1800 sn kademelerinin hepsinde.
@@ -2678,7 +2680,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.116.2...HEAD
+[20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2
 [20.116.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.1
 [20.116.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.0
 [20.115.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.115.0
