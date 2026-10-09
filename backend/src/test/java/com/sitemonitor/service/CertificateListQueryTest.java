@@ -95,6 +95,43 @@ class CertificateListQueryTest {
         return new CertListQuery(1, 50, "domain", "asc", "", "", status, team, window, insecure, tier, port, fp);
     }
 
+    private CertListQuery qTrust(String trust) {
+        return new CertListQuery(1, 50, "domain", "asc", "", "", "", "", "", false, null, "", "", trust);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("Güven süzgeci (2026-10-09): sütunun hükmüyle süzer; facet dört hüküm + sorun türlerini kendi boyutu hariç sayar")
+    @SuppressWarnings("unchecked")
+    void trustFilterAndFacet() {
+        // Fikstür yalnız trust_status yazar (zincir/iptal boş): TRUSTED → 1/3 denetim = Kısmen; UNTRUSTED → Sorun; hata satırı → Bilinmiyor
+        List<String> trusted = List.of("crit.example.com", "expired.example.com", "high.example.com", "ok.example.com",
+                "shared-a.example.com", "warn.example.com");
+        assertThat(domains(service.getPaginated(qTrust("partial"), null))).containsExactlyElementsOf(trusted);
+        assertThat(domains(service.getPaginated(qTrust("bad"), null))).containsExactly("shared-b.example.com");
+        assertThat(domains(service.getPaginated(qTrust("untrusted"), null))).containsExactly("shared-b.example.com");
+        assertThat(domains(service.getPaginated(qTrust("chain"), null))).isEmpty();
+        assertThat(domains(service.getPaginated(qTrust("unknown"), null))).containsExactly("err.example.com");
+        assertThat(domains(service.getPaginated(qTrust("ok"), null))).isEmpty();
+        assertThat(domains(service.getPaginated(qTrust("uydurma"), null))).hasSize(8);   // bilinmeyen değer süzmez
+
+        // Facet kendi boyutu HARİÇ sayılır: "Sorun" seçiliyken de tüm hükümlerin sayısı görünür
+        Map<String, Integer> tf = (Map<String, Integer>) facets(service.getPaginated(qTrust("bad"), null)).get("trust");
+        assertThat(tf).containsEntry("ok", 0).containsEntry("partial", 6).containsEntry("unknown", 1).containsEntry("bad", 1)
+                .containsEntry("chain", 0).containsEntry("untrusted", 1).containsEntry("revoked", 0);
+        // Öteki süzgeçler facet'e uygulanır (takım 2: high, warn, shared-b)
+        Map<String, Integer> team2 = (Map<String, Integer>) facets(service.getPaginated(
+                new CertListQuery(1, 50, "domain", "asc", "", "", "", "2", "", false, null, "", "", ""), null)).get("trust");
+        assertThat(team2).containsEntry("partial", 2).containsEntry("bad", 1).containsEntry("unknown", 0);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("Güven süzgeci CSV dışa aktarmada da uygulanır; eski 13 bileşenli sorgu = süzgeçsiz")
+    void trustFilterExportAndCompat() {
+        String csv = service.exportCsv(qTrust("bad"), null, List.of("domain"));
+        assertThat(csv).contains("shared-b.example.com").doesNotContain("ok.example.com");
+        assertThat(q("", "", "", false, null, "", "").filterTrust()).isEmpty();
+    }
+
     @SuppressWarnings("unchecked")
     private List<String> domains(Map<String, Object> res) {
         return ((List<CertificateDto>) res.get("data")).stream().map(CertificateDto::getDomain).collect(Collectors.toList());

@@ -17,12 +17,14 @@ package com.sitemonitor.dto;
  *   <li>{@code filterTier} — envanter kritiklik kademesi (1–4).</li>
  *   <li>{@code filterPort} — {@code nonstd} (443 dışı) ya da tam port.</li>
  *   <li>{@code filterFp} — aynı parmak izini paylaşan satırlar (SAN/wildcard grubu).</li>
+ *   <li>{@code filterTrust} — "Güven" sütununun hükmü (2026-10-09): {@code ok | partial | unknown | bad} ya da
+ *       sorun türü {@code chain | untrusted | revoked} ({@link com.sitemonitor.service.CertTrustVerdict}).</li>
  * </ul>
  */
 public record CertListQuery(int page, int perPage, String sortBy, String sortDir,
                             String filterDomain, String filterIssuer, String filterStatus,
                             String filterTeam, String filterWindow, boolean filterInsecure,
-                            Integer filterTier, String filterPort, String filterFp) {
+                            Integer filterTier, String filterPort, String filterFp, String filterTrust) {
 
     public CertListQuery {
         page = Math.max(1, page);
@@ -36,6 +38,16 @@ public record CertListQuery(int page, int perPage, String sortBy, String sortDir
         filterWindow = nz(filterWindow, "");
         filterPort = nz(filterPort, "");
         filterFp = nz(filterFp, "");
+        filterTrust = nz(filterTrust, "");
+    }
+
+    /** Güven süzgeci olmadan (2026-10-09 öncesi çağrı biçimi — mevcut çağıranlar ve testler değişmez). */
+    public CertListQuery(int page, int perPage, String sortBy, String sortDir,
+                         String filterDomain, String filterIssuer, String filterStatus,
+                         String filterTeam, String filterWindow, boolean filterInsecure,
+                         Integer filterTier, String filterPort, String filterFp) {
+        this(page, perPage, sortBy, sortDir, filterDomain, filterIssuer, filterStatus, filterTeam, filterWindow,
+                filterInsecure, filterTier, filterPort, filterFp, "");
     }
 
     /** Eski sekiz parametreli çağrı biçimi (mevcut testler + basit kullanım). */

@@ -8,7 +8,7 @@ import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import TeamScopeSwitch from '../ui/TeamScopeSwitch.jsx'
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, WINDOW_OPTIONS, TIER_OPTIONS, EMPTY_FILTERS,
-  activeFilterChips, defaultCols, moveCol } from './certTableModel.js'
+  activeFilterChips, defaultCols, moveCol, trustFilterOptions } from './certTableModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent } from '@/components/shadcn/card'
@@ -86,6 +86,7 @@ export default function CertTableToolbar({
       case 'tier': return t('tbl.chipTier', `T${c.value}`)
       case 'port': return c.value === 'nonstd' ? t('tbl.portNonstd') : `${t('tbl.colPort')} ${c.value}`
       case 'fp': return t('tbl.sameCert')
+      case 'trust': return t('tbl.chipTrust', t(`tbl.trust.${c.value}`))
       default: return c.value
     }
   }
@@ -115,6 +116,7 @@ export default function CertTableToolbar({
     label: w === '' ? t('tbl.filterAll') : `${w === 'expired' ? t('tbl.winExpired') : t('tbl.winDays', w)}${win[w] != null ? ` (${win[w]})` : ''}`,
   }))
   const tierOpts = TIER_OPTIONS.map((x) => ({ value: x, label: x === '' ? t('tbl.tierAll') : `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` }))
+  const trustOpts = [{ value: '', label: t('tbl.filterAll') }, ...trustFilterOptions(t, facets)]
 
   const savePreset = () => { onSavePreset(presetName.trim()); setPresetName('') }
   const clearSearch = () => set('domain', '')
@@ -139,6 +141,10 @@ export default function CertTableToolbar({
       <div className={FACET}>
         <Label htmlFor="ct-f-status" className={FACET_LABEL}>{t('tbl.facetStatus')}</Label>
         <SearchableSelect id="ct-f-status" value={filters.status} onChange={(v) => set('status', v)} options={statusOpts} />
+      </div>
+      <div className={FACET}>
+        <Label htmlFor="ct-f-trust" className={FACET_LABEL}>{t('tbl.facetTrust')}</Label>
+        <SearchableSelect id="ct-f-trust" value={filters.trust} onChange={(v) => set('trust', v)} options={trustOpts} />
       </div>
       <div className={FACET}>
         <Label htmlFor="ct-f-sort" className={FACET_LABEL}>{t('tbl.facetSort')}</Label>

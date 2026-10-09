@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   TABLE_COLUMNS, defaultCols, normalizeCols, moveCol, savePreset, PRESET_MAX, activeFilterChips, countActiveFilters,
   toQuery, toUrlMapping, filtersFromUrl, EMPTY_FILTERS, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp,
-  buildSelectionCsv, csvColumnsFor, STATUS_OPTIONS,
+  buildSelectionCsv, csvColumnsFor, STATUS_OPTIONS, TRUST_FILTERS, trustChecks, trustFilterOptions,
 } from '../components/certtable/certTableModel.js'
 
 // Tüm Sertifikalar modeli (2026-09-13): bileşenden bağımsız saf kurallar.
@@ -140,5 +140,62 @@ describe('certTableModel — durum seçeneği ikonları', () => {
   it('model dosyasında emoji kalmadı', () => {
     const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../components/certtable/certTableModel.js'), 'utf8')
     expect(src).not.toMatch(EMOJI)
+  })
+})
+
+
+// ── Güven süzgeci + açıklaması (2026-10-09, kullanıcı: "süzgeçte yalnız 'Herhangi' / 'Yalnız güvensiz' var ama sütunda
+// 'Kısmen doğrulandı' görünüyor; neden kısmen doğrulandığı bilinmiyor") ──
+describe('certTableModel — güven süzgeci ve açıklaması', () => {
+  // backend CertTrustVerdictTest ile AYNI doğruluk tablosu ('-' = boş) — biri değişirse ikisi
+  const ROWS = [
+    ['VALID', 'TRUSTED', 'GOOD', 'ok', ''],
+    ['VALID', 'TRUSTED', 'UNKNOWN', 'partial', ''],
+    ['VALID', '-', '-', 'partial', ''],
+    ['-', 'TRUSTED', '-', 'partial', ''],
+    ['-', '-', '-', 'unknown', ''],
+    ['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'unknown', ''],
+    ['BROKEN', 'TRUSTED', 'GOOD', 'bad', 'chain'],
+    ['VALID', 'UNTRUSTED', 'GOOD', 'bad', 'untrusted'],
+    ['VALID', 'TRUSTED', 'REVOKED', 'bad', 'revoked'],
+    ['BROKEN', 'UNTRUSTED', 'REVOKED', 'bad', 'chain|untrusted|revoked'],
+    ['broken', 'trusted', 'unknown', 'bad', 'chain'],
+    ['valid', 'trusted', 'good', 'ok', ''],
+  ]
+  const v = (x) => (x === '-' ? null : x)
+  it.each(ROWS)('trustOf ↔ CertTrustVerdict: %s/%s/%s → %s [%s]', (chain, trust, rev, tone, issues) => {
+    const r = trustOf({ chain_status: v(chain), trust_status: v(trust), revocation_status: v(rev) })
+    expect(r.tone).toBe(tone)
+    expect(r.issues).toEqual(issues ? issues.split('|') : [])
+  })
+
+  it('trustChecks: üç denetimin durumu; neden yalnız SONUÇLANMAYAN iptal satırında', () => {
+    const c = trustChecks({ chain_status: 'VALID', trust_status: 'TRUSTED', revocation_status: 'UNKNOWN' }, 'NO_ENDPOINTS')
+    expect(c.map((x) => [x.key, x.state])).toEqual([['chain', 'ok'], ['ca', 'ok'], ['rev', 'unknown']])
+    expect(c[2].reason).toBe('NO_ENDPOINTS')
+    const bad = trustChecks({ chain_status: 'BROKEN', trust_status: 'UNTRUSTED', revocation_status: 'REVOKED' }, 'OCSP')
+    expect(bad.map((x) => x.state)).toEqual(['bad', 'bad', 'bad'])
+    expect(bad[2].reason).toBeNull()
+    expect(trustChecks({}).map((x) => x.state)).toEqual(['unknown', 'unknown', 'unknown'])
+  })
+
+  it('süzgeç isteğe filter_trust, adrese c_tr yazılır; bilinmeyen değer okunmaz; çip anahtarı "trust"', () => {
+    const f = { ...EMPTY_FILTERS, trust: 'partial' }
+    expect(toQuery(f, { page: 1, perPage: 20, sortBy: 'priority|asc' }).filter_trust).toBe('partial')
+    expect(toQuery(EMPTY_FILTERS, { page: 1, perPage: 20 }).filter_trust).toBeUndefined()
+    expect(toUrlMapping(f, { sortBy: 'priority|asc' }).c_tr).toBe('partial')
+    expect(toUrlMapping(EMPTY_FILTERS, { sortBy: 'priority|asc' }).c_tr).toBeNull()
+    expect(filtersFromUrl((k) => ({ c_tr: 'revoked' })[k] ?? null).trust).toBe('revoked')
+    expect(filtersFromUrl((k) => ({ c_tr: 'insecure' })[k] ?? null).trust).toBe('')
+    expect(activeFilterChips(f).map((c) => c.key)).toEqual(['trust'])
+  })
+
+  it('seçenekler sütunun değerleri (Tam / Kısmen / Bilinmiyor / Sorun + sorun türleri), facet sayılı', () => {
+    expect(TRUST_FILTERS).toEqual(['ok', 'partial', 'unknown', 'bad', 'chain', 'untrusted', 'revoked'])
+    const opts = trustFilterOptions(t, { trust: { ok: 3, partial: 5, unknown: 1, bad: 2, chain: 1, untrusted: 1, revoked: 0 } })
+    expect(opts.map((o) => o.value)).toEqual(TRUST_FILTERS)
+    expect(opts[1].label).toBe('tbl.trust.partial (5)')
+    expect(opts[4].label).toBe('— tbl.trust.chain (1)')
+    expect(trustFilterOptions(t, null)[0].label).toBe('tbl.trust.ok')   // facet yokken sayı yazılmaz
   })
 })

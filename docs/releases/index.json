@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T07:31:23Z",
+  "generatedAt": "2026-10-09T08:36:06Z",
   "repo": "inanmise/site-monitor",
-  "count": 721,
+  "count": 722,
   "releases": [
+    {
+      "version": "20.116.3",
+      "tag": "v20.116.3",
+      "releasedAt": "2026-10-09T08:36:00Z",
+      "commit": "7cba5eb4455379c85e9af74fa6c29db13dade013",
+      "prevVersion": "20.116.2",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7cba5eb4",
+          "subject": "kolon süzgeç satırı testi güven seçeneklerinin sütun değerlerini sunduğunu doğrular"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8bfb25f1",
+          "subject": "Tüm Sertifikalar güven süzgeci sütunun değerlerini sunar (Tam / Kısmen doğrulandı / Bilinmiyor / Sorun); rozet nedenini açıklar"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.116.2",
       "tag": "v20.116.2",

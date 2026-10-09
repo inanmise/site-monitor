@@ -6,7 +6,8 @@ import { EMPTY_FILTERS } from '../components/certtable/certTableModel.js'
 /** Tüm Sertifikalar kolon süzgeç satırı (2026-09-22): hücre sayısı = seçim + kolonlar + işlem; sunucu süzgeçlerine eşleme. */
 describe('CertFilterRow', () => {
   const cols = ['domain', 'issuer', 'expiry', 'days', 'status', 'trust', 'checked']
-  const facets = { teams: [{ id: 5, name: 'Takım A', count: 3 }], no_team: 1, tiers: { 1: 4 }, insecure: 2 }
+  const facets = { teams: [{ id: 5, name: 'Takım A', count: 3 }], no_team: 1, tiers: { 1: 4 }, insecure: 2,
+    trust: { ok: 4, partial: 2, unknown: 1, bad: 1, chain: 0, untrusted: 1, revoked: 0 } }
 
   it('hücreler başlıkla hizalı; sunucunun süzemediği kolon boş; domain metni ve pencere/durum/güven seçimleri filtreye yazar', () => {
     const onFilter = vi.fn()
@@ -21,10 +22,11 @@ describe('CertFilterRow', () => {
     fireEvent.mouseDown(row.querySelector('[data-col="days"] button[role="combobox"]'))
     fireEvent.mouseDown(screen.getByText(/≤ 90/))
     expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, window: '90' })
-    // Güven → insecure boolean
+    // Güven → sütunun değerleri (2026-10-09; eskiden yalnız "Yalnız güvensiz" vardı ve sütunla uyuşmuyordu)
     fireEvent.mouseDown(row.querySelector('[data-col="trust"] button[role="combobox"]'))
-    fireEvent.mouseDown(screen.getByText(/güvensiz|insecure/i))
-    expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, insecure: true })
+    expect(screen.queryByText(/güvensiz|insecure/i)).toBeNull()
+    fireEvent.mouseDown(screen.getByText(/^(Kısmen doğrulandı|Partly verified) \(2\)$/))
+    expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, trust: 'partial' })
   })
 
   it('takım seçenekleri facet\'ten (sayı ile) + Takımsız; port seçenekleri sayfadaki satırlardan', () => {

@@ -1,13 +1,13 @@
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import { COLUMN_BY_KEY, STATUS_OPTIONS, TIER_OPTIONS } from './certTableModel.js'
+import { COLUMN_BY_KEY, STATUS_OPTIONS, TIER_OPTIONS, trustFilterOptions } from './certTableModel.js'
 import { Input } from '@/components/shadcn/input'
 import { TableCell, TableRow } from '@/components/shadcn/table'
 
 /**
  * Tüm Sertifikalar tablosu — başlığın altındaki KOLON SÜZGEÇ SATIRI (2026-09-22, kullanıcı isteği: envanterdekiyle aynı).
  * Bu tablo SUNUCU sayfalı: süzgeçler mevcut sunucu parametrelerine eşlenir (filter_domain/issuer/status/team/window/tier/
- * port/insecure/fp) — yeni sunucu süzgeci uydurulmaz; sunucunun süzemediği kolonlar (SAN, imza, anahtar, TLS, seri…)
+ * port/fp/trust) — yeni sunucu süzgeci uydurulmaz; sunucunun süzemediği kolonlar (SAN, imza, anahtar, TLS, seri…)
  * boş hücre olarak kalır. Metin alanları tablonun 300 ms debounce'undan geçer (filters → queryFilters).
  * Hücre sırası thead ile birebir: [seçim] + cols + işlem. Çizim shadcn: TableRow/TableCell + Input + ui/SearchableSelect.
  */
@@ -47,11 +47,9 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
       case 'status': return sel('status', STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: t(o.labelKey) })), 'status')
       case 'tier': return sel('tier', TIER_OPTIONS.filter(Boolean).map((x) => ({ value: x, label: `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` })), 'tier')
       case 'port': return sel('port', portOpts, 'port')
-      case 'trust': return (
-        <SearchableSelect value={filters.insecure ? 'insecure' : ''} onChange={(v) => set('insecure', v === 'insecure')}
-          options={[any, { value: 'insecure', label: `${t('tbl.onlyInsecure')}${facets ? ` (${facets.insecure ?? 0})` : ''}` }]}
-          ariaLabel={colAria('trust')} />
-      )
+      // Güven (2026-10-09): sütunun gösterdiği değerlerle AYNI seçenekler (eskiden yalnız "Yalnız güvensiz" vardı —
+      // sütunda "Kısmen doğrulandı" görünürken süzülemiyordu). "Yalnız güvensiz" süzgeç çubuğunda ayrı düğme olarak kalır.
+      case 'trust': return sel('trust', trustFilterOptions(t, facets), 'trust')
       case 'fingerprint': return text('fp', t('tbl.colFingerprint'), t('tbl.colFingerprint'))
       default: return null
     }

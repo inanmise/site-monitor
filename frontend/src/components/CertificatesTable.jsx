@@ -24,7 +24,8 @@ import CertBulkBar from './certtable/CertBulkBar.jsx'
 import CertFilterRow from './certtable/CertFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_TEXT, URL_KEYS,
   readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
-  filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
+  filtersFromUrl, toQuery, toUrlMapping, levelOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
+import TrustBadge from './certtable/TrustBadge.jsx'   // Güven rozeti + neden açıklaması (2026-10-09)
 import { Button } from '@/components/shadcn/button'
 import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
 import { isManualCert } from './manualcert/manualCertModel.js'
@@ -54,12 +55,6 @@ const LIFE_TONE = { valid: 'ok', warning: 'warn', critical: 'crit', error: 'crit
 const OPT_TONE = {
   expired: 'text-destructive', critical: 'text-destructive', high: 'text-orange-600 dark:text-orange-400',
   warning: 'text-amber-600 dark:text-amber-400', valid: 'text-success', error: 'text-destructive',
-}
-const TRUST_TONE = {
-  ok: 'bg-success/15 text-success dark:bg-success/20',
-  partial: 'bg-muted text-muted-foreground',
-  unknown: 'border-border bg-transparent text-muted-foreground',
-  bad: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
 }
 const TIER_TONE = { 1: 'bg-indigo-600 text-white', 2: 'bg-sky-600 text-white', 3: 'bg-cyan-600 text-white', 4: 'bg-zinc-500 text-white' }
 
@@ -388,7 +383,6 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
   const days = cert.days_remaining
   const life = lifetimePct(cert)
   const stale = isStale(cert)
-  const trust = trustOf(cert)
   const rel = relTime(cert.checked_at)
   const sanList = Array.isArray(cert.san) ? cert.san : []
   const stop = (e) => e.stopPropagation()
@@ -455,13 +449,8 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
           )}
         </span>
       ))
-      case 'trust': return td((
-        <Badge variant="outline" data-slot="cert-trust" data-tone={trust.tone}
-          title={trust.issues.map((i) => t(`tbl.trust.${i}`)).join(' · ') || t(`tbl.trust.${trust.tone}`)}
-          className={cn('border-transparent text-[.85em] font-semibold', TRUST_TONE[trust.tone])}>
-          {trust.tone === 'bad' ? trust.issues.map((i) => t(`tbl.trust.${i}`)).join(', ') : t(`tbl.trust.${trust.tone}`)}
-        </Badge>
-      ))
+      // Rozet + neden açıklaması (2026-10-09): dokununca üç denetimin durumu ve sonuçlanmayanın nedeni açılır
+      case 'trust': return td(<TrustBadge cert={cert} onOpenHealth={() => open('health')} />)
       case 'san': return td(sanList.length, undefined, { title: sanList.join('\n') })
       case 'shared': return td(shared > 1 ? sharedBtn(false) : '—')
       case 'key': return td(cert.public_key_algorithm ? `${cert.public_key_algorithm}${cert.public_key_size ? ' ' + cert.public_key_size : ''}` : '—', mono)
