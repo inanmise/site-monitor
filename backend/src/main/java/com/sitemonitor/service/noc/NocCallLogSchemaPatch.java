@@ -72,11 +72,15 @@ public class NocCallLogSchemaPatch {
             log.warn("7/24 arama kaydı tablosu ({}) yok — yama atlandı (varlık tabloyu oluşturmalıydı)", TABLE);
             return 0;
         }
+        // Kilit güvenliği (2026-10-09): indeks zaten varsa ifade çalışmaz (tabloya kilit alınmaz); çalışırsa kilit
+        // beklemesi SchemaDdlGuard.LOCK_TIMEOUT_SECONDS ile sınırlı — aşılırsa uyarı, sonraki açılışta yeniden denenir.
+        com.sitemonitor.service.schema.SchemaDdlGuard guard = new com.sitemonitor.service.schema.SchemaDdlGuard(jdbc);
         int added = 0;
-        for (Map.Entry<String, String> c : COLUMNS.entrySet()) added += addColumn(c.getKey(), c.getValue());
+        for (Map.Entry<String, String> c : COLUMNS.entrySet()) added += addColumn(guard, c.getKey(), c.getValue());
         for (String ddl : INDEXES) {
             try {
-                jdbc.execute(ddl);
+                if (guard.alreadyInPlace(ddl)) continue;
+                guard.executeBounded(ddl, false);
             } catch (Exception e) {
                 log.warn("7/24 arama kaydı şema yaması (indeks) uygulanamadı: {} — {}", ddl, e.getMessage());
             }
@@ -85,10 +89,10 @@ public class NocCallLogSchemaPatch {
         return added;
     }
 
-    private int addColumn(String column, String type) {
+    private int addColumn(com.sitemonitor.service.schema.SchemaDdlGuard guard, String column, String type) {
         try {
             if (columnExists(column)) return 0;
-            jdbc.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + column + " " + type);
+            guard.executeBounded("ALTER TABLE " + TABLE + " ADD COLUMN " + column + " " + type, false);
             return 1;
         } catch (Exception e) {
             log.warn("7/24 arama kaydı şema yaması uygulanamadı: {}.{} — {}", TABLE, column, e.getMessage());

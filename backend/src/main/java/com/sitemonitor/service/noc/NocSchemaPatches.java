@@ -52,17 +52,21 @@ public class NocSchemaPatches {
 
     /** @return bu koşuda EKLENEN kolon sayısı (0 = zaten güncel). */
     public int apply() {
+        // Kilit güvenliği (2026-10-09): indeks zaten varsa ifade çalışmaz (tabloya kilit alınmaz); çalışırsa kilit
+        // beklemesi SchemaDdlGuard.LOCK_TIMEOUT_SECONDS ile sınırlı — aşılırsa uyarı, sonraki açılışta yeniden denenir.
+        com.sitemonitor.service.schema.SchemaDdlGuard guard = new com.sitemonitor.service.schema.SchemaDdlGuard(jdbc);
         int added = 0;
         for (String t : MONITOR_TABLES) {
-            added += addColumn(t, "noc_notify", "BOOLEAN");
-            added += addColumn(t, "noc_group_ids", "VARCHAR(500)");
+            added += addColumn(guard, t, "noc_notify", "BOOLEAN");
+            added += addColumn(guard, t, "noc_group_ids", "VARCHAR(500)");
         }
         // 7/24 izleme ekibi takımları (2026-10-04): tek satırlık yapılandırmaya eklenen kolonlar — hepsi NULLABLE
         // (null = hiçbir takım seçilmedi; bugünkü davranış). Tablo hiç yoksa ddl-auto varlıktan kurar.
-        for (String[] c : OPERATOR_COLUMNS) added += addColumn("noc_settings", c[0], c[1]);
+        for (String[] c : OPERATOR_COLUMNS) added += addColumn(guard, "noc_settings", c[0], c[1]);
         for (String ddl : INDEXES) {
             try {
-                jdbc.execute(ddl);
+                if (guard.alreadyInPlace(ddl)) continue;
+                guard.executeBounded(ddl, false);
             } catch (Exception e) {
                 log.warn("7/24 şema yaması (indeks) uygulanamadı: {} — {}", ddl, e.getMessage());
             }
@@ -71,10 +75,10 @@ public class NocSchemaPatches {
         return added;
     }
 
-    private int addColumn(String table, String column, String type) {
+    private int addColumn(com.sitemonitor.service.schema.SchemaDdlGuard guard, String table, String column, String type) {
         try {
             if (columnExists(table, column)) return 0;
-            jdbc.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+            guard.executeBounded("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type, false);
             return 1;
         } catch (Exception e) {
             log.warn("7/24 şema yaması uygulanamadı: {}.{} — {}", table, column, e.getMessage());
