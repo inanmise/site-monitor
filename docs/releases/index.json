@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T13:01:57Z",
+  "generatedAt": "2026-10-09T14:51:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 724,
+  "count": 725,
   "releases": [
+    {
+      "version": "20.117.2",
+      "tag": "v20.117.2",
+      "releasedAt": "2026-10-09T14:51:15Z",
+      "commit": "377f8bfb2996b3ed3749a9ba69140a6e16ce8eba",
+      "prevVersion": "20.117.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "377f8bfb",
+          "subject": "CHANGELOG + CLAUDE.md — şema yaması kilit güvenliği ve tarama liderliği yenileyicisi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "62acbbb5",
+          "subject": "tarama liderliği kirası ayrı zamanlayıcıyla yenilenir; liderliği kaybeden pod'un tarama sonucu alarm durumuna yazılmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "923f3c94",
+          "subject": "açılış şema yamaları gerekiyorsa çalışır ve kilit için en çok 20 sn bekler (SchemaDdlGuard)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.117.1",
       "tag": "v20.117.1",

@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.117.2] — 2026-10-09
+
 ### Fixed
 - **Açılıştaki şema yamaları artık tabloya gereksiz kilit almıyor ve süresiz beklemiyor.** Her açılışta koşulsuz çalışan
   yamalar (kolon tipi, NOT NULL kaldırma, kısıt düşürme, autovacuum ayarı, `CREATE INDEX IF NOT EXISTS`) değişiklik zaten
@@ -24,7 +26,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 - **Tarama liderliği tek ve çok pod'da kararlı.** Lider kirası artık ayrı bir zamanlayıcıyla dakikada bir yenileniyor;
   zamanlanmış işler bütün iş parçacıklarını uzun süre meşgul etse de liderlik el değiştirmiyor. Liderliği kaybeden pod'un
   yarıda kalmış taramasının sonucu alarm durumuna yazılmıyor. Tek pod'da davranış aynı.
-
 
 ## [20.117.1] — 2026-10-09
 
@@ -2768,7 +2769,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.2...HEAD
+[20.117.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.2
 [20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
 [20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
 [20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
