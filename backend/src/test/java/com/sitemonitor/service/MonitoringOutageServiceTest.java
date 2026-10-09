@@ -1255,4 +1255,36 @@ class MonitoringOutageServiceTest {
         verify(jdbcTemplate, never()).update(startsWith("INSERT INTO scheduler_lock"), any(Object[].class));
         verify(escalationService, never()).completeDeferredInitialNotification(any());
     }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): tarama lideri olmayan pod'un ZAMANLANMIŞ sonucu alarm durumuna yazılmaz; kapı açılınca normal")
+    void scheduledResultsFence_dropsResultsOnNonLeader() {
+        AtomicInteger calls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean leader = new java.util.concurrent.atomic.AtomicBoolean(false);
+        service.setScheduledResultsFence(leader::get);
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+        verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+        assertThat(calls.get()).as("teyit yoklaması da başlamadı").isZero();
+
+        leader.set(true);
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+        verify(escalationService, times(1)).processConfirmedOutage(
+                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), any());
+    }
+
+    @Test
+    @DisplayName("Kapı hata verirse sonuç işlenir (izleme durmaz); kapı takılmamışsa davranış bugünküyle aynı")
+    void scheduledResultsFence_failingFenceIsOpen() {
+        AtomicInteger calls = new AtomicInteger();
+        service.setScheduledResultsFence(() -> { throw new IllegalStateException("kira sorgusu düştü"); });
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+        verify(escalationService, times(1)).processConfirmedOutage(
+                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), any());
+    }
 }
