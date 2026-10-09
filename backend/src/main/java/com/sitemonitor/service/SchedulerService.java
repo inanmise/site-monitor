@@ -446,6 +446,7 @@ public class SchedulerService {
             warnOnOrphanedRecords();
             clearStaleLocksForThisHost();
             clearStaleSweepLeaderOfThisHost();
+            startSweepLeaderRenewer();
             restoreOutageStateFromDb();
         } finally {
             // Senkron bootstrap bitti (başarılı ya da değil — mevcut davranış: app yine de çalışmaya
@@ -3481,6 +3482,14 @@ public class SchedulerService {
     /** Zarif kapanış başladı: kira bırakıldı, bu pod yeniden ALMAZ. */
     private volatile boolean sweepLeaderStopped = false;
     private final AtomicLong sweepLeaderWarnAt = new AtomicLong();
+    /**
+     * Kirayı tarama iş parçacıklarından BAĞIMSIZ yenileyen tek iş parçacıklı zamanlayıcı (2026-10-09). Eskiden kira yalnız
+     * bir tarama "lider miyim?" diye sorduğunda yenileniyordu; 54 zamanlanmış iş 8 iş parçacığını paylaşıyor — uzun işler
+     * (saatlik sertifika taraması, gece temizliği, raporlar, yavaş alan adı sorguları) 8'ini birden kira süresinden uzun
+     * tutarsa kira düşüyor, liderlik pod'lar arasında el değiştiriyor ve her devirde bellekteki alarm sayaçları
+     * sıfırlanıyordu. Yenileyici her {@code ttl/3}'te bir koşar; tek pod'da davranış aynı (kira hep bu pod'da).
+     */
+    private volatile java.util.concurrent.ScheduledExecutorService sweepLeaderRenewer;
 
     /**
      * Bu pod izleme taramalarını koşturmalı mı — küme genelinde TEK pod (kira sahibi) evet der (2026-10-09).
@@ -3509,29 +3518,34 @@ public class SchedulerService {
             long now = scheduleClock.getAsLong();
             cached = cachedSweepLeader(now, ttl);                // başka tarama iş parçacığı az önce sordu
             if (cached != null) return cached;
-            boolean held;
-            try {
-                held = clusterSchedule.acquireLease(SWEEP_LEADER, now, ttl);
-            } catch (Exception e) {
-                long last = sweepLeaderWarnAt.get();
-                if (System.currentTimeMillis() - last >= 60_000L
-                        && sweepLeaderWarnAt.compareAndSet(last, System.currentTimeMillis())) {
-                    log.warn("Tarama liderliği kirası okunamadı — bu pod izleme taramalarını YEREL koşturuyor (çok pod'da "
-                            + "alarm durumu bölünebilir): {}", e.toString());
-                }
-                return true;
-            }
-            if (held && !sweepLeaderHeld) {
-                log.info("Tarama liderliği bu pod'da [instance={}, owner={}] — izleme taramaları burada koşar",
-                        INSTANCE_ID, clusterSchedule.owner());
-            } else if (!held && sweepLeaderHeld) {
-                log.warn("Tarama liderliği başka pod'a geçti [owner={}] — bu pod izleme taramalarını durdurdu",
-                        clusterSchedule.owner());
-            }
-            sweepLeaderHeld = held;
-            sweepLeaderCheckedAt = now;
-            return held;
+            return refreshSweepLeader(now, ttl);
         }
+    }
+
+    /** Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır. */
+    private boolean refreshSweepLeader(long now, long ttl) {
+        boolean held;
+        try {
+            held = clusterSchedule.acquireLease(SWEEP_LEADER, now, ttl);
+        } catch (Exception e) {
+            long last = sweepLeaderWarnAt.get();
+            if (System.currentTimeMillis() - last >= 60_000L
+                    && sweepLeaderWarnAt.compareAndSet(last, System.currentTimeMillis())) {
+                log.warn("Tarama liderliği kirası okunamadı — bu pod izleme taramalarını YEREL koşturuyor (çok pod'da "
+                        + "alarm durumu bölünebilir): {}", e.toString());
+            }
+            return true;
+        }
+        if (held && !sweepLeaderHeld) {
+            log.info("Tarama liderliği bu pod'da [instance={}, owner={}] — izleme taramaları burada koşar",
+                    INSTANCE_ID, clusterSchedule.owner());
+        } else if (!held && sweepLeaderHeld) {
+            log.warn("Tarama liderliği başka pod'a geçti [owner={}] — bu pod izleme taramalarını durdurdu",
+                    clusterSchedule.owner());
+        }
+        sweepLeaderHeld = held;
+        sweepLeaderCheckedAt = now;
+        return held;
     }
 
     /** Taze karar varsa onu döner (lider: {@code ttl/3}'ten yeni yenileme; takipçi: kısa yeniden yoklama aralığı). */
@@ -3550,8 +3564,60 @@ public class SchedulerService {
      */
     @jakarta.annotation.PreDestroy
     void onShutdown() {
+        stopSweepLeaderRenewer();
         releaseSweepLeadership();
         shutdownManualRunPool();
+    }
+
+    /**
+     * Kira yenileyicisinin bir turu (2026-10-09): tarama iş parçacıkları meşgul olsa da lider kirasını süresi dolmadan
+     * yeniler; takipçide süresi dolmuş kirayı devralmayı dener. Önbelleğe bakmaz (her tur veritabanına sorar).
+     */
+    void renewSweepLeadership() {
+        if (clusterSchedule == null || sweepLeaderStopped) return;
+        long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
+        synchronized (sweepLeaderMonitor) {
+            if (sweepLeaderStopped) return;
+            refreshSweepLeader(scheduleClock.getAsLong(), ttl);
+        }
+    }
+
+    /**
+     * Kira yenileyicisini başlatır (açılış; küme kaydı yoksa hiçbir şey yapmaz). Ayrıca alarm hattına "zamanlanmış sonuç
+     * yalnız liderden" kapısını takar: kirayı kaybeden pod'un yarıda kalmış taramasının sonucu alarm durumuna yazılmaz.
+     */
+    void startSweepLeaderRenewer() {
+        if (clusterSchedule == null || sweepLeaderRenewer != null) return;
+        long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
+        long period = Math.max(5_000L, ttl / 3);
+        java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sweep-leader-lease");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.scheduleWithFixedDelay(() -> {
+            // Her şey yakalanır: zamanlanmış görev bir kez fırlatırsa ScheduledExecutorService onu BİR DAHA koşturmaz.
+            try {
+                renewSweepLeadership();
+            } catch (Throwable t) {
+                long last = sweepLeaderWarnAt.get();
+                if (System.currentTimeMillis() - last >= 60_000L
+                        && sweepLeaderWarnAt.compareAndSet(last, System.currentTimeMillis())) {
+                    log.warn("Tarama liderliği kirası yenilenemedi (sonraki turda yeniden denenecek): {}", t.toString());
+                }
+            }
+        }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS);
+        sweepLeaderRenewer = ex;
+        if (monitoringOutageService != null) monitoringOutageService.setScheduledResultsFence(this::isSweepLeader);
+        log.info("Tarama liderliği kira yenileyicisi başladı (her {} sn)", period / 1000);
+    }
+
+    /** Yenileyiciyi durdurur (kapanış) — kira bırakılmadan ÖNCE, kapanırken yeniden alınmasın. */
+    void stopSweepLeaderRenewer() {
+        java.util.concurrent.ScheduledExecutorService ex = sweepLeaderRenewer;
+        if (ex == null) return;
+        ex.shutdownNow();
+        sweepLeaderRenewer = null;
     }
 
     /**
@@ -3595,6 +3661,7 @@ public class SchedulerService {
             m.put("until", lease == null ? null : ISO.format(Instant.ofEpochMilli(lease.untilMs())));
             m.put("expired", lease == null || lease.untilMs() < now);
             m.put("held_by_me", lease != null && lease.untilMs() >= now && clusterSchedule.owner().equals(lease.owner()));
+            m.put("renewer", sweepLeaderRenewer != null);
         } catch (Exception e) {
             m.put("error", e.getMessage());
         }

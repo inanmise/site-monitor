@@ -58,10 +58,14 @@ public final class SchemaPatchRunner {
 
     private final JdbcTemplate jdbc;
     private final long lockWaitMs;
+    /** Kilit güvenliği (2026-10-09): yerinde olan değişikliği atlar, çalışan ifadenin kilit beklemesini sınırlar. */
+    private final SchemaDdlGuard guard;
     private Boolean postgres;
     private int applied;
     private int noop;
     private int failed;
+    /** {@link #failed} içinden kilit beklemesi aşılanlar — sonraki açılışta yeniden denenir. */
+    private int deferred;
     private final List<String> failures = new ArrayList<>();
     private boolean locked;
 
@@ -71,8 +75,14 @@ public final class SchemaPatchRunner {
 
     /** Test: kilit bekleme süresi kısaltılabilir. */
     SchemaPatchRunner(JdbcTemplate jdbc, long lockWaitMs) {
+        this(jdbc, lockWaitMs, new SchemaDdlGuard(jdbc));
+    }
+
+    /** Test: kilit güvenliği (kısa kilit süresi) verilebilir. */
+    SchemaPatchRunner(JdbcTemplate jdbc, long lockWaitMs, SchemaDdlGuard guard) {
         this.jdbc = jdbc;
         this.lockWaitMs = lockWaitMs;
+        this.guard = guard;
     }
 
     /** Idempotent şema/veri yaması — davranış {@code SchedulerService.patch} ile birebir aynı; hata açılışı durdurmaz. */
@@ -87,7 +97,7 @@ public final class SchemaPatchRunner {
                     log.debug("Schema patch noop (column exists): {}", shortDdl);
                     return;
                 }
-                jdbc.execute(ddl);
+                guard.executeBounded(ddl, false);
                 applied++;
                 log.info("Schema patch applied (column added): {}", shortDdl);
             } else if (head.startsWith("CREATE TABLE")) {
@@ -97,19 +107,37 @@ public final class SchemaPatchRunner {
                     log.debug("Schema patch noop (table exists): {}", shortDdl);
                     return;
                 }
-                jdbc.execute(ddl);
+                guard.executeBounded(ddl, false);
                 applied++;
                 log.info("Schema patch applied (table created): {}", shortDdl);
             } else if (head.startsWith("UPDATE") || head.startsWith("INSERT") || head.startsWith("DELETE")) {
-                int rows = jdbc.update(ddl);                                // gerçek değişiklik = etkilenen satır > 0
+                int rows = guard.executeBounded(ddl, true);                 // gerçek değişiklik = etkilenen satır > 0
                 if (rows > 0) { applied++; log.info("Schema patch applied ({} row(s)): {}", rows, shortDdl); }
                 else          { noop++;    log.debug("Schema patch noop (0 rows): {}", shortDdl); }
             } else {
-                jdbc.execute(ddl);   // CREATE [UNIQUE] INDEX IF NOT EXISTS, DROP ..., ALTER ... TYPE — idempotent, sessiz
+                // CREATE [UNIQUE] INDEX IF NOT EXISTS, DROP ..., ALTER ... TYPE / DROP NOT NULL / SET (...) — idempotent, sessiz.
+                // 2026-10-09: değişiklik ZATEN yerindeyse hiç çalıştırılmaz → normal açılışta tabloya kilit alınmaz.
+                if (guard.alreadyInPlace(ddl)) {
+                    noop++;
+                    log.debug("Schema patch noop (already in place): {}", shortDdl);
+                    return;
+                }
+                guard.executeBounded(ddl, false);
                 noop++;
                 log.debug("Schema patch ran: {}", shortDdl);
             }
         } catch (Exception e) {
+            if (SchemaDdlGuard.isLockTimeout(e)) {
+                // Kilit sınırı (2026-10-09): tabloda uzun bir sorgu / açık işlem var — süresiz beklemek yerine atlanır.
+                failed++;
+                deferred++;
+                if (failures.size() < MAX_FAILURES) {
+                    failures.add(shortDdl + " → kilit " + guard.lockTimeoutSeconds() + " sn içinde alınamadı (sonraki açılışta yeniden denenecek)");
+                }
+                log.warn("⚠ Şema yaması kilit {} sn içinde alınamadı — atlandı, sonraki açılışta yeniden denenecek: {}",
+                        guard.lockTimeoutSeconds(), shortDdl);
+                return;
+            }
             String msg = rootMessage(e);
             if (isExpected(sqlState(e), msg) || !isPostgres()) {
                 noop++;
@@ -220,7 +248,8 @@ public final class SchemaPatchRunner {
         Summary s = new Summary(applied, noop, failed, List.copyOf(failures), locked, System.currentTimeMillis());
         LAST.set(s);
         if (failed > 0) {
-            log.warn("⚠ Şema yamaları: {} uygulandı, {} zaten uygulanmış, {} BAŞARISIZ{} — ilkleri: {}", applied, noop, failed,
+            log.warn("⚠ Şema yamaları: {} uygulandı, {} zaten uygulanmış, {} BAŞARISIZ{}{} — ilkleri: {}", applied, noop, failed,
+                    deferred > 0 ? " (" + deferred + " kilit beklemesi — sonraki açılışta yeniden denenecek)" : "",
                     locked ? "" : " (kilitsiz)", failures);
         } else {
             log.info("Şema yamaları: {} uygulandı, {} zaten uygulanmış, 0 başarısız{}", applied, noop,

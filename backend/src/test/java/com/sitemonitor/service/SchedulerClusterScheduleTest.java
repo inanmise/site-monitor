@@ -575,6 +575,79 @@ class SchedulerClusterScheduleTest {
     }
 
     @Test
+    @DisplayName("KAPI (2026-10-09): tarama iş parçacıkları meşgulken (hiç tarama koşmasa da) yenileyici kirayı tutar — liderlik el değiştirmez")
+    void renewer_keepsLeadership_whileSweepThreadsAreBusy() {
+        PortMonitor m = standalonePort(35L, 30);
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        List<Long> probes = recordPortProbes();
+        SchedulerService a = pod("pod-a");
+        SchedulerService b = pod("pod-b");
+
+        a.runPortChecks();                                       // t = 0: a lider (kira 180 sn)
+        for (int i = 0; i < 5; i++) {                            // 5 dk boyunca a'da HİÇ tarama koşmuyor (8 iş parçacığı dolu)
+            advance(60 * SEC);
+            a.renewSweepLeadership();                            // yalnız ayrı yenileyici
+            b.runPortChecks();                                   // takipçi devralamaz
+        }
+        assertThat(b.isSweepLeader()).isFalse();
+        assertThat(probes).as("takipçi hiç yoklamadı").hasSize(1);
+        advance(SEC);
+        a.runPortChecks();                                       // lider kesintisiz taramaya devam eder
+        assertThat(a.isSweepLeader()).isTrue();
+        assertThat(probes).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): lider gerçekten ölünce takipçinin yenileyicisi (hiç tarama koşmadan) kira dolunca devralır")
+    void followerRenewer_takesOverAfterLeaderDies() {
+        SchedulerService a = pod("pod-a");
+        SchedulerService b = pod("pod-b");
+        a.renewSweepLeadership();
+        assertThat(a.isSweepLeader()).isTrue();
+        advance(170 * SEC);
+        b.renewSweepLeadership();
+        assertThat(b.isSweepLeader()).as("kira dolmadan devralınmaz").isFalse();
+        advance(11 * SEC);                                       // t = 181 sn: a yenilemedi (öldü) → kira doldu
+        b.renewSweepLeadership();
+        assertThat(b.isSweepLeader()).isTrue();
+    }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): alarm hattının kapısı liderliği izler; yenileyici kapanışta durur, kapanan pod kirayı yeniden almaz")
+    void renewer_fenceAndShutdown() {
+        org.mockito.ArgumentCaptor<java.util.function.BooleanSupplier> fenceA =
+                org.mockito.ArgumentCaptor.forClass(java.util.function.BooleanSupplier.class);
+        SchedulerService a = pod("pod-a");
+        SchedulerService b = pod("pod-b");
+        a.renewSweepLeadership();
+        a.startSweepLeaderRenewer();
+        verify(monitoringOutageService).setScheduledResultsFence(fenceA.capture());
+        assertThat(fenceA.getValue().getAsBoolean()).isTrue();
+        assertThat(ReflectionTestUtils.getField(a, "sweepLeaderRenewer")).isNotNull();
+
+        b.renewSweepLeadership();
+        assertThat(b.isSweepLeader()).isFalse();
+
+        a.onShutdown();                                          // yenileyici durur, kira bırakılır
+        assertThat(ReflectionTestUtils.getField(a, "sweepLeaderRenewer")).isNull();
+        a.renewSweepLeadership();                                // kapanırken gelen tur kirayı yeniden ALMAZ
+        assertThat(fenceA.getValue().getAsBoolean()).as("kapanan pod'un sonuçları alarm hattına yazılmaz").isFalse();
+        advance(6 * SEC);
+        b.renewSweepLeadership();
+        assertThat(b.isSweepLeader()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Tek pod / küme kaydı yok: yenileyici başlamaz, kapı takılmaz (bugünkü davranış)")
+    void noClusterStore_noRenewer() {
+        SchedulerService legacy = legacyPod();
+        legacy.startSweepLeaderRenewer();
+        assertThat(ReflectionTestUtils.getField(legacy, "sweepLeaderRenewer")).isNull();
+        org.mockito.Mockito.verify(monitoringOutageService, org.mockito.Mockito.never()).setScheduledResultsFence(any());
+        assertThat(legacy.isSweepLeader()).isTrue();
+    }
+
+    @Test
     @DisplayName("kira: zarif kapanışta (@PreDestroy) bırakılır → takipçi kira süresini beklemeden bir sonraki tıkta devralır; kapanan pod yeniden almaz")
     void gracefulShutdown_immediateTakeover() {
         PortMonitor m = standalonePort(33L, 30);

@@ -421,6 +421,39 @@ public class MonitoringOutageService {
     }
 
     /**
+     * "Zamanlanmış sonuç yalnız tarama liderinden" kapısı (2026-10-09). {@code SchedulerService} açılışta takar; çok pod'da
+     * kirayı (tarama liderliği) kaybeden pod'un yarıda kalmış taramasının sonucu alarm durumuna YAZILMAZ — yeni lider
+     * aynı izlemeleri kendi turunda yoklar. Elle kontrol ({@code manual=true}) kapıdan geçmez (bugünkü davranış). Tek pod'da
+     * ya da kapı takılmamışsa her şey eskisi gibi; kira sorgusu hata verirse kapı açık (izleme durmaz).
+     */
+    private volatile java.util.function.BooleanSupplier scheduledResultsFence;
+    private final java.util.concurrent.atomic.AtomicLong fenceLogAt = new java.util.concurrent.atomic.AtomicLong();
+
+    public void setScheduledResultsFence(java.util.function.BooleanSupplier fence) {
+        this.scheduledResultsFence = fence;
+    }
+
+    /** Zamanlanmış sonuç işlenmeli mi (kapı yoksa ya da hata verirse evet). */
+    private boolean scheduledResultsAllowed(String alertType, int count) {
+        java.util.function.BooleanSupplier f = scheduledResultsFence;
+        if (f == null) return true;
+        boolean ok;
+        try {
+            ok = f.getAsBoolean();
+        } catch (RuntimeException e) {
+            return true;
+        }
+        if (!ok) {
+            long last = fenceLogAt.get();
+            if (System.currentTimeMillis() - last >= 60_000L && fenceLogAt.compareAndSet(last, System.currentTimeMillis())) {
+                log.info("Zamanlanmış tarama sonucu işlenmedi: bu pod artık tarama lideri değil (tür={}, {} sonuç) — yeni lider yoklar",
+                        alertType, count);
+            }
+        }
+        return ok;
+    }
+
+    /**
      * @param manual kullanıcının "Şimdi kontrol et" (tekil ya da toplu) tuşundan gelen değerlendirme mi.
      *
      * <p><b>Elle kontrol ALARM AÇMAZ (ürün kararı 2026-09-29, prod olayı).</b> Eskiden elle yol zamanlayıcıyla aynı
@@ -440,6 +473,7 @@ public class MonitoringOutageService {
      */
     public void handleSweepResults(String alertType, List<SweepItem> items, boolean manual) {
         if (items == null || items.isEmpty()) return;
+        if (!manual && !scheduledResultsAllowed(alertType, items.size())) return;
 
         // Domain bazlı agregasyon: any-down = domain down; all-up = recovered
         Map<String, List<SweepItem>> byDomain = new LinkedHashMap<>();
@@ -899,6 +933,8 @@ public class MonitoringOutageService {
     public void handleDnsSweep(List<SweepItem> failureItems, List<SweepItem> slowItems,
                                List<DnsChange> changes,
                                List<SweepItem> unexpectedItems, List<SweepItem> inconsistentItems) {
+        // Zamanlanmış DNS turu — değişiklik teyidi de alarm durumuna yazar: kirayı kaybeden pod'da hiçbiri işlenmez (2026-10-09).
+        if (!scheduledResultsAllowed(EscalationService.TYPE_DNS_FAILURE, failureItems == null ? 0 : failureItems.size())) return;
         handleSweepResults(EscalationService.TYPE_DNS_FAILURE, failureItems);
         handleSweepResults(EscalationService.TYPE_DNS_SLOW, slowItems);   // yavaş/timeout'lu çözümleme — kendi teyit zinciri (3×60sn ctxExtra'dan)
         handleSweepResults(EscalationService.TYPE_DNS_UNEXPECTED, unexpectedItems);   // beklenen-değer kilidi (state; değer beklenene dönünce oto-kapanır)

@@ -49,6 +49,18 @@ class SchemaPatchRunnerTest {
         when(md.getDatabaseProductName()).thenReturn("PostgreSQL");
     }
 
+    /** Eski yürütme yolu (ifade doğrudan jdbc'ye) — kilit güvenliğinin kendisi SchemaDdlGuardTest'te (2026-10-09). */
+    private SchemaPatchRunner runner(long lockWaitMs) {
+        SchemaDdlGuard pass = mock(SchemaDdlGuard.class);
+        when(pass.executeBounded(anyString(), anyBoolean())).thenAnswer(inv -> {
+            String ddl = inv.getArgument(0);
+            if (inv.<Boolean>getArgument(1)) return jdbc.update(ddl);
+            jdbc.execute(ddl);
+            return 0;
+        });
+        return new SchemaPatchRunner(jdbc, lockWaitMs, pass);
+    }
+
     private static UncategorizedSQLException sqlError(String state, String msg) {
         return new UncategorizedSQLException("patch", "x", new SQLException(msg, state));
     }
@@ -58,7 +70,7 @@ class SchemaPatchRunnerTest {
     void addColumn_skipsWhenPresent() {
         when(jdbc.queryForObject(contains("information_schema.columns"), eq(Integer.class), any(), any()))
                 .thenReturn(1, 0);
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         r.patch("ALTER TABLE port_monitors ADD COLUMN deleted_at VARCHAR(30)");
         verify(jdbc, never()).execute(anyString());
         r.patch("ALTER TABLE port_monitors ADD COLUMN deleted_at VARCHAR(30)");
@@ -76,7 +88,7 @@ class SchemaPatchRunnerTest {
                 .doThrow(sqlError(null, "ERROR: index \"x\" already exists"))
                 .doThrow(sqlError("42804", "column \"x\" cannot be cast automatically"))
                 .when(jdbc).execute(anyString());
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         r.patch("CREATE INDEX idx_a ON t(a)");
         r.patch("CREATE INDEX idx_b ON t(b)");
         r.patch("ALTER TABLE t ALTER COLUMN c TYPE INTEGER");
@@ -93,7 +105,7 @@ class SchemaPatchRunnerTest {
     void nonPostgres_failureIsNotCounted() throws Exception {
         when(conn.getMetaData().getDatabaseProductName()).thenReturn("H2");
         doThrow(sqlError("42001", "Syntax error")).when(jdbc).execute(anyString());
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         r.patch("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON t(a)");
         assertThat(r.finish().failed()).isZero();
     }
@@ -102,7 +114,7 @@ class SchemaPatchRunnerTest {
     @DisplayName("UPDATE: etkilenen satır > 0 'applied', 0 'noop'")
     void dataPatch_countsRows() {
         when(jdbc.update(anyString())).thenReturn(3, 0);
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         r.patch("UPDATE t SET a = 1 WHERE a IS NULL");
         r.patch("UPDATE t SET a = 1 WHERE a IS NULL");
         var s = r.finish();
@@ -126,7 +138,7 @@ class SchemaPatchRunnerTest {
     @DisplayName("Kilit alınır, iş koşar, kilit bırakılır ve bağlantı kapanır — iş hata verse de")
     void runExclusive_releasesLockEvenOnFailure() throws Exception {
         PreparedStatement unlock = lockStatement(true);
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         assertThatThrownBy(() -> r.runExclusive(() -> { throw new IllegalStateException("yama patladı"); }))
                 .isInstanceOf(IllegalStateException.class);
         verify(unlock).setLong(1, SchemaPatchRunner.LOCK_KEY);
@@ -139,7 +151,7 @@ class SchemaPatchRunnerTest {
     @DisplayName("Kilit süresi içinde alınamazsa iş yine koşar (kilitsiz), kilit bırakılmaya çalışılmaz")
     void runExclusive_proceedsWithoutLockAfterWait() throws Exception {
         PreparedStatement unlock = lockStatement(false);
-        var r = new SchemaPatchRunner(jdbc, 20);
+        var r = runner(20);
         AtomicBoolean ran = new AtomicBoolean();
         r.runExclusive(() -> ran.set(true));
         assertThat(ran).isTrue();
@@ -151,7 +163,7 @@ class SchemaPatchRunnerTest {
     @DisplayName("PostgreSQL değilse kilit denenmez, iş doğrudan koşar")
     void runExclusive_nonPostgres_runsDirectly() throws Exception {
         when(conn.getMetaData().getDatabaseProductName()).thenReturn("H2");
-        var r = new SchemaPatchRunner(jdbc, 10);
+        var r = runner(10);
         AtomicBoolean ran = new AtomicBoolean();
         r.runExclusive(() -> ran.set(true));
         assertThat(ran).isTrue();
@@ -166,5 +178,34 @@ class SchemaPatchRunnerTest {
         assertThat(SchemaPatchRunner.isExpected(null, "relation \"t\" does not exist")).isTrue();
         assertThat(SchemaPatchRunner.isExpected("42804", "cannot be cast")).isFalse();
         assertThat(SchemaPatchRunner.isExpected("53100", "could not extend file: No space left on device")).isFalse();
+    }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): kilit 20 sn içinde alınamazsa yama süresiz beklemez — atlanır, sayılır, sonrakiler sürer")
+    void lockTimeout_isDeferred_andNextPatchesRun() {
+        SchemaDdlGuard guard = mock(SchemaDdlGuard.class);
+        when(guard.lockTimeoutSeconds()).thenReturn(20);
+        doThrow(sqlError("55P03", "canceling statement due to lock timeout"))
+                .when(guard).executeBounded("ALTER TABLE app_users ALTER COLUMN password_hash DROP NOT NULL", false);
+        var r = new SchemaPatchRunner(jdbc, 10, guard);
+        r.patch("ALTER TABLE app_users ALTER COLUMN password_hash DROP NOT NULL");
+        r.patch("ALTER TABLE certificate_inventory ALTER COLUMN owner TYPE TEXT");
+        verify(guard).executeBounded("ALTER TABLE certificate_inventory ALTER COLUMN owner TYPE TEXT", false);
+        var s = r.finish();
+        assertThat(s.failed()).isEqualTo(1);
+        assertThat(s.failures()).singleElement().asString().contains("kilit 20 sn").contains("sonraki açılışta");
+    }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): değişiklik zaten yerindeyse ifade HİÇ çalışmaz (normal açılışta tabloya kilit yok)")
+    void alreadyInPlace_neverExecutes() {
+        SchemaDdlGuard guard = mock(SchemaDdlGuard.class);
+        when(guard.alreadyInPlace(anyString())).thenReturn(true);
+        var r = new SchemaPatchRunner(jdbc, 10, guard);
+        r.patch("ALTER TABLE incident_options DROP CONSTRAINT IF EXISTS uk_inc_opt_type_value");
+        r.patch("CREATE INDEX IF NOT EXISTS idx_x ON t(a)");
+        verify(guard, never()).executeBounded(anyString(), anyBoolean());
+        verify(jdbc, never()).execute(anyString());
+        assertThat(r.finish().noop()).isEqualTo(2);
     }
 }
