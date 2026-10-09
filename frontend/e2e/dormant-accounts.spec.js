@@ -41,16 +41,24 @@ const USER_ACTIVITY = {
   active_users: [], login_status: [], series: { day: [], hour: [] }, top_users: [], top_sources: [],
   anomalies: { total: 0, unacked_recent: 0, counts: {}, recent: [] },
   role_team: { by_role: [], by_team: [] }, heatmaps: [], usage: { days: 7, pages: [], users: [], teams: [] },
-  details: { logins: [], failed: [], anomalies: [], unique_users: [], dormant: DORMANT,
-    dormant_meta: { total: DORMANT.length, cap: 5000, truncated: false, threshold_days: 30 } },
+  // Yoklanan özet yalnız ilk satırları taşır (gerçekte 500; burada 20) — tam liste pencere açılınca ayrı uçtan gelir
+  details: { logins: [], failed: [], anomalies: [], unique_users: [], dormant: DORMANT.slice(0, 20),
+    dormant_meta: { total: DORMANT.length, cap: 20, truncated: true, threshold_days: 30 } },
 }
+const DORMANT_FULL = { rows: DORMANT, meta: { total: DORMANT.length, cap: 5000, truncated: false, threshold_days: 30 }, generated_at: ago(0) }
 
+let dormantCalls = 0
 async function mock(page) {
+  dormantCalls = 0
   await mockApi(page)   // genel uygulama uçları (oturum, tercihler, menü rozetleri …); aşağıdaki yollar onu EZER
   await page.route((u) => new URL(u).pathname.startsWith('/api/admin/system/user-activity'), async (route) => {
     const p = new URL(route.request().url()).pathname
     let data = USER_ACTIVITY
-    if (p.endsWith('/series')) data = { buckets: [], granularity: 'day' }
+    if (p.endsWith('/dormant')) {
+      dormantCalls += 1
+      await new Promise((r) => setTimeout(r, 300))   // ağ gecikmesi: önce özet satırları + "yükleniyor" görünsün
+      data = DORMANT_FULL
+    } else if (p.endsWith('/series')) data = { buckets: [], granularity: 'day' }
     else if (p.includes('/user/')) data = { username: 'x', logins: 0, failed: 0, distinct_ips: 0, events: [], identity_masked: false }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) })
   })
@@ -60,7 +68,10 @@ async function openDormant(page) {
   await page.goto('/?tab=health&sec=users')
   await page.locator('[data-kpi="dormant"]').click({ timeout: 30_000 })
   await page.locator('[data-slot="dormant-stats"]').waitFor()
-  await page.waitForTimeout(400)   // açılış animasyonu (opaklık) bitsin
+  // tam liste gelene kadar özet satırları + "yükleniyor" satırı; gelince satır kalkar ve toplam tam listeden
+  await page.locator('[data-slot="dormant-loading"]').waitFor({ state: 'detached', timeout: 10_000 })
+  await expect(page.locator('[data-slot="dormant-stats"] [data-stat="total"]')).toContainText(String(DORMANT.length))
+  await page.waitForTimeout(300)   // açılış animasyonu (opaklık) bitsin
 }
 
 /** Pencere içinde ekranın sağına taşan görünür öğeler (kendi kaydırma kabında kalanlar sayılmaz). */
@@ -128,8 +139,15 @@ for (const vp of [
       expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
       expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
 
-      // istatistik kutucukları + dağılım kartları görünür; toplam doğru
+      // istatistik kutucukları + dağılım kartları görünür; toplam TAM listeden (özet yalnız 20 satır taşıyordu)
       await expect(dlg.locator('[data-stat="total"]')).toContainText(String(DORMANT.length))
+      // tam liste açılışta bir kez (geliştirme sunucusunda React.StrictMode etkiyi iki kez bağlar → en çok 2; ilki sıra
+      // korumasıyla yok sayılır); pencere YOKLAMAZ: açık beklerken istek sayısı artmaz
+      const afterOpen = dormantCalls
+      expect(afterOpen).toBeGreaterThanOrEqual(1)
+      expect(afterOpen).toBeLessThanOrEqual(2)
+      await page.waitForTimeout(1500)
+      expect(dormantCalls).toBe(afterOpen)
       if (vp.width < 768) {
         // telefonda dağılımlar katlı başlar (liste ekranlarca aşağı itilmesin); açılınca da taşma yok
         await expect(dlg.locator('[data-breakdown]')).toHaveCount(0)

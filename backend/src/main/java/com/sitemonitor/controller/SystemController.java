@@ -271,6 +271,20 @@ public class SystemController {
                 "data", userActivityService.getLoginSeries(from, to, granularity)));
     }
 
+    /**
+     * Atıl hesaplar TAM listesi (2026-10-09): yoklanan özet ({@code /user-activity}, 30 sn'de bir, Sistem Sağlığı'nın her
+     * bölümünde) atıl satırları eski tavanda (500) tutar; "Atıl hesaplar" penceresi açılınca bu uç {rows (≤ 5000), meta}
+     * döner. Kapı ve maske özetle AYNI: {@code system_health.read} (2026-09-19 kararı — KPI kartı ve ilk 500 satır zaten
+     * her kademeye açık; daha dar kapı pencereyi kapsamlı müdüre kırık gösterirdi), kimlik izi maskesi (satırlar zaten
+     * iz taşımaz — savunma derinliği) ve kullanıcı kimliği global olmayanlara opak (UserRefResponseAdvice).
+     */
+    @GetMapping("/user-activity/dormant")
+    public ResponseEntity<Map<String, Object>> dormantAccounts(HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
+        return ok(Map.of("data", maskIdentity(userActivityService.getDormantAccounts(),
+                identityVisible(session), (String) session.getAttribute("username"))));
+    }
+
     /** Kullanıcı zaman çizelgesi (#3): son 30 gün login/anomali olayları — oturum detay modalı. */
     @GetMapping("/user-activity/user/{username}")
     public ResponseEntity<Map<String, Object>> userTimeline(@PathVariable String username,

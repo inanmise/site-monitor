@@ -136,26 +136,58 @@ class UserActivityServiceEnrichmentTest {
 
         Map<?, ?> meta = (Map<?, ?>) details.get("dormant_meta");
         assertThat(meta.get("total")).isEqualTo(2);
-        assertThat(meta.get("cap")).isEqualTo(UserActivityService.DORMANT_CAP);
+        assertThat(meta.get("cap")).isEqualTo(500);                              // yoklanan özet: eski tavan
         assertThat(meta.get("truncated")).isEqualTo(false);
         assertThat(meta.get("threshold_days")).isEqualTo(30);
         // KPI sayısı ile liste uzunluğu aynı kural
         assertThat(((Map<?, ?>) o.get("summary")).get("dormant_30d")).isEqualTo(2L);
+        // tam liste ucu AYNI satır kurucusu: aynı sıra, aynı alanlar
+        @SuppressWarnings("unchecked") List<Map<String, Object>> full = (List<Map<String, Object>>) service.getDormantAccounts().get("rows");
+        assertThat(full).isEqualTo(dormant);
     }
 
     @Test
-    @DisplayName("Atıl hesap listesi tavanı: 500 değil DORMANT_CAP; aşılınca kırpılır ve dormant_meta.truncated=true, total gerçek sayı")
+    @DisplayName("Yoklanan özet atıl listeyi ESKİ tavanda (500) tutar, meta gerçek toplamı taşır; tam liste ucu DORMANT_CAP'e kadar döner")
     void dormantListCapAndTruncation() {
         List<AppUser> many = new ArrayList<>();
         for (int i = 0; i <= UserActivityService.DORMANT_CAP; i++) many.add(user(1000L + i, "u" + i, null, true, null));
         when(userRepo.findAll()).thenReturn(many);
         Map<String, Object> o = service.getOverview();
         Map<?, ?> details = (Map<?, ?>) o.get("details");
-        assertThat((List<?>) details.get("dormant")).hasSize(UserActivityService.DORMANT_CAP);
+        assertThat((List<?>) details.get("dormant")).hasSize(500);
         Map<?, ?> meta = (Map<?, ?>) details.get("dormant_meta");
         assertThat(meta.get("total")).isEqualTo(UserActivityService.DORMANT_CAP + 1);
+        assertThat(meta.get("cap")).isEqualTo(500);
         assertThat(meta.get("truncated")).isEqualTo(true);
         assertThat(((Map<?, ?>) o.get("summary")).get("dormant_30d")).isEqualTo((long) UserActivityService.DORMANT_CAP + 1);
+
+        Map<String, Object> fullList = service.getDormantAccounts();
+        assertThat((List<?>) fullList.get("rows")).hasSize(UserActivityService.DORMANT_CAP);
+        Map<?, ?> fullMeta = (Map<?, ?>) fullList.get("meta");
+        assertThat(fullMeta.get("total")).isEqualTo(UserActivityService.DORMANT_CAP + 1);
+        assertThat(fullMeta.get("cap")).isEqualTo(UserActivityService.DORMANT_CAP);
+        assertThat(fullMeta.get("truncated")).isEqualTo(true);
+        assertThat(fullList.get("generated_at")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Tam atıl listesi: yalnız iki tablo okunur (kullanıcı + takım), sonuç kısa süre PAYLAŞILIR — arka arkaya çağrı DB'ye inmez; kırpma yoksa truncated=false")
+    void dormantFullListIsMemoised() {
+        Instant now = Instant.now();
+        when(userRepo.findAll()).thenReturn(List.of(
+                user(1, "fresh", 5L, true, ISO.format(now)),
+                user(2, "old40", 5L, true, ISO.format(now.minus(40, ChronoUnit.DAYS))),
+                user(3, "never", 9L, true, null)));
+        Map<String, Object> first = service.getDormantAccounts();
+        Map<String, Object> second = service.getDormantAccounts();
+        assertThat(second).isSameAs(first);
+        verify(userRepo, times(1)).findAll();
+        verify(teamRepo, times(1)).findAll();
+        verifyNoInteractions(auditLogRepo);                                    // audit penceresi okunmaz
+        @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) first.get("rows");
+        assertThat(rows).extracting(m -> m.get("username")).containsExactly("never", "old40");
+        assertThat(((Map<?, ?>) first.get("meta")).get("truncated")).isEqualTo(false);
+        assertThat(((Map<?, ?>) first.get("meta")).get("total")).isEqualTo(2);
     }
 
     @Test

@@ -70,9 +70,13 @@ public class UserActivityService {
     private static final int RECENT_ANOMALIES = 20;
     private static final int HEATMAP_CELL_CAP = 200;   // hücre başına en fazla login detayı
     private static final int DETAIL_CAP = 500;         // KPI drill-down liste üst sınırı
-    /** Atıl hesap listesi tavanı (2026-10-09): istatistikler listeden türetilir → 500'de kırpmak sayıları bozardı.
-     *  Toplu pasife alma aracının tavanıyla aynı (5000); aşılırsa {@code details.dormant_meta.truncated}. */
+    /** Atıl hesaplar TAM liste tavanı (2026-10-09, {@link #getDormantAccounts}): istatistikler listeden türetilir.
+     *  Toplu pasife alma aracının tavanıyla aynı (5000); aşılırsa {@code meta.truncated}. Yoklanan özet DETAIL_CAP'te. */
     static final int DORMANT_CAP = 5000;
+    /** Tam atıl listesi belleği — bütün görüntüleyicilerce paylaşılır (tek anahtar). */
+    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> dormantMemo = new com.sitemonitor.util.TtlMemo<>(1);
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.user-activity.dormant-cache-ms:30000}")
+    private long dormantCacheMs = 30_000;
     private static final long MAX_RANGE_DAYS = 31;     // esnek seri sorgusu üst sınırı
     private static final long DAY_SECONDS = 86_400L;
 
@@ -241,7 +245,37 @@ public class UserActivityService {
                     m.put("last_login", userLast.get(e.getKey()));
                     return m;
                 }).toList());
-        // #5: atıl hesaplar — en uzun süredir girmeyen önce; hiç girmemişler en başta
+        // #5: atıl hesaplar — en uzun süredir girmeyen önce; hiç girmemişler en başta. YOKLANAN özet (Sistem Sağlığı'nın
+        // her bölümünde 30 sn'de bir) ESKİ tavanda (DETAIL_CAP) kalır — tam liste ayrı uçtan, pencere açılınca
+        // (getDormantAccounts). dormant_meta gerçek toplamı taşır: panel listenin kırpıldığını bilir.
+        Map<String, Object> dormant = dormantSection(usersByName, teamNames, DETAIL_CAP);
+        out.put("dormant", dormant.get("rows"));
+        out.put("dormant_meta", dormant.get("meta"));
+        return out;
+    }
+
+    /**
+     * Atıl hesaplar görünümünün TAM listesi (2026-10-09): {@code GET /api/admin/system/user-activity/dormant} — yalnız
+     * pencere açılınca / pencerenin Yenile düğmesiyle istenir, YOKLANMAZ. Satırlar özetle aynı kurucudan
+     * ({@link #dormantRow}), tavan {@link #DORMANT_CAP}. Ek DB yükü yok denecek kadar: özetin yüklediği iki tablo
+     * ({@code app_users}, {@code teams}) aynen okunur ve sonuç {@code dormantCacheMs} (varsayılan 30 sn) bütün
+     * görüntüleyicilerce PAYLAŞILIR (TtlMemo — eşzamanlı ıskalamalar tek hesabı bekler). Paylaşılan nesne değiştirilmez;
+     * kimlik maskesi denetleyicide kopya üzerinde.
+     */
+    public Map<String, Object> getDormantAccounts() {
+        return dormantMemo.get("all", dormantCacheMs, false, () -> {
+            Map<String, Object> section = dormantSection(usersByName(), teamNameMap(), DORMANT_CAP);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("rows", section.get("rows"));
+            out.put("meta", section.get("meta"));
+            out.put("generated_at", ISO.format(Instant.now()));
+            return out;
+        });
+    }
+
+    /** Atıl hesaplar (aktif hesaplar arasında 30+ gündür girmeyen ya da hiç girmemiş; en eski önce): {@code rows} en çok
+     *  {@code cap} satır, {@code meta} = {total (gerçek), cap, truncated, threshold_days}. Özet ve tam liste ORTAK kural. */
+    private Map<String, Object> dormantSection(Map<String, AppUser> usersByName, Map<Long, String> teamNames, int cap) {
         Instant now = Instant.now();
         String d30 = ISO.format(now.minusSeconds(DORMANT_DAYS * DAY_SECONDS));
         List<AppUser> dormant = usersByName.values().stream()
@@ -249,15 +283,14 @@ public class UserActivityService {
                 .filter(u -> u.getLastLoginAt() == null || u.getLastLoginAt().isBlank() || u.getLastLoginAt().compareTo(d30) < 0)
                 .sorted(Comparator.comparing((AppUser u) -> nullSafe(u.getLastLoginAt())))
                 .toList();
-        out.put("dormant", dormant.stream().limit(DORMANT_CAP).map(u -> dormantRow(u, teamNames, now)).toList());
-        // Atıl hesaplar görünümü (2026-10-09): liste tavanı + gerçek toplam — liste kırpıldıysa arayüz bunu SÖYLER
-        // (istatistikler listeden türetildiği için "N'nin ilk M'si" bandı çizilir; KPI sayısı summary.dormant_30d'den).
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("total", dormant.size());
-        meta.put("cap", DORMANT_CAP);
-        meta.put("truncated", dormant.size() > DORMANT_CAP);
+        meta.put("cap", cap);
+        meta.put("truncated", dormant.size() > cap);
         meta.put("threshold_days", DORMANT_DAYS);
-        out.put("dormant_meta", meta);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("rows", dormant.stream().limit(cap).map(u -> dormantRow(u, teamNames, now)).toList());
+        out.put("meta", meta);
         return out;
     }
 

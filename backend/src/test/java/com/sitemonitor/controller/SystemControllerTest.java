@@ -339,6 +339,59 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    /** Atıl hesaplar tam listesi (2026-10-09): servisin döndürdüğü {rows, meta} aynen; kimlik izi her zaman düşer. */
+    private static Map<String, Object> dormantPayload() {
+        Map<String, Object> row = new java.util.LinkedHashMap<>(Map.of("username", "u1", "inactive_days", 120,
+                "team_id", 5, "has_email", true));
+        row.put("ip", "198.51.100.44");   // sızan bir alan olsa bile maske düşürür (savunma derinliği)
+        return Map.of("rows", List.of(row), "meta", Map.of("total", 5001, "cap", 5000, "truncated", true, "threshold_days", 30),
+                "generated_at", "2026-10-09T09:00:00");
+    }
+
+    @Test
+    @DisplayName("GET /user-activity/dormant: global ADMIN, AUDIT, USER ve kapsamlı müdür okur (özetle aynı kapı); rows + meta aynen")
+    void dormantAccounts_readGateLikeOverview() throws Exception {
+        when(userActivityService.getDormantAccounts()).thenReturn(dormantPayload());
+        for (MockHttpSession s : List.of(adminSession(), auditSession(), userSession(), scopedAdminSession())) {
+            mvc.perform(get("/api/admin/system/user-activity/dormant").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data.rows[0].username").value("u1"))
+                    .andExpect(jsonPath("$.data.rows[0].inactive_days").value(120))
+                    .andExpect(jsonPath("$.data.meta.total").value(5001))
+                    .andExpect(jsonPath("$.data.meta.cap").value(5000))
+                    .andExpect(jsonPath("$.data.meta.truncated").value(true));
+        }
+        verify(permissionService, org.mockito.Mockito.atLeast(4))
+                .require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+    }
+
+    @Test
+    @DisplayName("GET /user-activity/dormant: oturumsuz 401, system_health.read yoksa 403 (servis çağrılmaz)")
+    void dormantAccounts_deniedWithoutPermission() throws Exception {
+        mvc.perform(get("/api/admin/system/user-activity/dormant")).andExpect(status().isUnauthorized());
+        org.mockito.Mockito.doThrow(new SecurityException("no permission"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+        mvc.perform(get("/api/admin/system/user-activity/dormant").session(userSession())).andExpect(status().isForbidden());
+        verify(userActivityService, never()).getDormantAccounts();
+    }
+
+    @Test
+    @DisplayName("GET /user-activity/dormant: kimlik izi maskesi — global olmayanlarda identity_masked=true ve iz alanı yok; global/AUDIT'te görünür")
+    void dormantAccounts_masksIdentityTrace() throws Exception {
+        when(userActivityService.getDormantAccounts()).thenReturn(dormantPayload());
+        String body = mvc.perform(get("/api/admin/system/user-activity/dormant").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.identity_masked").value(true))
+                .andExpect(jsonPath("$.data.rows[0].ip").doesNotExist())
+                .andExpect(jsonPath("$.data.rows[0].username").value("u1"))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("198.51.100.44");
+        mvc.perform(get("/api/admin/system/user-activity/dormant").session(auditSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.identity_masked").value(false));
+    }
+
     @Test
     @DisplayName("GET /api/admin/system/user-activity as AUDIT returns 200 (read-only viewer)")
     void userActivity_asAudit_returns200() throws Exception {
