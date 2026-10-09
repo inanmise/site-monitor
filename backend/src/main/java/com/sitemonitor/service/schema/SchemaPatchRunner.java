@@ -151,7 +151,8 @@ public final class SchemaPatchRunner {
     }
 
     private static String sqlState(Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable t = e; t != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; t = t.getCause() == t ? null : t.getCause()) {
             if (t instanceof java.sql.SQLException se && se.getSQLState() != null) return se.getSQLState();
         }
         return null;
@@ -261,7 +262,8 @@ public final class SchemaPatchRunner {
 
     private static String rootMessage(Throwable e) {
         Throwable t = e;
-        while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        while (t.getCause() != null && t.getCause() != t && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH) t = t.getCause();
         String m = t.getMessage();
         return m != null ? m : (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
     }

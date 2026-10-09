@@ -29,6 +29,7 @@ import AccountInactiveDialog from './components/AccountInactiveDialog.jsx'
 import {
   ACCOUNT_INACTIVE_REDIRECT, accountInactiveFromUrl, accountInactiveSignaled, assignLocation, onAccountInactive,
 } from './utils/accountInactive.js'
+import { onSessionExpired } from './utils/sessionExpiry.js'
 // Sistem Bakım Modu (2026-10-02): şeritler + geri sayım penceresi (saniyelik tik kendi içinde) ve oturum kesimi sinyali
 import SystemMaintenanceLayer from './components/maintenance/SystemMaintenanceLayer.jsx'
 import {
@@ -814,6 +815,25 @@ export default function App() {
     if (accountInactiveSignaled()) handle()
     return off
   }, [])
+
+  // OTURUM DÜŞTÜ, YÖNLENDİRME SİGORTASI ATTI (2026-10-09): api/client.js 60 sn içinde 2 kez /?session=expired'a
+  // yönlendirdiyse (çok kopyalı yanlış kurulum: /me bir kopyada 200, yoklama ötekinde 401) sayfayı yeniden yüklemez —
+  // giriş formu burada, yönlendirmeyle AYNI "oturum süresi doldu" bildirimiyle açılır (utils/sessionExpiry.js).
+  useEffect(() => onSessionExpired(() => {
+    if (!userRef.current) return
+    clearTimeout(logoutTimer.current)
+    clearTimeout(warnTimer.current)
+    clearInterval(countdownInterval.current)
+    clearInterval(refreshPollRef.current)
+    resetSessionData()
+    setUser(null)
+    setSystemRole('USER')
+    setTeamId(null)
+    setTeamName(null)
+    setInactivityWarning(false)
+    setRefreshing(false)
+    setSessionExpiredNotice(true)
+  }), [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // SİSTEM BAKIMI SİNYALİ (2026-10-02, kullanıcı kararı): oturum açıkken (401 MAINTENANCE — bakım başladı, oturum sunucuda
   // kesildi) → kısa geri sayımlı bakım penceresi, sonra /?session=maintenance; oturum yokken (açılışta /me ya da remember-me

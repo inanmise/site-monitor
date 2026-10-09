@@ -74,6 +74,14 @@ public class NocDelivery {
     @Column(columnDefinition = "TEXT")
     private String subject;
 
+    /**
+     * Teslim denemesi sayısı (2026-10-09) — her sahiplenmede bir artar. Fırtına TİK'inin açılış yeniden denemesi bu
+     * sayaçla TAVANLANIR ({@code NocNotificationService.STORM_OPEN_MAX_ATTEMPTS}); null = sayaçtan önceki satır (bir
+     * deneme sayılır). NULLABLE — dolu tabloya {@code SchedulerService.applySchemaPatches} ekler.
+     */
+    @Column(name = "attempts")
+    private Integer attempts;
+
     @Column(name = "created_at", nullable = false, length = 30)
     private String createdAt;
 

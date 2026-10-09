@@ -1225,4 +1225,34 @@ class MonitoringOutageServiceTest {
         rec.runAll();
         verify(escalationService, times(1)).resolveMonitoringAlertsForDomain(d, EscalationService.TYPE_ACCESSIBILITY);
     }
+
+    @Test
+    @DisplayName("2026-10-09 döngü kapısı: bakımda açılmış değişiklik alarmının ertelenmiş bildirim tik'i ONAYLI olayları sorguda eler — yalnız onaysızlar kilit + tamamlama alır")
+    void deferredChangeTick_readsOnlyUnacknowledged() {
+        AlertEvent pending = new AlertEvent();
+        pending.setId(501L);
+        pending.setDomain("dns.example.com");
+        pending.setAlertType(EscalationService.TYPE_DNS_CHANGED);
+        pending.setAcknowledged(false);
+        pending.setCreatedAt("2026-01-01T00:00:00");   // E9 payı çoktan geçti
+        when(alertEventRepo.findUnacknowledgedOpenAwaitingInitial(MonitoringOutageService.MANUAL_CLOSE_TYPES))
+                .thenReturn(List.of(pending));
+
+        assertThat(service.notifyChangeAlertsDeferredByMaintenance()).isEqualTo(1);
+
+        verify(alertEventRepo).findUnacknowledgedOpenAwaitingInitial(MonitoringOutageService.MANUAL_CLOSE_TYPES);
+        verify(escalationService).completeDeferredInitialNotification(pending);
+    }
+
+    @Test
+    @DisplayName("2026-10-09: bekleyen (onaysız) değişiklik alarmı yoksa tik hiçbir kilit yazmaz ve tamamlama çağırmaz")
+    void deferredChangeTick_nothingPending_noLockNoCall() {
+        when(alertEventRepo.findUnacknowledgedOpenAwaitingInitial(MonitoringOutageService.MANUAL_CLOSE_TYPES))
+                .thenReturn(List.of());
+
+        assertThat(service.notifyChangeAlertsDeferredByMaintenance()).isZero();
+
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO scheduler_lock"), any(Object[].class));
+        verify(escalationService, never()).completeDeferredInitialNotification(any());
+    }
 }

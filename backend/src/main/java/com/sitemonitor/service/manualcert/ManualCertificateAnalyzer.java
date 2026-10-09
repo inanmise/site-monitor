@@ -100,6 +100,15 @@ public class ManualCertificateAnalyzer {
     }
 
     /**
+     * Ham yükleme {@link ExtractedUpload#MAX_CERTS}'ten fazla FARKLI sertifika taşıyor (2026-10-09). Zincir gruplama her
+     * aday çiftinde imza doğrular (karesel); tarayıcı yolunun 200 sınırı ham PEM'de yoktu — 5 MB'a ~10.000 sertifika sığar,
+     * aynı adlı sahte zincirler istek iş parçacığını dakikalarca kilitliyordu. Sınır iki yolda artık aynı.
+     */
+    public static class TooManyCertificatesException extends RuntimeException {
+        public TooManyCertificatesException() { super("too many certificates", null, false, false); }
+    }
+
+    /**
      * Ham yükleme özel anahtar / anahtar deposu taşıyor (2026-10-08): sunucu bunu AÇMAZ ve kabul etmez — çağıran 400
      * {@code PRIVATE_KEY_NOT_ACCEPTED} döner. {@link #kind()} yalnız tür ({@code PKCS12}, {@code JKS}, {@code PRIVATE_KEY} …).
      */
@@ -401,6 +410,7 @@ public class ManualCertificateAnalyzer {
     public Analysis analyze(byte[] data, String fileName, boolean pasted) {
         CertificateFileParser.Result parsed = parseTimed(data, fileName, pasted);
         if (parsed.privateMaterial() != null) throw new PrivateMaterialRejected(parsed.privateMaterial());
+        if (distinctCertificates(parsed) > ExtractedUpload.MAX_CERTS) throw new TooManyCertificatesException();
         return analyzeParsed(parsed);
     }
 
@@ -642,6 +652,16 @@ public class ManualCertificateAnalyzer {
             return best.ref;
         }
         return entries.size() == 1 ? entries.get(0).ref : null;
+    }
+
+    /** Parmak izine göre farklı sertifika sayısı (yinelenen PEM blokları sınıra sayılmaz). */
+    static int distinctCertificates(CertificateFileParser.Result parsed) {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (ParsedCert pc : parsed.certs()) {
+            String fp = fingerprint(pc.cert());
+            if (fp != null) seen.add(fp);
+        }
+        return seen.size();
     }
 
     public static String fingerprint(X509Certificate c) {

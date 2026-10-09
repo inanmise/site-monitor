@@ -15,6 +15,31 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.117.1] — 2026-10-09
+
+### Fixed
+- **Sonsuz döngü ve sonsuz bekleme riskleri kapatıldı (uçtan uca denetim).** Normal girdide davranış aynı; yalnız bozuk,
+  kötü niyetli ya da aşırı büyük girdide işlem artık sınırlı sürede biter.
+  - **Herkese açık hata bildirimi ucu:** URL maskesi belirli bir metinde saatlerce CPU yakıyordu (ReDoS) — doğrusal tarama,
+    çıktı birebir aynı. E-posta biçim denetimlerinde uzunluk artık düzenli ifadeden önce.
+  - **Sertifika kontrolleri:** sertifikanın taşıdığı CRL adresleri tekilleştirilir, en çok 3 indirme + ortak süre bütçesi.
+  - **Dosyadan sertifika:** sunucuda ve tarayıcıda PEM taraması doğrusal; ham yüklemede 200'den fazla farklı sertifika
+    reddedilir (`TOO_MANY_CERTIFICATES`). Tarayıcı ayıklayıcısı: JCEKS sınıf döngüsü, PKCS#12 maliyet bombaları (MAC
+    uzunluğu, tuz, blok sayısı, toplam yineleme bütçesi) ve ZIP (sahte kayıt sayısı, beyan edilen boyutun ötesine açma)
+    sınırlandı.
+  - **Bildirimler:** 7/24 fırtına açılış postası her 30 sn'de yeniden gönderiliyordu — atlanan kesin, başarısız olan 5 dk
+    arayla en çok 3 kez (vazgeçme günlüğe yazılır). Fırtına günlük toplu tekrarı gönderimden önce sahiplenilir; push
+    kuyruğu salt-okunur veritabanında aynı push'u yeniden göndermez; onaylanmış değişiklik alarmları dakikalık turda
+    boşuna işlenmez; fırtına kapanışı yalnız kendi üyesini ayırır.
+  - **Diğer arka uç:** neden zinciri yürüyüşleri derinlik tavanlı (A→B→A döngüsü), zamanlayıcı vade hesabı döngüsüz,
+    k6 script denetimi (512 KB / 500 döngü tavanı), sayfa hariç-tutma deseni regex'siz, uçtan uca tanılamada ara (1xx)
+    yanıt ve başlık satırı tavanı.
+  - **Arayüz:** yavaş sunucuda yoklamalar üst üste binmez (Sistem Sağlığı tarama yoklaması, otomatik yenilemeler);
+    sürüm sonrası parça yükleme hatası oturumda en çok bir kez otomatik yenileme yapar; oturum düşüşü 60 sn'de 2'den
+    fazla yönlendirme yapmaz (giriş formu yerinde açılır); İngilizce sözlük 10 sn'de gelmezse Türkçe ile açılır; uzun
+    metinlerdeki karesel kalıplar doğrusal taramaya çevrildi.
+  - **CI:** her işe süre sınırı, Surefire fork süre sınırı; testlerde süresiz beklemeler kaldırıldı.
+
 ## [20.117.0] — 2026-10-09
 
 ### Added
@@ -2732,7 +2757,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.1...HEAD
+[20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
 [20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
 [20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
 [20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2

@@ -375,7 +375,8 @@ public class HstsDiagnosticsService {
 
     private static String rootMsg(Throwable e) {
         Throwable cur = e;
-        while (cur.getCause() != null && cur.getCause() != cur) cur = cur.getCause();
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        while (cur.getCause() != null && cur.getCause() != cur && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH) cur = cur.getCause();
         String msg = cur.getMessage();
         return (msg != null && !msg.isBlank()) ? msg : cur.getClass().getSimpleName();
     }

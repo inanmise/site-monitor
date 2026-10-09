@@ -210,7 +210,7 @@ public class NotificationGroupService {
                 for (String part : raw.split("[,;]")) {
                     String e = part.trim();
                     if (e.isEmpty()) continue;
-                    if (!EMAIL.matcher(e).matches())
+                    if (e.length() > 254 || !EMAIL.matcher(e).matches())   // ReDoS (2026-10-09): önce uzunluk
                         throw new IllegalArgumentException("Geçersiz e-posta adresi: " + e);
                     if (seen.add(e.toLowerCase())) emails.add(e);
                 }

@@ -199,26 +199,80 @@ export function armor(label, der) {
   return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`
 }
 
-const PEM_BLOCK = /-----BEGIN ([A-Z0-9 .]+)-----([\s\S]*?)-----END \1-----/g
-/** Her türden özel anahtar başlığı (kapanışı bozuk olsa da sayılır). */
-const PRIVATE_BEGIN = /-----BEGIN [A-Z0-9 .]*PRIVATE KEY[A-Z0-9 .]*-----/g
+/**
+ * PEM işaretleri (2026-10-09, sonsuz döngü / ReDoS denetimi): eski `BEGIN (…)-----([\s\S]*?)-----END \1-----` ifadesi
+ * kapanışı olmayan HER BEGIN için metnin sonuna kadar tarıyordu (O(k·N); 5 MB'ta 290 000 BEGIN ≈ saatler) ve özel anahtar
+ * sayacı uzun bir etiket dizisinde O(N²) geri izliyordu. Artık metin TEK geçişte işaretlere ayrılır, eşleştirme doğrusal.
+ * Etiket ≤ 64 karakter (gerçek etiketler ≤ 25). İşaretler ortak tire paylaşabilir ("…-----BEGIN B-----" önceki işaretin
+ * kapanış tirelerinden başlayabilir) — eski ifadenin bulduğu her konum burada da bulunur.
+ */
+const PEM_MARKER = /-----(BEGIN|END) ([A-Z0-9 .]{1,64})-----/g
+const MARKER_DASHES = 5
+
+/** `[{ begin: boolean, label, start, end }]` — konum sırasıyla, örtüşen (tire paylaşan) işaretler dahil. */
+function pemMarkers(text) {
+  const out = []
+  PEM_MARKER.lastIndex = 0
+  for (let m = PEM_MARKER.exec(text); m; m = PEM_MARKER.exec(text)) {
+    const end = m.index + m[0].length
+    out.push({ begin: m[1] === 'BEGIN', label: m[2], start: m.index, end })
+    PEM_MARKER.lastIndex = end - MARKER_DASHES                     // kapanış tireleri sonraki işaretin başı olabilir
+  }
+  return out
+}
+
+/**
+ * BEGIN ↔ END eşleştirmesi — eski tembel ifadeyle AYNI anlam: her BEGIN, gövdesinden SONRA gelen aynı etiketli İLK END
+ * ile eşleşir (iç içe başka bloklar gövdede kalır); END'i olmayan BEGIN atlanır ve tarama sonraki işaretten sürer;
+ * eşleşen bloktan sonra tarama END'in bitiminden sürer. Etiket başına END listesi + tek yönlü işaretçi → doğrusal.
+ * @returns {Array<{ label: string, body: string }>} ham etiket ve gövde metni
+ */
+function pemRawBlocks(text) {
+  const markers = pemMarkers(text)
+  const ends = new Map()                                           // etiket → { list: [işaret], i: işaretçi }
+  for (const mk of markers) {
+    if (mk.begin) continue
+    let e = ends.get(mk.label)
+    if (!e) { e = { list: [], i: 0 }; ends.set(mk.label, e) }
+    e.list.push(mk)
+  }
+  const out = []
+  let cursor = 0
+  for (const mk of markers) {
+    if (!mk.begin || mk.start < cursor) continue
+    const e = ends.get(mk.label)
+    if (!e) continue
+    while (e.i < e.list.length && e.list[e.i].start < mk.end) e.i++   // BEGIN'ler artan sırada → işaretçi geri gitmez
+    if (e.i >= e.list.length) continue
+    const close = e.list[e.i]
+    out.push({ label: mk.label, body: text.slice(mk.end, close.start) })
+    cursor = close.end
+  }
+  return out
+}
 
 /** PEM blokları: `[{ label, der }]` (gövdesi çözülemeyen blok atlanır). Özel anahtar blokları ÇÖZÜLMEZ, yalnız sayılır. */
 export function pemBlocks(text) {
   const out = []
-  for (const m of String(text).matchAll(PEM_BLOCK)) {
-    const label = m[1].trim().toUpperCase()
+  for (const m of pemRawBlocks(String(text))) {
+    const label = m.label.trim().toUpperCase()
     if (label.includes('PRIVATE KEY')) continue
-    const body = m[2].split(/\r?\n/).filter((l) => !l.includes(':')).join('')   // RFC 1421 başlıkları (Proc-Type …)
+    const body = m.body.split(/\r?\n/).filter((l) => !l.includes(':')).join('')   // RFC 1421 başlıkları (Proc-Type …)
     const der = base64Decode(body)
     if (der && der.length) out.push({ label, der })
   }
   return out
 }
 
+/** Her türden özel anahtar başlığı (kapanışı bozuk olsa da sayılır); birbiriyle örtüşen başlıklar bir kez sayılır. */
 export function countPrivateKeyBlocks(text) {
   let n = 0
-  for (const _ of String(text).matchAll(PRIVATE_BEGIN)) n++   // eslint-disable-line no-unused-vars
+  let after = 0
+  for (const mk of pemMarkers(String(text))) {
+    if (!mk.begin || mk.start < after || !mk.label.includes('PRIVATE KEY')) continue
+    n++
+    after = mk.end
+  }
   return n
 }
 

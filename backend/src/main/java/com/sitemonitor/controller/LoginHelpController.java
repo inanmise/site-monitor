@@ -97,7 +97,8 @@ public class LoginHelpController {
 
         if (username.isBlank()) return err(HttpStatus.BAD_REQUEST, "Kullanıcı adı zorunludur");
         if (email.isBlank())    return err(HttpStatus.BAD_REQUEST, "E-posta adresi zorunludur");
-        if (!EMAIL.matcher(email).matches() || email.length() > MAX_EMAIL)
+        // ReDoS (2026-10-09): uzunluk DÜZENLİ İFADEDEN ÖNCE — kalıp uzun girdide karesel geri izler.
+        if (email.length() > MAX_EMAIL || !EMAIL.matcher(email).matches())
             return err(HttpStatus.BAD_REQUEST, "Geçerli bir e-posta adresi giriniz");
         if (message.isBlank())  return err(HttpStatus.BAD_REQUEST, "Açıklama boş olamaz");
         if (username.length() > MAX_USERNAME || errorText.length() > MAX_ERROR_TEXT

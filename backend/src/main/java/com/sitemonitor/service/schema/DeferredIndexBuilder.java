@@ -376,7 +376,8 @@ public final class DeferredIndexBuilder {
 
     private static String firstLine(Throwable e) {
         Throwable t = e;
-        while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        while (t.getCause() != null && t.getCause() != t && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH) t = t.getCause();
         String m = t.getMessage() != null ? t.getMessage() : e.getClass().getSimpleName();
         int i = m.indexOf('\n');
         String line = i >= 0 ? m.substring(0, i) : m;

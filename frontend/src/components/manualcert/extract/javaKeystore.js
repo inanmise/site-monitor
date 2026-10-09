@@ -102,13 +102,39 @@ const SC_SERIALIZABLE = 0x02
 const SC_EXTERNALIZABLE = 0x04
 const SC_BLOCK_DATA = 0x08
 const PRIM_SIZE = { B: 1, C: 2, D: 8, F: 4, I: 4, J: 8, S: 2, Z: 1 }
+/** Üst sınıf zincirinin azami uzunluğu (gerçek Java sınıf hiyerarşileri birkaç düzeydir). */
+const MAX_CLASS_CHAIN = 64
+
+/**
+ * Sınıf tanımı → üst sınıflar ÖNCE gelecek biçimde zincir. Bozuk / kötü niyetli akışta `super` döngüsel olabilir
+ * (TC_REFERENCE kendi tanıtıcısına ya da A→B→A); döngü ya da aşırı uzun zincir → hata (çağıran kısmi okuma sayar),
+ * sonsuz döngü OLMAZ (2026-10-09).
+ */
+function classChain(desc) {
+  const chain = []
+  const seen = new Set()
+  for (let d = desc; d; d = d.super) {
+    if (seen.has(d) || chain.length >= MAX_CLASS_CHAIN) throw new Error('cycle')
+    seen.add(d)
+    chain.push(d)
+  }
+  return chain.reverse()
+}
 
 /** `ObjectOutputStream` ile yazılmış TEK nesneyi (akış başlığı dahil) atlar; tanınmayan yapı → hata. */
 function skipJavaObjectStream(r) {
   if (r.u16() !== 0xaced || r.u16() !== 5) throw new Error('stream header')
   const handles = []
+  /** Okunmakta olan (üst sınıfı henüz bağlanmamış) sınıf tanımları — üst sınıf bunlardan biri olamaz (döngü). */
+  const reading = new Set()
   let budget = 100_000
   const tick = () => { if (--budget < 0) throw new Error('budget') }
+  const linkSuper = (desc, depth) => {
+    const sup = readClassDesc(depth + 1)
+    if (sup && reading.has(sup)) throw new Error('cycle')        // kendisi ya da henüz okunan bir ata
+    desc.super = sup
+    reading.delete(desc)
+  }
 
   const readClassDesc = (depth) => {
     tick()
@@ -119,6 +145,7 @@ function skipJavaObjectStream(r) {
       const desc = { kind: 'desc', name: r.utf(), fields: [] }
       r.skip(8)                                                   // serialVersionUID
       handles.push(desc)
+      reading.add(desc)
       desc.flags = r.u8()
       const n = r.u16()
       for (let i = 0; i < n; i++) {
@@ -128,17 +155,18 @@ function skipJavaObjectStream(r) {
         desc.fields.push(type)
       }
       skipAnnotation(depth + 1)
-      desc.super = readClassDesc(depth + 1)
+      linkSuper(desc, depth)
       return desc
     }
     if (tc === TC.PROXYCLASSDESC) {
       const desc = { kind: 'desc', name: '$proxy', fields: [], flags: SC_SERIALIZABLE }
       handles.push(desc)
+      reading.add(desc)
       const n = r.i32()
       if (n < 0 || n > 64) throw new Error('proxy')
       for (let i = 0; i < n; i++) r.utf()
       skipAnnotation(depth + 1)
-      desc.super = readClassDesc(depth + 1)
+      linkSuper(desc, depth)
       return desc
     }
     throw new Error('classdesc')
@@ -181,9 +209,7 @@ function skipJavaObjectStream(r) {
       case TC.OBJECT: {
         const desc = readClassDesc(depth + 1)
         handles.push({ kind: 'obj' })
-        const chain = []
-        for (let d = desc; d; d = d.super) chain.unshift(d)
-        for (const d of chain) {
+        for (const d of classChain(desc)) {
           if (d.flags & SC_EXTERNALIZABLE) {
             if (!(d.flags & SC_BLOCK_DATA)) throw new Error('externalizable')
             skipAnnotation(depth + 1)

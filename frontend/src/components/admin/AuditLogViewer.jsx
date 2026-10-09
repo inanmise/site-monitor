@@ -116,8 +116,8 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
 
   // ── Özet (yalnız tam kapsam — ekip kapsamında uç 403 verir, hiç çağrılmaz) ──
   const loadStats = useCallback(() => {
-    if (!fullScope) return
-    api.admin.getAuditStats()
+    if (!fullScope) return undefined
+    return api.admin.getAuditStats()
       .then(r => { if (r?.success) { setStats(r.data); setStatsError(false) } else setStatsError(true) })
       .catch(() => setStatsError(true))
   }, [fullScope])
@@ -132,7 +132,8 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
     return () => { alive = false }
   }, [])
 
-  useVisibleInterval(() => { reload(); loadStats() }, autoRefresh ? 15000 : 0, false)
+  // Yığılma yok (2026-10-09): liste isteği sürüyorsa yenisi istenmez; özet sözü dönülür → kanca o bitene dek tur atlar
+  useVisibleInterval(() => { if (!loading) reload(); return loadStats() }, autoRefresh ? 15000 : 0, false)
 
   // ── Seçim / ayrıntı ──
   const selectedRow = rows.find(r => r.id === selectedId) ?? extraRows[selectedId] ?? null

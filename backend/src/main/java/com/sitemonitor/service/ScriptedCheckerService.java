@@ -197,6 +197,10 @@ public class ScriptedCheckerService {
      *                       null ⇒ bütçe-bağımlı denetimler atlanır (eski iki argümanlı çağrı).
      */
     public ScriptDiagnostics validateScript(String script, List<String> envNames, Integer timeoutSeconds) {
+        // Boyut tavanı HER metin taramasından önce (2026-10-09): aşağıdaki denetimler scripti defalarca tarar.
+        if (script != null && script.length() > ScriptedSafetyRules.MAX_SCRIPT_CHARS) {
+            return new ScriptDiagnostics(ScriptedSafetyRules.tooLargeMessage(script.length()), new ArrayList<>());
+        }
         List<String> warnings = new ArrayList<>(auditEnvReferences(script, envNames));
         warnings.addAll(auditRequestTimeouts(script));
 
@@ -289,7 +293,9 @@ public class ScriptedCheckerService {
     private static final Pattern ENV_DOT = Pattern.compile("__ENV\\s*\\.\\s*([A-Za-z_$][\\w$]*)");
     private static final Pattern ENV_IDX = Pattern.compile("__ENV\\s*\\[\\s*([\"'])([A-Za-z_$][\\w$]*)\\1\\s*]");
     /** `__ENV` sonrası `.` veya `["`/`['` GELMEYEN her geçiş → statik çözülemeyen dinamik erişim. */
-    private static final Pattern ENV_DYNAMIC = Pattern.compile("__ENV\\s*(?![.\\s]*[.\\[])|__ENV\\s*\\[\\s*(?![\"'])");
+    // \s*+ İYELİKLİ (2026-10-09, ReDoS): "__ENV" + k boşlukta eski \s* her bölünmede bakış-ilerisini yeniden koşturuyordu
+    // (O(k²)). Karar aynı: bakış-ilerisi boşluğu kendisi de tükettiği için erken bölünme yalnız tam bölünme başarısızsa başarısız olur.
+    private static final Pattern ENV_DYNAMIC = Pattern.compile("__ENV\\s*+(?![.\\s]*[.\\[])|__ENV\\s*\\[\\s*(?![\"'])");
 
     /** Script gövdesindeki mutlak URL'ler — tırnak/backtick/parantez/boşlukta biter. */
     private static final Pattern URL_LITERAL = Pattern.compile("https?://[^\\s'\"`)<>\\\\]+");

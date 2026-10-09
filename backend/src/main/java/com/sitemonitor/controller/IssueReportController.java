@@ -124,7 +124,8 @@ public class IssueReportController {
         if (email == null) {
             String bodyEmail = str(body.get("email"));
             if (bodyEmail.isBlank()) return err(HttpStatus.BAD_REQUEST, "E-posta adresi zorunludur");
-            if (!EMAIL.matcher(bodyEmail).matches() || bodyEmail.length() > MAX_EMAIL)
+            // ReDoS (2026-10-09): uzunluk DÜZENLİ İFADEDEN ÖNCE — kalıp uzun girdide karesel geri izler.
+            if (bodyEmail.length() > MAX_EMAIL || !EMAIL.matcher(bodyEmail).matches())
                 return err(HttpStatus.BAD_REQUEST, "Geçerli bir e-posta adresi giriniz");
             email = bodyEmail;
             if (Boolean.TRUE.equals(body.get("saveEmailToProfile")) && user != null) {

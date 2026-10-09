@@ -90,7 +90,8 @@ public class NocGroupService {
             for (String piece : p.split("[,;\\s]+")) {
                 String e = piece.trim();
                 if (e.isEmpty()) continue;
-                if (!EMAIL.matcher(e).matches()) throw new IllegalArgumentException("Geçersiz e-posta adresi: " + e);
+                // ReDoS (2026-10-09): uzunluk önce — kalıp uzun girdide karesel geri izler.
+                if (e.length() > 254 || !EMAIL.matcher(e).matches()) throw new IllegalArgumentException("Geçersiz e-posta adresi: " + e);
                 if (seen.add(e.toLowerCase(Locale.ROOT))) out.add(e);
             }
         }
@@ -217,7 +218,7 @@ public class NocGroupService {
         Set<String> seen = new HashSet<>();
         for (String part : g.getEmails().split(",")) {
             String e = part.trim();
-            if (!e.isEmpty() && EMAIL.matcher(e).matches() && seen.add(e.toLowerCase(Locale.ROOT))) out.add(e);
+            if (!e.isEmpty() && e.length() <= 254 && EMAIL.matcher(e).matches() && seen.add(e.toLowerCase(Locale.ROOT))) out.add(e);
         }
         return out;
     }

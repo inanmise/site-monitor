@@ -258,7 +258,8 @@ public class CaAutoPinService {
     /** Cause zincirinde PKIX/güven-yolu hatası var mı? Hostname mismatch HARİÇ (pin çözmez).
      *  HTTP monitör strict yolu ve RDAP çıkışı aynı sınıflandırmayı paylaşır. */
     public static boolean isTrustFailure(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
             String msg = cur.getMessage();
             if (msg != null && msg.contains("No subject alternative")) return false;
             if (cur instanceof java.security.cert.CertPathBuilderException

@@ -410,4 +410,25 @@ class PageCheckerServiceTest {
         if (b.length > 0) { try (OutputStream os = ex.getResponseBody()) { os.write(b); } }
         ex.close();
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("KAPI (2026-10-09): hariç-tutma glob'u regex'siz — eski .*parça.* kalıbıyla aynı karar, uzun URL'de anında")
+    void excludeGlob_matchesOldRegex_andIsLinear() {
+        String[] globs = { "*.php", "/admin/*", "*track*pixel*", "a*b*c*d*e*f", "*", "**", "x", "*/*/*/*/*/*.php", "/a*" };
+        String[] urls = { "https://h/index.php", "https://h/admin/x", "https://h/track/1/pixel.gif", "abcdef", "",
+                "https://h/a/b/c", "x", "https://h/p.php?q=1", "line\nbreak.php", "aXbXcXdXeXf", "/a", "fedcba" };
+        for (String g : globs) {
+            java.util.regex.Pattern old = java.util.regex.Pattern.compile(
+                    ".*" + java.util.regex.Pattern.quote(g).replace("*", "\\E.*\\Q") + ".*");
+            String[] segs = g.split("\\*", -1);
+            for (String u : urls) {
+                org.assertj.core.api.Assertions.assertThat(PageCheckerService.globMatches(segs, u))
+                        .as("%s ~ %s", g, u).isEqualTo(old.matcher(u).matches());
+            }
+        }
+        String hostile = "https://h/" + "/".repeat(2000) + "x.html";
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(1), () ->
+                org.assertj.core.api.Assertions.assertThat(
+                        PageCheckerService.globMatches("*/*/*/*/*/*.php".split("\\*", -1), hostile)).isFalse());
+    }
 }

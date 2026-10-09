@@ -209,4 +209,18 @@ class ScriptedSafetyRulesTest {
             assertThat(ScriptedSafetyRules.loopBody("{ http.get('u');", 0)).isNull();
         }
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("KAPI (2026-10-09): 512 KB üstü script ve 500'den fazla döngü ENGELLENİR — denetim anında biter")
+    void hugeScriptsAndLoopFloods_areBlockedFast() {
+        String huge = "export default function () {}\n" + "x".repeat(ScriptedSafetyRules.MAX_SCRIPT_CHARS);
+        String loops = "export default function () {" + "for(".repeat(200_000) + "}";
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3), () -> {
+            org.assertj.core.api.Assertions.assertThat(ScriptedSafetyRules.check(huge).blocked()).isTrue();
+            org.assertj.core.api.Assertions.assertThat(ScriptedSafetyRules.check(loops).blocked()).isTrue();
+        });
+        String normal = "import http from 'k6/http';\nexport default function () {\n"
+                + "  for (let i = 0; i < 3; i++) { http.get('https://example.test/' + i); }\n}\n";
+        org.assertj.core.api.Assertions.assertThat(ScriptedSafetyRules.check(normal).blocked()).isFalse();
+    }
 }

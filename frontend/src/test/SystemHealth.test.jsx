@@ -351,6 +351,28 @@ describe('SystemHealth — Zamanlayıcı ve yürütücüler uyarıları', () => 
     await waitFor(() => expect(api.runScheduler).toHaveBeenCalledTimes(1))
     await screen.findByText(/Check triggered|Kontrol başlatıldı/)
   })
+
+  it('tarama hızlı yoklaması üst üste istek biriktirmez: yanıt gelmeden sonraki istek atılmaz (2026-10-09)', async () => {
+    await openSched(HEALTH)
+    const before = api.admin.getSystemHealth.mock.calls.length
+    let release = null
+    api.admin.getSystemHealth.mockImplementation(() => new Promise((r) => { release = r }))
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /Run Now|Şimdi Çalıştır/ }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100) })
+      expect(api.admin.getSystemHealth.mock.calls.length - before).toBe(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+      expect(api.admin.getSystemHealth.mock.calls.length - before).toBe(1)   // eskisi (setInterval): ~11 eşzamanlı istek
+      await act(async () => {
+        release({ success: true, data: { ...HEALTH, scheduler: { ...HEALTH.scheduler, running: true } } })
+        await vi.advanceTimersByTimeAsync(2100)
+      })
+      expect(api.admin.getSystemHealth.mock.calls.length - before).toBe(2)   // yanıt geldi → 2 sn sonra sıradaki
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('SystemHealth — bölüm hataları ve telefon düzeni', () => {

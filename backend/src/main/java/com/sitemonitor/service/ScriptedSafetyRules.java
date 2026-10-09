@@ -46,6 +46,22 @@ public final class ScriptedSafetyRules {
     private static final Pattern INFINITE_LOOP =
             Pattern.compile("(?:while\\s*\\(\\s*(?:true|1)\\s*\\))|(?:for\\s*\\(\\s*;\\s*;\\s*\\))");
     private static final Pattern SLEEP_CALL = Pattern.compile("\\bsleep\\s*\\(");
+    /** Her döngü başlığı ({@code for(} / {@code while(}) — döngü sayısı tavanı için. */
+    private static final Pattern LOOP_HEADER = Pattern.compile("(?:for|while)\\s*\\(");
+    /**
+     * Script boyutu tavanı (2026-10-09, sonsuz bekleme savunması). Bu kurallar döngü başına metni ileri tarar
+     * ({@code FOR_LITERAL_BOUND}, parantez/blok eşleme, gövde araması); boyut sınırsızken 1 MB'lık bir "for(" yığını
+     * kayıt isteğini dakikalarca CPU'da tutuyordu. Gerçek k6 senaryoları birkaç KB'dir.
+     */
+    public static final int MAX_SCRIPT_CHARS = 512 * 1024;
+    /** Döngü başlığı tavanı: döngü başına doğrusal tarama × döngü sayısı sınırlı kalsın (gerçek script < 50 döngü). */
+    static final int MAX_LOOP_HEADERS = 500;
+
+    /** Boyut tavanı iletisi (kayıt, şablon ve anlık koşum aynı metni kullanır). */
+    public static String tooLargeMessage(int chars) {
+        return "Script çok büyük (" + chars + " karakter; tavan: " + MAX_SCRIPT_CHARS + "). Sentetik izleme tek bir "
+                + "senaryoyu doğrular — senaryoyu sadeleştirin ya da birkaç izlemeye bölün.";
+    }
     /** `new Array(1e8)`, `Array(50000000)`, `'x'.repeat(9999999)`, `Buffer.alloc(...)`. */
     private static final Pattern BIG_ALLOC = Pattern.compile(
             "(?:new\\s+Array\\s*\\(|\\bArray\\s*\\(|\\.repeat\\s*\\(|\\.padStart\\s*\\(|\\.padEnd\\s*\\()"
@@ -67,10 +83,18 @@ public final class ScriptedSafetyRules {
     public static SafetyDiagnostics check(String script) {
         List<String> warnings = new ArrayList<>();
         if (script == null || script.isBlank()) return new SafetyDiagnostics(null, warnings);
+        if (script.length() > MAX_SCRIPT_CHARS) return block(tooLargeMessage(script.length()), warnings);
 
         // Yorumlar önce silinir: yorum içindeki örnek kod ("// while(true) YAPMAYIN") kaydı
         // engellemesin. Aynı temizlik ScriptedCheckerService'in timeout denetimlerinde de yapılıyor.
         String src = ScriptedCheckerService.stripComments(script);
+
+        // ── BLOCK 0: döngü sayısı tavanı (2026-10-09) — aşağıdaki her kural döngü başına metni tarar ─────────────
+        long loopHeaders = LOOP_HEADER.matcher(src).results().limit(MAX_LOOP_HEADERS + 1L).count();
+        if (loopHeaders > MAX_LOOP_HEADERS) {
+            return block("Script " + MAX_LOOP_HEADERS + "'den fazla döngü içeriyor. Sentetik izleme bir senaryoyu bir kez "
+                    + "koşar; bu kadar döngü hem okunamaz hem de kayıt sırasında güvenlik denetimini aşırı yavaşlatır.", warnings);
+        }
 
         // ── BLOCK 1: sonsuz döngü ────────────────────────────────────────────────────────────
         // Yanlış-pozitif riski sıfır: k6'nın default fonksiyonu DÖNMEK ZORUNDA. Sonsuz döngü
@@ -192,7 +216,7 @@ public final class ScriptedSafetyRules {
 
     /** `for (... ; i < n ; ...)` / `while (i < n)` gibi sınırı literal OLMAYAN, istekli döngü. */
     private static boolean variableBoundLoopWithRequest(String src) {
-        Matcher m = Pattern.compile("(?:for|while)\\s*\\(").matcher(src);
+        Matcher m = LOOP_HEADER.matcher(src);
         while (m.find()) {
             int close = matchingParen(src, m.end() - 1);
             if (close < 0) continue;

@@ -235,6 +235,9 @@
                          -Ppostgres-it bu iki özelliği ters çevirir (yukarıdaki <properties> notu). -->
                     <groups>${surefire.groups}</groups>
                     <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                    <!-- Sonsuz bekleme savunması (2026-10-09): kilitlenen bir test (latch/future beklemesi, eşzamanlılık
+                         gerilemesi) fork'u sonsuza dek tutmasın. CI'da tüm takım ~8 dk; yerelde yük altında birkaç katı. -->
+                    <forkedProcessTimeoutInSeconds>3600</forkedProcessTimeoutInSeconds>
                 </configuration>
             </plugin>
             <!-- Code coverage report. Run via `mvn test`; output in target/site/jacoco/index.html -->

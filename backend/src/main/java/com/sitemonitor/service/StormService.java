@@ -488,10 +488,16 @@ public class StormService {
         String last = storm.getLastReAlertAt() != null ? storm.getLastReAlertAt() : storm.getCreatedAt();
         // Storm günlük toplu re-alert — rolling 24 saat (23:59'da açılıp 00:00'da tekrar alarmlama edge'i, M10 ile tutarlı).
         if (last == null || EscalationService.reAlertDue(last, now(), RE_ALERT_HOURS)) {
-            List<AlertEvent> stillDown = members.stream()
-                    .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
-            sendStormAlert(storm, stillDown, "DAILY_REALERT");
-            log.info("🌩 Storm #{} günlük toplu re-alert gönderildi — {} monitör hâlâ down", storm.getId(), stillDown.size());
+            // GÖNDERMEDEN ÖNCE SAHİPLEN (2026-10-09, sonsuz döngü düzeltmesi): damga eskiden gönderimden SONRA yazılıyordu;
+            // gönderim ile damga arasında bir istisna (ör. damga UPDATE'i düştü) 30 sn sonraki tur için tekrarı yine "vakti
+            // gelmiş" bırakıyor, aynı toplu posta / webhook / push her turda yeniden gidiyordu. Koşullu UPDATE tek kazanır;
+            // gönderim düşse de sahiplenme durur (en çok bir kez — alarm yollarıyla aynı). Sonraki tekrar 24 sa sonra.
+            if (claimDailyRealert(storm)) {
+                List<AlertEvent> stillDown = members.stream()
+                        .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
+                sendStormAlert(storm, stillDown, "DAILY_REALERT");
+                log.info("🌩 Storm #{} günlük toplu re-alert gönderildi — {} monitör hâlâ down", storm.getId(), stillDown.size());
+            }
         } else {
             // memberCount + tepe hedef tazelemesi — HEDEFLİ UPDATE (2026-10-01). Varlığın save'i, okuma ile yazma arasında
             // katılan üyenin last_member_at damgasını eski değere geri sarıp fırtınayı erken mühürleyebiliyordu.
@@ -539,11 +545,11 @@ public class StormService {
                     announced++;
                     leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
                 } else {
-                    alertEventRepo.unlinkFromStorm(e.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK
+                    alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK — yalnız BU fırtınadaysa (2026-10-09)
                     leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
                 }
             } else {
-                alertEventRepo.unlinkFromStorm(e.getId());   // koşullu — çözülmüş üyeyi diriltmeden bağı kaldır (M6)
+                alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu — çözülmüş üyeyi diriltmeden, yalnız BU fırtınanın bağını kaldır (M6, 2026-10-09)
                 leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
                 unannounced++;
             }
@@ -643,7 +649,7 @@ public class StormService {
         String closingAt = now();
         List<Object[]> leaves = new ArrayList<>(stillDown.size() + recovered.size());
         for (AlertEvent e : stillDown) {
-            alertEventRepo.unlinkFromStorm(e.getId());   // koşullu geri-bağlama (M6); sonraki sweep bireysel re-alert
+            alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu geri-bağlama (M6, yalnız BU fırtınadan); sonraki sweep bireysel re-alert
             leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
         }
         for (AlertEvent e : recovered) {
@@ -1113,6 +1119,43 @@ public class StormService {
             log.warn("Storm #{} üye sayacı güncellenemedi — alarm bireysel gönderilecek: {}", storm.getId(), e.getMessage());
             return -1;
         }
+    }
+
+    /** Günlük toplu tekrarın sahiplenmesi (2026-10-09): damga hâlâ OKUNAN değerdeyse ileri alınır — tek yazar kazanır. */
+    static final String SQL_REALERT_CLAIM =
+            "UPDATE alert_storms SET last_re_alert_at = ? WHERE id = ? AND resolved = false AND last_re_alert_at = ?";
+    /**
+     * Damgası hiç yazılmamış fırtına (açılış damgası düştü) için aynı sahiplenme. Ayrı ifade: PostgreSQL'de
+     * {@code ? IS NULL} türü belirsiz parametre hatası verir; {@code IS NOT DISTINCT FROM} de taşınabilir değil.
+     */
+    static final String SQL_REALERT_CLAIM_UNSTAMPED =
+            "UPDATE alert_storms SET last_re_alert_at = ? WHERE id = ? AND resolved = false AND last_re_alert_at IS NULL";
+
+    /**
+     * Günlük toplu tekrarı GÖNDERMEDEN ÖNCE sahiplenir (2026-10-09, sonsuz döngü düzeltmesi). {@code true} = bu tur
+     * gönderir (damga ileri alındı); {@code false} = başka tur/pod sahiplendi, fırtına kapandı ya da yazılamadı — bu tur
+     * GÖNDERMEZ. Yazılamadıysa hiçbir şey gitmedi; sonraki tur (30 sn) yeniden dener — gönderimsiz tekrar döngü değildir.
+     */
+    boolean claimDailyRealert(AlertStorm storm) {
+        String seen = storm.getLastReAlertAt();
+        String at = now();
+        int rows;
+        try {
+            rows = seen == null
+                    ? jdbcTemplate.update(SQL_REALERT_CLAIM_UNSTAMPED, at, storm.getId())
+                    : jdbcTemplate.update(SQL_REALERT_CLAIM, at, storm.getId(), seen);
+        } catch (Exception e) {
+            log.warn("Storm #{} günlük toplu tekrarı sahiplenilemedi — bu tur gönderilmiyor (sonraki tur yeniden dener): {}",
+                    storm.getId(), e.getMessage());
+            return false;
+        }
+        if (rows != 1) {
+            log.info("Storm #{} günlük toplu tekrarı gönderilmedi — damga bu arada ilerledi ya da fırtına kapandı (sahiplenme {} satır)",
+                    storm.getId(), rows);
+            return false;
+        }
+        storm.setLastReAlertAt(at);
+        return true;
     }
 
     private String commonRootCause(List<AlertEvent> peers) {

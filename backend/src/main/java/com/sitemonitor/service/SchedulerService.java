@@ -1066,6 +1066,9 @@ public class SchedulerService {
                 log.warn("7/24 şema yamaları uygulanamadı (sonraki açılışta yeniden denenecek): {}", e.getMessage());
             }
         }
+        // 7/24 teslim denemesi sayacı (2026-10-09, sonsuz döngü düzeltmesi): fırtına tik'i (30 sn) başarısız açılışı her
+        // turda yeniden gönderiyordu; yeniden deneme bu sayaçla tavanlanır. NULLABLE (null = eski satır, bir deneme).
+        patch("ALTER TABLE noc_deliveries ADD COLUMN attempts INTEGER");
 
         // Sorumlu Ekipler — sertifikayı kimin yenileyeceğini gösteren dört serbest metin alanı.
         // Yönlendirmeye GİRMEZ, yalnız uyarı e-postasında ve envanter detayında gösterilir.
@@ -3301,8 +3304,14 @@ public class SchedulerService {
     /** GRID: nextDue'yu now'u geçene dek interval adımlarıyla ilerletir (catch-up clamp — kapalılık
      *  sonrası burst yok, tek çalıştırma + gelecekteki ilk grid noktası). Saf/statik → birim test edilir. */
     static long nextDueAfter(long nextDue, long now, long intervalMs) {
-        while (nextDue <= now) nextDue += intervalMs;
-        return nextDue;
+        // 2026-10-09 (sonsuz döngü savunması): eskiden "while (nextDue <= now) nextDue += interval" — veritabanındaki
+        // bozuk/çok eski bir vade (0, negatif) ya da ≤ 0 aralık zamanlayıcıyı milyarlarca turda (ya da sonsuza dek)
+        // dondurabilirdi. Aynı sonuç (now'dan BÜYÜK ilk ızgara noktası) tek adımda hesaplanır.
+        if (nextDue > now) return nextDue;
+        long step = Math.max(1L, intervalMs);
+        long behind = now - nextDue;
+        if (behind < 0) return now + step;                   // taşma (aşırı negatif vade): ızgara anlamsız, şimdiden başla
+        return nextDue + (behind / step + 1) * step;
     }
 
     /** Per-monitör kontrol sıklığı kapısı — GRID semantiği (2026-08-03): map SONRAKİ VADEYİ tutar ve vade

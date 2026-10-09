@@ -77,6 +77,10 @@ public class ChainValidationService {
     /** Test dikişi: kapı testi süreleri kısaltır (gerçek 60+10 sn beklenmesin). Üretimde sabitlerin değeri. */
     long ocspTotalMs = OCSP_TOTAL_MS;
     long crlTotalMs  = CRL_TOTAL_MS;
+    /** Bir sertifikanın CRL döngüsünde en çok kaç liste İNDİRİLİR (önbellekteki listeler sayılmaz) — 2026-10-09. */
+    static final int MAX_CRL_DOWNLOADS = 3;
+    /** Tüm CRL indirmelerinin paylaştığı toplam süre: iki tam indirme bütçesi (yeni indirme bu süre dolunca başlamaz). */
+    long crlLoopTotalMs = 2 * CRL_TOTAL_MS;
     int ocspReadTimeoutMs = 5_000;
     int crlReadTimeoutMs  = 10_000;
 
@@ -405,10 +409,24 @@ public class ChainValidationService {
     String checkCrl(X509Certificate cert, List<RevocationReason.Attempt> attempts) {
         try {
             boolean consulted = false;
-            for (String url : getCrlUrls(cert)) {
+            // Sonsuz bekleme savunması (2026-10-09): dağıtım noktası listesi SERTİFİKADAN gelir — tekrar eden ya da
+            // yüzlerce adres (her biri 60+10 sn bütçeli) bir kontrolü saatlerce, saatlik taramayı ve kilidini kilitleyebilirdi.
+            // Adresler tekilleştirilir; en çok MAX_CRL_DOWNLOADS indirme denenir ve hepsi TEK bir toplam süreyi paylaşır.
+            // Gerçek sertifikalar 1–3 adres taşır: davranış aynı. Danışılamayan liste → sonuç yine dürüstçe UNKNOWN.
+            long loopDeadline = System.currentTimeMillis() + crlLoopTotalMs;
+            int downloads = 0;
+            for (String url : new LinkedHashSet<>(getCrlUrls(cert))) {
                 // Herhangi bir cache kilidi tutmadan kontrol et; bloklamayı önlemek için ayrı indir
                 X509CRL crl = crlCache.getIfPresent(url);
                 if (crl == null) {
+                    // Yalnız AĞA çıkan (http/https) denemeler sayılır: ldap:// gibi şema reddi anında döner,
+                    // AD sertifikalarındaki "ldap + http" çiftinde http adresi sınırdan etkilenmez.
+                    boolean network = isHttpUrl(url);
+                    if (network && (downloads >= MAX_CRL_DOWNLOADS || System.currentTimeMillis() >= loopDeadline)) {
+                        log.debug("CRL dağıtım noktası atlandı (indirme/süre sınırı): {}", url);
+                        continue;
+                    }
+                    if (network) downloads++;
                     crl = downloadCrl(url, attempts);
                     if (crl != null) crlCache.put(url, crl);
                 }
@@ -471,6 +489,11 @@ public class ChainValidationService {
             log.debug("CRL DP parse failed: {}", e.getMessage());
         }
         return urls;
+    }
+
+    private static boolean isHttpUrl(String url) {
+        String s = url == null ? "" : url.toLowerCase(Locale.ROOT);
+        return s.startsWith("http://") || s.startsWith("https://");
     }
 
     private X509CRL downloadCrl(String url, List<RevocationReason.Attempt> attempts) {

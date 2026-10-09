@@ -1,6 +1,7 @@
 package com.sitemonitor.service;
 
 import java.util.Locale;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -106,13 +107,39 @@ public final class SecretMask {
      *  sorun-bildirimi otomatik bağlamı (URL, hata metni/stack) için. Parametre ADI hassas
      *  kalıba uyarsa (EN+TR: password/parola/sifre/token/secret/otp/pin/key...) değeri {@link #MASK} olur;
      *  yol ve zararsız parametreler görünür kalır (tanı değeri korunur). */
-    private static final Pattern QUERY_SENSITIVE = Pattern.compile(
-            "(?i)([?&#][^=&#\\s]*(?:password|passwd|parola|sifre|şifre|secret|token|api_?key|private_?key|"
-            + "credential|session_?id|jsessionid|otp|pin|mfa|verification_?code|auth)[^=&#\\s]*=)[^&#\\s]*");
+    // Sonsuz bekleme savunması (2026-10-09, ReDoS): eski TEK kalıp adın iki yanında örtüşen [^=&#\s]* taşıyordu ve '?'
+    // ad sınıfına dahildi — herkese açık /api/client-error-report'a gönderilen "?pin?pin…" (≈100 KB) kübik geri izlemeyle
+    // istek iş parçacığını saatlerce kilitliyordu (uzunluk/hız sınırı maskeden SONRA geliyordu). Şimdi doğrusal: parametre
+    // adı (iyelikli, '?' dahil hiçbir ayırıcıyı yutmaz) bir kalıpla, hassaslık ikinci kalıpla, değer elle taranır.
+    // Çıktı eskisiyle aynıdır (tek fark: adın İÇİNDE '?' geçen yapay biçimde ad '?'dan sonra başlar — yine maskelenir).
+    private static final Pattern QUERY_PARAM = Pattern.compile("[?&#]([^=&#?\\s]*+)=");
+    private static final Pattern SENSITIVE_PARAM_NAME = Pattern.compile(
+            "(?i)password|passwd|parola|sifre|şifre|secret|token|api_?key|private_?key|"
+            + "credential|session_?id|jsessionid|otp|pin|mfa|verification_?code|auth");
 
     public static String maskUrlQuery(String text) {
         if (text == null || text.isEmpty()) return text;
-        return QUERY_SENSITIVE.matcher(text).replaceAll("$1" + MASK);
+        Matcher m = QUERY_PARAM.matcher(text);
+        StringBuilder out = null;
+        int copied = 0;
+        int from = 0;
+        while (from < text.length() && m.find(from)) {
+            int valueStart = m.end();
+            if (!SENSITIVE_PARAM_NAME.matcher(m.group(1)).find()) { from = valueStart; continue; }
+            int valueEnd = valueStart;
+            while (valueEnd < text.length() && !isValueStop(text.charAt(valueEnd))) valueEnd++;
+            if (out == null) out = new StringBuilder(text.length());
+            out.append(text, copied, valueStart).append(MASK);
+            copied = valueEnd;
+            from = valueEnd;
+        }
+        if (out == null) return text;
+        return out.append(text, copied, text.length()).toString();
+    }
+
+    /** Değerin bittiği karakter: eski kalıbın {@code [^&#\s]} sınıfının tümleyeni ({@code \s} = boşluk, \t \n \x0B \f \r). */
+    private static boolean isValueStop(char c) {
+        return c == '&' || c == '#' || c == ' ' || c == '\t' || c == '\n' || c == 0x0B || c == '\f' || c == '\r';
     }
 
     /**

@@ -142,6 +142,8 @@ jobs:
     name: Detect version bump
     needs: gate
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 10
     if: github.actor != 'github-actions[bot]' && needs.gate.outputs.proceed == 'true'
     outputs:
       should_release: ${{ steps.detect.outputs.should_release }}
@@ -230,6 +232,8 @@ jobs:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 45
     permissions:
       contents: write
       packages: write

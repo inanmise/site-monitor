@@ -45,18 +45,33 @@ const needsLoad = (lang) => lang === 'en' && !DICTS.en
 let enLoading = null
 
 /**
+ * İngilizce sözlük bu sürede inmezse yükleme BAŞARISIZ sayılır (2026-10-09, sonsuz bekleme denetimi): hiç sonuçlanmayan
+ * bir parça isteği (asılı proxy / bağlantı) açılış ekranını (`LanguageBootSplash`) sonsuza dek açık tutuyordu. Zaman
+ * aşımı mevcut Türkçe yedek yoluna düşer (`lang.loadFailed` bildirimi, oturum boyunca `X-Lang: tr`); geç gelen sözlük
+ * yine önbelleğe yazılır, sonraki geçiş anında olur.
+ */
+export const LANG_LOAD_TIMEOUT_MS = 10_000
+
+/**
  * Dil sözlüğünü yükler (önbellekli; aynı anda gelen çağrılar TEK isteği paylaşır). TR ve tanınmayan
- * kodlar anında çözülür. Başarısız indirme önbelleğe ALINMAZ — sonraki çağrı yeniden dener.
+ * kodlar anında çözülür. Başarısız (ya da {@link LANG_LOAD_TIMEOUT_MS} içinde bitmeyen) indirme önbelleğe
+ * ALINMAZ — sonraki çağrı yeniden dener.
  * @returns {Promise<object>} sözlük nesnesi
  */
 export function loadLanguage(lang) {
   if (lang !== 'en') return Promise.resolve(TR)
   if (DICTS.en) return Promise.resolve(DICTS.en)
   if (!enLoading) {
-    enLoading = import('./en.js').then(
-      (m) => { DICTS.en = m.EN; enLoading = null; return m.EN },
-      (err) => { enLoading = null; throw err },
-    )
+    const attempt = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('language load timeout')), LANG_LOAD_TIMEOUT_MS)
+      import('./en.js').then(
+        (m) => { clearTimeout(timer); DICTS.en = m.EN; resolve(m.EN) },
+        (err) => { clearTimeout(timer); reject(err) },
+      )
+    })
+    enLoading = attempt
+    const settle = () => { if (enLoading === attempt) enLoading = null }
+    attempt.then(settle, settle)
   }
   return enLoading
 }

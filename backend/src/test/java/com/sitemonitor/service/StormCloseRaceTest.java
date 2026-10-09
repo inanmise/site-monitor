@@ -242,7 +242,7 @@ class StormCloseRaceTest {
         verify(alertEventRepo, never()).unlinkFromStormIfLinked(eq(1L), anyLong());
         verify(alertEventRepo, never()).unlinkFromStormIfLinked(eq(2L), anyLong());
         verify(alertEventRepo, never()).unlinkFromStormIfLinked(eq(3L), anyLong());
-        verify(alertEventRepo).unlinkFromStorm(2L);   // duyurulmamış bilinen üye: mevcut yol
+        verify(alertEventRepo).unlinkFromStorm(2L, 7L);   // duyurulmamış bilinen üye: mevcut yol
         // Sıra: önce fırtına kapanışı kaydedilir, sonra geç katılan okunur.
         var order = inOrder(stormRepo, alertEventRepo);
         order.verify(stormRepo).save(s);

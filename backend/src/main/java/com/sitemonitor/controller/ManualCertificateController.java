@@ -670,6 +670,12 @@ public class ManualCertificateController {
                             "The file couldn't be analysed within " + ManualCertificateAnalyzer.PARSE_TIMEOUT_SECONDS + " seconds; it may "
                                     + "hold a very large number of certificates or the server is busy. Try again in a minute, or upload "
                                     + "a smaller file with only the certificates you want to track."))));
+        } catch (ManualCertificateAnalyzer.TooManyCertificatesException tm) {
+            throw new ParseFailure(uploadRejected("TOO_MANY_CERTIFICATES", Msg.t(
+                    "Dosyada " + ExtractedUpload.MAX_CERTS + "'den fazla farklı sertifika var. Yalnız izlemek istediğiniz "
+                            + "sertifikaları içeren daha küçük bir dosya yükleyin ya da büyük bir paketi birkaç dosyaya bölün.",
+                    "The file holds more than " + ExtractedUpload.MAX_CERTS + " different certificates. Upload a smaller file "
+                            + "with only the certificates you want to track, or split a large bundle into several files.")));
         } catch (ManualCertificateAnalyzer.BusyException be) {
             throw new ParseFailure(ResponseEntity.status(429).body(Map.of("success", false, "code", "BUSY",
                     "error", Msg.t("Sertifika çözümleyicisi şu anda başka dosyaları işliyor; birkaç saniye bekleyip yeniden deneyin.",

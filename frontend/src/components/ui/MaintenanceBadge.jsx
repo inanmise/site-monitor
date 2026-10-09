@@ -6,15 +6,23 @@ import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 
 // Modül-seviyesi cache: tüm badge örnekleri tek /active isteğini paylaşır (30sn TTL) — N monitör kartı = 1 istek.
-let _cache = null, _at = 0, _inflight = null
+// Başarısız yanıt da 60 sn hatırlanır (2026-10-09): eskiden yalnız başarı önbelleğe giriyordu, uç düşükken her kart
+// her bağlanışında yeniden istek atıyordu (liste kaydırma / sayfa değişimi = istek fırtınası).
+const FAIL_TTL_MS = 60000
+let _cache = null, _at = 0, _inflight = null, _failAt = 0
 async function getActive() {
   if (_cache && Date.now() - _at < 30000) return _cache
+  if (_failAt && Date.now() - _failAt < FAIL_TTL_MS) return _cache || { all: false, targets: [] }
   if (_inflight) return _inflight
   const call = api?.monitoring?.maintenance?.active
   if (typeof call !== 'function') return { all: false, targets: [] }   // API yoksa (ör. test mock'u) sessizce no-op
   _inflight = call()
-    .then(res => { _inflight = null; if (res?.success) { _cache = res.data || { all: false, targets: [] }; _at = Date.now() } return _cache || { all: false, targets: [] } })
-    .catch(() => { _inflight = null; return _cache || { all: false, targets: [] } })
+    .then(res => {
+      _inflight = null
+      if (res?.success) { _cache = res.data || { all: false, targets: [] }; _at = Date.now(); _failAt = 0 } else _failAt = Date.now()
+      return _cache || { all: false, targets: [] }
+    })
+    .catch(() => { _inflight = null; _failAt = Date.now(); return _cache || { all: false, targets: [] } })
   return _inflight
 }
 

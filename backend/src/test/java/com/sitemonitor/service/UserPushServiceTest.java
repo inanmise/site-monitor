@@ -1251,6 +1251,78 @@ class UserPushServiceTest {
         }
     }
 
+    // ── 2026-10-09: salt-okunur veritabanında outbox sonsuz yeniden gönderim döngüsü ───────────────────────
+
+    private static RuntimeException readOnlyDb() {
+        return new org.springframework.dao.DataAccessResourceFailureException("could not execute statement",
+                new java.sql.SQLException("ERROR: cannot execute UPDATE in a read-only transaction", "25006"));
+    }
+
+    @Test
+    @DisplayName("DÖNGÜ KAPISI (2026-10-09): sahiplenme yazma reddiyle düşerse (salt-okunur DB, 25006) tur GÖNDERMEZ — eski yol okunan satırı gönderip sonucu yazamıyor, dakikada bir yeniden gönderiyordu")
+    void readOnlyDb_claimRejected_doesNotSend() throws Exception {
+        startServer();
+        when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenThrow(readOnlyDb());
+        when(deliveryRepo.saveAll(any())).thenThrow(readOnlyDb());
+        when(deliveryRepo.updateOutcome(anyLong(), anyString(), any(), any(), any(), any(), any())).thenThrow(readOnlyDb());
+        UserPushDelivery row = pendingRow(35L);
+        try {
+            for (int i = 0; i < 5; i++) service.drainOutbox();   // 5 süpürme (5 dk)
+
+            assertThat(receivedBodies).as("salt-okunur DB'de hiçbir push gitmez").isEmpty();
+            assertThat(row.getStatus()).isEqualTo("PENDING");
+            assertThat(row.getAttempts()).isZero();
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("DÖNGÜ KAPISI (2026-10-09): push gitti ama sonucu (tam + dar) yazılamadı → satır PENDING kalsa da sonraki tur YENİDEN GÖNDERMEZ, yalnız SENT'i yazar")
+    void sentButOutcomeUnwritable_isNotResent() throws Exception {
+        startServer();
+        when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenThrow(new RuntimeException("db kapalı"));   // eski yol
+        when(deliveryRepo.saveAll(any())).thenThrow(readOnlyDb());
+        UserPushDelivery row = pendingRow(36L);
+        when(deliveryRepo.updateOutcome(anyLong(), anyString(), any(), any(), any(), any(), any()))
+                .thenThrow(readOnlyDb())    // gönderimden hemen sonra: yazılamadı
+                .thenAnswer(inv -> {        // sonraki tur: veritabanı yeniden yazılabilir — durum kalıcılaşır
+                    row.setStatus(inv.getArgument(1));
+                    row.setNextAttemptAt(inv.getArgument(6));
+                    return 1;
+                });
+        try {
+            service.drainOutbox();
+            assertThat(receivedBodies).hasSize(1);
+            assertThat(service.sentUnrecorded).containsKey(36L);
+            // Veritabanı satırı hâlâ PENDING (sonuç yazılamadı) — bellekteki varlık değil, kalıcı durum taklit edilir.
+            row.setStatus("PENDING");
+            row.setNextAttemptAt(null);
+
+            service.drainOutbox();
+            service.drainOutbox();
+
+            assertThat(receivedBodies).as("aynı push ikinci kez gitmez").hasSize(1);
+            verify(deliveryRepo, org.mockito.Mockito.times(2)).updateOutcome(eq(36L), eq("SENT"), eq(1), eq(200), any(), anyString(),
+                    org.mockito.ArgumentMatchers.isNull());
+            assertThat(service.sentUnrecorded).isEmpty();
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-09: yazma reddi sınıflaması — SQLSTATE 25xxx / H2 90097 / salt-okunur iletisi evet; bağlantı ya da genel hata hayır (eski yol korunur)")
+    void writeRejected_classification() {
+        assertThat(UserPushService.writeRejected(readOnlyDb())).isTrue();
+        assertThat(UserPushService.writeRejected(new java.sql.SQLException("x", "25P02"))).isTrue();
+        assertThat(UserPushService.writeRejected(new RuntimeException(new java.sql.SQLException("The database is read only", "90097")))).isTrue();
+        assertThat(UserPushService.writeRejected(new RuntimeException("cannot execute UPDATE in a read-only transaction"))).isTrue();
+        assertThat(UserPushService.writeRejected(new RuntimeException("db kapalı"))).isFalse();
+        assertThat(UserPushService.writeRejected(new java.sql.SQLException("Connection refused", "08001"))).isFalse();
+        assertThat(UserPushService.writeRejected(null)).isFalse();
+    }
+
     // ── 2026-09-28: fırtına push'u — bireysel push'un kanal kapıları (P12) + yaşam döngüsü (P13) ─────────
 
     private AlertEvent stormMember(long id, String type, String ctxJson) {

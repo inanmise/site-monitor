@@ -68,12 +68,23 @@ function repeatTo(src, len) {
 }
 
 /**
+ * Savunma sınırları (2026-10-09): çıktı boyu (`n`) her blok için `iterations` kez özet demektir — dosyadan gelen bir
+ * uzunluk (ör. 5 MB'lık MAC değeri) türetmeyi saatlere uzatabilirdi. Gerçek kullanım: n ≤ 64 (SHA-512 MAC), tuz 8–20
+ * bayt, parola ≤ 256 karakter (BMP ≤ 514 bayt).
+ */
+export const KDF_MAX_OUT = 128
+export const KDF_MAX_SALT = 1024
+export const KDF_MAX_PASSWORD = 4096
+
+/**
  * RFC 7292 Ek B.2 anahtar türetme (MAC anahtarı id=3, eski PBE anahtarı id=1 / IV id=2). Eşzamanlı, saf JS (forge özeti);
  * yinelemeler kısa girdiyi özetler — 10 000 yineleme birkaç ms.
  */
 export function pkcs12Kdf(hashName, pw, salt, id, iterations, n) {
   const h = HASHES[hashName]
   if (!h) throw new UnsupportedAlgorithmError(hashName)
+  if (!(n >= 1 && n <= KDF_MAX_OUT)) throw new UnsupportedAlgorithmError('kdf length')
+  if (salt.length > KDF_MAX_SALT || pw.length > KDF_MAX_PASSWORD) throw new UnsupportedAlgorithmError('kdf input')
   const u = h.size
   const v = h.block
   const D = toBin(new Uint8Array(v).fill(id))

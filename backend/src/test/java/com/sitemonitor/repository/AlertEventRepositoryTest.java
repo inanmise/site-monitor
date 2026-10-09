@@ -119,11 +119,50 @@ class AlertEventRepositoryTest {
         AlertEvent resolved = alert("r.example.com", "HTTP_DOWN", "2026-07-01T10:00:00", true);
         resolved.setStormId(5L); resolved = repo.save(resolved);
 
-        assertThat(repo.unlinkFromStorm(open.getId())).isEqualTo(1);
-        assertThat(repo.unlinkFromStorm(resolved.getId())).isZero();
+        assertThat(repo.unlinkFromStorm(open.getId(), 5L)).isEqualTo(1);
+        assertThat(repo.unlinkFromStorm(resolved.getId(), 5L)).isZero();
 
         assertThat(repo.findById(open.getId()).orElseThrow().getStormId()).isNull();
         assertThat(repo.findById(resolved.getId()).orElseThrow().getStormId()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("2026-10-09: unlinkFromStorm yalnız VERİLEN fırtınanın üyesini ayırır — başka fırtınaya geçmiş satırın bağı ve damgası korunur")
+    void unlinkFromStorm_onlyTheGivenStorm() {
+        AlertEvent moved = alert("m.example.com", "HTTP_DOWN", "2026-07-01T10:00:00", false);
+        moved.setStormId(8L);
+        moved.setLastReAlertAt("2026-07-01T10:05:00");
+        moved = repo.save(moved);
+
+        assertThat(repo.unlinkFromStorm(moved.getId(), 5L)).as("kapanan fırtına #5, satır #8'de").isZero();
+        AlertEvent after = repo.findById(moved.getId()).orElseThrow();
+        assertThat(after.getStormId()).isEqualTo(8L);
+        assertThat(after.getLastReAlertAt()).isEqualTo("2026-07-01T10:05:00");
+
+        assertThat(repo.unlinkFromStorm(moved.getId(), 8L)).isEqualTo(1);
+        after = repo.findById(moved.getId()).orElseThrow();
+        assertThat(after.getStormId()).isNull();
+        assertThat(after.getLastReAlertAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-10-09: ertelenmiş değişiklik bildirimi sorgusu ONAYLI olayı vermez; onaysız, hiç bildirilmemiş, açık olanı verir")
+    void findUnacknowledgedOpenAwaitingInitial_skipsAcknowledged() {
+        // (Kolon bu şemada NOT NULL; eski prod satırlarındaki NULL için sorgu "acknowledged IS NULL" dalını da taşır.)
+        AlertEvent pending = repo.save(alert("p.example.com", "DNS_CHANGED", "2026-07-01T10:00:00", false));
+        AlertEvent domainChange = repo.save(alert("n.example.com", "DOMAINMON_CHANGED", "2026-07-01T10:00:00", false));
+        AlertEvent acked = alert("a.example.com", "DNS_CHANGED", "2026-07-01T10:00:00", false);
+        acked.setAcknowledged(true);
+        repo.save(acked);
+        AlertEvent notified = alert("s.example.com", "DNS_CHANGED", "2026-07-01T10:00:00", false);
+        notified.setLastReAlertAt("2026-07-01T10:01:00");
+        repo.save(notified);
+        repo.save(alert("r.example.com", "DNS_CHANGED", "2026-07-01T10:00:00", true));        // çözülmüş
+        repo.save(alert("h.example.com", "HTTP_DOWN", "2026-07-01T10:00:00", false));         // başka tür
+
+        List<AlertEvent> out = repo.findUnacknowledgedOpenAwaitingInitial(List.of("DNS_CHANGED", "DOMAINMON_CHANGED"));
+
+        assertThat(out).extracting(AlertEvent::getId).containsExactlyInAnyOrder(pending.getId(), domainChange.getId());
     }
 
     // ── Alarm Geçmişi: sütun sıralaması + tarih yüklemleri (2026-10-01) ──────────────────────────────────

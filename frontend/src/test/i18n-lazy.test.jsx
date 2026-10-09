@@ -172,6 +172,39 @@ describe('i18n — İngilizce sözlük ayrı chunk (öneri 22)', () => {
     expect(await screen.findByText(TR['lang.loadFailed'])).toBeInTheDocument()
   })
 
+  it('açılışta sözlük HİÇ inmezse (asılı istek): zaman aşımında Türkçe yedek yol — açılış ekranında sonsuza dek kalınmaz (2026-10-09)', async () => {
+    localStorage.setItem(STORAGE_KEY, 'en')
+    const m = await freshI18n({ enModule: () => new Promise(() => {}) })
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    vi.useFakeTimers()
+    try {
+      render(
+        <m.LangProvider fallback={<m.LanguageBootSplash />}>
+          <m.ToastProvider>
+            <m.LanguageLoadNotice />
+            <App />
+          </m.ToastProvider>
+        </m.LangProvider>,
+      )
+      expect(screen.queryByTestId('app')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS - 100) })
+      expect(screen.queryByTestId('app')).toBeNull()                         // süre dolmadan yedek yola düşülmez
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      expect(screen.getByTestId('app')).toHaveTextContent(TR['stat.total'])
+      expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
+      expect(m.dateLocale.sessionLangOverride()).toBe('tr')
+      expect(m.isLanguageLoaded('en')).toBe(false)
+      // Bildirim sahte saatte doğrulanır: gerçek saate dönüşte bekleyen sahte zamanlayıcılar (toast yerleşimi) düşer.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(screen.getByText(TR['lang.loadFailed'])).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('aynı anda gelen yüklemeler TEK indirmeyi paylaşır; inmiş sözlükle geçiş ANINDA (pending yok)', async () => {
     let imports = 0
     const m = await freshI18n({ enModule: async () => { imports++; return { EN } } })

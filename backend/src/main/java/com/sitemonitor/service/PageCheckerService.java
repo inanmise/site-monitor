@@ -528,14 +528,35 @@ public class PageCheckerService {
 
     /** PER-CHECK hariç-tutma eşleştiricisi (regex + literal). Singleton serviste paylaşımlı alan YOK → thread-safe:
      *  her {@code check()} kendi immutable örneğini taşır. */
-    private record Excludes(List<Pattern> regex, List<String> literals) {
+    private record Excludes(List<String[]> globs, List<String> literals) {
         static final Excludes EMPTY = new Excludes(List.of(), List.of());
         boolean matches(String url) {
             String low = url.toLowerCase(Locale.ROOT);
             for (String lit : literals) if (!lit.isEmpty() && low.contains(lit)) return true;
-            for (Pattern p : regex) if (p.matcher(url).matches()) return true;
+            for (String[] g : globs) if (globMatches(g, url)) return true;
             return false;
         }
+    }
+
+    /**
+     * {@code ".*" + quote(parça1) + ".*" + quote(parça2) + … + ".*"} ile BİREBİR aynı karar, regex'siz (2026-10-09): parçalar
+     * URL'de sırayla ve örtüşmeden geçiyor mu — en erken yerleşim açgözlü olarak doğrudur. Eski regex 6 yıldızlı bir desende
+     * uzun bir URL'de polinom geri izliyordu (≈C(n,5) adım) ve kontrolün süresi regex'i kesemiyordu. {@code .} satır sonunu
+     * geçmediği için URL'de satır sonu karakteri varsa eski desen hiç eşleşmezdi — bu da korunur.
+     */
+    static boolean globMatches(String[] segments, String url) {
+        for (int i = 0; i < url.length(); i++) {
+            char c = url.charAt(i);
+            if (c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029') return false;
+        }
+        int at = 0;
+        for (String seg : segments) {
+            if (seg.isEmpty()) continue;
+            int i = url.indexOf(seg, at);
+            if (i < 0) return false;
+            at = i + seg.length();
+        }
+        return true;
     }
 
     /** Hariç-tutma desenleri: her satır bir glob. `Pattern.quote` regex-injection'ı ve ÜSTEL ReDoS'u önler
@@ -545,7 +566,7 @@ public class PageCheckerService {
     private static final int EXCLUDE_MAX_LINES = 50, EXCLUDE_MAX_LEN = 200, EXCLUDE_MAX_STARS = 6;
     private Excludes compileExcludes(String raw) {
         if (raw == null || raw.isBlank()) return Excludes.EMPTY;
-        List<Pattern> regex = new ArrayList<>();
+        List<String[]> globs = new ArrayList<>();
         List<String> literals = new ArrayList<>();
         int lines = 0;
         for (String line : raw.split("\\r?\\n")) {
@@ -559,13 +580,9 @@ public class PageCheckerService {
                 literals.add(p.replace("*", "").toLowerCase(Locale.ROOT));
                 continue;
             }
-            try {
-                regex.add(Pattern.compile(".*" + Pattern.quote(p).replace("*", "\\E.*\\Q") + ".*"));
-            } catch (Exception e) {
-                literals.add(p.replace("*", "").toLowerCase(Locale.ROOT));
-            }
+            globs.add(p.split("\\*", -1));
         }
-        return new Excludes(regex, literals);
+        return new Excludes(globs, literals);
     }
 
     private boolean isDisallowed(String url, Set<String> disallow) {

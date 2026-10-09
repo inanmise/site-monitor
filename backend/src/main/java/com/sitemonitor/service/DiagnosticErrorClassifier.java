@@ -15,7 +15,8 @@ public final class DiagnosticErrorClassifier {
     public static String classify(Throwable t) {
         if (t == null) return "UNKNOWN";
         Throwable cur = t;
-        while (cur.getCause() != null && cur.getCause() != cur) cur = cur.getCause();
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        while (cur.getCause() != null && cur.getCause() != cur && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH) cur = cur.getCause();
         String cls = cur.getClass().getName();
         String msg = cur.getMessage();
         String combined = (cls + " " + (msg != null ? msg : ""));
