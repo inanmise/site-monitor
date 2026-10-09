@@ -64,7 +64,8 @@ describe('personalStorage — kullanıcıya göre ayrım + çıkışta temizlik'
     const body = (startRe) => {
       const m = startRe.exec(src)
       expect(m, String(startRe)).not.toBeNull()
-      return src.slice(m.index, m.index + 900)
+      // Pencere fonksiyonun BAŞINI kapsar (sıra denetimi): 2026-10-09'da çıkışa oturum verisi sıfırlama eklendi → 1400
+      return src.slice(m.index, m.index + 1400)
     }
     expect(body(/async function handleLogout\(\)/)).toMatch(/clearPersonalStorage\(\)[\s\S]*setUser\(null\)/)
     expect(body(/const doAutoLogout = async \(\) =>/)).toMatch(/clearPersonalStorage\(\)[\s\S]*setUser\(null\)/)
