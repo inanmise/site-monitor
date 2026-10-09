@@ -1130,8 +1130,8 @@ public class UserPushService {
      * {@link #claim} eski yolu korur.
      */
     static boolean writeRejected(Throwable e) {
-        int depth = 0;
-        for (Throwable t = e; t != null && depth < 16; t = t.getCause(), depth++) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable t = e; t != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; t = t.getCause()) {
             if (t instanceof java.sql.SQLException sql) {
                 String state = sql.getSQLState();
                 if (state != null && (state.startsWith("25") || "90097".equals(state))) return true;
