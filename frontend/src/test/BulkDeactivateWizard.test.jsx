@@ -5,7 +5,7 @@ import UserManager from '../components/admin/UserManager.jsx'
 import { EscalationPanel } from '../components/ui/TeamContactPanels.jsx'
 import EscalationContacts from '../components/admin/EscalationContacts.jsx'
 import {
-  EMPTY_FORM, buildCriteria, canProceed, confirmMatches, filterTargets, isListChanged, parseDays, validateForm,
+  EMPTY_FORM, buildCriteria, canProceed, confirmMatches, filterTargets, formFromParams, isListChanged, parseDays, validateForm,
 } from '../components/admin/bulkDeactivateModel.js'
 import { eventLabel } from '../components/admin/audit/auditFormat.js'
 
@@ -96,6 +96,20 @@ describe('bulkDeactivateModel', () => {
     expect(canProceed(PREVIEW)).toBe(true)
   })
 
+  it('ön doldurma paramları (Atıl hesaplar → g_bd*): geçerli değerler forma, geçersizler varsayılanda; g_bd yoksa null', () => {
+    const reader = (o) => (k, fb = null) => (o[k] ?? fb)
+    expect(formFromParams(reader({}))).toBeNull()
+    expect(formFromParams(reader({ g_bd_days: '90' }))).toBeNull()        // g_bd=1 olmadan açılmaz
+    expect(formFromParams(null)).toBeNull()
+    expect(formFromParams(reader({ g_bd: '1', g_bd_days: '90', g_bd_never: '0', g_bd_src: 'LDAP', g_bd_role: 'AUDIT', g_bd_teams: '2,1' })))
+      .toEqual({ ...EMPTY_FORM, inactiveOn: true, days: '90', includeNever: false, source: 'LDAP', role: 'AUDIT', scope: 'teams', teamIds: [2, 1] })
+    // ADMIN rolü seçilemez, bilinmeyen kaynak / bozuk gün / sayı olmayan takım yok sayılır
+    expect(formFromParams(reader({ g_bd: '1', g_bd_days: '0', g_bd_never: 'x', g_bd_src: 'SAML', g_bd_role: 'ADMIN', g_bd_teams: 'a,,b' })))
+      .toEqual({ ...EMPTY_FORM })
+    expect(buildCriteria(formFromParams(reader({ g_bd: '1', g_bd_days: '30', g_bd_never: '1' }))))
+      .toEqual({ scope: 'all', auth_source: 'ALL', inactive_days: 30, include_never_logged_in: true })
+  })
+
   it('denetim etiketleri: yeni olay türleri okunur ad alır (ham kod değil)', () => {
     const t = (k) => ({ 'audit.ev.USER_BULK_DEACTIVATE': 'Kullanıcılar toplu pasife alındı' }[k] ?? k)
     expect(eventLabel('USER_BULK_DEACTIVATE', t)).toBe('Kullanıcılar toplu pasife alındı')
@@ -117,6 +131,24 @@ describe('BulkDeactivateWizard', () => {
     const steps = await screen.findByRole('list', { name: /Sihirbaz adımları|Wizard steps/ })
     expect(steps.querySelector('[data-step="criteria"]')).toHaveAttribute('aria-current', 'step')
     expect(within(dialog()).getByText(/Her zaman hariç|Always excluded/)).toBeInTheDocument()
+  })
+
+  it('initialForm: form ön doldurulur, "dolduruldu" bandı görünür; önizleme o ölçütle gider (sihirbaz yine onay ister)', async () => {
+    renderWizard({ initialForm: { ...EMPTY_FORM, inactiveOn: true, days: '180', includeNever: false, source: 'LDAP' } })
+    expect(await screen.findByText(/Atıl hesaplar görünümündeki|Dormant accounts filters/)).toBeInTheDocument()
+    expect(within(dialog()).getByLabelText(/Gün sayısı|Number of days/)).toHaveValue('180')
+    await toPreview()
+    expect(api.admin.bulkDeactivatePreview).toHaveBeenCalledWith({
+      scope: 'all', auth_source: 'LDAP', inactive_days: 180, include_never_logged_in: false,
+    })
+    expect(api.admin.bulkDeactivate).not.toHaveBeenCalled()
+  })
+
+  it('initialForm yoksa bant yok ve form boş başlar', async () => {
+    renderWizard()
+    await screen.findByRole('list', { name: /Sihirbaz adımları|Wizard steps/ })
+    expect(dialog().querySelector('[data-slot="ubd-prefilled"]')).toBeNull()
+    expect(within(dialog()).queryByLabelText(/Gün sayısı|Number of days/)).toBeNull()
   })
 
   it('takım kapsamında takım seçilmeden önizleme İSTENMEZ; hata alanın altında', async () => {
@@ -235,6 +267,27 @@ describe('UserManager — Toplu pasife al düğmesi', () => {
     fireEvent.click(open)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByRole('list', { name: /Sihirbaz adımları|Wizard steps/ })).toBeInTheDocument()
+  })
+
+  it('derin bağlantı (?g_bd=1…): global yöneticide sihirbaz ön doldurulmuş AÇILIR, paramlar URL\'den silinir; elle açılış boş başlar', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=users&g_bd=1&g_bd_days=90&g_bd_never=1&g_bd_src=LOCAL')
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" globalAdmin />)
+    expect(await screen.findByText(/Atıl hesaplar görünümündeki|Dormant accounts filters/)).toBeInTheDocument()
+    expect(within(dialog()).getByLabelText(/Gün sayısı|Number of days/)).toHaveValue('90')
+    await waitFor(() => expect(window.location.search).not.toMatch(/g_bd/))
+    expect(window.location.search).toContain('g_tab=users')
+    fireEvent.click(btn(/^(Vazgeç|Cancel)$/))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /Toplu pasife al|Bulk deactivate/ }))
+    await screen.findByRole('list', { name: /Sihirbaz adımları|Wizard steps/ })
+    expect(dialog().querySelector('[data-slot="ubd-prefilled"]')).toBeNull()
+  })
+
+  it('derin bağlantı kapsamlı müdürde sihirbazı AÇMAZ', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=users&g_bd=1&g_bd_days=90')
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="x" ownTeamId={1} />)
+    await waitFor(() => expect(api.admin.searchUsers).toHaveBeenCalled())
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('kapsamlı müdür (ADMIN, global değil), TEAM_ADMIN ve USER görmez', async () => {

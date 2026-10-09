@@ -70,6 +70,9 @@ public class UserActivityService {
     private static final int RECENT_ANOMALIES = 20;
     private static final int HEATMAP_CELL_CAP = 200;   // hücre başına en fazla login detayı
     private static final int DETAIL_CAP = 500;         // KPI drill-down liste üst sınırı
+    /** Atıl hesap listesi tavanı (2026-10-09): istatistikler listeden türetilir → 500'de kırpmak sayıları bozardı.
+     *  Toplu pasife alma aracının tavanıyla aynı (5000); aşılırsa {@code details.dormant_meta.truncated}. */
+    static final int DORMANT_CAP = 5000;
     private static final long MAX_RANGE_DAYS = 31;     // esnek seri sorgusu üst sınırı
     private static final long DAY_SECONDS = 86_400L;
 
@@ -239,25 +242,67 @@ public class UserActivityService {
                     return m;
                 }).toList());
         // #5: atıl hesaplar — en uzun süredir girmeyen önce; hiç girmemişler en başta
-        String d30 = ISO.format(Instant.now().minusSeconds(DORMANT_DAYS * DAY_SECONDS));
-        out.put("dormant", usersByName.values().stream()
+        Instant now = Instant.now();
+        String d30 = ISO.format(now.minusSeconds(DORMANT_DAYS * DAY_SECONDS));
+        List<AppUser> dormant = usersByName.values().stream()
                 .filter(u -> Boolean.TRUE.equals(u.getActive()))
                 .filter(u -> u.getLastLoginAt() == null || u.getLastLoginAt().isBlank() || u.getLastLoginAt().compareTo(d30) < 0)
                 .sorted(Comparator.comparing((AppUser u) -> nullSafe(u.getLastLoginAt())))
-                .limit(DETAIL_CAP)
-                .map(u -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("username", u.getUsername());
-                    m.put("user_id", u.getId());
-                    m.put("display_name", displayName(u));
-                    m.put("system_role", u.getSystemRole());
-                    m.put("team_name", u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
-                    m.put("auth_source", u.getAuthSource());
-                    m.put("last_login_at", u.getLastLoginAt());
-                    m.put("created_at", u.getCreatedAt());
-                    return m;
-                }).toList());
+                .toList();
+        out.put("dormant", dormant.stream().limit(DORMANT_CAP).map(u -> dormantRow(u, teamNames, now)).toList());
+        // Atıl hesaplar görünümü (2026-10-09): liste tavanı + gerçek toplam — liste kırpıldıysa arayüz bunu SÖYLER
+        // (istatistikler listeden türetildiği için "N'nin ilk M'si" bandı çizilir; KPI sayısı summary.dormant_30d'den).
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("total", dormant.size());
+        meta.put("cap", DORMANT_CAP);
+        meta.put("truncated", dormant.size() > DORMANT_CAP);
+        meta.put("threshold_days", DORMANT_DAYS);
+        out.put("dormant_meta", meta);
         return out;
+    }
+
+    /**
+     * Atıl hesap satırı. İlk sekiz alan 2026-09-13'ten beri aynı (adları DEĞİŞMEZ); 2026-10-09 "Atıl hesaplar" görünümü
+     * için EKLEMELER: takım kimliği + ek takımlar (takım süzgeci / toplu pasife alma ön doldurması), org rolü, sunucu
+     * saatiyle hesaplanmış {@code inactive_days} (son girişten beri tam gün; hiç girmemişse null) ve
+     * {@code account_age_days} (oluşturulmadan beri; "yeni hesap, henüz girmedi" ayrımı), {@code has_email} (iletişim
+     * kurulabilir mi — adresin kendisi değil), kalıcı kilit, son giriş yöntemi ve {@code has_photo}. Kimlik izi alanı YOK (IP / konum /
+     * tarayıcı taşımaz) — IdentityMask kapsamına girecek bir şey eklenmedi; {@code user_id} UserRefWire ile opak olur.
+     */
+    private static Map<String, Object> dormantRow(AppUser u, Map<Long, String> teamNames, Instant now) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("username", u.getUsername());
+        m.put("user_id", u.getId());
+        m.put("display_name", displayName(u));
+        m.put("system_role", u.getSystemRole());
+        m.put("team_name", u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
+        m.put("auth_source", u.getAuthSource());
+        m.put("last_login_at", u.getLastLoginAt());
+        m.put("created_at", u.getCreatedAt());
+        m.put("team_id", u.getTeamId());
+        m.put("team_ids", u.getTeamIds() == null ? List.of() : new ArrayList<>(u.getTeamIds()));
+        m.put("org_role", u.getOrgRole());
+        m.put("department", u.getDepartment());
+        m.put("inactive_days", daysSince(u.getLastLoginAt(), now));
+        m.put("account_age_days", daysSince(u.getCreatedAt(), now));
+        m.put("has_email", u.getEmail() != null && !u.getEmail().isBlank());
+        m.put("permanent_lock", Boolean.TRUE.equals(u.getPermanentLock()));
+        m.put("last_login_method", u.getLastLoginMethod());
+        // Fotoğraf VAR MI (login_status ile aynı bayrak): avatar fotoğrafsız her atıl hesap için /photo (204) istemesin.
+        m.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
+        return m;
+    }
+
+    /** UTC ISO zaman damgasından bu yana geçen TAM gün sayısı; boş / çözülemeyen / gelecekteki değer → null / 0. */
+    static Long daysSince(String iso, Instant now) {
+        if (iso == null || iso.isBlank()) return null;
+        Instant at;
+        try {
+            at = Instant.parse(iso.endsWith("Z") ? iso : iso + "Z");
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return Math.max(0L, Duration.between(at, now).toDays());
     }
 
     /** Olay listesini yeni→eski sırada, cap'li UI satırlarına çevirir (ortak satır şekli). */

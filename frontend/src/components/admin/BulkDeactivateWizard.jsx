@@ -45,7 +45,7 @@ import { cn } from '@/lib/utils'
 /** Alt çubuk düğmeleri telefonda ≥ 40 px dokunma hedefi (RESPONSIVE.md §4). */
 const FOOT = 'max-sm:h-10 pointer-coarse:h-10'
 
-export default function BulkDeactivateWizard({ open, onClose, onDone, teams = [] }) {
+export default function BulkDeactivateWizard({ open, onClose, onDone, teams = [], initialForm = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -63,6 +63,11 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
   const [history, setHistory] = useState(null)
   const [undoingId, setUndoingId] = useState(null)
   const changed = useRef(false)                         // kapanışta listeyi tazele
+  // Ön doldurma (2026-10-09, Atıl hesaplar → "Toplu pasife almada incele"): açılış anındaki değer okunur; sonraki
+  // çizimlerde yeni nesne gelse de form sıfırlanmaz (etki yalnız `open` değişince koşar).
+  const initialRef = useRef(initialForm)
+  initialRef.current = initialForm
+  const [prefilled, setPrefilled] = useState(false)
 
   const teamMap = useMemo(() => Object.fromEntries((teams || []).map((tm) => [tm.id, tm.name])), [teams])
 
@@ -76,7 +81,9 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
   // Her açılış temiz başlar (önceki çalıştırmanın önizlemesi / onay metni taşınmaz).
   useEffect(() => {
     if (!open) return
-    setStep('criteria'); setForm(EMPTY_FORM); setPreview(null); setError(null); setQ(''); setNote(''); setTyped('')
+    const init = initialRef.current
+    setStep('criteria'); setForm(init ? { ...EMPTY_FORM, ...init } : EMPTY_FORM); setPrefilled(!!init)
+    setPreview(null); setError(null); setQ(''); setNote(''); setTyped('')
     setResult(null); setUndoResult(null); setHistory(null); changed.current = false
     loadHistory()
   }, [open, loadHistory])
@@ -151,7 +158,7 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
   // ── Adım gövdeleri ──
   const body = {
     criteria: <CriteriaStep form={form} patch={patch} fe={fe} teams={teams} t={t} history={history}
-      onUndo={undo} undoingId={undoingId} />,
+      onUndo={undo} undoingId={undoingId} prefilled={prefilled} />,
     preview: preview && <PreviewStep preview={preview} q={q} setQ={setQ} teamMap={teamMap} t={t} />,
     confirm: preview && <ConfirmStep preview={preview} note={note} setNote={setNote} typed={typed} setTyped={setTyped} t={t} />,
     result: result && <ResultStep result={result} undoResult={undoResult} t={t} onUndo={undo} undoingId={undoingId} />,
@@ -244,7 +251,7 @@ function Effects({ t, tone = 'warning' }) {
   )
 }
 
-function CriteriaStep({ form, patch, fe, teams, t, history, onUndo, undoingId }) {
+function CriteriaStep({ form, patch, fe, teams, t, history, onUndo, undoingId, prefilled = false }) {
   const base = useId()
   const scopes = [
     { value: 'all', title: t('ubd.scope.all'), hint: t('ubd.scope.allHint') },
@@ -254,6 +261,7 @@ function CriteriaStep({ form, patch, fe, teams, t, history, onUndo, undoingId })
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <AlertBanner tone="info" icon={ShieldCheck} className="mb-0">{t('ubd.alwaysExcluded')}</AlertBanner>
+      {prefilled && <div data-slot="ubd-prefilled"><AlertBanner tone="info" icon={Info} className="mb-0">{t('ubd.prefilled')}</AlertBanner></div>}
 
       <div className="flex min-w-0 flex-col gap-2">
         <span id={`${base}-scope`} className="text-sm font-semibold">{t('ubd.scope')}</span>

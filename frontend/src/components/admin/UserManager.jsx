@@ -25,6 +25,7 @@ import { UserPlus, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditor from './user-editor/UserEditor.jsx'
 import BulkDeactivateWizard from './BulkDeactivateWizard.jsx'
+import { PREFILL_PARAMS, formFromParams } from './bulkDeactivateModel.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
@@ -147,7 +148,21 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [bulk, setBulk] = useState(null)                                        // { action, team_id, org_role }
   const [bulkBusy, setBulkBusy] = useState(false)
   // Sistem geneli toplu pasife alma sihirbazı (2026-10-02, kullanıcı kararı) — yalnız GLOBAL yönetici; seçimli çubuk ayrı.
-  const [bulkWizard, setBulkWizard] = useState(false)
+  // Ön doldurulmuş açılış (2026-10-09, Atıl hesaplar görünümü → `g_bd=1&g_bd_days=…`): yalnız global yöneticide; paramlar
+  // bir kez okunur ve URL'den silinir (yenileme / geri dönüş sihirbazı yeniden açmasın). Elle açılış her zaman boş başlar.
+  const [bulkInitial, setBulkInitial] = useState(() => (globalAdmin ? formFromParams(readUrlParam) : null))
+  const [bulkWizard, setBulkWizard] = useState(() => bulkInitial != null)
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href)
+      let changed = false
+      for (const k of PREFILL_PARAMS) if (url.searchParams.has(k)) { url.searchParams.delete(k); changed = true }
+      if (changed) {
+        const qs = url.searchParams.toString()
+        window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+      }
+    } catch { /* en iyi çaba */ }
+  }, [])
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
@@ -662,7 +677,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       )}
 
       {globalAdmin && (
-        <BulkDeactivateWizard open={bulkWizard} teams={teams} onClose={() => setBulkWizard(false)} onDone={refresh} />
+        <BulkDeactivateWizard open={bulkWizard} teams={teams} initialForm={bulkInitial}
+          onClose={() => { setBulkWizard(false); setBulkInitial(null) }} onDone={refresh} />
       )}
 
       {autoResetModal && (

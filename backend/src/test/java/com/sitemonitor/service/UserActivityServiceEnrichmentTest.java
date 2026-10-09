@@ -93,6 +93,85 @@ class UserActivityServiceEnrichmentTest {
     }
 
     @Test
+    @DisplayName("Atıl hesaplar görünümü (2026-10-09): satır eklemeleri (takım kimliği, gün sayıları, e-posta var mı, kilit, yöntem) + dormant_meta; eski alanlar aynı, kimlik izi yok")
+    void dormantRowsCarryViewFields() {
+        Instant now = Instant.now();
+        AppUser old = user(3, "old100", 9L, true, ISO.format(now.minus(100, ChronoUnit.DAYS).minusSeconds(60)));
+        old.setTeamIds(new LinkedHashSet<>(List.of(9L, 5L)));
+        old.setEmail("old100@example.com"); old.setOrgRole("TECH"); old.setDepartment("Bölüm X");
+        old.setAuthSource("LDAP"); old.setSystemRole("USER"); old.setPermanentLock(true); old.setLastLoginMethod("LDAP");
+        old.setCreatedAt(ISO.format(now.minus(400, ChronoUnit.DAYS)));
+        old.setLastLoginIp("10.9.9.9");
+        AppUser never = user(4, "never", null, true, null);
+        never.setEmail("  "); never.setCreatedAt(ISO.format(now.minus(3, ChronoUnit.DAYS)));
+        when(userRepo.findAll()).thenReturn(List.of(user(1, "fresh", 5L, true, ISO.format(now)), old, never));
+
+        Map<String, Object> o = service.getOverview();
+        Map<?, ?> details = (Map<?, ?>) o.get("details");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> dormant = (List<Map<String, Object>>) details.get("dormant");
+        assertThat(dormant).extracting(m -> m.get("username")).containsExactly("never", "old100");
+        // 2026-09-13 alanları: adları ve sırası değişmedi (eklemeler sonda)
+        assertThat(new ArrayList<>(dormant.get(1).keySet()).subList(0, 8)).containsExactly(
+                "username", "user_id", "display_name", "system_role", "team_name", "auth_source", "last_login_at", "created_at");
+        Map<String, Object> r = dormant.get(1);
+        assertThat(r.get("team_id")).isEqualTo(9L);
+        assertThat(r.get("team_ids")).isEqualTo(List.of(9L, 5L));
+        assertThat(r.get("org_role")).isEqualTo("TECH");
+        assertThat(r.get("department")).isEqualTo("Bölüm X");
+        assertThat(r.get("inactive_days")).isEqualTo(100L);
+        assertThat(r.get("account_age_days")).isEqualTo(400L);
+        assertThat(r.get("has_email")).isEqualTo(true);
+        assertThat(r.get("permanent_lock")).isEqualTo(true);
+        assertThat(r.get("last_login_method")).isEqualTo("LDAP");
+        assertThat(r.get("has_photo")).isEqualTo(false);
+        // hiç girmemiş: gün sayısı yok, hesap yaşı var; boşluk e-posta "yok" sayılır; takımsız
+        Map<String, Object> n = dormant.get(0);
+        assertThat(n.get("inactive_days")).isNull();
+        assertThat(n.get("account_age_days")).isEqualTo(3L);
+        assertThat(n.get("has_email")).isEqualTo(false);
+        assertThat(n.get("team_id")).isNull();
+        assertThat(n.get("team_ids")).isEqualTo(List.of());
+        // kimlik izi (IP) atıl satırına GİRMEZ; e-posta adresinin kendisi de yok (yalnız has_email)
+        assertThat(dormant).allSatisfy(m -> assertThat(m).doesNotContainKeys("ip", "last_login_ip", "email", "user_agent"));
+
+        Map<?, ?> meta = (Map<?, ?>) details.get("dormant_meta");
+        assertThat(meta.get("total")).isEqualTo(2);
+        assertThat(meta.get("cap")).isEqualTo(UserActivityService.DORMANT_CAP);
+        assertThat(meta.get("truncated")).isEqualTo(false);
+        assertThat(meta.get("threshold_days")).isEqualTo(30);
+        // KPI sayısı ile liste uzunluğu aynı kural
+        assertThat(((Map<?, ?>) o.get("summary")).get("dormant_30d")).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("Atıl hesap listesi tavanı: 500 değil DORMANT_CAP; aşılınca kırpılır ve dormant_meta.truncated=true, total gerçek sayı")
+    void dormantListCapAndTruncation() {
+        List<AppUser> many = new ArrayList<>();
+        for (int i = 0; i <= UserActivityService.DORMANT_CAP; i++) many.add(user(1000L + i, "u" + i, null, true, null));
+        when(userRepo.findAll()).thenReturn(many);
+        Map<String, Object> o = service.getOverview();
+        Map<?, ?> details = (Map<?, ?>) o.get("details");
+        assertThat((List<?>) details.get("dormant")).hasSize(UserActivityService.DORMANT_CAP);
+        Map<?, ?> meta = (Map<?, ?>) details.get("dormant_meta");
+        assertThat(meta.get("total")).isEqualTo(UserActivityService.DORMANT_CAP + 1);
+        assertThat(meta.get("truncated")).isEqualTo(true);
+        assertThat(((Map<?, ?>) o.get("summary")).get("dormant_30d")).isEqualTo((long) UserActivityService.DORMANT_CAP + 1);
+    }
+
+    @Test
+    @DisplayName("daysSince: tam gün, Z'li/Z'siz, boş/bozuk → null, gelecek → 0")
+    void daysSinceParsing() {
+        Instant now = Instant.parse("2026-10-09T12:00:00Z");
+        assertThat(UserActivityService.daysSince("2026-10-08T12:00:01", now)).isZero();
+        assertThat(UserActivityService.daysSince("2026-10-08T12:00:00Z", now)).isEqualTo(1L);
+        assertThat(UserActivityService.daysSince("2025-10-09T12:00:00", now)).isEqualTo(365L);
+        assertThat(UserActivityService.daysSince(null, now)).isNull();
+        assertThat(UserActivityService.daysSince(" ", now)).isNull();
+        assertThat(UserActivityService.daysSince("not-a-date", now)).isNull();
+        assertThat(UserActivityService.daysSince("2026-10-10T00:00:00", now)).isZero();
+    }
+
+    @Test
     @DisplayName("#2 aktif oturum: idle_sec = şimdi − last_seen; expires_in = hareketsizlik ayarı − idle; son sekme PageUsage'dan")
     void activeSessionIdleAndExpiry() {
         AppUser u = user(1, "admin", 5L, true, ISO.format(Instant.now()));
