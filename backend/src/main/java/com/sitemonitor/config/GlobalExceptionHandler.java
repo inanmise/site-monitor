@@ -439,7 +439,8 @@ public class GlobalExceptionHandler {
     /** Tomcat'in SizeException'ı izin verilen boyutu taşır ({@code getPermittedSize}) — Tomcat'e derleme bağımlılığı olmadan. */
     static long permittedBytes(MaxUploadSizeExceededException e) {
         if (e.getMaxUploadSize() > 0) return e.getMaxUploadSize();
-        for (Throwable c = e.getCause(); c != null && c != c.getCause(); c = c.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable c = e.getCause(); c != null && c != c.getCause() && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; c = c.getCause()) {
             try {
                 Method m = c.getClass().getMethod("getPermittedSize");
                 Object v = m.invoke(c);
@@ -574,7 +575,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleDataAccess(Exception e) {
         // Çevrilmemiş kısıt ihlali (SQLState 23xxx — ör. servis içi flush'ta Hibernate ConstraintViolationException)
         // bir sunucu hatası değil; kısıt işleyicisiyle aynı açıklayıcı yanıtı alır.
-        for (Throwable c = e; c != null && c != c.getCause(); c = c.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable c = e; c != null && c != c.getCause() && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; c = c.getCause()) {
             if (c instanceof java.sql.SQLException sql && sql.getSQLState() != null && sql.getSQLState().startsWith("23")) {
                 return handleDataIntegrityViolation(new DataIntegrityViolationException(sql.getMessage(), e));
             }
@@ -670,7 +672,8 @@ public class GlobalExceptionHandler {
     /** İstisna zincirinde istemci-kopması var mı — Tomcat'e import bağımlılığı olmadan (sınıf-adı + IOException
      *  mesajı ile). ClientAbortException / AsyncRequestNotUsableException / "broken pipe" / "connection reset". */
     static boolean isClientAbort(Throwable t) {
-        for (Throwable c = t; c != null; c = c.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable c = t; c != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; c = c.getCause()) {
             String cn = c.getClass().getName();
             if (cn.equals("org.apache.catalina.connector.ClientAbortException")
                     || cn.equals("org.springframework.web.context.request.async.AsyncRequestNotUsableException")) {

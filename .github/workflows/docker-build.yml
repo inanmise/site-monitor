@@ -21,6 +21,8 @@ jobs:
   docker:
     name: Build image (${{ github.ref_name }})
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write   # required for ghcr.io push

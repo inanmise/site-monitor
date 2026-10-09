@@ -152,4 +152,41 @@ class SecretMaskTest {
         assertThat(SecretMask.maskEmails(null)).isEqualTo("[]");
         assertThat(SecretMask.maskEmails(new String[0])).isEqualTo("[]");
     }
+
+    /** Eski (2026-10-09 öncesi) kalıp — doğrusal yeniden yazımın ÇIKTI kâhini. */
+    private static final java.util.regex.Pattern OLD_QUERY_SENSITIVE = java.util.regex.Pattern.compile(
+            "(?i)([?&#][^=&#\\s]*(?:password|passwd|parola|sifre|şifre|secret|token|api_?key|private_?key|"
+            + "credential|session_?id|jsessionid|otp|pin|mfa|verification_?code|auth)[^=&#\\s]*=)[^&#\\s]*");
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://cm/?tab=scripted&token=GIZLI&password=S1&parola=S2&x=1",
+            "Error: GET /api/x?api_key=KEY99&id=5 failed at line 3",
+            "https://cm/?tab=a&days=7",
+            "a?b=1&my_token_value=xyz#frag&AUTHORIZATION=Bearer%20q other ?pin=1234 tail",
+            "?sessionId=abc&JSESSIONID=def&verification_code=777&mfa_code=1&private_key=---",
+            "http://h/p#access_token=T1&state=s&id_token=T2",
+            "?token=a&token=b&&token=c&#token=d",
+            "?=x&secret==y&passwd= &otp=",
+            "no query here at all",
+            "?şifre=gizli&Sifre=x&PAROLA=y",
+            "?pass=keep&tokenizer=masked&x=1\n?pin=9\tz",
+            "line1?api-key=keep&apiKey=masked\r\nline2" })
+    @DisplayName("maskUrlQuery (2026-10-09): doğrusal yeniden yazım eski kalıpla BİREBİR aynı çıktıyı verir")
+    void maskUrlQuery_linearRewrite_matchesOldOutput(String input) {
+        String expected = OLD_QUERY_SENSITIVE.matcher(input).replaceAll("$1" + SecretMask.MASK);
+        assertThat(SecretMask.maskUrlQuery(input)).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("KAPI (ReDoS, 2026-10-09): herkese açık uca gelen '?pin' x 25.000 (≈100 KB) metni anında maskelenir")
+    void maskUrlQuery_pathologicalInput_isLinear() {
+        String bomb = "?pin".repeat(25_000);
+        String spaced = "?" + "a".repeat(200_000) + "pin" + "b".repeat(200_000);   // '=' yok — eskisi O(n^2)
+        String out = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
+                () -> SecretMask.maskUrlQuery(bomb) + SecretMask.maskUrlQuery(spaced));
+        assertThat(out).hasSize(bomb.length() + spaced.length());   // '=' yok → maskelenecek değer yok, metin aynen
+        String masked = SecretMask.maskUrlQuery("?x=1".repeat(50_000) + "&token=" + "s".repeat(100_000));
+        assertThat(masked).endsWith("&token=" + SecretMask.MASK);
+    }
 }

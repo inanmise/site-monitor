@@ -32,6 +32,8 @@ jobs:
   backend:
     name: Backend (Java 25 / Maven)
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -173,6 +175,8 @@ jobs:
   frontend:
     name: Frontend (Node 24 / Vite)
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
@@ -364,6 +368,8 @@ jobs:
   helm-lint:
     name: Helm Lint
     runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

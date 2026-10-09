@@ -915,4 +915,36 @@ class HttpDiagnosticsServiceTest {
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").build(kp.getPrivate());
         return new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));
     }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): sınırsız '100 Continue' akışı — ara yanıt tavanında kesilir, süre/bellek dolana dek dönmez")
+    void endlessInterimResponses_cappedQuickly() throws Exception {
+        try (ServerSocket ss = new ServerSocket(0, 5, java.net.InetAddress.getByName("127.0.0.1"))) {
+            Thread srv = new Thread(() -> {
+                try (Socket s = ss.accept()) {
+                    java.io.InputStream in = s.getInputStream();
+                    byte[] buf = new byte[4096];
+                    in.read(buf);                                     // isteği oku (tek parça yeter)
+                    OutputStream out = s.getOutputStream();
+                    byte[] cont = ("HTTP/1.1 100 Continue" + (char) 13 + (char) 10 + (char) 13 + (char) 10).getBytes(StandardCharsets.US_ASCII);
+                    for (int i = 0; i < 100_000; i++) { out.write(cont); if (i % 50 == 0) out.flush(); }
+                    out.flush();
+                } catch (Exception ignored) {
+                    // istemci kesti — beklenen
+                }
+            }, "interim-flood");
+            srv.setDaemon(true);
+            srv.start();
+            clientSays(false, null, "interim flood");
+            long t0 = System.currentTimeMillis();
+            Map<String, Object> data = service(null).diagnose(monitor("http://127.0.0.1:" + ss.getLocalPort() + "/", 5000), false);
+            long ms = System.currentTimeMillis() - t0;
+            assertThat(ms).as("tavan, süre bütçesinden (5 sn) önce keser").isLessThan(4_000L);
+            Map<String, Object> p = path(data, 0);
+            assertThat(p).containsEntry("outcome", "fail").containsEntry("failed_step", "response");
+            @SuppressWarnings("unchecked") List<String> transcript = (List<String>) p.get("transcript");
+            assertThat(transcript.size()).as("transkript sınırlı").isLessThan(200);
+            assertThat(String.valueOf(m(p.get("error")))).as("tavan nedeniyle kesildi").contains("ara yanıt");
+        }
+    }
 }

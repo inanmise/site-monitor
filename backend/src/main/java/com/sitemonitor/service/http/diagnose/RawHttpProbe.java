@@ -85,6 +85,12 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
     public static final int BODY_CAP_BYTES = HttpRequestRules.MAX_RESPONSE_BYTES;
     static final int MAX_LINE = 16 * 1024;
     static final int MAX_HEADERS = 200;
+    /** Katlanmış satırlar dahil TOPLAM başlık satırı (2026-10-09): katlama MAX_HEADERS'a sayılmıyordu, düşmanca uç sonsuz
+     *  devam satırıyla belleği ve karesel birleştirmeyi süre dolana dek büyütebiliyordu. */
+    static final int MAX_HEADER_LINES = 1000;
+    /** Asıl yanıttan önce kabul edilen ara (1xx) yanıt sayısı (2026-10-09): sınırsız "100 Continue" akışı transkripti
+     *  süre dolmadan pod belleğini tüketecek kadar büyütebiliyordu. Gerçek sunucular 1–2 tane gönderir. */
+    static final int MAX_INTERIM_RESPONSES = 10;
     /** İzlemenin gerçek istemcisinin gönderdiği User-Agent ({@code HttpCheckerService.buildRequest}). */
     static final String USER_AGENT = "SiteMonitor-HttpMonitor/1.0";
 
@@ -678,6 +684,7 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             try {
                 w = new Wire(active, active.getInputStream(), 8192);
                 w.deadline = headerDeadline;
+                int interim = 0;
                 while (true) {
                     statusLine = w.readLine(MAX_LINE);
                     if (statusLine == null) throw new EOFException("sunucu yanıt vermeden bağlantıyı kapattı");
@@ -691,7 +698,11 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
                     firstValues.clear();
                     readHeaders(w, respHeaders, firstValues);
                     transcript.add("<");
-                    if (status >= 100 && status < 200 && status != 101) continue;   // 100/103: asıl yanıtı bekle
+                    if (status >= 100 && status < 200 && status != 101) {           // 100/103: asıl yanıtı bekle
+                        if (++interim > MAX_INTERIM_RESPONSES)
+                            throw new IOException("aşırı ara yanıt (" + MAX_INTERIM_RESPONSES + "+ adet 1xx)");
+                        continue;
+                    }
                     break;
                 }
             } catch (IOException e) {
@@ -846,9 +857,11 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
     private void readHeaders(Wire w, List<Map<String, Object>> out, Map<String, String> first) throws IOException {
         List<String[]> raw = new ArrayList<>();
         int count = 0;
+        int lines = 0;
         while (true) {
             String line = w.readLine(MAX_LINE);
             if (line == null || line.isEmpty()) break;
+            if (++lines > MAX_HEADER_LINES) throw new IOException("aşırı başlık satırı (" + MAX_HEADER_LINES + "+)");
             if ((line.startsWith(" ") || line.startsWith("\t")) && !raw.isEmpty()) {
                 String[] prev = raw.get(raw.size() - 1);
                 prev[1] = prev[1] + " " + line.trim();
@@ -1207,7 +1220,8 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
 
     private static boolean isTimeout(Throwable e, AtomicBoolean watchdogFired) {
         if (watchdogFired != null && watchdogFired.get()) return true;
-        for (Throwable t = e; t != null; t = t.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable t = e; t != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; t = t.getCause()) {
             if (t instanceof SocketTimeoutException) return true;
             if (t.getCause() == t) break;
         }

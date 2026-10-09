@@ -406,7 +406,9 @@ public class SystemController {
         permissionService.require(session, "system_health.actions", "execute");
         Object teamIdRaw = body != null ? body.get("teamId") : null;
         String email = body != null && body.get("email") != null ? body.get("email").toString().trim() : "";
-        if (teamIdRaw == null || email.isBlank() || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+        // ReDoS (2026-10-09): uzunluk DÜZENLİ İFADEDEN ÖNCE — kalıp uzun girdide karesel geri izler.
+        if (teamIdRaw == null || email.isBlank() || email.length() > 254
+                || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false, "error", "teamId ve geçerli email gerekli", "timestamp", now()));
         }
@@ -504,7 +506,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         String email = body != null && body.get("email") != null ? body.get("email").toString().trim() : "";
-        if (!email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+        if (email.length() > 254 || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {   // ReDoS: önce uzunluk
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false, "error", "Geçerli bir e-posta adresi gerekli", "timestamp", now()));
         }

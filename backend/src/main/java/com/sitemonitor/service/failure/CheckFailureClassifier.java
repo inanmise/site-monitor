@@ -153,7 +153,8 @@ public final class CheckFailureClassifier {
     public static CheckFailure forDnsException(Throwable t) {
         CheckFailureReason r = DNS_RESOLVE;
         try {
-            for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+            int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+            for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
                 String low = cur.getMessage() == null ? "" : cur.getMessage().toLowerCase(Locale.ROOT);
                 String cls = cur.getClass().getName();
                 if (cls.endsWith("TextParseException") || cls.endsWith("RelativeNameException")) { r = CONFIG_ERROR; break; }
@@ -329,7 +330,8 @@ public final class CheckFailureClassifier {
 
     /** Zincirdeki ilk anlamlı (boş olmayan) ileti; hiç yoksa istisna sınıfının adı. */
     static String firstMessage(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
             String m = cur.getMessage();
             if (m != null && !m.isBlank()) return m;
         }

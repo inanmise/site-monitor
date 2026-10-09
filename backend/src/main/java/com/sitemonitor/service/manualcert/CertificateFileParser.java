@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -346,22 +347,72 @@ public final class CertificateFileParser {
 
     // ── PEM ──────────────────────────────────────────────────────────────────
 
-    private static final Pattern PEM_BLOCK = Pattern.compile(
-            "-----BEGIN ([A-Z0-9 .]+)-----(.*?)-----END \\1-----", Pattern.DOTALL);
-    /** Her türden özel anahtar başlığı — kapanışı bozuk olsa da sayılır. */
-    private static final Pattern PRIVATE_BEGIN = Pattern.compile("-----BEGIN [A-Z0-9 .]*PRIVATE KEY[A-Z0-9 .]*-----");
+    // Sonsuz bekleme savunması (2026-10-09, ReDoS): eski iki kalıp (tembel DOTALL gövde + geri başvuru; etiketin iki yanında
+    // yıldız) eşi olmayan HER BEGIN'de metnin sonuna dek tarıyordu — 5 MB'lık "-----BEGIN X-----" yığını dakikalarca CPU
+    // yakıyordu ve java.util.regex kesmeye (Future.cancel) bakmadığı için 10 sn'lik süre kutusu bile onu durduramıyordu.
+    // Şimdi işaretçiler TEK geçişte toplanır (etiket ≤ 64 karakter — gerçek etiketlerin en uzunu ~25) ve her BEGIN aynı
+    // etiketli İLK END ile eşleşir: eski kalıbın anlamı birebir — eşi olmayan BEGIN atlanır, eşleşen bloktan sonra tarama
+    // END'in ardından sürer; özel anahtar başlıkları (kapanışı bozuk olsa da) yine sayılır.
+    private static final Pattern PEM_MARKER = Pattern.compile("-----(BEGIN|END) ([A-Z0-9 .]{1,64})-----");
+
+    /** PEM bloğu: ham etiket + gövde metni (çözülmemiş). */
+    record PemBlock(String label, String body) {}
+
+    /** {@link #scanPem} sonucu: bloklar (sırasıyla) + özel anahtar BAŞLIĞI sayısı. */
+    record PemScan(List<PemBlock> blocks, int privateKeyHeaders) {}
+
+    /** Doğrusal PEM taraması — eski {@code PEM_BLOCK} / {@code PRIVATE_BEGIN} kalıplarının çıktısıyla aynı. */
+    static PemScan scanPem(String text) {
+        List<int[]> spans = new ArrayList<>();              // [başlangıç, bitiş, BEGIN mi (1/0)]
+        List<String> labels = new ArrayList<>();
+        Map<String, List<int[]>> endsByLabel = new HashMap<>();
+        int privateHeaders = 0;
+        int privateEnd = -1;
+        Matcher m = PEM_MARKER.matcher(text);
+        int from = 0;
+        while (from < text.length() && m.find(from)) {
+            boolean begin = "BEGIN".equals(m.group(1));
+            String label = m.group(2);
+            spans.add(new int[]{m.start(), m.end(), begin ? 1 : 0});
+            labels.add(label);
+            if (!begin) endsByLabel.computeIfAbsent(label, k -> new ArrayList<>()).add(new int[]{m.start(), m.end()});
+            // Eski PRIVATE_BEGIN find() döngüsü örtüşmeyen eşleşmeleri sayıyordu.
+            if (begin && m.start() >= privateEnd && label.contains("PRIVATE KEY")) {
+                privateHeaders++;
+                privateEnd = m.end();
+            }
+            from = m.start() + 1;                            // işaretçiler tire dizisini paylaşabilir (eski tarama gibi)
+        }
+        List<PemBlock> blocks = new ArrayList<>();
+        Map<String, Integer> next = new HashMap<>();         // etiket başına END göstergesi — tekdüze ilerler (doğrusal)
+        int pos = 0;
+        for (int i = 0; i < spans.size(); i++) {
+            int[] sp = spans.get(i);
+            if (sp[2] == 0 || sp[0] < pos) continue;
+            String label = labels.get(i);
+            List<int[]> ends = endsByLabel.get(label);
+            if (ends == null) continue;
+            int p = next.getOrDefault(label, 0);
+            while (p < ends.size() && ends.get(p)[0] < sp[1]) p++;
+            next.put(label, p);
+            if (p == ends.size()) continue;                  // eşi yok → bu BEGIN atlanır
+            int[] end = ends.get(p);
+            blocks.add(new PemBlock(label, text.substring(sp[1], end[0])));
+            pos = end[1];
+        }
+        return new PemScan(blocks, privateHeaders);
+    }
 
     static void parsePem(String text, Result r, String source) {
-        Matcher pk = PRIVATE_BEGIN.matcher(text);
-        while (pk.find()) {                                     // RSA/EC/DSA/ENCRYPTED/OPENSSH/… — sayılır, OKUNMAZ
+        PemScan scan = scanPem(text);
+        for (int i = 0; i < scan.privateKeyHeaders(); i++) {  // RSA/EC/DSA/ENCRYPTED/OPENSSH/… — sayılır, OKUNMAZ
             r.privateKeyCount++;
             r.markSecret(SECRET_PRIVATE_KEY);
         }
-        Matcher m = PEM_BLOCK.matcher(text);
-        while (m.find()) {
-            String label = m.group(1).trim().toUpperCase(Locale.ROOT);
+        for (PemBlock block : scan.blocks()) {
+            String label = block.label().trim().toUpperCase(Locale.ROOT);
             if (label.contains("PRIVATE KEY")) continue;
-            byte[] der = pemBody(m.group(2));
+            byte[] der = pemBody(block.body());
             if (der == null) continue;
             switch (label) {
                 case "CERTIFICATE", "X509 CERTIFICATE", "X.509 CERTIFICATE" -> {

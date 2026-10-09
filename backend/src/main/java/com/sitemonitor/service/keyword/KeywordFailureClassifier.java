@@ -70,7 +70,8 @@ public final class KeywordFailureClassifier {
     /** İstisna → kod. HTTP tanısının sınıflandırıcısı + gövde süre sınırı. Bilinmeyen → UNKNOWN. */
     public static String codeForException(Throwable t) {
         if (t == null) return UNKNOWN;
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
             if (cur instanceof HttpBodies.BodyDeadlineException) return TIMEOUT_READ;
         }
         HttpFailureDiagnostics.Kind k = HttpFailureDiagnostics.classify(t);
@@ -104,7 +105,8 @@ public final class KeywordFailureClassifier {
         String h = host == null || host.isBlank() ? "hedef" : host;
         String raw = rawMessage(t);
         boolean bodyDeadline = false;
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
             if (cur instanceof HttpBodies.BodyDeadlineException) { bodyDeadline = true; break; }
         }
         String detail = switch (code) {
@@ -194,7 +196,8 @@ public final class KeywordFailureClassifier {
 
     /** İstisnanın ilk anlamlı mesajı (zincirde boş olmayan ilk mesaj), tek satır, ≤ 200. */
     static String rawMessage(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+        int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
+        for (Throwable cur = t; cur != null && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH; cur = cur.getCause() == cur ? null : cur.getCause()) {
             String m = cur.getMessage();
             if (m != null && !m.isBlank()) return abbreviate(m.replaceAll("\\s+", " ").trim(), 200);
         }

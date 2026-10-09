@@ -95,16 +95,16 @@ class TtlMemoTest {
             java.util.concurrent.Future<String> owner = pool.submit(() -> memo.get("k", 60_000, false, () -> {
                 calls.incrementAndGet();
                 inside.countDown();
-                try { release.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                try { release.await(30, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 return "v";
             }));
-            inside.await();
+            org.assertj.core.api.Assertions.assertThat(inside.await(30, java.util.concurrent.TimeUnit.SECONDS)).as("sahip hesaplamaya girdi").isTrue();
             java.util.List<java.util.concurrent.Future<String>> waiters = new java.util.ArrayList<>();
             for (int i = 0; i < 3; i++) waiters.add(pool.submit(() -> memo.get("k", 60_000, false, () -> { calls.incrementAndGet(); return "x"; })));
             Thread.sleep(100);
             release.countDown();
-            org.assertj.core.api.Assertions.assertThat(owner.get()).isEqualTo("v");
-            for (var w : waiters) org.assertj.core.api.Assertions.assertThat(w.get()).isEqualTo("v");
+            org.assertj.core.api.Assertions.assertThat(owner.get(30, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("v");
+            for (var w : waiters) org.assertj.core.api.Assertions.assertThat(w.get(30, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("v");
             org.assertj.core.api.Assertions.assertThat(calls.get()).isEqualTo(1);
         } finally {
             pool.shutdownNow();

@@ -418,4 +418,26 @@ class ManualCertificateAnalyzerTest {
 
     @SuppressWarnings("unused")
     private static Optional<CertificateInventory> none() { return Optional.empty(); }
+
+    @Test
+    @DisplayName("KAPI (2026-10-09): ham yükleme 200'den fazla FARKLI sertifika taşırsa zincir gruplamaya girmeden reddedilir")
+    void rawUpload_tooManyDistinctCertificates_rejected() {
+        KeyPair kp = TestCerts.rsa();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i <= ExtractedUpload.MAX_CERTS; i++) {
+            sb.append(pem(selfSignedLeaf("bulk" + i + ".example.test", List.of("bulk" + i + ".example.test"), kp,
+                    Instant.now().minus(1, ChronoUnit.DAYS), Instant.now().plus(30, ChronoUnit.DAYS))));
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(ManualCertificateAnalyzer.TooManyCertificatesException.class,
+                () -> analyze(sb.toString()));
+    }
+
+    @Test
+    @DisplayName("Sınır yinelenenleri saymaz: aynı sertifika 300 kez → tek farklı sertifika, analiz edilir")
+    void rawUpload_duplicatesDoNotCountTowardLimit() {
+        Chain c = TestCerts.chain("dup.example.test", days(100));
+        String one = pem(c.leaf());
+        Analysis a = analyze(one.repeat(300));
+        assertThat(a.entries).hasSize(1);
+    }
 }

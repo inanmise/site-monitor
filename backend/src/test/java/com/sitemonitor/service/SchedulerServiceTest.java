@@ -246,6 +246,27 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("KAPI (2026-10-09): nextDueAfter döngüsüz — bozuk/çok eski vade ve ≤0 aralık anında, eski sonuçla aynı")
+    void nextDueAfter_isConstantTime_andMatchesLoop() {
+        long now = 1_800_000_000_000L;
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(1), () -> {
+            assertThat(SchedulerService.nextDueAfter(0L, now, 1L)).isEqualTo(now + 1);                 // eskisi 1,8e12 tur
+            assertThat(SchedulerService.nextDueAfter(Long.MIN_VALUE, now, 1000L)).isEqualTo(now + 1000L); // taşma yolu
+            assertThat(SchedulerService.nextDueAfter(now - 10, now, 0L)).isEqualTo(now + 1);              // eskisi sonsuz
+        });
+        // Eski döngüyle birebir (küçük değerlerde kâhin)
+        java.util.Random rnd = new java.util.Random(7);
+        for (int i = 0; i < 2000; i++) {
+            long iv = 1 + rnd.nextInt(5000);
+            long due = rnd.nextInt(100_000);
+            long n = rnd.nextInt(100_000);
+            long expected = due;
+            while (expected <= n) expected += iv;
+            assertThat(SchedulerService.nextDueAfter(due, n, iv)).isEqualTo(expected);
+        }
+    }
+
+    @Test
     @DisplayName("runUptimeChecks dispatches SweepItems to MonitoringOutageService")
     void runUptimeChecks_dispatchesSweep() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();

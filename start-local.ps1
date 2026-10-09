@@ -115,6 +115,7 @@ Start-Process -FilePath $Java `
 
 Write-Host "Backend started. Logs: backend\app.log"
 Write-Host "Waiting for startup..."
+$up = $false
 $deadline = (Get-Date).AddSeconds(40)
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
@@ -122,7 +123,9 @@ while ((Get-Date) -lt $deadline) {
         $h = Invoke-RestMethod -Uri "http://localhost:8080/health" -TimeoutSec 2
         if ($h.status -eq "UP") {
             Write-Host "Backend is UP - http://localhost:8080"
+            $up = $true
             break
         }
     } catch { }
 }
+if (-not $up) { Write-Warning "Backend 40 sn icinde UP olmadi - backend\app.log ve backend\app-err.log dosyalarina bakin." }

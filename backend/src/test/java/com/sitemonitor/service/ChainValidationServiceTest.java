@@ -524,6 +524,62 @@ class ChainValidationServiceTest {
         }
     }
 
+    /** Her açılışı sayan, bağlantıyı hemen düşüren servis (dağıtım noktası döngüsünün sınır kapısı için). */
+    private ChainValidationService countingService(java.util.concurrent.atomic.AtomicInteger opens) {
+        ChainValidationService s = new ChainValidationService() {
+            @Override java.net.HttpURLConnection openWithProxy(String url) throws java.io.IOException {
+                opens.incrementAndGet();
+                throw new java.net.ConnectException("ulaşılamıyor");
+            }
+        };
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlCacheMaxSize", 100);
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlCacheTtlHours", 1);
+        s.init();
+        return s;
+    }
+
+    @Test
+    @DisplayName("KAPI (sonsuz bekleme, 2026-10-09): sertifika 40 CRL adresi (tekrarlı) taşısa da en çok 3 indirme denenir")
+    void checkCrl_manyDistributionPoints_boundedDownloads() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger opens = new java.util.concurrent.atomic.AtomicInteger();
+        ChainValidationService s = countingService(opens);
+        String[] urls = new String[40];
+        for (int i = 0; i < urls.length; i++) urls[i] = "http://crl" + (i % 20) + ".example.com/x.crl";   // 20 farklı, her biri 2 kez
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com", urls);
+        List<RevocationReason.Attempt> attempts = new java.util.ArrayList<>();
+        assertThat(s.checkCrl(cert, attempts)).isEqualTo("UNKNOWN");
+        assertThat(opens.get()).as("indirme sınırı").isEqualTo(ChainValidationService.MAX_CRL_DOWNLOADS);
+        assertThat(attempts).hasSize(ChainValidationService.MAX_CRL_DOWNLOADS);
+    }
+
+    @Test
+    @DisplayName("KAPI: ldap:// adresleri indirme sınırını tüketmez — AD'nin 'ldap + http' düzeninde http adresi denenir")
+    void checkCrl_ldapEntriesDoNotConsumeDownloadBudget() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger opens = new java.util.concurrent.atomic.AtomicInteger();
+        ChainValidationService s = countingService(opens);
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com",
+                "ldap:///CN=a", "ldap:///CN=b", "ldap:///CN=c", "ldap:///CN=d", "http://crl.example.com/x.crl");
+        assertThat(s.checkCrl(cert, new java.util.ArrayList<>())).isEqualTo("UNKNOWN");
+        assertThat(opens.get()).as("http adresi sınırdan etkilenmeden denendi").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("KAPI: süre bütçesi dolunca yeni CRL indirmesi başlamaz; önbellekteki liste yine danışılır (REVOKED korunur)")
+    void checkCrl_loopDeadline_stopsNewDownloadsButUsesCache() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger opens = new java.util.concurrent.atomic.AtomicInteger();
+        ChainValidationService s = countingService(opens);
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlLoopTotalMs", 0L);
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com",
+                "http://crl-a.example.com/x.crl", "http://crl-b.example.com/x.crl");
+        @SuppressWarnings("unchecked")
+        com.github.benmanes.caffeine.cache.Cache<String, java.security.cert.X509CRL> cache =
+                (com.github.benmanes.caffeine.cache.Cache<String, java.security.cert.X509CRL>)
+                        org.springframework.test.util.ReflectionTestUtils.getField(s, "crlCache");
+        cache.put("http://crl-b.example.com/x.crl", buildCrl(cert, cert.getSerialNumber()));
+        assertThat(s.checkCrl(cert, new java.util.ArrayList<>())).isEqualTo("REVOKED");
+        assertThat(opens.get()).as("bütçe 0: hiç indirme yok").isZero();
+    }
+
     // ── Test Cert Utilities ───────────────────────────────────────────────────
 
     /** CRL onbellegine hazir bir liste koyar (indirme yolunu atlar). */
