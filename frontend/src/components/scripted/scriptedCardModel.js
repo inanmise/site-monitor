@@ -24,6 +24,14 @@ const num = (v) => {
 const LIB_HOSTS = new Set(['jslib.k6.io', 'cdn.jsdelivr.net', 'unpkg.com', 'raw.githubusercontent.com'])
 const URL_IN_TEXT = /https?:\/\/[^\s'"`<>)\]}]+/gi
 const BROWSER_IMPORT = /from\s+['"]k6\/(?:experimental\/)?browser['"]/
+// Adres sonundaki noktalama — sondan geriye tek geçiş (2026-10-09): eski `/[.,;:]+$/` ortasında uzun noktalama
+// dizisi olan adreste O(N²) geri izliyordu. Sonuç aynı: en uzun noktalama soneki atılır.
+const TRAILING_PUNCT = new Set(['.', ',', ';', ':'])
+const stripTrailingPunct = (s) => {
+  let e = s.length
+  while (e > 0 && TRAILING_PUNCT.has(s[e - 1])) e--
+  return e === s.length ? s : s.slice(0, e)
+}
 
 function hostOf(raw) {
   try {
@@ -53,7 +61,7 @@ export function scenarioTarget(m) {
     .filter((line) => !/^\s*import\b/.test(line) && !/^\s*\/\//.test(line))
     .join('\n')
   for (const match of code.matchAll(URL_IN_TEXT)) {
-    const url = match[0].replace(/[.,;:]+$/, '')
+    const url = stripTrailingPunct(match[0])
     const host = hostOf(url)
     if (host && !LIB_HOSTS.has(host)) found.push(url)
   }

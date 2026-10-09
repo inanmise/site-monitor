@@ -10,8 +10,8 @@
  */
 import { Asn1Error, T, UNIVERSAL, children, equalBytes, int, is, isCtx, isSeq, isX509, octets, oid, readTlv, toHex, bmpString } from './asn1.js'
 import {
-  BadPasswordError, UnsupportedAlgorithmError, aesCbcDecrypt, bmpPassword, desCbcDecrypt, hmac, pbkdf2, pkcs12Kdf, rc2CbcDecrypt,
-  utf8Password,
+  BadPasswordError, HASHES, UnsupportedAlgorithmError, aesCbcDecrypt, bmpPassword, desCbcDecrypt, hmac, pbkdf2, pkcs12Kdf,
+  rc2CbcDecrypt, utf8Password,
 } from './crypto.js'
 
 const OID = {
@@ -56,9 +56,27 @@ const LEGACY_PBE = {
 /** Kötü niyetli / bozuk dosyada sonsuz bekleme olmasın (yerleşik PBKDF2 1 milyonu ~1 sn'de bitirir). */
 const MAX_ITERATIONS = 5_000_000
 const MAX_BAGS = 2000
+/**
+ * Maliyet bombası sınırları (2026-10-09): tek dosyada TÜM anahtar türetmelerinin (MAC × aday + her şifreli içerik ×
+ * aday) toplam yineleme × blok bütçesi, şifreli içerik bloğu sayısı ve MAC tuzu. Gerçek dosyalar (OpenSSL / keytool /
+ * Windows: 2000–10 000 yineleme, 1–3 içerik bloğu, 8–20 bayt tuz) bunların çok altında kalır.
+ */
+const MAX_TOTAL_ITERATIONS = 10_000_000
+const MAX_ENCRYPTED_BLOCKS = 16
+const MAX_MAC_SALT = 64
 
 export class Pkcs12FormatError extends Error {
   constructor(detail) { super(`pkcs12: ${detail}`); this.name = 'Pkcs12FormatError'; this.detail = detail }
+}
+
+/** Dosya başına yineleme bütçesi: türetmeden ÖNCE harcanır; aşılırsa {@link UnsupportedAlgorithmError} (iş yapılmaz). */
+function iterationBudget(limit = MAX_TOTAL_ITERATIONS) {
+  let left = limit
+  return (iterations, hashName, outLen) => {
+    const blocks = Math.max(1, Math.ceil(outLen / (HASHES[hashName]?.size || 20)))
+    left -= iterations * blocks
+    if (left < 0) throw new UnsupportedAlgorithmError('iteration budget')
+  }
 }
 
 /**
@@ -83,6 +101,7 @@ export async function readPkcs12(der, password, subtle, onProgress) {
   const given = typeof password === 'string' && password.length > 0
   // Parola girilmediyse boş parolanın iki yaygın kodlaması denenir (NUL sonlandırıcılı / hiç bayt yok)
   const candidates = given ? [password] : ['', null]
+  const spend = iterationBudget()
 
   // 1) Bütünlük MAC'i — hangi parola adayının doğru olduğunu söyler
   let verified
@@ -97,8 +116,12 @@ export async function readPkcs12(der, password, subtle, onProgress) {
       const salt = octets(der, m[1])
       const iterations = m[2] ? int(der, m[2]) : 1
       if (iterations < 1 || iterations > MAX_ITERATIONS) throw new UnsupportedAlgorithmError('mac iterations')
+      // MAC değeri özetin TAM boyunda olmalı (anahtar boyu bundan türetilir); tuz kısa — ikisi de dosyadan gelir
+      if (expected.length !== HASHES[hashName].size) throw new Pkcs12FormatError('mac length')
+      if (salt.length > MAX_MAC_SALT) throw new Pkcs12FormatError('mac salt')
       report('kdf')
       for (const cand of candidates) {
+        spend(iterations, hashName, expected.length)
         const key = pkcs12Kdf(hashName, bmpPassword(cand), salt, 3, iterations, expected.length)
         if (equalBytes(await hmac(hashName, key, authSafe, subtle), expected)) { verified = cand; break }
       }
@@ -139,6 +162,8 @@ export async function readPkcs12(der, password, subtle, onProgress) {
   }
   let usedPassword = verified
   let decryptReported = false
+  let encryptedBlocks = 0
+  let undecryptable = false                                       // parolasız: hiçbir adayın çözemediği blok görüldü
   const contents = readTlv(authSafe)
   for (const ci of children(authSafe, contents)) {
     const c = children(authSafe, ci)
@@ -148,7 +173,10 @@ export async function readPkcs12(der, password, subtle, onProgress) {
       continue
     }
     if (type !== OID.encryptedData) { skippedEncrypted = true; continue }   // zarflı içerik vb. — desteklenmez
+    if (++encryptedBlocks > MAX_ENCRYPTED_BLOCKS) throw new Pkcs12FormatError('too many encrypted contents')
     if (macChecked && verified === undefined) { skippedEncrypted = true; continue }
+    // Parola yokken bir blok hiçbir adayla çözülemediyse sonrakiler denenmez (her biri yeni bir türetme maliyeti)
+    if (undecryptable) { skippedEncrypted = true; continue }
     const ed = children(authSafe, children(authSafe, c[1])[0])
     const eci = children(authSafe, ed[1])
     if (!eci[2] || !isCtx(eci[2], 0)) continue
@@ -158,7 +186,7 @@ export async function readPkcs12(der, password, subtle, onProgress) {
     let plain = null
     for (const cand of tries) {
       try {
-        plain = await decryptContent(authSafe, eci[1], cand, encrypted, subtle)
+        plain = await decryptContent(authSafe, eci[1], cand, encrypted, subtle, spend)
         const probe = readTlv(plain)
         if (!isSeq(probe) || probe.end !== plain.length) throw new BadPasswordError()
         usedPassword = cand
@@ -171,6 +199,7 @@ export async function readPkcs12(der, password, subtle, onProgress) {
     if (!plain) {
       if (given) return { entries: [], keys, needsPassword: false, passwordError: true, passwordUsed: true }
       skippedEncrypted = true
+      undecryptable = true
       continue
     }
     walk(plain, 0)
@@ -204,7 +233,7 @@ function readAttributes(buf, setNode) {
   return out
 }
 
-async function decryptContent(buf, algNode, password, data, subtle) {
+async function decryptContent(buf, algNode, password, data, subtle, spend) {
   const alg = children(buf, algNode)
   const algOid = oid(buf, alg[0])
   if (algOid === OID.pbes2) {
@@ -227,6 +256,7 @@ async function decryptContent(buf, algNode, password, data, subtle) {
     const cipher = PBES2_CIPHERS[oid(buf, enc[0])]
     if (!cipher || !enc[1] || !is(enc[1], UNIVERSAL, T.OCTET_STRING)) throw new UnsupportedAlgorithmError('cipher')
     const iv = octets(buf, enc[1])
+    spend(iterations, prf, cipher.len)
     const key = await pbkdf2(prf, utf8Password(password), salt, iterations, cipher.len, subtle)
     return cipher.kind === 'aes' ? aesCbcDecrypt(key, iv, data, subtle) : desCbcDecrypt(key, iv, data)
   }
@@ -237,6 +267,8 @@ async function decryptContent(buf, algNode, password, data, subtle) {
   const iterations = int(buf, p[1])
   if (iterations < 1 || iterations > MAX_ITERATIONS) throw new UnsupportedAlgorithmError('iterations')
   const pw = bmpPassword(password)
+  spend(iterations, 'SHA-1', legacy.len)
+  spend(iterations, 'SHA-1', 8)
   const key = pkcs12Kdf('SHA-1', pw, salt, 1, iterations, legacy.len)
   const iv = pkcs12Kdf('SHA-1', pw, salt, 2, iterations, 8)
   return legacy.kind === 'des' ? desCbcDecrypt(key, iv, data) : rc2CbcDecrypt(key, legacy.bits, iv, data)

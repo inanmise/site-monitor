@@ -13,13 +13,13 @@
  *
  * <p>Saf: DOM yok, ağ yok. Ana iş parçacığında ya da Web Worker'da aynı biçimde çalışır; hiçbir zaman fırlatmaz.
  */
-import { unzipSync } from 'fflate'
 import {
   armor, asciiText, base64Encode, classifyDer, countPrivateKeyBlocks, isCsr, looseBase64, pemBlocks, pkcs7Certificates, x509Node,
 } from './asn1.js'
 import { UnsupportedAlgorithmError } from './crypto.js'
 import { readJavaKeystore } from './javaKeystore.js'
 import { readPkcs12 } from './pkcs12.js'
+import { zipDirectory, zipEntriesOverlap, zipEntryData } from './zip.js'
 
 export const MAX_BYTES = 5 * 1024 * 1024
 export const MAX_MB = 5
@@ -162,38 +162,46 @@ async function fromPkcs12(bytes, acc, ctx) {
   }
 }
 
-/** ZIP: sınırlar sunucudakiyle aynı; her girdi ayrı ayrı açılır (bozuk bir girdi arşivin geri kalanını düşürmez). */
+/**
+ * ZIP: sınırlar sunucudakiyle aynı; her girdi ayrı ayrı açılır (bozuk bir girdi arşivin geri kalanını düşürmez).
+ * Merkezi dizin ve açma `zip.js` ile SINIRLI (2026-10-09): kayıt sayısı dosya boyuyla, açılan bayt bildirilen boyla
+ * sınırlı; aynı baytları paylaşan (örtüşen) kayıt açılmaz — tek sıkıştırılmış akışı 50 kez açtıran sahte arşiv olmaz.
+ */
 async function fromZip(bytes, acc, ctx) {
   const plan = []
   let count = 0
   let total = 0
   let limited = false
+  let records
   try {
-    unzipSync(bytes, {
-      filter: (f) => {
-        if (limited || /\/$/.test(f.name)) return false
-        const name = sanitizeName(f.name) || ''
-        if (++count > ZIP_MAX_ENTRIES) { limited = true; return false }
-        if (ARCHIVE_EXT.test(name)) { note(acc, 'ZIP_SKIPPED_ENTRY', 'info', { name }); return false }
-        if (total + f.originalSize > ZIP_MAX_TOTAL || (f.size > 0 && f.originalSize / f.size > ZIP_MAX_RATIO)) { limited = true; return false }
-        total += f.originalSize
-        plan.push({ index: count - 1, name })
-        return false                                   // ilk tur yalnız plan — açma ikinci turda girdi başına
-      },
-    })
+    records = zipDirectory(bytes)
   } catch {
     acc.unsupported = acc.unsupported || { reason: 'ZIP_UNREADABLE' }
     return
   }
+  for (const f of records) {
+    if (limited) break                                 // sınır aşıldıktan sonra hiçbir kayıt plana girmez
+    if (/\/$/.test(f.name)) continue
+    const name = sanitizeName(f.name) || ''
+    if (++count > ZIP_MAX_ENTRIES) { limited = true; break }
+    if (ARCHIVE_EXT.test(name)) { note(acc, 'ZIP_SKIPPED_ENTRY', 'info', { name }); continue }
+    if (total + f.originalSize > ZIP_MAX_TOTAL || (f.size > 0 && f.originalSize / f.size > ZIP_MAX_RATIO)) { limited = true; break }
+    total += f.originalSize
+    plan.push({ rec: f, name })
+  }
   // İlerleme: "n / N dosya" — açılacak girdi sayısı bilinir (plan), her girdiden SONRA bir adım
   progress(ctx, { phase: 'zip', done: 0, total: plan.length })
-  for (const [pos, { index, name }] of plan.entries()) {
+  const opened = []
+  for (const [pos, { rec, name }] of plan.entries()) {
     if (pos > 0) progress(ctx, { phase: 'zip', done: pos, total: plan.length })
+    if (opened.some((o) => zipEntriesOverlap(o, rec))) {         // örtüşen / yinelenen yerel başlık — açılmaz
+      note(acc, 'ZIP_SKIPPED_ENTRY', 'info', { name })
+      continue
+    }
+    opened.push(rec)
     let data = null
     try {
-      let i = -1
-      const out = unzipSync(bytes, { filter: (f) => { if (/\/$/.test(f.name)) return false; i++; return i === index } })
-      data = Object.values(out)[0] || null
+      data = zipEntryData(bytes, rec)
     } catch { data = null }
     if (!data || !data.length || (data[0] === 0x50 && data[1] === 0x4b) || (data[0] === 0x1f && data[1] === 0x8b)) {
       note(acc, 'ZIP_SKIPPED_ENTRY', 'info', { name })

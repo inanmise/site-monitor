@@ -42,6 +42,15 @@ export function hasTemplate(note, text) {
   return tpl !== '' && String(note ?? '').includes(tpl)
 }
 
+// Sondaki boşluk / ayraç — sondan geriye tek geçiş (2026-10-09): eski `/[\s.;,]+$/` ve `/\s+$/` ifadeleri ortasında
+// uzun boşluk dizisi olan notta O(N²) geri izliyordu. Sonuç aynı (`\s` ile `trimEnd` aynı karakter kümesidir).
+const TRAILING_SEP = /[\s.;,]/
+function stripTrailingSep(s) {
+  let e = s.length
+  while (e > 0 && TRAILING_SEP.test(s[e - 1])) e--
+  return e === s.length ? s : s.slice(0, e)
+}
+
 /**
  * Çip tıklaması: şablon notta YOKSA eklenir (boşsa tek başına; doluysa noktalamaya göre ". " / " " ile sona), VARSA
  * çıkarılır (yanlış çipe basan geri alabilsin). Çıkarırken birleştirici ayraç da temizlenir, kullanıcının kendi
@@ -55,10 +64,10 @@ export function applyTemplate(note, text) {
   if (at >= 0) {
     let before = cur.slice(0, at)
     let after = cur.slice(at + tpl.length).replace(/^[.;,]?[ \t]*/, '')
-    if (!after.trim()) { before = before.replace(/[\s.;,]+$/, ''); after = '' }
+    if (!after.trim()) { before = stripTrailingSep(before); after = '' }
     return before + after
   }
-  const base = cur.replace(/\s+$/, '')
+  const base = cur.trimEnd()
   if (!base) return tpl
   return base + (/[.!?…;:,]$/.test(base) ? ' ' : '. ') + tpl
 }

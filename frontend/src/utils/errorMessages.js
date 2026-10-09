@@ -171,8 +171,46 @@ const TECHNICAL = [
   /<!doctype|<html[\s>]|<body[\s>]|<head[\s>]|<\/(?:html|body|pre|h1)>/i,       // HTML hata sayfası
   /Request failed with status code|Failed to fetch|NetworkError when attempting|^Load failed$|net::ERR_|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i,
   /Cannot read propert|is not a function|undefined is not|null is not an object/i,
-  /Whitelabel Error Page|No message available|"timestamp"\s*:.*"status"\s*:/i,
+  { test: (s) => /Whitelabel Error Page|No message available/i.test(s) || timestampThenStatus(s) },
 ]
+
+/**
+ * Spring varsayılan hata gövdesi: aynı satırda `"timestamp":` ardından `"status":` — eski
+ * `/"timestamp"\s*:.*"status"\s*:/i` ile AYNI sonuç, ama doğrusal (2026-10-09): eski ifade "status"suz bir satırda
+ * her "timestamp" için satır sonuna kadar geri izliyordu (k tekrar × satır boyu → sekme donar). `.` satır sonlarını
+ * (\n \r \u2028 \u2029) geçmez; anahtarlar birbirinin içinde başlayamaz, bu yüzden global tarama tüm konumları bulur.
+ */
+const TIMESTAMP_KEY = /"timestamp"\s*:/gi
+const STATUS_KEY = /"status"\s*:/gi
+const LINE_BREAK = /[\n\r\u2028\u2029]/g
+function timestampThenStatus(s) {
+  const statusAt = []
+  STATUS_KEY.lastIndex = 0
+  for (let m = STATUS_KEY.exec(s); m; m = STATUS_KEY.exec(s)) statusAt.push(m.index)
+  if (!statusAt.length) return false
+  let si = 0
+  let lineEnd = -1
+  TIMESTAMP_KEY.lastIndex = 0
+  for (let m = TIMESTAMP_KEY.exec(s); m; m = TIMESTAMP_KEY.exec(s)) {
+    const from = m.index + m[0].length                            // `.*` buradan başlar
+    if (from > lineEnd) {                                         // önceki satır sonu geride kaldı → yenisini bul
+      LINE_BREAK.lastIndex = from
+      const br = LINE_BREAK.exec(s)
+      lineEnd = br ? br.index : s.length
+    }
+    while (si < statusAt.length && statusAt[si] < from) si++
+    if (si < statusAt.length && statusAt[si] < lineEnd) return true
+  }
+  return false
+}
+
+// Sondaki boşluk / noktalama — sondan geriye tek geçiş (eski `/[\s.!…:;]+$/u` uzun bir iç dizide O(N²) idi)
+const TRAILING_NOISE = /[\s.!…:;]/u
+function stripTrailingNoise(s) {
+  let e = s.length
+  while (e > 0 && TRAILING_NOISE.test(s[e - 1])) e--
+  return e === s.length ? s : s.slice(0, e)
+}
 
 // Karşılaştırma: kırpılmış, küçük harf, sondaki noktalama atılmış. Tam eşleşme — "Hata: alan boş" gibi açıklamalı metin KALIR.
 const VAGUE = new Set([
@@ -188,7 +226,7 @@ const VAGUE = new Set([
 
 // "İ".toLowerCase() = "i̇" (i + U+0307 birleşik nokta) — nokta atılır ki "İşlem başarısız" kümeyle eşleşsin.
 function normalize(msg) {
-  return String(msg).trim().toLowerCase().replace(/̇/g, '').replace(/[\s.!…:;]+$/u, '')
+  return stripTrailingNoise(String(msg).trim().toLowerCase().replace(/̇/g, ''))
 }
 
 /** Kullanıcıya gösterilmemesi gereken teknik metin mi (yığın izi, sınıf adı, HTML sayfası, tarayıcı ağ iletisi…)? */

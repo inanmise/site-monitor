@@ -411,6 +411,38 @@ export function previewKind(mode, status) {
 }
 
 /**
+ * Markdown görsellerinin adları (`![ad](adres)`) — eski `/!\[([^\]]*)\]\([^)]*\)/g` ile AYNI sonuç, doğrusal
+ * (2026-10-09): eski ifade kapanışı olmayan her `![` için metnin sonuna kadar tarıyordu (çok sayıda `![` → O(k·N),
+ * görsel yüklerken sekme donar). Aday `![` konumları artan sırada; sonraki `]` / `)` aramaları önbellekli ve tek
+ * yönlü olduğu için toplam iş metin boyuyla orantılıdır.
+ */
+export function markdownImageCaptions(txt) {
+  const s = String(txt ?? '')
+  const out = []
+  const nextOf = (ch) => {                                        // q artan sırada sorulur → tek yönlü önbellek
+    let at = -2
+    return (q) => {
+      if (at === -1 || (at >= q)) return at
+      at = s.indexOf(ch, q)
+      return at
+    }
+  }
+  const closeAt = nextOf(']')
+  const parenAt = nextOf(')')
+  let from = 0
+  for (let p = s.indexOf('![', from); p >= 0; p = s.indexOf('![', from)) {
+    const close = closeAt(p + 2)
+    if (close < 0) break                                          // sonrasında `]` yok → başka eşleşme de yok
+    if (s[close + 1] !== '(') { from = p + 1; continue }
+    const paren = parenAt(close + 2)
+    if (paren < 0) break                                          // sonrasında `)` yok → başka eşleşme de yok
+    out.push(s.slice(p + 2, close))
+    from = paren + 1
+  }
+  return out
+}
+
+/**
  * Markdown görsel adı tekilleştirme — aynı olayın dört markdown alanı genelinde aynı ad tekrar ederse
  * "ad (2).uzantı" üretir; `reserved` bu oturumda verilmiş adlar (yükleme sürerken ikinci seçim çakışmasın).
  */
@@ -418,8 +450,7 @@ export function uniqueCaption(desired, form, reserved) {
   const base = (desired || 'image').trim() || 'image'
   const used = new Set(reserved)
   for (const k of ['rca_summary', 'description', 'resolution_steps', 'business_impact']) {
-    const txt = form?.[k] || ''
-    for (const m of txt.matchAll(/!\[([^\]]*)\]\([^)]*\)/g)) used.add(m[1])
+    for (const caption of markdownImageCaptions(form?.[k] || '')) used.add(caption)
   }
   if (!used.has(base)) return base
   const dot = base.lastIndexOf('.')

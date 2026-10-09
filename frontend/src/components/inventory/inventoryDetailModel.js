@@ -43,7 +43,14 @@ export function safeHttpUrl(value) {
 // (e-posta şablonundaki endpointLink kuralı: şemasız host linklenmez).
 const URL_IN_TEXT = /https?:\/\/[^\s<>"'`]+/gi
 // Cümle sonu noktalama bağlantıya dahil edilmez: "bkz. https://wiki.example.com/x." → nokta metin kalır.
-const TRAILING_PUNCT = /[.,;:!?)\]}'"]+$/
+// Sondan geriye tek geçiş (2026-10-09): eski `/[.,;:!?)\]}'"]+$/` ifadesi ortasında uzun noktalama dizisi olan bir
+// adreste O(N²) geri izliyordu (açıklamayı açan her kullanıcının sekmesi donardı). Sonuç aynı: en uzun noktalama soneki.
+const TRAILING_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', ']', '}', "'", '"'])
+const stripTrailingPunct = (s) => {
+  let e = s.length
+  while (e > 0 && TRAILING_PUNCT.has(s[e - 1])) e--
+  return e === s.length ? s : s.slice(0, e)
+}
 
 /**
  * Serbest metni düz metin ve güvenli bağlantı parçalarına böler. Bağlantısız metin TEK bir metin parçası döner
@@ -55,9 +62,7 @@ export function splitLinks(text) {
   const out = []
   let last = 0
   for (const m of src.matchAll(URL_IN_TEXT)) {
-    let value = m[0]
-    const trail = value.match(TRAILING_PUNCT)
-    if (trail) value = value.slice(0, value.length - trail[0].length)
+    const value = stripTrailingPunct(m[0])
     const href = safeHttpUrl(value)
     if (!href) continue
     if (m.index > last) out.push({ type: 'text', value: src.slice(last, m.index) })
