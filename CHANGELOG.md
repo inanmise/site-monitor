@@ -15,6 +15,40 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Security
+- **Kullanıcı adı tahmini kapandı.** Kaba kuvvet denemesinde bilinmeyen kullanıcı adı, mevcut aktif hesabın aldığı
+  yanıtın aynısını alır: durum kodu, gövde ve `wait_seconds`, 30 → 120 → 600 → 1800 sn kademelerinin hepsinde.
+  - Bilinmeyen adın kilit durumu `login_unknown_lockouts` tablosunda tutulur. Her pod aynı kalan süreyi gösterir.
+  - Kademe hesabının tek kaynağı `LockoutLadder`; mevcut hesap ve bilinmeyen ad aynı hesabı kullanır.
+  - Yerel parolada bilinmeyen ad da bir BCrypt doğrulaması kadar sürer; yanıt süresinden hesabın varlığı anlaşılmaz.
+  - Kayıtlar yalnız eşik aşılınca oluşur. 365 gün sonra ya da 50 000 kayıt üstünde en eskiler silinir.
+
+### Fixed
+- **Bağımsız izleme alarmında yalnız sahibi takım işlem yapar.** Aynı sunucunun sertifikasına sahip takım, başka bir
+  takımın bağımsız izleme alarmını (ping, port, DNS, alan adı, HTTP, keyword, sayfa, sayfa hızı, sentetik) artık
+  onaylayamaz, çözemez, yeniden bildiremez, alıcılarını önizleyemez ve yorumlayamaz.
+  - Sertifika, erişilebilirlik ve envanterden türeyen port/DNS alarmlarında envanter takımları (SY + UG) eskisi gibi
+    işlem yapar.
+  - Kural, bildirim yönlendirmesiyle aynı yardımcıdan (`AlertOwnership`) gelir; yetki ve alıcı kararı ayrışamaz.
+  - Alarm listesi ve olay listesi satırları `act_scope` bayrağı taşır. İşlem yapılamayan satırda Onayla / Çöz /
+    Yeniden bildir düğmeleri ve toplu seçim kutusu görünmez; nedeni satırda yazar.
+  - Okuma görünürlüğü değişmedi; 7/24 operatörünün okuma ve yorum hakkı aynı.
+- **Kapanan fırtınaya eklenen alarm sessiz kalmaz.** Fırtına kapanırken eklenen alarm fırtınaya bağlanmaz ve hemen
+  tek tek bildirilir. Kapanıştan hemen sonra bağlanmış olan alarm fırtınadan çözülür ve sonraki taramada ilk bildirimi
+  alır. Eskiden ~24 saat bildirimsiz kalabiliyordu.
+- **Çok pod'lu kurulumda izlemeler aralık başına bir kez yoklanır.**
+  - **Zamanlama:** her izlemenin sonraki zamanı `monitor_check_schedule` tablosunda, tek pod'un talep ettiği şekilde
+    tutulur. 2 pod'da artık her izleme aralık başına iki kez yoklanmıyor; çift geçmiş kaydı ve RDAP 429 riski kalktı.
+  - **Liderlik:** izleme taramaları yenilenen bir tarama liderliğiyle (varsayılan 180 sn) tek pod'da koşar. Alarm
+    doğrulama ve iyileşme sayaçları eksiksiz kalır. Lider kapanınca ya da yanıt vermeyince başka pod devralır.
+  - **Turlar:** saatlik erişilebilirlik turu ve günlük işler kümede bir kez çalışır.
+  - **Yeniden başlatma:** pod yeniden başlayınca izlemeler toplu olarak yeniden yoklanmaz.
+  - **Sistem Sağlığı:** zamanlayıcı bölümünde tarama lideri görünür.
+  - **⚠ Davranış:** yeniden başlatma artık zamanlamayı sıfırlamaz. Saatlik ve günlük turlar, bir önceki turun
+    bitişine değil başlangıcına göre (±1 dk) sayılır.
+  - **Yeni yapılandırma:** `site.monitor.scheduler.sweep-leader-ttl-ms` (180000, en az 60000),
+    `site.monitor.scheduler.round-tick-ms` (60000).
+
 ## [20.116.1] — 2026-10-09
 
 ### Performance

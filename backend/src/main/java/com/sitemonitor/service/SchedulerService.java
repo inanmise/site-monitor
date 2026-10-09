@@ -3413,18 +3413,26 @@ public class SchedulerService {
      * İfade çözülemezse ya da bean yoksa {@code true} (eski davranış).
      *
      * @param cronExpr çözülmüş cron ifadesi ya da {@code ${anahtar:varsayılan}} yer tutucusu
-     * @param zone     {@code @Scheduled(zone=…)} ile aynı dilim; null = sunucunun varsayılanı (Spring ile aynı)
+     * @param zone     {@code @Scheduled(zone=…)} ile aynı dilim; null = annotation'da dilim yok → Spring JVM dilimini
+     *                 kullanır (prod konteyneri UTC, yerel geliştirme İstanbul). JVM dilimi OKUNMAZ (OrgCalendarDayGateTest):
+     *                 iki aday (UTC, İstanbul) hesaplanır ve ERKEN olan tetik alınır — kayıt gerçek tetiği asla aşmaz,
+     *                 meşru bir tur atlanmaz (varsayılan saatlik cron'da iki aday zaten aynı andır).
      */
     private boolean cronRoundDue(String name, String cronExpr, String zone) {
         if (clusterSchedule == null) return true;
         long nowMs = scheduleClock.getAsLong();
         long untilMs;
         try {
-            java.time.ZoneId z = zone == null ? java.time.ZoneId.systemDefault() : java.time.ZoneId.of(zone);
-            var next = org.springframework.scheduling.support.CronExpression.parse(resolvePlaceholder(cronExpr))
-                    .next(Instant.ofEpochMilli(nowMs + CRON_EARLY_TOLERANCE_MS).atZone(z));
-            if (next == null) return true;
-            long nextMs = next.toInstant().toEpochMilli();
+            java.time.ZoneId[] zones = zone == null
+                    ? new java.time.ZoneId[] { java.time.ZoneOffset.UTC, java.time.ZoneId.of(ZONE_IST) }
+                    : new java.time.ZoneId[] { java.time.ZoneId.of(zone) };
+            var expr = org.springframework.scheduling.support.CronExpression.parse(resolvePlaceholder(cronExpr));
+            long nextMs = Long.MAX_VALUE;
+            for (java.time.ZoneId z : zones) {
+                var next = expr.next(Instant.ofEpochMilli(nowMs + CRON_EARLY_TOLERANCE_MS).atZone(z));
+                if (next != null) nextMs = Math.min(nextMs, next.toInstant().toEpochMilli());
+            }
+            if (nextMs == Long.MAX_VALUE) return true;
             untilMs = nextMs - Math.min(CRON_ROUND_SLACK_MS, Math.max(0L, nextMs - nowMs) / 2);
         } catch (Exception e) {
             log.debug("Cron turu hesaplanamadı ({}): {} — kayıtsız koşuluyor", name, e.toString());
