@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.118.1] — 2026-10-09
+
 ### Changed
 - **Genel Bakış ilk yüklemesi hızlandı (kullanıcı bildirimi: "Sertifikalar yükleniyor" uzun sürüyordu).**
   - Kartlar artık sertifika listesi gelir gelmez çiziliyor; zengin kart ekleri, istatistikler, sessiz alarm, pasif ve posta
@@ -26,7 +28,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   - Kart "son alarm" bilgisi artık tüm alarm geçmişini gruplamıyor; aktif envanter alanı başına tek indeks aramasıyla geliyor.
   - Okuma isteği (GET) geçici bir bağlantı sıfırlanmasında (`ERR_CONNECTION_RESET`) bir kez yeniden deneniyor; yazma
     istekleri, zaman aşımı, iptal ve çevrimdışı durumda yeniden deneme yok.
-
 
 ## [20.118.0] — 2026-10-09
 
@@ -2799,7 +2800,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.118.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.118.1...HEAD
+[20.118.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.1
 [20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0
 [20.117.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.2
 [20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
