@@ -158,11 +158,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * damgalanmıştı (SUPPRESSED); bağ kopunca izleme yolu "bugün zaten gönderildi" deyip bir
      * re-alert aralığı (24 sa) susuyordu — "sonraki sweep bireysel alarm" sözü tutulmuyordu.
      * null damga = "ilk bildirim yarıda kaldı" dalı → sonraki sweep INITIAL'ı hemen gönderir.
+     *
+     * <p>YALNIZ verilen fırtınanın üyesinde (2026-10-09): koşulda fırtına kimliği yoktu — kapanış, üye listesini okuduktan
+     * sonra BAŞKA bir fırtınaya geçmiş satırı o fırtınadan koparıp damgasını sıfırlayabiliyordu (yarışta çift İLK bildirim,
+     * diğer fırtınanın üye sayısı yanlış). Çağıran kapattığı fırtınayı verir; bağ değişmişse 0 döner, satıra dokunulmaz.
+     * Kapanışın BİLİNEN üyeleri için; geç katılan adımı {@link #unlinkFromStormIfLinked}'i kullanır.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = null WHERE e.id = :id AND e.resolved = false")
-    int unlinkFromStorm(@Param("id") Long id);
+    @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = null "
+            + "WHERE e.id = :id AND e.resolved = false AND e.stormId = :stormId")
+    int unlinkFromStorm(@Param("id") Long id, @Param("stormId") Long stormId);
 
     /**
      * Fırtına kapanış yarışı (2026-10-09): {@link #unlinkFromStorm} ile aynı ayırma (bağ + ilk bildirim damgası sıfırlanır →
@@ -207,9 +213,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /**
      * O-A3-5 (2026-09-29): ilk bildirimi HİÇ gitmemiş ({@code lastReAlertAt} null) açık olaylar, verilen türlerde — bakım
      * penceresinde açılan değişiklik alarmlarının (DNS_CHANGED / DOMAINMON_CHANGED) pencere bitince bildirilmesi için.
-     * Yalnız okuma; türetilmiş sorgu (Spring Data), dar indeksli (resolved + alert_type).
+     * Yalnız okuma, dar indeksli (resolved + alert_type).
+     *
+     * <p>ONAYLANMIŞ olay HARİÇ (2026-10-09, sonsuz döngü düzeltmesi): {@code processConfirmedOutage} onaylı olayda hiçbir
+     * şey göndermez ve damga da yazmaz ({@code if (acked) return;}). Bu türler elle kapandığından onaylı, hiç bildirilmemiş
+     * olay her pod'da DAKİKADA BİR kilit yazıp boş değerlendirmeye giriyordu — kapatılana dek. Onayı düşen olay (seviye
+     * terfisi {@code acknowledged=false} yazar) yeniden listeye girer: ertelenmiş ilk bildirim davranışı aynen korunur.
+     * {@code acknowledged} NULLABLE — null onaysız sayılır (O6, {@code Boolean.TRUE.equals} ile aynı).
      */
-    List<AlertEvent> findByAlertTypeInAndResolvedFalseAndLastReAlertAtIsNull(Collection<String> alertTypes);
+    @Query("SELECT e FROM AlertEvent e WHERE e.alertType IN :alertTypes AND e.resolved = false "
+            + "AND e.lastReAlertAt IS NULL AND (e.acknowledged IS NULL OR e.acknowledged = false)")
+    List<AlertEvent> findUnacknowledgedOpenAwaitingInitial(@Param("alertTypes") Collection<String> alertTypes);
 
     /**
      * D-7 / D-c11 (2026-09-29): pencerede GERÇEKTEN kurtarılarak kapanan alarm sayısı, tür başına — sessiz kapanışlar

@@ -544,4 +544,121 @@ class NocNotificationServiceTest {
         assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.HTTP, http, "HTTP_DOWN"))
                 .isEqualTo("http://cm.local/?tab=http&monitor=9");
     }
+
+    // ── 2026-10-09: fırtına tik'i gitmemiş açılışı SONSUZA kadar yeniden göndermez ─────────────────────────────
+
+    /** Posta günlüğüne yazılan, verilen tetikli satırlar (sırayla). */
+    private List<NotificationLog> logRows(String trigger) {
+        List<NotificationLog> out = new ArrayList<>();
+        for (var inv : mockingDetails(logs).getInvocations()) {
+            if (!inv.getMethod().getName().equals("save")) continue;
+            NotificationLog n = (NotificationLog) inv.getArgument(0);
+            if (trigger.equals(n.getTrigger())) out.add(n);
+        }
+        return out;
+    }
+
+    /** 30 sn arayla N tik (yaşam döngüsü kadansı) — saat her tikte ilerler. */
+    private void ticks(AlertStorm st, List<AlertEvent> members, java.time.Instant from, int n) {
+        for (int i = 0; i < n; i++) {
+            svc.clock = java.time.Clock.fixed(from.plusSeconds(30L * i), java.time.ZoneOffset.UTC);
+            svc.onStormTick(st, members, "Takım A", "Port Kesintisi");
+        }
+    }
+
+    @Test
+    @DisplayName("2026-10-09 döngü kapısı: global e-posta KAPALIYKEN (SKIPPED_DISABLED) fırtına açılışı tik'te yeniden GÖNDERİLMEZ — 2 saatlik 240 tikte tek deneme, tek günlük satırı")
+    void stormTick_skippedOpening_isFinal() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-01-10T21:05:00Z");
+        svc.clock = java.time.Clock.fixed(t0, java.time.ZoneOffset.UTC);
+        AlertEvent a = alert(101, "PORT_DOWN", "CRITICAL", "h101.example.com");
+        monitor(NocType.PORT, 101, true, true, null);
+        mailStatus = "SKIPPED_DISABLED";
+        svc.onStormDispatched(storm(50), List.of(a), "Takım A", "Port Kesintisi");   // fırtınanın açılışı
+        assertThat(mailsSent()).isEqualTo(1);
+
+        ticks(storm(50), List.of(a), t0.plusSeconds(30), 240);
+
+        assertThat(mailsSent()).as("SKIPPED kesin karar — tik yeniden denemez").isEqualTo(1);
+        assertThat(logRows(NocNotificationService.TRIGGER_STORM)).hasSize(1);
+        assertThat(store.get("storm:50:OPEN").getStatus()).isEqualTo("SKIPPED_DISABLED");
+        assertThat(store.get("storm:50:OPEN").getAttempts()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("2026-10-09 döngü kapısı: FAILED fırtına açılışı tik'te geri çekilmeli (≥5 dk) ve tavanlı (3 deneme) — sonra durur; son deneme 'vazgeçildi' izini taşır")
+    void stormTick_failedOpening_backoffAndCap() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-01-10T21:05:00Z");
+        svc.clock = java.time.Clock.fixed(t0, java.time.ZoneOffset.UTC);
+        AlertEvent a = alert(102, "PORT_DOWN", "CRITICAL", "h102.example.com");
+        monitor(NocType.PORT, 102, true, true, null);
+        // SMTP DATA sonrası istemci zaman aşımı: posta belki gitti ama durum FAILED — eskiden 30 sn'de bir yeniden gidiyordu.
+        mailStatus = "FAILED: Read timed out";
+        svc.onStormDispatched(storm(51), List.of(a), "Takım A", "Port Kesintisi");
+        assertThat(mailsSent()).isEqualTo(1);
+
+        ticks(storm(51), List.of(a), t0.plusSeconds(30), 9);   // ilk 4,5 dk: geri çekilme
+        assertThat(mailsSent()).as("5 dk dolmadan yeniden deneme yok").isEqualTo(1);
+
+        ticks(storm(51), List.of(a), t0.plus(java.time.Duration.ofMinutes(5)), 240);   // sonraki 2 saat
+
+        assertThat(mailsSent()).as("toplam en çok " + NocNotificationService.STORM_OPEN_MAX_ATTEMPTS + " deneme")
+                .isEqualTo(NocNotificationService.STORM_OPEN_MAX_ATTEMPTS);
+        List<NotificationLog> rows = logRows(NocNotificationService.TRIGGER_STORM);
+        assertThat(rows).hasSize(NocNotificationService.STORM_OPEN_MAX_ATTEMPTS);
+        assertThat(rows.get(0).getEmailStatus()).isEqualTo("FAILED: Read timed out");
+        assertThat(rows.get(rows.size() - 1).getEmailStatus())
+                .startsWith("FAILED: Read timed out")
+                .contains("vazgeçildi");
+        NocDelivery open = store.get("storm:51:OPEN");
+        assertThat(open.getAttempts()).isEqualTo(NocNotificationService.STORM_OPEN_MAX_ATTEMPTS);
+        assertThat(open.getStatus()).startsWith("FAILED").contains("vazgeçildi");
+    }
+
+    @Test
+    @DisplayName("2026-10-09: tavanlı tik yeniden denemesi geçici arızayı yine kurtarır — 5 dk sonra SMTP düzelince açılış gider, sonra tekrar yok")
+    void stormTick_failedOpening_recoversWithinCap() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-01-10T21:05:00Z");
+        svc.clock = java.time.Clock.fixed(t0, java.time.ZoneOffset.UTC);
+        AlertEvent a = alert(103, "PORT_DOWN", "CRITICAL", "h103.example.com");
+        monitor(NocType.PORT, 103, true, true, null);
+        mailStatus = "FAILED: Connection refused";
+        svc.onStormDispatched(storm(52), List.of(a), "Takım A", "Port Kesintisi");
+        mailStatus = "SENT";
+        ticks(storm(52), List.of(a), t0.plus(java.time.Duration.ofMinutes(5)), 20);
+
+        assertThat(mailsSent()).isEqualTo(2);
+        assertThat(store.get("storm:52:OPEN").getStatus()).isEqualTo("SENT");
+        assertThat(store.get("alert:103:OPEN").getStatus()).isEqualTo(NocNotificationService.VIA_STORM);
+    }
+
+    @Test
+    @DisplayName("2026-10-09: fırtınanın KENDİ tetiği (günlük toplu tekrar) tik tavanı dolduktan sonra da bir kez dener — alarm hunisindeki gibi (davranış aynı)")
+    void stormDailyRealert_stillRetriesAfterTickCap() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-01-10T21:05:00Z");
+        svc.clock = java.time.Clock.fixed(t0, java.time.ZoneOffset.UTC);
+        AlertEvent a = alert(104, "PORT_DOWN", "CRITICAL", "h104.example.com");
+        monitor(NocType.PORT, 104, true, true, null);
+        mailStatus = "FAILED: Connection refused";
+        svc.onStormDispatched(storm(53), List.of(a), "Takım A", "Port Kesintisi");
+        ticks(storm(53), List.of(a), t0.plus(java.time.Duration.ofMinutes(5)), 60);
+        assertThat(mailsSent()).isEqualTo(NocNotificationService.STORM_OPEN_MAX_ATTEMPTS);
+
+        mailStatus = "SENT";
+        svc.clock = java.time.Clock.fixed(t0.plus(java.time.Duration.ofHours(24)), java.time.ZoneOffset.UTC);
+        svc.onStormDispatched(storm(53), List.of(a), "Takım A", "Port Kesintisi");   // StormService günlük tekrarı
+        assertThat(mailsSent()).isEqualTo(NocNotificationService.STORM_OPEN_MAX_ATTEMPTS + 1);
+        assertThat(store.get("storm:53:OPEN").getStatus()).isEqualTo("SENT");
+    }
+
+    @Test
+    @DisplayName("2026-10-09: vazgeçme notu 255 karakterlik günlük kolonuna sığar; gitmiş / atlanmış / tavan altı durum değişmez")
+    void giveUpNote_fitsLogColumn() {
+        String longErr = "FAILED: " + "x".repeat(400);
+        String noted = NocNotificationService.withGiveUpNote(longErr, NocNotificationService.STORM_OPEN_MAX_ATTEMPTS);
+        assertThat(noted).hasSizeLessThanOrEqualTo(255).startsWith("FAILED: ").contains("vazgeçildi");
+        assertThat(NocNotificationService.withGiveUpNote("SENT", 5)).isEqualTo("SENT");
+        assertThat(NocNotificationService.withGiveUpNote("SKIPPED_DISABLED", 5)).isEqualTo("SKIPPED_DISABLED");
+        assertThat(NocNotificationService.withGiveUpNote("FAILED: x", 1)).isEqualTo("FAILED: x");
+    }
 }

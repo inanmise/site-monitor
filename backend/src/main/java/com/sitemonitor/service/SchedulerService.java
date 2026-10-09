@@ -1066,6 +1066,9 @@ public class SchedulerService {
                 log.warn("7/24 şema yamaları uygulanamadı (sonraki açılışta yeniden denenecek): {}", e.getMessage());
             }
         }
+        // 7/24 teslim denemesi sayacı (2026-10-09, sonsuz döngü düzeltmesi): fırtına tik'i (30 sn) başarısız açılışı her
+        // turda yeniden gönderiyordu; yeniden deneme bu sayaçla tavanlanır. NULLABLE (null = eski satır, bir deneme).
+        patch("ALTER TABLE noc_deliveries ADD COLUMN attempts INTEGER");
 
         // Sorumlu Ekipler — sertifikayı kimin yenileyeceğini gösteren dört serbest metin alanı.
         // Yönlendirmeye GİRMEZ, yalnız uyarı e-postasında ve envanter detayında gösterilir.

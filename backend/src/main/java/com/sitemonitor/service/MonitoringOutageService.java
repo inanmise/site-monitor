@@ -770,7 +770,8 @@ public class MonitoringOutageService {
     }
 
     int notifyChangeAlertsDeferredByMaintenance() {
-        List<AlertEvent> pending = alertEventRepo.findByAlertTypeInAndResolvedFalseAndLastReAlertAtIsNull(MANUAL_CLOSE_TYPES);
+        // Onaylı olay sorguda elenir (2026-10-09): onaylıya gönderim yok, damga da yok → her dakika boş kilit + değerlendirme.
+        List<AlertEvent> pending = alertEventRepo.findUnacknowledgedOpenAwaitingInitial(MANUAL_CLOSE_TYPES);
         if (pending == null || pending.isEmpty()) return 0;
         int n = 0;
         for (AlertEvent e : pending) {

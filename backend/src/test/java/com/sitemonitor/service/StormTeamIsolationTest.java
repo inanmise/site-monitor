@@ -173,9 +173,10 @@ class StormTeamIsolationTest {
             e.setStormId(i.getArgument(1));
             return 1;
         });
-        lenient().when(alertEventRepo.unlinkFromStorm(anyLong())).thenAnswer(i -> {
+        lenient().when(alertEventRepo.unlinkFromStorm(anyLong(), anyLong())).thenAnswer(i -> {
             AlertEvent e = event(i.getArgument(0));
-            if (e == null || Boolean.TRUE.equals(e.getResolved())) return 0;
+            // Yalnız verilen fırtınanın üyesi (2026-10-09) — başka fırtınaya geçmiş satıra dokunulmaz.
+            if (e == null || Boolean.TRUE.equals(e.getResolved()) || !Objects.equals(e.getStormId(), i.getArgument(1))) return 0;
             e.setStormId(null);
             e.setLastReAlertAt(null);
             return 1;
@@ -212,6 +213,14 @@ class StormTeamIsolationTest {
         doAnswer(i -> {
             Object[] a = i.getArguments();
             String sql = String.valueOf(a[0]);
+            // Günlük toplu tekrarın gönderim ÖNCESİ sahiplenmesi (2026-10-09): damga okunan değerdeyse ileri alınır.
+            if (sql.equals(StormService.SQL_REALERT_CLAIM) || sql.equals(StormService.SQL_REALERT_CLAIM_UNSTAMPED)) {
+                AlertStorm s = byId.get((Long) a[2]);
+                if (s == null || Boolean.TRUE.equals(s.getResolved())) return 0;
+                if (!Objects.equals(s.getLastReAlertAt(), a.length > 3 ? a[3] : null)) return 0;
+                s.setLastReAlertAt(String.valueOf(a[1]));
+                return 1;
+            }
             if (!sql.startsWith("INSERT INTO alert_storms")) return 0;
             String scopeKey = String.valueOf(a[1]);
             inserts.add(a);

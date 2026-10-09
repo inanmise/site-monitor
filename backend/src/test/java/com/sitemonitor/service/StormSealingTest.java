@@ -190,7 +190,7 @@ class StormSealingTest {
         verify(alertEventRepo).releaseFromStormAsNotified(1L, 7L, announcedAt);
         verify(alertEventRepo).releaseFromStormAsNotified(2L, 7L, announcedAt);
         verify(alertEventRepo, never()).releaseFromStormAsNotified(eq(414L), anyLong(), anyString());
-        verify(alertEventRepo).unlinkFromStorm(414L);   // lastReAlertAt=null → ilk turda bireysel INITIAL
+        verify(alertEventRepo).unlinkFromStorm(414L, 7L);   // lastReAlertAt=null → ilk turda bireysel INITIAL
     }
 
     @Test
@@ -204,7 +204,7 @@ class StormSealingTest {
         storm.lifecycleSweep();
 
         assertThat(s.getResolved()).isFalse();
-        verify(alertEventRepo, never()).unlinkFromStorm(anyLong());
+        verify(alertEventRepo, never()).unlinkFromStorm(anyLong(), anyLong());
         verify(alertEventRepo, never()).releaseFromStormAsNotified(anyLong(), anyLong(), anyString());
     }
 

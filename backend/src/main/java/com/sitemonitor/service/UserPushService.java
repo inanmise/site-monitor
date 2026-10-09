@@ -1056,8 +1056,10 @@ public class UserPushService {
                 return;
             }
             // Çok pod güvenliği (2026-10-01, öneri 3): yalnız BU turun kiraladığı satırlar gönderilir.
-            List<UserPushDelivery> pending = claim(due);
-            if (pending.isEmpty()) return;   // başka bir pod aldı
+            List<UserPushDelivery> claimed = claim(due);
+            if (claimed.isEmpty()) return;   // başka bir pod aldı (ya da veritabanı yazmayı reddetti — claim)
+            // Gönderilmiş ama sonucu yazılamamış satır YENİDEN GÖNDERİLMEZ (2026-10-09) — yalnız SENT sonucu yazılır.
+            List<UserPushDelivery> pending = withoutSentUnrecorded(claimed);
             Map<List<String>, List<UserPushDelivery>> byBatch = new LinkedHashMap<>();
             // Tek istek TEK mesaj taşır (gövde ilk satırın başlık + mesajı): aynı batch'te farklı metin (iki dil) olursa
             // ayrı isteğe bölünür (2026-10-04, öneri 5). Dil başına ayrı batch kimliği zaten verilir; bu savunma katmanıdır.
@@ -1071,8 +1073,10 @@ public class UserPushService {
             // gecikmesiz görev planlanmış görevden önce koşar → aynı batch retryMax tükenene dek
             // milisaniyeler içinde tekrar gönderiliyor, backoff hiçbir zaman uygulanmıyordu
             // (retry-max yükseltilirse tek arıza penceresinde push API'sine ardışık burst).
+            // Gönderilmeyen (sonucu bekleyen) satırlar da İŞLENDİ sayılır — yoksa aşağıdaki tarama onları "yeni iş" görüp
+            // gecikmesiz tur kuyruklar ve tek iş parçacıklı worker kendini durmadan yeniden çağırırdı.
             Set<Long> handled = new java.util.HashSet<>();
-            for (UserPushDelivery d : pending) if (d.getId() != null) handled.add(d.getId());
+            for (UserPushDelivery d : claimed) if (d.getId() != null) handled.add(d.getId());
             for (var e : byBatch.entrySet()) sendBatch(e.getValue());
             // Gönderim sürerken YENİ satır birikmiş olabilir — yalnız onlar için bir tur daha bak.
             boolean freshWork = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE).stream()
@@ -1092,6 +1096,12 @@ public class UserPushService {
      * döner — iki pod aynı satırı göndermez. Kira damgası tur başına tekildir (saniye + rastgele kesir; metin
      * karşılaştırması {@code findDuePending}'in "şimdi" damgasıyla sıralı kalır). Sahiplenme sorgusu düşerse eski yol
      * (okunan satırlar) — tek pod'da davranış birebir aynıdır.
+     *
+     * <p>İSTİSNA (2026-10-09, sonsuz döngü düzeltmesi): veritabanı YAZMAYI REDDEDİYORSA ({@link #writeRejected} — ör.
+     * PostgreSQL yük devri sonrası salt-okunur replika, SQLSTATE 25006) eski yola düşülmez, bu tur HİÇ gönderilmez. Eski
+     * yol okunan satırları gönderiyor, push API 2xx dönüyor, ardından sonucu yazmak da reddediliyordu: satır PENDING kalıp
+     * her süpürmede (dakikada bir) aynı push kişiye yeniden gidiyordu. Yazma reddinde gönderilmeyen satır kaybolmaz —
+     * veritabanı yazılabilir olunca ilk tur gönderir.
      */
     List<UserPushDelivery> claim(List<UserPushDelivery> due) {
         List<Long> ids = due.stream().map(UserPushDelivery::getId).filter(java.util.Objects::nonNull).toList();
@@ -1103,9 +1113,84 @@ public class UserPushService {
             if (deliveryRepo.claimDue(ids, ISO.format(now), lease) == 0) return List.of();
             return deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, lease);
         } catch (Exception e) {
+            if (writeRejected(e)) {
+                log.warn("user-push: veritabanı yazmayı reddediyor (salt-okunur?) — {} satır bu tur GÖNDERİLMİYOR, "
+                        + "sonuç yazılamayacağı için yeniden gönderim döngüsü olurdu: {}", ids.size(), e.toString());
+                return List.of();
+            }
             log.debug("user-push sahiplenme yapılamadı ({} satır) — okunan satırlarla devam: {}", ids.size(), e.toString());
             return due;
         }
+    }
+
+    /**
+     * Hata zincirinde bir YAZMA REDDİ var mı (2026-10-09): SQLSTATE sınıfı 25 ("geçersiz işlem durumu"; 25006 =
+     * read_only_sql_transaction — PostgreSQL salt-okunur replika / {@code default_transaction_read_only}), H2'nin
+     * salt-okunur veritabanı kodu 90097 ya da sürücünün salt-okunur iletisi. Bağlantı/sorgu hataları DEĞİL — onlarda
+     * {@link #claim} eski yolu korur.
+     */
+    static boolean writeRejected(Throwable e) {
+        int depth = 0;
+        for (Throwable t = e; t != null && depth < 16; t = t.getCause(), depth++) {
+            if (t instanceof java.sql.SQLException sql) {
+                String state = sql.getSQLState();
+                if (state != null && (state.startsWith("25") || "90097".equals(state))) return true;
+            }
+            String m = t.getMessage();
+            if (m != null) {
+                String lm = m.toLowerCase(java.util.Locale.ROOT);
+                if (lm.contains("read-only transaction") || lm.contains("read only transaction")
+                        || lm.contains("database is read only")) return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        return false;
+    }
+
+    /** Gönderildi ama sonucu yazılamadı: SENT sonucunun yeniden yazımı için gereken alanlar + kayıt anı. */
+    record SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs) {}
+
+    /**
+     * Push API'nin KABUL ETTİĞİ ama sonucu (tam kayıt + dar güncelleme) yazılamamış satırlar (2026-10-09). Satır
+     * veritabanında PENDING kaldığından sonraki turlar onu yeniden gönderiyordu (kişiye aynı push dakikada bir). Bu pod
+     * böyle bir satırı YENİDEN GÖNDERMEZ; her turda yalnız SENT sonucunu yazmayı dener, yazınca kaydı siler. Bellekte ve
+     * tavanlı ({@link #SENT_UNRECORDED_MAX}); {@link #SENT_UNRECORDED_TTL_MS} sonra düşer (sonuç hâlâ yazılamıyorsa satır
+     * en çok o aralıkta bir yeniden gönderilir). Başka pod'un kiraladığı satırı bilmez — çok pod'da sahiplenme korur.
+     */
+    final Map<Long, SentUnrecorded> sentUnrecorded = new java.util.concurrent.ConcurrentHashMap<>();
+    static final int SENT_UNRECORDED_MAX = 10_000;
+    static final long SENT_UNRECORDED_TTL_MS = 24L * 60 * 60 * 1000;
+
+    /** Sonucu yazılamamış gönderilmiş satırları ayıklar; onlar için SENT sonucunu yeniden yazmayı dener. */
+    List<UserPushDelivery> withoutSentUnrecorded(List<UserPushDelivery> rows) {
+        if (sentUnrecorded.isEmpty()) return rows;
+        long nowMs = System.currentTimeMillis();
+        sentUnrecorded.values().removeIf(s -> nowMs - s.atMs() > SENT_UNRECORDED_TTL_MS);
+        List<UserPushDelivery> out = new ArrayList<>(rows.size());
+        for (UserPushDelivery d : rows) {
+            SentUnrecorded s = d.getId() == null ? null : sentUnrecorded.get(d.getId());
+            if (s == null) { out.add(d); continue; }
+            try {
+                deliveryRepo.updateOutcome(d.getId(), "SENT", s.attempts(), s.httpStatus(), null, s.sentAt(), null);
+                sentUnrecorded.remove(d.getId());
+                log.info("user-push satır #{} daha önce gönderilmişti — yeniden GÖNDERİLMEDİ, SENT sonucu şimdi yazıldı", d.getId());
+            } catch (Exception ex) {
+                log.warn("user-push satır #{} gönderilmiş ama sonucu hâlâ yazılamıyor — yeniden gönderilmiyor: {}",
+                        d.getId(), ex.toString());
+            }
+        }
+        return out;
+    }
+
+    /** Gönderilmiş satırın sonucu yazılamadı — sonraki turların yeniden göndermemesi için hatırla (tavanlı). */
+    private void rememberSentUnrecorded(UserPushDelivery d) {
+        if (d.getId() == null) return;
+        if (sentUnrecorded.size() >= SENT_UNRECORDED_MAX) {
+            log.warn("user-push: sonucu yazılamamış gönderim kaydı tavanda ({}) — satır #{} hatırlanamadı", SENT_UNRECORDED_MAX, d.getId());
+            return;
+        }
+        sentUnrecorded.put(d.getId(), new SentUnrecorded(d.getAttempts(), d.getHttpStatus(), d.getSentAt(),
+                System.currentTimeMillis()));
     }
 
     private void sendBatch(List<UserPushDelivery> rows) {
@@ -1206,6 +1291,8 @@ public class UserPushService {
                             d.getError(), d.getSentAt(), d.getNextAttemptAt());
                 } catch (Exception ex) {
                     log.warn("user-push satır #{} durumu yazılamadı: {}", d.getId(), ex.toString());
+                    // Gönderildi ama PENDING kaldı (2026-10-09): sonraki turlar yeniden göndermesin — withoutSentUnrecorded.
+                    if ("SENT".equals(d.getStatus())) rememberSentUnrecorded(d);
                 }
             }
         }

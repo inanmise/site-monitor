@@ -78,6 +78,12 @@ public class NocNotificationService {
     static final java.time.Duration STALE_SENDING = java.time.Duration.ofMinutes(10);
     /** Fırtına güncellemesi arası en az aralık (fırtına başına). */
     static final java.time.Duration STORM_UPDATE_MIN_GAP = java.time.Duration.ofMinutes(5);
+    /**
+     * Fırtına TİK'inin (30 sn) gitmemiş açılışı yeniden denemesi (2026-10-09, sonsuz döngü düzeltmesi): son denemeden en az
+     * bu kadar sonra ve toplamda en çok {@link #STORM_OPEN_MAX_ATTEMPTS} deneme. Bkz. {@link #tickRetryHeld}.
+     */
+    static final java.time.Duration STORM_OPEN_RETRY_GAP = java.time.Duration.ofMinutes(5);
+    static final int STORM_OPEN_MAX_ATTEMPTS = 3;
     private static final int MAX_STORM_TEAMS = 10;
     private static final Pattern CTX_MONITOR_ID = Pattern.compile("\"monitor_id\"[ ]*:[ ]*\"?([0-9]+)");
     private static final DateTimeFormatter ISO =
@@ -172,6 +178,55 @@ public class NocNotificationService {
         java.time.Instant at = parseIso(d.getUpdatedAt() != null ? d.getUpdatedAt() : d.getCreatedAt());
         return at == null || at.isAfter(clock.instant().minus(STALE_SENDING));
     }
+
+    /** Satırın deneme sayısı — sayaçtan önce yazılmış (null) kayıtlı satır bir deneme sayılır, kaydedilmemiş satır sıfır. */
+    static int attemptsOf(NocDelivery d) {
+        if (d == null) return 0;
+        if (d.getAttempts() != null) return d.getAttempts();
+        return d.getId() == null ? 0 : 1;
+    }
+
+    /**
+     * Fırtına TİK'i gitmemiş açılışı bu turda YENİDEN DENEMEMELİ mi (2026-10-09, sonsuz döngü düzeltmesi).
+     *
+     * <p>Eskiden tik yalnız {@link #blocking(NocDelivery)}'e bakıyordu: {@code FAILED: …}, {@code SKIPPED_DISABLED},
+     * {@code SKIPPED: pasif kullanıcı} satırı her 30 sn'de yeniden sahiplenilip gönderiliyor ve her seferinde yeni bir posta
+     * günlüğü satırı yazılıyordu — fırtınanın TÜM ömrü boyunca. SMTP'nin DATA sonrası istemci zaman aşımıyla FAILED
+     * döndüğü (ama postayı teslim ettiği) durumda 7/24 ekibine 30 sn'de bir aynı e-posta gidiyordu. Kural:
+     * <ul>
+     *   <li>gitmiş / taze "gönderiliyor" → engeller (mevcut kural);</li>
+     *   <li>{@code SKIPPED*} → KESİN: bilinçli karar (e-posta kapalı, alıcılar pasif); izi ilk denemenin satırında;</li>
+     *   <li>{@code FAILED} (ve bayat "gönderiliyor") → son denemeden {@link #STORM_OPEN_RETRY_GAP} sonra, toplamda en çok
+     *       {@link #STORM_OPEN_MAX_ATTEMPTS} deneme; tavanı dolduran denemenin satırı "vazgeçildi" notunu taşır.</li>
+     * </ul>
+     * Fırtınanın KENDİ tetikleri (açılış, günlük toplu tekrar — {@link #onStormDispatched}) bu kapıdan geçmez: alarm
+     * hunisindeki {@link #onAlertDispatched} gibi, en çok günde bir yeniden dener (davranış birebir).
+     */
+    boolean tickRetryHeld(NocDelivery d) {
+        if (d == null) return false;
+        if (blocking(d)) return true;
+        String s = d.getStatus();
+        if (s != null && s.startsWith("SKIPPED")) return true;
+        if (attemptsOf(d) >= STORM_OPEN_MAX_ATTEMPTS) return true;
+        java.time.Instant at = parseIso(d.getUpdatedAt() != null ? d.getUpdatedAt() : d.getCreatedAt());
+        return at != null && at.isAfter(clock.instant().minus(STORM_OPEN_RETRY_GAP));
+    }
+
+    /**
+     * Tavanı dolduran başarısız denemenin izi (2026-10-09, "sessiz bastırma yok"): fırtına tik'i bu açılışı artık yeniden
+     * denemez — durum (teslim satırı + posta günlüğü) bunu söyler. Gitmiş / bilinçli atlanmış sonuç değişmez.
+     */
+    static String withGiveUpNote(String status, int attempts) {
+        if (status == null || sent(status) || status.startsWith("SKIPPED") || attempts < STORM_OPEN_MAX_ATTEMPTS) return status;
+        String note = " · vazgeçildi: fırtına turu yeniden denemez (" + attempts + ". deneme, tavan "
+                + STORM_OPEN_MAX_ATTEMPTS + ")";
+        // Posta günlüğünün durum kolonu VARCHAR(255): not sığmazsa satır yazılamaz ve iz kaybolurdu — hata metni kırpılır.
+        int room = Math.max(0, MAX_LOG_STATUS - note.length());
+        return (status.length() > room ? status.substring(0, room) : status) + note;
+    }
+
+    /** {@code notification_logs.email_status} uzunluğu (varsayılan VARCHAR(255)). */
+    private static final int MAX_LOG_STATUS = 255;
 
     private static java.time.Instant parseIso(String iso) {
         if (iso == null || iso.isBlank()) return null;
@@ -326,12 +381,21 @@ public class NocNotificationService {
      * kapsanan üye yoksa bir sonraki toplu tekrar (DAILY_REALERT) yeniden bakar.
      */
     public void onStormDispatched(AlertStorm storm, List<AlertEvent> downMembers, String scopeLabel, String rootCause) {
+        dispatchStorm(storm, downMembers, scopeLabel, rootCause, false);
+    }
+
+    /**
+     * Fırtına açılış postası. {@code fromTick}: çağıran 30 sn'lik yaşam döngüsü tik'i — gitmemiş açılışı yalnız
+     * {@link #tickRetryHeld} izin verirse yeniden dener (2026-10-09); fırtınanın kendi tetikleri mevcut kuralla.
+     */
+    private void dispatchStorm(AlertStorm storm, List<AlertEvent> downMembers, String scopeLabel, String rootCause,
+                               boolean fromTick) {
         try {
             if (storm == null || storm.getId() == null || downMembers == null || downMembers.isEmpty()) return;
             if (systemMaintenanceMuted()) return;   // sistem bakımı: fırtına postası susturuldu (iz StormService'te)
             String key = "storm:" + storm.getId() + ":" + NocDelivery.OPEN;
             Optional<NocDelivery> prev = deliveries.findByDedupeKey(key);
-            if (prev.isPresent() && blocking(prev.get())) return;
+            if (prev.isPresent() && (fromTick ? tickRetryHeld(prev.get()) : blocking(prev.get()))) return;
             if (prev.isEmpty() && blocking(legacyOpen(storm))) return;   // O-3 sessiz taşıma: açılış eski fırtınayla gitti
             NocConfigService.Config cfg = config.get();
             List<StormMember> eligible = eligibleStormMembers(downMembers, cfg);
@@ -356,6 +420,13 @@ public class NocNotificationService {
                     lines, new ArrayList<>(blocks.values()), cfg.callInstructions(), coverage, targets.groupNames(), level);
             String subject = NocMailComposer.stormSubject(downMembers.size(), level);
             String status = send(targets.emails(), subject, mail, com.sitemonitor.service.BrandMailAssets.variantForLevel(level));
+            // Tavanı dolduran başarısız deneme (2026-10-09): tik artık yeniden denemez — teslim satırı ve posta günlüğü söyler.
+            String finalStatus = withGiveUpNote(status, attemptsOf(d));
+            if (finalStatus != null && !finalStatus.equals(status)) {
+                log.warn("7/24 fırtına açılışı {} denemede gönderilemedi — fırtına turu yeniden denemeyecek: fırtına={} — {}",
+                        attemptsOf(d), storm.getId(), status);
+                status = finalStatus;
+            }
             finish(d, status, null, null, null, targets, subject);
             writeLog(eligible.get(0).event().getId(), targets, subject,
                     NocMailComposer.storm(downMembers.size(), scopeLabel, rootCause, storm.getCreatedAt(), lines,
@@ -406,7 +477,8 @@ public class NocNotificationService {
             // 7/24'e zaten bildirildi (alert:<id>:OPEN izi); yalnız sonradan katılanlar aşağıdaki toplu güncellemeyle gider.
             if (open == null) open = legacyOpen(storm);
             if (open == null || !sent(open.getStatus())) {
-                if (open == null || !blocking(open)) onStormDispatched(storm, activeMembers, scopeLabel, rootCause);
+                // Gitmemiş açılışın tik yeniden denemesi geri çekilmeli ve tavanlı (2026-10-09) — bkz. tickRetryHeld.
+                if (open == null || !blocking(open)) dispatchStorm(storm, activeMembers, scopeLabel, rootCause, true);
                 return;
             }
             java.time.Instant nowI = clock.instant();
@@ -594,6 +666,7 @@ public class NocNotificationService {
         d.setStormId(stormId);
         d.setPhase(phase);
         d.setStatus("SENDING");
+        d.setAttempts(attemptsOf(d) + 1);   // deneme sayacı (2026-10-09) — fırtına tik'inin yeniden deneme tavanı
         if (d.getCreatedAt() == null) d.setCreatedAt(now);
         d.setUpdatedAt(now);
         try {
