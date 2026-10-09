@@ -1,10 +1,12 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.service.DatabaseHealthService;
 import com.sitemonitor.service.DatabaseInfoService;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,10 +33,34 @@ public class DatabaseInfoController {
     private final DatabaseInfoService service;
     private final PermissionService permissionService;
 
+    /**
+     * Dış izleme ucunun ({@code GET /api/public/health/db}) AYNI sonucu (2026-10-09, Ayarlar → Veritabanı yeniden
+     * tasarımı): sayfa ayrı bir istek atmadan durumu (UP/DEGRADED/DOWN), sorgu/bağlantı süresini, yazılabilirliği,
+     * havuz ve şema denetimini gösterir. Pod başına 5 sn önbellekli, 4 sn sınırlı — ek yük yok. Dilim testlerinde bean
+     * yoksa blok eklenmez (davranış öncekiyle aynı).
+     */
+    @Autowired(required = false)
+    private DatabaseHealthService databaseHealth;
+
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info(HttpSession session) {
         requireSettingsAccess(session, "settings.database", "view");
-        return ok(Map.of("data", service.getInfo()));
+        Map<String, Object> data = new LinkedHashMap<>(service.getInfo());
+        Map<String, Object> health = healthBlock();
+        if (health != null) data.put("health", health);
+        return ok(Map.of("data", data));
+    }
+
+    /** Sağlık özeti — alınamazsa null (sayfanın geri kalanı yine gösterilir; istisna metni istemciye gitmez). */
+    private Map<String, Object> healthBlock() {
+        if (databaseHealth == null) return null;
+        try {
+            DatabaseHealthService.Snapshot s = databaseHealth.current();
+            return s == null || s.body() == null ? null : s.body();
+        } catch (Exception e) {
+            log.debug("Veritabanı sağlık özeti alınamadı: {}", e.toString());
+            return null;
+        }
     }
 
     /** Konfigüre bootstrap admin (site.monitor.username) HER ZAMAN erişir (kilitlenme-güvenli fallback —

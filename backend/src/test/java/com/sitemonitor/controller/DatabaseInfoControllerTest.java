@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.service.DatabaseHealthService;
 import com.sitemonitor.service.DatabaseInfoService;
 import com.sitemonitor.service.HttpMetricsService;
 import com.sitemonitor.service.PermissionService;
@@ -35,6 +36,8 @@ class DatabaseInfoControllerTest {
     // AuthInterceptor (@Component) her dilimde kuruluyor; sessiz reauth'a denetim kaydı
     // yazdığından AuditService'e de ihtiyaç duyar.
     @MockitoBean com.sitemonitor.service.AuditService auditService;
+    // 2026-10-09: sayfa sağlık özetini aynı yanıtta okur (dış izleme ucuyla aynı sonuç).
+    @MockitoBean DatabaseHealthService databaseHealth;
 
     @BeforeEach
     void setUp() {
@@ -74,6 +77,41 @@ class DatabaseInfoControllerTest {
                 .andExpect(jsonPath("$.data.database").value("certmonitor"))
                 .andExpect(jsonPath("$.data.user").value("certuser"))
                 .andExpect(jsonPath("$.data.pool.max_size").value(10));
+    }
+
+    @Test
+    @DisplayName("GET info → data.health dış izleme ucunun gövdesini taşır (durum, denetimler; gizli bilgi yok)")
+    void info_includesHealthBlock() throws Exception {
+        when(service.getInfo()).thenReturn(new LinkedHashMap<>(Map.of("database", "appdb")));
+        Map<String, Object> checks = new LinkedHashMap<>();
+        checks.put("connection", Map.of("status", "UP", "acquire_ms", 2));
+        checks.put("query", Map.of("status", "DEGRADED", "latency_ms", 1500));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "DEGRADED");
+        body.put("component", "database");
+        body.put("checked_at", "2026-10-09T09:00:00Z");
+        body.put("checks", checks);
+        when(databaseHealth.current()).thenReturn(new DatabaseHealthService.Snapshot(body, "DEGRADED", 1L));
+
+        mvc.perform(get("/api/admin/database/info").session(session("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.database").value("appdb"))
+                .andExpect(jsonPath("$.data.health.status").value("DEGRADED"))
+                .andExpect(jsonPath("$.data.health.checks.query.latency_ms").value(1500))
+                .andExpect(jsonPath("$.data.health.checks.connection.acquire_ms").value(2));
+    }
+
+    @Test
+    @DisplayName("GET info → sağlık özeti alınamazsa blok yok, sayfa yine 200 (istisna metni sızmaz)")
+    void info_healthFailure_stillOk() throws Exception {
+        when(service.getInfo()).thenReturn(new LinkedHashMap<>(Map.of("database", "appdb")));
+        when(databaseHealth.current()).thenThrow(new IllegalStateException("gizli-ayrinti host=db.example.com"));
+
+        mvc.perform(get("/api/admin/database/info").session(session("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.database").value("appdb"))
+                .andExpect(jsonPath("$.data.health").doesNotExist())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("gizli-ayrinti"))));
     }
 
     private MockHttpSession session(String username) {
