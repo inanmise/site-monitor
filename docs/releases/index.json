@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T11:36:19Z",
+  "generatedAt": "2026-10-09T13:01:57Z",
   "repo": "inanmise/site-monitor",
-  "count": 723,
+  "count": 724,
   "releases": [
+    {
+      "version": "20.117.1",
+      "tag": "v20.117.1",
+      "releasedAt": "2026-10-09T13:01:49Z",
+      "commit": "2210384b0a3b6376c59fc3df0aec6f37feb39195",
+      "prevVersion": "20.117.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2210384b",
+          "subject": "tembel parça kapısı zip.js'i tanır; dil zaman aşımı bildirimi sahte saatte doğrulanır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "680a623f",
+          "subject": "push outbox neden zinciri yürüyüşü ortak CauseChain tavanını kullanır (kaynak kapısı)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "55ca9a22",
+          "subject": "CHANGELOG + CLAUDE.md — sonsuz döngü / bekleme savunması kuralları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4b37e32f",
+          "subject": "istek yığılması, yeniden yükleme / yönlendirme döngüleri ve sonsuz açılış beklemesi kapatıldı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "54b2ca01",
+          "subject": "sertifika ayıklayıcı ve metin taramalarında sonsuz döngü / ReDoS riskleri kapatıldı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f155efe1",
+          "subject": "bildirim katmanındaki sonsuz yeniden gönderim döngüleri sınırlandı (7/24 fırtına tik'i, fırtına günlük tekrarı, push outbox, ertelenmiş değişiklik tik'i)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "be44657b",
+          "subject": "sonsuz döngü / sonsuz bekleme riskleri giderildi (ReDoS, CRL döngüsü, neden zinciri, PEM, k6 denetimi, CI süre sınırları)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.117.0",
       "tag": "v20.117.0",

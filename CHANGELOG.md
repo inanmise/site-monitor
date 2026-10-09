@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.117.1] — 2026-10-09
+
 ### Fixed
 - **Sonsuz döngü ve sonsuz bekleme riskleri kapatıldı (uçtan uca denetim).** Normal girdide davranış aynı; yalnız bozuk,
   kötü niyetli ya da aşırı büyük girdide işlem artık sınırlı sürede biter.
@@ -2755,7 +2757,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.117.1...HEAD
+[20.117.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.1
 [20.117.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.0
 [20.116.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.3
 [20.116.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.116.2
