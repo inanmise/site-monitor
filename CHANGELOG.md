@@ -15,6 +15,22 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Oturumlar yeniden veritabanında tutuluyor; prod'da yeniden başlatma herkesi düşürmüyor.** Spring Boot 3.3.6 → 4.1.0
+  yükseltmesinden (2026-06-17) beri prod profilindeki `spring.session.store-type=jdbc` hiçbir şey yapmıyordu. Boot 4
+  oturum yapılandırmasını ayrı bir modüle taşımıştı ve o modül projede yoktu. Bu yüzden oturumlar pod belleğindeydi:
+  her dağıtım ve yeniden başlatma herkesi oturumdan düşürüyor, birden çok pod oturumu paylaşamıyordu.
+  - Tek anahtar: `site.monitor.session.store` (ortam değişkeni `SPRING_SESSION_STORE_TYPE`). `jdbc` prod profilinin
+    varsayılanı; `memory` yerel geliştirme ve testlerin varsayılanı (davranış değişmedi).
+  - JDBC'de oturumlar `spring_session` tablosunda; pod yeniden başlayınca ve pod'lar arasında oturum sürer.
+  - Açılış temizliği JDBC'de yalnız depoda karşılığı kalmamış tek-oturum işaretlerini siler. Her pod açılışında
+    çevrimiçi sayımı ve tek-oturum koruması artık sıfırlanmıyor; yönetici sonlandırması korunur.
+  - Sistem Sağlığı → Uygulama kartında "Oturum deposu" satırı: Veritabanı (JDBC) + canlı oturum sayısı ya da Pod
+    belleği uyarısı. Dağıtımdan sonra buradan doğrulanır.
+  - **⚠ Davranış:** prod'da çerez adı `JSESSIONID` → `SESSION` olur. Bu sürümün dağıtımında herkes bir kez yeniden giriş
+    yapar ("beni hatırla" seçenler otomatik döner); sonraki dağıtımlarda oturum korunur.
+  - **Geri dönüş:** `SPRING_SESSION_STORE_TYPE=memory` (Helm `config.sessionStoreType`) ile kod değişmeden eski davranış.
+
 ## [20.116.3] — 2026-10-09
 
 ### Fixed

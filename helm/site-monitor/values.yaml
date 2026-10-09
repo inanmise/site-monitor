@@ -118,9 +118,11 @@ config:
   # (ör. System.out) Türkçe karakterleri bozmadan yazsın (mojibake savunması).
   javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -Djdk.httpclient.allowRestrictedHeaders=host"
 
-  # Spring Session storage. Default "jdbc" persists sessions to spring_session /
-  # spring_session_attributes tables so users stay logged in across pod restarts.
-  # Set to "none" to use the previous in-memory store (loses sessions on restart).
+  # Spring Session storage → site.monitor.session.store (SPRING_SESSION_STORE_TYPE).
+  # "jdbc" (default) persists sessions to spring_session / spring_session_attributes so users
+  # stay logged in across pod restarts and replicas share sessions. "memory" (or "none") is the
+  # in-memory fallback — sessions are lost on restart. 2026-10-09: before this fix Spring Boot 4
+  # ignored the setting (missing spring-boot-session-jdbc), so prod ran in-memory since 2026-06-17.
   sessionStoreType: "jdbc"
 
   # ── Egress proxy (corporate forward proxy) ────────────────────────────────

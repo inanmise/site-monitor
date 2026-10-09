@@ -114,6 +114,14 @@
             <groupId>org.springframework.session</groupId>
             <artifactId>spring-session-jdbc</artifactId>
         </dependency>
+        <!-- Spring Boot 4 oturum otomatik yapılandırması (2026-10-09). Boot 4 bu yapılandırmayı spring-boot-autoconfigure'dan
+             AYRI modüle taşıdı; bu bağımlılık yokken spring.session.* hiçbir şey yapmıyordu ve 3.3.6 → 4.1.0 yükseltmesinden
+             (2026-06-17) beri prod'da oturumlar pod belleğindeydi. Etkinliği site.monitor.session.store anahtarı belirler
+             (config/SessionStoreAutoConfigurationFilter): memory (varsayılan) | jdbc (prod profili). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-session-jdbc</artifactId>
+        </dependency>
         <!-- Caffeine — in-process L1 cache for low-latency reads -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

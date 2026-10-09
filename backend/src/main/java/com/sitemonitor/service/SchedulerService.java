@@ -142,6 +142,9 @@ public class SchedulerService {
     /** Tablo kayıt defteri (SQL Playground "ne zaman oluştu / son değişim", 2026-09-11) — isteğe bağlı. */
     @Autowired(required = false)
     private SchemaTableRegistryService schemaRegistry;
+    /** Oturum deposu (2026-10-09): açılış temizliği + Sistem Sağlığı özeti — bean yoksa bugünkü davranış. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.session.SessionStoreService sessionStore;
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
@@ -416,8 +419,9 @@ public class SchedulerService {
             // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
             // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
             // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
+            // JDBC deposunda (2026-10-09) oturumlar yaşar: yalnız depoda karşılığı kalmamış işaretler temizlenir.
             try {
-                int cleared = userService.clearAllActiveSessions();
+                int cleared = sessionStore != null ? sessionStore.clearStaleActiveSessionMarkers() : userService.clearAllActiveSessions();
                 if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
             } catch (Exception e) {
                 log.warn("Startup active-session cleanup failed: {}", e.getMessage());
@@ -2916,6 +2920,10 @@ public class SchedulerService {
         Map<String, Object> leader = sweepLeaderStatus();
         if (leader != null) schedulerMap.put("sweep_leader", leader);
         h.put("scheduler", schedulerMap);
+        // Oturum deposu (2026-10-09): jdbc | memory + canlı oturum sayısı — dağıtım sonrası doğrulama için
+        if (sessionStore != null) {
+            try { h.put("session_store", sessionStore.status()); } catch (RuntimeException e) { log.debug("Oturum deposu özeti alınamadı: {}", e.toString()); }
+        }
 
         // Sürüm & dağıtım (Sistem kartı): koşan sürüm/commit/ortam/çalışma süresi — detay /api/system/version.
         if (buildInfo != null) {
