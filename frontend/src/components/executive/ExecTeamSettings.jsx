@@ -27,8 +27,6 @@ import {
 
 /** Seçilebilir üye sayısı bu eşiği geçince arama kutusu görünür. */
 const SEARCH_THRESHOLD = 6
-/** "Yöneten müdürler" satırında adı yazılan en çok kişi. */
-const ADMIN_NAMES = 6
 
 /** Alıcı kaynağı satırı: anahtar + kaynağın kimi kapsadığı (ya da neden boş olduğu). */
 function SourceRow({ icon: Icon, checked, onChange, label, children }) {
@@ -40,6 +38,20 @@ function SourceRow({ icon: Icon, checked, onChange, label, children }) {
       </div>
       <div className="min-w-0 pl-6 text-xs text-muted-foreground [overflow-wrap:anywhere]">{children}</div>
     </div>
+  )
+}
+
+/**
+ * Kişi satırı — AD SOYAD (tam, kırpılmadan; uzun adlar alt satıra sarar) + e-posta (yoksa "e-posta adresi yok").
+ * Takım müdürü ve yöneten müdürler aynı biçimde (2026-10-10, kullanıcı bildirimi: ad rozette kesiliyordu).
+ */
+function PersonLine({ person, slot }) {
+  const t = useT()
+  return (
+    <span data-slot={slot} className="block min-w-0 [overflow-wrap:anywhere]">
+      <span className="font-medium text-foreground">{person.name}</span>
+      <span>{` · ${person.email || t('exec.team.noEmail')}`}</span>
+    </span>
   )
 }
 
@@ -256,17 +268,14 @@ export default function ExecTeamSettings({ teamId, month, onDirtyChange, onSaved
         slot="ex-team-recipients">
         <SourceRow icon={ShieldUser} checked={form.includeManager} onChange={set('includeManager')} label={t('exec.team.includeManager')}>
           {data.manager
-            ? <span data-slot="ex-team-manager">{[data.manager.name, data.manager.email || t('exec.team.noEmail')].join(' · ')}</span>
+            ? <PersonLine person={data.manager} slot="ex-team-manager" />
             : <span>{t('exec.team.noManager')}</span>}
         </SourceRow>
         <SourceRow icon={UserCog} checked={form.includeTeamAdmins} onChange={set('includeTeamAdmins')} label={t('exec.team.includeAdmins')}>
           {admins.length > 0 ? (
-            <span className="flex flex-wrap gap-1" data-slot="ex-team-admins">
-              {admins.slice(0, ADMIN_NAMES).map((a) => (
-                <Badge key={String(a.user_id)} variant="secondary" className="max-w-[14rem] truncate font-normal">{a.name}</Badge>
-              ))}
-              {admins.length > ADMIN_NAMES && <Badge variant="outline" className="font-normal">+{admins.length - ADMIN_NAMES}</Badge>}
-            </span>
+            <ul className="m-0 flex list-none flex-col gap-1 p-0" data-slot="ex-team-admins">
+              {admins.map((a) => <li key={String(a.user_id)}><PersonLine person={a} slot="ex-team-admin" /></li>)}
+            </ul>
           ) : <span>{t('exec.team.noAdmins')}</span>}
         </SourceRow>
         <MemberPicker members={data.members || []} selected={form.userIds} name="members" error={fe.errors.members}
@@ -296,7 +305,11 @@ export default function ExecTeamSettings({ teamId, month, onDirtyChange, onSaved
         {(data.recipient_preview || []).length > 0 && (
           <ul className="m-0 flex list-none flex-wrap gap-1 p-0" aria-label={t('exec.recipients.preview')} data-slot="ex-team-preview-list">
             {data.recipient_preview.map((e) => (
-              <li key={e}><Badge variant="secondary" className="max-w-[16rem] truncate font-normal"><Mail aria-hidden="true" />{e}</Badge></li>
+              <li key={e} className="min-w-0 max-w-full">
+                <Badge variant="secondary" className="h-auto max-w-full justify-start text-left font-normal whitespace-normal [overflow-wrap:anywhere]">
+                  <Mail aria-hidden="true" />{e}
+                </Badge>
+              </li>
             ))}
             {(data.recipient_count ?? 0) > data.recipient_preview.length && (
               <li><Badge variant="outline" className="font-normal">+{data.recipient_count - data.recipient_preview.length}</Badge></li>

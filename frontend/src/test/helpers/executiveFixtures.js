@@ -260,7 +260,13 @@ export const TEAM_DETAIL = {
   team_id: 5, team_name: 'Ödeme Ağ Geçidi Takımı', team_active: true, enabled: true, include_manager: true,
   include_team_admins: true, extra_emails: '', updated_at: '2026-09-20T08:00:00', updated_by: 'yonetici',
   manager: { user_id: 'u-100', name: 'Müdür Örnek', title: 'Birim Müdürü', email: 'mudur@example.com', active: true },
-  team_admins: [{ user_id: 'u-101', name: 'Kapsamlı Müdür', title: null, email: 'kapsamli@example.com', active: true }],
+  // Uzun ad bilerek (2026-10-10 kullanıcı bildirimi: yöneten müdürün adı rozette kesiliyordu) + altıdan fazla müdür
+  team_admins: [
+    { user_id: 'u-101', name: 'Kapsamlı Müdür', title: null, email: 'kapsamli@example.com', active: true },
+    { user_id: 'u-102', name: 'Ayşegül Karaosmanoğlu Çelebioğlu Yılmazer-Büyükkaraağaçlıoğlu', title: null,
+      email: 'aysegul.karaosmanoglu.celebioglu@ornek-kurum-bilgi-teknolojileri.example.com', active: true },
+    ...['Bir', 'İki', 'Üç', 'Dört', 'Beş', 'Altı'].map((n, i) => ({ user_id: `u-11${i}`, name: `Müdür ${n}`, title: null, email: null, active: true })),
+  ],
   members: [
     { user_id: 'u-201', name: 'Ayşe Örnek', title: 'Kıdemli Uzman', email: 'ayse@example.com', active: true, selected: true },
     { user_id: 'u-202', name: 'Mehmet Örnek', title: null, email: 'mehmet@example.com', active: true, selected: false },

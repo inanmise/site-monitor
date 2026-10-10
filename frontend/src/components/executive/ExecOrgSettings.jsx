@@ -226,7 +226,9 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
           {(data.recipient_preview || []).length > 0 && (
             <ul className="m-0 flex list-none flex-wrap gap-1 p-0" aria-label={t('exec.recipients.preview')}>
               {data.recipient_preview.map((e) => (
-                <li key={e}><Badge variant="secondary" className="max-w-[16rem] truncate font-normal">{e}</Badge></li>
+                <li key={e} className="min-w-0 max-w-full">
+                  <Badge variant="secondary" className="h-auto max-w-full justify-start text-left font-normal whitespace-normal [overflow-wrap:anywhere]">{e}</Badge>
+                </li>
               ))}
             </ul>
           )}

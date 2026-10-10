@@ -235,9 +235,13 @@ describe('Yönetici Özeti sayfası — alıcılar ve gönderim', () => {
 
     fireEvent.click(rows[1])
     await waitFor(() => expect(ex().team).toHaveBeenCalledWith('5'))
-    const settings = await within(panel).findByText('Müdür Örnek · mudur@example.com')
-    expect(settings).toBeInTheDocument()
-    expect(within(panel).getByText('Kapsamlı Müdür')).toBeInTheDocument()
+    await within(panel).findByText('Müdür Örnek')
+    expect(panel.querySelector('[data-slot="ex-team-manager"]')).toHaveTextContent('Müdür Örnek · mudur@example.com')
+    // yöneten müdürler: HEPSİ, tam adıyla (kırpma / "+N" yok), e-postayla; adresi olmayan "e-posta adresi yok"
+    const admins = [...panel.querySelectorAll('[data-slot="ex-team-admin"]')].map((x) => x.textContent)
+    expect(admins).toHaveLength(8)
+    expect(admins[1]).toBe('Ayşegül Karaosmanoğlu Çelebioğlu Yılmazer-Büyükkaraağaçlıoğlu · aysegul.karaosmanoglu.celebioglu@ornek-kurum-bilgi-teknolojileri.example.com')
+    expect(admins[7]).toBe('Müdür Altı · e-posta adresi yok')
     expect(within(panel).getByRole('checkbox', { name: /Ayşe Örnek/ })).toBeChecked()
     expect(within(panel).getByRole('checkbox', { name: /Epostasız Üye/ })).toBeDisabled()
     expect(within(panel).getByText('1 seçili · 3 üye')).toBeInTheDocument()
