@@ -79,6 +79,29 @@ describe('Veri Kalitesi sayfası (2026-10-10)', () => {
     expect(api.dataQuality.summary).toHaveBeenCalledWith(false)
   })
 
+  it('kurum kartı bant dağılımı + takım karşılaştırması (öncelikli / en yüksek); satır düzeltme listesini açar', async () => {
+    render(<DataQualityPage />)
+    await screen.findByRole('table')
+    const dist = document.querySelector('[data-slot="dq-org"] [data-slot="dq-band-dist"]')
+    expect(dist).not.toBeNull()
+    expect(within(dist).getByText(/2 of 3 teams are Good or Excellent|3 takımdan 2 tanesi İyi ya da Mükemmel/)).toBeInTheDocument()
+    expect([...dist.querySelectorAll('[data-slot="dq-band-seg"]')].map((x) => x.dataset.band)).toEqual(['EXCELLENT', 'GOOD', 'POOR'])
+    const leaders = document.querySelector('[data-slot="dq-leaders"]')
+    const worst = leaders.querySelector('[data-slot="dq-leader-col"][data-kind="worst"]')
+    const best = leaders.querySelector('[data-slot="dq-leader-col"][data-kind="best"]')
+    expect([...worst.querySelectorAll('[data-slot="dq-leader"]')].map((x) => x.dataset.teamId)).toEqual(['1'])
+    expect([...best.querySelectorAll('[data-slot="dq-leader"]')].map((x) => x.dataset.teamId)).toEqual(['2'])
+    fireEvent.click(worst.querySelector('[data-slot="dq-leader"]'))
+    await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalledWith('1', false))
+    const dialog = await screen.findByRole('dialog')
+    // kurumla kıyas: takım 41, kurum 81 → 40 puan altında
+    const bench = await within(dialog).findByText(/40 points below the organisation score|Kurum puanının 40 puan altında/)
+    expect(bench.closest('[data-slot="dq-benchmark"]')).not.toBeNull()
+    // önem süzgeci kural sayısını taşır
+    expect(within(dialog).getByRole('button', { name: /^(All|Tümü) \(3\)$/ })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /^(High|Yüksek) \(2\)$/ })).toBeInTheDocument()
+  })
+
   it('takım sıralaması tabloda: en düşük puan üstte; bant kartı süzer; arama süzer', async () => {
     render(<DataQualityPage />)
     await screen.findByRole('table')
@@ -154,7 +177,7 @@ describe('Veri Kalitesi sayfası (2026-10-10)', () => {
     render(<DataQualityPage />)
     const dialog = await screen.findByRole('dialog')
     await waitFor(() => expect(dialog.querySelectorAll('[data-slot="dq-rule"]').length).toBe(3))
-    fireEvent.click(within(dialog).getByRole('button', { name: /^(Low|Düşük)$/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /^(Low|Düşük) \(\d+\)$/ }))
     await waitFor(() => expect([...dialog.querySelectorAll('[data-slot="dq-rule"]')].map((r) => r.dataset.code)).toEqual(['MON_NO_GROUP']))
     fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'yok-boyle-bir-sey' } })
     await waitFor(() => expect(dialog.querySelectorAll('[data-slot="dq-rule"]').length).toBe(0))

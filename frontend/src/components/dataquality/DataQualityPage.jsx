@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ClipboardCheck, RefreshCw, Search, Info, BadgeCheck, ThumbsUp, TriangleAlert, OctagonAlert, UserX, ListChecks,
-  Users, MoonStar, CircleHelp,
+  Users, MoonStar, CircleHelp, ListOrdered,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -17,14 +17,13 @@ import PageHeader from '../ui/PageHeader.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
-import { LoadingBlock, ProgressBar } from '../ui/Progress.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
 import ScoreRing from './ScoreRing.jsx'
-import DataQualityTrend from './DataQualityTrend.jsx'
-import DataQualityTeamDetail, { BandBadge, DeltaChip, SeverityBadge } from './DataQualityTeamDetail.jsx'
+import DataQualityTeamDetail, { BandBadge, DeltaChip } from './DataQualityTeamDetail.jsx'
+import { OrgHero, OrgIssues, TeamLeaders } from './DataQualityOverview.jsx'
 import {
-  DEFAULT_SORT, NOC_SETTINGS_LINK, SORTS, bandCounts, bandOf, filterTeams, hasScore, healthPercent, normalizeSummary,
-  sortTeams,
+  DEFAULT_SORT, NOC_SETTINGS_LINK, SORTS, bandCounts, bandOf, filterTeams, hasScore, normalizeSummary, sortTeams,
 } from './dataQualityModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -32,6 +31,7 @@ import { Card, CardContent } from '@/components/shadcn/card'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 const BAND_TILES = [
   { key: 'EXCELLENT', Icon: BadgeCheck, cls: 'valid' },
@@ -64,69 +64,6 @@ function HowItWorks({ config }) {
   )
 }
 
-/** Kurum puanı kartı: halka + bant + 7 gün farkı + sayılar + 30 günlük eğilim. */
-function OrgScoreCard({ org }) {
-  const t = useT()
-  return (
-    <Card data-slot="dq-org" className="gap-0 py-0">
-      <CardContent className="flex flex-col gap-4 p-4 sm:p-5">
-        <div className="flex items-center gap-4">
-          <ScoreRing score={org.score} band={org.band} size="lg"
-            label={hasScore(org.score) ? t('dq.orgScoreAria', org.score) : t('dq.band.NO_DATA')} />
-          <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('dq.orgScore')}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <BandBadge band={org.band} />
-              <DeltaChip delta={org.delta_7d} />
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">{t('dq.orgCounts', org.findings ?? 0, org.items ?? 0)}</p>
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 text-xs font-semibold text-muted-foreground">{t('dq.trendTitle')}</div>
-          <DataQualityTrend trend={org.trend} />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/** Kurumda en çok puan kaybettiren kurallar (sağlık çubuğuyla). */
-function OrgIssues({ rules }) {
-  const t = useT()
-  const top = [...(rules || [])].filter((r) => (r.failing ?? 0) > 0)
-    .sort((a, b) => (b.points ?? 0) - (a.points ?? 0)).slice(0, 5)
-  return (
-    <Card data-slot="dq-org-issues" className="gap-0 py-0">
-      <CardContent className="flex flex-col gap-3 p-4 sm:p-5">
-        <div className="flex items-center gap-2">
-          <ListChecks aria-hidden="true" className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">{t('dq.orgIssuesTitle')}</h3>
-        </div>
-        {top.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('dq.orgIssuesNone')}</p>
-        ) : (
-          <ul className="m-0 flex list-none flex-col gap-3 p-0">
-            {top.map((r) => {
-              const pct = healthPercent(r)
-              return (
-                <li key={r.code} data-slot="dq-org-issue" data-code={r.code} className="flex flex-col gap-1.5">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 flex-1 text-sm font-medium">{t(`dq.rule.${r.code}.title`)}</span>
-                    <SeverityBadge severity={r.severity} />
-                    <span className="text-xs tabular-nums text-muted-foreground">{t('dq.failingOf', r.failing, r.eligible)}</span>
-                  </div>
-                  <ProgressBar value={pct} max={100} size="sm" decorative tone={pct >= 90 ? 'ok' : pct >= 50 ? 'warn' : 'crit'} />
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
 /** Takımın en çok puan kaybettiren sorunları (kısa liste). */
 function TopIssues({ issues, compact = false }) {
   const t = useT()
@@ -151,7 +88,7 @@ function TeamCards({ teams, onOpen }) {
     <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))]" data-slot="dq-team-cards">
       {teams.map((tm) => (
         <li key={tm.id}>
-          <Card data-slot="dq-team-card" data-team-id={String(tm.id)} data-band={bandOf(tm.band)} className="h-full gap-0 py-0">
+          <Card data-slot="dq-team-card" data-team-id={String(tm.id)} data-band={bandOf(tm.band)} className="h-full gap-0 py-0 shadow-none">
             <CardContent className="flex h-full flex-col gap-3 p-4">
               <div className="flex items-center gap-3">
                 <ScoreRing score={tm.score} band={tm.band} size="md"
@@ -184,7 +121,7 @@ function TeamTable({ teams, onOpen }) {
   return (
     <div className="overflow-x-auto rounded-xl border">
       <Table data-slot="dq-team-table" className="table-fixed">
-        <TableHeader>
+        <TableHeader className="bg-muted/40">
           <TableRow>
             <TableHead className="w-14 text-right">{t('dq.col.rank')}</TableHead>
             <TableHead className="w-[24%]">{t('dq.col.team')}</TableHead>
@@ -262,6 +199,7 @@ export default function DataQualityPage({ globalAdmin = false }) {
     hint: t(`dq.bandHint.${b.key}`),
   }))
 
+  const hasLeaders = useMemo(() => teams.filter((x) => hasScore(x.score)).length >= 2, [teams])
   const nocNote = data?.notes?.find((n) => n.code === 'NOC_NOT_CONFIGURED')
   const hygieneNote = data?.notes?.some((n) => n.code === 'HYGIENE_UNAVAILABLE')
   const filtersActive = !!(q || band)
@@ -313,9 +251,12 @@ export default function DataQualityPage({ globalAdmin = false }) {
             </AlertBanner>
           )}
 
-          <section aria-label={t('dq.orgSection')} className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-            {data.org ? <OrgScoreCard org={data.org} /> : null}
-            <OrgIssues rules={data.org?.rules} />
+          <section aria-label={t('dq.orgSection')} className="flex min-w-0 flex-col gap-4">
+            {data.org ? <OrgHero org={data.org} teams={teams} /> : null}
+            <div className={cn('grid min-w-0 grid-cols-1 gap-4', hasLeaders && 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]')}>
+              <OrgIssues rules={data.org?.rules} />
+              <TeamLeaders teams={teams} onOpen={(tm) => setTeamKey(String(tm.id))} />
+            </div>
           </section>
 
           {data.unassigned && (data.unassigned.findings ?? 0) > 0 && (
@@ -326,40 +267,52 @@ export default function DataQualityPage({ globalAdmin = false }) {
             </AlertBanner>
           )}
 
-          <section aria-label={t('dq.teamsSection')} className="flex min-w-0 flex-col gap-3">
-            <MonitorStatsBar items={tiles} activeFilter={band || null}
-              onStatClick={(k) => setBand((cur) => (cur === k ? '' : k))} />
+          <section aria-labelledby="dq-teams-title" data-slot="dq-teams" className="min-w-0">
+            <Card className="min-w-0 gap-0 py-0 shadow-xs">
+              <CardContent className="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <h3 id="dq-teams-title" className="m-0 flex items-center gap-2 text-sm font-semibold">
+                      <ListOrdered aria-hidden="true" className="size-4 shrink-0 text-primary" />{t('dq.teamsSection')}
+                    </h3>
+                    <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('dq.teamsDesc')}</p>
+                  </div>
+                </div>
+                <MonitorStatsBar items={tiles} activeFilter={band || null}
+                  onStatClick={(k) => setBand((cur) => (cur === k ? '' : k))} />
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-              <InputGroup className="w-full max-sm:h-10 sm:max-w-xs">
-                <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)} data-page-search
-                  placeholder={t('dq.searchTeams')} aria-label={t('dq.searchTeams')} />
-                <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-              </InputGroup>
-              <NativeSelect value={sort} onChange={(e) => setSort(e.target.value)} aria-label={t('dq.sortLabel')}
-                className="w-full max-sm:h-10 sm:w-auto">
-                {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t(`dq.sort.${s}`)}</NativeSelectOption>)}
-              </NativeSelect>
-              {filtersActive && (
-                <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8"
-                  onClick={() => { setQ(''); setBand('') }}>{t('dq.clearFilters')}</Button>
-              )}
-              <span className="text-xs text-muted-foreground sm:ml-auto" aria-live="polite">
-                {t('dq.shownCount', shown.length, teams.length)}
-              </span>
-            </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <InputGroup className="w-full max-sm:h-10 sm:max-w-xs">
+                    <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)} data-page-search
+                      placeholder={t('dq.searchTeams')} aria-label={t('dq.searchTeams')} />
+                    <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+                  </InputGroup>
+                  <NativeSelect value={sort} onChange={(e) => setSort(e.target.value)} aria-label={t('dq.sortLabel')}
+                    className="w-full max-sm:h-10 sm:w-auto">
+                    {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t(`dq.sort.${s}`)}</NativeSelectOption>)}
+                  </NativeSelect>
+                  {filtersActive && (
+                    <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8"
+                      onClick={() => { setQ(''); setBand('') }}>{t('dq.clearFilters')}</Button>
+                  )}
+                  <span className="text-xs text-muted-foreground sm:ml-auto" aria-live="polite">
+                    {t('dq.shownCount', shown.length, teams.length)}
+                  </span>
+                </div>
 
-            <div ref={setBoxEl} className="min-w-0">
-              {teams.length === 0 ? (
-                <StatusBlock tone="neutral" icon={Users} title={t('dq.noTeamsTitle')} description={t('dq.noTeamsBody')} />
-              ) : shown.length === 0 ? (
-                <StatusBlock tone="neutral" icon={Search} title={t('dq.noMatchTitle')} description={t('dq.noMatchTeams')} />
-              ) : cards ? (
-                <TeamCards teams={shown} onOpen={(tm) => setTeamKey(String(tm.id))} />
-              ) : (
-                <TeamTable teams={shown} onOpen={(tm) => setTeamKey(String(tm.id))} />
-              )}
-            </div>
+                <div ref={setBoxEl} className="min-w-0">
+                  {teams.length === 0 ? (
+                    <StatusBlock tone="neutral" icon={Users} title={t('dq.noTeamsTitle')} description={t('dq.noTeamsBody')} />
+                  ) : shown.length === 0 ? (
+                    <StatusBlock tone="neutral" icon={Search} title={t('dq.noMatchTitle')} description={t('dq.noMatchTeams')} />
+                  ) : cards ? (
+                    <TeamCards teams={shown} onOpen={(tm) => setTeamKey(String(tm.id))} />
+                  ) : (
+                    <TeamTable teams={shown} onOpen={(tm) => setTeamKey(String(tm.id))} />
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </section>
         </>
       )}
