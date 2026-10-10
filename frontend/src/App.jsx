@@ -105,7 +105,7 @@ const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPag
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
-const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage.jsx'))   // Veri Kalitesi (2026-10-10)
+const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage'))   // Veri Kalitesi (2026-10-10)
 // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT (sunucu ayrıca executive_summary.view ister)
 const ExecutiveSummaryPage = lazy(() => import('./components/executive/ExecutiveSummaryPage'))
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
