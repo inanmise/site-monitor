@@ -181,22 +181,24 @@ describe('CertificatesTable', () => {
   })
 })
 describe('CertificatesTable — sütun seçici + kayıtlı görünüm (2026-09-12, #10)', () => {
-  it('varsayılan 7 sütun; "Takım" açılınca başlık gelir ve tercih localStorage\'a yazılır; yeniden render tercihten okur', async () => {
+  it('varsayılan 8 sütun; "Takım" açılınca başlık gelir ve tercih localStorage\'a yazılır; yeniden render tercihten okur', async () => {
     try { localStorage.removeItem('certtable-view') } catch { /* yok */ }
     api.getCertificatesPaginated.mockResolvedValue(paged([cert({ domain: 'col.example.com', team_name: 'Takım A', team_id: 1, public_key_algorithm: 'RSA', public_key_size: 2048 })]))
     const { unmount } = render(<CertificatesTable onRowClick={() => {}} />)
     await waitFor(() => expect(document.querySelector('tr[data-domain="col.example.com"]')).toBeTruthy())
-    // Veri sütunları (seçim + işlem sütunları hariç): varsayılan 7 — Konu kapalı, Güven açık (2026-09-13)
+    // Veri sütunları (seçim + işlem sütunları hariç): varsayılan 8 — Konu kapalı, Güven açık (2026-09-13),
+    // TLS notu açık (2026-10-10)
     const dataCols = () => [...document.querySelectorAll('thead th[data-col]')].filter((th) => !['select', 'actions'].includes(th.dataset.col)).length
-    expect(dataCols()).toBe(7)
+    expect(dataCols()).toBe(8)
+    expect(document.querySelector('thead th[data-col="grade"]')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Sütunlar|Columns/ }))
     fireEvent.click(screen.getByLabelText(/^(Takım|Team)$/))
-    expect(dataCols()).toBe(8)
+    expect(dataCols()).toBe(9)
     expect(JSON.parse(localStorage.getItem('certtable-view')).cols).toContain('team')
     unmount()
     render(<CertificatesTable onRowClick={() => {}} />)
     await waitFor(() => expect(document.querySelector('tr[data-domain="col.example.com"]')).toBeTruthy())
-    expect(dataCols()).toBe(8)
+    expect(dataCols()).toBe(9)
     expect(document.body.textContent).toContain('Takım A')
     try { localStorage.removeItem('certtable-view') } catch { /* yok */ }
   })

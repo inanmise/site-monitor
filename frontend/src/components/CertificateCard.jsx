@@ -14,6 +14,7 @@ import {
   TONE_LABEL, certTone, isPausedCert, nonStandardPort, planChipOf, reasonsOf, renewedDaysAgo, validityOf,
 } from './certcard/certCardModel.js'
 import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
+import TlsGradeBadge from './tlsgrade/TlsGradeBadge.jsx'
 import { isManualCert } from './manualcert/manualCertModel.js'
 import { Card } from '@/components/shadcn/card'
 import { Badge } from '@/components/shadcn/badge'
@@ -110,6 +111,10 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           {isManualCert(cert) && (
             <ManualCertBadge version={cert.manual_version ?? null} uploadedAt={cert.manual_uploaded_at ?? null} rowLabel={domain} triggerClassName={CARD_LAYER} />
           )}
+          {/* TLS yapılandırma notu (2026-10-10): dokununca "Neden B?" — örtünün üstünde; not yoksa (elle yüklenen) çizilmez.
+              Kompakt = yalnız harf; not düştüyse aşağı ok + açıklamada "A → B". */}
+          <TlsGradeBadge cert={cert} compact={!extra} rowLabel={domain} triggerClassName={CARD_LAYER}
+            onOpenDetail={onOpenHealth ? () => onOpenHealth(domain) : undefined} />
           {/* Sağ grup: 7/24 göstergesi (izleme kartlarıyla AYNI yer — sağ grubun başı; Zengin = hap, Kompakt = ikon + nokta)
               + katman. Gösterge örtünün üstünde (CARD_LAYER, tıklaması pencereyi açmaz); satır `noc_notify` taşımıyorsa
               (eski sunucu yanıtı) çizilmez. Düzenleme = kartın kendi Düzenle işleyicisi, form 7/24 alanına kaydırılmış. */}

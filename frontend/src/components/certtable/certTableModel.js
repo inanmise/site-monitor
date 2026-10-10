@@ -9,6 +9,7 @@ import { CircleAlert, CircleCheck, CircleX, OctagonAlert, OctagonX, TriangleAler
 import { csvRows } from '../../utils/csv.js'
 import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 import { roundedAgoParts } from '../../utils/relativeTime.js'
+import { GRADE_FILTERS } from '../tlsgrade/tlsGradeModel.js'
 
 /** Sütun kataloğu — `sort`: sunucu sıralama anahtarı (yoksa başlık tıklanmaz). */
 export const TABLE_COLUMNS = [
@@ -21,6 +22,8 @@ export const TABLE_COLUMNS = [
   { key: 'days',         labelKey: 'tbl.colDays',         def: true,    sort: 'days_remaining' },
   { key: 'status',       labelKey: 'tbl.colStatus',       fixed: true,  sort: 'priority' },
   { key: 'trust',        labelKey: 'tbl.colTrust',        def: true },
+  // TLS yapılandırma notu (2026-10-10): rozet + "Neden B?" açıklaması; sıralama artan = sorunlu önce
+  { key: 'grade',        labelKey: 'tbl.colTlsGrade',     def: true,    sort: 'tls_grade' },
   { key: 'san',          labelKey: 'tbl.colSan',          def: false },
   { key: 'shared',       labelKey: 'tbl.colShared',       def: false,   sort: 'shared' },
   { key: 'key',          labelKey: 'tbl.colKey',          def: false,   sort: 'key_size' },
@@ -42,7 +45,7 @@ const CSV_KEY = {
   domain: 'domain', issuer: 'issuer', subject: 'subject', team: 'team', expiry: 'expiry', days: 'days',
   status: 'status', trust: 'trust', san: 'san', shared: 'shared', key: 'key', signature: 'signature',
   port: 'port', tier: 'tier', via: 'via', tls: 'tls', intermediate: 'intermediate', notBefore: 'not_before',
-  fingerprint: 'fingerprint', serial: 'serial', checked: 'checked',
+  fingerprint: 'fingerprint', serial: 'serial', checked: 'checked', grade: 'tls_grade',
 }
 export function csvColumnsFor(cols) { return cols.map((k) => CSV_KEY[k]).filter(Boolean) }
 
@@ -113,7 +116,7 @@ export function savePreset(list, preset) {
 }
 
 // ── Süzgeç durumu ──────────────────────────────────────────────────────────
-export const EMPTY_FILTERS = { domain: '', issuer: '', status: '', team: '', window: '', insecure: false, tier: '', port: '', fp: '', trust: '' }
+export const EMPTY_FILTERS = { domain: '', issuer: '', status: '', team: '', window: '', insecure: false, tier: '', port: '', fp: '', trust: '', grade: '' }
 // `icon`: lucide bileşeni (2026-10-09; eskiden emoji karakterleriydi — proje kuralı: ikonlar yalnız lucide). Renk çizen
 // yerin ton sınıfından (currentColor) gelir; şekiller ayrı: dolmuş = sekizgen X, kritik = sekizgen !, yüksek = daire !,
 // uyarı = üçgen !, geçerli = daire onay, hata = daire X (renk tek sinyal değil).
@@ -169,6 +172,7 @@ export function toQuery(f, { page, perPage, sortBy, scope }) {
   if (f.port) q.filter_port = f.port
   if (f.fp) q.filter_fp = f.fp
   if (f.trust) q.filter_trust = f.trust
+  if (f.grade) q.filter_grade = f.grade
   return q
 }
 
@@ -177,7 +181,7 @@ export function toQuery(f, { page, perPage, sortBy, scope }) {
  * 2026-09-26'dan beri standart `useServerPagination` tarafından okunur/yazılır (ps ön ayar listesine karşı doğrulanır,
  * sayfa > 1 ise ps de yazılır); burada yalnız süzgeç + sıralama kalır — iki yazıcı aynı anahtarda yarışmasın.
  */
-export const URL_KEYS = { domain: 'c_q', issuer: 'c_iss', status: 'c_st', team: 'c_team', window: 'c_win', insecure: 'c_sec', tier: 'c_tier', port: 'c_port', fp: 'c_fp', trust: 'c_tr' }
+export const URL_KEYS = { domain: 'c_q', issuer: 'c_iss', status: 'c_st', team: 'c_team', window: 'c_win', insecure: 'c_sec', tier: 'c_tier', port: 'c_port', fp: 'c_fp', trust: 'c_tr', grade: 'c_gr' }
 export function toUrlMapping(f, { sortBy, scope }) {
   const m = {}
   for (const [k, p] of Object.entries(URL_KEYS)) {
@@ -202,6 +206,7 @@ export function filtersFromUrl(readParam) {
   const port = s('port'); if (port && (port === 'nonstd' || /^\d{1,5}$/.test(port))) f.port = port
   f.fp = s('fp') || ''
   const tr = s('trust'); if (TRUST_FILTERS.includes(tr)) f.trust = tr
+  const gr = s('grade'); if (GRADE_FILTERS.includes(gr)) f.grade = gr
   return f
 }
 
@@ -321,6 +326,7 @@ export function buildSelectionCsv(rows, cols, shared, t) {
       case 'fingerprint': return c.fingerprint || ''
       case 'serial': return c.serial_number || ''
       case 'checked': return c.checked_at || ''
+      case 'grade': return c.tls_grade || ''
       default: return ''
     }
   }

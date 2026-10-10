@@ -130,8 +130,8 @@ public class TlsProfileJobService {
     private void tickAndLog() {
         TickResult r = runTick(Instant.now());
         if (r.probed() > 0 || r.grades().changed()) {
-            log.info("TLS profil turu: {} vadesi gelen, {} yoklandı ({} başarısız); not: {} düşüş, {} yükseliş",
-                    r.due(), r.probed(), r.failed(), r.grades().drops(), r.grades().rises());
+            log.info("TLS profil turu: {} vadesi gelen, {} yoklandı ({} başarısız); not: {} düşüş, {} yükseliş, {} bilgi değişimi",
+                    r.due(), r.probed(), r.failed(), r.grades().drops(), r.grades().rises(), r.grades().refined());
         }
     }
 

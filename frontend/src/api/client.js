@@ -715,6 +715,13 @@ export const api = {
   // "Planlı yenilemeydi" onayı: sabitlenen parmak izi için kalıcı onay yazar, satır yeşile döner.
   confirmCertificateRenewal: (domain) =>
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
+  // TLS yapılandırma notu (2026-10-10): not + nedenler + TLS profili (kalıcı veriden, ağ beklemez).
+  getTlsGrade: (domain) => request(`/certificates/${encodeURIComponent(domain)}/tls-grade`),
+  // TLS profilini ŞİMDİ yeniden tarar (protokol sürümleri, OCSP zımbalama) — uç başına ≤ 30 sn; sunucu süre sınırlı.
+  rescanTlsProfile: (domain) =>
+    request(`/certificates/${encodeURIComponent(domain)}/tls-grade/rescan`, { method: 'POST', timeoutMs: 0 }),
+  // Son not düşüşleri + profil kapsaması (kullanıcının izleme kapsamında).
+  getTlsGradeDrops: (days = 30) => request(`/tls-grade/drops?days=${encodeURIComponent(days)}`),
 
   // Manuel (dosyadan yüklenen) sertifikalar (2026-10-06): ağ üzerinden erişilemeyen sertifika dosyadan yüklenir, süresi
   // ağdakilerle AYNI kurallarla izlenir. Yükleme uçları çok parçalı (FormData: yalnız `extracted` — tarayıcıda ayıklanan

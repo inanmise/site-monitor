@@ -137,8 +137,21 @@ public class TlsGradeService {
     /** Karşılaştırılacak satır: envanter kaydı + güncel not + kodlar. */
     public record Evaluated(CertificateInventory inv, String grade, List<String> codes) { }
 
-    public record ReconcileResult(int created, int updated, int drops, int rises) {
-        public boolean changed() { return drops + rises > 0; }
+    public record ReconcileResult(int created, int updated, int drops, int rises, int refined) {
+        public ReconcileResult(int created, int updated, int drops, int rises) { this(created, updated, drops, rises, 0); }
+
+        public boolean changed() { return drops + rises + refined > 0; }
+    }
+
+    /** Notu TLS profilinin EKSİKLİĞİ sınırlayan kodlar — bunlardan biri varken not değişimi bir "bilgi değişimi"dir. */
+    static final java.util.Set<String> PROFILE_GAP_CODES = java.util.Set.of(
+            TlsGradeRules.Reason.PROFILE_PENDING.name(), TlsGradeRules.Reason.PROFILE_FAILED.name(),
+            TlsGradeRules.Reason.PROFILE_PARTIAL.name());
+
+    static boolean hasProfileGap(java.util.Collection<String> codes) {
+        if (codes == null) return false;
+        for (String c : codes) if (PROFILE_GAP_CODES.contains(c)) return true;
+        return false;
     }
 
     /**
@@ -159,7 +172,7 @@ public class TlsGradeService {
         String now = ISO.format(Instant.now());
         List<TlsGradeStatus> toSave = new ArrayList<>();
         List<TlsGradeChange> events = new ArrayList<>();
-        int created = 0, updated = 0, drops = 0, rises = 0;
+        int created = 0, updated = 0, drops = 0, rises = 0, refined = 0;
         for (Evaluated e : byId.values()) {
             String codes = joinCodes(e.codes());
             TlsGradeStatus st = existing.get(e.inv().getId());
@@ -187,7 +200,11 @@ public class TlsGradeService {
                 continue;
             }
             String old = st.getGrade();
-            boolean drop = TlsGradeRules.isGrade(old) && TlsGradeRules.rank(e.grade()) < TlsGradeRules.rank(old);
+            boolean lower = TlsGradeRules.isGrade(old) && TlsGradeRules.rank(e.grade()) < TlsGradeRules.rank(old);
+            // Bilgi değişimi: önceki ya da yeni notu profil EKSİKLİĞİ sınırlıyordu (ilk tarama, başarısız / eksik tarama).
+            // "TLS 1.0 açık" ilk kez ÖĞRENİLİNCE A → B bir yapılandırma bozulması değildir — düşüş damgası ve etkinlik yok.
+            boolean refine = hasProfileGap(splitCodes(st.getReasons())) || hasProfileGap(e.codes());
+            boolean drop = lower && !refine;
             TlsGradeChange ch = new TlsGradeChange();
             ch.setInventoryId(e.inv().getId());
             ch.setDomain(e.inv().getDomain());
@@ -195,7 +212,7 @@ public class TlsGradeService {
             ch.setUgTeamId(e.inv().getUgTeamId());
             ch.setFromGrade(old);
             ch.setToGrade(e.grade());
-            ch.setDirection(drop ? TlsGradeChange.DROP : TlsGradeChange.RISE);
+            ch.setDirection(refine ? TlsGradeChange.REFINE : drop ? TlsGradeChange.DROP : TlsGradeChange.RISE);
             ch.setReasons(codes);
             ch.setChangedAt(now);
             events.add(ch);
@@ -206,7 +223,9 @@ public class TlsGradeService {
             st.setDomain(e.inv().getDomain());
             st.setEvaluatedAt(now);
             st.setChangedAt(now);
-            if (drop) {
+            if (refine) {
+                refined++;   // düşüş damgasına dokunulmaz (gösterge, mevcut nota göre kendiliğinden görünür / kaybolur)
+            } else if (drop) {
                 st.setDroppedFrom(old);
                 st.setDroppedAt(now);
                 drops++;
@@ -227,10 +246,11 @@ public class TlsGradeService {
                     ch.getTeamId(), "TLS_GRADE_DROPPED", "system",
                     "TLS notu " + ch.getFromGrade() + " → " + ch.getToGrade() + " · " + ch.getReasons());
         }
-        if (drops + rises > 0) {
-            log.info("TLS notu karşılaştırması: {} düşüş, {} yükseliş, {} yeni, {} neden güncellemesi", drops, rises, created, updated);
+        if (drops + rises + refined > 0) {
+            log.info("TLS notu karşılaştırması: {} düşüş, {} yükseliş, {} bilgi değişimi, {} yeni, {} neden güncellemesi",
+                    drops, rises, refined, created, updated);
         }
-        return new ReconcileResult(created, updated, drops, rises);
+        return new ReconcileResult(created, updated, drops, rises, refined);
     }
 
     static String joinCodes(List<String> codes) {

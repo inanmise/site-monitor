@@ -10,6 +10,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import { REVOCATION_REASONS, attemptText } from '../utils/revocationInfo.js'
 import HstsExplainer from './certhealth/HstsExplainer.jsx'
+import TlsGradeSection from './tlsgrade/TlsGradeSection.jsx'
 
 /**
  * Sertifika Sağlık Kontrol Listesi.
@@ -83,6 +84,8 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   // "Yalnız sorunlular": liste 12+ satır ve çoğu temiz; "11/12 temiz" özeti EKSİK olanı
   // söylemiyordu, kullanıcı hangi satırın sorunlu olduğunu bulmak için hepsini geziyordu.
   const [onlyIssues, setOnlyIssues] = useState(false)
+  // TLS notu bölümü (2026-10-10): "Şimdi kontrol et" HSTS'i / anlaşılan takımı değiştirebilir → bölüm yeniden okunur
+  const [gradeReload, setGradeReload] = useState(0)
   // Uçuşan istek sayacı: yanıt döndüğünde "hâlâ bu domain mi" sorusunun cevabı.
   const seqRef = useRef(0)
 
@@ -121,7 +124,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
       const res = await api.refreshCertificateHealth(domain)
       // Kullanıcı bu arada başka bir domaine geçtiyse yanıt BAŞKA bir kaydın canlı kontrolüdür.
       if (seq !== seqRef.current) return
-      if (res?.success) { setData(res.data); setError(null) }
+      if (res?.success) { setData(res.data); setError(null); setGradeReload((n) => n + 1) }
       else setError(res?.error || t('hlth.refreshError'))
     } catch (e) {
       if (seq !== seqRef.current) return
@@ -167,6 +170,9 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   return (
     <div className="hlth-panel">
       {error && <AlertBanner tone="warning" title={t('hlth.refreshError')}>{error}</AlertBanner>}
+
+      {/* TLS yapılandırma notu (2026-10-10): aşağıdaki sağlık kurallarının üstüne kurulu tek not + nedenler + TLS profili */}
+      <TlsGradeSection domain={domain} reloadKey={gradeReload} />
 
       {/* Üst künye — geçerlilik penceresi ve kontrol zamanları tek satırda.
           İLK çip HANGİ HOST: liste, kaydın adını hiçbir yerde yazmıyordu; kalıcı mount'lu modalda

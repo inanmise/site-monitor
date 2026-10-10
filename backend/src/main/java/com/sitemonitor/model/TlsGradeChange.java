@@ -26,6 +26,12 @@ public class TlsGradeChange {
 
     public static final String DROP = "DROP";
     public static final String RISE = "RISE";
+    /**
+     * Bilgi değişimi: önceki ya da yeni not TLS profilinin eksikliğiyle sınırlıydı (PROFILE_PENDING / FAILED / PARTIAL).
+     * İlk günlük tarama "TLS 1.0 açık" bulunca A → B olur — yapılandırma DEĞİŞMEDİ, yalnız daha çok şey bilinir; bu bir
+     * düşüş sayılmaz (gösterge / etkinlik yok), geçmişte ayrı görünür.
+     */
+    public static final String REFINE = "REFINE";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -48,7 +54,7 @@ public class TlsGradeChange {
     @Column(length = 2)
     private String toGrade;
 
-    /** {@link #DROP} | {@link #RISE}. */
+    /** {@link #DROP} | {@link #RISE} | {@link #REFINE}. */
     @Column(length = 10)
     private String direction;
 

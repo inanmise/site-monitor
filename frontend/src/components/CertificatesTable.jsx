@@ -26,6 +26,9 @@ import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_TEXT
   readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
 import TrustBadge from './certtable/TrustBadge.jsx'   // Güven rozeti + neden açıklaması (2026-10-09)
+import TlsGradeBadge from './tlsgrade/TlsGradeBadge.jsx'   // TLS notu rozeti + "Neden B?" (2026-10-10)
+import TlsGradeOverview from './tlsgrade/TlsGradeOverview.jsx'
+import { gradeOfRow } from './tlsgrade/tlsGradeModel.js'
 import { Button } from '@/components/shadcn/button'
 import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
 import { isManualCert } from './manualcert/manualCertModel.js'
@@ -303,6 +306,10 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
         onApplyPreset={applyPreset} onDeletePreset={deletePreset} exportUrl={exportUrl} total={p.total} teamNames={teamNamesRef.current}
         scope={scope} onScope={changeScope} visibleToAll={visibleToAll} />
 
+      {/* TLS notu dağılımı (2026-10-10): facet sayıları (süzgeçlerle tutarlı), çipe dokununca o nota süzer; son düşüşler */}
+      <TlsGradeOverview facets={facets} value={filters.grade} onSelect={(g) => updateFilters({ ...filters, grade: g })}
+        onOpenCert={(d) => onRowClick(d, 'health')} />
+
       <CertBulkBar selected={selected} rows={selectableCerts} cols={cols} shared={shared} canManage={canManage} globalAdmin={globalAdmin}
         onClear={() => setSelected(new Set())} onToggleAll={toggleAllPage} onDone={() => { onRefresh?.(); loadRef.current({ silent: true }) }} download={download} />
 
@@ -451,6 +458,10 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
       ))
       // Rozet + neden açıklaması (2026-10-09): dokununca üç denetimin durumu ve sonuçlanmayanın nedeni açılır
       case 'trust': return td(<TrustBadge cert={cert} onOpenHealth={() => open('health')} />)
+      // TLS yapılandırma notu (2026-10-10): dokununca "Neden B?" — not yoksa (elle yüklenen / veri yok) tire
+      case 'grade': return td(gradeOfRow(cert)
+        ? <TlsGradeBadge cert={cert} compact rowLabel={cert.domain} onOpenDetail={() => open('health')} />
+        : <span className="text-muted-foreground" title={t('tlsg.filterNone')}>—</span>)
       case 'san': return td(sanList.length, undefined, { title: sanList.join('\n') })
       case 'shared': return td(shared > 1 ? sharedBtn(false) : '—')
       case 'key': return td(cert.public_key_algorithm ? `${cert.public_key_algorithm}${cert.public_key_size ? ' ' + cert.public_key_size : ''}` : '—', mono)

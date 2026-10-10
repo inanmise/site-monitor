@@ -144,6 +144,24 @@ class TlsGradeServiceTest {
     }
 
     @Test
+    @DisplayName("Bilgi değişimi: ilk profil taraması 'TLS 1.0 açık' bulunca A → B DÜŞÜŞ sayılmaz (REFINE, gösterge/etkinlik yok)")
+    void profileArrivalIsRefinementNotDrop() {
+        CertificateInventory i = inv(1, "a.example.com");
+        run(i, "A", "PROFILE_PENDING");
+        TlsGradeService.ReconcileResult r = run(i, "B", "TLS10_ENABLED", "NO_TLS13");
+        assertThat(r.drops()).isZero();
+        assertThat(r.refined()).isEqualTo(1);
+        assertThat(r.changed()).isTrue();
+        assertThat(changes).extracting(TlsGradeChange::getDirection).containsExactly(TlsGradeChange.REFINE);
+        assertThat(statuses.get(1L).getDroppedFrom()).isNull();
+        verify(activity, never()).recordLifecycle(anyString(), any(), anyString(), anyString(), any(), anyString(), anyString(), anyString());
+        // Profil bilgisi tamken sonraki kötüleşme GERÇEK düşüştür
+        TlsGradeService.ReconcileResult r2 = run(i, "C", "NO_TLS12");
+        assertThat(r2.drops()).isEqualTo(1);
+        assertThat(statuses.get(1L).getDroppedFrom()).isEqualTo("B");
+    }
+
+    @Test
     @DisplayName("Not ve nedenler aynıysa hiçbir şey yazılmaz")
     void unchangedWritesNothing() {
         CertificateInventory i = inv(1, "a.example.com");
