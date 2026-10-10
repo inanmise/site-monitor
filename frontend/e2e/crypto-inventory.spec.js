@@ -2,6 +2,8 @@
 // tablet (768) ve dizüstünde (1280): sayfa yatay taşmaz, görünür hiçbir öğe ekranın sağına taşmaz, telefonda geçiş
 // listesi KART (tablo değil), 1280'de tablo; dokunulan denetimlerin hedefi telefonda ≥ 40 px; dışa aktarım menüsü açılır.
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { unzipSync, strFromU8 } from 'fflate'
 import { mockApi } from './support/monitorMocks.js'
 
 const LONG = 'odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com'
@@ -140,3 +142,34 @@ for (const vp of [{ name: 'phone', width: 390, height: 844 }, { name: 'tablet', 
     expect(await overflowing(page, vp.width)).toEqual([])
   })
 }
+
+// Düzenleyici dışa aktarım GERÇEK dosya üretir (tembel modül + jsPDF + Roboto + buildXlsx): Excel paketi açılır, beş
+// sayfa ve ilk satırın alan adı doğrulanır; PDF %PDF imzalı ve yazı tipi gömülü; her indirmeden sonra denetim izi istenir.
+test('kripto envanteri — gerçek XLSX / PDF indirmesi + denetim izi', async ({ page }) => {
+  const audits = []
+  await open(page, { width: 1280, height: 800 })
+  await page.route((u) => new URL(u).pathname === '/api/crypto-inventory/export-audit', async (route) => {
+    audits.push(JSON.parse(route.request().postData() || '{}'))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' })
+  })
+
+  await page.locator('[data-slot="cinv-export"]').click()
+  const [xl] = await Promise.all([page.waitForEvent('download'), page.locator('[data-export="xlsx"]').click()])
+  expect(xl.suggestedFilename()).toMatch(/^sitemonitor-crypto-inventory-\d{8}-\d{4}\.xlsx$/)
+  const files = unzipSync(new Uint8Array(readFileSync(await xl.path())))
+  for (let i = 1; i <= 5; i++) expect(files[`xl/worksheets/sheet${i}.xml`], `sheet${i}`).toBeTruthy()
+  expect(strFromU8(files['xl/worksheets/sheet2.xml'])).toContain(LONG)
+  expect(strFromU8(files['xl/workbook.xml'])).toContain('_xlnm._FilterDatabase')
+
+  await expect(page.locator('[data-slot="cinv-export"]')).toBeEnabled()
+  await page.locator('[data-slot="cinv-export"]').click()
+  const [pdf] = await Promise.all([page.waitForEvent('download'), page.locator('[data-export="pdf"]').click()])
+  expect(pdf.suggestedFilename()).toMatch(/\.pdf$/)
+  await pdf.saveAs('test-results/crypto-inventory.pdf')
+  const buf = readFileSync(await pdf.path())
+  expect(buf.subarray(0, 4).toString()).toBe('%PDF')
+  expect(buf.length).toBeGreaterThan(20_000)
+
+  await expect.poll(() => audits.map((a) => a.format)).toEqual(['xlsx', 'pdf'])
+  expect(audits[0]).toMatchObject({ rows: 30, filtered: false })
+})
