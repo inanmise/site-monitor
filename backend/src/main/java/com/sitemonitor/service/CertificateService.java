@@ -369,6 +369,10 @@ public class CertificateService {
         Map<String, com.sitemonitor.model.ManualCertificateVersion> manualByDomain = manualCurrentVersions(activeInventory);
         // Tier bazlı eşik (2026-09-20): tek okuma, alan başına tier'ıyla çözülür.
         ThresholdResolution thresholds = ThresholdResolution.load(alertThresholdRepo, null);
+        // TLS notu (2026-10-10): profil + son bilinen not İKİ toplu okumayla (satır başına sorgu yok); servis yoksa atlanır.
+        com.sitemonitor.service.tlsgrade.TlsGradeService.Snapshot tlsSnap = tlsGradeService == null ? null
+                : tlsGradeService.snapshot(activeDomains, activeInventory.stream().map(CertificateInventory::getId)
+                        .filter(java.util.Objects::nonNull).collect(Collectors.toSet()));
         // findByDomainIn → tüm latest_checks yerine sadece aktif domain'lerin satırlarını çek
         return latestRepo.findByDomainIn(activeDomains).stream()
                 .sorted(Comparator.comparing(LatestCheck::getDomain,
@@ -389,10 +393,15 @@ public class CertificateService {
                     applyManual(dto, nocSource.get(c.getDomain()), manualByDomain.get(c.getDomain()));
                     int[] td = thresholds.days(tierMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
+                    if (tlsSnap != null) tlsGradeService.apply(dto, c, nocSource.get(c.getDomain()), tlsSnap);
                     return dto;
                 })
                 .collect(Collectors.toList());
     }
+
+    /** TLS yapılandırma notu (2026-10-10) — isteğe bağlı: birim testi bağlamında yok → liste satırları notsuz. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.tlsgrade.TlsGradeService tlsGradeService;
 
     /** Manuel sertifika sürümleri — isteğe bağlı (birim testi bağlamında yok → alanlar boş kalır). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -653,12 +662,14 @@ public class CertificateService {
         java.util.function.Predicate<CertificateDto> byFp = c -> q.filterFp().isEmpty() || q.filterFp().equalsIgnoreCase(c.getFingerprint());
         // Güven sütunu süzgeci (2026-10-09): sütunun gösterdiği hükmün AYNISI (CertTrustVerdict = arayüz trustOf)
         java.util.function.Predicate<CertificateDto> byTrust = c -> CertTrustVerdict.matches(c, q.filterTrust());
+        // TLS notu sütunu süzgeci (2026-10-10): satırın gösterdiği not; "none" = notsuz (elle yüklenen / veri yok)
+        java.util.function.Predicate<CertificateDto> byGrade = c -> matchesGrade(c, q.filterGrade());
 
         // Boyut adı → süzgeç; facet sayımında o boyut dışarıda bırakılır
         Map<String, java.util.function.Predicate<CertificateDto>> dims = new LinkedHashMap<>();
         dims.put("text", byText); dims.put("status", byStatus); dims.put("window", byWindow); dims.put("team", byTeam);
         dims.put("insecure", byInsecure); dims.put("tier", byTier); dims.put("port", byPort); dims.put("fp", byFp);
-        dims.put("trust", byTrust);
+        dims.put("trust", byTrust); dims.put("grade", byGrade);
         java.util.function.Function<String, List<CertificateDto>> allBut = skip -> all.stream()
                 .filter(c -> dims.entrySet().stream().allMatch(e -> e.getKey().equals(skip) || e.getValue().test(c)))
                 .collect(Collectors.toList());
@@ -706,6 +717,14 @@ public class CertificateService {
             trust.merge(CertTrustVerdict.tone(c), 1, Integer::sum);
             for (String issue : CertTrustVerdict.issues(c)) trust.merge(issue, 1, Integer::sum);
         }
+        // TLS notu facet'i: A+ … F + notsuz (2026-10-10)
+        Map<String, Integer> grades = new LinkedHashMap<>();
+        for (String g : com.sitemonitor.service.tlsgrade.TlsGradeRules.GRADES) grades.put(g, 0);
+        grades.put(GRADE_NONE, 0);
+        for (CertificateDto c : allBut.apply("grade")) {
+            String g = c.getTlsGrade();
+            grades.merge(com.sitemonitor.service.tlsgrade.TlsGradeRules.isGrade(g) ? g : GRADE_NONE, 1, Integer::sum);
+        }
 
         Map<String, Object> facets = new LinkedHashMap<>();
         facets.put("levels", levels);
@@ -716,6 +735,7 @@ public class CertificateService {
         facets.put("tiers", tiers);
         facets.put("nonstd_port", nonstd);
         facets.put("trust", trust);
+        facets.put("grades", grades);
         facets.put("all", all.size());
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -763,6 +783,24 @@ public class CertificateService {
         };
     }
 
+    /** Notsuz satırın süzgeç / facet değeri (elle yüklenen, hiç kontrol edilmemiş ya da son kontrolü başarısız). */
+    static final String GRADE_NONE = "none";
+
+    /** TLS notu süzgeci (2026-10-10): tam not ya da {@code none}; tanınmayan değer = süzgeç yok (bozuk bağlantı listeyi boşaltmasın). */
+    static boolean matchesGrade(CertificateDto c, String filter) {
+        String f = filter == null ? "" : filter.trim().toUpperCase(java.util.Locale.ROOT);
+        if (f.isEmpty()) return true;
+        if ("NONE".equals(f)) return !com.sitemonitor.service.tlsgrade.TlsGradeRules.isGrade(c.getTlsGrade());
+        if (!com.sitemonitor.service.tlsgrade.TlsGradeRules.isGrade(f)) return true;
+        return f.equals(c.getTlsGrade());
+    }
+
+    /** Sıralama sırası: F (0) … A+ (5), notsuz en sonda (6) — artan sıralama sorunluyu öne alır. */
+    static int gradeOrder(CertificateDto c) {
+        int r = com.sitemonitor.service.tlsgrade.TlsGradeRules.rank(c.getTlsGrade());
+        return r == 0 ? 6 : r - 1;
+    }
+
     private static boolean matchesWindow(CertificateDto c, String window) {
         if (window.isEmpty()) return true;
         Integer d = c.getDaysRemaining();
@@ -790,6 +828,8 @@ public class CertificateService {
             case "shared" -> Comparator.comparingInt(c -> shared.getOrDefault(c.getDomain(), 1));
             case "not_before" -> Comparator.comparing(c -> c.getNotBefore() == null ? "" : c.getNotBefore());
             case "intermediate" -> Comparator.comparingInt(c -> c.getIntermediateDaysRemaining() == null ? 999999 : c.getIntermediateDaysRemaining());
+            case "tls_grade" -> Comparator.comparingInt(CertificateService::gradeOrder)
+                    .thenComparing(c -> c.getDomain().toLowerCase());
             default -> Comparator.comparing(c -> c.getDomain().toLowerCase());
         };
     }
@@ -803,7 +843,7 @@ public class CertificateService {
         Map<String, Object> res = getPaginated(
                 new com.sitemonitor.dto.CertListQuery(1, 5000, q.sortBy(), q.sortDir(), q.filterDomain(), q.filterIssuer(),
                         q.filterStatus(), q.filterTeam(), q.filterWindow(), q.filterInsecure(), q.filterTier(), q.filterPort(), q.filterFp(),
-                        q.filterTrust()),
+                        q.filterTrust(), q.filterGrade()),
                 teamIds);
         @SuppressWarnings("unchecked")
         List<CertificateDto> rows = (List<CertificateDto>) res.get("data");
@@ -851,6 +891,9 @@ public class CertificateService {
         m.put("serial", r -> r.c().getSerialNumber());
         m.put("checked", r -> r.c().getCheckedAt());
         m.put("error", r -> r.c().getError());
+        // TLS notu (2026-10-10) — sona eklendi: varsayılan sütun sırası (cols boş) değişmesin
+        m.put("tls_grade", r -> r.c().getTlsGrade() == null ? "" : r.c().getTlsGrade());
+        m.put("tls_grade_reasons", r -> r.c().getTlsGradeReasons() == null ? "" : String.join("|", r.c().getTlsGradeReasons()));
         CSV_COLUMNS = Collections.unmodifiableMap(m);
     }
 

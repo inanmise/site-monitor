@@ -400,6 +400,21 @@ public final class RetentionCatalog {
                 + "saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; "
                 + "mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve "
                 + "site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler."),
+        // ── TLS yapılandırma notu (2026-10-10) ──────────────────────────────────────────────────
+        age("tls-grade-changes", "tls_grade_changes", "changed_at", "site.monitor.series.certificate.retention-days",
+                180, 30, false, DataClass.OPERATIONAL,
+                "TLS notu değişim günlüğü (önceki → yeni not, neden kodları, alan adı, takım kimliği; kişi verisi yok). "
+                + "Sertifika kontrol serisinden türer → aynı pencere (aynı ayar anahtarı). Satır yalnız not DEĞİŞİNCE doğar."),
+        orphan("tls-grade-status-orphan", "tls_grade_status",
+                "NOT EXISTS (SELECT 1 FROM certificate_inventory i WHERE i.id = tls_grade_status.inventory_id)",
+                DataClass.OPERATIONAL,
+                "Envanter kaydı başına son bilinen TLS notu (düşüş göstergesinin karşılaştırma tabanı). Kayıt silinince "
+                + "yetim kalır ve burada temizlenir; aksi hâlde envanter kadar satır, birikmez."),
+        orphan("tls-profiles-orphan", "tls_profiles",
+                "NOT EXISTS (SELECT 1 FROM certificate_inventory i WHERE i.domain = tls_profiles.domain)",
+                DataClass.OPERATIONAL,
+                "Alan adı başına TLS profili (kabul edilen protokol sürümleri, OCSP zımbalama, zayıf takım kabulü — günlük "
+                + "yoklama). Envanterden silinen alan adının satırı burada temizlenir; aksi hâlde alan adı kadar satır."),
         info("password-history", "password_history", Mode.EXTERNAL, DataClass.PERSONAL,
                 "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı."),
         info("monitor-check-schedule", "monitor_check_schedule", Mode.EXTERNAL, DataClass.OPERATIONAL,

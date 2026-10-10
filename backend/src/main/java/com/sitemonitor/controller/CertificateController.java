@@ -183,12 +183,13 @@ public class CertificateController {
             @RequestParam(defaultValue = "") String filter_port,
             @RequestParam(defaultValue = "") String filter_fp,
             @RequestParam(defaultValue = "") String filter_trust,
+            @RequestParam(defaultValue = "") String filter_grade,
             @RequestParam(defaultValue = "mine") String scope,
             HttpSession session) {
 
         var q = new com.sitemonitor.dto.CertListQuery(page, per_page, sort_by, sort_dir,
                 filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
-                filter_tier, filter_port, filter_fp, filter_trust);
+                filter_tier, filter_port, filter_fp, filter_trust, filter_grade);
         boolean all = inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
         Map<String, Object> result = certService.getPaginated(q, listScope(session, scope));
         java.util.function.Predicate<Long> writable = SessionScope.inventoryWriteTest(session);
@@ -228,12 +229,13 @@ public class CertificateController {
             @RequestParam(defaultValue = "") String filter_port,
             @RequestParam(defaultValue = "") String filter_fp,
             @RequestParam(defaultValue = "") String filter_trust,
+            @RequestParam(defaultValue = "") String filter_grade,
             @RequestParam(defaultValue = "") String cols,
             @RequestParam(defaultValue = "mine") String scope,
             HttpSession session, jakarta.servlet.http.HttpServletRequest request) {
         var q = new com.sitemonitor.dto.CertListQuery(1, 5000, sort_by, sort_dir,
                 filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
-                filter_tier, filter_port, filter_fp, filter_trust);
+                filter_tier, filter_port, filter_fp, filter_trust, filter_grade);
         List<String> colList = java.util.Arrays.stream(cols.split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
         // Kapsam listeyle AYNI (2026-09-26): ekranda "Tüm takımlar" seçiliyken indirilen dosya da o kümedir.

@@ -92,6 +92,7 @@ public final class AuditEventCatalog {
             "CERT_RENEWAL_CONFIRMED",
             "CERT_RENEWAL_PLANNED",
             "CERT_RENEWAL_PLAN_CLEARED",
+            "CERT_TLS_PROFILE_RESCAN",      // TLS profili (protokol / zımbalama) elle yeniden tarandı (2026-10-10)
             "CHANGE_LOG_DENIED",
             "CLIENT_ERROR_REPORT",
             "CONTACT_CREATE",
