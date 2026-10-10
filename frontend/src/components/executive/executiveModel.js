@@ -8,10 +8,22 @@
  */
 import { MONITOR_LABEL_KEY } from '../palette/paletteModel.js'
 
-/** Özetin URL önekli durumu: ay, canlı hesap, ayar penceresi. */
+/**
+ * Özetin URL önekli durumu: ay, canlı hesap, kapsam (takım), görünüm (rapor / alıcılar ve gönderim) ve gönderim
+ * görünümündeki seçili kayıt (kurum ya da takım). `ex_cfg=1` e-postadaki "ayarlar" bağlantısıdır → gönderim görünümü.
+ */
 export const EX_MONTH = 'ex_m'
 export const EX_LIVE = 'ex_live'
 export const EX_CFG = 'ex_cfg'
+export const EX_TEAM = 'ex_team'
+export const EX_VIEW = 'ex_view'
+export const EX_SEL = 'ex_sel'
+
+/** Görünümler. */
+export const VIEW_REPORT = 'report'
+export const VIEW_DELIVERY = 'delivery'
+/** Gönderim görünümünde kurum geneli satırının seçim anahtarı. */
+export const SEL_ORG = 'org'
 
 export const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 
@@ -380,3 +392,104 @@ export const CRYPTO_CATEGORY_SEGMENTS = Object.freeze([
 export function orderedSections(summary) {
   return [...(summary?.sections || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 }
+
+// ── Kapsam (2026-10-10: takıma özel özet) ─────────────────────────────────────────────────────────────────────────────
+
+/** Takım kimliği parametresi geçerli mi (sayısal; takım kimliği kullanıcı kimliği DEĞİLDİR). */
+export const TEAM_ID_RE = /^\d{1,18}$/
+
+/** Özetin kapsamı takım mı? */
+export function isTeamScope(summary) {
+  return summary?.scope?.kind === 'team' && summary?.scope?.team_id != null
+}
+
+/**
+ * Kapsam seçici seçenekleri: kurum (görebiliyorsa) + takımlar (sunucu sırası, A→Z). Değer: `org` ya da takım kimliği
+ * (metin). Takımlar "Takımlar" grubunda.
+ */
+export function scopeOptions(scopes, t) {
+  const out = []
+  if (scopes?.org) out.push({ value: SEL_ORG, label: t('exec.scope.org') })
+  for (const team of scopes?.teams || []) {
+    if (team?.id == null) continue
+    out.push({ value: String(team.id), label: team.name || `#${team.id}`, group: scopes?.org ? t('exec.scope.teams') : undefined })
+  }
+  return out
+}
+
+/** Bölüm durumlarının sayımı (üst şeridin dağılım çubuğu) — sabit sıra, kötüden iyiye. */
+export const STATUS_SEGMENTS = Object.freeze([
+  { key: 'critical', color: 'var(--destructive)' },
+  { key: 'error', color: 'color-mix(in srgb, var(--warning) 60%, var(--destructive))' },
+  { key: 'attention', color: 'var(--warning)' },
+  { key: 'ok', color: 'var(--success)' },
+  { key: 'no_data', color: 'var(--muted-foreground)' },
+])
+
+export function statusCounts(sections) {
+  const counts = { critical: 0, error: 0, attention: 0, ok: 0, no_data: 0 }
+  for (const s of sections || []) {
+    const k = Object.prototype.hasOwnProperty.call(counts, s?.status) ? s.status : 'no_data'
+    counts[k] += 1
+  }
+  return counts
+}
+
+// ── Takım alıcı ayarları ───────────────────────────────────────────────────────────────────────────────────────────
+
+/** Sunucu ayrıntısı → form (kullanıcı kimlikleri opak metin olarak; sayıya ÇEVRİLMEZ). */
+export function teamToForm(d) {
+  const selected = (d?.members || []).filter((m) => m?.selected).map((m) => String(m.user_id))
+  return {
+    enabled: !!d?.enabled,
+    includeManager: d?.include_manager !== false,
+    includeTeamAdmins: d?.include_team_admins !== false,
+    userIds: selected,
+    extra: d?.extra_emails || '',
+  }
+}
+
+/** Form → PUT gövdesi. Seçilen kimlikler üye listesinin sırasıyla (kararlı karşılaştırma). */
+export function teamToBody(f, members = []) {
+  const chosen = new Set((f?.userIds || []).map(String))
+  const ordered = (members || []).map((m) => String(m.user_id)).filter((id) => chosen.has(id))
+  for (const id of chosen) if (!ordered.includes(id)) ordered.push(id)
+  return {
+    enabled: !!f?.enabled,
+    include_manager: !!f?.includeManager,
+    include_team_admins: !!f?.includeTeamAdmins,
+    user_ids: ordered,
+    extra_emails: parseEmails(f?.extra).join(', '),
+  }
+}
+
+/** Kaydedilmemiş değişiklik var mı? */
+export function teamDirty(form, data) {
+  if (!data) return false
+  const members = data.members || []
+  return JSON.stringify(teamToBody(form, members)) !== JSON.stringify(teamToBody(teamToForm(data), members))
+}
+
+/** Üye süzgeci: ad, unvan ya da adreste geçen (Türkçe büyük/küçük harf duyarsız). */
+export function filterMembers(members, query) {
+  const q = String(query || '').trim().toLocaleLowerCase('tr')
+  if (!q) return members || []
+  return (members || []).filter((m) => [m?.name, m?.title, m?.email]
+    .some((v) => v && String(v).toLocaleLowerCase('tr').includes(q)))
+}
+
+/** Takım listesi süzgeci (ad). */
+export function filterTeams(teams, query) {
+  const q = String(query || '').trim().toLocaleLowerCase('tr')
+  if (!q) return teams || []
+  return (teams || []).filter((x) => String(x?.team_name || '').toLocaleLowerCase('tr').includes(q))
+}
+
+/** Uyarı kodu → i18n anahtarı (literal: used-keys kapısı görebilsin). */
+export const TEAM_NOTE_KEY = Object.freeze({
+  NO_MANAGER: 'exec.team.note.NO_MANAGER',
+  MANAGER_NO_EMAIL: 'exec.team.note.MANAGER_NO_EMAIL',
+  MANAGER_INACTIVE: 'exec.team.note.MANAGER_INACTIVE',
+  NO_TEAM_ADMINS: 'exec.team.note.NO_TEAM_ADMINS',
+  LEFT_MEMBERS: 'exec.team.note.LEFT_MEMBERS',
+})
