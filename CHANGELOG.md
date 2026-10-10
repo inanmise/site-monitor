@@ -16,10 +16,27 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 ## [Unreleased]
 
 ### Added
+- **TLS yapılandırma notu (A+–F).** Protokol sürümü, şifre takımları, OCSP stapling, HSTS ve anahtar boyu tek bir notta;
+  not nedenleriyle birlikte ("Neden B: TLS 1.0 açık"). Genel Bakış kartında rozet, Tüm Sertifikalar'da sütun / süzgeç /
+  dağılım, Sağlık sekmesinde ayrıntılı bölüm ve "yeniden tara" (diagnostics yetkisi). Not düşünce kartta gösterge,
+  "Son düşüşler" listesi ve aktivite kaydı (e-posta/push alarmı yok).
+  - **⚠ Yeni ağ davranışı:** desteklenen protokolleri ve OCSP stapling'i görmek için her aktif ağ ucu günde bir kez kısa
+    TLS el sıkışmalarıyla yoklanır (TLS 1.0–1.3 + yalnız zayıf şifreli bir deneme; el sıkışma tamamlanmaz; yalnız tarama
+    lideri pod'da, `scheduler_lock` `tls-profile`). Güvenlik / IDS ekibine bilgi verin; kapatmak için
+    `site.monitor.tls-profile.enabled=false` (o zaman notun protokol kısmı "bilinmiyor" kalır).
+- **Kripto envanteri ve kuantum sonrası (PQC) hazırlık** — Zayıf Algoritma sayfasında yeni sekme: algoritma × anahtar boyu
+  envanteri, SHA-1/MD5 kalıntıları (yaprak + ara sertifika), kuantuma karşı savunmasızlık sınıfı, 0–100 geçiş önceliği
+  (katman, müşteriye açıklık, anahtar gücü, yenileme zamanı), takım bazlı geçiş listesi; düzenleyici raporlama için
+  Excel / PDF / CSV dışa aktarım (denetim kaydıyla).
+- **Takım veri kalitesi puanı** — Raporlar → Veri Kalitesi: kural kataloğu (sahipsiz kayıt, eksik katman / iletişim,
+  bayat ya da tekrar eden hatalı kontrol, 7/24'e bildirilmeyen kritik kayıt, uzun süre duraklatılmış / çift izleme,
+  üyesi / yöneticisi / bildirim adresi / eskalasyon kişisi olmayan takım), takım ve kurum puanı (0–100, büyüklükten
+  bağımsız), 30 günlük eğilim ve düzeltme ekranına giden bağlantılı düzeltme listesi.
 - **Aylık Yönetici Özeti (kullanıcı isteği: "SLO uyumu, en gürültülü alarmlar, yaklaşan sertifika bitişleri ve yenileme
   süresine uyum tek bir PDF ya da e-postada").** Raporlar → Yönetici Özeti (`?tab=executive`): ay seçimi, dört bölüm
   (erişilebilirlik hedefi uyumu — resmî SLO değil, kurum hedefine göre ölçülen değer; en gürültülü alarmlar + MTTA/MTTR;
-  yaklaşan sertifika bitişleri 30/60/90 gün; yenileme süresine uyum), PDF indirme. Gönderilen ay, gönderilen içerikten
+  yaklaşan sertifika bitişleri 30/60/90 gün; yenileme süresine uyum; TLS notu dağılımı ve ay içindeki düşüşler; kripto /
+  PQC hazırlığı; takım veri kalitesi puanı), PDF indirme. Gönderilen ay, gönderilen içerikten
   gösterilir. Okuma: global yönetici + AUDIT (`executive_summary.view`); ayar / test / gönderim: global yönetici.
   - **⚠ Davranış / Yeni yapılandırma:** zamanlanmış e-posta **varsayılan KAPALI** (`site.monitor.executive-summary.enabled`
     =false); `.cron` (`0 0 9 1 * *`), `.recipients`, `.include-global-admins` (true), `.availability-target` (99.9),
