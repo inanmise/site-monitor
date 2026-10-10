@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.119.0] — 2026-10-10
+
 ### Added
 - **TLS yapılandırma notu (A+–F).** Protokol sürümü, şifre takımları, OCSP stapling, HSTS ve anahtar boyu tek bir notta;
   not nedenleriyle birlikte ("Neden B: TLS 1.0 açık"). Genel Bakış kartında rozet, Tüm Sertifikalar'da sütun / süzgeç /
@@ -2828,7 +2830,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.118.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.119.0...HEAD
+[20.119.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.119.0
 [20.118.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.1
 [20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0
 [20.117.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.117.2

@@ -1,9 +1,121 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-09T20:21:42Z",
+  "generatedAt": "2026-10-10T06:47:53Z",
   "repo": "inanmise/site-monitor",
-  "count": 727,
+  "count": 728,
   "releases": [
+    {
+      "version": "20.119.0",
+      "tag": "v20.119.0",
+      "releasedAt": "2026-10-10T06:47:45Z",
+      "commit": "bdf42db6a8c9b5a36f764e4014c403d28f58eb61",
+      "prevVersion": "20.118.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 7,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bdf42db6",
+          "subject": "Veri Kalitesi sekmesi lazy import yolu ve kullanıcı etkinliği etiketi; kripto dışa aktarımı tembel Excel kapısında"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "cbf01f22",
+          "subject": "yeni raporlar (veri kalitesi, kripto envanteri, TLS notu, yönetici özeti) gerçek PostgreSQL'de — yutulan SQL hatası kapısı"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "4ff65ab0",
+          "subject": "CHANGELOG + CLAUDE.md — TLS notu, kripto envanteri, veri kalitesi ve yönetici özeti bölümleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a139ec9a",
+          "subject": "Yönetici Özeti — TLS notu dağılımı, kripto / PQC hazırlığı ve takım veri kalitesi bölümleri"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f5f1a88f",
+          "subject": "kripto envanteri testinde bölgeli gün (CI UTC kayması); push tercih testinde işçi yarışı giderildi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9d5375b5",
+          "subject": "Aylık Yönetici Özeti — erişilebilirlik hedefi uyumu, en gürültülü alarmlar, yaklaşan bitişler ve yenileme uyumu tek PDF/e-postada"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "180ed76c",
+          "subject": "veri saklama politikası dokümanı birleşik katalogdan yeniden üretildi (veri kalitesi + TLS notu tabloları)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0afdd70e",
+          "subject": "TLS notu arayüzü — kart rozeti, Tüm Sertifikalar sütunu/süzgeci, Sağlık sekmesinde TLS notu bölümü, düşüş listesi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4b96df88",
+          "subject": "TLS yapılandırma notu (A+–F) — kural, günlük TLS profil yoklaması, not değişim günlüğü ve uçlar"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "9c4b3673",
+          "subject": "Kripto envanteri e2e — gerçek XLSX/PDF indirmesi ve CRYPTO_INVENTORY_EXPORT denetim izi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0fa281e6",
+          "subject": "Kripto envanteri / PQC hazırlık — Zayıf Algoritma sayfasında yeni sekme (shadcn, mobil, XLSX/PDF/CSV)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "763a6807",
+          "subject": "Kripto envanteri / PQC hazırlık — sunucu (sınıflandırıcı, geçiş önceliği, GET /api/crypto-inventory)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "450fef9f",
+          "subject": "Takım veri kalitesi puanı — kural kataloğu, takım/kurum puanı, düzeltme listesi ve 30 günlük eğilim"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.118.1",
       "tag": "v20.118.1",
