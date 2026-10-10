@@ -97,11 +97,12 @@ class ExecutiveSummaryI18nGateTest {
     }
 
     @Test
-    @DisplayName("örnek özetin ürettiği her kod tarama kümesinde (dinamik kod kaçmasın)")
+    @DisplayName("örnek özetin ürettiği her kod tarama kümesinde (dinamik kod kaçmasın) — kurum VE takım kapsamı örnekleri")
     void sampleCodesAreScanned() throws IOException {
         Set<String> expected = expectedKeys();
         List<String> unknown = new ArrayList<>();
-        for (ExecutiveSummary s : List.of(ExecutiveSummarySamples.full(), ExecutiveSummarySamples.quiet())) {
+        for (ExecutiveSummary s : List.of(ExecutiveSummarySamples.full(), ExecutiveSummarySamples.quiet(),
+                ExecutiveSummarySamples.teamFull(), ExecutiveSummarySamples.teamQuiet())) {
             for (SectionResult sec : s.sections()) {
                 for (SectionResult.Verdict v : sec.verdicts()) {
                     String k = "exec." + sec.key() + ".verdict." + v.code();
@@ -115,8 +116,40 @@ class ExecutiveSummaryI18nGateTest {
                     String k = "exec." + sec.key() + ".note." + n.code();
                     if (!expected.contains(k)) unknown.add(k);
                 }
+                for (SectionResult.Table t : sec.tables()) {
+                    String k = "exec." + sec.key() + ".table." + t.code();
+                    if (!expected.contains(k)) unknown.add(k);
+                    for (SectionResult.Column c : t.columns()) {
+                        if (!expected.contains("exec.col." + c.code())) unknown.add("exec.col." + c.code());
+                    }
+                }
             }
         }
         assertThat(unknown).isEmpty();
+    }
+
+    @Test
+    @DisplayName("takım kapsamı örnekleri gerçekten TAKIM kodlarını üretir (kurum kodları yerine) — kapsam alanı takım")
+    void teamSamplesUseTeamCodes() {
+        for (ExecutiveSummary s : List.of(ExecutiveSummarySamples.teamFull(), ExecutiveSummarySamples.teamQuiet())) {
+            assertThat(s.scope().isTeam()).isTrue();
+            assertThat(s.headlineKpis()).extracting(h -> h.section() + ":" + h.kpi().code())
+                    .contains("availability:team_availability", "data-quality:team_score")
+                    .doesNotContain("availability:org_availability", "data-quality:org_score");
+            for (SectionResult sec : s.sections()) {
+                assertThat(sec.verdicts()).extracting(SectionResult.Verdict::code)
+                        .doesNotContain("ORG_MET", "ORG_MISSED", "TEAMS_BELOW", "TEAMS_ALL_MET", "SCORE", "POOR_TEAMS", "TOP_RULE");
+                assertThat(sec.tables()).extracting(SectionResult.Table::code)
+                        .doesNotContain("teams", "top_teams", "by_team", "lowest_teams");
+                List<String> notes = sec.notes().stream().map(SectionResult.Note::code).toList();
+                // "kurum geneli / kurum hedefi / kurum puanı" yazan notların takım karşılıkları kullanılır
+                switch (sec.key()) {
+                    case "availability" -> assertThat(notes).contains("TEAM_METHOD").doesNotContain("METHOD", "UNMAPPED");
+                    case "crypto-readiness" -> assertThat(notes).contains("TEAM_ASOF").doesNotContain("ASOF");
+                    case "data-quality" -> assertThat(notes).contains("TEAM_ASOF", "TEAM_METHOD").doesNotContain("ASOF", "METHOD");
+                    default -> assertThat(notes).contains("TEAM_SCOPE");
+                }
+            }
+        }
     }
 }
