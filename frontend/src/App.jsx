@@ -118,7 +118,8 @@ const MaintenanceWindowsPage = lazy(() => import('./components/MaintenanceWindow
 const InventoryManager = lazy(() => import('./components/admin/InventoryManager'))
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
-const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
+// Zayıf Algoritma sayfası = bulgular + kripto envanteri / PQC sekmesi (2026-10-10)
+const WeakAlgorithmPage = lazy(() => import('./components/admin/WeakAlgorithmPage'))
 import TodayPanel from './components/TodayPanel.jsx'
 import RecentChangesLine from './components/RecentChangesLine.jsx'
 import HelpDrawer from './components/HelpDrawer.jsx'
@@ -2013,7 +2014,7 @@ export default function App() {
             {tab === 'weakalgo' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.weakalgo.Icon} title={t('app.weakAlgoTitle')} description={t('app.weakAlgoDesc')} />
-                <WeakAlgorithmReport />
+                <WeakAlgorithmPage />
               </div>
             )}
 

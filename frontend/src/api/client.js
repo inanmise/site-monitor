@@ -420,6 +420,15 @@ export const api = {
     summary: (fresh = false) => request(fresh === true ? '/data-quality?fresh=1' : '/data-quality'),
     team: (key, fresh = false) => request(`/data-quality/teams/${encodeURIComponent(key)}${fresh === true ? '?fresh=1' : ''}`),
   },
+  /**
+   * Kripto envanteri / PQC hazırlık (2026-10-10) — Zayıf Algoritma sayfasının sekmesi; `weak_algo.read` + görüş kapsamı.
+   * Sunucu 120 sn paylaşır, `fresh=true` (Yenile) belleği en fazla 5 sn'de bir atlar. `auditExport` dışa aktarım
+   * sonrası denetim izi (CRYPTO_INVENTORY_EXPORT) — dosya istemcide üretilir.
+   */
+  cryptoInventory: {
+    get: (fresh = false) => request(fresh === true ? '/crypto-inventory?fresh=1' : '/crypto-inventory'),
+    auditExport: (body) => request('/crypto-inventory/export-audit', { method: 'POST', body: JSON.stringify(body) }),
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),

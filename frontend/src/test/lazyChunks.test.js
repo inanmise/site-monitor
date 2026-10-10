@@ -69,6 +69,22 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(hasStatic('components/maintenance/SystemMaintenanceLayer.jsx', /SysMaintExtendDialog/)).toBe(false)
   })
 
+  it('Kripto envanteri (2026-10-10): görünüm yalnız kendi sekmesinde, dışa aktarım (jsPDF) yalnız istenince yüklenir', () => {
+    const page = 'components/admin/WeakAlgorithmPage.jsx'
+    expect(hasStatic(page, /cryptoinv\/CryptoInventoryView(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(page, /cryptoinv\/CryptoInventoryView\.jsx$/)).toBe(true)
+    const view = 'components/cryptoinv/CryptoInventoryView.jsx'
+    expect(hasStatic(view, /cryptoInventoryExport(\.js)?$|^jspdf/)).toBe(false)
+    expect(hasDynamic(view, /cryptoInventoryExport\.js$/)).toBe(true)
+    // jsPDF yalnız dışa aktarım modülünde ve yalnız import() ile
+    const jspdfUsers = FILES.filter(({ rel: r }) => r.startsWith('components/cryptoinv/'))
+      .filter(({ src }) => staticImports(src).some((s) => /^jspdf/.test(s))).map((x) => x.rel)
+    expect(jspdfUsers).toEqual([])
+    expect(hasDynamic('components/cryptoinv/cryptoInventoryExport.js', /^jspdf$/)).toBe(true)
+    const exportStaticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /cryptoInventoryExport(\.js)?$/.test(s))).map((x) => x.rel)
+    expect(exportStaticUsers).toEqual([])
+  })
+
   it('Olaylar sayfasında sayfa düzeyinde saniyelik saat yok — süre kendi yaprağında (LiveDuration)', () => {
     const page = read('components/IncidentsPage.jsx')
     expect(page).not.toMatch(/setNowMs/)
