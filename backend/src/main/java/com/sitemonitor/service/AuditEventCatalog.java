@@ -98,6 +98,7 @@ public final class AuditEventCatalog {
             "CONTACT_DELETE",
             "CONTACT_UPDATE",
             "CONTACT_WEBHOOK_TEST",
+            "CRYPTO_INVENTORY_EXPORT",    // kripto envanteri / PQC hazırlık raporu XLSX/PDF/CSV dışa aktarıldı (2026-10-10)
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
@@ -366,6 +367,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
         if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
+        if (t.startsWith("CRYPTO_INVENTORY")) return CERTIFICATE;   // kripto envanteri (2026-10-10) — Zayıf Algoritma ile aynı kova
 
         if (t.startsWith("MAINTENANCE_")) return MAINTENANCE;
         // Sistem Bakım Modu (2026-10-02) — SYSTEM_* kuralından ÖNCE: denetçi "Bakım" grubunda arar (hedef bakım
