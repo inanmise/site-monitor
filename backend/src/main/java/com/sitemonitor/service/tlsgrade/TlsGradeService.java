@@ -408,6 +408,16 @@ public class TlsGradeService {
     public Map<String, Object> coverage(List<CertificateInventory> inScope) {
         Set<String> domains = new HashSet<>();
         for (CertificateInventory inv : inScope) if (!inv.isManual() && inv.getDomain() != null) domains.add(inv.getDomain());
+        return coverageForDomains(domains);
+    }
+
+    /**
+     * {@link #coverage} çekirdeği — çağıranın AĞ uç noktası alan adlarıyla (elle yüklenenler çıkarılmış). Tek toplu profil
+     * okuması. Aylık yönetici özeti envanteri bağlamdan okuduğu için bunu doğrudan çağırır (aynı sayım kuralı).
+     */
+    public Map<String, Object> coverageForDomains(Collection<String> networkDomains) {
+        Set<String> domains = new HashSet<>();
+        if (networkDomains != null) for (String d : networkDomains) if (d != null) domains.add(d);
         int ok = 0, partial = 0, failed = 0;
         String latest = null;
         if (!domains.isEmpty()) {
@@ -427,6 +437,23 @@ public class TlsGradeService {
         m.put("pending", Math.max(0, domains.size() - ok - partial - failed));
         m.put("latest_probe_at", latest);
         return m;
+    }
+
+    // ── Ay penceresindeki düşüşler (aylık yönetici özeti) ────────────────────────────────────
+
+    /** Pencere sonucu: TAM düşüş sayısı + en yeni {@code cap} satır (liste sınırlı, toplam değil). */
+    public record DropWindow(long total, List<TlsGradeChange> rows) { }
+
+    /**
+     * {@code [fromIso, toIso)} (UTC damga, {@code yyyy-MM-dd'T'HH:mm:ss}) içindeki GERÇEK düşüşler ({@code DROP} — bilgi
+     * değişimleri {@code REFINE} hariç). İki toplu sorgu (sayım + sınırlı liste), kapsam süzgeci YOK (kurum geneli).
+     */
+    public DropWindow dropsBetween(String fromIso, String toIso, int cap) {
+        int lim = Math.max(1, Math.min(cap, DROPS_SCAN_MAX));
+        long total = changeRepo.countBetween(fromIso, toIso, TlsGradeChange.DROP);
+        List<TlsGradeChange> rows = total == 0 ? List.of()
+                : changeRepo.findBetween(fromIso, toIso, TlsGradeChange.DROP, PageRequest.of(0, lim));
+        return new DropWindow(total, rows == null ? List.of() : rows);
     }
 
     private static Instant parse(String iso) {

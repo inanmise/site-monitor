@@ -29,6 +29,88 @@ public final class ExecFormat {
             "overdue_reason.NO_PLAN", "Plan yok",
             "overdue_reason.PLAN_PASSED", "Plan tarihi geçti");
 
+    /**
+     * BAŞKA özelliklerin kod sözlükleri (sütun / parametre biçimi → kod) — yönetici özetinin TLS notu, kripto hazırlığı ve
+     * veri kalitesi bölümleri o özelliklerin KENDİ kodlarını yollar; posta ve PDF Türkçeyi buradan, arayüz o özelliğin
+     * kendi i18n anahtarından ({@link #CODE_LABEL_I18N}) yazar. Metinler {@code tr.js}'teki karşılıklarıyla BİREBİR aynıdır
+     * (kapı: {@code ExecutiveSummaryCodeLabelsGateTest} — eksik kod ya da sapma build'i düşürür).
+     */
+    public static final java.util.Map<String, String> CODE_LABEL_I18N = java.util.Map.of(
+            "tls_reason", "tlsg.reason.{0}.title",
+            "crypto_category", "cinv.cat.{0}",
+            "pqc_band", "cinv.band.{0}",
+            "dq_rule", "dq.rule.{0}.title",
+            "dq_band", "dq.band.{0}");
+
+    /** {@link #CODE_LABEL_I18N} biçimlerinin Türkçesi, {@code <biçim>.<kod>} anahtarıyla. */
+    public static final java.util.Map<String, String> CODE_LABELS_TR = java.util.Map.ofEntries(
+            // TLS notu nedenleri (TlsGradeRules.Reason)
+            java.util.Map.entry("tls_reason.CERT_EXPIRED", "Sertifikanın süresi dolmuş"),
+            java.util.Map.entry("tls_reason.HOSTNAME_MISMATCH", "Alan adı sertifikada yok"),
+            java.util.Map.entry("tls_reason.CERT_UNTRUSTED", "Güvenilmeyen sertifika yayıncısı"),
+            java.util.Map.entry("tls_reason.CERT_REVOKED", "Sertifika iptal edilmiş"),
+            java.util.Map.entry("tls_reason.CHAIN_BROKEN", "Sertifika zinciri kırık"),
+            java.util.Map.entry("tls_reason.KEY_WEAK", "Zayıf anahtar"),
+            java.util.Map.entry("tls_reason.SIG_WEAK", "Zayıf imza algoritması"),
+            java.util.Map.entry("tls_reason.CIPHER_INSECURE", "Şifresiz ya da kimliksiz takım anlaşıldı"),
+            java.util.Map.entry("tls_reason.INSECURE_CIPHER_ACCEPTED", "Güvensiz takım kabul ediliyor"),
+            java.util.Map.entry("tls_reason.CIPHER_WEAK", "Modern istemciye zayıf takım seçiliyor"),
+            java.util.Map.entry("tls_reason.MULTIPLE_SERIOUS", "Birden çok ciddi sorun"),
+            java.util.Map.entry("tls_reason.NO_TLS12", "TLS 1.2 desteklenmiyor"),
+            java.util.Map.entry("tls_reason.WEAK_CIPHER_ACCEPTED", "Zayıf takım kabul ediliyor"),
+            java.util.Map.entry("tls_reason.TLS10_ENABLED", "TLS 1.0 açık"),
+            java.util.Map.entry("tls_reason.TLS11_ENABLED", "TLS 1.1 açık"),
+            java.util.Map.entry("tls_reason.NO_PFS", "İleriye dönük gizlilik yok"),
+            java.util.Map.entry("tls_reason.CIPHER_CBC", "Modern istemciye CBC takımı seçiliyor"),
+            java.util.Map.entry("tls_reason.NO_TLS13", "TLS 1.3 kapalı"),
+            java.util.Map.entry("tls_reason.HSTS_MISSING", "HSTS yok"),
+            java.util.Map.entry("tls_reason.HSTS_SHORT", "HSTS süresi kısa"),
+            java.util.Map.entry("tls_reason.HSTS_NOT_CHECKED", "HSTS denetlenmedi"),
+            java.util.Map.entry("tls_reason.OCSP_STAPLING_MISSING", "OCSP zımbalama yok"),
+            java.util.Map.entry("tls_reason.PROFILE_PENDING", "TLS profili henüz taranmadı"),
+            java.util.Map.entry("tls_reason.PROFILE_FAILED", "TLS profili taranamadı"),
+            java.util.Map.entry("tls_reason.PROFILE_PARTIAL", "TLS profili eksik"),
+            java.util.Map.entry("tls_reason.KEY_2030", "2030 sonrası için kısa anahtar"),
+            // Kripto geçiş kategorisi (CryptoClassifier.Category) ve öncelik bandı (PqcMigrationPriority)
+            java.util.Map.entry("crypto_category.BROKEN", "Bugün zayıf"),
+            java.util.Map.entry("crypto_category.LEGACY", "2030 altı"),
+            java.util.Map.entry("crypto_category.MODERN", "Klasik güçlü"),
+            java.util.Map.entry("crypto_category.PQC_READY", "PQC hazır"),
+            java.util.Map.entry("crypto_category.UNKNOWN", "Veri yok"),
+            java.util.Map.entry("pqc_band.P1", "P1 · şimdi"),
+            java.util.Map.entry("pqc_band.P2", "P2 · sıradaki"),
+            java.util.Map.entry("pqc_band.P3", "P3 · planlı"),
+            java.util.Map.entry("pqc_band.P4", "P4 · izle"),
+            java.util.Map.entry("pqc_band.DONE", "Hazır"),
+            // Veri kalitesi kuralları (DataQualityRule) ve bantları (DataQualityScore.Band)
+            java.util.Map.entry("dq_rule.INV_NO_TEAM", "Sahipsiz envanter kaydı"),
+            java.util.Map.entry("dq_rule.MON_NO_TEAM", "Sahipsiz izleme"),
+            java.util.Map.entry("dq_rule.INV_NO_TIER", "Kritiklik katmanı (tier) atanmamış"),
+            java.util.Map.entry("dq_rule.INV_TIER_SUSPECT", "Katman sinyallerle çelişiyor"),
+            java.util.Map.entry("dq_rule.INV_NO_CONTACTS", "Sorumlu ekip iletişimi eksik"),
+            java.util.Map.entry("dq_rule.INV_NEVER_CHECKED", "Hiç kontrol edilmemiş"),
+            java.util.Map.entry("dq_rule.INV_STALE_CHECK", "Son kontrol eski"),
+            java.util.Map.entry("dq_rule.INV_CHECK_FAILING", "Kontrol tekrar tekrar hata veriyor"),
+            java.util.Map.entry("dq_rule.NOC_CRITICAL_UNCOVERED", "Kritik kayıt 7/24 ekibine bildirilmiyor"),
+            java.util.Map.entry("dq_rule.MON_PAUSED_LONG", "Uzun süredir duraklatılmış"),
+            java.util.Map.entry("dq_rule.MON_NO_GROUP", "İzlemenin grup adı yok"),
+            java.util.Map.entry("dq_rule.MON_DUPLICATE", "Aynı hedefe ikinci izleme"),
+            java.util.Map.entry("dq_rule.TEAM_NO_MEMBERS", "Takımın aktif üyesi yok"),
+            java.util.Map.entry("dq_rule.TEAM_NO_MANAGER", "Takım lideri / müdürü yok"),
+            java.util.Map.entry("dq_rule.TEAM_NO_NOTIFY_ADDRESS", "Takımın bildirim adresi yok"),
+            java.util.Map.entry("dq_rule.TEAM_NO_ESCALATION", "YÜKSEK / KRİTİK eskalasyon kişisi yok"),
+            java.util.Map.entry("dq_band.EXCELLENT", "Mükemmel"),
+            java.util.Map.entry("dq_band.GOOD", "İyi"),
+            java.util.Map.entry("dq_band.NEEDS_ATTENTION", "İyileştirilmeli"),
+            java.util.Map.entry("dq_band.POOR", "Zayıf"),
+            java.util.Map.entry("dq_band.NO_DATA", "Puan yok"));
+
+    /** Kodun Türkçesi ({@link #CODE_LABELS_TR}); bilinmeyen kod olduğu gibi döner. */
+    public static String codeLabel(String format, Object code) {
+        if (code == null) return "—";
+        return CODE_LABELS_TR.getOrDefault(format + "." + code, String.valueOf(code));
+    }
+
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
 
@@ -113,8 +195,10 @@ public final class ExecFormat {
                         ? "Seviye " + n.intValue() : "Atanmamış";
                 case "monitor_type" -> com.sitemonitor.service.MonitorTypeCatalog.label(String.valueOf(v));
                 case "renewal_class", "overdue_reason" -> ENUM_TR.getOrDefault(f + "." + v, String.valueOf(v));
+                case "tls_reason", "crypto_category", "pqc_band", "dq_rule", "dq_band" -> codeLabel(f, v);
                 case "pct_change" -> v instanceof Number n ? pctChange(n.doubleValue()) : String.valueOf(v);
                 case "int" -> v instanceof Number n ? String.valueOf(Math.round(n.doubleValue())) : String.valueOf(v);
+                case "num" -> v instanceof Number n ? num(n.doubleValue(), 2) : String.valueOf(v);
                 case "pct" -> v instanceof Number n ? pct(n.doubleValue()) : String.valueOf(v);
                 case "pp" -> v instanceof Number n ? pp(n.doubleValue()) : String.valueOf(v);
                 case "minutes" -> v instanceof Number n ? minutes(n.doubleValue()) : String.valueOf(v);

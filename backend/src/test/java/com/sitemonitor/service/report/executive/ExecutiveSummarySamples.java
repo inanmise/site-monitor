@@ -1,9 +1,13 @@
 package com.sitemonitor.service.report.executive;
 
 import com.sitemonitor.dto.CertificateDto;
+import com.sitemonitor.model.TlsGradeChange;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.service.MonitoringOverviewService;
 import com.sitemonitor.service.RenewalForecastService;
+import com.sitemonitor.service.crypto.CryptoInventoryService;
+import com.sitemonitor.service.quality.DataQualityService;
+import com.sitemonitor.service.tlsgrade.TlsGradeService;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
@@ -98,7 +102,111 @@ public final class ExecutiveSummarySamples {
         }
         SectionResult d = rn.evaluate(ctx, groups, null, true);
 
-        return ExecutiveSummaryService.assemble(ctx, List.of(a, b, c, d));
+        // (e) TLS notu
+        TlsGradeSection tls = new TlsGradeSection(mock(TlsGradeService.class));
+        List<TlsGradeSection.Endpoint> graded = new ArrayList<>();
+        graded.add(new TlsGradeSection.Endpoint("far.example.com", 2L, "Takım B", 2, "A+", List.of()));
+        graded.add(new TlsGradeSection.Endpoint("a.example.com", 3L, "İnternet Şubesi", 3, "A", List.of("OCSP_STAPLING_MISSING")));
+        List<TlsGradeChange> drops = new ArrayList<>();
+        if (busy) {
+            graded.add(new TlsGradeSection.Endpoint(LONG_HOST, 1L, TR_TEAM, 1, "F", List.of("CERT_EXPIRED", "TLS10_ENABLED")));
+            graded.add(new TlsGradeSection.Endpoint("odeme.example.com", 2L, "Takım B", 2, "B", List.of("TLS10_ENABLED", "NO_TLS13")));
+            graded.add(new TlsGradeSection.Endpoint("eski.example.com", 3L, "İnternet Şubesi", 3, "C",
+                    List.of("WEAK_CIPHER_ACCEPTED", "TLS11_ENABLED")));
+            drops.add(change(11L, LONG_HOST, 1L, "B", "F", "2026-09-21T08:00:00"));
+            drops.add(change(12L, "odeme.example.com", 2L, "A", "B", "2026-09-05T08:00:00"));
+        }
+        Map<String, Object> coverage = new LinkedHashMap<>();
+        coverage.put("endpoints", graded.size() + 1);
+        coverage.put("ok", busy ? 3 : 2);
+        coverage.put("partial", busy ? 1 : 0);
+        coverage.put("failed", busy ? 1 : 0);
+        coverage.put("pending", busy ? 1 : 1);
+        SectionResult e = tls.evaluate(ctx, new TlsGradeSection.Inputs(graded, busy ? 2 : 0, busy ? 1 : 0, coverage,
+                new TlsGradeService.DropWindow(drops.size(), drops)));
+
+        // (f) kripto hazırlığı
+        CryptoReadinessSection cr = new CryptoReadinessSection(mock(CryptoInventoryService.class));
+        SectionResult f = cr.evaluate(ctx, cryptoSummary(busy));
+
+        // (g) veri kalitesi
+        DataQualitySection dq = new DataQualitySection(mock(DataQualityService.class));
+        List<DataQualityService.TeamScore> teamScores = busy
+                ? List.of(new DataQualityService.TeamScore(1L, TR_TEAM, 42, "POOR", 9),
+                          new DataQualityService.TeamScore(2L, "Takım B", 81, "GOOD", 3),
+                          new DataQualityService.TeamScore(3L, "İnternet Şubesi", 95, "EXCELLENT", 1))
+                : List.of(new DataQualityService.TeamScore(2L, "Takım B", 93, "EXCELLENT", 1));
+        List<DataQualityService.IssueCount> costly = busy
+                ? List.of(new DataQualityService.IssueCount("INV_NO_TEAM", 4, 40, 6.2),
+                          new DataQualityService.IssueCount("TEAM_NO_ESCALATION", 1, 3, 4.1),
+                          new DataQualityService.IssueCount("INV_NO_CONTACTS", 12, 40, 1.9))
+                : List.of(new DataQualityService.IssueCount("MON_NO_GROUP", 1, 20, 0.4));
+        DataQualityService.Digest digest = new DataQualityService.Digest(NOW, busy ? 71 : 94, busy ? "NEEDS_ATTENTION" : "EXCELLENT",
+                busy ? 17 : 1, teamScores, costly, costly);
+        DataQualityService.MonthEnds ends = new DataQualityService.MonthEnds("2026-08-31", "2026-09-30",
+                Map.of(0L, busy ? 78 : 93, 1L, 50), Map.of(0L, busy ? 71 : 94, 1L, 42));
+        SectionResult g = dq.evaluate(ctx, digest, ends);
+
+        return ExecutiveSummaryService.assemble(ctx, List.of(a, b, c, d, e, f, g));
+    }
+
+    private static TlsGradeChange change(Long inv, String domain, Long team, String from, String to, String at) {
+        TlsGradeChange ch = new TlsGradeChange();
+        ch.setInventoryId(inv);
+        ch.setDomain(domain);
+        ch.setTeamId(team);
+        ch.setFromGrade(from);
+        ch.setToGrade(to);
+        ch.setDirection(TlsGradeChange.DROP);
+        ch.setChangedAt(at);
+        return ch;
+    }
+
+    /** {@code CryptoInventoryService.summary} biçiminde örnek (kurum geneli). */
+    static Map<String, Object> cryptoSummary(boolean busy) {
+        Map<String, Object> s = new LinkedHashMap<>();
+        s.put("total", busy ? 12 : 4);
+        s.put("checked", busy ? 11 : 4);
+        s.put("unchecked", busy ? 1 : 0);
+        s.put("by_pqc", Map.of("VULNERABLE", busy ? 10 : 4, "HYBRID", 0, "PQC", 0, "UNKNOWN", busy ? 2 : 0));
+        Map<String, Object> cat = new LinkedHashMap<>();
+        cat.put("BROKEN", busy ? 2 : 0);
+        cat.put("LEGACY", busy ? 5 : 0);
+        cat.put("MODERN", busy ? 3 : 4);
+        cat.put("PQC_READY", 0);
+        cat.put("UNKNOWN", busy ? 2 : 0);
+        s.put("by_category", cat);
+        s.put("by_band", Map.of("P1", busy ? 2 : 0, "P2", busy ? 4 : 0, "P3", busy ? 3 : 2, "P4", busy ? 3 : 2, "DONE", 0));
+        s.put("remnants", Map.of("md5_leaf", 0, "sha1_leaf", busy ? 1 : 0, "md5_intermediate", 0,
+                "sha1_intermediate", busy ? 1 : 0, "sha1_root", 0, "chains_examined", busy ? 11 : 4, "affected", busy ? 2 : 0));
+        s.put("vulnerable_expiring_90d", busy ? 3 : 0);
+        s.put("legacy_reissue", busy ? 1 : 0);
+        s.put("generated_at", "2026-10-10T08:59:00");
+        List<Map<String, Object>> top = new ArrayList<>();
+        if (busy) {
+            top.add(topRow(1, LONG_HOST, 1L, TR_TEAM, 1, "BROKEN", 90, "P1", 9));
+            top.add(topRow(2, "odeme.example.com", 2L, "Takım B", 2, "LEGACY", 60, "P2", 40));
+        } else {
+            top.add(topRow(1, "far.example.com", 2L, "Takım B", 2, "MODERN", 35, "P3", 200));
+        }
+        s.put("top", top);
+        return s;
+    }
+
+    private static Map<String, Object> topRow(int rank, String domain, Long team, String teamName, Integer tier,
+                                              String category, int score, String band, Integer days) {
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("rank", rank);
+        t.put("domain", domain);
+        t.put("source", "NETWORK");
+        t.put("team_id", team);
+        t.put("team_name", teamName);
+        t.put("tier", tier);
+        t.put("category", category);
+        t.put("score", score);
+        t.put("band", band);
+        t.put("days_remaining", days);
+        return t;
     }
 
     private static void add(List<CertificateDto> latest, Map<String, ExecutiveSummaryContext.InventoryRow> inv,

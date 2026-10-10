@@ -18,16 +18,19 @@ package com.sitemonitor.service.report.executive;
  * E-posta, PDF ve uygulama ekranı bölümü {@link SectionResult} üzerinden GENEL olarak çizer; başka bir dosyaya
  * dokunmak gerekmez. Hata fırlatan bölüm özetin geri kalanını düşürmez ({@link SectionResult#failed}).
  *
- * <p><b>Ayrılmış sıra numaraları</b> (paralel geliştirilen özellikler için; anahtarlar önerilir):
+ * <p><b>Sıra numaraları</b> (yeni bölüm araya girebilsin diye onar onar):
  * <ul>
  *   <li>10 {@code availability} — erişilebilirlik hedefi uyumu</li>
  *   <li>20 {@code noise} — en gürültülü alarmlar</li>
  *   <li>30 {@code expirations} — yaklaşan sertifika bitişleri</li>
  *   <li>40 {@code renewals} — yenileme süresine uyum</li>
- *   <li>50 {@code tls-grade} — TLS yapılandırma notu dağılımı (henüz yok)</li>
- *   <li>60 {@code crypto-readiness} — kripto envanteri / PQC hazırlığı (henüz yok)</li>
- *   <li>70 {@code data-quality} — takım veri kalitesi puanı (henüz yok)</li>
+ *   <li>50 {@code tls-grade} — TLS yapılandırma notu dağılımı ({@link TlsGradeSection})</li>
+ *   <li>60 {@code crypto-readiness} — kripto envanteri / PQC hazırlığı ({@link CryptoReadinessSection})</li>
+ *   <li>70 {@code data-quality} — takım veri kalitesi puanı ({@link DataQualitySection})</li>
  * </ul>
+ * Başka bir özelliğin KODLARINI (neden, kategori, kural …) sütun / parametre olarak yollayan bölüm, Türkçesini
+ * {@link ExecFormat#CODE_LABELS_TR}'ye, i18n anahtar kalıbını {@link ExecFormat#CODE_LABEL_I18N}'e ve arayüz eşlemesini
+ * {@code executiveModel.CODE_LABEL_KEY}'e ekler (kapı: {@code ExecutiveSummaryCodeLabelsGateTest}).
  */
 public interface ExecutiveSummarySection {
 

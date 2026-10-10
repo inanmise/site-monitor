@@ -83,7 +83,8 @@ public final class ExecutiveSummaryMail {
         if (pdfFileName != null && !pdfFileName.isBlank()) {
             d.raw(MailKit.listCard("Ekteki dosya", Badge.outline("PDF"),
                     MailKit.esc("Özetin tamamı: takım ve hizmet tabloları, en gürültülü hedefler, yaklaşan bitişler, "
-                            + "yenileme sınıfları ve yöntem notları."),
+                            + "yenileme sınıfları, TLS not dağılımı, kripto geçiş listesi, veri kalitesi sıralaması ve "
+                            + "yöntem notları."),
                     null, List.of(new ListItem(MailKit.mono(pdfFileName), null)), null),
                     "Ekteki dosya: " + pdfFileName + " — özetin tamamı (tablolar ve yöntem notları).");
         }

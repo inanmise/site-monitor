@@ -41,6 +41,21 @@ class ExecutiveSummaryPdfWriterTest {
         assertThat(t).contains("ğüşıöç İĞÜŞÖÇ");
         assertThat(t).contains("Sayfa 1 /");
         assertThat(t).contains("Süresi dolduktan sonra");
+        // Yeni bölümler (2026-10-10): TLS notu, kripto hazırlığı, veri kalitesi — kod sütunları Türkçe yazılır
+        assertThat(t).contains("TLS yapılandırma notu", "Kripto envanteri ve PQC hazırlığı", "Takım veri kalitesi puanı");
+        assertThat(t).contains("TLS 1.0 açık", "Bugün zayıf", "P1 · şimdi", "Sahipsiz envanter kaydı", "İyileştirilmeli");
+        assertThat(t).doesNotContain("TLS10_ENABLED", "INV_NO_TEAM", "NEEDS_ATTENTION");
+    }
+
+    @Test
+    @DisplayName("her bölüm tablosu posta / PDF için ≤ 15 satır (yeni bölümler ≤ 10)")
+    void tableRowLimits() {
+        for (com.sitemonitor.service.report.executive.SectionResult sec : ExecutiveSummarySamples.full().sections()) {
+            for (com.sitemonitor.service.report.executive.SectionResult.Table tb : sec.tables()) {
+                int max = java.util.Set.of("tls-grade", "crypto-readiness", "data-quality").contains(sec.key()) ? 10 : 15;
+                assertThat(tb.rows()).as(sec.key() + "/" + tb.code()).hasSizeLessThanOrEqualTo(max);
+            }
+        }
     }
 
     @Test
@@ -61,7 +76,9 @@ class ExecutiveSummaryPdfWriterTest {
                 ExecutiveSummaryPdfWriter.fileName(s.month()));
         assertThat(ExecutiveSummaryMail.subject(s)).startsWith("[Site Monitor] Aylık Yönetici Özeti · Eylül 2026 · ");
         assertThat(m.html()).doesNotContain("SiteMonitor").contains("?tab=executive&amp;ex_m=2026-09")
-                .contains("Yenileme süresine uyum").contains("site-monitor-yonetici-ozeti-2026-09.pdf");
+                .contains("Yenileme süresine uyum").contains("site-monitor-yonetici-ozeti-2026-09.pdf")
+                .contains("TLS yapılandırma notu").contains("Kripto envanteri ve PQC hazırlığı")
+                .contains("Takım veri kalitesi puanı");
         assertThat(m.html().getBytes(StandardCharsets.UTF_8).length).isLessThan(95_000);
         assertThat(m.text()).contains("Erişilebilirlik hedefi uyumu").doesNotContain("<table");
     }

@@ -4,6 +4,7 @@ import { EN } from '../i18n/en.js'
 import {
   buildMonthlyCron, dailyPoints, formatValue, invalidEmails, isSummaryPayload, kpiView, localized, monthLabel,
   monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
+  distributionSegments, TLS_GRADE_SEGMENTS, CRYPTO_CATEGORY_SEGMENTS, CODE_LABEL_KEY,
 } from '../components/executive/executiveModel.js'
 import { summary } from './helpers/executiveFixtures.js'
 
@@ -48,6 +49,57 @@ describe('executiveModel — biçimleme', () => {
     expect(formatValue('NO_PLAN', 'overdue_reason', { t: tTR })).toBe('Plan yok')
     expect(formatValue('bad', 'status', { t: tTR })).toBe('Kritik')
   })
+
+  it('başka özelliklerin kodları kendi i18n anahtarlarıyla (TLS nedeni, kripto kategori/bant, veri kalitesi kural/bant)', () => {
+    expect(formatValue('TLS10_ENABLED', 'tls_reason', { t: tTR })).toBe(TR['tlsg.reason.TLS10_ENABLED.title'])
+    expect(formatValue('TLS10_ENABLED', 'tls_reason', { t: tEN })).toBe(EN['tlsg.reason.TLS10_ENABLED.title'])
+    expect(formatValue('LEGACY', 'crypto_category', { t: tEN })).toBe(EN['cinv.cat.LEGACY'])
+    expect(formatValue('P1', 'pqc_band', { t: tTR })).toBe(TR['cinv.band.P1'])
+    expect(formatValue('INV_NO_TEAM', 'dq_rule', { t: tEN })).toBe(EN['dq.rule.INV_NO_TEAM.title'])
+    expect(formatValue('NEEDS_ATTENTION', 'dq_band', { t: tTR })).toBe('İyileştirilmeli')
+    // bilinmeyen kod ham anahtar değil, kodun kendisi
+    expect(formatValue('YENI_KURAL', 'dq_rule', { t: tEN })).toBe('YENI_KURAL')
+    expect(formatValue(6.25, 'num', { t: tTR, lang: 'tr' })).toBe('6,25')
+  })
+})
+
+describe('executiveModel — yeni bölümler (TLS notu, kripto, veri kalitesi)', () => {
+  const s = summary()
+  const sec = (k) => s.sections.find((x) => x.key === k)
+
+  it('hükümler iki dilde, kod parametresi kendi dilinde biçimlenir', () => {
+    const tls = sec('tls-grade')
+    expect(verdictText(tEN, 'tls-grade', tls.verdicts[2], 'en'))
+      .toBe(`The most common reason pulling grades below A: ${EN['tlsg.reason.TLS10_ENABLED.title']} (6 endpoints).`)
+    expect(verdictText(tTR, 'tls-grade', tls.verdicts[0], 'tr')).toBe('Notlanan 40 uç nokta: A/A+ payı %70, C ve altı %7,5.')
+    const dq = sec('data-quality')
+    expect(verdictText(tEN, 'data-quality', dq.verdicts[0], 'en'))
+      .toBe('Organisation data quality score 71 (Needs attention); 17 open findings.')
+    expect(verdictText(tTR, 'data-quality', dq.verdicts[1], 'tr'))
+      .toBe('Ay sonu görüntüsüne göre puan geçen aya kıyasla 7 puan düştü (78 → 71).')
+  })
+
+  it('göstergeler: ipucu parametreleri, ay sonu farkı çipi; ipucu yoksa boş', () => {
+    const dq = sec('data-quality')
+    const v = kpiView(tEN, 'data-quality', dq.kpis[1], 'en')
+    expect(v.label).toBe('Month-end score')
+    expect(v.delta).toBe('▼ 7 pts vs last month')
+    expect(v.hint).toBe('Snapshot of 30/09/2026')
+    expect(kpiView(tEN, 'data-quality', dq.kpis[0], 'en').hint).toBe('Needs attention · 17 open findings')
+    expect(kpiView(tEN, 'tls-grade', sec('tls-grade').kpis[2], 'en').hint).toBeNull()
+    expect(kpiView(tTR, 'crypto-readiness', sec('crypto-readiness').kpis[1], 'tr').hint).toBe('P2 5 · P3 10 · P4 13')
+  })
+
+  it('dağılım dilimleri: sabit sıra, yüzde, eksik / bozuk değer 0', () => {
+    const segs = distributionSegments({ 'A+': 1, A: 3, F: 'x', B: -2 }, TLS_GRADE_SEGMENTS)
+    expect(segs.map((x) => x.key)).toEqual(['A+', 'A', 'B', 'C', 'D', 'F'])
+    expect(segs.map((x) => x.count)).toEqual([1, 3, 0, 0, 0, 0])
+    expect(segs[1].pct).toBe(75)
+    expect(segs[0].total).toBe(4)
+    expect(distributionSegments(null, CRYPTO_CATEGORY_SEGMENTS)[0].total).toBe(0)
+    expect(CRYPTO_CATEGORY_SEGMENTS.map((x) => x.key)).toEqual(['BROKEN', 'LEGACY', 'MODERN', 'PQC_READY', 'UNKNOWN'])
+    expect(Object.keys(CODE_LABEL_KEY)).toEqual(['tls_reason', 'crypto_category', 'pqc_band', 'dq_rule', 'dq_band'])
+  })
 })
 
 describe('executiveModel — metin (i18n + sunucu metnine düşüş)', () => {
@@ -60,7 +112,7 @@ describe('executiveModel — metin (i18n + sunucu metnine düşüş)', () => {
   })
 
   it('bilinmeyen bölüm (yeni sağlayıcı) sunucunun Türkçe metnine düşer — ham anahtar görünmez', () => {
-    const fut = s.sections.find((x) => x.key === 'tls-grade')
+    const fut = s.sections.find((x) => x.key === 'future-section')
     expect(verdictText(tEN, fut.key, fut.verdicts[0], 'en')).toBe(fut.verdicts[0].text)
     expect(localized(tEN, 'exec.unknown.title', 'Sunucu metni')).toBe('Sunucu metni')
   })

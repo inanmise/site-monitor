@@ -18,4 +18,17 @@ public interface TlsGradeChangeRepository extends JpaRepository<TlsGradeChange, 
     @Query("SELECT c FROM TlsGradeChange c WHERE c.changedAt >= :since AND c.direction = :direction "
             + "ORDER BY c.changedAt DESC, c.id DESC")
     List<TlsGradeChange> findRecent(@Param("since") String since, @Param("direction") String direction, Pageable page);
+
+    /**
+     * Yarı açık pencere {@code [from, to)} içindeki değişimler, yeniden eskiye — aylık yönetici özeti (ay sınırları
+     * İstanbul takvimi, UTC damga). Sayfa sınırı çağıranda (sorgu sınırsız olmasın).
+     */
+    @Query("SELECT c FROM TlsGradeChange c WHERE c.changedAt >= :from AND c.changedAt < :to AND c.direction = :direction "
+            + "ORDER BY c.changedAt DESC, c.id DESC")
+    List<TlsGradeChange> findBetween(@Param("from") String from, @Param("to") String to,
+                                     @Param("direction") String direction, Pageable page);
+
+    /** {@link #findBetween} penceresindeki TAM sayı (liste sınırlıyken de doğru toplam). */
+    @Query("SELECT COUNT(c) FROM TlsGradeChange c WHERE c.changedAt >= :from AND c.changedAt < :to AND c.direction = :direction")
+    long countBetween(@Param("from") String from, @Param("to") String to, @Param("direction") String direction);
 }

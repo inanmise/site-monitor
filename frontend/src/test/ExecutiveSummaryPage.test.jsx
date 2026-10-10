@@ -33,10 +33,39 @@ describe('Yönetici Özeti sayfası', () => {
     const { container } = render(<ExecutiveSummaryPage globalAdmin />)
     await screen.findByRole('region', { name: 'Erişilebilirlik hedefi uyumu' })
     const keys = [...container.querySelectorAll('[data-slot="ex-section"]')].map((el) => el.getAttribute('data-key'))
-    expect(keys).toEqual(['availability', 'noise', 'expirations', 'renewals', 'tls-grade'])
-    expect(screen.getByRole('region', { name: 'TLS yapılandırma notu' })).toBeInTheDocument()
-    expect(screen.getAllByText('Sertifikaların %90\'ı A notunda.').length).toBeGreaterThan(0)
+    expect(keys).toEqual(['availability', 'noise', 'expirations', 'renewals', 'tls-grade', 'crypto-readiness', 'data-quality',
+      'future-section'])
+    expect(screen.getByRole('region', { name: 'Gelecek bölüm' })).toBeInTheDocument()
+    expect(screen.getAllByText('Gelecek bölümün sunucu metni.').length).toBeGreaterThan(0)
     expect(ex().get).toHaveBeenCalledWith({ month: null, live: false, fresh: false })
+  })
+
+  it('TLS notu / kripto / veri kalitesi bölümleri: i18n başlık, kod hücreleri kendi dilinde, dağılım çubukları, rapor anı', async () => {
+    const { container } = render(<ExecutiveSummaryPage globalAdmin />)
+    const tls = await screen.findByRole('region', { name: 'TLS yapılandırma notu' })
+    expect(within(tls).getAllByText('Notlanan 40 uç nokta: A/A+ payı %70, C ve altı %7,5.').length).toBeGreaterThan(0)
+    expect(within(tls).getByText(/Notu A’nın altına çeken en sık neden: TLS 1\.0 açık \(6 uç nokta\)/)).toBeInTheDocument()
+    expect(within(tls).getAllByText('Sertifikanın süresi dolmuş').length).toBeGreaterThan(0)   // tls_reason hücresi
+    expect(within(tls).getByText(/Rapor anı:/)).toBeInTheDocument()
+    const dist = container.querySelector('[data-slot="ex-tls-dist"]')
+    expect(dist).not.toBeNull()
+    expect([...dist.querySelectorAll('[data-slot="ex-tls-dist-seg"]')].map((x) => x.getAttribute('data-key')))
+      .toEqual(['A+', 'A', 'B', 'C', 'F'])                                                  // sıfır dilim çizilmez
+    expect(dist.querySelectorAll('[data-slot="ex-tls-dist-legend"]')).toHaveLength(6)        // lejant her notu söyler
+    expect(within(tls).getByText('Not dağılımı · 40 uç nokta')).toBeInTheDocument()
+
+    const crypto = screen.getByRole('region', { name: 'Kripto envanteri ve PQC hazırlığı' })
+    expect(within(crypto).getAllByText('P1 · şimdi').length).toBeGreaterThan(0)              // pqc_band hücresi
+    expect(within(crypto).getAllByText('2030 altı').length).toBeGreaterThan(0)                // kategori hücresi + lejant
+    expect(within(crypto).getByText('P2 5 · P3 10 · P4 13')).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-slot="ex-crypto-dist-legend"]')).toHaveLength(5)
+
+    const dq = screen.getByRole('region', { name: 'Takım veri kalitesi puanı' })
+    expect(within(dq).getAllByText('Kurum veri kalitesi puanı 71 (İyileştirilmeli); 17 açık bulgu.').length).toBeGreaterThan(0)
+    expect(within(dq).getAllByText('Sahipsiz envanter kaydı').length).toBeGreaterThan(0)      // dq_rule hücresi
+    expect(within(dq).getAllByText('YENI_KURAL').length).toBeGreaterThan(0)                  // bilinmeyen kod ham anahtar değil
+    expect(within(dq).getAllByText('6,2').length).toBeGreaterThan(0)                         // num → ondalık virgül
+    expect(within(dq).getByText('▼ 7 puan · geçen aya göre')).toBeInTheDocument()            // ay sonu farkı çipi
   })
 
   it('üst şerit: genel durum, bölüm göstergeleri, biçimli hükümler', async () => {
@@ -44,7 +73,8 @@ describe('Yönetici Özeti sayfası', () => {
     const head = await screen.findByRole('region', { name: /Eylül 2026/ })
     expect(within(head).getByText('Aksiyon gerekli')).toBeInTheDocument()
     const tiles = container.querySelectorAll('[data-slot="ex-headline-kpis"] [data-slot="ex-kpi"]')
-    expect([...tiles].map((x) => x.getAttribute('data-code'))).toEqual(['org_availability', 'total_alarms', 'within30', 'on_time_pct'])
+    expect([...tiles].map((x) => x.getAttribute('data-code'))).toEqual(['org_availability', 'total_alarms', 'within30', 'on_time_pct',
+      'top_share', 'broken', 'org_score'])
     expect(within(head).getByText('Kurum erişilebilirliği %99,95 — hedef %99,9 karşılandı.')).toBeInTheDocument()
     expect(within(head).getByText('Bu ay 120 alarm açıldı; geçen aya (80) göre %50 artış.')).toBeInTheDocument()
   })

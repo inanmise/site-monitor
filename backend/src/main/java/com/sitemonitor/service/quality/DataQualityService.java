@@ -216,11 +216,19 @@ public class DataQualityService {
 
     public record TeamScore(long teamId, String teamName, Integer score, String band, int findings) {}
 
-    public record IssueCount(String code, int failing, int eligible) {}
+    /**
+     * Kurumda kusurlu bir kural: kusurlu / uygun öğe ve {@code pointsLost} = kural tümüyle düzeltilirse KURUM puanının
+     * kazanacağı puan ({@link DataQualityScore#pointsLost}, bir ondalık).
+     */
+    public record IssueCount(String code, int failing, int eligible, double pointsLost) {}
 
-    /** Süzülmemiş kurum özeti — kurum puanı, takım puanları (kötüden iyiye), kurumda en çok kusurlu kurallar. */
+    /**
+     * Süzülmemiş kurum özeti — kurum puanı, takım puanları (kötüden iyiye), kurumda en çok kusurlu kurallar
+     * ({@code topIssues}, kusurlu sayısına göre, en çok 5) ve en çok PUAN kaybettiren kurallar ({@code costliest},
+     * kaybedilen puana göre, kusurlu her kural).
+     */
     public record Digest(Instant generatedAt, Integer orgScore, String orgBand, int orgFindings,
-                         List<TeamScore> teams, List<IssueCount> topIssues) {}
+                         List<TeamScore> teams, List<IssueCount> topIssues, List<IssueCount> costliest) {}
 
     public Digest digest() {
         Evaluation e = evaluation(false);
@@ -232,14 +240,69 @@ public class DataQualityService {
         teams.sort(Comparator.comparing((TeamScore t) -> t.score() == null ? Integer.MAX_VALUE : t.score())
                 .thenComparing(t -> t.teamName() == null ? "" : t.teamName()));
         List<IssueCount> issues = new ArrayList<>();
-        for (Map.Entry<DataQualityRule, Count> en : e.org().counts().entrySet()) {
+        Map<DataQualityRule, Count> orgCounts = e.org().counts();
+        for (Map.Entry<DataQualityRule, Count> en : orgCounts.entrySet()) {
             if (en.getValue().failing() > 0)
-                issues.add(new IssueCount(en.getKey().name(), en.getValue().failing(), en.getValue().eligible()));
+                issues.add(new IssueCount(en.getKey().name(), en.getValue().failing(), en.getValue().eligible(),
+                        DataQualityScore.pointsLost(orgCounts, en.getKey())));
         }
+        List<IssueCount> costliest = new ArrayList<>(issues);
+        costliest.sort(Comparator.comparingDouble(IssueCount::pointsLost).reversed()
+                .thenComparing(Comparator.comparingInt(IssueCount::failing).reversed()).thenComparing(IssueCount::code));
         issues.sort(Comparator.comparingInt(IssueCount::failing).reversed().thenComparing(IssueCount::code));
         Integer org = e.org().score();
         return new Digest(e.at(), org, DataQualityScore.band(org).name(), e.org().findingCount(),
-                List.copyOf(teams), List.copyOf(issues.size() > 5 ? issues.subList(0, 5) : issues));
+                List.copyOf(teams), List.copyOf(issues.size() > 5 ? issues.subList(0, 5) : issues),
+                List.copyOf(costliest));
+    }
+
+    // ── Ay sonu görüntüleri (aylık yönetici özeti: aydan aya değişim) ─────────────────────────────────
+
+    /**
+     * İki ayın SON günlük görüntüsü: {@code prevDay}/{@code curDay} (İstanbul günü, yoksa null) ve o günlerin kova
+     * puanları (anahtar {@code team_key}: takım kimliği, {@value #ORG_KEY} kurum, {@value #UNASSIGNED_KEY} Sahipsiz).
+     */
+    public record MonthEnds(String prevDay, String curDay, Map<Long, Integer> prev, Map<Long, Integer> cur) {
+        public static final MonthEnds NONE = new MonthEnds(null, null, Map.of(), Map.of());
+    }
+
+    static final String SQL_MONTH_END_DAYS = "SELECT MAX(CASE WHEN snap_day < ? THEN snap_day END) AS prev_day, "
+            + "MAX(CASE WHEN snap_day >= ? THEN snap_day END) AS cur_day FROM data_quality_daily "
+            + "WHERE team_key = 0 AND snap_day >= ? AND snap_day <= ?";
+    static final String SQL_DAYS_SCORES = "SELECT snap_day, team_key, score FROM data_quality_daily WHERE snap_day IN (?, ?)";
+
+    /**
+     * {@code monthStart} ayının ve bir önceki ayın son günlük görüntüsü (kurum satırının olduğu en son gün) + o iki günün
+     * bütün kova puanları. İKİ sorgu (gün seçimi + iki günün satırları); tablo yoksa / hata → {@link MonthEnds#NONE}.
+     * Görüntüler {@value #TREND_KEEP_DAYS} gün saklanır — daha eski aylarda gün bulunmaz (çağıran not düşer).
+     */
+    public MonthEnds monthEnds(LocalDate monthStart) {
+        try {
+            LocalDate prevStart = monthStart.minusMonths(1);
+            LocalDate monthLast = monthStart.plusMonths(1).minusDays(1);
+            String[] days = new String[2];
+            jdbc.query(SQL_MONTH_END_DAYS, rs -> {
+                days[0] = rs.getString(1);
+                days[1] = rs.getString(2);
+            }, monthStart.toString(), monthStart.toString(), prevStart.toString(), monthLast.toString());
+            if (days[0] == null && days[1] == null) return MonthEnds.NONE;
+            Map<Long, Integer> prev = new HashMap<>();
+            Map<Long, Integer> cur = new HashMap<>();
+            String a = days[0] == null ? days[1] : days[0];
+            String b = days[1] == null ? days[0] : days[1];
+            jdbc.query(SQL_DAYS_SCORES, rs -> {
+                Object s = rs.getObject(3);
+                if (s == null) return;
+                String day = rs.getString(1);
+                int score = ((Number) s).intValue();
+                if (day != null && day.equals(days[0])) prev.put(rs.getLong(2), score);
+                if (day != null && day.equals(days[1])) cur.put(rs.getLong(2), score);
+            }, a, b);
+            return new MonthEnds(days[0], days[1], prev, cur);
+        } catch (Exception e) {
+            log.debug("Veri kalitesi ay sonu görüntüleri okunamadı (tablo henüz yok?): {}", e.getMessage());
+            return MonthEnds.NONE;
+        }
     }
 
     // ── Günlük görüntü (eğilim) ──────────────────────────────────────────────────────────────────────

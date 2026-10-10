@@ -8,7 +8,9 @@ import {
 } from '@/components/shadcn/chart'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { cn } from '@/lib/utils'
-import { dailyPoints, fmtNumber, fmtPct, renewalSegments, yFloor } from './executiveModel.js'
+import {
+  CRYPTO_CATEGORY_SEGMENTS, TLS_GRADE_SEGMENTS, dailyPoints, distributionSegments, fmtNumber, fmtPct, renewalSegments, yFloor,
+} from './executiveModel.js'
 
 /** Grafik ipucu: gün, erişilebilirlik, kontrol sayısı, hedefe göre durum (metinle). */
 function TrendTip({ active, payload, target, t, lang }) {
@@ -160,5 +162,58 @@ export function RenewalDistribution({ section }) {
         ))}
       </ul>
     </section>
+  )
+}
+
+/**
+ * Bileşim çubuğu + sayılı, yüzdeli lejant (yenileme dağılımıyla aynı dil). Dilim payı adet oranıdır; her dilim lejantta
+ * metinle de söylenir (renk tek taşıyıcı değil). Toplam 0 ise hiçbir şey çizilmez (genel tablolar yeter).
+ */
+function DistributionBar({ slot, title, segments, labelOf, cols = 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-6' }) {
+  const { lang } = useLanguage()
+  const titleId = useId()
+  const total = segments[0]?.total || 0
+  if (!total) return null
+  return (
+    <section aria-labelledby={titleId} data-slot={slot} className="flex min-w-0 flex-col gap-2">
+      <h4 id={titleId} className="m-0 text-sm font-semibold">{title}</h4>
+      <div aria-hidden="true" className="flex h-3 w-full gap-0.5 overflow-hidden rounded-full bg-muted">
+        {segments.filter((s) => s.count > 0).map((s) => (
+          <span key={s.key} data-slot={`${slot}-seg`} data-key={s.key}
+            className="h-full min-w-1 basis-0 first:rounded-l-full last:rounded-r-full"
+            style={{ flexGrow: s.count, background: s.color }} />
+        ))}
+      </div>
+      <ul className={cn('m-0 grid list-none gap-x-4 gap-y-1 p-0', cols)}>
+        {segments.map((s) => (
+          <li key={s.key} data-slot={`${slot}-legend`} data-key={s.key} className="flex min-w-0 items-center gap-2 text-sm">
+            <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{labelOf(s.key)}</span>
+            <span className="font-semibold tabular-nums">{fmtNumber(s.count, lang, 0)}</span>
+            <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">{fmtPct(s.pct, lang, 1)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** TLS notu dağılımı (A+ … F) — `data.grades`. */
+export function TlsGradeDistribution({ section }) {
+  const t = useT()
+  const segs = distributionSegments(section?.data?.grades, TLS_GRADE_SEGMENTS)
+  return (
+    <DistributionBar slot="ex-tls-dist" segments={segs} labelOf={(k) => k}
+      title={t('exec.tls-grade.dist', segs[0]?.total || 0)} />
+  )
+}
+
+/** Kripto geçiş kategorileri — `data.by_category`. */
+export function CryptoCategoryDistribution({ section }) {
+  const t = useT()
+  const segs = distributionSegments(section?.data?.by_category, CRYPTO_CATEGORY_SEGMENTS)
+  return (
+    <DistributionBar slot="ex-crypto-dist" segments={segs} labelOf={(k) => t(`cinv.cat.${k}`)}
+      cols="grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" title={t('exec.crypto-readiness.dist', segs[0]?.total || 0)} />
   )
 }

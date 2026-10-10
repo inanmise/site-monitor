@@ -50,9 +50,15 @@ for (const vp of VIEWPORTS) {
     await page.goto('/?tab=executive')
 
     const sections = page.locator('[data-slot="ex-section"]')
-    await expect(sections).toHaveCount(5, { timeout: 30_000 })
+    await expect(sections).toHaveCount(8, { timeout: 30_000 })
     await expect(page.locator('[data-slot="ex-headline"]')).toBeVisible()
     await expect(page.locator('[data-slot="ex-trend-chart"], [data-testid="ex-trend-chart"]').first()).toBeVisible()
+    // Yeni bölümler (TLS notu, kripto hazırlığı, veri kalitesi) + dağılım çubukları
+    for (const key of ['tls-grade', 'crypto-readiness', 'data-quality']) {
+      await expect(page.locator(`[data-slot="ex-section"][data-key="${key}"]`)).toBeVisible()
+    }
+    await expect(page.locator('[data-slot="ex-tls-dist"]')).toBeVisible()
+    await expect(page.locator('[data-slot="ex-crypto-dist"]')).toBeVisible()
 
     // Sayfa düzeyinde yatay taşma yok (belge + uygulama kaydırma kabı)
     const overflow = await page.evaluate(() => {
@@ -90,6 +96,8 @@ for (const vp of VIEWPORTS) {
 
     await page.locator('[data-slot="ex-headline"]').screenshot({ path: `test-results/executive-headline-${vp.name}.png` })
     await page.locator('[data-slot="ex-section"][data-key="availability"]').screenshot({ path: `test-results/executive-availability-${vp.name}.png` })
+    await page.locator('[data-slot="ex-section"][data-key="tls-grade"]').screenshot({ path: `test-results/executive-tls-grade-${vp.name}.png` })
+    await page.locator('[data-slot="ex-section"][data-key="crypto-readiness"]').screenshot({ path: `test-results/executive-crypto-${vp.name}.png` })
 
     // Ayar penceresi (global yönetici) ekrana sığar
     await page.locator('[data-slot="ex-open-settings"]').click()

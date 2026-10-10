@@ -28,6 +28,18 @@ export const TONE_TEXT = Object.freeze({
 /** Biçimi sağa yaslanan (sayısal) sütun türleri. */
 export const NUMERIC_TYPES = new Set(['int', 'num', 'pct', 'pp', 'minutes', 'days', 'pct_change'])
 
+/**
+ * BAŞKA özelliklerin kodları (TLS notu nedeni, kripto kategorisi / öncelik bandı, veri kalitesi kuralı / bandı) — metin o
+ * özelliğin KENDİ i18n anahtarından gelir (tek kaynak; sunucuda `ExecFormat.CODE_LABEL_I18N` ile aynı eşleme).
+ */
+export const CODE_LABEL_KEY = Object.freeze({
+  tls_reason: (c) => `tlsg.reason.${c}.title`,
+  crypto_category: (c) => `cinv.cat.${c}`,
+  pqc_band: (c) => `cinv.band.${c}`,
+  dq_rule: (c) => `dq.rule.${c}.title`,
+  dq_band: (c) => `dq.band.${c}`,
+})
+
 /** Yanıt beklenen biçimde mi? */
 export function isSummaryPayload(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d) && typeof d.month === 'string' && Array.isArray(d.sections)
@@ -143,6 +155,15 @@ export function formatValue(value, format, { t, lang = 'tr' } = {}) {
     case 'renewal_class':
     case 'overdue_reason': {
       const k = `exec.enum.${f}.${value}`
+      const s = t(k)
+      return s === k ? String(value) : s
+    }
+    case 'tls_reason':
+    case 'crypto_category':
+    case 'pqc_band':
+    case 'dq_rule':
+    case 'dq_band': {
+      const k = CODE_LABEL_KEY[f](value)
       const s = t(k)
       return s === k ? String(value) : s
     }
@@ -325,6 +346,35 @@ export function renewalSegments(byClass) {
     return { ...c, count: n, pct: total ? (n * 100) / total : 0 }
   }).map((s) => ({ ...s, total }))
 }
+
+/**
+ * Sayım haritası → sabit sıralı, yüzdeli dilimler (bileşim çubuğu). `order`: [{ key, color }]; bilinmeyen / negatif /
+ * sayı olmayan değer 0 sayılır.
+ */
+export function distributionSegments(counts, order) {
+  const n = (k) => Math.max(0, Number(counts?.[k]) || 0)
+  const total = order.reduce((s, c) => s + n(c.key), 0)
+  return order.map((c) => ({ ...c, count: n(c.key), pct: total ? (n(c.key) * 100) / total : 0, total }))
+}
+
+/** TLS notları iyiden kötüye — durum renkleri (iyi = başarı, B uyarı, C–D ciddi, F kritik). */
+export const TLS_GRADE_SEGMENTS = Object.freeze([
+  { key: 'A+', color: 'var(--success)' },
+  { key: 'A', color: 'color-mix(in srgb, var(--success) 55%, var(--card))' },
+  { key: 'B', color: 'var(--warning)' },
+  { key: 'C', color: 'color-mix(in srgb, var(--warning) 50%, var(--destructive))' },
+  { key: 'D', color: 'color-mix(in srgb, var(--destructive) 65%, var(--card))' },
+  { key: 'F', color: 'var(--destructive)' },
+])
+
+/** Kripto geçiş kategorileri — sunucu sırası (CryptoClassifier.Category). */
+export const CRYPTO_CATEGORY_SEGMENTS = Object.freeze([
+  { key: 'BROKEN', color: 'var(--destructive)' },
+  { key: 'LEGACY', color: 'var(--warning)' },
+  { key: 'MODERN', color: 'var(--chart-1)' },
+  { key: 'PQC_READY', color: 'var(--success)' },
+  { key: 'UNKNOWN', color: 'var(--muted-foreground)' },
+])
 
 /** Ekran sırası: bölümler order'a göre (sunucu zaten sıralı yollar; savunmacı). */
 export function orderedSections(summary) {

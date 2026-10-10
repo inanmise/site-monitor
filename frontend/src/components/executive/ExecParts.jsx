@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import {
   Target, BellRing, CalendarClock, RefreshCw, FileChartColumn, CircleCheck, TriangleAlert, OctagonAlert, Info, Clock,
+  ShieldCheck, KeyRound, ClipboardCheck,
 } from 'lucide-react'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -11,15 +12,20 @@ import {
   STATUS_VARIANT, TONE_TEXT, NUMERIC_TYPES, columnLabel, formatValue, kpiView, keys, localized, noteText, sectionTitle,
   verdictText, fmtDateTime,
 } from './executiveModel.js'
-import { AvailabilityTrend, RenewalDistribution } from './ExecVisuals.jsx'
+import { AvailabilityTrend, CryptoCategoryDistribution, RenewalDistribution, TlsGradeDistribution } from './ExecVisuals.jsx'
 
 /** Bölüm anahtarı → başlık ikonu (bilinmeyen bölüm genel ikonla çizilir — genişleme noktası). */
-const SECTION_ICON = { availability: Target, noise: BellRing, expirations: CalendarClock, renewals: RefreshCw }
+const SECTION_ICON = {
+  availability: Target, noise: BellRing, expirations: CalendarClock, renewals: RefreshCw,
+  'tls-grade': ShieldCheck, 'crypto-readiness': KeyRound, 'data-quality': ClipboardCheck,
+}
 
 /** Bölüme özel görsel (isteğe bağlı) — yoksa yalnız genel çizim. Yeni bölüm buraya bir giriş ekleyebilir. */
 const SECTION_VISUAL = {
   availability: (section) => <AvailabilityTrend section={section} />,
   renewals: (section) => <RenewalDistribution section={section} />,
+  'tls-grade': (section) => <TlsGradeDistribution section={section} />,
+  'crypto-readiness': (section) => <CryptoCategoryDistribution section={section} />,
 }
 
 const TONE_ICON = { ok: CircleCheck, warn: TriangleAlert, bad: OctagonAlert, info: Info, neutral: Info }

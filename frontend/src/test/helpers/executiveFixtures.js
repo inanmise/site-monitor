@@ -111,15 +111,102 @@ const renewals = {
   data: { by_class: { ON_TIME: 2, LATE: 1, LAST_MINUTE: 1, AFTER_EXPIRY: 1 }, total: 5 },
 }
 
-/** Gelecekte eklenecek bölüm (ör. TLS notu) — i18n anahtarı yok: ekran sunucu metnine düşmeli. */
+const code = (value, format) => ({ value, format })
+
+const tlsGrade = {
+  key: 'tls-grade', order: 50, title: 'TLS yapılandırma notu', status: 'critical', snapshot: true,
+  as_of: '2026-10-01T06:00:00', headline_kpi: 'top_share',
+  verdicts: [
+    { code: 'DISTRIBUTION', tone: 'neutral', text: 'Notlanan 40 uç nokta: A/A+ payı %70, C ve altı %7,5.', params: [40, pct(70), pct(7.5)] },
+    { code: 'F_GRADES', tone: 'bad', text: '1 uç nokta F notunda; 1 tanesi Seviye 1 (müşteriye açık üretim).', params: [1, 1] },
+    { code: 'TOP_REASON', tone: 'neutral', text: 'Notu A\'nın altına çeken en sık neden: TLS 1.0 açık (6 uç nokta).', params: [code('TLS10_ENABLED', 'tls_reason'), 6] },
+  ],
+  kpis: [
+    { code: 'top_share', label: 'A / A+ payı', value: 70, format: 'pct', tone: 'neutral', hint: 'x', hint_params: [40, 28] },
+    { code: 'f_count', label: 'F notu', value: 1, format: 'int', tone: 'bad', hint: 'x', hint_params: [1] },
+    { code: 'probe_coverage', label: 'TLS profili taranan', value: null, format: 'pct', tone: 'neutral', hint: null, hint_params: [] },
+  ],
+  tables: [
+    {
+      code: 'lowest', title: 'En düşük notlu uç noktalar (C ve altı)', total: 3, empty: 'x',
+      columns: [
+        { code: 'domain', label: 'Sertifika', type: 'text' }, { code: 'tier', label: 'Seviye', type: 'tier' },
+        { code: 'grade', label: 'Not', type: 'text' }, { code: 'reason', label: 'Neden', type: 'tls_reason' },
+        { code: 'state', label: 'Durum', type: 'status' },
+      ],
+      rows: [
+        { domain: LONG_HOST, tier: 1, grade: 'F', reason: 'CERT_EXPIRED', state: 'bad' },
+        { domain: 'eski.example.com', tier: 3, grade: 'C', reason: 'NO_TLS12', state: 'warn' },
+      ],
+    },
+  ],
+  notes: [{ code: 'METHOD', text: 'x', params: [] }],
+  data: { grades: { 'A+': 8, A: 20, B: 9, C: 2, D: 0, F: 1 }, graded: 40 },
+}
+
+const cryptoReadiness = {
+  key: 'crypto-readiness', order: 60, title: 'Kripto envanteri ve PQC hazırlığı', status: 'attention', snapshot: true,
+  as_of: '2026-10-01T05:59:00', headline_kpi: 'broken',
+  verdicts: [
+    { code: 'NO_BROKEN', tone: 'ok', text: 'Bugün zayıf algoritma kullanan uç nokta yok.', params: [] },
+    { code: 'LEGACY', tone: 'warn', text: 'x', params: [12, pct(30), 2] },
+  ],
+  kpis: [
+    { code: 'broken', label: 'Bugün zayıf', value: 0, format: 'int', tone: 'ok', hint: 'x', hint_params: [] },
+    { code: 'p1', label: 'Öncelik P1', value: 2, format: 'int', tone: 'warn', hint: 'x', hint_params: [5, 10, 13] },
+  ],
+  tables: [
+    {
+      code: 'migration', title: 'Öncelikli geçiş listesi', total: 30, empty: 'x',
+      columns: [
+        { code: 'domain', label: 'Sertifika', type: 'text' }, { code: 'category', label: 'Kategori', type: 'crypto_category' },
+        { code: 'band', label: 'Öncelik', type: 'pqc_band' }, { code: 'score', label: 'Puan', type: 'int' },
+        { code: 'days', label: 'Kalan', type: 'days' },
+      ],
+      rows: [{ domain: 'odeme.example.com', category: 'LEGACY', band: 'P1', score: 75, days: 20 }],
+    },
+  ],
+  notes: [{ code: 'KEX', text: 'x', params: [] }],
+  data: { by_category: { BROKEN: 0, LEGACY: 12, MODERN: 26, PQC_READY: 0, UNKNOWN: 2 }, total: 40 },
+}
+
+const dataQuality = {
+  key: 'data-quality', order: 70, title: 'Takım veri kalitesi puanı', status: 'attention', snapshot: true,
+  as_of: '2026-10-01T05:58:00', headline_kpi: 'org_score',
+  verdicts: [
+    { code: 'SCORE', tone: 'warn', text: 'x', params: [71, code('NEEDS_ATTENTION', 'dq_band'), 17] },
+    { code: 'MONTH_DOWN', tone: 'warn', text: 'x', params: [78, 71, 7] },
+  ],
+  kpis: [
+    { code: 'org_score', label: 'Kurum puanı', value: 71, format: 'int', tone: 'warn', hint: 'x', hint_params: [code('NEEDS_ATTENTION', 'dq_band'), 17] },
+    { code: 'month_end', label: 'Ay sonu puanı', value: 71, format: 'int', tone: 'warn', hint: 'x', hint_params: [{ value: '2026-09-30', format: 'date' }], delta: -7, delta_format: 'pp', delta_tone: 'bad' },
+  ],
+  tables: [
+    {
+      code: 'costly_rules', title: 'En çok puan kaybettiren kurallar', total: 2, empty: 'x',
+      columns: [
+        { code: 'rule', label: 'Kural', type: 'dq_rule' }, { code: 'failing', label: 'Kusurlu', type: 'int' },
+        { code: 'points_lost', label: 'Kaybettirdiği puan', type: 'num' },
+      ],
+      rows: [
+        { rule: 'INV_NO_TEAM', failing: 4, points_lost: 6.2 },
+        { rule: 'YENI_KURAL', failing: 1, points_lost: 0.5 },
+      ],
+    },
+  ],
+  notes: [],
+  data: {},
+}
+
+/** Gelecekte eklenecek bölüm — i18n anahtarı yok: ekran sunucu metnine düşmeli (genişleme noktası). */
 const future = {
-  key: 'tls-grade', order: 50, title: 'TLS yapılandırma notu', status: 'ok', snapshot: false, as_of: null, headline_kpi: null,
-  verdicts: [{ code: 'GRADE_A', tone: 'ok', text: 'Sertifikaların %90\'ı A notunda.', params: [] }],
+  key: 'future-section', order: 80, title: 'Gelecek bölüm', status: 'ok', snapshot: false, as_of: null, headline_kpi: null,
+  verdicts: [{ code: 'GRADE_A', tone: 'ok', text: 'Gelecek bölümün sunucu metni.', params: [] }],
   kpis: [], tables: [], notes: [], data: {},
 }
 
 export function summary(overrides = {}) {
-  const sections = [availability, noise, expirations, renewals, future]
+  const sections = [availability, noise, expirations, renewals, tlsGrade, cryptoReadiness, dataQuality, future]
   return {
     month: '2026-09', month_label: 'Eylül 2026', from: '2026-08-31T21:00:00', to: '2026-09-30T21:00:00', complete: true,
     generated_at: '2026-10-01T06:00:00', source: 'live', status: 'critical',

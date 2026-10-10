@@ -36,8 +36,9 @@ public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
     private static final float[] WARN_BG = { 254 / 255f, 243 / 255f, 199 / 255f };
     private static final float[] BAD_BG = { 254 / 255f, 226 / 255f, 226 / 255f };
     private static final float[] NEUTRAL_BG = { 241 / 255f, 245 / 255f, 249 / 255f };
-    private static final Set<String> RIGHT = Set.of("int", "pct", "pp", "minutes", "days", "pct_change");
-    private static final Set<String> WIDE = Set.of("text", "service", "team", "monitor_type", "renewal_class", "overdue_reason");
+    private static final Set<String> RIGHT = Set.of("int", "num", "pct", "pp", "minutes", "days", "pct_change");
+    private static final Set<String> WIDE = Set.of("text", "service", "team", "monitor_type", "renewal_class", "overdue_reason",
+            "tls_reason", "dq_rule", "crypto_category", "pqc_band");
 
     private final PdfCanvas c = new PdfCanvas();
 
