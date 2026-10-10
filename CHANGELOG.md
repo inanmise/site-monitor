@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.120.0] — 2026-10-10
+
 ### Added
 - **Takıma özel aylık yönetici özeti ve takım alıcıları.** Özet artık kurum geneli ya da tek takım için açılır (yalnız o
   takımın izleme ve sertifikaları; envanterde SY ya da UG olduğu kayıtlar dahil). Takım müdürleri (kapsamlı yöneticiler)
@@ -2847,7 +2849,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.119.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.120.0...HEAD
+[20.120.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.120.0
 [20.119.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.119.0
 [20.118.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.1
 [20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0

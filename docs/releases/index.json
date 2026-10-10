@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-10T06:47:53Z",
+  "generatedAt": "2026-10-10T16:50:40Z",
   "repo": "inanmise/site-monitor",
-  "count": 728,
+  "count": 729,
   "releases": [
+    {
+      "version": "20.120.0",
+      "tag": "v20.120.0",
+      "releasedAt": "2026-10-10T16:50:31Z",
+      "commit": "41662383ee60bbc3b1d14f8ef522a5c96d38bf44",
+      "prevVersion": "20.119.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 1,
+        "docs": 1,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "41662383",
+          "subject": "kasıtlı UNIQUE ihlali yutulan SQL hatası yakalamasının dışında"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "22c55f1e",
+          "subject": "düz metin önbelleği aynı HTML ikinci kez üretilince son dizeye bağlanır (aralıklı htmlToText yedeği)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "feb2b139",
+          "subject": "yönetici özeti takım kapsamı — bölüm, sorgu sayısı ve i18n kapısı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6418151e",
+          "subject": "yönetici özeti bölümleri takım kapsamında hesaplanır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "043b0087",
+          "subject": "takım bazlı yönetici özeti, Yönetici Özeti ve Veri Kalitesi yeniden tasarımı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "241ec5cd",
+          "subject": "Veri Kalitesi sayfası yeniden tasarlandı — kurum kartı (puan, 30 gün eğilim, bant dağılımı), takım karşılaştırması, kurumla kıyas"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f04765e",
+          "subject": "Yönetici Özeti sayfası yeniden tasarlandı — kapsam seçici, bölüm sağlığı, içindekiler, alıcılar ve gönderim görünümü (takım alıcıları)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "55bd1ddd",
+          "subject": "takım bazlı yönetici özeti — takım ayarları, alıcılar, takım başına tam bir kez gönderim ve kapsamlı uçlar"
+        },
+        {
+          "type": "refactor",
+          "scope": null,
+          "breaking": false,
+          "sha": "9646e7b7",
+          "subject": "yönetici özeti bağlamına takım kapsamı ve özete kapsam alanı (kurum çıktısı değişmez)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.119.0",
       "tag": "v20.119.0",
