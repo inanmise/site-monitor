@@ -136,6 +136,13 @@ for (const vp of VIEWPORTS) {
     const team = detail.locator('[data-slot="ex-settings"][data-scope="team"]')
     await expect(team).toBeVisible({ timeout: 15_000 })
     await expect(team.locator('[data-slot="ex-team-member"]')).toHaveCount(3)
+    // Yöneten müdürlerin ve takım müdürünün adı KESİLMEZ (2026-10-10 kullanıcı bildirimi): hepsi listelenir, her satır
+    // kendi kutusuna sığar (uzun ad / adres alt satıra sarar), kırpma yok.
+    await expect(team.locator('[data-slot="ex-team-admin"]')).toHaveCount(8)
+    const clipped = await team.evaluate((root) => [...root.querySelectorAll('[data-slot="ex-team-admin"], [data-slot="ex-team-manager"], [data-slot="ex-team-preview-list"] li')]
+      .filter((el) => el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().right > root.getBoundingClientRect().right + 1)
+      .map((el) => `${el.getAttribute('data-slot') || 'li'} ${el.scrollWidth}>${el.clientWidth}`))
+    expect(clipped, 'kesilen ad / adres').toEqual([])
     if (vp.width < 1024) {
       await expect(list).toBeHidden()
       await expect(page.locator('[data-slot="ex-delivery-back"]')).toBeVisible()
