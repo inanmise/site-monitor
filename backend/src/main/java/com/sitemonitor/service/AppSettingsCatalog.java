@@ -308,6 +308,14 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.cert-inventory-report.cc",         "monitoring", Type.STRING),
         // Zamanlama CANLI: dinamik tetikleyici her hesaplamada bunu okur (yeniden başlatma yok).
         new Setting("site.monitor.cert-inventory-report.cron",       "monitoring", Type.STRING),
+        // Aylık yönetici özeti (2026-10-10) — Raporlar → Yönetici Özeti sayfası yönetir (grup Genel Ayarlar'da GİZLİ,
+        // GeneralSettings SKIP_GROUPS). Zamanlanmış gönderim VARSAYILAN KAPALI (opt-in). Hepsi GLOBAL_ONLY (aşağıda).
+        new Setting("site.monitor.executive-summary.enabled",               "executive-summary", Type.BOOL),
+        new Setting("site.monitor.executive-summary.cron",                  "executive-summary", Type.STRING),
+        new Setting("site.monitor.executive-summary.recipients",            "executive-summary", Type.STRING),
+        new Setting("site.monitor.executive-summary.include-global-admins", "executive-summary", Type.BOOL),
+        new Setting("site.monitor.executive-summary.availability-target",   "executive-summary", Type.DOUBLE),
+        new Setting("site.monitor.executive-summary.renewal-target-days",   "executive-summary", Type.INT),
         // Haftalık rapor sağlık skoru ağırlıkları (executive özet) — WeeklyScoreCalculator canlı okur.
         new Setting("site.monitor.weekly.score.weight-critical",  "weekly", Type.DOUBLE),
         new Setting("site.monitor.weekly.score.weight-expiring",  "weekly", Type.DOUBLE),
@@ -581,7 +589,15 @@ public final class AppSettingsCatalog {
         "site.monitor.public-stats.usage-enabled",
         // 2026-10-05: temalar — kurum geneli görünüm politikası (açık temalar + varsayılan); müdür salt okunur görür.
         "site.monitor.theme.enabled",
-        "site.monitor.theme.default"
+        "site.monitor.theme.default",
+        // 2026-10-10: aylık yönetici özeti — KURUM GENELİ rapor: kime gideceği (alıcılar + global yöneticiler), ne zaman
+        // gideceği ve hangi hedeflerle ölçüleceği global yönetici kararıdır; müdür sayfayı açamaz (uç ayrıca kapılı).
+        "site.monitor.executive-summary.enabled",
+        "site.monitor.executive-summary.cron",
+        "site.monitor.executive-summary.recipients",
+        "site.monitor.executive-summary.include-global-admins",
+        "site.monitor.executive-summary.availability-target",
+        "site.monitor.executive-summary.renewal-target-days"
     ));
 
     /**

@@ -429,6 +429,49 @@ export const api = {
     get: (fresh = false) => request(fresh === true ? '/crypto-inventory?fresh=1' : '/crypto-inventory'),
     auditExport: (body) => request('/crypto-inventory/export-audit', { method: 'POST', body: JSON.stringify(body) }),
   },
+  /**
+   * Aylık Yönetici Özeti (2026-10-10) — okuma: global yönetici + AUDIT (`executive_summary.view`); ayar/test/gönderim:
+   * global yönetici. `withStatus`: 403 → "erişim yok" ekranı, 429 → test sınırı.
+   */
+  executiveSummary: {
+    get: ({ month, live = false, fresh = false } = {}) => {
+      const qs = new URLSearchParams()
+      if (month) qs.set('month', month)
+      if (live) qs.set('live', '1')
+      if (fresh) qs.set('fresh', '1')
+      const s = qs.toString()
+      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true })
+    },
+    getSettings: () => request('/executive-summary/settings', { withStatus: true }),
+    saveSettings: (body) => request('/executive-summary/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    sendTest: (month) => request('/executive-summary/send-test', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    runNow: (month) => request('/executive-summary/run', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    /**
+     * PDF'i indirir (e-posta ekinin aynısı). Düz `<a href>` yerine blob: üretim hatası (503) ya da yetki (403) tarayıcıyı
+     * JSON sayfasına götürmesin, kullanıcıya söylenebilsin.
+     */
+    downloadPdf: async ({ month, live = false } = {}) => {
+      const qs = new URLSearchParams()
+      if (month) qs.set('month', month)
+      if (live) qs.set('live', '1')
+      try {
+        const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        if (!res.ok) return { success: false, status: res.status }
+        const blob = await res.blob()
+        const disp = res.headers.get('Content-Disposition') || ''
+        const match = /filename="?([^";]+)"?/.exec(disp)
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        return { success: true }
+      } catch (e) {
+        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+    },
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),

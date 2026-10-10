@@ -15,6 +15,17 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Aylık Yönetici Özeti (kullanıcı isteği: "SLO uyumu, en gürültülü alarmlar, yaklaşan sertifika bitişleri ve yenileme
+  süresine uyum tek bir PDF ya da e-postada").** Raporlar → Yönetici Özeti (`?tab=executive`): ay seçimi, dört bölüm
+  (erişilebilirlik hedefi uyumu — resmî SLO değil, kurum hedefine göre ölçülen değer; en gürültülü alarmlar + MTTA/MTTR;
+  yaklaşan sertifika bitişleri 30/60/90 gün; yenileme süresine uyum), PDF indirme. Gönderilen ay, gönderilen içerikten
+  gösterilir. Okuma: global yönetici + AUDIT (`executive_summary.view`); ayar / test / gönderim: global yönetici.
+  - **⚠ Davranış / Yeni yapılandırma:** zamanlanmış e-posta **varsayılan KAPALI** (`site.monitor.executive-summary.enabled`
+    =false); `.cron` (`0 0 9 1 * *`), `.recipients`, `.include-global-admins` (true), `.availability-target` (99.9),
+    `.renewal-target-days` (30) — hepsi GLOBAL_ONLY. Gönderim BCC 100'lük dilimler + PDF eki, ay başına tam bir kez
+    (`executive_summary_reports`), 72 saatlik saatlik telafi, her gönderim/atlama `notification_logs`'ta.
+
 ## [20.118.1] — 2026-10-09
 
 ### Changed

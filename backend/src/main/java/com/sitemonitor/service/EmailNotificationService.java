@@ -2208,6 +2208,16 @@ public class EmailNotificationService {
         return sendHtmlInternal(new String[0], null, bcc, subject, html, plainText, null, false, null);
     }
 
+    /**
+     * Gizli alıcılı (BCC) + dosya ekli toplu posta — aylık yönetici özeti (2026-10-10; PDF eki). {@link #sendHtmlBcc} ile
+     * AYNI tek huni: mail kapalı → {@code SKIPPED_DISABLED}, pasif kullanıcı ağı ({@code doSend}), marka CID'i, düz metin.
+     */
+    public String sendHtmlBccWithAttachments(String[] bcc, String subject, String html, String plainText,
+                                             List<MailAttachment> attachments) {
+        if (bcc == null || bcc.length == 0) return "SKIPPED: alıcı yok";
+        return sendHtmlInternal(new String[0], null, bcc, subject, html, plainText, null, false, attachments);
+    }
+
     private String sendHtmlInternal(String[] to, String[] cc, String subject, String html, String plainText,
                                     List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
         return sendHtmlInternal(to, cc, null, subject, html, plainText, inline, force, attachments);

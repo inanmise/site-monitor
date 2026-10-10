@@ -13,7 +13,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck,
+  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation,
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -120,6 +120,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16) — varsayılan KAPALI, sekme hiç çizilmez.
         { id: 'weeklyreports',    Icon: FileChartColumn, labelKey: 'nav.weeklyReports',   show: weeklyReportsVisible },
         { id: 'incident-history', Icon: FileClock,       labelKey: 'nav.incidentHistory', show: true },
+        // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — yalnız global yönetici + AUDIT (uç ayrıca izin ister)
+        { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: isGlobalAdmin || systemRole === 'AUDIT' },
       ],
     },
     {

@@ -36,6 +36,7 @@ export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'dataquality', labelKey: 'nav.dataQuality' },
   { id: 'weeklyreports', labelKey: 'nav.weeklyReports' },
   { id: 'incident-history', labelKey: 'nav.incidentHistory' },
+  { id: 'executive', labelKey: 'nav.executiveSummary' },
   { id: 'activity', labelKey: 'nav.activity' },
   { id: 'myactivity', labelKey: 'nav.myActivity' },
   { id: 'system', labelKey: 'nav.system' },
@@ -55,6 +56,7 @@ export function landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisibl
     if (id === 'settings') return systemRole === 'ADMIN'
     if (id === 'sqlplayground') return !!globalAdmin
     if (id === 'weeklyreports') return !!weeklyReportsVisible
+    if (id === 'executive') return !!globalAdmin || systemRole === 'AUDIT'
     return true
   })
 }

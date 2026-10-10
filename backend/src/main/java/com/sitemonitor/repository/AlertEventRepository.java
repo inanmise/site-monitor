@@ -807,6 +807,24 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<Object[]> findNoiseRowsSince(@Param("since") String since);
 
     /**
+     * Aylık yönetici özeti (2026-10-10) — {@code [from, to)} aralığında AÇILAN alarmların dar izdüşümü (ay başına TEK
+     * sorgu; MTTA için sahiplenme anı da). Sınırlar UTC ISO metin (İstanbul ay başının UTC karşılığı).
+     * Sütunlar: {@code [domain, alertType, alertLevel, createdAt, resolvedAt, resolved, resolvedSilently, acknowledged,
+     * acknowledgedAt, teamId]}.
+     */
+    @Query("""
+            SELECT e.domain, e.alertType, e.alertLevel, e.createdAt, e.resolvedAt, e.resolved, e.resolvedSilently,
+                   e.acknowledged, e.acknowledgedAt, e.teamId
+            FROM AlertEvent e
+            WHERE e.createdAt >= :from AND e.createdAt < :to
+            """)
+    List<Object[]> findExecutiveRows(@Param("from") String from, @Param("to") String to);
+
+    /** Aylık yönetici özeti: {@code [from, to)} aralığında açılan alarm SAYISI (önceki ay karşılaştırması). */
+    @Query("SELECT COUNT(e) FROM AlertEvent e WHERE e.createdAt >= :from AND e.createdAt < :to")
+    long countCreatedBetween(@Param("from") String from, @Param("to") String to);
+
+    /**
      * Gürültü ısı haritası HÜCRE ayrıntısı (2026-10-01): pencerenin alarmları, satıra gidiş için kimlikle. Dar izdüşüm —
      * gün × saat (İstanbul) süzgeci Java'da (created_at metin; dilim birden çok haftaya yayılır). Yalnız tıklanınca çalışır.
      * Sütunlar: {@code [id, domain, alertType, alertLevel, createdAt, resolvedAt, resolved, acknowledged, teamId]}.

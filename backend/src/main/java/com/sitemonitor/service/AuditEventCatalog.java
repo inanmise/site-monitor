@@ -125,6 +125,10 @@ public final class AuditEventCatalog {
             "DOMAIN_SOFT_DELETE",         // eski (çöp kutusuna taşı) — geçmiş satırlar için
             "DOMAIN_TRANSFER_SY",
             "DOMAIN_TRANSFER_UG",
+            "EXECUTIVE_SUMMARY_EXPORT",     // aylık yönetici özeti PDF indirildi (2026-10-10)
+            "EXECUTIVE_SUMMARY_RUN",        // aylık yönetici özeti ELLE gönderildi
+            "EXECUTIVE_SUMMARY_SETTINGS",   // aylık yönetici özeti ayarları kaydedildi
+            "EXECUTIVE_SUMMARY_TEST",       // aylık yönetici özeti test e-postası (yalnız isteyen yöneticiye)
             "GENERAL_SETTINGS_SAVE",
             "GUIDE_LINK_CREATE",
             "GUIDE_LINK_DELETE",
@@ -366,6 +370,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("NOC_")) return INTEGRATION;
 
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
+        if (t.startsWith("EXECUTIVE_SUMMARY")) return REPORT;        // _EXPORT / SETTINGS kurallarından ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
         if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
         if (t.startsWith("CRYPTO_INVENTORY")) return CERTIFICATE;   // kripto envanteri (2026-10-10) — Zayıf Algoritma ile aynı kova

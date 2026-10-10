@@ -203,7 +203,7 @@ describe('Nav — nav-main yapısı ve ikonlar (2026-09-26)', () => {
   /** App.jsx VALID_TABS'ın kenar çubuğunda duranları ('settings' kullanıcı menüsünde). */
   const TABS = ['dashboard', 'all', 'domains', 'manualcerts', 'uptime', 'forecast', 'renewal', 'renewal-guide',
     'status', 'http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted',
-    'warnings', 'incidents', 'maintenance', 'alerthistory', 'storms', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history',
+    'warnings', 'incidents', 'maintenance', 'alerthistory', 'storms', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive',
     'activity', 'myactivity', 'system', 'monitorchanges', 'admin', 'health', 'permissions', 'sqlplayground', 'login-issues', 'help']
 
   function renderAll(props = {}) {

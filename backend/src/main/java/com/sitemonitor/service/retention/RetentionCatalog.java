@@ -380,6 +380,10 @@ public final class RetentionCatalog {
                 "Sistem bakımında susturulan alarm bildirimleri (2026-10-02): bakım × alarm başına TEK satır — bitişteki "
                 + "bildirim telafisinin listesi ve kararı. Bildirim günlüğüyle (notification_logs) aynı süre: iz o günlükte, "
                 + "bu tablo onun bakım özetidir. Kişisel veri yok (alarm kimliği + tetik + sayaç)."),
+        info("executive-summary-reports", "executive_summary_reports", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Aylık yönetici özeti gönderim kaydı (2026-10-10): ay başına TEK satır — durum, alıcı sayısı, dilim sonucu ve "
+                + "gönderilen özetin içeriği (sayılar, takım adları; kişisel veri yok). 'Tam bir kez' kapısıdır; yılda 12 satır, "
+                + "silinmez (geçmiş ayın ekranı bu kayıttan çizilir)."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
