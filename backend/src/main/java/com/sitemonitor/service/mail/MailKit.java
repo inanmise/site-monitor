@@ -765,7 +765,15 @@ public final class MailKit {
     private static final Map<String, String> TEXT_BY_HTML = Collections.synchronizedMap(new WeakHashMap<>());
 
     static void rememberText(String html, String text) {
-        if (html != null && text != null) TEXT_BY_HTML.put(html, text);
+        if (html == null || text == null) return;
+        // ÖNCE sil, sonra koy: WeakHashMap eşit bir anahtar zaten varsa yalnız DEĞERİ değiştirir, ESKİ anahtar nesnesini
+        // tutar. Aynı HTML iki kez üretilince (aynı rapor iki kez) kayıt artık erişilemeyen ilk dizeye bağlı kalıyor, çöp
+        // toplayıcı onu silince yeni dizeyle arama boş dönüyor ve metin htmlToText yedeğine düşüyordu (bağlantı biçimi
+        // farklı — WeeklyAvailabilityEmailTest.plainTextParity aralıklı kırmızısı, 2026-10-10).
+        synchronized (TEXT_BY_HTML) {
+            TEXT_BY_HTML.remove(html);
+            TEXT_BY_HTML.put(html, text);
+        }
     }
 
     /** Gönderim hunisi için düz metin: MailDoc'un yazdığı metin; yoksa (ör. eski kayıtlı HTML) HTML'den türetilir. */
