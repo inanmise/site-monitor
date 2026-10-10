@@ -383,6 +383,10 @@ public final class RetentionCatalog {
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
+        info("data-quality-daily", "data_quality_daily", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Takım veri kalitesi puanının günlük görüntüsü (2026-10-10): gün × kova (takım / kurum / sahipsiz) başına TEK "
+                + "satır — puan, bulgu ve incelenen öğe sayısı (30 günlük eğilim çizgisi). DataQualitySnapshotJob her yazımda "
+                + "120 günden eski satırları siler → en fazla ~120 × (takım sayısı + 2) satır. Kişisel veri yok."),
         info("spring-session", "spring_session", Mode.EXTERNAL, DataClass.PERSONAL,
                 "Spring Session JDBC deposu — Spring'in kendi dakikalık cleanup job'ı süresi dolan oturumları siler "
                 + "(spring.session.timeout=24h). Bu uygulama dokunmaz."),

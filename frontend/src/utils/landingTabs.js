@@ -33,6 +33,7 @@ export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'noc', labelKey: 'nav.noc' },
   { id: 'stats', labelKey: 'nav.stats' },
   { id: 'weakalgo', labelKey: 'nav.weakAlgo' },
+  { id: 'dataquality', labelKey: 'nav.dataQuality' },
   { id: 'weeklyreports', labelKey: 'nav.weeklyReports' },
   { id: 'incident-history', labelKey: 'nav.incidentHistory' },
   { id: 'activity', labelKey: 'nav.activity' },

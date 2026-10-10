@@ -13,7 +13,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh,
+  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck,
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -115,6 +115,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       items: [
         { id: 'stats',            Icon: ChartPie,        labelKey: 'nav.stats',           show: true },
         { id: 'weakalgo',         Icon: ShieldAlert,     labelKey: 'nav.weakAlgo',        show: true },
+        // Veri Kalitesi (2026-10-10): takım veri kalitesi puanı + düzeltme listesi — herkese açık, görüş kapsamlı (sunucu)
+        { id: 'dataquality',      Icon: ClipboardCheck,  labelKey: 'nav.dataQuality',     show: true },
         // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16) — varsayılan KAPALI, sekme hiç çizilmez.
         { id: 'weeklyreports',    Icon: FileChartColumn, labelKey: 'nav.weeklyReports',   show: weeklyReportsVisible },
         { id: 'incident-history', Icon: FileClock,       labelKey: 'nav.incidentHistory', show: true },

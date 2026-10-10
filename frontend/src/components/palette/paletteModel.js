@@ -5,7 +5,7 @@ import {
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
   Logs, UserCheck, Fingerprint, FilePenLine,
   Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning, SignalHigh,
+  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning, SignalHigh, ClipboardCheck,
 } from 'lucide-react'
 import { personalKey } from '../../utils/personalStorage.js'
 
@@ -44,6 +44,7 @@ export const TAB_META = {
   noc:                { Icon: Headset,       section: 'nav.groupAlerts' },
   stats:              { Icon: ChartPie,        section: 'nav.groupReports' },
   weakalgo:           { Icon: ShieldAlert,     section: 'nav.groupReports' },
+  dataquality:        { Icon: ClipboardCheck,  section: 'nav.groupReports' },   // Veri Kalitesi (2026-10-10)
   weeklyreports:      { Icon: FileChartColumn, section: 'nav.groupReports' },
   'incident-history': { Icon: FileClock,       section: 'nav.groupReports' },
   activity:           { Icon: Logs,        section: 'nav.groupLogs' },

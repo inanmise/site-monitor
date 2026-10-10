@@ -415,6 +415,11 @@ export const api = {
   statusPage: {
     get: (fresh = false) => request(fresh === true ? '/status-page?fresh=1' : '/status-page'),
   },
+  /** Takım veri kalitesi puanı (2026-10-10) — data_quality.view; kapsam sunucuda, 60 sn paylaşılan bellek (`fresh` Yenile). */
+  dataQuality: {
+    summary: (fresh = false) => request(fresh === true ? '/data-quality?fresh=1' : '/data-quality'),
+    team: (key, fresh = false) => request(`/data-quality/teams/${encodeURIComponent(key)}${fresh === true ? '?fresh=1' : ''}`),
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),

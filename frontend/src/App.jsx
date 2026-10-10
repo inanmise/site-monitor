@@ -105,6 +105,7 @@ const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPag
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
+const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage.jsx'))   // Veri Kalitesi (2026-10-10)
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -2070,6 +2071,7 @@ export default function App() {
             {tab === 'monitoring' && <MonitoringOverviewPage />}
             {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
+            {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
