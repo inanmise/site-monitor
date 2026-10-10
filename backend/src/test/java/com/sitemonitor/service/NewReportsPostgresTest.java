@@ -110,13 +110,6 @@ class NewReportsPostgresTest {
             r.setStatus("FAILED");
             r.setAttempts(1);
             Long id = reportRepo.saveAndFlush(r).getId();
-            com.sitemonitor.model.ExecutiveSummaryTeamReport dup = new com.sitemonitor.model.ExecutiveSummaryTeamReport();
-            dup.setTeamId(teamId);
-            dup.setReportYear(2020);
-            dup.setReportMonth(1);
-            dup.setStatus("SENDING");
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> reportRepo.saveAndFlush(dup))
-                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
             assertThat(reportRepo.reclaim(id, "FAILED", 1, 2, "2026-10-10T00:00:00", "MANUAL", "it")).isEqualTo(1);
             assertThat(reportRepo.reclaim(id, "FAILED", 1, 2, "2026-10-10T00:00:00", "MANUAL", "it")).isZero();
             assertThat(reportRepo.findByReportYearAndReportMonthAndTeamIdIn(2020, 1, List.of(teamId))).hasSize(1);
@@ -130,6 +123,24 @@ class NewReportsPostgresTest {
             assertThat(scoped.scope().teamId()).isEqualTo(teamId);
             assertThat(scoped.sections()).as("takım kapsamında hata veren bölüm").noneMatch(x -> SectionResult.ERROR.equals(x.status()));
             assertThat(sql.errors()).as("takım yönetici özetinin yuttuğu SQL hataları").isEmpty();
+        }
+        try {
+            // Kasıtlı UNIQUE ihlali (iki pod aynı takım × ayı talep eder) — yakalama bloğunun DIŞINDA: Hibernate bunu WARN
+            // olarak günlüğe yazar, yutulan hata değildir.
+            com.sitemonitor.model.ExecutiveSummaryTeamReport first = new com.sitemonitor.model.ExecutiveSummaryTeamReport();
+            first.setTeamId(teamId);
+            first.setReportYear(2020);
+            first.setReportMonth(2);
+            first.setStatus("SENDING");
+            reportRepo.saveAndFlush(first);
+            com.sitemonitor.model.ExecutiveSummaryTeamReport dup = new com.sitemonitor.model.ExecutiveSummaryTeamReport();
+            dup.setTeamId(teamId);
+            dup.setReportYear(2020);
+            dup.setReportMonth(2);
+            dup.setStatus("SENDING");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> reportRepo.saveAndFlush(dup))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThat(reportRepo.deleteOlderThan(2021 * 12 + 1)).isEqualTo(1);
         } finally {
             settingsRepo.deleteById(teamId);
             teams.deleteById(teamId);
