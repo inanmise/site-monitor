@@ -149,6 +149,19 @@ class PdfCanvas implements AutoCloseable {
         cs.stroke();
     }
 
+    /**
+     * PNG/JPEG görsel (marka logosu, 2026-10-10 yönetici özeti). Bozuk/boş bayt sessizce atlanır — logo yüzünden belge
+     * düşmez.
+     */
+    void image(byte[] bytes, float x, float yy, float w, float h) {
+        if (bytes == null || bytes.length == 0) return;
+        try {
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject img =
+                    org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, "logo");
+            cs.drawImage(img, x, yy, w, h);
+        } catch (Exception ignored) { /* logosuz devam */ }
+    }
+
     /** Küçük renkli etiket (seviye/rozet). Çizimden sonraki x'i döner. */
     float chip(float x, float yy, String label, float[] bg, float[] fg) throws IOException {
         float w = width(label, bold, 6.5f) + 8;

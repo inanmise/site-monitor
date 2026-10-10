@@ -562,13 +562,14 @@ public class CertificateHealthService {
 
     /** null değerleri ELEYEN kanıt haritası — arayüzde boş satır çizilmesin. */
     /** HSTS max-age alt sınırı (180 gün): altı "kısa" — yaygın kabul (OWASP / tarayıcı önerileri en az 6 ay, ideal 1 yıl). */
-    static final long HSTS_MIN_MAX_AGE_SECONDS = 15_552_000L;
+    // public (2026-10-10): TLS notu (tlsgrade.TlsGradeRules) HSTS'i AYNI eşikle ve AYNI ayrıştırmayla okur — ikinci kural yok.
+    public static final long HSTS_MIN_MAX_AGE_SECONDS = 15_552_000L;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** Kısa JSON nesnesi → harita; boş / bozuk → boş harita (satır asla düşmez). */
     @SuppressWarnings("unchecked")
-    static Map<String, Object> parseJsonMap(String json) {
+    public static Map<String, Object> parseJsonMap(String json) {
         if (json == null || json.isBlank()) return Map.of();
         try {
             Object v = JSON.readValue(json, Map.class);

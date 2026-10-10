@@ -31,7 +31,8 @@ const read = (p) => fs.readFileSync(p, 'utf8')
  * bunu aşağıda doğruluyor, yani ikisi ayrışırsa kapı kırılır.
  */
 // appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında.
-const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance']
+// executive-summary (2026-10-10): Raporlar → Yönetici Özeti sayfasının ayar penceresinde.
+const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary']
 
 /** new Setting("key", "group", Type.X) → [{key, group}] */
 function catalogSettings() {

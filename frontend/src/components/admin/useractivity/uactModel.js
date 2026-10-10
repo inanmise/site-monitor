@@ -41,7 +41,7 @@ export const TAB_LABEL_KEYS = Object.freeze({
   renewal: 'nav.renewal', 'renewal-guide': 'nav.renewalGuide', http: 'nav.http', domain: 'nav.domainmon', port: 'nav.port',
   dns: 'nav.dns', keyword: 'nav.keyword', ping: 'nav.ping', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted',
   warnings: 'nav.warnings', incidents: 'nav.incidents', maintenance: 'nav.maintenance', alerthistory: 'nav.alertHistory', noc: 'nav.noc',
-  stats: 'nav.stats', weakalgo: 'nav.weakAlgo', weeklyreports: 'nav.weeklyReports', 'incident-history': 'nav.incidentHistory',
+  stats: 'nav.stats', weakalgo: 'nav.weakAlgo', weeklyreports: 'nav.weeklyReports', 'incident-history': 'nav.incidentHistory', executive: 'nav.executiveSummary', dataquality: 'nav.dataQuality',
   activity: 'nav.activity', myactivity: 'nav.myActivity', system: 'nav.system', monitorchanges: 'nav.monitorChanges',
   admin: 'nav.admin', health: 'nav.health', permissions: 'nav.permissions', sqlplayground: 'nav.sqlPlayground',
   'login-issues': 'nav.loginIssues', help: 'nav.help', settings: 'nav.settings',

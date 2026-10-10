@@ -262,6 +262,25 @@ public class CertificateDto {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean paused;
 
+    /**
+     * TLS yapılandırma notu (2026-10-10): "A+" … "F" ({@code tlsgrade.TlsGradeRules}). Yalnız {@code getAllLatest}
+     * (Pano + Tüm Sertifikalar) doldurur — tek toplu profil okumasıyla, satır başına sorgu yok. Elle yüklenen / hiç
+     * kontrol edilmemiş / son kontrolü başarısız satırda null → YAZILMAZ (arayüz rozet çizmez).
+     */
+    @JsonProperty("tls_grade")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String tlsGrade;
+
+    /** Notu sınırlayan neden KODLARI, en kötü tavan önce (en çok 8; parametreler ayrıntı ucunda). Boşsa yazılmaz. */
+    @JsonProperty("tls_grade_reasons")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    private List<String> tlsGradeReasons;
+
+    /** Son günlerde not DÜŞTÜYSE {@code {from, to, at}} (kart göstergesi); düşüş yoksa / toparlandıysa null. */
+    @JsonProperty("tls_grade_drop")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private java.util.Map<String, Object> tlsGradeDrop;
+
     /** Sığ kopya + {@code can_manage}; önbellekteki paylaşılan nesneye DOKUNMAZ. */
     public CertificateDto withCanManage(boolean value) {
         CertificateDto copy = new CertificateDto();

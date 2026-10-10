@@ -3522,6 +3522,14 @@ public class SchedulerService {
         }
     }
 
+    /**
+     * {@link #isSweepLeader} kararının paket dışı okuması (2026-10-10, TLS profili işi {@code tlsgrade.TlsProfileJobService}):
+     * düşük sıklıklı yan işler de yalnız lider pod'da koşsun. Karar ve yedek davranış aynı (kira okunamazsa yerel koşu).
+     */
+    public boolean isSweepLeaderNow() {
+        return isSweepLeader();
+    }
+
     /** Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır. */
     private boolean refreshSweepLeader(long now, long ttl) {
         boolean held;

@@ -1,3 +1,4 @@
+import { dataQualitySummaryMock, dataQualityTeamMock } from './dataQualityMocks.js'
 // Gerçekçi izleme verisi — e2e taramaları için API mock'u (girişsiz, sunucusuz).
 //
 // Neden ayrı dosya: responsive.spec.js (kalıcı kapı) ve kart tasarım taramaları aynı veriyi kullanır. Veri
@@ -829,6 +830,11 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/monitoring/overview') {
       // İzleme Panosu (2026-09-30): 9 tür + izleme satırları — telefon/tablet taşma ölçümü dolu verilerle
       body = { success: true, data: overviewMock(monitors) }
+    } else if (p === '/api/data-quality') {
+      // Veri Kalitesi (2026-10-10): beş bant, uzun takım adları, Sahipsiz kovası, 7/24 notu, 30 günlük eğilim
+      body = { success: true, data: dataQualitySummaryMock({ seesAll: role === 'ADMIN' || role === 'AUDIT' }) }
+    } else if (p.startsWith('/api/data-quality/teams/')) {
+      body = { success: true, data: dataQualityTeamMock(decodeURIComponent(p.slice('/api/data-quality/teams/'.length))) }
     } else if (p === '/api/status-page') {
       // Kurum içi Durum Sayfası (2026-10-01): sorunlu + bakımdaki + sağlıklı takımlar, uzun adlar, açık/çözülen olay, bakım
       body = { success: true, data: statusPageMock() }

@@ -298,6 +298,10 @@ public class AppSettingsService {
         }
         // Tür bazlı yeniden uyarı sıklığı (2026-10-01): 0 (genel aralık) ya da 15–10080 dakika.
         if (ReAlertIntervals.isKey(s.key())) ReAlertIntervals.validate(s.key(), val);
+        // Aylık yönetici özeti (2026-10-10): cron / alıcı / hedef aralıkları — hangi uçtan yazılırsa yazılsın aynı kural.
+        if (com.sitemonitor.service.report.executive.ExecutiveSummarySettings.isKey(s.key())) {
+            com.sitemonitor.service.report.executive.ExecutiveSummarySettings.validate(s.key(), val);
+        }
         // Açık temalar (2026-10-05): CSV'deki her kimlik katalogda olmalı (boş liste = varsayılana dön, yukarıda döndü).
         if (ThemeCatalog.KEY_ENABLED.equals(s.key())) {
             for (String id : ThemeCatalog.parseCsv(val)) {

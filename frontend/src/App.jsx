@@ -105,6 +105,9 @@ const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPag
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
+const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage'))   // Veri Kalitesi (2026-10-10)
+// Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT (sunucu ayrıca executive_summary.view ister)
+const ExecutiveSummaryPage = lazy(() => import('./components/executive/ExecutiveSummaryPage'))
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -117,7 +120,8 @@ const MaintenanceWindowsPage = lazy(() => import('./components/MaintenanceWindow
 const InventoryManager = lazy(() => import('./components/admin/InventoryManager'))
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
-const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
+// Zayıf Algoritma sayfası = bulgular + kripto envanteri / PQC sekmesi (2026-10-10)
+const WeakAlgorithmPage = lazy(() => import('./components/admin/WeakAlgorithmPage'))
 import TodayPanel from './components/TodayPanel.jsx'
 import RecentChangesLine from './components/RecentChangesLine.jsx'
 import HelpDrawer from './components/HelpDrawer.jsx'
@@ -1551,6 +1555,7 @@ export default function App() {
   // "<Sayfa> · SiteMonitor" başlığını ve tek cümlelik açıklamasını taşır; dil değişince tazelenir. Hook erken-return'lerden ÖNCE.
   // Rolüne kapalı sekme (Ayarlar: ADMIN değil; SQL Playground: global admin değil) eskiden boş sayfaydı → "Erişim yok" paneli.
   const restrictedTab = (tab === 'settings' && systemRole !== 'ADMIN') || (tab === 'sqlplayground' && !globalAdmin)
+    || (tab === 'executive' && !(globalAdmin || systemRole === 'AUDIT'))
   usePageMeta(appMetaKey({
     authChecked, user, mustChangePwd, tab, validTabs: VALID_TABS, restricted: restrictedTab,
     accountInactive: accountInactiveNotice, maintenance: maintNotice, sessionExpired: sessionExpiredNotice,
@@ -2012,7 +2017,7 @@ export default function App() {
             {tab === 'weakalgo' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.weakalgo.Icon} title={t('app.weakAlgoTitle')} description={t('app.weakAlgoDesc')} />
-                <WeakAlgorithmReport />
+                <WeakAlgorithmPage />
               </div>
             )}
 
@@ -2070,6 +2075,8 @@ export default function App() {
             {tab === 'monitoring' && <MonitoringOverviewPage />}
             {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
+            {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
+            {tab === 'executive' && (globalAdmin || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}

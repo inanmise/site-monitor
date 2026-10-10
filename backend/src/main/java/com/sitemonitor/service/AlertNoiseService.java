@@ -43,7 +43,8 @@ public class AlertNoiseService {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
-    static final int MAX_DAYS = 90, TOP = 10, FLAP_MIN_ALERTS = 5, FLAP_MAX_AVG_MINUTES = 10;
+    /** Flap kuralı (FLAP_*) yönetici özetinde de kullanılır (2026-10-10) → public. */
+    public static final int MAX_DAYS = 90, TOP = 10, FLAP_MIN_ALERTS = 5, FLAP_MAX_AVG_MINUTES = 10;
 
     // ── Öneri eşikleri (2026-10-01) — tek yer; testler bu sabitleri referans alır ──
     /** SHORT_OUTAGES: en az bu kadar alarm ve ortanca kapanma süresi bu dakikanın ALTINDA. */

@@ -92,12 +92,14 @@ public final class AuditEventCatalog {
             "CERT_RENEWAL_CONFIRMED",
             "CERT_RENEWAL_PLANNED",
             "CERT_RENEWAL_PLAN_CLEARED",
+            "CERT_TLS_PROFILE_RESCAN",      // TLS profili (protokol / zımbalama) elle yeniden tarandı (2026-10-10)
             "CHANGE_LOG_DENIED",
             "CLIENT_ERROR_REPORT",
             "CONTACT_CREATE",
             "CONTACT_DELETE",
             "CONTACT_UPDATE",
             "CONTACT_WEBHOOK_TEST",
+            "CRYPTO_INVENTORY_EXPORT",    // kripto envanteri / PQC hazırlık raporu XLSX/PDF/CSV dışa aktarıldı (2026-10-10)
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
@@ -123,6 +125,10 @@ public final class AuditEventCatalog {
             "DOMAIN_SOFT_DELETE",         // eski (çöp kutusuna taşı) — geçmiş satırlar için
             "DOMAIN_TRANSFER_SY",
             "DOMAIN_TRANSFER_UG",
+            "EXECUTIVE_SUMMARY_EXPORT",     // aylık yönetici özeti PDF indirildi (2026-10-10)
+            "EXECUTIVE_SUMMARY_RUN",        // aylık yönetici özeti ELLE gönderildi
+            "EXECUTIVE_SUMMARY_SETTINGS",   // aylık yönetici özeti ayarları kaydedildi
+            "EXECUTIVE_SUMMARY_TEST",       // aylık yönetici özeti test e-postası (yalnız isteyen yöneticiye)
             "GENERAL_SETTINGS_SAVE",
             "GUIDE_LINK_CREATE",
             "GUIDE_LINK_DELETE",
@@ -364,8 +370,10 @@ public final class AuditEventCatalog {
         if (t.startsWith("NOC_")) return INTEGRATION;
 
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
+        if (t.startsWith("EXECUTIVE_SUMMARY")) return REPORT;        // _EXPORT / SETTINGS kurallarından ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
         if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
+        if (t.startsWith("CRYPTO_INVENTORY")) return CERTIFICATE;   // kripto envanteri (2026-10-10) — Zayıf Algoritma ile aynı kova
 
         if (t.startsWith("MAINTENANCE_")) return MAINTENANCE;
         // Sistem Bakım Modu (2026-10-02) — SYSTEM_* kuralından ÖNCE: denetçi "Bakım" grubunda arar (hedef bakım

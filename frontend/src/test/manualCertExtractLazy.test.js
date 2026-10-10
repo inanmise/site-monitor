@@ -40,13 +40,16 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', XLSX_WRITER])
   })
 
-  it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modülünden gelir; o modül her yerde import() ile yüklenir', () => {
+  it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modüllerinden gelir; onlar her yerde import() ile yüklenir', () => {
     const writerUsers = FILES.filter(({ src }) => anyImports(src).some((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s))).map((x) => x.rel).sort()
-    expect(writerUsers).toEqual(['components/sharedcert/sharedCertExport.js'])
-    const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /sharedCertExport(\.js)?$/.test(s))).map((x) => x.rel)
+    // 2026-10-10: kripto envanteri dışa aktarımı ikinci tembel kullanıcı (Excel / PDF / CSV).
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js'])
+    const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(sharedCertExport|cryptoInventoryExport)(\.js)?$/.test(s))).map((x) => x.rel)
     expect(staticExportUsers).toEqual([])
     const lazyExportUsers = FILES.filter(({ src }) => /import\(\s*'\.\/sharedcert\/sharedCertExport\.js'\s*\)/.test(src)).map((x) => x.rel)
     expect(lazyExportUsers).toEqual(['components/SharedCertificateModal.jsx'])
+    const lazyCryptoUsers = FILES.filter(({ src }) => /import\(\s*'\.\/cryptoInventoryExport\.js'\s*\)/.test(src)).map((x) => x.rel)
+    expect(lazyCryptoUsers).toEqual(['components/cryptoinv/CryptoInventoryView.jsx'])
   })
 
   it('extract/index.js statik içe aktarma YAPMAZ; çekirdek dinamik import ya da Worker ile gelir', () => {

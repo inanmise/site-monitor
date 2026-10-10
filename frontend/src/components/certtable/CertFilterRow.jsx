@@ -1,6 +1,7 @@
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { COLUMN_BY_KEY, STATUS_OPTIONS, TIER_OPTIONS, trustFilterOptions } from './certTableModel.js'
+import { gradeFilterOptions } from '../tlsgrade/tlsGradeModel.js'
 import { Input } from '@/components/shadcn/input'
 import { TableCell, TableRow } from '@/components/shadcn/table'
 
@@ -50,6 +51,7 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
       // Güven (2026-10-09): sütunun gösterdiği değerlerle AYNI seçenekler (eskiden yalnız "Yalnız güvensiz" vardı —
       // sütunda "Kısmen doğrulandı" görünürken süzülemiyordu). "Yalnız güvensiz" süzgeç çubuğunda ayrı düğme olarak kalır.
       case 'trust': return sel('trust', trustFilterOptions(t, facets), 'trust')
+      case 'grade': return sel('grade', gradeFilterOptions(t, facets), 'grade')
       case 'fingerprint': return text('fp', t('tbl.colFingerprint'), t('tbl.colFingerprint'))
       default: return null
     }

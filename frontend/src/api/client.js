@@ -415,6 +415,63 @@ export const api = {
   statusPage: {
     get: (fresh = false) => request(fresh === true ? '/status-page?fresh=1' : '/status-page'),
   },
+  /** Takım veri kalitesi puanı (2026-10-10) — data_quality.view; kapsam sunucuda, 60 sn paylaşılan bellek (`fresh` Yenile). */
+  dataQuality: {
+    summary: (fresh = false) => request(fresh === true ? '/data-quality?fresh=1' : '/data-quality'),
+    team: (key, fresh = false) => request(`/data-quality/teams/${encodeURIComponent(key)}${fresh === true ? '?fresh=1' : ''}`),
+  },
+  /**
+   * Kripto envanteri / PQC hazırlık (2026-10-10) — Zayıf Algoritma sayfasının sekmesi; `weak_algo.read` + görüş kapsamı.
+   * Sunucu 120 sn paylaşır, `fresh=true` (Yenile) belleği en fazla 5 sn'de bir atlar. `auditExport` dışa aktarım
+   * sonrası denetim izi (CRYPTO_INVENTORY_EXPORT) — dosya istemcide üretilir.
+   */
+  cryptoInventory: {
+    get: (fresh = false) => request(fresh === true ? '/crypto-inventory?fresh=1' : '/crypto-inventory'),
+    auditExport: (body) => request('/crypto-inventory/export-audit', { method: 'POST', body: JSON.stringify(body) }),
+  },
+  /**
+   * Aylık Yönetici Özeti (2026-10-10) — okuma: global yönetici + AUDIT (`executive_summary.view`); ayar/test/gönderim:
+   * global yönetici. `withStatus`: 403 → "erişim yok" ekranı, 429 → test sınırı.
+   */
+  executiveSummary: {
+    get: ({ month, live = false, fresh = false } = {}) => {
+      const qs = new URLSearchParams()
+      if (month) qs.set('month', month)
+      if (live) qs.set('live', '1')
+      if (fresh) qs.set('fresh', '1')
+      const s = qs.toString()
+      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true })
+    },
+    getSettings: () => request('/executive-summary/settings', { withStatus: true }),
+    saveSettings: (body) => request('/executive-summary/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    sendTest: (month) => request('/executive-summary/send-test', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    runNow: (month) => request('/executive-summary/run', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    /**
+     * PDF'i indirir (e-posta ekinin aynısı). Düz `<a href>` yerine blob: üretim hatası (503) ya da yetki (403) tarayıcıyı
+     * JSON sayfasına götürmesin, kullanıcıya söylenebilsin.
+     */
+    downloadPdf: async ({ month, live = false } = {}) => {
+      const qs = new URLSearchParams()
+      if (month) qs.set('month', month)
+      if (live) qs.set('live', '1')
+      try {
+        const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        if (!res.ok) return { success: false, status: res.status }
+        const blob = await res.blob()
+        const disp = res.headers.get('Content-Disposition') || ''
+        const match = /filename="?([^";]+)"?/.exec(disp)
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        return { success: true }
+      } catch (e) {
+        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+    },
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),
@@ -701,6 +758,13 @@ export const api = {
   // "Planlı yenilemeydi" onayı: sabitlenen parmak izi için kalıcı onay yazar, satır yeşile döner.
   confirmCertificateRenewal: (domain) =>
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
+  // TLS yapılandırma notu (2026-10-10): not + nedenler + TLS profili (kalıcı veriden, ağ beklemez).
+  getTlsGrade: (domain) => request(`/certificates/${encodeURIComponent(domain)}/tls-grade`),
+  // TLS profilini ŞİMDİ yeniden tarar (protokol sürümleri, OCSP zımbalama) — uç başına ≤ 30 sn; sunucu süre sınırlı.
+  rescanTlsProfile: (domain) =>
+    request(`/certificates/${encodeURIComponent(domain)}/tls-grade/rescan`, { method: 'POST', timeoutMs: 0 }),
+  // Son not düşüşleri + profil kapsaması (kullanıcının izleme kapsamında).
+  getTlsGradeDrops: (days = 30) => request(`/tls-grade/drops?days=${encodeURIComponent(days)}`),
 
   // Manuel (dosyadan yüklenen) sertifikalar (2026-10-06): ağ üzerinden erişilemeyen sertifika dosyadan yüklenir, süresi
   // ağdakilerle AYNI kurallarla izlenir. Yükleme uçları çok parçalı (FormData: yalnız `extracted` — tarayıcıda ayıklanan

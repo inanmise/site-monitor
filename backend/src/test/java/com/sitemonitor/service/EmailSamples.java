@@ -539,5 +539,13 @@ final class EmailSamples {
                 svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.quiet()), "ok");
         addHtml("report-inventory-empty", "report", "[Site Monitor] Aylık Sertifika Envanteri",
                 svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.empty()), "ok");
+        // Aylık yönetici özeti (2026-10-10): veri GERÇEK bölüm hesaplarından geçer (ExecutiveSummarySamples).
+        for (var e : java.util.Map.of(
+                "report-executive", com.sitemonitor.service.report.executive.ExecutiveSummarySamples.full(),
+                "report-executive-quiet", com.sitemonitor.service.report.executive.ExecutiveSummarySamples.quiet()).entrySet()) {
+            com.sitemonitor.service.mail.MailDoc.Mail m = com.sitemonitor.service.mail.ExecutiveSummaryMail.build(
+                    e.getValue(), BASE, "10.10.2026 12:00", "site-monitor-yonetici-ozeti-2026-09.pdf");
+            add(e.getKey(), "report", com.sitemonitor.service.mail.ExecutiveSummaryMail.subject(e.getValue()), m.html(), m.text(), "ok");
+        }
     }
 }

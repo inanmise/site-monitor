@@ -104,11 +104,20 @@ public final class PermissionCatalog {
         r("weak_algo.read",     "logs", VIEW),
         // İstisna kaydı / takıma bildir (2026-09-12). Ayrı satır — auditDefaults deseni (yukarıdaki not).
         r("weak_algo.manage",   "logs", EDIT),
+        // Takım veri kalitesi puanı (2026-10-10): kurum puanı + görünür takımların düzeltme listesi. Salt okuma; kapsam
+        // uçta (izleme okuma kuralı — DataQualityController). Varsayılan herkese açık (TEAM_ADMIN/USER listelerinde,
+        // AUDIT VIEW kuralıyla, ADMIN hepsi).
+        r("data_quality.view",  "logs", VIEW),
 
         // ── Haftalık Raporlar ─────────────────────────────────────────────
         r("weekly_reports.read",    "reports", VIEW),
         r("weekly_reports.crud",    "reports", EDIT),
         r("weekly_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
+        // Aylık yönetici özeti (2026-10-10): KURUM GENELİ rapor (tüm takımların erişilebilirliği, alarmları, sertifikaları).
+        // Varsayılan ADMIN + AUDIT (auditDefaults VIEW kuralı); TEAM_ADMIN/USER'a verilmez. İzin GEREKLİ ama YETMEZ: uç
+        // ayrıca kurum geneli görüntüleyici ister: global yönetici ya da AUDIT, SessionScope.isGlobalViewer. Kapsamlı
+        // müdür ADMIN satırından izni alsa da açamaz — takım kapsamlı bir kullanıcıya diğer takımların sayıları açılmaz.
+        r("executive_summary.view", "reports", VIEW),
 
         // ── Olay & Hata Geçmişi (SRE incident ledger) — kendi grubu (reports'tan ayrı) ──
         r("incidents.view",   "incidents", VIEW),
@@ -227,6 +236,7 @@ public final class PermissionCatalog {
             // audit_log.read: SİSTEM GENELİ denetim kaydı (tüm takımlar/kullanıcılar) → yalnız
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read", "weak_algo.manage",
+            "data_quality.view",   // takım veri kalitesi puanı (2026-10-10) — salt okuma, kapsam uçta
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
             // monitoring.scripted: PO/TEAM_ADMIN kendi takımı için k6 senaryosu yazar/çalıştırır (USER'a AÇILMAZ)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "monitoring.scripted", "domain.registration.view", "monitoring.group",
@@ -301,6 +311,7 @@ public final class PermissionCatalog {
             // audit_log.read: SİSTEM GENELİ denetim → yalnız admin/AUDIT (requireAuditAccess). Ekip kapsamlı
             // Denetim Logu (ekip arkadaşlarının kayıtları) bu izne BAĞLI DEĞİL, herkese açık (2026-09-25 kararı).
             "weak_algo.read",
+            "data_quality.view",   // takım veri kalitesi puanı (2026-10-10) — kendi takımlarının düzeltme listesi
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
             // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)
             "weekly_reports.read", "weekly_reports.crud",

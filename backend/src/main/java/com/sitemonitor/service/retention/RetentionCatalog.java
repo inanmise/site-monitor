@@ -380,9 +380,17 @@ public final class RetentionCatalog {
                 "Sistem bakımında susturulan alarm bildirimleri (2026-10-02): bakım × alarm başına TEK satır — bitişteki "
                 + "bildirim telafisinin listesi ve kararı. Bildirim günlüğüyle (notification_logs) aynı süre: iz o günlükte, "
                 + "bu tablo onun bakım özetidir. Kişisel veri yok (alarm kimliği + tetik + sayaç)."),
+        info("executive-summary-reports", "executive_summary_reports", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Aylık yönetici özeti gönderim kaydı (2026-10-10): ay başına TEK satır — durum, alıcı sayısı, dilim sonucu ve "
+                + "gönderilen özetin içeriği (sayılar, takım adları; kişisel veri yok). 'Tam bir kez' kapısıdır; yılda 12 satır, "
+                + "silinmez (geçmiş ayın ekranı bu kayıttan çizilir)."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
+        info("data-quality-daily", "data_quality_daily", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Takım veri kalitesi puanının günlük görüntüsü (2026-10-10): gün × kova (takım / kurum / sahipsiz) başına TEK "
+                + "satır — puan, bulgu ve incelenen öğe sayısı (30 günlük eğilim çizgisi). DataQualitySnapshotJob her yazımda "
+                + "120 günden eski satırları siler → en fazla ~120 × (takım sayısı + 2) satır. Kişisel veri yok."),
         info("spring-session", "spring_session", Mode.EXTERNAL, DataClass.PERSONAL,
                 "Spring Session JDBC deposu — Spring'in kendi dakikalık cleanup job'ı süresi dolan oturumları siler "
                 + "(spring.session.timeout=24h). Bu uygulama dokunmaz."),
@@ -396,6 +404,21 @@ public final class RetentionCatalog {
                 + "saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; "
                 + "mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve "
                 + "site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler."),
+        // ── TLS yapılandırma notu (2026-10-10) ──────────────────────────────────────────────────
+        age("tls-grade-changes", "tls_grade_changes", "changed_at", "site.monitor.series.certificate.retention-days",
+                180, 30, false, DataClass.OPERATIONAL,
+                "TLS notu değişim günlüğü (önceki → yeni not, neden kodları, alan adı, takım kimliği; kişi verisi yok). "
+                + "Sertifika kontrol serisinden türer → aynı pencere (aynı ayar anahtarı). Satır yalnız not DEĞİŞİNCE doğar."),
+        orphan("tls-grade-status-orphan", "tls_grade_status",
+                "NOT EXISTS (SELECT 1 FROM certificate_inventory i WHERE i.id = tls_grade_status.inventory_id)",
+                DataClass.OPERATIONAL,
+                "Envanter kaydı başına son bilinen TLS notu (düşüş göstergesinin karşılaştırma tabanı). Kayıt silinince "
+                + "yetim kalır ve burada temizlenir; aksi hâlde envanter kadar satır, birikmez."),
+        orphan("tls-profiles-orphan", "tls_profiles",
+                "NOT EXISTS (SELECT 1 FROM certificate_inventory i WHERE i.domain = tls_profiles.domain)",
+                DataClass.OPERATIONAL,
+                "Alan adı başına TLS profili (kabul edilen protokol sürümleri, OCSP zımbalama, zayıf takım kabulü — günlük "
+                + "yoklama). Envanterden silinen alan adının satırı burada temizlenir; aksi hâlde alan adı kadar satır."),
         info("password-history", "password_history", Mode.EXTERNAL, DataClass.PERSONAL,
                 "UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı."),
         info("monitor-check-schedule", "monitor_check_schedule", Mode.EXTERNAL, DataClass.OPERATIONAL,

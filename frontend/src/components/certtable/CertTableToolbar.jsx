@@ -7,6 +7,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import TeamScopeSwitch from '../ui/TeamScopeSwitch.jsx'
+import { gradeFilterOptions } from '../tlsgrade/tlsGradeModel.js'
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, WINDOW_OPTIONS, TIER_OPTIONS, EMPTY_FILTERS,
   activeFilterChips, defaultCols, moveCol, trustFilterOptions } from './certTableModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -87,6 +88,7 @@ export default function CertTableToolbar({
       case 'port': return c.value === 'nonstd' ? t('tbl.portNonstd') : `${t('tbl.colPort')} ${c.value}`
       case 'fp': return t('tbl.sameCert')
       case 'trust': return t('tbl.chipTrust', t(`tbl.trust.${c.value}`))
+      case 'grade': return t('tbl.chipGrade', c.value === 'none' ? t('tlsg.filterNone') : c.value)
       default: return c.value
     }
   }
@@ -117,6 +119,7 @@ export default function CertTableToolbar({
   }))
   const tierOpts = TIER_OPTIONS.map((x) => ({ value: x, label: x === '' ? t('tbl.tierAll') : `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` }))
   const trustOpts = [{ value: '', label: t('tbl.filterAll') }, ...trustFilterOptions(t, facets)]
+  const gradeOpts = [{ value: '', label: t('tbl.filterAll') }, ...gradeFilterOptions(t, facets)]
 
   const savePreset = () => { onSavePreset(presetName.trim()); setPresetName('') }
   const clearSearch = () => set('domain', '')
@@ -145,6 +148,10 @@ export default function CertTableToolbar({
       <div className={FACET}>
         <Label htmlFor="ct-f-trust" className={FACET_LABEL}>{t('tbl.facetTrust')}</Label>
         <SearchableSelect id="ct-f-trust" value={filters.trust} onChange={(v) => set('trust', v)} options={trustOpts} />
+      </div>
+      <div className={FACET}>
+        <Label htmlFor="ct-f-grade" className={FACET_LABEL}>{t('tbl.facetGrade')}</Label>
+        <SearchableSelect id="ct-f-grade" value={filters.grade} onChange={(v) => set('grade', v)} options={gradeOpts} />
       </div>
       <div className={FACET}>
         <Label htmlFor="ct-f-sort" className={FACET_LABEL}>{t('tbl.facetSort')}</Label>

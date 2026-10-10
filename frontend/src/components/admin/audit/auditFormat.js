@@ -173,6 +173,7 @@ const SPECIAL = {
   // Pasif hesabın açık oturumunun kesilmesi; HTTP uçtan uca tanılama (2026-10-02) — kural adı/eylem eşlemesine uymaz
   SESSION_ENDED_INACTIVE: 'audit.ev.SESSION_ENDED_INACTIVE',
   HTTP_DIAGNOSTICS_RUN: 'audit.ev.HTTP_DIAGNOSTICS_RUN',
+  CERT_TLS_PROFILE_RESCAN: 'audit.ev.CERT_TLS_PROFILE_RESCAN',   // TLS profili elle yeniden tarandı (2026-10-10)
   KEYWORD_DIAGNOSTICS_RUN: 'audit.ev.KEYWORD_DIAGNOSTICS_RUN',   // keyword uçtan uca tanılama (2026-10-04)
   // Ping / Port / DNS uçtan uca tanılama (2026-10-05)
   PING_DIAGNOSTICS_RUN: 'audit.ev.PING_DIAGNOSTICS_RUN',

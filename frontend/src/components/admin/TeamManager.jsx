@@ -534,6 +534,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                     { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
                     { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
                     { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
+                    // Veri Kalitesi (2026-10-10): takımın puanı + düzeltme listesi (sayfa görüş kapsamını sunucuda uygular)
+                    { label: t('dq.teamMenu'), onClick: () => navigateTo('dataquality', { dq_team: String(team.id) }) },
                     { label: t('tla.menu'), onClick: () => setLdapAuditTeam(team), hidden: !isAdmin },
                     { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
                   ]} />
