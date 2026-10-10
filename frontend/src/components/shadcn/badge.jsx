@@ -3,8 +3,12 @@ import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils"
 import { Slot } from "radix-ui"
 
+// Proje sapması (2026-10-10, kullanıcı bildirimi): `justify-center` → `justify-center-safe` (CSS `safe center`). Sığmayan
+// içerik ortalanınca İKİ yandan taşıp kırpılıyordu (overflow-hidden) — uzun kişi/takım adının BAŞI görünmüyordu
+// ("…enk Çil (Teknoloji…"). safe center'da taşma yalnız sonda olur; ad başı daima görünür. Rozette ad/uzun metin
+// `truncate` ile KESİLMEZ (inline-flex'te üç nokta zaten çıkmaz) — kapı: test/badgeNoTruncate.test.js.
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex w-fit shrink-0 items-center justify-center-safe gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {

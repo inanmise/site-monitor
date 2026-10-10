@@ -216,7 +216,7 @@ konsolda "Function components cannot be given refs".
 | Dosya | Sapma |
 |---|---|
 | `button.jsx` | `data-variant` / `data-size` öznitelikleri; proje varyantları `success` (`bg-success`), `warning` (`bg-amber-600`) |
-| `badge.jsx` | `data-variant`; proje varyantı `warning` (amber tonlu) |
+| `badge.jsx` | `data-variant`; proje varyantı `warning` (amber tonlu); taban `justify-center-safe` (CSS `safe center`, 2026-10-10): sığmayan içerik yalnız SONDA taşar — eskiden ortalanıp İKİ yandan kırpılıyor, uzun adın BAŞI görünmüyordu. Rozette `truncate` YASAK (inline-flex'te üç nokta çıkmaz); ad / uzun metin `h-auto whitespace-normal [overflow-wrap:anywhere]` ile sarar ya da rozet yerine düz metin. Kapı: `test/badgeNoTruncate.test.js` |
 | `alert.jsx` | Proje varyantları `info` / `success` / `warning` / `danger` (koyu karşılıklı). Resmî belgede artık `AlertAction` var; yerel dosyada **yok** — AlertBanner `data-slot="alert-actions"` ile kendi çözümünü kurar |
 | `dialog.jsx` | Katman `--z-modal`; yalnız opaklık animasyonu (zoom yok — e2e ölçümleri); `motion-reduce:animate-none!`. **DİKKAT:** yerleşik kapat düğmesinin sr-only metni hâlâ İngilizce "Close" → projede `DialogContent` **her zaman** `showCloseButton={false}` ile kullanılır ve i18n'li kendi X düğmesi konur (ModalShell, CommandPalette, Login) |
 | `alert-dialog.jsx` | Katman `--z-dialog`; opaklık animasyonu; `overlayProps` (örtü tıklaması = İptal, `ui/Dialog.jsx`) |

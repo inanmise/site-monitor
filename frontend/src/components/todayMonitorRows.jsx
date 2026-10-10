@@ -133,7 +133,7 @@ export function HealthRowBody({ item: x, t, onOpen }) {
       return (
         <Badge key={f.key} variant={bad ? 'secondary' : 'warning'} data-slot="today-finding" data-bad={bad ? 'true' : undefined}
           title={t(`hlth.val.${f.value_key}`, ...(f.value_args || []))}
-          className={cn('max-w-full truncate rounded-md px-[7px] py-px text-[.74em] font-semibold',
+          className={cn('h-auto max-w-full justify-start text-left whitespace-normal [overflow-wrap:anywhere] rounded-md px-[7px] py-px text-[.74em] font-semibold',
             bad && 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300')}>
           {t(`today.hf.${f.key}`)}
         </Badge>

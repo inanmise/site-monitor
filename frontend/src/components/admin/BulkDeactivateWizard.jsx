@@ -414,7 +414,7 @@ function PreviewStep({ preview, q, setQ, teamMap, t }) {
                     <div className="flex min-w-0 flex-wrap items-center gap-1 md:max-w-[50%] md:justify-end">
                       {tids.length === 0
                         ? <Badge variant="outline" className="font-normal text-muted-foreground">{t('ubd.noTeam')}</Badge>
-                        : tids.map((id) => <Badge key={id} variant="secondary" className="max-w-full truncate font-normal">{teamMap[id]}</Badge>)}
+                        : tids.map((id) => <Badge key={id} variant="secondary" className="h-auto max-w-full justify-start text-left whitespace-normal [overflow-wrap:anywhere] font-normal">{teamMap[id]}</Badge>)}
                       <span className="text-xs whitespace-nowrap text-muted-foreground" title={u.last_login_at || undefined}>
                         {lastLoginText(u, t, now)}
                       </span>

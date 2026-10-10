@@ -237,7 +237,7 @@ function RowWhat({ r, t }) {
         {!summary && <Badge variant="outline" className="rounded-sm text-[0.7rem] font-semibold">{pushTriggerLabel(r.trigger, t)}</Badge>}
         {r.alert_level && <Badge variant="outline" data-level={r.alert_level} className="rounded-sm text-[0.7rem] font-normal">{LEVEL_KEY[r.alert_level] ? t(LEVEL_KEY[r.alert_level]) : r.alert_level}</Badge>}
         {!hidden && r.monitor_type && !summary && <Badge variant="outline" className="rounded-sm text-[0.7rem] font-normal">{familyLabel(r.monitor_type, t)}</Badge>}
-        {!hidden && r.team_name && <Badge variant="secondary" className="max-w-full truncate rounded-sm text-[0.7rem] font-normal">{r.team_name}</Badge>}
+        {!hidden && r.team_name && <Badge variant="secondary" className="h-auto max-w-full justify-start text-left whitespace-normal [overflow-wrap:anywhere] rounded-sm text-[0.7rem] font-normal">{r.team_name}</Badge>}
         {r.lang === 'en' && r.own && <Badge variant="secondary" className="rounded-sm text-[0.7rem]" title={t('mypush.hist.langEn')} aria-label={t('mypush.hist.langEn')}>EN</Badge>}
         {summary && r.summarized_count > 0 && <span className="text-xs text-muted-foreground">{t('mypush.hist.summaryOf', r.summarized_count)}</span>}
       </span>
