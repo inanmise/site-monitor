@@ -299,6 +299,16 @@ class UserPushPreferencesTest {
             return c;
         }
 
+        /** Tek iş parçacıklı push işçisinin kuyruğu boşalana dek bekler (boş görev sıraya girer ve tamamlanır). */
+        private void awaitPushWorkerIdle() {
+            try {
+                ((java.util.concurrent.ExecutorService) org.springframework.test.util.ReflectionTestUtils.getField(service, "worker"))
+                        .submit(() -> { }).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new AssertionError("push işçisi boşalmadı", e);
+            }
+        }
+
         @Test
         @DisplayName("adım push'u: tek aktif kullanıcıya ESCALATION_STEP satırı, metin '[ESKALASYON · 15 dk onaysız] …' (kişinin dilinde), dedupe (alarm, kişi, seviye)")
         void stepPush_writesRow() {
@@ -320,6 +330,7 @@ class UserPushPreferencesTest {
             assertThat(store.get(0).getMessage()).startsWith("[ESCALATION · 15 min unacknowledged] HIGH: svc.example.com is not responding.");
 
             store.clear();
+            awaitPushWorkerIdle();   // önceki enqueue'ların tetiklediği arka plan boşaltması mock'a dokunurken stub kurulmasın (yarış)
             doReturn(true).when(deliveryRepo).existsByAlertEventIdAndDedupeKeyAndUsername(9L, "ESC_STEP:77:HIGH", "N00030");   // doReturn: kickDrain yarışı
             assertThat(service.enqueueEscalationStep(e, contact(), 15)).isNull();
             assertThat(store).as("aynı (alarm, kişi, seviye) ikinci kez yazılmaz").isEmpty();

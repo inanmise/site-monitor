@@ -276,7 +276,7 @@ class CryptoInventoryServiceTest {
         when(versionRepo.findByInventoryIdInAndCurrentTrue(anyCollection())).thenReturn(List.of());
         when(latestCheckRepo.findAll()).thenReturn(List.of(lc("n.example.com", "RSA", 2048, "SHA1withRSA", 30, "[]")));
         WeakAlgorithmException ex = new WeakAlgorithmException();
-        ex.setDomain("n.example.com"); ex.setUntil(LocalDate.now().plusDays(30).toString());
+        ex.setDomain("n.example.com"); ex.setUntil(LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).plusDays(30).toString());
         when(exceptionRepo.findAll()).thenReturn(List.of(ex));
         Map<String, Object> body = svc.buildUncached(null, Instant.now());
         verify(versionRepo, times(1)).findByInventoryIdInAndCurrentTrue(anyCollection());
