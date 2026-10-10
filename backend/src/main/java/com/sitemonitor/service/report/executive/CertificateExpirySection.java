@@ -28,6 +28,10 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  * süresi dolmuş (&lt; 0) · 0–30 · 31–60 · 61–90 · 90 üstü · tarih yok. "30/60/90 gün içinde" kümülatiftir (süresi
  * dolmuşlar HARİÇ, ayrı gösterilir). Duraklatılmış (pasif) kayıtlar izlenmediği için dahil değildir; dosyadan yüklenen
  * (manuel) sertifikalar dahildir.
+ *
+ * <p><b>Takım kapsamı (2026-10-10):</b> bağlamın {@link ExecutiveSummaryContext#latestCerts()} /
+ * {@link ExecutiveSummaryContext#inventory()} okumaları zaten takımın (SY ya da UG) kayıtlarıdır; "takımlara göre"
+ * tablosu (tek satır olurdu) atlanır, kapsam notu düşülür.
  */
 @Slf4j
 @Component
@@ -186,35 +190,8 @@ public class CertificateExpirySection implements ExecutiveSummarySection {
                 new Column("d90", "61–90 gün", "int")),
                 tierRows, tierRows.size(), "Kayıt yok."));
 
-        // ── Takıma göre (en çok acil/yaklaşan önce) ──
-        Collator collator = Collator.getInstance(Locale.forLanguageTag("tr"));
-        collator.setStrength(Collator.SECONDARY);
-        List<Map.Entry<Long, Counts>> teams = new ArrayList<>(byTeam.entrySet());
-        teams.removeIf(e -> e.getValue().expired + e.getValue().within90() == 0);
-        teams.sort(Comparator.comparingInt((Map.Entry<Long, Counts> e) -> -(e.getValue().expired + e.getValue().d30))
-                .thenComparingInt(e -> -e.getValue().within90())
-                .thenComparing(e -> teamNames.getOrDefault(e.getKey(), "￿"), collator));
-        List<Map<String, Object>> teamRows = new ArrayList<>();
-        for (Map.Entry<Long, Counts> e : teams.subList(0, Math.min(TEAM_LIMIT, teams.size()))) {
-            Counts c = e.getValue();
-            Map<String, Object> r = new LinkedHashMap<>();
-            r.put("team", e.getKey() == null ? null : teamNames.get(e.getKey()));
-            r.put("team_id", e.getKey());
-            r.put("expired", c.expired);
-            r.put("upto30", c.within30());
-            r.put("upto60", c.within60());
-            r.put("upto90", c.within90());
-            r.put("planned", c.planned);
-            teamRows.add(r);
-        }
-        b.table(new Table("by_team", "Takımlara göre", List.of(
-                new Column("team", "Takım", "team"),
-                new Column("expired", "Süresi dolmuş", "int"),
-                new Column("upto30", "≤ 30 gün", "int"),
-                new Column("upto60", "≤ 60 gün", "int"),
-                new Column("upto90", "≤ 90 gün", "int"),
-                new Column("planned", "Planlı", "int")),
-                teamRows, teams.size(), "90 gün içinde biten sertifika yok."));
+        // ── Takıma göre (en çok acil/yaklaşan önce) — takım kapsamında tek satır olacağından yok ──
+        if (!ctx.teamScoped()) b.table(byTeamTable(byTeam, teamNames));
 
         // ── En yakın bitişler ──
         List<Cert> soon = new ArrayList<>();
@@ -244,10 +221,46 @@ public class CertificateExpirySection implements ExecutiveSummarySection {
                 soonRows, soon.size(), "90 gün içinde biten sertifika yok."));
         b.note("ASOF", "Rapor anı fotoğrafı: " + ExecFormat.stamp(ctx.now()) + " itibarıyla aktif envanterin son kontrol "
                 + "sonuçları. Duraklatılmış kayıtlar dahil değildir.", datetime(ctx.nowIso()));
+        if (ctx.teamScoped()) {
+            b.note("TEAM_SCOPE", "Takımın sorumlu (SY) ya da uygulama geliştirici (UG) olduğu aktif envanter kayıtları; "
+                    + "Takım sütunu kaydın sorumlu takımıdır.");
+        }
         b.data("expired", all.expired).data("within30", all.within30()).data("within60", all.within60())
                 .data("within90", all.within90()).data("over90", all.over).data("unknown", all.unknown)
                 .data("total", certs.size());
         return b.build();
+    }
+
+    /** Takımlara göre (en çok acil/yaklaşan önce) — yalnız kurum kapsamı. */
+    private static Table byTeamTable(Map<Long, Counts> byTeam, Map<Long, String> teamNames) {
+        Collator collator = Collator.getInstance(Locale.forLanguageTag("tr"));
+        collator.setStrength(Collator.SECONDARY);
+        List<Map.Entry<Long, Counts>> teams = new ArrayList<>(byTeam.entrySet());
+        teams.removeIf(e -> e.getValue().expired + e.getValue().within90() == 0);
+        teams.sort(Comparator.comparingInt((Map.Entry<Long, Counts> e) -> -(e.getValue().expired + e.getValue().d30))
+                .thenComparingInt(e -> -e.getValue().within90())
+                .thenComparing(e -> teamNames.getOrDefault(e.getKey(), "￿"), collator));
+        List<Map<String, Object>> teamRows = new ArrayList<>();
+        for (Map.Entry<Long, Counts> e : teams.subList(0, Math.min(TEAM_LIMIT, teams.size()))) {
+            Counts c = e.getValue();
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("team", e.getKey() == null ? null : teamNames.get(e.getKey()));
+            r.put("team_id", e.getKey());
+            r.put("expired", c.expired);
+            r.put("upto30", c.within30());
+            r.put("upto60", c.within60());
+            r.put("upto90", c.within90());
+            r.put("planned", c.planned);
+            teamRows.add(r);
+        }
+        return new Table("by_team", "Takımlara göre", List.of(
+                new Column("team", "Takım", "team"),
+                new Column("expired", "Süresi dolmuş", "int"),
+                new Column("upto30", "≤ 30 gün", "int"),
+                new Column("upto60", "≤ 60 gün", "int"),
+                new Column("upto90", "≤ 90 gün", "int"),
+                new Column("planned", "Planlı", "int")),
+                teamRows, teams.size(), "90 gün içinde biten sertifika yok.");
     }
 
     static String tierLabel(int tier) {

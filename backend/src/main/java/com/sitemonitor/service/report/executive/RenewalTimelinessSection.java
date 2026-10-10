@@ -49,6 +49,10 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  *   <li>Gecikmede (şimdi): kalan süresi hedef sürenin altına düşmüş VE (planı yok YA DA planı geçmiş ve yapılmamış) aktif
  *       sertifikalar; süresi dolmuşlar her durumda.</li>
  * </ul>
+ *
+ * <p><b>Takım kapsamı (2026-10-10):</b> parmak izi grupları kurum geneli okunur ve koşu boyu paylaşılır
+ * ({@link ExecutiveSummaryContext#shared}); yenileme yalnız kapsamdaki alan adları için aranır (bağlamın SY ya da UG
+ * süzülmüş envanteri ve son sertifikaları). Plan ve gecikme de aynı süzülmüş kayıtlardan.
  */
 @Slf4j
 @Component
@@ -85,20 +89,27 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
-        Map<String, List<Group>> groups = new HashMap<>();
+        Map<String, List<Group>> groups = Map.of();
         boolean readOk = true;
         try {
             String from = ExecutiveSummaryContext.UTC_ISO.format(ctx.from().minus(Duration.ofDays(LOOKBACK_DAYS)));
-            jdbc.query(SQL, rs -> {
-                String d = rs.getString("domain");
-                if (d == null) return;
-                groups.computeIfAbsent(d, k -> new ArrayList<>())
-                        .add(new Group(rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")));
-            }, from, ctx.toIso());
+            // Kurum geneli parmak izi grupları koşu boyu paylaşılır (takım özetleri aynı sorguyu yeniden koşmaz);
+            // takım süzmesi evaluate'te kapsamdaki alan adlarıyla (bağlamın envanteri / son sertifikaları).
+            groups = ctx.shared("renewals.groups|" + from + "|" + ctx.toIso(), () -> {
+                Map<String, List<Group>> out = new HashMap<>();
+                jdbc.query(SQL, rs -> {
+                    String d = rs.getString("domain");
+                    if (d == null) return;
+                    out.computeIfAbsent(d, k -> new ArrayList<>())
+                            .add(new Group(rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")));
+                }, from, ctx.toIso());
+                return out;
+            });
         } catch (Exception e) {
             readOk = false;
             log.debug("Yönetici özeti: yenileme geçmişi okunamadı: {}", e.toString());
         }
+        if (groups == null) groups = Map.of();
         Map<String, Integer> lead = null;
         if (ctx.renewalTargetDays() <= 0) {
             try { lead = forecast.leadDays(); } catch (Exception e) { log.debug("Yenileme süresi okunamadı: {}", e.toString()); }
@@ -324,6 +335,10 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
                 + "en az hedef süre (gün) varken. Son dakika: son " + LAST_MINUTE_DAYS + " gün.", LAST_MINUTE_DAYS);
         b.note("PLANS", "Plan alanı yalnız güncel değeri tutar; plan ve gecikme sayıları rapor anına göredir ("
                 + ExecFormat.stamp(ctx.now()) + ").", datetime(ctx.nowIso()));
+        if (ctx.teamScoped()) {
+            b.note("TEAM_SCOPE", "Takımın sorumlu (SY) ya da uygulama geliştirici (UG) olduğu aktif envanter kayıtlarının "
+                    + "yenilemeleri; Takım sütunu kaydın sorumlu takımıdır.");
+        }
         b.data("by_class", byClass).data("total", total).data("compliance", compliance)
                 .data("plans", Map.of("planned", planned, "done", done, "missed", missed, "pending", pending))
                 .data("target_days", fixedTarget ? ctx.renewalTargetDays() : null)

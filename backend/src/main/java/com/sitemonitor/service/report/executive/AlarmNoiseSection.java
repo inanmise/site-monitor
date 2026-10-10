@@ -1,7 +1,9 @@
 package com.sitemonitor.service.report.executive;
 
+import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.service.AlertNoiseService;
+import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.MonitorTypeCatalog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +39,15 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  * </ul>
  * <b>Sorgu bütçesi:</b> ayın alarmları için TEK dar izdüşüm + önceki ay için TEK sayım; envanter ve takım adları paylaşılan
  * bağlamdan.
+ *
+ * <h2>Takım kapsamı (2026-10-10)</h2>
+ * Alarm takımın kapsamındadır ⇔ damgalı takımı ({@code alert_events.team_id}) kapsam takımıdır YA DA alarm envanter gibi
+ * yönlenir ({@link AlertOwnership#routesLikeInventory} — bildirim yönlendirmesiyle AYNI yüklem: tür listesi + bağlamdaki
+ * bağımsız izleme işareti) ve alan adı kapsamdaki envanterdedir (SY ya da UG). Böylece aynı host'taki başka bir takımın
+ * bağımsız Port/HTTP izlemesinin alarmı sayılmaz. Damgasız ve envanter dışı alarm hiçbir takımın kapsamında değildir.
+ * Ayın ve önceki ayın satırları koşu boyu paylaşılır ({@link ExecutiveSummaryContext#shared}); takım süzmesi bellekte —
+ * önceki ay sayısı da süzülür (kurum kapsamı bugünkü TEK sayımı kullanır). Takımda "takımlar" tablosu yerine türe göre
+ * kırılım gelir.
  */
 @Slf4j
 @Component
@@ -51,6 +62,8 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
     static final int UNACKED_WARN_PCT = 50;
     /** Önceki aya göre artış bu yüzdeyi aşarsa bölüm "takip gerekli". */
     static final int INCREASE_WARN_PCT = 25;
+    /** Koşu boyu paylaşılan ay satırlarının anahtar öneki ({@link ExecutiveSummaryContext#shared}). */
+    static final String SHARED_ROWS = "noise.rows|";
 
     private final AlertEventRepository alertRepo;
 
@@ -58,29 +71,60 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
     @Override public int order() { return ORDER; }
     @Override public String title() { return TITLE; }
 
-    /** Alarm satırı (repo izdüşümü sırası). */
+    /** Alarm satırı (repo izdüşümü sırası). {@code context}: alarm-anı bağlam JSON'u (yalnız takım kapsamı okur). */
     record Ev(String domain, String type, String level, String createdAt, String resolvedAt, boolean resolved,
-              boolean silent, boolean acked, String ackedAt, Long teamId) {
+              boolean silent, boolean acked, String ackedAt, Long teamId, String context) {
         static Ev of(Object[] r) {
             return new Ev(s(r[0]), s(r[1]), s(r[2]), s(r[3]), s(r[4]), Boolean.TRUE.equals(r[5]), Boolean.TRUE.equals(r[6]),
-                    Boolean.TRUE.equals(r[7]), s(r[8]), r[9] instanceof Number n ? Long.valueOf(n.longValue()) : null);
+                    Boolean.TRUE.equals(r[7]), s(r[8]), r[9] instanceof Number n ? Long.valueOf(n.longValue()) : null,
+                    r.length > 10 ? s(r[10]) : null);
         }
         private static String s(Object v) { return v == null ? null : String.valueOf(v); }
     }
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
-        List<Ev> events = new ArrayList<>();
-        for (Object[] r : alertRepo.findExecutiveRows(ctx.fromIso(), ctx.toIso())) {
-            if (r != null && r.length >= 10) events.add(Ev.of(r));
-        }
+        List<Ev> events = rows(ctx, ctx.fromIso(), ctx.toIso());
         Long prev = null;
         try {
-            prev = alertRepo.countCreatedBetween(ctx.prevFromIso(), ctx.fromIso());
+            if (ctx.teamScoped()) {
+                long n = 0;
+                for (Ev e : rows(ctx, ctx.prevFromIso(), ctx.fromIso())) if (inScope(ctx, e)) n++;
+                prev = n;
+            } else {
+                prev = alertRepo.countCreatedBetween(ctx.prevFromIso(), ctx.fromIso());
+            }
         } catch (Exception e) {
             log.debug("Yönetici özeti: önceki ay alarm sayısı okunamadı: {}", e.toString());
         }
         return evaluate(ctx, events, prev);
+    }
+
+    /** {@code [from, to)} içinde açılan alarmlar — kurum geneli, koşu boyu paylaşılır (takım süzmesi çağıranda). */
+    private List<Ev> rows(ExecutiveSummaryContext ctx, String from, String to) {
+        return ctx.shared(SHARED_ROWS + from + "|" + to, () -> {
+            List<Ev> out = new ArrayList<>();
+            List<Object[]> raw = alertRepo.findExecutiveRows(from, to);
+            if (raw != null) {
+                for (Object[] r : raw) if (r != null && r.length >= 10) out.add(Ev.of(r));
+            }
+            return List.copyOf(out);
+        });
+    }
+
+    /**
+     * Alarm kapsamda mı: kurum geneli → hepsi; takım → damga kapsam takımı YA DA envanter gibi yönlenen alarm ve alan adı
+     * kapsamdaki envanterde (SY ya da UG). Bağlam yalnız gerektiğinde ayrıştırılır.
+     */
+    static boolean inScope(ExecutiveSummaryContext ctx, Ev e) {
+        if (!ctx.teamScoped()) return true;
+        if (e == null) return false;
+        if (e.teamId() != null && ctx.teamInScope(e.teamId())) return true;
+        if (e.domain() == null || !ctx.domainInScope(e.domain())) return false;
+        AlertEvent probe = new AlertEvent();
+        probe.setAlertType(e.type());
+        probe.setContextJson(e.context());
+        return AlertOwnership.routesLikeInventory(probe);
     }
 
     private static final class TargetAcc {
@@ -98,6 +142,7 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
     }
 
     SectionResult evaluate(ExecutiveSummaryContext ctx, List<Ev> events, Long prevCount) {
+        boolean teamScope = ctx.teamScoped();
         SectionResult.Builder b = SectionResult.builder(KEY, ORDER, TITLE).headlineKpi("total_alarms");
         Map<String, Long> domainTeam = new java.util.HashMap<>();
         try {
@@ -111,14 +156,23 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
 
         Map<String, TargetAcc> targets = new LinkedHashMap<>();
         Map<Long, TeamAcc> teams = new LinkedHashMap<>();
+        // Takım kapsamı: izleme türüne göre kırılım ("takımlar" tablosunun yerine)
+        Map<String, TeamAcc> byType = new LinkedHashMap<>();
         int total = 0, critical = 0, unacked = 0, silent = 0, stillOpenUnacked = 0, acked = 0, resolvedCount = 0;
         double ackSum = 0, resolveSum = 0;
         for (Ev e : events) {
+            if (!inScope(ctx, e)) continue;                    // kurum kapsamında her satır kapsamda
             total++;
             boolean crit = "CRITICAL".equalsIgnoreCase(e.level());
             if (crit) critical++;
             Long team = e.teamId() != null ? e.teamId() : (e.domain() == null ? null : domainTeam.get(e.domain()));
             TeamAcc ta = teams.computeIfAbsent(team, k -> { TeamAcc a = new TeamAcc(); a.teamId = k; return a; });
+            TeamAcc ty = teamScope ? byType.computeIfAbsent(String.valueOf(MonitorTypeCatalog.typeOfAlert(e.type())),
+                    k -> new TeamAcc()) : null;
+            if (ty != null) {
+                ty.alerts++;
+                if (crit) ty.critical++;
+            }
             ta.alerts++;
             if (crit) ta.critical++;
             String key = (e.domain() == null ? "?" : e.domain()) + "|" + e.type();
@@ -131,12 +185,14 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
             Instant created = parse(e.createdAt());
             if (!e.acked()) {
                 unacked++; ta.unacked++; tg.unacked++;
+                if (ty != null) ty.unacked++;
                 if (!e.resolved()) stillOpenUnacked++;
             } else {
                 Instant at = parse(e.ackedAt());
                 if (created != null && at != null && !at.isBefore(created)) {
                     double m = (at.toEpochMilli() - created.toEpochMilli()) / 60000.0;
                     acked++; ackSum += m; ta.acked++; ta.ackMinutes += m;
+                    if (ty != null) { ty.acked++; ty.ackMinutes += m; }
                 }
             }
             if (e.resolved() && e.silent()) silent++;
@@ -146,6 +202,7 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
                     double m = (r.toEpochMilli() - created.toEpochMilli()) / 60000.0;
                     resolvedCount++; resolveSum += m; ta.resolved++; ta.resolveMinutes += m;
                     tg.resolved++; tg.minutesSum += m; tg.durations.add(m);
+                    if (ty != null) { ty.resolved++; ty.resolveMinutes += m; }
                 }
             }
         }
@@ -266,23 +323,59 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
                 new Column("unacked", "Sahiplenilmeyen", "int"),
                 new Column("flapping", "Dalgalanma", "status")),
                 rows, targetList.size(), "Bu ay alarm açılmadı."));
-        b.table(new Table("top_teams", "En çok alarm alan takımlar", List.of(
-                new Column("team", "Takım", "team"),
-                new Column("alerts", "Alarm", "int"),
-                new Column("critical", "Kritik", "int"),
-                new Column("unacked_pct", "Sahiplenilmeyen", "pct"),
-                new Column("mtta", "MTTA", "minutes"),
-                new Column("mttr", "MTTR", "minutes"),
-                new Column("flapping", "Dalgalanan hedef", "int")),
-                teamRows, teamList.size(), "Bu ay alarm açılmadı."));
+        if (teamScope) {
+            b.table(byTypeTable(byType));
+        } else {
+            b.table(new Table("top_teams", "En çok alarm alan takımlar", List.of(
+                    new Column("team", "Takım", "team"),
+                    new Column("alerts", "Alarm", "int"),
+                    new Column("critical", "Kritik", "int"),
+                    new Column("unacked_pct", "Sahiplenilmeyen", "pct"),
+                    new Column("mtta", "MTTA", "minutes"),
+                    new Column("mttr", "MTTR", "minutes"),
+                    new Column("flapping", "Dalgalanan hedef", "int")),
+                    teamRows, teamList.size(), "Bu ay alarm açılmadı."));
+        }
         b.note("METHOD", "Ay içinde AÇILAN alarmlar sayılır (Türkiye saatiyle). Dalgalanma: ayda en az "
                         + AlertNoiseService.FLAP_MIN_ALERTS + " alarm ve ortalama kurtarma en çok "
                         + AlertNoiseService.FLAP_MAX_AVG_MINUTES + " dk. Sessiz kapanışlar (silme / duraklatma) MTTR'a girmez.",
                 AlertNoiseService.FLAP_MIN_ALERTS, AlertNoiseService.FLAP_MAX_AVG_MINUTES);
         if (silent > 0) b.note("SILENT", silent + " alarm sessiz kapandı (kurtarma sayılmadı).", silent);
+        if (teamScope) {
+            b.note("TEAM_SCOPE", "Takımın alarmları: takıma damgalı alarmlar ile takımın sorumlu (SY) ya da uygulama "
+                    + "geliştirici (UG) olduğu envanter kayıtlarının sertifika, erişim ve envanterden türeyen Port/DNS "
+                    + "alarmları. Aynı host'taki başka takımların bağımsız izlemeleri sayılmaz.");
+        }
         b.data("total", total).data("prev_total", prevCount).data("change_pct", changePct)
                 .data("silent", silent).data("per_day", perDay);
         return b.build();
+    }
+
+    /** Takım kapsamı: izleme türüne göre alarmlar (en çok önce; türü bilinmeyen alarm tipi "null" anahtarında). */
+    private static Table byTypeTable(Map<String, TeamAcc> byType) {
+        List<Map.Entry<String, TeamAcc>> list = new ArrayList<>(byType.entrySet());
+        list.sort(Comparator.comparingInt((Map.Entry<String, TeamAcc> en) -> -en.getValue().alerts)
+                .thenComparing(Map.Entry::getKey));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map.Entry<String, TeamAcc> en : list.subList(0, Math.min(TOP, list.size()))) {
+            TeamAcc t = en.getValue();
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("monitor_type", "null".equals(en.getKey()) ? null : en.getKey());
+            r.put("alerts", t.alerts);
+            r.put("critical", t.critical);
+            r.put("unacked_pct", t.alerts == 0 ? 0.0 : round1(100.0 * t.unacked / t.alerts));
+            r.put("mtta", t.acked == 0 ? null : round1(t.ackMinutes / t.acked));
+            r.put("mttr", t.resolved == 0 ? null : round1(t.resolveMinutes / t.resolved));
+            rows.add(r);
+        }
+        return new Table("by_type", "Türe göre alarmlar", List.of(
+                new Column("monitor_type", "Tür", "monitor_type"),
+                new Column("alerts", "Alarm", "int"),
+                new Column("critical", "Kritik", "int"),
+                new Column("unacked_pct", "Sahiplenilmeyen", "pct"),
+                new Column("mtta", "MTTA", "minutes"),
+                new Column("mttr", "MTTR", "minutes")),
+                rows, list.size(), "Bu ay alarm açılmadı.");
     }
 
     /** Gürültü Analizi'nin flap kuralı (tek kaynak: {@link AlertNoiseService} sabitleri). */

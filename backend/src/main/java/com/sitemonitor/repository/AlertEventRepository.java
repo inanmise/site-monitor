@@ -810,11 +810,12 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * Aylık yönetici özeti (2026-10-10) — {@code [from, to)} aralığında AÇILAN alarmların dar izdüşümü (ay başına TEK
      * sorgu; MTTA için sahiplenme anı da). Sınırlar UTC ISO metin (İstanbul ay başının UTC karşılığı).
      * Sütunlar: {@code [domain, alertType, alertLevel, createdAt, resolvedAt, resolved, resolvedSilently, acknowledged,
-     * acknowledgedAt, teamId]}.
+     * acknowledgedAt, teamId, contextJson]}. {@code contextJson} takım kapsamlı özette bağımsız izleme işaretini
+     * ({@code EscalationService.isStandaloneEvent}) okumak için — kurum özeti kullanmaz.
      */
     @Query("""
             SELECT e.domain, e.alertType, e.alertLevel, e.createdAt, e.resolvedAt, e.resolved, e.resolvedSilently,
-                   e.acknowledged, e.acknowledgedAt, e.teamId
+                   e.acknowledged, e.acknowledgedAt, e.teamId, e.contextJson
             FROM AlertEvent e
             WHERE e.createdAt >= :from AND e.createdAt < :to
             """)
