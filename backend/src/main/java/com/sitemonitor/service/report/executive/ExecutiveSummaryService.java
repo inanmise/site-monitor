@@ -196,7 +196,8 @@ public class ExecutiveSummaryService {
         st.put("timezone", ExecutiveSummaryContext.IST.getId());
         return new ExecutiveSummary(ctx.month().toString(), ExecFormat.monthLabel(ctx.month()), ctx.fromIso(), ctx.toIso(),
                 ctx.complete(), ctx.nowIso(), ExecutiveSummary.SOURCE_LIVE, SectionResult.worst(statuses), headline, kpis,
-                results, st);
+                results, st, ctx.teamScoped()
+                        ? ExecutiveSummary.Scope.team(ctx.scopeTeamId(), ctx.scopeTeamName()) : ExecutiveSummary.Scope.ORG);
     }
 
     /** Seçilebilir aylar: bu ay + son 12 ay; gönderim durumuyla (tek sorgu). */
