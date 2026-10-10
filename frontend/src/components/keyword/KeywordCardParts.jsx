@@ -40,7 +40,7 @@ function ReasonChip({ monitor: m, verdict }) {
   if (!r) return null
   return (
     <Badge variant="outline" data-slot="keyword-reason-chip" data-code={r.code} title={r.label}
-      className={cn(CHIP, 'max-w-full truncate', r.tone === 'warning'
+      className={cn(CHIP, 'h-auto max-w-full justify-start text-left whitespace-normal [overflow-wrap:anywhere]', r.tone === 'warning'
         ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
         : 'border-destructive/40 bg-destructive/10 text-destructive')}>
       <TriangleAlert aria-hidden="true" />{r.label}
