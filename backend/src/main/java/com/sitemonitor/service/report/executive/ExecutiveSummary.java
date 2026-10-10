@@ -20,6 +20,7 @@ import java.util.Map;
  * @param headlineKpis  üst şeridin gösterge kutuları (her bölümün {@code headline_kpi}'si)
  * @param sections      bölümler, {@link ExecutiveSummarySection#order()} sırasıyla
  * @param settings      hesapta kullanılan hedefler (erişilebilirlik hedefi, yenileme hedef süresi…)
+ * @param scope         kapsam: kurum geneli ya da tek takım (2026-10-10). Eski kayıtlarda yok → {@link Scope#ORG}.
  */
 public record ExecutiveSummary(
         String month,
@@ -33,7 +34,8 @@ public record ExecutiveSummary(
         List<SectionResult.Verdict> headline,
         @JsonProperty("headline_kpis") List<HeadlineKpi> headlineKpis,
         List<SectionResult> sections,
-        Map<String, Object> settings) {
+        Map<String, Object> settings,
+        Scope scope) {
 
     public static final String SOURCE_LIVE = "live";
     public static final String SOURCE_SNAPSHOT = "snapshot";
@@ -43,14 +45,31 @@ public record ExecutiveSummary(
         headlineKpis = headlineKpis == null ? List.of() : List.copyOf(headlineKpis);
         sections = sections == null ? List.of() : List.copyOf(sections);
         settings = settings == null ? Map.of() : settings;
+        scope = scope == null ? Scope.ORG : scope;
     }
 
     /** Üst şerit göstergesi: hangi bölümden geldiği + göstergenin kendisi. */
     public record HeadlineKpi(String section, SectionResult.Kpi kpi) { }
 
+    /**
+     * Kapsam. {@code kind} = {@value #ORG_KIND} (kurum geneli) | {@value #TEAM_KIND} (tek takım). Takım kimliği kullanıcı
+     * kimliği DEĞİLDİR ({@code UserRefWire} dokunmaz).
+     */
+    public record Scope(String kind, @JsonProperty("team_id") Long teamId, @JsonProperty("team_name") String teamName) {
+        public static final String ORG_KIND = "org";
+        public static final String TEAM_KIND = "team";
+        public static final Scope ORG = new Scope(ORG_KIND, null, null);
+
+        public static Scope team(Long teamId, String teamName) {
+            return new Scope(TEAM_KIND, teamId, teamName);
+        }
+
+        public boolean isTeam() { return TEAM_KIND.equals(kind) && teamId != null; }
+    }
+
     public ExecutiveSummary withSource(String s) {
         return new ExecutiveSummary(month, monthLabel, from, to, complete, generatedAt, s, status, headline,
-                headlineKpis, sections, settings);
+                headlineKpis, sections, settings, scope);
     }
 
     /** Anahtarıyla bölüm (yoksa null). */

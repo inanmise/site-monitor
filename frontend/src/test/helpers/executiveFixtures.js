@@ -224,8 +224,53 @@ export const MONTHS = [
   { month: '2026-08', label: 'Ağustos 2026', current: false, status: null },
 ]
 
+/** Seçilebilir kapsamlar (kurum + iki takım) — takım adları uydurma. */
+export const SCOPES = {
+  org: true,
+  teams: [
+    { id: 5, name: 'Ödeme Ağ Geçidi Takımı', can_configure: true },
+    { id: 6, name: 'Ağ Operasyon', can_configure: true },
+  ],
+}
+
 export function response(overrides = {}, extra = {}) {
-  return { success: true, data: summary(overrides), months: MONTHS, default_month: '2026-09', can_configure: true, ...extra }
+  return { success: true, data: summary(overrides), months: MONTHS, default_month: '2026-09', can_configure: true,
+    can_configure_team: false, can_configure_any_team: true, scopes: SCOPES, ...extra }
+}
+
+/** Takım kapsamlı özet yanıtı (takım 5). */
+export function teamResponse(overrides = {}, extra = {}) {
+  return response({ scope: { kind: 'team', team_id: 5, team_name: 'Ödeme Ağ Geçidi Takımı' }, ...overrides },
+    { can_configure_team: true, ...extra })
+}
+
+/** Gönderim görünümü: takım listesi (`GET /api/executive-summary/teams`). */
+export const TEAMS = {
+  teams: [
+    { team_id: 6, team_name: 'Ağ Operasyon', team_active: true, enabled: false, recipient_count: 0, notes: ['NO_MANAGER'],
+      last_status: null, last_sent_at: null, updated_at: null },
+    { team_id: 5, team_name: 'Ödeme Ağ Geçidi Takımı', team_active: true, enabled: true, recipient_count: 3, notes: [],
+      last_status: 'SENT', last_sent_at: '2026-10-01T06:00:20', updated_at: '2026-09-20T08:00:00' },
+  ],
+  report_month: '2026-09', next_runs: ['2026-11-01T06:00:00', '2026-12-01T06:00:00'], org_enabled: false, bcc_chunk: 100,
+}
+
+/** Takım ayrıntısı (`GET /api/executive-summary/teams/5`) — kullanıcı kimlikleri opak (global olmayan görüntüleyici). */
+export const TEAM_DETAIL = {
+  team_id: 5, team_name: 'Ödeme Ağ Geçidi Takımı', team_active: true, enabled: true, include_manager: true,
+  include_team_admins: true, extra_emails: '', updated_at: '2026-09-20T08:00:00', updated_by: 'yonetici',
+  manager: { user_id: 'u-100', name: 'Müdür Örnek', title: 'Birim Müdürü', email: 'mudur@example.com', active: true },
+  team_admins: [{ user_id: 'u-101', name: 'Kapsamlı Müdür', title: null, email: 'kapsamli@example.com', active: true }],
+  members: [
+    { user_id: 'u-201', name: 'Ayşe Örnek', title: 'Kıdemli Uzman', email: 'ayse@example.com', active: true, selected: true },
+    { user_id: 'u-202', name: 'Mehmet Örnek', title: null, email: 'mehmet@example.com', active: true, selected: false },
+    { user_id: 'u-203', name: 'Epostasız Üye', title: 'Stajyer', email: null, active: true, selected: false },
+  ],
+  recipient_count: 3, recipient_preview: ['mudur@example.com', 'kapsamli@example.com', 'ayse@example.com'],
+  recipient_counts: { manager: 1, team_admins: 1, members: 1, extra: 0, dropped_inactive: 0 },
+  notes: [],
+  history: [{ month: '2026-09', status: 'SENT', recipients: 3, sent_at: '2026-10-01T06:00:20', detail: 'SENT ×3' }],
+  next_runs: ['2026-11-01T06:00:00', '2026-12-01T06:00:00'],
 }
 
 export const SETTINGS = {

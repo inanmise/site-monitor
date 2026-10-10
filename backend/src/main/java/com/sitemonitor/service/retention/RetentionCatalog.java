@@ -384,6 +384,18 @@ public final class RetentionCatalog {
                 "Aylık yönetici özeti gönderim kaydı (2026-10-10): ay başına TEK satır — durum, alıcı sayısı, dilim sonucu ve "
                 + "gönderilen özetin içeriği (sayılar, takım adları; kişisel veri yok). 'Tam bir kez' kapısıdır; yılda 12 satır, "
                 + "silinmez (geçmiş ayın ekranı bu kayıttan çizilir)."),
+        orphan("executive-summary-team-reports-orphan", "executive_summary_team_reports",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = executive_summary_team_reports.team_id)",
+                DataClass.OPERATIONAL,
+                "Takım yönetici özeti gönderim kaydı (2026-10-10): takım × ay başına TEK satır — durum, alıcı sayısı, dilim "
+                + "sonucu ve gönderilen takım özetinin içeriği (sayılar, takım adı; kişisel veri yok). Zamanlanmış gönderim her "
+                + "koşuda seçilebilir pencereden (24 ay) eski satırları siler; takım silinince yetim satır burada temizlenir."),
+        orphan("executive-summary-team-settings-orphan", "executive_summary_team_settings",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = executive_summary_team_settings.team_id)",
+                DataClass.PERSONAL,
+                "Takım yönetici özeti ayarı (2026-10-10): takım başına TEK satır — açık/kapalı, alıcı seçenekleri, seçilen "
+                + "üyelerin kullanıcı kimlikleri ve ek e-posta adresleri. Takım silinince yetim satır burada temizlenir; aksi "
+                + "hâlde takım sayısı kadar satır."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),

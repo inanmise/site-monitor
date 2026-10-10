@@ -106,7 +106,8 @@ const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOvervie
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
 const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage'))   // Veri Kalitesi (2026-10-10)
-// Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT (sunucu ayrıca executive_summary.view ister)
+// Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT; takım özeti — ayrıca takım müdürü
+// (kapsamlı ADMIN). Sunucu ayrıca executive_summary.view ister ve kapsamı kendisi süzer.
 const ExecutiveSummaryPage = lazy(() => import('./components/executive/ExecutiveSummaryPage'))
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
@@ -1555,7 +1556,7 @@ export default function App() {
   // "<Sayfa> · SiteMonitor" başlığını ve tek cümlelik açıklamasını taşır; dil değişince tazelenir. Hook erken-return'lerden ÖNCE.
   // Rolüne kapalı sekme (Ayarlar: ADMIN değil; SQL Playground: global admin değil) eskiden boş sayfaydı → "Erişim yok" paneli.
   const restrictedTab = (tab === 'settings' && systemRole !== 'ADMIN') || (tab === 'sqlplayground' && !globalAdmin)
-    || (tab === 'executive' && !(globalAdmin || systemRole === 'AUDIT'))
+    || (tab === 'executive' && !(systemRole === 'ADMIN' || systemRole === 'AUDIT'))
   usePageMeta(appMetaKey({
     authChecked, user, mustChangePwd, tab, validTabs: VALID_TABS, restricted: restrictedTab,
     accountInactive: accountInactiveNotice, maintenance: maintNotice, sessionExpired: sessionExpiredNotice,
@@ -2076,7 +2077,7 @@ export default function App() {
             {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
-            {tab === 'executive' && (globalAdmin || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
+            {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}

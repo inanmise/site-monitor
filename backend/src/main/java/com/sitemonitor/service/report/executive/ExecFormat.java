@@ -193,7 +193,9 @@ public final class ExecFormat {
             return switch (f) {
                 case "tier" -> v instanceof Number n && n.intValue() >= 1 && n.intValue() <= 4
                         ? "Seviye " + n.intValue() : "Atanmamış";
-                case "monitor_type" -> com.sitemonitor.service.MonitorTypeCatalog.label(String.valueOf(v));
+                // "uptime" (Durum İzleme — envanter erişim kontrolü) katalogda tür değildir; arayüz nav.uptime yazar
+                case "monitor_type" -> "uptime".equals(String.valueOf(v)) ? "Durum İzleme"
+                        : com.sitemonitor.service.MonitorTypeCatalog.label(String.valueOf(v));
                 case "renewal_class", "overdue_reason" -> ENUM_TR.getOrDefault(f + "." + v, String.valueOf(v));
                 case "tls_reason", "crypto_category", "pqc_band", "dq_rule", "dq_band" -> codeLabel(f, v);
                 case "pct_change" -> v instanceof Number n ? pctChange(n.doubleValue()) : String.valueOf(v);

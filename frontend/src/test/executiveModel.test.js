@@ -5,8 +5,10 @@ import {
   buildMonthlyCron, dailyPoints, formatValue, invalidEmails, isSummaryPayload, kpiView, localized, monthLabel,
   monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
   distributionSegments, TLS_GRADE_SEGMENTS, CRYPTO_CATEGORY_SEGMENTS, CODE_LABEL_KEY,
+  scopeOptions, statusCounts, STATUS_SEGMENTS, teamToForm, teamToBody, teamDirty, filterMembers, filterTeams, isTeamScope,
+  TEAM_NOTE_KEY, TEAM_ID_RE,
 } from '../components/executive/executiveModel.js'
-import { summary } from './helpers/executiveFixtures.js'
+import { summary, SCOPES, TEAM_DETAIL, TEAMS } from './helpers/executiveFixtures.js'
 
 /** useT'nin saf karşılığı: eksik anahtarda anahtarın kendisi, {n} yer tutucuları doldurulur. */
 const mk = (dict) => (key, ...args) => {
@@ -180,5 +182,60 @@ describe('executiveModel — yardımcılar', () => {
     const floor = yFloor(pts, 99.9)
     expect(floor).toBeLessThan(99.4)
     expect(floor).toBeGreaterThan(98)
+  })
+})
+
+describe('takım kapsamı ve alıcı modeli (2026-10-10)', () => {
+  const t = mk(TR)
+
+  it('kapsam seçenekleri: kurum (görebiliyorsa) + takımlar "Takımlar" grubunda; kurum yoksa grup yok; kimlik metin', () => {
+    expect(scopeOptions(SCOPES, t)).toEqual([
+      { value: 'org', label: 'Kurum geneli' },
+      { value: '5', label: 'Ödeme Ağ Geçidi Takımı', group: 'Takımlar' },
+      { value: '6', label: 'Ağ Operasyon', group: 'Takımlar' },
+    ])
+    expect(scopeOptions({ org: false, teams: [{ id: 7, name: '' }] }, t)).toEqual([{ value: '7', label: '#7', group: undefined }])
+    expect(scopeOptions(null, t)).toEqual([])
+    expect(isTeamScope({ scope: { kind: 'team', team_id: 5 } })).toBe(true)
+    expect(isTeamScope({ scope: { kind: 'org' } })).toBe(false)
+    expect(isTeamScope(summary())).toBe(false)
+    expect(TEAM_ID_RE.test('12')).toBe(true)
+    expect(TEAM_ID_RE.test('1;DROP')).toBe(false)
+  })
+
+  it('bölüm durumu sayımı: bilinmeyen durum "veri yok"; dilim sırası kötüden iyiye', () => {
+    expect(statusCounts([{ status: 'ok' }, { status: 'critical' }, { status: 'ok' }, { status: 'garip' }, {}]))
+      .toEqual({ critical: 1, error: 0, attention: 0, ok: 2, no_data: 2 })
+    expect(STATUS_SEGMENTS.map((s) => s.key)).toEqual(['critical', 'error', 'attention', 'ok', 'no_data'])
+  })
+
+  it('takım formu ↔ gövde: seçili üyeler liste sırasıyla, opak kimlikler METİN, ek adresler tekil + virgüllü', () => {
+    const f = teamToForm(TEAM_DETAIL)
+    expect(f).toEqual({ enabled: true, includeManager: true, includeTeamAdmins: true, userIds: ['u-201'], extra: '' })
+    const body = teamToBody({ ...f, userIds: ['u-203', 'u-201', 'yabanci'], extra: 'a@x.com; A@X.com b@x.com' }, TEAM_DETAIL.members)
+    expect(body).toEqual({ enabled: true, include_manager: true, include_team_admins: true,
+      user_ids: ['u-201', 'u-203', 'yabanci'], extra_emails: 'a@x.com, b@x.com' })
+    expect(teamDirty(f, TEAM_DETAIL)).toBe(false)
+    expect(teamDirty({ ...f, userIds: ['u-201', 'u-202'] }, TEAM_DETAIL)).toBe(true)
+    expect(teamDirty({ ...f, extra: ' ' }, TEAM_DETAIL)).toBe(false)          // boşluk değişiklik sayılmaz
+    expect(teamDirty(f, null)).toBe(false)
+    // varsayılanlar: alanlar yoksa müdür seçenekleri AÇIK, özet KAPALI
+    expect(teamToForm({})).toEqual({ enabled: false, includeManager: true, includeTeamAdmins: true, userIds: [], extra: '' })
+  })
+
+  it('süzgeçler: üye ad/unvan/adres, takım adı — Türkçe büyük/küçük harf duyarsız', () => {
+    expect(filterMembers(TEAM_DETAIL.members, 'AYŞE').map((m) => m.user_id)).toEqual(['u-201'])
+    expect(filterMembers(TEAM_DETAIL.members, 'stajyer').map((m) => m.user_id)).toEqual(['u-203'])
+    expect(filterMembers(TEAM_DETAIL.members, 'mehmet@').map((m) => m.user_id)).toEqual(['u-202'])
+    expect(filterMembers(TEAM_DETAIL.members, '  ')).toHaveLength(3)
+    expect(filterTeams(TEAMS.teams, 'ödeme').map((x) => x.team_id)).toEqual([5])
+    expect(filterTeams(TEAMS.teams, 'AĞ')).toHaveLength(2)
+  })
+
+  it('uyarı kodlarının metni iki dilde var', () => {
+    for (const key of Object.values(TEAM_NOTE_KEY)) {
+      expect(TR[key], key).toBeTruthy()
+      expect(EN[key], key).toBeTruthy()
+    }
   })
 })

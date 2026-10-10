@@ -128,6 +128,7 @@ public final class AuditEventCatalog {
             "EXECUTIVE_SUMMARY_EXPORT",     // aylık yönetici özeti PDF indirildi (2026-10-10)
             "EXECUTIVE_SUMMARY_RUN",        // aylık yönetici özeti ELLE gönderildi
             "EXECUTIVE_SUMMARY_SETTINGS",   // aylık yönetici özeti ayarları kaydedildi
+            "EXECUTIVE_SUMMARY_TEAM_SETTINGS", // takım yönetici özeti ayarları (alıcılar / açık-kapalı) kaydedildi
             "EXECUTIVE_SUMMARY_TEST",       // aylık yönetici özeti test e-postası (yalnız isteyen yöneticiye)
             "GENERAL_SETTINGS_SAVE",
             "GUIDE_LINK_CREATE",

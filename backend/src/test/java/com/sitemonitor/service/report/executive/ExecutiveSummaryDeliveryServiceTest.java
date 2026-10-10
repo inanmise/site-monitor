@@ -77,7 +77,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         return new ExecutiveSummary("2026-09", "Eylül 2026", "2026-08-31T21:00:00", "2026-09-30T21:00:00", true,
                 "2026-10-10T09:00:00", ExecutiveSummary.SOURCE_LIVE, SectionResult.OK, sec.verdicts(),
                 List.of(new ExecutiveSummary.HeadlineKpi("availability", sec.kpis().get(0))), List.of(sec),
-                Map.of("availability_target", 99.9, "renewal_target_days", 30));
+                Map.of("availability_target", 99.9, "renewal_target_days", 30), null);
     }
 
     private void enable(String recipientsCsv, boolean admins) {

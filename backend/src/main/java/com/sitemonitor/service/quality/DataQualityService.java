@@ -239,21 +239,54 @@ public class DataQualityService {
         }
         teams.sort(Comparator.comparing((TeamScore t) -> t.score() == null ? Integer.MAX_VALUE : t.score())
                 .thenComparing(t -> t.teamName() == null ? "" : t.teamName()));
-        List<IssueCount> issues = new ArrayList<>();
-        Map<DataQualityRule, Count> orgCounts = e.org().counts();
-        for (Map.Entry<DataQualityRule, Count> en : orgCounts.entrySet()) {
-            if (en.getValue().failing() > 0)
-                issues.add(new IssueCount(en.getKey().name(), en.getValue().failing(), en.getValue().eligible(),
-                        DataQualityScore.pointsLost(orgCounts, en.getKey())));
-        }
+        List<IssueCount> issues = failingIssues(e.org().counts());
         List<IssueCount> costliest = new ArrayList<>(issues);
-        costliest.sort(Comparator.comparingDouble(IssueCount::pointsLost).reversed()
-                .thenComparing(Comparator.comparingInt(IssueCount::failing).reversed()).thenComparing(IssueCount::code));
+        costliest.sort(BY_POINTS_LOST);
         issues.sort(Comparator.comparingInt(IssueCount::failing).reversed().thenComparing(IssueCount::code));
         Integer org = e.org().score();
         return new Digest(e.at(), org, DataQualityScore.band(org).name(), e.org().findingCount(),
                 List.copyOf(teams), List.copyOf(issues.size() > 5 ? issues.subList(0, 5) : issues),
                 List.copyOf(costliest));
+    }
+
+    /**
+     * Tek takımın özeti (takım kapsamlı yönetici özeti, 2026-10-10): puan + bant + açık bulgu + incelenen öğe ve TAKIMIN
+     * en çok puan kaybettiren kuralları ({@code pointsLost} TAKIM kovasının sayaçlarıyla — düzeltilirse TAKIM puanının
+     * kazanacağı). Takım kovası sahiplik kurallarını ({@code INV_NO_TEAM}, {@code MON_NO_TEAM}) hiç içermez — onlar
+     * yalnız kurum ve Sahipsiz kovasına sayılır. Kova envanteri SY takımına ({@code team_id}) göre toplar.
+     */
+    public record TeamDigest(Instant generatedAt, long teamId, String teamName, Integer score, String band,
+                             int findings, int items, List<IssueCount> costliest) {}
+
+    /**
+     * {@link TeamDigest} — bellekteki değerlendirmeden, EK SORGU YOK (aynı 60 sn bellek; N takım özeti tek hesap).
+     * Takım değerlendirmede yoksa (silinmiş / pasif takım) {@code null}.
+     */
+    public TeamDigest teamDigest(long teamId) {
+        Evaluation e = evaluation(false);
+        Bucket b = e.team(teamId);
+        if (b == null) return null;
+        List<IssueCount> costliest = failingIssues(b.counts());
+        costliest.sort(BY_POINTS_LOST);
+        Integer s = b.score();
+        return new TeamDigest(e.at(), teamId, b.teamName(), s, DataQualityScore.band(s).name(), b.findingCount(),
+                b.items(), List.copyOf(costliest));
+    }
+
+    /** Kaybedilen puana göre (çok önce), eşitlikte kusurlu sayısı, sonra kod. */
+    private static final Comparator<IssueCount> BY_POINTS_LOST = Comparator.comparingDouble(IssueCount::pointsLost)
+            .reversed().thenComparing(Comparator.comparingInt(IssueCount::failing).reversed())
+            .thenComparing(IssueCount::code);
+
+    /** Kovada kusurlu kurallar (sırasız); kaybedilen puan AYNI kovanın sayaçlarıyla. */
+    private static List<IssueCount> failingIssues(Map<DataQualityRule, Count> counts) {
+        List<IssueCount> out = new ArrayList<>();
+        for (Map.Entry<DataQualityRule, Count> en : counts.entrySet()) {
+            if (en.getValue() != null && en.getValue().failing() > 0)
+                out.add(new IssueCount(en.getKey().name(), en.getValue().failing(), en.getValue().eligible(),
+                        DataQualityScore.pointsLost(counts, en.getKey())));
+        }
+        return out;
     }
 
     // ── Ay sonu görüntüleri (aylık yönetici özeti: aydan aya değişim) ─────────────────────────────────

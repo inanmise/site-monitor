@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Presentation, RefreshCw, Download, Settings2, CircleAlert, Lock, History, Radio, Info } from 'lucide-react'
+import { Presentation, RefreshCw, Download, CircleAlert, Lock, History, Radio, Info, FileText, Send, Building2, Users } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -7,6 +7,7 @@ import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import PageHeader from '../ui/PageHeader.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -14,68 +15,92 @@ import { Card, CardContent } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
-import { SectionCard, StatusBadge, KpiTile, VerdictItem } from './ExecParts.jsx'
-import ExecSettingsDialog from './ExecSettingsDialog.jsx'
+import ExecReportView from './ExecReportView.jsx'
+import ExecDeliveryView from './ExecDeliveryView.jsx'
 import {
-  EX_CFG, EX_LIVE, EX_MONTH, MONTH_RE, fmtDateTime, fmtPct, isSummaryPayload, monthLabel, monthOptions, orderedSections,
-  sectionTitle,
+  EX_CFG, EX_LIVE, EX_MONTH, EX_SEL, EX_TEAM, EX_VIEW, MONTH_RE, SEL_ORG, TEAM_ID_RE, VIEW_DELIVERY, VIEW_REPORT,
+  fmtDateTime, isSummaryPayload, isTeamScope, monthOptions, scopeOptions,
 } from './executiveModel.js'
 
 function PageSkeleton({ label }) {
   return (
     <div role="status" aria-live="polite" data-slot="ex-skeleton" className="flex flex-col gap-4">
       <span className="sr-only">{label}</span>
-      <Skeleton className="h-40 w-full rounded-xl motion-reduce:animate-none" />
-      {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-56 w-full rounded-xl motion-reduce:animate-none" />)}
+      <Skeleton className="h-20 w-full rounded-xl motion-reduce:animate-none" />
+      <Skeleton className="h-56 w-full rounded-xl motion-reduce:animate-none" />
+      {Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-64 w-full rounded-xl motion-reduce:animate-none" />)}
     </div>
   )
 }
 
+function readTeamParam() {
+  const v = readUrlParam(EX_TEAM, '')
+  return v === SEL_ORG || TEAM_ID_RE.test(v) ? v : null
+}
+
 /**
- * AYLIK YÖNETİCİ ÖZETİ (2026-10-10) — `?tab=executive`. Ay seçimi, özetin bölümleri (e-posta / PDF ile AYNI içerik),
- * PDF indirme ve (global yönetici) zamanlama / alıcılar / hedefler / test postası.
+ * AYLIK YÖNETİCİ ÖZETİ (2026-10-10; takım kapsamı ve yeniden tasarım aynı gün, kullanıcı isteği) — `?tab=executive`.
  *
- * <p><b>Erişim:</b> kurum geneli rapor — global yönetici + AUDIT (`executive_summary.view`); sunucu 403 dönerse "erişim
- * yok" ekranı. <b>Kaynak:</b> gönderilmiş ay varsayılan olarak GÖNDERİLEN rapordan çizilir ("Gönderilen rapor" rozeti);
- * "Canlı hesapla" yeniden hesaplar. <b>URL:</b> `ex_m` (ay; varsayılan son tamamlanan ay yazılmaz), `ex_live=1`,
- * `ex_cfg=1` (ayar penceresi — e-postadaki bağlantı).
+ * <p><b>İki görünüm</b> (shadcn Tabs; yalnız yapılandırabilen görür): <b>Rapor</b> — kapsam (kurum geneli ya da takım) ve
+ * ay seçimi, üst kart (genel durum, bölüm sağlığı, ana göstergeler ve hükümler), bölümler (e-posta / PDF ile AYNI içerik),
+ * geniş ekranda yapışkan içindekiler; <b>Alıcılar ve gönderim</b> — kurum geneli ayarları (global yönetici) ve takım
+ * alıcıları (global yönetici her takım, takım müdürü yönettiği takımlar).
  *
- * <p>Düzen mobil-önce: başlık eylemleri telefonda sarar; üst kart (genel durum + hükümler + göstergeler) → bölüm
- * kartları; tablolar ≥ 768 px tablo, telefonda kart listesi. Sol renk şeridi YOK; durum rozet + metinle.
+ * <p><b>Erişim:</b> sunucu karar verir (kurum: global yönetici + AUDIT; takım: ayrıca takımın müdürü); 403 → "erişim yok".
+ * <b>Kaynak:</b> gönderilmiş ay varsayılan olarak GÖNDERİLEN rapordan çizilir; "Canlı hesapla" yeniden hesaplar.
+ * <b>URL:</b> `ex_m` ay (varsayılan yazılmaz), `ex_team` kapsam takımı, `ex_live=1`, `ex_view=delivery`, `ex_sel`
+ * gönderim görünümündeki seçim; `ex_cfg=1` (e-postadaki ayar bağlantısı) gönderim görünümünü açar.
  */
 export default function ExecutiveSummaryPage({ globalAdmin = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
-  const headId = useId()
   const monthSelectId = useId()
+  const scopeLabelId = useId()
+  const cfgLink = readUrlParam(EX_CFG, '') === '1'
   const [month, setMonth] = useState(() => {
     const m = readUrlParam(EX_MONTH, '')
     return MONTH_RE.test(m) ? m : null
   })
+  const [team, setTeam] = useState(readTeamParam)
   const [live, setLive] = useState(() => readUrlParam(EX_LIVE, '') === '1')
-  const [cfgOpen, setCfgOpen] = useState(() => globalAdmin && readUrlParam(EX_CFG, '') === '1')
+  const [view, setView] = useState(() => (cfgLink || readUrlParam(EX_VIEW, '') === VIEW_DELIVERY ? VIEW_DELIVERY : VIEW_REPORT))
+  const [deliveryVisited, setDeliveryVisited] = useState(view === VIEW_DELIVERY)
+  const [sel, setSel] = useState(() => {
+    const s = readUrlParam(EX_SEL, '')
+    if (s === SEL_ORG || TEAM_ID_RE.test(s)) return s
+    const tp = readTeamParam()
+    return cfgLink && tp && tp !== SEL_ORG ? tp : null
+  })
   const [state, setState] = useState({ loading: true, error: null, status: null, data: null, months: [], defaultMonth: null,
-    canConfigure: false, at: null })
+    scopes: null, canConfigure: false, canConfigureAny: false })
   const [pdfBusy, setPdfBusy] = useState(false)
   const seq = useRef(0)
 
+  const allowDelivery = state.canConfigure || state.canConfigureAny
+  const activeView = allowDelivery ? view : VIEW_REPORT
+
   useUrlQuerySync({
     [EX_MONTH]: month && month !== state.defaultMonth ? month : null,
+    [EX_TEAM]: team && team !== SEL_ORG ? team : null,
     [EX_LIVE]: live ? '1' : null,
-    [EX_CFG]: cfgOpen ? '1' : null,
+    [EX_VIEW]: activeView === VIEW_DELIVERY ? VIEW_DELIVERY : null,
+    [EX_SEL]: activeView === VIEW_DELIVERY && sel ? sel : null,
+    [EX_CFG]: null,
   })
 
   const load = useCallback(async ({ fresh = false } = {}) => {
     const my = ++seq.current
     setState((s) => ({ ...s, loading: true }))
     try {
-      const res = await api.executiveSummary.get({ month, live, fresh })
+      const res = await api.executiveSummary.get({ month, team, live, fresh })
       if (my !== seq.current) return
       if (res?.success && isSummaryPayload(res.data)) {
         setState({ loading: false, error: null, status: null, data: res.data, months: res.months || [],
-          defaultMonth: res.default_month || null, canConfigure: !!res.can_configure, at: new Date() })
+          defaultMonth: res.default_month || null, scopes: res.scopes || null, canConfigure: !!res.can_configure,
+          canConfigureAny: !!res.can_configure_any_team })
       } else {
         setState((s) => ({ ...s, loading: false, error: res?.error || t('exec.loadError'), status: res?.status ?? null }))
       }
@@ -83,23 +108,26 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('exec.loadError'), status: 0 }))
     }
-  }, [month, live, t])
+  }, [month, team, live, t])
   useEffect(() => { load() }, [load])
 
   const data = state.data
-  const sections = useMemo(() => orderedSections(data), [data])
-  // Üst şerit hükümleri: her bölümün İLK hükmü (sunucunun `headline`'ı ile aynı kural; bölüm anahtarı i18n için gerekli)
-  const headline = useMemo(() => sections.filter((s) => s.verdicts?.length).map((s) => ({ key: s.key, verdict: s.verdicts[0] })), [sections])
   const options = useMemo(() => monthOptions(state.months, lang), [state.months, lang])
+  const scopeOpts = useMemo(() => scopeOptions(state.scopes, t), [state.scopes, t])
   const selected = month || data?.month || state.defaultMonth || ''
   const sentStatus = options.find((o) => o.value === selected)?.status
-  const canConfigure = globalAdmin && state.canConfigure
-  const target = data?.settings?.availability_target
+  const scopeValue = team || (isTeamScope(data) ? String(data.scope.team_id) : SEL_ORG)
+  const forbidden = state.status === 403
+
+  function changeView(v) {
+    setView(v)
+    if (v === VIEW_DELIVERY) setDeliveryVisited(true)
+  }
 
   async function downloadPdf() {
     setPdfBusy(true)
     try {
-      const res = await api.executiveSummary.downloadPdf({ month: selected, live })
+      const res = await api.executiveSummary.downloadPdf({ month: selected, team: isTeamScope(data) ? String(data.scope.team_id) : null, live })
       if (!res?.success) {
         toast.error(res?.status === 403 ? t('exec.pdfForbidden') : t('exec.pdfFailed'))
       }
@@ -108,53 +136,62 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
     }
   }
 
-  const forbidden = state.status === 403
-  const headerActions = (
-    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-      <Label htmlFor={monthSelectId} className="sr-only">{t('exec.month')}</Label>
-      <NativeSelect id={monthSelectId} data-slot="ex-month" value={selected} disabled={!options.length || forbidden}
-        onChange={(e) => { setMonth(e.target.value); setLive(false) }}
-        className="h-10 max-w-[calc(100vw-2rem)] lg:h-8">
-        {options.map((o) => (
-          <NativeSelectOption key={o.value} value={o.value}>
-            {o.current ? t('exec.monthCurrent', o.label) : o.status === 'SENT' || o.status === 'PARTIAL' ? t('exec.monthSent', o.label) : o.label}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+  const headerActions = activeView === VIEW_REPORT ? (
+    <>
       <Button type="button" variant="outline" size="sm" onClick={() => load({ fresh: true })} disabled={forbidden}
         aria-busy={state.loading || undefined} data-slot="ex-refresh" className="h-10 lg:h-8 pointer-coarse:h-10">
         <RefreshCw aria-hidden="true" className={cn(state.loading && 'animate-spin motion-reduce:animate-none')} />{t('exec.refresh')}
       </Button>
-      {canConfigure && (
-        <Button type="button" variant="outline" size="sm" onClick={() => setCfgOpen(true)} data-slot="ex-open-settings"
-          className="h-10 lg:h-8 pointer-coarse:h-10">
-          <Settings2 aria-hidden="true" />{t('exec.settings')}
-        </Button>
-      )}
       <Button type="button" size="sm" onClick={downloadPdf} disabled={!data || pdfBusy} aria-busy={pdfBusy || undefined}
         data-slot="ex-pdf" className="h-10 lg:h-8 pointer-coarse:h-10">
         {pdfBusy ? <Spinner decorative size={14} /> : <Download aria-hidden="true" />}{t('exec.downloadPdf')}
       </Button>
-    </div>
+    </>
+  ) : null
+
+  const sourceBadge = data && activeView === VIEW_REPORT ? (
+    <Badge variant="outline" data-slot="ex-source" data-source={data.source} className="gap-1.5 font-normal text-muted-foreground">
+      {data.source === 'snapshot' ? <History aria-hidden="true" className="size-3.5" /> : <Radio aria-hidden="true" className="size-3.5" />}
+      {t(data.source === 'snapshot' ? 'exec.source.snapshot' : 'exec.source.live', fmtDateTime(data.generated_at, lang))}
+    </Badge>
+  ) : null
+
+  const scopeBar = data && (
+    <Card data-slot="ex-scopebar" className="gap-0 py-3 shadow-xs">
+      <CardContent className="grid min-w-0 gap-3 px-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,15rem)] sm:items-end sm:px-5">
+        <div className="flex min-w-0 flex-col gap-1.5 [&_[role=combobox]]:h-10 lg:[&_[role=combobox]]:h-9">
+          <Label id={scopeLabelId} className="text-xs font-medium text-muted-foreground">{t('exec.scope.label')}</Label>
+          {scopeOpts.length > 1 ? (
+            <div data-slot="ex-scope">
+              <SearchableSelect value={scopeValue} options={scopeOpts} ariaLabelledBy={scopeLabelId} searchThreshold={8}
+                onChange={(v) => { setTeam(v || null); setLive(false) }} />
+            </div>
+          ) : (
+            <p data-slot="ex-scope-static" className="m-0 flex min-h-10 items-center gap-2 text-sm font-medium lg:min-h-9">
+              {isTeamScope(data) ? <Users aria-hidden="true" className="size-4 text-muted-foreground" />
+                : <Building2 aria-hidden="true" className="size-4 text-muted-foreground" />}
+              <span className="truncate">{isTeamScope(data) ? (data.scope.team_name || `#${data.scope.team_id}`) : t('exec.scope.org')}</span>
+            </p>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor={monthSelectId} className="text-xs font-medium text-muted-foreground">{t('exec.month')}</Label>
+          <NativeSelect id={monthSelectId} data-slot="ex-month" value={selected} disabled={!options.length || forbidden}
+            onChange={(e) => { setMonth(e.target.value); setLive(false) }}
+            className="h-10 w-full lg:h-9">
+            {options.map((o) => (
+              <NativeSelectOption key={o.value} value={o.value}>
+                {o.current ? t('exec.monthCurrent', o.label) : o.status === 'SENT' || o.status === 'PARTIAL' ? t('exec.monthSent', o.label) : o.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+      </CardContent>
+    </Card>
   )
 
-  return (
-    <div data-slot="ex-page" className="min-w-0" aria-busy={state.loading || undefined}>
-      <PageHeader icon={Presentation} title={t('exec.title')} description={t('exec.subtitle')}
-        meta={data ? (
-          <Badge variant="outline" data-slot="ex-source" data-source={data.source} className="gap-1.5 font-normal text-muted-foreground">
-            {data.source === 'snapshot' ? <History aria-hidden="true" className="size-3.5" /> : <Radio aria-hidden="true" className="size-3.5" />}
-            {t(data.source === 'snapshot' ? 'exec.source.snapshot' : 'exec.source.live', fmtDateTime(data.generated_at, lang))}
-          </Badge>
-        ) : null}
-        actions={headerActions} />
-
-      {forbidden && (
-        <div data-slot="ex-forbidden">
-          <StatusBlock tone="neutral" icon={Lock} title={t('exec.noAccess.title')} description={t('exec.noAccess.desc')}
-            className="rounded-xl border py-10" />
-        </div>
-      )}
+  const reportPanel = (
+    <>
       {!forbidden && state.loading && !data && <PageSkeleton label={t('exec.loading')} />}
       {!forbidden && state.error && !data && (
         <div data-slot="ex-error">
@@ -162,9 +199,9 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
             actions={<Button type="button" variant="outline" onClick={() => load()} className="h-10 lg:h-9">{t('exec.retry')}</Button>} />
         </div>
       )}
-
       {!forbidden && data && (
-        <div className={cn('flex min-w-0 flex-col gap-4 transition-opacity motion-reduce:transition-none', state.loading && 'opacity-70')}>
+        <div className="flex min-w-0 flex-col gap-4">
+          {scopeBar}
           {state.error && (
             <AlertBanner tone="warning" title={t('exec.staleTitle')}>{state.error}</AlertBanner>
           )}
@@ -181,49 +218,51 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
               {t('exec.liveNote')}
             </AlertBanner>
           )}
+          <ExecReportView data={data} loading={state.loading} />
+        </div>
+      )}
+    </>
+  )
 
-          <Card data-slot="ex-headline" data-status={data.status} role="region" aria-labelledby={headId}
-            className="min-w-0 gap-4 py-4 shadow-xs">
-            <CardContent className="flex min-w-0 flex-col gap-4 px-4 sm:px-5">
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 id={headId} className="m-0 text-lg leading-tight font-semibold">{t('exec.headline.title', monthLabel(data.month, lang))}</h3>
-                  <p className="m-0 mt-0.5 text-sm text-muted-foreground">
-                    {target != null ? t('exec.headline.desc', fmtPct(target, lang)) : null}
-                  </p>
-                </div>
-                <StatusBadge status={data.status} className="text-sm" />
-              </div>
-              {data.headline_kpis?.length > 0 && (
-                <div role="group" aria-label={t('exec.headline.kpis')} data-slot="ex-headline-kpis"
-                  className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                  {data.headline_kpis.map((h) => <KpiTile key={h.section} sectionKey={h.section} kpi={h.kpi} emphasis />)}
-                </div>
-              )}
-              {headline.length > 0 && (
-                <ul data-slot="ex-headline-verdicts" className="m-0 flex list-none flex-col gap-1.5 p-0">
-                  {headline.map(({ key, verdict }) => <VerdictItem key={key} sectionKey={key} verdict={verdict} />)}
-                </ul>
-              )}
-              {sections.length > 1 && (
-                <nav aria-label={t('exec.jump')} className="flex flex-wrap gap-2 border-t pt-3">
-                  {sections.map((s) => (
-                    <Button key={s.key} asChild variant="ghost" size="sm" className="h-10 lg:h-8 pointer-coarse:h-10">
-                      <a href={`#ex-sec-${s.key}`} data-slot="ex-jump" data-key={s.key}>{sectionTitle(t, s)}</a>
-                    </Button>
-                  ))}
-                </nav>
-              )}
-            </CardContent>
-          </Card>
+  return (
+    <div data-slot="ex-page" className="min-w-0" aria-busy={state.loading || undefined}>
+      <PageHeader icon={Presentation} title={t('exec.title')} description={t('exec.subtitle')} meta={sourceBadge}
+        actions={headerActions} />
 
-          {sections.map((s) => <SectionCard key={s.key} section={s} />)}
-          <p className="m-0 text-xs text-muted-foreground">{t('exec.footer')}</p>
+      {forbidden && (
+        <div data-slot="ex-forbidden">
+          <StatusBlock tone="neutral" icon={Lock} title={t('exec.noAccess.title')} description={t('exec.noAccess.desc')}
+            className="rounded-xl border py-10" />
         </div>
       )}
 
-      {canConfigure && (
-        <ExecSettingsDialog open={cfgOpen} onClose={() => setCfgOpen(false)} month={selected} />
+      {allowDelivery && !forbidden ? (
+        // İki görünüm: Rapor / Alıcılar ve gönderim. İçerikler zorla bağlı kalır (pasif olan gizlenir) — gönderim
+        // görünümündeki kaydedilmemiş form sekme değişince kaybolmasın; gönderim görünümü İLK ziyarette bağlanır.
+        <Tabs value={activeView} onValueChange={changeView} className="gap-4">
+          <TabsList variant="line" aria-label={t('exec.view.label')} data-slot="ex-views"
+            className="h-auto w-full justify-start gap-1 overflow-x-auto border-b pb-0">
+            <TabsTrigger value={VIEW_REPORT} data-view={VIEW_REPORT} className="min-h-10 flex-none px-3 lg:min-h-9">
+              <FileText aria-hidden="true" />{t('exec.view.report')}
+            </TabsTrigger>
+            <TabsTrigger value={VIEW_DELIVERY} data-view={VIEW_DELIVERY} className="min-h-10 flex-none px-3 lg:min-h-9">
+              <Send aria-hidden="true" />{t('exec.view.delivery')}
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value={VIEW_REPORT} forceMount data-view-panel={VIEW_REPORT}
+            className="min-w-0 data-[state=inactive]:hidden">
+            {reportPanel}
+          </TabsContent>
+          {deliveryVisited && (
+            <TabsContent value={VIEW_DELIVERY} forceMount data-view-panel={VIEW_DELIVERY}
+              className="min-w-0 data-[state=inactive]:hidden">
+              <ExecDeliveryView month={selected} canConfigureOrg={globalAdmin && state.canConfigure}
+                selected={sel} onSelect={setSel} />
+            </TabsContent>
+          )}
+        </Tabs>
+      ) : (
+        <div data-view-panel={VIEW_REPORT} className="min-w-0">{!forbidden && reportPanel}</div>
       )}
     </div>
   )

@@ -121,7 +121,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         { id: 'weeklyreports',    Icon: FileChartColumn, labelKey: 'nav.weeklyReports',   show: weeklyReportsVisible },
         { id: 'incident-history', Icon: FileClock,       labelKey: 'nav.incidentHistory', show: true },
         // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — yalnız global yönetici + AUDIT (uç ayrıca izin ister)
-        { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: isGlobalAdmin || systemRole === 'AUDIT' },
+        { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: systemRole === 'ADMIN' || systemRole === 'AUDIT' },
       ],
     },
     {

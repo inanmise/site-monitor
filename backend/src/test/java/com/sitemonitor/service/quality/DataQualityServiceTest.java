@@ -197,6 +197,36 @@ class DataQualityServiceTest {
     }
 
     @Test
+    @DisplayName("teamDigest: TAKIM kovasının puanı/bulguları + kuralları (kayıp puan takım sayaçlarıyla); sahiplik kuralı yok; ek yükleme yok")
+    void teamDigest() {
+        DataQualityService.Digest org = service.digest();
+        DataQualityService.TeamDigest t = service.teamDigest(1L);
+        assertThat(t).isNotNull();
+        assertThat(t.teamId()).isEqualTo(1L);
+        assertThat(t.teamName()).isEqualTo("Ödeme");
+        DataQualityEvaluator.Bucket bucket = service.evaluation(false).team(1L);
+        assertThat(t.score()).isEqualTo(bucket.score());
+        assertThat(t.band()).isEqualTo(DataQualityScore.band(bucket.score()).name());
+        assertThat(t.findings()).isEqualTo(bucket.findingCount());
+        assertThat(t.items()).isEqualTo(bucket.items());
+        // Takım 1'in envanter kaydında tier yok → INV_NO_TIER takımın kuralı; kayıp puan TAKIM sayaçlarıyla
+        assertThat(t.costliest()).extracting(DataQualityService.IssueCount::code).contains("INV_NO_TIER");
+        DataQualityService.IssueCount noTier = t.costliest().stream()
+                .filter(i -> "INV_NO_TIER".equals(i.code())).findFirst().orElseThrow();
+        assertThat(noTier.pointsLost()).isEqualTo(DataQualityScore.pointsLost(bucket.counts(), DataQualityRule.INV_NO_TIER));
+        // Sahiplik kuralları takım puanına girmez (kurumda INV_NO_TEAM kusurlu olsa da)
+        assertThat(org.costliest()).extracting(DataQualityService.IssueCount::code).contains("INV_NO_TEAM");
+        assertThat(t.costliest()).extracting(DataQualityService.IssueCount::code).doesNotContain("INV_NO_TEAM", "MON_NO_TEAM");
+        // Kaybedilen puana göre azalan
+        for (int i = 1; i < t.costliest().size(); i++) {
+            assertThat(t.costliest().get(i - 1).pointsLost()).isGreaterThanOrEqualTo(t.costliest().get(i).pointsLost());
+        }
+        // Değerlendirmede olmayan takım → null; hepsi tek yüklemeden (bellek)
+        assertThat(service.teamDigest(99L)).isNull();
+        verify(source, times(1)).load(any());
+    }
+
+    @Test
     @DisplayName("7 günlük fark: tam 7 gün önceki görüntüden; yoksa null")
     void delta() {
         List<TrendPoint> trend = List.of(new TrendPoint("2026-10-02", 70), new TrendPoint("2026-10-03", 74),

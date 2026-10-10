@@ -150,6 +150,124 @@ public final class ExecutiveSummarySamples {
         return ExecutiveSummaryService.assemble(ctx, List.of(a, b, c, d, e, f, g));
     }
 
+    /**
+     * TAKIM kapsamlı örnek (2026-10-10): takım 1'in ({@link #TR_TEAM}) özeti — takım kodları (TEAM_*, SERVICES_*,
+     * worst_monitors, by_type, TEAM_SCOPE, TEAM_ASOF …) gerçek bölüm hesaplarından. Envanterde takımın SY ve UG kayıtları
+     * ile başka bir takımın kaydı birlikte durur (süzme zorlaması).
+     */
+    public static ExecutiveSummary teamFull() {
+        return buildTeam(true);
+    }
+
+    /** Sakin takım ayı: hedef karşılandı, alarm yok, ay sonu puanı aynı. */
+    public static ExecutiveSummary teamQuiet() {
+        return buildTeam(false);
+    }
+
+    private static ExecutiveSummary buildTeam(boolean busy) {
+        YearMonth m = YearMonth.of(2026, 9);
+        Map<Long, String> teams = Map.of(1L, TR_TEAM, 2L, "Takım B", 3L, "İnternet Şubesi");
+        List<CertificateDto> latest = new ArrayList<>();
+        Map<String, ExecutiveSummaryContext.InventoryRow> inv = new LinkedHashMap<>();
+        add(latest, inv, "expired.example.com", 1L, 1, NOW.minusSeconds(3 * 86_400L), "2025-09-01T00:00:00", null);
+        add(latest, inv, LONG_HOST, 1L, 1, NOW.plusSeconds(busy ? 9 * 86_400L : 200 * 86_400L), "2025-10-01T00:00:00", "2026-10-12");
+        add(latest, inv, "odeme.example.com", 2L, 2, NOW.plusSeconds(40 * 86_400L), "2025-10-01T00:00:00", "2026-09-20");
+        inv.put("odeme.example.com", new ExecutiveSummaryContext.InventoryRow("odeme.example.com", 2L, 1L, 2, null, "2026-09-20"));
+        add(latest, inv, "baska.example.com", 3L, 3, NOW.plusSeconds(5 * 86_400L), "2025-10-01T00:00:00", null);
+        if (!busy) latest.removeIf(c -> "expired.example.com".equals(c.getDomain()));
+        if (!busy) inv.remove("expired.example.com");
+        ExecutiveSummaryContext ctx = new ExecutiveSummaryContext(m, NOW, 99.9, 30, () -> latest, () -> inv, () -> teams,
+                1L, TR_TEAM, null);
+
+        // (a) erişilebilirlik — takımın HTTP'si + UG envanterinin türev Port'u; başka takımın izlemesi süzülür
+        AvailabilitySection av = new AvailabilitySection(mock(MonitoringOverviewService.class), mock(JdbcTemplate.class));
+        Map<String, long[]> byKey = new LinkedHashMap<>();
+        Map<String, AvailabilitySection.MonitorRef> refs = new HashMap<>();
+        byKey.put("HTTP|1", new long[]{ 43_200, busy ? 42_900 : 43_199, 43_000, 42_990 });
+        refs.put("HTTP|1", new AvailabilitySection.MonitorRef("API", "http", 1L, TR_TEAM, "Ödeme", true));
+        byKey.put("PORT|5", new long[]{ 8_640, 8_640, 8_000, 8_000 });
+        refs.put("PORT|5", new AvailabilitySection.MonitorRef("odeme:443", "port", 2L, "Takım B", "Ağ", true,
+                "odeme.example.com", true));
+        byKey.put("PING|2", new long[]{ 8_640, 100, 8_000, 8_000 });
+        refs.put("PING|2", new AvailabilitySection.MonitorRef("Ağ", "ping", 3L, "İnternet Şubesi", null, true));
+        Map<String, Map<java.time.LocalDate, long[]>> monitorDays = new HashMap<>();
+        for (Map.Entry<String, long[]> e : byKey.entrySet()) {
+            Map<java.time.LocalDate, long[]> days = new java.util.TreeMap<>();
+            for (int d = 1; d <= 30; d++) days.put(m.atDay(d), new long[]{ e.getValue()[0] / 30, e.getValue()[1] / 30 });
+            monitorDays.put(e.getKey(), days);
+        }
+        SectionResult a = av.evaluate(ctx, new AvailabilitySection.Rollup(byKey, Map.of(), "hourly_rollup", false, monitorDays), refs);
+
+        // (b) gürültü — damgalı + UG envanteri alarmları; başka takımın bağımsız Port'u süzülür
+        AlarmNoiseSection noise = new AlarmNoiseSection(mock(AlertEventRepository.class));
+        List<AlarmNoiseSection.Ev> evs = new ArrayList<>();
+        if (busy) {
+            for (int i = 0; i < 7; i++) {
+                evs.add(AlarmNoiseSection.Ev.of(new Object[]{ LONG_HOST, "HTTP_DOWN", i == 0 ? "CRITICAL" : "HIGH",
+                        "2026-09-1" + i + "T10:00:00", "2026-09-1" + i + "T10:03:00", true, false, i % 2 == 0,
+                        i % 2 == 0 ? "2026-09-1" + i + "T10:01:00" : null, 1L, "{\"team_id\":1}" }));
+            }
+            evs.add(AlarmNoiseSection.Ev.of(new Object[]{ "odeme.example.com", "PORT_DOWN", "WARNING", "2026-09-20T02:00:00",
+                    null, false, false, false, null, 2L, null }));
+            evs.add(AlarmNoiseSection.Ev.of(new Object[]{ "odeme.example.com", "PORT_DOWN", "CRITICAL", "2026-09-21T02:00:00",
+                    null, false, false, false, null, 3L, "{\"team_id\":3,\"standalone\":true}" }));
+        }
+        SectionResult b = noise.evaluate(ctx, evs, busy ? 4L : 0L);
+
+        // (c) bitişler
+        SectionResult c = new CertificateExpirySection().compute(ctx);
+
+        // (d) yenileme
+        RenewalTimelinessSection rn = new RenewalTimelinessSection(mock(JdbcTemplate.class), mock(RenewalForecastService.class));
+        Map<String, List<RenewalTimelinessSection.Group>> groups = new HashMap<>();
+        if (busy) {
+            groups.put("odeme.example.com", List.of(
+                    new RenewalTimelinessSection.Group("U1", "2026-05-01T00:00:00", "2026-09-01T00:00:00"),
+                    new RenewalTimelinessSection.Group("U2", "2026-09-03T00:00:00", "2027-09-01T00:00:00")));
+            groups.put("baska.example.com", List.of(
+                    new RenewalTimelinessSection.Group("B1", "2026-05-01T00:00:00", "2026-12-01T00:00:00"),
+                    new RenewalTimelinessSection.Group("B2", "2026-09-10T00:00:00", "2027-12-01T00:00:00")));
+        }
+        SectionResult d = rn.evaluate(ctx, groups, null, true);
+
+        // (e) TLS notu — takımın uç noktaları; düşüş penceresi sınırlı (busy) → takım notu
+        TlsGradeSection tls = new TlsGradeSection(mock(TlsGradeService.class));
+        List<TlsGradeSection.Endpoint> graded = new ArrayList<>();
+        graded.add(new TlsGradeSection.Endpoint("odeme.example.com", 2L, "Takım B", 2, "A", List.of("OCSP_STAPLING_MISSING")));
+        List<TlsGradeChange> drops = new ArrayList<>();
+        if (busy) {
+            graded.add(new TlsGradeSection.Endpoint(LONG_HOST, 1L, TR_TEAM, 1, "F", List.of("CERT_EXPIRED", "TLS10_ENABLED")));
+            drops.add(change(11L, LONG_HOST, 1L, "B", "F", "2026-09-21T08:00:00"));
+            drops.add(change(13L, "baska.example.com", 3L, "A", "C", "2026-09-22T08:00:00"));
+        }
+        Map<String, Object> coverage = new LinkedHashMap<>();
+        coverage.put("endpoints", graded.size());
+        coverage.put("ok", graded.size());
+        coverage.put("partial", 0);
+        coverage.put("failed", 0);
+        coverage.put("pending", 0);
+        SectionResult e = tls.evaluate(ctx, new TlsGradeSection.Inputs(graded, 0, 0, coverage,
+                new TlsGradeService.DropWindow(busy ? 700 : 0, drops)));
+
+        // (f) kripto hazırlığı (servis kapsamı [takım] — burada özet biçimi)
+        CryptoReadinessSection cr = new CryptoReadinessSection(mock(CryptoInventoryService.class));
+        SectionResult f = cr.evaluate(ctx, cryptoSummary(busy));
+
+        // (g) veri kalitesi — takımın özeti + ay sonu satırı (team_key = 1)
+        DataQualitySection dq = new DataQualitySection(mock(DataQualityService.class));
+        List<DataQualityService.IssueCount> costly = busy
+                ? List.of(new DataQualityService.IssueCount("INV_NO_TIER", 2, 5, 12.0),
+                          new DataQualityService.IssueCount("TEAM_NO_ESCALATION", 1, 1, 8.6))
+                : List.of();
+        DataQualityService.TeamDigest td = new DataQualityService.TeamDigest(NOW, 1L, TR_TEAM, busy ? 44 : 96,
+                busy ? "POOR" : "EXCELLENT", busy ? 3 : 0, 9, costly);
+        DataQualityService.MonthEnds ends = new DataQualityService.MonthEnds("2026-08-31", "2026-09-30",
+                Map.of(0L, 78, 1L, busy ? 50 : 96), Map.of(0L, 71, 1L, busy ? 44 : 96));
+        SectionResult g = dq.evaluateTeam(ctx, td, ends);
+
+        return ExecutiveSummaryService.assemble(ctx, List.of(a, b, c, d, e, f, g));
+    }
+
     private static TlsGradeChange change(Long inv, String domain, Long team, String from, String to, String at) {
         TlsGradeChange ch = new TlsGradeChange();
         ch.setInventoryId(inv);

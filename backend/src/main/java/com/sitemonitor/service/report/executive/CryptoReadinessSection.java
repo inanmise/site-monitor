@@ -23,6 +23,11 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  * gelir (≤ 120 sn); sınıflandırma ({@code CryptoClassifier}) ve öncelik ({@code PqcMigrationPriority}) burada YENİDEN
  * hesaplanmaz. Bu bölüm ek sorgu yapmaz.
  *
+ * <p><b>Takım kapsamı (2026-10-10):</b> {@code viewTeamIds = [takım]}. Servisin kapsam kuralı bağlamınkiyle AYNI: SY
+ * ({@code team_id}) YA DA UG ({@code ug_team_id}) takımı kapsamda olan aktif kayıtlar (Zayıf Algoritma raporuyla aynı
+ * süzgeç; sahipsiz kayıt girmez). Sonuç servisin kapsam anahtarlı belleğindedir (takım başına bir hesap, sabit sayıda
+ * sorgu); "kurum geneli" notu yerine takım kapsamı notu düşülür.
+ *
  * <h2>Paylar</h2>
  * Paydalar anahtarı OKUNAN uç noktalardır: kuantuma açık payı = VULNERABLE / (toplam − PQC durumu bilinmeyen); 2030 altı
  * payı = LEGACY / (toplam − kategorisi bilinmeyen). Veri olmayan kayıt payı sulandırmaz, ayrıca sayılır.
@@ -58,7 +63,8 @@ public class CryptoReadinessSection implements ExecutiveSummarySection {
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
-        return evaluate(ctx, crypto.summary(null, TOP_N));
+        // Takım kapsamı: servisin görüş kapsamı = SY ya da UG (bağlamın inventoryInScope kuralıyla aynı)
+        return evaluate(ctx, crypto.summary(ctx.teamScoped() ? List.of(ctx.scopeTeamId()) : null, TOP_N));
     }
 
     @SuppressWarnings("unchecked")
@@ -202,8 +208,14 @@ public class CryptoReadinessSection implements ExecutiveSummarySection {
                 topRows, Math.max(toMigrate, topRows.size()), "Geçiş bekleyen uç nokta yok."));
 
         // ── Notlar ──
-        b.note("ASOF", "Rapor anı fotoğrafı: " + stampOf(asOf) + " itibarıyla kurum geneli — aktif envanterin son kontrolleri "
-                + "ve dosyadan yüklenen sertifikalar.", datetime(asOf));
+        if (ctx.teamScoped()) {
+            b.note("TEAM_ASOF", "Rapor anı fotoğrafı: " + stampOf(asOf) + " itibarıyla takımın sorumlu (SY) ya da uygulama "
+                    + "geliştirici (UG) olduğu aktif envanter kayıtları — son kontroller ve dosyadan yüklenen sertifikalar.",
+                    datetime(asOf));
+        } else {
+            b.note("ASOF", "Rapor anı fotoğrafı: " + stampOf(asOf) + " itibarıyla kurum geneli — aktif envanterin son kontrolleri "
+                    + "ve dosyadan yüklenen sertifikalar.", datetime(asOf));
+        }
         b.note("METHOD", "Kategori ve öncelik Kripto Envanteri'nin kuralıyladır (NIST SP 800-131A: RSA 2048 2030 sonunda "
                 + "emekli; puan = maruziyet + bugünkü güç + yenileme penceresi + kayıtlı trafik riski). Paylar anahtarı okunan "
                 + "uç noktalar üzerinden hesaplanır.");

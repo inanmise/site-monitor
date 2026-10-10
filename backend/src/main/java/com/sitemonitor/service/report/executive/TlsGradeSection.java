@@ -39,6 +39,10 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  * </ul>
  * <b>Sorgu bütçesi:</b> 3 (profil kapsaması + düşüş sayımı + sınırlı düşüş listesi); gerisi paylaşılan bağlamdan.
  *
+ * <p><b>Takım kapsamı (2026-10-10):</b> dağılım ve kapsama bağlamın süzülmüş (SY ya da UG) kayıtlarıdır; düşüş penceresi
+ * kurum geneli okunup koşu boyu paylaşılır ({@link ExecutiveSummaryContext#shared}) ve alan adı kapsamdaki envanterde
+ * olan kayıtlarla süzülür. Takım özeti başına sorgu: profil kapsaması (takımın alan adlarıyla) — düşüş penceresi koşuda bir kez.
+ *
  * <h2>Durum eşikleri</h2>
  * <ul>
  *   <li>{@code NO_DATA} — notlanan uç nokta yok;</li>
@@ -123,7 +127,9 @@ public class TlsGradeSection implements ExecutiveSummarySection {
         }
         TlsGradeService.DropWindow drops = null;
         try {
-            drops = gradeService.dropsBetween(ctx.fromIso(), ctx.toIso(), DROP_SCAN);
+            // Kurum geneli ay penceresi koşu boyu paylaşılır; takım süzmesi evaluate'te (alan adı kapsamdaki envanterde mi)
+            drops = ctx.shared("tls-grade.drops|" + ctx.fromIso() + "|" + ctx.toIso(),
+                    () -> gradeService.dropsBetween(ctx.fromIso(), ctx.toIso(), DROP_SCAN));
         } catch (Exception e) {
             log.debug("Yönetici özeti: TLS not değişim günlüğü okunamadı: {}", e.toString());
         }
@@ -215,11 +221,20 @@ public class TlsGradeSection implements ExecutiveSummarySection {
                 .thenComparing(Endpoint::domain));
 
         // ── Ay içindeki düşüşler ──
+        // Takım kapsamı: kurum geneli pencereden yalnız alan adı kapsamdaki envanterde olan kayıtlar; kayıt sayısı da
+        // bu süzülmüş kayıtlardan (pencere en yeni DROP_SCAN satırla sınırlıysa not düşülür).
+        boolean teamScope = ctx.teamScoped();
         TlsGradeService.DropWindow dw = in.drops();
         Map<String, DropRow> dropByEndpoint = new LinkedHashMap<>();
+        long teamDropRecords = 0;
         if (dw != null) {
             for (TlsGradeChange c : dw.rows()) {
-                if (c == null || !TlsGradeRules.isGrade(c.getFromGrade()) || !TlsGradeRules.isGrade(c.getToGrade())) continue;
+                if (c == null) continue;
+                if (teamScope) {
+                    if (c.getDomain() == null || !ctx.domainInScope(c.getDomain())) continue;
+                    teamDropRecords++;
+                }
+                if (!TlsGradeRules.isGrade(c.getFromGrade()) || !TlsGradeRules.isGrade(c.getToGrade())) continue;
                 String k = c.getInventoryId() != null ? "id:" + c.getInventoryId() : "d:" + c.getDomain();
                 Endpoint now = c.getDomain() == null ? null : byDomain.get(c.getDomain());
                 String current = now == null ? null : now.grade();
@@ -241,7 +256,7 @@ public class TlsGradeSection implements ExecutiveSummarySection {
                 .thenComparingInt(d -> d.tier() == null ? 9 : d.tier())
                 .thenComparing(d -> d.at() == null ? "" : d.at(), Comparator.reverseOrder())
                 .thenComparing(d -> d.domain() == null ? "" : d.domain()));
-        long dropTotal = dw == null ? 0 : dw.total();
+        long dropTotal = dw == null ? 0 : teamScope ? teamDropRecords : dw.total();
 
         // ── Profil kapsaması ──
         Map<String, Object> cov = in.coverage();
@@ -397,9 +412,19 @@ public class TlsGradeSection implements ExecutiveSummarySection {
         }
         if (dw == null) {
             b.note("DROPS_UNAVAILABLE", "Not değişim günlüğü okunamadı; ay içindeki düşüşler bu raporda gösterilemiyor.");
+        } else if (teamScope) {
+            if (dw.rows().size() < dw.total()) {
+                b.note("TEAM_DROPS_SAMPLED", "Ay içindeki düşüş kayıtlarının yalnız en yeni " + dw.rows().size()
+                        + " tanesi incelendi; takımın düşüş sayısı bu kayıtlardan hesaplandı ve eksik olabilir.",
+                        dw.rows().size());
+            }
         } else if (dw.rows().size() < dropTotal) {
             b.note("DROPS_SAMPLED", "Ay içinde " + dropTotal + " düşüş kaydı var; uç nokta tablosu en yeni " + dw.rows().size()
                     + " kayıttan kuruldu.", dropTotal, dw.rows().size());
+        }
+        if (teamScope) {
+            b.note("TEAM_SCOPE", "Takımın sorumlu (SY) ya da uygulama geliştirici (UG) olduğu aktif envanter kayıtları; ay "
+                    + "içindeki not düşüşleri de bu kayıtların alan adlarıyla süzülür.");
         }
         b.data("grades", byGrade).data("graded", total).data("ungraded", in.ungraded())
                 .data("not_applicable", in.notApplicable()).data("top_share", topShare).data("low_share", lowShare)

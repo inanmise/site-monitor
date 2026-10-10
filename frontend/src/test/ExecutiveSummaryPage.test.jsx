@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { response, SETTINGS, LONG_HOST } from './helpers/executiveFixtures.js'
+import { response, teamResponse, SETTINGS, TEAMS, TEAM_DETAIL, LONG_HOST } from './helpers/executiveFixtures.js'
 
-// Aylık Yönetici Özeti sayfası (2026-10-10): bölümler GENEL çizilir (bilinmeyen bölüm de), metinler i18n + biçimli
-// parametreler, ay seçimi URL'ye yazılır, gönderilen rapor ↔ canlı hesap, PDF indirme, 403 → erişim yok, ayar penceresi
-// (yalnız global yönetici; alan altı doğrulama, test postası yalnız kendine).
+// Aylık Yönetici Özeti sayfası (2026-10-10; takım kapsamı + yeniden tasarım aynı gün): bölümler GENEL çizilir (bilinmeyen
+// bölüm de), metinler i18n + biçimli parametreler, kapsam (kurum / takım) ve ay seçimi URL'ye yazılır, gönderilen rapor ↔
+// canlı hesap, PDF indirme, 403 → erişim yok; "Alıcılar ve gönderim" görünümü: kurum ayarları (yalnız global yönetici;
+// alan altı doğrulama, test postası yalnız kendine) ve takım alıcıları (müdür / yöneten müdürler / üyeler / ek adresler).
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   api: withApiFallback({
     executiveSummary: {
       get: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn(), sendTest: vi.fn(), runNow: vi.fn(), downloadPdf: vi.fn(),
+      teams: vi.fn(), team: vi.fn(), saveTeam: vi.fn(), sendTeamTest: vi.fn(), runTeamNow: vi.fn(),
     },
   }),
 }))
@@ -20,13 +22,22 @@ import ExecutiveSummaryPage from '../components/executive/ExecutiveSummaryPage.j
 
 const ex = () => api.executiveSummary
 
-describe('Yönetici Özeti sayfası', () => {
+/** Görünüm sekmesine geçer (Radix Tabs jsdom'da mousedown ile etkinleşir). */
+async function openDelivery() {
+  const tab = await screen.findByRole('tab', { name: 'Alıcılar ve gönderim' })
+  fireEvent.mouseDown(tab)
+  return screen.findByRole('tabpanel', { name: 'Alıcılar ve gönderim' })
+}
+
+describe('Yönetici Özeti sayfası — rapor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.history.replaceState({}, '', '/?tab=executive')
     try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
     ex().get.mockResolvedValue(response())
     ex().getSettings.mockResolvedValue({ success: true, data: SETTINGS })
+    ex().teams.mockResolvedValue({ success: true, data: TEAMS })
+    ex().team.mockResolvedValue({ success: true, data: TEAM_DETAIL })
   })
 
   it('bölümler sırasıyla ve genel çizilir; bilinmeyen bölüm sunucu metniyle görünür', async () => {
@@ -37,7 +48,7 @@ describe('Yönetici Özeti sayfası', () => {
       'future-section'])
     expect(screen.getByRole('region', { name: 'Gelecek bölüm' })).toBeInTheDocument()
     expect(screen.getAllByText('Gelecek bölümün sunucu metni.').length).toBeGreaterThan(0)
-    expect(ex().get).toHaveBeenCalledWith({ month: null, live: false, fresh: false })
+    expect(ex().get).toHaveBeenCalledWith({ month: null, team: null, live: false, fresh: false })
   })
 
   it('TLS notu / kripto / veri kalitesi bölümleri: i18n başlık, kod hücreleri kendi dilinde, dağılım çubukları, rapor anı', async () => {
@@ -68,15 +79,25 @@ describe('Yönetici Özeti sayfası', () => {
     expect(within(dq).getByText('▼ 7 puan · geçen aya göre')).toBeInTheDocument()            // ay sonu farkı çipi
   })
 
-  it('üst şerit: genel durum, bölüm göstergeleri, biçimli hükümler', async () => {
+  it('üst kart: kapsam çipi, genel durum, bölüm sağlığı, bölüm adlı göstergeler, biçimli hükümler; içindekiler', async () => {
     const { container } = render(<ExecutiveSummaryPage globalAdmin />)
     const head = await screen.findByRole('region', { name: /Eylül 2026/ })
-    expect(within(head).getByText('Aksiyon gerekli')).toBeInTheDocument()
+    expect(head).toHaveAttribute('data-scope', 'org')
+    expect(within(head).getByText('Kurum geneli')).toBeInTheDocument()
+    expect(within(head).getAllByText('Aksiyon gerekli').length).toBeGreaterThan(0)
     const tiles = container.querySelectorAll('[data-slot="ex-headline-kpis"] [data-slot="ex-kpi"]')
     expect([...tiles].map((x) => x.getAttribute('data-code'))).toEqual(['org_availability', 'total_alarms', 'within30', 'on_time_pct',
       'top_share', 'broken', 'org_score'])
+    expect(tiles[0].querySelector('[data-slot="ex-kpi-caption"]').textContent).toBe('Erişilebilirlik hedefi uyumu')
     expect(within(head).getByText('Kurum erişilebilirliği %99,95 — hedef %99,9 karşılandı.')).toBeInTheDocument()
     expect(within(head).getByText('Bu ay 120 alarm açıldı; geçen aya (80) göre %50 artış.')).toBeInTheDocument()
+    // bölüm sağlığı: dilimler kötüden iyiye, toplam bölüm sayısı
+    expect(within(head).getByText('8 bölümün durumu')).toBeInTheDocument()
+    const segs = [...head.querySelectorAll('[data-slot="ex-health-seg"]')].map((x) => x.getAttribute('data-key'))
+    expect(segs[0]).toBe('critical')
+    // içindekiler + çip satırı: her bölüme bağlantı
+    expect(container.querySelectorAll('[data-slot="ex-toc"] [data-slot="ex-jump"]')).toHaveLength(8)
+    expect(container.querySelectorAll('[data-slot="ex-jump-chips"] [data-slot="ex-jump"]')).toHaveLength(8)
   })
 
   it('tablolar: boş takım "Takımsız", gruplanmamış hizmet, kırpma notu, durum hücresi metinle; rapor anı rozeti', async () => {
@@ -97,79 +118,213 @@ describe('Yönetici Özeti sayfası', () => {
     const select = await screen.findByLabelText('Ay')
     expect(select.value).toBe('2026-09')
     fireEvent.change(select, { target: { value: '2026-08' } })
-    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: '2026-08', live: false, fresh: false }))
+    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: '2026-08', team: null, live: false, fresh: false }))
     await waitFor(() => expect(window.location.search).toContain('ex_m=2026-08'))
+  })
+
+  it('kapsam seçici: takım seçilince özet takımla yeniden istenir, URL ex_team yazar; takım özetinde kapsam çipi ve takım dipnotu', async () => {
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const trigger = await screen.findByRole('combobox', { name: 'Kapsam' })
+    expect(trigger).toHaveTextContent('Kurum geneli')
+    ex().get.mockResolvedValue(teamResponse())
+    fireEvent.mouseDown(trigger)
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Ödeme Ağ Geçidi Takımı' }))
+    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: null, team: '5', live: false, fresh: false }))
+    await waitFor(() => expect(window.location.search).toContain('ex_team=5'))
+    const head = await screen.findByRole('region', { name: /Eylül 2026/ })
+    await waitFor(() => expect(head).toHaveAttribute('data-scope', 'team'))
+    expect(within(head).getByText('Takım: Ödeme Ağ Geçidi Takımı')).toBeInTheDocument()
+    expect(screen.getByText(/Sayılar yalnız bu takımın kayıtlarından üretilir/)).toBeInTheDocument()
   })
 
   it('gönderilen rapor → "Canlı hesapla" live=1 ile yeniden ister; Yenile fresh=1', async () => {
     ex().get.mockResolvedValue(response({ source: 'snapshot' }))
     render(<ExecutiveSummaryPage globalAdmin />)
     fireEvent.click(await screen.findByRole('button', { name: 'Canlı hesapla' }))
-    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: null, live: true, fresh: false }))
+    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: null, team: null, live: true, fresh: false }))
     fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
-    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: null, live: true, fresh: true }))
+    await waitFor(() => expect(ex().get).toHaveBeenLastCalledWith({ month: null, team: null, live: true, fresh: true }))
   })
 
-  it('PDF indir seçili ayı ister; hata tostu açıklayıcı', async () => {
+  it('PDF indir seçili ayı ve kapsamı ister; hata tostu açıklayıcı', async () => {
     ex().downloadPdf.mockResolvedValue({ success: false, status: 503 })
     render(<ExecutiveSummaryPage globalAdmin />)
     fireEvent.click(await screen.findByRole('button', { name: 'PDF indir' }))
-    await waitFor(() => expect(ex().downloadPdf).toHaveBeenCalledWith({ month: '2026-09', live: false }))
+    await waitFor(() => expect(ex().downloadPdf).toHaveBeenCalledWith({ month: '2026-09', team: null, live: false }))
     expect(await screen.findByText(/PDF indirilemedi/)).toBeInTheDocument()
   })
 
-  it('403 → erişim yok paneli (ham hata değil); ayar düğmesi yalnız global yöneticiye', async () => {
+  it('403 → erişim yok paneli (ham hata değil); görünüm sekmeleri yok', async () => {
     ex().get.mockResolvedValue({ success: false, status: 403, error: 'FORBIDDEN' })
     render(<ExecutiveSummaryPage />)
     expect(await screen.findByText('Yönetici özetine erişiminiz yok')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Ayarlar ve gönderim' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Alıcılar ve gönderim' })).toBeNull()
   })
 
-  it('AUDIT (global yönetici değil) ayar düğmesini görmez', async () => {
-    ex().get.mockResolvedValue(response({}, { can_configure: false }))
+  it('AUDIT (yapılandıramaz) gönderim görünümünü görmez', async () => {
+    ex().get.mockResolvedValue(response({}, { can_configure: false, can_configure_any_team: false }))
     render(<ExecutiveSummaryPage globalAdmin={false} />)
     await screen.findByRole('region', { name: 'Erişilebilirlik hedefi uyumu' })
-    expect(screen.queryByRole('button', { name: 'Ayarlar ve gönderim' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Alıcılar ve gönderim' })).toBeNull()
+    expect(ex().teams).not.toHaveBeenCalled()
+  })
+})
+
+describe('Yönetici Özeti sayfası — alıcılar ve gönderim', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/?tab=executive')
+    try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+    ex().get.mockResolvedValue(response())
+    ex().getSettings.mockResolvedValue({ success: true, data: SETTINGS })
+    ex().teams.mockResolvedValue({ success: true, data: TEAMS })
+    ex().team.mockResolvedValue({ success: true, data: TEAM_DETAIL })
   })
 
-  it('ayar penceresi: geçersiz adres alanın altında, kayıt gitmez; düzeltince doğru gövdeyle kaydeder', async () => {
+  it('kurum ayarları: geçersiz adres alanın altında, kayıt gitmez; düzeltince doğru gövdeyle kaydeder; URL ex_view yazar', async () => {
     ex().saveSettings.mockImplementation(async (body) => ({ success: true, data: { ...SETTINGS, ...body,
       include_global_admins: body.include_global_admins, availability_target: Number(body.availability_target) } }))
     render(<ExecutiveSummaryPage globalAdmin />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ayarlar ve gönderim' }))
-    const dialog = await screen.findByRole('dialog')
-    const recipients = await within(dialog).findByRole('textbox', { name: /E-posta adresleri/ })
-    expect(within(dialog).getByText(/3 alıcı \(1 adres \+ 2 global yönetici\)/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/pasif bir kullanıcıya ait/)).toBeInTheDocument()
+    const panel = await openDelivery()
+    const recipients = await within(panel).findByRole('textbox', { name: /E-posta adresleri/ })
+    expect(within(panel).getByText(/3 alıcı \(1 adres \+ 2 global yönetici\)/)).toBeInTheDocument()
+    expect(within(panel).getByText(/pasif bir kullanıcıya ait/)).toBeInTheDocument()
+    await waitFor(() => expect(window.location.search).toContain('ex_view=delivery'))
 
     fireEvent.change(recipients, { target: { value: 'yonetim@example.com, kotu-adres' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }))
-    expect(await within(dialog).findByText(/Geçersiz adres: kotu-adres/)).toBeInTheDocument()
+    fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    expect(await within(panel).findByText(/Geçersiz adres: kotu-adres/)).toBeInTheDocument()
     expect(ex().saveSettings).not.toHaveBeenCalled()
 
     fireEvent.change(recipients, { target: { value: 'yonetim@example.com, cto@example.com' } })
-    fireEvent.click(within(dialog).getByRole('switch', { name: 'Zamanlanmış gönderim' }))
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }))
+    fireEvent.click(within(panel).getByRole('switch', { name: 'Zamanlanmış gönderim' }))
+    fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
     await waitFor(() => expect(ex().saveSettings).toHaveBeenCalledWith({
       enabled: true, cron: '0 0 9 1 * *', recipients: 'yonetim@example.com, cto@example.com', include_global_admins: true,
       availability_target: '99.9', renewal_target_days: '30',
     }))
   })
 
-  it('ayar penceresi: sunucu alan hatası (400 field) alanın altına; test postası seçili ay için', async () => {
+  it('kurum ayarları: sunucu alan hatası (400 field) alanın altına; test postası seçili ay için', async () => {
     ex().saveSettings.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'availability_target',
       error: 'Erişilebilirlik hedefi 90 ile 100 arasında bir yüzde olmalı (ör. 99,9).' })
     ex().sendTest.mockResolvedValue({ success: true, message: 'Test e-postası ben@example.com adresine gönderildi.' })
     render(<ExecutiveSummaryPage globalAdmin />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ayarlar ve gönderim' }))
-    const dialog = await screen.findByRole('dialog')
-    const target = await within(dialog).findByRole('textbox', { name: /Erişilebilirlik hedefi \(%\)/ })
+    const panel = await openDelivery()
+    const target = await within(panel).findByRole('textbox', { name: /Erişilebilirlik hedefi \(%\)/ })
     fireEvent.change(target, { target: { value: '99.95' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }))
-    expect(await within(dialog).findByText(/90 ile 100 arasında/)).toBeInTheDocument()
+    fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    expect(await within(panel).findByText(/90 ile 100 arasında/)).toBeInTheDocument()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Bana test e-postası gönder' }))
+    fireEvent.click(within(panel).getByRole('button', { name: 'Bana test e-postası gönder' }))
     await waitFor(() => expect(ex().sendTest).toHaveBeenCalledWith('2026-09'))
     expect(await screen.findByText(/ben@example.com adresine gönderildi/)).toBeInTheDocument()
+  })
+
+  it('takım listesi: açık/kapalı, alıcı sayısı, son gönderim; takım seçilince ayrıntı (müdür, yöneten müdürler, üyeler) yüklenir', async () => {
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const panel = await openDelivery()
+    const list = within(panel).getByRole('list', { name: 'Takımlar' })
+    const rows = within(list).getAllByRole('button')
+    expect(rows.map((r) => r.getAttribute('data-key'))).toEqual(['6', '5'])
+    expect(rows[1]).toHaveTextContent('Ödeme Ağ Geçidi Takımı')
+    expect(rows[1]).toHaveTextContent('3 alıcı')
+    expect(rows[1]).toHaveTextContent('Gönderildi')
+    expect(rows[1]).toHaveTextContent('Açık')
+    expect(rows[0]).toHaveTextContent('Kapalı')
+
+    fireEvent.click(rows[1])
+    await waitFor(() => expect(ex().team).toHaveBeenCalledWith('5'))
+    const settings = await within(panel).findByText('Müdür Örnek · mudur@example.com')
+    expect(settings).toBeInTheDocument()
+    expect(within(panel).getByText('Kapsamlı Müdür')).toBeInTheDocument()
+    expect(within(panel).getByRole('checkbox', { name: /Ayşe Örnek/ })).toBeChecked()
+    expect(within(panel).getByRole('checkbox', { name: /Epostasız Üye/ })).toBeDisabled()
+    expect(within(panel).getByText('1 seçili · 3 üye')).toBeInTheDocument()
+    await waitFor(() => expect(window.location.search).toContain('ex_sel=5'))
+  })
+
+  it('takım ayarı: üye seçimi + ek adres (geçersiz → alan altı) ve doğru gövdeyle kayıt; kaydetmeden gönderim kapalı', async () => {
+    ex().saveTeam.mockImplementation(async (id, body) => ({ success: true, data: { ...TEAM_DETAIL, extra_emails: body.extra_emails,
+      members: TEAM_DETAIL.members.map((m) => ({ ...m, selected: body.user_ids.includes(m.user_id) })) } }))
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery&ex_sel=5')
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const panel = await screen.findByRole('tabpanel', { name: 'Alıcılar ve gönderim' })
+    const mehmet = await within(panel).findByRole('checkbox', { name: /Mehmet Örnek/ })
+    fireEvent.click(mehmet)
+    expect(within(panel).getByText('2 seçili · 3 üye')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'Şimdi gönder' })).toBeDisabled()
+
+    const extra = within(panel).getByRole('textbox', { name: 'Ek adresler' })
+    fireEvent.change(extra, { target: { value: 'kotu-adres' } })
+    fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    expect(await within(panel).findByText(/Geçersiz adres: kotu-adres/)).toBeInTheDocument()
+    expect(ex().saveTeam).not.toHaveBeenCalled()
+
+    fireEvent.change(extra, { target: { value: 'cto@example.com' } })
+    fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(ex().saveTeam).toHaveBeenCalledWith('5', {
+      enabled: true, include_manager: true, include_team_admins: true, user_ids: ['u-201', 'u-202'], extra_emails: 'cto@example.com',
+    }))
+    expect(await screen.findByText(/Ödeme Ağ Geçidi Takımı takımının özet ayarları kaydedildi/)).toBeInTheDocument()
+    await waitFor(() => expect(ex().teams).toHaveBeenCalledTimes(2))              // liste sayıları tazelendi
+  })
+
+  it('takım testi seçili ay ve takımla; "Şimdi gönder" onaylıdır', async () => {
+    ex().sendTeamTest.mockResolvedValue({ success: true, message: 'Test e-postası ben@example.com adresine gönderildi.' })
+    ex().runTeamNow.mockResolvedValue({ success: true, message: '2026-09 özeti 3 alıcıya gönderildi (SENT ×3).' })
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery&ex_sel=5')
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const panel = await screen.findByRole('tabpanel', { name: 'Alıcılar ve gönderim' })
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Bana test e-postası gönder' }))
+    await waitFor(() => expect(ex().sendTeamTest).toHaveBeenCalledWith('5', '2026-09'))
+    fireEvent.click(within(panel).getByRole('button', { name: 'Şimdi gönder' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/Ödeme Ağ Geçidi Takımı takımının Eylül 2026 özeti/)).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gönder' }))
+    await waitFor(() => expect(ex().runTeamNow).toHaveBeenCalledWith('5', '2026-09'))
+  })
+
+  it('kaydedilmemiş değişiklikle başka listeye geçmek onay ister; vazgeçince kalır', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery&ex_sel=5')
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const panel = await screen.findByRole('tabpanel', { name: 'Alıcılar ve gönderim' })
+    fireEvent.click(await within(panel).findByRole('checkbox', { name: /Mehmet Örnek/ }))
+    const orgRow = panel.querySelector('[data-slot="ex-delivery-item"][data-key="org"]')
+    fireEvent.click(orgRow)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Kaydedilmemiş değişiklikler var')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(ex().getSettings).not.toHaveBeenCalled()
+    expect(within(panel).getByRole('checkbox', { name: /Mehmet Örnek/ })).toBeChecked()
+
+    fireEvent.click(orgRow)
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Değişiklikleri at' }))
+    await waitFor(() => expect(ex().getSettings).toHaveBeenCalled())
+  })
+
+  it('takım müdürü (kurumu göremez): kurum satırı yok, ilk takım seçili; e-postadaki bağlantı (ex_team + ex_cfg) takımı açar', async () => {
+    ex().get.mockResolvedValue(teamResponse({}, { can_configure: false, scopes: { org: false, teams: [{ id: 5, name: 'Ödeme Ağ Geçidi Takımı', can_configure: true }] } }))
+    ex().teams.mockResolvedValue({ success: true, data: { ...TEAMS, teams: [TEAMS.teams[1]] } })
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=5&ex_cfg=1')
+    render(<ExecutiveSummaryPage globalAdmin={false} />)
+    const panel = await screen.findByRole('tabpanel', { name: 'Alıcılar ve gönderim' })
+    await waitFor(() => expect(ex().team).toHaveBeenCalledWith('5'))
+    expect(panel.querySelector('[data-slot="ex-delivery-item"][data-key="org"]')).toBeNull()
+    expect(ex().getSettings).not.toHaveBeenCalled()
+    expect(ex().get).toHaveBeenCalledWith({ month: null, team: '5', live: false, fresh: false })
+    await waitFor(() => expect(window.location.search).not.toContain('ex_cfg'))
+    // kapsam: yalnız takım (seçici yerine düz metin)
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Rapor' }))
+    expect(await screen.findByText('Ödeme Ağ Geçidi Takımı', { selector: '[data-slot="ex-scope-static"] span' })).toBeInTheDocument()
+  })
+
+  it('yapılandırılabilen takım yoksa açıklayıcı boş durum', async () => {
+    ex().get.mockResolvedValue(teamResponse({}, { can_configure: false, scopes: { org: false, teams: [{ id: 5, name: 'X', can_configure: false }] } }))
+    ex().teams.mockResolvedValue({ success: true, data: { ...TEAMS, teams: [] } })
+    render(<ExecutiveSummaryPage globalAdmin={false} />)
+    const panel = await openDelivery()
+    expect(await within(panel).findByText('Yapılandırabileceğiniz takım yok')).toBeInTheDocument()
   })
 })

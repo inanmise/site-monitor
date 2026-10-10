@@ -1,10 +1,13 @@
 package com.sitemonitor.service.report.executive;
 
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.ExecutiveReportRow;
 import com.sitemonitor.model.ExecutiveSummaryReport;
+import com.sitemonitor.model.ExecutiveSummaryTeamReport;
 import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.repository.ExecutiveSummaryReportRepository;
+import com.sitemonitor.repository.ExecutiveSummaryTeamReportRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.EmailNotificationService;
@@ -19,7 +22,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.time.YearMonth;
@@ -34,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * AYLIK YÖNETİCİ ÖZETİ GÖNDERİMİ (2026-10-10).
@@ -53,15 +56,22 @@ import java.util.concurrent.ConcurrentHashMap;
  *       verir.</li>
  * </ul>
  *
+ * <h2>Takım özetleri (2026-10-10, kullanıcı isteği: "takım bazlı yönetici ayarlaması")</h2>
+ * Aynı tetik, kurum özetinden SONRA, gönderimi açık her AKTİF takım için o takımın özetini o takımın alıcılarına gönderir
+ * ({@link ExecutiveSummaryTeamService}). Kurum özetinin açık/kapalı olması takım özetlerini etkilemez. Her takım × ay
+ * {@code executive_summary_team_reports}'ta aynı "tam bir kez" kapısından geçer; bir takımın hatası diğerlerini durdurmaz.
+ * Takım sayısı kadar döngü (sınırlı); kurum geneli ham veri koşu başına bir kez okunur
+ * ({@link ExecutiveSummaryService#newRunShared()}). Kapalı takım için kayıt yazılmaz (gürültü olmasın).
+ *
  * <h2>Alıcılar</h2>
- * Açık adres listesi + (ayar açıksa) aktif GLOBAL yöneticilerin adresleri; küçük harf tekil. Pasif kullanıcıya ait adres
- * düşer ({@code InactiveRecipientGuard}; huni de ayrıca süzer). Posta GİZLİ alıcılarla (BCC), {@value #BCC_CHUNK}'lük
- * dilimlerle gider; ek: PDF.
+ * Kurum: açık adres listesi + (ayar açıksa) aktif GLOBAL yöneticilerin adresleri; takım: takım ayarı. Küçük harf tekil.
+ * Pasif kullanıcıya ait adres düşer ({@code InactiveRecipientGuard}; huni de ayrıca süzer). Posta GİZLİ alıcılarla (BCC),
+ * {@value #BCC_CHUNK}'lük dilimlerle gider; ek: PDF.
  *
  * <h2>İz ("gönderilmeyen bildirim nedenini söyler")</h2>
  * Her dilim {@code notification_logs}'a (tetik {@code EXECUTIVE_SUMMARY}) yazılır; alıcı yoksa {@code SKIPPED: alıcı yok}
  * satırı; özet kapalıyken zamanlanmış koşu ayın kaydına {@code SKIPPED_DISABLED} bırakır. Test gönderimi
- * ({@code EXECUTIVE_SUMMARY_TEST}) yalnız isteyen global yöneticinin KENDİ adresine gider ve ay kaydına dokunmaz.
+ * ({@code EXECUTIVE_SUMMARY_TEST}) yalnız isteyen yöneticinin KENDİ adresine gider ve ay kaydına dokunmaz.
  * Sistem bakımı susturması diğer raporlarda olduğu gibi bu postaya UYGULANMAZ (alarm bildirimi değildir).
  */
 @Slf4j
@@ -93,6 +103,13 @@ public class ExecutiveSummaryDeliveryService {
     @Autowired(required = false)
     private InactiveRecipientGuard inactiveGuard;
 
+    /** Takım özetleri (birim testlerinde yoksa takım yolu kapalıdır; kurum yolu birebir aynı çalışır). */
+    @Autowired(required = false)
+    private ExecutiveSummaryTeamService teamService;
+
+    @Autowired(required = false)
+    private ExecutiveSummaryTeamReportRepository teamReportRepo;
+
     private final Map<String, Deque<Long>> testTimes = new ConcurrentHashMap<>();
 
     public ExecutiveSummaryDeliveryService(ExecutiveSummaryService summaryService, ExecutiveSummarySettings settings,
@@ -112,6 +129,14 @@ public class ExecutiveSummaryDeliveryService {
 
     void setInactiveGuard(InactiveRecipientGuard g) { this.inactiveGuard = g; }
 
+    void setTeamParts(ExecutiveSummaryTeamService teamService, ExecutiveSummaryTeamReportRepository teamReportRepo) {
+        this.teamService = teamService;
+        this.teamReportRepo = teamReportRepo;
+    }
+
+    /** Takım yolu kurulu mu (Spring bağlamında her zaman; bean'siz birim testinde hayır). */
+    public boolean teamsAvailable() { return teamService != null && teamReportRepo != null; }
+
     /** Gönderim sonucu. {@code status} kayıt durumu ya da atlama kodu (ALREADY_SENT, IN_PROGRESS, DISABLED, NOT_DUE …). */
     public record Result(String status, String month, int recipients, int chunks, String detail) { }
 
@@ -120,7 +145,75 @@ public class ExecutiveSummaryDeliveryService {
         public boolean isEmpty() { return emails.isEmpty(); }
     }
 
-    // ── Alıcılar ────────────────────────────────────────────────────────────────────────────────────────────────────
+    /** Gönderimin alıcı kümesi (kurum ya da takım): adresler + pasif olduğu için düşen sayısı. */
+    record Audience(List<String> emails, int droppedInactive) {
+        boolean isEmpty() { return emails.isEmpty(); }
+    }
+
+    // ── Kayıt yuvaları (kurum geneli / takım) ───────────────────────────────────────────────────────────────────────
+
+    /** Ay kaydının deposu — kurum geneli ve takım kayıtları aynı talep / bitirme mantığını paylaşır. */
+    interface Slot {
+        /** Günlük ve iz etiketi ("kurum geneli" / "takım #5 Ödeme"). */
+        String label();
+        /** {@code notification_logs.recipient_name}. */
+        String traceName();
+        ExecutiveReportRow find(YearMonth m);
+        ExecutiveReportRow newRow(YearMonth m);
+        ExecutiveReportRow saveAndFlush(ExecutiveReportRow r);
+        void save(ExecutiveReportRow r);
+        int reclaim(Long id, String expectedStatus, Integer expectedAttempts, Integer nextAttempts, String claimedAt,
+                    String triggerKind, String actor);
+    }
+
+    private final Slot orgSlot = new Slot() {
+        @Override public String label() { return "kurum geneli"; }
+        @Override public String traceName() { return "Yönetici Özeti"; }
+        @Override public ExecutiveReportRow find(YearMonth m) {
+            return reportRepo.findByReportYearAndReportMonth(m.getYear(), m.getMonthValue()).orElse(null);
+        }
+        @Override public ExecutiveReportRow newRow(YearMonth m) {
+            ExecutiveSummaryReport r = new ExecutiveSummaryReport();
+            r.setReportYear(m.getYear());
+            r.setReportMonth(m.getMonthValue());
+            return r;
+        }
+        @Override public ExecutiveReportRow saveAndFlush(ExecutiveReportRow r) {
+            return reportRepo.saveAndFlush((ExecutiveSummaryReport) r);
+        }
+        @Override public void save(ExecutiveReportRow r) { reportRepo.save((ExecutiveSummaryReport) r); }
+        @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
+            return reportRepo.reclaim(id, st, exp, next, at, trig, actor);
+        }
+    };
+
+    private Slot teamSlot(Long teamId, String teamName) {
+        String name = teamName == null || teamName.isBlank() ? "#" + teamId : teamName;
+        return new Slot() {
+            @Override public String label() { return "takım #" + teamId + " " + name; }
+            @Override public String traceName() { return clip("Yönetici Özeti · " + name, 200); }
+            @Override public ExecutiveReportRow find(YearMonth m) {
+                return teamReportRepo.findByTeamIdAndReportYearAndReportMonth(teamId, m.getYear(), m.getMonthValue())
+                        .orElse(null);
+            }
+            @Override public ExecutiveReportRow newRow(YearMonth m) {
+                ExecutiveSummaryTeamReport r = new ExecutiveSummaryTeamReport();
+                r.setTeamId(teamId);
+                r.setReportYear(m.getYear());
+                r.setReportMonth(m.getMonthValue());
+                return r;
+            }
+            @Override public ExecutiveReportRow saveAndFlush(ExecutiveReportRow r) {
+                return teamReportRepo.saveAndFlush((ExecutiveSummaryTeamReport) r);
+            }
+            @Override public void save(ExecutiveReportRow r) { teamReportRepo.save((ExecutiveSummaryTeamReport) r); }
+            @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
+                return teamReportRepo.reclaim(id, st, exp, next, at, trig, actor);
+            }
+        };
+    }
+
+    // ── Alıcılar (kurum) ────────────────────────────────────────────────────────────────────────────────────────────
 
     public Recipients recipients() {
         Map<String, String> out = new LinkedHashMap<>();
@@ -165,20 +258,30 @@ public class ExecutiveSummaryDeliveryService {
 
     // ── Zamanlanmış / telafi / elle ─────────────────────────────────────────────────────────────────────────────────
 
-    /** Zamanlanmış tetik: önceki ayın özeti. Kapalıysa ayın kaydına SKIPPED_DISABLED bırakır (yalnız ilk kez). */
+    /**
+     * Zamanlanmış tetik: önceki ayın özeti. Kurum özeti kapalıysa ayın kaydına SKIPPED_DISABLED bırakır (yalnız ilk kez);
+     * ardından gönderimi açık takımların özetleri. Dönen: kurum sonucunun aynısı.
+     */
     public Result runScheduled() {
         YearMonth month = summaryService.defaultMonth();
+        Result org;
         if (!settings.enabled()) {
             recordDisabled(month);
             log.info("Aylık yönetici özeti kapalı ({}=false) — {} için gönderim yapılmadı", ExecutiveSummarySettings.ENABLED_KEY, month);
-            return new Result("DISABLED", month.toString(), 0, 0, "Yönetici özeti kapalı");
+            org = new Result("DISABLED", month.toString(), 0, 0, "Yönetici özeti kapalı");
+        } else {
+            org = deliver(month, "SCHEDULED", "system", false);
         }
-        return deliver(month, "SCHEDULED", "system", false);
+        runTeams(month, "SCHEDULED", false);
+        pruneTeamReports();
+        return org;
     }
 
-    /** Saatlik telafi (sınıf belgesi). */
+    /** Saatlik telafi (sınıf belgesi). Kurum ve takım yolları birbirinden bağımsızdır. */
     public Result catchUp() {
-        if (!settings.enabled()) return new Result("DISABLED", null, 0, 0, null);
+        boolean orgOn = settings.enabled();
+        boolean teamsOn = teamsAvailable() && teamService.anyEnabled();
+        if (!orgOn && !teamsOn) return new Result("DISABLED", null, 0, 0, null);
         Instant now = summaryService.now();
         YearMonth cur = summaryService.currentMonth();
         Instant planned = plannedFireThisMonth(cur, settings.cron());
@@ -187,16 +290,82 @@ public class ExecutiveSummaryDeliveryService {
         if (Duration.between(planned, now).toHours() >= CATCH_UP_HOURS) {
             return new Result("WINDOW_CLOSED", month.toString(), 0, 0, null);
         }
-        ExecutiveSummaryReport row = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null);
-        if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
-            return new Result("NOTHING_TO_DO", month.toString(), 0, 0, row.getStatus());
+        Result org;
+        if (!orgOn) {
+            org = new Result("DISABLED", month.toString(), 0, 0, null);
+        } else {
+            ExecutiveSummaryReport row = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null);
+            if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
+                org = new Result("NOTHING_TO_DO", month.toString(), 0, 0, row.getStatus());
+            } else {
+                org = deliver(month, "CATCH_UP", "system", false);
+            }
         }
-        return deliver(month, "CATCH_UP", "system", false);
+        if (teamsOn) runTeams(month, "CATCH_UP", true);
+        return org;
     }
 
     /** Elle gönderim (global yönetici, "Şimdi gönder"): kayıt durumundan bağımsız gönderir; yalnız süren gönderim engeller. */
     public Result sendNow(YearMonth month, String actor) {
         return deliver(month, "MANUAL", actor == null ? "admin" : actor, true);
+    }
+
+    /** Takımın elle gönderimi (global yönetici ya da takımın müdürü — kapı denetleyicide). */
+    public Result sendTeamNow(Long teamId, YearMonth month, String actor) {
+        if (!teamsAvailable()) return new Result("DISABLED", month.toString(), 0, 0, null);
+        Map<Long, ExecutiveSummaryTeamService.Recipients> rc = teamService.recipientsFor(List.of(teamId));
+        ExecutiveSummaryTeamService.Recipients r = rc.get(teamId);
+        if (r == null) return new Result("TEAM_INACTIVE", month.toString(), 0, 0, null);
+        return deliverTeam(teamId, teamService.teamName(teamId), month, "MANUAL", actor == null ? "admin" : actor, true,
+                r, summaryService.newRunShared());
+    }
+
+    /**
+     * Gönderimi açık takımların özetleri. {@code catchUpOnly}: yalnız kaydı olmayan ya da yeniden denenebilir durumdaki
+     * takımlar (telafi). Takım başına hata günlüğe yazılır, sıradaki takım sürer.
+     */
+    void runTeams(YearMonth month, String trigger, boolean catchUpOnly) {
+        if (!teamsAvailable()) return;
+        List<Long> ids = teamService.enabledTeamIds();
+        if (ids.isEmpty()) return;
+        Map<Long, ExecutiveSummaryTeamService.Recipients> recipients = teamService.recipientsFor(ids);
+        Map<String, Object> shared = summaryService.newRunShared();
+        Map<Long, String> names = summaryService.teamNames();
+        int sent = 0, skipped = 0, failed = 0;
+        for (Long id : ids) {
+            ExecutiveSummaryTeamService.Recipients rc = recipients.get(id);
+            if (rc == null) { skipped++; continue; }            // silinmiş ya da pasif takım
+            try {
+                if (catchUpOnly) {
+                    ExecutiveSummaryTeamReport row = teamReportRepo.findByTeamIdAndReportYearAndReportMonth(id,
+                            month.getYear(), month.getMonthValue()).orElse(null);
+                    if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
+                        skipped++;
+                        continue;
+                    }
+                }
+                Result r = deliverTeam(id, names.get(id), month, trigger, "system", false, rc, shared);
+                if (ExecutiveReportRow.SENT.equals(r.status()) || ExecutiveReportRow.PARTIAL.equals(r.status())) sent++;
+                else skipped++;
+            } catch (Exception e) {
+                failed++;
+                log.warn("Takım yönetici özeti gönderilemedi (takım {} / {}): {}", id, month, e.toString(), e);
+            }
+        }
+        log.info("Takım yönetici özetleri {} ({}): {} takım — {} gönderildi, {} atlandı, {} hata", month, trigger,
+                ids.size(), sent, skipped, failed);
+    }
+
+    /** Seçilebilir pencereden (24 ay) eski takım kayıtlarını siler — tablo takım × 25 aydan fazla büyümez. */
+    void pruneTeamReports() {
+        if (teamReportRepo == null) return;
+        try {
+            YearMonth cutoff = summaryService.currentMonth().minusMonths(ExecutiveSummaryService.MAX_MONTHS_BACK);
+            int n = teamReportRepo.deleteOlderThan(cutoff.getYear() * 12 + cutoff.getMonthValue());
+            if (n > 0) log.info("Takım yönetici özeti: {} eski kayıt silindi (< {})", n, cutoff);
+        } catch (Exception e) {
+            log.warn("Takım yönetici özeti eski kayıtları silinemedi: {}", e.toString());
+        }
     }
 
     /** Bu ayın planlı ilk tetiği (cron ayın başından itibaren). Geçersiz cron → varsayılan. */
@@ -212,44 +381,60 @@ public class ExecutiveSummaryDeliveryService {
         return next.toInstant();
     }
 
-    private static int attempts(ExecutiveSummaryReport r) {
+    private static int attempts(ExecutiveReportRow r) {
         return r.getAttempts() == null ? 0 : r.getAttempts();
     }
 
-    /** Ay kaydı TALEP edilir (tam bir kez), sonra özet + PDF + BCC dilimleri. */
+    /** Kurum ayı kaydı TALEP edilir (tam bir kez), sonra özet + PDF + BCC dilimleri. */
     Result deliver(YearMonth month, String trigger, String actor, boolean force) {
-        ExecutiveSummaryReport row = claim(month, trigger, actor, force);
+        return deliverTo(orgSlot, month, trigger, actor, force, () -> summaryService.compute(month), () -> {
+            Recipients rc = recipients();
+            return new Audience(rc.emails(), rc.droppedInactive());
+        }, ExecutiveSummarySettings.RECIPIENTS_KEY + " ve global yönetici seçeneği");
+    }
+
+    /** Takım ayı kaydı TALEP edilir, sonra takım özeti + PDF + BCC dilimleri (takımın alıcılarına). */
+    Result deliverTeam(Long teamId, String teamName, YearMonth month, String trigger, String actor, boolean force,
+                       ExecutiveSummaryTeamService.Recipients rc, Map<String, Object> shared) {
+        return deliverTo(teamSlot(teamId, teamName), month, trigger, actor, force,
+                () -> summaryService.compute(month, teamId, shared),
+                () -> new Audience(rc.emails(), rc.droppedInactive()), "takım alıcı ayarı");
+    }
+
+    private Result deliverTo(Slot slot, YearMonth month, String trigger, String actor, boolean force,
+                             Supplier<ExecutiveSummary> computer, Supplier<Audience> audience, String recipientsHint) {
+        ExecutiveReportRow row = claim(slot, month, trigger, actor, force);
         if (row == null) {
-            ExecutiveSummaryReport cur = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null);
+            ExecutiveReportRow cur = slot.find(month);
             // SENDING / yarış → IN_PROGRESS; gönderilmiş → ALREADY_SENT; deneme tavanı dolmuş ya da başka pod yeniden talep
             // etmiş (koşullu UPDATE 0 satır) → NOT_CLAIMED.
             String cs = cur == null ? null : cur.getStatus();
-            String st = cs == null || ExecutiveSummaryReport.SENDING.equals(cs) ? "IN_PROGRESS"
-                    : ExecutiveSummaryReport.SENT.equals(cs) || ExecutiveSummaryReport.PARTIAL.equals(cs) ? "ALREADY_SENT"
+            String st = cs == null || ExecutiveReportRow.SENDING.equals(cs) ? "IN_PROGRESS"
+                    : ExecutiveReportRow.SENT.equals(cs) || ExecutiveReportRow.PARTIAL.equals(cs) ? "ALREADY_SENT"
                     : "NOT_CLAIMED";
-            log.info("Aylık yönetici özeti {} — {} ({}), gönderim yapılmadı", month, st, cur == null ? "-" : cur.getStatus());
+            log.info("Aylık yönetici özeti {} ({}) — {} ({}), gönderim yapılmadı", month, slot.label(), st,
+                    cur == null ? "-" : cur.getStatus());
             return new Result(st, month.toString(), 0, 0, cur == null ? null : cur.getStatus());
         }
         ExecutiveSummary summary;
         try {
-            summary = summaryService.compute(month);
+            summary = computer.get();
         } catch (Exception e) {
-            log.error("Aylık yönetici özeti {} hesaplanamadı: {}", month, e.toString(), e);
-            finish(row, ExecutiveSummaryReport.FAILED, 0, 0, "Özet hesaplanamadı: " + e.getClass().getSimpleName(), null, null);
-            return new Result(ExecutiveSummaryReport.FAILED, month.toString(), 0, 0, "summary");
+            log.error("Aylık yönetici özeti {} ({}) hesaplanamadı: {}", month, slot.label(), e.toString(), e);
+            finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, "Özet hesaplanamadı: " + e.getClass().getSimpleName(), null, null);
+            return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, "summary");
         }
-        Recipients rc = recipients();
+        Audience rc = audience.get();
         String subject = ExecutiveSummaryMail.subject(summary);
         if (rc.isEmpty()) {
             String why = "SKIPPED: alıcı yok" + (rc.droppedInactive() > 0 ? " (" + rc.droppedInactive() + " pasif kullanıcı adresi düştü)" : "");
-            trace("—", subject, null, why, TRIGGER);
-            finish(row, ExecutiveSummaryReport.NO_RECIPIENT, 0, 0, why, subject, summary);
-            log.warn("Aylık yönetici özeti {}: alıcı yok ({} ve global yönetici seçeneği) — gönderilmedi", month,
-                    ExecutiveSummarySettings.RECIPIENTS_KEY);
-            return new Result(ExecutiveSummaryReport.NO_RECIPIENT, month.toString(), 0, 0, why);
+            trace(slot, "—", subject, null, why, TRIGGER);
+            finish(slot, row, ExecutiveReportRow.NO_RECIPIENT, 0, 0, why, subject, summary);
+            log.warn("Aylık yönetici özeti {} ({}): alıcı yok ({}) — gönderilmedi", month, slot.label(), recipientsHint);
+            return new Result(ExecutiveReportRow.NO_RECIPIENT, month.toString(), 0, 0, why);
         }
         byte[] pdf = ExecutiveSummaryPdfWriter.render(summary);
-        String fileName = ExecutiveSummaryPdfWriter.fileName(month.toString());
+        String fileName = ExecutiveSummaryPdfWriter.fileName(summary);
         MailDoc.Mail mail = ExecutiveSummaryMail.build(summary, baseUrl(), ExecFormat.stamp(summaryService.now()),
                 pdf.length > 0 ? fileName : null);
         List<EmailNotificationService.MailAttachment> attachments = pdf.length > 0
@@ -268,13 +453,13 @@ public class ExecutiveSummaryDeliveryService {
             } catch (Exception e) {
                 st = "FAILED: " + e.getClass().getSimpleName();
             }
-            trace("BCC×" + chunk.size() + ": " + String.join(", ", chunk), subject, chunks == 1 ? mail.html() : null, st, TRIGGER);
+            trace(slot, "BCC×" + chunk.size() + ": " + String.join(", ", chunk), subject, chunks == 1 ? mail.html() : null, st, TRIGGER);
             statuses.merge(statusKey(st), chunk.size(), Integer::sum);
         }
         String detail = detail(statuses) + (pdf.length > 0 ? "" : " · PDF eki üretilemedi");
         String finalStatus = finalStatus(statuses);
-        finish(row, finalStatus, to.size(), chunks, detail, subject, summary);
-        log.info("Aylık yönetici özeti {} ({}): {} alıcı, {} dilim → {}", month, trigger, to.size(), chunks, detail);
+        finish(slot, row, finalStatus, to.size(), chunks, detail, subject, summary);
+        log.info("Aylık yönetici özeti {} ({} / {}): {} alıcı, {} dilim → {}", month, slot.label(), trigger, to.size(), chunks, detail);
         return new Result(finalStatus, month.toString(), to.size(), chunks, detail);
     }
 
@@ -290,11 +475,11 @@ public class ExecutiveSummaryDeliveryService {
     static String finalStatus(Map<String, Integer> statuses) {
         int ok = statuses.getOrDefault("SENT", 0) + statuses.getOrDefault("QUEUED_RETRY", 0);
         int total = statuses.values().stream().mapToInt(Integer::intValue).sum();
-        if (total == 0) return ExecutiveSummaryReport.FAILED;
-        if (ok == total) return ExecutiveSummaryReport.SENT;
-        if (ok > 0) return ExecutiveSummaryReport.PARTIAL;
-        if (statuses.getOrDefault("SKIPPED_DISABLED", 0) == total) return ExecutiveSummaryReport.SKIPPED_MAIL_OFF;
-        return ExecutiveSummaryReport.FAILED;
+        if (total == 0) return ExecutiveReportRow.FAILED;
+        if (ok == total) return ExecutiveReportRow.SENT;
+        if (ok > 0) return ExecutiveReportRow.PARTIAL;
+        if (statuses.getOrDefault("SKIPPED_DISABLED", 0) == total) return ExecutiveReportRow.SKIPPED_MAIL_OFF;
+        return ExecutiveReportRow.FAILED;
     }
 
     private static String detail(Map<String, Integer> statuses) {
@@ -303,42 +488,45 @@ public class ExecutiveSummaryDeliveryService {
         return sb.toString();
     }
 
-    /**
-     * Ay kaydını talep eder: yoksa INSERT (UNIQUE yıl×ay — yarışı kaybeden düşer), varsa koşullu UPDATE. Zamanlanmış yol
-     * yalnız yeniden denenebilir durumları alır; elle yol SENDING dışında her durumu alır. Talep edilemezse null.
-     */
+    /** Kurum ayı kaydını talep eder (eski imza — testler). */
     ExecutiveSummaryReport claim(YearMonth month, String trigger, String actor, boolean force) {
+        return (ExecutiveSummaryReport) claim(orgSlot, month, trigger, actor, force);
+    }
+
+    /**
+     * Ay kaydını talep eder: yoksa INSERT (UNIQUE — yarışı kaybeden düşer), varsa koşullu UPDATE. Zamanlanmış yol yalnız
+     * yeniden denenebilir durumları alır; elle yol SENDING dışında her durumu alır. Talep edilemezse null.
+     */
+    ExecutiveReportRow claim(Slot slot, YearMonth month, String trigger, String actor, boolean force) {
         String now = UTC_ISO.format(summaryService.now());
-        ExecutiveSummaryReport row = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null);
+        ExecutiveReportRow row = slot.find(month);
         if (row == null) {
-            ExecutiveSummaryReport r = new ExecutiveSummaryReport();
-            r.setReportYear(month.getYear());
-            r.setReportMonth(month.getMonthValue());
-            r.setStatus(ExecutiveSummaryReport.SENDING);
+            ExecutiveReportRow r = slot.newRow(month);
+            r.setStatus(ExecutiveReportRow.SENDING);
             r.setAttempts(1);
             r.setTriggerKind(trigger);
             r.setActor(actor);
             r.setClaimedAt(now);
             r.setCreatedAt(now);
             try {
-                return reportRepo.saveAndFlush(r);
+                return slot.saveAndFlush(r);
             } catch (DataIntegrityViolationException e) {
-                log.info("Aylık yönetici özeti {}: kayıt başka pod tarafından talep edildi", month);
+                log.info("Aylık yönetici özeti {} ({}): kayıt başka pod tarafından talep edildi", month, slot.label());
                 return null;
             }
         }
         String status = row.getStatus();
-        if (ExecutiveSummaryReport.SENDING.equals(status)) return null;
+        if (ExecutiveReportRow.SENDING.equals(status)) return null;
         if (!force && (!RETRYABLE.contains(status) || attempts(row) >= MAX_ATTEMPTS)) return null;
         int prevAttempts = attempts(row);
         if (row.getAttempts() == null) {
             // Eski/boş deneme sayısı: koşullu UPDATE'in eşitliği null'da çalışmaz → önce sıfırla.
             row.setAttempts(0);
-            reportRepo.saveAndFlush(row);
+            slot.saveAndFlush(row);
         }
-        int n = reportRepo.reclaim(row.getId(), status, prevAttempts, prevAttempts + 1, now, trigger, actor);
+        int n = slot.reclaim(row.getId(), status, prevAttempts, prevAttempts + 1, now, trigger, actor);
         if (n != 1) return null;
-        row.setStatus(ExecutiveSummaryReport.SENDING);
+        row.setStatus(ExecutiveReportRow.SENDING);
         row.setAttempts(prevAttempts + 1);
         row.setClaimedAt(now);
         row.setTriggerKind(trigger);
@@ -346,7 +534,7 @@ public class ExecutiveSummaryDeliveryService {
         return row;
     }
 
-    private void finish(ExecutiveSummaryReport row, String status, int recipients, int chunks, String detail,
+    private void finish(Slot slot, ExecutiveReportRow row, String status, int recipients, int chunks, String detail,
                         String subject, ExecutiveSummary summary) {
         try {
             row.setStatus(status);
@@ -359,13 +547,13 @@ public class ExecutiveSummaryDeliveryService {
                 row.setSummaryJson(ExecutiveSummaryService.toJson(summary));
             }
             row.setSentAt(UTC_ISO.format(summaryService.now()));
-            reportRepo.save(row);
+            slot.save(row);
         } catch (Exception e) {
-            log.warn("Aylık yönetici özeti kaydı yazılamadı: {}", e.toString());
+            log.warn("Aylık yönetici özeti kaydı yazılamadı ({}): {}", slot.label(), e.toString());
         }
     }
 
-    /** Kapalıyken zamanlanmış koşu: ayın kaydı yoksa SKIPPED_DISABLED (iz). */
+    /** Kapalıyken zamanlanmış koşu: kurum ayının kaydı yoksa SKIPPED_DISABLED (iz). */
     void recordDisabled(YearMonth month) {
         try {
             if (reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).isPresent()) return;
@@ -416,11 +604,20 @@ public class ExecutiveSummaryDeliveryService {
         }
     }
 
-    /** Test postası: yalnız {@code email}'e, ay kaydı YAZILMAZ; iz {@code EXECUTIVE_SUMMARY_TEST}. */
+    /** Kurum test postası: yalnız {@code email}'e, ay kaydı YAZILMAZ; iz {@code EXECUTIVE_SUMMARY_TEST}. */
     public TestResult sendTest(YearMonth month, String email) {
-        ExecutiveSummary summary = summaryService.compute(month);
+        return sendTestOf(orgSlot, summaryService.compute(month), month, email);
+    }
+
+    /** Takım test postası: takım özeti, yalnız isteyenin {@code email}'ine; ay kaydı YAZILMAZ. */
+    public TestResult sendTeamTest(Long teamId, YearMonth month, String email) {
+        String name = teamsAvailable() ? teamService.teamName(teamId) : null;
+        return sendTestOf(teamSlot(teamId, name), summaryService.compute(month, teamId, null), month, email);
+    }
+
+    private TestResult sendTestOf(Slot slot, ExecutiveSummary summary, YearMonth month, String email) {
         byte[] pdf = ExecutiveSummaryPdfWriter.render(summary);
-        String fileName = ExecutiveSummaryPdfWriter.fileName(month.toString());
+        String fileName = ExecutiveSummaryPdfWriter.fileName(summary);
         MailDoc.Mail mail = ExecutiveSummaryMail.build(summary, baseUrl(), ExecFormat.stamp(summaryService.now()),
                 pdf.length > 0 ? fileName : null);
         String subject = "[TEST] " + ExecutiveSummaryMail.subject(summary);
@@ -432,7 +629,7 @@ public class ExecutiveSummaryDeliveryService {
         } catch (Exception e) {
             st = "FAILED: " + e.getClass().getSimpleName();
         }
-        trace(email, subject, mail.html(), st, TRIGGER_TEST);
+        trace(slot, email, subject, mail.html(), st, TRIGGER_TEST);
         String key = statusKey(st);
         return new TestResult("SENT".equals(key) || "QUEUED_RETRY".equals(key), st, email);
     }
@@ -443,18 +640,7 @@ public class ExecutiveSummaryDeliveryService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (ExecutiveSummaryReport r : reportRepo.findAllByOrderByReportYearDescReportMonthDesc(
                 PageRequest.of(0, Math.max(1, Math.min(limit, 36))))) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("month", r.getReportYear() == null || r.getReportMonth() == null ? null
-                    : YearMonth.of(r.getReportYear(), r.getReportMonth()).toString());
-            m.put("status", r.getStatus());
-            m.put("summary_status", r.getSummaryStatus());
-            m.put("trigger", r.getTriggerKind());
-            m.put("attempts", r.getAttempts());
-            m.put("recipients", r.getRecipientCount());
-            m.put("chunks", r.getChunkCount());
-            m.put("detail", r.getDetail());
-            m.put("sent_at", r.getSentAt());
-            out.add(m);
+            out.add(ExecutiveSummaryTeamService.historyRow(r));
         }
         return out;
     }
@@ -489,14 +675,19 @@ public class ExecutiveSummaryDeliveryService {
         return out;
     }
 
+    /** Takımların ortak zamanlaması (takım ayar ekranı — kurum cron'u ile aynı). */
+    public List<String> nextRuns() {
+        return nextRuns(settings.cron(), 3);
+    }
+
     // ── İz ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-    private void trace(String recipients, String subject, String html, String status, String trigger) {
+    private void trace(Slot slot, String recipients, String subject, String html, String status, String trigger) {
         try {
             NotificationLog n = new NotificationLog();
             n.setAlertEventId(0L);                       // rapor postasının alarmı yok (diğer raporlarla aynı nöbetçi)
             n.setRecipientEmail(clip(recipients, 250));
-            n.setRecipientName("Yönetici Özeti");
+            n.setRecipientName(slot.traceName());
             n.setRecipientRole("REPORT");
             n.setSubject(subject);
             n.setMessage(html);

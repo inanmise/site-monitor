@@ -8,8 +8,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.text.Collator;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,9 +46,17 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  * İzleme → takım/grup eşlemesi İzleme Panosu'nun kurum geneli (bellekli) satırlarından; Durum İzleme satırları envanterin
  * SY takımı ve grubundan. Silinmiş izlemelerin özet satırları dahil EDİLMEZ (sayısı notta).
  *
+ * <h2>Takım kapsamı (2026-10-10)</h2>
+ * Bir izleme takımın kapsamındadır ⇔ kendi takımı ({@code team_id}) kapsam takımıdır YA DA envanter türevidir (Durum
+ * İzleme ya da envanterden türeyen Port) ve host'u kapsamdaki envanterdedir ({@link ExecutiveSummaryContext#domainInScope}
+ * — SY ya da UG). Kurum geneli izleme toplamları ve günlük seri koşu boyu paylaşılır ({@link ExecutiveSummaryContext#shared});
+ * takımın günlük serisi izleme × İstanbul günü toplamından (koşu başına TEK sorgu) bellekte süzülür. Takımda "takımlara
+ * göre" tablosu ve takım sayısı hükmü yerine hizmet hükmü ve "en düşük erişilebilirlikli izlemeler" tablosu gelir;
+ * silinmiş izlemeler bir takıma bağlanamadığı için takım özetinde not düşülmez.
+ *
  * <h2>Sorgu bütçesi</h2>
- * İki toplu sorgu (izleme başına cari + önceki ay toplamı; kurum geneli saat kovaları → İstanbul günleri) + gerekirse
- * aynı ikisi günlük özete. Pano satırları ve envanter paylaşılan bellekten.
+ * İki toplu sorgu (izleme başına cari + önceki ay toplamı; kurum geneli saat kovaları → İstanbul günleri — takım kapsamında
+ * izleme × gün) + gerekirse aynı ikisi günlük özete. Pano satırları ve envanter paylaşılan bellekten.
  */
 @Slf4j
 @Component
@@ -87,6 +97,42 @@ public class AvailabilitySection implements ExecutiveSummarySection {
                 + " WHERE " + col + " >= ? AND " + col + " < ? AND monitor_type IN " + IN_TYPES + " GROUP BY " + col;
     }
 
+    /**
+     * Takım kapsamının günlük serisi: izleme × kova toplamları — params: from, to. {@code bucketExpr} kova ifadesi,
+     * {@code nextDayExpr} kovanın İstanbul'da ertesi güne düşüp düşmediği (1/0; sabit {@code 0} ise gruplamaya girmez).
+     */
+    static String perMonitorBucketSql(String table, String col, String bucketExpr, String nextDayExpr) {
+        boolean constant = "0".equals(nextDayExpr);
+        return "SELECT monitor_type, monitor_key, " + bucketExpr + " AS bucket, " + nextDayExpr + " AS next_day, "
+                + "SUM(total_checks) AS total, SUM(up_checks) AS up FROM " + table + " WHERE " + col + " >= ? AND " + col
+                + " < ? AND monitor_type IN " + IN_TYPES + " GROUP BY monitor_type, monitor_key, " + bucketExpr
+                + (constant ? "" : ", " + nextDayExpr);
+    }
+
+    /**
+     * Saatlik özetten izleme × İstanbul günü: UTC günü ({@code substr(…,1,10)}) + İstanbul'da ertesi güne düşen saat mi
+     * ({@code saat ≥ boundaryHour}). Ay boyunca sabit, tam saatlik, pozitif ofset gerekir ({@link #dayBoundaryHour});
+     * değilse {@code boundaryHour < 0} → saat kovası olduğu gibi döner (satır çok, sonuç aynı).
+     */
+    static String perMonitorDaySqlHourly(int boundaryHour) {
+        if (boundaryHour < 0) return perMonitorBucketSql("monitor_check_hourly", "hour_bucket", "hour_bucket", "0");
+        String late = "CASE WHEN substr(hour_bucket, 12, 2) >= '" + String.format(Locale.ROOT, "%02d", boundaryHour)
+                + "' THEN 1 ELSE 0 END";
+        return perMonitorBucketSql("monitor_check_hourly", "hour_bucket", "substr(hour_bucket, 1, 10)", late);
+    }
+
+    /**
+     * {@code zone}'da gün sınırına denk gelen UTC saati (UTC+3 → 21: 21:00Z ve sonrası ertesi gündür). Ofset ay boyunca
+     * değişiyorsa, tam saat değilse ya da negatifse -1 (çağıran saat kovasına düşer). UTC+0 → 24 (hiçbir saat ertesi gün değil).
+     */
+    static int dayBoundaryHour(ZoneId zone, Instant from, Instant to) {
+        ZoneOffset a = zone.getRules().getOffset(from);
+        ZoneOffset b = zone.getRules().getOffset(to.minusSeconds(1));
+        int secs = a.getTotalSeconds();
+        if (!a.equals(b) || secs < 0 || secs % 3600 != 0 || secs >= 86_400) return -1;
+        return 24 - secs / 3600;
+    }
+
     private final MonitoringOverviewService overviewService;
     private final JdbcTemplate jdbc;
 
@@ -94,13 +140,32 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     @Override public int order() { return ORDER; }
     @Override public String title() { return TITLE; }
 
-    /** İzleme kimliği (rollup anahtarı {@code TÜR|anahtar}) → takım/grup. */
-    record MonitorRef(String name, String type, Long teamId, String teamName, String group, boolean active) { }
+    /**
+     * İzleme kimliği (rollup anahtarı {@code TÜR|anahtar}) → takım/grup. {@code host} + {@code derived}: envanter türevi
+     * (Durum İzleme, envanterden türeyen Port) satırın host'u — takım kapsamında SY ya da UG eşlemesi için.
+     */
+    record MonitorRef(String name, String type, Long teamId, String teamName, String group, boolean active,
+                      String host, boolean derived) {
+        MonitorRef(String name, String type, Long teamId, String teamName, String group, boolean active) {
+            this(name, type, teamId, teamName, group, active, null, false);
+        }
+    }
 
-    /** Rollup okuması: anahtar → [cur_total, cur_up, prev_total, prev_up]; gün → [total, up]. */
-    record Rollup(Map<String, long[]> byKey, Map<LocalDate, long[]> daily, String source, boolean approximate) {
+    /**
+     * Rollup okuması: anahtar → [cur_total, cur_up, prev_total, prev_up]; gün → [total, up] (kurum geneli seri).
+     * {@code monitorDays}: takım kapsamında izleme anahtarı → İstanbul günü → [total, up] (kurum kapsamında null; takım
+     * serisi bundan, kapsamdaki izlemelerle bellekte kurulur).
+     */
+    record Rollup(Map<String, long[]> byKey, Map<LocalDate, long[]> daily, String source, boolean approximate,
+                  Map<String, Map<LocalDate, long[]>> monitorDays) {
+        Rollup(Map<String, long[]> byKey, Map<LocalDate, long[]> daily, String source, boolean approximate) {
+            this(byKey, daily, source, approximate, null);
+        }
         static Rollup empty() { return new Rollup(Map.of(), Map.of(), "none", false); }
     }
+
+    /** Koşu boyu paylaşılan ham veri anahtarlarının öneki ({@link ExecutiveSummaryContext#shared}). */
+    static final String SHARED = "availability.";
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
@@ -111,47 +176,110 @@ public class AvailabilitySection implements ExecutiveSummarySection {
 
     // ── Veri okuma (sabit sorgu sayısı) ─────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Kurum geneli ham toplamlar koşu boyu paylaşılır: aynı gönderim koşusundaki kurum + takım özetleri izleme toplamını
+     * TEK kez okur. Kurum kapsamı günlük seriyi kurum geneli kovadan, takım kapsamı izleme × günden (koşu başına bir kez)
+     * kurar; takım süzmesi {@link #evaluate}'te bellekte.
+     */
     Rollup loadRollup(ExecutiveSummaryContext ctx) {
         String cur = ExecutiveSummaryContext.HOUR_BUCKET.format(ctx.from());
         String prev = ExecutiveSummaryContext.HOUR_BUCKET.format(ctx.prevFrom());
         String end = ExecutiveSummaryContext.HOUR_BUCKET.format(ctx.to());
+        boolean team = ctx.teamScoped();
         try {
-            Map<String, long[]> byKey = perMonitor("monitor_check_hourly", "hour_bucket", cur, prev, end);
+            Map<String, long[]> byKey = ctx.shared(SHARED + "hourly.per_monitor|" + cur,
+                    () -> perMonitor("monitor_check_hourly", "hour_bucket", cur, prev, end));
             boolean hasCur = byKey.values().stream().anyMatch(v -> v[0] > 0);
             if (hasCur) {
-                Map<LocalDate, long[]> daily = new TreeMap<>();
-                for (Map<String, Object> r : jdbc.queryForList(perBucketSql("monitor_check_hourly", "hour_bucket"), cur, end)) {
-                    LocalDate day = istDayOfHour(String.valueOf(r.get("bucket")));
-                    if (day == null) continue;
-                    long[] acc = daily.computeIfAbsent(day, d -> new long[2]);
-                    acc[0] += asLong(r.get("total"));
-                    acc[1] += asLong(r.get("up"));
+                if (team) {
+                    int boundary = dayBoundaryHour(ExecutiveSummaryContext.IST, ctx.from(), ctx.to());
+                    Map<String, Map<LocalDate, long[]>> days = ctx.shared(SHARED + "hourly.monitor_days|" + cur,
+                            () -> monitorDays(perMonitorDaySqlHourly(boundary), boundary < 0 ? DayMode.HOUR : DayMode.SPLIT,
+                                    cur, end));
+                    return new Rollup(byKey, Map.of(), "hourly_rollup", false, days);
                 }
+                Map<LocalDate, long[]> daily = ctx.shared(SHARED + "hourly.org_days|" + cur, () -> {
+                    Map<LocalDate, long[]> out = new TreeMap<>();
+                    for (Map<String, Object> r : jdbc.queryForList(perBucketSql("monitor_check_hourly", "hour_bucket"), cur, end)) {
+                        LocalDate day = istDayOfHour(String.valueOf(r.get("bucket")));
+                        if (day == null) continue;
+                        long[] acc = out.computeIfAbsent(day, d -> new long[2]);
+                        acc[0] += asLong(r.get("total"));
+                        acc[1] += asLong(r.get("up"));
+                    }
+                    return out;
+                });
                 return new Rollup(byKey, daily, "hourly_rollup", false);
             }
             // Saatlik özet yok (saklama dışı / henüz yazılmadı) → günlük özet, UTC gün sınırları (yaklaşık).
             String dCur = ctx.month().atDay(1).toString();
             String dPrev = ctx.month().minusMonths(1).atDay(1).toString();
             String dEnd = ctx.month().plusMonths(1).atDay(1).toString();
-            Map<String, long[]> dByKey = perMonitor("monitor_check_daily", "day", dCur, dPrev, dEnd);
+            Map<String, long[]> dByKey = ctx.shared(SHARED + "daily.per_monitor|" + dCur,
+                    () -> perMonitor("monitor_check_daily", "day", dCur, dPrev, dEnd));
             if (dByKey.values().stream().noneMatch(v -> v[0] > 0)) {
                 // Günlükte de cari ay yok → veri yok (önceki ay saatlikte olabilir; sonuç yine "veri yok" der).
                 return new Rollup(byKey, Map.of(), byKey.isEmpty() ? "none" : "hourly_rollup", false);
             }
-            Map<LocalDate, long[]> daily = new TreeMap<>();
-            for (Map<String, Object> r : jdbc.queryForList(perBucketSql("monitor_check_daily", "day"), dCur, dEnd)) {
-                try {
-                    LocalDate day = LocalDate.parse(String.valueOf(r.get("bucket")).substring(0, 10));
-                    long[] acc = daily.computeIfAbsent(day, d -> new long[2]);
-                    acc[0] += asLong(r.get("total"));
-                    acc[1] += asLong(r.get("up"));
-                } catch (Exception ignored) { /* bozuk kova atlanır */ }
+            if (team) {
+                Map<String, Map<LocalDate, long[]>> days = ctx.shared(SHARED + "daily.monitor_days|" + dCur,
+                        () -> monitorDays(perMonitorBucketSql("monitor_check_daily", "day", "day", "0"), DayMode.DAY,
+                                dCur, dEnd));
+                return new Rollup(dByKey, Map.of(), "daily_rollup", true, days);
             }
+            Map<LocalDate, long[]> daily = ctx.shared(SHARED + "daily.org_days|" + dCur, () -> {
+                Map<LocalDate, long[]> out = new TreeMap<>();
+                for (Map<String, Object> r : jdbc.queryForList(perBucketSql("monitor_check_daily", "day"), dCur, dEnd)) {
+                    try {
+                        LocalDate day = LocalDate.parse(String.valueOf(r.get("bucket")).substring(0, 10));
+                        long[] acc = out.computeIfAbsent(day, d -> new long[2]);
+                        acc[0] += asLong(r.get("total"));
+                        acc[1] += asLong(r.get("up"));
+                    } catch (Exception ignored) { /* bozuk kova atlanır */ }
+                }
+                return out;
+            });
             return new Rollup(dByKey, daily, "daily_rollup", true);
         } catch (Exception e) {
             log.debug("Yönetici özeti: erişilebilirlik özeti okunamadı: {}", e.toString());
             return Rollup.empty();
         }
+    }
+
+    /** Kova → İstanbul günü çevirisi: SPLIT = UTC günü + ertesi gün bayrağı, HOUR = saat kovası, DAY = gün (UTC, yaklaşık). */
+    enum DayMode { SPLIT, HOUR, DAY }
+
+    /**
+     * İzleme × İstanbul günü toplamları (takım serisi için, koşu başına bir kez). Satırlar akış hâlinde işlenir (harita
+     * listesi kurulmaz); bozuk kova atlanır.
+     */
+    Map<String, Map<LocalDate, long[]>> monitorDays(String sql, DayMode mode, String from, String to) {
+        Map<String, Map<LocalDate, long[]>> out = new HashMap<>();
+        jdbc.query(sql, rs -> {
+            String type = rs.getString("monitor_type");
+            String key = rs.getString("monitor_key");
+            String bucket = rs.getString("bucket");
+            if (type == null || key == null || bucket == null) return;
+            LocalDate day;
+            try {
+                day = switch (mode) {
+                    case SPLIT -> {
+                        LocalDate d = LocalDate.parse(bucket.substring(0, 10));
+                        yield rs.getInt("next_day") == 1 ? d.plusDays(1) : d;
+                    }
+                    case HOUR -> istDayOfHour(bucket);
+                    case DAY -> LocalDate.parse(bucket.substring(0, 10));
+                };
+            } catch (Exception ignored) {
+                return;                                              // bozuk kova atlanır
+            }
+            if (day == null) return;
+            long[] acc = out.computeIfAbsent(type + "|" + key.trim(), k -> new TreeMap<>())
+                    .computeIfAbsent(day, d -> new long[2]);
+            acc[0] += rs.getLong("total");
+            acc[1] += rs.getLong("up");
+        }, from, to);
+        return out;
     }
 
     private Map<String, long[]> perMonitor(String table, String col, String cur, String prev, String end) {
@@ -177,8 +305,30 @@ public class AvailabilitySection implements ExecutiveSummarySection {
         }
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * İzleme anahtarı → takım/grup (kurum geneli; takım süzmesi {@link #inScope} ile). Durum İzleme satırları SÜZÜLMEMİŞ
+     * envanterden kurulur: takım kapsamında kapsam dışı bir alan adının kontrolleri "silinmiş izleme" sayılmasın.
+     */
     Map<String, MonitorRef> monitorRefs(ExecutiveSummaryContext ctx) {
+        Map<String, MonitorRef> out = new HashMap<>(ctx.shared(SHARED + "overview_refs", this::overviewRefs));
+        // Durum İzleme (sertifika envanteri erişimi) — anahtar alan adı; takım/grup envanterden.
+        Map<Long, String> names = safeTeamNames(ctx);
+        try {
+            for (ExecutiveSummaryContext.InventoryRow inv : ctx.allInventory().values()) {
+                if (inv.domain() == null) continue;
+                String group = inv.groupName() != null && !inv.groupName().isBlank() ? inv.groupName().trim() : null;
+                out.put("UPTIME|" + inv.domain(), new MonitorRef(inv.domain(), "uptime", inv.teamId(),
+                        inv.teamId() == null ? null : names.get(inv.teamId()), group, true, inv.domain(), true));
+            }
+        } catch (Exception e) {
+            log.debug("Yönetici özeti: envanter okunamadı: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** İzleme Panosu'nun kurum geneli satırları → izleme eşlemesi (koşu boyu paylaşılır; hata → boş, bölüm düşmez). */
+    @SuppressWarnings("unchecked")
+    private Map<String, MonitorRef> overviewRefs() {
         Map<String, MonitorRef> out = new HashMap<>();
         try {
             Map<String, Object> ov = overviewService.build(TtlMemo.scopeKey(true, null), t -> true, true,
@@ -191,25 +341,26 @@ public class AvailabilitySection implements ExecutiveSummarySection {
                 if (rt == null || r.get("id") == null) continue;
                 String group = r.get("group_name") instanceof String g && !g.isBlank() ? g.trim() : null;
                 boolean active = Boolean.TRUE.equals(r.get("active")) && !Boolean.TRUE.equals(r.get("inventory_inactive"));
+                // Port'ta standalone=false → envanter türevi satır (host'u envanter alan adı); diğer türlerde null.
+                boolean derived = Boolean.FALSE.equals(r.get("standalone"));
                 out.put(rt + "|" + r.get("id"), new MonitorRef(str(r.get("name")), String.valueOf(r.get("type")),
-                        asLongObj(r.get("team_id")), str(r.get("team_name")), group, active));
+                        asLongObj(r.get("team_id")), str(r.get("team_name")), group, active, str(r.get("target")), derived));
             }
         } catch (Exception e) {
             log.debug("Yönetici özeti: pano satırları okunamadı: {}", e.toString());
         }
-        // Durum İzleme (sertifika envanteri erişimi) — anahtar alan adı; takım/grup envanterden.
-        Map<Long, String> names = safeTeamNames(ctx);
-        try {
-            for (ExecutiveSummaryContext.InventoryRow inv : ctx.inventory().values()) {
-                if (inv.domain() == null) continue;
-                String group = inv.groupName() != null && !inv.groupName().isBlank() ? inv.groupName().trim() : null;
-                out.put("UPTIME|" + inv.domain(), new MonitorRef(inv.domain(), "uptime", inv.teamId(),
-                        inv.teamId() == null ? null : names.get(inv.teamId()), group, true));
-            }
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: envanter okunamadı: {}", e.toString());
-        }
         return out;
+    }
+
+    /**
+     * İzleme kapsamda mı: kurum geneli → hepsi; takım → kendi takımı kapsam takımı YA DA envanter türevi ve host'u
+     * kapsamdaki envanterde (SY ya da UG).
+     */
+    static boolean inScope(ExecutiveSummaryContext ctx, MonitorRef ref) {
+        if (!ctx.teamScoped()) return true;
+        if (ref == null) return false;
+        if (ref.teamId() != null && ctx.teamInScope(ref.teamId())) return true;
+        return ref.derived() && ctx.domainInScope(ref.host());
     }
 
     private static Map<Long, String> safeTeamNames(ExecutiveSummaryContext ctx) {
@@ -226,6 +377,7 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     private static final class Acc {
         final String key;
         String name;
+        String type;
         Long teamId;
         String teamName;
         String group;
@@ -252,6 +404,7 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     }
 
     SectionResult evaluate(ExecutiveSummaryContext ctx, Rollup rollup, Map<String, MonitorRef> monitors) {
+        if (ctx.teamScoped()) return evaluateTeam(ctx, rollup, monitors);
         double target = ctx.availabilityTarget();
         SectionResult.Builder b = SectionResult.builder(KEY, ORDER, TITLE).headlineKpi("org_availability");
         Acc org = new Acc("org");
@@ -378,6 +531,13 @@ public class AvailabilitySection implements ExecutiveSummarySection {
                 "Bu ay ölçülen takım yok."));
 
         // ── En kötü hizmetler ──
+        b.table(worstServices(svcList, target));
+        b.data("teams_measured", teamsMeasured).data("teams_below", teamsBelow);
+        return b.build();
+    }
+
+    /** En düşük erişilebilirlikli hizmetler (en az {@value #MIN_SERVICE_CHECKS} kontrol, artan) — kurum ve takım aynı tablo. */
+    private static Table worstServices(List<Acc> svcList, double target) {
         List<Acc> worst = new ArrayList<>();
         for (Acc s : svcList) if (s.cur() != null && s.curTotal >= MIN_SERVICE_CHECKS) worst.add(s);
         worst.sort(Comparator.comparing((Acc a) -> a.cur()).thenComparing(a -> -a.curTotal));
@@ -394,16 +554,171 @@ public class AvailabilitySection implements ExecutiveSummarySection {
             r.put("met", s.cur() >= target ? T_OK : T_BAD);
             worstRows.add(r);
         }
-        b.table(new Table("worst_services", "En düşük erişilebilirlikli hizmetler", List.of(
+        return new Table("worst_services", "En düşük erişilebilirlikli hizmetler", List.of(
                 new Column("service", "Hizmet", "service"),
                 new Column("team", "Takım", "team"),
                 new Column("monitors", "İzleme", "int"),
                 new Column("checks", "Kontrol", "int"),
                 new Column("availability", "Erişilebilirlik", "pct"),
                 new Column("met", "Hedef", "status")),
-                worstRows, worst.size(), "En az " + MIN_SERVICE_CHECKS + " kontrolü olan hizmet yok."));
-        b.data("teams_measured", teamsMeasured).data("teams_below", teamsBelow);
+                worstRows, worst.size(), "En az " + MIN_SERVICE_CHECKS + " kontrolü olan hizmet yok.");
+    }
+
+    /**
+     * TAKIM kapsamı: yalnız {@link #inScope} izlemeler. Hükümler ve ana gösterge "Takım …" kodlarıyla; "takımlara göre"
+     * tablosu ve takım sayısı yerine hizmet hükmü + en düşük erişilebilirlikli İZLEMELER. Günlük seri izleme × günden
+     * (kapsamdaki izlemeler). Silinmiş izlemeler bir takıma bağlanamaz → sayılmaz, not da düşülmez.
+     */
+    private SectionResult evaluateTeam(ExecutiveSummaryContext ctx, Rollup rollup, Map<String, MonitorRef> monitors) {
+        double target = ctx.availabilityTarget();
+        SectionResult.Builder b = SectionResult.builder(KEY, ORDER, TITLE).headlineKpi("team_availability");
+        Acc team = new Acc("team");
+        Map<String, Acc> services = new LinkedHashMap<>();
+        List<Acc> monitorAccs = new ArrayList<>();
+        for (Map.Entry<String, long[]> e : rollup.byKey().entrySet()) {
+            long[] v = e.getValue();
+            if (v[0] <= 0 && v[2] <= 0) continue;
+            MonitorRef ref = monitors.get(e.getKey());
+            if (!inScope(ctx, ref)) continue;                // silinmiş (ref yok) ya da başka takımın izlemesi
+            team.add(v);
+            String tk = ref.teamId() == null ? "-" : String.valueOf(ref.teamId());
+            String sk = tk + "|" + (ref.group() == null ? "" : ref.group().toLowerCase(Locale.ROOT));
+            Acc s = services.computeIfAbsent(sk, k -> new Acc(k));
+            s.teamId = ref.teamId();
+            if (s.teamName == null) s.teamName = ref.teamName();
+            if (s.group == null) s.group = ref.group();
+            s.add(v);
+            Acc m = new Acc(e.getKey());
+            m.name = ref.name();
+            m.type = ref.type();
+            m.teamId = ref.teamId();
+            m.teamName = ref.teamName();
+            m.group = ref.group();
+            m.add(v);
+            monitorAccs.add(m);
+        }
+        int activeNoData = 0;
+        for (Map.Entry<String, MonitorRef> m : monitors.entrySet()) {
+            if (!m.getValue().active() || !inScope(ctx, m.getValue())) continue;
+            long[] v = rollup.byKey().get(m.getKey());
+            if (v == null || v[0] <= 0) activeNoData++;
+        }
+        // Günlük seri: izleme × gün toplamından YALNIZ kapsamdaki izlemeler (kurum serisi takımda asla gösterilmez)
+        Map<LocalDate, long[]> daily = new TreeMap<>();
+        if (rollup.monitorDays() != null) {
+            for (Map.Entry<String, Map<LocalDate, long[]>> e : rollup.monitorDays().entrySet()) {
+                if (!inScope(ctx, monitors.get(e.getKey()))) continue;
+                for (Map.Entry<LocalDate, long[]> d : e.getValue().entrySet()) {
+                    long[] acc = daily.computeIfAbsent(d.getKey(), k -> new long[2]);
+                    acc[0] += d.getValue()[0];
+                    acc[1] += Math.min(d.getValue()[1], d.getValue()[0]);
+                }
+            }
+        }
+
+        Double cur = team.cur(), prev = team.prev();
+        b.data("target", target).data("source", rollup.source()).data("approximate", rollup.approximate())
+                .data("team_availability", cur).data("prev_availability", prev)
+                .data("daily", dailySeries(daily));
+        teamNotes(b, ctx, rollup);
+        if (cur == null) {
+            b.status(NO_DATA).verdict("TEAM_NO_DATA", T_NEUTRAL, "Bu ay takımın erişilebilirlik verisi yok: ölçülen "
+                    + "izlemesi yok ya da gece özeti henüz yazılmamış.");
+            b.kpi(new Kpi("team_availability", "Takım erişilebilirliği", null, "pct", T_NEUTRAL,
+                    "Hedef " + ExecFormat.pct(target, 3), List.of(pct(target)), null, null, null));
+            return b.build();
+        }
+
+        List<Acc> svcList = new ArrayList<>(services.values());
+        int svcMeasured = 0, svcMeeting = 0;
+        for (Acc s : svcList) {
+            if (s.cur() == null) continue;
+            svcMeasured++;
+            if (s.cur() >= target) svcMeeting++;
+        }
+        int svcBelow = svcMeasured - svcMeeting;
+        boolean met = cur >= target;
+        Double delta = prev == null ? null : round2(cur - prev);
+        Double budgetBurn = target >= 100 ? null : round2((100 - cur) / (100 - target) * 100);
+        double downtime = (100 - cur) / 100.0 * ctx.elapsedMinutes();
+
+        b.status(!met ? CRITICAL : svcBelow > 0 ? ATTENTION : OK);
+        if (met) {
+            b.verdict("TEAM_MET", T_OK, "Takım erişilebilirliği " + ExecFormat.pct(cur, 3) + " — hedef "
+                    + ExecFormat.pct(target, 3) + " karşılandı.", pct(cur), pct(target));
+        } else {
+            b.verdict("TEAM_MISSED", T_BAD, "Takım erişilebilirliği " + ExecFormat.pct(cur, 3) + " — hedef "
+                    + ExecFormat.pct(target, 3) + " karşılanmadı (" + ExecFormat.num(target - cur, 3) + " puan altında).",
+                    pct(cur), pct(target), num(round3(target - cur)));
+        }
+        if (svcBelow > 0) {
+            b.verdict("SERVICES_BELOW", T_WARN, svcMeasured + " hizmetten " + svcBelow + " tanesi hedefin altında.",
+                    svcMeasured, svcBelow);
+        } else {
+            b.verdict("SERVICES_ALL_MET", T_OK, "Ölçülen " + svcMeasured + " hizmetin tamamı hedefi karşıladı.", svcMeasured);
+        }
+
+        b.kpi(new Kpi("team_availability", "Takım erişilebilirliği", cur, "pct", met ? T_OK : T_BAD,
+                "Hedef " + ExecFormat.pct(target, 3), List.of(pct(target)), delta, "pp",
+                delta == null ? null : delta >= 0 ? T_OK : T_BAD));
+        b.kpi(new Kpi("team_target", "Erişilebilirlik hedefi", target, "pct", T_NEUTRAL,
+                "Ayarlardaki ortak hedef", List.of(), null, null, null));
+        b.kpi(new Kpi("services_meeting", "Hedefi karşılayan hizmet", svcMeeting, "int",
+                svcMeeting < svcMeasured ? T_WARN : T_OK, svcMeasured + " hizmetten", List.of(svcMeasured), null, null, null));
+        b.kpi(new Kpi("budget_used", "Hata bütçesi kullanımı", budgetBurn, "pct",
+                budgetBurn == null ? T_NEUTRAL : budgetBurn > 100 ? T_BAD : budgetBurn > 75 ? T_WARN : T_OK,
+                "Hedefin izin verdiği kesintinin kullanılan payı", List.of(), null, null, null));
+        b.kpi(new Kpi("downtime_equiv", "Eşdeğer kesinti", round1(downtime), "minutes", T_NEUTRAL,
+                "Kontrol ağırlıklı yaklaşık süre", List.of(), null, null, null));
+        b.kpi(new Kpi("monitors_measured", "Ölçülen izleme", team.monitors, "int", T_NEUTRAL,
+                activeNoData + " aktif izlemede veri yok", List.of(activeNoData), null, null, null));
+
+        b.table(worstServices(svcList, target));
+
+        // ── En düşük erişilebilirlikli izlemeler (takımın kendi kırılımı) ──
+        List<Acc> worst = new ArrayList<>();
+        for (Acc m : monitorAccs) if (m.cur() != null && m.curTotal >= MIN_SERVICE_CHECKS) worst.add(m);
+        worst.sort(Comparator.comparing((Acc a) -> a.cur()).thenComparing(a -> -a.curTotal)
+                .thenComparing(a -> a.key));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Acc m : worst.subList(0, Math.min(WORST_LIMIT, worst.size()))) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("monitor", m.name);
+            r.put("monitor_type", m.type);
+            r.put("service", m.group);
+            r.put("ungrouped", m.group == null);
+            r.put("checks", m.curTotal);
+            r.put("availability", m.cur());
+            r.put("met", m.cur() >= target ? T_OK : T_BAD);
+            rows.add(r);
+        }
+        b.table(new Table("worst_monitors", "En düşük erişilebilirlikli izlemeler", List.of(
+                new Column("monitor", "İzleme", "text"),
+                new Column("monitor_type", "Tür", "monitor_type"),
+                new Column("service", "Hizmet", "service"),
+                new Column("checks", "Kontrol", "int"),
+                new Column("availability", "Erişilebilirlik", "pct"),
+                new Column("met", "Hedef", "status")),
+                rows, worst.size(), "En az " + MIN_SERVICE_CHECKS + " kontrolü olan izleme yok."));
+        b.data("services_measured", svcMeasured).data("services_below", svcBelow);
         return b.build();
+    }
+
+    /** Takım notları: yöntem (kapsam tanımıyla), yaklaşıklık, ölçü kapsamı, devam eden ay. */
+    private static void teamNotes(SectionResult.Builder b, ExecutiveSummaryContext ctx, Rollup rollup) {
+        b.note("TEAM_METHOD", "Erişilebilirlik = başarılı kontrol / toplam kontrol (kontrol ağırlıklı), gece yazılan saatlik "
+                + "özetten; ay sınırları Türkiye saatine göre. Takımın kendi izlemeleri ile sorumlu (SY) ya da uygulama "
+                + "geliştirici (UG) olduğu envanter kayıtlarının Durum İzleme ve türev Port kontrolleri sayılır. Resmî bir SLO "
+                + "değil, ortak hedefe göre ölçülen değerdir.");
+        if (rollup.approximate()) {
+            b.note("APPROX", "Bu ay için saatlik özet bulunamadı; günlük özet (UTC gün sınırları) kullanıldı — ay "
+                    + "sınırında birkaç saatlik kayma olabilir.");
+        }
+        b.note("SCOPE", "DNS ve alan adı kaydı izlemelerinin erişilebilirlik ölçüsü yoktur. Bakım pencereleri yalnız "
+                + "Durum İzleme kontrollerinde sayım dışıdır.");
+        if (!ctx.complete()) {
+            b.note("PARTIAL", "Ay devam ediyor; özet gece işlendiği için son ~24 saat dahil olmayabilir.");
+        }
     }
 
     private static void notes(SectionResult.Builder b, ExecutiveSummaryContext ctx, Rollup rollup, int unmapped) {

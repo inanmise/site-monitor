@@ -15,6 +15,25 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.120.0] — 2026-10-10
+
+### Added
+- **Takıma özel aylık yönetici özeti ve takım alıcıları.** Özet artık kurum geneli ya da tek takım için açılır (yalnız o
+  takımın izleme ve sertifikaları; envanterde SY ya da UG olduğu kayıtlar dahil). Takım müdürleri (kapsamlı yöneticiler)
+  kendi takımlarının özetini görür. Her takım için alıcılar: takım müdürü, takımı yöneten müdürler, seçilen üyeler ve ek
+  adresler; açık/kapalı, test e-postası, "Şimdi gönder" ve gönderim geçmişi. Takım özetleri kurum özetinin zamanlamasıyla,
+  ondan bağımsız olarak, takım × ay başına tam bir kez gider; e-posta konusu, PDF kapağı ve dosya adı takım adını taşır.
+  - **Yeni yapılandırma:** yok — takım özetleri varsayılan KAPALI (her takım ayrı açılır).
+  - **⚠ Davranış:** Yönetici Özeti menüsü artık takım müdürlerine de görünür (yalnız kendi takımlarının özetiyle).
+
+### Changed
+- **Yönetici Özeti sayfası yeniden tasarlandı:** kapsam ve ay seçici, genel durum + bölüm sağlığı çubuğu, bölüm adlı ana
+  göstergeler, geniş ekranda yapışkan içindekiler, telefonda kayan bölüm çipleri; ayarlar pencere yerine "Alıcılar ve
+  gönderim" görünümünde (liste → ayrıntı, telefonda geri düğmesi).
+- **Veri Kalitesi sayfası yeniden tasarlandı:** kurum kartı (puan, geniş 30 günlük eğilim, takımların bant dağılımı),
+  takım karşılaştırması (öncelikli / en yüksek puanlı takımlar), sıralama kendi kartında; düzeltme listesinde kurumla
+  kıyas çubukları ve önem süzgecinde kural sayıları.
+
 ## [20.119.0] — 2026-10-10
 
 ### Added
@@ -2830,7 +2849,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.119.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.120.0...HEAD
+[20.120.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.120.0
 [20.119.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.119.0
 [20.118.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.1
 [20.118.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.0

@@ -434,14 +434,25 @@ export const api = {
    * global yönetici. `withStatus`: 403 → "erişim yok" ekranı, 429 → test sınırı.
    */
   executiveSummary: {
-    get: ({ month, live = false, fresh = false } = {}) => {
+    /** `team`: takım kimliği ya da `org`; boş = sunucunun varsayılan kapsamı (kurum ya da müdürün ilk takımı). */
+    get: ({ month, team = null, live = false, fresh = false } = {}) => {
       const qs = new URLSearchParams()
       if (month) qs.set('month', month)
+      if (team != null && team !== '') qs.set('team', String(team))
       if (live) qs.set('live', '1')
       if (fresh) qs.set('fresh', '1')
       const s = qs.toString()
       return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true })
     },
+    // Takım özeti alıcıları (2026-10-10): global yönetici her takım, takım müdürü yönettiği takımlar.
+    teams: () => request('/executive-summary/teams', { withStatus: true }),
+    team: (teamId) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}`, { withStatus: true }),
+    saveTeam: (teamId, body) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}`,
+      { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    sendTeamTest: (teamId, month) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}/send-test`,
+      { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    runTeamNow: (teamId, month) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}/run`,
+      { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
     getSettings: () => request('/executive-summary/settings', { withStatus: true }),
     saveSettings: (body) => request('/executive-summary/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     sendTest: (month) => request('/executive-summary/send-test', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
@@ -450,9 +461,10 @@ export const api = {
      * PDF'i indirir (e-posta ekinin aynısı). Düz `<a href>` yerine blob: üretim hatası (503) ya da yetki (403) tarayıcıyı
      * JSON sayfasına götürmesin, kullanıcıya söylenebilsin.
      */
-    downloadPdf: async ({ month, live = false } = {}) => {
+    downloadPdf: async ({ month, team = null, live = false } = {}) => {
       const qs = new URLSearchParams()
       if (month) qs.set('month', month)
+      if (team != null && team !== '') qs.set('team', String(team))
       if (live) qs.set('live', '1')
       try {
         const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })

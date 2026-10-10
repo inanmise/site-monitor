@@ -2,20 +2,22 @@ package com.sitemonitor.service.report.executive;
 
 import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.dto.CertificateDto;
-import com.sitemonitor.model.ExecutiveSummaryReport;
+import com.sitemonitor.model.ExecutiveReportRow;
+import com.sitemonitor.model.ExecutiveSummaryTeamReport;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.ExecutiveSummaryReportRepository;
+import com.sitemonitor.repository.ExecutiveSummaryTeamReportRepository;
 import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.util.Msg;
 import com.sitemonitor.util.TtlMemo;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
-
 import java.time.Instant;
 import java.time.YearMonth;
 import java.util.ArrayList;
@@ -37,11 +39,17 @@ import java.util.function.Supplier;
  * bölümün hatası yalnız o bölümü "hesaplanamadı" yapar. Üst şerit: bölümlerin ilk hükmü + {@code headline_kpi}'si; genel
  * durum bölümlerin en kötüsü.
  *
+ * <h2>Kapsam (2026-10-10, kullanıcı isteği: takıma özel özet)</h2>
+ * {@code teamId == null} kurum geneli (bugünkü davranış), dolu = yalnız o takımın kayıtları
+ * ({@link ExecutiveSummaryContext}). Takım kapsamı yetki DEĞİLDİR — kim hangi takımı görebilir kararı denetleyicidedir.
+ * Aylık gönderim aynı ay için kurum + N takım hesaplar; {@link #newRunShared()} haritası bütün bağlamlara verilir ve
+ * kurum geneli ham veri (envanter, son sertifikalar, ay sorguları) koşu başına bir kez okunur.
+ *
  * <h2>Bellek</h2>
- * Ay başına bellek ({@link TtlMemo}): biten ay {@value #PAST_TTL_MS} ms (veri değişmez; anlık bölümler için yine de
- * süreli), devam eden ay {@value #CURRENT_TTL_MS} ms. {@code fresh} belleği ay başına en fazla {@value #FRESH_MIN_MS} ms'de
- * bir atlar. Gönderilmiş bir ay (SENT/PARTIAL) varsayılan olarak GÖNDERİLEN içerikten gösterilir ({@code source=snapshot})
- * — ekrandaki sayılar postadakilerle aynı; {@code live=true} canlı yeniden hesaplar.
+ * Ay × kapsam başına bellek ({@link TtlMemo}): biten ay {@value #PAST_TTL_MS} ms (veri değişmez; anlık bölümler için yine
+ * de süreli), devam eden ay {@value #CURRENT_TTL_MS} ms. {@code fresh} belleği ay × kapsam başına en fazla
+ * {@value #FRESH_MIN_MS} ms'de bir atlar. Gönderilmiş bir ay (SENT/PARTIAL) varsayılan olarak GÖNDERİLEN içerikten
+ * gösterilir ({@code source=snapshot}) — ekrandaki sayılar postadakilerle aynı; {@code live=true} canlı yeniden hesaplar.
  */
 @Slf4j
 @Service
@@ -52,6 +60,8 @@ public class ExecutiveSummaryService {
     static final long FRESH_MIN_MS = 30_000;
     /** Seçilebilen en eski ay (bugünden geriye). */
     public static final int MAX_MONTHS_BACK = 24;
+    /** Bellek kapasitesi: ay × kapsam (kurum + takımlar). */
+    static final int MEMO_CAPACITY = 120;
 
     static final String INVENTORY_SQL = "SELECT domain, team_id, ug_team_id, tier, group_name, renewal_planned_at "
             + "FROM certificate_inventory WHERE active = true AND deleted_at IS NULL";
@@ -63,7 +73,11 @@ public class ExecutiveSummaryService {
     private final JdbcTemplate jdbc;
     private final ExecutiveSummaryReportRepository reportRepo;
 
-    private final TtlMemo<ExecutiveSummary> memo = new TtlMemo<>(40);
+    /** Takım kayıtları (birim testlerinde yoksa takım ekranı yalnız canlı hesap gösterir). */
+    @Autowired(required = false)
+    private ExecutiveSummaryTeamReportRepository teamReportRepo;
+
+    private final TtlMemo<ExecutiveSummary> memo = new TtlMemo<>(MEMO_CAPACITY);
     private final Map<String, Long> lastFresh = new ConcurrentHashMap<>();
     private Supplier<Instant> clock = Instant::now;
 
@@ -86,6 +100,9 @@ public class ExecutiveSummaryService {
 
     /** Test kancası: saat. */
     void setClock(Supplier<Instant> clock) { this.clock = clock; }
+
+    /** Test kancası: takım kayıtları. */
+    void setTeamReportRepo(ExecutiveSummaryTeamReportRepository r) { this.teamReportRepo = r; }
 
     public Instant now() { return clock.get(); }
 
@@ -117,15 +134,22 @@ public class ExecutiveSummaryService {
         return m;
     }
 
+    /** Kurum geneli ekran girişi (eski imza). */
+    public ExecutiveSummary get(YearMonth month, boolean live, boolean fresh) {
+        return get(month, null, live, fresh);
+    }
+
     /**
      * Ekranın girişi. Gönderilmiş ay → kayıt (snapshot) ({@code live=false}); aksi bellekli canlı hesap.
+     *
+     * @param teamId null = kurum geneli; dolu = takım özeti (yetkiyi çağıran denetler)
      */
-    public ExecutiveSummary get(YearMonth month, boolean live, boolean fresh) {
+    public ExecutiveSummary get(YearMonth month, Long teamId, boolean live, boolean fresh) {
         if (!live && month.isBefore(currentMonth())) {
-            ExecutiveSummary snap = snapshot(month);
+            ExecutiveSummary snap = snapshot(month, teamId);
             if (snap != null) return snap;
         }
-        String key = month.toString();
+        String key = month + "|" + (teamId == null ? "org" : "team:" + teamId);
         boolean past = month.isBefore(currentMonth());
         long ttl = past ? PAST_TTL_MS : CURRENT_TTL_MS;
         boolean doFresh = false;
@@ -137,30 +161,60 @@ public class ExecutiveSummaryService {
                 doFresh = true;
             }
         }
-        return memo.get(key, ttl, doFresh, () -> compute(month));
+        return memo.get(key, ttl, doFresh, () -> compute(month, teamId, null));
+    }
+
+    /** Gönderilmiş kurum ayının kaydı (eski imza). */
+    public ExecutiveSummary snapshot(YearMonth month) {
+        return snapshot(month, null);
     }
 
     /** Gönderilmiş ayın kaydı (yoksa / okunamazsa null). */
-    public ExecutiveSummary snapshot(YearMonth month) {
+    public ExecutiveSummary snapshot(YearMonth month, Long teamId) {
         try {
-            ExecutiveSummaryReport r = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue())
-                    .orElse(null);
+            ExecutiveReportRow r = teamId == null
+                    ? reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null)
+                    : teamReportRepo == null ? null
+                    : teamReportRepo.findByTeamIdAndReportYearAndReportMonth(teamId, month.getYear(), month.getMonthValue())
+                            .orElse(null);
             if (r == null || r.getSummaryJson() == null || r.getSummaryJson().isBlank()) return null;
-            if (!ExecutiveSummaryReport.SENT.equals(r.getStatus()) && !ExecutiveSummaryReport.PARTIAL.equals(r.getStatus())) {
+            if (!ExecutiveReportRow.SENT.equals(r.getStatus()) && !ExecutiveReportRow.PARTIAL.equals(r.getStatus())) {
                 return null;
             }
             return JSON.readValue(r.getSummaryJson(), ExecutiveSummary.class).withSource(ExecutiveSummary.SOURCE_SNAPSHOT);
         } catch (Exception e) {
-            log.warn("Yönetici özeti kaydı okunamadı ({}): {}", month, e.toString());
+            log.warn("Yönetici özeti kaydı okunamadı ({} / {}): {}", month, teamId == null ? "kurum" : "takım " + teamId,
+                    e.toString());
             return null;
         }
     }
 
-    /** Belleksiz canlı hesap — gönderim ve test bunu kullanır. */
+    /** Belleksiz canlı kurum hesabı (eski imza). */
     public ExecutiveSummary compute(YearMonth month) {
+        return compute(month, null, null);
+    }
+
+    /** Koşu boyu paylaşılan bellek — aynı ayın kurum + takım hesaplarına aynı harita verilir. */
+    public Map<String, Object> newRunShared() {
+        return new ConcurrentHashMap<>();
+    }
+
+    /**
+     * Belleksiz canlı hesap — gönderim ve test bunu kullanır.
+     *
+     * @param teamId null = kurum geneli
+     * @param shared koşu boyu paylaşılan bellek ({@link #newRunShared()}); null = bu hesaba özel
+     */
+    public ExecutiveSummary compute(YearMonth month, Long teamId, Map<String, Object> shared) {
         Instant now = now();
+        Map<String, Object> sh = shared == null ? newRunShared() : shared;
+        Supplier<List<CertificateDto>> latest = () -> ExecutiveSummaryContext.sharedValue(sh, "base.latest", this::loadLatest);
+        Supplier<Map<String, ExecutiveSummaryContext.InventoryRow>> inv =
+                () -> ExecutiveSummaryContext.sharedValue(sh, "base.inventory", this::loadInventory);
+        Supplier<Map<Long, String>> names = () -> ExecutiveSummaryContext.sharedValue(sh, "base.teamNames", this::loadTeamNames);
+        String teamName = teamId == null ? null : names.get().get(teamId);
         ExecutiveSummaryContext ctx = new ExecutiveSummaryContext(month, now, settings.availabilityTarget(),
-                settings.renewalTargetDays(), this::loadLatest, this::loadInventory, this::loadTeamNames);
+                settings.renewalTargetDays(), latest, inv, names, teamId, teamName, sh);
         List<SectionResult> results = new ArrayList<>();
         for (ExecutiveSummarySection s : sections) {
             long t0 = System.nanoTime();
@@ -168,10 +222,12 @@ public class ExecutiveSummaryService {
                 SectionResult r = s.compute(ctx);
                 results.add(r == null ? SectionResult.failed(s.key(), s.order(), s.title()) : r);
             } catch (Exception e) {
-                log.warn("Yönetici özeti bölümü hesaplanamadı ({} / {}): {}", s.key(), month, e.toString(), e);
+                log.warn("Yönetici özeti bölümü hesaplanamadı ({} / {} / {}): {}", s.key(), month,
+                        teamId == null ? "kurum" : "takım " + teamId, e.toString(), e);
                 results.add(SectionResult.failed(s.key(), s.order(), s.title()));
             }
-            log.debug("Yönetici özeti bölümü {} ({}): {} ms", s.key(), month, (System.nanoTime() - t0) / 1_000_000);
+            log.debug("Yönetici özeti bölümü {} ({} / {}): {} ms", s.key(), month, teamId == null ? "kurum" : teamId,
+                    (System.nanoTime() - t0) / 1_000_000);
         }
         return assemble(ctx, results);
     }
@@ -196,14 +252,24 @@ public class ExecutiveSummaryService {
         st.put("timezone", ExecutiveSummaryContext.IST.getId());
         return new ExecutiveSummary(ctx.month().toString(), ExecFormat.monthLabel(ctx.month()), ctx.fromIso(), ctx.toIso(),
                 ctx.complete(), ctx.nowIso(), ExecutiveSummary.SOURCE_LIVE, SectionResult.worst(statuses), headline, kpis,
-                results, st);
+                results, st, ctx.teamScoped()
+                        ? ExecutiveSummary.Scope.team(ctx.scopeTeamId(), ctx.scopeTeamName()) : ExecutiveSummary.Scope.ORG);
     }
 
-    /** Seçilebilir aylar: bu ay + son 12 ay; gönderim durumuyla (tek sorgu). */
+    /** Seçilebilir kurum ayları (eski imza). */
     public List<Map<String, Object>> months() {
-        Map<String, ExecutiveSummaryReport> sent = new HashMap<>();
+        return months(null);
+    }
+
+    /** Seçilebilir aylar: bu ay + son 12 ay; kapsamın gönderim durumuyla (tek sorgu). */
+    public List<Map<String, Object>> months(Long teamId) {
+        Map<String, ExecutiveReportRow> sent = new HashMap<>();
         try {
-            for (ExecutiveSummaryReport r : reportRepo.findAllByOrderByReportYearDescReportMonthDesc(PageRequest.of(0, 24))) {
+            List<? extends ExecutiveReportRow> rows = teamId == null
+                    ? reportRepo.findAllByOrderByReportYearDescReportMonthDesc(PageRequest.of(0, 24))
+                    : teamReportRepo == null ? List.<ExecutiveSummaryTeamReport>of()
+                    : teamReportRepo.findByTeamIdOrderByReportYearDescReportMonthDesc(teamId, PageRequest.of(0, 24));
+            for (ExecutiveReportRow r : rows) {
                 if (r.getReportYear() != null && r.getReportMonth() != null) {
                     sent.put(YearMonth.of(r.getReportYear(), r.getReportMonth()).toString(), r);
                 }
@@ -219,7 +285,7 @@ public class ExecutiveSummaryService {
             o.put("month", m.toString());
             o.put("label", ExecFormat.monthLabel(m));
             o.put("current", i == 0);
-            ExecutiveSummaryReport r = sent.get(m.toString());
+            ExecutiveReportRow r = sent.get(m.toString());
             o.put("status", r == null ? null : r.getStatus());
             o.put("sent_at", r == null ? null : r.getSentAt());
             out.add(o);
@@ -230,6 +296,11 @@ public class ExecutiveSummaryService {
     /** Sağlayıcı anahtarları (sıralı) — tanı/ekran. */
     public List<String> sectionKeys() {
         return sections.stream().map(ExecutiveSummarySection::key).toList();
+    }
+
+    /** Takım adları (kimlik → ad; tek sorgu). Denetleyici kapsam seçicisi ve takım varlık denetimi için. */
+    public Map<Long, String> teamNames() {
+        return loadTeamNames();
     }
 
     // ── Paylaşılan tembel veri (bağlam başına TEK okuma) ──

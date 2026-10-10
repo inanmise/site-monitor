@@ -66,6 +66,32 @@ export function DeltaChip({ delta, compact = false, className }) {
   )
 }
 
+/**
+ * Kurumla kıyas: takım ve kurum puanı yan yana iki ince çubuk + fark cümlesi (renk tek taşıyıcı değil — sayılar yazılı).
+ */
+function Benchmark({ team, org }) {
+  const t = useT()
+  const diff = team - org
+  const tone = (v) => (v >= 75 ? 'ok' : v >= 50 ? 'warn' : 'crit')
+  return (
+    <div data-slot="dq-benchmark" className="flex min-w-0 flex-col gap-2 md:border-l md:pl-4">
+      <span className="text-xs font-semibold text-muted-foreground">{t('dq.benchmark.title')}</span>
+      {[['team', team], ['org', org]].map(([k, v]) => (
+        <div key={k} className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-2 text-xs">
+            <span className="text-muted-foreground">{t(k === 'team' ? 'dq.benchmark.team' : 'dq.benchmark.org')}</span>
+            <span className="font-semibold tabular-nums">{v}</span>
+          </div>
+          <ProgressBar value={v} max={100} size="sm" decorative tone={tone(v)} />
+        </div>
+      ))}
+      <span data-slot="dq-benchmark-diff" className={cn('text-xs font-medium', diff > 0 ? 'text-success' : diff < 0 ? 'text-destructive' : 'text-muted-foreground')}>
+        {diff > 0 ? t('dq.benchmark.above', diff) : diff < 0 ? t('dq.benchmark.below', Math.abs(diff)) : t('dq.benchmark.same')}
+      </span>
+    </div>
+  )
+}
+
 /** Tek düzeltme kalemi — ad + hedef + tür + kısa neden + "Düzelt / Aç" (derin bağlantı). */
 function FixItem({ rule, item, onGo }) {
   const t = useT()
@@ -198,8 +224,10 @@ export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
     downloadCsv(stampedName(`veri-kalitesi-${unassigned ? 'sahipsiz' : (head.id ?? 'takim')}`), toCsv(headers, rows))
   }
 
-  const severityOptions = [{ value: '', label: t('dq.allSeverities') },
-    ...DATA_QUALITY_SEVERITIES.map((s) => ({ value: s, label: t(`dq.severity.${s}`) }))]
+  // Önem süzgeci: her seçenek kusurlu KURAL sayısını taşır (ör. "Yüksek (2)") — hangi düğmenin boş olduğu görünür.
+  const severityCount = (sev) => allFailing.filter((r) => r.severity === sev).length
+  const severityOptions = [{ value: '', label: t('dq.allSeveritiesCount', allFailing.length) },
+    ...DATA_QUALITY_SEVERITIES.map((s) => ({ value: s, label: t('dq.severityCount', t(`dq.severity.${s}`), severityCount(s)) }))]
 
   return (
     <ModalShell open onClose={onClose} size="xl" scrollBody icon={ClipboardCheck} title={title}
@@ -225,24 +253,29 @@ export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
         {data && (
           <>
             <section aria-label={t('dq.summaryLabel')}
-              className="flex items-center gap-3 rounded-xl border bg-card p-3 sm:gap-4 sm:p-4">
-              {!unassigned && (
-                <ScoreRing score={head.score} band={head.band} size="md"
-                  label={hasScore(head.score) ? t('dq.scoreAria', head.score) : t('dq.band.NO_DATA')} />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  {!unassigned && <BandBadge band={head.band} />}
-                  {!unassigned && <DeltaChip delta={head.delta_7d} />}
-                  {unassigned && <Badge variant="destructive">{t('dq.unassignedBadge')}</Badge>}
-                </div>
-                <p className="mt-1.5 text-sm text-muted-foreground">
-                  {unassigned ? t('dq.unassignedBody') : t('dq.detailCounts', head.findings ?? 0, head.items ?? 0)}
-                </p>
-                {!unassigned && hasScore(data.org_score) && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{t('dq.orgBenchmark', data.org_score)}</p>
+              className="grid min-w-0 gap-4 rounded-xl border bg-card p-3 sm:p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,17rem)] md:items-center">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                {!unassigned && (
+                  <ScoreRing score={head.score} band={head.band} size="md"
+                    label={hasScore(head.score) ? t('dq.scoreAria', head.score) : t('dq.band.NO_DATA')} />
                 )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!unassigned && <BandBadge band={head.band} />}
+                    {!unassigned && <DeltaChip delta={head.delta_7d} />}
+                    {unassigned && <Badge variant="destructive">{t('dq.unassignedBadge')}</Badge>}
+                  </div>
+                  <p className="mt-1.5 text-sm text-muted-foreground">
+                    {unassigned ? t('dq.unassignedBody') : t('dq.detailCounts', head.findings ?? 0, head.items ?? 0)}
+                  </p>
+                  {!unassigned && hasScore(data.org_score) && !hasScore(head.score) && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{t('dq.orgBenchmark', data.org_score)}</p>
+                  )}
+                </div>
               </div>
+              {!unassigned && hasScore(head.score) && hasScore(data.org_score) && (
+                <Benchmark team={head.score} org={data.org_score} />
+              )}
             </section>
 
             {allFailing.length === 0 ? (
