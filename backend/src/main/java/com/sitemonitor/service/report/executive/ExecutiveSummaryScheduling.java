@@ -17,7 +17,8 @@ import java.time.Instant;
  * <ol>
  *   <li>planlı tetik (varsayılan ayın 1'i 09:00 Europe/Istanbul) → {@link ExecutiveSummaryDeliveryService#runScheduled};</li>
  *   <li>saatlik telafi (her saatin 17. dakikası) → {@link ExecutiveSummaryDeliveryService#catchUp} — pod kapalıyken kaçan
- *       ya da başarısız olan ayı {@value ExecutiveSummaryDeliveryService#CATCH_UP_HOURS} saat içinde tamamlar.</li>
+ *       ya da başarısız olan ayı {@value ExecutiveSummaryDeliveryService#CATCH_UP_HOURS} saat içinde tamamlar. Takım
+ *       özetleri (2026-10-10) aynı tetiklerle, kurum özetinden sonra gider.</li>
  * </ol>
  * Asıl "tam bir kez" kapısı kilit değil, ay kaydının UNIQUE talebidir (kilit kaçsa bile ikinci posta gitmez).
  */
@@ -32,6 +33,7 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
     private final ExecutiveSummaryDeliveryService delivery;
     private final ExecutiveSummarySettings settings;
     private final SchedulerService schedulerService;
+    private final ExecutiveSummaryTeamService teamService;
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
@@ -51,9 +53,14 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
                         }
                     }
                 });
-        // Kapalıyken (varsayılan) telafi kilide bile dokunmaz — saatlik boş DB yazımı olmasın.
+        // Kurum özeti ve bütün takım özetleri kapalıyken (varsayılan) telafi kilide bile dokunmaz — saatlik boş DB
+        // yazımı olmasın (takım kapısı tek sayım sorgusu).
         registrar.addTriggerTask(
-                () -> { if (settings.enabled()) schedulerService.runWithSchedulerLock(LOCK, delivery::catchUp); },
+                () -> {
+                    if (settings.enabled() || teamService.anyEnabled()) {
+                        schedulerService.runWithSchedulerLock(LOCK, delivery::catchUp);
+                    }
+                },
                 new CronTrigger(CATCH_UP_CRON, ExecutiveSummaryContext.IST));
     }
 }

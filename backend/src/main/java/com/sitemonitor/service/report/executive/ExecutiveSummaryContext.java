@@ -179,14 +179,19 @@ public final class ExecutiveSummaryContext {
      * geneli (süzülmemiş) ham veri için: takım süzmesi çağıranda yapılır, böylece aynı harita bütün takım bağlamlarına
      * verilebilir. Yükleyici null dönerse null saklanır (yeniden denenmez).
      */
-    @SuppressWarnings("unchecked")
     public <T> T shared(String key, Supplier<T> loader) {
+        return sharedValue(shared, key, loader);
+    }
+
+    /** {@link #shared} gövdesi — servis bağlamı kurmadan önce aynı haritaya taban veriyi (envanter vb.) bağlar. */
+    @SuppressWarnings("unchecked")
+    static <T> T sharedValue(Map<String, Object> map, String key, Supplier<T> loader) {
         // computeIfAbsent DEĞİL: yükleyici başka bir paylaşılan değeri isteyebilir (ConcurrentHashMap'te özyinelemeli
         // güncelleme IllegalStateException). Eşzamanlı iki ilk çağrı iki kez yükleyebilir; ilk yazılan kazanır.
-        Object v = shared.get(key);
+        Object v = map.get(key);
         if (v == null) {
             Holder h = new Holder(loader == null ? null : loader.get());
-            Object prev = shared.putIfAbsent(key, h);
+            Object prev = map.putIfAbsent(key, h);
             v = prev == null ? h : prev;
         }
         return (T) ((Holder) v).value;

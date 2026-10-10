@@ -32,8 +32,18 @@ public final class ExecutiveSummaryMail {
 
     /** Konu: {@code [Site Monitor] Aylık Yönetici Özeti · Eylül 2026 · AKSİYON GEREKLİ} (marka iki sözcük). */
     public static String subject(ExecutiveSummary s) {
-        return "[Site Monitor] Aylık Yönetici Özeti · " + nz(s.monthLabel(), s.month()) + " · "
-                + ExecFormat.sectionStatusLabel(s.status());
+        return "[Site Monitor] Aylık Yönetici Özeti · " + (isTeam(s) ? teamName(s) + " · " : "") + nz(s.monthLabel(), s.month())
+                + " · " + ExecFormat.sectionStatusLabel(s.status());
+    }
+
+    /** Takım özeti mi (2026-10-10)? Kurum geneli posta birebir aynı kalır. */
+    static boolean isTeam(ExecutiveSummary s) {
+        return s.scope() != null && s.scope().isTeam();
+    }
+
+    private static String teamName(ExecutiveSummary s) {
+        String n = s.scope().teamName();
+        return n == null || n.isBlank() ? "Takım #" + s.scope().teamId() : n;
     }
 
     /**
@@ -47,10 +57,12 @@ public final class ExecutiveSummaryMail {
         String month = nz(s.monthLabel(), s.month());
         String verdict = s.headline().isEmpty() ? "Özet hazır." : s.headline().get(0).text();
 
-        MailDoc d = MailDoc.create("[Site Monitor] Aylık Yönetici Özeti — " + month).wide().darkCanvas()
-                .preheader(month + " · " + verdict)
+        boolean team = isTeam(s);
+        MailDoc d = MailDoc.create("[Site Monitor] Aylık Yönetici Özeti — " + (team ? teamName(s) + " — " : "") + month)
+                .wide().darkCanvas()
+                .preheader((team ? teamName(s) + " · " : "") + month + " · " + verdict)
                 .kicker(KICKER)
-                .badges(statusBadge(s.status()), Badge.outline("Kurum geneli"))
+                .badges(statusBadge(s.status()), Badge.outline(team ? "Takım: " + teamName(s) : "Kurum geneli"))
                 .title(month + " · Yönetici Özeti", verdict);
         d.note("Dönem: " + month + " (Türkiye saati)" + (s.complete() ? "" : " · ay devam ediyor, şimdiye kadarki veri")
                 + " · Erişilebilirlik hedefi " + ExecFormat.pct(asDouble(s.settings().get("availability_target")), 3) + ".");
@@ -82,22 +94,33 @@ public final class ExecutiveSummaryMail {
 
         if (pdfFileName != null && !pdfFileName.isBlank()) {
             d.raw(MailKit.listCard("Ekteki dosya", Badge.outline("PDF"),
-                    MailKit.esc("Özetin tamamı: takım ve hizmet tabloları, en gürültülü hedefler, yaklaşan bitişler, "
+                    MailKit.esc(team
+                            ? "Özetin tamamı: hizmet tabloları, en gürültülü hedefler, yaklaşan bitişler, yenileme "
+                              + "sınıfları, TLS not dağılımı, kripto geçiş listesi, veri kalitesi kuralları ve yöntem notları."
+                            : "Özetin tamamı: takım ve hizmet tabloları, en gürültülü hedefler, yaklaşan bitişler, "
                             + "yenileme sınıfları, TLS not dağılımı, kripto geçiş listesi, veri kalitesi sıralaması ve "
                             + "yöntem notları."),
                     null, List.of(new ListItem(MailKit.mono(pdfFileName), null)), null),
                     "Ekteki dosya: " + pdfFileName + " — özetin tamamı (tablolar ve yöntem notları).");
         }
         if (links) {
-            d.buttons(null, List.of(new Btn(base + "/?tab=executive&ex_m=" + enc(s.month()), "Özeti uygulamada aç",
-                    Variant.PRIMARY)));
+            String teamParam = team ? "&ex_team=" + s.scope().teamId() : "";
+            d.buttons(null, List.of(new Btn(base + "/?tab=executive&ex_m=" + enc(s.month()) + teamParam,
+                    "Özeti uygulamada aç", Variant.PRIMARY)));
         }
-        String why = "Bu özet, yönetici özeti ayarlarında tanımlı alıcılara ve (seçildiyse) global yöneticilere her ay "
+        String why = team
+                ? "Bu özet, " + teamName(s) + " takımının yönetici özeti ayarlarında tanımlı alıcılara (takım müdürü, takımı "
+                  + "yöneten müdürler, seçilen üyeler ve ek adresler) her ay otomatik gönderilir. Sayılar yalnız bu takımın "
+                  + "kayıtlarından üretilir; erişilebilirlik resmî bir SLO değil, kurum hedefine göre ölçülen değerdir."
+                : "Bu özet, yönetici özeti ayarlarında tanımlı alıcılara ve (seçildiyse) global yöneticilere her ay "
                 + "otomatik gönderilir. Sayılar uygulamanın kendi kayıtlarından üretilir; erişilebilirlik resmî bir SLO değil, "
                 + "kurum hedefine göre ölçülen değerdir.";
-        String settings = links ? base + "/?tab=executive&ex_cfg=1" : null;
+        String settings = !links ? null : team
+                ? base + "/?tab=executive&ex_team=" + s.scope().teamId() + "&ex_cfg=1"
+                : base + "/?tab=executive&ex_cfg=1";
+        String who = team ? " (global yönetici ya da takımın müdürü)." : " (global yönetici).";
         d.footerWhyCustom(MailKit.esc(why) + (settings == null ? ""
-                        : " Alıcılar ve zamanlama: " + MailKit.link(settings, "Yönetici özeti ayarları") + " (global yönetici)."),
+                        : " Alıcılar ve zamanlama: " + MailKit.link(settings, "Yönetici özeti ayarları") + who),
                 why + (settings == null ? "" : " Alıcılar ve zamanlama: " + settings))
          .footerMeta("Site Monitor — Otomatik Aylık Yönetici Özeti",
                 generatedAt == null || generatedAt.isBlank() ? null : "Oluşturuldu: " + generatedAt);

@@ -57,6 +57,40 @@ public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
         return "site-monitor-yonetici-ozeti-" + (month == null ? "ay" : month.replaceAll("[^0-9-]", "")) + ".pdf";
     }
 
+    /**
+     * Özetin ek dosya adı: kurum geneli → {@link #fileName(String)} (değişmedi); takım →
+     * {@code site-monitor-yonetici-ozeti-<takim>-2026-09.pdf} (takım adı ASCII'ye katlanır, en fazla 40 karakter).
+     */
+    public static String fileName(ExecutiveSummary s) {
+        if (s == null) return fileName((String) null);
+        if (s.scope() == null || !s.scope().isTeam()) return fileName(s.month());
+        String slug = slug(s.scope().teamName());
+        String month = s.month() == null ? "ay" : s.month().replaceAll("[^0-9-]", "");
+        return "site-monitor-yonetici-ozeti-" + (slug.isEmpty() ? "takim-" + s.scope().teamId() : slug) + "-" + month + ".pdf";
+    }
+
+    /** Dosya adı parçası: Türkçe harfler ASCII'ye, diğer her şey tireye; en fazla 40 karakter. */
+    static String slug(String name) {
+        if (name == null) return "";
+        String folded = name.toLowerCase(java.util.Locale.forLanguageTag("tr"))
+                .replace('ç', 'c').replace('ğ', 'g').replace('ı', 'i').replace('ö', 'o').replace('ş', 's').replace('ü', 'u')
+                .replace('â', 'a').replace('î', 'i').replace('û', 'u');
+        StringBuilder sb = new StringBuilder();
+        boolean dash = false;
+        for (int i = 0; i < folded.length() && sb.length() < 40; i++) {
+            char ch = folded.charAt(i);
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+                sb.append(ch);
+                dash = false;
+            } else if (!dash && sb.length() > 0) {
+                sb.append('-');
+                dash = true;
+            }
+        }
+        while (sb.length() > 0 && sb.charAt(sb.length() - 1) == '-') sb.setLength(sb.length() - 1);
+        return sb.toString();
+    }
+
     byte[] write(ExecutiveSummary s) throws IOException {
         c.newPage();
         cover(s);
@@ -73,7 +107,7 @@ public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
         c.rect(0, top - 92, PAGE.getWidth(), 92, DARK);
         c.image(BrandMailAssets.logoBytes("ok"), MARGIN, top - 66, 34, 34);
         c.text(c.bold, 17f, MARGIN + 46, top - 44, "Aylık Yönetici Özeti", WHITE);
-        c.text(c.regular, 10f, MARGIN + 46, top - 60, c.clip(nz(s.monthLabel(), s.month()) + "  ·  Site Monitor  ·  Kurum geneli",
+        c.text(c.regular, 10f, MARGIN + 46, top - 60, c.clip(nz(s.monthLabel(), s.month()) + "  ·  Site Monitor  ·  " + scopeLabel(s),
                 CONTENT_W - 170, c.regular, 10f), new float[]{ 203 / 255f, 213 / 255f, 225 / 255f });
         c.text(c.regular, 7.5f, MARGIN + 46, top - 74, "Üretim: " + stamp(s.generatedAt()) + " (Türkiye saati)"
                 + (s.complete() ? "" : "  ·  ay devam ediyor") + (ExecutiveSummary.SOURCE_SNAPSHOT.equals(s.source())
@@ -121,8 +155,19 @@ public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
         c.ensureSpace(40);
         c.line(MARGIN, c.y, MARGIN + CONTENT_W, RULE);
         c.y -= 12;
-        note("Site Monitor — Aylık Yönetici Özeti · " + nz(s.monthLabel(), s.month()) + " · "
-                + s.sections().size() + " bölüm. Ayrıntı ve canlı görünüm: uygulamada Raporlar → Yönetici Özeti.");
+        note("Site Monitor — Aylık Yönetici Özeti · " + (isTeam(s) ? scopeLabel(s) + " · " : "") + nz(s.monthLabel(), s.month())
+                + " · " + s.sections().size() + " bölüm. Ayrıntı ve canlı görünüm: uygulamada Raporlar → Yönetici Özeti.");
+    }
+
+    private static boolean isTeam(ExecutiveSummary s) {
+        return s.scope() != null && s.scope().isTeam();
+    }
+
+    /** Kapsam etiketi: "Kurum geneli" (değişmedi) ya da "Takım: Ödeme Sistemleri". */
+    static String scopeLabel(ExecutiveSummary s) {
+        if (!isTeam(s)) return "Kurum geneli";
+        String n = s.scope().teamName();
+        return "Takım: " + (n == null || n.isBlank() ? "#" + s.scope().teamId() : n);
     }
 
     // ── İlkeller ────────────────────────────────────────────────────────────────────────────────────────────────────

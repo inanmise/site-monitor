@@ -22,7 +22,7 @@ import lombok.NoArgsConstructor;
     uniqueConstraints = @UniqueConstraint(name = "uk_esr_year_month", columnNames = {"report_year", "report_month"}))
 @Data
 @NoArgsConstructor
-public class ExecutiveSummaryReport {
+public class ExecutiveSummaryReport implements ExecutiveReportRow {
 
     /** Gönderim sürüyor (talep alındı). */
     public static final String SENDING = "SENDING";
