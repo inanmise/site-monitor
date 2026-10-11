@@ -9,9 +9,9 @@ import { test, expect } from '@playwright/test'
 const LONG_A = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
 const LONG_B = 'Mehmet Emin Çelikkanat-Özdemiroğulları (Uygulama Geliştirme ve Entegrasyon Müdürü)'
 const USERS = [
-  { id: 2, username: 'KULLANICI_A', display_name: LONG_A, email: 'a@example.com', system_role: 'USER', org_role: 'TECH', team_id: 1, team_ids: [1], active: true },
-  { id: 3, username: 'KULLANICI_B', display_name: LONG_B, email: 'b@example.com', system_role: 'USER', org_role: 'MANAGER', team_id: null, team_ids: [], active: true },
-  { id: 4, username: 'KULLANICI_C', display_name: 'Kullanıcı C', email: 'c@example.com', system_role: 'USER', org_role: 'TECH', team_id: 2, team_ids: [2], active: true },
+  { id: 2, username: 'KULLANICI_A', display_name: LONG_A, employee_id: '100002', email: 'a@example.com', system_role: 'USER', org_role: 'TECH', team_id: 1, team_ids: [1], active: true },
+  { id: 3, username: 'KULLANICI_B', display_name: LONG_B, employee_id: '100003', email: 'b@example.com', system_role: 'USER', org_role: 'MANAGER', team_id: null, team_ids: [], active: true },
+  { id: 4, username: 'KULLANICI_C', display_name: 'Kullanıcı C', employee_id: '100004', email: 'c@example.com', system_role: 'USER', org_role: 'TECH', team_id: 2, team_ids: [2], active: true },
 ]
 const TEAMS = [
   { id: 1, name: 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi', active: true, leader_id: 2, manager_id: 3,
@@ -85,7 +85,7 @@ function clippedText(sel) {
   if (!root) return ['NO_ROOT']
   const rootR = root.getBoundingClientRect()
   const out = []
-  for (const el of root.querySelectorAll('[data-slot="team-badge"] span, [data-slot="team-owners"] dd, [data-slot="team-email"], [data-slot="team-gap-chip"] span')) {
+  for (const el of root.querySelectorAll('[data-slot="team-badge"] span, [data-slot="team-owners"] dd, [data-slot="team-owner-sicil"], [data-slot="team-email"], [data-slot="team-gap-chip"] span')) {
     const r = el.getBoundingClientRect()
     if (r.width === 0) continue
     const cs = getComputedStyle(el)
@@ -136,6 +136,9 @@ for (const vp of VIEWPORTS) {
 
       expect(await pageOverflow(page), 'sayfa yatay taşması').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clippedText, '[data-slot="team-manager"]'), 'kesilen ad / adres').toEqual([])
+      // Sorumlular: lider + müdür ad-soyadının yanında sicil (2026-10-11)
+      await expect(items.first().locator('[data-slot="team-owner-sicil"]')).toHaveCount(2)
+      await expect(items.first().locator('[data-slot="team-owner-sicil"]').first()).toContainText('100002')
       if (vp.touch) {
         const bad = await page.evaluate(smallTargets, '[data-slot="team-manager"]')
         expect(bad, `40 px altı hedefler: ${bad.join(', ')}`).toEqual([])

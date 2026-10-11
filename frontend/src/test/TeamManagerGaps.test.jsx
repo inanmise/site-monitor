@@ -28,8 +28,8 @@ import { api } from '../api/client'
 import TeamManager from '../components/admin/TeamManager.jsx'
 
 const USERS = [
-  { id: 7, username: 'lead', display_name: 'Lider Bir', org_role: 'TECH', team_id: 1, active: true },
-  { id: 8, username: 'mgr', display_name: 'Müdür Bir', org_role: 'MANAGER', active: true },
+  { id: 7, username: 'lead', display_name: 'Lider Bir', employee_id: '100007', org_role: 'TECH', team_id: 1, active: true },
+  { id: 8, username: 'mgr', display_name: 'Müdür Bir', employee_id: '100008', org_role: 'MANAGER', active: true },
 ]
 const TEAMS = [
   { id: 1, name: 'Payments', active: true, leader_id: 7, email: 'p@example.com', manager_id: 8, description: 'Ödemeler' },
@@ -207,6 +207,28 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     fireEvent.click(screen.getByRole('button', { name: EN['team.exportCsv'] }))
     expect(csv.rows).toContain(EN['team.csvGaps'])
     expect(csv.rows).toContain(`${EN['team.gap.email.label']}; ${EN['team.gap.leader.label']}`)
+  })
+
+  it('sorumlular: lider ve müdür ad-soyadının yanında sicil; atanmamışta sicil yok', async () => {
+    await mount()
+    const sicils = (name) => [...rowOf(name).querySelectorAll('[data-slot="team-owners"] [data-slot="team-owner-sicil"]')].map((e) => e.textContent)
+    expect(sicils('Payments')).toEqual([EN['team.sicil'].replace('{0}', '100007'), EN['team.sicil'].replace('{0}', '100008')])
+    const owners = rowOf('Payments').querySelector('[data-slot="team-owners"]')
+    expect(owners.textContent).toContain('Lider Bir')
+    expect(owners.textContent).toContain('Müdür Bir')
+    expect(sicils('Ledger')).toEqual([])
+  })
+
+  it('müdür yalnız sicilden türetildiyse (kullanıcı kaydı yok) sicil ikinci kez yazılmaz', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: true, data: [
+      { id: 20, username: 'uye', display_name: 'Üye Bir', employee_id: '100020', org_role: 'TECH', team_id: 5, manager_sicil: 'X9999', active: true },
+    ] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'Zeta', active: true, leader_id: null, manager_id: null, email: 'z@example.com' }] })
+    api.admin.teamStats.mockResolvedValue({ success: true, data: {} })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Zeta')
+    await waitFor(() => expect(rowOf('Zeta').querySelector('[data-slot="team-owners"]').textContent).toContain('X9999'))
+    expect(rowOf('Zeta').querySelectorAll('[data-slot="team-owner-sicil"]')).toHaveLength(0)
   })
 
   it('dar kapta (< 900 px) kartlar: tablo yok, her takım bir kart, seçim ve menü kartta', async () => {

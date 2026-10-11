@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-11T14:59:23Z",
+  "generatedAt": "2026-10-11T15:40:11Z",
   "repo": "inanmise/site-monitor",
-  "count": 732,
+  "count": 733,
   "releases": [
+    {
+      "version": "20.122.0",
+      "tag": "v20.122.0",
+      "releasedAt": "2026-10-11T15:40:02Z",
+      "commit": "0ec5081e6f3bf6d09edc5cf1680e71c719e29aab",
+      "prevVersion": "20.121.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0ec5081e",
+          "subject": "takımlar — sorumlularda lider ve müdür adının altında sicil"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.121.0",
       "tag": "v20.121.0",
