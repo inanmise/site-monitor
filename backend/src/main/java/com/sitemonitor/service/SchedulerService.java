@@ -468,28 +468,60 @@ public class SchedulerService {
         // ilk interaktif isteği (login → BCrypt) aç bırakır → login ~1dk askıda kalır.
         // Bu yüzden tek daemon thread'e alıp startupCheckDelayMs kadar geciktiriyoruz;
         // pod Ready olur olmaz login CPU'yu serbest bulur, ağır iş JVM ısınınca başlar.
-        Thread t = new Thread(() -> {
-            try {
-                if (startupCheckDelayMs > 0) Thread.sleep(startupCheckDelayMs);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            // Dağıtık kilit (2026-10-09): yuvarlanan dağıtımda N pod aynı anda açılıp AYNI kaçırılmış bildirimi N kez
-            // gönderiyordu. Kilit başka pod'daysa bu pod atlar (o pod gönderiyor); kilit TTL'i aşan uzun bir koşuda geç
-            // başlayan pod da göndermez — catch-up her alarmı göndermeden önce taze satırdan yeniden değerlendirir.
-            try { runWithSchedulerLock("startup-catchup", escalationService::catchUpMissedDailyAlerts); }
-            catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
-            // (2026-10-07) catchUpAlertsOnDeletedDomains kaldırıldı: silme kalıcı, yumuşak silinmiş envanter kalmaz.
-            // Küme tur kaydı (2026-10-09): yuvarlanan dağıtımda N yeni pod'un HER BİRİ tüm sertifikaları yeniden
-            // tarıyordu. Son STARTUP_CHECK_DEDUPE_MS içinde başka bir açılış taraması koştuysa bu pod atlar; tek pod'da
-            // (açılışlar arası daha uzun) davranış aynı. Elle "Şimdi kontrol et" bu kayda bakmaz.
+        Thread t = new Thread(this::runStartupCheck, "startup-check");
+        t.setDaemon(true);
+        startupCheckThread = t;
+        t.start();
+    }
+
+    /** Gecikmeli açılış işinin iş parçacığı — kapanışta kesilir ({@link #stopStartupCheck()}). */
+    private volatile Thread startupCheckThread;
+    /** Kapanış başladı: gecikmeli açılış işi artık başlamaz. */
+    private volatile boolean startupCheckStopped;
+
+    /**
+     * Gecikmeli açılış işi: kaçırılmış günlük bildirim telafisi + tam sertifika taraması.
+     *
+     * <p><b>Kapanışa dayanıklı (2026-10-11).</b> İş parçacığı kapanışta durdurulmuyordu: bağlam gecikme içinde kapanınca
+     * (pod durdurma, test bağlamı) süre dolduğunda KAPALI bağlamda {@code runCheck()} koşup yakalanmamış
+     * {@code BeanCreationException} fırlatıyordu — CI'da bir entegrasyon testinin bağlamı kapandıktan tam 60 sn sonra o
+     * sırada koşan, Awaitility'li ilgisiz bir test bu hatayla düştü. Artık kapanış başladıysa hiçbir adım başlamaz,
+     * uyku kesilir ve hiçbir istisna iş parçacığından kaçmaz (kapanıştaysa DEBUG, değilse WARN; saatlik tarama telafi eder).
+     */
+    void runStartupCheck() {
+        try {
+            if (startupCheckDelayMs > 0) Thread.sleep(startupCheckDelayMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (startupCheckStopped) return;
+        // Dağıtık kilit (2026-10-09): yuvarlanan dağıtımda N pod aynı anda açılıp AYNI kaçırılmış bildirimi N kez
+        // gönderiyordu. Kilit başka pod'daysa bu pod atlar (o pod gönderiyor); kilit TTL'i aşan uzun bir koşuda geç
+        // başlayan pod da göndermez — catch-up her alarmı göndermeden önce taze satırdan yeniden değerlendirir.
+        try { runWithSchedulerLock("startup-catchup", escalationService::catchUpMissedDailyAlerts); }
+        catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
+        if (startupCheckStopped) return;
+        // (2026-10-07) catchUpAlertsOnDeletedDomains kaldırıldı: silme kalıcı, yumuşak silinmiş envanter kalmaz.
+        // Küme tur kaydı (2026-10-09): yuvarlanan dağıtımda N yeni pod'un HER BİRİ tüm sertifikaları yeniden
+        // tarıyordu. Son STARTUP_CHECK_DEDUPE_MS içinde başka bir açılış taraması koştuysa bu pod atlar; tek pod'da
+        // (açılışlar arası daha uzun) davranış aynı. Elle "Şimdi kontrol et" bu kayda bakmaz.
+        try {
             if (roundDue("cert-startup", STARTUP_CHECK_DEDUPE_MS)) runCheck();
             else log.info("Açılış sertifika taraması atlandı — son {} dk içinde başka bir pod koşturdu [instance={}]",
                     STARTUP_CHECK_DEDUPE_MS / 60_000L, INSTANCE_ID);
-        }, "startup-check");
-        t.setDaemon(true);
-        t.start();
+        } catch (Exception e) {
+            if (startupCheckStopped) log.debug("Açılış sertifika taraması kapanışta yarıda kaldı: {}", e.toString());
+            else log.warn("Açılış sertifika taraması başarısız (saatlik tarama telafi eder): {}", e.getMessage());
+        }
+    }
+
+    /** Kapanış: gecikmeli açılış işi artık başlamaz; uykudaysa kesilir. */
+    void stopStartupCheck() {
+        startupCheckStopped = true;
+        Thread t = startupCheckThread;
+        startupCheckThread = null;
+        if (t != null && t.isAlive() && t != Thread.currentThread()) t.interrupt();
     }
 
     /**
@@ -3567,11 +3599,13 @@ public class SchedulerService {
     }
 
     /**
-     * Tek kapanış girişi (sınıf başına tek {@code @PreDestroy}, sıra belirli): önce tarama liderliği bırakılır ki takipçi
-     * pod hemen devralsın, sonra manuel çalıştırma havuzu kapanır (en çok 5 sn bekler).
+     * Tek kapanış girişi (sınıf başına tek {@code @PreDestroy}, sıra belirli): önce gecikmeli açılış işi durdurulur (kapalı
+     * bağlamda koşmasın), sonra tarama liderliği bırakılır ki takipçi pod hemen devralsın, en son manuel çalıştırma havuzu
+     * kapanır (en çok 5 sn bekler).
      */
     @jakarta.annotation.PreDestroy
     void onShutdown() {
+        stopStartupCheck();
         stopSweepLeaderRenewer();
         releaseSweepLeadership();
         shutdownManualRunPool();

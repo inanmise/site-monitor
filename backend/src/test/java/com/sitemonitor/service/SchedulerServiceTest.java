@@ -2297,4 +2297,40 @@ class SchedulerServiceTest {
         verify(domainCheckerService, org.mockito.Mockito.times(1)).check(m);   // yalnız zamanlanmış tur
         verify(domainCheckerService).checkRecheck(m);
     }
+
+    // ── Gecikmeli açılış işi kapanışa dayanıklı (2026-10-11, CI: kapalı bağlamda runCheck → yakalanmamış istisna) ──
+
+    @Test
+    @DisplayName("kapanış başladıysa gecikmeli açılış işi hiçbir adımı başlatmaz (catch-up yok, tarama yok)")
+    void startupCheck_afterShutdown_runsNothing() {
+        ReflectionTestUtils.setField(scheduler, "startupCheckDelayMs", 0L);
+        scheduler.stopStartupCheck();
+        scheduler.runStartupCheck();
+        verify(escalationService, never()).catchUpMissedDailyAlerts();
+        verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
+    }
+
+    @Test
+    @DisplayName("açılış taraması fırlatırsa istisna iş parçacığından KAÇMAZ (yakalanmamış istisna yok)")
+    void startupCheck_scanFailure_doesNotEscapeThread() {
+        ReflectionTestUtils.setField(scheduler, "startupCheckDelayMs", 0L);
+        lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenThrow(new IllegalStateException("bağlam kapalı"));
+        assertThatCode(() -> scheduler.runStartupCheck()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("kapanış uykudaki açılış iş parçacığını keser; iş parçacığı taramaya geçmeden biter")
+    void shutdown_interruptsSleepingStartupThread() throws Exception {
+        ReflectionTestUtils.setField(scheduler, "startupCheckDelayMs", 60_000L);
+        Thread t = new Thread(scheduler::runStartupCheck, "startup-check-test");
+        t.setDaemon(true);
+        ReflectionTestUtils.setField(scheduler, "startupCheckThread", t);
+        t.start();
+        scheduler.stopStartupCheck();
+        t.join(5_000);
+        assertThat(t.isAlive()).isFalse();
+        verify(escalationService, never()).catchUpMissedDailyAlerts();
+        verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
+    }
 }
