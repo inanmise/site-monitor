@@ -84,6 +84,55 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
             @Param("to") String to,
             @Param("q") String q);
 
+    /**
+     * Tür çipleri sayımı (2026-10-11, aktivite sayfası yeniden tasarımı): aynı kapsam/süzgeç + durum, TÜR SÜZGECİ HARİÇ
+     * (her çip seçili olmasa da kendi sayısını gösterir).
+     */
+    @Query("""
+            SELECT a.monitorType, COUNT(a) FROM ActivityLog a
+            WHERE (:scoped = FALSE OR a.teamId IN :scope)
+              AND (:monitorId IS NULL OR a.monitorId = :monitorId)
+              AND (:status IS NULL OR a.resultStatus = :status)
+              AND (:from IS NULL OR a.activityTime >= :from)
+              AND (:to IS NULL OR a.activityTime <= :to)
+              AND (:q IS NULL OR LOWER(a.target) LIKE :q OR LOWER(a.monitorName) LIKE :q OR LOWER(a.errorMessage) LIKE :q)
+            GROUP BY a.monitorType
+            """)
+    List<Object[]> countByTypeFiltered(
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope,
+            @Param("monitorId") Long monitorId,
+            @Param("status") String status,
+            @Param("from") String from,
+            @Param("to") String to,
+            @Param("q") String q);
+
+    /**
+     * Zaman çizelgesi (2026-10-11): UTC saat ({@code yyyy-MM-ddTHH}) × durum sayımı; KPI şeridiyle aynı süzgeç (durum
+     * hariç — çizelge dağılımı gösterir). Yerel SQL: {@code GROUP BY 1, 2} hem PostgreSQL hem H2'de ifadeyi yeniden
+     * yazmadan gruplar (JPQL'de SUBSTRING bağlı parametreye dönüşürse PostgreSQL GROUP BY eşleşmesini reddeder).
+     * {@code from} ZORUNLU (çağıran sınırlar — en çok 31 gün, idx_act_time ile kesilir).
+     */
+    @Query(value = """
+            SELECT SUBSTRING(activity_time, 1, 13) AS hr, result_status, COUNT(*) AS c FROM activity_log
+            WHERE (:scoped = FALSE OR team_id IN (:scope))
+              AND (:typeFilter = FALSE OR monitor_type IN (:types))
+              AND (CAST(:monitorId AS BIGINT) IS NULL OR monitor_id = :monitorId)
+              AND activity_time >= :from
+              AND (CAST(:to AS VARCHAR) IS NULL OR activity_time <= :to)
+              AND (CAST(:q AS VARCHAR) IS NULL OR LOWER(target) LIKE :q OR LOWER(monitor_name) LIKE :q OR LOWER(error_message) LIKE :q)
+            GROUP BY 1, 2
+            """, nativeQuery = true)
+    List<Object[]> countByHourAndStatus(
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope,
+            @Param("typeFilter") boolean typeFilter,
+            @Param("types") List<String> types,
+            @Param("monitorId") Long monitorId,
+            @Param("from") String from,
+            @Param("to") String to,
+            @Param("q") String q);
+
     /** Detay panelindeki mini-geçmiş: aynı monitörün (tür + id) son N kaydı, en yeni üstte. */
     @Query("""
             SELECT a FROM ActivityLog a
