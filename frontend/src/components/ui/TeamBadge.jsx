@@ -36,7 +36,12 @@ export const TEAM_BADGE_TOUCH = 'relative pointer-coarse:overflow-visible pointe
  * modalı açar ve dış düğmeye SIZMAZ.
  */
 /** {@code ariaLabel}: tıklama üye penceresi DEĞİL başka bir eylemse (ör. Alarm Geçmişi "bu takıma süz") erişilebilir ad da onu söyler. */
-export default function TeamBadge({ teamId, teamName, size = 12, className = '', onOpen, static: forceStatic = false, title, as = 'button', ariaLabel }) {
+/**
+ * {@code wrap} (2026-10-11, Takımlar sayfası): ad KESİLMEZ, satır sonunda sarar (`truncate` yerine
+ * `[overflow-wrap:anywhere]`). Ad listenin ana kimliği olduğunda kullanılır (bkz. "ad ve uzun metin kesilmez" kuralı);
+ * varsayılan kapalı — çip içi rozetlerin dar kap davranışı değişmez.
+ */
+export default function TeamBadge({ teamId, teamName, size = 12, className = '', onOpen, static: forceStatic = false, title, as = 'button', ariaLabel, wrap = false }) {
   const t = useT()
   const dir = useTeamDirectory()
   const [open, setOpen] = useState(false)
@@ -49,11 +54,14 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
   // İkon boyutu prop'tan (eski API, px) — Badge'in [&>svg]:size-3 kuralını satır içi stil ezer;
   // size={0} (TeamStatsSection) ikonu hiç çizdirmez.
   const icon = size > 0 ? <Users aria-hidden="true" style={{ width: size, height: size }} /> : null
-  const body = <>{icon}<span className="truncate">{name}</span></>
+  const body = <>{icon}<span className={wrap ? 'min-w-0 text-left whitespace-normal [overflow-wrap:anywhere]' : 'truncate'}>{name}</span></>
+  // Çok satırlı ad: hap köşesi (rounded-full) + overflow-hidden satırların uçlarını KIRPIYORDU (2026-10-11, telefon kartı:
+  // "ijital Kanallaı") — sarılan rozet düz köşeli ve taşmasız.
+  const wrapCls = wrap && 'h-auto items-start justify-start overflow-visible rounded-md whitespace-normal [&>svg]:mt-[0.2em] [&>svg]:shrink-0'
   if (!clickable) {
     return (
       <Badge variant="ghost" data-slot="team-badge" title={title}
-        className={cn(BADGE_BASE, 'cursor-default', className)}>
+        className={cn(BADGE_BASE, 'cursor-default', wrapCls, className)}>
         {body}
       </Badge>
     )
@@ -64,7 +72,7 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
     else setOpen(true)
   }
   const label = ariaLabel || t('team.openMembers', name)
-  const cls = cn(BADGE_BASE, BADGE_INTERACTIVE, TEAM_BADGE_TOUCH, className)
+  const cls = cn(BADGE_BASE, BADGE_INTERACTIVE, TEAM_BADGE_TOUCH, wrapCls, className)
   return (
     <>
       {as === 'span' ? (

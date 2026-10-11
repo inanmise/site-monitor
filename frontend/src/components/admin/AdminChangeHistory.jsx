@@ -283,10 +283,10 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
         <div className="flex shrink-0 items-center gap-2">
           {open && (
             <SimpleTooltip content={t('hist.refresh')}>
-              <Button variant="secondary" size="icon-sm" className="max-sm:size-10" onClick={() => setNonce(n => n + 1)} aria-label={t('hist.refresh')}><RefreshCw size={14} /></Button>
+              <Button variant="secondary" size="icon-sm" className="max-sm:size-10 pointer-coarse:size-10" onClick={() => setNonce(n => n + 1)} aria-label={t('hist.refresh')}><RefreshCw size={14} /></Button>
             </SimpleTooltip>
           )}
-          <Button variant="secondary" className="max-sm:h-10" onClick={() => { if (open) { setOpen(false); onClearFilter?.() } else setOpen(true) }}>
+          <Button variant="secondary" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => { if (open) { setOpen(false); onClearFilter?.() } else setOpen(true) }}>
             <History size={15} aria-hidden="true" /> {open ? t('ng.histHide') : t('ng.histShow')}
           </Button>
         </div>

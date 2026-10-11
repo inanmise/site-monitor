@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Menu } from 'lucide-react'
+import { ChevronDown, Menu } from 'lucide-react'
 import { Button } from '@/components/shadcn/button'
 import {
   DropdownMenu,
@@ -36,12 +36,17 @@ import {
  * ModalShell içindeki tablolarda görünmüyor, "tıklanmıyor" sanılıyordu (2026-09-20 Kullanıcı
  * Dizini). Token: --z-menu (modal ve Dialog üstü, toast altı).
  *
+ * <h3>variant</h3>
+ * `'icon'` (varsayılan): yalnız ikon, 28 px. `'labeled'` (2026-10-11, Takımlar — kullanıcı: "menüler çok net belli
+ * değil"): çerçeveli düğme, ikon + görünür "İşlemler" etiketi + aşağı ok; erişilebilir ad aynı (`rowLabel — label`,
+ * görünür etiketi İÇERİR). Dokunmatikte 40 px yükseklik.
+ *
  * Satır tıklaması: menü içindeki tıklamalar React ağacında çağıranın hücresine kabarır; satırı
  * açmaması için çağıran hücre yayılımı durdurur (CertificatesTable `onClick={stop}`) — eskisiyle
  * aynı sözleşme.
  * Görünür item yoksa hiçbir şey render etmez (yetkisiz kullanıcıda boş hücre).
  */
-export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel = null, placement = 'bottom' }) {
+export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel = null, placement = 'bottom', variant = 'icon' }) {
   const selectedRef = useRef(false)   // kapanış bir EYLEM seçiminden mi geldi (odak dönüşü için)
   const visible = (items || []).filter((it) => it && !it.hidden)
   if (visible.length === 0) return null
@@ -56,10 +61,20 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
             duyulmuyordu. rowLabel verilmezse davranış eskisiyle birebir aynı. */}
         {/* print:hidden — eski sarmalayıcı (.wr-menu-wrap) yazdırmada gizleniyordu; aynı davranış.
             pointer-coarse:size-10 — dokunmatikte 40 px dokunma hedefi (RESPONSIVE.md); masaüstü 28 px kalır. */}
-        <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground pointer-coarse:size-10 print:hidden"
-          title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
-          <Menu aria-hidden="true" />
-        </Button>
+        {variant === 'labeled' ? (
+          <Button variant="outline" size="sm" data-kebab="labeled"
+            className="h-8 gap-1.5 px-2.5 font-semibold max-sm:h-10 pointer-coarse:h-10 print:hidden data-[state=open]:border-primary data-[state=open]:text-primary"
+            title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
+            <Menu aria-hidden="true" />
+            <span>{label}</span>
+            <ChevronDown aria-hidden="true" className="size-3.5 opacity-70" />
+          </Button>
+        ) : (
+          <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground pointer-coarse:size-10 print:hidden"
+            title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
+            <Menu aria-hidden="true" />
+          </Button>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         side={right ? 'right' : 'bottom'}

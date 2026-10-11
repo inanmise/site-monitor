@@ -197,6 +197,18 @@ describe('KebabMenu', () => {
     } finally { restore() }
   })
 
+  it('variant="labeled": çerçeveli düğme, görünür etiket + ok; erişilebilir ad satırı söyler ve etiketi içerir; menü aynı', async () => {
+    const onEdit = vi.fn()
+    render(<KebabMenu variant="labeled" label="İşlemler" rowLabel="Ödeme Takımı" items={[{ label: 'Düzenle', onClick: onEdit }]} />)
+    const trigger = screen.getByRole('button', { name: 'Ödeme Takımı — İşlemler' })
+    expect(trigger).toHaveTextContent('İşlemler')
+    expect(trigger.getAttribute('data-kebab')).toBe('labeled')
+    expect(trigger).toHaveClass('pointer-coarse:h-10')    // dokunma hedefi ≥ 40 px
+    pressMenuTrigger(trigger)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Düzenle' }))
+    expect(onEdit).toHaveBeenCalledTimes(1)
+  })
+
   it('görünür eylem yoksa tetik HİÇ çizilmez (yetkisiz kullanıcı)', () => {
     render(<KebabMenu label="menü" items={[{ label: 'Sil', onClick: vi.fn(), hidden: true }]} />)
     expect(screen.queryByLabelText('menü')).not.toBeInTheDocument()

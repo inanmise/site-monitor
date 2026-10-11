@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-10T17:55:49Z",
+  "generatedAt": "2026-10-11T14:59:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 731,
+  "count": 732,
   "releases": [
+    {
+      "version": "20.121.0",
+      "tag": "v20.121.0",
+      "releasedAt": "2026-10-11T14:59:17Z",
+      "commit": "e0e2274e8054100612e5bb7f2197bc529ade6608",
+      "prevVersion": "20.120.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e0e2274e",
+          "subject": "açılış taraması iş parçacığı kapanışta durur — kapalı bağlamda runCheck ve yakalanmamış istisna yok"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "13e8328a",
+          "subject": "takımlar sayfası — eksik bilgi süzgeci, özet kartları, sığan sıkı liste ve görünür İşlemler menüsü"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.120.2",
       "tag": "v20.120.2",
