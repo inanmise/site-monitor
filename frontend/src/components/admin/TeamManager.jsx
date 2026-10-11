@@ -525,26 +525,33 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)} partial={!statsReady || !usersReady} />
     </div>
   )
-  /** Lider + müdür. `stacked` (tablo): etiket adın ÜSTÜNDE — dar sütunda ad tüm genişliği kullanır; kartta yan yana. */
+  /** Kişinin sicili (2026-10-11, kullanıcı isteği: "müdür ve liderin ad-soyad yanında sicil olsun"); yoksa null. */
+  const sicilOf = (u) => String(u?.employee_id ?? u?.employeeId ?? '').trim() || null
+  /** Adın ALTINDAKİ ikincil satır: sicil + (varsa) "elle" işareti — ad sarsa da hizalı kalır. */
+  const ownerMeta = (sicil, manual = false) => (sicil || manual) && (
+    <span data-slot="team-owner-meta" className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+      {sicil && <span data-slot="team-owner-sicil" className="whitespace-nowrap tabular-nums">{t('team.sicil', sicil)}</span>}
+      {manual && <span title={t('team.managerManualTitle')}>{t('team.managerManual')}</span>}
+    </span>
+  )
+  /** Lider + müdür (ad + sicil). `stacked` (tablo): etiket adın ÜSTÜNDE — dar sütunda ad tüm genişliği kullanır; kartta
+   *  yan yana. Müdür yalnız sicille türetildiyse (kullanıcı kaydı yok) etiketin kendisi sicildir — ikinci kez yazılmaz. */
   const ownersBlock = (team, stacked = false) => {
     const leaderName = userMap[leaderIdOf(team)]
+    const leaderSicil = leaderName ? sicilOf(usersById[leaderIdOf(team)]) : null
     const mgr = managerOf(team)
+    const mgrSicil = mgr?.label && mgr.userId != null ? sicilOf(usersById[mgr.userId]) : null
     const manual = manualManagerId(team) != null && userMap[manualManagerId(team)]
     return (
       <dl data-slot="team-owners" className={cn('grid min-w-0 text-[13px] leading-snug',
         stacked ? 'grid-cols-1 gap-y-0.5 [&>dd]:mb-1.5 [&>dd:last-child]:mb-0' : 'grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2.5 gap-y-1')}>
         <dt className="text-xs text-muted-foreground">{t('team.leaderShort')}</dt>
         <dd className="min-w-0 [overflow-wrap:anywhere]">
-          {leaderName ? <span>{leaderName}</span> : <span className="text-xs font-medium text-destructive">{t('team.noLeader')}</span>}
+          {leaderName ? <><span>{leaderName}</span>{ownerMeta(leaderSicil)}</> : <span className="text-xs font-medium text-destructive">{t('team.noLeader')}</span>}
         </dd>
         <dt className="text-xs text-muted-foreground">{t('team.managerShort')}</dt>
         <dd className="min-w-0 [overflow-wrap:anywhere]">
-          {mgr?.label ? <span>{mgr.label}</span> : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
-          {manual && (
-            <span className="ml-1.5 text-xs text-muted-foreground" title={t('team.managerManualTitle')}>
-              {t('team.managerManual')}
-            </span>
-          )}
+          {mgr?.label ? <><span>{mgr.label}</span>{ownerMeta(mgrSicil, manual)}</> : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
         </dd>
       </dl>
     )

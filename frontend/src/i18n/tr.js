@@ -6093,6 +6093,7 @@ export const TR = {
   'team.colOwners': 'Sorumlular',
   'team.leaderShort': 'Lider',
   'team.managerShort': 'Müdür',
+  'team.sicil': 'Sicil {0}',
   'team.menuViewMembers': 'Üyeleri gör',
   'team.menuContacts': 'Eskalasyon kişileri',
   'team.menuGroups': 'Bildirim grupları',

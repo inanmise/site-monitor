@@ -6080,6 +6080,7 @@ export const EN = {
   'team.colOwners': 'Owners',
   'team.leaderShort': 'Leader',
   'team.managerShort': 'Manager',
+  'team.sicil': 'Employee ID {0}',
   'team.menuViewMembers': 'View members',
   'team.menuContacts': 'Escalation contacts',
   'team.menuGroups': 'Notification groups',
