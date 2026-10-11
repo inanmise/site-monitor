@@ -319,21 +319,39 @@ Herhangi bir sertifikaya tıklayarak detaylar, uyarı geçmişi ve notlar görü
 
 ### Manuel Kontrol
 
-Dashboard'da "Şimdi Kontrol Et" düğmesine basın ya da:
+Dashboard'da "Şimdi Kontrol Et" düğmesine basın ya da önce oturum açıp (aşağıdaki **API kimlik doğrulaması**) çerezle çağırın:
 
 ```bash
-curl -u user:password -X POST http://localhost:8080/api/scheduler/run
+curl -b cookies.txt -X POST http://localhost:8080/api/scheduler/run
 ```
 
 Belirli bir domain'i hemen kontrol etmek için:
 
 ```bash
-curl -u user:password http://localhost:8080/api/check/example.com
+curl -b cookies.txt http://localhost:8080/api/check/example.com
 ```
 
 ## API Endpoints
 
-Tüm istekler HTTP Basic Auth veya oturum çerezi gerektirir.
+### API kimlik doğrulaması
+
+`/api/**` uçları **yalnız oturum çerezi** ile çalışır. HTTP Basic Auth, `Authorization: Bearer …` ya da API anahtarı
+desteklenmez (`AuthInterceptor`); herkese açık uçlar yalnız giriş, marka, giriş sayfası istatistikleri, sistem bakımı
+durumu ve veritabanı sağlık ucudur. Betikten erişim için önce `POST /api/login` ile oturum açıp çerezi saklayın:
+
+```bash
+# 1) Giriş — oturum çerezini dosyaya yaz (JSON gövde; alan adları snake_case)
+curl -c cookies.txt -H 'Content-Type: application/json' \
+  -d '{"username":"kullanici","password":"parola"}' http://localhost:8080/api/login
+# 2) Çerezle istek
+curl -b cookies.txt http://localhost:8080/api/certificates
+```
+
+- **Tek aktif oturum:** kullanıcının başka bir canlı oturumu varsa giriş **409** döner. `"force_login": "true"` ile
+  yeniden denerseniz o oturum (ör. tarayıcıdaki) kapanır — betikler için ayrı bir yerel hesap kullanın.
+- **CSRF denetimi:** `Origin`/`Referer` başlığı göndermeyen istemciler (curl, entegrasyon) geçer; başlık gönderen
+  bir istemcinin adresi sunucuyla eşleşmelidir (`OriginCheckFilter`).
+- Kilitlenme, pasif hesap ve bakım kuralları tarayıcı girişiyle aynıdır.
 
 ### Sertifikalar
 
@@ -498,7 +516,7 @@ Dört serbest izleme tipi (`port`, `ping`, `keyword`, `dns`) ortak bir REST dese
 ### Örnek API Yanıtı
 
 ```bash
-curl -u user:password http://localhost:8080/api/certificates
+curl -b cookies.txt http://localhost:8080/api/certificates
 ```
 
 ```json
