@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,10 @@ import java.util.regex.Pattern;
  * enjeksiyonu olmasın) o kullanılır, yoksa üretilir. Yanıtta HER İKİ başlık da döner; hata gövdeleri aynı değeri
  * {@code request_id} olarak taşır (GlobalExceptionHandler) ve kullanıcı arayüzü onu "Teknik ayrıntı"da gösterir —
  * kullanıcının ilettiği kimlik, sunucu logundaki hata satırını ({@code [istek=…]}) doğrudan bulur.
+ *
+ * <p><b>Her günlük satırında (2026-10-11):</b> kimlik istek boyunca MDC'de ({@value #MDC_KEY}) durur — düz metin
+ * günlükte {@code rid=<id>}, JSON günlükte {@code "requestId"} alanı. İstek bitince (hata da olsa) silinir; iş
+ * parçacığına aktarım {@link MdcTaskDecorator} ile.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -34,6 +39,8 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     public static final String ATTR = "correlationId";
     public static final String HEADER = "X-Correlation-Id";
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
+    /** Günlük bağlamı anahtarı (logback {@code %X{requestId}}, JSON {@code requestId}). */
+    public static final String MDC_KEY = "requestId";
 
     /** Kabul edilen dış kimlik: audit kolonu 40 karakter; başlık/log enjeksiyonuna kapalı karakter kümesi. */
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._:=-]{1,40}");
@@ -47,7 +54,15 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         req.setAttribute(ATTR, cid);
         res.setHeader(HEADER, cid);
         res.setHeader(REQUEST_ID_HEADER, cid);
-        chain.doFilter(req, res);
+        String outer = MDC.get(MDC_KEY);
+        MDC.put(MDC_KEY, cid);
+        try {
+            chain.doFilter(req, res);
+        } finally {
+            // Havuzdaki iş parçacığı bir sonraki isteğe eski kimliği taşımasın (iç içe dağıtımda dıştakini geri koy)
+            if (outer == null) MDC.remove(MDC_KEY);
+            else MDC.put(MDC_KEY, outer);
+        }
     }
 
     /** Güvenli dış kimlik ya da null. */

@@ -19,6 +19,7 @@
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
 | RDAP/HTTPS `PKIX path building failed` | [Kurumsal vekil CA rotasyonu](#kurumsal-vekil-ca-rotasyonu) |
 | `/metrics` dışarıdan açık mı? | [/metrics erişimi](#metrics-erişimi) |
+| Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
 
 ---
 
@@ -274,3 +275,23 @@ Seçenekler (platform ekibi kararı):
 3. Kalıcı: ayrı yönetim portu (`management.server.port`) + Service'te yayınlamama — kod ve chart değişikliği.
 
 Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/metrics` → engellendiyse 403/404.
+
+## Günlükler ve izleme
+
+2026-10-11'den beri **prod günlüğü JSON** (satır başına bir ECS nesnesi; stdout + `/var/log/site-monitor/*.log`), yerel
+çalıştırma düz metin. Geri dönmek için `LOG_FORMAT=text` (Helm `config.logFormat: text`); çeşit `LOG_JSON_FORMAT=ecs|logstash|gelf`.
+
+- **İstek kimliği her satırda:** hata gövdesindeki `request_id` = yanıt başlığı `X-Request-Id` = günlükte `requestId`
+  (JSON) / `rid=<id>` (düz metin). Kullanıcı "Teknik ayrıntı"daki kimliği iletir:
+  ```bash
+  kubectl logs -n "$NS" "$DEPLOY" | grep '"requestId":"<id>"'          # JSON
+  kubectl logs -n "$NS" "$DEPLOY" | grep 'rid=<id>'                    # düz metin
+  ```
+  Aynı isteğin havuza düşen işleri (ör. "Şimdi kontrol et") da aynı kimlikle yazılır.
+- **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`.
+  Eski `grep "decrypt failed"` / `grep 'Şema yamaları'` komutları JSON satırda da çalışır (ileti kaçışsız UTF-8).
+- **İz (OpenTelemetry):** her isteğin ve zamanlanmış işin bir `traceId`'si vardır (günlükte `traceId` / `trace=`).
+  Örnekleme %10 (`config.otel.samplingProbability`). Span'lar YALNIZ `config.otel.endpoint` (tam OTLP/HTTP iz URL'si,
+  ör. `http://otel-collector:4318/v1/traces`) verilince dışa aktarılır; boşken uygulama hiçbir yere bağlanmaz.
+  Tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler Prometheus'ta kalır (OTLP metrik gönderimi yok). İzlenen
+  sitelere giden kontrol isteklerine `traceparent` başlığı EKLENMEZ (Boot HTTP istemci kurucuları kullanılmıyor).
