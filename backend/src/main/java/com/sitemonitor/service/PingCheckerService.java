@@ -23,8 +23,12 @@ import java.util.regex.Pattern;
 @Service
 public class PingCheckerService {
 
-    // "0% packet loss" / "0% loss" / "%0 paket kaybı" gibi varyantlar
-    private static final Pattern LOSS = Pattern.compile("(\\d+)%\\s*(?:packet\\s*)?loss", Pattern.CASE_INSENSITIVE);
+    // "0% packet loss" / "33.3333% packet loss" (iputils ONDALIKLI yazar) / "(%33 kayıp)" (Türkçe Windows) varyantları.
+    // 2026-10-12 (kullanıcı bildirimi: "paket kaybı %3333"): eski kalıp yalnız TAM SAYI arıyordu ("(\d+)%") ve
+    // "33.3333%"te noktadan SONRAKİ "3333"ü yakalıyordu → kayıp 3333 ≥ 100 → 3 paketten 2'si yanıt alan hedef
+    // "kapalı" sayılıyordu (yanlış alarm). Tanı servisindeki (PingDiagnosticsService) kalıplarla aynı.
+    private static final Pattern LOSS = Pattern.compile("(\\d+(?:[.,]\\d+)?)%\\s*(?:packet\\s*)?loss", Pattern.CASE_INSENSITIVE);
+    private static final Pattern LOSS_TR = Pattern.compile("%\\s*(\\d+(?:[.,]\\d+)?)\\s*kay", Pattern.CASE_INSENSITIVE);
     // iputils/busybox: "= 0.1/0.2/0.3[/0.0] ms" → avg = 2. grup
     private static final Pattern RTT_UNIX = Pattern.compile("=\\s*([\\d.]+)/([\\d.]+)/([\\d.]+)");
     // Windows: "Average = 12ms" / "Ortalama = 12ms"
@@ -130,9 +134,10 @@ public class PingCheckerService {
             return result;
         }
 
-        Integer loss = match(LOSS, out, 1) != null ? Integer.valueOf(match(LOSS, out, 1)) : null;
+        Double lossPct = parseLossPercent(out);
+        Integer loss = storedLoss(lossPct);
         Long rtt = parseAvgRtt(out);
-        boolean up = loss != null ? loss < 100 : (rtt != null);
+        boolean up = lossPct != null ? lossPct < 100 : (rtt != null);
 
         result.put("up", up);
         result.put("packet_loss", loss);
@@ -173,6 +178,34 @@ public class PingCheckerService {
             try { return Long.parseLong(mw.group(1)); } catch (NumberFormatException ignore) {}
         }
         return null;
+    }
+
+    /**
+     * Ping çıktısındaki paket kaybı yüzdesi — ondalıklı olabilir ("33.3333%", "33,3%"); bulunamazsa null.
+     * Çıktı sınırlıdır (ProcessProbe) ve kalıplar doğrusaldır.
+     */
+    static Double parseLossPercent(String out) {
+        if (out == null || out.isEmpty()) return null;
+        String v = match(LOSS, out, 1);
+        if (v == null) v = match(LOSS_TR, out, 1);
+        if (v == null) return null;
+        try {
+            double d = Double.parseDouble(v.replace(',', '.'));
+            return Double.isFinite(d) && d >= 0 && d <= 100 ? d : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Saklanan tam sayı kayıp (kolon INTEGER): KISMİ kayıp (0 &lt; x &lt; 100) asla 0 ya da 100'e yuvarlanmaz — 0,4 kayıp
+     * "kayıpsız", 99,6 kayıp "hiç yanıt yok" görünürdü; [1, 99] aralığına sıkıştırılır.
+     */
+    static Integer storedLoss(Double pct) {
+        if (pct == null) return null;
+        if (pct <= 0) return 0;
+        if (pct >= 100) return 100;
+        return (int) Math.max(1, Math.min(99, Math.round(pct)));
     }
 
     private static String match(Pattern p, String s, int g) {
