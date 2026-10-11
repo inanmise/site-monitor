@@ -1,10 +1,13 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useId } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
-import { UsersRound, PenLine, Headset } from 'lucide-react'
+import {
+  UsersRound, PenLine, Headset, Plus, CircleCheck, CirclePause, TriangleAlert, Siren, History, Gauge, ScanSearch,
+  Trash2, Users, UserPlus, BellRing,
+} from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -16,8 +19,17 @@ import TeamMembersManager from './TeamMembersManager.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
 import TeamLdapAuditModal from './TeamLdapAuditModal.jsx'
-import { navigateTo } from '../../utils/navigate.js'
+import { navigateTo, applyTabView } from '../../utils/navigate.js'
 import { Download, SlidersHorizontal } from 'lucide-react'
+import MonitorStatsBar from '../MonitorStatsBar.jsx'
+import { useElementWidthState } from '../../hooks/useElementWidth.js'
+import { useIsMobile } from '../../hooks/use-mobile.js'
+import TeamGapsPanel, { TEAM_TOUCH_CHIP } from './teams/TeamGapsPanel.jsx'
+import TeamGapBadge from './teams/TeamGapBadge.jsx'
+import {
+  TEAM_GAPS, CORE_GAPS, TEAM_SORTS, DEFAULT_TEAM_SORT, teamGaps, gapCounts, matchesGaps, hasCoreGap, parseGapParam,
+  gapParam, sortTeams,
+} from './teams/teamGaps.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -67,20 +79,40 @@ function weeklyFlag(team, which) {
     : !!(team?.weekly_availability_enabled ?? team?.weeklyAvailabilityEnabled)
 }
 
-/** Takım satırındaki haftalık e-posta anahtarı — shadcn Switch + kısa etiket (tam ad aria-label/title). */
+/** Takım satırındaki haftalık e-posta anahtarı — shadcn Switch + kısa etiket (tam ad aria-label/title). Etiket dar
+ *  sütunda SARAR (kesilmez, taşmaz). */
 function WeeklySwitch({ on, disabled, onToggle, label, short }) {
+  const id = useId()
   return (
-    <span className="flex items-center gap-2">
-      <Switch checked={!!on} disabled={disabled} aria-label={label} title={label} onCheckedChange={onToggle} />
-      <span className="text-xs whitespace-nowrap text-muted-foreground">{short}</span>
+    <span className="flex min-w-0 items-center gap-2 max-sm:min-h-10 pointer-coarse:min-h-10">
+      <Switch id={id} checked={!!on} disabled={disabled} aria-label={label} title={label} onCheckedChange={onToggle} />
+      <label htmlFor={id} className={cn('flex min-w-0 items-center self-stretch text-xs leading-tight text-muted-foreground', disabled ? 'cursor-default' : 'cursor-pointer')}>{short}</label>
     </span>
   )
 }
 
+/**
+ * Liste görünümü KAP genişliğine göre (2026-10-11, kullanıcı: "tablo araları çok açık … sayfaya sığmıyor"): kap bu
+ * değerin altındaysa kartlar, üstündeyse sıkı sabit düzenli tablo. Tablonun sabit sütunları (seçim, haftalık, işlemler)
+ * ~330 px; kalan üç sütun bu eşikte ≥ 190 px alır — ad / kişi adı sarar, yatay kaydırma doğmaz. Ölçüm yoksa (jsdom,
+ * ilk boyama) telefon kırılımına düşülür.
+ */
+export const TEAM_TABLE_MIN_PX = 900
+/** Kart görünümünde iki sütuna geçilen kap genişliği. */
+const TEAM_CARDS_TWO_COL_PX = 640
 
-export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null }) {
+
+/**
+ * `onJump(tabId, params)`: Yönetim paneli içinde başka bir alt sekmeye SÜZGEÇLİ geçiş (AdminPanel.jump) — eksik
+ * bilgi düzeltme kısayolları (eskalasyon kişisi / bildirim grubu) takımı süzülmüş açar. Verilmezse `applyTabView`.
+ */
+export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null, onJump }) {
   const t = useT()
   const toast = useToast()
+  const phone = useIsMobile()
+  const [boxWidth, setBoxEl] = useElementWidthState()
+  const cards = boxWidth > 0 ? boxWidth < TEAM_TABLE_MIN_PX : phone
+  const cardsTwoCol = boxWidth >= TEAM_CARDS_TWO_COL_PX
   // 7/24 izleme ekibi takımı rozeti (2026-10-04): takım rehberinin `noc_team` bayrağı (sağlayıcı yoksa rozet yok)
   const teamDir = useTeamDirectory()
   const isAdmin = systemRole === 'ADMIN'
@@ -118,6 +150,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
   const [stats, setStats] = useState({})                // takım id → sayaçlar (2026-09-20)
+  const [statsReady, setStatsReady] = useState(false)   // sayaçlar geldi mi (eksik kuralları için)
+  const [usersReady, setUsersReady] = useState(false)   // kullanıcı listesi geldi mi (lider / müdür eksikleri için)
   const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
   const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
   const [ldapAuditTeam, setLdapAuditTeam] = useState(null)   // AD ile üyelik denetimi (2026-09-26)
@@ -128,10 +162,17 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [fAlerts, setFAlerts]   = useState(() => readUrlParam('g_alerts', ''))     // '' | 'open' | 'none'
   const [fLeader, setFLeader]   = useState(() => readUrlParam('g_leader', ''))     // '' | 'none'
   const [fWeekly, setFWeekly]   = useState(() => readUrlParam('g_weekly', ''))     // '' | 'reminder_on' | 'reminder_off' | 'availability_on' | 'availability_off'
-  useUrlQuerySync({ g_q: q, g_active: fActive, g_mgr: fManager, g_alerts: fAlerts, g_leader: fLeader, g_weekly: fWeekly })
+  // Eksik bilgi süzgeci (2026-10-11): seçili eksikler (g_miss, CSV) + eşleşme (g_mmode: any | all) + sıralama (g_sort)
+  const [gapSel, setGapSel]   = useState(() => parseGapParam(readUrlParam('g_miss', '')))
+  const [gapMode, setGapMode] = useState(() => (readUrlParam('g_mmode', '') === 'all' ? 'all' : 'any'))
+  const [sort, setSort]       = useState(() => { const v = readUrlParam('g_sort', ''); return TEAM_SORTS.includes(v) ? v : DEFAULT_TEAM_SORT })
+  useUrlQuerySync({ g_q: q, g_active: fActive, g_mgr: fManager, g_alerts: fAlerts, g_leader: fLeader, g_weekly: fWeekly,
+    g_miss: gapParam(gapSel), g_mmode: gapSel.length >= 2 && gapMode === 'all' ? 'all' : null,
+    g_sort: sort === DEFAULT_TEAM_SORT ? null : sort })
   const filterActive = !!(fActive || fManager || fAlerts || fLeader || fWeekly)
   const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_active', '') || readUrlParam('g_mgr', '') || readUrlParam('g_alerts', '') || readUrlParam('g_leader', '') || readUrlParam('g_weekly', '')))
-  const clearFilters = () => { setQ(''); setFActive(''); setFManager(''); setFAlerts(''); setFLeader(''); setFWeekly('') }
+  const clearFilters = () => { setQ(''); setFActive(''); setFManager(''); setFAlerts(''); setFLeader(''); setFWeekly(''); setGapSel([]); setGapMode('any') }
+  const toggleGap = (key) => setGapSel((prev) => parseGapParam((prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]).join(',')))
   const { showConfirm } = useDialog()
   const [selected, setSelected] = useState(() => new Set())   // toplu işlem seçimi (takım id)
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -153,17 +194,21 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     loadStats()
   }
 
-  /** Satır sayaçları — ayrı istek: liste sayaç gecikse de gelir (best-effort). */
+  /** Satır sayaçları — ayrı istek: liste sayaç gecikse de gelir (best-effort). Gelmezse sayaca dayalı eksikler
+   *  (üye, eskalasyon kişisi, grup, varlık) "bilinmiyor" kalır — eksik SAYILMAZ. */
   async function loadStats() {
     try {
       const r = await api.admin.teamStats?.()
-      if (r?.success) setStats(r.data || {})
+      if (r?.success) { setStats(r.data || {}); setStatsReady(true) }
     } catch { /* sütun boş kalır */ }
   }
 
   async function loadUsers() {
-    const res = await api.admin.getUsers()
-    if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
+    // Hata dalı (2026-10-11): istek düşerse yakalanmamış söz reddi olmasın; lider / müdür eksikleri "bilinmiyor" kalır.
+    try {
+      const res = await api.admin.getUsers()
+      if (res?.success) { setUsers((res.data ?? []).filter(u => u.active)); setUsersReady(true) }   // data null gelirse ekran cokmesin
+    } catch { /* lider/müdür adları boş kalır */ }
   }
 
   /** Yönetim ekranı yükleyicisi: kapsamlı tam üye listesi + kurum-geneli eskalasyon kişileri.
@@ -222,7 +267,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     return resolveTeamManagerEntry(users.filter(u => isTeamMember(u, team.id)), usersById, managerLabelFor,
       team.leader_id ?? team.leaderId ?? null)
   }
-  const teamManagerLabel = (team) => teamManagerEntry(team)?.label ?? null
+  const teamManagerLabel = (team) => managerOf(team)?.label ?? null
   /** "AD ile üyelik denetimi" modalı için: müdür + ona DOĞRUDAN bağlı üyeler (müdürün kendisi üye sayılmaz). */
   const managerInfoFor = (team) => {
     const e = teamManagerEntry(team)
@@ -233,12 +278,41 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     return { label: e.label, manual: !!e.manual, reports }
   }
 
-  /** Süzgeç + arama (ad / e-posta / lider adı / müdür adı / açıklama) — istemci tarafı; liste zaten tümü. */
-  const filteredTeams = useMemo(() => {
+  /** Takım müdürü kayıtları — kullanıcı listesi / takımlar değişince BİR KEZ çözülür (süzgeç, eksik kuralı, satır ve
+   *  CSV aynı kaydı okur; eskiden her render'da takım × kullanıcı taranıyordu). */
+  const managerEntries = useMemo(() => new Map(teams.map((tm) => [tm.id, teamManagerEntry(tm)])),
+    [teams, users]) // eslint-disable-line react-hooks/exhaustive-deps
+  const managerOf = (tm) => (managerEntries.has(tm.id) ? managerEntries.get(tm.id) : teamManagerEntry(tm))
+  const leaderIdOf = (tm) => tm.leader_id ?? tm.leaderId ?? null
+  const statsOf = (tm) => stats[String(tm.id)] || null
+
+  /** Takım başına eksikler (2026-10-11) — sayaç / kullanıcı listesi gelmeden ilgili kurallar "bilinmiyor" (atlanır). */
+  const gapsById = useMemo(() => {
+    const m = new Map()
+    for (const tm of teams) {
+      const lid = leaderIdOf(tm)
+      m.set(tm.id, teamGaps(tm, {
+        stats: statsReady ? statsOf(tm) : null,
+        hasLeader: usersReady ? (lid != null && !!userMap[lid]) : null,
+        hasManager: usersReady ? !!managerEntries.get(tm.id)?.label : null,
+      }))
+    }
+    return m
+  }, [teams, stats, statsReady, usersReady, userMap, managerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+  const gapsOf = (tm) => gapsById.get(tm.id) ?? []
+  const gapKnown = (key) => {
+    const g = TEAM_GAPS.find((x) => x.key === key)
+    if (g?.stats) return statsReady
+    return key === 'leader' || key === 'manager' ? usersReady : true
+  }
+
+  /** Süzgeç + arama (ad / e-posta / lider adı / müdür adı / açıklama) — istemci tarafı; liste zaten tümü.
+   *  Eksik bilgi süzgeci HARİÇ: eksik çiplerinin sayıları bu kümeden sayılır (seçilen eksik kendi sayısını değiştirmez). */
+  const baseTeams = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return teams.filter(tm => {
       const s = stats[String(tm.id)] || {}
-      const mgr = teamManagerEntry(tm)
+      const mgr = managerOf(tm)
       const mgrLabel = mgr?.label || ''
       const manualMgr = manualManagerId(tm)
       if (needle && ![tm.name, tm.email, tm.description, userMap[tm.leader_id], mgrLabel].some((v) => v && String(v).toLowerCase().includes(needle))) return false
@@ -256,13 +330,16 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       if (fWeekly === 'availability_off' && weeklyFlag(tm, 'availability')) return false
       return true
     })
-  }, [teams, stats, users, q, fActive, fManager, fAlerts, fLeader, fWeekly]) // eslint-disable-line react-hooks/exhaustive-deps
-  const pager = usePagination(filteredTeams, { listKey: 'admin-teams', preset: 'panel', resetDeps: [q, fActive, fManager, fAlerts, fLeader, fWeekly] })
+  }, [teams, stats, users, managerEntries, q, fActive, fManager, fAlerts, fLeader, fWeekly]) // eslint-disable-line react-hooks/exhaustive-deps
+  const gapCountMap = useMemo(() => gapCounts(baseTeams, gapsOf), [baseTeams, gapsById]) // eslint-disable-line react-hooks/exhaustive-deps
+  const filteredTeams = useMemo(() => sortTeams(baseTeams.filter((tm) => matchesGaps(gapsOf(tm), gapSel, gapMode)), sort, { gapsOf, statsOf }),
+    [baseTeams, gapsById, gapSel, gapMode, sort, stats]) // eslint-disable-line react-hooks/exhaustive-deps
+  const pager = usePagination(filteredTeams, { listKey: 'admin-teams', preset: 'panel', resetDeps: [q, fActive, fManager, fAlerts, fLeader, fWeekly, gapParam(gapSel), gapMode, sort] })
   const pagedTeams = pager.pageItems
   const managerOptions = useMemo(() => {
     const ids = new Set()
     for (const tm of teams) { const m = manualManagerId(tm); if (m != null && userMap[m]) ids.add(String(m)) }
-    for (const tm of teams) { const e = teamManagerEntry(tm); if (e?.userId != null && userMap[e.userId]) ids.add(String(e.userId)) }
+    for (const tm of teams) { const e = managerOf(tm); if (e?.userId != null && userMap[e.userId]) ids.add(String(e.userId)) }
     return [{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.filterNoManager') }, ...[...ids].map((id) => ({ value: id, label: userMap[id] })).sort((a, b) => a.label.localeCompare(b.label))]
   }, [teams, users]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -379,36 +456,172 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   ]
   const formMsgTone = msg && msg.startsWith('✓') ? 'success' : 'danger'
 
-  return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <h3>{t('team.title')}</h3>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" title={t('team.exportCsv')} onClick={() => {
-            const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
-              tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? ''] })
-            downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
-              t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim()], rows))
-          }}><Download size={14} /> {t('team.exportCsv')}</Button>
-          {isAdmin && <Button variant="success" onClick={openAdd}>{t('team.addBtn')}</Button>}
-        </div>
+  // ── Eksik bilgi düzeltme kısayolları (2026-10-11) — yalnız kullanıcının yapabildiği düzeltmeler bağlanır ──
+  const jumpAdmin = (tabId, params) => (onJump ? onJump(tabId, params) : applyTabView('admin', { g_tab: tabId, ...params }))
+  const gapActionsFor = (team) => {
+    const editable = canEditRow(team.id)
+    const edit = editable ? () => openEdit(team) : null
+    return {
+      email: edit, leader: edit, manager: edit, description: edit,
+      members: editable ? () => setManageTeam(team) : null,
+      inactive_members: () => setMembersTeam(team),
+      contacts: () => jumpAdmin('contacts', { g_team: String(team.id) }),
+      groups: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }),
+      assets: () => navigateTo('domains', { i_team: String(team.id) }),
+    }
+  }
+
+  // ── Özet kartları (2026-10-11): toplam / aktif / pasif / eksik bilgisi olan / alarmdaki — tıklanınca süzer ──
+  const activeCount = teams.filter((tm) => tm.active).length
+  const coreGapTeams = teams.filter((tm) => hasCoreGap(gapsOf(tm))).length
+  const alertTeams = teams.filter((tm) => Number(statsOf(tm)?.open_alerts) > 0).length
+  const coreSelected = gapSel.length === CORE_GAPS.length && CORE_GAPS.every((k) => gapSel.includes(k)) && gapMode === 'any'
+  const kpiActive = coreSelected ? 'gaps' : fAlerts === 'open' ? 'alerts' : fActive === 'active' ? 'active' : fActive === 'inactive' ? 'inactive' : null
+  const kpis = [
+    { key: 'total', Icon: UsersRound, cls: 'total', label: t('team.kpi.total'), value: teams.length, hint: t('team.kpi.totalHint') },
+    { key: 'active', Icon: CircleCheck, cls: 'valid', label: t('team.kpi.active'), value: activeCount },
+    { key: 'inactive', Icon: CirclePause, cls: 'paused', label: t('team.kpi.inactive'), value: teams.length - activeCount },
+    { key: 'gaps', Icon: TriangleAlert, cls: 'warning', label: t('team.kpi.gaps'), value: usersReady ? coreGapTeams : '…', hint: t('team.kpi.gapsHint') },
+    { key: 'alerts', Icon: Siren, cls: 'critical', label: t('team.kpi.alerts'), value: statsReady ? alertTeams : '…', hint: t('team.kpi.alertsHint') },
+  ]
+  const onKpi = (key) => {
+    if (key === 'total') { clearFilters(); return }
+    if (key === 'active' || key === 'inactive') { setFActive((v) => (v === key ? '' : key)); return }
+    if (key === 'alerts') { setFAlerts((v) => (v === 'open' ? '' : 'open')); return }
+    if (key === 'gaps') { if (coreSelected) setGapSel([]); else { setGapSel([...CORE_GAPS]); setGapMode('any') } }
+  }
+
+  /** CSV — süzülmüş liste (eski sütunlar aynı sırada) + sonda eksik bilgiler. */
+  const exportCsv = () => {
+    const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
+      tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? '',
+      gapsOf(tm).map((k) => t(`team.gap.${k}.label`)).join('; ')] })
+    downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
+      t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim(),
+      t('team.csvGaps')], rows))
+  }
+
+  // ── Satır / kart parçaları — tablo ve kart görünümü AYNI parçaları çizer ──
+  const nameBlock = (team) => (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+        <strong className="min-w-0 text-[0.95em]"><TeamBadge teamId={team.id} teamName={team.name} size={13} wrap
+          onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
+        {teamDir.byId.get(Number(team.id))?.noc_team && (
+          <Badge variant="outline" data-slot="team-noc-badge" title={t('noc.ot.teamBadgeTip')}
+            className="gap-1 rounded-full border-sky-500/40 bg-sky-500/10 font-semibold text-sky-700 dark:text-sky-300">
+            <Headset aria-hidden="true" className="size-3" />{t('noc.ot.teamBadge')}
+          </Badge>
+        )}
       </div>
+      {team.email
+        ? <span data-slot="team-email" className="px-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{team.email}</span>
+        : <span data-slot="team-email" data-missing="true" className="px-1 text-xs font-medium text-destructive">{t('team.gap.email.label')}</span>}
+    </div>
+  )
+  const statusBlock = (team) => (
+    <div className="flex flex-wrap items-center gap-1.5 px-1">
+      <ToneBadge tone={team.active ? 'success' : 'danger'}>{team.active ? t('team.active') : t('team.inactive')}</ToneBadge>
+      <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)} partial={!statsReady || !usersReady} />
+    </div>
+  )
+  /** Lider + müdür. `stacked` (tablo): etiket adın ÜSTÜNDE — dar sütunda ad tüm genişliği kullanır; kartta yan yana. */
+  const ownersBlock = (team, stacked = false) => {
+    const leaderName = userMap[leaderIdOf(team)]
+    const mgr = managerOf(team)
+    const manual = manualManagerId(team) != null && userMap[manualManagerId(team)]
+    return (
+      <dl data-slot="team-owners" className={cn('grid min-w-0 text-[13px] leading-snug',
+        stacked ? 'grid-cols-1 gap-y-0.5 [&>dd]:mb-1.5 [&>dd:last-child]:mb-0' : 'grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2.5 gap-y-1')}>
+        <dt className="text-xs text-muted-foreground">{t('team.leaderShort')}</dt>
+        <dd className="min-w-0 [overflow-wrap:anywhere]">
+          {leaderName ? <span>{leaderName}</span> : <span className="text-xs font-medium text-destructive">{t('team.noLeader')}</span>}
+        </dd>
+        <dt className="text-xs text-muted-foreground">{t('team.managerShort')}</dt>
+        <dd className="min-w-0 [overflow-wrap:anywhere]">
+          {mgr?.label ? <span>{mgr.label}</span> : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
+          {manual && (
+            <span className="ml-1.5 text-xs text-muted-foreground" title={t('team.managerManualTitle')}>
+              {t('team.managerManual')}
+            </span>
+          )}
+        </dd>
+      </dl>
+    )
+  }
+  const statsBlock = (team) => (
+    <TeamStats s={stats[String(team.id)]} t={t}
+      onMembers={() => (canEditRow(team.id) ? setManageTeam(team) : setMembersTeam(team))}
+      onDomains={() => navigateTo('domains', { i_team: String(team.id) })}
+      onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
+  )
+  const weeklyBlock = (team, inline = false) => (
+    <div className={cn('flex gap-1.5', inline ? 'flex-wrap gap-x-5 gap-y-2' : 'flex-col')}>
+      <WeeklySwitch on={weeklyFlag(team, 'reminder')} disabled={!canToggleWeekly(team.id)}
+        label={t('team.weeklyReminder')} short={t('team.weeklyReminderShort')} onToggle={() => toggleWeekly(team, 'reminder')} />
+      <WeeklySwitch on={weeklyFlag(team, 'availability')} disabled={!canToggleWeekly(team.id)}
+        label={t('team.weeklyAvailability')} short={t('team.weeklyAvailabilityShort')} onToggle={() => toggleWeekly(team, 'availability')} />
+    </div>
+  )
+  const menuFor = (team) => (
+    <KebabMenu variant="labeled" label={t('team.colActions')} rowLabel={team.name} items={[
+      { label: t('team.edit'), icon: <PenLine />, onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
+      { label: t('team.manageMembers'), icon: <UserPlus />, onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
+      { label: t('team.menuViewMembers'), icon: <Users />, onClick: () => setMembersTeam(team) },
+      { label: t('team.menuContacts'), icon: <Siren />, onClick: () => jumpAdmin('contacts', { g_team: String(team.id) }) },
+      { label: t('team.menuGroups'), icon: <BellRing />, onClick: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }) },
+      { label: t('hist.title'), icon: <History />, onClick: () => setHistFilter({ id: team.id, name: team.name }) },
+      // Veri Kalitesi (2026-10-10): takımın puanı + düzeltme listesi (sayfa görüş kapsamını sunucuda uygular)
+      { label: t('dq.teamMenu'), icon: <Gauge />, onClick: () => navigateTo('dataquality', { dq_team: String(team.id) }) },
+      { label: t('tla.menu'), icon: <ScanSearch />, onClick: () => setLdapAuditTeam(team), hidden: !isAdmin },
+      { label: t('team.delete'), icon: <Trash2 />, danger: true, onClick: () => del(team.id), hidden: !isAdmin },
+    ]} />
+  )
+  const emptyText = gapSel.length > 0 ? t('team.gap.empty') : t('team.noResults')
+
+  return (
+    <section data-slot="team-manager" className="mb-8 flex min-w-0 flex-col gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_18rem]">
+          <h3 className="text-lg font-semibold tracking-tight">{t('team.title')}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('team.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" className="max-sm:h-10 pointer-coarse:h-10" title={t('team.exportCsv')} onClick={exportCsv}>
+            <Download aria-hidden="true" /> {t('team.exportCsv')}
+          </Button>
+          {isAdmin && <Button className="max-sm:h-10 pointer-coarse:h-10" onClick={openAdd}><Plus aria-hidden="true" /> {t('team.addBtn')}</Button>}
+        </div>
+      </header>
       {msg && !modal && <AlertBanner tone={formMsgTone}>{msg}</AlertBanner>}
       {loadError && teams.length === 0 && (
         <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
       )}
 
-      {/* Araç çubuğu — arama + Süzgeçler paneli + sayaç (2026-09-20); shadcn InputGroup + Label */}
-      <div className="mb-3" data-testid="tm-toolbar">
+      {teams.length > 0 && <MonitorStatsBar dense items={kpis} activeFilter={kpiActive} onStatClick={onKpi} className="mb-0" />}
+
+      {teams.length > 0 && (
+        <TeamGapsPanel counts={gapCountMap} selected={gapSel} mode={gapMode} known={gapKnown}
+          onToggle={toggleGap} onMode={setGapMode} onClear={() => { setGapSel([]); setGapMode('any') }} />
+      )}
+
+      {/* Araç çubuğu — arama + sıralama + Süzgeçler paneli + sayaç (2026-09-20; sıralama 2026-10-11) */}
+      <div data-testid="tm-toolbar">
         <div className="flex flex-wrap items-center gap-2">
           <ToolbarSearch value={q} onChange={setQ} placeholder={t('team.searchPlaceholder')}
-            ariaLabel={t('team.searchLabel')} clearLabel={t('inv.filterClear')} />
-          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'secondary'} size="sm" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
-            <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
+            ariaLabel={t('team.searchLabel')} clearLabel={t('inv.filterClear')} className="max-sm:h-10 pointer-coarse:h-10" />
+          <span className="w-full min-[480px]:w-auto min-[480px]:min-w-[200px] max-sm:[&_button]:h-10 pointer-coarse:[&_button]:h-10">
+            <SearchableSelect value={sort} onChange={(v) => setSort(TEAM_SORTS.includes(v) ? v : DEFAULT_TEAM_SORT)}
+              ariaLabel={t('team.sortTeams')} searchThreshold={99}
+              options={TEAM_SORTS.map((k) => ({ value: k, label: t(`team.sortBy.${k}`) }))} />
+          </span>
+          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="max-sm:h-10 pointer-coarse:h-10"
+            onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+            <SlidersHorizontal aria-hidden="true" /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
           </Button>
-          <span className="text-[0.84em] whitespace-nowrap text-muted-foreground">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
+          <span className="text-[0.84em] whitespace-nowrap text-muted-foreground" aria-live="polite">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
           <div className="flex-1" />
-          {(filterActive || q) && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
+          {(filterActive || q || gapSel.length > 0) && <Button type="button" variant="ghost" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
         </div>
         {filtersOpen && (
           <FilterPanel label={t('inv.filters')} className="grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
@@ -439,10 +652,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
       {canManage && selected.size > 0 && (
         <div data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}
-          className="mb-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2">
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2">
           <span className="mr-1 font-bold">{t('team.selected', selected.size)}</span>
-          <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</Button>
-          <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</Button>
+          <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</Button>
+          <Button variant="destructive" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</Button>
           <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
             <SearchableSelect value="" onChange={(v) => v && runBulk(v)} placeholder={t('team.bulkWeekly')} ariaLabel={t('team.bulkWeekly')} searchThreshold={99}
               options={[{ value: '', label: t('team.bulkWeekly') }, { value: 'weekly_reminder_on', label: t('team.bulkReminderOn') }, { value: 'weekly_reminder_off', label: t('team.bulkReminderOff') },
@@ -454,96 +667,91 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                 options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />
             </span>
           )}
-          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
+          <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border bg-card border-border">
-        <Table>
-          <TableHeader className="bg-muted/50">
-            <TableRow>
-              {canManage && (
-                <TableHead className="w-7">
-                  <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('team.selectAll')} disabled={selectableIds.length === 0} />
-                </TableHead>
-              )}
-              <TableHead>{t('team.colName')}</TableHead>
-              <TableHead className="hidden md:table-cell">{t('team.colEmail')}</TableHead>
-              <TableHead className="hidden lg:table-cell">{t('team.colLeader')}</TableHead>
-              <TableHead className="hidden lg:table-cell">{t('team.colManager')}</TableHead>
-              <TableHead>{t('team.colActive')}</TableHead>
-              <TableHead className="hidden lg:table-cell">{t('team.colWeeklyEmails')}</TableHead>
-              <TableHead>{t('team.colAssets')}</TableHead>
-              <TableHead>{t('team.colActions')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredTeams.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={canManage ? 9 : 8} className="p-[18px] text-center text-muted-foreground">
-                  {t('team.noResults')}
-                </TableCell>
-              </TableRow>
+      {/* Liste — kap genişliğine göre sıkı tablo ya da kartlar (2026-10-11) */}
+      <div ref={setBoxEl} data-slot="tm-list" data-view={cards ? 'cards' : 'table'} className="min-w-0">
+        {cards ? (
+          <div className="flex flex-col gap-2">
+            {canManage && selectableIds.length > 0 && (
+              <label className="flex min-h-10 w-fit cursor-pointer items-center gap-2 px-1 text-sm">
+                <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('team.selectAll')} />
+                {t('team.selectAll')}
+              </label>
             )}
-            {pagedTeams.map((team) => (
-              <TableRow key={team.id} data-state={selected.has(team.id) ? 'selected' : undefined}>
-                {canManage && (
-                  <TableCell className="w-7">
-                    {canEditRow(team.id) ? <Checkbox checked={selected.has(team.id)} onCheckedChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} /> : null}
-                  </TableCell>
+            {filteredTeams.length === 0 ? (
+              <p data-slot="tm-empty" className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">{emptyText}</p>
+            ) : (
+              <ul aria-label={t('team.listLabel')} className={cn('grid gap-3', cardsTwoCol && 'grid-cols-2')}>
+                {pagedTeams.map((team) => (
+                  <li key={team.id} data-slot="team-card" data-team-id={team.id} data-state={selected.has(team.id) ? 'selected' : undefined}
+                    className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3 shadow-xs data-[state=selected]:border-primary data-[state=selected]:bg-primary/[0.03]">
+                    <div className="flex items-start gap-2">
+                      {canManage && canEditRow(team.id) && (
+                        <label className="-mt-1.5 -ml-1.5 flex size-10 shrink-0 cursor-pointer items-center justify-center">
+                          <Checkbox checked={selected.has(team.id)} onCheckedChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} />
+                        </label>
+                      )}
+                      <div className="min-w-0 flex-1">{nameBlock(team)}</div>
+                      <div className="shrink-0">{menuFor(team)}</div>
+                    </div>
+                    {statusBlock(team)}
+                    <div className="rounded-md bg-muted/40 px-2.5 py-2">{ownersBlock(team)}</div>
+                    {statsBlock(team)}
+                    <div className="border-t pt-2.5">{weeklyBlock(team, true)}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <Table className="table-fixed">
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  {canManage && (
+                    <TableHead className="w-10">
+                      <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('team.selectAll')} disabled={selectableIds.length === 0} />
+                    </TableHead>
+                  )}
+                  {/* Sabit düzen: ad ve kişi sütunları payı alır, varlık çipleri kalanı (sarar); haftalık + işlemler dar sabit */}
+                  <TableHead className="w-[22%]">{t('team.colTeam')}</TableHead>
+                  <TableHead className="w-[24%]">{t('team.colOwners')}</TableHead>
+                  <TableHead>{t('team.colAssets')}</TableHead>
+                  <TableHead className="w-[10rem]">{t('team.colWeeklyEmails')}</TableHead>
+                  <TableHead className="w-[7.5rem] text-right">{t('team.colActions')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredTeams.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={canManage ? 6 : 5} className="p-[18px] text-center whitespace-normal text-muted-foreground">
+                      {emptyText}
+                    </TableCell>
+                  </TableRow>
                 )}
-                <TableCell>
-                  <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
-                    onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
-                  {teamDir.byId.get(Number(team.id))?.noc_team && (
-                    <Badge variant="outline" data-slot="team-noc-badge" title={t('noc.ot.teamBadgeTip')}
-                      className="ml-1.5 gap-1 rounded-full border-sky-500/40 bg-sky-500/10 font-semibold text-sky-700 dark:text-sky-300">
-                      <Headset aria-hidden="true" className="size-3" />{t('noc.ot.teamBadge')}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="hidden md:table-cell">{team.email || '—'}</TableCell>
-                <TableCell className="hidden lg:table-cell">{userMap[team.leader_id] ?? <span className="text-destructive">{t('team.noLeader')}</span>}</TableCell>
-                <TableCell className="hidden lg:table-cell">
-                  {teamManagerLabel(team) || '—'}
-                  {manualManagerId(team) != null && userMap[manualManagerId(team)] && (
-                    <span className="ml-1.5 text-xs text-muted-foreground" title={t('team.managerManualTitle')}>
-                      {t('team.managerManual')}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <ToneBadge tone={team.active ? 'success' : 'danger'}>{team.active ? t('team.active') : t('team.inactive')}</ToneBadge>
-                </TableCell>
-                <TableCell className="hidden lg:table-cell">
-                  <div className="flex flex-col gap-1.5">
-                    <WeeklySwitch on={weeklyFlag(team, 'reminder')} disabled={!canToggleWeekly(team.id)}
-                      label={t('team.weeklyReminder')} short={t('team.weeklyReminderShort')} onToggle={() => toggleWeekly(team, 'reminder')} />
-                    <WeeklySwitch on={weeklyFlag(team, 'availability')} disabled={!canToggleWeekly(team.id)}
-                      label={t('team.weeklyAvailability')} short={t('team.weeklyAvailabilityShort')} onToggle={() => toggleWeekly(team, 'availability')} />
-                  </div>
-                </TableCell>
-                <TableCell className="whitespace-normal">
-                  <TeamStats s={stats[String(team.id)]} t={t}
-                    onMembers={() => (canEditRow(team.id) ? setManageTeam(team) : setMembersTeam(team))}
-                    onDomains={() => navigateTo('domains', { i_team: String(team.id) })}
-                    onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
-                </TableCell>
-                <TableCell>
-                  <KebabMenu label={t('team.colActions')} rowLabel={team.name} items={[
-                    { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
-                    { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
-                    { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
-                    // Veri Kalitesi (2026-10-10): takımın puanı + düzeltme listesi (sayfa görüş kapsamını sunucuda uygular)
-                    { label: t('dq.teamMenu'), onClick: () => navigateTo('dataquality', { dq_team: String(team.id) }) },
-                    { label: t('tla.menu'), onClick: () => setLdapAuditTeam(team), hidden: !isAdmin },
-                    { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
-                  ]} />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                {pagedTeams.map((team) => (
+                  <TableRow key={team.id} data-team-id={team.id} data-state={selected.has(team.id) ? 'selected' : undefined} className="align-top">
+                    {canManage && (
+                      <TableCell className="w-10 pt-3 align-top">
+                        {canEditRow(team.id) ? <Checkbox checked={selected.has(team.id)} onCheckedChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} /> : null}
+                      </TableCell>
+                    )}
+                    <TableCell className="py-2.5 align-top whitespace-normal">
+                      <div className="flex min-w-0 flex-col gap-1.5">{nameBlock(team)}{statusBlock(team)}</div>
+                    </TableCell>
+                    <TableCell className="py-2.5 align-top whitespace-normal">{ownersBlock(team, true)}</TableCell>
+                    <TableCell className="py-2.5 align-top whitespace-normal">{statsBlock(team)}</TableCell>
+                    <TableCell className="py-2.5 align-top whitespace-normal">{weeklyBlock(team)}</TableCell>
+                    <TableCell className="py-2.5 text-right align-top">{menuFor(team)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </div>
 
       {/* Sayfalama — proje standardı PaginationBar (istemci-taraflı, 2026-09-20) */}
@@ -677,7 +885,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
         onOpenDirectory={isAdmin ? (u) => { setEditingUser(null); setViewTab('directory'); setViewUser(u) } : undefined}
       />
-    </div>
+    </section>
   )
 }
 
@@ -687,11 +895,11 @@ function TeamStats({ s, t, onMembers, onDomains, onAlerts }) {
   if (!s) return null
   const chip = (key, val, onClick, tip, alert = false, labelOverride = null) => {
     const n = Number(val ?? 0)
-    const cls = cn('h-auto rounded-full px-2 py-px text-[0.76em] font-semibold', n === 0 && 'opacity-55',
+    const cls = cn('relative h-auto rounded-full px-2 py-px text-[0.76em] font-semibold', n === 0 && 'opacity-55',
       alert && 'border-destructive/40 text-destructive')
     const label = labelOverride || t(`team.stat.${key}`, n)
     return onClick
-      ? <Button type="button" key={key} variant="outline" size="xs" className={cn(cls, 'hover:border-primary hover:text-primary')} onClick={onClick} title={tip}>{label}</Button>
+      ? <Button type="button" key={key} variant="outline" size="xs" className={cn(cls, TEAM_TOUCH_CHIP, 'hover:border-primary hover:text-primary')} onClick={onClick} title={tip}>{label}</Button>
       : <Badge key={key} variant="outline" className={cls} title={tip}>{label}</Badge>
   }
   // Pasif üyeler (2026-10-02): toplam üyeye dâhil; varsa sayaç "N aktif · M pasif" yazar (members_inactive ek alan).
@@ -699,7 +907,7 @@ function TeamStats({ s, t, onMembers, onDomains, onAlerts }) {
   const membersLabel = inactiveMembers > 0
     ? t('team.stat.membersSplit', Math.max(0, Number(s.members ?? 0) - inactiveMembers), inactiveMembers) : null
   return (
-    <div className="flex max-w-[260px] flex-wrap gap-1" data-testid="team-stats">
+    <div className="flex min-w-0 flex-wrap gap-1" data-testid="team-stats">
       {chip('members', s.members, onMembers, t('team.statMembersTip'), false, membersLabel)}
       {chip('domains', s.domains, onDomains, t('team.statDomainsTip'))}
       {chip('monitors', s.monitors)}

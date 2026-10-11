@@ -442,7 +442,7 @@ toggle `toggle-group.jsx`'in içinden dolaylı olarak kullanılıyor).
 | Sekmeler | Tabs | URL parametre ad alanına dikkat |
 | Tek açılır bölüm | Collapsible | `forceMount` + `hidden` tuzağı |
 | Birden çok açılır bölüm | Accordion | `type="multiple"` |
-| Satır/kart eylem menüsü | `ui/KebabMenu` (DropdownMenu) | `rowLabel` ile satırı ayırt eden ad |
+| Satır/kart eylem menüsü | `ui/KebabMenu` (DropdownMenu) | `rowLabel` ile satırı ayırt eden ad; menünün kendisi listenin ana eylemiyse `variant="labeled"` (çerçeveli "İşlemler ▾" düğmesi, telefonda / dokunmatikte 40 px — Takımlar 2026-10-11) |
 | İzleme kartı eylemleri telefonda (< 640 px) | `MonitorCardActions phoneMenu menuItems={[…]}` | 2026-09-27 (Alan Adı kartı; isteğe bağlı, varsayılan kapalı → diğer sayfalarda çıktı aynı): Sürdür + Şimdi kontrol et görünür kalır, Düzenle/Kopyala/Sil `max-sm:hidden`, yerine tek "Diğer işlemler" KebabMenu'sü (Düzenle · Kopyala · `menuItems` · Sil; adı satırı taşır) — sertifika kartının telefon düzeniyle aynı |
 | Genel açılır menü | DropdownMenu (`modal={false}`, `z-(--z-menu)`) | — |
 | Kısa ipucu (hover/odak) | Tooltip | TooltipProvider gerekir; temel bilgi taşımaz |
