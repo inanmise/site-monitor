@@ -122,6 +122,8 @@ class TlsGradeServiceTest {
         assertThat(c.getDirection()).isEqualTo(TlsGradeChange.DROP);
         assertThat(c.getTeamId()).isEqualTo(7L);
         assertThat(c.getUgTeamId()).isEqualTo(9L);
+        // Düşüş takıma bildirilecek (2026-10-11): bildirim işi PENDING satırları talep eder
+        assertThat(c.getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
         assertThat(statuses.get(1L).getDroppedFrom()).isEqualTo("A");
         assertThat(statuses.get(1L).getDroppedAt()).isNotBlank();
         verify(activity).recordLifecycle(eq(ActivityLogService.CERT), eq(1L), eq("a.example.com"), eq("a.example.com"),
@@ -141,6 +143,8 @@ class TlsGradeServiceTest {
         assertThat(r.rises()).isEqualTo(1);
         assertThat(statuses.get(1L).getDroppedFrom()).isNull();
         assertThat(changes).extracting(TlsGradeChange::getDirection).containsExactly("DROP", "RISE", "RISE");
+        // Yalnız düşüş bildirilir; yükseliş ve bilgi değişimi bildirim beklemez
+        assertThat(changes).extracting(TlsGradeChange::getNotifyState).containsExactly(TlsGradeChange.NOTIFY_PENDING, null, null);
     }
 
     @Test
@@ -153,6 +157,7 @@ class TlsGradeServiceTest {
         assertThat(r.refined()).isEqualTo(1);
         assertThat(r.changed()).isTrue();
         assertThat(changes).extracting(TlsGradeChange::getDirection).containsExactly(TlsGradeChange.REFINE);
+        assertThat(changes.get(0).getNotifyState()).isNull();
         assertThat(statuses.get(1L).getDroppedFrom()).isNull();
         verify(activity, never()).recordLifecycle(anyString(), any(), anyString(), anyString(), any(), anyString(), anyString(), anyString());
         // Profil bilgisi tamken sonraki kötüleşme GERÇEK düşüştür
@@ -238,6 +243,25 @@ class TlsGradeServiceTest {
         assertThat(rows.get(1).get("recovered")).isEqualTo(true);
         assertThat(service.drops(List.of(), 30, 50, Map.of())).isEmpty();
         assertThat(service.drops(null, 30, 50, Map.of())).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("2026-10-11: son düşüş satırı bildirim durumunu kod olarak taşır; özellikten önceki satırda alan yok")
+    void dropsCarryNotifyCode() {
+        TlsGradeChange sent = change(1L, "a.example.com", 7L, null, "A", "C");
+        sent.setNotifyState(TlsGradeChange.NOTIFY_SENT);
+        sent.setNotifiedAt("2026-10-11T08:05:00");
+        TlsGradeChange skipped = change(2L, "b.example.com", 7L, null, "A", "B");
+        skipped.setNotifyState("SKIPPED: eşik üstü not");
+        TlsGradeChange legacy = change(3L, "c.example.com", 7L, null, "A", "B");
+        when(changeRepo.findRecent(anyString(), eq("DROP"), any())).thenReturn(List.of(sent, skipped, legacy));
+        List<Map<String, Object>> rows = service.drops(null, 30, 50, Map.of());
+        assertThat(rows.get(0)).containsEntry("notify", "sent").containsEntry("notified_at", "2026-10-11T08:05:00");
+        assertThat(rows.get(1)).containsEntry("notify", "below").doesNotContainKey("notified_at");
+        assertThat(rows.get(2)).doesNotContainKey("notify");
+        assertThat(TlsGradeDropNotifier.uiCode(TlsGradeChange.NOTIFY_SENDING)).isEqualTo("pending");
+        assertThat(TlsGradeDropNotifier.uiCode("SKIPPED: takım yok")).isEqualTo("no_team");
+        assertThat(TlsGradeDropNotifier.uiCode("tuhaf")).isNull();
     }
 
     @Test

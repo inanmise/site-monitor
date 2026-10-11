@@ -2319,6 +2319,10 @@ export const EN = {
   'general.grp.logging':    'Logging',
   'general.grp.security':    'Security',
   'general.grp.scripted':   'Synthetic Monitoring (k6)',
+  // TLS grade drop notification (2026-10-11)
+  'general.grp.tls-grade': 'TLS configuration grade',
+  'general.lbl.site.monitor.tls-grade.drop-notify': 'Notify the team when a grade drops',
+  'general.lbl.site.monitor.tls-grade.drop-notify-min-grade': 'Notification threshold (new grade at most)',
   'general.grp.executor':   'Task Pool (certCheckExecutor)',
   'general.grpDesc.executor': 'The thread pool and waiting queue that run monitoring checks. Changes take effect as soon as you save; no restart or Helm upgrade is needed. Rules: core ≤ maximum, queue ≥ 1. Leave a field blank to fall back to the environment variable (EXECUTOR_*). Every queued task holds memory; the Task Queue card under System Health shows saturation.',
   'general.grp.realert':    'Re-alert interval (per type)',
@@ -14701,6 +14705,9 @@ export const EN = {
     'What it does: Decides what happens when a hard-coded secret — a password or token — is detected in a script.\nBenefit: Secrets stop being embedded in script text and environment variables get used instead.\nRecommended: WARN (the default) warns but still saves; move to BLOCK to refuse the save once the habit is established.',
   'help.set.site.monitor.scripted.file-read-policy':
     'What it does: What happens when a synthetic script reads files (open(), the k6/fs module, local file imports, system file paths).\nBenefit: k6 runs as the same user as the application, so a script that reads files can reach secrets on the server; this gate closes that path.\nRecommended: REPORT (default) only warns and writes a report at start-up; nothing else changes. When no existing script reads files (report: /api/admin/scripted/file-read-report), switch to BLOCK: such scripts are neither saved nor run.',
+  // TLS grade drop notification (2026-10-11)
+  'help.set.site.monitor.tls-grade.drop-notify': 'What it does: When the daily TLS scan lowers a certificate\'s configuration grade, sends one summary email to the responsible (SY) and UG teams and a push to their members.\nBenefit: A grade drop no longer stays inside the app; the team learns the same day about a degradation such as TLS 1.0 being enabled, a weak cipher or a lost HSTS header.\nRecommended: On (the default). Each drop is notified once; rises and information changes from incomplete scans aren\'t notified. When switched off, pending drops are marked "notification off" and aren\'t sent later.',
+  'help.set.site.monitor.tls-grade.drop-notify-min-grade': 'What it does: Decides which drops are notified: if the new grade is HIGHER than this one, no notification is sent.\nBenefit: Cuts the noise from small drops (A+ → A) without missing serious degradations.\nRecommended: A (the default) — every drop except to A+. Pick B or C to be told only about serious degradations.',
   'help.set.site.monitor.scripted.k6-api-address':
     'What it does: The address the k6 subprocess binds its REST API to.\nBenefit: Port 0 means an ephemeral port, so concurrent runs can never collide.\nRecommended: 127.0.0.1:0 (the default). Leaving it empty omits the flag entirely — use that only as an escape hatch with an unexpected k6 build.',
   'help.set.site.monitor.scripted.k6-bin':
@@ -18202,6 +18209,15 @@ export const EN = {
   'tlsg.ov.latestProbe': 'last scan {0}',
   'tlsg.ov.recovered': 'Recovered',
   'tlsg.ov.current': 'now {0}',
+  // TLS grade drop notification state (2026-10-11)
+  'tlsg.ov.notify.sent': 'Team notified',
+  'tlsg.ov.notify.sentAt': 'Team notified: {0}',
+  'tlsg.ov.notify.pending': 'Notification queued',
+  'tlsg.ov.notify.off': 'Not notified: notifications were off',
+  'tlsg.ov.notify.below': 'Not notified: grade above the threshold',
+  'tlsg.ov.notify.maintenance': 'Not notified: system maintenance',
+  'tlsg.ov.notify.no_team': 'Not notified: no team assigned',
+  'tlsg.ov.notify.no_recipient': 'Not notified: the team has no recipients',
   'tlsg.ov.openCert': 'Open certificate',
   'tlsg.ov.loadError': 'Grade drops could not be loaded; check the connection and try again.',
   // ── Aylık Yönetici Özeti (2026-10-10) — sayfa, ayarlar, bölüm metinleri (exec.<bölüm>.<tür>.<kod>) ──

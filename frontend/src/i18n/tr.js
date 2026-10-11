@@ -2320,6 +2320,10 @@ export const TR = {
   'general.grp.logging':    'Loglama',
   'general.grp.security':    'Güvenlik',
   'general.grp.scripted':   'Sentetik İzleme (k6)',
+  // TLS notu düşüş bildirimi (2026-10-11)
+  'general.grp.tls-grade': 'TLS yapılandırma notu',
+  'general.lbl.site.monitor.tls-grade.drop-notify': 'Not düşünce takıma bildir',
+  'general.lbl.site.monitor.tls-grade.drop-notify-min-grade': 'Bildirim eşiği (yeni not en çok)',
   'general.grp.executor':   'Görev Havuzu (certCheckExecutor)',
   'general.grpDesc.executor': 'İzleme kontrollerini koşturan thread havuzu ve bekleme kuyruğu. Kaydedince anında uygulanır; yeniden başlatma ve Helm upgrade gerekmez. Kural: çekirdek ≤ azami, kuyruk ≥ 1. Boş bırakılan alan ortam değişkenine (EXECUTOR_*) döner. Kuyruktaki her görev bellek tutar; Sistem Sağlığı → Görev Kuyruğu kartı doygunluğu gösterir.',
   // Tür bazlı yeniden uyarı sıklığı (2026-10-01, opt-in) — backend ReAlertIntervals / AppSettingsCatalog "realert".
@@ -14731,6 +14735,9 @@ export const TR = {
     'Ne işe yarar: Script içinde sabit-kodlu bir gizli değer (parola, token) saptandığında ne yapılacağı.\nFaydası: Sırlar script metnine gömülmez; ortam değişkeni kullanımı teşvik edilir.\nÖnerilen değer: WARN (varsayılan) uyarır ama kaydeder; disiplin oturduğunda BLOCK yapıp kaydı tamamen reddedin.',
   'help.set.site.monitor.scripted.file-read-policy':
     'Ne işe yarar: Sentetik betikte dosya okuma (open(), k6/fs modülü, yerel dosya importu, sistem dosya yolu) saptandığında ne yapılacağı.\nFaydası: k6 uygulamayla aynı kullanıcıyla çalıştığı için dosya okuyan bir betik sunucudaki gizli değerlere erişebilir; bu kapı o yolu kapatır.\nÖnerilen değer: REPORT (varsayılan) yalnız uyarır ve açılışta rapor yazar, davranış değişmez. Mevcut betiklerin hiçbiri dosya okumuyorsa (rapor: /api/admin/scripted/file-read-report) BLOCK yapın; dosya okuyan betik kaydedilmez ve çalıştırılmaz.',
+  // TLS notu düşüş bildirimi (2026-10-11)
+  'help.set.site.monitor.tls-grade.drop-notify': 'Ne işe yarar: Günlük TLS taramasında bir sertifikanın yapılandırma notu düşünce sorumlu (SY) ve UG takımlarına tek bir özet e-posta ve üyelere push gönderir.\nFaydası: Not düşüşü yalnız uygulama içinde kalmaz; takım TLS 1.0 açılması, zayıf şifre ya da HSTS kaybı gibi bozulmayı aynı gün öğrenir.\nÖnerilen değer: Açık (varsayılan). Her düşüş bir kez bildirilir; not yükselmesi ve eksik taramadan doğan bilgi değişimi bildirilmez. Kapatılınca bekleyen düşüşler "bildirim kapalı" olarak işaretlenir, sonradan açılınca geriye dönük gönderilmez.',
+  'help.set.site.monitor.tls-grade.drop-notify-min-grade': 'Ne işe yarar: Hangi düşüşlerin bildirileceğini belirler: yeni not bu nottan YÜKSEKSE bildirim gitmez.\nFaydası: Küçük düşüşlerle (A+ → A) gelen gürültü kesilir, ciddi bozulmalar kaçmaz.\nÖnerilen değer: A (varsayılan) — A+ dışındaki her düşüş. Yalnız ciddi bozulmalar için B ya da C seçin.',
   'help.set.site.monitor.scripted.k6-api-address':
     'Ne işe yarar: k6 alt sürecinin REST API\'sini bağlayacağı adres.\nFaydası: 0 portu efemer (rastgele boş) port demektir — eşzamanlı koşumlarda port çakışması imkânsızdır.\nÖnerilen değer: 127.0.0.1:0 (varsayılan). Boş bırakılırsa bayrak hiç eklenmez; bunu yalnız beklenmedik bir k6 sürümünde geri dönüş olarak kullanın.',
   'help.set.site.monitor.scripted.k6-bin':
@@ -18236,6 +18243,15 @@ export const TR = {
   'tlsg.ov.latestProbe': 'son tarama {0}',
   'tlsg.ov.recovered': 'Toparlandı',
   'tlsg.ov.current': 'şimdi {0}',
+  // TLS notu düşüş bildirimi durumu (2026-10-11)
+  'tlsg.ov.notify.sent': 'Takıma bildirildi',
+  'tlsg.ov.notify.sentAt': 'Takıma bildirildi: {0}',
+  'tlsg.ov.notify.pending': 'Bildirim sırada',
+  'tlsg.ov.notify.off': 'Bildirilmedi: bildirim kapalıydı',
+  'tlsg.ov.notify.below': 'Bildirilmedi: eşik üstü not',
+  'tlsg.ov.notify.maintenance': 'Bildirilmedi: sistem bakımı',
+  'tlsg.ov.notify.no_team': 'Bildirilmedi: takım atanmamış',
+  'tlsg.ov.notify.no_recipient': 'Bildirilmedi: takımın alıcısı yok',
   'tlsg.ov.openCert': 'Sertifikayı aç',
   'tlsg.ov.loadError': 'Not düşüşleri yüklenemedi; bağlantıyı kontrol edip yeniden deneyin.',
   // ── Aylık Yönetici Özeti (2026-10-10) — sayfa, ayarlar, bölüm metinleri (exec.<bölüm>.<tür>.<kod>) ──

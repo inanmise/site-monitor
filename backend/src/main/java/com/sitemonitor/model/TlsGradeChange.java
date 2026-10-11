@@ -65,4 +65,20 @@ public class TlsGradeChange {
     /** ISO-8601 UTC. */
     @Column(length = 19)
     private String changedAt;
+
+    /**
+     * Takım bildirimi durumu (2026-10-11, kullanıcı isteği: "TLS notu düşünce yalnız uygulama içinde görünüyor").
+     * Yalnız DROP satırları {@link #NOTIFY_PENDING} doğar; bildirim işi (TlsGradeDropNotifier) talep edip SENT ya da
+     * "SKIPPED: …" yazar. null = bildirim yok (eski satırlar ve RISE/REFINE) — eski düşüşler geriye dönük gönderilmez.
+     */
+    @Column(name = "notify_state", length = 60)
+    private String notifyState;
+
+    /** Bildirim kararının zamanı (ISO-8601 UTC). */
+    @Column(name = "notified_at", length = 19)
+    private String notifiedAt;
+
+    public static final String NOTIFY_PENDING = "PENDING";
+    public static final String NOTIFY_SENDING = "SENDING";
+    public static final String NOTIFY_SENT = "SENT";
 }

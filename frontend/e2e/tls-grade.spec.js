@@ -53,7 +53,7 @@ async function mockTls(page) {
     status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
       days: 30,
       rows: [{ domain: DOMAIN, from: 'A', to: 'B', direction: 'DROP', at: iso(3_600_000), reasons: ['TLS10_ENABLED'],
-        team_id: 1, team_name: 'Takım A', current: 'B', recovered: false }],
+        team_id: 1, team_name: 'Takım A', current: 'B', recovered: false, notify: 'no_recipient' }],
       coverage: { endpoints: 4, ok: 3, partial: 0, failed: 0, pending: 1, latest_probe_at: iso(7_200_000) },
     }, timestamp: iso() }),
   }))
@@ -142,6 +142,10 @@ for (const vp of VIEWPORTS) {
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('[data-slot="tls-grade-drop-row"]')).toHaveCount(1)
     await expect(dialog.locator('[data-slot="tls-grade-coverage"]')).toBeVisible()
+    // 2026-10-11: bildirim durumu rozeti (en uzun metin) satırı taşırmaz, kırpılmaz
+    const notify = dialog.locator('[data-slot="tls-grade-drop-notify"][data-notify="no_recipient"]')
+    await expect(notify).toBeVisible()
+    expect(await notify.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
     await fitsViewport(dialog, vp)
     const rowBtn = dialog.getByRole('button', { name: new RegExp(`${DOMAIN.replace(/\./g, '\\.')} — `) })
     if (vp.width < 768) expect((await rowBtn.boundingBox()).height).toBeGreaterThanOrEqual(39)

@@ -308,6 +308,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.cert-inventory-report.cc",         "monitoring", Type.STRING),
         // Zamanlama CANLI: dinamik tetikleyici her hesaplamada bunu okur (yeniden başlatma yok).
         new Setting("site.monitor.cert-inventory-report.cron",       "monitoring", Type.STRING),
+        // TLS yapılandırma notu düşüş bildirimi (2026-10-11) — Ayarlar → Genel → TLS notu. Varsayılan AÇIK, eşik A
+        // (A+ dışındaki her düşüş); kapatılınca bekleyen düşüşler "SKIPPED: bildirim kapalı" olur.
+        new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
+        new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
         // Aylık yönetici özeti (2026-10-10) — Raporlar → Yönetici Özeti sayfası yönetir (grup Genel Ayarlar'da GİZLİ,
         // GeneralSettings SKIP_GROUPS). Zamanlanmış gönderim VARSAYILAN KAPALI (opt-in). Hepsi GLOBAL_ONLY (aşağıda).
         new Setting("site.monitor.executive-summary.enabled",               "executive-summary", Type.BOOL),

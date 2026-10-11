@@ -74,6 +74,13 @@ public class TlsProfileJobService {
     @Lazy
     private CertificateService certificateService;
 
+    /** Düşüş → takım bildirimi (2026-10-11) — isteğe bağlı: birim testinde yok. */
+    @Autowired(required = false)
+    @Lazy
+    private TlsGradeDropNotifier dropNotifier;
+
+    void setDropNotifier(TlsGradeDropNotifier n) { this.dropNotifier = n; }
+
     /** Lider kapısı + dağıtık kilit — isteğe bağlı: birim testinde yok (her çağrı yerel koşar). */
     @Autowired(required = false)
     @Lazy
@@ -158,6 +165,8 @@ public class TlsProfileJobService {
         if (!results.isEmpty()) evict();
         TlsGradeService.ReconcileResult grades = reconcileAll(active);
         if (grades.changed()) evict();
+        // Bekleyen düşüşler (bu turun ya da elle yeniden taramanın) takıma bildirilir — kilit altında, bir kez
+        if (dropNotifier != null) dropNotifier.notifyPending();
         return new TickResult(due.size(), results.size(), failed, grades);
     }
 

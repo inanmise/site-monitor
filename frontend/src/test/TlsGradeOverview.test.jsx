@@ -61,6 +61,22 @@ describe('TlsGradeOverview', () => {
     expect(onOpenCert).toHaveBeenCalledWith('old.example.com')
   })
 
+  it('2026-10-11: satır takıma bildirim durumunu gösterir; durum yoksa (eski satır) rozet yok', async () => {
+    api.getTlsGradeDrops.mockResolvedValue({ success: true, data: { days: 30, coverage: null, rows: [
+      { domain: 'a.example.com', from: 'A', to: 'C', at: '2026-10-11T08:00:00', reasons: [], notify: 'sent', notified_at: '2026-10-11T08:05:00' },
+      { domain: 'b.example.com', from: 'A', to: 'B', at: '2026-10-11T08:00:00', reasons: [], notify: 'below' },
+      { domain: 'c.example.com', from: 'A', to: 'B', at: '2026-10-11T08:00:00', reasons: [] },
+    ] } })
+    render(<TlsGradeOverview facets={FACETS} />)
+    fireEvent.click(screen.getByRole('button', { name: /Recent drops/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Endpoints whose TLS grade dropped' })
+    await waitFor(() => expect(dialog.querySelectorAll('[data-slot="tls-grade-drop-row"]')).toHaveLength(3))
+    const [a, b, c] = dialog.querySelectorAll('[data-slot="tls-grade-drop-row"]')
+    expect(a.querySelector('[data-slot="tls-grade-drop-notify"]')).toHaveTextContent('Team notified: 2026-10-11T08:05:00')
+    expect(b.querySelector('[data-notify="below"]')).toHaveTextContent('Not notified: grade above the threshold')
+    expect(c.querySelector('[data-slot="tls-grade-drop-notify"]')).toBeNull()
+  })
+
   it('düşüş yoksa olumlu boş durum', async () => {
     api.getTlsGradeDrops.mockResolvedValue({ success: true, data: { days: 30, rows: [], coverage: null } })
     render(<TlsGradeOverview facets={FACETS} />)
