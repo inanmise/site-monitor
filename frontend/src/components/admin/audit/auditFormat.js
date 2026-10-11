@@ -146,6 +146,8 @@ const SPECIAL = {
   SQL_EXECUTE: 'audit.ev.SQL_EXECUTE',
   SCHEMA_PATCH: 'audit.ev.SCHEMA_PATCH',
   SECRET_REENCRYPT: 'audit.ev.SECRET_REENCRYPT',   // gizli anahtar döndürme (2026-10-11)
+  WATCHDOG_EVALUATE: 'audit.ev.WATCHDOG_EVALUATE',   // kendi kendini izleme (2026-10-11)
+  WATCHDOG_TEST: 'audit.ev.WATCHDOG_TEST',
   MONITOR_TEST: 'audit.ev.MONITOR_TEST',
   MONITOR_DIAGNOSE: 'audit.ev.MONITOR_DIAGNOSE',
   MAINTENANCE_QUICK: 'audit.ev.MAINTENANCE_QUICK',

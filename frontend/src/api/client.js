@@ -1584,6 +1584,10 @@ export const api = {
 
     // System health
     getSystemHealth: () => request('/admin/system'),
+    // Kendi kendini izleme (2026-10-11): durum, şimdi değerlendir, test bildirimi
+    getWatchdog: () => request('/admin/system/watchdog'),
+    evaluateWatchdog: () => request('/admin/system/watchdog/evaluate', { method: 'POST' }),
+    testWatchdog: () => request('/admin/system/watchdog/test', { method: 'POST' }),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),

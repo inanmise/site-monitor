@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { Database, Globe, HeartPulse, Plug, Rocket, Server, Users, Zap } from 'lucide-react'
+import { Database, Globe, HeartPulse, Plug, Radar, Rocket, Server, Users, Zap } from 'lucide-react'
 import { api } from '../../api/client'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { useT } from '../../i18n/index.jsx'
@@ -26,6 +26,7 @@ import IntegrationsSection from './health/IntegrationsSection.jsx'
 import HeartbeatSection from './health/HeartbeatSection.jsx'
 import HttpSection from './health/HttpSection.jsx'
 import WeeklyAvailLogsModal from './health/WeeklyAvailLogsModal.jsx'
+import WatchdogSection from './health/WatchdogSection.jsx'   // Kendi kendini izleme (2026-10-11)
 import HttpExplorerModal from './httpmetrics/HttpExplorerModal.jsx'   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 
@@ -39,6 +40,7 @@ const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx')
  * HTTP istekleri · Kullanıcı/Oturum · Sürüm & Dağıtım (EN SONDA, 2026-09-11 kararı; not en altta 2026-09-12).
  */
 const SECTION_META = {
+  watchdog: { icon: Radar, label: 'wd.section' },
   sys: { icon: Server, label: 'health.sectionApp' },
   sched: { icon: Zap, label: 'health.sectionSched' },
   db: { icon: Database, label: 'health.dbTitle' },
@@ -48,7 +50,7 @@ const SECTION_META = {
   users: { icon: Users, label: 'uact.section' },
   releases: { icon: Rocket, label: 'deploy.section' },
 }
-const ORDER = ['sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
+const ORDER = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
 
 function initialSection() {
   const sec = readUrlParam('sec', '')
@@ -66,7 +68,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const t = useT()
   const isMobile = useIsMobile()
   const { showConfirm } = useDialog()
-  const { canView: canViewRes, canEdit: canEditRes } = usePermissions()
+  const { canView: canViewRes, canEdit: canEditRes, canExecute: canExecRes } = usePermissions()
   const canViewReleases = canViewRes('release_history.read')
 
   const [health, setHealth] = useState(null)
@@ -74,6 +76,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const [httpMetrics, setHttpMetrics] = useState(null)
   const [userActivity, setUserActivity] = useState(null)
   const [configChecks, setConfigChecks] = useState(null)   // yapılandırma sağlığı (LDAP) — yalnız global admin
+  const [watchdog, setWatchdog] = useState(null)           // kendi kendini izleme (2026-10-11)
+  const [watchdogError, setWatchdogError] = useState(null)
+  const canActSystem = canExecRes('system_health.actions')
   const [loadErrors, setLoadErrors] = useState({ health: false, metrics: false, http: false, users: false })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -156,13 +161,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
   const load = useCallback(async () => {
     // allSettled: bir uç çökse de diğerleri yüklensin; her bölüm kendi hatasını loadErrors üzerinden gösterir.
-    const [healthRes, metricsRes, httpRes, uactRes, cfgRes] = await Promise.allSettled([
+    const [healthRes, metricsRes, httpRes, uactRes, cfgRes, wdRes] = await Promise.allSettled([
       api.admin.getSystemHealth(),
       api.admin.getMetrics(),
       api.admin.getHttpMetrics(),
       canViewUserActivity ? api.admin.getUserActivity() : Promise.resolve(null),
       // Yapılandırma sağlığı ucu global yöneticiye açık (settings.general edit); LDAP kartı yalnız oradan beslenir.
       globalAdmin ? api.admin.getConfigHealth() : Promise.resolve(null),
+      api.admin.getWatchdog(),
     ])
     const errs = { health: false, metrics: false, http: false, users: false }
     if (healthRes.status === 'fulfilled' && healthRes.value?.success) {
@@ -180,6 +186,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       const checks = cfgRes.value.data?.checks
       setConfigChecks(Array.isArray(checks) ? checks : null)
     }
+    if (wdRes.status === 'fulfilled' && wdRes.value?.success) { setWatchdog(wdRes.value.data); setWatchdogError(null) }
+    else setWatchdogError(wdRes.status === 'fulfilled' ? (wdRes.value?.error || true) : (wdRes.reason?.message || true))
     setLoadErrors(errs)
     setLastChecked(new Date())
     setLoading(false)
@@ -346,8 +354,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   }
 
   // ── Türetimler (saf model) ──
-  const overall = useMemo(() => deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors }),
-    [health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors])
+  const overall = useMemo(() => deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog }),
+    [health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog])
   const kpis = useMemo(() => (health ? deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks }) : null),
     [health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks])
   const levels = useMemo(() => sectionLevels(overall.reasons), [overall])
@@ -384,6 +392,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     heartbeat: health?.heartbeat ? (health.heartbeat.minutes_since >= 0 ? t('health.hbMinutes').replace('{n}', health.heartbeat.minutes_since) : t('health.hbAlarm')) : '',
     http: httpMetrics?.summary ? [`${Number(httpMetrics.summary.total_requests ?? 0).toLocaleString()} ${t('http.totalReqs').toLowerCase()}`, `${formatPercent(httpMetrics.summary.error_rate_pct ?? 0)} ${t('http.errorRate').toLowerCase()}`, `${httpMetrics.summary.avg_ms ?? 0} ms`].join(' · ') : '',
     users: '', releases: '',
+    watchdog: watchdog ? (watchdog.enabled === false ? t('wd.status.DISABLED')
+      : [t(`wd.status.${watchdog.status}`), (watchdog.checks || []).filter((c) => c.status === 'PROBLEM').length > 0
+        && t('wd.problemCount', (watchdog.checks || []).filter((c) => c.status === 'PROBLEM').length)].filter(Boolean).join(' · ')) : '',
   }
   const refreshProps = { t, level: overall.level, lastChecked, paused, onTogglePause: () => setPaused((p) => !p), onRefresh: refreshNow, refreshing }
 
@@ -398,6 +409,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     )
   }
   const content = {
+    watchdog: () => (
+      <WatchdogSection t={t} data={watchdog} error={watchdogError} canAct={canActSystem} globalAdmin={!!globalAdmin}
+        onChanged={(d) => setWatchdog(d)} />
+    ),
     sys: () => <SystemSection t={t} health={health} metrics={metrics} metricsError={loadErrors.metrics} onRetry={refreshNow} onOpenChart={setModalChart} />,
     sched: () => (
       <SchedulerSection t={t} health={health} isAdmin={isAdmin} poolLastRefreshed={poolLastRefreshed} poolRefreshing={poolCardRefreshing} onRefreshPool={refreshPool}
@@ -427,7 +442,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       </Suspense>
     ),
   }
-  const visible = ORDER.filter((k) => (k === 'users' ? canViewUserActivity : k === 'releases' ? canViewReleases : true))
+  const visible = ORDER.filter((k) => (k === 'users' ? canViewUserActivity : k === 'releases' ? canViewReleases
+    : k === 'watchdog' ? watchdog != null : true))   // yetkisiz (403) ya da hiç yüklenemediyse bölüm yok
 
   return (
     <div data-slot="system-health" className="flex flex-col gap-3 py-1">

@@ -20,6 +20,7 @@
 | RDAP/HTTPS `PKIX path building failed` | [Kurumsal vekil CA rotasyonu](#kurumsal-vekil-ca-rotasyonu) |
 | `/metrics` dışarıdan açık mı? | [/metrics erişimi](#metrics-erişimi) |
 | Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
+| "Uygulama sorunu: …" e-postası / dış izleyici `/api/public/health/watchdog` 503 | [Kendi kendini izleme](#kendi-kendini-izleme) |
 
 ---
 
@@ -295,3 +296,23 @@ Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host
   ör. `http://otel-collector:4318/v1/traces`) verilince dışa aktarılır; boşken uygulama hiçbir yere bağlanmaz.
   Tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler Prometheus'ta kalır (OTLP metrik gönderimi yok). İzlenen
   sitelere giden kontrol isteklerine `traceparent` başlığı EKLENMEZ (Boot HTTP istemci kurucuları kullanılmıyor).
+
+## Kendi kendini izleme
+
+2026-10-11'den beri uygulama dakikada bir, kümede tek pod'da (`scheduler_lock` `watchdog`) kendi işleyişini ölçer ve iki
+ardışık ölçümde doğrulanan sorunu / düzelmeyi bildirir (e-posta: Ayarlar → Genel → Kendi kendini izleme alıcıları, boşsa
+sistem yöneticisi adresi; isteğe bağlı webhook ve doğrudan push). Ekran: Sistem Sağlığı → Kendi kendini izleme. Dış izleyici:
+`GET /api/public/health/watchdog` (oturumsuz; UP/DEGRADED 200, kritik sorun ya da 5 dk'dan eski değerlendirme 503).
+
+| Kontrol | Ne zaman sorun | İlk bakılacak yer |
+|---|---|---|
+| Tarama liderliği (kritik) | Liderlik kirası bir TTL'den uzun süredir dolu, kimse almadı | Pod'lar ayakta mı, `scheduler` günlüğü; Sistem Sağlığı → Zamanlayıcı |
+| İzleme taramaları | Bir türde etkin izlemelerin ≥ %50'si zamanında kontrol edilmiyor | Görev havuzu doygunluğu (Zamanlayıcı ve yürütücüler), vekil |
+| Sertifika taraması | Son sertifika sonucu 4 saatten eski | `scheduler_lock` `cert-check`, tarama günlüğü |
+| Bildirim gönderimi | Son 30 dk'da ≥ 3 e-postanın ≥ %50'si başarısız | [SMTP düştü](#smtp-düştü) |
+| Push kuyruğu | ≥ 10 push 10 dk'dan uzun gecikmede ya da devre kesici açık | Push ağ geçidi, Webhook Push Gönderim Logu |
+| Veritabanı (DOWN kritik) | Sağlık kontrolü DEGRADED/DOWN | [DB dolması](#db-dolması), `/api/public/health/db` |
+
+Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiçbir kanaldan gidemeyen bildirim 15 dk'da
+bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
+çökükken yalnız veritabanı kontrolü pod belleğinde değerlendirilir ve e-posta / webhook / push yine gider.

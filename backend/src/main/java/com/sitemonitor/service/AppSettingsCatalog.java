@@ -312,6 +312,17 @@ public final class AppSettingsCatalog {
         // (A+ dışındaki her düşüş); kapatılınca bekleyen düşüşler "SKIPPED: bildirim kapalı" olur.
         new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
+        // Kendi kendini izleme (2026-10-11) — Ayarlar → Genel → Kendi kendini izleme. Aralıklar WatchdogSettings.validate;
+        // alıcı / push / webhook anahtarları GLOBAL_ONLY (aşağıda).
+        new Setting("site.monitor.watchdog.enabled",             "watchdog", Type.BOOL),
+        new Setting("site.monitor.watchdog.recipients",          "watchdog", Type.CSV),
+        new Setting("site.monitor.watchdog.push-users",          "watchdog", Type.CSV),
+        new Setting("site.monitor.watchdog.webhook-url",         "watchdog", Type.STRING),
+        new Setting("site.monitor.watchdog.webhook-type",        "watchdog", Type.ENUM, java.util.List.of("TEAMS", "SLACK")),
+        new Setting("site.monitor.watchdog.reminder-hours",      "watchdog", Type.INT),
+        new Setting("site.monitor.watchdog.confirm-checks",      "watchdog", Type.INT),
+        new Setting("site.monitor.watchdog.stale-ratio-percent", "watchdog", Type.INT),
+        new Setting("site.monitor.watchdog.cert-stale-hours",    "watchdog", Type.INT),
         // Aylık yönetici özeti (2026-10-10) — Raporlar → Yönetici Özeti sayfası yönetir (grup Genel Ayarlar'da GİZLİ,
         // GeneralSettings SKIP_GROUPS). Zamanlanmış gönderim VARSAYILAN KAPALI (opt-in). Hepsi GLOBAL_ONLY (aşağıda).
         new Setting("site.monitor.executive-summary.enabled",               "executive-summary", Type.BOOL),
@@ -540,6 +551,11 @@ public final class AppSettingsCatalog {
      * Kapı: {@code SettingsScopedAdminGateTest}.
      */
     public static final java.util.Set<String> GLOBAL_ONLY = withRetentionKeys(java.util.Set.of(
+        // Kendi kendini izleme alıcıları / kanalları (2026-10-11): sistem sağlığı bildirimini kime gideceği global karar
+        "site.monitor.watchdog.recipients",
+        "site.monitor.watchdog.push-users",
+        "site.monitor.watchdog.webhook-url",
+        "site.monitor.watchdog.webhook-type",
         "site.monitor.monitoring.allow-internal-targets",
         "site.monitor.monitoring.allow-loopback-targets",
         "site.monitor.dns.resolvers",

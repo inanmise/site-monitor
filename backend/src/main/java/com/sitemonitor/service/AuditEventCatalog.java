@@ -232,6 +232,8 @@ public final class AuditEventCatalog {
             "RETENTION_SETTINGS_SAVE",
             "RETENTION_SETTINGS_SHORTENED",
             "SCHEDULER_LOCK_RELEASE",
+            "WATCHDOG_EVALUATE",          // kendi kendini izleme elle değerlendirildi (2026-10-11)
+            "WATCHDOG_TEST",              // kendi kendini izleme test bildirimi (2026-10-11)
             "SCHEDULER_RUN",
             "SCHEMA_PATCH",
             "SCRIPTED_DRAFT_DELETE",
@@ -402,7 +404,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 
-        if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.equals("SCHEMA_PATCH")
+        if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 
         // Kalan her şey bir AYAR yüzeyidir (settings/branding/storm/guide-link/template…).

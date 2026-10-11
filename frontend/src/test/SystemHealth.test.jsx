@@ -15,7 +15,7 @@ vi.mock('../hooks/use-mobile.js', () => ({ useIsMobile: () => mobile.on }))
  *
  * Neden var: 2026-08-19'da bu ekran üretimde `ReferenceError` ile ErrorBoundary'ye düştü — kullanımlar
  * VARSAYILAN KAPALI akordiyonların içindeydi ve fixture ilgili kapıları açmıyordu. Bu yüzden fixture
- * BACKEND'İN GERÇEK ŞEKLİNİ (SchedulerService + SystemController payload'ı) taşır ve test SEKİZ bölümün
+ * BACKEND'İN GERÇEK ŞEKLİNİ (SchedulerService + SystemController payload'ı) taşır ve test DOKUZ bölümün
  * hepsini tek tek açar. Fixture'ı budarken dikkat: bir alanı silmek ilgili kapıyı kapatır.
  *
  * Sorgular rol/ad ve `data-slot`/`data-kpi`/`data-section`/`data-level` kancalarıyla — sınıf adıyla DEĞİL.
@@ -27,6 +27,9 @@ const { adminProxy } = vi.hoisted(() => {
     getHttpMetrics:  vi.fn(),
     getConfigHealth: vi.fn(),
     getHeartbeatTimeline: vi.fn(),
+    getWatchdog: vi.fn(),
+    evaluateWatchdog: vi.fn(),
+    testWatchdog: vi.fn(),
     pushLog: { summary: vi.fn() },
   }
   // Vekil: testin AÇIKÇA kontrol ettiği uçlar elle; geri kalan HER metot ilk erişimde üretilir ve boş başarı döner
@@ -80,8 +83,17 @@ const PUSH = { success: true, data: { kpi: { sent: 240, failed: 3, pending: 0, b
 const CONFIG = { success: true, data: { overall: 'ok', checks: [{ key: 'smtp', status: 'ok', detail: 'tested_ok:x', tab: 'smtp' }, { key: 'ldap', status: 'ok', detail: 'tested_ok:x', tab: 'ldap' }] } }
 const CONFIG_LDAP_WARN = { success: true, data: { overall: 'warn', checks: [{ key: 'smtp', status: 'ok', detail: 'tested_ok:x', tab: 'smtp' }, { key: 'ldap', status: 'warn', detail: 'never_tested', tab: 'ldap' }] } }
 
-/** Bölümler — DOM SIRASIYLA (SystemHealth.jsx ORDER). Sürüm & Dağıtım EN SONDA (2026-09-11 kararı). */
-const SECTIONS = ['sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
+/** Kendi kendini izleme yanıtı (WatchdogService.adminStatus şekli) — sağlıklı (2026-10-11). */
+const WD_CHECK = (key, label, over = {}) => ({ key, label, problem_text: 'x', default_severity: 'HIGH', status: 'OK', last_result: 'OK',
+  severity: null, since: '2026-09-27T03:00:00', evaluated_at: '2026-09-27T04:59:00', detail: label + ' ayrıntı', facts: {}, ...over })
+const WATCHDOG = { status: 'UP', enabled: true, stale: false, interval_seconds: 60,
+  checks: [WD_CHECK('sweep_leader', 'Tarama liderliği'), WD_CHECK('monitor_sweep', 'İzleme taramaları'), WD_CHECK('cert_sweep', 'Sertifika taraması'),
+    WD_CHECK('notifications', 'Bildirim gönderimi'), WD_CHECK('push_outbox', 'Push kuyruğu', { last_result: 'NA', detail: 'Uygulanmaz: kişisel push kapalı.' }),
+    WD_CHECK('database', 'Veritabanı')],
+  channels: { email_recipients: 2, push_users: 0, webhook: false, reminder_hours: 6, confirm_checks: 2 } }
+
+/** Bölümler — DOM SIRASIYLA (SystemHealth.jsx ORDER). Kendi kendini izleme EN ÜSTTE (2026-10-11), Sürüm & Dağıtım EN SONDA. */
+const SECTIONS = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
 
 const toggles = () => [...document.querySelectorAll('[data-slot="stats-toggle"]')]
 const toggleOf = (sec) => document.querySelector(`[data-section="${sec}"] [data-slot="stats-toggle"]`)
@@ -106,12 +118,13 @@ beforeEach(() => {
   api.admin.getHeartbeatTimeline.mockResolvedValue({ success: true, data: { days: 1, bucket_minutes: 5, buckets: [
     { start: '2026-09-27T04:00:00', expected: 5, received: 5 }, { start: '2026-09-27T04:05:00', expected: 5, received: 0 }, { start: '2026-09-27T04:10:00', expected: 5, received: 3 } ] } })
   api.admin.pushLog.summary.mockResolvedValue(PUSH)
+  api.admin.getWatchdog.mockResolvedValue({ success: true, data: WATCHDOG })
   window.history.replaceState(null, '', '/')
 })
 afterEach(() => { window.history.replaceState(null, '', '/') })
 
 describe('SystemHealth — bölümler hatasız render eder', () => {
-  it('yüklenince iskelet, sonra SEKİZ katlanabilir bölüm (sırayla) sunar', async () => {
+  it('yüklenince iskelet, sonra DOKUZ katlanabilir bölüm (sırayla) sunar', async () => {
     renderHealth()
     expect(document.querySelector('[data-slot="health-skeleton"]')).not.toBeNull()
     await waitFor(() => expect(overall()).not.toBeNull())
@@ -450,5 +463,63 @@ describe('SystemHealth — haftalık erişilebilirlik günlükleri', () => {
     fireEvent.click(table.querySelector('[data-slot="wa-row"]'))
     await waitFor(() => expect(api.admin.getWeeklyAvailHistoryItem).toHaveBeenCalledWith(1))
     await waitFor(() => expect(document.querySelectorAll('[role="dialog"]').length).toBe(2))
+  })
+})
+
+describe('SystemHealth — kendi kendini izleme (2026-10-11)', () => {
+  it('bölüm açılınca kontroller durumlarıyla; kanal özeti; dış izleyici adresi', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
+    await user.click(toggleOf('watchdog'))
+    const sec = await waitFor(() => {
+      const el = document.querySelector('[data-slot="watchdog-section"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(sec).toHaveAttribute('data-status', 'UP')
+    const rows = [...sec.querySelectorAll('[data-slot="watchdog-check"]')]
+    expect(rows.map((r) => r.getAttribute('data-key'))).toEqual(['sweep_leader', 'monitor_sweep', 'cert_sweep', 'notifications', 'push_outbox', 'database'])
+    expect(sec.querySelector('[data-key="push_outbox"]')).toHaveAttribute('data-state', 'na')
+    expect(sec.querySelector('[data-slot="watchdog-channels"]')).toHaveTextContent(/2 (e-mail recipients|e-posta alıcısı)/)
+    expect(sec.querySelector('[data-slot="watchdog-public-url"]')).toHaveTextContent('/api/public/health/watchdog')
+  })
+
+  it('onaylı kritik sorun genel bandı kritiğe çeker ve sebep olarak listelenir; şimdi değerlendir + test uçları', async () => {
+    const user = userEvent.setup()
+    api.admin.getWatchdog.mockResolvedValue({ success: true, data: { ...WATCHDOG, status: 'DOWN', checks: WATCHDOG.checks.map((c) => (c.key === 'sweep_leader'
+      ? { ...c, status: 'PROBLEM', last_result: 'PROBLEM', severity: 'CRITICAL', notified_at: '2026-09-27T04:58:00', notified_kind: 'ALERT' } : c)) } })
+    api.admin.evaluateWatchdog.mockResolvedValue({ success: true, data: { ...WATCHDOG, round: { alerts: 0, recoveries: 1 } } })
+    api.admin.testWatchdog.mockResolvedValue({ success: true, data: { outcome: 'DELIVERED' } })
+    await renderLoaded()
+    expect(overall()).toHaveAttribute('data-level', 'down')
+    expect(document.querySelector('[data-slot="health-reasons"]')).toHaveTextContent(/Tarama liderliği/)
+    await user.click(toggleOf('watchdog'))
+    const row = await waitFor(() => {
+      const el = document.querySelector('[data-slot="watchdog-check"][data-key="sweep_leader"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(row).toHaveAttribute('data-state', 'problem')
+    await user.click(screen.getByRole('button', { name: /Evaluate now|Şimdi değerlendir/ }))
+    await waitFor(() => expect(api.admin.evaluateWatchdog).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(document.querySelector('[data-slot="watchdog-section"]')).toHaveAttribute('data-status', 'UP'))
+    await user.click(screen.getByRole('button', { name: /Send test notification|Test bildirimi gönder/ }))
+    await waitFor(() => expect(api.admin.testWatchdog).toHaveBeenCalledTimes(1))
+  })
+
+  it('uç yetkisizse (403) ya da hiç yüklenemezse bölüm çizilmez', async () => {
+    api.admin.getWatchdog.mockResolvedValue({ success: false, error: 'forbidden' })
+    await renderLoaded()
+    expect(toggleOf('watchdog')).toBeNull()
+    expect(toggleOf('sys')).not.toBeNull()
+  })
+
+  it('test düğmesi yalnız global yöneticide', async () => {
+    const user = userEvent.setup()
+    await renderLoaded({ globalAdmin: false })
+    await user.click(toggleOf('watchdog'))
+    await waitFor(() => expect(document.querySelector('[data-slot="watchdog-section"]')).not.toBeNull())
+    expect(screen.queryByRole('button', { name: /Send test notification|Test bildirimi gönder/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Evaluate now|Şimdi değerlendir/ })).toBeInTheDocument()
   })
 })

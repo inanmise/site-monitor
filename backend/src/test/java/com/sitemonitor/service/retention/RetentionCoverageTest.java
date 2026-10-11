@@ -49,6 +49,7 @@ class RetentionCoverageTest {
             Map.entry("noc_notification_groups", "7/24 İzleme Ekibi grupları — global, birkaç satır; yalnız global yönetici elle yönetir."),
             Map.entry("noc_team_call_list", "Takım arama listesi — takım×kişi (onlarca satır), liste her kayıtta baştan yazılır."),
             Map.entry("noc_settings", "7/24 yapılandırması — tekil satır (id=1)."),
+            Map.entry("watchdog_state", "Kendi kendini izleme — kontrol başına TEK satır (katalog kadar, ~6); geçmiş tutulmaz."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),
             Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (silme kalıcı, 2026-10-07)."),

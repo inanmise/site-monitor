@@ -50,7 +50,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/login/otp/verify",
             // Veritabanı sağlık kontrolü (2026-10-08): dış izleyici oturumsuz çağırır — yalnız durum / süre / sayı; sunucu
             // adı, veritabanı adı, hata metni YOK. Sonuç 5 sn önbellekli, kontrol 4 sn sınırlı (DatabaseHealthService).
-            "/api/public/health/db");
+            "/api/public/health/db",
+            // Kendi kendini izleme (2026-10-11): dış izleyici oturumsuz okur — yalnız genel durum + kontrol anahtarları ve
+            // anları (sayı, ad, adres, hata metni YOK); durum tablosundan okunur, istek başına yoklama koşmaz.
+            "/api/public/health/watchdog");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(
