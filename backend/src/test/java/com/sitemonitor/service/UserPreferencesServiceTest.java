@@ -100,6 +100,29 @@ class UserPreferencesServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-11 Panom: dashboard yerleşimi normalleşir (v:1, yalnız id/type/size); bozuk kutu, tekrar kimlik, üst sınır 400; null siler")
+    void dashboardLayout() {
+        var w = map("id", "w1", "type", "alerts_open", "size", "md", "extra", "x");
+        var r = service.merge(3L, map("dashboard", map("widgets", List.of(w, map("id", "w2", "type", "oncall", "size", "sm")))));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> d = (Map<String, Object>) r.prefs().get("dashboard");
+        assertThat(d).containsEntry("v", 1);
+        assertThat((List<?>) d.get("widgets")).hasSize(2);
+        assertThat(d.get("widgets").toString()).doesNotContain("extra");
+        assertThatThrownBy(() -> service.merge(3L, map("dashboard", map("widgets", List.of(map("id", "W 1", "type", "x", "size", "md"))))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.merge(3L, map("dashboard", map("widgets", List.of(map("id", "a", "type", "x", "size", "xl"))))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.merge(3L, map("dashboard", map("widgets", List.of(w, w)))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("tekrar");
+        List<Object> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 25; i++) many.add(map("id", "w" + i, "type", "activity", "size", "sm"));
+        assertThatThrownBy(() -> service.merge(3L, map("dashboard", map("widgets", many)))).isInstanceOf(IllegalArgumentException.class);
+        var cleared = service.merge(3L, map("dashboard", null));
+        assertThat(cleared.prefs()).doesNotContainKey("dashboard");
+    }
+
+    @Test
     @DisplayName("bilinmeyen üst düzey anahtar 400 (IAE) — belge yazılmaz")
     void unknownKeyRejected() {
         assertThatThrownBy(() -> service.merge(1L, map("theme", "dark")))

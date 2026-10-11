@@ -7,6 +7,7 @@
  * Haftalık Raporlar yalnız modül açıksa. Kimlikler App.jsx VALID_TABS'ta olmalı (kapı: landingTabs.test.js).
  */
 export const LANDING_TAB_ORDER = Object.freeze([
+  { id: 'mydash', labelKey: 'nav.myDashboard' },
   { id: 'all', labelKey: 'nav.all' },
   { id: 'domains', labelKey: 'nav.domains' },
   { id: 'manualcerts', labelKey: 'nav.manualCerts' },

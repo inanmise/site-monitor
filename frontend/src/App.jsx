@@ -78,6 +78,7 @@ import { LoadingBlock, Spinner } from './components/ui/Progress.jsx'
 import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
 import PageHeader from './components/ui/PageHeader.jsx'
+import { isTvModeActive, onTvModeChange } from './utils/tvMode.js'
 import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
 // Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
 import { VALID_TABS, NOT_FOUND_TAB, tabFromSearch, requestedTabParam } from './utils/appRoutes.js'
@@ -106,6 +107,7 @@ const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOvervie
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
 const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage'))   // Veri Kalitesi (2026-10-10)
+const MyDashPage = lazy(() => import('./components/mydash/MyDashPage'))   // Panom — kişisel pano + TV kipi (2026-10-11)
 // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT; takım özeti — ayrıca takım müdürü
 // (kapsamlı ADMIN). Sunucu ayrıca executive_summary.view ister ve kapsamı kendisi süzer.
 const ExecutiveSummaryPage = lazy(() => import('./components/executive/ExecutiveSummaryPage'))
@@ -647,16 +649,22 @@ export default function App() {
       clearInterval(countdownInterval.current)
       setInactivityWarning(false)
 
+      // TV / duvar ekranı kipi (Panom, 2026-10-11) açıkken hareketsizlik uyarısı ve çıkışı ertelenir: sayaç yeniden kurulur
       warnTimer.current = setTimeout(() => {
+        if (isTvModeActive()) { resetTimer(); return }
         setWarnDeadline(Date.now() + idleCfg.warnMs)
         setInactivityWarning(true)
       }, Math.max(1000, idleCfg.totalMs - idleCfg.warnMs))
 
-      logoutTimer.current = setTimeout(doAutoLogout, idleCfg.totalMs)
+      logoutTimer.current = setTimeout(() => {
+        if (isTvModeActive()) { resetTimer(); return }
+        doAutoLogout()
+      }, idleCfg.totalMs)
     }
 
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click']
     events.forEach((e) => document.addEventListener(e, resetTimer, { passive: true }))
+    const offTv = onTvModeChange(resetTimer)   // kip açılınca görünen uyarı kalkar; kapanınca sayaç baştan başlar
     resetTimer()
 
     return () => {
@@ -664,6 +672,7 @@ export default function App() {
       clearTimeout(warnTimer.current)
       clearInterval(countdownInterval.current)
       events.forEach((e) => document.removeEventListener(e, resetTimer))
+      offTv()
     }
     // idleCfg bağımlılıkta: ayar değiştiğinde (yeniden giriş / F5) zamanlayıcı YENİ süreyle
     // kurulmalı, yoksa eski süre oturum boyunca yaşamaya devam ederdi.
@@ -2076,6 +2085,7 @@ export default function App() {
             {tab === 'monitoring' && <MonitoringOverviewPage />}
             {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
+            {tab === 'mydash' && <MyDashPage />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}

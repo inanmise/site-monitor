@@ -19,6 +19,7 @@ import { personalKey } from '../../utils/personalStorage.js'
  */
 export const TAB_META = {
   dashboard:          { Icon: LayoutDashboard, section: null },
+  mydash:             { Icon: LayoutGrid,    section: null },   // Panom (2026-10-11)
   all:                { Icon: FileBadge,     section: 'nav.groupCertificates' },
   domains:            { Icon: Boxes,         section: 'nav.groupCertificates' },
   manualcerts:        { Icon: FileKey2,      section: 'nav.groupCertificates' },   // Manuel Sertifikalar (2026-10-06)
