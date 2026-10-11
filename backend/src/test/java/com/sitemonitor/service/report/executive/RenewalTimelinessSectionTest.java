@@ -82,6 +82,54 @@ class RenewalTimelinessSectionTest {
     }
 
     @Test
+    @DisplayName("2026-10-12 kullanıcı senaryosu: yenilemelerin HEPSİ bitişten önce (hedef süreden geç) → uyum %100; planı olmasa da")
+    void allRenewedBeforeExpiry_isFullCompliance() {
+        Map<String, List<RenewalTimelinessSection.Group>> gs = new HashMap<>();
+        gs.put("p.com", List.of(g("P1", "2026-05-01T00:00:00", "2026-09-20T00:00:00"),
+                g("P2", "2026-09-10T00:00:00", "2027-09-20T00:00:00")));                  // 10 gün kala — eskiden "geç"
+        gs.put("q.com", List.of(g("Q1", "2026-05-01T00:00:00", "2026-09-25T00:00:00"),
+                g("Q2", "2026-09-22T00:00:00", "2027-09-25T00:00:00")));                  // 3 gün kala — son dakika
+        CertificateDto p = cert("p.com", 1L, 1, "2027-09-20T00:00:00", "2026-09-10T00:00:00");
+        CertificateDto q = cert("q.com", 1L, 1, "2027-09-25T00:00:00", "2026-09-22T00:00:00");
+        ExecutiveSummaryContext ctx = ctx(SEP, NOW, 99.9, 30, List.of(p, q),
+                invMap(inv("p.com", 1L, 1, null), inv("q.com", 1L, 1, null)), Map.of(1L, "Takım A"));
+        SectionResult r = section.evaluate(ctx, gs, null, true);
+        assertThat(kpi(r, "on_time_pct").value()).isEqualTo(100.0);
+        assertThat(kpi(r, "early_pct").value()).isEqualTo(0.0);
+        assertThat(verdictCodes(r)).doesNotContain("EXPIRED_UNRENEWED");
+    }
+
+    @Test
+    @DisplayName("ay içinde YENİLENMEDEN süresi dolan oranı düşürür; ertesi ay yenilense de o ay sayılır; ay içinde geç yenileme AFTER_EXPIRY'dir")
+    void expiredWithoutRenewal_lowersCompliance() {
+        Map<String, List<RenewalTimelinessSection.Group>> gs = new HashMap<>();
+        gs.put("ok.com", List.of(g("O1", "2026-05-01T00:00:00", "2026-09-20T00:00:00"),
+                g("O2", "2026-09-10T00:00:00", "2027-09-20T00:00:00")));                  // bitişten önce
+        gs.put("lapse.com", List.of(g("L1", "2026-05-01T00:00:00", "2026-09-15T00:00:00")));   // yenilenmedi
+        gs.put("next.com", List.of(g("N1", "2026-05-01T00:00:00", "2026-09-28T00:00:00"),
+                g("N2", "2026-10-03T00:00:00", "2027-10-03T00:00:00")));                  // EKİM'de yenilendi → Eylül'de dolmuş
+        gs.put("late.com", List.of(g("T1", "2026-05-01T00:00:00", "2026-09-05T00:00:00"),
+                g("T2", "2026-09-08T00:00:00", "2027-09-08T00:00:00")));                  // ay içinde, bitişten SONRA
+        var lapses = RenewalTimelinessSection.lapses(gs, ctx().from(), ctx().to(), ctx().to(),
+                java.util.Set.of("ok.com", "lapse.com", "next.com", "late.com"));
+        assertThat(lapses).extracting(RenewalTimelinessSection.Lapse::domain).containsExactly("lapse.com", "next.com");
+
+        List<CertificateDto> latest = List.of(cert("ok.com", 1L, 1, "2027-09-20T00:00:00", "2026-09-10T00:00:00"),
+                cert("lapse.com", 1L, 1, "2026-09-15T00:00:00", "2025-09-15T00:00:00"),
+                cert("next.com", 1L, 1, "2027-10-03T00:00:00", "2026-10-03T00:00:00"),
+                cert("late.com", 1L, 1, "2027-09-08T00:00:00", "2026-09-08T00:00:00"));
+        ExecutiveSummaryContext ctx = ctx(SEP, NOW, 99.9, 30, latest,
+                invMap(inv("ok.com", 1L, 1, null), inv("lapse.com", 1L, 1, null), inv("next.com", 1L, 1, null), inv("late.com", 1L, 1, null)),
+                Map.of(1L, "Takım A"));
+        SectionResult r = section.evaluate(ctx, gs, null, true);
+        // 2 yenileme (ok: önce, late: sonra) + 2 yenilenmeden dolan → 1 / 4
+        assertThat(kpi(r, "on_time_pct").value()).isEqualTo(25.0);
+        assertThat(verdictCodes(r)).contains("COMPLIANCE", "AFTER_EXPIRY", "EXPIRED_UNRENEWED");
+        assertThat(table(r, "expired").rows()).extracting(m -> m.get("domain")).containsExactly("lapse.com", "next.com");
+        assertThat(r.status()).isEqualTo(SectionResult.CRITICAL);
+    }
+
+    @Test
     @DisplayName("bölüm: uyum %, plan gerçekleşme, gecikmedekiler, durum KRİTİK (süresi dolduktan sonra yenileme)")
     void evaluate() {
         CertificateDto a = cert("a.com", 1L, 1, "2027-10-01T00:00:00", "2026-09-05T08:00:00");
@@ -101,7 +149,9 @@ class RenewalTimelinessSectionTest {
         SectionResult r = section.evaluate(ctx, groups(), null, true);
 
         assertThat(kpi(r, "renewals").value()).isEqualTo(5);
-        assertThat(kpi(r, "on_time_pct").value()).isEqualTo(40.0);      // b + e
+        // Uyum (2026-10-12): süresi dolmadan yapılanlar (a, b, c, e) / (5 yenileme + 0 yenilenmeden dolan) — plan etkisiz
+        assertThat(kpi(r, "on_time_pct").value()).isEqualTo(80.0);
+        assertThat(kpi(r, "early_pct").value()).isEqualTo(40.0);        // b + e: hedef süreden önce (bilgi)
         assertThat(kpi(r, "late").value()).isEqualTo(2);                 // a (geç) + c (son dakika)
         assertThat(kpi(r, "after_expiry").value()).isEqualTo(1);
         // plan: a.com 2026-09-03 → sunulan sertifika 09-05'te düzenlendi → YAPILDI; z.com 09-20 → KAÇIRILDI
