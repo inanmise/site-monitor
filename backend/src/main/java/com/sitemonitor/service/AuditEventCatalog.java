@@ -237,6 +237,7 @@ public final class AuditEventCatalog {
             "SCRIPTED_DRAFT_DELETE",
             "SCRIPTED_DRAFT_SAVE",
             "SECRET_DECRYPT",
+            "SECRET_REENCRYPT",           // gizli anahtar döndürme: önceki anahtardaki değerler yeniden şifrelendi (2026-10-11)
             "SELF_PASSWORD_CHANGE",
             "SESSION_ENDED_INACTIVE",     // pasife alınan hesabın canlı oturumu kesildi (2026-10-02)
             "SESSION_ENDED_MAINTENANCE",  // sistem bakımı başladı — global yönetici olmayan oturum kesildi (2026-10-02)
@@ -351,7 +352,7 @@ public final class AuditEventCatalog {
 
         // Güvenlik reddi her şeyden önce gelir: "*_DENIED" bir izleme olayı değil, bir yetki olayıdır.
         if (t.equals("ACCESS_DENIED") || t.equals("AUTH_REQUIRED") || t.endsWith("_DENIED")) return SECURITY;
-        if (t.equals("SECRET_DECRYPT")) return SECURITY;
+        if (t.equals("SECRET_DECRYPT") || t.equals("SECRET_REENCRYPT")) return SECURITY;
 
         if (t.startsWith("LOGIN") || t.equals("LOGOUT") || t.equals("ACCOUNT_LOCKED")
                 || t.startsWith("SESSION_") || t.startsWith("REMEMBER_TOKEN")

@@ -2524,6 +2524,20 @@ public class SchedulerService {
      * Dağıtık kilit altında iş çalıştırır — cron'u {@code @Scheduled} yerine DİNAMİK tetikleyiciyle
      * kurulan görevler için ({@code CertInventoryReportScheduling}). Kilit başka pod'daysa iş atlanır.
      */
+    /**
+     * Kilit alınabildiyse işi çalıştırır ve sonucunu döner; kilit başka pod'daysa {@code Optional.empty()} (çağıran "zaten
+     * çalışıyor" der). {@link #runWithSchedulerLock}'tan farkı: istisna YUTULMAZ, çağırana gider — elle tetiklenen işler
+     * (2026-10-11, gizli anahtar yeniden şifreleme) sonucu ekranda gösterir. İş null dönmemeli.
+     */
+    public <T> java.util.Optional<T> callWithSchedulerLock(String lockName, java.util.function.Supplier<T> task) {
+        if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) return java.util.Optional.empty();
+        try {
+            return java.util.Optional.ofNullable(task.get());
+        } finally {
+            releaseSchedulerLock(lockName);
+        }
+    }
+
     public void runWithSchedulerLock(String lockName, Runnable task) {
         if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) {
             log.debug("{} — lock başka pod'da, atlanıyor", lockName);

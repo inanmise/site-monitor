@@ -26,6 +26,9 @@ import java.util.Locale;
  *       türetmek, veritabanını okuyan birine 10^6 adayı denetip kodu geri ürettirirdi. Bedeli: anahtarsız ÇOK pod'lu
  *       kurulumda başka pod'a düşen doğrulama "yanlış kod" sayılır (prod'da olamaz).</li>
  *   <li><b>Karşılaştırma:</b> {@link MessageDigest#isEqual} — sabit zamanlı.</li>
+ *   <li><b>Anahtar döndürme (2026-10-11):</b> önceki anahtar ({@code SITE_MONITOR_SECRET_KEY_PREVIOUS}) ayarlıysa doğrulama
+ *       onun alt anahtarıyla alınan özeti de kabul eder — dağıtım sırasında eski pod'un verdiği kod yeni pod'da geçer.
+ *       Yeni özet HER ZAMAN güncel anahtarla alınır; iki özet de her doğrulamada hesaplanır (süre sızdırmaz).</li>
  * </ul>
  * Bu sınıf hiçbir şey LOGLAMAZ (kod ve anahtar asla).
  */
@@ -35,6 +38,7 @@ public class OtpCodes {
 
     private final SecureRandom random = new SecureRandom();
     private final byte[] key;
+    private final byte[] previousKey;
     private final boolean ephemeral;
 
     public OtpCodes(SecretCipher secretCipher) {
@@ -49,6 +53,7 @@ public class OtpCodes {
             this.ephemeral = false;
         }
         this.key = k;
+        this.previousKey = ephemeral || secretCipher == null ? null : secretCipher.previousHmacSubKey("login-otp");
     }
 
     /** Anahtar süreç başına mı (gerçek gizli anahtar ayarlı değil) — ayarlar sayfası uyarı gösterir. */
@@ -63,9 +68,13 @@ public class OtpCodes {
 
     /** HMAC-SHA256(anahtar, challengeId + ":" + kod) → 64 hex. */
     public String hmac(String challengeId, String code) {
+        return hmacWith(key, challengeId, code);
+    }
+
+    private static String hmacWith(byte[] k, String challengeId, String code) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(key, "HmacSHA256"));
+            mac.init(new SecretKeySpec(k, "HmacSHA256"));
             byte[] out = mac.doFinal(((challengeId == null ? "" : challengeId) + ":" + (code == null ? "" : code))
                     .getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(out);
@@ -78,6 +87,11 @@ public class OtpCodes {
     public boolean matches(String challengeId, String code, String storedHex) {
         byte[] computed = hmac(challengeId, code).getBytes(StandardCharsets.US_ASCII);
         byte[] stored = (storedHex == null ? "" : storedHex).getBytes(StandardCharsets.US_ASCII);
-        return MessageDigest.isEqual(computed, stored);
+        boolean current = MessageDigest.isEqual(computed, stored);
+        if (previousKey == null) return current;
+        // Döndürme penceresi: önceki anahtarın özeti de HER ZAMAN hesaplanır (kısa devre yok — süre farkı sızdırmaz)
+        boolean previous = MessageDigest.isEqual(
+                hmacWith(previousKey, challengeId, code).getBytes(StandardCharsets.US_ASCII), stored);
+        return current | previous;
     }
 }

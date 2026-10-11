@@ -79,7 +79,8 @@ echo "$DEPLOY / $SECRET"                      # ikisi de dolu olmalı
 `SITE_MONITOR_SECRET_KEY` UI'dan kaydedilen sırları (LDAP bind parolası, SMTP parolası, HTTP/Keyword özel
 başlık sırları, kişi-push başlık sırları, PageSpeed API anahtarı, senaryo env sırları) şifreler. Değer
 değişirse uygulama **açılır ama** bu sırların hepsi `null` çözülür — tek iz `SecretCipher: decrypt failed`
-WARN satırıdır. Anahtar rotasyonu **desteklenmiyor** ([`RUNBOOK.md` → Secret key](RUNBOOK.md#secret-key)).
+WARN satırıdır. Anahtar yayınla birlikte değiştirilmez; değişim ayrı bir bakım işidir ve **döndürme** ile yapılır
+(yeni + önceki anahtar, "Yeniden şifrele", önceki anahtarı kaldır — [`RUNBOOK.md` → Anahtar döndürme](RUNBOOK.md#anahtar-döndürme)).
 
 - [ ] Secret'taki değer ile **çalışan pod'un** kullandığı değer aynı (değer basılmaz, yalnız özet karşılaştırılır):
   ```bash

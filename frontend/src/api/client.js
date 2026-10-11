@@ -1242,6 +1242,9 @@ export const api = {
     // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
+    // Gizli anahtar döndürme (2026-10-11): konum başına güncel / önceki / okunamayan sayıları + önceki anahtardakileri yeniden şifrele
+    secretRotationStatus: () => request('/admin/secret-tools/rotation'),
+    reencryptSecrets: () => request('/admin/secret-tools/rotation/reencrypt', { method: 'POST', body: JSON.stringify({ confirm: true }) }),
 
     // Veritabanı bilgileri (admin-only Settings sayfası) — bağlı PostgreSQL meta verisi
     getDatabaseInfo: () => request('/admin/database/info'),
