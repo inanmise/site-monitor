@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -40,6 +41,7 @@ public class LdapAdminController {
     private final LdapDirectoryService directoryService;
     private final AuditService auditService;
     private final PermissionService permissionService;
+    private final com.sitemonitor.service.ldap.LdapRoleMappingPreviewService previewService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {
@@ -61,7 +63,10 @@ public class LdapAdminController {
                 "{\"enabled\":" + saved.getEnabled()
                         + ",\"host\":\"" + safe(saved.getHost()) + "\""
                         + ",\"port\":" + saved.getPort()
-                        + ",\"useLdaps\":" + saved.getUseLdaps() + "}");
+                        + ",\"useLdaps\":" + saved.getUseLdaps()
+                        + ",\"roleMappingEnabled\":" + Boolean.TRUE.equals(saved.getRoleMappingEnabled())
+                        + ",\"roleMappingFallback\":\"" + safe(saved.getRoleMappingFallback()) + "\""
+                        + ",\"roleMappings\":" + settingsService.roleMappings().size() + "}");
         return ok(Map.of(
                 "data", settingsService.toClientMap(saved),
                 "message", Msg.t("LDAP ayarları kaydedildi (yeniden başlatma gerekmez)", "LDAP settings saved (no restart needed)")));
@@ -102,6 +107,48 @@ public class LdapAdminController {
             body2.put("error", rootMessage(e));
             body2.put("timestamp", now());
             return ResponseEntity.ok(body2);
+        }
+    }
+
+    /**
+     * LDAP grup → rol eşlemesi ÖNİZLEMESİ (2026-10-11): formdaki (kaydedilmemiş olabilir) kurallarla "kim ne olacak".
+     * Hiçbir şey yazmaz; AD'yi hizmet hesabıyla salt okur. Gövde: {@code {role_mappings:[{group,role}], role_mapping_fallback}}.
+     */
+    @PostMapping("/role-mapping/preview")
+    public ResponseEntity<Map<String, Object>> previewRoleMapping(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireSettingsAccess(session, "settings.ldap", "edit");
+        Object raw = LdapSettingsService.validateMappings(body.get("role_mappings"));
+        String fallback = LdapSettingsService.validateFallback(body.get("role_mapping_fallback"));
+        List<Map<String, String>> plain = new java.util.ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> m)) continue;
+                Map<String, String> e = new LinkedHashMap<>();
+                e.put("group", m.get("group") == null ? null : m.get("group").toString());
+                e.put("role", m.get("role") == null ? null : m.get("role").toString());
+                plain.add(e);
+            }
+        }
+        var rules = com.sitemonitor.service.ldap.LdapRoleMapping.rulesOf(plain);
+        auditService.recordAction("LDAP_ROLE_MAPPING_PREVIEW", session, request, "LDAP", "role-mapping",
+                "{\"rules\":" + rules.size() + ",\"fallback\":\"" + fallback + "\"}");
+        try {
+            return ok(Map.of("data", previewService.preview(rules, fallback)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "code", "LDAP_NOT_CONFIGURED",
+                    "error", Msg.t("LDAP bağlantısı yapılandırılmamış · önce sunucu ve Base DN alanlarını doldurup kaydedin.",
+                            "LDAP is not configured · fill in the server and Base DN fields and save first."),
+                    "timestamp", now()));
+        } catch (RuntimeException e) {
+            // Tanı aracı: AD hatası satır içinde gösterilir (bağlantı / yetki / filtre — yöneticinin düzeltebileceği neden)
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("code", "LDAP_UNREACHABLE");
+            err.put("error", Msg.t("Active Directory'den grup üyeleri okunamadı · bağlantıyı \"Bağlantıyı test et\" ile sınayın. Ayrıntı: ",
+                    "Couldn't read group members from Active Directory · check the connection with \"Test connection\". Detail: ") + rootMessage(e));
+            err.put("timestamp", now());
+            return ResponseEntity.ok(err);
         }
     }
 

@@ -34,6 +34,7 @@ class LdapAdminControllerTest {
     @MockitoBean LdapDirectoryService directoryService;
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
+    @MockitoBean com.sitemonitor.service.ldap.LdapRoleMappingPreviewService previewService;
 
     // Beans pulled in by WebConfig / AuthInterceptor / HttpMetricsInterceptor.
     @MockitoBean RememberMeService rememberMeService;
@@ -152,6 +153,55 @@ class LdapAdminControllerTest {
     }
 
     // ── session builders ─────────────────────────────────────────────────────
+
+    // ── Rol eşlemesi önizlemesi (2026-10-11) ──
+
+    @Test
+    @DisplayName("POST /role-mapping/preview: yetkisiz yönetici 403; bootstrap admin → formdaki kurallarla önizleme")
+    void rolePreview_gatedAndPassesRules() throws Exception {
+        String body = "{\"role_mappings\":[{\"group\":\"SM-Denetim\",\"role\":\"audit\"},{\"group\":\"\",\"role\":\"ADMIN\"}],"
+                + "\"role_mapping_fallback\":\"DERIVED\"}";
+        mvc.perform(post("/api/admin/ldap/role-mapping/preview").session(adminRoleButNotBootstrap())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        when(previewService.preview(any(), any())).thenReturn(Map.of("ldap_users", 3));
+        mvc.perform(post("/api/admin/ldap/role-mapping/preview").session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.ldap_users").value(3));
+        org.mockito.Mockito.verify(previewService).preview(
+                org.mockito.ArgumentMatchers.argThat(r -> r.size() == 1 && r.get(0).role().equals("AUDIT")),
+                org.mockito.ArgumentMatchers.eq("DERIVED"));
+    }
+
+    @Test
+    @DisplayName("POST /role-mapping/preview: geçersiz rol → 400 VALIDATION_FAILED (field role_mappings)")
+    void rolePreview_invalidRole_400() throws Exception {
+        mvc.perform(post("/api/admin/ldap/role-mapping/preview").session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role_mappings\":[{\"group\":\"X\",\"role\":\"ROOT\"}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("role_mappings"));
+    }
+
+    @Test
+    @DisplayName("POST /role-mapping/preview: LDAP yapılandırılmamış → 400 LDAP_NOT_CONFIGURED; AD hatası → satır içi LDAP_UNREACHABLE")
+    void rolePreview_directoryErrors() throws Exception {
+        String body = "{\"role_mappings\":[{\"group\":\"X\",\"role\":\"USER\"}]}";
+        when(previewService.preview(any(), any())).thenThrow(new IllegalArgumentException("LDAP host yapılandırılmamış"));
+        mvc.perform(post("/api/admin/ldap/role-mapping/preview").session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("LDAP_NOT_CONFIGURED"));
+        org.mockito.Mockito.reset(previewService);
+        when(previewService.preview(any(), any())).thenThrow(new IllegalStateException("Connection refused"));
+        mvc.perform(post("/api/admin/ldap/role-mapping/preview").session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("LDAP_UNREACHABLE"));
+    }
 
     private MockHttpSession bootstrapAdmin() {
         MockHttpSession s = new MockHttpSession();

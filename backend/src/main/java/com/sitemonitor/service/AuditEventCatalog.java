@@ -149,6 +149,7 @@ public final class AuditEventCatalog {
             "ISSUE_REPORT_REOPEN",
             "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)
             "LDAP_QUERY_USER",
+            "LDAP_ROLE_MAPPING_PREVIEW",  // Ayarlar → LDAP: grup → rol eşlemesi "kim ne olacak" önizlemesi (2026-10-11)
             "LDAP_SETTINGS_SAVE",
             "LDAP_TEST",
             "LOGIN",
@@ -291,6 +292,7 @@ public final class AuditEventCatalog {
             "USER_LDAP_RESYNC",           // yönetici: kullanıcıyı AD'den yeniden eşitle (2026-09-26)
             "USER_LDAP_SYNC",             // giriş/müdür provizyonunda LDAP kaynaklı üyelik/müdür değişikliği (2026-09-26)
             "USER_ORG_ROLE_UNLOCK",
+            "USER_ROLE_FROM_AD",          // LDAP grup → rol eşlemesi giriş/eşitlemede sistem rolünü değiştirdi (2026-10-11)
             "USER_PASSWORD_AUTO_RESET",
             "USER_PREFERENCES_UPDATE",    // kişi favorilerini / açılış sekmesini / kayıtlı görünümlerini değiştirdi (2026-10-02)
             "USER_PUSH_EXPORT",

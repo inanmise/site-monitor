@@ -1251,6 +1251,8 @@ export const api = {
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
     // verify=true: kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN sertifika doğrulaması açık denenir
     testLdap: (verify = false) => request(`/admin/ldap/test${verify ? '?verify=true' : ''}`, { method: 'POST' }),
+    // LDAP grup → rol eşlemesi "kim ne olacak" önizlemesi (2026-10-11) — formdaki kurallarla, hiçbir şey yazmaz
+    previewLdapRoleMapping: (dto) => request('/admin/ldap/role-mapping/preview', { method: 'POST', body: JSON.stringify(dto) }),
     queryLdapUser: (value, attr) => request('/admin/ldap/query-user', {
       method: 'POST', body: JSON.stringify({ value, attr }),
     }),

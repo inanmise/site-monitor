@@ -125,4 +125,52 @@ class LdapSettingsServiceTest {
         service.refreshFromDb();
         assertThat(service.getOrDefaults().getHost()).isEqualTo("ldap2.example.com");
     }
+
+    // ── Rol eşlemesi ayarları (2026-10-11) ──
+
+    @Test
+    @DisplayName("varsayılan: eşleme KAPALI, varsayılan davranış DERIVED; activeRoleMapping null")
+    void roleMapping_defaultOff() {
+        Map<String, Object> m = service.toClientMap(service.getOrDefaults());
+        assertThat(m.get("role_mapping_enabled")).isEqualTo(false);
+        assertThat(m.get("role_mapping_fallback")).isEqualTo("DERIVED");
+        assertThat(service.activeRoleMapping()).isNull();
+    }
+
+    @Test
+    @DisplayName("açılınca activeRoleMapping kuralları sırayla + varsayılanı verir")
+    void roleMapping_enabled() {
+        service.save(new java.util.HashMap<>(Map.of(
+                "role_mapping_enabled", true,
+                "role_mapping_fallback", "team_admin",
+                "role_mappings", List.of(Map.of("group", "SM-Denetim", "role", "audit"), Map.of("group", "Admins", "role", "ADMIN")))), "admin");
+        var cfg = service.activeRoleMapping();
+        assertThat(cfg).isNotNull();
+        assertThat(cfg.fallback()).isEqualTo("TEAM_ADMIN");
+        assertThat(cfg.rules()).extracting(com.sitemonitor.service.ldap.LdapRoleMapping.Rule::role).containsExactly("AUDIT", "ADMIN");
+    }
+
+    @Test
+    @DisplayName("gövdede role_mappings YOKSA kayıtlı kurallar silinmez (eskiden [] yazılıyordu)")
+    void roleMappings_keptWhenAbsent() {
+        service.save(new java.util.HashMap<>(Map.of("role_mappings", List.of(Map.of("group", "A", "role", "USER")))), "admin");
+        service.save(new java.util.HashMap<>(Map.of("host", "ldap.example.com")), "admin");
+        assertThat(service.roleMappings()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("geçersiz rol / aşırı uzun grup / bilinmeyen varsayılan → alan hatası (400)")
+    void roleMapping_validation() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.save(new java.util.HashMap<>(Map.of(
+                "role_mappings", List.of(Map.of("group", "A", "role", "ROOT")))), "admin"))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.save(new java.util.HashMap<>(Map.of(
+                "role_mappings", List.of(Map.of("group", "x".repeat(513), "role", "USER")))), "admin"))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.save(new java.util.HashMap<>(Map.of(
+                "role_mapping_fallback", "SUPERUSER")), "admin"))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        assertThat(LdapSettingsService.validateFallback("")).isEqualTo("DERIVED");
+        assertThat(LdapSettingsService.validateFallback("audit")).isEqualTo("AUDIT");
+    }
 }

@@ -1,15 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Trash2, KeyRound } from 'lucide-react'
+import { Search, KeyRound } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
-import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import Field from '../ui/Field.jsx'
 import ToneBadge from './ToneBadge.jsx'
+import LdapRoleMappingSection from './ldap/LdapRoleMappingSection.jsx'
 import {
   FIELD_GRID as GRID, FIELD_GRID_3, SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar,
   SettingsSection, TestResult, ToggleRow,
@@ -22,7 +21,6 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
-const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
 
 /**
  * LDAP / Active Directory ayarları. Tam sayfa yeniden tasarım (2026-09-27): SettingsHeader + ana anahtar +
@@ -73,18 +71,6 @@ export default function LdapSettings() {
 
   function set(key, value) {
     setForm((f) => ({ ...f, [key]: value }))
-  }
-
-  // ── role mappings ──────────────────────────────────────────────────────────
-  function addMapping() {
-    set('role_mappings', [...(form.role_mappings || []), { group: '', role: 'ADMIN' }])
-  }
-  function updateMapping(i, key, value) {
-    const next = form.role_mappings.map((m, idx) => (idx === i ? { ...m, [key]: value } : m))
-    set('role_mappings', next)
-  }
-  function removeMapping(i) {
-    set('role_mappings', form.role_mappings.filter((_, idx) => idx !== i))
   }
 
   // ── actions ────────────────────────────────────────────────────────────────
@@ -246,73 +232,8 @@ export default function LdapSettings() {
         <p className="mt-1.5 text-xs text-muted-foreground">{t('ldap.skipMemberOfHint')}</p>
       </SettingsSection>
 
-      {/* Group → role mapping */}
-      <SettingsSection title={t('ldap.roleMapping')} description={t('ldap.roleMappingDesc')}>
-        {/* Bu bölümün İKİ kontrolü de (eşlemeler ve varsayılan rol) kaydediliyor ama giriş
-            yolunda HİÇ okunmuyor: rol dizin niteliklerinden türetiliyor
-            (LdapProvisioningService — yönetici/ürün sahibi → TEAM_ADMIN, diğerleri → USER).
-            Eski yardım metni "hiçbir grup eşleşmediğinde uygulanır" diyordu; bu YANLIŞ bir
-            vaatti ve güvenlik açısından yanıltıcıydı: "Varsayılan rol: ADMIN" seçen bir
-            yönetici, eşleşmeyen herkesin admin olduğunu sanabilirdi. */}
-        <AlertBanner tone="warning" title={t('ldap.roleMappingInactiveTitle')}>
-          {t('ldap.roleMappingInactive')}
-        </AlertBanner>
-        <div className="overflow-hidden rounded-lg border border-border">
-          <Table>
-            <TableHeader className="bg-muted/50">
-              <TableRow>
-                <TableHead>{t('ldap.mapGroup')}<HelpTip helpKey="help.ldap.mapGroup" label={t('ldap.mapGroup')} /></TableHead>
-                <TableHead className="w-[180px]">{t('ldap.mapRole')}<HelpTip helpKey="help.ldap.mapRole" label={t('ldap.mapRole')} /></TableHead>
-                <TableHead className="w-12"><span className="sr-only">{t('ldap.removeMapping')}</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(form.role_mappings || []).length === 0 && (
-                <TableRow><TableCell colSpan={3} className="p-3.5 text-center text-muted-foreground">{t('ldap.noMappings')}</TableCell></TableRow>
-              )}
-              {(form.role_mappings || []).map((m, i) => {
-                const rowName = m.group || String(i + 1)
-                return (
-                  <TableRow key={i}>
-                    <TableCell>
-                      <Input type="text" value={m.group} placeholder="CN=CertAdmins"
-                        aria-label={t('a11y.rowAction', String(i + 1), t('ldap.mapGroup'))}
-                        onChange={(e) => updateMapping(i, 'group', e.target.value)} />
-                    </TableCell>
-                    <TableCell>
-                      <NativeSelect value={m.role} className="min-w-[150px]"
-                        aria-label={t('a11y.rowAction', rowName, t('ldap.mapRole'))}
-                        onChange={(e) => updateMapping(i, 'role', e.target.value)}>
-                        {ROLES.map((r) => <NativeSelectOption key={r} value={r}>{r}</NativeSelectOption>)}
-                      </NativeSelect>
-                    </TableCell>
-                    <TableCell>
-                      <SimpleTooltip content={t('ldap.removeMapping')}>
-                        <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => removeMapping(i)}
-                          aria-label={t('a11y.rowAction', rowName, t('ldap.removeMapping'))}>
-                          <Trash2 size={15} />
-                        </Button>
-                      </SimpleTooltip>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
-        <Button variant="secondary" className="mt-2.5" onClick={addMapping}>
-          <Plus size={14} /> {t('ldap.addMapping')}
-        </Button>
-        <Field className="mt-3.5 sm:max-w-xs" label={helpLabel(t('ldap.defaultRole'), 'help.ldap.defaultRole')}
-          hint={t('ldap.defaultRoleHint')}>
-          {({ id, describedBy }) => (
-            <NativeSelect id={id} aria-describedby={describedBy} value={form.default_role || 'ADMIN'}
-              className="min-w-[200px]" onChange={(e) => set('default_role', e.target.value)}>
-              {ROLES.map((r) => <NativeSelectOption key={r} value={r}>{r}</NativeSelectOption>)}
-            </NativeSelect>
-          )}
-        </Field>
-      </SettingsSection>
+      {/* Group → role mapping (2026-10-11: uygulanır — anahtar, sıralı kurallar, önizleme) */}
+      <LdapRoleMappingSection form={form} set={set} />
 
       {/* Directory user lookup — what AD returns for a username */}
       <SettingsSection title={t('ldap.lookupTitle')} description={t('ldap.lookupDesc')}>

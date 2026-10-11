@@ -1,7 +1,10 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.LdapSettings;
 import com.sitemonitor.repository.LdapSettingsRepository;
+import com.sitemonitor.service.ldap.LdapRoleMapping;
+import com.sitemonitor.util.Msg;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -127,7 +130,11 @@ public class LdapSettingsService {
         s.setGroupFilter(strVal(body, "group_filter", s.getGroupFilter()));
         s.setSkipMemberOf(boolVal(body, "skip_member_of", s.getSkipMemberOf()));
         s.setDefaultRole(strVal(body, "default_role", s.getDefaultRole()));
-        s.setRoleMappingsJson(serializeMappings(body.get("role_mappings")));
+        // Eşlemeler yalnız gövdede VARSA yazılır (2026-10-11): eskiden anahtar yoksa "[]" yazılıp kayıtlı kurallar sessizce
+        // siliniyordu. Doğrulama kayıttan ÖNCE: geçersiz rol / aşırı uzun grup / çok kural → 400 (alan hatası).
+        if (body.containsKey("role_mappings")) s.setRoleMappingsJson(serializeMappings(validateMappings(body.get("role_mappings"))));
+        s.setRoleMappingEnabled(boolVal(body, "role_mapping_enabled", Boolean.TRUE.equals(s.getRoleMappingEnabled())));
+        if (body.containsKey("role_mapping_fallback")) s.setRoleMappingFallback(validateFallback(body.get("role_mapping_fallback")));
 
         s.setUpdatedAt(ISO.format(Instant.now()));
         s.setUpdatedBy(actor);
@@ -160,6 +167,8 @@ public class LdapSettingsService {
         m.put("skip_member_of", bool(s.getSkipMemberOf()));
         m.put("role_mappings", parseMappings(s.getRoleMappingsJson()));
         m.put("default_role", s.getDefaultRole());
+        m.put("role_mapping_enabled", Boolean.TRUE.equals(s.getRoleMappingEnabled()));
+        m.put("role_mapping_fallback", LdapRoleMapping.normalizeFallback(s.getRoleMappingFallback()));
         m.put("updated_at", s.getUpdatedAt());
         m.put("updated_by", s.getUpdatedBy());
         return m;
@@ -167,6 +176,59 @@ public class LdapSettingsService {
 
     public List<Map<String, String>> roleMappings() {
         return parseMappings(getOrDefaults().getRoleMappingsJson());
+    }
+
+    /** Giriş / eşitlemede uygulanacak eşleme yapılandırması; eşleme KAPALIYSA null (bugünkü davranış aynen). */
+    public RoleMappingConfig activeRoleMapping() {
+        LdapSettings s = getOrDefaults();
+        if (!Boolean.TRUE.equals(s.getRoleMappingEnabled())) return null;
+        return new RoleMappingConfig(LdapRoleMapping.rulesOf(parseMappings(s.getRoleMappingsJson())),
+                LdapRoleMapping.normalizeFallback(s.getRoleMappingFallback()));
+    }
+
+    /** Uygulanacak kurallar (sıralı) + eşleşme yoksa davranış ("DERIVED" ya da sabit rol). */
+    public record RoleMappingConfig(List<LdapRoleMapping.Rule> rules, String fallback) {}
+
+    /** Kural listesini doğrular: en çok {@value LdapRoleMapping#MAX_RULES} satır, grup ≤ 512 karakter, rol katalogda. */
+    public static Object validateMappings(Object raw) {
+        if (raw == null) return List.of();
+        if (!(raw instanceof List<?> list)) {
+            throw new FieldValidationException("role_mappings", Msg.t("Rol eşlemeleri bir liste olmalı.", "Role mappings must be a list."));
+        }
+        int rows = 0;
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> mm)) continue;
+            String g = str(mm.get("group"));
+            String r = str(mm.get("role"));
+            if (g == null || g.isBlank()) continue;   // boş satır: sessizce atlanır (eskisi gibi)
+            if (++rows > LdapRoleMapping.MAX_RULES) {
+                throw new FieldValidationException("role_mappings", Msg.t(
+                        "En çok " + LdapRoleMapping.MAX_RULES + " rol eşlemesi tanımlanabilir · fazla satırları silip yeniden kaydedin.",
+                        "At most " + LdapRoleMapping.MAX_RULES + " role mappings are allowed · remove the extra rows and save again."));
+            }
+            if (g.trim().length() > LdapRoleMapping.MAX_GROUP_LENGTH) {
+                throw new FieldValidationException("role_mappings", Msg.t(
+                        "Grup değeri en çok " + LdapRoleMapping.MAX_GROUP_LENGTH + " karakter olabilir · grubun adını (CN) ya da tam DN'ini yazın.",
+                        "A group value can be at most " + LdapRoleMapping.MAX_GROUP_LENGTH + " characters · enter the group name (CN) or its full DN."));
+            }
+            if (!LdapRoleMapping.isRole(r)) {
+                throw new FieldValidationException("role_mappings", Msg.t(
+                        "\"" + g.trim() + "\" satırının rolü geçersiz · ADMIN, TEAM_ADMIN, AUDIT ya da USER seçin.",
+                        "The role on row \"" + g.trim() + "\" is not valid · choose ADMIN, TEAM_ADMIN, AUDIT or USER."));
+            }
+        }
+        return list;
+    }
+
+    /** "DERIVED" (bugünkü kural) ya da katalogdaki bir rol; boş → DERIVED; başka değer → 400. */
+    public static String validateFallback(Object raw) {
+        String v = str(raw);
+        if (v == null || v.isBlank()) return LdapRoleMapping.FALLBACK_DERIVED;
+        String up = v.trim().toUpperCase(java.util.Locale.ROOT);
+        if (LdapRoleMapping.FALLBACK_DERIVED.equals(up) || LdapRoleMapping.isRole(up)) return up;
+        throw new FieldValidationException("role_mapping_fallback", Msg.t(
+                "Eşleşme yoksa uygulanacak davranış geçersiz · \"bugünkü kural\" ya da bir rol seçin.",
+                "The no-match behaviour is not valid · choose \"current rule\" or a role."));
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
