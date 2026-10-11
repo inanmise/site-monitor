@@ -81,6 +81,12 @@ public class NocController {
     /** Konsol kapısı: TÜM alarmları görebilen (global görücü ya da 7/24 operatörü) + arama kaydı yetkisi. */
     private final com.sitemonitor.service.noc.NocCallLogService nocCallLog;
 
+    /** Nöbet çizelgesi (2026-10-11) — arama kartında sahip takımın şu anki nöbetçisi. Dilim testinde null. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.oncall.OnCallService onCallService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.AppUserRepository userRepo;
+
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
     }
@@ -361,7 +367,29 @@ public class NocController {
         }
         out.put("escalation", esc);
         out.put("call_instructions", configService.get().callInstructions());
+        // Şu anki nöbetçi (2026-10-11): çizelgesi olan takımda önce aranacak kişi — telefon yalnız bu kartta (aynı kapı)
+        out.put("oncall", oncallPerson(teamId));
         return ok(out);
+    }
+
+    private Map<String, Object> oncallPerson(Long teamId) {
+        if (onCallService == null || userRepo == null || teamId == null) return null;
+        try {
+            var p = onCallService.currentFor(List.of(teamId)).get(teamId);
+            if (p == null) return null;
+            var u = userRepo.findById(p.userId()).orElse(null);
+            if (u == null) return null;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", u.getDisplayName() == null || u.getDisplayName().isBlank() ? u.getUsername() : u.getDisplayName());
+            m.put("title", u.getTitle());
+            m.put("phone", u.getPhone());
+            m.put("until", p.until());
+            m.put("override", p.override());
+            m.put("active", p.active());
+            return m;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static Map<String, Object> person(com.sitemonitor.service.noc.NocMailComposer.Person p) {

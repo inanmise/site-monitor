@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useId } from 'react'
-import { api } from '../../api/client'
+import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import {
   UsersRound, PenLine, Headset, Plus, CircleCheck, CirclePause, TriangleAlert, Siren, History, Gauge, ScanSearch,
-  Trash2, Users, UserPlus, BellRing,
+  Trash2, Users, UserPlus, BellRing, CalendarClock,
 } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 import TagInput from '../ui/TagInput.jsx'
@@ -19,6 +19,7 @@ import TeamMembersManager from './TeamMembersManager.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
 import TeamLdapAuditModal from './TeamLdapAuditModal.jsx'
+import OnCallScheduleModal from './oncall/OnCallScheduleModal.jsx'   // nöbet çizelgesi (2026-10-11)
 import { navigateTo, applyTabView } from '../../utils/navigate.js'
 import { Download, SlidersHorizontal } from 'lucide-react'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
@@ -155,6 +156,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
   const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
   const [ldapAuditTeam, setLdapAuditTeam] = useState(null)   // AD ile üyelik denetimi (2026-09-26)
+  const [oncallTeam, setOncallTeam] = useState(null)         // nöbet çizelgesi penceresi (2026-10-11)
+  const [oncallNow, setOncallNow] = useState({})             // takım kimliği → şu anki nöbetçi {name, until}
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
   // Zengin süzgeçler (2026-09-20, kullanıcı bildirimi): durum, müdür, açık alarm, lider, haftalık — URL'de g_*
   const [fActive, setFActive]   = useState(() => readUrlParam('g_active', ''))     // '' | 'active' | 'inactive'
@@ -186,12 +189,22 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     // uyelikler ve takim kapsamli alarmlar ikiye bolunur.
     try {
       const res = await api.admin.getTeams()
-      if (res?.success) { setTeams(res.data); setLoadError(null) }
+      if (res?.success) { setTeams(res.data); setLoadError(null); loadOncall(res.data) }
       else setLoadError(res?.error || t('settings.loadError'))
     } catch (e) {
       setLoadError(e?.message || t('settings.loadError'))
     }
     loadStats()
+  }
+
+  /** Şu anki nöbetçiler (2026-10-11) — ayrı, en iyi çaba istek: gelmezse satırda nöbetçi satırı yok. */
+  async function loadOncall(list = teams) {
+    try {
+      const ids = (list || []).map((x) => x.id).slice(0, 200)
+      if (!ids.length || !api.oncall?.current) return
+      const r = await api.oncall.current(ids)
+      if (r?.success) setOncallNow(Object.fromEntries((r.data || []).map((p) => [String(p.team_id), p])))
+    } catch { /* nöbetçi satırı gösterilmez */ }
   }
 
   /** Satır sayaçları — ayrı istek: liste sayaç gecikse de gelir (best-effort). Gelmezse sayaca dayalı eksikler
@@ -553,6 +566,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         <dd className="min-w-0 [overflow-wrap:anywhere]">
           {mgr?.label ? <><span>{mgr.label}</span>{ownerMeta(mgrSicil, manual)}</> : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
         </dd>
+        {oncallNow[String(team.id)] && (
+          <>
+            <dt className="text-xs text-muted-foreground">{t('oncall.short')}</dt>
+            <dd data-slot="team-oncall" className="min-w-0 [overflow-wrap:anywhere]">
+              <span>{oncallNow[String(team.id)].name}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{t('oncall.untilShort', formatDate(oncallNow[String(team.id)].until))}</span>
+            </dd>
+          </>
+        )}
       </dl>
     )
   }
@@ -577,6 +599,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       { label: t('team.menuViewMembers'), icon: <Users />, onClick: () => setMembersTeam(team) },
       { label: t('team.menuContacts'), icon: <Siren />, onClick: () => jumpAdmin('contacts', { g_team: String(team.id) }) },
       { label: t('team.menuGroups'), icon: <BellRing />, onClick: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }) },
+      // Nöbet çizelgesi (2026-10-11): herkes görür; yönetemeyen salt okunur görür (uç kapsamı uygular)
+      { label: t('oncall.menu'), icon: <CalendarClock />, onClick: () => setOncallTeam(team) },
       { label: t('hist.title'), icon: <History />, onClick: () => setHistFilter({ id: team.id, name: team.name }) },
       // Veri Kalitesi (2026-10-10): takımın puanı + düzeltme listesi (sayfa görüş kapsamını sunucuda uygular)
       { label: t('dq.teamMenu'), icon: <Gauge />, onClick: () => navigateTo('dataquality', { dq_team: String(team.id) }) },
@@ -849,6 +873,9 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       {manageTeam && (
         <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)}
           onClose={() => setManageTeam(null)} onChanged={() => { loadStats(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
+      )}
+      {oncallTeam && (
+        <OnCallScheduleModal team={oncallTeam} onClose={() => setOncallTeam(null)} onSaved={() => loadOncall()} />
       )}
       {ldapAuditTeam && (
         <TeamLdapAuditModal team={ldapAuditTeam} managerInfo={managerInfoFor(ldapAuditTeam)}

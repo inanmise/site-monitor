@@ -204,6 +204,9 @@ public final class AuditEventCatalog {
             "NOC_MONITOR_BULK",
             "NOC_MONITOR_UPDATE",
             "NOC_TEAMS_UPDATE",
+            "ONCALL_OVERRIDE_ADD",        // nöbet yer değiştirmesi eklendi (2026-10-11)
+            "ONCALL_OVERRIDE_DELETE",     // nöbet yer değiştirmesi silindi (2026-10-11)
+            "ONCALL_SCHEDULE_SAVE",       // takım nöbet çizelgesi kaydedildi (2026-10-11)
             "NOTIFICATION_GROUP_CREATE",
             "NOTIFICATION_GROUP_DEFAULT",
             "NOTIFICATION_GROUP_DELETE",
@@ -370,6 +373,7 @@ public final class AuditEventCatalog {
         // yönetimidir; gruplar/yapılandırma bildirim ENTEGRASYONUdur (NOTIFICATION_GROUP_* ile aynı yer).
         if (t.startsWith("NOC_MONITOR_")) return MONITOR;
         if (t.startsWith("NOC_CALL_LIST")) return TEAM;
+        if (t.startsWith("ONCALL_")) return TEAM;                   // nöbet çizelgesi (2026-10-11) — takım düzeni
         if (t.startsWith("NOC_CALL_LOG")) return INCIDENT;          // uyarı üzerinden arama kaydı (ALERT_* ile aynı yer)
         // 7/24 izleme ekibi takımları (2026-10-04): kimin TÜM izlemeleri göreceğini belirler — erişim/yetki değişikliği
         if (t.equals("NOC_TEAMS_UPDATE")) return PERMISSION;

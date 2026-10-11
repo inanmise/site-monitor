@@ -404,6 +404,14 @@ export const api = {
     directory: () => request('/teams/directory'),
     members: (id) => request(`/teams/${id}/members`),
   },
+  // Nöbet çizelgesi (2026-10-11): takım çizelgesi, kayıt, yer değiştirme, şu anki nöbetçiler
+  oncall: {
+    get: (teamId) => request(`/oncall/teams/${teamId}`),
+    save: (teamId, body) => request(`/oncall/teams/${teamId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    addOverride: (teamId, body) => request(`/oncall/teams/${teamId}/overrides`, { method: 'POST', body: JSON.stringify(body) }),
+    deleteOverride: (id) => request(`/oncall/overrides/${id}`, { method: 'DELETE' }),
+    current: (teamIds) => request(`/oncall/current?teamIds=${(teamIds || []).join(',')}`),
+  },
   users: {
     directory: () => request('/users/directory'),
   },

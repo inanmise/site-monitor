@@ -34,6 +34,8 @@ const TRIGGER_CLASS = cn(
   'group/picker w-full justify-between gap-2 border-input px-3 font-normal has-[>svg]:px-3',
   'data-[state=open]:border-ring',
   'in-[.inv-fr-cell]:h-7 in-[.inv-fr-cell]:px-2 in-[.inv-fr-cell]:text-xs in-[.bulkbar-field]:min-w-[140px]',
+  // Dokunmatik boy (2026-10-11): `.ss-touch` sarmalayıcısı içinde parmakla dokunulan ekranda 40 px (pencere formları)
+  'pointer-coarse:in-[.ss-touch]:h-10',
 )
 
 /**

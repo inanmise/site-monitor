@@ -1612,6 +1612,79 @@ public class UserPushService {
         }
     }
 
+    /**
+     * Nöbetçi push'u (2026-10-11, kullanıcı kararı: "takım seçerse nöbetçiye de"). Takımın nöbet çizelgesinde "nöbetçiye
+     * de bildir" açıksa YÜKSEK / KRİTİK alarm bildirimi o anki nöbetçiye de gider. Kurallar eskalasyon adımıyla aynı:
+     * sistem bakımı (elle gönderim hariç), tür/takım kapsamı, izleme bayrağı, global sessiz saat, kişisel tercihler
+     * (opt-out, aile, seviye, susturma, kişisel sessiz saat) ve saat tavanı. Kişi aynı tetikte TAKIM push'unu zaten
+     * aldıysa ikinci satır yazılmaz. Satırın tetiği takım push'uyla aynı (OPEN / ESCALATION / RE_ALERT / RESEND);
+     * ayırt eden yinelenmezlik anahtarı {@code ONCALL:…}. Hiçbir istisna yaymaz.
+     *
+     * @return yazılan satırın durumu, yazılmadıysa null
+     */
+    public String enqueueOnCall(Long alertEventId, String mailTrigger, Long teamId, Long userId, Set<String> excludeUsernames) {
+        try {
+            if (!enabled() || alertEventId == null || userId == null) return null;
+            AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
+            if (event == null) return null;
+            String trigger = switch (mailTrigger == null ? "" : mailTrigger) {
+                case "ESCALATION" -> "ESCALATION";
+                case "DAILY_REALERT" -> "RE_ALERT";
+                case "MANUAL" -> "RESEND";
+                default -> "OPEN";
+            };
+            String level = event.getAlertLevel();
+            String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
+            String block = null;
+            if (!"RESEND".equals(trigger) && systemMaintenanceMuted()) block = SystemMaintenanceService.PUSH_SKIPPED;
+            if (block == null && "RE_ALERT".equals(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) {
+                block = "SKIPPED_REALERT_OFF";
+            }
+            if (block == null) block = scopeBlockReason(teamId, family);
+            if (block == null && pushDisabled(event)) block = "SKIPPED_MONITOR_OFF";
+            if (block == null && quietHoursBlock(level)) block = "SKIPPED_QUIET_HOURS";
+            if (block != null) return block;   // kanal kararı takım push'unun karar satırında zaten izli
+            com.sitemonitor.model.EscalationContact probe = new com.sitemonitor.model.EscalationContact();
+            probe.setUserId(userId);
+            probe.setTeamId(teamId);
+            UserPushRecipientResolver.ContactMatch match = resolver.resolveContact(probe, level, familyList(family));
+            if (match == null || match.recipient() == null) return match == null ? null : match.skipReason();
+            UserPushRecipientResolver.Recipient r = match.recipient();
+            if (excludeUsernames != null && excludeUsernames.contains(r.username())) return null;
+            // Aynı tetikte takım push'unu zaten aldıysa (üyelik + seviye) ikinci kez gitmez — RESEND anahtarı rastgele olduğundan
+            // elle gönderimde bu denetim satırın yazıldığı son dakikaya bakar.
+            String teamKey = dedupeKeyFor(trigger, event);
+            if (!"RESEND".equals(trigger) && deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), teamKey, r.username())) {
+                return null;
+            }
+            String dedupeKey = "ONCALL:" + ("RESEND".equals(trigger) ? "RESEND:" + UUID.randomUUID().toString().substring(0, 8) : teamKey);
+            if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username())) return null;
+            String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+            String status;
+            if (r.skipReason() != null) status = r.skipReason();
+            else if (!capBypass(level) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else status = "PENDING";
+            String lang = r.lang();
+            String prefix = "en".equals(lang) ? "On call: " : "Nöbetçisiniz: ";
+            String message = PushText.truncate(PushText.pushSafe(prefix + rawMessage(event, trigger, contextOf(event), lang)), maxMessageChars());
+            UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, r.username(), r.displayName(),
+                    message, status, ISO.format(Instant.now()), lang);
+            d.setBatchId("oncall-" + UUID.randomUUID().toString().substring(0, 8));
+            try {
+                deliveryRepo.save(d);
+            } catch (Exception dup) {
+                log.debug("user-push nöbetçi dedupe (unique): olay={} kişi={}", event.getId(), r.username());
+                return null;
+            }
+            if ("PENDING".equals(status)) worker.execute(this::drainOutbox);
+            log.info("user-push nöbetçi: olay #{} takım #{} → {}", event.getId(), teamId, status);
+            return status;
+        } catch (Exception e) {
+            log.warn("user-push nöbetçi atlandı (alarm e-postası etkilenmedi): {}", e.toString());
+            return null;
+        }
+    }
+
     /** Adım push'unun karar satırı (sistem sicili) — kişi başına (alarm, kişi, seviye) bir kez. Ad: kişi kimliği (isim değil). */
     private void stepSkipRow(AlertEvent event, com.sitemonitor.model.EscalationContact contact, Long teamId, String family,
                              String dedupeKey, String reason) {
