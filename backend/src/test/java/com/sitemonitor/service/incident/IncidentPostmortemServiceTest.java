@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 /**
@@ -192,6 +193,47 @@ class IncidentPostmortemServiceTest {
         assertThat(a.getDueDate()).isNull();
         svc.updateAction(a, Map.of(), null, true, false, "b");   // sahip açıkça kaldırıldı
         assertThat(a.getOwnerUserId()).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-10-12: sonradan pasifleşen sahip DEĞİŞMEDEN gönderilirse düzenleme kilitlenmez; YENİ pasif sahip reddedilir")
+    void unchangedPassiveOwnerDoesNotBlockEdit() {
+        when(userRepo.findById(7L)).thenReturn(Optional.of(user(7L, false)));
+        IncidentActionItem a = new IncidentActionItem();
+        a.setIncidentId(10L);
+        a.setTitle("İş");
+        a.setStatus("OPEN");
+        a.setKind("PREVENT");
+        a.setPriority("LOW");
+        a.setOwnerUserId(7L);
+        svc.updateAction(a, Map.of("title", "Yeni başlık", "owner_user_id", "x"), 7L, true, false, "b");
+        assertThat(a.getTitle()).isEqualTo("Yeni başlık");
+        assertThat(a.getOwnerUserId()).isEqualTo(7L);
+        a.setOwnerUserId(3L);
+        assertThatThrownBy(() -> svc.updateAction(a, Map.of("owner_user_id", "x"), 7L, true, false, "b"))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: olaylar arası listede satır can_open taşır — başka takımın olayından size atanan iş açılamaz")
+    void searchCarriesCanOpen() {
+        IncidentActionItem mine = new IncidentActionItem();
+        mine.setId(1L); mine.setIncidentId(10L); mine.setTitle("Bizim iş"); mine.setStatus("OPEN");
+        IncidentActionItem foreign = new IncidentActionItem();
+        foreign.setId(2L); foreign.setIncidentId(11L); foreign.setTitle("Yabancı iş"); foreign.setStatus("OPEN"); foreign.setOwnerUserId(7L);
+        when(actionRepo.search(anyBoolean(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.<Object[]>of(
+                        new Object[]{mine, "Olay A", "Takım A", "HIGH", 5L, 5L},
+                        new Object[]{foreign, "Olay B", "Takım B", "LOW", 9L, 9L})));
+        when(actionRepo.totals(anyBoolean(), any(), any(), any())).thenReturn(List.<Object[]>of(new Object[]{2L, 0L, 1L}));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> items = (List<Map<String, Object>>) svc.search(true, List.of(5L), 7L, false, "open", false, null, 0, 50,
+                (team, createdBy) -> Long.valueOf(5L).equals(team) || Long.valueOf(5L).equals(createdBy)).get("items");
+        assertThat(items).extracting(m -> m.get("can_open")).containsExactly(true, false);
+        assertThat(items).extracting(m -> m.get("mine")).containsExactly(false, true);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> legacy = (List<Map<String, Object>>) svc.search(true, List.of(5L), 7L, false, "open", false, null, 0, 50).get("items");
+        assertThat(legacy).extracting(m -> m.get("can_open")).containsExactly(true, true);
     }
 
     @Test

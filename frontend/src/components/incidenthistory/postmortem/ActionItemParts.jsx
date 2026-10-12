@@ -119,7 +119,7 @@ export function ActionForm({ initial, people, onSubmit, onCancel, busy }) {
       title: (!f.title.trim() && t('pm.err.title')) || (f.title.trim().length > MAX_TITLE_CHARS && t('pm.err.titleLong', MAX_TITLE_CHARS)),
       description: f.description.length > MAX_DESCRIPTION_CHARS && t('pm.err.descLong', MAX_DESCRIPTION_CHARS),
     })) return
-    const res = await onSubmit(actionPayload(f))
+    const res = await onSubmit(actionPayload(f, initial && initial.id != null ? initial : null))
     if (res?.fields) fe.check(res.fields)
   }
 

@@ -68,6 +68,14 @@ describe('rapor formu', () => {
     expect(actionPayload({ ...f, title: '  İş  ', description: '  ', owner_user_id: '', due_date: '' }))
       .toEqual({ title: 'İş', description: null, kind: 'DETECT', priority: 'HIGH', status: 'OPEN', owner_user_id: null, due_date: null })
   })
+  it('düzenleme gövdesi yalnız değişen alanlar, durum asla (eşzamanlı "Tamamlandı" geri alınmaz; pasif sahip kilitlemez)', () => {
+    const saved = { id: 4, title: 'İş', owner_user_id: 'b6c1-uuid', due_date: '2026-10-20', kind: 'DETECT', priority: 'HIGH', status: 'OPEN' }
+    const f = actionForm(saved)
+    expect(actionPayload(f, saved)).toEqual({})
+    expect(actionPayload({ ...f, due_date: '2026-10-25', title: ' Yeni iş ' }, saved)).toEqual({ due_date: '2026-10-25', title: 'Yeni iş' })
+    expect(actionPayload({ ...f, owner_user_id: '' }, saved)).toEqual({ owner_user_id: null })
+    expect(actionPayload({ ...f, status: 'DONE' }, saved)).toEqual({})
+  })
 })
 
 describe('dışa aktarım', () => {

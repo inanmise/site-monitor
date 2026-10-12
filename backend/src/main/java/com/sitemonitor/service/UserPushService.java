@@ -29,6 +29,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -513,6 +514,51 @@ public class UserPushService {
      * kalıcı {@code SKIPPED_MONITOR_OFF} satırından okunur (yukarıdaki dal).
      */
     public PushPreview preview(Long alertEventId, Long fallbackTeamId) {
+        return preview(alertEventId, fallbackTeamId, List.of());
+    }
+
+    /**
+     * Önizleme + nöbetçi push'u (2026-10-12): gönderimde {@link #enqueueOnCall} ile eklenecek nöbetçiler de listelenir, böylece
+     * operatör onları görüp çıkarabilir. Takım listesinde zaten olan kişi tekrar yazılmaz (gönderimde de ikinci push gitmez).
+     */
+    public PushPreview preview(Long alertEventId, Long fallbackTeamId,
+                               List<com.sitemonitor.service.oncall.OnCallService.OnCallPerson> oncall) {
+        PushPreview base = previewTeam(alertEventId, fallbackTeamId);
+        // Olay düzeyindeki engel (izleme push'u kapalı, sessiz saat, kapsam…) nöbetçi push'unu da durdurur; yalnız "takımda alıcı yok"
+        // durumunda nöbetçi satırları yine gösterilir.
+        boolean teamOpen = base.blockReason() == null || "SKIPPED_NO_RECIPIENTS".equals(base.blockReason());
+        if (!base.channelEnabled() || oncall == null || oncall.isEmpty() || !teamOpen) return base;
+        AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
+        if (event == null) return base;
+        String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
+        Set<String> listed = new HashSet<>();
+        base.recipients().forEach(r -> listed.add(r.username()));
+        List<PushPreviewRow> extra = new ArrayList<>();
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+        Set<Long> done = new HashSet<>();
+        for (var p : oncall) {
+            if (p == null || p.userId() == null || !done.add(p.userId())) continue;
+            if (scopeBlockReason(p.teamId(), family) != null) continue;
+            com.sitemonitor.model.EscalationContact probe = new com.sitemonitor.model.EscalationContact();
+            probe.setUserId(p.userId());
+            probe.setTeamId(p.teamId());
+            UserPushRecipientResolver.ContactMatch match = resolver.resolveContact(probe, event.getAlertLevel(), familyList(family));
+            if (match == null || match.recipient() == null) continue;
+            UserPushRecipientResolver.Recipient r = match.recipient();
+            if (!listed.add(r.username())) continue;
+            String status;
+            if (r.skipReason() != null) status = r.skipReason();
+            else if (!capBypass(event.getAlertLevel()) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else status = "PENDING";
+            extra.add(new PushPreviewRow(r.username(), r.displayName(), status));
+        }
+        if (extra.isEmpty()) return base;
+        List<PushPreviewRow> rows = new ArrayList<>(base.recipients());
+        rows.addAll(extra);
+        return new PushPreview(true, null, rows);
+    }
+
+    private PushPreview previewTeam(Long alertEventId, Long fallbackTeamId) {
         if (!enabled()) return new PushPreview(false, "CHANNEL_DISABLED", List.of());
         AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
         if (event == null) return new PushPreview(true, "ALERT_NOT_FOUND", List.of());
@@ -1652,9 +1698,14 @@ public class UserPushService {
             UserPushRecipientResolver.Recipient r = match.recipient();
             if (excludeUsernames != null && excludeUsernames.contains(r.username())) return null;
             // Aynı tetikte takım push'unu zaten aldıysa (üyelik + seviye) ikinci kez gitmez — RESEND anahtarı rastgele olduğundan
-            // elle gönderimde bu denetim satırın yazıldığı son dakikaya bakar.
+            // elle gönderimde bu denetim aynı olay + kişi için son 2 dakikada yazılmış RESEND satırına bakar (takım push'u aynı
+            // çağrıda, nöbetçi push'undan hemen ÖNCE yazılır).
             String teamKey = dedupeKeyFor(trigger, event);
-            if (!"RESEND".equals(trigger) && deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), teamKey, r.username())) {
+            if ("RESEND".equals(trigger)) {
+                if (deliveryRepo.existsRecentTeamResend(event.getId(), r.username(), ISO.format(Instant.now().minus(Duration.ofMinutes(2))))) {
+                    return null;
+                }
+            } else if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), teamKey, r.username())) {
                 return null;
             }
             String dedupeKey = "ONCALL:" + ("RESEND".equals(trigger) ? "RESEND:" + UUID.randomUUID().toString().substring(0, 8) : teamKey);

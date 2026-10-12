@@ -48,6 +48,11 @@ class OnCallRotationTest {
         assertThat(a.override()).isTrue();
         assertThat(OnCallRotation.current(WEEKLY, List.of(o1, o2), Instant.parse("2026-10-07T06:00:00Z")).userId()).isEqualTo(77L);
         assertThat(OnCallRotation.current(WEEKLY, List.of(o1, o2), Instant.parse("2026-10-08T00:00:00Z")).userId()).isEqualTo(11L);
+        // 2026-10-12: yer değiştirme yalnız ETKİN çizelgede geçerli — çizelgesiz / kapalı takımda pencere de "nöbetçi yok" der
+        // (bildirim, takım satırı ve 7/24 bu takımları zaten atlıyordu).
+        assertThat(OnCallRotation.current(null, List.of(o1), Instant.parse("2026-10-06T10:00:00Z")).userId()).isNull();
+        assertThat(OnCallRotation.current(new OnCallRotation.Config(false, 7, ANCHOR, List.of(11L)), List.of(o1),
+                Instant.parse("2026-10-06T10:00:00Z")).userId()).isNull();
     }
 
     @Test

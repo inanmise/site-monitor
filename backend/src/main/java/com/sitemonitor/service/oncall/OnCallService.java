@@ -247,6 +247,11 @@ public class OnCallService {
         if (userId == null || users.findById(userId).isEmpty()) {
             throw field("user_id", "Nöbeti devralacak kişiyi seçin.", "Pick the person taking over the shift.");
         }
+        // Çizelgesiz takımda yer değiştirme hiçbir yerde geçerli olmaz (bildirim, takım satırı, 7/24) — sessizce kaydedilmez.
+        if (schedules.findByTeamId(teamId).isEmpty()) {
+            throw field("user_id", "Yer değiştirme eklemeden önce takımın nöbet çizelgesini kaydedin.",
+                    "Save the team's on-call schedule before adding an override.");
+        }
         OnCallOverride o = new OnCallOverride();
         o.setTeamId(teamId);
         o.setUserId(userId);

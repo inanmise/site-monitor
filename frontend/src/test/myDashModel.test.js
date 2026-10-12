@@ -159,6 +159,10 @@ describe('kutu özetleri', () => {
     expect(s.problems.map((p) => p.key)).toEqual(['c', 'b'])
     expect(s.tone).toBe('danger')
     expect(statusSummary({ services: [] })).toMatchObject({ worst: 'no_data', tone: 'muted' })
+    // 2026-10-12: küçük boyutta liste 0'a kısılır — gerçek sorun sayısı ayrıca taşınır ("hepsi çalışıyor" ona bakar)
+    const small = statusSummary({ services: [{ key: 'a', state: 'major_outage' }, { key: 'b', state: 'operational' }] }, 0)
+    expect(small.problems).toEqual([])
+    expect(small.problemCount).toBe(1)
   })
   it('fırtına: yalnız fırtınadaki ve eşiğe yakın takımlar, fırtına önce', () => {
     const s = stormSummary({ settings: { enabled: true }, totals: { storming: 1, near: 1 }, teams: [

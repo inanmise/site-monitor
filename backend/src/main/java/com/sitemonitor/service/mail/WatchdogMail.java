@@ -19,7 +19,16 @@ public final class WatchdogMail {
     private WatchdogMail() {}
 
     /** Tek satır: {@code kind} = ALERT | REMIND | RECOVER | TEST. */
-    public record Item(String kind, String label, String severity, String detail) { }
+    public record Item(String kind, String label, String severity, String detail, String labelEn, String detailEn) {
+        public Item(String kind, String label, String severity, String detail) {
+            this(kind, label, severity, detail, null, null);
+        }
+
+        /** İngilizce etiket (yoksa Türkçe) — push alıcısının diline göre (2026-10-12). */
+        public String label(boolean en) { return en && labelEn != null ? labelEn : label; }
+
+        public String detail(boolean en) { return en && detailEn != null ? detailEn : detail; }
+    }
 
     public static String subject(List<Item> items, boolean test) {
         if (test) return "[Site Monitor] Kendi kendini izleme — test bildirimi";
@@ -30,7 +39,22 @@ public final class WatchdogMail {
         return "[Site Monitor] Kendi kendini izleme · " + open + " sorun" + (recovered > 0 ? " · " + recovered + " düzeldi" : "");
     }
 
+    /** Push başlığı İngilizce (2026-10-12) — e-posta ve günlük Türkçe kalır. */
+    public static String subjectEn(List<Item> items, boolean test) {
+        if (test) return "[Site Monitor] Self-monitoring — test notification";
+        long open = items.stream().filter(i -> !"RECOVER".equals(i.kind())).count();
+        long recovered = items.size() - open;
+        if (open > 0 && items.size() == 1) return "[Site Monitor] Application problem: " + items.get(0).label(true);
+        if (open == 0 && recovered == 1) return "[Site Monitor] Recovered: " + items.get(0).label(true);
+        return "[Site Monitor] Self-monitoring · " + open + " problem(s)" + (recovered > 0 ? " · " + recovered + " recovered" : "");
+    }
+
     public static MailDoc.Mail build(List<Item> items, boolean test, String appUrl) {
+        return build(items, test, appUrl, 2);
+    }
+
+    /** {@code confirm}: sorunu doğrulayan ardışık ölçüm sayısı (ayar; metin sabit "iki" yazmasın — 2026-10-12). */
+    public static MailDoc.Mail build(List<Item> items, boolean test, String appUrl, int confirm) {
         List<Item> all = items == null ? List.of() : items;
         boolean anyCritical = all.stream().anyMatch(i -> "CRITICAL".equals(i.severity()) && !"RECOVER".equals(i.kind()));
         long open = all.stream().filter(i -> !"RECOVER".equals(i.kind())).count();
@@ -42,7 +66,7 @@ public final class WatchdogMail {
         d.title(test ? "Test bildirimi" : open > 0 ? "Uygulamanın kendi işleyişinde sorun var" : "Uygulama sorunu düzeldi",
                 test ? "Bu e-posta, kendi kendini izleme bildirimlerinin size ulaştığını doğrulamak için gönderildi."
                         : "Site Monitor kendi taramalarını, bildirim kanallarını ve veritabanını dakikada bir denetler. "
-                        + "Aşağıdaki durum iki ardışık ölçümde doğrulandı.");
+                        + (confirm <= 1 ? "Aşağıdaki durum ölçümle belirlendi." : "Aşağıdaki durum " + confirm + " ardışık ölçümde doğrulandı."));
         if (!test) d.stats(List.of(Stat.of("Açık sorun", String.valueOf(open)), Stat.of("Düzelen", String.valueOf(all.size() - open))));
         List<List<Cell>> cells = new ArrayList<>();
         for (Item i : all) {

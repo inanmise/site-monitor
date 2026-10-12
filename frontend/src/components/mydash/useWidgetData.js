@@ -34,6 +34,13 @@ export function useWidgetData(fetcher, { pollMs = WIDGET_POLL_MS, enabled = true
   }, [fetcher, enabled])
 
   useVisibleInterval(load, enabled ? pollMs : 0)
+  // Getirici değişince (ör. kutu büyütülünce daha çok satır isteyen getirici) bir sonraki 60 sn'lik turu beklemeden yükle (2026-10-12)
+  const lastFetcher = useRef(fetcher)
+  useEffect(() => {
+    if (lastFetcher.current === fetcher) return
+    lastFetcher.current = fetcher
+    load()
+  }, [fetcher, load])
   const first = useRef(true)
   useEffect(() => {
     if (first.current) { first.current = false; return }

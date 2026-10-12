@@ -166,7 +166,7 @@ class AlertStandaloneOwnerScopeTest {
                 .thenAnswer(i -> alertEventRepo.findById(i.getArgument(0)).orElse(null));
         when(escalationService.resolve(anyLong(), any(), any()))
                 .thenAnswer(i -> alertEventRepo.findById(i.getArgument(0)).orElse(null));
-        when(userPushService.preview(anyLong(), any())).thenReturn(
+        when(userPushService.preview(anyLong(), any(), any())).thenReturn(
                 new com.sitemonitor.service.UserPushService.PushPreview(true, null, List.of()));
     }
 

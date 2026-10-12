@@ -52,10 +52,13 @@ public final class OnCallRotation {
         return new Slot(who, start, start.plus(p), false, null);
     }
 
-    /** {@code at} anındaki nöbetçi: geçerli yer değiştirme varsa o (en son eklenen), yoksa rotasyon. */
+    /**
+     * {@code at} anındaki nöbetçi: geçerli yer değiştirme varsa o (en son eklenen), yoksa rotasyon. Yer değiştirme yalnız ETKİN
+     * çizelgede geçerlidir (2026-10-12): bildirim ve takım satırı çizelgesiz takımı atladığından pencere de "nöbetçi yok" der.
+     */
     public static Slot current(Config c, List<Override> overrides, Instant at) {
         Override o = activeOverride(overrides, at);
-        if (o != null && (c == null || c.enabled())) return new Slot(o.userId(), o.start(), o.end(), true, o.id());
+        if (o != null && c != null && c.enabled()) return new Slot(o.userId(), o.start(), o.end(), true, o.id());
         return baseSlot(c, at);
     }
 

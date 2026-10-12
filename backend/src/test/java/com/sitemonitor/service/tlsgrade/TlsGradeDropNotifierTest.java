@@ -170,6 +170,31 @@ class TlsGradeDropNotifierTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: e-posta gönderilemedi + push yok → FAILED (\"alıcı yok\" değil); kuyrukta (QUEUED) gönderilmiş sayılır; uzun iz kırpılır")
+    void failedMailIsFailedNotNoRecipient() {
+        when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(Map.of("queued", 0));
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("FAILED: " + "x".repeat(400));
+        drop(1, "a.example.com", 1L, null, "A", "B");
+        n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED);
+        assertThat(TlsGradeDropNotifier.uiCode(TlsGradeDropNotifier.NOTIFY_FAILED)).isEqualTo("failed");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepo).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).hasSizeLessThanOrEqualTo(255);
+
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("QUEUED_RETRY: 421");
+        drop(2, "b.example.com", 1L, null, "A", "B");
+        n.notifyPending();
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("SKIPPED_DISABLED");
+        drop(3, "c.example.com", 1L, null, "A", "B");
+        n.notifyPending();
+        assertThat(store.get(3L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.SKIP_NO_RECIPIENT);
+    }
+
+    @Test
     @DisplayName("takımın e-postası yok ve push kuyruğa alınamadı → SKIPPED: alıcı yok (iz yine yazılır)")
     void noRecipient() {
         when(escalation.teamEmailsForMonitor(any(), isNull())).thenReturn(List.of());

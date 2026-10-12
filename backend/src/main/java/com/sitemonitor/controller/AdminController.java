@@ -2512,6 +2512,8 @@ public class AdminController {
                 ev.setCertTier(inv.getTier());
                 if (inv.isManual()) ev.setCertSource(inv.getCertSource());   // "Manuel sertifika" rozeti (2026-10-08)
             }
+            ev.setOwnerTeamIds(new ArrayList<>(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev,
+                    inv == null ? null : inv.getTeamId(), inv == null ? null : inv.getUgTeamId())));
             long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0, 0});
             ev.setEmailSentCount(counts[0]);
             ev.setEmailFailedCount(counts[1]);
@@ -2591,7 +2593,7 @@ public class AdminController {
         // (SKIPPED_TEAM_OFF / _NO_RECIPIENTS ...) — sessiz "gitmedi" yerine gorunur bir neden.
         // Fallback takim, gercek gonderimin kullandigiyla AYNI kaynaktan gelir
         // (resolveReNotifyTargets) — onizleme gonderimden sapmasin.
-        var push = userPushService.preview(id, escalationService.reNotifyFallbackTeamId(id));
+        var push = userPushService.preview(id, escalationService.reNotifyFallbackTeamId(id), escalationService.reNotifyOnCall(id));
         List<Map<String, Object>> pushRows = push.recipients().stream()
                 .map(r -> {
                     Map<String, Object> m = new LinkedHashMap<String, Object>();

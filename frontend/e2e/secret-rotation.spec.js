@@ -1,6 +1,7 @@
 // Ayarlar → Anahtar Çözümleme → Anahtar döndürme (2026-10-11, kullanıcı isteği: "Gizli anahtar döndürme"). Gerçek
 // tarayıcıda 390 (dokunmatik) / 768 (dokunmatik) / 1280: bölüm yatay taşmaz, uzun kayıt adı kesilmez, dokunma hedefleri
-// ≥ 40 px; onay penceresi ekrana sığar; "Yeniden şifrele" sonrası sonuç bandı ve "done" aşaması. API mock'lu.
+// ≥ 40 px; onay penceresi ekrana sığar; "Yeniden şifrele" sonrası sonuç bandı; hâlâ hiçbir anahtarla çözülemeyen değer
+// kaldığı için aşama "done" değil "unreadable" (2026-10-12). API mock'lu.
 import { test, expect } from '@playwright/test'
 
 const LONG = 'Ödeme Sistemleri Entegrasyon Sağlık Kontrolü — Üretim Ortamı (Bölge 2 / Yedek Hat) (#42)'
@@ -81,7 +82,7 @@ for (const vp of VIEWPORTS) {
   test.describe(`Gizli anahtar döndürme — ${vp.name} ${vp.width}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
 
-    test('durum sığar, uzun ad kesilmez; yeniden şifrele → onay → sonuç + "done"', async ({ page }) => {
+    test('durum sığar, uzun ad kesilmez; yeniden şifrele → onay → sonuç; okunamayan değer kaldığı için "unreadable"', async ({ page }) => {
       test.setTimeout(90_000)
       await mock(page)
       await page.goto('/?tab=settings&sec=secrets')
@@ -104,7 +105,8 @@ for (const vp of VIEWPORTS) {
       expect(box.x).toBeGreaterThanOrEqual(-1)
       expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
       await dlg.getByRole('button', { name: /Re-encrypt|Yeniden şifrele/ }).click()
-      await expect(panel).toHaveAttribute('data-phase', 'done')
+      // Önceki anahtara bağlı değer kalmadı ama 1 değer hiçbir anahtarla çözülemiyor → "tüm değerler güncel anahtarda" denmez
+      await expect(panel).toHaveAttribute('data-phase', 'unreadable')
       await expect(panel.locator('[data-slot="rotation-result"]')).toBeVisible()
       await expect(panel.locator('[data-slot="rotation-reencrypt"]')).toBeDisabled()
       expect(await page.evaluate(overflowIn, '[data-slot="secret-rotation"]'), 'sonuçtan sonra taşma').toEqual([])

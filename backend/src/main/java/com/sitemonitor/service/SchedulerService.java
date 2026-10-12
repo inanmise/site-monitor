@@ -756,6 +756,7 @@ public class SchedulerService {
         patch("ALTER TABLE alert_events ADD COLUMN resolved_note TEXT");
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");
+        patch("ALTER TABLE alert_events ADD COLUMN oncall_emails TEXT");   // nöbetçi olarak bildirilenler (2026-10-12)
         // Sertifika alarmında gerçek son geçerlilik anı (kapalı alarm kartı artık hesaplamaz, okur).
         patch("ALTER TABLE alert_events ADD COLUMN not_after TEXT");
         patch("ALTER TABLE alert_events ADD COLUMN group_name TEXT");
@@ -1854,10 +1855,24 @@ public class SchedulerService {
      */
     private void repairPingDecimalLossRows() {
         try {
+            String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks WHERE packet_loss > 100", String.class);
             int fixed = jdbcTemplate.update(
                     "UPDATE ping_checks SET up = TRUE, packet_loss = NULL, error = NULL, failure_reason = NULL, failure_detail = NULL "
                   + "WHERE packet_loss > 100");
-            if (fixed > 0) log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
+            if (fixed > 0) {
+                log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
+                // Günlük / saatlik özetler de aynı satırlardan yeniden hesaplanır (2026-10-12): gece rollup'ı yalnız son 3 günü
+                // yeniler; daha eski günlerin özeti (yönetici özeti erişilebilirliği, haftalık rapor, eğilim) yanlış "kapalı"yı
+                // taşımaya devam ederdi. Upsert idempotent — yalnız PING türü.
+                if (oldest != null && oldest.length() >= 10) {
+                    String from = oldest.substring(0, 10) + "T00:00:00";
+                    Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
+                    int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", from, ISO.format(todayStart));
+                    int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", from,
+                            ISO.format(todayStart.plus(1, ChronoUnit.DAYS)));
+                    log.info("Ping özetleri onarılan satırlardan yeniden hesaplandı: {} gün, {} saat kovası ({} sonrası)", d, h, from);
+                }
+            }
         } catch (Exception e) {
             log.warn("Ping geçmişi onarımı atlandı (sonraki açılış yeniden dener): {}", e.getMessage());
         }

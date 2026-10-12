@@ -149,6 +149,11 @@ class OnCallServiceTest {
                 .hasMessageContaining("90");
         assertThatThrownBy(() -> svc.addOverride(1L, null, "2026-10-10T10:00:00Z", "2026-10-11T09:00:00Z", null, "a"))
                 .hasMessageContaining("Nöbeti devralacak");
+        // 2026-10-12: çizelgesiz takımda yer değiştirme reddedilir (hiçbir yerde geçerli olmazdı)
+        when(schedules.findByTeamId(2L)).thenReturn(java.util.Optional.empty());
+        assertThatThrownBy(() -> svc.addOverride(2L, 10L, "2026-10-10T10:00:00Z", "2026-10-11T09:00:00Z", null, "a"))
+                .hasMessageContaining("çizelgesini kaydedin");
+        when(schedules.findByTeamId(1L)).thenReturn(java.util.Optional.of(new com.sitemonitor.model.OnCallSchedule()));
         OnCallOverride o = svc.addOverride(1L, 10L, "2026-10-10T10:00:00Z", "2026-10-11T09:00:00", "izin", "a");
         assertThat(o.getStartsAt()).isEqualTo("2026-10-10T10:00:00");
         assertThat(o.getEndsAt()).isEqualTo("2026-10-11T09:00:00");

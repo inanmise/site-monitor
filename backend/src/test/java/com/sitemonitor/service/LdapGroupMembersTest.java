@@ -101,7 +101,7 @@ class LdapGroupMembersTest {
     }
 
     @Test
-    @DisplayName("grup adı (CN, \"cn=\" önekiyle de): grup arama tabanında DN'lere çözülür, üyeler birleşir; özel kullanıcı özniteliği")
+    @DisplayName("grup adı (CN, \"cn=\" önekiyle de): grup arama tabanından BAĞIMSIZ tüm dizinde DN'lere çözülür (girişle aynı), üyeler birleşir")
     void cnSpecResolvesGroups() throws Exception {
         LdapSettings s = settings();
         s.setGroupSearchBase("OU=Gruplar," + BASE);
@@ -109,7 +109,7 @@ class LdapGroupMembersTest {
         LdapContext ctx = mock(LdapContext.class);
         String dn1 = "CN=Operasyon,OU=Gruplar," + BASE;
         String dn2 = "CN=Operasyon,OU=Eski," + BASE;
-        when(ctx.search(eq("OU=Gruplar," + BASE), eq("(&(objectClass=group)(cn=Operasyon \\28NOC\\29))"), any(SearchControls.class)))
+        when(ctx.search(eq(BASE), eq("(&(objectClass=group)(cn=Operasyon \\28NOC\\29))"), any(SearchControls.class)))
                 .thenReturn(results(group(dn1), group(dn2)));
         when(ctx.search(eq(BASE), eq("(memberOf=" + dn1 + ")"), any(SearchControls.class))).thenReturn(results(user("uid", "a")));
         when(ctx.search(eq(BASE), eq("(memberOf=" + dn2 + ")"), any(SearchControls.class))).thenReturn(results(user("uid", "b"), user("cn", "yok")));

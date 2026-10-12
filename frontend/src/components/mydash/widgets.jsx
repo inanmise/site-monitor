@@ -234,7 +234,8 @@ function StatusWidget({ frame, refreshKey }) {
           <More n={s.problemsMore} t={t} />
         </>
       )}
-      {s.total > 0 && s.problems.length === 0 && <Empty text={t('mydash.status.allOk')} tv={frame.tv} />}
+      {/* Küçük boyutta liste 0'a kısılır — "hepsi çalışıyor" kararı kısılmış listeye değil gerçek sorun sayısına bakar (2026-10-12) */}
+      {s.total > 0 && s.problemCount === 0 && <Empty text={t('mydash.status.allOk')} tv={frame.tv} />}
     </WidgetCard>
   )
 }

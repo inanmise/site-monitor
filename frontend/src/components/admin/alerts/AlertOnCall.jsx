@@ -11,7 +11,10 @@ import { useT } from '../../../i18n/index.jsx'
 export default function AlertOnCall({ alert: a, Fact }) {
   const t = useT()
   const [rows, setRows] = useState(null)
-  const ids = [a?.team_id, a?.sy_team_id, a?.ug_team_id].filter((x) => x != null)
+  // Sahip takımlar sunucudan (2026-10-12): bağımsız alarmda yalnız damgalı takım — envanterin SY/UG'si o alarmın sahibi
+  // değildir, onların nöbetçisi "kimi aramalı" diye gösterilmez. Alan yoksa (eski yanıt) eski davranış.
+  const ids = (Array.isArray(a?.owner_team_ids) ? a.owner_team_ids : [a?.team_id, a?.sy_team_id, a?.ug_team_id])
+    .filter((x) => x != null)
   const key = [...new Set(ids.map(String))].join(',')
   const open = a && !a.resolved
   useEffect(() => {

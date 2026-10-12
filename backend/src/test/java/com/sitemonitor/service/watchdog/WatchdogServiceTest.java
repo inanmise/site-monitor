@@ -132,6 +132,54 @@ class WatchdogServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: DB kesintisinde bellekte açılan veritabanı sorunu, DB dönünce eski satırı ezer → düzelme bildirilir")
+    @SuppressWarnings("unchecked")
+    void databaseRecoveryIsNotified() {
+        WatchdogState stale = new WatchdogState();
+        stale.setCheckKey(WatchdogCheck.DATABASE.key());
+        stale.setStatus("OK");
+        stale.setEvaluatedAt("2026-10-11T11:00:00");
+        table.put(stale.getCheckKey(), stale);
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        assertThat(svc.evaluate(T0.plusSeconds(60)).alerts()).isEqualTo(1);
+        down.set(false);
+        results.put(WatchdogCheck.DATABASE, Result.OK);
+        svc.evaluate(T0.plusSeconds(120));
+        WatchdogService.Round r = svc.evaluate(T0.plusSeconds(180));
+        assertThat(r.recoveries()).isEqualTo(1);
+        ArgumentCaptor<List<WatchdogMail.Item>> items = ArgumentCaptor.forClass(List.class);
+        verify(notifier, times(2)).send(items.capture(), eq(false));
+        assertThat(items.getAllValues().get(1)).extracting(WatchdogMail.Item::kind).containsExactly("RECOVER");
+        assertThat(table.get(WatchdogCheck.DATABASE.key()).getStatus()).isEqualTo("OK");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: zamanlanmış tur, başka pod son aralıkta değerlendirdiyse atlanır (RECENT); elle değerlendirme atlanmaz")
+    void scheduledRoundSkipsRecentEvaluation() {
+        svc.evaluate(T0);
+        assertThat(svc.evaluate(T0.plusSeconds(30), false).outcome()).isEqualTo("RECENT");
+        assertThat(svc.evaluate(T0.plusSeconds(30), true).outcome()).isNotEqualTo("RECENT");
+        assertThat(svc.evaluate(T0.plusSeconds(100), false).outcome()).isNotEqualTo("RECENT");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: kapalıyken elle değerlendirme hiç koşmaz (bildirim gönderemez)")
+    void manualEvaluationWhenDisabled() {
+        when(settings.getBoolean(eq(WatchdogSettings.KEY_ENABLED), anyBoolean())).thenReturn(false);
+        assertThat(svc.enabled()).isFalse();
+        assertThat(svc.evaluateManually(T0)).isEmpty();
+        verify(probes, never()).runAll(any());
+        when(settings.getBoolean(eq(WatchdogSettings.KEY_ENABLED), anyBoolean())).thenReturn(true);
+        assertThat(svc.evaluateManually(T0)).isPresent();
+    }
+
+    @Test
     @DisplayName("yönetici durumu: ölçülmemiş kontrol PENDING; ölçülende ayrıntı cümlesi + kanal özeti")
     void adminStatus() {
         Map<String, Object> before = svc.adminStatus(T0);

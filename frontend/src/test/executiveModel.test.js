@@ -130,6 +130,13 @@ describe('executiveModel — metin (i18n + sunucu metnine düşüş)', () => {
       hint: '4 yenileme · 0 sertifika yenilenmeden doldu', hint_params: [4, 0] }
     expect(kpiView(tEN, 'renewals', onTime, 'en').label).toBe('Renewed before expiry')
     expect(kpiView(tEN, 'renewals', onTime, 'en').hint).toBe('4 renewals · 0 certificates expired unrenewed')
+    // 2026-10-12: kural değişmeden önce gönderilmiş ayın kaydı ESKİ anlamı taşır (tek parametre: hedef gün) → eski etiket
+    // ve ipucu; yeni etiket altında eski değer ("%0") gösterilmez, ipucunda "{1}" yer tutucusu kalmaz.
+    const legacy = { code: 'on_time_pct', label: 'Zamanında yenileme', value: 0, format: 'pct', tone: 'warn',
+      hint: 'Hedef: bitişten en az 30 gün önce', hint_params: [30] }
+    expect(kpiView(tEN, 'renewals', legacy, 'en').label).toBe('Renewed on time')
+    expect(kpiView(tEN, 'renewals', legacy, 'en').hint).toBe('Target: at least 30 days before expiry')
+    expect(kpiView(tEN, 'renewals', legacy, 'en').code).toBe('on_time_pct')
   })
 
   it('gösterge görünümü: etiket, değer, fark çipi', () => {

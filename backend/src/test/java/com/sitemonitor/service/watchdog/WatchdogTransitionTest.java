@@ -71,13 +71,13 @@ class WatchdogTransitionTest {
     }
 
     @Test
-    @DisplayName("UNKNOWN / NA sayaçları değiştirmez; hatırlatma 0 = kapalı; önceki dönemden kalan bildirim yeni dönemi örtmez")
+    @DisplayName("UNKNOWN sayaçları değiştirmez; hatırlatma 0 = kapalı; önceki dönemden kalan bildirim yeni dönemi örtmez")
     void unknownAndNoReminder() {
         WatchdogState s = fresh();
         step(s, Result.PROBLEM, 0);
         assertThat(step(s, Result.UNKNOWN, 1)).isEqualTo(Action.NONE);
         assertThat(s.getProblemStreak()).isEqualTo(1);
-        assertThat(step(s, Result.NA, 2)).isEqualTo(Action.NONE);
+        assertThat(step(s, Result.UNKNOWN, 2)).isEqualTo(Action.NONE);
         assertThat(step(s, Result.PROBLEM, 3)).isEqualTo(Action.ALERT);
         WatchdogTransition.markNotified(s, Action.ALERT, true, T0.plus(Duration.ofMinutes(3)));
         assertThat(WatchdogTransition.apply(s, Result.PROBLEM, "HIGH", null, T0.plus(Duration.ofDays(3)), 2, 0)).isEqualTo(Action.NONE);
@@ -88,5 +88,24 @@ class WatchdogTransitionTest {
         WatchdogTransition.markNotified(s, Action.RECOVER, true, T0.plus(Duration.ofMinutes(5001)));
         step(s, Result.PROBLEM, 5002);
         assertThat(step(s, Result.PROBLEM, 5003)).isEqualTo(Action.ALERT);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: açık sorun NA'ya dönerse (kontrolün konusu kalmadı) kapanır ve kapanış bildirilir; sorun yokken NA sessiz")
+    void naClosesOpenProblem() {
+        WatchdogState s = fresh();
+        step(s, Result.PROBLEM, 0);
+        assertThat(step(s, Result.PROBLEM, 1)).isEqualTo(Action.ALERT);
+        WatchdogTransition.markNotified(s, Action.ALERT, true, T0.plus(Duration.ofMinutes(1)));
+        assertThat(step(s, Result.NA, 2)).isEqualTo(Action.RECOVER);
+        assertThat(s.getStatus()).isEqualTo("OK");
+        assertThat(s.getProblemStreak()).isZero();
+        assertThat(step(s, Result.NA, 3)).isEqualTo(Action.NONE);   // tekrar bildirim yok
+        // Sorun yokken NA: sessiz, onay sayacı sıfırlanır (yarım kalmış sorun serisi NA'dan sonra baştan sayılır)
+        WatchdogState t = fresh();
+        step(t, Result.PROBLEM, 0);
+        assertThat(step(t, Result.NA, 1)).isEqualTo(Action.NONE);
+        assertThat(step(t, Result.PROBLEM, 2)).isEqualTo(Action.NONE);
+        assertThat(step(t, Result.PROBLEM, 3)).isEqualTo(Action.ALERT);
     }
 }

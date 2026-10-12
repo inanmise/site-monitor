@@ -74,6 +74,15 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
 
     /** Dedupe ön-kontrolü (yarışta son söz UNIQUE kısıtın — bu yalnız gürültüsüz erken çıkış). */
     boolean existsByAlertEventIdAndDedupeKeyAndUsername(Long alertEventId, String dedupeKey, String username);
+    /**
+     * Elle yeniden gönderimde nöbetçi push'u (2026-10-12): RESEND anahtarı her gönderimde rastgele olduğundan "takım push'unu
+     * bu gönderimde zaten aldı mı" sorusu anahtarla değil, aynı olay + kişi için yakın zamanda yazılmış RESEND satırıyla yanıtlanır.
+     */
+    @Query("""
+           SELECT COUNT(d) > 0 FROM UserPushDelivery d
+           WHERE d.alertEventId = :eventId AND d.username = :username AND d.dedupeKey LIKE 'RESEND:%' AND d.createdAt >= :since
+           """)
+    boolean existsRecentTeamResend(@Param("eventId") Long eventId, @Param("username") String username, @Param("since") String since);
     /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */
     boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
     /** Fırtına karar satırı dedupe'u — takım başına (aynı fırtınada iki takımın kararı ayrı yazılır). */

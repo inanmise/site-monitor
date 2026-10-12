@@ -19,17 +19,21 @@ export const MIN_FIT = 0.6
  */
 function useFitScale(mainRef, deps) {
   const [fit, setFit] = useState(1)
+  // Alt sınırda bile sığmıyor mu (çok kısa ekran / yatay telefon) — o zaman sayfa KAYAR, kırpılmaz (2026-10-12)
+  const [clipped, setClipped] = useState(false)
   useEffect(() => {
     const main = mainRef.current
     if (!main) return undefined
     const grid = main.querySelector('[data-slot="mydash-tv-page"][data-active="true"]')
-    if (!grid) { setFit(1); return undefined }
+    if (!grid) { setFit(1); setClipped(false); return undefined }
     const measure = () => {
       const cs = getComputedStyle(main)
       const avail = main.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
       const natural = grid.offsetHeight
       const next = avail > 0 && natural > avail + 1 ? Math.max(MIN_FIT, Math.floor((avail / natural) * 1000) / 1000) : 1
       setFit((prev) => (Math.abs(prev - next) > 0.004 ? next : prev))
+      const over = avail > 0 && natural * next > avail + 1
+      setClipped((prev) => (prev === over ? prev : over))
     }
     measure()
     if (typeof ResizeObserver === 'undefined') return undefined
@@ -38,7 +42,7 @@ function useFitScale(mainRef, deps) {
     ro.observe(main)
     return () => ro.disconnect()
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
-  return fit
+  return { fit, clipped }
 }
 
 function useViewport() {
@@ -90,7 +94,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
   const mainRef = useRef(null)
   const count = pages.length
   const cur = count ? Math.min(slide, count - 1) : 0
-  const fit = useFitScale(mainRef, [cur, count, cols, rows])
+  const { fit, clipped } = useFitScale(mainRef, [cur, count, cols, rows])
 
   useEffect(() => {
     setTvModeActive(true)
@@ -242,7 +246,8 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
         </div>
       </header>
 
-      <main ref={mainRef} className={cn('min-h-0 flex-1 p-4 sm:p-6', fit < 1 ? 'overflow-hidden' : 'overflow-y-auto')} data-fit={fit}>
+      <main ref={mainRef} className={cn('min-h-0 flex-1 p-4 sm:p-6', fit < 1 && !clipped ? 'overflow-hidden' : 'overflow-y-auto')} data-fit={fit}
+        data-clipped={clipped || undefined}>
         {count === 0 ? (
           <p className="m-0 text-lg text-muted-foreground">{t('mydash.emptyBody')}</p>
         ) : pages.map((list, i) => (

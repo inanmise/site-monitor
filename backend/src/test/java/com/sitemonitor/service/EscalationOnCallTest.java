@@ -137,12 +137,14 @@ class EscalationOnCallTest {
     }
 
     @Test
-    @DisplayName("KRİTİK açılış: takım adresi + nöbetçi; nöbetçiye push (takım push'u da aynen)")
+    @DisplayName("KRİTİK açılış: takım adresi + nöbetçi; nöbetçiye push (takım push'u da aynen); nöbetçi adresi alarma yazılır")
     void criticalAddsOnCall() {
         service.processResults(List.of(hijacked()));
         assertThat(sentTo()).containsExactly(A_MAIL, ONCALL_MAIL);
         verify(userPushService).enqueueAlert(any(), eq("INITIAL"), eq(TEAM_A), any(), any());
         verify(userPushService).enqueueOnCall(any(), eq("INITIAL"), eq(TEAM_A), eq(55L), any());
+        // 2026-10-12: çözüm e-postası açılışı NÖBETÇİ olarak alanlara gider — adres alarm satırına hedefli UPDATE ile yazılır
+        verify(alertEventRepo).setOncallEmails(eq(100L), eq(ONCALL_MAIL));
     }
 
     @Test
@@ -188,17 +190,43 @@ class EscalationOnCallTest {
     }
 
     @Test
-    @DisplayName("elle gönderim önizlemesi nöbetçiyi ONCALL olarak gösterir; çözüm e-postası nöbetçiye de")
+    @DisplayName("elle gönderim önizlemesi nöbetçiyi ONCALL olarak gösterir; çözüm e-postası açılışı nöbetçi olarak ALANA gider")
     void previewAndResolution() {
         AlertEvent open = openEvent("CRITICAL");
+        open.setOncallEmails("eski-nobetci@example.com");   // açılışı alan (devirden önceki) nöbetçi
         when(alertEventRepo.findById(open.getId())).thenReturn(Optional.of(open));
         List<EscalationService.ReNotifyRecipient> preview = service.previewReNotify(open.getId());
         assertThat(preview).extracting(EscalationService.ReNotifyRecipient::email).containsExactly(A_MAIL, ONCALL_MAIL);
         assertThat(preview.get(1).kind()).isEqualTo("ONCALL");
+        assertThat(service.reNotifyOnCall(open.getId())).extracting(OnCallService.OnCallPerson::userId).containsExactly(55L);
 
         service.resolve(open.getId(), "Kişi A");
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendResolutionAlert(to.capture(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(to.getValue()).containsExactly(A_MAIL, ONCALL_MAIL);
+        // Şu anki nöbetçi (açılışı görmedi) çözümü ALMAZ; açılışı alan eski nöbetçi kapanışı öğrenir (2026-10-12)
+        assertThat(to.getValue()).containsExactly(A_MAIL, "eski-nobetci@example.com");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: açılışı nöbetçi olarak kimse almadıysa (seçenek sonradan açıldı) çözüm yalnız takıma")
+    void resolutionWithoutOnCallOpening() {
+        AlertEvent open = openEvent("CRITICAL");
+        when(alertEventRepo.findById(open.getId())).thenReturn(Optional.of(open));
+        service.resolve(open.getId(), "Kişi A");
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendResolutionAlert(to.capture(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(to.getValue()).containsExactly(A_MAIL);
+    }
+
+    @Test
+    @DisplayName("nöbetçi adresleri birleşir: tekil (büyük/küçük harf), virgüllü, en çok 20")
+    void oncallMailedFor() {
+        AlertEvent e = new AlertEvent();
+        assertThat(EscalationService.oncallMailedFor(e)).isEmpty();
+        e.setOncallEmails(" a@example.com ,b@example.com,, ");
+        assertThat(EscalationService.oncallMailedFor(e)).containsExactly("a@example.com", "b@example.com");
+        when(alertEventRepo.findOncallEmails(9L)).thenReturn("a@example.com");
+        ReflectionTestUtils.invokeMethod(service, "rememberOncallMailed", 9L, List.of("A@example.com", "c@example.com"));
+        verify(alertEventRepo).setOncallEmails(9L, "a@example.com,c@example.com");
     }
 }

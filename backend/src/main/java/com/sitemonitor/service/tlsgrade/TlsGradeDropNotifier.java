@@ -64,6 +64,13 @@ public class TlsGradeDropNotifier {
     static final String SKIP_MAINT = "SKIPPED: sistem bakımı";
     static final String SKIP_NO_TEAM = "SKIPPED: takım yok";
     static final String SKIP_NO_RECIPIENT = "SKIPPED: alıcı yok";
+    /** Alıcı vardı ama hiçbir kanal teslim edemedi (SMTP hatası, push kuyruğa girmedi) — 2026-10-12'ye kadar "alıcı yok" yazılırdı. */
+    static final String NOTIFY_FAILED = "FAILED: gönderilemedi";
+    /** notification_logs.recipient_email / email_status uzunluğu (VARCHAR(255)). */
+    private static final int LOG_FIELD_MAX = 255;
+
+    /** Takıma gönderimin sonucu. */
+    enum Delivery { DELIVERED, FAILED, NONE }
 
     /**
      * Ekran kodu ("Son düşüşler" satırı): sent | pending | off | below | maintenance | no_team | no_recipient; özellikten
@@ -79,6 +86,7 @@ public class TlsGradeDropNotifier {
             case SKIP_MAINT -> "maintenance";
             case SKIP_NO_TEAM -> "no_team";
             case SKIP_NO_RECIPIENT -> "no_recipient";
+            case NOTIFY_FAILED -> "failed";
             default -> null;
         };
     }
@@ -162,27 +170,40 @@ public class TlsGradeDropNotifier {
             for (Long t : owners) byTeam.computeIfAbsent(t, k -> new ArrayList<>()).add(c);
         }
         Set<Long> delivered = new LinkedHashSet<>();
+        Set<Long> failed = new LinkedHashSet<>();
         String appUrl = appSettings.getString("site.monitor.app.base-url", "");
         for (Map.Entry<Long, List<TlsGradeChange>> e : byTeam.entrySet()) {
-            boolean any = sendToTeam(e.getKey(), e.getValue(), appUrl);
-            if (any) for (TlsGradeChange c : e.getValue()) delivered.add(c.getId());
+            Delivery d = sendToTeam(e.getKey(), e.getValue(), appUrl);
+            for (TlsGradeChange c : e.getValue()) {
+                if (d == Delivery.DELIVERED) delivered.add(c.getId());
+                else if (d == Delivery.FAILED) failed.add(c.getId());
+            }
         }
+        // En az bir sahip takıma ulaştıysa SENT; hiçbirine ulaşamadı ama denendiyse FAILED; hiç alıcı yoksa "alıcı yok".
         List<TlsGradeChange> sent = eligible.stream().filter(c -> delivered.contains(c.getId())).toList();
-        List<TlsGradeChange> noRecipient = eligible.stream().filter(c -> !delivered.contains(c.getId())).toList();
+        List<TlsGradeChange> notDelivered = eligible.stream()
+                .filter(c -> !delivered.contains(c.getId()) && failed.contains(c.getId())).toList();
+        List<TlsGradeChange> noRecipient = eligible.stream()
+                .filter(c -> !delivered.contains(c.getId()) && !failed.contains(c.getId())).toList();
         finish(sent, TlsGradeChange.NOTIFY_SENT, now);
+        finish(notDelivered, NOTIFY_FAILED, now);
         finish(noRecipient, SKIP_NO_RECIPIENT, now);
-        log.info("TLS notu düşüş bildirimi: {} düşüş · {} takıma gönderildi · {} atlandı", mine.size(), byTeam.size(),
-                below.size() + teamless.size() + noRecipient.size());
+        log.info("TLS notu düşüş bildirimi: {} düşüş · {} takıma gönderildi · {} gönderilemedi · {} atlandı", mine.size(), byTeam.size(),
+                notDelivered.size(), below.size() + teamless.size() + noRecipient.size());
         return new Result(mine.size(), sent.size(), mine.size() - sent.size(), byTeam.size());
     }
 
-    /** Takıma tek özet: e-posta (alıcı varsa) + üyelere push. En az bir kanal ulaştıysa true. */
-    private boolean sendToTeam(Long teamId, List<TlsGradeChange> rows, String appUrl) {
+    /**
+     * Takıma tek özet: e-posta (alıcı varsa) + üyelere push. En az bir kanal ulaştıysa (e-posta SENT / kuyrukta, ya da push
+     * kuyruğa girdi) DELIVERED; bir kanal denendi ama hiçbiri ulaşmadıysa FAILED; hiç alıcı yoksa NONE.
+     */
+    private Delivery sendToTeam(Long teamId, List<TlsGradeChange> rows, String appUrl) {
         String teamName = teamRepo.findById(teamId).map(Team::getName).orElse("Takım #" + teamId);
         List<TlsGradeDropMail.Row> mailRows = rows.stream()
                 .map(c -> new TlsGradeDropMail.Row(c.getDomain(), c.getFromGrade(), c.getToGrade(), c.getReasons(), c.getChangedAt()))
                 .toList();
         boolean delivered = false;
+        boolean attempted = false;
         List<String> recipients;
         try { recipients = escalation.teamEmailsForMonitor(teamId, null); } catch (Exception ex) { recipients = List.of(); }
         String subject = TlsGradeDropMail.subject(teamName, mailRows);
@@ -192,7 +213,9 @@ public class TlsGradeDropNotifier {
         } else {
             MailDoc.Mail mail = TlsGradeDropMail.build(teamName, mailRows, appUrl);
             status = email.sendHtml(recipients.toArray(new String[0]), null, subject, mail.html(), null);
-            delivered = status != null && status.startsWith("SENT");
+            // QUEUED_RETRY (SMTP 421 vb.) teslim kuyruğunda — gönderilmiş sayılır; SKIPPED… (kanal kapalı / pasif) deneme değildir
+            delivered = status != null && (status.startsWith("SENT") || status.startsWith("QUEUED"));
+            attempted = status == null || !status.startsWith("SKIPPED");
             log.info("TLS notu düşüş e-postası: takım={} sertifika={} alıcı={} durum={}", teamName, rows.size(),
                     SecretMask.maskEmails(recipients), status);
         }
@@ -220,7 +243,7 @@ public class TlsGradeDropNotifier {
             }
         }
         saveLog(teamName, recipients, subject, status + (queued > 0 ? " · push " + queued : ""));
-        return delivered;
+        return delivered ? Delivery.DELIVERED : attempted ? Delivery.FAILED : Delivery.NONE;
     }
 
     private void saveLog(String teamName, List<String> recipients, String subject, String status) {
@@ -229,10 +252,10 @@ public class TlsGradeDropNotifier {
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL) — haftalık rapor deseni
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientName(teamName);
-            n.setRecipientEmail(String.join(", ", recipients));
+            n.setRecipientEmail(clipTo(String.join(", ", recipients), LOG_FIELD_MAX));
             n.setRecipientRole("COMBINED");
             n.setSubject(subject);
-            n.setEmailStatus(status);
+            n.setEmailStatus(clipTo(status, LOG_FIELD_MAX));
             n.setWebhookStatus("SKIPPED");
             n.setTrigger(TRIGGER);
             n.setEmailFrom(email.getEmailFrom());
@@ -240,6 +263,12 @@ public class TlsGradeDropNotifier {
         } catch (Exception e) {
             log.warn("TLS notu düşüş bildirimi günlük kaydı yazılamadı: {}", e.getMessage());
         }
+    }
+
+    /** Sütun uzunluğuna kırp (uzun alıcı listesi / hata metni INSERT'i düşürmesin — tek iz kaybolurdu). */
+    static String clipTo(String v, int max) {
+        if (v == null || v.length() <= max) return v;
+        return v.substring(0, Math.max(0, max - 1)) + "…";
     }
 
     private void finish(List<TlsGradeChange> rows, String state, String now) {

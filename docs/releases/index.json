@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-12T02:05:43Z",
+  "generatedAt": "2026-10-12T07:17:01Z",
   "repo": "inanmise/site-monitor",
-  "count": 734,
+  "count": 735,
   "releases": [
+    {
+      "version": "20.123.1",
+      "tag": "v20.123.1",
+      "releasedAt": "2026-10-12T07:16:54Z",
+      "commit": "931693c87c82ea3439874b871abc157d6b728dd2",
+      "prevVersion": "20.123.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "931693c8",
+          "subject": "kod incelemesinde bulunan 26 hata — nöbet, kendi kendini izleme, Panom, postmortem, TLS bildirimi, anahtar döndürme, yönetici özeti"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.123.0",
       "tag": "v20.123.0",

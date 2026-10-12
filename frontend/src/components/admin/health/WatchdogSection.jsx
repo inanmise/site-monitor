@@ -75,10 +75,10 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
             <Radar aria-hidden="true" className="size-4 text-muted-foreground" />
             <ToneBadge tone={OVERALL_TONE[data.status] || 'muted'} className="font-semibold">{t(`wd.status.${data.status}`)}</ToneBadge>
           </div>
-          <p className="m-0 text-sm text-muted-foreground">{t('wd.desc', data.interval_seconds ?? 60)}</p>
+          <p className="m-0 text-sm text-muted-foreground">{t('wd.desc', data.interval_seconds ?? 60, data.confirm_checks ?? 2)}</p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
-          {canAct && (
+          {canAct && data.enabled !== false && (
             <Button type="button" variant="outline" size="sm" onClick={evaluate} disabled={!!busy} aria-busy={busy === 'eval' || undefined}
               className="max-sm:h-10 max-sm:flex-1 pointer-coarse:h-10">
               {busy === 'eval' ? <Spinner size={14} inline decorative /> : <Play aria-hidden="true" />} {t('wd.evaluate')}

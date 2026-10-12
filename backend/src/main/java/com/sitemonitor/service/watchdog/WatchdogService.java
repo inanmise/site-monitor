@@ -82,15 +82,45 @@ public class WatchdogService {
         if (!WatchdogSettings.enabled(settings)) return;
         try {
             Instant now = Instant.now();
-            Optional<Round> r = scheduler == null ? Optional.of(evaluate(now)) : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now));
+            Optional<Round> r = scheduler == null ? Optional.of(evaluate(now, false))
+                    : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now, false));
             if (r.isEmpty() && databaseDown(now)) evaluateLocalDatabase(now);   // kilit tablosu okunamıyor → yerel kip
         } catch (Exception e) {
             log.warn("Kendi kendini izleme turu tamamlanamadı: {}", e.toString());
         }
     }
 
-    /** Tüm kontrolleri ölçer, durumları günceller, geçişleri TEK bildirimde gönderir. Elle "Şimdi değerlendir" de bunu çağırır. */
-    public synchronized Round evaluate(Instant now) {
+    /**
+     * Elle "Şimdi değerlendir" (2026-10-12): zamanlanmış turla AYNI kilit altında — iki pod aynı durumu okuyup aynı sorunu
+     * iki kez bildiremez. Kilit başka pod'daysa (o an bir tur sürüyor) boş döner; kapalıyken hiç değerlendirmez.
+     */
+    public Optional<Round> evaluateManually(Instant now) {
+        if (!WatchdogSettings.enabled(settings)) return Optional.empty();
+        return scheduler == null ? Optional.of(evaluate(now, true)) : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now, true));
+    }
+
+    /** Kapalı mı (uç 409 döner, düğme gizlenir). */
+    public boolean enabled() {
+        return WatchdogSettings.enabled(settings);
+    }
+
+    /** Elle değerlendirme — testler ve kilitsiz eski çağıranlar için; kümeye açık yol {@link #evaluateManually}. */
+    public Round evaluate(Instant now) {
+        return evaluate(now, true);
+    }
+
+    /**
+     * Tüm kontrolleri ölçer, durumları günceller, geçişleri TEK bildirimde gönderir.
+     *
+     * <p><b>Küme genelinde aralık başına bir tur (2026-10-12):</b> kilit iş bitince bırakıldığı için her pod kendi turunu
+     * atardı (N pod → onay sayacı dakikalar yerine saniyelerle dolar, pod'a özgü ölçümler sayaçları sıfırlar). Zamanlanmış
+     * tur, başka bir pod son aralık içinde değerlendirdiyse ATLANIR ({@code RECENT}); elle değerlendirme atlanmaz.
+     *
+     * <p><b>DB kesintisi sonrası:</b> kesinti boyunca yalnız pod belleğinde tutulan durum (ör. veritabanı sorunu açıldı ve
+     * bildirildi) okuma yeniden çalışınca kayıtlı satırdan daha YENİYSE onun yerine geçer — böylece "düzeldi" bildirimi
+     * kaybolmaz.
+     */
+    synchronized Round evaluate(Instant now, boolean manual) {
         Map<String, WatchdogState> states = new HashMap<>();
         boolean persisted = true;
         try {
@@ -98,6 +128,16 @@ public class WatchdogService {
         } catch (Exception e) {
             persisted = false;
             states.putAll(memory);
+        }
+        if (persisted) {
+            // Yalnız KAYITLI satırlara bakılır: bu pod'un DB kesintisindeki yerel değerlendirmesi "yakın tur" sayılmaz.
+            if (!manual && evaluatedRecently(states.values(), now)) {
+                return new Round(states.size(), 0, 0, 0, "RECENT", false);
+            }
+            for (WatchdogState m : memory.values()) {
+                WatchdogState stored = states.get(m.getCheckKey());
+                if (stored == null || newer(m.getEvaluatedAt(), stored.getEvaluatedAt())) states.put(m.getCheckKey(), m);
+            }
         }
         int confirm = WatchdogSettings.confirm(settings);
         int reminder = WatchdogSettings.reminderHours(settings);
@@ -113,7 +153,7 @@ public class WatchdogService {
             Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder);
             if (a != Action.NONE) {
                 items.add(new WatchdogMail.Item(a.name(), p.check().labelTr(), st.getSeverity() == null ? p.check().severity().name() : st.getSeverity(),
-                        WatchdogMessages.detail(p.check(), p.facts(), false)));
+                        WatchdogMessages.detail(p.check(), p.facts(), false), p.check().labelEn(), WatchdogMessages.detail(p.check(), p.facts(), true)));
                 acted.add(Map.entry(st, a));
                 switch (a) {
                     case ALERT -> alerts++;
@@ -144,6 +184,22 @@ public class WatchdogService {
         return new Round(states.size(), alerts, reminders, recoveries, outcome, !persisted);
     }
 
+    /** {@code a} anı {@code b}'den sonra mı (ISO yyyy-MM-ddTHH:mm:ss metinleri; null = hiç). */
+    static boolean newer(String a, String b) {
+        if (a == null) return false;
+        if (b == null) return true;
+        return a.compareTo(b) > 0;
+    }
+
+    /** Başka bir pod (ya da bu pod) bu aralık içinde değerlendirdi mi — 5 sn pay, saat kayması/gecikme için. */
+    boolean evaluatedRecently(java.util.Collection<WatchdogState> states, Instant now) {
+        String limit = WatchdogTransition.ISO.format(now.minusMillis(Math.max(1_000L, intervalMs - 5_000L)));
+        for (WatchdogState s : states) {
+            if (s.getEvaluatedAt() != null && s.getEvaluatedAt().compareTo(limit) > 0) return true;
+        }
+        return false;
+    }
+
     /** DB çökükken: yalnız veritabanı kontrolü, pod belleğinde (her pod kendisi bildirir — tek pod prod'da tek bildirim). */
     synchronized void evaluateLocalDatabase(Instant now) {
         Probe p = probes.run(WatchdogCheck.DATABASE, now);
@@ -156,7 +212,8 @@ public class WatchdogService {
                 WatchdogSettings.confirm(settings), WatchdogSettings.reminderHours(settings));
         if (a == Action.NONE) return;
         WatchdogNotifier.Report rep = notifier.send(List.of(new WatchdogMail.Item(a.name(), WatchdogCheck.DATABASE.labelTr(),
-                st.getSeverity(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), false))), false);
+                st.getSeverity(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), false),
+                WatchdogCheck.DATABASE.labelEn(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), true))), false);
         WatchdogTransition.markNotified(st, a, rep.outcome() != WatchdogNotifier.Outcome.FAILED, now);
     }
 
@@ -245,6 +302,7 @@ public class WatchdogService {
         out.put("enabled", WatchdogSettings.enabled(settings));
         out.put("stale", !states.isEmpty() && stale(states, now));
         out.put("interval_seconds", intervalMs / 1000);
+        out.put("confirm_checks", WatchdogSettings.confirm(settings));
         List<Map<String, Object>> checks = new ArrayList<>();
         for (WatchdogCheck c : WatchdogCheck.values()) {
             WatchdogState s = byKey.get(c.key());
