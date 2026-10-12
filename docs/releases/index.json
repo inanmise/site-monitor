@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-12T18:05:27Z",
+  "generatedAt": "2026-10-12T22:49:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 738,
+  "count": 739,
   "releases": [
+    {
+      "version": "20.125.1",
+      "tag": "v20.125.1",
+      "releasedAt": "2026-10-12T22:49:46Z",
+      "commit": "0a298545dcc04543d46caee1eb91fc33fc1d2471",
+      "prevVersion": "20.125.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0a298545",
+          "subject": "takım erişim paylaşımı ve son sürümlerin inceleme turları 4–7 — bildirim yönlendirmesi paylaşılmaz, kesinti sonrası \"düzeldi\" kaybolmaz"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.125.0",
       "tag": "v20.125.0",
