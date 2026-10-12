@@ -87,25 +87,30 @@ export default function MonitorCardActions({
       <CheckRunningStrip running={running} />
       {/* onCheck yoksa (satır çalıştırılamaz — sunucu `can_check`, 2026-09-29) düğme HİÇ çizilmez: basılıp 403 yiyen düğme yok */}
       {onCheck && <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} rowLabel={rowLabel} className={TOUCH} />}
-      <SimpleTooltip content={editTitle}>
-        <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.edit, phoneHidden)}
-          onClick={onEdit} aria-label={named(editTitle)}><Pencil size={13} aria-hidden="true" /></Button>
-      </SimpleTooltip>
-      <SimpleTooltip content={t('mon.duplicate')}>
-        <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.copy, phoneHidden)}
-          onClick={onDuplicate} aria-label={named(t('mon.duplicate'))}><Copy size={13} aria-hidden="true" /></Button>
-      </SimpleTooltip>
+      {/* onEdit / onDuplicate yoksa (yalnız çalıştırma yetkisi — takım erişim paylaşımı EXECUTE, 2026-10-12) çizilmez */}
+      {onEdit && (
+        <SimpleTooltip content={editTitle}>
+          <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.edit, phoneHidden)}
+            onClick={onEdit} aria-label={named(editTitle)}><Pencil size={13} aria-hidden="true" /></Button>
+        </SimpleTooltip>
+      )}
+      {onDuplicate && (
+        <SimpleTooltip content={t('mon.duplicate')}>
+          <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.copy, phoneHidden)}
+            onClick={onDuplicate} aria-label={named(t('mon.duplicate'))}><Copy size={13} aria-hidden="true" /></Button>
+        </SimpleTooltip>
+      )}
       {onDelete && (
         <SimpleTooltip content={deleteTitle}>
           <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.danger, phoneHidden)}
             disabled={deleting} onClick={onDelete} aria-label={named(deleteTitle)}><Trash2 size={13} aria-hidden="true" /></Button>
         </SimpleTooltip>
       )}
-      {phoneMenu && (
+      {phoneMenu && (onEdit || onDuplicate || onDelete || menuItems?.length > 0) && (
         <span data-slot="monitor-card-more" className="sm:hidden">
           <KebabMenu rowLabel={rowLabel} label={t('alh.moreActions')} items={[
-            { label: editTitle, icon: <Pencil aria-hidden="true" />, onClick: onEdit },
-            { label: t('mon.duplicate'), icon: <Copy aria-hidden="true" />, onClick: onDuplicate },
+            onEdit && { label: editTitle, icon: <Pencil aria-hidden="true" />, onClick: onEdit },
+            onDuplicate && { label: t('mon.duplicate'), icon: <Copy aria-hidden="true" />, onClick: onDuplicate },
             ...(menuItems || []),
             onDelete && { label: deleteTitle, icon: <Trash2 aria-hidden="true" />, onClick: onDelete, danger: true, hidden: !!deleting },
           ].filter(Boolean)} />

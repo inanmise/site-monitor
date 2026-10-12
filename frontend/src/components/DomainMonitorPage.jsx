@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
-import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -147,13 +147,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
   const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
-  const canManageRow = (m) => isAdmin || isOwnTeam(m)
+  const canManageRow = (m) => (typeof m?.can_edit === 'boolean' ? m.can_edit : (isAdmin || isOwnTeam(m)))   // sunucu bayrağı (2026-10-12, erişim paylaşımı); eski yanıtta rol kuralı
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
-  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
-  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  const canCheckRow = (m) => (typeof m?.can_check === 'boolean' ? m.can_check : canManageRow(m))
+  const canDeleteRow = (m) => (typeof m?.can_delete === 'boolean' ? m.can_delete : (isAdmin || (isTeamAdmin && isOwnTeam(m))))
   // "Sorun Tanıla" (2026-10-05): rol değil sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run) — tanılama
   // ucu artık kullanıcının işletebildiği takımın alan adı izlemesini de kabul ediyor. Liste satırına da bakılır ("Şimdi
   // kontrol et" açık detayın kopyasını tetik yanıtıyla değiştirir, yanıtta bayrak olmayabilir). Formdaki (kaydedilmemiş alan
@@ -510,7 +510,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
         // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
         // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
-        setSelected(prev => (prev?.id === m.id ? res.data : prev))
+        setSelected(prev => (prev?.id === m.id ? withRowFlags(prev, res.data) : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -956,17 +956,17 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
               )}
               meta={<MonitorCardMeta monitor={m} />}
-              actions={canManageRow(m) && (
-                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
+              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
                   running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
                   checkTitle={t('dom.check')} editTitle={t('dom.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('dom.delete')}
-                  phoneMenu menuItems={[{
+                  phoneMenu menuItems={canManageRow(m) ? [{
                     label: m.renewal_planned_at ? t('forecast.editPlan') : t('forecast.planRenewal'),
                     icon: <CalendarPlus aria-hidden="true" />, onClick: () => setPlanRow(m),
-                  }]} />
+                  }] : []} />
               )} />
           ))}
         </div>
@@ -1072,7 +1072,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="domain" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)}
+                  canManage={canDeleteRow(selected)}
                   // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
                   onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>

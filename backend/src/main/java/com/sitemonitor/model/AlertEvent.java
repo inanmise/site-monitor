@@ -189,6 +189,21 @@ public class AlertEvent {
     @Transient private Boolean actScope;
 
     /**
+     * Yeniden bildir / alıcı önizlemesi kapsamı (2026-10-12, takım erişim paylaşımı): YALNIZ eylem kapsamı paylaşımla
+     * gelen satırda {@code false} — arayüz "Tekrar bildir"i gizler (sunucu da reddeder). Diğer satırlarda alan yok
+     * ({@code act_scope} kuralı geçerli). Kalıcı DEĞİL. JSON: {@code notify_scope}.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @Transient private Boolean notifyScope;
+
+    /**
+     * Eylem kapalıysa nedeni sunucu biliyorsa (2026-10-12): {@code "shared_view"} = alarm takım erişim paylaşımıyla YALNIZ
+     * görüntülenebiliyor (paylaşımda Çalıştırma düzeyi yok). Diğer satırlarda alan yok. Kalıcı DEĞİL. JSON: {@code act_block}.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @Transient private String actBlock;
+
+    /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
      *
      * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse

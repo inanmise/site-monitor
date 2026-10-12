@@ -268,7 +268,7 @@ public class NetworkMonitorDiagnosticsController {
     }
 
     private static void requireOperate(HttpSession session, Long teamId) {
-        if (!SessionScope.canOperateTeam(session, teamId)) {
+        if (!SessionScope.canExecuteTeam(session, teamId)) {
             throw new SecurityException(Msg.t("Bu takımın izlemesinde tanılama çalıştıramazsınız.",
                     "You cannot run diagnostics on this team's monitor."));
         }

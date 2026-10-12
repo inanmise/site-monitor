@@ -423,7 +423,8 @@ public class NocController {
      */
     boolean canReadCallList(HttpSession session, Long teamId) {
         // 7/24 operatörü (2026-10-04) her takımın arama listesini okur — aramayı o yapar (yazma kapısı aynı).
-        return SessionScope.canViewMonitoring(session, teamId) || canEditCallList(session, teamId);
+        // Erişim paylaşımı kişi listelerini AÇMAZ (2026-10-12): üyeler / arama sırası takımın yönetim verisidir.
+        return SessionScope.canViewMonitoringOwn(session, teamId) || canEditCallList(session, teamId);
     }
 
     /** Arama listesini düzenleyebilir mi — takım yöneticisi/müdürü/lideri ya da global admin. */

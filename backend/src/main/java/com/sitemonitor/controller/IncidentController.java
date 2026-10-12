@@ -72,7 +72,7 @@ public class IncidentController {
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
                 since, until, teamId, slaBreached, open, incidentViewScope(session),
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
-        List<Map<String, Object>> rows = result.getContent().stream().map(this::dto).toList();
+        List<Map<String, Object>> rows = result.getContent().stream().map(e -> markWritable(session, e, dto(e))).toList();
         addPostmortemSummaries(rows);
         return ok(Map.of(
                 "data",  rows,
@@ -142,7 +142,7 @@ public class IncidentController {
         IncidentRecord e = service.get(id);
         requireIncidentRead(session, e);   // takım kapsamı (IDOR engeli)
         // Postmortem rozetleri ayrıntıda da (2026-10-12): bağlantıyla açılan olay kartı "postmortem yok" diyordu.
-        Map<String, Object> d = dto(e);
+        Map<String, Object> d = markWritable(session, e, dto(e));
         addPostmortemSummaries(List.of(d));
         return ok(Map.of("data", d));
     }
@@ -322,7 +322,7 @@ public class IncidentController {
     private List<Long> incidentViewScope(HttpSession session) {
         // OKUMA kapsamı: 7/24 izleme ekibi operatörü (2026-10-04) tüm takımların olay kayıtlarını okur (liste, eğilim,
         // alarm bağlantıları). Yazma kapıları (requireIncidentWrite / requireTransferTarget) bunu KULLANMAZ.
-        return SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIds(session);
+        return SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIdsWithGrants(session);   // + paylaşım (2026-10-12)
     }
     private void requireIncidentRead(HttpSession session, IncidentRecord e) {
         if (SessionScope.isGlobalViewer(session)) return;   // kayda dokunmadan (eski sıra korunur)
@@ -337,7 +337,10 @@ public class IncidentController {
     public static boolean canReadIncident(HttpSession session, Long teamId, Long createdByTeamId) {
         // 7/24 izleme ekibi operatörü (2026-10-04) her takımın kaydını OKUR; yazma sınırı inOwnIncidentScope'ta kalır.
         if (SessionScope.isNocOperator(session)) return true;
-        return inOwnIncidentScope(session, teamId, createdByTeamId);
+        if (inOwnIncidentScope(session, teamId, createdByTeamId)) return true;
+        // Erişim paylaşımı (2026-10-12): paylaşan takımın olay kaydını OKUR (yazma sınırı inOwnIncidentScope'ta kalır)
+        return (teamId != null && SessionScope.canViewWithGrants(session, teamId))
+                || (createdByTeamId != null && SessionScope.canViewWithGrants(session, createdByTeamId));
     }
     /** KENDİ takım sınırı (eski okuma = yazma sınırı) — global görüntüleyici hepsi; diğerleri kaydın / girenin takımı. */
     static boolean inOwnIncidentScope(HttpSession session, Long teamId, Long createdByTeamId) {
@@ -393,6 +396,16 @@ public class IncidentController {
         } catch (Exception ex) {
             log.warn("Olay listesi postmortem rozetleri okunamadı: {}", ex.getMessage());
         }
+    }
+
+    /**
+     * Okunabilen ama YAZILAMAYAN kayıt (7/24 operatörünün ya da takım erişim paylaşımının açtığı, 2026-10-12): satıra
+     * {@code can_edit=false} — arayüz Düzenle / Sil / toplu işlemi çizmez (sunucu inOwnIncidentScope ile zaten reddeder).
+     * Kendi kapsamındaki satırda alan YAZILMAZ (yanıt bugünküyle aynı).
+     */
+    private static Map<String, Object> markWritable(HttpSession session, IncidentRecord e, Map<String, Object> d) {
+        if (!inOwnIncidentScope(session, e.getTeamId(), e.getCreatedByTeamId())) d.put("can_edit", false);
+        return d;
     }
 
     private Map<String, Object> dto(IncidentRecord e) {

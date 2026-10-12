@@ -58,7 +58,8 @@ export default function UptimePage() {
   // Tanılama (2026-10-05): rol değil izin — `diagnostics.run` (execute) olan kullanıcı KENDİ (yönetebildiği) kartını tanılar;
   // başka takımın salt okunur kartında yok. Sunucu (/api/admin/diagnostics/*) aynı izni + takım kapsamlı envanteri zorlar.
   const canRunDiagnostics = usePermissions().canExecute('diagnostics.run')
-  const canDiagnoseItem = (item) => !!item && canRunDiagnostics && item.can_manage !== false
+  // + erişim paylaşımıyla ÇALIŞTIRILABİLEN kart (can_check, 2026-10-12)
+  const canDiagnoseItem = (item) => !!item && canRunDiagnostics && (item.can_manage !== false || item.can_check === true)
   const openDiag = (item) => { if (item) setDiag({ domain: item.domain, port: item.port || 443 }) }
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -338,7 +339,8 @@ export default function UptimePage() {
             // taşıyordu). Hiç kesinti yoksa ölçü çizilmez (eski davranış: yalnız > 0 olanlar görünürdü).
             const incidentCounts = [item.incidents_1d, item.incidents_7d, item.incidents_15d, item.incidents_30d]
             const hasIncidents = incidentCounts.some(v => v > 0)
-            const readOnly = item.can_manage === false   // başka takımın kartı: tanılama yok, salt okunur rozet
+            // başka takımın kartı: tanılama yok, salt okunur rozet — erişim paylaşımıyla görülen kart (shared_access) değil
+            const readOnly = item.can_manage === false && item.shared_access !== true
             return (
               /* Kart: shadcn Card + "stretched button" (monitoring/MonitorCard) — başlık gerçek düğme,
                  örtüsü kartı kaplar; kopyala / grup-etiket düğmeleri / tanıla örtünün üstünde (R18). */
@@ -414,7 +416,7 @@ export default function UptimePage() {
           title={selected.domain}
           subtitle={<span className="flex min-w-0 flex-wrap items-center gap-2">
             <MonitorCardTag className="text-xs">:{selected.port || 443}</MonitorCardTag>
-            {selected.can_manage === false && <ReadOnlyBadge teamId={selected.team_id} teamName={selected.team_name} />}
+            {selected.can_manage === false && selected.shared_access !== true && <ReadOnlyBadge teamId={selected.team_id} teamName={selected.team_name} />}
           </span>}
           // Tanıla (2026-10-05): kartla aynı kapı (diagnostics.run + kendi kartı) — yoksa eylem grubu hiç çizilmez ve kabuk
           // kendi X'ini kullanır (eski görünüm). Varsa eylem grubu kendi X'ini taşır.

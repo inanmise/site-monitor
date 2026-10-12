@@ -110,6 +110,13 @@ public class AuthController {
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocOperatorService nocOperators;
 
+    /**
+     * Takım erişim paylaşımı (2026-10-12). İsteğe bağlı: dilimli testte yokken oturuma paylaşım yazılmaz. Giriş ve
+     * {@code /me} paylaşılan takımları ({@code access_grants}) taşır; sonraki isteklerde AuthInterceptor tazeler.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.access.TeamAccessGrantService teamGrants;
+
     /** {@code noc_can_write} (arama kaydı) kuralının tek kaynağı — isteğe bağlı (dilimli test). */
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLogService;
@@ -843,7 +850,7 @@ public class AuthController {
             // Giriş güvenliği özeti — kullanıcı satırından okunur, EK SORGU YOK. Değerler kaydırma
             // sonrası hâldir, yani sayfa yenilendiğinde (F5) giriş yanıtındakiyle birebir aynıdır.
             resp.put("login_info", loginInfo(UserService.stampOf(u)));
-            putTeams(resp, u);
+            putTeams(resp, u, session);
         });
         // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
@@ -1346,6 +1353,9 @@ public class AuthController {
         // 7/24 izleme ekibi operatörlüğü (2026-10-04): girişte de yazılır — giriş yanıtı noc_operator'ı taşısın. Sonraki
         // isteklerde AuthInterceptor tazeler (takım listeden çıkarsa yeniden giriş beklemeden kalkar).
         if (nocOperators != null) nocOperators.sync(session);
+        if (teamGrants != null) {
+            try { teamGrants.sync(session); } catch (Exception e) { /* paylaşım okunamadı → kapalı düşer, istek düşmez */ }
+        }
     }
 
     /**
@@ -1433,7 +1443,7 @@ public class AuthController {
         resp.put("team_id", user.getTeamId());
         resp.put("team_name", user.getTeamId() != null
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null) : null);
-        putTeams(resp, user);
+        putTeams(resp, user, session);
         resp.put("system_role", user.getSystemRole());
         resp.put("must_change_password", Boolean.TRUE.equals(user.getMustChangePassword()));
         // Giris yanitina da konur: /me yalnizca acilista kosuyor, taze girişten sonra tekrar
@@ -1495,13 +1505,46 @@ public class AuthController {
         }
     }
 
-    private void putTeams(Map<String, Object> resp, AppUser user) {
+    private void putTeams(Map<String, Object> resp, AppUser user, HttpSession session) {
         List<Long> ids = new ArrayList<>();
         if (user.getTeamId() != null) ids.add(user.getTeamId());
         if (user.getTeamIds() != null)
             for (Long t : user.getTeamIds()) if (t != null && !ids.contains(t)) ids.add(t);
         resp.put("team_ids", ids);
         resp.put("team_names", userService.teamNamesFor(ids));
+        resp.put("access_grants", accessGrants(user, session));
+    }
+
+    /**
+     * Erişim paylaşımıyla açılan takımlar (2026-10-12): {@code [{team_id, team_name, level}]} — istemci izleme ekleme takım
+     * seçicisinde EDIT+ takımları gösterir ve YALNIZ paylaşımla görülen kartın düğmelerini düzeyden çizer.
+     *
+     * <p>Kullanıcının zaten GÖREBİLDİĞİ takım ({@link SessionScope#canView}: üyelik, yönettiği / müdürlüğündeki takımlar,
+     * global görüntüleyici) listeye girmez: o takımda paylaşım düzeyi bağlayıcı değildir — sunucu kendi kapsamını uygular.
+     * Eskiden yalnız üyelik düşülüyordu; paylaşım alan müdür kendi yönettiği takımın kartında düğmelerini kaybediyordu.
+     */
+    private List<Map<String, Object>> accessGrants(AppUser user, HttpSession session) {
+        if (teamGrants == null || user == null || user.getId() == null) return List.of();
+        try {
+            Map<Long, com.sitemonitor.service.access.TeamAccessLevel> levels = teamGrants.levelsFor(user.getId());
+            if (levels.isEmpty()) return List.of();
+            List<Long> ids = new ArrayList<>();
+            for (Long id : levels.keySet()) if (session == null || !SessionScope.canView(session, id)) ids.add(id);
+            if (ids.isEmpty()) return List.of();
+            ids.sort(Long::compare);
+            Map<Long, String> names = userService.teamNameMap(ids);   // tek sorgu
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Long id : ids) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("team_id", id);
+                m.put("team_name", names.get(id));
+                m.put("level", levels.get(id).name());
+                out.add(m);
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();   // okunamadı → paylaşım yok sayılır (kapalı düşer)
+        }
     }
 
     private String resolveClientIp(HttpServletRequest request) {

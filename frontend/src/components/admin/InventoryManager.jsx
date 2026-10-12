@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Globe, Building2, Clock, X, Trash2, Power, PowerOff, UserPlus, CheckSquare, Square, AlertTriangle, Inbox, FileUp } from 'lucide-react'
 import AddCertSplitButton from '../manualcert/AddCertSplitButton.jsx'
+import { mergeWriteTeams } from '../../hooks/useMonitorTeamPick.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { filterDeleted, markDeleted, markManyDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
 import { INVENTORY_RENAMED_EVENT, renameRow } from '../../utils/inventoryEvent.js'
@@ -222,7 +223,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   useEffect(() => {
     // Tek takım modeli: ekleyebilen/düzenleyebilen herkes (admin + team-admin) takım
     // listesine ihtiyaç duyar; team-admin'e backend yalnız kapsamındaki takımları döner.
-    if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
+    // + erişim paylaşımıyla düzenlenen takımlar (2026-10-12): /admin/teams görüş kapsamıdır, paylaşan takım orada yok
+    if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(mergeWriteTeams(res.data, teamsProp)) })
     api.notificationGroups.list().then(res => { if (res?.success) setNotifGroups(res.data?.groups ?? res.data ?? []) }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- yalnız ilk açılışta (rol oturum boyunca değişmez)
   // Liste kapsamla yeniden çekilir (ilk yükleme dâhil); seçim kapsam değişince temizlenir (aşağıda setScope).
@@ -801,7 +803,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           canManage={canManage}
           canWrite={canAdd}
           // R4: düzenlemede takım aktarımı yalnız rol ADMIN'de — sunucu TEAM_ADMIN/USER için takımı sabitler.
-          canMoveTeam={isAdmin}
+          // Paylaşımla görülen kayıtta takım aktarımı yok (2026-10-12) — sunucu takımı sabitler
+          canMoveTeam={isAdmin && formModal.record?.shared_access !== true}
           canOpenSettings={globalAdmin}   // 7/24 alanı: "aktif grup yok" → Ayarlar bağlantısı YALNIZ global yöneticiye (grup tanımlayan o)
           onClose={() => setFormModal(null)}
           onSaved={(_res, domain, opts) => { setFormModal(null); afterFormSaved(domain, opts); onInventoryChange?.() }}

@@ -151,4 +151,11 @@ describe('MonitorCardActions', () => {
     // Hiçbir düğme çıplak eylem adıyla kalmadı.
     expect(screen.queryByRole('button', { name: /^Sil$/ })).toBeNull()
   })
+
+  it('yalnız çalıştırma yetkisi (2026-10-12, takım erişim paylaşımı): onEdit / onDuplicate verilmezse düğmeleri ÇİZİLMEZ, Kontrol kalır', () => {
+    setup({ onEdit: undefined, onDuplicate: undefined, rowLabel: 'paylasilan.example.com' })
+    expect(screen.getByRole('button', { name: /Kontrol Et/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Düzenle/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Kopyala|Duplicate/ })).toBeNull()
+  })
 })

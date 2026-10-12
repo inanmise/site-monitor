@@ -80,6 +80,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Org geneli görünürlük (2026-09-26): başka takımın kaydı — kontrol/düzenle/tanıla/sil/not ekle YOK, alarm sekmesi YOK,
   // başlıkta salt okunur rozet + sahibi takım (`readOnlyTeam: { id, name }`). Okuma sekmeleri (SSL, sağlık, geçmiş, envanter, notlar) açık.
   readOnly = false, readOnlyTeam = null,
+  // Yalnız takım erişim paylaşımıyla görülen kayıt (2026-10-12): `{ check, edit, delete }` paylaşım düzeyinden — tanıla /
+  // sağlık yenile EXECUTE, eski sürüm silme DELETE ister. null = paylaşım yok, mevcut kurallar aynen.
+  grantAccess = null,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
   // Pencere içinden veri değişti (manuel sertifika yeni sürümü, 2026-10-09): çağıran (Pano) kart listesini tazeler.
   onDataChanged,
@@ -131,16 +134,17 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const bodyRef = useRef(null)   // ModalShell kaydırılan gövdesi — sekme değişince başa sarılır
   const [activeTab, setActiveTab]     = useState('ssl')
   const [showDiag, setShowDiag]       = useState(false)
-  const isAdmin = !readOnly && (currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN')
+  // Not yönetimi takım yönetimidir — paylaşımla gelen kayıtta açılmaz (2026-10-12)
+  const isAdmin = !readOnly && !grantAccess && (currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN')
   const perms = usePermissions()
   const canViewInventory = perms.canView('inventory.list')
   // Silme yetkisi backend'deki kapinin AYNISI: inventory.crud/edit (uc ayrica takim kapsami arar).
   // Yetkisi olmayana dugme HIC cizilmez — gorunup 403 vermek kullaniciyi bosuna umutlandirir.
-  const canDeleteCert = !readOnly && perms.canEdit('inventory.crud')
+  const canDeleteCert = !readOnly && perms.canEdit('inventory.crud') && (!grantAccess || grantAccess.delete)
   // Tanıla (2026-10-05): rol (ADMIN/TEAM_ADMIN) değil `diagnostics.run` (execute) izni — sunucu (/api/admin/diagnostics/*)
   // aynı izni + takım kapsamlı envanteri zorlar. Başka takımın (salt okunur) kaydında ve önizlemede yok. Kontrol geçmişindeki
   // hata panelinin "Bu kontrolü tanıla" düğmesi de aynı kapıyla aynı pencereyi açar.
-  const canDiagnose = !readOnly && !previewMode && perms.canExecute('diagnostics.run')
+  const canDiagnose = !readOnly && !previewMode && perms.canExecute('diagnostics.run') && (!grantAccess || grantAccess.check)
   const [deleting, setDeleting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // Bağımlı sekmeler (Sağlık / Alarm / Envanter) kendi verilerini bir kez çekip tutuyor. Bu
@@ -514,7 +518,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
               {/* key'e DOMAIN de girer: modal kalıcı mount'lu, domain değişince panel
                   remount olmazsa önceki kaydın satırları ekranda kalıyordu. */}
-              <CertHealthPanel key={`${domain}:${reloadKey}`} domain={domain} canRefresh={!readOnly} />
+              <CertHealthPanel key={`${domain}:${reloadKey}`} domain={domain} canRefresh={!readOnly && (!grantAccess || grantAccess.check)}
+                canConfirm={!readOnly && (!grantAccess || grantAccess.edit)} />
             </Suspense>
           </TabsContent>
         )}
@@ -544,7 +549,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* Manuel kayıt (2026-10-06): sürümler — yeni sürüm yüklenince pencere verisi de tazelenir */}
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
               {/* key YALNIZ alan adı: tazeleme sayacıyla yeniden bağlansaydı açık yükleme sihirbazı (sonuç adımı) kapanırdı */}
-              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={handleRenewed} />
+              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={handleRenewed}
+                canDeleteVersions={!grantAccess || grantAccess.delete} />
             </Suspense>
           </TabsContent>
         )}

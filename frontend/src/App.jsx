@@ -11,7 +11,7 @@ import { filterDeleted, useDeletedMarksVersion } from './utils/recentlyDeleted.j
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
-import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
+import { teamsFromMe, grantWriteTeamsFromMe, grantLevelsFromMe, mergeWriteTeams, rowGrantAccess } from './hooks/useMonitorTeamPick.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import InactivityCountdownText from './components/ui/InactivityCountdownText.jsx'
@@ -291,6 +291,12 @@ export default function App() {
   const [myTeamIds, setMyTeamIds] = useState([])
   // Üyesi olunan takımlar (id+ad): izleme formlarında takım seçimi (2026-09-18) — /me team_ids × team_names
   const [myTeams, setMyTeams] = useState([])
+  // Takım erişim paylaşımıyla düzenlenebilen takımlar (2026-10-12) — yalnız izleme / envanter formlarının takım seçicisine
+  // eklenir (writeTeams); gezinme ve yönetim üyelikle (myTeams) kalır.
+  const [grantWriteTeams, setGrantWriteTeams] = useState([])
+  // Paylaşım düzeyleri `{ [teamId]: level }` — YALNIZ paylaşımla görülen kartın Kontrol / Düzenle / Sil kapısı (2026-10-12)
+  const [grantLevels, setGrantLevels] = useState({})
+  const writeTeams = useMemo(() => mergeWriteTeams(myTeams, grantWriteTeams), [myTeams, grantWriteTeams])
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
@@ -429,10 +435,17 @@ export default function App() {
   // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): USER varsayılanı inventory.crud/edit AÇIK; sunucu üyelik doğrular.
   // usePermissions App gövdesinde çalışmaz (provider aşağıda; bkz. cardActions) → rol tabanlı; asıl kapı uçta.
   const canAddInventory = canManageInventory || systemRole === 'USER'
-  const canEditCert = (cert) => canManageInventory || (canAddInventory && cert?.team_id != null && myTeamIds.some((id) => String(id) === String(cert.team_id)))
   // Backend'deki SessionScope.isGlobalViewer'ın birebir karşılığı: kapsamsız (global) admin ya da
   // AUDIT. Kapsamlı müdür-admin buraya GİRMEZ — o da takım süzgeciyle çalışır.
   const globalViewer = globalAdmin || systemRole === 'AUDIT'
+  // Yalnız erişim paylaşımıyla görülen kart (2026-10-12): Kontrol (EXECUTE+), Düzenle (EDIT+), Sil (DELETE) paylaşım
+  // düzeyinden; diğer kartlarda null → rol kuralı aynen.
+  const certGrantAccess = (cert) => rowGrantAccess(cert?.team_id, { memberTeamIds: myTeamIds, grantLevels, globalViewer })
+  const canEditCert = (cert) => {
+    const ga = certGrantAccess(cert)
+    if (ga) return canAddInventory && ga.edit
+    return canManageInventory || (canAddInventory && cert?.team_id != null && myTeamIds.some((id) => String(id) === String(cert.team_id)))
+  }
   const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
@@ -490,6 +503,8 @@ export default function App() {
         setTeamName(res.team_name ?? null)
         setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
         setMyTeams(teamsFromMe(res))
+        setGrantWriteTeams(grantWriteTeamsFromMe(res))
+        setGrantLevels(grantLevelsFromMe(res))
         setMustChangePwd(!!res.must_change_password)
         setIdleCfg(idleConfigFrom(res))
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
@@ -1017,8 +1032,8 @@ export default function App() {
     if (refreshing) return
     const keys = Array.isArray(teamKeys) && teamKeys.length ? teamKeys : null
     const scoped = keys
-      ? certs.filter(c => keys.includes(c.team_id != null ? String(c.team_id) : NO_TEAM))
-      : certs
+      ? checkableCerts.filter(c => keys.includes(c.team_id != null ? String(c.team_id) : NO_TEAM))
+      : checkableCerts
     const domains = [...new Set(scoped.map(c => c.domain).filter(Boolean))].sort((a, b) => a.localeCompare(b))
     if (!domains.length) {
       // Bkz. useCheckRun: sessiz erken donus, tiklamanin kaybolmasi gibi okunuyordu.
@@ -1207,8 +1222,9 @@ export default function App() {
   }
 
   function cardActions(cert) {
+    const ga = certGrantAccess(cert)
     return {
-      onCheckNow: cert.paused ? undefined : () => runSingleCheck(cert.domain),
+      onCheckNow: cert.paused || (ga && !ga.check) ? undefined : () => runSingleCheck(cert.domain),
       checking: checkingDomain === cert.domain || refreshing,
       // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
       onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
@@ -1218,7 +1234,7 @@ export default function App() {
       // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
       // kapısı zaten uçta: inventory.crud/edit + takım kapsamı; reddedilirse toast hatayı gösterir.
-      onDelete: canManageInventory ? () => deleteCertFromCard(cert.domain) : undefined,
+      onDelete: (ga ? canAddInventory && ga.delete : canManageInventory) ? () => deleteCertFromCard(cert.domain) : undefined,
       // "Sorumlu kişi yok" çipi (2026-09-20): form doğrudan Sorumlu Ekipler bölümünde açılır.
       onEditContacts: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit', focus: 'contacts' }) : undefined,
       deleting: deletingDomain === cert.domain,
@@ -1271,6 +1287,8 @@ export default function App() {
     setTeamName(userData.team_name ?? null)
     setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
     setMyTeams(teamsFromMe(userData))
+    setGrantWriteTeams(grantWriteTeamsFromMe(userData))
+    setGrantLevels(grantLevelsFromMe(userData))
     setIdleCfg(idleConfigFrom(userData))
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
@@ -1307,6 +1325,13 @@ export default function App() {
     for (const c of certs) if (c?.domain) idx[c.domain] = { team_name: c.team_name, tier: c.tier, port: c.port }
     return idx
   }, [certs])
+
+  // "Şimdi Kontrol Et" kapsamı (2026-10-12): yalnız paylaşımla GÖRÜLEN (EXECUTE'u olmayan) kartlar listelenmez — sunucu
+  // reddederdi; paylaşımı olmayan kullanıcıda liste `certs`'in kendisi.
+  const checkableCerts = useMemo(() => {
+    if (!Object.keys(grantLevels).length) return certs
+    return certs.filter((c) => { const ga = rowGrantAccess(c?.team_id, { memberTeamIds: myTeamIds, grantLevels, globalViewer }); return !ga || ga.check })
+  }, [certs, grantLevels, myTeamIds, globalViewer])
 
   const issuerStats = useMemo(() => {
     const reachable = certs.filter(c => c.status !== 'error')
@@ -1951,7 +1976,7 @@ export default function App() {
 
             {tab === 'domains' && (
               <div className="tab-content active">
-                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} teams={myTeams} globalAdmin={globalAdmin}   // USER: form takım kutusu üyesi olduğu takımlar (2026-09-18)
+                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} teams={writeTeams} globalAdmin={globalAdmin}   // USER: form takım kutusu üyesi olduğu takımlar (2026-09-18)
                   openAddSignal={pendingAddDomain} onAddConsumed={() => setPendingAddDomain(false)}
                   // "Şimdi Kontrol Et" Envanter başlığında (eski üst .controls satırının yerine, 2026-09-27)
                   onCheckNow={() => setTeamPickerOpen(true)} checkRunning={refreshing} checkLabel={checkNowLabel} />
@@ -1962,7 +1987,7 @@ export default function App() {
               <div className="tab-content active">
                 {/* "Aç" pencereyi Pano'daki satırla açar (eylemler aynı); listede yoksa (yeni / başka takım) alan adıyla — salt okunur
                     satır salt okunur pencerede. */}
-                <ManualCertsPage systemRole={systemRole} myTeams={myTeams} globalAdmin={globalAdmin} onInventoryChange={loadData}
+                <ManualCertsPage systemRole={systemRole} myTeams={writeTeams} globalAdmin={globalAdmin} onInventoryChange={loadData}
                   onOpenCert={(row) => {
                     const c = certsRef.current.find((x) => x.domain === row.domain)
                     const meta = { cert_source: 'MANUAL', manual_version: c?.manual_version ?? row.current_version?.version ?? null,
@@ -2088,15 +2113,15 @@ export default function App() {
             {tab === 'mydash' && <MyDashPage />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
-            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
-            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             {/* Markalı 404 (2026-10-08): tanınmayan ?tab= → "Sayfa bulunamadı"; rolüne kapalı sekme → "Erişim yok" (eskiden boş) */}
             {tab === NOT_FOUND_TAB && (
@@ -2128,6 +2153,7 @@ export default function App() {
         onDataChanged={loadData}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
+        grantAccess={modalCert && !modalCert._preview && !modalCert._readOnly ? certGrantAccess(modalCert) : null}
         {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
       </Suspense>
       )}
@@ -2160,7 +2186,8 @@ export default function App() {
             // okunur (usePermissions App gövdesinde çalışmaz). Takım aktarımı yalnız rol ADMIN'de: sunucu
             // (updateInventory) TEAM_ADMIN ve USER için takımı mevcut değere sabitler.
             canManage={canManageInventory}
-            canMoveTeam={systemRole === 'ADMIN'}
+            // Yalnız paylaşımla görülen kartta takım aktarımı yok (2026-10-12) — sunucu takımı sabitler
+            canMoveTeam={systemRole === 'ADMIN' && !certGrantAccess(certs.find((c) => c.domain === invForm.domain))}
             canOpenSettings={globalAdmin}   // 7/24 alanı "aktif grup yok" → Ayarlar bağlantısı yalnız global yöneticiye
             onClose={() => setInvForm(null)}
             // Mükerrer alan adı bandından aktarım / geri yükleme (2026-09-28): form kapanır, taşınan kaydın penceresi açılır
@@ -2172,7 +2199,7 @@ export default function App() {
       {/* Şimdi Kontrol Et — önce takım seçimi, sonra akan sonuç tablosu */}
       {teamPickerOpen && (
         <CheckTeamPicker
-          certs={certs}
+          certs={checkableCerts}
           onClose={() => setTeamPickerOpen(false)}
           onStart={(keys, label) => { setTeamPickerOpen(false); handleRefresh(keys, label) }}
         />

@@ -43,7 +43,7 @@ public class StormStatusController {
     /** Ezber anahtarı: her şeyi gören "ALL", diğerleri sıralı görüş takımları (aynı kapsam → aynı yanıt). */
     static String scopeKey(HttpSession session, boolean seesAll) {
         if (seesAll) return "ALL";
-        java.util.List<Long> v = SessionScope.viewTeamIds(session);
+        java.util.List<Long> v = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         if (v == null || v.isEmpty()) return "NONE";
         return v.stream().filter(java.util.Objects::nonNull).sorted().map(String::valueOf)
                 .collect(java.util.stream.Collectors.joining(","));
@@ -59,7 +59,7 @@ public class StormStatusController {
                                                        @RequestParam(defaultValue = "20") int size) {
         permissionService.require(session, "alerts.read", "view");
         return ResponseEntity.ok(Map.of("success", true, "data",
-                statusService.history(canView(session), seesAll(session), SessionScope.viewTeamIds(session),
+                statusService.history(canView(session), seesAll(session), SessionScope.viewTeamIdsWithGrants(session),
                         teamId, from, to, resolvedOnly, page, size)));
     }
 
@@ -88,7 +88,7 @@ public class StormStatusController {
     /** Her şeyi gören için daima true; diğerleri için {@code SessionScope.canView}. */
     private Predicate<Long> canView(HttpSession session) {
         if (seesAll(session)) return id -> true;
-        return id -> id != null && SessionScope.canView(session, id);
+        return id -> id != null && SessionScope.canViewWithGrants(session, id);   // + erişim paylaşımı (2026-10-12)
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)

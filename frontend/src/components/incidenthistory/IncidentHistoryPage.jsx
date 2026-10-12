@@ -337,9 +337,10 @@ export default function IncidentHistoryPage() {
 
   const toggleSel = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const toggleAll = () => setSelected((s) => {
-    const all = rows.length > 0 && rows.every((r) => s.has(r.id))
+    const writable = rows.filter((r) => r?.can_edit !== false)   // yazılamayan satır seçilmez (2026-10-12)
+    const all = writable.length > 0 && writable.every((r) => s.has(r.id))
     const n = new Set(s)
-    rows.forEach((r) => (all ? n.delete(r.id) : n.add(r.id)))
+    writable.forEach((r) => (all ? n.delete(r.id) : n.add(r.id)))
     return n
   })
 
@@ -476,7 +477,8 @@ export default function IncidentHistoryPage() {
 
       {detail && (
         <HistoryDetailSheet key={detail.id} record={detail} onClose={closeDetail} onEdit={openEdit} onDelete={removeIncident}
-          onPostmortem={(r) => setPmFor(r)} allowManage={allowManage} allowDelete={allowDelete} />
+          onPostmortem={(r) => setPmFor(r)} allowManage={allowManage && detail.can_edit !== false}
+          allowDelete={allowDelete && detail.can_edit !== false} />
       )}
 
       {pmFor && (

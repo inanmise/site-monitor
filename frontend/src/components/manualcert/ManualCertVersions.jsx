@@ -140,7 +140,8 @@ function VersionCard({ v, inventoryId, current, onDelete, onView, deleting = fal
  * <p>Test kancaları: `data-slot="mcert-versions"`, kart `mcert-version` (+ `data-current`, `data-version`), `mcert-pem`,
  * `mcert-version-delete`, `mcert-same-reupload`, `mcert-version-view`.
  */
-export default function ManualCertVersions({ domain, readOnly = false, onRenewed, onOpenCert }) {
+// canDeleteVersions (2026-10-12): eski sürümü kalıcı silmek — erişim paylaşımında yalnız SİLME düzeyi (sunucu aynı)
+export default function ManualCertVersions({ domain, readOnly = false, onRenewed, onOpenCert, canDeleteVersions = true }) {
   const t = useT()
   const canEditInventory = usePermissions().canEdit('inventory.crud')
   const { showConfirm } = useDialog()
@@ -245,7 +246,7 @@ export default function ManualCertVersions({ domain, readOnly = false, onRenewed
             {older.map((v) => (
               <li key={v.id ?? v.version}>
                 <VersionCard v={v} inventoryId={state.id} current={false} onView={setViewing}
-                  onDelete={canRenew ? deleteVersion : undefined} deleting={deletingId != null && deletingId === v.id} />
+                  onDelete={canRenew && canDeleteVersions ? deleteVersion : undefined} deleting={deletingId != null && deletingId === v.id} />
               </li>
             ))}
           </ol>

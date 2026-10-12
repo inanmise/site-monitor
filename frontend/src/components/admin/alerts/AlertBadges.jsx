@@ -280,7 +280,8 @@ export function ActBlockedNote({ reason, className }) {
   const text = reason === 'perm' ? t('alh.actNoPermission')
     : reason === 'permNoc' ? t('alh.actNoPermissionNoc')
       : reason === 'owner' ? t('alh.actStandaloneOwner')
-        : t('alh.actOtherTeam')
+        : reason === 'shared' ? t('alh.actSharedView')
+          : t('alh.actOtherTeam')
   return <p data-slot="alert-act-blocked" data-reason={reason} className={cn('basis-full text-xs text-muted-foreground', className)}>{text}</p>
 }
 

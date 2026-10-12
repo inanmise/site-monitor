@@ -49,7 +49,7 @@ public class InventoryInsightController {
         if (SessionScope.isGlobalViewer(session)) {
             rows = inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
         } else {
-            List<Long> scope = SessionScope.viewTeamIds(session);
+            List<Long> scope = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
             rows = (scope == null || scope.isEmpty()) ? List.of()
                     : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(scope);
         }

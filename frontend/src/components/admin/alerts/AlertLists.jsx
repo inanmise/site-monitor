@@ -252,10 +252,13 @@ export function OpenAlertCard({
             <Button type="button" variant="success" size="sm" className={ACT} aria-label={rowLabel(t('alh.resolveAction'))} onClick={() => onResolve(a)}>
               <CheckCircle2 aria-hidden="true" />{t('alh.resolveAction')}
             </Button>
-            <Button type="button" variant="outline" size="sm" className={ACT} aria-label={rowLabel(t('alh.renotify'))}
-              onClick={() => onReNotify(a)} disabled={notifying} aria-busy={notifying || undefined}>
-              <BellPlus aria-hidden="true" />{notifying ? t('alh.sending') : t('alh.renotify')}
-            </Button>
+            {/* Paylaşımla eylem yapılan alarmda yeniden bildirim yok (sunucu notify_scope=false, 2026-10-12) */}
+            {onReNotify && a.notify_scope !== false && (
+              <Button type="button" variant="outline" size="sm" className={ACT} aria-label={rowLabel(t('alh.renotify'))}
+                onClick={() => onReNotify(a)} disabled={notifying} aria-busy={notifying || undefined}>
+                <BellPlus aria-hidden="true" />{notifying ? t('alh.sending') : t('alh.renotify')}
+              </Button>
+            )}
           </>
         )}
         {onLogCall && (

@@ -196,7 +196,13 @@ public class CertificateController {
         Object rawRows = result.get("data");
         List<Object> rows = new java.util.ArrayList<>();
         if (rawRows instanceof List<?> l) {
-            for (Object o : l) rows.add(o instanceof CertificateDto c ? c.withCanManage(writable.test(c.getTeamId())) : o);
+            for (Object o : l) {
+                if (!(o instanceof CertificateDto c)) { rows.add(o); continue; }
+                // Yalnız paylaşımla görülen satır: shared_access + can_check (2026-10-12); diğerleri eskisi gibi
+                boolean shared = SessionScope.viewableOnlyByGrant(session, c.getTeamId());
+                rows.add(c.withAccess(writable.test(c.getTeamId()), shared ? Boolean.TRUE : null,
+                        shared ? SessionScope.canExecuteTeam(session, c.getTeamId()) : null));
+            }
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
@@ -270,6 +276,10 @@ public class CertificateController {
                 .orElseThrow(() -> new java.util.NoSuchElementException("Domain envanterde bulunamadı: " + domain));
         if (SessionScope.canView(session, inv.getTeamId())) return inv;
         if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return inv;
+        // Anlık kontrol = ÇALIŞTIRMA: erişim paylaşımında EXECUTE+ (2026-10-12)
+        List<Long> exec = SessionScope.grantExecuteTeamIds(session);
+        if (inv.getTeamId() != null && exec.contains(inv.getTeamId())) return inv;
+        if (inv.getUgTeamId() != null && exec.contains(inv.getUgTeamId())) return inv;
         throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
     }
 
@@ -615,7 +625,7 @@ public class CertificateController {
      */
     private List<String> retainViewableDomains(HttpSession session, List<String> domains) {
         if (domains.isEmpty() || SessionScope.seesAllMonitoring(session)) return domains;   // + 7/24 operatörü (2026-10-04)
-        List<Long> teams = SessionScope.viewTeamIds(session);
+        List<Long> teams = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         // null/bos kapsam = hicbir takimi goremez (SessionScope.canView ile ayni sonuc).
         // Ayrica bos liste ile sorgu `IN ()` uretecegi icin depoya HIC gidilmemeli.
         if (teams == null || teams.isEmpty()) return List.of();
@@ -772,7 +782,8 @@ public class CertificateController {
         permissionService.require(session, "inventory.crud", "edit");
         CertificateInventory inv = requireViewableForHealth(session, domain, request);
         if (inv == null) return notFoundBody();
-        requireOperableForHealth(session, inv);
+        // Onay bir KAYIT yazımıdır → erişim paylaşımında EDIT+ (2026-10-12); EXECUTE yalnız yenilemeyi açar.
+        if (!SessionScope.canOperateTeam(session, inv.getTeamId())) throw new SecurityException(OPERATE_DENIED.get());
 
         LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
         String pinned = lc == null ? null : lc.getPinnedFingerprint();
@@ -824,15 +835,17 @@ public class CertificateController {
      * olduğundan 404 değil 403 — gizlenecek varlık yok.
      */
     private static void requireOperableForHealth(HttpSession session, CertificateInventory inv) {
-        if (!SessionScope.canOperateTeam(session, inv.getTeamId()))
-            throw new SecurityException(com.sitemonitor.util.Msg.t(
-                    "Bu alan adının takımında işlem yetkiniz yok; yalnız görüntüleyebilirsiniz",
-                    "You can view this domain but can't act on it; it belongs to a team outside your scope"));
+        if (!SessionScope.canExecuteTeam(session, inv.getTeamId()))   // + erişim paylaşımı EXECUTE+ (2026-10-12)
+            throw new SecurityException(OPERATE_DENIED.get());
     }
+
+    private static final java.util.function.Supplier<String> OPERATE_DENIED = () -> com.sitemonitor.util.Msg.t(
+            "Bu alan adının takımında işlem yetkiniz yok; yalnız görüntüleyebilirsiniz",
+            "You can view this domain but can't act on it; it belongs to a team outside your scope");
 
     private CertificateInventory viewableForHealth(HttpSession session, String domain, CertificateInventory inv,
                                                    HttpServletRequest request) {
-        if (inv == null || !SessionScope.canView(session, inv.getTeamId())) {
+        if (inv == null || !SessionScope.canViewWithGrants(session, inv.getTeamId())) {
             if (inv != null && inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) {
                 throw new SecurityException(com.sitemonitor.util.Msg.t(
                         "Bu alan adı başka bir takıma kayıtlı; yalnız görüntüleyebilirsiniz",
@@ -853,7 +866,7 @@ public class CertificateController {
         var inv = inventoryRepo.findByDomain(domain).orElse(null);
         // 7/24 operatörü (2026-10-04) her takımın sağlık listesini OKUR; yazan uçların kapısı (viewableForHealth) aynen.
         if (inv != null && SessionScope.isNocOperator(session)) return inv;
-        if (inv != null && !SessionScope.canView(session, inv.getTeamId())
+        if (inv != null && !SessionScope.canViewWithGrants(session, inv.getTeamId())
                 && inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) {
             return inv;
         }

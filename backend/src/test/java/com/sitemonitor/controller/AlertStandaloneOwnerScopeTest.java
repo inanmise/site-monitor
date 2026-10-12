@@ -314,4 +314,94 @@ class AlertStandaloneOwnerScopeTest {
         mvc.perform(get("/api/admin/alerts/60").session(session("kisid", "USER", List.of(TEAM_D))))
                 .andExpect(status().isForbidden());
     }
+
+    // ── Takım erişim paylaşımı (2026-10-12) ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("paylaşım: B'nin alarmı A üyesine VIEW ile salt okunur (eylem 403), EXECUTE ile sahiplen / çöz açılır")
+    void teamAccessGrantGatesAlertActions() throws Exception {
+        MockHttpSession viewOnly = session("kisia2", "USER", List.of(TEAM_A));
+        viewOnly.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(viewOnly)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(escalationService);
+
+        MockHttpSession exec = session("kisia3", "USER", List.of(TEAM_A));
+        exec.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        exec.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(exec)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/admin/alerts/61/resolve").session(exec)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk());
+        // A üyesinin kendi Ping'i (65) zaten açık
+        mvc.perform(post("/api/admin/alerts/65/acknowledge").session(exec)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk());
+        // Paylaşım başka takımın alarmını AÇMAZ: D üyesine B'nin paylaşımı A'nın alarmını (65) açmaz
+        MockHttpSession execD = session("kisid", "USER", List.of(TEAM_D));
+        execD.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        execD.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(post("/api/admin/alerts/65/acknowledge").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isForbidden());
+        verify(escalationService, times(1)).acknowledge(eq(65L), any(), any());   // yalnız A üyesinin onayı
+    }
+
+    @Test
+    @DisplayName("Paylaşım (2026-10-12): EXECUTE sahiplenir / çözer ama YENİDEN BİLDİRMEZ ve alıcı önizlemesini görmez; toplu yeniden bildir atlar")
+    void teamAccessGrantNeverReNotifies() throws Exception {
+        MockHttpSession exec = session("kisia4", "USER", List.of(TEAM_A));
+        exec.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        exec.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(get("/api/admin/alerts/60/re-notify/preview").session(exec)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/60/re-notify").session(exec)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/bulk").session(exec)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"action\":\"re-notify\",\"ids\":[60]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.skipped").value(1));
+        verify(escalationService, never()).reNotify(anyLong());
+        verify(escalationService, never()).previewReNotify(anyLong());
+        // Satır bayrakları: EXECUTE → act_scope=true + notify_scope=false; yalnız VIEW → act_scope=false + act_block
+        mvc.perform(get("/api/admin/alerts/60").session(exec)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.act_scope").value(true))
+                .andExpect(jsonPath("$.data.notify_scope").value(false))
+                .andExpect(jsonPath("$.data.act_block").doesNotExist());
+        MockHttpSession viewOnly = session("kisia5", "USER", List.of(TEAM_A));
+        viewOnly.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(get("/api/admin/alerts/60").session(viewOnly)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.act_scope").value(false))
+                .andExpect(jsonPath("$.data.act_block").value("shared_view"))
+                .andExpect(jsonPath("$.data.notify_scope").doesNotExist());
+        // Yalnız paylaşımla okunan alarmın bildirim satırlarında alıcı kişi / adres gizli (durum görünür); sahibinde aynen
+        com.sitemonitor.model.NotificationLog log = new com.sitemonitor.model.NotificationLog();
+        log.setId(1L); log.setAlertEventId(60L); log.setRecipientName("Ayşe Yılmaz"); log.setRecipientEmail("ayse@example.com, ali@example.com");
+        log.setCc("mudur@example.com"); log.setEmailStatus("SENT"); log.setRecipientRole("TEAM");
+        when(notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(60L)).thenReturn(List.of(log));
+        // A üyesi alarmı kendi kapsamından da okuyor (alan adının envanteri A'da) → maskelenmez; ilgisiz D üyesi yalnız
+        // B'nin paylaşımıyla okuyor → maskeli
+        MockHttpSession viewOnlyD = session("kisid2", "USER", List.of(TEAM_D));
+        viewOnlyD.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        mvc.perform(get("/api/admin/alerts/60/notifications").session(viewOnly)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].recipient_email").value("ayse@example.com, ali@example.com"));
+        mvc.perform(get("/api/admin/alerts/60").session(viewOnlyD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.act_block").value("shared_view"))
+                .andExpect(jsonPath("$.oncall").isEmpty());
+        mvc.perform(get("/api/admin/alerts/60/notifications").session(viewOnlyD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].recipient_name").isEmpty())
+                .andExpect(jsonPath("$.data[0].recipient_email").value("2 adres"))
+                .andExpect(jsonPath("$.data[0].cc").value("1 adres"))
+                .andExpect(jsonPath("$.data[0].email_status").value("SENT"));
+        mvc.perform(get("/api/admin/alerts/60/notifications").session(memberB)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].recipient_email").value("ayse@example.com, ali@example.com"));
+        org.assertj.core.api.Assertions.assertThat(log.getRecipientName()).isEqualTo("Ayşe Yılmaz");   // kayıt nesnesi değişmez (kopya)
+        // Paylaşımı olmayan üyede yeni alanlar YAZILMAZ (yanıt aynı)
+        mvc.perform(get("/api/admin/alerts/60").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notify_scope").doesNotExist())
+                .andExpect(jsonPath("$.data.act_block").doesNotExist());
+    }
 }

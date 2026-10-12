@@ -236,6 +236,18 @@ public class CertificateDto {
     private Boolean canManage;
 
     /**
+     * YALNIZ erişim paylaşımıyla görülen satır (2026-10-12): {@code shared_access=true} + çalıştırma kapısı
+     * {@code can_check}. Yalnız {@link #withAccess} KOPYASINA yazılır (önbellekteki nesne paylaşılıyor); diğer satırlarda null.
+     */
+    @JsonProperty("shared_access")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean sharedAccess;
+
+    @JsonProperty("can_check")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean canCheck;
+
+    /**
      * Elle yüklenen sertifika (2026-10-06): {@code "MANUAL"}; ağdan kontrol edilen satırda null → YAZILMAZ (yanıt
      * bugünküyle bayt bayt aynı kalır). Envanter satırını okuyan listeler ({@code getAllLatest}) doldurur.
      */
@@ -283,9 +295,16 @@ public class CertificateDto {
 
     /** Sığ kopya + {@code can_manage}; önbellekteki paylaşılan nesneye DOKUNMAZ. */
     public CertificateDto withCanManage(boolean value) {
+        return withAccess(value, null, null);
+    }
+
+    /** {@link #withCanManage} + paylaşım bayrakları ({@code null} = yazılmaz) — yeni KOPYA döner. */
+    public CertificateDto withAccess(boolean canManage, Boolean sharedAccess, Boolean canCheck) {
         CertificateDto copy = new CertificateDto();
         org.springframework.beans.BeanUtils.copyProperties(this, copy);
-        copy.canManage = value;
+        copy.canManage = canManage;
+        copy.sharedAccess = sharedAccess;
+        copy.canCheck = canCheck;
         return copy;
     }
 

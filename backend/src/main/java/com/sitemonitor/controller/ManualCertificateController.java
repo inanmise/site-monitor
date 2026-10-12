@@ -421,7 +421,10 @@ public class ManualCertificateController {
         permissionService.require(session, "inventory.crud", "edit");
         CertificateInventory inv = loadManual(inventoryId);
         if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
-        if (!SessionScope.canWriteInventory(session, inv.getTeamId())) {
+        // Kalıcı silme: takımın KENDİ yazma kapsamı ya da erişim paylaşımında SİLME düzeyi — EDIT paylaşımı sürüm
+        // silmez (2026-10-12).
+        if (!SessionScope.canWriteInventoryOwn(session, inv.getTeamId())
+                && !SessionScope.canDeleteTeamResource(session, inv.getTeamId())) {
             throw new SecurityException(Msg.t("Bu kaydın takımında yazma yetkiniz yok; başka bir takımın kaydını yalnız "
                             + "görüntüleyebilirsiniz. Kaydın takımından birine ya da takım yöneticinize başvurun.",
                     "You don't have write access to this record's team; another team's record can only be viewed. "
@@ -467,7 +470,7 @@ public class ManualCertificateController {
                 CertificateInventory.SOURCE_MANUAL);
         boolean globalViewer = SessionScope.isGlobalViewer(session);
         boolean orgWide = !globalViewer && inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
-        List<Long> view = SessionScope.viewTeamIds(session);
+        List<Long> view = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         List<CertificateInventory> rows = new ArrayList<>();
         for (CertificateInventory inv : all) {
             if (!inv.isManual()) continue;
@@ -545,7 +548,7 @@ public class ManualCertificateController {
         permissionService.require(session, "inventory.list", "view");
         CertificateInventory inv = loadManual(inventoryId);
         if (inv == null || inv.getDeletedAt() != null || !canRead(session, inv)) return notFound();
-        if (!SessionScope.canOperateTeam(session, inv.getTeamId())) {
+        if (!SessionScope.canExecuteTeam(session, inv.getTeamId())) {   // + erişim paylaşımı EXECUTE+ (2026-10-12)
             throw new SecurityException(Msg.t("Bu kaydın takımında işlem yetkiniz yok; yalnız görüntüleyebilirsiniz.",
                     "You can't act on this record's team; you can only view it."));
         }
@@ -872,7 +875,7 @@ public class ManualCertificateController {
      */
     private boolean canRead(HttpSession session, CertificateInventory inv) {
         if (SessionScope.isGlobalViewer(session)) return true;
-        List<Long> view = SessionScope.viewTeamIds(session);
+        List<Long> view = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         if (view != null && inv.getTeamId() != null && view.contains(inv.getTeamId())) return true;
         return inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv);
     }

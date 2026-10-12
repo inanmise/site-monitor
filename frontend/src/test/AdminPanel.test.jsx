@@ -52,12 +52,12 @@ describe('AdminPanel', () => {
     expect(screen.queryByText('Certificate Management')).not.toBeInTheDocument()
   })
 
-  it('renders all 6 tabs under their group labels with admin role (shadcn Tabs)', async () => {
+  it('renders all 7 tabs under their group labels with admin role (shadcn Tabs)', async () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
     const list = screen.getByRole('tablist')
     expect(list).toHaveAttribute('data-slot', 'tabs-list')
     expect(within(list).getAllByRole('tab').map((x) => x.textContent))
-      .toEqual(['Thresholds', 'Escalation Contacts', 'Notification Groups', 'Who gets notified?', 'Teams', 'Users'])
+      .toEqual(['Thresholds', 'Escalation Contacts', 'Notification Groups', 'Who gets notified?', 'Teams', 'Users', 'Access sharing'])
     // Grup başlıkları görünür ama sekme listesinde sekme DEĞİL (aria-hidden).
     for (const g of ['Certificate Management', 'Notifications & Alerts', 'Organization']) {
       expect(within(list).getByText(g)).toHaveAttribute('aria-hidden', 'true')

@@ -31,7 +31,10 @@ class CertificateInventoryOpsTest {
             // 7/24 İzleme Ekibi bildirimi (2026-09-27, NOC): yenileme OPERASYONU değil, uyarının kime gideceğini
             // belirleyen bildirim YÖNLENDİRME ayarı — "Operasyonel Bilgiler" listesine (Netscaler, WAF, sunucuda
             // değiştirilecek …) ait değil; 7/24 e-postasının kendisi zaten bu ayarın sonucu.
-            "nocNotify");
+            "nocNotify",
+            // Takım erişim paylaşımı (2026-10-12): istek başına hesaplanan @Transient satır bayrakları (silebilir mi, yalnız
+            // paylaşımla mı görülüyor, kontrol edebilir mi) — kayıt alanı değil, e-postada görünmez.
+            "canDelete", "sharedAccess", "canCheck");
 
     private static List<String> booleanFieldNames() {
         List<String> out = new ArrayList<>();

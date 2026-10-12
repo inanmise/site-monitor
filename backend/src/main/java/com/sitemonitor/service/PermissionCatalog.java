@@ -59,6 +59,10 @@ public final class PermissionCatalog {
         // (uç ayrıca SessionScope.canManage ister). VIEW ve EDIT ayrı satır: AUDIT'e yazma sızmasın.
         r("oncall.read",        "management", VIEW),
         r("oncall.manage",      "management", EDIT),
+        // Takım erişim paylaşımı (2026-10-12): takımın izlemelerini başka takıma / kişiye açmak. Okuma (liste) ve yazma
+        // (ekle / düzenle / kaldır) ayrı satır; uç ayrıca paylaşan takımı YÖNETMEYİ ister (SessionScope.canManage).
+        r("teams.sharing",      "management", VIEW),
+        r("teams.sharing",      "management", EDIT),
         r("users.list",         "management", VIEW),
         r("users.crud",         "management", EDIT),
         r("users.actions",      "management", EXECUTE),
@@ -232,6 +236,7 @@ public final class PermissionCatalog {
             "notes.read", "notes.crud",
             "teams.list", "teams.update", "teams.weekly_notifications",
             "oncall.read", "oncall.manage",   // kendi takımının nöbet çizelgesi (2026-10-11)
+            "teams.sharing",   // kendi takımının erişim paylaşımları (2026-10-12)
             "users.list", "users.crud", "users.actions",
             "alerts.read", "alerts.actions",
             "system_health.read",

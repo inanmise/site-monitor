@@ -58,7 +58,7 @@ export default function InventoryCardList({
         const isSel = selected.has(r.id)
         const team = r.team_name || teamMap[String(r.team_id)]
         const menu = ro
-          ? rowMenuItems({ r, t, ro, onShow })
+          ? rowMenuItems({ r, t, ro, onShow, onCheckNow: checkNow })
           : rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow: checkNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete })
         return (
           <li key={r.id}>

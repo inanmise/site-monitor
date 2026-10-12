@@ -222,7 +222,7 @@ public class ActivityController {
 
     private static Scope scope(HttpSession session) {
         // İzleme etkinlik akışı (2026-10-04): 7/24 operatörü tüm takımlarınkini okur.
-        List<Long> view = SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIds(session);
+        List<Long> view = SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         boolean scoped = view != null;
         if (scoped && view.isEmpty()) return new Scope(true, List.of(-1L), true);   // kapsamsız → hiç kayıt
         return new Scope(scoped, scoped ? view : List.of(-1L), false);

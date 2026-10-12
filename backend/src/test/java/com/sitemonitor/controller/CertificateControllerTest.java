@@ -803,6 +803,26 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("Takım erişim paylaşımı (2026-10-12): EXECUTE yenileme ONAYLAYAMAZ (kayıt yazımı, 403); EDIT onaylar")
+    void healthConfirm_grantNeedsEdit() throws Exception {
+        com.sitemonitor.model.CertificateInventory inv = invOf(9L, 443);
+        inv.setDomain("paylasilan.example.com");
+        com.sitemonitor.model.LatestCheck lc = pendingRenewal("paylasilan.example.com");
+        when(inventoryRepo.findByDomain("paylasilan.example.com")).thenReturn(java.util.Optional.of(inv));
+        when(latestCheckRepo.findById("paylasilan.example.com")).thenReturn(java.util.Optional.of(lc));
+        MockHttpSession s = teamSession(5L);
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(java.util.List.of(9L)));
+        s.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new java.util.ArrayList<>(java.util.List.of(9L)));
+        mvc.perform(post("/api/certificates/paylasilan.example.com/health/confirm-renewal").session(s))
+                .andExpect(status().isForbidden());
+        verify(latestCheckRepo, never()).save(any());
+        s.setAttribute(SessionScope.ATTR_GRANT_EDIT, new java.util.ArrayList<>(java.util.List.of(9L)));
+        mvc.perform(post("/api/certificates/paylasilan.example.com/health/confirm-renewal").session(s))
+                .andExpect(r -> org.assertj.core.api.Assertions.assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        verify(latestCheckRepo).save(any());
+    }
+
+    @Test
     @DisplayName("A11: AUDIT yenileme ONAYLAYAMAZ ve tazeleme TETİKLEYEMEZ (403) — hiçbir şey yazılmaz/koşmaz")
     void healthWrites_audit_forbidden() throws Exception {
         com.sitemonitor.model.CertificateInventory inv = invOf(5L, 443);

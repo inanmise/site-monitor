@@ -6,7 +6,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import {
   UsersRound, PenLine, Headset, Plus, CircleCheck, CirclePause, TriangleAlert, Siren, History, Gauge, ScanSearch,
-  Trash2, Users, UserPlus, BellRing, CalendarClock,
+  Trash2, Users, UserPlus, BellRing, CalendarClock, Share2,
 } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 import TagInput from '../ui/TagInput.jsx'
@@ -654,6 +654,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       { label: t('team.edit'), icon: <PenLine />, onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
       { label: t('team.manageMembers'), icon: <UserPlus />, onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
       { label: t('team.menuViewMembers'), icon: <Users />, onClick: () => setMembersTeam(team) },
+      // Erişim paylaşımı (2026-10-12): paylaşım sekmesine bu takımla süzülü geçer; sunucu yine takımı yönetmeyi ister
+      { label: t('team.menuShare'), icon: <Share2 />, onClick: () => jumpAdmin('sharing', { g_team: team.id }), hidden: !canEditRow(team.id) },
       { label: t('team.menuContacts'), icon: <Siren />, onClick: () => jumpAdmin('contacts', { g_team: String(team.id) }) },
       { label: t('team.menuGroups'), icon: <BellRing />, onClick: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }) },
       // Nöbet çizelgesi (2026-10-11): herkes görür; yönetemeyen salt okunur görür (uç kapsamı uygular)

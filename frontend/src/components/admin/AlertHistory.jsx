@@ -597,9 +597,12 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           <Button type="button" variant="outline" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>
             <UserCheck aria-hidden="true" />{t('alh.ack')}
           </Button>
-          <Button type="button" variant="outline" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>
-            <BellRing aria-hidden="true" />{t('alh.renotify')}
-          </Button>
+          {/* Yalnız paylaşımla eylem yapılan alarmlar seçiliyse toplu yeniden bildirim yok (sunucu atlardı, 2026-10-12) */}
+          {alerts.some((a) => selected.has(a.id) && a.notify_scope !== false) && (
+            <Button type="button" variant="outline" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>
+              <BellRing aria-hidden="true" />{t('alh.renotify')}
+            </Button>
+          )}
           <Button type="button" variant="success" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('resolve')}>
             <CheckCircle2 aria-hidden="true" />{t('alh.resolveAction')}
           </Button>
@@ -646,7 +649,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   const detailProps = detail ? {
     nowMs, teamName: teamNameOf(detail.team_id), push: facets.push[String(detail.id)],
-    ...(actBlocked(detail) ? { actBlocked: actBlocked(detail) } : { onAck: ack, onResolve: resolve, onReNotify: reNotify }),
+    ...(actBlocked(detail) ? { actBlocked: actBlocked(detail) }
+      : { onAck: ack, onResolve: resolve, onReNotify: detail.notify_scope === false ? undefined : reNotify }),
     notifying: notifying === detail.id, onShowHistory: showSignatureHistory,
     nocCanWrite, nocFocusKey: nocFocus && String(nocFocus.id) === String(detail.id) ? nocFocus.n : 0, onNocChanged,
   } : null

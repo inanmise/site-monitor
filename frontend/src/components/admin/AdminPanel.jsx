@@ -9,6 +9,7 @@ import RecipientSimulator from './RecipientSimulator.jsx'
 import TeamManager from './TeamManager'
 import UserManager from './UserManager'
 import AdminOverviewStrip from './AdminOverviewStrip.jsx'
+import TeamAccessManager from './access/TeamAccessManager.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 
 const TAB_GROUPS = [
@@ -34,6 +35,8 @@ const TAB_GROUPS = [
     tabs: [
       { id: 'teams', labelKey: 'admin.tabTeams', adminOnly: false },
       { id: 'users', labelKey: 'admin.tabUsers', adminOnly: false },
+      // Erişim paylaşımı (2026-10-12): herkes görür ("Sizinle paylaşılanlar"); paylaşım ekleme takımı yönetene açık
+      { id: 'sharing', labelKey: 'admin.tabSharing', adminOnly: false },
     ],
   },
 ]
@@ -114,6 +117,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
               defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
           )}
           {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} onJump={jump} />}
+          {activeTab === 'sharing'    && <TeamAccessManager />}
           {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}
         </TabsContent>
       </Tabs>

@@ -649,6 +649,14 @@ public class UserService {
         return new ArrayList<>(ids);
     }
 
+    /** Verilen takım id'leri → ad, TEK sorgu (bulunamayan yok) — /me erişim paylaşımı listesi (2026-10-12). */
+    public Map<Long, String> teamNameMap(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return Map.of();
+        Map<Long, String> byId = new HashMap<>();
+        teamRepo.findAllById(ids).forEach(t -> byId.put(t.getId(), t.getName()));
+        return byId;
+    }
+
     /** Verilen takım id'lerini ada çevirir (sıra korunur, bulunamayanlar atlanır) — /me için. */
     public List<String> teamNamesFor(Collection<Long> ids) {
         if (ids == null || ids.isEmpty()) return List.of();

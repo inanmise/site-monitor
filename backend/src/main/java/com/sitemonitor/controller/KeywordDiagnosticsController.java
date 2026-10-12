@@ -150,7 +150,7 @@ public class KeywordDiagnosticsController {
     }
 
     private static void requireOperate(HttpSession session, KeywordMonitor m) {
-        if (!SessionScope.canOperateTeam(session, m.getTeamId())) {
+        if (!SessionScope.canExecuteTeam(session, m.getTeamId())) {
             throw new SecurityException(Msg.t("Bu takımın izlemesinde tanılama çalıştıramazsınız.",
                     "You cannot run diagnostics on this team's monitor."));
         }
