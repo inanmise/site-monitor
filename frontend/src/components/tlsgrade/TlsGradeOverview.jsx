@@ -31,6 +31,7 @@ const NOTIFY_META = {
   maintenance: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
   no_team: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
   no_recipient: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
+  failed: { icon: MailX, cls: 'border-destructive/30 bg-destructive/10 text-destructive' },
 }
 
 function NotifyBadge({ code, at }) {

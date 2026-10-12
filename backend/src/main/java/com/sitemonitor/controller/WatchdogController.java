@@ -63,12 +63,31 @@ public class WatchdogController {
     @PostMapping("/api/admin/system/watchdog/evaluate")
     public ResponseEntity<Map<String, Object>> evaluate(HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "system_health.actions", "execute");
-        WatchdogService.Round r = watchdog.evaluate(Instant.now());
+        if (!watchdog.enabled()) {
+            return conflict("WATCHDOG_DISABLED", Msg.t(
+                    "Kendi kendini izleme kapalı; değerlendirme yapılmadı. Ayarlar → Genel Ayarlar → Kendi kendini izleme'den açın.",
+                    "Self-monitoring is turned off, so nothing was evaluated. Turn it on under Settings → General → Self-monitoring."));
+        }
+        java.util.Optional<WatchdogService.Round> run = watchdog.evaluateManually(Instant.now());
+        if (run.isEmpty()) {
+            return conflict("WATCHDOG_BUSY", Msg.t(
+                    "Şu an başka bir değerlendirme sürüyor; birkaç saniye sonra yeniden deneyin.",
+                    "Another evaluation is running right now; try again in a few seconds."));
+        }
+        WatchdogService.Round r = run.get();
         auditService.recordAction("WATCHDOG_EVALUATE", session, request, "SYSTEM", "watchdog",
                 "{\"alerts\":" + r.alerts() + ",\"reminders\":" + r.reminders() + ",\"recoveries\":" + r.recoveries() + "}");
         Map<String, Object> data = new LinkedHashMap<>(watchdog.adminStatus(Instant.now()));
         data.put("round", Map.of("alerts", r.alerts(), "reminders", r.reminders(), "recoveries", r.recoveries(), "notification", r.outcome()));
         return ok(Map.of("data", data));
+    }
+
+    private static ResponseEntity<Map<String, Object>> conflict(String code, String message) {
+        Map<String, Object> err = new LinkedHashMap<>();
+        err.put("success", false);
+        err.put("code", code);
+        err.put("error", message);
+        return ResponseEntity.status(409).body(err);
     }
 
     @PostMapping("/api/admin/system/watchdog/test")

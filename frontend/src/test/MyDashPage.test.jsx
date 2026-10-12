@@ -181,10 +181,11 @@ describe('MyDashPage', () => {
     expect(screen.getByRole('button', { name: /^(TV mode|TV modu)$/ })).toBeDisabled()
   })
 
-  it('kutu hatası: önce veri vardıysa "son veriler" notu, yoksa sunucu metni', async () => {
+  it('kutu hatası: önce veri vardıysa "son veriler" notu, yoksa gövdede "veriler alınamadı" + sunucu metni (yeşil özet yok)', async () => {
     api.getActivity.mockResolvedValue({ success: false, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra yeniden deneyin.' })
     render(<Shell initial={{ v: 1, widgets: [{ id: 'activity', type: 'activity', size: 'md' }, { id: 'cert', type: 'cert_expiring', size: 'sm' }] }}><MyDashPage /></Shell>)
-    await waitFor(() => expect(widget('activity').querySelector('[data-slot="mydash-widget-error"]')).toHaveTextContent(/yanıt vermiyor/))
+    await waitFor(() => expect(widget('activity').querySelector('[data-slot="mydash-widget-failed"]')).toHaveTextContent(/yanıt vermiyor/))
+    expect(widget('activity').getAttribute('data-tone')).toBe('muted')
     await waitFor(() => expect(widget('cert_expiring').querySelector('[data-slot="mydash-cert-7"]')).toHaveTextContent('2'))
     api.getStats.mockResolvedValue({ success: false, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra yeniden deneyin.' })
     fireEvent.click(screen.getByRole('button', { name: /^(Refresh|Yenile)$/ }))

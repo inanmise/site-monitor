@@ -129,7 +129,9 @@ public class SecretRotationService {
             cur += c.current();
             prev += c.previous();
             bad += c.unreadable();
-            anyError |= c.error() != null;
+            // Sayım tavanda kesildiyse (konumda MAX_ROWS'tan fazla satır) tavan sonrası satırlar hiç okunmadı: önceki anahtar
+            // onlarda olabilir → "kaldırılabilir" denmez (2026-10-12).
+            anyError |= c.error() != null || c.truncated();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", c.loc().id());
             m.put("label", Msg.t(c.loc().labelTr(), c.loc().labelEn()));
@@ -150,7 +152,7 @@ public class SecretRotationService {
         totals.put("unreadable", bad);
         out.put("totals", totals);
         out.put("locations", locs);
-        // Önceki anahtar ancak hiçbir değer ona bağlı değilken (ve sayım tamken) güvenle kaldırılır
+        // Önceki anahtar ancak hiçbir değer ona bağlı değilken (ve sayım hatasız + TAM iken) güvenle kaldırılır
         out.put("previous_removable", cipher.isPreviousKeyConfigured() && prev == 0 && !anyError);
         out.put("can_reencrypt", cipher.isKeyConfigured() && cipher.isPreviousKeyConfigured() && prev > 0);
         return out;

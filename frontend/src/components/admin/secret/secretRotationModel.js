@@ -11,7 +11,7 @@ export const ROTATION_FILTERS = ['all', 'current', 'previous', 'unreadable']
  *  - `dev_key`     güncel anahtar ayarlı değil (gömülü geliştirme anahtarı) — önce gerçek anahtar.
  *  - `pending`     önceki anahtar ayarlı ve ona bağlı değer var — yeniden şifrele.
  *  - `done`        önceki anahtar ayarlı, ona bağlı değer kalmadı — önceki anahtarı kaldır.
- *  - `incomplete`  önceki anahtar ayarlı ama sayım eksik (bir konum okunamadı) — kaldırma önerilmez.
+ *  - `incomplete`  önceki anahtar ayarlı ama sayım eksik (bir konum okunamadı ya da sayım tavanına ulaştı) — kaldırma önerilmez.
  *  - `unreadable`  önceki anahtar yok ve hiçbir anahtarla çözülemeyen değer var — eski anahtarı önceki olarak ver ya da
  *                  değerleri yeniden gir.
  *  - `steady`      döndürme yok, her şey güncel anahtarda.
@@ -23,6 +23,8 @@ export function rotationPhase(status) {
   if (!key.current_configured) return 'dev_key'
   if (key.previous_configured) {
     if ((totals.previous || 0) > 0) return 'pending'
+    // Hiçbir anahtarla çözülemeyen değer varken "tüm değerler güncel anahtarda" denmez (2026-10-12)
+    if ((totals.unreadable || 0) > 0) return 'unreadable'
     return status.previous_removable ? 'done' : 'incomplete'
   }
   if ((totals.unreadable || 0) > 0) return 'unreadable'

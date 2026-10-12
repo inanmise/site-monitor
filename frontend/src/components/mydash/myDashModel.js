@@ -283,7 +283,8 @@ export function statusSummary(sp, limit = 5) {
     .sort((a, b) => (STATE_RANK[b.state] - STATE_RANK[a.state]) || String(a.since || '').localeCompare(String(b.since || '')))
   const worst = services.reduce((acc, s) => (STATE_RANK[s?.state] > STATE_RANK[acc] ? s.state : acc), services.length ? 'operational' : 'no_data')
   return {
-    total: services.length, counts, problems: problems.slice(0, limit), problemsMore: Math.max(0, problems.length - limit), worst,
+    total: services.length, counts, problems: problems.slice(0, limit), problemsMore: Math.max(0, problems.length - limit),
+    problemCount: problems.length, worst,
     tone: worst === 'major_outage' || worst === 'partial_outage' ? 'danger' : worst === 'degraded' ? 'warning' : services.length ? 'success' : 'muted',
   }
 }

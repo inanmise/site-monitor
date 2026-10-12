@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter;
 /**
  * Kontrol durum geçişi — SAF (2026-10-11). Tek bir kötü ölçüm alarm yapmaz: {@code confirm} ardışık sorunlu ölçüm
  * PROBLEM'e, aynı sayıda sağlıklı ölçüm OK'e geçirir. PROBLEM sürerken {@code reminderHours} (0 = hiç) dolunca bir
- * hatırlatma. UNKNOWN (ölçülemedi) ve NA (uygulanmaz) sayaçları değiştirmez — ölçülemeyen kontrol ne alarm ne iyileşme
+ * hatırlatma. UNKNOWN (ölçülemedi) sayaçları değiştirmez — ölçülemeyen kontrol ne alarm ne iyileşme
  * üretir. Önem ölçümden gelir (örn. veritabanı DOWN → CRITICAL).
  *
  * <p><b>Teslim edilemeyen bildirim kaybolmaz:</b> hiçbir kanaldan gidemeyen açılış / hatırlatma ({@code *_FAILED})
@@ -84,8 +84,21 @@ public final class WatchdogTransition {
                 if (!"PROBLEM".equals(state.getStatus())) state.setSeverity(null);
                 return Action.NONE;
             }
+            case NA -> {
+                // Uygulanmaz (2026-10-12): kontrolün konusu kalmadı (ör. kişisel push kapatıldı). Açık sorun bu durumda hiç
+                // kapanamaz ve genel durumu sonsuza dek "sorunlu" tutardı → sorun kapatılır ve kapanış bildirilir.
+                state.setProblemStreak(0);
+                state.setOkStreak(0);
+                if ("PROBLEM".equals(state.getStatus())) {
+                    state.setStatus("OK");
+                    state.setSince(nowIso);
+                    return Action.RECOVER;
+                }
+                state.setSeverity(null);
+                return Action.NONE;
+            }
             default -> {
-                return Action.NONE;   // UNKNOWN / NA: sayaçlar değişmez
+                return Action.NONE;   // UNKNOWN: ölçülemedi — sayaçlar değişmez
             }
         }
     }

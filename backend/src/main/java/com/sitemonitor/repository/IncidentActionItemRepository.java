@@ -35,9 +35,9 @@ public interface IncidentActionItemRepository extends JpaRepository<IncidentActi
     /**
      * Olaylar arası aksiyon listesi: kapsam = olay kaydı okuma kapsamı (takım ya da giren takım) VEYA aksiyonun sahibi
      * olmak (başka takımın olayından size atanan iş de listenizde). Sıra: son tarihi olanlar önce (yakın tarih üstte),
-     * sonra yeni eklenen. Satır: [aksiyon, olay başlığı, olay takım adı, olay önem derecesi].
+     * sonra yeni eklenen. Satır: [aksiyon, olay başlığı, olay takım adı, olay önem derecesi, olay takımı, giren takım].
      */
-    @Query(value = "SELECT a, r.title, r.teamName, r.severity FROM IncidentActionItem a, IncidentRecord r WHERE a.incidentId = r.id"
+    @Query(value = "SELECT a, r.title, r.teamName, r.severity, r.teamId, r.createdByTeamId FROM IncidentActionItem a, IncidentRecord r WHERE a.incidentId = r.id"
             + SCOPE
             + " AND (:mineOnly = false OR a.ownerUserId = :me)"
             + " AND a.status IN :statuses"

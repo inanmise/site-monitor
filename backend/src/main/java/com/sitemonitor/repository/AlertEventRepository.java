@@ -125,6 +125,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("UPDATE AlertEvent e SET e.lastReAlertAt = :at WHERE e.id IN :ids AND e.resolved = false")
     int stampNotifiedByQuietDigest(@Param("ids") Collection<Long> ids, @Param("at") String at);
 
+    /** Nöbetçi olarak bildirilen adresler (2026-10-12) — çözüm e-postasının nöbetçi alıcıları; hedefli okuma. */
+    @Query(value = "SELECT oncall_emails FROM alert_events WHERE id = :id", nativeQuery = true)
+    String findOncallEmails(@Param("id") Long id);
+
+    /** Nöbetçi adreslerini yazar — yalnız bu sütun (varlık kaydı onu ezmez: insertable/updatable=false). */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE alert_events SET oncall_emails = :emails WHERE id = :id", nativeQuery = true)
+    int setOncallEmails(@Param("id") Long id, @Param("emails") String emails);
+
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "

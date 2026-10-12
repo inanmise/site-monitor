@@ -108,6 +108,13 @@ public class AlertEvent {
      *  Set edildiğinde bireysel bildirim bastırılır (toplu alarm/recovery storm üzerinden gider). */
     private Long stormId;
 
+    /** Açılış / yükseltme / hatırlatma e-postasını NÖBETÇİ olarak alan adresler (2026-10-12, virgüllü). Çözüm e-postası
+     *  yalnız bunlara gider — devirden sonra yeni nöbetçiye, görmediği alarmın "çözüldü"sü gitmez. Yalnız hedefli UPDATE
+     *  yazar ({@code AlertEventRepository.setOncallEmails}); varlık kaydı ezmesin diye salt okunur, istemciye gitmez. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "oncall_emails", columnDefinition = "TEXT", insertable = false, updatable = false)
+    private String oncallEmails;
+
     /** Monitörün grubu (group_name) — per-group storm scoping için oluşturulurken damgalanır (yalnız
      *  per-group modu açıkken StormService tarafından çözülür); cert-envanteri/grupsuz izlemede null. */
     @Column(name = "group_name")
@@ -122,6 +129,9 @@ public class AlertEvent {
     /** Takım rozeti (tıklanabilir) için kimlik — adla değil id ile modal açılsın. */
     @Transient private Long    syTeamId;
     @Transient private Long    ugTeamId;
+    /** Alarmın SAHİP takımları (2026-10-12, {@code AlertOwnership.ownerTeamIds}): bağımsız alarmda yalnız damga, envanter gibi
+     *  yönlenen alarmda damga + SY + UG. Nöbetçi gösterimi buna bakar — envanter SY/UG'si bağımsız alarmın sahibi değildir. */
+    @Transient private java.util.List<Long> ownerTeamIds;
     @Transient private Integer certTier;
     /** Sertifika alarmının kaynağı (2026-10-08, Alarm Geçmişi izleme tipi rozeti): yalnız dosyadan yüklenen (MANUAL)
      *  kayıtta dolu — arayüz "Manuel sertifika" der. Ağ kaydında ve diğer alarm türlerinde YAZILMAZ (null). */

@@ -322,7 +322,10 @@ public class LdapDirectoryService {
     List<GroupMembers> membersOn(LdapContext ctx, LdapSettings s, List<String> specs) throws Exception {
         List<GroupMembers> out = new ArrayList<>();
         String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank()) ? s.getUserAttribute() : "sAMAccountName";
-        String groupBase = (s.getGroupSearchBase() != null && !s.getGroupSearchBase().isBlank()) ? s.getGroupSearchBase() : s.getBaseDn();
+        // CN kuralı TÜM dizinde aranır (2026-10-12): girişte eşleme kullanıcının memberOf DN'lerinin CN'ine bakar, grubun nerede
+        // durduğuna değil. Grup arama tabanıyla sınırlamak, taban dışındaki bir grubun üyelerini önizlemede "değişmez" gösterip
+        // anahtar açılınca rollerini değiştirirdi.
+        String groupBase = s.getBaseDn();
         for (String spec : specs) {
             if (spec == null || spec.isBlank()) { out.add(new GroupMembers(spec, List.of(), java.util.Set.of(), false)); continue; }
             String trimmed = spec.trim();

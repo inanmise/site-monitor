@@ -243,6 +243,40 @@ class UserPushPreferencesTest {
         }
 
         @Test
+        @DisplayName("2026-10-12 elle gönderim: takım push'unu bu gönderimde ALMIŞ nöbetçiye ikinci push yazılmaz; almamışa yazılır")
+        void onCallResend_noSecondPush() {
+            event("HIGH");
+            when(resolver.resolveContact(any(), eq("HIGH"), any())).thenReturn(new UserPushRecipientResolver.ContactMatch(
+                    new UserPushRecipientResolver.Recipient("N00009", "Nöbetçi", null), null));
+            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(true);
+            assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isNull();
+            assertThat(store).isEmpty();
+            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(false);
+            assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isEqualTo("PENDING");
+            assertThat(store).singleElement().satisfies(d -> assertThat(d.getDedupeKey()).startsWith("ONCALL:RESEND:"));
+        }
+
+        @Test
+        @DisplayName("2026-10-12 önizleme: gönderimde eklenecek nöbetçi push listesinde (takımdakiyle aynıysa tek satır)")
+        void previewListsOnCall() {
+            event("HIGH");
+            when(resolver.resolve(5L, "HIGH")).thenReturn(List.of(new UserPushRecipientResolver.Recipient("N00001", "Üye", null)));
+            when(resolver.resolveContact(any(), eq("HIGH"), any())).thenAnswer(i -> {
+                com.sitemonitor.model.EscalationContact c = i.getArgument(0);
+                String u = c.getUserId() == 77L ? "N00009" : "N00001";
+                return new UserPushRecipientResolver.ContactMatch(new UserPushRecipientResolver.Recipient(u, u, null), null);
+            });
+            var oncall = List.of(
+                    new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(5L, 77L, "N00009", "Nöbetçi", null, true, false, null),
+                    new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(5L, 1L, "N00001", "Üye", null, true, false, null));
+            var p = service.preview(9L, 5L, oncall);
+            assertThat(p.blockReason()).isNull();
+            assertThat(p.recipients()).extracting(UserPushService.PushPreviewRow::username).containsExactly("N00001", "N00009");
+            assertThat(service.preview(9L, 5L)).extracting(UserPushService.PushPreview::recipients)
+                    .satisfies(r -> assertThat(r).hasSize(1));
+        }
+
+        @Test
         @DisplayName("tercih nedenleri satıra YAZILIR (sessiz kayıp yok); aile süzgeci olayın ailesiyle uygulanır")
         void preferenceSkips_areWrittenAsRows() {
             event("HIGH");

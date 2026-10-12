@@ -325,6 +325,9 @@ public class IncidentPostmortemService {
             if (ownerId == null) {
                 a.setOwnerUserId(null);
                 a.setOwnerName(null);
+            } else if (ownerId.equals(a.getOwnerUserId())) {
+                // Değişmeyen sahip yeniden doğrulanmaz (2026-10-12): sahip sonradan pasifleştiyse başlık / tarih düzenlemesi
+                // 400 ile kilitlenmesin — düzenlemede değişmeyen değer kuraldan muaftır (proje kuralı).
             } else {
                 AppUser u = userRepo.findById(ownerId).orElse(null);
                 if (u == null) {
@@ -397,6 +400,17 @@ public class IncidentPostmortemService {
     /** Olaylar arası aksiyon listesi + sayaçlar. */
     public Map<String, Object> search(boolean scoped, List<Long> scope, Long me, boolean mineOnly, String status,
                                       boolean overdueOnly, String q, int page, int size) {
+        return search(scoped, scope, me, mineOnly, status, overdueOnly, q, page, size, null);
+    }
+
+    /**
+     * {@code canOpen}: (olay takımı, giren takım) → çağıran olayı OKUYABİLİR mi. Satır {@code can_open} taşır (2026-10-12):
+     * başka takımın olayından size atanan aksiyon listede görünür ama olayın kendisi açılamaz — "Olayı aç" gizlenir.
+     * null → hepsi açılabilir (eski davranış).
+     */
+    public Map<String, Object> search(boolean scoped, List<Long> scope, Long me, boolean mineOnly, String status,
+                                      boolean overdueOnly, String q, int page, int size,
+                                      java.util.function.BiPredicate<Long, Long> canOpen) {
         List<Long> sc = scope == null || scope.isEmpty() ? List.of(-1L) : scope;
         List<String> statuses = switch (status == null ? "open" : status.toLowerCase(Locale.ROOT)) {
             case "done" -> List.of("DONE", "CANCELLED");
@@ -416,6 +430,9 @@ public class IncidentPostmortemService {
             m.put("incident_team_name", r[2]);
             m.put("incident_severity", r[3]);
             m.put("mine", me != null && me.equals(((IncidentActionItem) r[0]).getOwnerUserId()));
+            Long teamId = r.length > 4 && r[4] instanceof Number n4 ? Long.valueOf(n4.longValue()) : null;
+            Long createdBy = r.length > 5 && r[5] instanceof Number n5 ? Long.valueOf(n5.longValue()) : null;
+            m.put("can_open", canOpen == null || canOpen.test(teamId, createdBy));
             rows.add(m);
         }
         Map<String, Object> totals = new LinkedHashMap<>();

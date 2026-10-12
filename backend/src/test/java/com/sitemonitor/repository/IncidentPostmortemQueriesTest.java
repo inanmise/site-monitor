@@ -107,6 +107,8 @@ class IncidentPostmortemQueriesTest {
         Page<Object[]> scoped = actions.search(true, List.of(5L), 77L, false, open, false, TODAY, "", PageRequest.of(0, 50));
         assertThat(titles(scoped)).containsExactly("Runbook yaz", "Alarm eşiği", "Girdiğimiz olayın işi", "Bana atanan yabancı iş", "Tarihsiz iş");
         assertThat(scoped.getContent().get(0)[1]).isEqualTo("Ödeme kesintisi");
+        // 2026-10-12: satır olayın takım + giren takım kimliğini de taşır ("Olayı aç" okuma kapısı sunucuda hesaplanır)
+        assertThat(scoped.getContent().get(0)).hasSize(6);
 
         assertThat(titles(actions.search(true, List.of(-1L), null, false, open, false, TODAY, "", PageRequest.of(0, 50)))).isEmpty();
         assertThat(titles(actions.search(false, List.of(-1L), null, false, open, false, TODAY, "", PageRequest.of(0, 50)))).hasSize(6);

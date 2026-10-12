@@ -109,11 +109,14 @@ class IncidentPostmortemControllerTest {
         mvc.perform(get("/api/incidents/1/postmortem").session(session(3, 5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.postmortem.status").value("DRAFT"))
-                .andExpect(jsonPath("$.data.can_edit").value(true))
+                .andExpect(jsonPath("$.data.can_edit").value(false))   // yalnız okuma izni → düzenleme düğmeleri yok (2026-10-12)
                 .andExpect(jsonPath("$.data.actions[0].mine").value(true))
                 .andExpect(jsonPath("$.data.actions[1].mine").value(false))
                 .andExpect(jsonPath("$.data.me").doesNotExist());
         verify(pm).timeline(eq(own), eq(false), any());   // alerts.read yok → alarm satırları istenmez
+        grant("incidents.manage", "edit");
+        mvc.perform(get("/api/incidents/1/postmortem").session(session(3, 5L)))
+                .andExpect(jsonPath("$.data.can_edit").value(true));
     }
 
     @Test
@@ -197,10 +200,10 @@ class IncidentPostmortemControllerTest {
     void listActions() throws Exception {
         mvc.perform(get("/api/incidents/actions").session(session(7, 5L))).andExpect(status().isForbidden());
         grant("incidents.view", "view");
-        when(pm.search(anyBoolean(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), anyInt(), anyInt()))
+        when(pm.search(anyBoolean(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(Map.of("items", List.of(), "total", 0));
         mvc.perform(get("/api/incidents/actions?status=open&mine=true&overdue=true&q=ödeme").session(session(7, 5L)))
                 .andExpect(status().isOk());
-        verify(pm).search(eq(true), eq(List.of(5L)), eq(7L), eq(true), eq("open"), eq(true), eq("ödeme"), eq(0), eq(50));
+        verify(pm).search(eq(true), eq(List.of(5L)), eq(7L), eq(true), eq("open"), eq(true), eq("ödeme"), eq(0), eq(50), any());
     }
 }

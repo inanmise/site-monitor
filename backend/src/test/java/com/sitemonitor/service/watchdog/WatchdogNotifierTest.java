@@ -119,4 +119,35 @@ class WatchdogNotifierTest {
         assertThat(r.push()).isEqualTo("SENT");
         verify(push, times(2)).sendDirect(anyString(), anyString(), anyString());
     }
+
+    @Test
+    @DisplayName("2026-10-12: e-posta kanalı kapalı / alıcılar pasif (SKIPPED…) bir deneme değildir → NO_CHANNEL (15 dk'da bir sonsuz yeniden deneme yok)")
+    void skippedEmailIsNoChannel() {
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("SKIPPED_DISABLED");
+        assertThat(n.send(items, false).outcome()).isEqualTo(WatchdogNotifier.Outcome.NO_CHANNEL);
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("SKIPPED: pasif kullanıcı");
+        assertThat(n.send(items, false).outcome()).isEqualTo(WatchdogNotifier.Outcome.NO_CHANNEL);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: pasif hesaba sistem push'u gitmez (izde sayılır); İngilizce push dili seçen kişiye İngilizce metin")
+    void pushSkipsPassiveAndFollowsLanguage() {
+        com.sitemonitor.repository.AppUserRepository users = mock(com.sitemonitor.repository.AppUserRepository.class);
+        n.setUsers(users);
+        com.sitemonitor.model.AppUser passive = new com.sitemonitor.model.AppUser();
+        passive.setUsername("N11111"); passive.setActive(false);
+        com.sitemonitor.model.AppUser en = new com.sitemonitor.model.AppUser();
+        en.setUsername("N22222"); en.setActive(true); en.setPushLang("en");
+        when(users.findByUsername("N11111")).thenReturn(java.util.Optional.of(passive));
+        when(users.findByUsername("N22222")).thenReturn(java.util.Optional.of(en));
+        when(settings.getString(eq(WatchdogSettings.KEY_PUSH_USERS), any())).thenReturn("N11111, N22222");
+        when(push.gatewayConfigured()).thenReturn(true);
+        when(push.sendDirect(anyString(), anyString(), anyString())).thenReturn(new UserPushService.DirectResult(true, 200, null));
+        List<WatchdogMail.Item> bilingual = List.of(new WatchdogMail.Item("ALERT", "Sertifika taraması", "HIGH", "gecikti",
+                "Certificate sweep", "is late"));
+        WatchdogNotifier.Report r = n.send(bilingual, false);
+        verify(push, never()).sendDirect(eq("N11111"), anyString(), anyString());
+        verify(push).sendDirect(eq("N22222"), eq("[Site Monitor] Application problem: Certificate sweep"), eq("Certificate sweep: problem — is late"));
+        assertThat(r.push()).isEqualTo("SENT · 1 pasif kullanıcı atlandı");
+    }
 }

@@ -91,14 +91,31 @@ class WatchdogControllerTest {
     }
 
     @Test
-    @DisplayName("şimdi değerlendir: eylem izni + denetim; tur özeti döner")
+    @DisplayName("şimdi değerlendir: eylem izni + denetim; tur özeti döner (kümede zamanlanmış turla aynı kilit)")
     void evaluate() throws Exception {
-        when(watchdog.evaluate(any())).thenReturn(new WatchdogService.Round(6, 1, 0, 0, "DELIVERED", false));
+        when(watchdog.enabled()).thenReturn(true);
+        when(watchdog.evaluateManually(any())).thenReturn(java.util.Optional.of(new WatchdogService.Round(6, 1, 0, 0, "DELIVERED", false)));
         when(watchdog.adminStatus(any())).thenReturn(Map.of("status", "DEGRADED"));
         mvc.perform(post("/api/admin/system/watchdog/evaluate").session(session("admin", "ADMIN", true)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.round.alerts").value(1))
                 .andExpect(jsonPath("$.data.status").value("DEGRADED"));
         verify(auditService).recordAction(eq("WATCHDOG_EVALUATE"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("SYSTEM"), eq("watchdog"), anyString());
+        verify(watchdog, never()).evaluate(any());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: kapalıyken değerlendirme yok (409 WATCHDOG_DISABLED); başka pod'da tur sürüyorsa 409 WATCHDOG_BUSY")
+    void evaluateDisabledOrBusy() throws Exception {
+        MockHttpSession admin = session("admin", "ADMIN", true);
+        when(watchdog.enabled()).thenReturn(false);
+        mvc.perform(post("/api/admin/system/watchdog/evaluate").session(admin))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("WATCHDOG_DISABLED"));
+        verify(watchdog, never()).evaluateManually(any());
+        when(watchdog.enabled()).thenReturn(true);
+        when(watchdog.evaluateManually(any())).thenReturn(java.util.Optional.empty());
+        mvc.perform(post("/api/admin/system/watchdog/evaluate").session(admin))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("WATCHDOG_BUSY"));
+        verify(auditService, never()).recordAction(eq("WATCHDOG_EVALUATE"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
     }
 }

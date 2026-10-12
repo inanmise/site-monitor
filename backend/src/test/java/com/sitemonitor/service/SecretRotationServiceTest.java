@@ -201,6 +201,17 @@ class SecretRotationServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: sayım tavanda kesilen konum (truncated) varken önceki anahtar 'kaldırılabilir' denmez")
+    void truncatedCountIsNotRemovable() {
+        var loc = SecretRotationService.LOCATIONS.get(0);
+        var full = new SecretRotationService.LocationCount(loc, 10, 10, 0, 0, List.of(), false, null);
+        var cut = new SecretRotationService.LocationCount(loc, SecretRotationService.MAX_ROWS, SecretRotationService.MAX_ROWS, 0, 0,
+                List.of(), true, null);
+        assertThat(svc.statusJson(List.of(full))).containsEntry("previous_removable", true);
+        assertThat(svc.statusJson(List.of(full, cut))).containsEntry("previous_removable", false);
+    }
+
+    @Test
     @DisplayName("bozuk JSON okunamayan sayılır ve yeniden yazılmaz")
     void brokenJson() {
         jdbc.update("INSERT INTO scripted_monitors VALUES (7, 'Bozuk', ?)", "{enc:v1:yarim");

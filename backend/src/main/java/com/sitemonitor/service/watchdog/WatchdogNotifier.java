@@ -48,6 +48,7 @@ public class WatchdogNotifier {
     private final NotificationLogRepository logs;
     private WebhookService webhooks;
     private UserPushService push;
+    private com.sitemonitor.repository.AppUserRepository users;
     private SystemMaintenanceService maintenance;
 
     @Value("${site.monitor.system-admin.email:}")
@@ -61,6 +62,7 @@ public class WatchdogNotifier {
 
     @Autowired(required = false) @Lazy public void setWebhooks(WebhookService v) { this.webhooks = v; }
     @Autowired(required = false) @Lazy public void setPush(UserPushService v) { this.push = v; }
+    @Autowired(required = false) public void setUsers(com.sitemonitor.repository.AppUserRepository v) { this.users = v; }
     @Autowired(required = false) @Lazy public void setMaintenance(SystemMaintenanceService v) { this.maintenance = v; }
 
     public Report send(List<WatchdogMail.Item> items, boolean test) {
@@ -78,13 +80,17 @@ public class WatchdogNotifier {
         if (to.isEmpty()) {
             emailStatus = "SKIPPED: alıcı yok";
         } else {
-            anyAttempt = true;
             try {
-                MailDoc.Mail mail = WatchdogMail.build(items, test, settings.getString("site.monitor.app.base-url", ""));
+                MailDoc.Mail mail = WatchdogMail.build(items, test, settings.getString("site.monitor.app.base-url", ""),
+                        WatchdogSettings.confirm(settings));
                 String st = email.sendHtml(to.toArray(String[]::new), null, subject, mail.html(), null);
                 emailStatus = st == null ? "FAILED: yanıt yok" : st;
+                // E-posta kanalı kapalı / alıcıların hepsi pasif (SKIPPED…) bir teslim DENEMESİ değildir (2026-10-12): FAILED sayılsa
+                // açık sorun 15 dk'da bir sonsuza dek yeniden "gönderilmeye" çalışılırdı.
+                if (!emailStatus.startsWith("SKIPPED")) anyAttempt = true;
                 if (st != null && (st.startsWith("SENT") || st.startsWith("QUEUED"))) anyOk = true;
             } catch (Exception e) {
+                anyAttempt = true;
                 emailStatus = "FAILED: " + clip(e.getMessage(), 180);
                 log.warn("Kendi kendini izleme e-postası gönderilemedi: {}", e.toString());
             }
@@ -113,16 +119,24 @@ public class WatchdogNotifier {
         } else if (!push.gatewayConfigured()) {
             pushStatus = "SKIPPED: push ağ geçidi yapılandırılmamış";
         } else {
-            anyAttempt = true;
-            int ok = 0;
+            int ok = 0, passive = 0, tried = 0;
             for (String u : users) {
+                // Pasif hesap sistem push'u da almaz (2026-10-12; e-posta yolu pasif adresi zaten düşürüyordu). Hesabı
+                // olmayan tanımlayıcıya bugünkü gibi gönderilir. Metin alıcının push diline göre (TR / EN).
+                com.sitemonitor.model.AppUser acc = lookup(u);
+                if (acc != null && Boolean.FALSE.equals(acc.getActive())) { passive++; continue; }
+                boolean en = acc != null && com.sitemonitor.service.PushI18n.isEn(acc.getPushLang());
+                tried++;
                 try {
-                    if (push.sendDirect(u, subject, plain(items)).ok()) ok++;
+                    if (push.sendDirect(u, en ? WatchdogMail.subjectEn(items, test) : subject, plain(items, en)).ok()) ok++;
                 } catch (Exception e) {
                     log.warn("Kendi kendini izleme push'u gönderilemedi ({}): {}", u, e.toString());
                 }
             }
-            pushStatus = ok == users.size() ? "SENT" : ok > 0 ? "PARTIAL " + ok + "/" + users.size() : "FAILED";
+            if (tried > 0) anyAttempt = true;
+            String skipped = passive > 0 ? " · " + passive + " pasif kullanıcı atlandı" : "";
+            pushStatus = tried == 0 ? "SKIPPED: pasif kullanıcı"
+                    : (ok == tried ? "SENT" : ok > 0 ? "PARTIAL " + ok + "/" + tried : "FAILED") + skipped;
             if (ok > 0) anyOk = true;
         }
 
@@ -142,20 +156,34 @@ public class WatchdogNotifier {
 
     /** Webhook / push gövdesi — satır başına "Kontrol: durum — ayrıntı". */
     static String plain(List<WatchdogMail.Item> items) {
+        return plain(items, false);
+    }
+
+    static String plain(List<WatchdogMail.Item> items, boolean en) {
         List<String> lines = new ArrayList<>();
         for (WatchdogMail.Item i : items) {
-            lines.add(i.label() + ": " + kindText(i.kind()) + (i.detail() == null || i.detail().isBlank() ? "" : " — " + i.detail()));
+            String d = i.detail(en);
+            lines.add(i.label(en) + ": " + kindText(i.kind(), en) + (d == null || d.isBlank() ? "" : " — " + d));
         }
         return String.join("\n", lines);
     }
 
-    private static String kindText(String kind) {
+    private static String kindText(String kind, boolean en) {
         return switch (kind == null ? "" : kind) {
-            case "ALERT" -> "sorun";
-            case "REMIND" -> "sürüyor";
-            case "RECOVER" -> "düzeldi";
+            case "ALERT" -> en ? "problem" : "sorun";
+            case "REMIND" -> en ? "ongoing" : "sürüyor";
+            case "RECOVER" -> en ? "recovered" : "düzeldi";
             default -> "test";
         };
+    }
+
+    private com.sitemonitor.model.AppUser lookup(String username) {
+        if (users == null || username == null) return null;
+        try {
+            return users.findByUsername(username.trim()).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String level(List<WatchdogMail.Item> items, boolean test) {

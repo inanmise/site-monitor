@@ -69,7 +69,9 @@ public class IncidentPostmortemController {
         Long me = sessionUserId(session);
         data.put("actions", pm.actions(inc.getId()).stream().map(a -> withMine(IncidentPostmortemService.actionDto(a, today), a, me)).toList());
         data.put("timeline", pm.timeline(inc, alerts, team -> SessionScope.canViewMonitoring(session, team)));
-        data.put("can_edit", canWrite(session, inc));
+        // Yazma uçlarıyla AYNI kural (2026-10-12): incidents.manage/edit + kendi takım kapsamı — yalnız okuyabilen (ör. AUDIT)
+        // düzenleme düğmeleri görüp her birinde 403 almasın.
+        data.put("can_edit", permissions.allows(session, "incidents.manage", "edit") && canWrite(session, inc));
         data.put("today", today);
         return ok(Map.of("data", data));
     }
@@ -156,7 +158,8 @@ public class IncidentPostmortemController {
         boolean all = SessionScope.seesAllMonitoring(session) || SessionScope.isGlobalViewer(session);
         List<Long> scope = all ? null : SessionScope.viewTeamIds(session);
         String query = q == null ? null : (q.length() > 200 ? q.substring(0, 200) : q);
-        return ok(Map.of("data", pm.search(!all, scope, sessionUserId(session), mine, status, overdue, query, page, size)));
+        return ok(Map.of("data", pm.search(!all, scope, sessionUserId(session), mine, status, overdue, query, page, size,
+                (team, createdBy) -> IncidentController.canReadIncident(session, team, createdBy))));
     }
 
     // ── Yardımcılar ─────────────────────────────────────────────────────────────────────────────────

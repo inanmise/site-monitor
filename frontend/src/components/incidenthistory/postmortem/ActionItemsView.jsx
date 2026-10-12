@@ -134,7 +134,7 @@ export default function ActionItemsView({ onOpenIncident }) {
           {items.map((a) => (
             <ActionRow key={a.id} action={a} today={today} canWrite={false} busy={busyId === a.id} onStatus={changeStatus}
               incident={{ title: a.incident_title, team: a.incident_team_name }}
-              onOpenIncident={onOpenIncident ? () => onOpenIncident(a.incident_id) : undefined} />
+              onOpenIncident={onOpenIncident && a.can_open !== false ? () => onOpenIncident(a.incident_id) : undefined} />
           ))}
         </ul>
       )}

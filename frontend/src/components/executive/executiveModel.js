@@ -232,20 +232,31 @@ export function noteText(t, sectionKey, n, lang) {
   return localized(t, `exec.note.${n.code}`, n.text, n.params, { lang })
 }
 
+/**
+ * Yenileme uyumunun ESKİ anlamı (2026-10-12): 2026-10-12'den önce gönderilmiş ayların kaydedilmiş özetinde `on_time_pct`
+ * "hedef süreden önce yenileme" oranıdır ve ipucu tek parametre (hedef gün) taşır. Yeni kural iki parametre taşır
+ * (yenileme, yenilenmeden dolan). Eski kayıt eski etiket ve ipucuyla gösterilir — yeni etiket altında eski değer yanıltırdı.
+ */
+export function legacyKpiCode(sectionKey, k) {
+  if (sectionKey === 'renewals' && k?.code === 'on_time_pct' && (k.hint_params || []).length < 2) return 'on_time_pct_legacy'
+  return k?.code
+}
+
 /** Gösterge etiketi + ipucu + değer + fark — çizim için hazır. */
 export function kpiView(t, sectionKey, k, lang) {
   const ctx = { t, lang }
+  const code = legacyKpiCode(sectionKey, k)
   const delta = k.delta == null ? null
     : k.delta_format === 'pp' ? formatValue(k.delta, 'pp', ctx)
       : k.delta_format === 'pct_change' ? formatValue(k.delta, 'pct_change', ctx)
         : fmtNumber(k.delta, lang, 1)
   return {
     code: k.code,
-    label: localized(t, keys.kpi(sectionKey, k.code), k.label),
+    label: localized(t, keys.kpi(sectionKey, code), k.label),
     value: formatValue(k.value, k.format, ctx),
     tone: k.tone || 'neutral',
     hint: k.hint == null && !(k.hint_params || []).length ? null
-      : localized(t, keys.hint(sectionKey, k.code), k.hint, k.hint_params, { lang }),
+      : localized(t, keys.hint(sectionKey, code), k.hint, k.hint_params, { lang }),
     delta,
     deltaTone: k.delta_tone || 'neutral',
   }

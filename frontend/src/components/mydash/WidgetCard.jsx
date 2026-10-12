@@ -32,9 +32,13 @@ export default function WidgetCard({
 }) {
   const t = useT()
   const { widget, edit, tv, canPrev, canNext, onMove, onResize, onRemove, dnd } = frame
+  // Hiç veri alınamadıysa (ilk yükleme hatası) gövde ÇİZİLMEZ: özet fonksiyonları boş veride "her şey yolunda" der ve duvar
+  // ekranı kesintide yeşil görünürdü (2026-10-12). Durum rozeti de gösterilmez; kutu "veri yok" der.
+  const failed = !!error && !at
   const showBody = !(loading && !at)
+  const shownTone = failed ? 'muted' : tone
   return (
-    <div data-slot="mydash-widget" data-type={widget.type} data-size={widget.size} data-tone={tone}
+    <div data-slot="mydash-widget" data-type={widget.type} data-size={widget.size} data-tone={shownTone} data-failed={failed || undefined}
       className={cn('min-w-0', tv ? null : SPAN_CLASS[widget.size], dnd?.over ? 'rounded-xl ring-2 ring-primary ring-offset-2 ring-offset-background' : null, className)}
       style={tv ? { gridColumn: `span ${frame.span || 1} / span ${frame.span || 1}` } : undefined}
       draggable={edit && !!dnd} onDragStart={dnd?.onDragStart} onDragEnd={dnd?.onDragEnd}
@@ -48,7 +52,7 @@ export default function WidgetCard({
               </span>
             )}
             <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
-            {toneLabel && <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>}
+            {toneLabel && !failed && <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>}
           </CardTitle>
           {description && !tv && <CardDescription className="[overflow-wrap:anywhere]">{description}</CardDescription>}
           {tab && !tv && !edit && (
@@ -92,10 +96,19 @@ export default function WidgetCard({
         )}
 
         <CardContent className={cn('@container flex min-w-0 flex-1 flex-col gap-3 px-4', tv && 'text-lg')}>
-          {showBody ? children : <LoadingBlock label={t('mydash.loading')} />}
+          {failed ? (
+            <div role="status" data-slot="mydash-widget-failed"
+              className={cn('flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300', tv && 'text-base')}>
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                <span className="block font-medium">{t('mydash.loadFailed')}</span>
+                {error && error !== 'error' && <span className="block text-xs text-muted-foreground">{error}</span>}
+              </span>
+            </div>
+          ) : showBody ? children : <LoadingBlock label={t('mydash.loading')} />}
         </CardContent>
 
-        {(error || at) && (
+        {at && (
           <div className={cn('flex flex-wrap items-center gap-1.5 px-4 text-xs text-muted-foreground', tv && 'text-sm')} data-slot="mydash-widget-foot">
             {error ? (
               <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300" role="status" data-slot="mydash-widget-error">

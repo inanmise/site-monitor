@@ -85,14 +85,26 @@ export function actionForm(a) {
   }
 }
 
-export function actionPayload(f) {
-  return {
+/**
+ * Form → gövde. Yeni aksiyonda tam gövde; DÜZENLEMEDE (`initial` = kayıtlı aksiyon) yalnız DEĞİŞEN alanlar ve asla
+ * `status` (formda durum alanı yok) — 2026-10-12: tam gövde, form açıkken sahibin "Tamamlandı" yaptığı aksiyonu yeniden
+ * Açık'a çeviriyor; sonradan pasifleşen değişmemiş sahip de her düzenlemeyi 400 ile kilitliyordu.
+ */
+export function actionPayload(f, initial = null) {
+  const full = {
     title: (f.title || '').trim(),
     description: (f.description || '').trim() || null,
     kind: f.kind, priority: f.priority, status: f.status,
     owner_user_id: f.owner_user_id === '' ? null : f.owner_user_id,
     due_date: f.due_date || null,
   }
+  if (!initial) return full
+  const base = actionPayload(actionForm(initial))
+  const out = {}
+  for (const k of Object.keys(full)) {
+    if (k !== 'status' && full[k] !== base[k]) out[k] = full[k]
+  }
+  return out
 }
 
 /** Aksiyon sayıları (rozet ve sekme başlığı). */
