@@ -21,7 +21,7 @@ async function mock(page, { dashboard = null } = {}) {
     if (p === '/api/me') {
       body = { success: true, username: 'demo', system_role: 'ADMIN', global_admin: true, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
     } else if (p === '/api/me/permissions') {
-      body = { success: true, data: { 'alerts.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true } } }
+      body = { success: true, data: { 'alerts.read': { view: true }, 'monitoring.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true } } }
     } else if (p === '/api/me/preferences') {
       if (req.method() === 'PUT') {
         const b = JSON.parse(req.postData() || '{}')

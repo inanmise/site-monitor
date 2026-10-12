@@ -240,9 +240,10 @@ public class AvailabilitySection implements ExecutiveSummarySection {
                 return out;
             });
             return new Rollup(dByKey, daily, "daily_rollup", true);
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: erişilebilirlik özeti okunamadı: {}", e.toString());
-            return Rollup.empty();
+        } catch (RuntimeException e) {
+            // Okuma hatası "veri yok" DEĞİLDİR (2026-10-12): boş özet bölümü NO_DATA yapıp ayı öyle kapatırdı. İstisna bölüm
+            // döngüsünde ERROR olur; zamanlanmış gönderim yeniden dener.
+            throw new IllegalStateException("Yönetici özeti: erişilebilirlik özeti okunamadı", e);
         }
     }
 
@@ -308,46 +309,96 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     /**
      * İzleme anahtarı → takım/grup (kurum geneli; takım süzmesi {@link #inScope} ile). Durum İzleme satırları SÜZÜLMEMİŞ
      * envanterden kurulur: takım kapsamında kapsam dışı bir alan adının kontrolleri "silinmiş izleme" sayılmasın.
+     *
+     * <p>Ay içinde DURAKLATILMIŞ envanter satırları da eşlenir (2026-10-12): duraklatılmadan önceki kontrolleri gerçek
+     * ölçümdür; eşlenmezse "silinmiş izleme" sayılıp kurum / takım erişilebilirliğinden düşüyordu (duraklatılmış bağımsız
+     * izlemeler Pano satırlarından zaten eşleniyordu — tutarsızdı). Okuma hataları bölümü ERROR yapar, boş eşleme değil.
      */
     Map<String, MonitorRef> monitorRefs(ExecutiveSummaryContext ctx) {
         Map<String, MonitorRef> out = new HashMap<>(ctx.shared(SHARED + "overview_refs", this::overviewRefs));
         // Durum İzleme (sertifika envanteri erişimi) — anahtar alan adı; takım/grup envanterden.
         Map<Long, String> names = safeTeamNames(ctx);
-        try {
-            for (ExecutiveSummaryContext.InventoryRow inv : ctx.allInventory().values()) {
-                if (inv.domain() == null) continue;
-                String group = inv.groupName() != null && !inv.groupName().isBlank() ? inv.groupName().trim() : null;
-                out.put("UPTIME|" + inv.domain(), new MonitorRef(inv.domain(), "uptime", inv.teamId(),
-                        inv.teamId() == null ? null : names.get(inv.teamId()), group, true, inv.domain(), true));
-            }
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: envanter okunamadı: {}", e.toString());
+        for (ExecutiveSummaryContext.InventoryRow inv : ctx.allInventory().values()) {
+            if (inv.domain() == null) continue;
+            out.put("UPTIME|" + inv.domain(), new MonitorRef(inv.domain(), "uptime", inv.teamId(),
+                    inv.teamId() == null ? null : names.get(inv.teamId()), groupOf(inv.groupName()), true, inv.domain(), true));
+        }
+        List<PausedInventory> paused = ctx.shared(SHARED + "paused_inventory", this::pausedInventory);
+        if (ctx.teamScoped()) remapPausedDerived(ctx, out, paused, names);
+        for (PausedInventory p : paused) {
+            if (out.containsKey("UPTIME|" + p.domain())) continue;     // aynı adla aktif satır kazanır
+            // Duraklatılmış satır kapsamdaki aktif envanterde yok → kapsam takım kimliğiyle: SY, yoksa kapsamdaki UG.
+            Long team = ctx.teamScoped() && !ctx.teamInScope(p.teamId()) && p.ugTeamId() != null
+                    && ctx.teamInScope(p.ugTeamId()) ? p.ugTeamId() : p.teamId();
+            out.put("UPTIME|" + p.domain(), new MonitorRef(p.domain(), "uptime", team,
+                    team == null ? null : names.get(team), p.group(), false, p.domain(), false));
         }
         return out;
     }
 
-    /** İzleme Panosu'nun kurum geneli satırları → izleme eşlemesi (koşu boyu paylaşılır; hata → boş, bölüm düşmez). */
+    /**
+     * Takım kapsamında, duraklatılmış envanter alan adının TÜREV satırları (ör. envanterden türeyen Port; damgası SY takımı)
+     * kapsam takımı SY ya da UG ise o takıma bağlanır (2026-10-12): {@code domainInScope} yalnız AKTİF envantere baktığı için
+     * UG takımında Durum İzleme sayılıp Port kontrolleri düşüyordu.
+     */
+    static void remapPausedDerived(ExecutiveSummaryContext ctx, Map<String, MonitorRef> refs, List<PausedInventory> paused,
+                                   Map<Long, String> names) {
+        if (paused == null || paused.isEmpty()) return;
+        Map<String, PausedInventory> byDomain = new HashMap<>();
+        for (PausedInventory p : paused) byDomain.putIfAbsent(p.domain(), p);
+        for (Map.Entry<String, MonitorRef> en : refs.entrySet()) {
+            MonitorRef r = en.getValue();
+            if (r == null || !r.derived() || r.host() == null || inScope(ctx, r)) continue;
+            PausedInventory p = byDomain.get(r.host());
+            if (p == null) continue;
+            boolean owned = ctx.teamInScope(p.teamId()) || (p.ugTeamId() != null && ctx.teamInScope(p.ugTeamId()));
+            if (!owned) continue;
+            Long team = ctx.scopeTeamId();
+            en.setValue(new MonitorRef(r.name(), r.type(), team, team == null ? null : names.get(team), r.group(), r.active(),
+                    r.host(), r.derived()));
+        }
+    }
+
+    /** Duraklatılmış (silinmemiş) envanter satırı — {@link #monitorRefs}. */
+    record PausedInventory(String domain, Long teamId, Long ugTeamId, String group) { }
+
+    static final String PAUSED_INVENTORY_SQL = "SELECT domain, team_id, ug_team_id, group_name FROM certificate_inventory "
+            + "WHERE active = false AND deleted_at IS NULL";
+
+    /** Duraklatılmış envanter (koşu boyu paylaşılır, kurum geneli; tek sorgu). */
+    List<PausedInventory> pausedInventory() {
+        List<PausedInventory> out = new ArrayList<>();
+        for (Map<String, Object> r : jdbc.queryForList(PAUSED_INVENTORY_SQL)) {
+            Object d = r.get("domain");
+            if (d == null) continue;
+            out.add(new PausedInventory(String.valueOf(d), asLongObj(r.get("team_id")), asLongObj(r.get("ug_team_id")),
+                    groupOf(r.get("group_name") == null ? null : String.valueOf(r.get("group_name")))));
+        }
+        return out;
+    }
+
+    private static String groupOf(String g) {
+        return g != null && !g.isBlank() ? g.trim() : null;
+    }
+
+    /** İzleme Panosu'nun kurum geneli satırları → izleme eşlemesi (koşu boyu paylaşılır; okuma hatası → bölüm ERROR). */
     @SuppressWarnings("unchecked")
     private Map<String, MonitorRef> overviewRefs() {
         Map<String, MonitorRef> out = new HashMap<>();
-        try {
-            Map<String, Object> ov = overviewService.build(TtlMemo.scopeKey(true, null), t -> true, true,
-                    MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS, false);
-            List<Map<String, Object>> rows = ov != null && ov.get("monitors") instanceof List<?> l
-                    ? (List<Map<String, Object>>) l : List.of();
-            for (Map<String, Object> r : rows) {
-                if (r == null || Boolean.TRUE.equals(r.get("deleted"))) continue;
-                String rt = OVERVIEW_TO_ROLLUP.get(String.valueOf(r.get("type")));
-                if (rt == null || r.get("id") == null) continue;
-                String group = r.get("group_name") instanceof String g && !g.isBlank() ? g.trim() : null;
-                boolean active = Boolean.TRUE.equals(r.get("active")) && !Boolean.TRUE.equals(r.get("inventory_inactive"));
-                // Port'ta standalone=false → envanter türevi satır (host'u envanter alan adı); diğer türlerde null.
-                boolean derived = Boolean.FALSE.equals(r.get("standalone"));
-                out.put(rt + "|" + r.get("id"), new MonitorRef(str(r.get("name")), String.valueOf(r.get("type")),
-                        asLongObj(r.get("team_id")), str(r.get("team_name")), group, active, str(r.get("target")), derived));
-            }
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: pano satırları okunamadı: {}", e.toString());
+        Map<String, Object> ov = overviewService.build(TtlMemo.scopeKey(true, null), t -> true, true,
+                MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS, false);
+        List<Map<String, Object>> rows = ov != null && ov.get("monitors") instanceof List<?> l
+                ? (List<Map<String, Object>>) l : List.of();
+        for (Map<String, Object> r : rows) {
+            if (r == null || Boolean.TRUE.equals(r.get("deleted"))) continue;
+            String rt = OVERVIEW_TO_ROLLUP.get(String.valueOf(r.get("type")));
+            if (rt == null || r.get("id") == null) continue;
+            String group = r.get("group_name") instanceof String g && !g.isBlank() ? g.trim() : null;
+            boolean active = Boolean.TRUE.equals(r.get("active")) && !Boolean.TRUE.equals(r.get("inventory_inactive"));
+            // Port'ta standalone=false → envanter türevi satır (host'u envanter alan adı); diğer türlerde null.
+            boolean derived = Boolean.FALSE.equals(r.get("standalone"));
+            out.put(rt + "|" + r.get("id"), new MonitorRef(str(r.get("name")), String.valueOf(r.get("type")),
+                    asLongObj(r.get("team_id")), str(r.get("team_name")), group, active, str(r.get("target")), derived));
         }
         return out;
     }

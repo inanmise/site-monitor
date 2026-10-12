@@ -48,8 +48,8 @@ import java.util.Set;
  *   <li><b>İz:</b> her takım gönderimi {@code notification_logs} (tetik {@value #TRIGGER}, alarm kimliği 0) — gönderilmeyen
  *       karar da gerekçesiyle yazılır. Hata turu düşürmez.</li>
  * </ul>
- * Zamanlanmış TLS işi ({@link TlsProfileJobService}) her turda çağırır (lider + {@code scheduler_lock}); elle yeniden
- * tarama da düşüş yazabilir, bildirimi yine bu tur gönderir.
+ * Zamanlanmış TLS işi ({@link TlsProfileJobService}) her turda, notları karşılaştırdıktan SONRA çağırır (lider +
+ * {@code scheduler_lock}); elle yeniden tarama notu karşılaştırmaz — düşüşü bir sonraki tur yazar ve bildirir (2026-10-12).
  */
 @Slf4j
 @Service
@@ -66,6 +66,13 @@ public class TlsGradeDropNotifier {
     static final String SKIP_NO_RECIPIENT = "SKIPPED: alıcı yok";
     /** Alıcı vardı ama hiçbir kanal teslim edemedi (SMTP hatası, push kuyruğa girmedi) — 2026-10-12'ye kadar "alıcı yok" yazılırdı. */
     static final String NOTIFY_FAILED = "FAILED: gönderilemedi";
+    /**
+     * Talep edildi ama sonuç yazılamadan tur kesildi (istisna / pod kapandı) — 2026-10-12'ye kadar satır SENDING'de sonsuza
+     * dek "sırada" görünürdü. Kısmen gönderilmiş olabileceği için YENİDEN GÖNDERİLMEZ (çift bildirim olmasın).
+     */
+    static final String NOTIFY_INTERRUPTED = "FAILED: yarıda kaldı";
+    /** Bu süreden eski SENDING satırı önceki (yarıda kalmış) bir turdan kalmıştır. */
+    static final java.time.Duration STALE_SENDING = java.time.Duration.ofHours(1);
     /** notification_logs.recipient_email / email_status uzunluğu (VARCHAR(255)). */
     private static final int LOG_FIELD_MAX = 255;
 
@@ -87,6 +94,7 @@ public class TlsGradeDropNotifier {
             case SKIP_NO_TEAM -> "no_team";
             case SKIP_NO_RECIPIENT -> "no_recipient";
             case NOTIFY_FAILED -> "failed";
+            case NOTIFY_INTERRUPTED -> "interrupted";
             default -> null;
         };
     }
@@ -130,6 +138,7 @@ public class TlsGradeDropNotifier {
     }
 
     private Result run() {
+        sweepStaleSending(Instant.now());
         List<TlsGradeChange> pending = changeRepo.findByNotifyStateOrderByIdAsc(TlsGradeChange.NOTIFY_PENDING, PageRequest.of(0, BATCH));
         if (pending.isEmpty()) return new Result(0, 0, 0, 0);
         List<Long> ids = pending.stream().map(TlsGradeChange::getId).toList();
@@ -138,6 +147,45 @@ public class TlsGradeDropNotifier {
         // Başka tur bir kısmını aldıysa yalnız bizim talep ettiklerimiz: yeniden okumak yerine durum filtresi
         List<TlsGradeChange> mine = new ArrayList<>();
         for (TlsGradeChange c : changeRepo.findAllById(ids)) if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) mine.add(c);
+        try {
+            return deliver(mine);
+        } catch (RuntimeException e) {
+            // Talep edilen satır SENDING'de KALMAZ: sonucu yazılmamış olanlar "yarıda kaldı" olur (yeniden gönderilmez).
+            List<TlsGradeChange> open = new ArrayList<>();
+            for (TlsGradeChange c : changeRepo.findAllById(mine.stream().map(TlsGradeChange::getId).toList())) {
+                if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) open.add(c);
+            }
+            finish(open, NOTIFY_INTERRUPTED, ISO.format(Instant.now()));
+            throw e;
+        }
+    }
+
+    /**
+     * Önceki turdan SENDING'de kalmış satırlar (pod tur ortasında kapandı) "yarıda kaldı" olur. Bildirim işi kilit
+     * altında tek koşar; yine de yalnız {@link #STALE_SENDING}'den eski satırlara dokunulur.
+     */
+    void sweepStaleSending(Instant now) {
+        try {
+            String cutoff = ISO.format(now.minus(STALE_SENDING));
+            List<TlsGradeChange> stale = new ArrayList<>();
+            for (TlsGradeChange c : changeRepo.findByNotifyStateOrderByIdAsc(TlsGradeChange.NOTIFY_SENDING, PageRequest.of(0, BATCH))) {
+                if (c.getChangedAt() != null && c.getChangedAt().compareTo(cutoff) < 0) stale.add(c);
+            }
+            if (stale.isEmpty()) return;
+            // Koşullu: yalnız hâlâ SENDING olan satır (bu arada sonuçlanan SENT / SKIPPED ezilmez)
+            List<Long> ids = stale.stream().map(TlsGradeChange::getId).toList();
+            for (int i = 0; i < ids.size(); i += BATCH) {
+                changeRepo.finishNotifyIfState(ids.subList(i, Math.min(ids.size(), i + BATCH)), TlsGradeChange.NOTIFY_SENDING,
+                        clip(NOTIFY_INTERRUPTED), ISO.format(now));
+            }
+            log.warn("TLS notu düşüş bildirimi: önceki turda yarıda kalan {} düşüş 'yarıda kaldı' işaretlendi (yeniden gönderilmez)",
+                    stale.size());
+        } catch (Exception e) {
+            log.debug("TLS notu düşüş bildirimi: yarıda kalan satırlar okunamadı: {}", e.toString());
+        }
+    }
+
+    private Result deliver(List<TlsGradeChange> mine) {
         String now = ISO.format(Instant.now());
 
         if (!appSettings.getBoolean(KEY_ENABLED, true)) {
@@ -171,9 +219,18 @@ public class TlsGradeDropNotifier {
         }
         Set<Long> delivered = new LinkedHashSet<>();
         Set<Long> failed = new LinkedHashSet<>();
+        int teamsDelivered = 0;
         String appUrl = appSettings.getString("site.monitor.app.base-url", "");
         for (Map.Entry<Long, List<TlsGradeChange>> e : byTeam.entrySet()) {
-            Delivery d = sendToTeam(e.getKey(), e.getValue(), appUrl);
+            Delivery d;
+            try {
+                d = sendToTeam(e.getKey(), e.getValue(), appUrl);
+            } catch (RuntimeException ex) {
+                // Bir takımın hatası ötekileri DURDURMAZ (2026-10-12): o takım "gönderilemedi", sıradaki takım sürer
+                log.warn("TLS notu düşüş bildirimi: takım {} gönderilemedi: {}", e.getKey(), ex.toString());
+                d = Delivery.FAILED;
+            }
+            if (d == Delivery.DELIVERED) teamsDelivered++;
             for (TlsGradeChange c : e.getValue()) {
                 if (d == Delivery.DELIVERED) delivered.add(c.getId());
                 else if (d == Delivery.FAILED) failed.add(c.getId());
@@ -188,8 +245,8 @@ public class TlsGradeDropNotifier {
         finish(sent, TlsGradeChange.NOTIFY_SENT, now);
         finish(notDelivered, NOTIFY_FAILED, now);
         finish(noRecipient, SKIP_NO_RECIPIENT, now);
-        log.info("TLS notu düşüş bildirimi: {} düşüş · {} takıma gönderildi · {} gönderilemedi · {} atlandı", mine.size(), byTeam.size(),
-                notDelivered.size(), below.size() + teamless.size() + noRecipient.size());
+        log.info("TLS notu düşüş bildirimi: {} düşüş · {}/{} takıma ulaştı · {} düşüş gönderilemedi · {} atlandı", mine.size(),
+                teamsDelivered, byTeam.size(), notDelivered.size(), below.size() + teamless.size() + noRecipient.size());
         return new Result(mine.size(), sent.size(), mine.size() - sent.size(), byTeam.size());
     }
 

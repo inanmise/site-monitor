@@ -38,8 +38,9 @@ export const GAP_SEVERITY_TONE = Object.freeze({
  * @param selected    seçili eksik anahtarları
  * @param mode        'any' | 'all'
  * @param known       `(gapKey) => boolean` — sayaç henüz bilinmiyorsa (yükleniyor) sayı yerine "…"
+ * @param failed      `(gapKey) => boolean` — sayacın girdisi OKUNAMADIYSA "…" yerine "—" (2026-10-12)
  */
-export default function TeamGapsPanel({ counts = {}, selected = [], mode = 'any', known = () => true, onToggle, onMode, onClear }) {
+export default function TeamGapsPanel({ counts = {}, selected = [], mode = 'any', known = () => true, failed = () => false, onToggle, onMode, onClear }) {
   const t = useT()
   const titleId = useId()
   return (
@@ -86,7 +87,7 @@ export default function TeamGapsPanel({ counts = {}, selected = [], mode = 'any'
               <span data-slot="team-gap-count"
                 className={cn('ml-1 shrink-0 rounded-full px-1.5 py-px text-xs font-bold tabular-nums',
                   isKnown && n > 0 ? GAP_SEVERITY_TONE[g.severity] : 'text-muted-foreground')}>
-                {isKnown ? n : '…'}
+                {isKnown ? n : failed(g.key) ? '—' : '…'}
               </span>
             </Button>
           )

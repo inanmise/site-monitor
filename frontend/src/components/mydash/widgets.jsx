@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import {
-  Activity, BellRing, CircleCheck, CloudLightning, HeartPulse, ListChecks, Radar, ShieldAlert, SignalHigh, UserRoundCheck,
+  Activity, BellRing, CircleCheck, CircleHelp, CloudLightning, HeartPulse, ListChecks, Radar, ShieldAlert, SignalHigh, UserRoundCheck,
 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
@@ -88,7 +88,8 @@ function AlertsWidget({ frame, refreshKey }) {
   const s = alertsSummary(data, listLimit(frame.widget.size, frame.tv, 5))
   return (
     <WidgetCard frame={frame} Icon={BellRing} title={t('mydash.w.alerts_open')} tab="alerthistory" loading={loading} error={error} at={at}
-      tone={s.tone} toneLabel={s.total > 0 ? t('mydash.openCount', s.total) : t('mydash.allClear')}>
+      tone={s.tone} toneLabel={s.hidden ? t('mydash.noAccess') : s.total > 0 ? t('mydash.openCount', s.total) : t('mydash.allClear')}>
+      {s.hidden ? <Empty tone="muted" text={t('mydash.noAccessBody')} tv={frame.tv} /> : (<>
       <div className="flex flex-col gap-3 @md:flex-row @md:items-end @md:gap-x-6">
         <Metric value={s.total} label={t('mydash.alerts.open')} tone={s.critical ? 'danger' : s.total ? 'warning' : 'success'} tv={frame.tv} slot="mydash-alerts-total" />
         <div className="grid min-w-0 grid-cols-3 gap-2 @md:flex-1">
@@ -108,6 +109,7 @@ function AlertsWidget({ frame, refreshKey }) {
           ))}
         </List>
       )}
+      </>)}
     </WidgetCard>
   )
 }
@@ -130,10 +132,11 @@ function MonitorHealthWidget({ frame, refreshKey }) {
   const limit = frame.tv ? (frame.widget.size === 'lg' ? 4 : 2) : listLimit(frame.widget.size, false, 4)
   return (
     <WidgetCard frame={frame} Icon={Radar} title={t('mydash.w.monitor_health')} tab="monitoring" loading={loading} error={error} at={at}
-      tone={s.tone} toneLabel={s.down ? t('mydash.monitor.downCount', s.down) : s.stale ? t('mydash.monitor.staleCount', s.stale) : t('mydash.allClear')}>
+      tone={s.tone} toneLabel={s.down ? t('mydash.monitor.downCount', s.down) : s.stale ? t('mydash.monitor.staleCount', s.stale)
+        : s.tone === 'success' ? t('mydash.allClear') : s.active === 0 ? t('mydash.monitor.none') : t('mydash.monitor.unknownCount', s.unknown)}>
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
         <Metric value={formatPct(s.healthyPct, lang)} label={t('mydash.monitor.healthy', s.healthy, s.active)}
-          tone={s.tone === 'success' ? 'success' : s.tone} tv={frame.tv} slot="mydash-monitor-healthy" />
+          tone={s.tone} tv={frame.tv} slot="mydash-monitor-healthy" />
         {s.successRate != null && (
           <Metric value={formatPct(s.successRate, lang)} label={t('mydash.monitor.success24')} tv={frame.tv} />
         )}
@@ -183,7 +186,9 @@ function CertWidget({ frame, refreshKey }) {
   const s = certSummary(data, listLimit(frame.widget.size, frame.tv, 4))
   return (
     <WidgetCard frame={frame} Icon={ShieldAlert} title={t('mydash.w.cert_expiring')} tab="warnings" loading={loading} error={error} at={at}
-      tone={s.tone} toneLabel={s.expired ? t('mydash.cert.expiredCount', s.expired) : s.exp7 ? t('mydash.cert.exp7Count', s.exp7) : s.exp30 ? t('mydash.cert.exp30Count', s.exp30) : t('mydash.allClear')}>
+      tone={s.tone} toneLabel={s.expired ? t('mydash.cert.expiredCount', s.expired) : s.exp7 ? t('mydash.cert.exp7Count', s.exp7)
+        : s.exp30 ? t('mydash.cert.exp30Count', s.exp30) : s.errors ? t('mydash.cert.scanFailures', s.errors)
+        : s.total === 0 ? t('mydash.noData') : t('mydash.allClear')}>
       <div className="grid grid-cols-2 gap-2 @md:grid-cols-4">
         <Tile value={s.expired} label={t('mydash.cert.expired')} tone={s.expired ? 'danger' : 'muted'} tv={frame.tv} slot="mydash-cert-expired" />
         <Tile value={s.exp7} label={t('mydash.cert.exp7')} tone={s.exp7 ? 'danger' : 'muted'} tv={frame.tv} slot="mydash-cert-7" />
@@ -212,7 +217,7 @@ function StatusWidget({ frame, refreshKey }) {
   const s = statusSummary(data, listLimit(frame.widget.size, frame.tv, 4))
   return (
     <WidgetCard frame={frame} Icon={SignalHigh} title={t('mydash.w.status_services')} tab="status" loading={loading} error={error} at={at}
-      tone={s.tone} toneLabel={s.total ? t('sp.state.' + s.worst) : null}>
+      tone={s.tone} toneLabel={s.total ? t('sp.state.' + s.shownState) : null}>
       {s.total === 0 ? (
         <Empty tone="muted" text={t('mydash.status.none')} tv={frame.tv} />
       ) : (
@@ -235,7 +240,7 @@ function StatusWidget({ frame, refreshKey }) {
         </>
       )}
       {/* Küçük boyutta liste 0'a kısılır — "hepsi çalışıyor" kararı kısılmış listeye değil gerçek sorun sayısına bakar (2026-10-12) */}
-      {s.total > 0 && s.problemCount === 0 && <Empty text={t('mydash.status.allOk')} tv={frame.tv} />}
+      {s.allOk && <Empty text={t('mydash.status.allOk')} tv={frame.tv} />}
     </WidgetCard>
   )
 }
@@ -351,7 +356,10 @@ function WatchdogWidget({ frame, refreshKey }) {
       tone={data?.stale ? 'danger' : WATCHDOG_TONE[status] || 'muted'} toneLabel={data ? t('wd.status.' + status) : null}>
       {data?.enabled === false && <Empty tone="muted" text={t('wd.disabledTitle')} tv={frame.tv} />}
       {data?.enabled !== false && data?.stale && <p className="m-0 font-medium text-destructive">{t('mydash.watchdog.stale')}</p>}
-      {data?.enabled !== false && !data?.stale && problems.length === 0 && data && <Empty text={t('mydash.watchdog.ok')} tv={frame.tv} />}
+      {data?.enabled !== false && !data?.stale && problems.length === 0 && data && (status === 'UP'
+        ? <Empty text={t('mydash.watchdog.ok')} tv={frame.tv} />
+        // Hiç değerlendirilmedi / bilinmiyor → yeşil "sağlıklı" DENMEZ (2026-10-12)
+        : <Empty tone="muted" icon={CircleHelp} text={t('mydash.watchdog.notEvaluated')} tv={frame.tv} />)}
       {problems.length > 0 && (
         <List slot="mydash-watchdog-problems">
           {problems.slice(0, frame.tv ? 3 : 4).map((c) => (

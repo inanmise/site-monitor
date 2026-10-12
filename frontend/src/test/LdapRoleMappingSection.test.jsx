@@ -100,6 +100,9 @@ describe('LdapSettings — grup → rol eşlemesi (2026-10-11)', () => {
     expect(dto.role_mapping_enabled).toBe(true)
     expect(dto.role_mapping_fallback).toBe('USER')
     expect(dto.role_mappings.map((r) => r.group)).toEqual(['CN=SM-Denetim', 'CN=SiteMonitor Admins,OU=Groups,DC=example,DC=com'])
+    // 2026-10-12: yalnız değişen alanlar (rol eşlemesi bir bütün) — bağlantı ayarları gönderilmez, başkasının kaydını ezmez
+    expect(dto).not.toHaveProperty('host')
+    expect(dto).not.toHaveProperty('updated_at')
   })
 
   it('sıralama: aşağı / yukarı taşı; ilk satırda "yukarı" kapalı; yeni satır USER; satır silinir', async () => {

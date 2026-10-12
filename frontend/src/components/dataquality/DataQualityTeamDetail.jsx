@@ -104,16 +104,16 @@ function FixItem({ rule, item, onGo }) {
       className="flex flex-col gap-2 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="min-w-0 truncate font-medium" title={label}>{label}</span>
+          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{label}</span>
           {typeKey && <Badge variant="outline" className="shrink-0 font-normal">{t(typeKey)}</Badge>}
           {item.manual && <Badge variant="outline" className="shrink-0 font-normal">{t('dq.manualCert')}</Badge>}
         </div>
         {(item.target && item.target !== item.name) && (
-          <div className="truncate text-xs text-muted-foreground" title={item.target}>{item.target}</div>
+          <div className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{item.target}</div>
         )}
         {ft && <div className="mt-0.5 text-xs text-muted-foreground" data-slot="dq-fact">{t(ft.key, ...ft.args)}</div>}
         {rule === 'INV_CHECK_FAILING' && item.facts?.error && (
-          <div className="mt-0.5 line-clamp-2 break-all font-mono text-[11px] text-muted-foreground">{item.facts.error}</div>
+          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{item.facts.error}</div>
         )}
       </div>
       {link && (

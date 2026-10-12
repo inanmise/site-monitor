@@ -4,7 +4,6 @@ import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.TlsProfile;
 import com.sitemonitor.repository.CertificateInventoryRepository;
-import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.TlsProfileRepository;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.SchedulerService;
@@ -50,7 +49,6 @@ class TlsProfileJobServiceTest {
 
     private CertificateInventoryRepository inventoryRepo;
     private TlsProfileRepository profileRepo;
-    private LatestCheckRepository latestRepo;
     private TlsProfileProbeService probe;
     private TlsGradeService grades;
     private CertificateService certs;
@@ -63,7 +61,6 @@ class TlsProfileJobServiceTest {
     void setUp() {
         inventoryRepo = mock(CertificateInventoryRepository.class);
         profileRepo = mock(TlsProfileRepository.class);
-        latestRepo = mock(LatestCheckRepository.class);
         probe = mock(TlsProfileProbeService.class);
         grades = mock(TlsGradeService.class);
         certs = mock(CertificateService.class);
@@ -74,8 +71,7 @@ class TlsProfileJobServiceTest {
         when(probe.probe(anyString(), anyInt(), anyBoolean(), anyString(), any())).thenAnswer(i -> profile(i.getArgument(0), "OK"));
         when(grades.reconcile(any())).thenReturn(new TlsGradeService.ReconcileResult(0, 0, 0, 0));
         when(certs.getAllLatest()).thenReturn(List.of());
-        when(latestRepo.findById(anyString())).thenReturn(Optional.empty());
-        job = new TlsProfileJobService(inventoryRepo, profileRepo, latestRepo, probe, grades);
+        job = new TlsProfileJobService(inventoryRepo, profileRepo, probe, grades);
         job.setCertificateService(certs);
         job.setSchedulerService(scheduler);
     }
@@ -210,15 +206,38 @@ class TlsProfileJobServiceTest {
         ungraded.setDomain("a.example.com");
         when(certs.getAllLatest()).thenReturn(List.of(row, ungraded));
         when(grades.reconcile(any())).thenReturn(new TlsGradeService.ReconcileResult(0, 0, 1, 0));
+        // 2026-10-12: karşılaştırmadan ÖNCE yalnız liste önbelleği boşaltılır (taze not); değişim olunca hepsi
+        org.springframework.cache.concurrent.ConcurrentMapCacheManager cm =
+                new org.springframework.cache.concurrent.ConcurrentMapCacheManager("cert-latest");
+        cm.getCache("cert-latest").put("k", "eski liste");
+        job.setCacheManager(cm);
         TlsProfileJobService.TickResult r = job.runTick(Instant.now());
         assertThat(r.probed()).isZero();
+        assertThat(cm.getCache("cert-latest").get("k")).as("liste önbelleği karşılaştırmadan önce boşaltıldı").isNull();
         verify(grades).reconcile(org.mockito.ArgumentMatchers.argThat(list -> list.size() == 1
                 && list.get(0).inv() == a && "B".equals(list.get(0).grade())));
         verify(certs, times(1)).evictAllCaches();
     }
 
     @Test
-    @DisplayName("Elle yeniden tarama: MANUAL tetikle yoklar, kaydeder, önbelleği boşaltır")
+    @DisplayName("2026-10-12: kapanış kesmesiyle yarım kalan tur not karşılaştırmaz, bildirim göndermez")
+    void interruptedTickSkipsReconcile() {
+        TlsGradeDropNotifier notifier = org.mockito.Mockito.mock(TlsGradeDropNotifier.class);
+        job.setDropNotifier(notifier);
+        add("a.example.com");
+        profiles.put("a.example.com", profile("a.example.com", "OK"));
+        Thread.currentThread().interrupt();
+        try {
+            job.runTick(Instant.now());
+        } finally {
+            Thread.interrupted();
+        }
+        verify(grades, org.mockito.Mockito.never()).reconcile(any());
+        org.mockito.Mockito.verify(notifier, org.mockito.Mockito.never()).notifyPending();
+    }
+
+    @Test
+    @DisplayName("Elle yeniden tarama: MANUAL tetikle yoklar, kaydeder, önbelleği boşaltır; notu KARŞILAŞTIRMAZ (tur yapar — 2026-10-12)")
     void rescan() {
         CertificateInventory a = add("a.example.com");
         a.setUseProxy(true);
@@ -227,6 +246,7 @@ class TlsProfileJobServiceTest {
         assertThat(profiles).containsKey("a.example.com");
         assertThat(p.getDomain()).isEqualTo("a.example.com");
         verify(certs).evictAllCaches();
+        verify(grades, org.mockito.Mockito.never()).reconcile(any());
     }
 
     @Test

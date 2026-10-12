@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
-  PHASE_TONE, ROTATION_FILTERS, locationTotal, normFilter, rotationPhase, splitLocations,
+  PHASE_TONE, ROTATION_FILTERS, locationTotal, normFilter, rotationPhase, splitLocations, countIncomplete,
 } from '../components/admin/secret/secretRotationModel.js'
 
 /** Gizli anahtar döndürme — saf model (2026-10-11): aşama, konum süzgeci, aşama metinlerinin iki dilde varlığı. */
@@ -62,4 +62,23 @@ describe('splitLocations', () => {
     expect(normFilter('bogus')).toBe('all')
     expect(ROTATION_FILTERS).toContain('unreadable')
   })
+})
+
+describe('sayım eksik — önceki anahtar yok (2026-10-12)', () => {
+  it('okunamayan ya da tavana takılan konum varken "her şey güncel" (steady) DENMEZ', () => {
+    const base = { key: { current_configured: true, previous_configured: false }, totals: { current: 3, previous: 0, unreadable: 0 } }
+    expect(rotationPhase({ ...base, locations: [{ id: 'a', current: 3 }] })).toBe('steady')
+    expect(rotationPhase({ ...base, locations: [{ id: 'a', current: 3, truncated: true }] })).toBe('count_incomplete')
+    expect(rotationPhase({ ...base, locations: [{ id: 'a', error: 'okunamadı' }] })).toBe('count_incomplete')
+    expect(rotationPhase({ ...base, totals: { ...base.totals, unreadable: 1 }, locations: [{ id: 'a', error: 'x' }] })).toBe('unreadable')
+    expect(PHASE_TONE.count_incomplete).toBe('warning')
+  })
+
+describe('tavanda kesik sayım + önceki 0 (2026-10-12)', () => {
+  it('countIncomplete kesik konumu görür (onay metni "0 değer" demesin diye)', () => {
+    expect(countIncomplete({ locations: [{ id: 'a', previous: 0, truncated: true }] })).toBe(true)
+    expect(countIncomplete({ locations: [{ id: 'a', previous: 0 }] })).toBe(false)
+    expect(countIncomplete(null)).toBe(false)
+  })
+})
 })

@@ -21,6 +21,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 
@@ -229,6 +230,28 @@ public class TrustEvaluator {
     }
 
     /** PEM değiştiyse extra TM'i yeniden kur; bozuk PEM'i tolere et (yalnız default truststore). */
+    /** Güven kökleri: JVM varsayılan deposu ({@code system}) + admin'in kurumsal CA paketi ({@code corporate}). */
+    public record Anchors(List<X509Certificate> system, List<X509Certificate> corporate) { }
+
+    /**
+     * Güven deposundaki sertifikalar (2026-10-12, hiyerarşi görünümü): sunucunun göndermediği KÖKÜ tarayıcının yaptığı gibi
+     * buradan bulmak için. Yalnız açık CA sertifikaları; okunamazsa boş liste (görünüm kökü "bulunamadı" der).
+     */
+    public Anchors trustAnchors() {
+        return new Anchors(acceptedIssuers(defaultTm), acceptedIssuers(currentExtraTm()));
+    }
+
+    private static List<X509Certificate> acceptedIssuers(X509TrustManager tm) {
+        if (tm == null) return List.of();
+        try {
+            X509Certificate[] issuers = tm.getAcceptedIssuers();
+            return issuers == null ? List.of() : List.of(issuers);
+        } catch (RuntimeException e) {
+            log.debug("Güven deposu okunamadı: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     private X509TrustManager currentExtraTm() {
         String pem = appSettings.getString(CA_BUNDLE_KEY, "");
         if (pem == null || pem.isBlank()) {

@@ -19,17 +19,18 @@ vi.mock('../api/client', () => ({
   }),
 }))
 
-const perm = vi.hoisted(() => ({ value: {} }))
+const perm = vi.hoisted(() => ({ value: {}, loaded: true }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({
     perms: perm.value,
     canView: (r) => !!perm.value[r]?.view,
-    canEdit: () => false, canExecute: () => false, refresh: () => {},
+    canEdit: () => false, canExecute: () => false, refresh: () => {}, loaded: perm.loaded,
   }),
   PermissionsProvider: ({ children }) => children,
 }))
 
 import { api } from '../api/client'
+import { EN } from '../i18n/en.js'
 import { UserPrefsContext } from '../hooks/useUserPrefs.js'
 import { isTvModeActive } from '../utils/tvMode.js'
 import MyDashPage from '../components/mydash/MyDashPage.jsx'
@@ -41,7 +42,7 @@ import MyDashPage from '../components/mydash/MyDashPage.jsx'
  */
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
-const ALL_PERMS = { 'alerts.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true } }
+const ALL_PERMS = { 'alerts.read': { view: true }, 'monitoring.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true } }
 
 const setSpy = vi.fn()
 const setterRef = { current: null }
@@ -61,6 +62,7 @@ beforeEach(() => {
   setSpy.mockImplementation((v) => { setterRef.current?.(v); return true })
   window.history.replaceState({}, '', '/?tab=mydash')
   perm.value = ALL_PERMS
+  perm.loaded = true
   api.me.openAlerts.mockResolvedValue({ success: true, data: { total: 3, tabs: {
     http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [
       { id: 7, domain: 'odeme.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: '2026-10-11T08:00:00', team_name: LONG_TEAM }] },
@@ -93,6 +95,31 @@ describe('MyDashPage', () => {
     await waitFor(() => expect(widget('status_services')).toHaveTextContent('İnternet Bankacılığı'))
     expect(widget('cert_expiring')).toHaveAttribute('data-tone', 'danger')
     expect(document.querySelector('[data-slot="badge"][class*="truncate"]')).toBeNull()
+  })
+
+  it('2026-10-12: kendi kendini izleme hiç değerlendirilmediyse (UNKNOWN, sorun yok) yeşil "hepsi sağlıklı" DENMEZ', async () => {
+    api.admin.getWatchdog.mockResolvedValue({ success: true, data: { enabled: true, status: 'UNKNOWN', stale: false, checks: [] } })
+    render(<Shell initial={{ v: 1, widgets: [{ id: 'watchdog', type: 'watchdog', size: 'sm' }] }}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget('watchdog').querySelector('[data-slot="mydash-empty"]')).not.toBeNull())
+    const empty = widget('watchdog').querySelector('[data-slot="mydash-empty"]')
+    expect(empty).toHaveTextContent(EN['mydash.watchdog.notEvaluated'])
+    expect(empty.className).not.toContain('text-success')
+    expect(widget('watchdog')).not.toHaveTextContent(EN['mydash.watchdog.ok'])
+  })
+
+  it('2026-10-12: yalnız UP iken yeşil "hepsi sağlıklı"', async () => {
+    render(<Shell initial={{ v: 1, widgets: [{ id: 'watchdog', type: 'watchdog', size: 'sm' }] }}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget('watchdog')).toHaveTextContent(EN['mydash.watchdog.ok']))
+    expect(widget('watchdog').querySelector('[data-slot="mydash-empty"]').className).toContain('text-success')
+  })
+
+  it('2026-10-12: yetkiler gelmeden düzenleme kapalı, kayıt yapılmaz, "pano boş" denmez', async () => {
+    perm.value = {}
+    perm.loaded = false
+    render(<Shell><MyDashPage /></Shell>)
+    expect(screen.queryByText(EN['mydash.emptyTitle'])).toBeNull()
+    expect(screen.getByRole('button', { name: EN['mydash.edit'] })).toBeDisabled()
+    expect(setSpy).not.toHaveBeenCalled()
   })
 
   it('yetkisi olmayan kutu kayıtlı olsa da çizilmez, verisi istenmez', async () => {

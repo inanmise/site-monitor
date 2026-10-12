@@ -48,6 +48,7 @@ class DataQualityServiceTest {
     DataQualityService service;
     MutableClock clock;
     AtomicInteger loads;
+    DataQualityFixtures fx;
 
     @BeforeEach
     void setUp() {
@@ -55,7 +56,7 @@ class DataQualityServiceTest {
         jdbc = mock(JdbcTemplate.class);
         clock = new MutableClock();
         loads = new AtomicInteger();
-        DataQualityFixtures fx = new DataQualityFixtures().team(1, "Ödeme").team(2, "Altyapı").team(3, "Kanal");
+        fx = new DataQualityFixtures().team(1, "Ödeme").team(2, "Altyapı").team(3, "Kanal");
         fx.inv(10, "pay.example.com", 1L).setTier(null);
         fx.inv(11, "core.example.com", 2L);
         fx.inv(12, "orphan.example.com", null);
@@ -181,6 +182,16 @@ class DataQualityServiceTest {
         assertThat(top.get(0)).containsKeys("code", "severity", "failing", "eligible", "points");
         assertThat(all).containsKeys("catalog", "config", "notes", "generated_at");
         assertThat((List<?>) all.get("catalog")).hasSize(DataQualityRule.values().length);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: zorunlu girdi okunamazsa hesap YOK (kısmi veriden puan / görüntü üretilmez); bellek kirlenmez, sonra düzelir")
+    void partialLoadIsNotScored() {
+        when(source.load(any())).thenThrow(new IllegalStateException("Veri kalitesi: üyeler okunamadı — puan hesaplanmadı"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.evaluation(false)).isInstanceOf(IllegalStateException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.digest()).isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.doAnswer(inv -> fx.facts()).when(source).load(any());
+        assertThat(service.digest().orgScore()).isNotNull();
     }
 
     @Test

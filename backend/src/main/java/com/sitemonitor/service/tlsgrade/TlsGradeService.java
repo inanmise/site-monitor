@@ -154,6 +154,19 @@ public class TlsGradeService {
         return false;
     }
 
+    /** "Ölçülmedi" kodları — değer BİLİNMİYOR (kötü değil). HSTS yalnız elle "Şimdi kontrol et" ile ölçülür. */
+    static final java.util.Set<String> MEASUREMENT_GAP_CODES = java.util.Set.of(TlsGradeRules.Reason.HSTS_NOT_CHECKED.name());
+
+    /**
+     * Not değişimini YALNIZ ölçüm boşluğu mu açıklıyor (2026-10-12): yeni kodlardan eskide olmayanların hepsi "ölçülmedi"
+     * kodu (ör. HSTS bilinmez oldu → A+ → A). Gerçek bir bulgu da eklendiyse (TLS 1.0 açık …) değişim düşüştür.
+     */
+    static boolean onlyMeasurementGapAdded(java.util.Collection<String> oldCodes, java.util.Collection<String> newCodes) {
+        java.util.Set<String> added = new java.util.HashSet<>(newCodes == null ? List.of() : newCodes);
+        if (oldCodes != null) added.removeAll(oldCodes);
+        return !added.isEmpty() && MEASUREMENT_GAP_CODES.containsAll(added);
+    }
+
     /**
      * Güncel notları son bilinenle karşılaştırır. Yalnız DEĞİŞEN satır yazılır (tur başına sabit sayıda toplu sorgu:
      * durumlar IN ile okunur, değişenler {@code saveAll}). İlk görüş değişim sayılmaz.
@@ -203,7 +216,9 @@ public class TlsGradeService {
             boolean lower = TlsGradeRules.isGrade(old) && TlsGradeRules.rank(e.grade()) < TlsGradeRules.rank(old);
             // Bilgi değişimi: önceki ya da yeni notu profil EKSİKLİĞİ sınırlıyordu (ilk tarama, başarısız / eksik tarama).
             // "TLS 1.0 açık" ilk kez ÖĞRENİLİNCE A → B bir yapılandırma bozulması değildir — düşüş damgası ve etkinlik yok.
-            boolean refine = hasProfileGap(splitCodes(st.getReasons())) || hasProfileGap(e.codes());
+            List<String> oldCodes = splitCodes(st.getReasons());
+            boolean refine = hasProfileGap(oldCodes) || hasProfileGap(e.codes())
+                    || (lower && onlyMeasurementGapAdded(oldCodes, e.codes()));   // yükseliş gerçek düzelmedir (RISE)
             boolean drop = lower && !refine;
             TlsGradeChange ch = new TlsGradeChange();
             ch.setInventoryId(e.inv().getId());
@@ -362,7 +377,7 @@ public class TlsGradeService {
 
     // ── Son düşüşler ──────────────────────────────────────────────────────────────────────────
 
-    /** Kapsam süzgecinden ÖNCE okunan en fazla satır (sınır — tablo küçük ama sorgu sınırsız olmasın). */
+    /** Aylık pencere sorgusunun ({@link #dropsBetween}) satır sınırı — sorgu sınırsız olmasın. */
     static final int DROPS_SCAN_MAX = 500;
 
     /**
@@ -375,15 +390,9 @@ public class TlsGradeService {
         int d = Math.max(1, Math.min(days, 180));
         int lim = Math.max(1, Math.min(limit, 200));
         String since = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
-        Set<Long> scope = teamIds == null ? null : new HashSet<>(teamIds);
-        List<TlsGradeChange> rows = changeRepo.findRecent(since, TlsGradeChange.DROP, PageRequest.of(0, DROPS_SCAN_MAX));
-        List<TlsGradeChange> visible = new ArrayList<>();
-        for (TlsGradeChange c : rows) {
-            if (scope != null && (c.getTeamId() == null || !scope.contains(c.getTeamId()))
-                    && (c.getUgTeamId() == null || !scope.contains(c.getUgTeamId()))) continue;
-            visible.add(c);
-            if (visible.size() >= lim) break;
-        }
+        List<TlsGradeChange> visible = teamIds == null
+                ? changeRepo.findRecent(since, TlsGradeChange.DROP, PageRequest.of(0, lim))
+                : changeRepo.findRecentForTeams(since, TlsGradeChange.DROP, new HashSet<>(teamIds), PageRequest.of(0, lim));
         Set<Long> invIds = new HashSet<>();
         for (TlsGradeChange c : visible) if (c.getInventoryId() != null) invIds.add(c.getInventoryId());
         Map<Long, TlsGradeStatus> current = new HashMap<>();

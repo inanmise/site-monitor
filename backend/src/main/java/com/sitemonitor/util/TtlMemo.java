@@ -30,7 +30,8 @@ import java.util.function.Supplier;
  */
 public final class TtlMemo<V> {
 
-    private record Entry<V>(V value, long at) {}
+    /** {@code maxAge}: değere özgü üst ömür (ör. hatalı sonuç kısa tutulur); varsayılan sınırsız (okumadaki ttl geçerli). */
+    private record Entry<V>(V value, long at, long maxAge) {}
 
     private final ConcurrentHashMap<String, Entry<V>> map = new ConcurrentHashMap<>();
     /** Şu an hesaplanan anahtarlar — bekleyenler aynı sonucu alır. */
@@ -49,15 +50,23 @@ public final class TtlMemo<V> {
     }
 
     public V get(String key, long ttlMs, boolean fresh, Supplier<V> compute) {
+        return get(key, ttlMs, fresh, compute, null);
+    }
+
+    /**
+     * {@code maxAgeFor}: hesaplanan değere göre üst ömür (ms) — okumadaki {@code ttlMs}'ten kısaysa o geçerli (2026-10-12:
+     * hesaplanamayan bölümlü yönetici özeti biten ayın 6 saatlik belleğinde kalmasın). null → yalnız {@code ttlMs}.
+     */
+    public V get(String key, long ttlMs, boolean fresh, Supplier<V> compute, java.util.function.ToLongFunction<V> maxAgeFor) {
         if (ttlMs <= 0 || key == null) return compute.get();
         long now = clock.getAsLong();
         if (fresh) {
             V v = compute.get();
-            store(key, v, clock.getAsLong(), ttlMs);
+            store(key, v, clock.getAsLong(), ttlMs, maxAgeFor);
             return v;
         }
         Entry<V> e = map.get(key);
-        if (e != null && now - e.at() < ttlMs) return e.value();
+        if (e != null && now - e.at() < Math.min(ttlMs, e.maxAge())) return e.value();
         CompletableFuture<V> mine = new CompletableFuture<>();
         CompletableFuture<V> running = inflight.putIfAbsent(key, mine);
         if (running != null) {
@@ -69,7 +78,7 @@ public final class TtlMemo<V> {
         }
         try {
             V v = compute.get();
-            store(key, v, clock.getAsLong(), ttlMs);
+            store(key, v, clock.getAsLong(), ttlMs, maxAgeFor);
             mine.complete(v);
             return v;
         } catch (RuntimeException | Error ex) {
@@ -80,10 +89,11 @@ public final class TtlMemo<V> {
         }
     }
 
-    private void store(String key, V v, long now, long ttlMs) {
+    private void store(String key, V v, long now, long ttlMs, java.util.function.ToLongFunction<V> maxAgeFor) {
         if (v == null) return;
         if (map.size() >= maxKeys && !map.containsKey(key)) evict(now, ttlMs);
-        map.put(key, new Entry<>(v, now));
+        long maxAge = maxAgeFor == null ? Long.MAX_VALUE : Math.max(0L, maxAgeFor.applyAsLong(v));
+        map.put(key, new Entry<>(v, now, maxAge));
     }
 
     private void evict(long now, long ttlMs) {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { changedFields } from '../../utils/changedFields.js'
 import { Search, KeyRound } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -27,6 +28,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
  * konu kartları (bağlantı / kullanıcı arama / grup / rol eşleme / dizin sorgusu) + alt kayıt çubuğu
  * (kirli durum kaydedilmiş anlık görüntüden; bind parolası kutusuna yazılan her şey kirli sayılır).
  */
+/** Birlikte gönderilen rol eşlemesi alanları. */
+const RM_KEYS = ['role_mapping_enabled', 'role_mappings', 'role_mapping_fallback']
+
 export default function LdapSettings() {
   const t = useT()
   const toast = useToast()
@@ -77,7 +81,12 @@ export default function LdapSettings() {
   async function save() {
     setSaving(true)
     try {
-      const dto = { ...form }
+      // Yalnız DEĞİŞEN alanlar (2026-10-12): tam form, başka yöneticinin o arada kaydettiği alanları (rol eşlemesi …)
+      // eski kopyayla geri alıyordu. Salt okunur damgalar hiç gönderilmez; parola yalnız yazıldıysa.
+      const dto = changedFields(form, loaded, ['updated_at', 'updated_by', 'bind_password_set'])
+      // Rol eşlemesi BİR BÜTÜN: biri değişirse üçü birlikte gider — yönetici önizlediği kurallarla açar, başka birinin
+      // kurallarıyla değil.
+      if (RM_KEYS.some((k) => k in dto)) for (const k of RM_KEYS) dto[k] = form[k]
       if (bindPw.trim()) dto.bind_password = bindPw
       const res = await api.admin.saveLdapSettings(dto)
       if (res?.success) {

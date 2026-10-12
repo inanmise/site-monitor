@@ -14,6 +14,7 @@ const dl = vi.hoisted(() => ({ calls: [] }))
 vi.mock('../utils/csvExport.js', async (orig) => ({ ...(await orig()), downloadText: (...a) => { dl.calls.push(a) } }))
 
 import { api } from '../api/client'
+import { activePeople, ownerOptions } from '../components/incidenthistory/postmortem/ActionItemParts.jsx'
 import PostmortemModal from '../components/incidenthistory/postmortem/PostmortemModal.jsx'
 
 /**
@@ -192,5 +193,21 @@ describe('PostmortemModal', () => {
     expect(onClose).not.toHaveBeenCalled()
     fireEvent.click(within(dlg).getByRole('button', { name: /^(Discard changes|Değişiklikleri sil)$/ }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('2026-10-12: sahip seçeneklerinde yalnız AKTİF kişiler; kayıtlı pasif sahip "(pasif)" etiketiyle kalır', () => {
+    const t = (k, a) => (k === 'pm.noOwner' ? 'Sahip atanmadı' : k === 'pm.ownerInactive' ? `${a} (pasif)` : k)
+    const people = [{ value: 'u-7', label: 'Ayşe' }]
+    expect(ownerOptions(people, null, t).map((o) => o.value)).toEqual(['', 'u-7'])
+    expect(ownerOptions(people, { owner_user_id: 'u-7', owner_name: 'Ayşe' }, t)).toHaveLength(2)
+    const withPassive = ownerOptions(people, { owner_user_id: 'u-9', owner_name: 'Eski Sahip' }, t)
+    expect(withPassive.at(-1)).toEqual({ value: 'u-9', label: 'Eski Sahip (pasif)' })
+    // Rehber yüklenmedi / okunamadı (null): bilinmiyor — "(pasif)" DENMEZ, kayıtlı adıyla
+    expect(ownerOptions(null, { owner_user_id: 'u-7', owner_name: 'Ayşe' }, t).at(-1)).toEqual({ value: 'u-7', label: 'Ayşe' })
+    expect(ownerOptions(null, null, t)).toEqual([{ value: '', label: 'Sahip atanmadı' }])
+    // Rehber → yalnız aktifler, A→Z
+    expect(activePeople([{ id: 'u-2', display_name: 'Zeynep' }, { id: 'u-1', display_name: 'Ayşe' },
+      { id: 'u-3', display_name: 'Pasif Kişi', active: false }, { id: 'u-4', username: 'kullanici.d', active: true }]))
+      .toEqual([{ value: 'u-1', label: 'Ayşe' }, { value: 'u-4', label: 'kullanici.d' }, { value: 'u-2', label: 'Zeynep' }])
   })
 })

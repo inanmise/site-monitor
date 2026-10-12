@@ -15,11 +15,11 @@ import { SettingsSection } from '../SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/shadcn/accordion'
 import { ItemGroup, Item, ItemTitle } from '@/components/shadcn/item'
-import { PHASE_TONE, normFilter, rotationPhase, splitLocations } from './secretRotationModel.js'
+import { PHASE_TONE, normFilter, rotationPhase, splitLocations, countIncomplete } from './secretRotationModel.js'
 
 /** Aşama → başlık ikonu (ton AlertBanner'dan). */
 const PHASE_ICON = {
-  dev_key: AlertTriangle, pending: RotateCw, done: CheckCircle2, incomplete: AlertTriangle, unreadable: ShieldAlert, steady: ShieldCheck,
+  dev_key: AlertTriangle, pending: RotateCw, done: CheckCircle2, incomplete: AlertTriangle, count_incomplete: AlertTriangle, unreadable: ShieldAlert, steady: ShieldCheck,
   done_unreadable: ShieldAlert,
 }
 
@@ -59,7 +59,7 @@ function LocationRow({ loc, t }) {
 /** Son yeniden şifreleme sonucu — satır içi, kalıcı (sayfa yenilenene dek). */
 function RunResult({ result, t }) {
   if (!result) return null
-  const tone = result.unreadable > 0 || result.changed_meanwhile > 0 ? 'warning' : 'success'
+  const tone = result.unreadable > 0 || result.changed_meanwhile > 0 || result.partial ? 'warning' : 'success'
   return (
     <div data-slot="rotation-result">
       <AlertBanner tone={tone} title={t('secret.rot.resultTitle', result.values_rewritten ?? 0)} className="mb-0">
@@ -67,6 +67,7 @@ function RunResult({ result, t }) {
           <li>{t('secret.rot.resultRows', result.rows_rewritten ?? 0)}</li>
           {result.changed_meanwhile > 0 && <li>{t('secret.rot.resultChanged', result.changed_meanwhile)}</li>}
           {result.unreadable > 0 && <li>{t('secret.rot.resultUnreadable', result.unreadable)}</li>}
+          {result.partial && <li data-slot="rotation-result-partial">{t('secret.rot.resultPartial')}</li>}
         </ul>
       </AlertBanner>
     </div>
@@ -119,7 +120,9 @@ export default function SecretRotationPanel() {
     if (running || !status?.can_reencrypt) return
     const ok = await showConfirm({
       title: t('secret.rot.confirmTitle'),
-      message: t('secret.rot.confirmMsg', status?.totals?.previous ?? 0),
+      message: (status?.totals?.previous ?? 0) === 0 && countIncomplete(status)
+        ? t('secret.rot.confirmMsgTruncated')
+        : t('secret.rot.confirmMsg', status?.totals?.previous ?? 0),
       confirmText: t('secret.rot.confirmBtn'),
       cancelText: t('dlg.cancel'),
       variant: 'warning',

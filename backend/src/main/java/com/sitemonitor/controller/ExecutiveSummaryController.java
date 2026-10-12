@@ -286,10 +286,13 @@ public class ExecutiveSummaryController {
         return runResponse(m, r, true);
     }
 
+    /** Ayın verisinin hazır olduğu saat metni ("06:00"). */
+    private static final String READY_AT = String.format("%02d:00", ExecutiveSummaryService.DATA_READY_HOUR);
+
     /**
      * Elle gönderim yalnız TAMAMLANMIŞ ay için (2026-10-12): içinde bulunulan ay gönderilirse kayıt SENT olur, ay bitince
-     * zamanlanmış tam özet "zaten gönderildi" diye gitmez ve ekran o ay için yarım anlık görüntüyü gösterirdi. Test e-postası
-     * etkilenmez (kayıt yazmaz).
+     * zamanlanmış tam özet "zaten gönderildi" diye gitmez ve ekran o ay için yarım anlık görüntüyü gösterirdi; biten ayın
+     * gece özeti henüz yazılmadıysa (1'i 06:00 öncesi) da reddedilir. Test e-postası etkilenmez (kayıt yazmaz).
      */
     private void requireCompletedMonth(YearMonth m) {
         YearMonth cur = service.currentMonth();
@@ -297,6 +300,14 @@ public class ExecutiveSummaryController {
             throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("month", Msg.t(
                     "İçinde bulunulan ay henüz bitmedi; özet ay bitince gönderilebilir. Test e-postasıyla şimdiden önizleyebilirsiniz.",
                     "The current month hasn't ended yet; the summary can be sent once it has. You can preview it now with a test e-mail."));
+        }
+        // Ay bitti ama son günlerin gece özeti henüz yazılmadı (1'i 00:00–06:00): eksik görüntüyle "gönderildi" kapanmasın.
+        if (m != null && !ExecutiveSummaryService.dataReady(m, service.now())) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("month", Msg.t(
+                    "Ayın son günlerinin gece özeti henüz yazılmadı; özet ayın 1'i saat " + READY_AT
+                            + "'dan sonra gönderilebilir. Test e-postasıyla şimdiden önizleyebilirsiniz.",
+                    "The nightly roll-up of the month's last days hasn't been written yet; the summary can be sent after "
+                            + READY_AT + " on the 1st. You can preview it now with a test e-mail."));
         }
     }
 
@@ -364,6 +375,11 @@ public class ExecutiveSummaryController {
                     "This month's summary is being sent right now. Refresh the history in a few minutes.");
             case "SKIPPED_MAIL_OFF" -> Msg.t("Gönderilmedi: e-posta kanalı kapalı (SMTP ayarlarında). Kanalı açıp tekrar deneyin.",
                     "Not sent: the e-mail channel is off (SMTP settings). Turn it on and try again.");
+            case ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE -> team
+                    ? Msg.t("Gönderilmedi: takımın alıcıları (ayarlar, üyeler ya da müdürler) şu anda okunamadı. Birkaç dakika sonra tekrar deneyin.",
+                            "Not sent: the team's recipients (settings, members or managers) could not be read right now. Try again in a few minutes.")
+                    : Msg.t("Gönderilmedi: global yöneticilerin listesi şu anda okunamadı, alıcılar eksik kalırdı. Birkaç dakika sonra tekrar deneyin.",
+                            "Not sent: the list of global administrators could not be read right now, so recipients would be missing. Try again in a few minutes.");
             case "TEAM_INACTIVE" -> Msg.t("Gönderilmedi: takım pasif. Takımı Takım Yönetimi'nden etkinleştirip tekrar deneyin.",
                     "Not sent: the team is inactive. Activate the team in Team Management and try again.");
             default -> Msg.t("Gönderim başarısız (" + r.status() + "). SMTP ayarlarını kontrol edip tekrar deneyin; ayrıntı gönderim geçmişinde.",

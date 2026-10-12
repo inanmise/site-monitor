@@ -93,7 +93,7 @@ class RenewalTimelinessSectionTest {
         CertificateDto q = cert("q.com", 1L, 1, "2027-09-25T00:00:00", "2026-09-22T00:00:00");
         ExecutiveSummaryContext ctx = ctx(SEP, NOW, 99.9, 30, List.of(p, q),
                 invMap(inv("p.com", 1L, 1, null), inv("q.com", 1L, 1, null)), Map.of(1L, "Takım A"));
-        SectionResult r = section.evaluate(ctx, gs, null, true);
+        SectionResult r = section.evaluate(ctx, gs, null);
         assertThat(kpi(r, "on_time_pct").value()).isEqualTo(100.0);
         assertThat(kpi(r, "early_pct").value()).isEqualTo(0.0);
         assertThat(verdictCodes(r)).doesNotContain("EXPIRED_UNRENEWED");
@@ -121,7 +121,7 @@ class RenewalTimelinessSectionTest {
         ExecutiveSummaryContext ctx = ctx(SEP, NOW, 99.9, 30, latest,
                 invMap(inv("ok.com", 1L, 1, null), inv("lapse.com", 1L, 1, null), inv("next.com", 1L, 1, null), inv("late.com", 1L, 1, null)),
                 Map.of(1L, "Takım A"));
-        SectionResult r = section.evaluate(ctx, gs, null, true);
+        SectionResult r = section.evaluate(ctx, gs, null);
         // 2 yenileme (ok: önce, late: sonra) + 2 yenilenmeden dolan → 1 / 4
         assertThat(kpi(r, "on_time_pct").value()).isEqualTo(25.0);
         assertThat(verdictCodes(r)).contains("COMPLIANCE", "AFTER_EXPIRY", "EXPIRED_UNRENEWED");
@@ -146,7 +146,7 @@ class RenewalTimelinessSectionTest {
                         inv("d.com", 2L, 2, null), inv("e.com", 2L, 2, null), inv("x.com", 1L, 1, null),
                         inv("y.com", 1L, 1, null), inv("z.com", 2L, 3, "2026-09-20")),
                 Map.of(1L, "Takım A", 2L, "Takım B"));
-        SectionResult r = section.evaluate(ctx, groups(), null, true);
+        SectionResult r = section.evaluate(ctx, groups(), null);
 
         assertThat(kpi(r, "renewals").value()).isEqualTo(5);
         // Uyum (2026-10-12): süresi dolmadan yapılanlar (a, b, c, e) / (5 yenileme + 0 yenilenmeden dolan) — plan etkisiz
@@ -198,7 +198,7 @@ class RenewalTimelinessSectionTest {
     }
 
     @Test
-    @DisplayName("sorgu ay başından 60 gün geriden, ay sonuna dek; okuma hatası → VERİ YOK")
+    @DisplayName("sorgu ay başından 60 gün geriden, ay sonuna dek; okuma hatası → bölüm hesaplanamaz (ERROR), 'yenileme yok' DEMEZ")
     void queryWindowAndFailure() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         RenewalTimelinessSection s = new RenewalTimelinessSection(jdbc, forecast);
@@ -208,7 +208,7 @@ class RenewalTimelinessSectionTest {
 
         doThrow(new RuntimeException("db")).when(jdbc).query(anyString(), any(org.springframework.jdbc.core.RowCallbackHandler.class),
                 any(Object[].class));
-        SectionResult r = s.compute(ctx());
-        assertThat(r.status()).isEqualTo(SectionResult.NO_DATA);
+        // 2026-10-12: istisna bölüm döngüsüne çıkar → SectionResult.failed (ERROR); zamanlanmış gönderim yeniden dener
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> s.compute(ctx())).isInstanceOf(RuntimeException.class);
     }
 }

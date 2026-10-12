@@ -425,6 +425,8 @@ public class SmtpLogQueryService {
         // yeniden gönderim 7/24 ekibine eksik bir arama listesi yollardı. Sonraki tetik zaten yeniden dener.
         if (com.sitemonitor.service.noc.NocLogRedaction.isNoc(n)) return new ResendResult(false, null, null, "NOC_NOT_RESENDABLE");
         if (n.getRecipientEmail() == null || n.getRecipientEmail().isBlank()) return new ResendResult(false, null, null, "NO_RECIPIENT");
+        // Kolona sığmayan alıcı listesi "… +N" ile kısaltıldı (2026-10-12): yeniden gönderim alıcıların bir KISMINA giderdi.
+        if (NotificationLog.fitted(n.getRecipientEmail())) return new ResendResult(false, null, null, "RECIPIENTS_TRUNCATED");
         if (n.getMessage() == null || n.getMessage().isBlank()) return new ResendResult(false, null, null, "NO_BODY");
         if (n.getAlertEventId() != null) {
             AlertEvent e = alertEventRepo.findById(n.getAlertEventId()).orElse(null);

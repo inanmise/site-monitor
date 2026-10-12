@@ -1413,6 +1413,33 @@ public class StormService {
         }
     }
 
+    /** Takım adresleri + kurtulan üyeleri nöbetçi olarak almış adresler (büyük/küçük harf duyarsız tekil, sıra korunur). */
+    static List<String> withOncall(List<String> teamEmails, List<AlertEvent> recovered) {
+        return withOncall(teamEmails, recovered, new java.util.HashSet<>());
+    }
+
+    /**
+     * {@code oncallTaken}: bu fırtına çözümünde nöbetçi adresi olarak ZATEN bir gönderime girmiş (ya da herhangi bir
+     * gönderimin takım adresi olan) adresler — SY + UG ortak üyesinin damgası iki takımın nöbetçisini taşır; her adres
+     * tek posta alır (2026-10-12). Çağıran kümeyi bütün gönderimlerin takım adresleriyle tohumlar.
+     */
+    static List<String> withOncall(List<String> teamEmails, List<AlertEvent> recovered, Set<String> oncallTaken) {
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (String e : teamEmails == null ? List.<String>of() : teamEmails) {
+            if (e != null && !e.isBlank() && seen.add(e.trim().toLowerCase(java.util.Locale.ROOT))) out.add(e.trim());
+        }
+        for (AlertEvent m : recovered == null ? List.<AlertEvent>of() : recovered) {
+            for (String e : EscalationService.oncallMailedFor(m)) {
+                String k = e.toLowerCase(java.util.Locale.ROOT);
+                if (seen.contains(k) || !oncallTaken.add(k)) continue;
+                seen.add(k);
+                out.add(e);
+            }
+        }
+        return out;
+    }
+
     private void sendStormRecovery(AlertStorm storm, List<AlertEvent> recoveredIn, List<AlertEvent> stillDown) {
         // O-b2 (2026-09-29): SESSİZ kapanan üye (izleme silindi / duraklatıldı / türün bildirimleri kapatıldı / envanter
         // pasif) KURTULMADI, susturuldu — toplu "N monitör kurtarıldı" e-postası/push'u/webhook'u/7-24 çözümü ONU saymaz.
@@ -1437,6 +1464,11 @@ public class StormService {
             Set<Long> recoveredIds = new java.util.HashSet<>();
             for (AlertEvent e : recovered) if (e.getId() != null) recoveredIds.add(e.getId());
             Map<String, String> sentWebhooks = new LinkedHashMap<>();
+            // Nöbetçi adresleri gönderimler arasında TEKİL: her takım adresi zaten tek gönderimdedir (resolveDispatches)
+            Set<String> oncallTaken = new java.util.HashSet<>();
+            for (TeamDispatch d : dispatches) {
+                for (String e : d.emails()) if (e != null) oncallTaken.add(e.trim().toLowerCase(java.util.Locale.ROOT));
+            }
 
             for (TeamDispatch d : dispatches) {
                 // Takıma özel bölme: kurtulan/hâlâ-down listeleri yalnız BU takımın üyelerinden.
@@ -1459,9 +1491,13 @@ public class StormService {
                 // gidiyor, hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
                 List<String> stillDownTargets = sampleTargets(mineStillDown);
 
+                // Kurtulan üyeyi NÖBETÇİ olarak almış adresler de çözümü öğrenir (2026-10-12; bireysel çözüm yoluyla aynı kural —
+                // EscalationService.oncallMailedFor): fırtınadan önce tek tek duyurulan alarmın nöbetçisi "düzeldi"yi kaçırıyordu.
+                // Damga üyenin KENDİ takımının nöbetçisidir (TeamDispatch takım üyeleri) — takım yalıtımı korunur.
+                List<String> mailTo = withOncall(d.emails(), mineRecovered, oncallTaken);
                 String mailStatus = "SKIPPED: alıcı yok";
                 String html = null;
-                if (!d.emails().isEmpty()) {
+                if (!mailTo.isEmpty()) {
                     // "Hâlâ erişilemeyen" sayacı da TAKIM kapsamlı: listenin kendisi öyle ve
                     // webhook partı (aşağıda) zaten mineStillDown kullanıyordu — e-posta hesap
                     // geneli sayı geçtiği için aynı olay iki kanalda farklı rakam veriyordu.
@@ -1471,10 +1507,10 @@ public class StormService {
                     String text = emailService.buildStormRecoveryText(
                             mineRecovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
-                    mailStatus = emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+                    mailStatus = emailService.sendHtml(mailTo.toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                 }
                 // Çözüm postası yalnız KURTULAN üyelerin günlüğüne (hâlâ-down üye için bu bir çözüm değildir).
-                logStormMail(new TeamDispatch(d.teamId(), d.teamName(), d.emails(), d.webhooks(), mineRecovered, List.of()),
+                logStormMail(new TeamDispatch(d.teamId(), d.teamName(), mailTo, d.webhooks(), mineRecovered, List.of()),
                         storm, TRIGGER_STORM_RESOLVE, subject, html, mailStatus);
 
                 enqueueStormPush(storm, d, "RESOLVE", new UserPushService.LocalizedText(

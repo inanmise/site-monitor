@@ -16,6 +16,8 @@ export const ROTATION_FILTERS = ['all', 'current', 'previous', 'unreadable']
  *                  çözülemiyor — başka bir anahtarla şifrelenmiş; kayıtlarda yeniden girilmeli.
  *  - `unreadable`  önceki anahtar YOK ve hiçbir anahtarla çözülemeyen değer var — eski anahtarı önceki olarak ver ya da
  *                  değerleri yeniden gir.
+ *  - `count_incomplete` önceki anahtar YOK ama sayım eksik (bir konum okunamadı ya da tavana ulaştı) — "her şey güncel
+ *                  anahtarda" DENMEZ (2026-10-12).
  *  - `steady`      döndürme yok, her şey güncel anahtarda.
  */
 export function rotationPhase(status) {
@@ -33,7 +35,14 @@ export function rotationPhase(status) {
     return 'done'
   }
   if ((totals.unreadable || 0) > 0) return 'unreadable'
+  if (countIncomplete(status)) return 'count_incomplete'
   return 'steady'
+}
+
+/** Sayım eksik mi: bir konum okunamadı ya da sayım tavanına ulaştı. */
+export function countIncomplete(status) {
+  const locs = Array.isArray(status?.locations) ? status.locations : []
+  return locs.some((l) => l && (l.error || l.truncated))
 }
 
 /** Aşama → AlertBanner tonu. */
@@ -42,6 +51,7 @@ export const PHASE_TONE = {
   pending: 'info',
   done: 'success',
   incomplete: 'warning',
+  count_incomplete: 'warning',
   done_unreadable: 'warning',
   unreadable: 'danger',
   steady: 'success',

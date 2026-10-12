@@ -38,6 +38,9 @@ export default function ActionItemsView({ onOpenIncident }) {
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState(null)
   const seq = useRef(0)
+  // Sonraki istenecek sayfa (2026-10-12): items.length'ten türetilmez — tekilleştirme satır düşürünce aynı sayfa
+  // yeniden istenip "daha fazla" ilerlemeyi bırakıyordu.
+  const nextPage = useRef(1)
 
   useUrlQuerySync({ ih_astatus: status === 'open' ? null : status, ih_amine: mine ? '1' : null, ih_aover: overdue ? '1' : null, ih_aq: qTerm || null })
   useEffect(() => {
@@ -56,7 +59,13 @@ export default function ActionItemsView({ onOpenIncident }) {
     if (res?.success && res.data) {
       setError(null)
       setData(res.data)
-      setItems((prev) => (page === 0 ? res.data.items || [] : [...prev, ...(res.data.items || [])]))
+      nextPage.current = page + 1
+      setItems((prev) => {
+        const next = res.data.items || []
+        if (page === 0) return next
+        const seen = new Set(prev.map((x) => x.id))
+        return [...prev, ...next.filter((x) => !seen.has(x.id))]
+      })
     } else setError(res?.error || t('pm.listError'))
   }, [status, mine, overdue, qTerm, t])
 
@@ -70,6 +79,9 @@ export default function ActionItemsView({ onOpenIncident }) {
     if (res?.success && res.data) {
       setItems((list) => list.map((x) => (x.id === a.id ? { ...x, ...res.data } : x)))
       toast.success(t('pm.statusSaved', t('pm.astatus.' + next)))
+      // Liste ve sayaçlar sunucudan yeniden (2026-10-12): süzgeçten çıkan satır sayfa ofsetini kaydırıyor, "daha fazla"
+      // bir satırı atlıyordu; açık / gecikmiş / bana ait sayıları da eski kalıyordu.
+      load(0)
     } else toast.error(res?.error || t('pm.actionError'))
   }
 
@@ -139,7 +151,7 @@ export default function ActionItemsView({ onOpenIncident }) {
         </ul>
       )}
       {data && items.length < total && (
-        <Button type="button" variant="outline" onClick={() => load(Math.floor(items.length / PAGE))} disabled={loading} className={cn('self-center', TOUCH)}
+        <Button type="button" variant="outline" onClick={() => load(nextPage.current)} disabled={loading} className={cn('self-center', TOUCH)}
           data-slot="pm-actions-more">
           {loading && <Spinner size={14} inline decorative />}{t('pm.loadMore', total - items.length)}
         </Button>

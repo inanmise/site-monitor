@@ -241,6 +241,65 @@ class AvailabilitySectionTeamScopeTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: DURAKLATILMIŞ envanter de eşlenir (pasif): kurumda SY takımı, takım kapsamında SY ya da UG; aynı adlı aktif satır kazanır; sorgu koşu başına bir kez")
+    void pausedInventoryIsMapped() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForList(AvailabilitySection.PAUSED_INVENTORY_SQL)).thenReturn(List.of(
+                new HashMap<>(Map.of("domain", "paused-sy.example.com", "team_id", 1L, "ug_team_id", 2L, "group_name", " Ödeme ")),
+                new HashMap<>(Map.of("domain", "paused-ug.example.com", "team_id", 3L, "ug_team_id", 1L)),
+                new HashMap<>(Map.of("domain", "sy.example.com", "team_id", 3L))));       // aynı adla aktif satır var
+        MonitoringOverviewService ov = mock(MonitoringOverviewService.class);
+        when(ov.build(anyString(), any(), anyBoolean(), anyInt(), anyBoolean())).thenReturn(Map.of("monitors", List.of()));
+        AvailabilitySection s = new AvailabilitySection(ov, jdbc);
+
+        Map<String, AvailabilitySection.MonitorRef> org = s.monitorRefs(orgCtx(List.of(), INV));
+        AvailabilitySection.MonitorRef p = org.get("UPTIME|paused-sy.example.com");
+        assertThat(p.active()).isFalse();
+        assertThat(p.teamId()).isEqualTo(1L);
+        assertThat(p.teamName()).isEqualTo("Takım A");
+        assertThat(p.group()).isEqualTo("Ödeme");
+        assertThat(org.get("UPTIME|paused-ug.example.com").teamId()).isEqualTo(3L);
+        assertThat(org.get("UPTIME|sy.example.com").active()).as("aktif satır kazanır").isTrue();
+        assertThat(org.get("UPTIME|sy.example.com").teamId()).isEqualTo(1L);
+
+        Map<String, Object> shared = new ConcurrentHashMap<>();
+        ExecutiveSummaryContext t1 = teamCtx(1, List.of(), INV, shared);
+        Map<String, AvailabilitySection.MonitorRef> team1 = s.monitorRefs(t1);
+        assertThat(AvailabilitySection.inScope(t1, team1.get("UPTIME|paused-sy.example.com"))).isTrue();      // SY=1
+        assertThat(AvailabilitySection.inScope(t1, team1.get("UPTIME|paused-ug.example.com"))).isTrue();      // UG=1
+        ExecutiveSummaryContext t2 = teamCtx(2, List.of(), INV, shared);
+        Map<String, AvailabilitySection.MonitorRef> team2 = s.monitorRefs(t2);
+        assertThat(team2.get("UPTIME|paused-sy.example.com").teamId()).isEqualTo(2L);                        // UG=2
+        assertThat(AvailabilitySection.inScope(t2, team2.get("UPTIME|paused-sy.example.com"))).isTrue();
+        assertThat(AvailabilitySection.inScope(t2, team2.get("UPTIME|paused-ug.example.com"))).isFalse();
+        // kurum bağlamı kendi belleğiyle (1) + iki takım bağlamı ORTAK bellekle (1) = 2 okuma
+        verify(jdbc, times(2)).queryForList(AvailabilitySection.PAUSED_INVENTORY_SQL);
+
+        // Duraklatılmış izlemenin ay içindeki gerçek kontrolleri artık "silinmiş izleme" sayılıp düşmez
+        Map<String, long[]> by = new LinkedHashMap<>();
+        by.put("UPTIME|paused-sy.example.com", v(100, 50, 0, 0));
+        SectionResult r = section.evaluate(orgCtx(List.of(), INV), new AvailabilitySection.Rollup(by, Map.of(), "hourly_rollup", false), org);
+        assertThat(r.data().get("org_availability")).isEqualTo(50.0);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: okuma hatası 'veri yok' DEĞİL — izleme özeti ya da pano satırları okunamazsa istisna (bölüm ERROR, gönderim yeniden dener)")
+    void readFailuresThrow() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForList(startsWith("SELECT monitor_type"), any(Object[].class)))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        AvailabilitySection s = new AvailabilitySection(mock(MonitoringOverviewService.class), jdbc);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> s.loadRollup(orgCtx(List.of(), INV)))
+                .isInstanceOf(IllegalStateException.class);
+
+        MonitoringOverviewService ov = mock(MonitoringOverviewService.class);
+        when(ov.build(anyString(), any(), anyBoolean(), anyInt(), anyBoolean())).thenThrow(new IllegalStateException("pano"));
+        AvailabilitySection s2 = new AvailabilitySection(ov, mock(JdbcTemplate.class));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> s2.monitorRefs(orgCtx(List.of(), INV)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("koşu boyu paylaşım: iki takım bağlamı aynı haritayla → izleme toplamı, izleme × gün ve pano satırları BİR kez")
     void sharedAcrossTeams() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
@@ -267,5 +326,24 @@ class AvailabilitySectionTeamScopeTest {
         when(r.getLong("total")).thenReturn(total);
         when(r.getLong("up")).thenReturn(up);
         return r;
+    }
+
+    @Test
+    @DisplayName("2026-10-12: duraklatılmış alan adının TÜREV Port satırı (damga SY) UG takımının özetinde de sayılır")
+    void pausedDerivedPortCountsForUgTeam() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForList(AvailabilitySection.PAUSED_INVENTORY_SQL)).thenReturn(List.of(
+                new HashMap<>(Map.of("domain", "paused-sy.example.com", "team_id", 1L, "ug_team_id", 2L))));
+        MonitoringOverviewService ov = mock(MonitoringOverviewService.class);
+        Map<String, Object> port = new HashMap<>(Map.of("type", "port", "id", 9L, "name", "paused-sy:443", "team_id", 1L,
+                "active", false, "deleted", false, "standalone", false, "target", "paused-sy.example.com", "inventory_inactive", true));
+        when(ov.build(anyString(), any(), anyBoolean(), anyInt(), anyBoolean())).thenReturn(Map.of("monitors", List.of(port)));
+        AvailabilitySection s = new AvailabilitySection(ov, jdbc);
+        ExecutiveSummaryContext ug = teamCtx(2, List.of(), INV, new ConcurrentHashMap<>());
+        Map<String, AvailabilitySection.MonitorRef> refs = s.monitorRefs(ug);
+        assertThat(AvailabilitySection.inScope(ug, refs.get("PORT|9"))).isTrue();
+        assertThat(AvailabilitySection.inScope(ug, refs.get("UPTIME|paused-sy.example.com"))).isTrue();
+        ExecutiveSummaryContext other = teamCtx(3, List.of(), INV, new ConcurrentHashMap<>());
+        assertThat(AvailabilitySection.inScope(other, s.monitorRefs(other).get("PORT|9"))).isFalse();
     }
 }

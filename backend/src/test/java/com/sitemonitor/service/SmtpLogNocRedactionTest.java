@@ -97,4 +97,18 @@ class SmtpLogNocRedactionTest {
         assertThat(r.reason()).isEqualTo("NOC_NOT_RESENDABLE");
         verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
     }
+
+    @Test
+    @DisplayName("2026-10-12: kolona sığmayıp '… +N' ile kısaltılmış alıcı listesi yeniden GÖNDERİLMEZ (alıcıların yalnız bir kısmına giderdi)")
+    void truncatedRecipientsAreNotResent() {
+        NotificationLog n = new NotificationLog();
+        n.setId(8L); n.setAlertEventId(10L); n.setRecipientRole("COMBINED"); n.setRecipientName("Takım A");
+        n.setRecipientEmail("a@example.com, b@example.com … +12"); n.setMessage("<p>gövde</p>"); n.setEmailStatus("FAILED: 550");
+        n.setTrigger("INITIAL"); n.setSubject("[Site Monitor] KRİTİK — a.example.com");
+        when(logRepo.findById(8L)).thenReturn(Optional.of(n));
+        SmtpLogQueryService.ResendResult r = svc.resend(8L, SmtpLogQueryService.Scope.all(), "admin");
+        assertThat(r.ok()).isFalse();
+        assertThat(r.reason()).isEqualTo("RECIPIENTS_TRUNCATED");
+        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+    }
 }

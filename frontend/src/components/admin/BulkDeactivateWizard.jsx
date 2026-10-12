@@ -407,7 +407,7 @@ function PreviewStep({ preview, q, setQ, teamMap, t }) {
                         <SystemRoleBadge role={u.system_role} />
                         <Badge variant="outline" className="font-normal text-muted-foreground">{t('ubd.source.' + (u.auth_source === 'LDAP' ? 'LDAP' : 'LOCAL'))}</Badge>
                       </div>
-                      <div className="truncate font-mono text-xs text-muted-foreground" title={u.email || u.username}>
+                      <div className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
                         {u.username}{u.email ? ` · ${u.email}` : ''}
                       </div>
                     </div>

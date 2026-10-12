@@ -160,7 +160,8 @@ class WatchdogServiceTest {
     }
 
     @Test
-    @DisplayName("2026-10-12: RECENT ile atlayan pod, kayıtlı satırdan eski bellek durumunu siler — sonraki DB kesintisinde bayat 'sorun' yeniden kullanılmaz")
+    @DisplayName("2026-10-12: RECENT ile atlayan pod, kayıtlı satırdan eski bellek durumunu siler (duyurduğu sorun için 'düzeldi' gönderir) — sonraki DB kesintisinde bayat 'sorun' yeniden kullanılmaz")
+    @SuppressWarnings("unchecked")
     void staleMemoryPrunedOnRecentSkip() {
         java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
         when(repo.findAll()).thenAnswer(i -> {
@@ -180,10 +181,70 @@ class WatchdogServiceTest {
         other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
         table.put(other.getCheckKey(), other);
         assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
+        // Bu pod'un duyurduğu "veritabanı çöktü" budanırken "düzeldi" bildirimi gider (eskiden kayboluyordu)
+        ArgumentCaptor<List<WatchdogMail.Item>> items = ArgumentCaptor.forClass(List.class);
+        verify(notifier, times(2)).send(items.capture(), eq(false));
+        assertThat(items.getAllValues().get(1)).extracting(WatchdogMail.Item::kind).containsExactly("RECOVER");
         // Yeni kısa kesinti: tek sorunlu yerel ölçüm onay beklemeden bildirim üretmemeli (bellek temizlendi)
         down.set(true);
         svc.evaluateLocalDatabase(T0.plusSeconds(400));
+        verify(notifier, times(2)).send(anyList(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: budanan bellek sorunu kayıtlı satırda da SORUN ise ayrı 'düzeldi' gönderilmez (kayıtlı durum kendisi kapatır)")
+    void prunedProblemStillOpenIsNotRecovered() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        svc.evaluate(T0.plusSeconds(60));
+        down.set(false);
+        WatchdogState other = new WatchdogState();
+        other.setCheckKey(WatchdogCheck.DATABASE.key());
+        other.setStatus("PROBLEM");
+        other.setNotifiedKind("ALERT");
+        other.setNotifiedAt(WatchdogTransition.ISO.format(T0.plusSeconds(140)));
+        other.setSince(WatchdogTransition.ISO.format(T0.plusSeconds(100)));
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
+        table.put(other.getCheckKey(), other);
+        assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
         verify(notifier, times(1)).send(anyList(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: sistem bakımı susturken açılan sorun ALERT_MUTED; susturma sürerken yinelenmez, bitince sorun sürüyorsa BİR KEZ bildirilir")
+    void mutedProblemIsSentAfterMaintenance() {
+        when(notifier.muted()).thenReturn(true);
+        when(notifier.send(anyList(), anyBoolean())).thenReturn(
+                new WatchdogNotifier.Report(WatchdogNotifier.Outcome.MUTED, "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", 1));
+        results.put(WatchdogCheck.CERT_SWEEP, Result.PROBLEM);
+        svc.evaluate(T0);
+        assertThat(svc.evaluate(T0.plusSeconds(60)).alerts()).isEqualTo(1);
+        assertThat(table.get("cert_sweep").getNotifiedKind()).isEqualTo("ALERT_MUTED");
+        svc.evaluate(T0.plusSeconds(1200));                                   // susturma sürüyor → yeniden deneme yok
+        verify(notifier, times(1)).send(anyList(), anyBoolean());
+
+        when(notifier.muted()).thenReturn(false);
+        when(notifier.send(anyList(), anyBoolean())).thenReturn(
+                new WatchdogNotifier.Report(WatchdogNotifier.Outcome.DELIVERED, "SENT", "SKIPPED", "SKIPPED", 1));
+        assertThat(svc.evaluate(T0.plusSeconds(1300)).alerts()).isEqualTo(1);
+        assertThat(table.get("cert_sweep").getNotifiedKind()).isEqualTo("ALERT");
+        svc.evaluate(T0.plusSeconds(1400));
+        verify(notifier, times(2)).send(anyList(), anyBoolean());
+
+        // Kanal yok → "gitti" denmez (ALERT_NOCHANNEL), yeniden denenmez
+        results.put(WatchdogCheck.NOTIFICATIONS, Result.PROBLEM);
+        when(notifier.send(anyList(), anyBoolean())).thenReturn(
+                new WatchdogNotifier.Report(WatchdogNotifier.Outcome.NO_CHANNEL, "SKIPPED: alıcı yok", "SKIPPED", "SKIPPED", 0));
+        svc.evaluate(T0.plusSeconds(1500));
+        svc.evaluate(T0.plusSeconds(1600));
+        assertThat(table.get("notifications").getNotifiedKind()).isEqualTo("ALERT_NOCHANNEL");
+        svc.evaluate(T0.plusSeconds(2700));
+        verify(notifier, times(3)).send(anyList(), anyBoolean());
     }
 
     @Test
@@ -233,6 +294,37 @@ class WatchdogServiceTest {
         when(notifier.send(anyList(), anyBoolean())).thenReturn(
                 new WatchdogNotifier.Report(WatchdogNotifier.Outcome.NO_CHANNEL, "SKIPPED: alıcı yok", "SKIPPED", "SKIPPED", 0));
         svc.evaluate(T0.plus(Duration.ofMinutes(20)));
-        assertThat(table.get("cert_sweep").getNotifiedKind()).isEqualTo("ALERT");
+        // 2026-10-12: kanal yok → yeniden denenmez ama "gitti" de denmez
+        assertThat(table.get("cert_sweep").getNotifiedKind()).isEqualTo("ALERT_NOCHANNEL");
+        svc.evaluate(T0.plus(Duration.ofMinutes(40)));
+        verify(notifier, times(2)).send(anyList(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: başka pod düzelmeyi ZATEN duyurduysa (kayıtlı satır RECOVER) budanan bellek sorunu ikinci 'düzeldi' göndermez")
+    void noSecondRecoverWhenAlreadyAnnounced() {
+        WatchdogState mem = new WatchdogState();
+        mem.setCheckKey("database");
+        mem.setStatus("PROBLEM");
+        mem.setNotifiedKind("ALERT");
+        mem.setNotifiedAt("2026-10-11T12:01:00");
+        WatchdogState stored = new WatchdogState();
+        stored.setCheckKey("database");
+        stored.setStatus("OK");
+        stored.setNotifiedKind("RECOVER");
+        stored.setNotifiedAt("2026-10-11T12:05:00");
+        assertThat(WatchdogService.recoveryAnnounced(stored, mem)).isTrue();
+        stored.setNotifiedKind("ALERT");
+        stored.setNotifiedAt("2026-10-11T11:00:00");
+        assertThat(WatchdogService.recoveryAnnounced(stored, mem)).isFalse();
+        // Teslim edilemeyen / susturulan hatırlatma da "duyurulmuş" sayılır; kanalsız hatırlatma sayılmaz
+        mem.setNotifiedKind("REMIND_FAILED");
+        assertThat(WatchdogService.announcedProblem(mem)).isTrue();
+        mem.setNotifiedKind("REMIND_MUTED");
+        assertThat(WatchdogService.announcedProblem(mem)).isTrue();
+        mem.setNotifiedKind("REMIND_NOCHANNEL");
+        assertThat(WatchdogService.announcedProblem(mem)).isFalse();
+        mem.setNotifiedKind("ALERT_FAILED");
+        assertThat(WatchdogService.announcedProblem(mem)).isFalse();
     }
 }

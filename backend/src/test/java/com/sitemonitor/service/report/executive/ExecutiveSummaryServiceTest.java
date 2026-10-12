@@ -90,6 +90,20 @@ class ExecutiveSummaryServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: envanter okunamazsa bölüm 'veri yok' DEĞİL ERROR; hata saklanmaz — sonraki bölüm yeniden okur")
+    void inventoryReadFailureIsError() {
+        when(jdbc.queryForList(ExecutiveSummaryService.INVENTORY_SQL))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        Fake a = new Fake("availability", 10, SectionResult.OK, false);
+        Fake b = new Fake("noise", 20, SectionResult.OK, false);
+        ExecutiveSummary s = svc(List.of(a, b)).compute(YearMonth.of(2026, 9));
+        assertThat(s.section("availability").status()).isEqualTo(SectionResult.ERROR);
+        assertThat(s.section("noise").status()).isEqualTo(SectionResult.ERROR);
+        assertThat(s.status()).isEqualTo(SectionResult.ERROR);
+        verify(jdbc, times(2)).queryForList(ExecutiveSummaryService.INVENTORY_SQL);
+    }
+
+    @Test
     @DisplayName("bellek: aynı ay ikinci istekte HESAPLANMAZ; fresh 30 sn'de bir; devam eden ay da belleklenir")
     void memo() {
         Fake f = new Fake("availability", 10, SectionResult.OK, false);
@@ -166,5 +180,22 @@ class ExecutiveSummaryServiceTest {
         assertThat(months).hasSize(13);
         assertThat(months.get(0)).containsEntry("month", "2026-10").containsEntry("current", true);
         assertThat(months.get(1)).containsEntry("month", "2026-09").containsEntry("status", "SENT");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: takım adları okunamazsa takım özeti 'Takımsız' yazdırmaz — hesap durur (gönderim yeniden dener)")
+    void teamNamesReadFailureStopsTeamSummary() {
+        when(teams.findAll()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> svc(List.of(new Fake("availability", 10, SectionResult.OK, false)))
+                .compute(YearMonth.of(2026, 9), 5L, null)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: hesaplanamayan bölümlü özet işaretlenir (biten ayın 6 sa belleğinde kalmasın)")
+    void errorSectionDetected() {
+        ExecutiveSummary s = svc(List.of(new Fake("noise", 20, SectionResult.OK, true))).compute(YearMonth.of(2026, 9));
+        assertThat(ExecutiveSummaryService.hasErrorSection(s)).isTrue();
+        ExecutiveSummary ok = svc(List.of(new Fake("availability", 10, SectionResult.OK, false))).compute(YearMonth.of(2026, 9));
+        assertThat(ExecutiveSummaryService.hasErrorSection(ok)).isFalse();
     }
 }

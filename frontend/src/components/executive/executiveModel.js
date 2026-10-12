@@ -287,15 +287,36 @@ export function monthOptions(months, lang = 'tr', now = new Date()) {
   }))
 }
 
+/** Ayın verisinin gönderime hazır olduğu saat (sonraki ayın 1'i, İstanbul) — sunucu {@code ExecutiveSummaryService.DATA_READY_HOUR}. */
+export const DATA_READY_HOUR = 6
+
+function istanbulMonth(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(date)
+  return `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`
+}
+
 /**
- * Ay bitti mi (Europe/Istanbul) — "Şimdi gönder" yalnız tamamlanmış ay için (2026-10-12; sunucu içinde bulunulan ayı 400 ile
- * reddeder: gönderilirse ay bitince tam özet "zaten gönderildi" diye gitmezdi).
+ * Ay gönderilebilir mi (Europe/Istanbul): {@code 'ok'}; {@code 'current'} = içinde bulunulan ya da gelecek ay; {@code 'pending'} =
+ * ay bitti ama son günlerin gece özeti henüz yazılmadı (sonraki ayın 1'i 00:00–06:00). Sunucu kapısının (400 field=month) eşi.
+ */
+export function monthSendState(month, now = new Date()) {
+  if (!MONTH_RE.test(month || '')) return 'current'
+  if (month >= istanbulMonth(now)) return 'current'
+  return month < istanbulMonth(new Date(now.getTime() - DATA_READY_HOUR * 3600_000)) ? 'ok' : 'pending'
+}
+
+/**
+ * "Şimdi gönder" açık mı — yalnız tamamlanmış ve verisi hazır ay (2026-10-12; sunucu içinde bulunulan ayı ve gece özeti
+ * yazılmamış ayı 400 ile reddeder: gönderilirse ay eksik görüntüyle "gönderildi" diye kapanırdı).
  */
 export function isCompletedMonth(month, now = new Date()) {
-  if (!MONTH_RE.test(month || '')) return false
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(now)
-  const cur = `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`
-  return month < cur
+  return monthSendState(month, now) === 'ok'
+}
+
+/** "Şimdi gönder" kapalıyken gösterilecek ipucu anahtarı (açıksa null). */
+export function runHintKey(month, now = new Date()) {
+  const st = monthSendState(month, now)
+  return st === 'ok' ? null : st === 'pending' ? 'exec.cfg.runDataPending' : 'exec.cfg.runCurrentMonth'
 }
 
 function fallbackMonths(now) {
@@ -496,6 +517,9 @@ export function teamToBody(f, members = []) {
     extra_emails: parseEmails(f?.extra).join(', '),
   }
 }
+
+/** Kayıt gövdesi yalnız değişen alanlar — ortak yardımcı (LDAP ayarları da kullanır). */
+export { changedFields } from '../../utils/changedFields.js'
 
 /** Kaydedilmemiş değişiklik var mı? */
 export function teamDirty(form, data) {

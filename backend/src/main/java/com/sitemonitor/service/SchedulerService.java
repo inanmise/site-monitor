@@ -1816,7 +1816,8 @@ public class SchedulerService {
 
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
-        repairPingDecimalLossRows();
+        // Ping ondalıklı kayıp onarımı açılış yolunda DEĞİL (2026-10-12): indekssiz tam tarama her açılışta trafik öncesi
+        // koşuyordu — rebuildPingRollupsOnce içinde, nişanlı ve kilitli (repairPingDecimalLossRows).
     }
 
     /**
@@ -1853,16 +1854,19 @@ public class SchedulerService {
      * çıkarılamaz ("16.6667" ile "66.6667" aynı "6667"yi bırakır) → kayıp boşaltılır. İdempotent: ilk koşudan sonra hiçbir
      * satır eşleşmez. Alarm geçmişine dokunmaz (açılmış alarmlar kayıt olarak kalır; açık olanı normal uzlaştırma kapatır).
      */
-    private void repairPingDecimalLossRows() {
+    static final String PING_DECIMAL_LOSS_REPAIR_SQL =
+            "UPDATE ping_checks SET up = TRUE, packet_loss = NULL, error = NULL, failure_reason = NULL, failure_detail = NULL "
+          + "WHERE packet_loss > 100";
+
+    /** Onarılan satır sayısı; hata → -1 (çağıran nişan yazmaz, iş bir saat sonra yeniden dener). */
+    private int repairPingDecimalLossRows() {
         try {
-            int fixed = jdbcTemplate.update(
-                    "UPDATE ping_checks SET up = TRUE, packet_loss = NULL, error = NULL, failure_reason = NULL, failure_detail = NULL "
-                  + "WHERE packet_loss > 100");
+            int fixed = jdbcTemplate.update(PING_DECIMAL_LOSS_REPAIR_SQL);
             if (fixed > 0) log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
-            // Özetlerin (günlük / saatlik) yeniden hesabı açılış yolunda DEĞİL: rebuildPingRollupsOnce (tek seferlik, kilitli,
-            // nişanlı, açılıştan birkaç dakika sonra) — 20.123.0'da satırları zaten onarılmış ortamlar da kapsanır.
+            return fixed;
         } catch (Exception e) {
-            log.warn("Ping geçmişi onarımı atlandı (sonraki açılış yeniden dener): {}", e.getMessage());
+            log.warn("Ping geçmişi onarımı başarısız (bir saat sonra yeniden denenecek): {}", e.getMessage());
+            return -1;
         }
     }
 
@@ -2369,58 +2373,96 @@ public class SchedulerService {
         return total;
     }
 
-    /** Ping özet yeniden hesabının nişanı — DEĞİŞTİRİLMEZ (değişirse iş yeniden koşar; idempotent, zararsız). */
-    static final String PING_ROLLUP_REBUILD_KEY = "2026-10-12-ping-rollup-rebuild";
+    /**
+     * Ping özet yeniden hesabının nişanı (değişirse iş yeniden koşar; idempotent, zararsız). "-v2" (2026-10-12): ilk sürüm
+     * geçici bir bağlantı hatasında veritabanı türünü "PostgreSQL değil" sayıp işi yapmadan nişan yazabiliyordu — o
+     * ortamlarda iş bir kez daha (onarımla birlikte) koşsun.
+     */
+    static final String PING_ROLLUP_REBUILD_KEY = "2026-10-12-ping-rollup-rebuild-v2";
+
+    /** Ping yeniden hesabının kilit süresi (dk) — tüm seriyi haftalık dilimlerle yeniden özetlemek varsayılan 10 dk'yı aşabilir. */
+    static final int PING_ROLLUP_REBUILD_LOCK_MINUTES = 120;
 
     /**
      * TEK SEFERLİK (2026-10-12): ondalıklı paket kaybı hatasının (20.123.0'da onarılan) yanlış "kapalı" saydığı ping satırları
-     * günlük / saatlik özetlerde hâlâ duruyordu — gece rollup'ı yalnız son {@code lookback-days} günü yeniler. Bu iş ping
-     * serisinin tamamını haftalık dilimlerle yeniden özetler (idempotent upsert). Açılış yolunda değil: açılıştan 5 dk sonra,
-     * {@code scheduler_lock} altında; nişan ({@code schema_patch_markers}) yalnız TÜM dilimler başarılıysa yazılır — yarıda
-     * kalırsa bir saat sonra yeniden denenir. PostgreSQL dışında (H2) iş yok, nişan yazılır.
+     * günlük / saatlik özetlerde hâlâ duruyordu — gece rollup'ı yalnız son {@code lookback-days} günü yeniler. Bu iş önce
+     * satırları onarır ({@code packet_loss > 100}), sonra ping serisinin tamamını haftalık dilimlerle yeniden özetler
+     * (idempotent upsert). Açılış yolunda değil: açılıştan 5 dk sonra, kendi kilidi ({@value #PING_ROLLUP_REBUILD_LOCK_MINUTES}
+     * dk) altında; nişan kilit İÇİNDE yeniden okunur (başka pod bitirdiyse tekrar koşmaz) ve yalnız onarım + TÜM dilimler
+     * başarılıysa yazılır — yarıda kalırsa bir saat sonra yeniden denenir. Veritabanı türü OKUNAMAZSA karar verilmez
+     * (eskiden geçici bağlantı hatası "PostgreSQL değil" sayılıp nişan yazılıyor, iş kalıcı olarak atlanıyordu). PostgreSQL
+     * dışında (H2) özet işi yok; onarım koşar, nişan yazılır.
      */
     @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}", fixedDelay = 3_600_000L)
     public void rebuildPingRollupsOnce() {
+        if (pingRollupRebuildDone()) return;
+        if (!tryAcquireSchedulerLock("ping-rollup-rebuild", PING_ROLLUP_REBUILD_LOCK_MINUTES)) {
+            log.debug("ping-rollup-rebuild — kilit başka pod'da, atlanıyor");
+            return;
+        }
+        try {
+            rebuildPingRollupsLocked();
+        } catch (Exception e) {
+            log.warn("Ping özet yeniden hesabı başarısız (bir saat sonra yeniden denenecek): {}", e.toString());
+        } finally {
+            releaseSchedulerLock("ping-rollup-rebuild");
+        }
+    }
+
+    /** Nişan yazılmış mı; okunamazsa "evet" (iş bu tur koşmaz, sonraki tur yeniden bakar). */
+    private boolean pingRollupRebuildDone() {
         try {
             jdbcTemplate.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
             Integer done = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?",
                     Integer.class, PING_ROLLUP_REBUILD_KEY);
-            if (done != null && done > 0) return;
+            return done != null && done > 0;
         } catch (Exception e) {
             log.debug("Ping özet yeniden hesabı nişanı okunamadı: {}", e.getMessage());
+            return true;
+        }
+    }
+
+    private void rebuildPingRollupsLocked() {
+        if (pingRollupRebuildDone()) return;                       // kilidi beklerken başka pod bitirmiş olabilir
+        Boolean pg = com.sitemonitor.service.schema.DeferredIndexBuilder.postgresOrNull(jdbcTemplate.getDataSource());
+        if (pg == null) {
+            log.warn("Ping özet yeniden hesabı: veritabanı türü okunamadı — bir saat sonra yeniden denenecek");
             return;
         }
-        runWithSchedulerLock("ping-rollup-rebuild", () -> {
-            int written = 0;
-            if (com.sitemonitor.service.schema.DeferredIndexBuilder.isPostgres(jdbcTemplate.getDataSource())) {
-                String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks", String.class);
-                if (oldest != null && oldest.length() >= 10) {
-                    Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
-                    Instant from = java.time.LocalDate.parse(oldest.substring(0, 10)).atStartOfDay(ZoneOffset.UTC).toInstant();
-                    for (Instant s = from; s.isBefore(todayStart.plus(1, ChronoUnit.DAYS)); s = s.plus(7, ChronoUnit.DAYS)) {
-                        Instant e = s.plus(7, ChronoUnit.DAYS);
-                        String f = ISO.format(s);
-                        // Günlük özet yalnız TAMAMLANMIŞ günler (bugün gece rollup'ının işi); saatlik bugün dahil.
-                        if (s.isBefore(todayStart)) {
-                            int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", f,
-                                    ISO.format(e.isAfter(todayStart) ? todayStart : e));
-                            if (d < 0) { log.warn("Ping günlük özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
-                            written += d;
-                        }
-                        int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", f, ISO.format(e));
-                        if (h < 0) { log.warn("Ping saatlik özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
-                        written += h;
+        int repaired = repairPingDecimalLossRows();
+        if (repaired < 0) return;
+        int written = 0;
+        if (pg) {
+            String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks", String.class);
+            if (oldest != null && oldest.length() >= 10) {
+                Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
+                // En eski ham gün saklama budamasıyla YARIM kalmıştır: o günün (ve saatlerinin) özeti eksik sayılarla
+                // ezilmesin (içindeki bir kesinti özetten kaybolurdu) — ilk TAM günden başlanır, o günün özeti olduğu gibi kalır.
+                Instant from = java.time.LocalDate.parse(oldest.substring(0, 10)).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+                for (Instant s = from; s.isBefore(todayStart.plus(1, ChronoUnit.DAYS)); s = s.plus(7, ChronoUnit.DAYS)) {
+                    Instant e = s.plus(7, ChronoUnit.DAYS);
+                    String f = ISO.format(s);
+                    // Günlük özet yalnız TAMAMLANMIŞ günler (bugün gece rollup'ının işi); saatlik bugün dahil.
+                    if (s.isBefore(todayStart)) {
+                        int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", f,
+                                ISO.format(e.isAfter(todayStart) ? todayStart : e));
+                        if (d < 0) { log.warn("Ping günlük özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                        written += d;
                     }
+                    int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", f, ISO.format(e));
+                    if (h < 0) { log.warn("Ping saatlik özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                    written += h;
                 }
             }
-            try {
-                jdbcTemplate.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
-                        PING_ROLLUP_REBUILD_KEY, ISO.format(Instant.now()), written);
-                log.info("Ping özetleri tüm seriden yeniden hesaplandı ({} kova) — tek seferlik iş tamam", written);
-            } catch (org.springframework.dao.DuplicateKeyException dup) {
-                log.debug("Ping özet yeniden hesabı nişanı başka pod tarafından yazılmış");
-            }
-        });
+        }
+        try {
+            jdbcTemplate.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                    PING_ROLLUP_REBUILD_KEY, ISO.format(Instant.now()), written);
+            log.info("Ping özetleri tüm seriden yeniden hesaplandı ({} kova, {} satır onarıldı) — tek seferlik iş tamam",
+                    written, repaired);
+        } catch (org.springframework.dao.DuplicateKeyException dup) {
+            log.debug("Ping özet yeniden hesabı nişanı başka pod tarafından yazılmış");
+        }
     }
 
     // monitor_id-anahtarlı tipler (boolean up-kolonu). table/upCol/respCol yalnız KOD-kontrollü (injection yok).

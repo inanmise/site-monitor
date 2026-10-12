@@ -220,4 +220,55 @@ class SecretRotationServiceTest {
         assertThat(svc.reencrypt("admin")).containsEntry("rows_rewritten", 0);
         assertThat(jdbc.queryForObject("SELECT env_json FROM scripted_monitors WHERE id = 7", String.class)).isEqualTo("{enc:v1:yarim");
     }
+
+    @Test
+    @DisplayName("2026-10-12: tavanda kesilen konum yeniden şifrelemede KALDIĞI YERDEN sürer (baştan başlayıp ilerleyemez değil); tavan varken can_reencrypt açık")
+    void reencryptResumesAcrossRuns() {
+        List<Object[]> rows = new java.util.ArrayList<>();
+        for (int i = 1; i <= 1200; i++) rows.add(new Object[]{ i, "izleme-" + i, oldCipher.encrypt("p" + i) });
+        jdbc.batchUpdate("INSERT INTO http_monitors VALUES (?, ?, ?, NULL)", rows);
+        svc.maxRows = SecretRotationService.PAGE;   // çalıştırma başına bir sayfa
+        Map<String, Object> st = svc.status();
+        assertThat(loc(st, "http_basic_auth")).containsEntry("truncated", true);
+        assertThat(st).containsEntry("can_reencrypt", true);
+
+        Map<String, Object> r1 = svc.reencrypt("admin");
+        assertThat(r1).containsEntry("rows_rewritten", 500).containsEntry("partial", true);
+        assertThat(loc(r1, "http_basic_auth")).containsEntry("partial", true);
+        Map<String, Object> r2 = svc.reencrypt("admin");
+        assertThat(r2).containsEntry("rows_rewritten", 500);   // 501..1000 — baştan DEĞİL
+        Map<String, Object> r3 = svc.reencrypt("admin");
+        assertThat(r3).containsEntry("rows_rewritten", 200).doesNotContainKey("partial");
+        Integer left = jdbc.queryForObject("SELECT COUNT(*) FROM http_monitors", Integer.class);
+        assertThat(left).isEqualTo(1200);
+        // Hepsi güncel anahtarda: yeni çalıştırma hiçbir şey yazmaz
+        svc.maxRows = SecretRotationService.MAX_ROWS;
+        assertThat(svc.reencrypt("admin")).containsEntry("rows_rewritten", 0);
+        assertThat(svc.status()).containsEntry("previous_removable", true);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: süre bütçesi dolarsa konum 'yarım' döner ve sonraki çalıştırma kaldığı id'den devam eder")
+    void reencryptDeadlineResumes() {
+        for (int i = 1; i <= 3; i++) {
+            jdbc.update("INSERT INTO http_monitors VALUES (?, ?, ?, NULL)", i, "izleme-" + i, oldCipher.encrypt("p" + i));
+        }
+        SecretRotationService.Location httpLoc = SecretRotationService.LOCATIONS.stream()
+                .filter(l -> "http_basic_auth".equals(l.id())).findFirst().orElseThrow();
+        // Süresi geçmiş bütçe: ilk sayfa işlenir (3 satır < sayfa → konum biter) — bitmiş konum yarım sayılmaz
+        SecretRotationService.LocationResult done = svc.reencrypt(httpLoc, 0L);
+        assertThat(done.partial()).isFalse();
+        assertThat(done.rowsRewritten()).isEqualTo(3);
+
+        // Sayfadan fazla satır + süresi geçmiş bütçe: bir sayfa sonra YARIM, sonraki çağrı kaldığı id'den sürer
+        List<Object[]> more = new java.util.ArrayList<>();
+        for (int i = 4; i <= 603; i++) more.add(new Object[]{ i, "izleme-" + i, oldCipher.encrypt("p" + i) });
+        jdbc.batchUpdate("INSERT INTO http_monitors VALUES (?, ?, ?, NULL)", more);
+        SecretRotationService.LocationResult first = svc.reencrypt(httpLoc, 0L);
+        assertThat(first.partial()).isTrue();
+        assertThat(first.rowsRewritten()).isEqualTo(497);                  // ilk sayfa: 3 güncel + 497 önceki
+        SecretRotationService.LocationResult rest = svc.reencrypt(httpLoc, Long.MAX_VALUE);
+        assertThat(rest.partial()).isFalse();
+        assertThat(rest.rowsRewritten()).isEqualTo(103);                   // 501..603 — baştan DEĞİL
+    }
 }

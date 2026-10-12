@@ -94,6 +94,14 @@ class TlsGradeDropNotifierTest {
             for (Long id : (Collection<Long>) inv.getArgument(0)) if (store.containsKey(id)) out.add(store.get(id));
             return out;
         });
+        when(repo.finishNotifyIfState(anyCollection(), anyString(), anyString(), anyString())).thenAnswer(inv -> {
+            int k = 0;
+            for (Long id : (Collection<Long>) inv.getArgument(0)) {
+                TlsGradeChange c = store.get(id);
+                if (c != null && inv.getArgument(1).equals(c.getNotifyState())) { c.setNotifyState(inv.getArgument(2)); k++; }
+            }
+            return k;
+        });
         when(repo.finishNotify(anyCollection(), anyString(), anyString())).thenAnswer(inv -> {
             List<Long> ids = new ArrayList<>((Collection<Long>) inv.getArgument(0));
             for (Long id : ids) store.get(id).setNotifyState(inv.getArgument(1));
@@ -217,5 +225,61 @@ class TlsGradeDropNotifierTest {
         assertThat(mail.text()).contains("a.example.com");
         assertThat(TlsGradeDropMail.worstGrade(List.of(rows.get(0),
                 new TlsGradeDropMail.Row("b", "A", "F", "", "")))).isEqualTo("F");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: tur ortasında hata → talep edilen satır SENDING'de KALMAZ, 'yarıda kaldı' olur (yeniden gönderilmez); tur fırlatmaz")
+    void failureMidRunMarksInterrupted() {
+        drop(1, "a.example.com", 7L, null, "A", "C");
+        // takım döngüsünün DIŞINDA (talepten sonra) beklenmeyen hata — takım hatası artık takım başına yakalanır
+        when(settings.getString(eq(TlsGradeDropNotifier.KEY_MIN_GRADE), anyString())).thenThrow(new IllegalStateException("ayar okunamadı"));
+        TlsGradeDropNotifier.Result r = n.notifyPending();
+        assertThat(r.claimed()).isZero();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
+        assertThat(TlsGradeDropNotifier.uiCode(TlsGradeDropNotifier.NOTIFY_INTERRUPTED)).isEqualTo("interrupted");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: önceki turdan 1 saatten eski SENDING satırı 'yarıda kaldı' işaretlenir; taze SENDING'e dokunulmaz")
+    void staleSendingIsSwept() {
+        TlsGradeChange old = drop(1, "a.example.com", 7L, null, "A", "C");
+        old.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        TlsGradeChange fresh = drop(2, "b.example.com", 7L, null, "A", "C");
+        fresh.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        java.time.Instant now = java.time.Instant.parse("2026-10-12T09:00:00Z");
+        fresh.setChangedAt("2026-10-12T08:30:00");
+        when(repo.findByNotifyStateOrderByIdAsc(eq(TlsGradeChange.NOTIFY_SENDING), any()))
+                .thenAnswer(inv -> store.values().stream().filter(c -> TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())).toList());
+        n.sweepStaleSending(now);
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENDING);
+        verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: bir takımın hatası ötekileri durdurmaz — o takımın satırları 'gönderilemedi', diğer takım gönderilir")
+    void oneTeamFailureDoesNotStopOthers() {
+        drop(1, "a.example.com", 7L, null, "A", "C");
+        drop(2, "b.example.com", 8L, null, "A", "C");
+        when(teamRepo.findById(7L)).thenThrow(new IllegalStateException("bağlantı koptu"));
+        TlsGradeDropNotifier.Result r = n.notifyPending();
+        assertThat(r.claimed()).isEqualTo(2);
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED);
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: süpürme koşullu — bu arada SENT olan satır 'yarıda kaldı' ile ezilmez")
+    void sweepIsConditional() {
+        TlsGradeChange sent = drop(1, "a.example.com", 7L, null, "A", "C");
+        sent.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        // okuma anında SENDING, yazma anında başka tur SENT yazmış
+        when(repo.findByNotifyStateOrderByIdAsc(eq(TlsGradeChange.NOTIFY_SENDING), any())).thenAnswer(inv -> {
+            List<TlsGradeChange> snap = List.of(sent);
+            sent.setNotifyState(TlsGradeChange.NOTIFY_SENT);
+            return snap;
+        });
+        n.sweepStaleSending(java.time.Instant.parse("2026-10-12T09:00:00Z"));
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
     }
 }

@@ -21,7 +21,8 @@ export function useWidgetData(fetcher, { pollMs = WIDGET_POLL_MS, enabled = true
     try {
       const res = await fetcher()
       if (!alive.current || my !== seq.current) return
-      if (res == null) { setState((s) => ({ ...s, loading: false })); return }   // 401: uygulama oturumu ele alır
+      // 401 / pasif / bakım: uygulama oturumu ele alır; kutu boş veriden "sorun yok" ÇİZMESİN — hata durumunda kalır (2026-10-12)
+      if (res == null) { setState((s) => ({ ...s, loading: false, error: 'error', status: null })); return }
       if (res.success === false) {
         setState((s) => ({ ...s, loading: false, error: res.error || 'error', status: res.errorInfo?.status ?? res.status ?? null }))
         return

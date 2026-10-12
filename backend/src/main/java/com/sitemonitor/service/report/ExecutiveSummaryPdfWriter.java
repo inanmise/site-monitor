@@ -29,6 +29,9 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
 public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
 
     private static final float ROW_H = 13f;
+    /** Sarılan hücrede ek satır yüksekliği ve hücre başına en fazla satır (adlar kesilmez — 2026-10-12). */
+    private static final float LINE_H = 8.6f;
+    static final int MAX_CELL_LINES = 6;
     private static final float KPI_H = 50f;
     private static final float KPI_GAP = 6f;
     private static final float[] DARK = { 15 / 255f, 23 / 255f, 42 / 255f };
@@ -249,21 +252,38 @@ public final class ExecutiveSummaryPdfWriter implements AutoCloseable {
         try {
             int i = 0;
             for (Map<String, Object> row : t.rows()) {
-                c.ensureSpace(ROW_H);
-                if (i++ % 2 == 1) c.rect(MARGIN, c.y - 3.5f, CONTENT_W, ROW_H, ZEBRA);
+                // Sol hizalı hücreler (ad, takım, hizmet, alan adı, metin) SARILIR — ad kesilmez; sayılar tek satır.
+                List<List<String>> cells = new java.util.ArrayList<>(cols.size());
+                int lines = 1;
+                for (int k = 0; k < cols.size(); k++) {
+                    SectionResult.Column col = cols.get(k);
+                    String text = ExecFormat.value(row.get(col.code()), col.type());
+                    PDFont font = k == 0 ? c.bold : c.regular;
+                    List<String> ls = RIGHT.contains(col.type())
+                            ? List.of(c.clip(text, widths[k] - 6, font, 7.2f))
+                            : c.wrapCell(text, widths[k] - 6, font, 7.2f, MAX_CELL_LINES);
+                    if (ls.isEmpty()) ls = List.of("");
+                    cells.add(ls);
+                    lines = Math.max(lines, ls.size());
+                }
+                float h = ROW_H + (lines - 1) * LINE_H;
+                c.ensureSpace(h);
+                if (i++ % 2 == 1) c.rect(MARGIN, c.y - 3.5f - (lines - 1) * LINE_H, CONTENT_W, h, ZEBRA);
                 float x = MARGIN;
                 for (int k = 0; k < cols.size(); k++) {
                     SectionResult.Column col = cols.get(k);
                     Object v = row.get(col.code());
-                    String text = ExecFormat.value(v, col.type());
                     PDFont font = k == 0 ? c.bold : c.regular;
                     float[] color = "status".equals(col.type()) ? toneColor(v == null ? null : String.valueOf(v)) : INK;
-                    String clipped = c.clip(text, widths[k] - 6, font, 7.2f);
-                    float tx = RIGHT.contains(col.type()) ? x + widths[k] - 3 - c.width(clipped, font, 7.2f) : x + 3;
-                    c.text(font, 7.2f, tx, c.y, clipped, color);
+                    List<String> ls = cells.get(k);
+                    for (int li = 0; li < ls.size(); li++) {
+                        String part = ls.get(li);
+                        float tx = RIGHT.contains(col.type()) ? x + widths[k] - 3 - c.width(part, font, 7.2f) : x + 3;
+                        c.text(font, 7.2f, tx, c.y - li * LINE_H, part, color);
+                    }
                     x += widths[k];
                 }
-                c.y -= ROW_H;
+                c.y -= h;
             }
         } finally {
             c.setPageHeaderHook(null);

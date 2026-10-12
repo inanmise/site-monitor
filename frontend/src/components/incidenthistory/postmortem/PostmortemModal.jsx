@@ -18,7 +18,7 @@ import { Button } from '@/components/shadcn/button'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
-import { ActionForm, ActionRow } from './ActionItemParts.jsx'
+import { ActionForm, ActionRow, activePeople } from './ActionItemParts.jsx'
 import {
   MAX_SECTION_CHARS, SECTIONS, STATUSES, STATUS_TONE, actionCounts, buildMarkdown, changedFields, formFromPostmortem, isDirty,
   markdownFileName, sectionErrors, timelineText,
@@ -60,7 +60,7 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
   const [conflict, setConflict] = useState(false)
   const [errors, setErrors] = useState({})
   const [tab, setTab] = useState('report')
-  const [people, setPeople] = useState([])
+  const [people, setPeople] = useState(null)   // null = rehber yüklenmedi / okunamadı (bilinmiyor)
   const [editing, setEditing] = useState(null)        // null | 'new' | action
   const [actionBusy, setActionBusy] = useState(null)  // aksiyon id ya da 'form'
   const changed = useRef(false)
@@ -90,9 +90,8 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
     let alive = true
     api.users.directory().then((res) => {
       if (!alive || !res?.success) return
-      const list = Array.isArray(res.data) ? res.data : []
-      setPeople(list.map((p) => ({ value: String(p.id), label: p.display_name || p.username || String(p.id) }))
-        .sort((a, b) => a.label.localeCompare(b.label, 'tr', { sensitivity: 'base' })))
+      // Yalnız AKTİF hesaplar atanabilir (sunucu pasif sahibi 400 ile reddeder) — 2026-10-12
+      setPeople(activePeople(res.data))
     }).catch(() => {})
     return () => { alive = false }
   }, [canEdit])

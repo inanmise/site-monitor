@@ -61,13 +61,13 @@ public class CertificateExpirySection implements ExecutiveSummarySection {
     static List<Cert> certs(ExecutiveSummaryContext ctx) {
         List<Cert> out = new ArrayList<>();
         Map<String, ExecutiveSummaryContext.InventoryRow> inv;
-        try { inv = ctx.inventory(); } catch (Exception e) { inv = Map.of(); }
+        inv = ctx.inventory();                                       // okuma hatası → bölüm ERROR (2026-10-12)
         if (inv == null) inv = Map.of();
         Map<Long, String> names;
         try { names = ctx.teamNames(); } catch (Exception e) { names = Map.of(); }
         if (names == null) names = Map.of();
         List<CertificateDto> latest;
-        try { latest = ctx.latestCerts(); } catch (Exception e) { latest = List.of(); }
+        latest = ctx.latestCerts();
         if (latest == null) latest = List.of();
         for (CertificateDto d : latest) {
             if (d == null || d.getDomain() == null) continue;

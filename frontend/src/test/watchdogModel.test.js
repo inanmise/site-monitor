@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkState, checkTone, openProblems, watchdogReasons } from '../components/admin/health/watchdogModel.js'
+import { checkState, checkTone, openProblems, watchdogReasons, notifiedKey } from '../components/admin/health/watchdogModel.js'
 import { deriveOverall } from '../components/admin/health/healthModel.js'
 
 /** Kendi kendini izleme modeli (2026-10-11): satır durumu / tonu, açık sorunlar, Sistem Sağlığı sebepleri. */
@@ -28,5 +28,16 @@ describe('watchdogModel', () => {
     const overall = deriveOverall({ health: {}, watchdog: data })
     expect(overall.level).toBe('down')
     expect(overall.reasons.filter((r) => r.section === 'watchdog')).toHaveLength(2)
+  })
+})
+
+describe('son bildirim türü (2026-10-12)', () => {
+  it('teslim / başarısız / bakımda susturuldu / kanal yok anahtarları; bilinmeyen tür ham anahtar üretmez', () => {
+    expect(notifiedKey('ALERT')).toBe('wd.notified.ALERT')
+    expect(notifiedKey('REMIND_FAILED')).toBe('wd.notified.REMINDFailed')
+    expect(notifiedKey('ALERT_MUTED')).toBe('wd.notified.ALERTMuted')
+    expect(notifiedKey('RECOVER_NOCHANNEL')).toBe('wd.notified.RECOVERNoChannel')
+    expect(notifiedKey('TEST')).toBeNull()
+    expect(notifiedKey(null)).toBeNull()
   })
 })

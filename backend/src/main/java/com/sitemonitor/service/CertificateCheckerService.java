@@ -698,6 +698,49 @@ public class CertificateCheckerService {
         }
     }
 
+    /** Otomatik proxy geri düşüşü açık mı ({@code site.monitor.proxy.auto-fallback}) — hiyerarşi ucunun yol ipucu kuralı. */
+    public boolean autoProxyFallbackEnabled() {
+        return autoProxyFallback;
+    }
+
+    /** Sunucunun el sıkışmada sunduğu zincir (yaprak ilk) + gidilen yol. */
+    public record PresentedChain(X509Certificate[] certificates, boolean viaProxy) { }
+
+    /**
+     * Sertifika HİYERARŞİSİ görünümü için (2026-10-12, kullanıcı isteği: "otomatik çekilen sertifikalarda da tarayıcı gibi
+     * hiyerarşi"): sunucunun sunduğu zinciri HAM X.509 olarak döner. Kontrolle AYNI hedef ve yol — SSRF koruması, yol
+     * kararı ({@code use_proxy ∧ proxy ∧ ¬NO_PROXY}), çok-A, SNI, TLS kipi (browser: TLS 1.2 + ALPN), kayıt bazlı zaman
+     * aşımı. Güven ZORLANMAZ (trust-all, yalnız okuma). OCSP / CRL / DNS / HSTS YOK; tek deneme; kayıt yazmaz, alarm
+     * değerlendirmez.
+     *
+     * @throws SsrfGuard.BlockedException hedef engelliyse
+     * @throws IOException bağlantı / el sıkışma başarısızsa
+     */
+    public PresentedChain capturePresentedChain(String domain, int port, boolean forceProxy,
+                                                String tlsModeOverride, Integer timeoutOverride) throws IOException {
+        ssrfGuard.validate(domain);
+        CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain, timeoutOverride);
+        int timeoutSec = opts.timeoutSeconds();
+        SSLSocket socket = opts.viaProxy()
+                ? openViaProxy(TRUST_ALL_FACTORY, domain, port, timeoutSec)
+                : connectFirstReachable(TRUST_ALL_FACTORY, domain, port, timeoutSec, resolveAllIps(domain));
+        try (socket) {
+            socket.setSoTimeout(timeoutSec * 1000);
+            SSLParameters params = socket.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(domain)));
+            if ("browser".equalsIgnoreCase(opts.tlsMode())) {
+                params.setApplicationProtocols(BROWSER_ALPN);
+                params.setProtocols(BROWSER_TLS_PROTOCOLS);
+            }
+            socket.setSSLParameters(params);
+            socket.startHandshake();
+            Certificate[] peer = socket.getSession().getPeerCertificates();
+            List<X509Certificate> out = new ArrayList<>(peer.length);
+            for (Certificate c : peer) if (c instanceof X509Certificate x) out.add(x);
+            return new PresentedChain(out.toArray(new X509Certificate[0]), opts.viaProxy());
+        }
+    }
+
     public X509Certificate[] captureProxyChain(String host, int port) throws IOException {
         if (proxyHost == null || proxyHost.isBlank() || proxyPort <= 0) {
             throw new IOException("Proxy yapılandırılmamış (site.monitor.proxy.host/port boş) — CA zinciri yalnız proxy üzerinden yakalanır");

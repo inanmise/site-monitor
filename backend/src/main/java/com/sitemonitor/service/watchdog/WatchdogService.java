@@ -129,13 +129,21 @@ public class WatchdogService {
             persisted = false;
             states.putAll(memory);
         }
+        boolean muted = notifier.muted();
         if (persisted) {
             // Kayıtlı satırdan YENİ olmayan bellek durumu artık geçersizdir (başka pod DB dönünce değerlendirip yazdı) — silinir.
             // RECENT ile sürekli atlayan bir pod bayat "sorun" durumunu sonraki DB kesintisinde yeniden kullanmasın (2026-10-12).
+            // Bu pod'un kesintide bellekte açıp BİLDİRDİĞİ sorun, kayıtlı satır sorunsuzsa "düzeldi" bildirimiyle kapanır
+            // (2026-10-12; eskiden budanıp kayboluyordu — yöneticiler "veritabanı çöktü" alıp "düzeldi"yi hiç almıyordu).
+            List<WatchdogState> orphans = new ArrayList<>();
             memory.entrySet().removeIf(en -> {
                 WatchdogState stored = states.get(en.getKey());
-                return stored != null && !newer(en.getValue().getEvaluatedAt(), stored.getEvaluatedAt());
+                if (stored == null || newer(en.getValue().getEvaluatedAt(), stored.getEvaluatedAt())) return false;
+                if (announcedProblem(en.getValue()) && !"PROBLEM".equals(stored.getStatus())
+                        && !recoveryAnnounced(stored, en.getValue())) orphans.add(stored);
+                return true;
             });
+            if (!orphans.isEmpty()) recoverOrphans(orphans, now);
             // Yalnız KAYITLI satırlara bakılır: bu pod'un DB kesintisindeki yerel değerlendirmesi "yakın tur" sayılmaz.
             if (!manual && evaluatedRecently(states.values(), now)) {
                 return new Round(states.size(), 0, 0, 0, "RECENT", false);
@@ -156,7 +164,7 @@ public class WatchdogService {
                 n.setCheckKey(k);
                 return n;
             });
-            Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder);
+            Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder, muted);
             if (a != Action.NONE) {
                 items.add(new WatchdogMail.Item(a.name(), p.check().labelTr(), st.getSeverity() == null ? p.check().severity().name() : st.getSeverity(),
                         WatchdogMessages.detail(p.check(), p.facts(), false), p.check().labelEn(), WatchdogMessages.detail(p.check(), p.facts(), true)));
@@ -173,8 +181,8 @@ public class WatchdogService {
         if (!items.isEmpty()) {
             WatchdogNotifier.Report rep = notifier.send(items, false);
             outcome = rep.outcome().name();
-            boolean delivered = rep.outcome() != WatchdogNotifier.Outcome.FAILED;   // kanal yok / susturuldu → yeniden denenmez
-            for (Map.Entry<WatchdogState, Action> e : acted) WatchdogTransition.markNotified(e.getKey(), e.getValue(), delivered, now);
+            String suffix = suffix(rep.outcome());
+            for (Map.Entry<WatchdogState, Action> e : acted) WatchdogTransition.markNotified(e.getKey(), e.getValue(), suffix, now);
             log.info("Kendi kendini izleme: {} sorun açıldı, {} hatırlatma, {} düzeldi → bildirim {}", alerts, reminders, recoveries, outcome);
         }
         if (persisted) {
@@ -188,6 +196,51 @@ public class WatchdogService {
         }
         if (!persisted) memory.putAll(states);
         return new Round(states.size(), alerts, reminders, recoveries, outcome, !persisted);
+    }
+
+    /** Teslim sonucu → bildirim türü eki ({@link WatchdogTransition#markNotified(WatchdogState, Action, String, Instant)}). */
+    static String suffix(WatchdogNotifier.Outcome o) {
+        return switch (o) {
+            case FAILED -> WatchdogTransition.FAILED;
+            case MUTED -> WatchdogTransition.MUTED;
+            case NO_CHANNEL -> WatchdogTransition.NO_CHANNEL;
+            default -> "";
+        };
+    }
+
+    /**
+     * Sorun açık ve DUYURULMUŞ mu: teslim edilmiş açılış ya da hatırlatma. Teslim edilemeyen / susturulan HATIRLATMA da
+     * sayılır (hatırlatma ancak duyurulmuş bir açılıştan sonra gelir); kanalsız hatırlatma sayılmaz.
+     */
+    static boolean announcedProblem(WatchdogState s) {
+        String k = s.getNotifiedKind();
+        if (!"PROBLEM".equals(s.getStatus()) || k == null) return false;
+        return "ALERT".equals(k) || "REMIND".equals(k) || "REMIND_FAILED".equals(k) || "REMIND_MUTED".equals(k);
+    }
+
+    /** Kayıtlı satır bu sorunun düzelmesini zaten duyurmuş mu (başka pod RECOVER göndermiş) — ikinci "düzeldi" gitmesin. */
+    static boolean recoveryAnnounced(WatchdogState stored, WatchdogState memory) {
+        String k = stored.getNotifiedKind();
+        return k != null && k.startsWith("RECOVER") && !newer(memory.getNotifiedAt(), stored.getNotifiedAt());
+    }
+
+    /** Budanan bellek sorunlarının "düzeldi" bildirimi — kayıtlı (güncel) satırın olgularıyla, tek bildirimde. */
+    private void recoverOrphans(List<WatchdogState> stored, Instant now) {
+        List<WatchdogMail.Item> items = new ArrayList<>();
+        for (WatchdogState s : stored) {
+            WatchdogCheck c = WatchdogCheck.byKey(s.getCheckKey());
+            if (c == null) continue;
+            Map<String, Object> facts = parse(s.getFacts());
+            items.add(new WatchdogMail.Item(Action.RECOVER.name(), c.labelTr(), c.severity().name(),
+                    WatchdogMessages.detail(c, facts, false), c.labelEn(), WatchdogMessages.detail(c, facts, true)));
+        }
+        if (items.isEmpty()) return;
+        try {
+            WatchdogNotifier.Report rep = notifier.send(items, false);
+            log.info("Kendi kendini izleme: kesintide bu pod'da açılan {} sorun düzeldi → bildirim {}", items.size(), rep.outcome());
+        } catch (Exception e) {
+            log.warn("Kendi kendini izleme: düzelme bildirimi gönderilemedi: {}", e.toString());
+        }
     }
 
     /** {@code a} anı {@code b}'den sonra mı (ISO yyyy-MM-ddTHH:mm:ss metinleri; null = hiç). */
@@ -215,12 +268,12 @@ public class WatchdogService {
             return n;
         });
         Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now,
-                WatchdogSettings.confirm(settings), WatchdogSettings.reminderHours(settings));
+                WatchdogSettings.confirm(settings), WatchdogSettings.reminderHours(settings), notifier.muted());
         if (a == Action.NONE) return;
         WatchdogNotifier.Report rep = notifier.send(List.of(new WatchdogMail.Item(a.name(), WatchdogCheck.DATABASE.labelTr(),
                 st.getSeverity(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), false),
                 WatchdogCheck.DATABASE.labelEn(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), true))), false);
-        WatchdogTransition.markNotified(st, a, rep.outcome() != WatchdogNotifier.Outcome.FAILED, now);
+        WatchdogTransition.markNotified(st, a, suffix(rep.outcome()), now);
     }
 
     private boolean databaseDown(Instant now) {

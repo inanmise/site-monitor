@@ -141,7 +141,10 @@ public class IncidentController {
         requireView(session);
         IncidentRecord e = service.get(id);
         requireIncidentRead(session, e);   // takım kapsamı (IDOR engeli)
-        return ok(Map.of("data", dto(e)));
+        // Postmortem rozetleri ayrıntıda da (2026-10-12): bağlantıyla açılan olay kartı "postmortem yok" diyordu.
+        Map<String, Object> d = dto(e);
+        addPostmortemSummaries(List.of(d));
+        return ok(Map.of("data", d));
     }
 
     @PostMapping
@@ -384,6 +387,8 @@ public class IncidentController {
             for (Map<String, Object> r : rows) {
                 Map<String, Object> s = sums.get((Long) r.get("id"));
                 if (s != null) r.putAll(s);
+                // Özet OKUNDU: alan yoksa gerçekten "rapor / aksiyon yok" (istemci okunamadığında yanlış "yok" demesin)
+                r.put("pm_summary", true);
             }
         } catch (Exception ex) {
             log.warn("Olay listesi postmortem rozetleri okunamadı: {}", ex.getMessage());

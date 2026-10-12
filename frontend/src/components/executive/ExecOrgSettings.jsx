@@ -17,7 +17,7 @@ import { Textarea } from '@/components/shadcn/textarea'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import ExecHistory from './ExecHistory.jsx'
 import { PanelSection, PanelTitle } from './ExecPanel.jsx'
-import { buildMonthlyCron, fmtDateTime, invalidEmails, monthLabel, parseMonthlyCron, isCompletedMonth } from './executiveModel.js'
+import { buildMonthlyCron, changedFields, fmtDateTime, invalidEmails, monthLabel, parseMonthlyCron, runHintKey } from './executiveModel.js'
 
 const DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
 
@@ -54,6 +54,8 @@ function toBody(f) {
  * sunucu 400 `field` ile. Zamanlama takım özetleri için de geçerlidir.
  */
 export default function ExecOrgSettings({ month, onDirtyChange }) {
+  // "Şimdi gönder" kapalıysa nedeni (içinde bulunulan ay / gece özeti bekleniyor); açıksa null
+  const runHint = runHintKey(month)
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -100,9 +102,11 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
 
   async function save() {
     if (validate()) return
+    const body = changedFields(toBody(form), toBody(toForm(data)))
+    if (Object.keys(body).length === 0) return
     setSaving(true)
     try {
-      const res = await api.executiveSummary.saveSettings(toBody(form))
+      const res = await api.executiveSummary.saveSettings(body)
       if (res?.success) {
         setState({ loading: false, error: null, data: res.data })
         setForm(toForm(res.data))
@@ -233,6 +237,9 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
             </ul>
           )}
         </div>
+        {data.recipient_complete === false && (
+          <AlertBanner tone="warning" className="mt-1" data-slot="ex-cfg-recipients-incomplete">{t('exec.cfg.recipientsIncomplete')}</AlertBanner>
+        )}
         {(data.recipient_dropped_inactive ?? 0) > 0 && (
           <AlertBanner tone="warning" className="mt-1">{t('exec.cfg.droppedInactive', data.recipient_dropped_inactive)}</AlertBanner>
         )}
@@ -264,14 +271,14 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
             data-slot="ex-cfg-test" className="h-10 lg:h-9">
             {testing ? <Spinner decorative size={14} /> : <Mail aria-hidden="true" />}{t('exec.cfg.sendTest')}
           </Button>
-          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty || !isCompletedMonth(month)} aria-busy={running || undefined}
-            title={isCompletedMonth(month) ? undefined : t('exec.cfg.runCurrentMonth')}
+          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty || !!runHint} aria-busy={running || undefined}
+            title={runHint ? t(runHint) : undefined}
             data-slot="ex-cfg-run" className="h-10 lg:h-9">
             {running ? <Spinner decorative size={14} /> : <Send aria-hidden="true" />}{t('exec.cfg.runNow')}
           </Button>
         </div>
         <p className="m-0 text-xs text-muted-foreground">{t('exec.cfg.testHint')}</p>
-        {!isCompletedMonth(month) && <p data-slot="ex-cfg-run-hint" className="m-0 text-xs text-muted-foreground">{t('exec.cfg.runCurrentMonth')}</p>}
+        {runHint && <p data-slot="ex-cfg-run-hint" className="m-0 text-xs text-muted-foreground">{t(runHint)}</p>}
         {dirty && <p className="m-0 text-xs text-muted-foreground">{t('exec.send.saveFirst')}</p>}
       </PanelSection>
 

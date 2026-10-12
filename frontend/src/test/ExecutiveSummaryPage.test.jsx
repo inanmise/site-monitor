@@ -20,6 +20,8 @@ import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import ExecutiveSummaryPage from '../components/executive/ExecutiveSummaryPage.jsx'
 
+const SCOPE_FALLBACK = 'Bağlantıdaki kapsam açılamadı (takım silinmiş ya da görme yetkiniz yok); sizin için varsayılan özet açıldı.'
+
 const ex = () => api.executiveSummary
 
 /** Görünüm sekmesine geçer (Radix Tabs jsdom'da mousedown ile etkinleşir). */
@@ -163,6 +165,43 @@ describe('Yönetici Özeti sayfası — rapor', () => {
     expect(document.querySelector('[data-slot="ex-forbidden"]')).toBeNull()
   })
 
+  it('2026-10-12: silinmiş takım (404) de varsayılana döner; bildirim ancak varsayılan YÜKLENİNCE', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=77')
+    let release
+    const gate = new Promise((r) => { release = r })
+    ex().get.mockImplementation(async (q) => {
+      if (q?.team === '77') return { success: false, status: 404, error: 'NOT_FOUND' }
+      await gate
+      return response()
+    })
+    render(<ExecutiveSummaryPage globalAdmin />)
+    await waitFor(() => expect(ex().get).toHaveBeenCalledWith(expect.objectContaining({ team: null })))
+    // varsayılan kapsam henüz yüklenmedi → bildirim yok
+    expect(screen.queryByText(SCOPE_FALLBACK)).toBeNull()
+    release()
+    expect(await screen.findByText(SCOPE_FALLBACK)).toBeInTheDocument()
+    expect(window.location.search).not.toContain('ex_team')
+  })
+
+  it('2026-10-12: varsayılan kapsam da yüklenemezse "geri dönüldü" bildirimi GÖSTERİLMEZ (hata gösterilir)', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=99')
+    ex().get.mockImplementation(async (q) => (q?.team === '99'
+      ? { success: false, status: 403, error: 'FORBIDDEN' }
+      : { success: false, status: 500, error: 'Sunucu hatası oluştu, birazdan tekrar deneyin.' }))
+    render(<ExecutiveSummaryPage globalAdmin />)
+    expect(await screen.findByText('Sunucu hatası oluştu, birazdan tekrar deneyin.')).toBeInTheDocument()
+    expect(screen.queryByText(SCOPE_FALLBACK)).toBeNull()
+  })
+
+  it('2026-10-12: ay hatası (400) geçerli takım kapsamını DÜŞÜRMEZ — hata gösterilir', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=5&ex_m=2020-01')
+    ex().get.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'month', error: 'Bu ay seçilebilir aralığın dışında; son 24 aydan birini seçin.' })
+    render(<ExecutiveSummaryPage globalAdmin />)
+    expect(await screen.findByText('Bu ay seçilebilir aralığın dışında; son 24 aydan birini seçin.')).toBeInTheDocument()
+    expect(ex().get).not.toHaveBeenCalledWith(expect.objectContaining({ team: null }))
+    expect(window.location.search).toContain('ex_team=5')
+  })
+
   it('403 → erişim yok paneli (ham hata değil); görünüm sekmeleri yok', async () => {
     ex().get.mockResolvedValue({ success: false, status: 403, error: 'FORBIDDEN' })
     render(<ExecutiveSummaryPage />)
@@ -191,8 +230,7 @@ describe('Yönetici Özeti sayfası — alıcılar ve gönderim', () => {
   })
 
   it('kurum ayarları: geçersiz adres alanın altında, kayıt gitmez; düzeltince doğru gövdeyle kaydeder; URL ex_view yazar', async () => {
-    ex().saveSettings.mockImplementation(async (body) => ({ success: true, data: { ...SETTINGS, ...body,
-      include_global_admins: body.include_global_admins, availability_target: Number(body.availability_target) } }))
+    ex().saveSettings.mockImplementation(async (body) => ({ success: true, data: { ...SETTINGS, ...body } }))
     render(<ExecutiveSummaryPage globalAdmin />)
     const panel = await openDelivery()
     const recipients = await within(panel).findByRole('textbox', { name: /E-posta adresleri/ })
@@ -208,9 +246,9 @@ describe('Yönetici Özeti sayfası — alıcılar ve gönderim', () => {
     fireEvent.change(recipients, { target: { value: 'yonetim@example.com, cto@example.com' } })
     fireEvent.click(within(panel).getByRole('switch', { name: 'Zamanlanmış gönderim' }))
     fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    // 2026-10-12: yalnız DEĞİŞEN alanlar gider — başka yöneticinin o arada kaydettiği alanlar ezilmez
     await waitFor(() => expect(ex().saveSettings).toHaveBeenCalledWith({
-      enabled: true, cron: '0 0 9 1 * *', recipients: 'yonetim@example.com, cto@example.com', include_global_admins: true,
-      availability_target: '99.9', renewal_target_days: '30',
+      enabled: true, recipients: 'yonetim@example.com, cto@example.com',
     }))
   })
 
@@ -276,8 +314,9 @@ describe('Yönetici Özeti sayfası — alıcılar ve gönderim', () => {
 
     fireEvent.change(extra, { target: { value: 'cto@example.com' } })
     fireEvent.click(within(panel).getByRole('button', { name: 'Kaydet' }))
+    // 2026-10-12: yalnız DEĞİŞEN alanlar (üye seçimi + ek adres)
     await waitFor(() => expect(ex().saveTeam).toHaveBeenCalledWith('5', {
-      enabled: true, include_manager: true, include_team_admins: true, user_ids: ['u-201', 'u-202'], extra_emails: 'cto@example.com',
+      user_ids: ['u-201', 'u-202'], extra_emails: 'cto@example.com',
     }))
     expect(await screen.findByText(/Ödeme Ağ Geçidi Takımı takımının özet ayarları kaydedildi/)).toBeInTheDocument()
     await waitFor(() => expect(ex().teams).toHaveBeenCalledTimes(2))              // liste sayıları tazelendi

@@ -172,6 +172,38 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: son eki parola / sır / jeton olan anahtarlar (bind_password, admin_password, webhook_secret) log'a düz DÜŞMEZ; boolean ve sıradan alan etkilenmez")
+    void trace_suffixSecrets_masked() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String reqJson = "{\"url\":\"https://gorunur.example.com/\",\"bind_password\":\"SAHTE-BAG-1111\","
+                + "\"admin_password\":\"SAHTE-YON-2222\",\"webhook_secret\":\"SAHTE-SIR-3333\",\"push_token\":\"SAHTE-JET-4444\","
+                + "\"has_password\":true,\"password_set\":\"evet-gorunur\"}";
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/admin/settings");
+        req.setContentType("application/json");
+        req.setContent(reqJson.getBytes(StandardCharsets.UTF_8));
+        filter.doFilter(req, new MockHttpServletResponse(), (request, response) -> request.getInputStream().readAllBytes());
+        assertThat(lastResponseLogLine()).contains("gorunur.example.com").contains("\"has_password\":true").contains("evet-gorunur")
+                .doesNotContain("SAHTE-BAG-1111").doesNotContain("SAHTE-YON-2222").doesNotContain("SAHTE-SIR-3333")
+                .doesNotContain("SAHTE-JET-4444");
+        assertThat(RequestLoggingFilter.redactSensitiveFields("{\"smtp_password\":\"SAHTE-5555\"}")).doesNotContain("SAHTE-5555");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: LDAP ayarları, betikli izleme ve kişisel push ayar uçlarının gövdeleri HİÇ loglanmaz (serbest adlı sırlar)")
+    void trace_freeFormSecretEndpoints_bodiesOmitted() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        for (String uri : new String[] { "/api/admin/ldap/settings", "/api/monitoring/scripted/5", "/api/monitoring/scripted/test",
+                "/api/admin/user-push/settings" }) {
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("PUT", uri);
+            req.setContentType("application/json");
+            req.setContent("{\"env\":{\"MUSTERI_API\":\"SAHTE-ENV-6666\"}}".getBytes(StandardCharsets.UTF_8));
+            filter.doFilter(req, new MockHttpServletResponse(), (request, response) -> request.getInputStream().readAllBytes());
+            assertThat(lastResponseLogLine()).as(uri).contains(RequestLoggingFilter.BODY_OMITTED).doesNotContain("SAHTE-ENV-6666");
+        }
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

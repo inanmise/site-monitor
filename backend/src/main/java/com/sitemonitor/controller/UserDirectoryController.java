@@ -47,6 +47,8 @@ public class UserDirectoryController {
             m.put("username", r[1]);
             m.put("display_name", displayName((String) r[2], (String) r[3], (String) r[4]));
             m.put("email", r[5]);   // alıcı/eskalasyon kontağı eşleştirmesi (e-posta zaten o ekranlarda görünür)
+            // Etkin mi (2026-10-12, ek alan): atama seçicileri pasif hesabı listelemesin; ad haritası hepsini tutar.
+            m.put("active", r.length < 7 || !Boolean.FALSE.equals(r[6]));
             list.add(m);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", list));

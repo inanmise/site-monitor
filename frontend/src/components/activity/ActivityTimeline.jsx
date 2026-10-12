@@ -16,7 +16,7 @@ import { chartPoints, seriesTotal } from './activityModel.js'
  * göstergesi (1. sayfada 30 sn'de bir sessiz tazeleme). Test kancaları: `data-slot="act-timeline"` (+ `data-bucket`),
  * `act-live`, `act-timeline-empty`.
  */
-export default function ActivityTimeline({ series, loading, lastActivity, live }) {
+export default function ActivityTimeline({ series, loading, failed = false, lastActivity, live }) {
   const t = useT()
   const { lang } = useLanguage()
   const points = useMemo(() => chartPoints(series, lang), [series, lang])
@@ -57,7 +57,11 @@ export default function ActivityTimeline({ series, loading, lastActivity, live }
         </div>
       </CardHeader>
       <CardContent className="px-1.5 sm:px-3">
-        {loading && !series ? (
+        {failed ? (
+          <p data-slot="act-timeline-error" role="status" className="m-0 flex h-[72px] items-center justify-center px-3 text-center text-sm text-muted-foreground">
+            {t('act.tl.loadError')}
+          </p>
+        ) : loading && !series ? (
           <Skeleton className="h-[150px] w-full" />
         ) : total === 0 ? (
           <p data-slot="act-timeline-empty" className="m-0 flex h-[72px] items-center justify-center text-sm text-muted-foreground">

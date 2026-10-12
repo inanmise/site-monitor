@@ -45,6 +45,18 @@ public class SecretRotationService {
     static final int PAGE = 500;
     static final int MAX_ROWS = 100_000;
     static final int MAX_SAMPLES = 20;
+    /** Bir yeniden şifreleme çalıştırmasının süre bütçesi — kilit süresinin (10 dk) altında (2026-10-12). */
+    static final long RUN_BUDGET_MS = 8 * 60_000L;
+
+    /** Sayım ve çalıştırma başına konum tavanı (test kancası; varsayılan {@link #MAX_ROWS}). */
+    int maxRows = MAX_ROWS;
+
+    /**
+     * Konum → kaldığı yer (son işlenen id). Tavana / süre bütçesine takılan konum bir SONRAKİ çalıştırmada buradan sürer
+     * (2026-10-12: eskiden her çalıştırma baştan başlayıp ilk 100 bin satırı yeniden okuyor, sonrasına hiç ulaşamıyordu).
+     * Pod belleği — pod yeniden başlarsa baştan; ilerleme yine sağlanır (her çalıştırma en az bir tavan kadar ilerler).
+     */
+    private final Map<String, Long> resumeAfter = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -123,7 +135,7 @@ public class SecretRotationService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("key", keyJson());
         int cur = 0, prev = 0, bad = 0;
-        boolean anyError = false;
+        boolean anyError = false, anyTruncated = false;
         List<Map<String, Object>> locs = new ArrayList<>();
         for (LocationCount c : counts) {
             cur += c.current();
@@ -132,6 +144,7 @@ public class SecretRotationService {
             // Sayım tavanda kesildiyse (konumda MAX_ROWS'tan fazla satır) tavan sonrası satırlar hiç okunmadı: önceki anahtar
             // onlarda olabilir → "kaldırılabilir" denmez (2026-10-12).
             anyError |= c.error() != null || c.truncated();
+            anyTruncated |= c.truncated();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", c.loc().id());
             m.put("label", Msg.t(c.loc().labelTr(), c.loc().labelEn()));
@@ -154,7 +167,8 @@ public class SecretRotationService {
         out.put("locations", locs);
         // Önceki anahtar ancak hiçbir değer ona bağlı değilken (ve sayım hatasız + TAM iken) güvenle kaldırılır
         out.put("previous_removable", cipher.isPreviousKeyConfigured() && prev == 0 && !anyError);
-        out.put("can_reencrypt", cipher.isKeyConfigured() && cipher.isPreviousKeyConfigured() && prev > 0);
+        // Tavanda kesilen konumda önceki anahtar sayılmayan satırlarda olabilir → yeniden şifreleme açık kalır (2026-10-12)
+        out.put("can_reencrypt", cipher.isKeyConfigured() && cipher.isPreviousKeyConfigured() && (prev > 0 || anyTruncated));
         return out;
     }
 
@@ -186,7 +200,7 @@ public class SecretRotationService {
                     after = r.id();
                 }
                 if (page.size() < PAGE) break;
-                if (rows >= MAX_ROWS) { truncated = true; break; }
+                if (rows >= maxRows) { truncated = true; break; }
             }
             return new LocationCount(loc, rows, cur, prev, bad, samples, truncated, null);
         } catch (Exception e) {
@@ -220,9 +234,14 @@ public class SecretRotationService {
 
     // ── Yeniden şifreleme ──────────────────────────────────────────────────────────────────────
 
-    /** Konum sonucu: yeniden yazılan değer/satır, arada değişen, okunamayan. */
+    /** Konum sonucu: yeniden yazılan değer/satır, arada değişen, okunamayan; {@code partial} = tavan / süre doldu, sürecek. */
     public record LocationResult(Location loc, int valuesRewritten, int rowsRewritten, int changedMeanwhile, int unreadable,
-                                 String error) { }
+                                 String error, boolean partial) {
+        public LocationResult(Location loc, int valuesRewritten, int rowsRewritten, int changedMeanwhile, int unreadable,
+                              String error) {
+            this(loc, valuesRewritten, rowsRewritten, changedMeanwhile, unreadable, error, false);
+        }
+    }
 
     /** Yeniden şifreleme reddi (409): anahtar ayarlı değil / önceki yok / iş başka yerde sürüyor. */
     public static class RotationRefused extends RuntimeException {
@@ -266,10 +285,11 @@ public class SecretRotationService {
 
     Map<String, Object> runReencrypt(String actor) {
         long t0 = System.currentTimeMillis();
+        long deadline = t0 + RUN_BUDGET_MS;
         List<LocationResult> results = new ArrayList<>();
         boolean touchedSettings = false;
         for (Location loc : LOCATIONS) {
-            LocationResult r = reencrypt(loc);
+            LocationResult r = reencrypt(loc, deadline);
             results.add(r);
             if (r.rowsRewritten() > 0 && "app_settings".equals(loc.table())) touchedSettings = true;
         }
@@ -277,8 +297,10 @@ public class SecretRotationService {
             try { appSettings.refreshFromDb(); } catch (Exception e) { log.debug("ayar önbelleği tazelenemedi: {}", e.toString()); }
         }
         int values = 0, rows = 0, changed = 0, bad = 0;
+        boolean partial = false;
         List<Map<String, Object>> locs = new ArrayList<>();
         for (LocationResult r : results) {
+            partial |= r.partial();
             values += r.valuesRewritten();
             rows += r.rowsRewritten();
             changed += r.changedMeanwhile();
@@ -290,16 +312,18 @@ public class SecretRotationService {
             m.put("rows_rewritten", r.rowsRewritten());
             m.put("changed_meanwhile", r.changedMeanwhile());
             m.put("unreadable", r.unreadable());
+            if (r.partial()) m.put("partial", true);
             if (r.error() != null) m.put("error", r.error());
             locs.add(m);
         }
-        log.info("Gizli anahtar yeniden şifreleme ({}): {} değer / {} satır yeniden yazıldı, {} arada değişti, {} okunamadı ({} ms)",
-                actor, values, rows, changed, bad, System.currentTimeMillis() - t0);
+        log.info("Gizli anahtar yeniden şifreleme ({}): {} değer / {} satır yeniden yazıldı, {} arada değişti, {} okunamadı ({} ms){}",
+                actor, values, rows, changed, bad, System.currentTimeMillis() - t0, partial ? " — yarım, yeniden çalıştırınca sürer" : "");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("values_rewritten", values);
         out.put("rows_rewritten", rows);
         out.put("changed_meanwhile", changed);
         out.put("unreadable", bad);
+        if (partial) out.put("partial", true);
         out.put("locations", locs);
         out.put("duration_ms", System.currentTimeMillis() - t0);
         out.put("status", status());
@@ -307,9 +331,17 @@ public class SecretRotationService {
     }
 
     LocationResult reencrypt(Location loc) {
+        return reencrypt(loc, Long.MAX_VALUE);
+    }
+
+    /**
+     * Konumu kaldığı yerden yeniden şifreler; tavan ({@link #maxRows}) ya da {@code deadline} dolarsa kaldığı yeri saklar
+     * ve {@code partial} döner. Konum sonuna gelince kaldığı yer silinir.
+     */
+    LocationResult reencrypt(Location loc, long deadline) {
         int values = 0, rows = 0, changed = 0, bad = 0, seen = 0;
         try {
-            long after = Long.MIN_VALUE;
+            long after = resumeAfter.getOrDefault(loc.id(), Long.MIN_VALUE);
             while (true) {
                 List<Row> page = page(loc, after);
                 for (Row r : page) {
@@ -325,9 +357,15 @@ public class SecretRotationService {
                         changed++;
                     }
                 }
-                if (page.size() < PAGE || seen >= MAX_ROWS) break;
+                if (page.size() < PAGE) {
+                    resumeAfter.remove(loc.id());
+                    return new LocationResult(loc, values, rows, changed, bad, null, false);
+                }
+                if (seen >= maxRows || System.currentTimeMillis() >= deadline) {
+                    resumeAfter.put(loc.id(), after);
+                    return new LocationResult(loc, values, rows, changed, bad, null, true);
+                }
             }
-            return new LocationResult(loc, values, rows, changed, bad, null);
         } catch (Exception e) {
             log.warn("Gizli anahtar yeniden şifreleme: {} tamamlanamadı: {}", loc.id(), e.toString());
             return new LocationResult(loc, values, rows, changed, bad,

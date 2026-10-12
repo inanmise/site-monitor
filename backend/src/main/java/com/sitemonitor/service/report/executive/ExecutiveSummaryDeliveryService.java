@@ -83,6 +83,10 @@ public class ExecutiveSummaryDeliveryService {
     public static final int CATCH_UP_HOURS = 72;
     public static final String TRIGGER = "EXECUTIVE_SUMMARY";
     public static final String TRIGGER_TEST = "EXECUTIVE_SUMMARY_TEST";
+    /** Ayın gece özeti henüz yazılmadı (sonraki ayın 1'i 06:00 öncesi) — zamanlanmış yol bekler, telafi sonra gönderir. */
+    public static final String DATA_PENDING = "DATA_PENDING";
+    /** Elle takım gönderimi: alıcılar (takım / ayar / üye / müdür) okunamadı — hiçbir şey gönderilmedi. */
+    public static final String RECIPIENTS_UNAVAILABLE = "RECIPIENTS_UNAVAILABLE";
     /** Test postası sınırı: yönetici başına {@value #TEST_LIMIT} / {@value #TEST_WINDOW_MS} ms. */
     public static final int TEST_LIMIT = 3;
     public static final long TEST_WINDOW_MS = 10 * 60_000L;
@@ -140,8 +144,11 @@ public class ExecutiveSummaryDeliveryService {
     /** Gönderim sonucu. {@code status} kayıt durumu ya da atlama kodu (ALREADY_SENT, IN_PROGRESS, DISABLED, NOT_DUE …). */
     public record Result(String status, String month, int recipients, int chunks, String detail) { }
 
-    /** Çözülmüş alıcılar: adresler + kaynak sayıları + pasif olduğu için düşenler. */
-    public record Recipients(List<String> emails, int explicitCount, int adminCount, int droppedInactive) {
+    /**
+     * Çözülmüş alıcılar: adresler + kaynak sayıları + pasif olduğu için düşenler. {@code complete=false}: global yöneticiler
+     * okunamadı — önizleme yine çizilir, gönderim YAPILMAZ (eksik listeyle ayı "gönderildi" diye kapatmaz).
+     */
+    public record Recipients(List<String> emails, int explicitCount, int adminCount, int droppedInactive, boolean complete) {
         public boolean isEmpty() { return emails.isEmpty(); }
     }
 
@@ -218,6 +225,7 @@ public class ExecutiveSummaryDeliveryService {
     public Recipients recipients() {
         Map<String, String> out = new LinkedHashMap<>();
         int explicit = 0, admins = 0, dropped = 0;
+        boolean complete = true;
         for (String e : settings.explicitRecipients()) {
             if (isInactiveOnly(e)) { dropped++; continue; }
             if (out.putIfAbsent(e.toLowerCase(Locale.ROOT), e) == null) explicit++;
@@ -225,16 +233,20 @@ public class ExecutiveSummaryDeliveryService {
         if (settings.includeGlobalAdmins()) {
             try {
                 for (AppUser u : userRepo.findByActiveTrueOrderByUsernameAsc()) {
-                    if (!Boolean.TRUE.equals(u.getActive()) || !isGlobalAdmin(u)) continue;
+                    if (!Boolean.TRUE.equals(u.getActive())) continue;
+                    Boolean global = globalAdminOrNull(u);
+                    if (global == null) { complete = false; continue; }   // kapsamı okunamadı: sessizce düşmez (2026-10-12)
+                    if (!global) continue;
                     String e = u.getEmail() == null ? null : u.getEmail().trim();
                     if (e == null || e.isEmpty() || !e.contains("@")) continue;
                     if (out.putIfAbsent(e.toLowerCase(Locale.ROOT), e) == null) admins++;
                 }
             } catch (Exception ex) {
+                complete = false;
                 log.warn("Yönetici özeti: global yöneticiler okunamadı: {}", ex.toString());
             }
         }
-        return new Recipients(List.copyOf(out.values()), explicit, admins, dropped);
+        return new Recipients(List.copyOf(out.values()), explicit, admins, dropped, complete);
     }
 
     private boolean isInactiveOnly(String email) {
@@ -247,12 +259,18 @@ public class ExecutiveSummaryDeliveryService {
 
     /** Global yönetici: ADMIN + takım kapsamı yok (yerel ADMIN her zaman; LDAP ADMIN kapsamı varsa müdürdür). */
     boolean isGlobalAdmin(AppUser u) {
+        return Boolean.TRUE.equals(globalAdminOrNull(u));   // belirsizse kurum geneli rapor GİTMEZ (sızıntıdan iyidir)
+    }
+
+    /** {@link #isGlobalAdmin} — kapsam okunamazsa null (çağıran alıcı listesini "eksik" işaretler). */
+    Boolean globalAdminOrNull(AppUser u) {
         if (u == null || !"ADMIN".equals(u.getSystemRole())) return false;
         if (!"LDAP".equalsIgnoreCase(u.getAuthSource())) return true;
         try {
             return userService.computeViewTeamIds(u) == null;
         } catch (Exception e) {
-            return false;    // belirsizse kurum geneli rapor GİTMEZ (sızıntıdan iyidir)
+            log.warn("Yönetici özeti: {} yöneticisinin kapsamı okunamadı: {}", u.getUsername(), e.toString());
+            return null;
         }
     }
 
@@ -264,17 +282,26 @@ public class ExecutiveSummaryDeliveryService {
      */
     public Result runScheduled() {
         YearMonth month = summaryService.defaultMonth();
-        Result org;
-        if (!settings.enabled()) {
-            recordDisabled(month);
-            log.info("Aylık yönetici özeti kapalı ({}=false) — {} için gönderim yapılmadı", ExecutiveSummarySettings.ENABLED_KEY, month);
-            org = new Result("DISABLED", month.toString(), 0, 0, "Yönetici özeti kapalı");
-        } else {
-            org = deliverOrgSafely(month, "SCHEDULED");
+        try {
+            if (!settings.enabled()) {
+                // Kapalı izi verinin hazır olmasını beklemez (gönderim yok) — eskiden 06:00 öncesi zamanlamada hiç yazılmıyordu
+                recordDisabled(month);
+                log.info("Aylık yönetici özeti kapalı ({}=false) — {} için gönderim yapılmadı", ExecutiveSummarySettings.ENABLED_KEY, month);
+            }
+            if (!ExecutiveSummaryService.dataReady(month, summaryService.now())) {
+                // Zamanlama gece özetinden önceye kurulmuş (ör. 1'i 01:00): ay eksik görüntüyle KAPANMAZ — saatlik telafi
+                // {@value ExecutiveSummaryService#DATA_READY_HOUR}:00'dan sonra gönderir (2026-10-12).
+                log.info("Aylık yönetici özeti {}: gece özeti henüz yazılmadı — telafi {}:00'dan sonra gönderecek", month,
+                        ExecutiveSummaryService.DATA_READY_HOUR);
+                return new Result(DATA_PENDING, month.toString(), 0, 0, null);
+            }
+            Result org = settings.enabled() ? deliverOrgSafely(month, "SCHEDULED")
+                    : new Result("DISABLED", month.toString(), 0, 0, "Yönetici özeti kapalı");
+            runTeams(month, "SCHEDULED", false);
+            return org;
+        } finally {
+            pruneTeamReports();   // budama her tetikte (veri bekleniyor dönüşünde de — 2026-10-12)
         }
-        runTeams(month, "SCHEDULED", false);
-        pruneTeamReports();
-        return org;
     }
 
     /** Saatlik telafi (sınıf belgesi). Kurum ve takım yolları birbirinden bağımsızdır. */
@@ -290,6 +317,7 @@ public class ExecutiveSummaryDeliveryService {
         if (Duration.between(planned, now).toHours() >= CATCH_UP_HOURS) {
             return new Result("WINDOW_CLOSED", month.toString(), 0, 0, null);
         }
+        if (!ExecutiveSummaryService.dataReady(month, now)) return new Result(DATA_PENDING, month.toString(), 0, 0, null);
         Result org;
         if (!orgOn) {
             org = new Result("DISABLED", month.toString(), 0, 0, null);
@@ -317,13 +345,25 @@ public class ExecutiveSummaryDeliveryService {
 
     /** Elle gönderim (global yönetici, "Şimdi gönder"): kayıt durumundan bağımsız gönderir; yalnız süren gönderim engeller. */
     public Result sendNow(YearMonth month, String actor) {
+        // Alıcılar TALEPTEN ÖNCE (2026-10-12): eksik listede talep edilirse gönderilmiş ay FAILED'e döner, kayıtlı görüntü
+        // kaybolurdu. Takım yolu (sendTeamNow) da aynı sırayla.
+        if (!recipients().complete()) {
+            trace(orgSlot, "—", null, null, "SKIPPED: global yöneticiler okunamadı — gönderilmedi", TRIGGER);
+            return new Result(RECIPIENTS_UNAVAILABLE, month.toString(), 0, 0, null);
+        }
         return deliver(month, "MANUAL", actor == null ? "admin" : actor, true);
     }
 
     /** Takımın elle gönderimi (global yönetici ya da takımın müdürü — kapı denetleyicide). */
     public Result sendTeamNow(Long teamId, YearMonth month, String actor) {
         if (!teamsAvailable()) return new Result("DISABLED", month.toString(), 0, 0, null);
-        Map<Long, ExecutiveSummaryTeamService.Recipients> rc = teamService.recipientsFor(List.of(teamId));
+        Map<Long, ExecutiveSummaryTeamService.Recipients> rc;
+        try {
+            rc = teamService.recipientsFor(List.of(teamId));
+        } catch (RuntimeException e) {
+            log.warn("Takım yönetici özeti elle gönderilemedi (takım {} / {}): {}", teamId, month, e.toString());
+            return new Result(RECIPIENTS_UNAVAILABLE, month.toString(), 0, 0, null);
+        }
         ExecutiveSummaryTeamService.Recipients r = rc.get(teamId);
         if (r == null) return new Result("TEAM_INACTIVE", month.toString(), 0, 0, null);
         return deliverTeam(teamId, teamService.teamName(teamId), month, "MANUAL", actor == null ? "admin" : actor, true,
@@ -338,9 +378,24 @@ public class ExecutiveSummaryDeliveryService {
         if (!teamsAvailable()) return;
         List<Long> ids = teamService.enabledTeamIds();
         if (ids.isEmpty()) return;
-        Map<Long, ExecutiveSummaryTeamService.Recipients> recipients = teamService.recipientsFor(ids);
+        Map<Long, ExecutiveSummaryTeamService.Recipients> recipients;
+        try {
+            recipients = teamService.recipientsFor(ids);
+        } catch (RuntimeException e) {
+            // Kayıt açılmadı → telafi (saatlik, 72 sa) yeniden dener; varsayılan / eksik alıcıyla gönderilmez.
+            log.warn("Takım yönetici özetleri {} ({}) bu turda gönderilmedi — alıcılar okunamadı, telafi yeniden deneyecek: {}",
+                    month, trigger, e.toString());
+            trace(teamsTraceSlot(), "—", null, null,
+                    clip("SKIPPED: takım alıcıları okunamadı — telafi yeniden deneyecek (" + ids.size() + " takım)", 250), TRIGGER);
+            return;
+        }
         Map<String, Object> shared = summaryService.newRunShared();
-        Map<Long, String> names = summaryService.teamNames();
+        Map<Long, String> names;
+        try {
+            names = summaryService.teamNames();
+        } catch (RuntimeException e) {
+            names = Map.of();   // yalnız etiket — takımın özeti hesaplanamazsa kendi kaydı FAILED olur, telafi dener
+        }
         int sent = 0, skipped = 0, failed = 0;
         for (Long id : ids) {
             ExecutiveSummaryTeamService.Recipients rc = recipients.get(id);
@@ -399,6 +454,8 @@ public class ExecutiveSummaryDeliveryService {
     Result deliver(YearMonth month, String trigger, String actor, boolean force) {
         return deliverTo(orgSlot, month, trigger, actor, force, () -> summaryService.compute(month), () -> {
             Recipients rc = recipients();
+            // Talep edilmiş kayıt FAILED olur (yarıda kesilme yolu) → telafi yeniden dener.
+            if (!rc.complete()) throw new IllegalStateException("Yönetici özeti: global yöneticiler okunamadı — gönderilmedi");
             return new Audience(rc.emails(), rc.droppedInactive());
         }, ExecutiveSummarySettings.RECIPIENTS_KEY + " ve global yönetici seçeneği");
     }
@@ -431,8 +488,20 @@ public class ExecutiveSummaryDeliveryService {
             summary = computer.get();
         } catch (Exception e) {
             log.error("Aylık yönetici özeti {} ({}) hesaplanamadı: {}", month, slot.label(), e.toString(), e);
+            trace(slot, "—", null, null, "FAILED: özet hesaplanamadı (" + e.getClass().getSimpleName() + ")", TRIGGER);
             finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, "Özet hesaplanamadı: " + e.getClass().getSimpleName(), null, null);
             return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, "summary");
+        }
+        List<String> broken = failedSections(summary);
+        if (!force && !broken.isEmpty() && attempts(row) < MAX_ATTEMPTS && !lastCatchUpChance(month)) {
+            // Zamanlanmış / telafi (2026-10-12): hesaplanamayan bölümle gönderilen ay o yarım görüntüyle KAPANIRDI. Kayıt
+            // FAILED olur, telafi bir saat sonra yeniden dener; SON denemede elde olanla gönderilir (rapor hiç gitmemekten
+            // iyidir — hatalı bölüm postada ve sayfada "hesaplanamadı" diye görünür). Elle gönderim her zaman gönderir.
+            String why = "Bölüm hesaplanamadı (" + String.join(", ", broken) + ") — telafi yeniden deneyecek";
+            log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), why);
+            trace(slot, "—", null, null, clip("SKIPPED: " + why, 250), TRIGGER);
+            finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, why, null, null);
+            return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, why);
         }
         Map<String, Integer> statuses = new LinkedHashMap<>();
         int chunks = 0;
@@ -481,9 +550,49 @@ public class ExecutiveSummaryDeliveryService {
             if (ExecutiveReportRow.SENT.equals(st)) st = ExecutiveReportRow.PARTIAL;
             String why = "Gönderim yarıda kesildi: " + e.getClass().getSimpleName() + (statuses.isEmpty() ? "" : " · " + detail(statuses));
             log.error("Aylık yönetici özeti {} ({}) gönderimi yarıda kesildi: {}", month, slot.label(), e.toString(), e);
+            trace(slot, "—", null, null, clip("FAILED: " + why, 250), TRIGGER);
             finish(slot, row, st, recipientCount, chunks, why, null, summary);
             return new Result(st, month.toString(), recipientCount, chunks, why);
         }
+    }
+
+    /**
+     * Telafinin SON şansı mı (2026-10-12): bir saat sonraki tur {@link #CATCH_UP_HOURS} penceresinin dışına düşecekse hatalı
+     * bölümle de gönderilir — yoksa geç başlayan bir ay (ör. özet pencere içinde geç açıldı) hiç gitmezdi.
+     */
+    boolean lastCatchUpChance(YearMonth month) {
+        try {
+            Instant planned = plannedFireThisMonth(month.plusMonths(1), settings.cron());
+            if (planned == null) return false;
+            return Duration.between(planned, summaryService.now()).toHours() >= CATCH_UP_HOURS - 1;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Takım döngüsü düzeyindeki iz (tek takıma bağlanamayan karar). */
+    private Slot teamsTraceSlot() {
+        return new Slot() {
+            @Override public String label() { return "takımlar"; }
+            @Override public String traceName() { return "Yönetici Özeti · takımlar"; }
+            @Override public ExecutiveReportRow find(YearMonth m) { return null; }
+            @Override public ExecutiveReportRow newRow(YearMonth m) { throw new UnsupportedOperationException(); }
+            @Override public ExecutiveReportRow saveAndFlush(ExecutiveReportRow r) { throw new UnsupportedOperationException(); }
+            @Override public void save(ExecutiveReportRow r) { throw new UnsupportedOperationException(); }
+            @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
+    /** Hesaplanamayan bölümlerin anahtarları (sırasıyla). */
+    static List<String> failedSections(ExecutiveSummary summary) {
+        List<String> out = new ArrayList<>();
+        if (summary == null || summary.sections() == null) return out;
+        for (SectionResult s : summary.sections()) {
+            if (s != null && SectionResult.ERROR.equals(s.status())) out.add(s.key());
+        }
+        return out;
     }
 
     static String statusKey(String st) {
@@ -692,6 +801,7 @@ public class ExecutiveSummaryDeliveryService {
         m.put("recipient_explicit", rc.explicitCount());
         m.put("recipient_admins", rc.adminCount());
         m.put("recipient_dropped_inactive", rc.droppedInactive());
+        m.put("recipient_complete", rc.complete());   // false: global yöneticiler okunamadı — sayı eksik olabilir
         m.put("recipient_preview", rc.emails().subList(0, Math.min(20, rc.emails().size())));
         m.put("next_runs", nextRuns(settings.cron(), 3));
         m.put("bcc_chunk", BCC_CHUNK);

@@ -48,6 +48,27 @@ class ExecutiveSummaryPdfWriterTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: tablo hücresinde uzun takım / hizmet adı ve boşluksuz alan adı KESİLMEZ — satır sarılır, tam metin PDF'te")
+    void longNamesWrapNotClip() throws Exception {
+        String team = "Dijital Kanallar ve Mobil Bankacılık Uygulama Geliştirme Direktörlüğü (Ödeme Sistemleri / Kart)";
+        String host = "odeme-gecidi-yedek-veri-merkezi-uygulama-sunucusu-kume-01.ornek-kurum-bilgi-teknolojileri.example.com";
+        com.sitemonitor.service.report.executive.SectionResult sec = com.sitemonitor.service.report.executive.SectionResult
+                .builder("availability", 10, "Erişilebilirlik hedefi uyumu").status("ok")
+                .table(new com.sitemonitor.service.report.executive.SectionResult.Table("teams", "Takımlar",
+                        java.util.List.of(new com.sitemonitor.service.report.executive.SectionResult.Column("team", "Takım", "team"),
+                                new com.sitemonitor.service.report.executive.SectionResult.Column("host", "Hedef", "text"),
+                                new com.sitemonitor.service.report.executive.SectionResult.Column("pct", "Erişilebilirlik", "pct")),
+                        java.util.List.of(java.util.Map.of("team", team, "host", host, "pct", 99.5)), 1, null))
+                .build();
+        ExecutiveSummary base = ExecutiveSummarySamples.quiet();
+        ExecutiveSummary s = new ExecutiveSummary(base.month(), base.monthLabel(), base.from(), base.to(), base.complete(),
+                base.generatedAt(), base.source(), base.status(), base.headline(), base.headlineKpis(), java.util.List.of(sec),
+                base.settings(), base.scope());
+        String t = text(ExecutiveSummaryPdfWriter.render(s)).replaceAll("\\s+", "");
+        assertThat(t).contains(team.replaceAll("\\s+", "")).contains(host).doesNotContain("…");
+    }
+
+    @Test
     @DisplayName("her bölüm tablosu posta / PDF için ≤ 15 satır (yeni bölümler ≤ 10)")
     void tableRowLimits() {
         for (com.sitemonitor.service.report.executive.SectionResult sec : ExecutiveSummarySamples.full().sections()) {

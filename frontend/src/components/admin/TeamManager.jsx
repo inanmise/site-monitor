@@ -153,6 +153,9 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [stats, setStats] = useState({})                // takım id → sayaçlar (2026-09-20)
   const [statsReady, setStatsReady] = useState(false)   // sayaçlar geldi mi (eksik kuralları için)
   const [usersReady, setUsersReady] = useState(false)   // kullanıcı listesi geldi mi (lider / müdür eksikleri için)
+  const [usersFailed, setUsersFailed] = useState(false) // liste okunamadı → "yükleniyor" sonsuza dek kalmaz, "okunamadı" denir
+  const [statsFailed, setStatsFailed] = useState(false) // sayaçlar okunamadı → rozet "gelince görünür" demez, "okunamadı" der
+  const [userIdsAll, setUserIdsAll] = useState(() => new Set())   // listedeki TÜM kimlikler (pasifler dahil) — "pasif lider" ≠ "görünmeyen lider"
   const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
   const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
   const [ldapAuditTeam, setLdapAuditTeam] = useState(null)   // AD ile üyelik denetimi (2026-09-26)
@@ -212,16 +215,22 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   async function loadStats() {
     try {
       const r = await api.admin.teamStats?.()
-      if (r?.success) { setStats(r.data || {}); setStatsReady(true) }
-    } catch { /* sütun boş kalır */ }
+      if (r?.success) { setStats(r.data || {}); setStatsReady(true); setStatsFailed(false) } else setStatsFailed(true)
+    } catch { setStatsFailed(true) /* sütun boş kalır; sayaca dayalı eksikler "okunamadı" */ }
   }
 
   async function loadUsers() {
     // Hata dalı (2026-10-11): istek düşerse yakalanmamış söz reddi olmasın; lider / müdür eksikleri "bilinmiyor" kalır.
     try {
       const res = await api.admin.getUsers()
-      if (res?.success) { setUsers((res.data ?? []).filter(u => u.active)); setUsersReady(true) }   // data null gelirse ekran cokmesin
-    } catch { /* lider/müdür adları boş kalır */ }
+      if (res?.success) {   // data null gelirse ekran cokmesin
+        const all = res.data ?? []
+        setUsers(all.filter(u => u.active))
+        setUserIdsAll(new Set(all.map((u) => String(u.id))))
+        setUsersReady(true)
+        setUsersFailed(false)
+      } else setUsersFailed(true)
+    } catch { setUsersFailed(true) /* lider/müdür adları "okunamadı" gösterilir — eksik SAYILMAZ */ }
   }
 
   /** Yönetim ekranı yükleyicisi: kapsamlı tam üye listesi + kurum-geneli eskalasyon kişileri.
@@ -300,18 +309,31 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const statsOf = (tm) => stats[String(tm.id)] || null
 
   /** Takım başına eksikler (2026-10-11) — sayaç / kullanıcı listesi gelmeden ilgili kurallar "bilinmiyor" (atlanır). */
+  // Kullanıcı listesi kurum geneli mi? `/admin/users` global görüntüleyiciye (global yönetici + AUDIT) TÜM kullanıcıları,
+  // diğerlerine yalnız kapsamındaki takımların üyelerini döndürür (2026-10-12).
+  const usersListComplete = globalAdmin || systemRole === 'AUDIT'
+  /**
+   * Atanmış kişinin durumu: `ok` (etkin, listede) | `missing` (atanmamış ya da PASİF — gerçek eksik) | `unknown` (atanmış ama
+   * kapsamlı görüntüleyicinin listesinde yok — başka takımdan bir kişi; "yok" denmez).
+   */
+  const personState = (id) => {
+    if (id == null) return 'missing'
+    if (userMap[id]) return 'ok'
+    if (userIdsAll.has(String(id))) return 'missing'
+    return usersListComplete ? 'missing' : 'unknown'
+  }
   const gapIndex = useMemo(() => {
     const m = new Map()
     const unknown = new Set()   // lideri / müdürü bu görüntüleyiciye göre bilinmeyen takımlar (rozet "henüz tam denetlenmedi")
+    const leaderUnknown = new Set()
     for (const tm of teams) {
       const lid = leaderIdOf(tm)
       const manual = manualManagerId(tm)
-      // Global olmayan görüntüleyicinin kullanıcı listesi yalnız kapsamındaki takımların üyeleri (2026-10-12): atanmış lider /
-      // elle müdür listede yoksa "yok" değil BİLİNMİYOR — başka takımdan bir yönetici sahte "lider yok / müdür yok" üretmesin.
-      // Global yöneticide liste tüm etkin kullanıcılardır → listede olmayan atanmış kişi gerçekten etkin değildir (eksik).
-      const hasLeader = !usersReady ? null : lid == null ? false : userMap[lid] ? true : globalAdmin ? false : null
+      const ls = usersReady ? personState(lid) : null
+      const hasLeader = ls == null || ls === 'unknown' ? null : ls === 'ok'
       const hasManager = !usersReady ? null : managerEntries.get(tm.id)?.label ? true
-        : manual != null && !globalAdmin ? null : false
+        : manual != null && personState(manual) === 'unknown' ? null : false
+      if (ls === 'unknown') leaderUnknown.add(tm.id)
       if (usersReady && (hasLeader == null || hasManager == null)) unknown.add(tm.id)
       m.set(tm.id, teamGaps(tm, {
         stats: statsReady ? statsOf(tm) : null,
@@ -319,14 +341,20 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         hasManager,
       }))
     }
-    return { gaps: m, unknown }
-  }, [teams, stats, statsReady, usersReady, userMap, managerEntries, globalAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
+    return { gaps: m, unknown, leaderUnknown }
+  }, [teams, stats, statsReady, usersReady, userMap, userIdsAll, managerEntries, usersListComplete]) // eslint-disable-line react-hooks/exhaustive-deps
   const gapsById = gapIndex.gaps
   const gapsOf = (tm) => gapsById.get(tm.id) ?? []
   const gapKnown = (key) => {
     const g = TEAM_GAPS.find((x) => x.key === key)
     if (g?.stats) return statsReady
     return key === 'leader' || key === 'manager' ? usersReady : true
+  }
+  // Girdisi OKUNAMAYAN eksik: çipte "…" (yükleniyor) değil "—" (2026-10-12)
+  const gapFailed = (key) => {
+    const g = TEAM_GAPS.find((x) => x.key === key)
+    if (g?.stats) return statsFailed && !statsReady
+    return key === 'leader' || key === 'manager' ? usersFailed && !usersReady : false
   }
 
   /** Süzgeç + arama (ad / e-posta / lider adı / müdür adı / açıklama) — istemci tarafı; liste zaten tümü.
@@ -341,12 +369,16 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       if (needle && ![tm.name, tm.email, tm.description, userMap[tm.leader_id], mgrLabel].some((v) => v && String(v).toLowerCase().includes(needle))) return false
       if (fActive === 'active' && !tm.active) return false
       if (fActive === 'inactive' && tm.active) return false
-      if (fManager === 'none' && (manualMgr != null || mgrLabel)) return false
+      // Kullanıcı listesi gelmeden türetilen müdür BİLİNMİYOR — "müdür yok" süzgecine girmez (2026-10-12)
+      if (fManager === 'none' && (manualMgr != null || mgrLabel || !usersReady)) return false
       // Kimlikle eşleş: eskiden görünen ad karşılaştırılıyordu → aynı adlı iki müdürün takımları karışıyordu.
       if (fManager && fManager !== 'none' && String(manualMgr ?? '') !== String(fManager) && String(mgr?.userId ?? '') !== String(fManager)) return false
+      if (fAlerts && !statsReady) return false   // sayaçlar yokken alarm durumu BİLİNMİYOR — "alarmsız" listelenmez
       if (fAlerts === 'open' && !(Number(s.open_alerts) > 0)) return false
       if (fAlerts === 'none' && Number(s.open_alerts) > 0) return false
-      if (fLeader === 'none' && tm.leader_id != null && userMap[tm.leader_id]) return false
+      // "Lider yok" süzgeci yalnız GERÇEKTEN eksik lideri listeler: görünmeyen (başka takımdan) lider eksik sayılmaz
+      // Kullanıcı listesi gelmeden / okunamadıysa atanmış lider BİLİNMİYOR — "lider yok" süzgecine girmez (2026-10-12)
+      if (fLeader === 'none' && tm.leader_id != null && (!usersReady || userMap[tm.leader_id] || gapIndex.leaderUnknown.has(tm.id))) return false
       if (fWeekly === 'reminder_on' && !weeklyFlag(tm, 'reminder')) return false
       if (fWeekly === 'reminder_off' && weeklyFlag(tm, 'reminder')) return false
       if (fWeekly === 'availability_on' && !weeklyFlag(tm, 'availability')) return false
@@ -504,8 +536,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     { key: 'total', Icon: UsersRound, cls: 'total', label: t('team.kpi.total'), value: teams.length, hint: t('team.kpi.totalHint') },
     { key: 'active', Icon: CircleCheck, cls: 'valid', label: t('team.kpi.active'), value: activeCount },
     { key: 'inactive', Icon: CirclePause, cls: 'paused', label: t('team.kpi.inactive'), value: teams.length - activeCount },
-    { key: 'gaps', Icon: TriangleAlert, cls: 'warning', label: t('team.kpi.gaps'), value: usersReady && statsReady ? coreGapTeams : '…', hint: t('team.kpi.gapsHint') },
-    { key: 'alerts', Icon: Siren, cls: 'critical', label: t('team.kpi.alerts'), value: statsReady ? alertTeams : '…', hint: t('team.kpi.alertsHint') },
+    { key: 'gaps', Icon: TriangleAlert, cls: 'warning', label: t('team.kpi.gaps'), value: usersReady && statsReady ? coreGapTeams : (usersFailed || statsFailed) ? '—' : '…', hint: t('team.kpi.gapsHint') },
+    { key: 'alerts', Icon: Siren, cls: 'critical', label: t('team.kpi.alerts'), value: statsReady ? alertTeams : statsFailed ? '—' : '…', hint: t('team.kpi.alertsHint') },
   ]
   const onKpi = (key) => {
     if (key === 'total') { clearFilters(); return }
@@ -516,9 +548,13 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
   /** CSV — süzülmüş liste (eski sütunlar aynı sırada) + sonda eksik bilgiler. */
   const exportCsv = () => {
-    const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
-      tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? '',
-      gapsOf(tm).map((k) => t(`team.gap.${k}.label`)).join('; ')] })
+    const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}
+      const leader = userMap[tm.leader_id] || (gapIndex.leaderUnknown.has(tm.id) ? t('team.leaderNotVisible') : '')
+      const gaps = gapsOf(tm).map((k) => t(`team.gap.${k}.label`))
+      if (gapIndex.unknown.has(tm.id) || !statsReady || !usersReady) gaps.push(t('team.gap.unknown'))   // denetlenemeyen kural "eksiksiz" görünmesin
+      return [tm.name, tm.email, leader, teamManagerLabel(tm) || '',
+        tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? '',
+        gaps.join('; ')] })
     downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
       t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim(),
       t('team.csvGaps')], rows))
@@ -545,7 +581,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const statusBlock = (team) => (
     <div className="flex flex-wrap items-center gap-1.5 px-1">
       <ToneBadge tone={team.active ? 'success' : 'danger'}>{team.active ? t('team.active') : t('team.inactive')}</ToneBadge>
-      <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)} partial={!statsReady || !usersReady || gapIndex.unknown.has(team.id)} />
+      <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)}
+        partial={!statsReady || !usersReady || gapIndex.unknown.has(team.id)}
+        partialReason={(usersFailed && !usersReady) || (statsFailed && !statsReady) ? 'failed'
+          : !statsReady || !usersReady ? 'pending' : 'scope'} />
     </div>
   )
   /** Kişinin sicili (2026-10-11, kullanıcı isteği: "müdür ve liderin ad-soyad yanında sicil olsun"); yoksa null. */
@@ -570,11 +609,19 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         stacked ? 'grid-cols-1 gap-y-0.5 [&>dd]:mb-1.5 [&>dd:last-child]:mb-0' : 'grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2.5 gap-y-1')}>
         <dt className="text-xs text-muted-foreground">{t('team.leaderShort')}</dt>
         <dd className="min-w-0 [overflow-wrap:anywhere]">
-          {leaderName ? <><span>{leaderName}</span>{ownerMeta(leaderSicil)}</> : <span className="text-xs font-medium text-destructive">{t('team.noLeader')}</span>}
+          {leaderName ? <><span>{leaderName}</span>{ownerMeta(leaderSicil)}</>
+            : leaderIdOf(team) != null && !usersReady ? <span data-slot="team-owner-pending" className="text-xs text-muted-foreground">{usersFailed ? t('team.ownerUnreadable') : t('app.loading')}</span>
+            : gapIndex.leaderUnknown.has(team.id) ? <span data-slot="team-leader-unknown" className="text-xs text-muted-foreground">{t('team.leaderNotVisible')}</span>
+            : <span className="text-xs font-medium text-destructive">{t('team.noLeader')}</span>}
         </dd>
         <dt className="text-xs text-muted-foreground">{t('team.managerShort')}</dt>
         <dd className="min-w-0 [overflow-wrap:anywhere]">
-          {mgr?.label ? <><span>{mgr.label}</span>{ownerMeta(mgrSicil, manual)}</> : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
+          {mgr?.label ? <><span>{mgr.label}</span>{ownerMeta(mgrSicil, manual)}</>
+            : !usersReady ? <span data-slot="team-owner-pending" className="text-xs text-muted-foreground">{usersFailed ? t('team.ownerUnreadable') : t('app.loading')}</span>
+            // Elle atanmış ama görüş alanı dışındaki müdür "müdürü yok" DEĞİL (lider ile aynı kural, 2026-10-12)
+            : manualManagerId(team) != null && personState(manualManagerId(team)) === 'unknown'
+              ? <span data-slot="team-manager-unknown" className="text-xs text-muted-foreground">{t('team.leaderNotVisible')}</span>
+            : <span className="text-xs text-muted-foreground">{t('team.filterNoManager')}</span>}
         </dd>
         {oncallNow[String(team.id)] && (
           <>
@@ -642,7 +689,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       {teams.length > 0 && <MonitorStatsBar dense items={kpis} activeFilter={kpiActive} onStatClick={onKpi} className="mb-0" />}
 
       {teams.length > 0 && (
-        <TeamGapsPanel counts={gapCountMap} selected={gapSel} mode={gapMode} known={gapKnown}
+        <TeamGapsPanel counts={gapCountMap} selected={gapSel} mode={gapMode} known={gapKnown} failed={gapFailed}
           onToggle={toggleGap} onMode={setGapMode} onClear={() => { setGapSel([]); setGapMode('any') }} />
       )}
 

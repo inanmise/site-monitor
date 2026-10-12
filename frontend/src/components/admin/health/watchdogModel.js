@@ -45,3 +45,15 @@ export function watchdogReasons(data) {
   }
   return out
 }
+
+const NOTIFIED_SUFFIX = { '': '', _FAILED: 'Failed', _MUTED: 'Muted', _NOCHANNEL: 'NoChannel' }
+const NOTIFIED_RE = /^(ALERT|REMIND|RECOVER)(_FAILED|_MUTED|_NOCHANNEL)?$/
+
+/**
+ * Son bildirim türü → i18n anahtarı: ALERT | REMIND | RECOVER, ekli hâlleri _FAILED (yeniden denenir), _MUTED (sistem bakımı
+ * susturdu — bakım bitince gönderilir), _NOCHANNEL (denenecek kanal yok). Bilinmeyen tür → null (ham anahtar gösterilmez).
+ */
+export function notifiedKey(kind) {
+  const m = NOTIFIED_RE.exec(String(kind || ''))
+  return m ? `wd.notified.${m[1]}${NOTIFIED_SUFFIX[m[2] || '']}` : null
+}

@@ -394,12 +394,21 @@ public final class DeferredIndexBuilder {
     }
 
     public static boolean isPostgres(DataSource ds) {
-        if (ds == null) return false;
+        return Boolean.TRUE.equals(postgresOrNull(ds));
+    }
+
+    /**
+     * Üç durumlu tür: {@code TRUE} PostgreSQL, {@code FALSE} başka (H2), {@code null} OKUNAMADI (bağlantı hatası / veri
+     * kaynağı yok). Tek seferlik işler "PostgreSQL değil → iş yok, nişan yaz" kararını yalnız {@code FALSE}'ta vermeli —
+     * geçici bir bağlantı hatası işi kalıcı olarak atlatmasın (2026-10-12).
+     */
+    public static Boolean postgresOrNull(DataSource ds) {
+        if (ds == null) return null;
         try (Connection c = ds.getConnection()) {
             String p = c.getMetaData().getDatabaseProductName();
             return p != null && p.toLowerCase(Locale.ROOT).contains("postgres");
         } catch (Exception e) {
-            return false;
+            return null;
         }
     }
 

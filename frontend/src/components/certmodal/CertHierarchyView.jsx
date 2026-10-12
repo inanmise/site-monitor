@@ -31,11 +31,34 @@ import { buildHierarchy, downloadNodePem, initialIndex, nameRows, validityTone }
  * parmak izi kırılır. Ağaç satırı ≥ 40 px. Sol renk şeridi YOK — durum rozetle.
  *
  * <p>Props: `nodes` (sunucunun `nodes` dizisi — kök ilk), `initialSelected` (`'leaf'` varsayılan; rol adı ya da sıra —
- * yaprak yoksa takip edilen baş). Test kancaları: `data-slot="cert-hierarchy"`, `cert-hierarchy-node` (+ `data-role`,
- * `data-depth`), `cert-hierarchy-missing-root`, `cert-hierarchy-details`, `cert-hierarchy-pem`.
+ * yaprak yoksa takip edilen baş), `missingRootText` / `emptyText` (ağ sertifikasında "dosya" yerine sunucu dili —
+ * verilmezse manuel metinler), `missingIssuerLabel` (yer tutucuda beklenen verenin adı). Test kancaları: `data-slot="cert-hierarchy"`, `cert-hierarchy-node` (+ `data-role`,
+ * `data-depth`), `cert-hierarchy-role`, `cert-hierarchy-expiry`, `cert-hierarchy-source`, `cert-hierarchy-missing-root`,
+ * `cert-hierarchy-details`, `cert-hierarchy-pem`.
+ *
+ * <p>2026-10-12 (kullanıcı isteği: "Root hangisi, intermediate hangisi, leaf hangisi çok net görünsün; her birinin bitiş
+ * tarihi ayrı ayrı izlensin"): ağaç satırında rol ayrı RENKLİ rozet (kök birincil, ara ikincil, yaprak çerçeveli), bitiş
+ * TARİHİ + kalan gün rozeti her satırda; ad kırpılmaz, sarar. Ağ sertifikasında kökü güven deposundan gelen düğüm
+ * "Güven deposundan" rozeti ve ayrıntıda "Kaynak" satırı taşır.
  */
 
 const ROLE_ICON = { root: Landmark, intermediate: ShieldCheck, leaf: FileBadge }
+// Rol rozeti: üç rol bir bakışta ayrılsın (tema belirteçleri — her temada okunur)
+const ROLE_BADGE = { root: 'default', intermediate: 'secondary', leaf: 'outline' }
+
+function RoleBadge({ role, t, className }) {
+  return (
+    <Badge variant={ROLE_BADGE[role] || 'secondary'} data-slot="cert-hierarchy-role" data-role={role}
+      className={cn('font-semibold', className)}>{t(`chier.role.${role}`)}</Badge>
+  )
+}
+
+/** Düğümün kaynağı (ağ sertifikası): sunucu gönderdi / güven deposundan (sistem | kurumsal). Manuelde null. */
+function sourceText(node, t) {
+  if (node.source === 'trust_store') return t(node.trustStore === 'corporate' ? 'chier.src.store.corporate' : 'chier.src.store.system')
+  if (node.source === 'server') return t('chier.src.server')
+  return null
+}
 // Girinti (rem) ve satır geometrisi: iç kutu sol dolgusu 0.5rem + simge 1.25rem → simge merkezi = derinlik × girinti + 1.125rem.
 const INDENT = 1.5
 const ICON_CENTER = 1.125
@@ -146,7 +169,7 @@ function DetailsPane({ node, t }) {
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h5 data-slot="cert-hierarchy-details-title" className="m-0 text-[15px] leading-snug font-semibold [overflow-wrap:anywhere]">{name}</h5>
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="outline" className="font-semibold">{t(`sslv.role.${node.role}`)}</Badge>
+            <RoleBadge role={node.role} t={t} />
             {node.selfSigned && <Badge variant="warning">{t('sslv.selfSigned')}</Badge>}
             <ValidityBadge node={node} t={t} />
           </div>
@@ -155,6 +178,12 @@ function DetailsPane({ node, t }) {
 
       <NameSection title={t('chier.sec.subject')} parts={node.subject} dn={node.subjectDn} t={t} />
       <NameSection title={t('chier.sec.issuer')} parts={node.issuer} dn={node.issuerDn} t={t} />
+
+      {sourceText(node, t) && (
+        <Section title={t('chier.sec.source')}>
+          <Row label={t('chier.f.source')}><span data-slot="cert-hierarchy-details-source">{sourceText(node, t)}</span></Row>
+        </Section>
+      )}
 
       <Section title={t('chier.sec.validity')}>
         <Row label={t('chier.f.notBefore')}><span className="tabular-nums">{node.notBefore ? formatDate(node.notBefore) : '—'}</span></Row>
@@ -235,7 +264,8 @@ function Connectors({ level, hasChild, dashedTop }) {
   )
 }
 
-export default function CertHierarchyView({ nodes: rawNodes, initialSelected = 'leaf' }) {
+export default function CertHierarchyView({ nodes: rawNodes, initialSelected = 'leaf', missingRootText = null, emptyText = null,
+  missingIssuerLabel = null }) {
   const t = useT()
   const titleId = useId()
   const { nodes, issuerMissing } = useMemo(() => buildHierarchy(rawNodes), [rawNodes])
@@ -251,7 +281,7 @@ export default function CertHierarchyView({ nodes: rawNodes, initialSelected = '
   }, [nodes, initialSelected])
 
   if (!nodes.length) {
-    return <p data-slot="cert-hierarchy" className="m-0 text-sm text-muted-foreground">{t('chier.empty')}</p>
+    return <p data-slot="cert-hierarchy" className="m-0 text-sm text-muted-foreground">{emptyText || t('chier.empty')}</p>
   }
 
   const last = nodes.length - 1
@@ -295,7 +325,14 @@ export default function CertHierarchyView({ nodes: rawNodes, initialSelected = '
             <div data-slot="cert-hierarchy-missing-root"
               className="flex min-w-0 items-start gap-2 rounded-md border border-dashed px-2 py-2 text-[13px] text-muted-foreground">
               <ShieldQuestion aria-hidden="true" className="mt-px size-5 shrink-0" />
-              <span className="min-w-0 [overflow-wrap:anywhere]">{t('chier.rootMissing')}</span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="[overflow-wrap:anywhere]">{missingRootText || t('chier.rootMissing')}</span>
+                {missingIssuerLabel && (
+                  <span data-slot="cert-hierarchy-missing-issuer" className="text-xs [overflow-wrap:anywhere]">
+                    {t('chier.expectedIssuer', missingIssuerLabel)}
+                  </span>
+                )}
+              </span>
             </div>
           )}
           <ul role="tree" aria-labelledby={titleId} data-slot="cert-hierarchy-tree" className="m-0 flex min-w-0 list-none flex-col p-0">
@@ -319,12 +356,22 @@ export default function CertHierarchyView({ nodes: rawNodes, initialSelected = '
                     isSel && 'bg-accent text-accent-foreground ring-1 ring-primary/30 group-hover:bg-accent',
                   )}>
                     <Icon aria-hidden="true" className={cn('size-5 shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-[13px] font-medium" title={n.label || undefined}>{n.label || '—'}</span>
-                      <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
-                        {t(`sslv.role.${n.role}`)}
+                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="text-[13px] leading-snug font-medium [overflow-wrap:anywhere]">{n.label || '—'}</span>
+                      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <RoleBadge role={n.role} t={t} />
+                        {n.source === 'trust_store' && (
+                          <Badge variant="outline" data-slot="cert-hierarchy-source" className="font-normal" title={sourceText(n, t) || undefined}>
+                            {t('chier.src.trustStoreShort')}
+                          </Badge>
+                        )}
                         <ValidityBadge node={n} t={t} />
                       </span>
+                      {n.notAfter && (
+                        <span data-slot="cert-hierarchy-expiry" className="text-[11px] text-muted-foreground tabular-nums">
+                          {t('chier.expiresOn', formatDate(n.notAfter))}
+                        </span>
+                      )}
                     </span>
                   </div>
                 </li>

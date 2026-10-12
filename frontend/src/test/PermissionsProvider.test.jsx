@@ -68,4 +68,22 @@ describe('PermissionsProvider — eşit yetki yanıtı yeniden çizim üretmez',
     expect(renders).toBe(settled)
     expect(latest.perms).toEqual({})
   })
+
+  it('2026-10-12: ilk snapshot gelene kadar loaded=false (boş {} "yetki yok" ile karışmaz); hata önceki durumu korur', async () => {
+    let resolve
+    getPermissions.mockImplementation(() => new Promise((r) => { resolve = r }))
+    render(<PermissionsProvider user="u"><Consumer /></PermissionsProvider>)
+    expect(latest.loaded).toBe(false)
+    await act(async () => { resolve({ success: true, data: { 'alerts.read': { view: true } } }) })
+    await waitFor(() => expect(latest.loaded).toBe(true))
+    getPermissions.mockRejectedValue(new Error('ağ'))
+    await act(async () => { await latest.refresh() })
+    expect(latest.loaded).toBe(true)
+    expect(latest.canView('alerts.read')).toBe(true)
+  })
+
+  it('2026-10-12: sağlayıcı yoksa loaded=true (eski davranış)', () => {
+    render(<Consumer />)
+    expect(latest.loaded).toBe(true)
+  })
 })

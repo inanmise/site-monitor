@@ -67,6 +67,19 @@ class UserDirectoryControllerTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: directory satırı 'active' taşır (pasif hesap false; eski 6 sütunlu satır true) — atama seçicileri pasifi süzer")
+    @SuppressWarnings("unchecked")
+    void directory_carriesActive() {
+        AppUser passive = user(3L, "pasif", "Pasif Kişi", null, null, "pasif@example.com");
+        passive.setActive(false);
+        List<Object[]> rs = rows(user(1L, "aylin", "Aylin Y.", null, null, "aylin@example.com"), passive);
+        rs.add(new Object[]{4L, "eski", "Eski Satır", null, null, null});
+        when(userRepo.findDirectoryRows()).thenReturn(rs);
+        List<Map<String, Object>> data = (List<Map<String, Object>>) controller.directory().getBody().get("data");
+        assertThat(data).extracting(m -> m.get("active")).containsExactly(true, false, true);
+    }
+
+    @Test
     @DisplayName("directory: display_name yoksa 'Ad Soyad'a düşer; o da yoksa null (frontend username'e düşer)")
     @SuppressWarnings("unchecked")
     void directory_displayNameFallbackLadder() {
@@ -97,7 +110,7 @@ class UserDirectoryControllerTest {
     /** Kullanıcıları dizin projeksiyon satırlarına çevirir (id, username, displayName, firstName, lastName, email). */
     private static List<Object[]> rows(AppUser... users) {
         List<Object[]> out = new java.util.ArrayList<>();
-        for (AppUser u : users) out.add(new Object[]{u.getId(), u.getUsername(), u.getDisplayName(), u.getFirstName(), u.getLastName(), u.getEmail()});
+        for (AppUser u : users) out.add(new Object[]{u.getId(), u.getUsername(), u.getDisplayName(), u.getFirstName(), u.getLastName(), u.getEmail(), u.getActive()});
         return out;
     }
 }

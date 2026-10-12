@@ -78,6 +78,8 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
     scopes: null, canConfigure: false, canConfigureAny: false })
   const [pdfBusy, setPdfBusy] = useState(false)
   const seq = useRef(0)
+  // Bağlantıdaki kapsam görülemediği için varsayılana dönüldü mü — bildirim ancak varsayılan kapsam YÜKLENİNCE gösterilir
+  const fellBack = useRef(false)
 
   const allowDelivery = state.canConfigure || state.canConfigureAny
   const activeView = allowDelivery ? view : VIEW_REPORT
@@ -101,19 +103,26 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
         setState({ loading: false, error: null, status: null, data: res.data, months: res.months || [],
           defaultMonth: res.default_month || null, scopes: res.scopes || null, canConfigure: !!res.can_configure,
           canConfigureAny: !!res.can_configure_any_team })
+        if (fellBack.current) {
+          fellBack.current = false
+          toast.info(t('exec.scopeFallback'))
+        }
       } else {
         const status = res?.status ?? res?.errorInfo?.status ?? null
-        if (status === 403 && team != null) {
-          // Bağlantıdaki kapsam (eski / iletilmiş ex_team) artık görülemiyor: "erişim yok" ekranında kilitlenmek yerine varsayılan
-          // kapsama dönülür — kapsam seçici ve sekmeler yeniden görünür (2026-10-12).
-          toast.info(t('exec.scopeFallback'))
+        if (team != null && (status === 403 || status === 404)) {
+          // Bağlantıdaki kapsam (eski / iletilmiş / silinmiş takım) görülemiyor: "erişim yok" ya da hata ekranında kilitlenmek
+          // yerine varsayılan kapsama dönülür (2026-10-12). Bildirim, varsayılan kapsam yüklenince. 400 (ör. eski ay) kapsamla
+          // ilgili değildir — geçerli takım düşürülmez, ay hatası gösterilir.
+          fellBack.current = true
           setTeam(null)
           return
         }
+        fellBack.current = false
         setState((s) => ({ ...s, loading: false, error: res?.error || t('exec.loadError'), status }))
       }
     } catch (e) {
       if (my !== seq.current) return
+      fellBack.current = false
       setState((s) => ({ ...s, loading: false, error: e?.message || t('exec.loadError'), status: 0 }))
     }
   }, [month, team, live, t]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -172,7 +181,7 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
           {scopeOpts.length > 1 ? (
             <div data-slot="ex-scope">
               <SearchableSelect value={scopeValue} options={scopeOpts} ariaLabelledBy={scopeLabelId} searchThreshold={8}
-                onChange={(v) => { setTeam(v || null); setLive(false) }} />
+                onChange={(v) => { fellBack.current = false; setTeam(v || null); setLive(false) }} />
             </div>
           ) : (
             <p data-slot="ex-scope-static" className="m-0 flex min-h-10 items-center gap-2 text-sm font-medium lg:min-h-9">

@@ -525,7 +525,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         <TabsContent value="ssl">
           {sslData ? (
             <SslCheckerPanel data={sslData} onRecheck={() => probeSsl(domain)} rechecking={sslLoading} recheckError={sslError}
-              chainView={sslChainView} onChainViewChange={setSslChainView} />
+              chainView={sslChainView} onChainViewChange={setSslChainView}
+              networkHierarchyDomain={!previewMode && !isManual ? domain : null} />
           ) : sslError != null ? (
             <StatusBlock tone="danger" icon={ShieldX} title={t(isManual ? 'sslv.m.loadFailed' : 'sslv.loadFailed')} description={sslError || t('sslv.loadFailedHint')}
               actions={(

@@ -191,7 +191,7 @@ public class IncidentActionReminderService {
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
             n.setSentAt(IncidentPostmortemService.ISO.format(Instant.now()));
             n.setRecipientName(clip(name == null ? "" : name, 255));
-            n.setRecipientEmail(clip(to, 1000));
+            n.setRecipientEmail(to);                        // varlık kolona sığdırır (2026-10-12; 1000 kolondan uzundu)
             n.setRecipientRole("ACTION_OWNER");
             n.setSubject(clip(subject, 500));
             n.setEmailStatus(clip(status, 250));

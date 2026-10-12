@@ -228,4 +228,34 @@ class ExecutiveSummaryTeamServiceTest {
         verify(userRepo, org.mockito.Mockito.times(1)).findMembersOfTeams(anyCollection());
         verify(userRepo, org.mockito.Mockito.times(1)).findByActiveTrueOrderByUsernameAsc();
     }
+
+    @Test
+    @DisplayName("2026-10-12: gönderim yolunda ayar / üye / müdür / müdür kapsamı okunamazsa İSTİSNA — varsayılan ya da eksik alıcıyla gönderilmez; ekran yine çizilir")
+    void deliveryRecipientsFailClosed() {
+        settings(true, true, true, "202", "cto@example.com");
+        assertThat(svc.recipientsFor(List.of(5L)).get(5L).emails()).isNotEmpty();
+
+        // Müdürün yönetim kapsamı okunamadı → "global" sayılıp sessizce düşmez, anlık görüntü eksik
+        when(userService.computeManageTeamIds(ldapAdmin)).thenThrow(new IllegalStateException("ldap"));
+        assertThatThrownBy(() -> svc.recipientsFor(List.of(5L))).isInstanceOf(IllegalStateException.class);
+        assertThat(svc.snapshot(List.of(5L)).complete()).isFalse();
+        assertThat(svc.detail(5L)).as("ayar ekranı yine çizilir").isNotNull();
+        org.mockito.Mockito.doReturn(List.of(1L, 5L)).when(userService).computeManageTeamIds(ldapAdmin);
+
+        // Üyeler okunamadı
+        when(userRepo.findMembersOfTeams(anyCollection())).thenThrow(new IllegalStateException("db"));
+        assertThatThrownBy(() -> svc.recipientsFor(List.of(5L))).isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.doReturn(List.of(member1, member2)).when(userRepo).findMembersOfTeams(anyCollection());
+
+        // Ayarlar okunamadı (eskiden varsayılanlarla — seçili üye / ek adres düşmüş — gönderiyordu)
+        when(settingsRepo.findAllById(any())).thenThrow(new IllegalStateException("db"));
+        assertThatThrownBy(() -> svc.recipientsFor(List.of(5L))).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ayarlar");
+        org.mockito.Mockito.doReturn(List.of()).when(settingsRepo).findAllById(any());
+
+        // Takımlar okunamadı
+        when(teamRepo.findAllById(any())).thenThrow(new IllegalStateException("db"));
+        assertThatThrownBy(() -> svc.recipientsFor(List.of(5L))).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("takımlar");
+    }
 }

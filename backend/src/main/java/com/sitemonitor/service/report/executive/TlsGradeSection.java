@@ -90,7 +90,7 @@ public class TlsGradeSection implements ExecutiveSummarySection {
         Map<String, ExecutiveSummaryContext.InventoryRow> inv = safeInventory(ctx);
         Map<Long, String> names = safeNames(ctx);
         List<CertificateDto> latest;
-        try { latest = ctx.latestCerts(); } catch (Exception e) { latest = List.of(); }
+        latest = ctx.latestCerts();                                  // okuma hatası → bölüm ERROR (2026-10-12)
         if (latest == null) latest = List.of();
 
         List<Endpoint> graded = new ArrayList<>();
@@ -444,13 +444,10 @@ public class TlsGradeSection implements ExecutiveSummarySection {
         return t == null ? null : t.atZone(ExecutiveSummaryContext.IST).toLocalDate().toString();
     }
 
+    /** Envanter — okuma hatası bölümü ERROR yapar (2026-10-12; boş harita kapsamayı şişirip notlanmayanı azaltırdı). */
     private static Map<String, ExecutiveSummaryContext.InventoryRow> safeInventory(ExecutiveSummaryContext ctx) {
-        try {
-            Map<String, ExecutiveSummaryContext.InventoryRow> m = ctx.inventory();
-            return m == null ? Map.of() : m;
-        } catch (Exception e) {
-            return Map.of();
-        }
+        Map<String, ExecutiveSummaryContext.InventoryRow> m = ctx.inventory();
+        return m == null ? Map.of() : m;
     }
 
     private static Map<Long, String> safeNames(ExecutiveSummaryContext ctx) {
