@@ -1,9 +1,135 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-11T15:40:11Z",
+  "generatedAt": "2026-10-12T02:05:43Z",
   "repo": "inanmise/site-monitor",
-  "count": 733,
+  "count": 734,
   "releases": [
+    {
+      "version": "20.123.0",
+      "tag": "v20.123.0",
+      "releasedAt": "2026-10-12T02:05:36Z",
+      "commit": "421f421d0bf6399df718a3c1389b6b878b2accdf",
+      "prevVersion": "20.122.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 9,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "421f421d",
+          "subject": "LDAP rol eşlemesi önizlemesinin grup üyesi okuması testlendi — CI sınıf kapsam tabanı (LdapDirectoryService ≥ %12)"
+        },
+        {
+          "type": "ci",
+          "scope": null,
+          "breaking": false,
+          "sha": "8afdff22",
+          "subject": "test fork heap'i 3 GB — 20.122'de %93'te olan fork ~145 yeni testle CI'da \"Java heap space\" verdi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ce5d43b2",
+          "subject": "tam doğrulamada yakalanan kapı ihlalleri — postmortem denetimi, saklama dokümanı, işlem bayrakları, dokunmatik seçici, izin kataloğu okuması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8003c894",
+          "subject": "postmortem şablonu ve aksiyon takibi — suçlamasız rapor, sahipli ve son tarihli aksiyonlar, otomatik zaman çizelgesi, gecikme hatırlatması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7dd3ebf2",
+          "subject": "Panom — kişisel, düzenlenebilir pano ve TV / duvar ekranı kipi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "bf581aff",
+          "subject": "nöbet rotasyonu — takım çizelgesi, yer değiştirme, şu anki nöbetçi; takım seçerse YÜKSEK/KRİTİK alarmlar nöbetçiye de e-posta ve push ile gider"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1a8ff511",
+          "subject": "kendi kendini izleme (watchdog) — taramalar, bildirim, push kuyruğu ve veritabanı dakikada bir denetlenir; doğrulanan sorun ve düzelme yöneticilere bildirilir, dış izleyici ucu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5b88d779",
+          "subject": "Aktivite sayfası yeniden tasarımı — zaman çizelgesi, sayılı tür çipleri, etkin süzgeç çipleri, kap genişliğine göre tablo/kart; ad ve hedef kesilmez"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "00ed3bbb",
+          "subject": "prod günlüğü JSON, her satırda istek kimliği ve iz kimliği; OpenTelemetry izi uç nokta verilince dışa aktarılır"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6aa004ba",
+          "subject": "gizli anahtar döndürme — önceki anahtar yalnız çözer, şifreli değerlerin anahtar durumu ve tek tıkla yeniden şifreleme; giriş kodu döndürmede geçerli kalır"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1f86cec2",
+          "subject": "TLS notu düşünce sorumlu takımlara e-posta ve push özeti gider — bir kez, eşik ayarlı, bakımda susar; son düşüşler bildirim durumunu gösterir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c6c013b3",
+          "subject": "yönetici özeti yenileme uyumu — süresi dolmadan yapılan yenileme uyumludur; oranı yalnız yenilenmeden dolan sertifika düşürür"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "da930964",
+          "subject": "LDAP grup → rol eşlemesi uygulanır — varsayılan kapalı, elle değişen rol ve son yönetici korunur, \"kim ne olacak?\" önizlemesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ad45b5c1",
+          "subject": "ping paket kaybı ondalıklı okunur — \"%3333\" ve kısmi kayıpta yanlış \"kapalı\" kararı düzeldi"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "526e1f40",
+          "subject": "README API kimlik doğrulaması gerçek akışla (oturum çerezi; Basic Auth yok), SHADCN.md kataloğu 2026-10-11 kullanım sayılarıyla"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.122.0",
       "tag": "v20.122.0",
