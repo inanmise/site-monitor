@@ -255,8 +255,11 @@
                          space" verdi; bağlam önbelleği ayrıca src/test/resources/spring.properties ile 12'ye sınırlı.
                          -Xmx2048m (2026-10-06): 20.108'in yeşil koşusu da sonlara doğru %93'teydi (1439/1536 MB); ~150
                          yeni test + iki yeni @WebMvcTest bağlamıyla CI fork'u 4525. testte "Java heap space" ile düştü
-                         (test hatası yok). Runner belleği 2 GB fork'u rahat taşır. -->
-                    <argLine>@{argLine} -Xmx2048m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
+                         (test hatası yok). Runner belleği 2 GB fork'u rahat taşır.
+                         -Xmx3072m (2026-10-12): 20.122'nin yeşil koşusu sonda %93'teydi (1913/2048 MB, 7404 test); ~145
+                         yeni testle CI'da 4 @DataJpaTest sınıfı bağlam kurarken "Java heap space" verdi (test hatası
+                         yok, yerelde %94 ile geçti). 2 çekirdekli runner'ın 7 GB belleği 3 GB fork + Maven'ı taşır. -->
+                    <argLine>@{argLine} -Xmx3072m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                     <!-- Etiket süzgeci (2026-10-02): postgres etiketli entegrasyon testleri varsayılan koşumda dışarıda;
                          -Ppostgres-it bu iki özelliği ters çevirir (yukarıdaki <properties> notu). -->
                     <groups>${surefire.groups}</groups>
