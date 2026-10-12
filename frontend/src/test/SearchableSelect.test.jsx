@@ -285,4 +285,19 @@ describe('SearchableSelect', () => {
     expect(screen.getByRole('combobox', { name: 'Sırala:' })).toBeDefined()
     expect(screen.getByRole('combobox', { name: 'Yıl' })).toBeDefined()
   })
+
+  it('wrapLabels (2026-10-12): seçili ad ve seçenek adları KIRPILMAZ, sarar; varsayılan görünüm değişmez', () => {
+    const LONG = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
+    const options = [{ value: '1', label: LONG }, { value: '2', label: 'Kısa' }]
+    const { unmount } = render(<SearchableSelect value="1" onChange={() => {}} options={options} wrapLabels ariaLabel="Kişi" />)
+    const trigger = screen.getByRole('combobox', { name: 'Kişi' })
+    expect(trigger.innerHTML).not.toContain('truncate')
+    expect(trigger.className).toContain('whitespace-normal')
+    fireEvent.mouseDown(trigger)
+    const opt = screen.getByRole('option', { name: LONG })
+    expect(opt.innerHTML).not.toContain('truncate')
+    unmount()
+    render(<SearchableSelect value="1" onChange={() => {}} options={options} ariaLabel="Kişi" />)
+    expect(screen.getByRole('combobox', { name: 'Kişi' }).innerHTML).toContain('truncate')
+  })
 })

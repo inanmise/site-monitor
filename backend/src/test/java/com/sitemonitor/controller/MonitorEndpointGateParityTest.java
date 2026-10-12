@@ -48,11 +48,15 @@ class MonitorEndpointGateParityTest {
      *
      * <p>Silmenin daha dar olması bilinçlidir: oluşturmayı sıradan USER yapabilir, kalıcı
      * kaldırmayı yalnız TEAM_ADMIN ve üstü.
+     *
+     * <p>Takım erişim paylaşımı (2026-10-12): tetik {@code canExecuteTeam} (= canOperateTeam + paylaşımda ÇALIŞTIRMA),
+     * silme {@code canDeleteTeamResource} (= canManage + paylaşımda SİLME). Paylaşımı olmayan kullanıcıda ikisi de eski
+     * kurala eşittir; dokuz tür yine AYNI kuralı kullanmalı.
      */
     private static final Map<String, String> EXPECTED_GATE = Map.of(
-            "trigger", "canOperateTeam",
+            "trigger", "canExecuteTeam",
             "update",  "canOperateTeam",
-            "delete",  "canManage");
+            "delete",  "canDeleteTeamResource");
 
     private static final List<String> VERBS = List.copyOf(new java.util.TreeSet<>(EXPECTED_GATE.keySet()));
 
@@ -104,6 +108,8 @@ class MonitorEndpointGateParityTest {
             if (l.equals("    }")) break;
             String t = l.stripLeading();
             if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) continue;
+            if (l.contains("canExecuteTeam(")) return "canExecuteTeam";
+            if (l.contains("canDeleteTeamResource(")) return "canDeleteTeamResource";
             if (l.contains("canOperateTeam(")) return "canOperateTeam";
             if (l.contains("SessionScope.canManage(")) return "canManage";
         }

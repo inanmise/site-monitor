@@ -47,6 +47,8 @@ export default function SearchableSelect({
   // Ad yolları (role="combobox" içerikten ad almaz — PickerTrigger): ariaLabel, görünür etiketin
   // id'si ya da `id` + `<label htmlFor>` / Field render-prop'u.
   ariaLabelledBy, id,
+  // true: seçenek ve seçili ad kırpılmaz, sarar (uzun AD görünen adları / takım adları — 2026-10-12). Varsayılan eski görünüm.
+  wrapLabels = false,
 }) {
   const t = useT()
   const { open, openRef, setOpen } = usePickerOpen()
@@ -153,8 +155,8 @@ export default function SearchableSelect({
         onSelect={() => select(opt.value)}
       >
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate">{opt.label}</span>
-          {opt.hint && <span className="truncate text-xs font-normal text-muted-foreground not-italic">{opt.hint}</span>}
+          <span className={wrapLabels ? '[overflow-wrap:anywhere]' : 'truncate'}>{opt.label}</span>
+          {opt.hint && <span className={cn(wrapLabels ? '[overflow-wrap:anywhere]' : 'truncate', 'text-xs font-normal text-muted-foreground not-italic')}>{opt.hint}</span>}
         </span>
         {deletable && (
           /* Klavye/dokunmatik kullanıcısı da silebilsin (Enter/Space) ve ad hangi seçeneğin
@@ -247,6 +249,7 @@ export default function SearchableSelect({
           ariaLabel={ariaLabel}
           ariaLabelledBy={ariaLabelledBy}
           id={id}
+          wrap={wrapLabels}
         >
           {triggerLabel}
         </PickerTrigger>

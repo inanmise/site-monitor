@@ -36,7 +36,8 @@ public class MonitoringOverviewController {
         // 7/24 operatörü (2026-10-04) global görücü gibi tüm takımları görür — anahtar ve yüklem AYNI kaynaktan.
         boolean global = SessionScope.seesAllMonitoring(session);
         // Bellek anahtarı canView yüklemini TAM belirler: global → hepsi; aksi halde yalnız görüş takımları.
-        String scopeKey = com.sitemonitor.util.TtlMemo.scopeKey(global, SessionScope.viewTeamIds(session));
+        // Erişim paylaşımı (2026-10-12): paylaşılan takımlar yüklemde (canViewMonitoring) → anahtarda da olmalı
+        String scopeKey = com.sitemonitor.util.TtlMemo.scopeKey(global, SessionScope.viewTeamIdsWithGrants(session));
         java.util.function.Predicate<Long> canView = teamId -> SessionScope.canViewMonitoring(session, teamId);
         Map<String, Object> data = isFresh(fresh)
                 ? overviewService.build(scopeKey, canView, global, hours, true)

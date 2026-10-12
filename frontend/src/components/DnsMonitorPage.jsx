@@ -111,14 +111,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // kart köşesiydi: "düğmeler neden görünmüyor?" Oysa envanter-türevi DNS kaydı takımını
   // envanterden alır, yani aynı takım yöneticisi aynı domainin Port izlemesini ve envanter
   // kaydının kendisini zaten yönetebiliyordu — fazladan admin şartının koruyucu değeri yoktu.
-  const canManageRow = (m) => isAdmin || isOwnTeam(m)
+  const canManageRow = (m) => (typeof m?.can_edit === 'boolean' ? m.can_edit : (isAdmin || isOwnTeam(m)))   // sunucu bayrağı (2026-10-12, erişim paylaşımı); eski yanıtta rol kuralı
   // Toplu kontrolün adayı = tek tek de çalıştırılabilen satırlar; kartın ▶ düğmesiyle aynı yüzey.
   // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
-  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
+  const canCheckRow = (m) => (typeof m?.can_check === 'boolean' ? m.can_check : canManageRow(m))
   // Silme SEMANTİĞİ hâlâ standalone'a göre ayrışır (standalone → gerçek silme; envanter-türevi →
   // pasifleştirme, envanter senkronu yeniden açabilir); ayrışan yalnız DAVRANIŞ, yetki değil.
-  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  const canDeleteRow = (m) => (typeof m?.can_delete === 'boolean' ? m.can_delete : (isAdmin || (isTeamAdmin && isOwnTeam(m))))
   // Uçtan uca tanılama (2026-10-05): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run). Liste
   // satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla günceller, yanıtta bayrak olmayabilir.
   const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
@@ -857,10 +857,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               )}
               meta={<MonitorCardMeta monitor={m} />}
               spark={<MonitorSpark rowLabel={m.domain} spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />}
-              actions={canManageRow(m) && (
-                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
+              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
                   running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
                   checkTitle={t('dns.check')} editTitle={t('dns.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id}

@@ -97,7 +97,7 @@ public class TlsGradeController {
         requireRescanPermission(session);
         CertificateInventory inv = readable(session, domain, request);
         if (inv == null) return notFound();
-        if (!SessionScope.canOperateTeam(session, inv.getTeamId())) {
+        if (!SessionScope.canExecuteTeam(session, inv.getTeamId())) {
             throw new SecurityException(Msg.t(
                     "Bu alan adının takımında işlem yetkiniz yok; TLS notunu yalnız görüntüleyebilirsiniz.",
                     "You can view this domain's TLS grade but can't rescan it; it belongs to a team outside your scope."));
@@ -162,7 +162,7 @@ public class TlsGradeController {
 
     private boolean canRescan(HttpSession session, CertificateInventory inv) {
         return !inv.isManual() && permissionService.allows(session, "diagnostics.run", "execute")
-                && SessionScope.canOperateTeam(session, inv.getTeamId());
+                && SessionScope.canExecuteTeam(session, inv.getTeamId());
     }
 
     private void requireRescanPermission(HttpSession session) {
@@ -181,7 +181,7 @@ public class TlsGradeController {
         CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
         if (inv == null) return null;
         if (SessionScope.isNocOperator(session)) return inv;
-        if (SessionScope.canView(session, inv.getTeamId())) return inv;
+        if (SessionScope.canViewWithGrants(session, inv.getTeamId())) return inv;   // + erişim paylaşımı (2026-10-12)
         if (inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) return inv;
         auditService.recordSecurityEvent("CERT_HEALTH_DENIED", request, session, "CERTIFICATE", domain,
                 "Yetkisiz TLS notu erişimi");

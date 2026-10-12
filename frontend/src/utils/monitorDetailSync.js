@@ -34,6 +34,31 @@ export function mergeSavedRow(prev, saved) {
   return prev.id === saved.id ? { ...prev, ...saved } : prev
 }
 
+/** Liste satırının sunucu kapı bayrakları — tetik ("Şimdi kontrol et") yanıtı bunları taşımaz. */
+const ROW_FLAGS = ['can_check', 'can_edit', 'can_delete', 'can_diagnose']
+
+/**
+ * "Şimdi kontrol et" yanıtını açık pencerenin kopyasına koyarken satır bayraklarını korur (2026-10-12, takım erişim
+ * paylaşımı): tetik yanıtı `can_*` alanlarını içermez; kopya onları kaybedince düğmeler rol kuralına düşüyor, paylaşımla
+ * çalıştıran kişinin "Kontrol" düğmesi kayboluyor ya da sunucunun reddedeceği "Sil" beliriyordu. Yanıtta olan bayrak
+ * kazanır; yoksa kopyadaki kalır. Diğer alanlar yanıttan gelir (eski davranış).
+ *
+ * @param {object|null} prev  açık pencerenin kopyası
+ * @param {object|null} next  tetik yanıtının satırı (`res.data`)
+ * @returns {object|null}
+ */
+export function withRowFlags(prev, next) {
+  if (!isRow(next) || !isRow(prev) || prev.id !== next.id) return next
+  let out = next
+  for (const k of ROW_FLAGS) {
+    if (next[k] === undefined && prev[k] !== undefined) {
+      if (out === next) out = { ...next }
+      out[k] = prev[k]
+    }
+  }
+  return out
+}
+
 /**
  * Düzenleme formunun kaynağı: izlemenin GÜNCEL listedeki satırı. Liste her kayıttan / yenilemeden sonra sunucudan gelir;
  * detay kopyası yalnız kendi eylemleriyle güncellenir. Satır kopyanın ÜSTÜNE birleştirilir: listede bulunmayan bir alan

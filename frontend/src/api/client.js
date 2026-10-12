@@ -415,6 +415,15 @@ export const api = {
   users: {
     directory: () => request('/users/directory'),
   },
+  // Takım erişim paylaşımı (2026-10-12): yönettiği takımların paylaşımları + kendisiyle paylaşılanlar. Hata gövdesi
+  // (`field` / `code`) form alanına yazılabilsin diye withStatus.
+  teamAccess: {
+    list: (team) => request(`/admin/team-access${team ? `?team=${encodeURIComponent(team)}` : ''}`, { withStatus: true }),
+    create: (body) => request('/admin/team-access', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    update: (id, body) => request(`/admin/team-access/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    remove: (id) => request(`/admin/team-access/${encodeURIComponent(id)}`, { method: 'DELETE', withStatus: true }),
+    sharedWithMe: () => request('/me/shared-with-me'),
+  },
   /** Çevrimiçi kullanıcı özeti (2026-10-02) — oturum açmış HERKES; yalnız sayılar (toplam + birincil takıma göre). */
   presence: {
     online: () => request('/presence/online'),

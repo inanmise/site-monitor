@@ -94,7 +94,7 @@ public class ScriptedTemplateController {
         if (t == null) return false;
         if (!Boolean.TRUE.equals(t.getActive())) return SessionScope.isGlobalAdmin(session);
         if (t.getTeamId() == null) return true;                       // Genel — canView'a GİRMEZ
-        return SessionScope.canView(session, t.getTeamId());
+        return SessionScope.canViewWithGrants(session, t.getTeamId());   // + erişim paylaşımı (2026-10-12)
     }
 
     /** Genel şablonu yalnız global admin yazar (K3); takım şablonunu üyeleri + yönetenleri. */
@@ -188,7 +188,7 @@ public class ScriptedTemplateController {
         if (SessionScope.isGlobalViewer(session)) {
             return templateRepo.findAllActive().stream().filter(t -> t.getTeamId() != null).toList();
         }
-        List<Long> view = SessionScope.viewTeamIds(session);
+        List<Long> view = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         if (view == null || view.isEmpty()) return List.of();
         return templateRepo.findActiveByTeams(view);
     }

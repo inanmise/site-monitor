@@ -512,6 +512,7 @@ export function outsideActScope(a, { nocCanWrite = false, globalViewer = false, 
 export function actBlockReason(a, { canAct = true, nocCanWrite = false, globalViewer = false, myTeamIds = null } = {}) {
   if (!a) return null
   if (canAct === false) return nocCanWrite ? 'permNoc' : 'perm'
-  if (typeof a.act_scope === 'boolean') return a.act_scope ? null : (nocCanWrite ? 'team' : 'owner')
+  // 'shared': takım erişim paylaşımıyla YALNIZ görüntülenen alarm (sunucu act_block, 2026-10-12)
+  if (typeof a.act_scope === 'boolean') return a.act_scope ? null : (a.act_block === 'shared_view' ? 'shared' : nocCanWrite ? 'team' : 'owner')
   return outsideActScope(a, { nocCanWrite, globalViewer, myTeamIds }) ? 'team' : null
 }

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CalendarClock, CalendarX2, FileKey2, FileUp, Layers, Lock, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
 import { api } from '../../api/client'
+import { mergeWriteTeams } from '../../hooks/useMonitorTeamPick.js'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { filterDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
@@ -84,7 +85,8 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
   useEffect(() => {
     if (!canManage) { setTeams(myTeams); return undefined }
     let alive = true
-    Promise.resolve(api.admin?.getTeams?.()).then((r) => { if (alive && r?.success) setTeams(r.data || []) }).catch(() => {})
+    // + erişim paylaşımıyla düzenlenen takımlar (2026-10-12): /admin/teams görüş kapsamıdır, paylaşan takım orada yok
+    Promise.resolve(api.admin?.getTeams?.()).then((r) => { if (alive && r?.success) setTeams(mergeWriteTeams(r.data || [], myTeams)) }).catch(() => {})
     return () => { alive = false }
   }, [canManage, myTeams])
 

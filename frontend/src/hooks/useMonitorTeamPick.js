@@ -41,7 +41,9 @@ export function useMonitorTeamPick({ isAdmin, adminTeams = [], myTeams = [], tea
   }, [myTeams, teamId])
 
   const canPickTeam = isAdmin || myTeams.length > 1
-  const pickTeams = isAdmin ? adminTeams : myTeams
+  // Yönetici rolünde sunucu listesi (/admin/teams = görüş kapsamı) erişim paylaşımıyla düzenlenen takımları içermez
+  // (2026-10-12): kapsamlı müdür / TEAM_ADMIN paylaşan takıma da izleme ekleyebilsin diye eksik olanlar eklenir.
+  const pickTeams = useMemo(() => (isAdmin ? mergeWriteTeams(adminTeams, myTeams) : myTeams), [isAdmin, adminTeams, myTeams])
 
   const isOwnTeam = useCallback((m) => m?.team_id != null && myTeamIdSet.has(String(m.team_id)), [myTeamIdSet])
 
@@ -53,6 +55,54 @@ export function useMonitorTeamPick({ isAdmin, adminTeams = [], myTeams = [], tea
   const teamless = !isAdmin && teamId == null && myTeams.length === 0
 
   return { canPickTeam, pickTeams, isOwnTeam, myTeamIdSet, defaultTeamId, defaultTeamName, teamless }
+}
+
+/**
+ * Takım erişim paylaşımıyla YAZILABİLEN takımlar (2026-10-12): /me `access_grants` içinde düzeyi EDIT ya da DELETE olanlar
+ * `[{id, name}]`. Üyelik DEĞİLDİR — yalnız izleme / envanter ekleme takım seçicisine eklenir (Nav ve yönetim üyelikle kalır).
+ */
+export function grantWriteTeamsFromMe(res) {
+  const list = Array.isArray(res?.access_grants) ? res.access_grants : []
+  return list
+    .filter((g) => g && g.team_id != null && (g.level === 'EDIT' || g.level === 'DELETE'))
+    .map((g) => ({ id: g.team_id, name: g.team_name ?? String(g.team_id) }))
+}
+
+/** /me `access_grants` → `{ [teamId]: level }` (paylaşımla erişilen takımlar ve en yüksek düzey). */
+export function grantLevelsFromMe(res) {
+  const out = {}
+  for (const g of Array.isArray(res?.access_grants) ? res.access_grants : []) {
+    if (g && g.team_id != null && typeof g.level === 'string') out[String(g.team_id)] = g.level
+  }
+  return out
+}
+
+const LEVEL_RANK = { VIEW: 1, EXECUTE: 2, EDIT: 3, DELETE: 4 }
+
+/**
+ * Yalnız erişim paylaşımıyla görülen satırın eylemleri (2026-10-12). Satırın takımı kullanıcının üyesi olduğu bir takım
+ * değilse ve paylaşım varsa `{ check, edit, delete }` (düzeye göre); aksi hâlde `null` — çağıran mevcut rol kuralını
+ * uygular (paylaşımı olmayan kullanıcıda davranış aynı). Global görüntüleyicide her zaman `null`.
+ */
+export function rowGrantAccess(teamId, { memberTeamIds = [], grantLevels = {}, globalViewer = false } = {}) {
+  if (globalViewer || teamId == null) return null
+  const key = String(teamId)
+  if (memberTeamIds.some((id) => String(id) === key)) return null
+  const rank = LEVEL_RANK[grantLevels[key]] || 0
+  if (!rank) return null
+  return { check: rank >= LEVEL_RANK.EXECUTE, edit: rank >= LEVEL_RANK.EDIT, delete: rank >= LEVEL_RANK.DELETE }
+}
+
+/** Üyelik + paylaşımla yazılabilen takımlar — kimlik başına bir kez, üyelik önce. */
+export function mergeWriteTeams(myTeams, grantTeams) {
+  const base = Array.isArray(myTeams) ? myTeams : []
+  const seen = new Set(base.map((tm) => String(tm.id)))
+  const extra = []
+  for (const tm of Array.isArray(grantTeams) ? grantTeams : []) {
+    if (tm && !seen.has(String(tm.id))) { seen.add(String(tm.id)); extra.push(tm) }
+  }
+  // Eklenecek takım yoksa AYNI dizi döner (paylaşımı olmayan kullanıcıda kimlik ve memo bağımlılıkları değişmez)
+  return extra.length ? [...base, ...extra] : base
 }
 
 /** /me yanıtındaki paralel dizileri ({team_ids, team_names}) takım nesnelerine çevirir. */

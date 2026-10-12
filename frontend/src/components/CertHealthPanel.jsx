@@ -74,7 +74,9 @@ function EvidenceValue({ k, v, t }) {
   return evidenceText(v)
 }
 
-export default function CertHealthPanel({ domain, canRefresh = true }) {
+// canConfirm (2026-10-12): "planlı yenileme" onayı bir KAYIT yazımıdır — erişim paylaşımında DÜZENLEME düzeyi ister;
+// verilmezse canRefresh ile aynı (eski davranış).
+export default function CertHealthPanel({ domain, canRefresh = true, canConfirm = canRefresh }) {
   const t = useT()
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -250,7 +252,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
                 <HealthRow key={row.key} row={row} t={t}
                   tlsModeUsed={data.tls_mode_used}
                   expanded={open === row.key}
-                  confirming={confirming} onConfirmRenewal={canRefresh ? confirmRenewal : undefined}
+                  confirming={confirming} onConfirmRenewal={canConfirm ? confirmRenewal : undefined}
                   onToggle={() => setOpen(open === row.key ? null : row.key)} />
               ))}
             </div>

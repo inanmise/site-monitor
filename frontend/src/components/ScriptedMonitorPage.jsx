@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
-import { freshestRow, mergeSavedRow, reloadAndSyncDetail } from '../utils/monitorDetailSync.js'
+import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -335,17 +335,17 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const liveRef = useRef({})
 
   // Satır-bazlı yetki: global monitoring.scripted izni (can_manage) + takım sahipliği (kanonik desen).
-  const canManageRow = (m) => k6.canManage && (isAdmin || isOwnTeam(m))
+  const canManageRow = (m) => k6.canManage && (typeof m?.can_edit === 'boolean' ? m.can_edit : (isAdmin || isOwnTeam(m)))   // sunucu bayrağı (2026-10-12)
   // k6 kurulu değilse aday YOK → düğme hiç çizilmez; kartın checkDisabled={!k6.available}
   // kapısıyla aynı sonuç, basılıp 4xx yiyen bir düğme gösterilmiyor.
   // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   // Tekil ▶ / detay "Çalıştır" / tanılama: sunucu `can_check` false ise çizilmez (k6 yoksa düğme görünür ama pasif).
-  const canRunRow = (m) => canManageRow(m) && m?.can_check !== false
+  const canRunRow = (m) => k6.canManage && (typeof m?.can_check === 'boolean' ? m.can_check : canManageRow(m))
   const canCheckRow = (m) => k6.available && canRunRow(m)
   // Atlanan koşumun sebebi: elle k6 kotası doluysa (D-10, 2026-09-29) arayüz dilinde; değilse sunucunun iletisi.
   const skippedReasonOf = (d) => (d?.skipped_code === 'MANUAL_POOL_BUSY' ? t('scripted.manualPoolBusy') : (d?.skipped_reason || ''))
-  const canDeleteRow = (m) => k6.canManage && (isAdmin || (isTeamAdmin && isOwnTeam(m)))
+  const canDeleteRow = (m) => k6.canManage && (typeof m?.can_delete === 'boolean' ? m.can_delete : (isAdmin || (isTeamAdmin && isOwnTeam(m))))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -1114,7 +1114,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
         // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
         // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
-        setSelected(prev => (prev?.id === m.id ? res.data : prev))
+        setSelected(prev => (prev?.id === m.id ? withRowFlags(prev, res.data) : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       } else if (res && !silent) toast.error(res.error || t('scripted.triggerError'))
@@ -1241,14 +1241,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
               )}
-              actions={canManageRow(m) && (
+              actions={(canManageRow(m) || canRunRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
                 <MonitorCardActions rowLabel={m.name}
                   running={isRunning(m.id)} checkDisabled={!k6.available}
-                  onCheck={canRunRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canRunRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
                   checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('scripted.delete')}
-                  onResume={() => resume(m)} resuming={isResuming(m.id)} />
+                  onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} />
               )} />
           ))}
         </div>
@@ -1436,7 +1436,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="scripted" monitorId={selected.id} teamNames={teamNameById}
-                  canManage={canManageRow(selected)}
+                  canManage={canDeleteRow(selected)}
                   // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
                   onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
               </Suspense>

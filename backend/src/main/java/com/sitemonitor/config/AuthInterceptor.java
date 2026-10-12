@@ -135,6 +135,25 @@ public class AuthInterceptor implements HandlerInterceptor {
         } catch (Exception e) {
             // Kapalı düşer: bayrak yazılamadıysa önceki değer kalır; okuma hatası bir isteği asla düşürmez.
         }
+        syncTeamGrants(session);
+    }
+
+    /**
+     * Takım erişim paylaşımı (2026-10-12) — 7/24 bayrağıyla AYNI yerde ve AYNI kuralla: her geçerli istekte ≤ 30 sn'lik
+     * önbellekten oturuma yazılır (yalnız değiştiyse); paylaşım kaldırılınca yeniden giriş beklemeden düşer. İsteğe bağlı.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.access.TeamAccessGrantService teamGrants;
+
+    /** Test kancası. */
+    void setTeamGrants(com.sitemonitor.service.access.TeamAccessGrantService s) { this.teamGrants = s; }
+
+    private void syncTeamGrants(HttpSession session) {
+        try {
+            if (teamGrants != null) teamGrants.sync(session);
+        } catch (Exception e) {
+            // Kapalı düşer: önceki değer kalır; okuma hatası isteği düşürmez.
+        }
     }
 
     private boolean maintenanceActive() {

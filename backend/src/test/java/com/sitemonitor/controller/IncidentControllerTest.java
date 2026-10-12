@@ -72,6 +72,33 @@ class IncidentControllerTest {
     }
 
     @Test
+    @DisplayName("Takım erişim paylaşımı (2026-10-12): paylaşımla OKUNAN kayıt can_edit=false; kendi kaydında alan YAZILMAZ")
+    void sharedIncidentIsReadOnly() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        IncidentRecord shared = sample();
+        shared.setTeamId(9L);
+        IncidentRecord own = sample();
+        own.setId(2L);
+        own.setTeamId(5L);
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(shared, own)));
+        when(service.get(1L)).thenReturn(shared);
+        MockHttpSession s = userSessionTeam(5L);
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(9L)));
+        mvc.perform(get("/api/incidents").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_edit").value(false))
+                .andExpect(jsonPath("$.data[1].can_edit").doesNotExist());
+        mvc.perform(get("/api/incidents/1").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_edit").value(false));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
+        mvc.perform(put("/api/incidents/1").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"OPEN\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("DELETE: incidents.manage var ama incidents.delete yoksa → 403")
     void delete_noDeletePerm_403() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);

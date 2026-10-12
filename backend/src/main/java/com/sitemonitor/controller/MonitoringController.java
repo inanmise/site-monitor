@@ -569,7 +569,7 @@ public class MonitoringController {
         var row = rowOpt.get();
         // ÖN FİLTRE (ucuz): geçmiş satırının takımı. Tek başına YETMEZ (aşağıya bakın) ama
         // yetkisiz çağrıyı kaydın varlığını sızdırmadan 403 ile keser.
-        if (!SessionScope.canManage(session, row.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+        if (!SessionScope.canDeleteTeamResource(session, row.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
         if (row.getSnapshot() == null || row.getSnapshot().isBlank())
             return badRequest("Bu olayda geri yüklenecek bir durum kaydı yok");
 
@@ -582,7 +582,7 @@ public class MonitoringController {
         // takımına aktarılır; A'nın yöneticisi eski seq ile restore çağırdığında kapı A'ya bakıp
         // geçiyor ve B takımının CANLI monitörünün url/interval/expectedStatus/active alanlarını
         // geri sarıyordu. Geçmiş satırının takımı yalnız OKUMA için doğru kaynaktır.
-        if (!SessionScope.canManage(session, liveTeamOf(resolved, entity)))
+        if (!SessionScope.canDeleteTeamResource(session, liveTeamOf(resolved, entity)))
             return forbidden("Bu izleme üzerinde yetkiniz yok");
 
         String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS
@@ -840,7 +840,7 @@ public class MonitoringController {
 
     private ChangeScope changeScope(HttpSession session, Long teamId) {
         boolean all = SessionScope.seesAllMonitoring(session);
-        List<Long> view = SessionScope.viewTeamIds(session);
+        List<Long> view = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         if (!all && (view == null || view.isEmpty())) return null;
         // Kapsam (2026-09-25): izlemenin takımı VEYA değişikliği yapan ekip üyesi — takımı boş satırlar
         // (envanter türevi / sentetik) takım arkadaşının değişikliği olarak da görünür. Boş IN listeleri
@@ -967,7 +967,12 @@ public class MonitoringController {
     private static List<Map<String, Object>> withCheckFlag(HttpSession session, List<Map<String, Object>> rows) {
         for (Map<String, Object> row : rows) {
             Object t = row.get("team_id");
-            row.put("can_check", SessionScope.canOperateTeam(session, t instanceof Number n ? n.longValue() : null));
+            Long team = t instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            // 2026-10-12 (takım erişim paylaşımı): üç bayrak üç uç kapısıyla AYNI — çalıştır (tetik/tanıla), düzenle
+            // (güncelle), sil. Arayüz düğmeleri rol dizesinden değil bunlardan çizer.
+            row.put("can_check", SessionScope.canExecuteTeam(session, team));
+            row.put("can_edit", SessionScope.canOperateTeam(session, team));
+            row.put("can_delete", SessionScope.canDeleteTeamResource(session, team));
         }
         return rows;
     }
@@ -987,6 +992,11 @@ public class MonitoringController {
 
     /** Serbest-form izleme (keyword/ping) üzerinde yazma/çalıştırma kapsamı:
      *  global admin → her takım; TEAM_ADMIN → yönetim kapsamındaki takımlar; USER → kendi takımı. */
+    /** Tetik / tanılama kapısı (2026-10-12): işletebilen ya da takım erişim paylaşımında EXECUTE+ ({@link SessionScope#canExecuteTeam}). */
+    private boolean canExecuteTeam(HttpSession session, Long teamId) {
+        return SessionScope.canExecuteTeam(session, teamId);
+    }
+
     private boolean canOperateTeam(HttpSession session, Long teamId) {
         // Kural TEK kaynakta (2026-09-27): 7/24 aç/kapa ucu (NocController) da aynı kapıyı kullanıyor.
         // USER: ÜYESİ olduğu HER takım (2026-09-18) — eskiden yalnız birincil takımdı; çok takımlı
@@ -1132,7 +1142,27 @@ public class MonitoringController {
             if (requested != null && !requested.equals(current)) requireExistingTeam(requested);
             return requested != null ? requested : current;
         }
-        if (requested != null && canOperateTeam(session, requested)) return requested;
+        if (requested == null || requested.equals(current)) return current;
+        // Paylaşımı olmayan kullanıcı: eski kural AYNEN (hedefi işletebiliyorsa taşınır, değilse sessizce yok sayılır)
+        if (SessionScope.grantViewTeamIds(session).isEmpty()) {
+            return canOperateTeam(session, requested) ? requested : current;
+        }
+        // Takım DEĞİŞİMİ erişim paylaşımıyla yapılamaz (2026-10-12): hem eski hem yeni takımda KENDİ kapsamı (üyelik /
+        // yönetim) gerekir. EDIT paylaşımı alan kişi paylaşan takımın izlemesini kendi takımına taşıyamaz, kendi
+        // izlemesini de paylaşan takıma itemez.
+        if (SessionScope.canOperateTeamOwn(session, requested)
+                && (current == null || SessionScope.canOperateTeamOwn(session, current))) return requested;
+        // Reddin sebebi paylaşımsa SESSİZ KALINMAZ: istemci "kaydedildi" deyip takımı değişmemiş bırakmasın → 403 (hiçbir
+        // alan kaydedilmez — çağıran kaydetmeden önce burada durur).
+        boolean grantInvolved = (current != null && !SessionScope.canOperateTeamOwn(session, current))
+                || SessionScope.canOperateTeam(session, requested);
+        if (grantInvolved) {
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Takım erişim paylaşımıyla açılan izlemenin takımı değiştirilemez; paylaşılan takıma da izleme taşınamaz. "
+                            + "Takım değişikliğini kaydın takımından biri ya da takım yöneticisi yapabilir.",
+                    "A monitor opened through team access sharing can't be moved to another team, and monitors can't be moved into a "
+                            + "sharing team. Someone in the record's team or a team manager can change the team."));
+        }
         return current;
     }
 
@@ -1362,6 +1392,11 @@ public class MonitoringController {
             // Salt okunur kart mı? (2026-09-26) — arayüz başka takımın kartında eylemleri gizler; sunucu yine
             // de her eylem ucunda kendi kapısını uygular (tanılama: özgün görüş kapsamı).
             item.put("can_manage", writable.test(inv.getTeamId()));
+            // Yalnız erişim paylaşımıyla görülen satır (2026-10-12): salt okunur yabancı kart DEĞİL; kontrol EXECUTE+ ister
+            if (SessionScope.viewableOnlyByGrant(session, inv.getTeamId())) {
+                item.put("shared_access", true);
+                item.put("can_check", SessionScope.canExecuteTeam(session, inv.getTeamId()));
+            }
             // Grup / etiket / kademe (2026-09-18): Durum İzleme grup-etiket filtresi + kart çipleri.
             item.put("group_name", inv.getGroupName());
             item.put("tags", inv.getTags());
@@ -1940,7 +1975,7 @@ public class MonitoringController {
             // birlikte canOperateTeam kullanan iki aykırıydı; arayüz zaten USER'a silme
             // göstermiyordu, dolayısıyla bu yalnız API-only boşluğu kapatır.
             Long team = effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
-            if (!SessionScope.canManage(session, team)) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            if (!SessionScope.canDeleteTeamResource(session, team)) return forbidden("Bu izleme üzerinde yetkiniz yok");
             boolean standalone = Boolean.TRUE.equals(m.getStandalone());
             if (standalone) {
                 // 2026-10-07 (kullanıcı kararı): bağımsız izleme silmesi KALICI — diğer yedi türle aynı. Açık alarmları
@@ -1997,7 +2032,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return findLivePort(id).map(m -> {
-            if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
+            if (!canExecuteTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = portChecker.check(m);
             String now = ISO.format(Instant.now());
@@ -2453,7 +2488,7 @@ public class MonitoringController {
             // geçirir ve silme sütununu 9 türün 7'sinden ayırırdı. USER kaybetmiyor: kendi satırını
             // düzenleyebiliyor ve formdaki "aktif" anahtarıyla duraklatabiliyor.
             Long team = effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId());
-            if (!SessionScope.canManage(session, team)) return forbidden("Bu monitörü silme yetkiniz yok");
+            if (!SessionScope.canDeleteTeamResource(session, team)) return forbidden("Bu monitörü silme yetkiniz yok");
             // Envanter-türevi satırda silme = DURAKLATMA (kart düğmesi "İzlemeyi durdur (envanter-türevi kayıt silinmez)"
             // vaadini verir; satır envanterle yaşar, envanter kaydı silinince o da gider).
             //
@@ -2532,7 +2567,7 @@ public class MonitoringController {
             // tetikleyebiliyordu. Zararı da ölçülmüştü: takım yöneticisi toplu kontrole bastığında
             // her satır 403 dönüyor ve GlobalExceptionHandler her biri için ACCESS_DENIED denetim
             // kaydı yazıyordu — 40 monitörlük sayfada tek tıklama 40 sahte güvenlik olayı.
-            if (!canOperateTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
+            if (!canExecuteTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
             String now = ISO.format(Instant.now());
@@ -2823,7 +2858,7 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = keywordMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)",
@@ -2884,7 +2919,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerKeyword(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return keywordMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // Beklentili kontrol (2026-10-04): zamanlanmış turla AYNI zenginleştirilmiş sonuç (neden + ipuçları + alıntı).
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, keywordHeaderSecrets.effectiveHeaders(m), Boolean.TRUE.equals(m.getCaseSensitive()),
@@ -3537,7 +3572,7 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = httpMonitorRepo.findById(id).map(MonitoringController::httpSnapshot).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW,
                             EscalationService.TYPE_DOMAIN_EXPIRY),
@@ -3587,7 +3622,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerHttp(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return httpMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // İLK kontrol burada koşar: kullanıcı sonucu ANINDA görsün (kart boş dönmesin).
             // Gelişmiş istek alanı yoksa (NONE) denetleyicinin eski girişi — istek/karar birebir eskisi (2026-10-01).
             Map<String, Object> r = runHttpCheck(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
@@ -3948,7 +3983,7 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = pageMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pageMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
@@ -4017,7 +4052,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPage(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pageMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // H1c: per-monitör cooldown — sayfa kontrolü (main + N kaynak) pahalıdır; art arda tetik request-thread'i tüketmesin.
             long nowMs = System.currentTimeMillis();
             long cooldownMs = appSettings.getInt("site.monitor.page.manual-cooldown-seconds", 20) * 1000L;
@@ -4202,7 +4237,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         Map<String, Object> _before = pageSpeedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, PAGESPEED_FIELDS)).orElse(null);
         return pageSpeedMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
@@ -4270,7 +4305,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPageSpeed(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pageSpeedMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // Per-monitör cooldown: bir ölçüm ana sayfa + onlarca kaynak isteği demek; art arda tetik
             // request-thread'lerini tüketir (sayfa bütünlüğündeki H1c ile aynı gerekçe).
             long nowMs = System.currentTimeMillis();
@@ -5078,7 +5113,7 @@ public class MonitoringController {
         Map<String, Object> _before = scriptedMonitorRepo.findById(id)
                 .map(x -> AuditDiff.snapshot(x, SCRIPTED_FIELDS)).orElse(null);
         return scriptedMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getName(),
                     Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
@@ -5149,7 +5184,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerScripted(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "execute");
         return scriptedMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             long nowMs = System.currentTimeMillis();
             long cooldownMs = appSettings.getInt("site.monitor.scripted.manual-cooldown-seconds", 20) * 1000L;
             Long prev = scriptedManualTriggerAt.get(id);
@@ -5269,7 +5304,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.scripted", "execute");
         com.sitemonitor.model.ScriptedMonitor m = scriptedMonitorRepo.findById(id).orElse(null);
         if (m == null) return notFound("Sentetik izleme bulunamadı");
-        if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+        if (!canExecuteTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
         if (!scriptedChecker.isAvailable())
             return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
 
@@ -5826,7 +5861,7 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = domainMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return domainMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Duraklatmayla AYNI altı tür (tek sabit): TRANSFER_LOCK / BLACKLIST silmede kapanmıyor, sahipsiz kalıyordu.
             escalationService.resolveOpenAlertsSilently(m.getDomain(), DOMAINMON_ALERT_TYPES,
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
@@ -5942,7 +5977,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
         return domainMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!SessionScope.canViewWithGrants(session, m.getTeamId())) return notFound("Domain monitor not found");
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
             String date = body.get("date") == null ? "" : String.valueOf(body.get("date")).trim();
             if (!date.matches("^\\d{4}-\\d{2}-\\d{2}$")) return badRequest("date: YYYY-MM-DD");
@@ -5960,7 +5995,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
         return domainMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!SessionScope.canViewWithGrants(session, m.getTeamId())) return notFound("Domain monitor not found");
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
             String was = m.getRenewalPlannedAt();
             DomainMonitor saved = domainRenewalPlans.unplan(m, session);
@@ -5974,7 +6009,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = domainChecker.checkManual(m);   // DomainCheck persist eder (manual=true — zamanlanmış değişiklik tabanı olmaz)
             // Eşik HATIRLATMASI elle kontrolde DEĞERLENDİRİLMEZ (2026-09-29, 2026-09-22 E kararının yerine): elle kontrol
             // yalnız gözlemdir, e-posta/push üretmez. Hatırlatmayı günlük ve kritik ikinci zamanlanmış kontrol gönderir.
@@ -6003,7 +6038,8 @@ public class MonitoringController {
             if (live) {
                 // live=true SALT OKUMA DEGIL: dis RDAP/WHOIS sorgusu + persist + alarm
                 // degerlendirmesi tetikler — yazma/calistirma yetkisi ister.
-                if (!canOperateTeam(session, m.getTeamId()))
+                // Canlı sorgu = ÇALIŞTIRMA ("Şimdi kontrol et" eşi): erişim paylaşımında EXECUTE+ da (2026-10-12)
+                if (!SessionScope.canExecuteTeam(session, m.getTeamId()))
                     return forbidden("Bu izleme üzerinde canlı sorgu yetkiniz yok");
                 Map<String, Object> r = domainChecker.checkManual(m);   // taze RDAP/WHOIS + persist (manual=true, 2026-09-29)
                 try { schedulerService.evaluateDomainAlarmsNow(m, r); }
@@ -6290,7 +6326,7 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = pingMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pingMonitorRepo.findById(id).map(m -> {
-            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            if (!SessionScope.canDeleteTeamResource(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getHost(),
                     Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
@@ -6339,7 +6375,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPing(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pingMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = pingChecker.check(m.getHost(), m.getIpVersion(),
                     m.getPacketCount() != null ? m.getPacketCount() : 4,
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);

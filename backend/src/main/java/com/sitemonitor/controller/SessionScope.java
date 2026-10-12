@@ -200,14 +200,120 @@ public final class SessionScope {
         return isGlobalViewer(session) || isNocOperator(session);
     }
 
-    /** {@link #canView}'in İZLEME OKUMA hâli — 7/24 operatörü her takımın izleme verisini okur. */
+    /**
+     * {@link #canView}'in İZLEME OKUMA hâli — 7/24 operatörü her takımın izleme verisini okur; erişim paylaşımı alan kişi
+     * (2026-10-12) paylaşan takımınkini okur.
+     */
     public static boolean canViewMonitoring(HttpSession session, Long teamId) {
+        return isNocOperator(session) || canViewWithGrants(session, teamId);
+    }
+
+    /**
+     * {@link #canViewMonitoring}'in erişim paylaşımı OLMAYAN hâli (2026-10-12): takımın KİŞİ bilgisini gösteren okuma
+     * uçları — nöbet çizelgesi / şu anki nöbetçi, 7/24 üye ve arama listesi. Paylaşım izlemeleri açar, takımın insanlarını
+     * değil (üyeler, telefonlar, izin notları yönetim verisidir).
+     */
+    public static boolean canViewMonitoringOwn(HttpSession session, Long teamId) {
         return isNocOperator(session) || canView(session, teamId);
     }
 
-    /** {@link #viewTeamIds}'in İZLEME OKUMA hâli — 7/24 operatöründe {@code null} (= tüm takımlar). */
+    /**
+     * {@link #canView} + erişim paylaşımı (2026-10-12) — 7/24 operatör genişlemesi OLMADAN. 7/24 kuralını kendisi ayrıca
+     * uygulayan izleme okuma uçları (alarm listesi, envanter "benimkiler", org geneli okuma maskelemesi) bunu kullanır.
+     */
+    public static boolean canViewWithGrants(HttpSession session, Long teamId) {
+        return canView(session, teamId) || granted(session, ATTR_GRANT_VIEW, teamId);
+    }
+
+    /**
+     * {@link #viewTeamIds} + paylaşılan takımlar (2026-10-12) — 7/24 genişlemesi OLMADAN ({@code null} yalnız global
+     * görüntüleyicide). Yukarıdaki uçların liste kapsamı.
+     */
+    public static List<Long> viewTeamIdsWithGrants(HttpSession session) {
+        List<Long> v = viewTeamIds(session);
+        if (v == null) return null;
+        List<Long> extra = grantViewTeamIds(session);
+        if (extra.isEmpty()) return v;
+        java.util.LinkedHashSet<Long> out = new java.util.LinkedHashSet<>(v);
+        out.addAll(extra);
+        // List.copyOf DEĞİL: onun contains(null)'ı NPE atar — viewTeamIds'in döndürdüğü listeler null sorgusunu kaldırır,
+        // paylaşım alan kişide de aynı davranış (null takım kimliği "kapsam dışı" demektir, 500 değil).
+        return java.util.Collections.unmodifiableList(new java.util.ArrayList<>(out));
+    }
+
+    /**
+     * {@link #viewTeamIds}'in İZLEME OKUMA hâli — 7/24 operatöründe {@code null} (= tüm takımlar); erişim paylaşımı alan
+     * kişide görüş kapsamı + paylaşan takımlar (2026-10-12). Önbellek anahtarları da BUNU kullanır: paylaşım alan iki kişi
+     * aynı {@code viewTeamIds} ile farklı veri görür.
+     */
     public static List<Long> monitoringViewTeamIds(HttpSession session) {
-        return isNocOperator(session) ? null : viewTeamIds(session);
+        return isNocOperator(session) ? null : viewTeamIdsWithGrants(session);
+    }
+
+    // ── Takım erişim paylaşımı (2026-10-12, kullanıcı isteği) ────────────────────────────────────────────────────────
+    //
+    // Bir takım izlemelerini başka bir takıma ya da kişiye açar (TeamAccessGrantService). Düzeyler KÜMÜLATİF ve oturuma
+    // dört liste olarak yazılır (her istekte ≤ 30 sn'lik önbellekten — AuthInterceptor.syncTeamGrants; kaldırılan paylaşım
+    // yeniden giriş beklemeden düşer): VIEW ⊇ EXECUTE ⊇ EDIT ⊇ DELETE. Okuma: izleme okuma yardımcıları (yukarıda).
+    // Çalıştırma: canExecuteTeam. Düzenleme: canOperateTeam / canWriteInventory / inventoryWriteTest. Silme:
+    // canDeleteTeamResource. canView / viewTeamIds / canManage / manageTeamIds DEĞİŞMEZ — yönetim alanları (kullanıcı /
+    // takım yönetimi, nöbet ve 7/24 kişi listeleri, bildirim grubu, eskalasyon, denetim, ayarlar) paylaşımla açılmaz;
+    // bakım pencereleri izleme bilgisi olduğundan OKUNUR (yazılamaz). Paylaşım ASLA: bir kaydı başka takıma taşıtmaz
+    // (canOperateTeamOwn), bildirim yeniden göndertmez / alıcıları göstermez (AdminController.requireAlertNotifyScope).
+
+    public static final String ATTR_GRANT_VIEW = "grantViewTeamIds";
+    public static final String ATTR_GRANT_EXECUTE = "grantExecTeamIds";
+    public static final String ATTR_GRANT_EDIT = "grantEditTeamIds";
+    public static final String ATTR_GRANT_DELETE = "grantDeleteTeamIds";
+
+    @SuppressWarnings("unchecked")
+    private static List<Long> grantList(HttpSession session, String attr) {
+        Object o = session != null ? session.getAttribute(attr) : null;
+        return o instanceof List ? (List<Long>) o : List.of();
+    }
+
+    private static boolean granted(HttpSession session, String attr, Long teamId) {
+        return teamId != null && grantList(session, attr).contains(teamId);
+    }
+
+    /** Paylaşımla OKUNAN takımlar (her düzey). */
+    public static List<Long> grantViewTeamIds(HttpSession session) {
+        return grantList(session, ATTR_GRANT_VIEW);
+    }
+
+    /**
+     * Takımı YALNIZ erişim paylaşımıyla mı görüyor (2026-10-12): kendi görüş kapsamında değil ama paylaşımda en az VIEW.
+     * Liste satırlarına {@code shared_access} bayrağı bununla yazılır — arayüz bu satırı "başka takımın salt okunur kaydı"
+     * saymaz (alarm / değişiklik sekmeleri açık), eylemleri satırın {@code can_*} bayraklarından çizer.
+     */
+    public static boolean viewableOnlyByGrant(HttpSession session, Long teamId) {
+        return teamId != null && !canView(session, teamId) && granted(session, ATTR_GRANT_VIEW, teamId);
+    }
+
+    /** Bu takımda erişim paylaşımıyla DÜZENLEME (EDIT ve üstü) düzeyi var mı — yalnız paylaşımın kendisi. */
+    public static boolean grantedEdit(HttpSession session, Long teamId) {
+        return granted(session, ATTR_GRANT_EDIT, teamId);
+    }
+
+    /** Paylaşımla ÇALIŞTIRILAN takımlar (EXECUTE ve üstü). */
+    public static List<Long> grantExecuteTeamIds(HttpSession session) {
+        return grantList(session, ATTR_GRANT_EXECUTE);
+    }
+
+    /**
+     * ÇALIŞTIRMA kapısı (2026-10-12): şimdi kontrol et, tanıla, TLS yeniden tara, sağlık yenile, manuel değerlendir — takımı
+     * işletebilen ({@link #canOperateTeam}) ya da takım paylaşımında EXECUTE (ve üstü) düzeyi olan.
+     */
+    public static boolean canExecuteTeam(HttpSession session, Long teamId) {
+        return canOperateTeam(session, teamId) || granted(session, ATTR_GRANT_EXECUTE, teamId);
+    }
+
+    /**
+     * SİLME kapısı (2026-10-12): izleme / envanter kaydını silmek — takımı YÖNETEN ({@link #canManage}) ya da takım
+     * paylaşımında DELETE düzeyi olan. Yönetim yetkileri bununla açılmaz; yalnız kaydın silinmesi.
+     */
+    public static boolean canDeleteTeamResource(HttpSession session, Long teamId) {
+        return canManage(session, teamId) || granted(session, ATTR_GRANT_DELETE, teamId);
     }
 
     /**
@@ -219,6 +325,15 @@ public final class SessionScope {
      * her takım (2026-09-18). {@code memberTeamIds} eski oturumda birincile düşer (rolling deploy) — daralma yok.
      */
     public static boolean canOperateTeam(HttpSession session, Long teamId) {
+        return canOperateTeamOwn(session, teamId) || granted(session, ATTR_GRANT_EDIT, teamId);   // erişim paylaşımı EDIT+ (2026-10-12)
+    }
+
+    /**
+     * {@link #canOperateTeam}'in erişim paylaşımı OLMAYAN hâli (2026-10-12) — üyelik / yönetim kapsamı. Kaydın TAKIMINI
+     * değiştirmek bunu ister (hem eski hem yeni takımda): EDIT paylaşımı alan kişi paylaşan takımın izlemesini kendi
+     * takımına taşıyamaz (taşıma = paylaşan takımın kaydı kaybetmesi; bu silme gibidir, düzenleme değil).
+     */
+    public static boolean canOperateTeamOwn(HttpSession session, Long teamId) {
         if (isGlobalAdmin(session)) return true;
         if (teamId == null) return false;
         if (canManage(session, teamId)) return true;
@@ -245,6 +360,12 @@ public final class SessionScope {
      * cevabıdır, rol kapıları onun ÜSTÜNE uygulanır.
      */
     public static boolean canWriteInventory(HttpSession session, Long teamId) {
+        return canWriteInventoryOwn(session, teamId)
+                || granted(session, ATTR_GRANT_EDIT, teamId);   // erişim paylaşımı EDIT+ (2026-10-12)
+    }
+
+    /** {@link #canWriteInventory}'nin erişim paylaşımı OLMAYAN hâli (2026-10-12) — üyelik / yönetim kapsamı. */
+    public static boolean canWriteInventoryOwn(HttpSession session, Long teamId) {
         return canManage(session, teamId) || isMemberOf(session, teamId);
     }
 
@@ -257,6 +378,7 @@ public final class SessionScope {
         java.util.Set<Long> teams = new java.util.HashSet<>(memberTeamIds(session));
         List<Long> manage = manageTeamIds(session);
         if (manage != null) teams.addAll(manage);
+        teams.addAll(grantList(session, ATTR_GRANT_EDIT));   // erişim paylaşımı EDIT+ (2026-10-12)
         return teamId -> teamId != null && teams.contains(teamId);
     }
 }

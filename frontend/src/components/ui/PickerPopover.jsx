@@ -50,7 +50,8 @@ const TRIGGER_CLASS = cn(
  * Tetiği bir `<label>` sarıyorsa ad oradan gelir. Kapı: rowAccessibleNames.test.js.
  */
 export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeholderShown, ariaLabel, ariaLabelledBy, id, children,
-  ariaDescribedBy, ariaInvalid }) {   // isteğe bağlı: ui/Field render-prop bağları (ipucu/hata) — 2026-09-27
+  ariaDescribedBy, ariaInvalid,   // isteğe bağlı: ui/Field render-prop bağları (ipucu/hata) — 2026-09-27
+  wrap = false }) {   // true: seçili ad kırpılmaz, satıra sarar (uzun kişi / takım adları — 2026-10-12)
   const toggle = () => {
     const next = !openRef.current
     if (next) onOpen?.()
@@ -89,9 +90,9 @@ export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeh
         aria-invalid={ariaInvalid || undefined}
         disabled={disabled}
         data-placeholder={placeholderShown ? '' : undefined}
-        className={TRIGGER_CLASS}
+        className={cn(TRIGGER_CLASS, wrap && 'h-auto min-h-9 py-1.5 whitespace-normal pointer-coarse:min-h-10')}
       >
-        <span className={cn('min-w-0 flex-1 truncate text-left', placeholderShown && 'text-muted-foreground')}>
+        <span className={cn('min-w-0 flex-1 text-left', wrap ? '[overflow-wrap:anywhere]' : 'truncate', placeholderShown && 'text-muted-foreground')}>
           {children}
         </span>
         <ChevronDown

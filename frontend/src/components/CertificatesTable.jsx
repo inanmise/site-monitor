@@ -347,9 +347,12 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                 <CertRow key={cert.domain} cert={cert} cols={cols} shared={shared[cert.domain] ?? 1} tourId={i === 0 ? 'ct-row-menu' : undefined}
                   compact={compact}
                   selected={selected.has(cert.domain)} onToggle={showSelect ? toggleSel : null}
-                  onOpen={onRowClick} onCheckNow={onCheckNow} checking={checkingDomain === cert.domain}
-                  onEdit={canManage ? onEdit : null} onCopyLink={copyRowLink}
-                  readOnly={!manageable(cert)} onOpenReadOnly={onOpenReadOnly} showTeam={cols.includes('team')}
+                  onOpen={onRowClick} onCheckNow={cert.can_check === false ? null : onCheckNow} checking={checkingDomain === cert.domain}
+                  onEdit={canManage && manageable(cert) ? onEdit : null} onCopyLink={copyRowLink}
+                  // Erişim paylaşımıyla görülen satır (shared_access, 2026-10-12) yabancı salt okunur DEĞİL: tam pencere açılır,
+                  // eylemler satır bayraklarından; toplu seçim yine yalnız değiştirilebilen satırda
+                  readOnly={!manageable(cert) && cert.shared_access !== true} selectable={manageable(cert)}
+                  onOpenReadOnly={onOpenReadOnly} showTeam={cols.includes('team')}
                   onSameCert={(fp) => updateFilters({ ...filters, fp })} />
               ))}
               {certs.length === 0 && (
@@ -376,7 +379,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
 }
 
 function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, checking, onEdit, onCopyLink, onSameCert, tourId, compact,
-  readOnly = false, onOpenReadOnly = null, showTeam = true }) {
+  readOnly = false, onOpenReadOnly = null, showTeam = true, selectable = !readOnly }) {
   const t = useT()
   const level = levelOf(cert)
   // Başka takımın satırı: pencere satırın kendisiyle (Pano listesinde yok) ve salt okunur açılır.
@@ -497,7 +500,7 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
       {onToggle && (
         <TableCell className={cn('w-8 text-center', compact ? 'px-2 py-1' : 'px-2.5 py-2.5', M_CELL_PLAIN)} onClick={stop}>
           {/* Salt okunur satır seçilemez (toplu işlem yok) — hücre hizalama için boş kalır */}
-          {!readOnly && <Checkbox checked={selected} onCheckedChange={() => onToggle(cert.domain)} aria-label={t('bulk.selectOneFor', cert.domain)} />}
+          {selectable && <Checkbox checked={selected} onCheckedChange={() => onToggle(cert.domain)} aria-label={t('bulk.selectOneFor', cert.domain)} />}
         </TableCell>
       )}
       {cols.map(cell)}

@@ -258,8 +258,10 @@
                          (test hatası yok). Runner belleği 2 GB fork'u rahat taşır.
                          -Xmx3072m (2026-10-12): 20.122'nin yeşil koşusu sonda %93'teydi (1913/2048 MB, 7404 test); ~145
                          yeni testle CI'da 4 @DataJpaTest sınıfı bağlam kurarken "Java heap space" verdi (test hatası
-                         yok, yerelde %94 ile geçti). 2 çekirdekli runner'ın 7 GB belleği 3 GB fork + Maven'ı taşır. -->
-                    <argLine>@{argLine} -Xmx3072m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
+                         yok, yerelde %94 ile geçti). 2 çekirdekli runner'ın 7 GB belleği 3 GB fork + Maven'ı taşır.
+                         -Xmx4096m (2026-10-12, takım erişim paylaşımı): yeşil koşu sonda %90'daydı (2782/3072 MB, 7683
+                         test). Kural ≥ %90'da artırmak; 7 GB runner 4 GB fork + Maven'ı (~1 GB) taşır. -->
+                    <argLine>@{argLine} -Xmx4096m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                     <!-- Etiket süzgeci (2026-10-02): postgres etiketli entegrasyon testleri varsayılan koşumda dışarıda;
                          -Ppostgres-it bu iki özelliği ters çevirir (yukarıdaki <properties> notu). -->
                     <groups>${surefire.groups}</groups>

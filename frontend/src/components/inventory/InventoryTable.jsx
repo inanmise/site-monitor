@@ -220,17 +220,24 @@ export const platformLabel = (code, names = {}) => names[code] || code
  * geri getir ve ayrı "kalıcı sil" yok).
  */
 export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCount, onShow, onCheckNow, onDiagnose, onEdit, onDuplicate, onTransfer, onDelete }) {
-  if (ro) return [{ label: t('inv.show'), onClick: () => onShow(r) }]
+  // Salt okunur satır: yalnız Göster — erişim paylaşımıyla ÇALIŞTIRILABİLEN satırda (can_check, 2026-10-12) ayrıca Kontrol
+  if (ro) {
+    return [
+      { label: t('inv.show'), onClick: () => onShow(r) },
+      r?.can_check === true && onCheckNow && { label: (isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow')), onClick: () => onCheckNow(r) },
+    ].filter(Boolean)
+  }
   return [
     { label: t('inv.show'), onClick: () => onShow(r) },
-    { label: (isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow')), onClick: () => onCheckNow(r) },
+    { label: (isManualCert(r) ? t('mcert.reevaluate') : t('inv.checkNow')), onClick: () => onCheckNow(r), hidden: r?.can_check === false },
     // Manuel (dosyadan yüklenen) kayıt (2026-10-06): ağ tanılaması ve kopyalama yok — adres yok, sertifika dosyadan.
     { label: t('inv.diagnose'), onClick: () => onDiagnose(r), hidden: !isAdmin || isManualCert(r) },
     // Düzenle/Kopyala satır bazlı (2026-09-18): USER kendi takımının kaydını düzenler; silme canManage'de kalır
     { label: t('inv.edit'), onClick: () => onEdit(r), hidden: !canEditRow(r) },
     { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canEditRow(r) || isManualCert(r) },
     { label: t('inv.transfer'), onClick: () => onTransfer(r), hidden: !(isAdmin && teamsCount > 1) },
-    { label: t('inv.delete'), danger: true, onClick: () => onDelete(r.id), hidden: !canManage },
+    // Silme: sunucunun satır bayrağı (can_delete — takımı yöneten ya da erişim paylaşımında "Tam", 2026-10-12); eski yanıtta rol
+    { label: t('inv.delete'), danger: true, onClick: () => onDelete(r.id), hidden: !(r?.can_delete === true || (r?.can_delete == null && canManage)) },
   ]
 }
 
@@ -432,7 +439,7 @@ export default function InventoryTable({
                     <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                       <ReadOnlyBadge compact teamId={show('team') ? undefined : r.team_id}
                         teamName={show('team') ? undefined : (r.team_name || teamMap[String(r.team_id)])} />
-                      <KebabMenu label={t('inv.colActions')} rowLabel={r.domain} items={rowMenuItems({ r, t, ro, onShow })} />
+                      <KebabMenu label={t('inv.colActions')} rowLabel={r.domain} items={rowMenuItems({ r, t, ro, onShow, onCheckNow: checkNow })} />
                     </div>
                   ) : (
                     <div className="inline-flex items-center justify-end gap-1">

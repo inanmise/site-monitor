@@ -36,7 +36,8 @@ import java.util.NoSuchElementException;
  * Nöbet çizelgesi uçları (2026-10-11, kullanıcı kararı: "takım seçerse nöbetçiye de").
  * <ul>
  *   <li>{@code GET /api/oncall/teams/{teamId}} — çizelge + şu anki nöbetçi + yaklaşan dilimler + yer değiştirmeler.
- *       Okuma: {@code oncall.read/view} ve takımın izleme okuma kapsamı ({@link SessionScope#canViewMonitoring}).</li>
+ *       Okuma: {@code oncall.read/view} ve takımın izleme okuma kapsamı ({@link SessionScope#canViewMonitoringOwn} —
+ *       takım erişim paylaşımı nöbet çizelgesini / nöbetçiyi AÇMAZ, 2026-10-12).</li>
  *   <li>{@code PUT /api/oncall/teams/{teamId}} — kaydet. Yazma: {@code oncall.manage/edit} ve takımı yönetme
  *       ({@link SessionScope#canManage}). Denetim {@code ONCALL_SCHEDULE_SAVE}.</li>
  *   <li>{@code POST /api/oncall/teams/{teamId}/overrides}, {@code DELETE /api/oncall/overrides/{id}} — yer değiştirme
@@ -67,7 +68,7 @@ public class OnCallController {
     public ResponseEntity<Map<String, Object>> view(@PathVariable Long teamId, HttpSession session) {
         permissionService.require(session, "oncall.read", "view");
         requireTeam(teamId);
-        if (!SessionScope.canViewMonitoring(session, teamId)) throw new NoSuchElementException("team");
+        if (!SessionScope.canViewMonitoringOwn(session, teamId)) throw new NoSuchElementException("team");
         Map<String, Object> data = new LinkedHashMap<>(onCall.view(teamId, Instant.now()));
         data.put("can_edit", canEdit(session, teamId));
         return ok(Map.of("data", data));
@@ -138,7 +139,7 @@ public class OnCallController {
         if (teamIds != null && teamIds.length() <= 4000) for (String p : teamIds.split(",")) {
             try {
                 long id = Long.parseLong(p.trim());
-                if (SessionScope.canViewMonitoring(session, id) && !ids.contains(id)) ids.add(id);
+                if (SessionScope.canViewMonitoringOwn(session, id) && !ids.contains(id)) ids.add(id);
             } catch (NumberFormatException ignored) { /* atla */ }
             if (ids.size() >= MAX_CURRENT_TEAMS) break;
         }

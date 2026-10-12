@@ -50,7 +50,7 @@ public class CryptoInventoryController {
     public ResponseEntity<Map<String, Object>> get(@RequestParam(value = "fresh", required = false) String fresh,
                                                    HttpSession session) {
         permissionService.require(session, "weak_algo.read", "view");
-        Map<String, Object> data = cryptoInventoryService.build(SessionScope.viewTeamIds(session),
+        Map<String, Object> data = cryptoInventoryService.build(SessionScope.viewTeamIdsWithGrants(session),  // + erişim paylaşımı (2026-10-12)
                 MonitoringOverviewController.isFresh(fresh));
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }

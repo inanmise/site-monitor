@@ -66,21 +66,24 @@ export default function HistoryList({
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
-  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id))
-  const someOnPage = !allOnPage && rows.some((r) => selected.has(r.id))
+  const writable = rows.filter((r) => r?.can_edit !== false)   // yazılamayan satır seçilmez (2026-10-12)
+  const allOnPage = writable.length > 0 && writable.every((r) => selected.has(r.id))
+  const someOnPage = !allOnPage && writable.some((r) => selected.has(r.id))
   const name = (r) => r.title || String(r.id)
 
-  const selectBox = (r, className) => (
+  // Okunabilen ama yazılamayan satır (sunucu can_edit=false — 7/24 / takım erişim paylaşımı, 2026-10-12): seçim ve
+  // Düzenle yok (sunucu reddederdi); hücre hizası için boş kalır.
+  const selectBox = (r, className) => (r?.can_edit === false ? null : (
     <Checkbox checked={selected.has(r.id)} onCheckedChange={() => onToggle(r.id)} className={className}
       aria-label={t('bulk.selectOneFor', name(r))} />
-  )
-  const editButton = (r, big = false) => (
+  ))
+  const editButton = (r, big = false) => (r?.can_edit === false ? null : (
     <Button type="button" variant="outline" size={big ? 'icon' : 'icon-sm'} title={t('inc.edit')} className={big ? 'size-10' : undefined}
       aria-label={t('a11y.rowAction', name(r), t('inc.edit'))}
       onClick={(e) => { e.stopPropagation(); onEdit(r) }}>
       <Pencil aria-hidden="true" />
     </Button>
-  )
+  ))
   const when = (r) => (
     <span className="flex flex-col leading-tight">
       <span className="whitespace-nowrap tabular-nums">{formatDate(r.occurred_at)}</span>

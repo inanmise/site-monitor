@@ -45,7 +45,8 @@ public class StatusPageController {
         boolean global = SessionScope.seesAllMonitoring(session);
         boolean incidents = permissionService.allows(session, "incidents.view", "view");
         boolean maintenance = permissionService.allows(session, "maintenance.view", "view");
-        String memoKey = memoKey(TtlMemo.scopeKey(global, SessionScope.viewTeamIds(session)), incidents, maintenance);
+        // Anahtar yüklemi TAM belirler — erişim paylaşımıyla açılan takımlar dahil (2026-10-12)
+        String memoKey = memoKey(TtlMemo.scopeKey(global, SessionScope.viewTeamIdsWithGrants(session)), incidents, maintenance);
         StatusPageService.Viewer viewer = new StatusPageService.Viewer(
                 teamId -> SessionScope.canViewMonitoring(session, teamId),
                 (teamId, createdByTeamId) -> incidents && IncidentController.canReadIncident(session, teamId, createdByTeamId),

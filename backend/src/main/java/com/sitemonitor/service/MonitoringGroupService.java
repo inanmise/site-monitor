@@ -216,7 +216,8 @@ public class MonitoringGroupService {
                 .orElseThrow(() -> new NoSuchElementException("Grup bulunamadı: " + groupId));
         Long teamId = g.getTeamId();
         String type = g.getType();
-        if (!SessionScope.canManage(session, teamId) && !ownTeam(session, teamId))
+        if (!SessionScope.canManage(session, teamId) && !ownTeam(session, teamId)
+                && !SessionScope.grantedEdit(session, teamId))   // erişim paylaşımı EDIT+ (2026-10-12)
             throw new SecurityException("Bu grubu yeniden adlandırma yetkiniz yok");
         String newName = newNameRaw == null ? "" : newNameRaw.trim();
         if (newName.isEmpty()) throw new IllegalArgumentException("Yeni grup adı boş olamaz.");

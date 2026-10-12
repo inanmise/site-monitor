@@ -21,14 +21,21 @@ import SearchableSelect from './SearchableSelect.jsx'
 export default function NotificationGroupSelect({ teamId, value, onChange, disabled = false }) {
   const t = useT()
   const [groups, setGroups] = useState([])
+  // Takımın grupları OKUNAMADI (2026-10-12): takım erişim paylaşımıyla düzenlenen izlemede paylaşan takımın bildirim
+  // grupları alıcıya açılmaz (yönetim verisi). Bu durumda seçici "Takım varsayılanı" diye YALAN söylemez; kayıtlı
+  // seçimi nötr bir etiketle gösterir ve kilitlenir (değer aynen korunur, kaydetme onu değiştirmez).
+  const [hidden, setHidden] = useState(false)
 
   useEffect(() => {
     let alive = true
+    setHidden(false)
     if (teamId === '' || teamId == null) { setGroups([]); return () => { alive = false } }
     // includeInactive: kayıtlı seçim silinmiş bir gruba işaret ediyorsa rozetle gösterebilmek için.
     api.notificationGroups.list(teamId, true).then(r => {
-      if (alive && r?.success) setGroups(r.data?.groups ?? [])
-    }).catch(() => { if (alive) setGroups([]) })
+      if (!alive) return
+      if (r?.success) setGroups(r.data?.groups ?? [])
+      else { setGroups([]); setHidden(true) }
+    }).catch(() => { if (alive) { setGroups([]); setHidden(true) } })
     return () => { alive = false }
   }, [teamId])
 
@@ -36,7 +43,10 @@ export default function NotificationGroupSelect({ teamId, value, onChange, disab
   // Takım seçilmemişken BOŞ seçenek de sunulmaz: SearchableSelect boş değeri o seçenekle
   // eşleştirip "Takım varsayılanı" yazardı — oysa henüz hangi takımın varsayılanı olduğu
   // belli değil. Seçenek listesi boş kalınca yer tutucu ("Önce takım seçin") görünür.
-  const options = noTeam ? [] : [
+  const hasValue = value != null && value !== ''
+  const options = noTeam ? [] : hidden ? [
+    hasValue ? { value: String(value), label: t('ng.selectorHidden') } : { value: '', label: t('ng.selectorDefault') },
+  ] : [
     { value: '', label: t('ng.selectorDefault') },
     ...groups
       // Pasif grup YALNIZ hâlâ seçiliyse listelenir — yeni seçim olarak sunulmaz.
@@ -56,7 +66,7 @@ export default function NotificationGroupSelect({ teamId, value, onChange, disab
         value={value == null ? '' : String(value)}
         onChange={onChange}
         options={options}
-        disabled={disabled || noTeam}
+        disabled={disabled || noTeam || hidden}
         searchThreshold={4}
         placeholder={noTeam ? t('ng.selectorNoTeam') : t('ng.selectorDefault')}
         ariaLabel={t('ng.selectorLabel')}

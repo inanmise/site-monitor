@@ -5007,6 +5007,88 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("Takım erişim paylaşımı (2026-10-12): satır bayrakları uç kapılarıyla aynı; VIEW tetiği 403, EXECUTE tetiği geçer; silme yalnız DELETE")
+    void teamAccessGrant_rowFlagsMirrorGates() throws Exception {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L), httpMon(3L, 9L)));
+        when(httpMonitorRepo.findById(1L)).thenReturn(java.util.Optional.of(httpMon(1L, 2L)));
+        when(httpMonitorRepo.findById(2L)).thenReturn(java.util.Optional.of(httpMon(2L, 3L)));
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 5L);
+        u.setAttribute("viewTeamIds", List.of(5L));
+        u.setAttribute("memberTeamIds", List.of(5L));
+        u.setAttribute("manageTeamIds", List.of());
+        u.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(2L, 3L)));
+        u.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new java.util.ArrayList<>(List.of(2L)));
+
+        mvc.perform(get("/api/monitoring/http").session(u))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))   // 9'un izlemesi görünmez
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[0].can_edit").value(false))
+                .andExpect(jsonPath("$.data[0].can_delete").value(false))
+                .andExpect(jsonPath("$.data[1].can_check").value(false));
+        mvc.perform(post("/api/monitoring/http/2/check").session(u)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/monitoring/http/1/check").session(u)).andExpect(status().isOk());
+        // Silme: EXECUTE / EDIT yetmez, yalnız DELETE
+        u.setAttribute(SessionScope.ATTR_GRANT_EDIT, new java.util.ArrayList<>(List.of(2L)));
+        mvc.perform(delete("/api/monitoring/http/1").session(u)).andExpect(status().isForbidden());
+        u.setAttribute(SessionScope.ATTR_GRANT_DELETE, new java.util.ArrayList<>(List.of(2L)));
+        mvc.perform(get("/api/monitoring/http").session(u))
+                .andExpect(jsonPath("$.data[0].can_edit").value(true))
+                .andExpect(jsonPath("$.data[0].can_delete").value(true));
+        mvc.perform(delete("/api/monitoring/http/1").session(u)).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("Takım erişim paylaşımı: EDIT paylaşımı izlemeyi DÜZENLER ama başka takıma TAŞIYAMAZ (kendi takımına da, paylaşan takıma itme de yok)")
+    void teamAccessGrant_editCannotMoveTeams() throws Exception {
+        com.sitemonitor.model.HttpMonitor shared = httpMon(1L, 2L);   // paylaşan takım 2'nin izlemesi
+        com.sitemonitor.model.HttpMonitor mine = httpMon(4L, 5L);     // kullanıcının kendi takımı 5
+        when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(shared));
+        when(httpMonitorRepo.findById(4L)).thenReturn(Optional.of(mine));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 5L);
+        u.setAttribute("viewTeamIds", List.of(5L));
+        u.setAttribute("memberTeamIds", List.of(5L));
+        u.setAttribute("manageTeamIds", List.of());
+        for (String a : List.of(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT)) {
+            u.setAttribute(a, new java.util.ArrayList<>(List.of(2L)));
+        }
+        // Paylaşan takımın izlemesini kendi takımına çekmek: 403 (sessiz "kaydedildi" yok), hiçbir şey kaydedilmez
+        mvc.perform(put("/api/monitoring/http/1").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Yeni ad\",\"teamId\":5}"))
+                .andExpect(status().isForbidden());
+        assertThat(shared.getTeamId()).isEqualTo(2L);
+        // Kendi izlemesini paylaşan takıma itmek: 403, takım AYNI
+        mvc.perform(put("/api/monitoring/http/4").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"teamId\":2}"))
+                .andExpect(status().isForbidden());
+        assertThat(mine.getTeamId()).isEqualTo(5L);
+        verify(httpMonitorRepo, never()).save(any());
+        // Takım alanı DEĞİŞMEDEN (aynı takım gönderilerek) düzenleme serbest
+        mvc.perform(put("/api/monitoring/http/1").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Yeni ad\",\"teamId\":2}"))
+                .andExpect(status().isOk());
+        assertThat(shared.getName()).isEqualTo("Yeni ad");
+        assertThat(shared.getTeamId()).isEqualTo(2L);
+        // Paylaşımı olmayan çok takımlı üye kendi iki takımı arasında taşımaya devam eder (davranış aynı)
+        MockHttpSession member = session("USER");
+        member.setAttribute("teamId", 5L);
+        member.setAttribute("viewTeamIds", List.of(5L, 6L));
+        member.setAttribute("memberTeamIds", List.of(5L, 6L));
+        member.setAttribute("manageTeamIds", List.of());
+        mvc.perform(put("/api/monitoring/http/4").session(member)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"teamId\":6}"))
+                .andExpect(status().isOk());
+        assertThat(mine.getTeamId()).isEqualTo(6L);
+    }
+
+    @Test
     @DisplayName("Liste can_check: global yönetici her satırda true; salt okur (AUDIT) her satırda false")
     void listHttp_canCheck_globalAdminAndAuditor() throws Exception {
         when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L)));

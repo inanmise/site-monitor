@@ -137,7 +137,7 @@ public class IncidentsController {
         Map<Long, Long> commentCounts = commentCounts(events);
         Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(events, own);
         TeamInfo teams = resolveTeams(events, inv);
-        Set<Long> owned = ownedIds(events, own, inv);
+        Set<Long> owned = ownedIds(events, actScope(session), inv);   // eylem sahipliği ≠ okuma (paylaşım VIEW, 2026-10-12)
         Access access = accessFor(session);
         // 7/24 operatörü (2026-10-04) başka ekibin olayını da TAM okur (teslim özeti, izleme bağlantısı, çözen kişi) —
         // eylem bayrakları (can_manage/can_act/can_delete) yine KENDİ kapsamından.
@@ -212,8 +212,22 @@ public class IncidentsController {
      */
     private static List<Long> ownScope(HttpSession session) {
         if (SessionScope.isGlobalViewer(session)) return null;
-        List<Long> v = SessionScope.viewTeamIds(session);
+        List<Long> v = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12) — OKUMA
         return v == null ? List.of() : v;
+    }
+
+    /**
+     * EYLEM sahipliği kapsamı (satır bayrakları {@code can_manage / can_act}, yorum): görüş kapsamı + erişim paylaşımında
+     * EXECUTE ve üstü (2026-10-12). Yalnız görüntüleme paylaşımı olayı OKUTUR, eylem açmaz. Global görüntüleyicide null.
+     */
+    private static List<Long> actScope(HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return null;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        List<Long> exec = SessionScope.grantExecuteTeamIds(session);
+        if (exec.isEmpty()) return v == null ? List.of() : v;
+        java.util.LinkedHashSet<Long> out = new java.util.LinkedHashSet<>(v == null ? List.of() : v);
+        out.addAll(exec);
+        return List.copyOf(out);
     }
 
     /** Ayar açık mı — her çağrıda canlı okunur (kaydedince yeniden başlatma gerekmez). Varsayılan AÇIK. */
@@ -716,7 +730,8 @@ public class IncidentsController {
     /** Olay çağıranın KENDİ (sahip olduğu) kapsamında mı (global görüntüleyici → her olay). Liste bayrağı {@code can_manage} ile aynı kural. */
     private boolean ownsIncident(HttpSession session, AlertEvent ev) {
         if (SessionScope.isGlobalViewer(session)) return true;
-        return incidentOwnedBy(ev, SessionScope.viewTeamIds(session));
+        return incidentOwnedBy(ev, SessionScope.viewTeamIds(session))
+                || incidentOwnedBy(ev, SessionScope.grantExecuteTeamIds(session));   // erişim paylaşımı EXECUTE+ (2026-10-12)
     }
 
     /**
@@ -727,7 +742,7 @@ public class IncidentsController {
      */
     private boolean requireIncidentReadable(HttpSession session, AlertEvent ev) {
         if (ownsIncident(session, ev)) return true;
-        if (incidentTeamInScope(ev, SessionScope.viewTeamIds(session)) || orgWideReader(session)) return false;
+        if (incidentTeamInScope(ev, SessionScope.viewTeamIdsWithGrants(session)) || orgWideReader(session)) return false;
         throw new SecurityException("Bu incident üzerinde yetkiniz yok");
     }
 

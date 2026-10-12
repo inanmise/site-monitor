@@ -211,6 +211,9 @@ public final class AuditEventCatalog {
             "ONCALL_OVERRIDE_ADD",        // nöbet yer değiştirmesi eklendi (2026-10-11)
             "ONCALL_OVERRIDE_DELETE",     // nöbet yer değiştirmesi silindi (2026-10-11)
             "ONCALL_SCHEDULE_SAVE",       // takım nöbet çizelgesi kaydedildi (2026-10-11)
+            "TEAM_ACCESS_GRANT_CREATE",   // takım erişim paylaşımı eklendi (2026-10-12)
+            "TEAM_ACCESS_GRANT_DELETE",   // takım erişim paylaşımı kaldırıldı (2026-10-12)
+            "TEAM_ACCESS_GRANT_UPDATE",   // takım erişim paylaşımı değişti (2026-10-12)
             "NOTIFICATION_GROUP_CREATE",
             "NOTIFICATION_GROUP_DEFAULT",
             "NOTIFICATION_GROUP_DELETE",

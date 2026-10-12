@@ -51,6 +51,7 @@ class RetentionCoverageTest {
             Map.entry("noc_settings", "7/24 yapılandırması — tekil satır (id=1)."),
             Map.entry("oncall_schedules", "Takım nöbet çizelgesi — takım başına TEK satır; takım silinince silinir."),
             Map.entry("oncall_overrides", "Nöbet yer değiştirmeleri — elle eklenir; bitişinden 180 gün sonra OnCallService kaydederken budar."),
+            Map.entry("team_access_grants", "Takım erişim paylaşımı (2026-10-12) — elle yönetilir, takım başına en çok 200 satır; takım ya da alıcı kullanıcı silinince silinir."),
             Map.entry("watchdog_state", "Kendi kendini izleme — kontrol başına TEK satır (katalog kadar, ~6); geçmiş tutulmaz."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),

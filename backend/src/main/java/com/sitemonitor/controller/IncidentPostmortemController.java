@@ -156,7 +156,7 @@ public class IncidentPostmortemController {
             HttpSession session) {
         requireView(session);
         boolean all = SessionScope.seesAllMonitoring(session) || SessionScope.isGlobalViewer(session);
-        List<Long> scope = all ? null : SessionScope.viewTeamIds(session);
+        List<Long> scope = all ? null : SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         String query = q == null ? null : (q.length() > 200 ? q.substring(0, 200) : q);
         return ok(Map.of("data", pm.search(!all, scope, sessionUserId(session), mine, status, overdue, query, page, size,
                 (team, createdBy) -> IncidentController.canReadIncident(session, team, createdBy))));

@@ -38,7 +38,8 @@ class AuthControllerTest {
 
     @MockitoBean
     UserService userService;
-    @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
+    @MockitoBean com.sitemonitor.service.TourStateService tourStateService;
+    @MockitoBean com.sitemonitor.service.access.TeamAccessGrantService teamGrants;   // takım erişim paylaşımı (2026-10-12)   // ürün turu (2026-09-13)
 
     @MockitoBean
     com.sitemonitor.service.HttpMetricsService httpMetricsService;
@@ -480,6 +481,26 @@ class AuthControllerTest {
     }
 
     // ── /me ───────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/me access_grants (2026-10-12): YALNIZ kullanıcının kendi kapsamında GÖREMEDİĞİ paylaşan takımlar")
+    void me_accessGrants_onlyTeamsOutsideOwnScope() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+        session.setAttribute("systemRole", "ADMIN");                 // kapsamlı müdür: 5'i yönetir / görür
+        session.setAttribute("viewTeamIds", java.util.List.of(5L));
+        session.setAttribute("manageTeamIds", java.util.List.of(5L));
+        when(teamGrants.levelsFor(1L)).thenReturn(java.util.Map.of(
+                2L, com.sitemonitor.service.access.TeamAccessLevel.EDIT,
+                5L, com.sitemonitor.service.access.TeamAccessLevel.VIEW));
+        when(userService.teamNameMap(any())).thenReturn(java.util.Map.of(2L, "Ödeme", 5L, "Kendi"));
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_grants.length()").value(1))
+                .andExpect(jsonPath("$.access_grants[0].team_id").value(2))
+                .andExpect(jsonPath("$.access_grants[0].level").value("EDIT"));
+    }
 
     @Test
     @DisplayName("GET /api/me with authenticated session returns username")

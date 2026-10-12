@@ -46,7 +46,7 @@ public class TodayPanelController {
         boolean seesAll = SessionScope.isGlobalViewer(session) || (nocCallLog != null && nocCallLog.seesAllAlerts(session));
         boolean bypass = fresh != null && ("1".equals(fresh.trim()) || "true".equalsIgnoreCase(fresh.trim()));
         Map<String, Object> data = visible
-                ? openAlertsSummary.cached(seesAll, SessionScope.viewTeamIds(session), bypass)
+                ? openAlertsSummary.cached(seesAll, SessionScope.viewTeamIdsWithGrants(session), bypass)   // + paylaşım (2026-10-12)
                 : openAlertsSummary.build(false, List.of());
         Map<String, Object> out = new java.util.LinkedHashMap<>(data);
         out.put("visible", visible);

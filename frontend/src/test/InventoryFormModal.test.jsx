@@ -419,11 +419,12 @@ describe('InventoryFormModalForDomain', () => {
   })
 
   // App bileşeni bu dosyada çizilemeyecek kadar ağır; kart yolunun yetki proplarını GEÇTİĞİ kaynaktan pinlenir.
-  it('R4 kaynak sözleşmesi: App kart yolu canManage + canMoveTeam (rol ADMIN) geçer', () => {
+  it('R4 kaynak sözleşmesi: App kart yolu canManage + canMoveTeam (rol ADMIN; yalnız paylaşımla görülen kartta yok) geçer', () => {
     const app = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../App.jsx'), 'utf8')
     const el = app.match(/<InventoryFormModalForDomain[\s\S]*?\/>/)?.[0] ?? ''
     expect(el).toMatch(/canManage=\{canManageInventory\}/)
-    expect(el).toMatch(/canMoveTeam=\{systemRole === 'ADMIN'\}/)
+    // Takım erişim paylaşımı (2026-10-12): paylaşımla görülen kartta sunucu takımı sabitler → aktarım sunulmaz
+    expect(el).toMatch(/canMoveTeam=\{systemRole === 'ADMIN' && !certGrantAccess\(/)
   })
 })
 

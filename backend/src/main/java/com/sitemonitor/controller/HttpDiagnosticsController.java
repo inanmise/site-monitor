@@ -157,7 +157,7 @@ public class HttpDiagnosticsController {
     }
 
     private static void requireOperate(HttpSession session, HttpMonitor m) {
-        if (!SessionScope.canOperateTeam(session, m.getTeamId())) {
+        if (!SessionScope.canExecuteTeam(session, m.getTeamId())) {
             throw new SecurityException(Msg.t("Bu takımın izlemesinde tanılama çalıştıramazsınız.",
                     "You cannot run diagnostics on this team's monitor."));
         }

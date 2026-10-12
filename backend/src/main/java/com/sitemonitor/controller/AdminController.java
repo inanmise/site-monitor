@@ -74,6 +74,10 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.oncall.OnCallService onCallService;
 
+    /** Takım erişim paylaşımı (2026-10-12) — takım / kullanıcı silinince paylaşımları da gider. İsteğe bağlı (dilim testi). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.access.TeamAccessGrantService teamAccessGrants;
+
     /** Alarm ayrıntısı için sahip takımların şu anki nöbetçileri (2026-10-11) — yalnız ad ve bitiş; bildirim seçeneği de. */
     private List<Map<String, Object>> oncallFor(Long... teamIds) {
         if (onCallService == null) return List.of();
@@ -384,8 +388,8 @@ public class AdminController {
         } else if (wantsAllInventory(session, scope)) {    // org geneli okuma
             items = inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
             orgWide = true;
-        } else {                                           // scoped (müdür/PO/USER)
-            List<Long> view = viewScope(session);
+        } else {                                           // scoped (müdür/PO/USER) + erişim paylaşımı (2026-10-12)
+            List<Long> view = SessionScope.viewTeamIdsWithGrants(session);
             items = (view == null || view.isEmpty())
                     ? List.of()
                     : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(view);
@@ -415,7 +419,9 @@ public class AdminController {
                 it.setCertError(lc.getError());
             }
             it.setCanManage(writable.test(it.getTeamId()));
-            if (orgWide && !SessionScope.canView(session, it.getTeamId())) redactForForeignReader(it);
+            it.setCanDelete(SessionScope.canDeleteTeamResource(session, it.getTeamId()));   // tekil silme kapısıyla aynı
+            markSharedAccess(session, it);
+            if (orgWide && !SessionScope.canViewWithGrants(session, it.getTeamId())) redactForForeignReader(it);
         }
         applyNotificationGroupNames(session, items);   // çekmecenin "Bildirim grubu" satırı — TEK sorgu, satır başına değil
         applyManualVersionSummary(items);              // manuel sertifika sürümü (2026-10-06) — TEK sorgu, manuel yoksa hiç
@@ -440,7 +446,7 @@ public class AdminController {
         // Kapsam: admin/audit değilse yalnız kendi görüş kapsamındaki takımın kaydı görünür
         // (çapraz-takım sızıntısı olmasın — listInventory'deki viewScope semantiği) — ya da org geneli okuma.
         if (rec != null && !isAdminOrAudit(session)) {
-            List<Long> scope = viewScope(session);
+            List<Long> scope = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
             boolean own = scope != null && !scope.isEmpty()
                     && rec.getTeamId() != null && scope.contains(rec.getTeamId());
             if (!own) {
@@ -456,6 +462,8 @@ public class AdminController {
             if (rec.getTeamId() != null)   rec.setTeamName(teamNames.get(rec.getTeamId()));
             if (rec.getUgTeamId() != null) rec.setUgTeamName(teamNames.get(rec.getUgTeamId()));
             rec.setCanManage(SessionScope.canWriteInventory(session, rec.getTeamId()));
+            rec.setCanDelete(SessionScope.canDeleteTeamResource(session, rec.getTeamId()));
+            markSharedAccess(session, rec);
             applyNotificationGroupNames(session, List.of(rec));   // grup kimliği varsa tek ek sorgu
             applyManualVersionSummary(List.of(rec));              // manuel sertifika ise tek ek sorgu (2026-10-06)
             if (foreign) redactForForeignReader(rec);
@@ -1221,7 +1229,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         return inventoryRepo.findById(id).map(inv -> {
-            requireTeamScopedAdmin(session, inv.getTeamId());
+            requireInventoryDeleter(session, inv.getTeamId());
             requirePerm(session, "inventory.crud", "edit");
             Map<String, Object> snapshot = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
             // Geçmiş satırı silmeden ÖNCE ve AYNI işlemde: silme geri alınırsa "silindi" izi de kalmaz.
@@ -1368,7 +1376,12 @@ public class AdminController {
         String ts = now();
         for (Long id : ids) {
             CertificateInventory inv = inventoryRepo.findById(id).orElse(null);
-            if (inv == null || !canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
+            // Toplu silme tekil silmeyle aynı kapı (erişim paylaşımında SİLME düzeyi de, 2026-10-12); diğer toplu
+            // eylemler takım yönetimidir (paylaşımla açılmaz).
+            boolean allowed = "delete".equals(action)
+                    ? inv != null && (canManageTeamResource(session, inv.getTeamId()) || SessionScope.canDeleteTeamResource(session, inv.getTeamId()))
+                    : inv != null && canManageTeamResource(session, inv.getTeamId());
+            if (!allowed) { skipped++; continue; }
             // Silme KALICI (2026-10-07): yumuşak silinmiş satır yalnız eski sürümden kalabilir — tek seferlik temizlik
             // onları da alır; o arada hiçbir eylem (silme dâhil) ona yazmaz.
             boolean deleted = inv.getDeletedAt() != null;
@@ -2163,7 +2176,7 @@ public class AdminController {
         // Takım kapsamı (IDOR engeli): global viewer (admin/AUDIT) tümünü; aksi halde alarmın takımı
         // (keyword/ping: e.teamId; cert: domain→envanter SY/UG) çağıranın görüntüleme kapsamında olmalı.
         // 7/24 operatörü (noc_calls.write) de TÜMÜNÜ görür — yalnız bu listede ve alarm okuma uçlarında (2026-09-27).
-        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIds(session);
+        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIdsWithGrants(session);
         boolean scoped = scope != null;
         if (scoped && scope.isEmpty()) {   // kapsamsız kullanıcı → hiçbir alarm
             return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "size", sz,
@@ -2322,7 +2335,7 @@ public class AdminController {
                 ? level.trim().toUpperCase(java.util.Locale.ROOT) : null;
 
         // Kapsam LİSTEYLE aynı (2026-10-04): 7/24 operatörü ekranda tüm takımları görüyorsa dosyada da görür.
-        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIds(session);
+        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIdsWithGrants(session);
         boolean scoped = scope != null;
         List<Long> scopeList = scoped ? scope : List.of(-1L);
 
@@ -2578,7 +2591,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> previewReNotifyAlert(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.actions", "execute");
-        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        requireAlertNotifyScope(session, id);   // takım kapsamı (IDOR engeli); erişim paylaşımı alıcıları göstermez
         List<Map<String, Object>> recipients = escalationService.previewReNotify(id).stream()
                 .map(r -> {
                     Map<String, Object> m = new LinkedHashMap<String, Object>();
@@ -2618,7 +2631,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session,
             @RequestBody(required = false) Map<String, Object> body) {
         requirePerm(session, "alerts.actions", "execute");
-        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        requireAlertNotifyScope(session, id);   // takım kapsamı (IDOR engeli); erişim paylaşımı yeniden bildirmez
         // Onay pop-up'ından gelen opsiyonel hariç-tutma listesi (kullanıcının listeden çıkardıkları).
         Set<String> excludes = new LinkedHashSet<>();
         if (body != null && body.get("excludeEmails") instanceof List<?> raw) {
@@ -2671,7 +2684,8 @@ public class AdminController {
         String by = resolveDisplayName(session);
         int processed = 0, skipped = 0, failed = 0;
         for (Long id : ids) {
-            if (!isAlertInScope(session, id)) { skipped++; continue; }   // kapsam-dışı → atla (fırlatma yok)
+            // kapsam-dışı → atla (fırlatma yok); toplu YENİDEN BİLDİR erişim paylaşımıyla yapılmaz (2026-10-12)
+            if (!isAlertInScope(session, id, !"re-notify".equals(action))) { skipped++; continue; }
             try {
                 switch (action) {
                     case "acknowledge" -> escalationService.acknowledge(id, by, note);
@@ -2723,10 +2737,36 @@ public class AdminController {
         body.put("data", ev);
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
         body.put("can_act", permissionService.allows(session, "alerts.actions", "execute"));
-        // Sahip takım(lar)ın şu anki nöbetçisi (2026-10-11) — alarm ayrıntısında "kimi aramalı"; çizelge yoksa boş liste
-        body.put("oncall", oncallFor(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId())
+        // Sahip takım(lar)ın şu anki nöbetçisi (2026-10-11) — alarm ayrıntısında "kimi aramalı"; çizelge yoksa boş liste.
+        // Yalnız takım erişim paylaşımıyla okunan alarmda boş (2026-10-12): nöbetçi kişi verisidir, paylaşımla açılmaz.
+        body.put("oncall", alertReadOnlyViaGrant(session, ev) ? List.of()
+                : oncallFor(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId())
                 .toArray(Long[]::new)));
         return ok(body);
+    }
+
+    /**
+     * Alarmı YALNIZ takım erişim paylaşımıyla mı okuyor (2026-10-12): tüm uyarıları gören (global / 7/24) değil ve alarmın
+     * okuma takımlarından hiçbiri kendi görüş kapsamında değil — {@link #requireAlertReadScope} paylaşım koluyla geçmiş.
+     * Bu durumda alarmın KİŞİ verisi (nöbetçi, bildirim alıcıları, push alıcıları) gösterilmez.
+     */
+    private boolean alertReadOnlyViaGrant(HttpSession session, AlertEvent ev) {
+        if (ev == null || seesAllAlerts(session)) return false;
+        List<Long> own = SessionScope.viewTeamIds(session);
+        if (own == null) return false;
+        if (SessionScope.grantViewTeamIds(session).isEmpty()) return false;
+        return !AlertOwnership.ownedByAny(alertReadTeamIds(ev), own);
+    }
+
+    /** Paylaşımla okunan alarmın bildirim satırı: alıcı adı / adresleri / CC gizli (yalnız adres SAYISI), içerik aynı. */
+    private static com.sitemonitor.model.NotificationLog maskRecipientsForGrant(com.sitemonitor.model.NotificationLog n) {
+        com.sitemonitor.model.NotificationLog base = com.sitemonitor.service.noc.NocLogRedaction.forViewer(n);
+        com.sitemonitor.model.NotificationLog c = new com.sitemonitor.model.NotificationLog();
+        org.springframework.beans.BeanUtils.copyProperties(base, c);
+        c.setRecipientName(null);
+        c.setRecipientEmail(com.sitemonitor.service.noc.NocLogRedaction.recipients(base.getRecipientEmail()));
+        c.setCc(com.sitemonitor.service.noc.NocLogRedaction.recipients(base.getCc()));
+        return c;
     }
 
     @GetMapping("/alerts/{id}/notifications")
@@ -2736,8 +2776,11 @@ public class AdminController {
         requireAlertReadScope(session, id);   // takım kapsamı (IDOR engeli); 7/24 operatörü tümü (okuma)
         // 7/24 (NOC) satırları alarmı gören HERKESE açık — gövde/alıcı daima MASKELİ biçimde döner (arama listesi
         // telefonları ve 7/24 grup adresleri takım üyesine, kapsamlı yöneticiye, denetçiye sızmasın; 2026-09-27).
+        // Yalnız paylaşımla okunan alarmda alıcı kişi / adresleri de gizli (2026-10-12) — durum ve içerik görünür
+        boolean viaGrant = alertReadOnlyViaGrant(session, alertEventRepo.findById(id).orElse(null));
         return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id).stream()
-                .map(com.sitemonitor.service.noc.NocLogRedaction::forViewer).toList()));
+                .map(viaGrant ? AdminController::maskRecipientsForGrant : com.sitemonitor.service.noc.NocLogRedaction::forViewer)
+                .toList()));
     }
 
     /**
@@ -2749,7 +2792,18 @@ public class AdminController {
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         requireAlertReadScope(session, id);   // takım kapsamı (IDOR engeli); 7/24 operatörü tümü (okuma)
-        return ok(Map.of("data", userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(id)));
+        List<com.sitemonitor.model.UserPushDelivery> rows = userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(id);
+        if (!alertReadOnlyViaGrant(session, alertEventRepo.findById(id).orElse(null))) return ok(Map.of("data", rows));
+        // Yalnız paylaşımla okunan alarm (2026-10-12): push alıcısının kimliği gizli — kopya, kayıt değişmez
+        List<com.sitemonitor.model.UserPushDelivery> masked = new ArrayList<>();
+        for (com.sitemonitor.model.UserPushDelivery d : rows) {
+            com.sitemonitor.model.UserPushDelivery c = new com.sitemonitor.model.UserPushDelivery();
+            org.springframework.beans.BeanUtils.copyProperties(d, c);
+            c.setUsername(null);
+            c.setDisplayName(null);
+            masked.add(c);
+        }
+        return ok(Map.of("data", masked));
     }
 
     /**
@@ -2780,7 +2834,28 @@ public class AdminController {
         // Olayda takım damgası yoksa (sertifika alarmı) push takımı envanterin SY takımıdır — yalnız tahmin için.
         Long fallbackTeam = ev.getTeamId() != null || ev.getDomain() == null ? null
                 : inventoryRepo.findByDomain(ev.getDomain()).map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
-        return ok(Map.of("data", stormPushCoverage.alarmDetail(ev, fallbackTeam)));
+        Map<String, Object> detail = stormPushCoverage.alarmDetail(ev, fallbackTeam);
+        // Yalnız paylaşımla okunan alarm (2026-10-12): push alıcılarının kimliği gizli (yapı her çağrıda taze kurulur)
+        if (alertReadOnlyViaGrant(session, ev)) scrubPushPeople(detail, 0);
+        return ok(Map.of("data", detail));
+    }
+
+    /** Yapıdaki push alıcısı kimliklerini ({@code username} / {@code display_name}) boşaltır — derinlik sınırlı. */
+    @SuppressWarnings("unchecked")
+    private static void scrubPushPeople(Object node, int depth) {
+        if (node == null || depth > 8) return;
+        if (node instanceof Map<?, ?> m) {
+            Map<String, Object> mm = (Map<String, Object>) m;
+            try {
+                if (mm.containsKey("username")) mm.put("username", null);
+                if (mm.containsKey("display_name")) mm.put("display_name", null);
+            } catch (UnsupportedOperationException immutable) {
+                // değiştirilemez ara yapı (Map.of) kişi taşımaz — atlanır
+            }
+            for (Object v : mm.values()) scrubPushPeople(v, depth + 1);
+        } else if (node instanceof java.util.Collection<?> c) {
+            for (Object v : c) scrubPushPeople(v, depth + 1);
+        }
     }
 
     // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────
@@ -2815,11 +2890,32 @@ public class AdminController {
     /** EYLEM kapısı: global viewer (admin/AUDIT) tümünü; aksi halde alarmın SAHİBİ takım(lar)ından biri çağıranın
      *  görüntüleme kapsamında olmalı (yoksa 403). Global olmayanda alarmı yükler. */
     private void requireAlertScope(HttpSession session, Long id) {
+        requireAlertScope(session, id, true);
+    }
+
+    /**
+     * Yeniden bildir ve alıcı önizlemesi (2026-10-12): {@link #requireAlertScope} ile aynı kural, erişim paylaşımı
+     * kolu OLMADAN. Paylaşım alan kişi alarmı sahiplenip çözebilir ama paylaşan takımın alıcılarını göremez ve onlara
+     * bildirim göndertemez — bildirimler ve alıcı listeleri (eskalasyon kişileri, bildirim grubu üyeleri, nöbetçi)
+     * paylaşan takımın yönetim verisidir.
+     */
+    private void requireAlertNotifyScope(HttpSession session, Long id) {
+        requireAlertScope(session, id, false);
+    }
+
+    private void requireAlertScope(HttpSession session, Long id, boolean allowGrant) {
         if (SessionScope.isGlobalViewer(session)) return;
         List<Long> v = SessionScope.viewTeamIds(session);
         AlertEvent ev = alertEventRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
         if (AlertOwnership.ownedByAny(alertOwnerTeamIds(ev), v)) return;
+        // Takım erişim paylaşımı EXECUTE+ (2026-10-12): paylaşan takımın alarmında sahiplen / çöz
+        if (AlertOwnership.ownedByAny(alertOwnerTeamIds(ev), SessionScope.grantExecuteTeamIds(session))) {
+            if (allowGrant) return;
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu alarma takım erişim paylaşımıyla erişiyorsunuz — yeniden bildirim ve alıcı listesi yalnız alarmın sahibi takıma açık",
+                    "You reach this alert through team access sharing — re-notifying and the recipient list are open only to the owning team"));
+        }
         if (v != null && !AlertOwnership.routesLikeInventory(ev)
                 && AlertOwnership.ownedByAny(alertReadTeamIds(ev), v)) {
             // Görüyor (host'un envanteri onun takımında) ama alarm başka takımın bağımsız izlemesine ait.
@@ -2839,9 +2935,18 @@ public class AdminController {
     private void markActScope(List<AlertEvent> events, HttpSession session) {
         if (events == null || events.isEmpty() || SessionScope.isGlobalViewer(session)) return;
         List<Long> v = SessionScope.viewTeamIds(session);
+        List<Long> exec = SessionScope.grantExecuteTeamIds(session);   // erişim paylaşımı EXECUTE+ (2026-10-12)
+        List<Long> viewOnly = SessionScope.grantViewTeamIds(session);
         for (AlertEvent ev : events) {
-            ev.setActScope(AlertOwnership.ownedByAny(
-                    AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId()), v));
+            var owners = AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId());
+            boolean own = AlertOwnership.ownedByAny(owners, v);
+            boolean viaGrant = !own && AlertOwnership.ownedByAny(owners, exec);
+            ev.setActScope(own || viaGrant);
+            // Her satırda AÇIKÇA yazılır (önceki bir görüntüleyicinin değeri aynı nesnede kalmasın):
+            // yalnız paylaşımla eylem yapılabilen satırda false (yeniden bildir / alıcı önizlemesi yok), diğerinde alan yok;
+            ev.setNotifyScope(viaGrant ? Boolean.FALSE : null);
+            // paylaşımla yalnız GÖRÜLEN alarm: arayüz "başka takımın bağımsız izlemesi" değil "yalnız görüntüleme" der
+            ev.setActBlock(!own && !viaGrant && AlertOwnership.ownedByAny(owners, viewOnly) ? "shared_view" : null);
         }
     }
 
@@ -2860,7 +2965,7 @@ public class AdminController {
      */
     private void requireAlertReadScope(HttpSession session, Long id) {
         if (seesAllAlerts(session)) return;
-        List<Long> v = SessionScope.viewTeamIds(session);
+        List<Long> v = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
         AlertEvent ev = alertEventRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
         if (AlertOwnership.ownedByAny(alertReadTeamIds(ev), v)) return;
@@ -2868,13 +2973,15 @@ public class AdminController {
     }
 
     /** requireAlertScope'un fırlatmayan sürümü — toplu işlemde kapsam-dışı/eksik id'yi atlamak için (sahip takım kuralı). */
-    private boolean isAlertInScope(HttpSession session, Long id) {
+    private boolean isAlertInScope(HttpSession session, Long id, boolean allowGrant) {
         if (SessionScope.isGlobalViewer(session)) return true;
         List<Long> v = SessionScope.viewTeamIds(session);
         if (v == null) return false;
         AlertEvent ev = alertEventRepo.findById(id).orElse(null);
         if (ev == null) return false;
-        return AlertOwnership.ownedByAny(alertOwnerTeamIds(ev), v);
+        var owners = alertOwnerTeamIds(ev);
+        return AlertOwnership.ownedByAny(owners, v)
+                || (allowGrant && AlertOwnership.ownedByAny(owners, SessionScope.grantExecuteTeamIds(session)));   // paylaşım (2026-10-12)
     }
 
     // ── Teams (ADMIN only) ────────────────────────────────────────────────────
@@ -3242,6 +3349,7 @@ public class AdminController {
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);
+        if (teamAccessGrants != null) teamAccessGrants.deleteForTeam(id);   // sahibi ya da alıcısı bu takım olan paylaşımlar
         auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(),
                 AuditDiff.snapshotJson(before));
         return ok(Map.of("message", "Team deleted"));
@@ -3651,6 +3759,7 @@ public class AdminController {
         String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
                 "username", "displayName", "email", "teamId", "systemRole", "orgRole", "active", "authSource"));
         userService.deleteUser(id);
+        if (teamAccessGrants != null) teamAccessGrants.deleteForUser(id);   // bu kişiye verilmiş paylaşımlar (2026-10-12)
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User deleted"));
     }
@@ -3675,7 +3784,7 @@ public class AdminController {
         if (isAdminOrAudit(session)) {
             notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
         } else {
-            List<Long> scope = viewScope(session);
+            List<Long> scope = SessionScope.viewTeamIdsWithGrants(session);   // + erişim paylaşımı (2026-10-12)
             CertificateInventory inv = inventoryVisibility == null ? null : inventoryRepo.findByDomain(domain).orElse(null);
             if (inv != null && readableOrgWide(session, inv)) {
                 notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain).stream()
@@ -4033,6 +4142,14 @@ public class AdminController {
         return SessionScope.viewTeamIds(session);
     }
 
+    /** Yalnız erişim paylaşımıyla görülen satıra {@code shared_access} + {@code can_check} (2026-10-12); diğerine dokunmaz. */
+    private static void markSharedAccess(HttpSession session, CertificateInventory inv) {
+        // Her satırda açıkça yazılır: önceki bir görüntüleyicinin değeri aynı nesnede kalmasın
+        boolean shared = SessionScope.viewableOnlyByGrant(session, inv.getTeamId());
+        inv.setSharedAccess(shared ? Boolean.TRUE : null);
+        inv.setCanCheck(shared ? SessionScope.canExecuteTeam(session, inv.getTeamId()) : null);
+    }
+
     /** Global admin, or a manager-scope (PO) that includes the resource's team. (Müdür → false.) */
     private boolean canManageTeamResource(HttpSession session, Long resourceTeamId) {
         if (isAdmin(session)) return true;                 // global admin
@@ -4048,6 +4165,15 @@ public class AdminController {
             throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
                     "Seçilen takım bulunamadı — geçerli bir takım seçin.", "The selected team doesn't exist — choose a valid team."));
         }
+    }
+
+    /**
+     * Envanter kaydı SİLME kapısı (2026-10-12): takımı yöneten (global admin / müdür / TEAM_ADMIN — eski
+     * {@link #requireTeamScopedAdmin} ile aynı) ya da takım erişim paylaşımında DELETE düzeyi olan.
+     */
+    private void requireInventoryDeleter(HttpSession session, Long resourceTeamId) {
+        if (canManageTeamResource(session, resourceTeamId) || SessionScope.canDeleteTeamResource(session, resourceTeamId)) return;
+        requireTeamScopedAdmin(session, resourceTeamId);   // aynı ret metni + günlük
     }
 
     private void requireTeamScopedAdmin(HttpSession session, Long resourceTeamId) {
@@ -4161,7 +4287,8 @@ public class AdminController {
         if (domain != null && domainMonitorRepo != null) {
             String d = domain.trim().toLowerCase(java.util.Locale.ROOT);
             for (com.sitemonitor.model.DomainMonitor m : domainMonitorRepo.findByDomain(d)) {
-                if (m != null && SessionScope.canOperateTeam(session, m.getTeamId())) return;
+                // Tanılama = ÇALIŞTIRMA: erişim paylaşımında EXECUTE+ da (2026-10-12; satırın can_diagnose kuralı)
+                if (m != null && SessionScope.canExecuteTeam(session, m.getTeamId())) return;
             }
         }
         requireAdminOrMonitoredDomain(session, domain);
@@ -4179,6 +4306,7 @@ public class AdminController {
                 // scope null = tüm takımlar (global admin/AUDIT); teamId null = SAHİPSİZ kayıt — başka
                 // takımın değil, dolayısıyla reddedilmez (envanter kayıtlarının bir kısmı takımsız doğar).
                 if (scope == null || inv.getTeamId() == null || scope.contains(inv.getTeamId())) return;
+                if (SessionScope.grantExecuteTeamIds(session).contains(inv.getTeamId())) return;   // paylaşım EXECUTE+ (2026-10-12)
             }
         }
         log.warn("Diagnostics denied (non-admin, domain='{}' not in team scope) user={}", domain, actor(session));

@@ -25,6 +25,14 @@ const CertCheckHistory = lazy(() => import('../certmodal/CertCheckHistory.jsx'))
  * izi/konu, TLS modu, sıklık, vekil) + "Sertifikayı aç" (Tüm Sertifikalar ekranında bu alan adının penceresi). Hiç kontrol
  * yoksa boş durum + "Şimdi kontrol et" (salt okunurda yok). Test kancası `data-slot="inv-cert-summary"`.
  */
+/**
+ * Kontrol edilebilir mi (2026-10-12, takım erişim paylaşımı): değiştirilebilen satırda sunucu `can_check=false` demedikçe;
+ * salt okunur satırda yalnız paylaşımla ÇALIŞTIRMA düzeyi varsa (`can_check=true`).
+ */
+function canCheckRecord(record, readOnly) {
+  return readOnly ? record?.can_check === true : record?.can_check !== false
+}
+
 function CertificateSummary({ record, readOnly, onCheckNow, platformNames }) {
   const t = useT()
   const openCert = () => navigateTo('all', { domain: record.domain })
@@ -32,7 +40,7 @@ function CertificateSummary({ record, readOnly, onCheckNow, platformNames }) {
     return (
       <StatusBlock tone="info" icon={ShieldCheck} title={t('inv.certNever')} description={t('inv.certNoData')}
         actions={<>
-          {!readOnly && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</Button>}
+          {canCheckRecord(record, readOnly) && <Button type="button" size="sm" onClick={() => onCheckNow(record)}><Play aria-hidden="true" /> {(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</Button>}
           <Button type="button" variant="outline" size="sm" onClick={openCert} title={t('inv.openCertHint')}><ExternalLink aria-hidden="true" /> {t('inv.openCert')}</Button>
         </>} />
     )
@@ -92,7 +100,11 @@ export default function InventoryDrawer({
   if (!record) return null
   const teamName = record.team_name || teamMap?.[String(record.team_id)]
   // Silme KALICI (2026-10-07): çekmece yalnız canlı kayıt açar — "silindi" rozeti / kipi yok.
-  const canAct = !readOnly
+  // Başka takımın kaydı (org geneli okuma): Değişiklikler sekmesi ve takım rozeti yok. Erişim paylaşımıyla görülen kayıt
+  // (shared_access) YABANCI DEĞİL — geçmişi okunur; değiştiremiyorsa yine salt okunur (2026-10-12).
+  const foreign = readOnly && record?.shared_access !== true
+  const canCheck = canCheckRecord(record, readOnly)
+  const canAct = !readOnly || canCheck
   const port = record.port || 443
 
   return (
@@ -116,7 +128,7 @@ export default function InventoryDrawer({
             <div data-slot="inv-drawer-badges" className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <CertCell r={record} t={t} />
               <TierBadge tier={record.tier} />
-              {teamName && !readOnly && <TeamBadge teamId={record.team_id} teamName={teamName} />}
+              {teamName && !foreign && <TeamBadge teamId={record.team_id} teamName={teamName} />}
               {readOnly && <ReadOnlyBadge teamId={record.team_id} teamName={teamName} />}
               <ActiveBadge r={record} t={t} />
             </div>
@@ -129,13 +141,13 @@ export default function InventoryDrawer({
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b px-3 sm:px-4 pointer-coarse:h-11">
             <TabsTrigger value="details" className="flex-none pointer-coarse:h-10">{t('inv.drawerOverview')}</TabsTrigger>
             <TabsTrigger value="cert" className="flex-none pointer-coarse:h-10">{t('inv.drawerCert')}</TabsTrigger>
-            {!readOnly && <TabsTrigger value="changes" className="flex-none pointer-coarse:h-10">{t('chg.tab')}</TabsTrigger>}
+            {!foreign && <TabsTrigger value="changes" className="flex-none pointer-coarse:h-10">{t('chg.tab')}</TabsTrigger>}
             <TabsTrigger value="checks" className="flex-none pointer-coarse:h-10">{t('inv.drawerChecks')}</TabsTrigger>
           </TabsList>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6 text-[.92em] sm:px-5">
             <TabsContent value="details"><InventoryDetails record={record} teamMap={teamMap} platformNames={platformNames} compact /></TabsContent>
             <TabsContent value="cert"><CertificateSummary record={record} readOnly={readOnly} onCheckNow={onCheckNow} platformNames={platformNames} /></TabsContent>
-            {!readOnly && (
+            {!foreign && (
               <TabsContent value="changes">
                 <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
                   <ChangeHistoryTab t={t} kind="inventory" monitorId={record.id} teamNames={teamNameById} />
@@ -156,16 +168,18 @@ export default function InventoryDrawer({
           // Telefonda tek satır: [▶][🗑][Düzenle ———] (ikon düğmeleri 40 px, ad aria-label'da); sm+ metinli. Sağ dolgu (pe-16)
           // uygulamanın sabit Yardım düğmesinin altında düğme kalmasın diye.
           <SheetFooter data-slot="inv-drawer-actions" className="mt-0 flex-row flex-nowrap items-center gap-2 border-t py-3 ps-3 pe-16 pb-[max(.75rem,env(safe-area-inset-bottom))] sm:ps-4">
-            <SimpleTooltip content={(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
-              <Button type="button" variant="outline" className="size-10 sm:h-10 sm:w-auto" onClick={() => onCheckNow(record)}
-                aria-label={t('a11y.rowAction', record.domain, (isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow')))}><Play aria-hidden="true" /><span className="hidden sm:inline">{(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</span></Button>
-            </SimpleTooltip>
+            {canCheck && (
+              <SimpleTooltip content={(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}>
+                <Button type="button" variant="outline" className="size-10 sm:h-10 sm:w-auto" onClick={() => onCheckNow(record)}
+                  aria-label={t('a11y.rowAction', record.domain, (isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow')))}><Play aria-hidden="true" /><span className="hidden sm:inline">{(isManualCert(record) ? t('mcert.reevaluate') : t('inv.checkNow'))}</span></Button>
+              </SimpleTooltip>
+            )}
             <span className="hidden flex-1 sm:block" />
-            {canManage && onDelete && (
+            {!readOnly && (record?.can_delete === true || (record?.can_delete == null && canManage)) && onDelete && (
               <Button type="button" variant="destructive" className="size-10 sm:h-10 sm:w-auto" onClick={() => onDelete(record.id)}
                 aria-label={t('a11y.rowAction', record.domain, t('inv.delete'))}><Trash2 aria-hidden="true" /><span className="hidden sm:inline">{t('inv.deleteBtn')}</span></Button>
             )}
-            {canEditRow(record) && (
+            {!readOnly && canEditRow(record) && (
               <Button type="button" className="h-10 flex-1 sm:flex-none" onClick={() => onEdit(record)}
                 aria-label={t('a11y.rowAction', record.domain, t('inv.edit'))}><Pencil aria-hidden="true" /> {t('inv.edit')}</Button>
             )}

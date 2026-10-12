@@ -209,6 +209,22 @@ public class CertificateInventory implements NocTarget {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean canManage;
 
+    // ── Çağıran bu kaydı SİLEBİLİR mi (2026-10-12, takım erişim paylaşımı): tekil silme ucunun kapısıyla aynı
+    // (takımı yöneten ya da paylaşımda DELETE düzeyi — SessionScope.canDeleteTeamResource). Yalnız okuma uçları doldurur.
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean canDelete;
+
+    // ── YALNIZ erişim paylaşımıyla görülen satır (2026-10-12): {@code shared_access=true} + çalıştırma kapısı
+    // {@code can_check} (SessionScope.canExecuteTeam). Diğer satırlarda null → yazılmaz (yanıt bugünküyle aynı).
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean sharedAccess;
+
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean canCheck;
+
     // ── Bildirim grubunun ADI (2026-09-28) — yalnız okuma uçları (listInventory / by-domain) doldurur; DB'de tutulmaz.
     // Yalnız grup GERÇEKTEN uygulanıyorsa (aktif + kaydın takımına ait — NotificationGroupService.overrideFor ile aynı
     // koşul) VE çağıran grubu okuyabiliyorsa (notification.groups/view + takım görüş kapsamı — grup ucunun kapısı) yazılır.
