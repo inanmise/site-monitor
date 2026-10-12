@@ -46,6 +46,7 @@ class ExecutiveSummaryControllerTest {
         c = new ExecutiveSummaryController(service, delivery, settings, perms, audit);
         when(service.parseMonth(any())).thenReturn(YearMonth.of(2026, 9));
         when(service.defaultMonth()).thenReturn(YearMonth.of(2026, 9));
+        when(service.currentMonth()).thenReturn(YearMonth.of(2026, 10));
         when(service.get(any(), anyBoolean(), anyBoolean())).thenReturn(ExecutiveSummarySamples.quiet());
         when(service.months()).thenReturn(List.of());
         when(delivery.status()).thenReturn(Map.of("enabled", false));
@@ -170,5 +171,15 @@ class ExecutiveSummaryControllerTest {
                 .thenReturn(new ExecutiveSummaryDeliveryService.Result("NO_RECIPIENT", "2026-09", 0, 0, null));
         Map<String, Object> body = c.run(Map.of(), s).getBody();
         assertThat(body).containsEntry("success", false).containsEntry("code", "NO_RECIPIENT").containsKey("error");
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("2026-10-12: içinde bulunulan ay elle gönderilemez (400) — tam ay engellenmesin; gönderim çağrılmaz")
+    void runRejectsCurrentMonth() {
+        MockHttpSession s = session("ADMIN", null);
+        when(service.parseMonth(any())).thenReturn(YearMonth.of(2026, 10));
+        assertThatThrownBy(() -> c.run(Map.of("month", "2026-10"), s))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        verify(delivery, never()).sendNow(any(), any());
     }
 }

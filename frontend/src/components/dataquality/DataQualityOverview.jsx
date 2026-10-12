@@ -161,7 +161,7 @@ function LeaderRow({ team, rank, onOpen }) {
         <span aria-hidden="true" className="w-4 shrink-0 text-right text-xs font-semibold tabular-nums text-muted-foreground">{rank}</span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{team.name}</span>
+            <span className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]">{team.name}</span>
             <span className="shrink-0 text-sm font-semibold tabular-nums" style={{ color: bandColor(team.band) }}>{team.score}</span>
           </span>
           <ProgressBar value={team.score} max={100} size="sm" decorative tone={scoreTone(team.score)} />

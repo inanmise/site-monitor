@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react'
+import { ArrowRight, CircleAlert, CircleCheck, CircleDashed, TriangleAlert } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
@@ -25,6 +25,16 @@ const TRIGGER_TONE = {
 export default function TeamGapBadge({ team, gaps = [], actions = {}, partial = false }) {
   const t = useT()
   const [open, setOpen] = useState(false)
+  // Bilinmeyen ne eksik ne eksiksizdir (2026-10-12): sayaçlar / kullanıcı listesi gelmeden (ya da hiç gelmezse) eksik
+  // görünmeyen satır yeşil "Eksiksiz" demez — nötr "henüz tam denetlenmedi".
+  if (gaps.length === 0 && partial) {
+    return (
+      <span data-slot="team-gap-badge" data-state="unknown" title={t('team.gap.statsPending')}
+        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+        <CircleDashed aria-hidden="true" className="size-3.5 shrink-0" />{t('team.gap.unknown')}
+      </span>
+    )
+  }
   if (gaps.length === 0) {
     return (
       <span data-slot="team-gap-badge" data-state="complete"

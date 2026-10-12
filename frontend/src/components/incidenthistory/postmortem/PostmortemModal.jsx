@@ -154,8 +154,14 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
   const replaceAction = (a) => setData((d) => ({ ...d, actions: d.actions.map((x) => (x.id === a.id ? { ...x, ...a } : x)) }))
 
   async function submitAction(body) {
-    setActionBusy('form')
     const isEdit = editing && editing !== 'new'
+    // Düzenlemede gövde yalnız değişen alanları taşır; hiçbir şey değişmediyse istek atılmaz (boş güncelleme, sahte "kaydedildi"
+    // ve gereksiz denetim satırı yok — 2026-10-12). Form kapanır.
+    if (isEdit && body && Object.keys(body).length === 0) {
+      setEditing(null)
+      return null
+    }
+    setActionBusy('form')
     let res = null
     try {
       res = isEdit ? await api.incidents.updateAction(editing.id, body) : await api.incidents.addAction(incident.id, body)

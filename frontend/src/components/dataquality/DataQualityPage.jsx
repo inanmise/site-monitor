@@ -73,7 +73,7 @@ function TopIssues({ issues, compact = false }) {
     <ul className="m-0 flex list-none flex-col gap-1 p-0">
       {list.map((i) => (
         <li key={i.code} className="flex min-w-0 items-baseline gap-2 text-xs">
-          <span className="min-w-0 truncate" title={t(`dq.rule.${i.code}.title`)}>{t(`dq.rule.${i.code}.title`)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{t(`dq.rule.${i.code}.title`)}</span>
           <span className="shrink-0 font-semibold text-destructive tabular-nums">{t('dq.pointsLost', i.points)}</span>
         </li>
       ))}
@@ -94,7 +94,7 @@ function TeamCards({ teams, onOpen }) {
                 <ScoreRing score={tm.score} band={tm.band} size="md"
                   label={hasScore(tm.score) ? t('dq.teamScoreAria', tm.name, tm.score) : t('dq.band.NO_DATA')} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold" title={tm.name}>{tm.name}</div>
+                  <div className="font-semibold [overflow-wrap:anywhere]">{tm.name}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
                     <BandBadge band={tm.band} />
                     <DeltaChip delta={tm.delta_7d} />
@@ -136,7 +136,7 @@ function TeamTable({ teams, onOpen }) {
           {teams.map((tm, i) => (
             <TableRow key={tm.id} data-slot="dq-team-row" data-team-id={String(tm.id)} data-band={bandOf(tm.band)}>
               <TableCell className="text-right text-muted-foreground tabular-nums">{i + 1}</TableCell>
-              <TableCell><span className="block truncate font-medium" title={tm.name}>{tm.name}</span></TableCell>
+              <TableCell className="whitespace-normal"><span className="block font-medium [overflow-wrap:anywhere]">{tm.name}</span></TableCell>
               <TableCell>
                 <ScoreRing score={tm.score} band={tm.band} size="sm"
                   label={hasScore(tm.score) ? t('dq.teamScoreAria', tm.name, tm.score) : t('dq.band.NO_DATA')} />

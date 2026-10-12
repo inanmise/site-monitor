@@ -2222,6 +2222,33 @@ class SchedulerServiceTest {
                 .isInstanceOf(java.util.concurrent.CompletionException.class).hasRootCauseMessage("boom");
     }
 
+    @Test
+    @DisplayName("2026-10-12: kapanış kesmesi gelince sweep beklemeyi bırakır (sonuç işlenmeden döner); kapanış yokken kesme beklemeyi kesmez")
+    void awaitCertCheck_shutdownInterruptStopsWaiting() throws Exception {
+        java.util.concurrent.atomic.AtomicLong progress = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+        scheduler.stopStartupCheck();   // kapanış başladı
+        Thread.currentThread().interrupt();
+        long t0 = System.nanoTime();
+        Map<String, Object> r = scheduler.awaitCertCheck(new java.util.concurrent.CompletableFuture<>(), "a.example.com", progress, 30_000L);
+        assertThat((System.nanoTime() - t0) / 1_000_000L).isLessThan(5_000L);
+        assertThat(r).containsEntry("domain", "a.example.com").containsEntry("status", "error");
+        assertThat(Thread.interrupted()).as("kesme bayrağı geri konur").isTrue();
+    }
+
+    @Test
+    @DisplayName("2026-10-12: ping özet yeniden hesabı tek seferlik — nişan varsa hiçbir şey; PostgreSQL değilse nişan yazılır, özet sorgusu koşmaz")
+    void rebuildPingRollupsOnce_markerGated() {
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(1);
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(0);
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).queryForObject(contains("MIN(checked_at) FROM ping_checks"), eq(String.class));
+        verify(jdbcTemplate).update(startsWith("INSERT INTO schema_patch_markers"), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY), anyString(), eq(0));
+    }
+
     // ── Elle kontrol sweep kararlarını TÜKETMEZ (2026-09-29) ─────────────────────────────────
 
     @Test

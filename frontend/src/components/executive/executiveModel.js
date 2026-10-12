@@ -219,14 +219,26 @@ export function sectionTitle(t, section) {
   return localized(t, keys.title(section.key), section.title || section.key)
 }
 
-/** Hüküm metni. */
-export function verdictText(t, sectionKey, v, lang) {
-  return localized(t, keys.verdict(sectionKey, v.code), v.text, v.params, { lang })
+/**
+ * Yenileme bölümü ESKİ kuralla mı kaydedilmiş (2026-10-12 öncesi gönderilmiş ayın özeti): `on_time_pct` ipucu tek
+ * parametre taşır. O bölümün göstergesi, hükmü ve yöntem notu eski metinlerle gösterilir — yenisi eski değerle çelişirdi.
+ */
+export function legacyRenewals(section) {
+  if (section?.key !== 'renewals') return false
+  const k = (section.kpis || []).find((x) => x?.code === 'on_time_pct')
+  return !!k && (k.hint_params || []).length < 2
 }
 
-/** Not metni (bölüme özgü yoksa ortak `exec.note.<kod>`). */
-export function noteText(t, sectionKey, n, lang) {
-  const specific = keys.note(sectionKey, n.code)
+/** Hüküm metni. Eski kuralın COMPLIANCE hükmü 3 parametre taşır (yenisi 4) → eski metin. */
+export function verdictText(t, sectionKey, v, lang) {
+  const code = sectionKey === 'renewals' && v?.code === 'COMPLIANCE' && (v.params || []).length < 4 ? 'COMPLIANCE_legacy' : v.code
+  return localized(t, keys.verdict(sectionKey, code), v.text, v.params, { lang })
+}
+
+/** Not metni (bölüme özgü yoksa ortak `exec.note.<kod>`). `legacy`: eski kurallı yenileme bölümü → eski yöntem notu. */
+export function noteText(t, sectionKey, n, lang, legacy = false) {
+  const code = legacy && sectionKey === 'renewals' && n.code === 'METHOD' ? 'METHOD_legacy' : n.code
+  const specific = keys.note(sectionKey, code)
   const s = localized(t, specific, null, n.params, { lang })
   if (s != null) return s
   return localized(t, `exec.note.${n.code}`, n.text, n.params, { lang })
@@ -273,6 +285,17 @@ export function monthOptions(months, lang = 'tr', now = new Date()) {
   return list.filter((m) => MONTH_RE.test(m?.month)).map((m) => ({
     value: m.month, label: monthLabel(m.month, lang), current: !!m.current, status: m.status || null,
   }))
+}
+
+/**
+ * Ay bitti mi (Europe/Istanbul) — "Şimdi gönder" yalnız tamamlanmış ay için (2026-10-12; sunucu içinde bulunulan ayı 400 ile
+ * reddeder: gönderilirse ay bitince tam özet "zaten gönderildi" diye gitmezdi).
+ */
+export function isCompletedMonth(month, now = new Date()) {
+  if (!MONTH_RE.test(month || '')) return false
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(now)
+  const cur = `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`
+  return month < cur
 }
 
 function fallbackMonths(now) {

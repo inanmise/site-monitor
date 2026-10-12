@@ -67,6 +67,18 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     confirmMock.mockResolvedValue(true)
   })
 
+  it('2026-10-12: kapsamlı görüntüleyicide listede olmayan atanmış lider "lider yok" sayılmaz (bilinmiyor); global yöneticide sayılır', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS.filter((u) => String(u.id) !== '7') })
+    const { unmount } = render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(chip('groups')?.getAttribute('data-count')).toBe('2'))
+    expect(chip('leader').getAttribute('data-count')).toBe('1')   // yalnız lideri hiç atanmamış Ledger
+    unmount()
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(Number(chip('leader')?.getAttribute('data-count'))).toBeGreaterThan(1))
+  })
+
   it('her eksik bir çip: sayısı o eksikle kaç takım olduğunu gösterir', async () => {
     await mount()
     const counts = Object.fromEntries([...document.querySelectorAll('[data-slot="team-gap-chip"]')]

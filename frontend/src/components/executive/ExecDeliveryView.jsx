@@ -31,10 +31,10 @@ function ListRow({ active, onClick, icon: Icon, title, meta, badge, warn = false
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
-          <span className="min-w-0 truncate">{title}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
           {warn && <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />}
         </span>
-        {meta && <span className="min-w-0 truncate text-xs text-muted-foreground">{meta}</span>}
+        {meta && <span className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{meta}</span>}
       </span>
       {badge}
       <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground lg:hidden" />

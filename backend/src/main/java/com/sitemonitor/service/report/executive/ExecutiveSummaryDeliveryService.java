@@ -270,7 +270,7 @@ public class ExecutiveSummaryDeliveryService {
             log.info("Aylık yönetici özeti kapalı ({}=false) — {} için gönderim yapılmadı", ExecutiveSummarySettings.ENABLED_KEY, month);
             org = new Result("DISABLED", month.toString(), 0, 0, "Yönetici özeti kapalı");
         } else {
-            org = deliver(month, "SCHEDULED", "system", false);
+            org = deliverOrgSafely(month, "SCHEDULED");
         }
         runTeams(month, "SCHEDULED", false);
         pruneTeamReports();
@@ -298,11 +298,21 @@ public class ExecutiveSummaryDeliveryService {
             if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
                 org = new Result("NOTHING_TO_DO", month.toString(), 0, 0, row.getStatus());
             } else {
-                org = deliver(month, "CATCH_UP", "system", false);
+                org = deliverOrgSafely(month, "CATCH_UP");
             }
         }
         if (teamsOn) runTeams(month, "CATCH_UP", true);
         return org;
+    }
+
+    /** Kurum gönderimi — beklenmeyen istisna takım özetlerini DURDURMAZ (2026-10-12; takım döngüsü her koşulda koşar). */
+    private Result deliverOrgSafely(YearMonth month, String trigger) {
+        try {
+            return deliver(month, trigger, "system", false);
+        } catch (RuntimeException e) {
+            log.error("Aylık yönetici özeti {} (kurum, {}) beklenmeyen hata — takım özetleri yine gönderilecek: {}", month, trigger, e.toString(), e);
+            return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, "unexpected: " + e.getClass().getSimpleName());
+        }
     }
 
     /** Elle gönderim (global yönetici, "Şimdi gönder"): kayıt durumundan bağımsız gönderir; yalnız süren gönderim engeller. */
@@ -424,6 +434,10 @@ public class ExecutiveSummaryDeliveryService {
             finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, "Özet hesaplanamadı: " + e.getClass().getSimpleName(), null, null);
             return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, "summary");
         }
+        Map<String, Integer> statuses = new LinkedHashMap<>();
+        int chunks = 0;
+        int recipientCount = 0;
+        try {
         Audience rc = audience.get();
         String subject = ExecutiveSummaryMail.subject(summary);
         if (rc.isEmpty()) {
@@ -440,9 +454,8 @@ public class ExecutiveSummaryDeliveryService {
         List<EmailNotificationService.MailAttachment> attachments = pdf.length > 0
                 ? List.of(new EmailNotificationService.MailAttachment(fileName, pdf, "application/pdf")) : List.of();
 
-        Map<String, Integer> statuses = new LinkedHashMap<>();
         List<String> to = rc.emails();
-        int chunks = 0;
+        recipientCount = to.size();
         for (int i = 0; i < to.size(); i += BCC_CHUNK) {
             List<String> chunk = to.subList(i, Math.min(to.size(), i + BCC_CHUNK));
             chunks++;
@@ -461,6 +474,16 @@ public class ExecutiveSummaryDeliveryService {
         finish(slot, row, finalStatus, to.size(), chunks, detail, subject, summary);
         log.info("Aylık yönetici özeti {} ({} / {}): {} alıcı, {} dilim → {}", month, slot.label(), trigger, to.size(), chunks, detail);
         return new Result(finalStatus, month.toString(), to.size(), chunks, detail);
+        } catch (RuntimeException e) {
+            // Talep edilmiş kayıt SENDING'de KALMAZ (2026-10-12): kalırsa telafi atlar, "Şimdi gönder" sonsuza dek "sürüyor" der.
+            // Gitmiş dilim varsa PARTIAL (yeniden gönderim elle), hiç gitmediyse FAILED (telafi yeniden dener).
+            String st = statuses.isEmpty() ? ExecutiveReportRow.FAILED : finalStatus(statuses);
+            if (ExecutiveReportRow.SENT.equals(st)) st = ExecutiveReportRow.PARTIAL;
+            String why = "Gönderim yarıda kesildi: " + e.getClass().getSimpleName() + (statuses.isEmpty() ? "" : " · " + detail(statuses));
+            log.error("Aylık yönetici özeti {} ({}) gönderimi yarıda kesildi: {}", month, slot.label(), e.toString(), e);
+            finish(slot, row, st, recipientCount, chunks, why, null, summary);
+            return new Result(st, month.toString(), recipientCount, chunks, why);
+        }
     }
 
     static String statusKey(String st) {
@@ -516,7 +539,9 @@ public class ExecutiveSummaryDeliveryService {
             }
         }
         String status = row.getStatus();
-        if (ExecutiveReportRow.SENDING.equals(status)) return null;
+        // SENDING kaydı yalnız ELLE gönderimle ve talep anı STALE_SENDING'den eskiyse devralınır (pod çöktü / yarıda kaldı);
+        // zamanlanmış / telafi yolu SENDING'e hiç dokunmaz (çift gönderim riski) — 2026-10-12.
+        if (ExecutiveReportRow.SENDING.equals(status) && !(force && staleSending(row, summaryService.now()))) return null;
         if (!force && (!RETRYABLE.contains(status) || attempts(row) >= MAX_ATTEMPTS)) return null;
         int prevAttempts = attempts(row);
         if (row.getAttempts() == null) {
@@ -532,6 +557,20 @@ public class ExecutiveSummaryDeliveryService {
         row.setTriggerKind(trigger);
         row.setActor(actor);
         return row;
+    }
+
+    /** Elle devralma eşiği: bu süreden eski SENDING talebi yarıda kalmış sayılır. */
+    static final Duration STALE_SENDING = Duration.ofHours(1);
+
+    static boolean staleSending(ExecutiveReportRow row, Instant now) {
+        String at = row.getClaimedAt();
+        if (at == null || at.isBlank()) return true;
+        try {
+            Instant claimed = java.time.LocalDateTime.parse(at.length() > 19 ? at.substring(0, 19) : at).toInstant(java.time.ZoneOffset.UTC);
+            return Duration.between(claimed, now).compareTo(STALE_SENDING) >= 0;
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     private void finish(Slot slot, ExecutiveReportRow row, String status, int recipients, int chunks, String detail,
