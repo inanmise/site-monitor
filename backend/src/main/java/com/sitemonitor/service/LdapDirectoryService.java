@@ -309,44 +309,50 @@ public class LdapDirectoryService {
         if (s.getBaseDn() == null || s.getBaseDn().isBlank()) throw new IllegalArgumentException("Base DN yapılandırılmamış");
         List<GroupMembers> out = new ArrayList<>();
         if (specs == null || specs.isEmpty()) return out;
-        String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank()) ? s.getUserAttribute() : "sAMAccountName";
-        String groupBase = (s.getGroupSearchBase() != null && !s.getGroupSearchBase().isBlank()) ? s.getGroupSearchBase() : s.getBaseDn();
         try (LdapConn conn = open(s)) {
-            for (String spec : specs) {
-                if (spec == null || spec.isBlank()) { out.add(new GroupMembers(spec, List.of(), java.util.Set.of(), false)); continue; }
-                String trimmed = spec.trim();
-                List<String> dns = new ArrayList<>();
-                if (com.sitemonitor.service.ldap.LdapRoleMapping.isDnSpec(trimmed)) {
-                    dns.add(trimmed);
-                } else {
-                    String cn = trimmed.regionMatches(true, 0, "CN=", 0, 3) ? trimmed.substring(3) : trimmed;
-                    SearchControls gc = new SearchControls();
-                    gc.setSearchScope(SearchControls.SUBTREE_SCOPE);
-                    gc.setCountLimit(GROUP_CAP);
-                    gc.setTimeLimit(READ_TIMEOUT_MS);
-                    gc.setReturningAttributes(new String[]{"distinguishedName"});
-                    NamingEnumeration<SearchResult> gr = conn.ctx.search(groupBase,
-                            "(&(objectClass=group)(cn=" + escapeFilter(cn.trim()) + "))", gc);
-                    try {
-                        while (gr.hasMore() && dns.size() < GROUP_CAP) dns.add(gr.next().getNameInNamespace());
-                    } catch (PartialResultException | javax.naming.SizeLimitExceededException ignored) {
-                        // referans / tavan — bulunanlarla devam
-                    }
-                }
-                java.util.Set<String> users = new java.util.LinkedHashSet<>();
-                boolean truncated = false;
-                for (String dn : dns) {
-                    truncated |= collectMembers(conn.ctx, s.getBaseDn(), dn, userAttr, users);
-                    if (users.size() >= MEMBER_CAP) { truncated = true; break; }
-                }
-                out.add(new GroupMembers(trimmed, dns, users, truncated));
-            }
-            return out;
+            return membersOn(conn.ctx, s, specs);
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
             throw new IllegalStateException(rootMessage(e), e);
         }
+    }
+
+    /** {@link #membersOfGroups} gövdesi, açık bir bağlam üzerinde (test dikişi: bağlam taklit edilebilir). */
+    List<GroupMembers> membersOn(LdapContext ctx, LdapSettings s, List<String> specs) throws Exception {
+        List<GroupMembers> out = new ArrayList<>();
+        String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank()) ? s.getUserAttribute() : "sAMAccountName";
+        String groupBase = (s.getGroupSearchBase() != null && !s.getGroupSearchBase().isBlank()) ? s.getGroupSearchBase() : s.getBaseDn();
+        for (String spec : specs) {
+            if (spec == null || spec.isBlank()) { out.add(new GroupMembers(spec, List.of(), java.util.Set.of(), false)); continue; }
+            String trimmed = spec.trim();
+            List<String> dns = new ArrayList<>();
+            if (com.sitemonitor.service.ldap.LdapRoleMapping.isDnSpec(trimmed)) {
+                dns.add(trimmed);
+            } else {
+                String cn = trimmed.regionMatches(true, 0, "CN=", 0, 3) ? trimmed.substring(3) : trimmed;
+                SearchControls gc = new SearchControls();
+                gc.setSearchScope(SearchControls.SUBTREE_SCOPE);
+                gc.setCountLimit(GROUP_CAP);
+                gc.setTimeLimit(READ_TIMEOUT_MS);
+                gc.setReturningAttributes(new String[]{"distinguishedName"});
+                NamingEnumeration<SearchResult> gr = ctx.search(groupBase,
+                        "(&(objectClass=group)(cn=" + escapeFilter(cn.trim()) + "))", gc);
+                try {
+                    while (gr.hasMore() && dns.size() < GROUP_CAP) dns.add(gr.next().getNameInNamespace());
+                } catch (PartialResultException | javax.naming.SizeLimitExceededException ignored) {
+                    // referans / tavan — bulunanlarla devam
+                }
+            }
+            java.util.Set<String> users = new java.util.LinkedHashSet<>();
+            boolean truncated = false;
+            for (String dn : dns) {
+                truncated |= collectMembers(ctx, s.getBaseDn(), dn, userAttr, users);
+                if (users.size() >= MEMBER_CAP) { truncated = true; break; }
+            }
+            out.add(new GroupMembers(trimmed, dns, users, truncated));
+        }
+        return out;
     }
 
     /** {@code (memberOf=dn)} — sayfalı; tavan ya da sayfa sınırı aşılırsa true. Kullanıcı adları BÜYÜK harfe çevrilir. */
