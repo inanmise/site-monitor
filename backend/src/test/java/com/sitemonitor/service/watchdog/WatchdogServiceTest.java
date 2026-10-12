@@ -178,6 +178,7 @@ class WatchdogServiceTest {
         WatchdogState other = new WatchdogState();
         other.setCheckKey(WatchdogCheck.DATABASE.key());
         other.setStatus("OK");
+        other.setLastResult("OK");
         other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
         table.put(other.getCheckKey(), other);
         assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
@@ -213,6 +214,117 @@ class WatchdogServiceTest {
         table.put(other.getCheckKey(), other);
         assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
         verify(notifier, times(1)).send(anyList(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("inceleme 5: kayıtlı satır OK ama son ölçümü PROBLEM / UNKNOWN ise 'düzeldi' gönderilmez; OK / NA ise gönderilir")
+    void storedHealthyNeedsHealthyLastResult() {
+        WatchdogState s = new WatchdogState();
+        s.setStatus("OK");
+        s.setLastResult("PROBLEM");
+        assertThat(WatchdogService.storedHealthy(s)).isFalse();
+        s.setLastResult("UNKNOWN");
+        assertThat(WatchdogService.storedHealthy(s)).isFalse();
+        s.setLastResult(null);
+        assertThat(WatchdogService.storedHealthy(s)).isFalse();
+        s.setLastResult("NA");
+        assertThat(WatchdogService.storedHealthy(s)).isTrue();
+        s.setLastResult("OK");
+        assertThat(WatchdogService.storedHealthy(s)).isTrue();
+        s.setStatus("PROBLEM");
+        assertThat(WatchdogService.storedHealthy(s)).isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme 6: kesintide duyurulan sorun, kayıtlı satır 'OK ama son ölçüm doğrulanmamış hata' iken budansa da "
+            + "KAYBOLMAZ — satır sağlıklı olunca TEK 'düzeldi' gider; sonraki turlarda tekrar gitmez")
+    @SuppressWarnings("unchecked")
+    void pendingRecoverySurvivesPruning() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        when(probes.run(eq(WatchdogCheck.DATABASE), any())).thenAnswer(i -> new WatchdogProbes.Probe(WatchdogCheck.DATABASE,
+                results.get(WatchdogCheck.DATABASE), "CRITICAL", Map.of("status", "DOWN")));
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        assertThat(svc.evaluate(T0.plusSeconds(60)).alerts()).isEqualTo(1);   // kesintide duyuruldu (bellek)
+        down.set(false);
+        // Öbür pod DB dönünce ilk turunda doğrulanmamış bir hata gördü: durum OK, son ölçüm PROBLEM
+        WatchdogState other = new WatchdogState();
+        other.setCheckKey(WatchdogCheck.DATABASE.key());
+        other.setStatus("OK");
+        other.setLastResult("PROBLEM");
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
+        table.put(other.getCheckKey(), other);
+        assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
+        verify(notifier, times(1)).send(anyList(), anyBoolean());             // henüz "düzeldi" yok (dalgalanma olmasın)
+        // Öbür pod'un sonraki turu sağlıklı: bekleyen düzelme şimdi duyurulur
+        other.setLastResult("OK");
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(220)));
+        assertThat(svc.evaluate(T0.plusSeconds(230), false).outcome()).isEqualTo("RECENT");
+        ArgumentCaptor<List<WatchdogMail.Item>> items = ArgumentCaptor.forClass(List.class);
+        verify(notifier, times(2)).send(items.capture(), eq(false));
+        assertThat(items.getAllValues().get(1)).extracting(WatchdogMail.Item::kind).containsExactly("RECOVER");
+        // tek kez: sonraki turlar ikinci "düzeldi" göndermez
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(290)));
+        svc.evaluate(T0.plusSeconds(300), false);
+        verify(notifier, times(2)).send(anyList(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("inceleme 6: bekleyen düzelme, kayıtlı satır SORUNA dönerse düşer (sorunu artık o satır duyurur ve kapatır)")
+    void pendingRecoveryDroppedWhenStoredBecomesProblem() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        svc.evaluate(T0.plusSeconds(60));
+        down.set(false);
+        WatchdogState other = new WatchdogState();
+        other.setCheckKey(WatchdogCheck.DATABASE.key());
+        other.setStatus("OK");
+        other.setLastResult("UNKNOWN");
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
+        table.put(other.getCheckKey(), other);
+        svc.evaluate(T0.plusSeconds(160), false);
+        other.setStatus("PROBLEM");                                           // öbür pod sorunu doğruladı
+        other.setLastResult("PROBLEM");
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(220)));
+        svc.evaluate(T0.plusSeconds(230), false);
+        other.setStatus("OK");                                                // öbür pod kendisi kapattı (kendi RECOVER'ı)
+        other.setLastResult("OK");
+        other.setNotifiedKind("RECOVER");
+        other.setNotifiedAt(WatchdogTransition.ISO.format(T0.plusSeconds(280)));
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(280)));
+        svc.evaluate(T0.plusSeconds(290), false);
+        verify(notifier, times(1)).send(anyList(), anyBoolean());             // yalnız kesintideki açılış; ikinci "düzeldi" yok
+    }
+
+    @Test
+    @DisplayName("inceleme 4: kayıtlı satır durumsuzsa (sağlıklı olduğu bilinmiyor) kesintide duyurulan sorun için 'düzeldi' GÖNDERİLMEZ")
+    void orphanRecoverNeedsStoredOk() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        svc.evaluate(T0.plusSeconds(60));
+        verify(notifier, times(1)).send(anyList(), anyBoolean());       // kesintide açılış duyuruldu
+        down.set(false);
+        WatchdogState other = new WatchdogState();
+        other.setCheckKey(WatchdogCheck.DATABASE.key());
+        other.setStatus(null);                                            // durum bilinmiyor
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
+        table.put(other.getCheckKey(), other);
+        assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
+        verify(notifier, times(1)).send(anyList(), anyBoolean());       // ikinci (RECOVER) gönderim YOK
     }
 
     @Test

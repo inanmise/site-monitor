@@ -2298,6 +2298,46 @@ class SchedulerServiceTest {
         assertThat(SchedulerService.PING_ROLLUP_REBUILD_LOCK_MINUTES).isGreaterThanOrEqualTo(60);
     }
 
+    @Test
+    @DisplayName("inceleme 4: ping özet yeniden hesabı kalıcı hatada pod başına en çok 24 kez denenir (sonsuz saatlik deneme yok)")
+    void rebuildPingRollupsOnce_attemptCap() throws Exception {
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(0);
+        javax.sql.DataSource broken = dataSource(null);
+        when(jdbcTemplate.getDataSource()).thenReturn(broken);
+        for (int i = 0; i < SchedulerService.PING_ROLLUP_REBUILD_MAX_ATTEMPTS + 3; i++) scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, times(SchedulerService.PING_ROLLUP_REBUILD_MAX_ATTEMPTS)).getDataSource();
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("inceleme 4: yarıda kalan ping özet yeniden hesabı sonraki denemede BAŞTAN değil kaldığı haftalık dilimden sürer")
+    void rebuildPingRollupsOnce_resumesFromFailedSlice() throws Exception {
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(0);
+        javax.sql.DataSource pg = dataSource("PostgreSQL");
+        when(jdbcTemplate.getDataSource()).thenReturn(pg);
+        String oldest = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(20).toString() + "T03:00:00";
+        org.mockito.Mockito.lenient().when(jdbcTemplate.queryForObject(contains("MIN(checked_at) FROM ping_checks"), eq(String.class))).thenReturn(oldest);
+        List<String> froms = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.lenient().when(jdbcTemplate.update(contains("INSERT INTO monitor_check_"), anyString(), anyString())).thenAnswer(inv -> {
+            froms.add(inv.getArgument(1));
+            if (calls.incrementAndGet() == 3) throw new org.springframework.dao.QueryTimeoutException("zaman aşımı");   // 2. dilim günlük
+            return 1;
+        });
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+        assertThat(froms).hasSize(3);
+        String failedSlice = froms.get(2);
+        assertThat(failedSlice).isNotEqualTo(froms.get(0));
+        froms.clear();
+        scheduler.rebuildPingRollupsOnce();
+        assertThat(froms.get(0)).isEqualTo(failedSlice);            // ilk dilim yinelenmedi
+        assertThat(froms).doesNotContain(java.time.LocalDate.parse(oldest.substring(0, 10)).plusDays(1) + "T00:00:00");
+        verify(jdbcTemplate).update(startsWith("INSERT INTO schema_patch_markers"), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY), anyString(), anyInt());
+    }
+
     // ── Elle kontrol sweep kararlarını TÜKETMEZ (2026-09-29) ─────────────────────────────────
 
     @Test

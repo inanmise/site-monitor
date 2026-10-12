@@ -86,7 +86,7 @@ export default function ManualCertsPage({ systemRole, myTeams = NO_TEAMS, global
     if (!canManage) { setTeams(myTeams); return undefined }
     let alive = true
     // + erişim paylaşımıyla düzenlenen takımlar (2026-10-12): /admin/teams görüş kapsamıdır, paylaşan takım orada yok
-    Promise.resolve(api.admin?.getTeams?.()).then((r) => { if (alive && r?.success) setTeams(mergeWriteTeams(r.data || [], myTeams)) }).catch(() => {})
+    Promise.resolve(api.admin?.getTeams?.()).then((r) => { if (alive && r?.success) setTeams(mergeWriteTeams(r.data || [], myTeams, { flagExisting: true })) }).catch(() => {})
     return () => { alive = false }
   }, [canManage, myTeams])
 

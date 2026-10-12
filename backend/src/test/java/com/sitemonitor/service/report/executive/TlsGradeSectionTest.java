@@ -199,18 +199,17 @@ class TlsGradeSectionTest {
     }
 
     @Test
-    @DisplayName("bağımlılık hatası özeti düşürmez: kapsama / günlük okunamazsa bölüm yine üretilir (not + tablo yok)")
+    @DisplayName("kapsama (bilgi) okunamazsa bölüm üretilir; düşüş günlüğü okunamazsa bölüm HATA verir — eksik günlükle OK hükmü yok (inceleme 5)")
     void dependencyFailureIsIsolated() {
         CertificateDto graded = cert("a.com", 1L, 3, null, null);
         graded.setTlsGrade("A");
         when(service.coverageForDomains(any())).thenThrow(new IllegalStateException("tablo yok"));
-        when(service.dropsBetween(anyString(), anyString(), anyInt())).thenThrow(new IllegalStateException("tablo yok"));
+        when(service.dropsBetween(anyString(), anyString(), anyInt())).thenReturn(new TlsGradeService.DropWindow(0, List.of()));
         SectionResult r = section.compute(ctx(SEP, NOW, 99.9, 30, List.of(graded), Map.of(), Map.of()));
         assertThat(r.status()).isEqualTo(SectionResult.OK);
-        assertThat(r.notes()).extracting(SectionResult.Note::code).contains("DROPS_UNAVAILABLE");
-        assertThat(r.tables()).extracting(SectionResult.Table::code).doesNotContain("drops");
-        assertThat(kpi(r, "drops").value()).isNull();
-        assertThat(verdictCodes(r)).doesNotContain("DROPS", "NO_DROPS");
+        when(service.dropsBetween(anyString(), anyString(), anyInt())).thenThrow(new IllegalStateException("tablo yok"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> section.compute(ctx(SEP, NOW, 99.9, 30, List.of(graded), Map.of(), Map.of())))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("değişim günlüğü");
     }
 
     @Test

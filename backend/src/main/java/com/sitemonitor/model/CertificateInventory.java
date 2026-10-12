@@ -225,6 +225,12 @@ public class CertificateInventory implements NocTarget {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean canCheck;
 
+    // ── Yalnız paylaşımla YAZABİLİYOR (inceleme 5): {@code routing_locked=true} → formda takım / bildirim grubu / 7/24 /
+    // kademe kilitli. Diğer satırlarda null → yazılmaz. İstek gövdesinden gelen değer hiçbir yerde okunmaz.
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean routingLocked;
+
     // ── Bildirim grubunun ADI (2026-09-28) — yalnız okuma uçları (listInventory / by-domain) doldurur; DB'de tutulmaz.
     // Yalnız grup GERÇEKTEN uygulanıyorsa (aktif + kaydın takımına ait — NotificationGroupService.overrideFor ile aynı
     // koşul) VE çağıran grubu okuyabiliyorsa (notification.groups/view + takım görüş kapsamı — grup ucunun kapısı) yazılır.

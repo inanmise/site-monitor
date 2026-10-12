@@ -116,7 +116,7 @@ export default function ManualCertList({ rows, onOpen, onRenew, onDownload, onEd
                     <dd className="m-0 min-w-0"><VersionCell row={r} t={t} /></dd>
                   </dl>
                   <div className="flex flex-wrap items-center gap-2 border-t pt-2.5">
-                    {ro && <ReadOnlyBadge compact teamId={r.team_id} teamName={r.team_name} />}
+                    {ro && r.shared_access !== true && <ReadOnlyBadge compact teamId={r.team_id} teamName={r.team_name} />}
                     <Button type="button" variant="outline" size="sm" data-slot="mcert-open" className="ml-auto h-10" onClick={() => onOpen(r)}
                       aria-label={t('a11y.rowAction', r.domain, t('mcert.act.open'))}>
                       <Eye aria-hidden="true" />{t('mcert.act.open')}
@@ -160,7 +160,8 @@ export default function ManualCertList({ rows, onOpen, onRenew, onDownload, onEd
                         <strong className="min-w-0 break-all">{r.domain}</strong>
                         <ManualCertBadge version={r.current_version?.version} uploadedAt={r.current_version?.uploaded_at} rowLabel={r.domain} />
                         <CertTierBadge tier={r.tier} />
-                        {r.can_manage === false && <ReadOnlyBadge compact teamId={r.team_id} teamName={r.team_name} />}
+                        {/* Paylaşımla görülen satır (2026-10-12) "başka takımın salt okunur kaydı" değildir: eylemleri satır bayraklarından */}
+                        {r.can_manage === false && r.shared_access !== true && <ReadOnlyBadge compact teamId={r.team_id} teamName={r.team_name} />}
                       </span>
                       {r.subject && <span className="mt-0.5 block truncate text-xs text-muted-foreground" title={r.subject}>{r.subject}</span>}
                       {/* Veren sütunu yalnız çok geniş ekranda; altında satırın içinde (eylem sütunu kaydırmaya kaçmasın) */}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { ChevronDown, Download, Users, Upload, Plus, PlayCircle, RefreshCw, Globe, Building2, Clock, X, Trash2, Power, PowerOff, UserPlus, CheckSquare, Square, AlertTriangle, Inbox, FileUp } from 'lucide-react'
 import AddCertSplitButton from '../manualcert/AddCertSplitButton.jsx'
-import { mergeWriteTeams } from '../../hooks/useMonitorTeamPick.js'
+import { isRoutingLockedRow, mergeWriteTeams } from '../../hooks/useMonitorTeamPick.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { filterDeleted, markDeleted, markManyDeleted, unmarkDeleted, useDeletedMarksVersion } from '../../utils/recentlyDeleted.js'
 import { INVENTORY_RENAMED_EVENT, renameRow } from '../../utils/inventoryEvent.js'
@@ -224,7 +224,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     // Tek takım modeli: ekleyebilen/düzenleyebilen herkes (admin + team-admin) takım
     // listesine ihtiyaç duyar; team-admin'e backend yalnız kapsamındaki takımları döner.
     // + erişim paylaşımıyla düzenlenen takımlar (2026-10-12): /admin/teams görüş kapsamıdır, paylaşan takım orada yok
-    if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(mergeWriteTeams(res.data, teamsProp)) })
+    if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(mergeWriteTeams(res.data, teamsProp, { flagExisting: true })) })
     api.notificationGroups.list().then(res => { if (res?.success) setNotifGroups(res.data?.groups ?? res.data ?? []) }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- yalnız ilk açılışta (rol oturum boyunca değişmez)
   // Liste kapsamla yeniden çekilir (ilk yükleme dâhil); seçim kapsam değişince temizlenir (aşağıda setScope).
@@ -340,7 +340,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [selected, setSelected] = useState(() => new Set())
   const [contactsModal, setContactsModal] = useState(null)   // E5: toplu sorumlu ekip atama
   // Yabancı (salt okunur) satır toplu işleme SEÇİLEMEZ — sayaçlar ve "tümünü seç" onları atlar.
-  const selectableItems = useMemo(() => visibleItems.filter(i => rowManageable(i)), [visibleItems, rowManageable])
+  // Toplu seçim (2026-10-12): yalnız paylaşımla görülen satır SEÇİLEMEZ — toplu etkinleştir / pasife al / kontak takım
+  // yönetimidir ve sunucu o satırları atlar ("kısmen yapıldı"); tekil eylemler kartta kalır.
+  // inceleme 5: yalnız paylaşımla YAZILABİLEN satır da (`routing_locked`) — toplu takım / 7/24 / kontak işlemleri paylaşılmaz
+  const rowSelectable = useCallback((r) => rowManageable(r) && !isRoutingLockedRow(r), [rowManageable])
+  const selectableItems = useMemo(() => visibleItems.filter(i => rowSelectable(i)), [visibleItems, rowSelectable])
   const setScope = (v) => { const n = normalizeScope(v); setScopeRaw(n); writeView({ scope: n }); setSelected(new Set()) }
   // Sekme ZATEN açıkken gelen derin bağlantı (Ek 3/4, 2026-09-28): App aynı sekmede paramları adrese yazıp `sm:tab-params`
   // yayar (sekme yeniden bağlanmaz). `domain` yalnız mount'ta okunuyordu → mükerrer alan adı bandının penceresindeki
@@ -646,7 +650,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   // Satır/kart eylemleri — tablo ve telefon kartı AYNI sözleşme.
   const rowProps = {
-    canManage, canEditRow, canManageRow: rowManageable, isAdmin, teamsCount: teams.length, teamMap, selected, onToggle: toggleSel,
+    canManage, canEditRow, canManageRow: rowManageable, canSelectRow: rowSelectable, isAdmin, teamsCount: teams.length, teamMap, selected, onToggle: toggleSel,
     onShow: (r) => setShowItem(r), onEdit: openEdit, onDuplicate: openDuplicate, onTransfer: openTransfer,
     onDelete: del,
     onDiagnose: (r) => setDiag({ domain: r.domain, port: r.port || 443 }),
@@ -804,7 +808,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           canWrite={canAdd}
           // R4: düzenlemede takım aktarımı yalnız rol ADMIN'de — sunucu TEAM_ADMIN/USER için takımı sabitler.
           // Paylaşımla görülen kayıtta takım aktarımı yok (2026-10-12) — sunucu takımı sabitler
-          canMoveTeam={isAdmin && formModal.record?.shared_access !== true}
+          canMoveTeam={isAdmin && !isRoutingLockedRow(formModal.record)}
           canOpenSettings={globalAdmin}   // 7/24 alanı: "aktif grup yok" → Ayarlar bağlantısı YALNIZ global yöneticiye (grup tanımlayan o)
           onClose={() => setFormModal(null)}
           onSaved={(_res, domain, opts) => { setFormModal(null); afterFormSaved(domain, opts); onInventoryChange?.() }}

@@ -19,12 +19,12 @@ vi.mock('../api/client', () => ({
   }),
 }))
 
-const perm = vi.hoisted(() => ({ value: {}, loaded: true }))
+const perm = vi.hoisted(() => ({ value: {}, loaded: true, failed: false, refresh: () => {} }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({
     perms: perm.value,
     canView: (r) => !!perm.value[r]?.view,
-    canEdit: () => false, canExecute: () => false, refresh: () => {}, loaded: perm.loaded,
+    canEdit: () => false, canExecute: () => false, refresh: perm.refresh, loaded: perm.loaded, failed: perm.failed,
   }),
   PermissionsProvider: ({ children }) => children,
 }))
@@ -63,6 +63,8 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/?tab=mydash')
   perm.value = ALL_PERMS
   perm.loaded = true
+  perm.failed = false
+  perm.refresh = vi.fn()
   api.me.openAlerts.mockResolvedValue({ success: true, data: { total: 3, tabs: {
     http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [
       { id: 7, domain: 'odeme.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: '2026-10-11T08:00:00', team_name: LONG_TEAM }] },
@@ -116,9 +118,29 @@ describe('MyDashPage', () => {
   it('2026-10-12: yetkiler gelmeden düzenleme kapalı, kayıt yapılmaz, "pano boş" denmez', async () => {
     perm.value = {}
     perm.loaded = false
-    render(<Shell><MyDashPage /></Shell>)
+    // inceleme 4: yalnız YETKİ İSTEYEN kutulardan oluşan kayıtlı düzen — yükleniyor dalı gerçekten sınanır (varsayılan
+    // düzen yetkisiz kutular içerdiği için eski test bu dala hiç girmiyordu)
+    render(<Shell initial={{ v: 1, widgets: [{ id: 'alerts-open', type: 'alerts_open', size: 'md' }, { id: 'oncall', type: 'oncall', size: 'sm' }] }}><MyDashPage /></Shell>)
     expect(screen.queryByText(EN['mydash.emptyTitle'])).toBeNull()
+    expect(screen.getByText(EN['mydash.loading'])).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="mydash-perms-failed"]')).toBeNull()
     expect(screen.getByRole('button', { name: EN['mydash.edit'] })).toBeDisabled()
+    expect(screen.getByRole('button', { name: EN['mydash.edit'] })).toHaveAttribute('title', EN['mydash.editUnavailablePerms'])
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('inceleme 4: yetkiler OKUNAMADIYSA sonsuz "yükleniyor" yerine hata + yeniden dene; pano boş denmez, kayıt yapılmaz', async () => {
+    perm.value = {}
+    perm.loaded = false
+    perm.failed = true
+    render(<Shell initial={{ v: 1, widgets: [{ id: 'alerts-open', type: 'alerts_open', size: 'md' }, { id: 'oncall', type: 'oncall', size: 'sm' }] }}><MyDashPage /></Shell>)
+    const box = document.querySelector('[data-slot="mydash-perms-failed"]')
+    expect(box).not.toBeNull()
+    expect(box).toHaveTextContent(EN['mydash.permsFailed'])
+    expect(screen.queryByText(EN['mydash.loading'])).toBeNull()
+    expect(screen.queryByText(EN['mydash.emptyTitle'])).toBeNull()
+    fireEvent.click(within(box).getByRole('button', { name: EN['hist.retry'] }))
+    await waitFor(() => expect(perm.refresh).toHaveBeenCalled())   // yeniden dene eşzamansız (meşgul durumu)
     expect(setSpy).not.toHaveBeenCalled()
   })
 
@@ -255,5 +277,42 @@ describe('MyDashPage', () => {
     fireEvent.click(exit)
     await waitFor(() => expect(document.querySelector('[data-slot="mydash-tv"]')).toBeNull())
     expect(isTvModeActive()).toBe(false)
+  })
+
+  it('inceleme 5: yetkiler okunamadıysa TV her an görünen bir şeritle söyler (yetkili kutular eksik) ve yeniden dener', async () => {
+    perm.value = {}
+    perm.loaded = false
+    perm.failed = true
+    window.history.replaceState({}, '', '/?tab=mydash&md_tv=1')
+    render(<Shell initial={{ v: 1, widgets: [{ id: 'activity', type: 'activity', size: 'md' }, { id: 'alerts-open', type: 'alerts_open', size: 'md' }] }}><MyDashPage /></Shell>)
+    const strip = await waitFor(() => { const s = document.querySelector('[data-slot="mydash-tv-perms"]'); expect(s).not.toBeNull(); return s })
+    expect(strip).toHaveTextContent(EN['mydash.tvPermsFailed'])
+    fireEvent.click(within(strip).getByRole('button', { name: EN['hist.retry'] }))
+    await waitFor(() => expect(perm.refresh).toHaveBeenCalled())
+  })
+
+  it('inceleme 4: üstte başka pencere odaktayken TV Tab / Escape tuşlarını almaz (odak geri çekilmez, TV kapanmaz)', async () => {
+    window.history.replaceState({}, '', '/?tab=mydash&md_tv=1')
+    render(<Shell><MyDashPage /></Shell>)
+    await screen.findByRole('button', { name: /^(Exit|Çık)$/ })
+    // TV'nin üstüne açılmış başka bir pencere (ör. bakım geri sayımı) — TV kökünün dışında
+    const other = document.createElement('div')
+    other.setAttribute('role', 'alertdialog')
+    const inside = document.createElement('button')
+    inside.textContent = 'Tamam'
+    other.appendChild(inside)
+    document.body.appendChild(other)
+    try {
+      inside.focus()
+      act(() => { fireEvent.keyDown(inside, { key: 'Tab' }) })
+      expect(document.activeElement).toBe(inside)                     // odak TV denetimlerine çekilmedi
+      act(() => { fireEvent.keyDown(inside, { key: 'Escape' }) })
+      expect(document.querySelector('[data-slot="mydash-tv"]')).not.toBeNull()   // TV kapanmadı
+    } finally {
+      other.remove()
+    }
+    // TV'nin kendi içinde Escape yine kapatır
+    act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
+    await waitFor(() => expect(document.querySelector('[data-slot="mydash-tv"]')).toBeNull())
   })
 })

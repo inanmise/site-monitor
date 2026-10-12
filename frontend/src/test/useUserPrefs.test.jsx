@@ -320,9 +320,11 @@ describe('motor — yenileme güvenliği (2026-10-12)', () => {
     localStorage.setItem('site-monitor-theme', 'light')
     const engine = createPrefsEngine({ storage: localStorage, debounceMs: 10, save: () => Promise.resolve({ success: true, prefs: {} }) })
     engine.hydrate({ local: { 'site-monitor-theme': 'light', 'sm.pageSize.dashboard-certs': '25' } }, { migrate: false })
-    // başka sekme temayı değiştirdi (bu sekmenin izleme kancasından geçmez — storage olayı)
-    const ORIG = Storage.prototype.setItem
-    ORIG.call(localStorage, 'site-monitor-theme', 'dark')
+    // başka sekme temayı değiştirdi (bu sekmenin izleme kancasından geçmez — storage olayı). inceleme 4: motor kurulmadan
+    // ÖNCE yakalanmış özgün setItem (ORIG_SET) — eski test kancalanmış sarmalayıcıyı çağırıp anahtarı "bu sekmenin kirli
+    // yazımı" yapıyordu; hydrate onu kirli diye koruduğu için gerçek sekmeler arası yol hiç sınanmıyordu.
+    expect(Storage.prototype.setItem).not.toBe(ORIG_SET)   // motor kancası takılı
+    ORIG_SET.call(localStorage, 'site-monitor-theme', 'dark')
     // eski belge (tema hâlâ light) + sunucuda değişen sayfa boyu
     engine.hydrate({ local: { 'site-monitor-theme': 'light', 'sm.pageSize.dashboard-certs': '50' } }, { migrate: false, refresh: true })
     expect(localStorage.getItem('site-monitor-theme')).toBe('dark')

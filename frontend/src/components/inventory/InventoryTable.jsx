@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { expiredAgoText, expiresInText } from '../../utils/dayPhrases.js'
 import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
 import { isManualCert } from '../manualcert/manualCertModel.js'
+import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
 
 export const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
@@ -235,7 +236,8 @@ export function rowMenuItems({ r, t, ro, isAdmin, canManage, canEditRow, teamsCo
     // Düzenle/Kopyala satır bazlı (2026-09-18): USER kendi takımının kaydını düzenler; silme canManage'de kalır
     { label: t('inv.edit'), onClick: () => onEdit(r), hidden: !canEditRow(r) },
     { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canEditRow(r) || isManualCert(r) },
-    { label: t('inv.transfer'), onClick: () => onTransfer(r), hidden: !(isAdmin && teamsCount > 1) },
+    // Devret: paylaşımla yazılan kayıtta YOK (inceleme 5) — takım değişimi paylaşılmaz, sunucu reddederdi
+    { label: t('inv.transfer'), onClick: () => onTransfer(r), hidden: !(isAdmin && teamsCount > 1) || isRoutingLockedRow(r) },
     // Silme: sunucunun satır bayrağı (can_delete — takımı yöneten ya da erişim paylaşımında "Tam", 2026-10-12); eski yanıtta rol
     { label: t('inv.delete'), danger: true, onClick: () => onDelete(r.id), hidden: !(r?.can_delete === true || (r?.can_delete == null && canManage)) },
   ]
@@ -263,6 +265,7 @@ const stop = (e) => e.stopPropagation()
 export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   canManageRow = () => true,   // org geneli görünürlük (2026-09-26): false → başka takımın kaydı, HER değiştiren kontrol gizli + salt okunur rozet
+  canSelectRow,                // toplu seçime girer mi (2026-10-12: paylaşımla görülen satır girmez); verilmezse canManageRow
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick,
   filters = null, onFilters = null, allRows = [], showFilters = false, onClearFilters = null,   // kolon süzgeç satırı (2026-09-22)
   platformNames = {},   // kod → ad (Ayarlar → Platformlar); yoksa kod gösterilir
@@ -320,7 +323,7 @@ export default function InventoryTable({
           <TableRow className="hover:bg-transparent">
             {canManage && (
               <TableHead className={cn(headCls, 'w-7')}>
-                <Checkbox checked={allOnPage} onCheckedChange={onToggleAll} disabled={rows.filter((r) => canManageRow(r)).length === 0}
+                <Checkbox checked={allOnPage} onCheckedChange={onToggleAll} disabled={rows.filter((r) => (canSelectRow || canManageRow)(r)).length === 0}
                   aria-label={t('inv.bulkSelectAll')} />
               </TableHead>
             )}
@@ -351,6 +354,8 @@ export default function InventoryTable({
           {rows.map((r) => {
             const ro = !canManageRow(r)              // başka takımın kaydı: salt okunur satır
             const editable = !ro && canEditRow(r)
+            // Kademe yönlendirmedir (inceleme 6): paylaşımla yazılan satırda satır içi kademe düzenlemesi yok — sunucu 403 verirdi
+            const tierEditable = editable && !isRoutingLockedRow(r)
             const dexp = r.domain_expiry ? -daysBetween(r.domain_expiry) : null
             const dim = cn(cellCls, 'text-[.88em] text-muted-foreground')
             const port = r.port ?? 443
@@ -369,7 +374,7 @@ export default function InventoryTable({
                 className="group/row cursor-pointer outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset">
                 {canManage && (
                   <TableCell className={cellCls} onClick={stop}>
-                    {!ro && <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} aria-label={t('bulk.selectOneFor', r.domain)} />}
+                    {!ro && (canSelectRow || canManageRow)(r) && <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} aria-label={t('bulk.selectOneFor', r.domain)} />}
                   </TableCell>
                 )}
                 <TableCell className={cn(cellCls, STICKY, 'max-w-[26rem]')}>
@@ -398,12 +403,12 @@ export default function InventoryTable({
                 </TableCell>
                 {show('port') && <TableCell className={cn(cellCls, 'tabular-nums')}>{port}</TableCell>}
                 {show('tier') && (
-                  <TableCell className={cellCls} onClick={stop} onDoubleClick={() => editable && setEditing({ id: r.id, field: 'tier' })}>
+                  <TableCell className={cellCls} onClick={stop} onDoubleClick={() => tierEditable && setEditing({ id: r.id, field: 'tier' })}>
                     {editing?.id === r.id && editing.field === 'tier' ? inlineTier(r) : (
                       <Button type="button" variant="ghost" size="xs" data-inv-tier-edit="true"
                         className="h-auto rounded p-0 text-muted-foreground hover:bg-transparent disabled:opacity-100 has-[>svg]:px-0"
-                        disabled={!editable} onClick={() => setEditing({ id: r.id, field: 'tier' })}
-                        title={editable ? t('inv.inlineEditTip') : undefined}
+                        disabled={!tierEditable} onClick={() => setEditing({ id: r.id, field: 'tier' })}
+                        title={tierEditable ? t('inv.inlineEditTip') : undefined}
                         aria-label={t('a11y.rowAction', r.domain, `${t('inv.colTier')}: ${r.tier ? `T${r.tier}` : t('tier.unclassified')}`)}>
                         {r.tier ? <TierBadge tier={r.tier} /> : '—'}
                       </Button>

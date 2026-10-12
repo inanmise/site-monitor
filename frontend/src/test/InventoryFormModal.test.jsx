@@ -105,6 +105,70 @@ describe('InventoryFormModal', () => {
     expect(api.admin.updateInventory).not.toHaveBeenCalled()
   })
 
+  it('inceleme 4: yalnız paylaşımla düzenlenen kayıt — takım, bildirim grubu ve 7/24 KİLİTLİ (çağıran canMoveTeam verse de) + neden notu', async () => {
+    const { unmount } = render(<InventoryFormModal mode="edit" record={{ ...RECORD, shared_access: true, notification_group_id: 3 }}
+      teams={TEAMS} canMoveTeam onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).not.toBeNull()
+    expect(screen.getByRole('combobox', { name: /^(Takım|Team)/ })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /notification group|bildirim grubu/i })).toBeDisabled()
+    const noc = document.querySelector('[data-slot="noc-notify-field"]')
+    expect(noc.querySelector('[role="switch"]')).toBeDisabled()
+    // diğer alanlar düzenlenebilir: kayıt yine kaydedilir — kilitli alanlar KAYITTAKİ değerle gider (sunucu eşitse düşürür)
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ notification_group_id: 3, tier: 2, team_id: 1 })
+    unmount()
+    // paylaşımsız kayıtta (aynı çağıran) kilit yok
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} canMoveTeam onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).toBeNull()
+    expect(screen.getByRole('combobox', { name: /^(Takım|Team)/ })).not.toBeDisabled()
+  })
+
+  it('inceleme 5: routing_locked (kendi kapsamıyla görüp yalnız paylaşımla yazan) — takım, kademe, grup, 7/24 kilitli', () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, routing_locked: true }} teams={TEAMS} canMoveTeam
+      onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).not.toBeNull()
+    expect(screen.getByRole('combobox', { name: /^(Takım|Team)/ })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /Kritiklik|Criticality/ })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /notification group|bildirim grubu/i })).toBeDisabled()
+  })
+
+  it('inceleme 5: paylaşımla YAZILAN takıma kopyala → kademe / grup / 7/24 varsayılana çekilir ve kilitlenir; kendi takımında kopya aynen', async () => {
+    const teams = [...TEAMS, { id: 7, name: 'Paylaşan Takım', grant: true }]
+    const src = { ...RECORD, team_id: 7, tier: 1, notification_group_id: 5, noc_notify: true, noc_group_ids: '3' }
+    const { unmount } = render(<InventoryFormModal mode="duplicate" record={src} teams={teams} onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).not.toBeNull()
+    expect(screen.getByRole('combobox', { name: /Kritiklik|Criticality/ })).toBeDisabled()
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'b.example.com' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.addInventory).toHaveBeenCalled())
+    const payload = api.admin.addInventory.mock.calls[0][0]
+    expect(payload).toMatchObject({ team_id: 7, tier: null, notification_group_id: null, noc_notify: false })
+    expect(payload.noc_group_ids ?? []).toEqual([])
+    unmount()
+    api.admin.addInventory.mockClear()
+    // kendi takımına kopya: kilit yok, kademe kopyalanır
+    render(<InventoryFormModal mode="duplicate" record={{ ...src, team_id: 1 }} teams={teams} onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).toBeNull()
+    expect(screen.getByRole('combobox', { name: /Kritiklik|Criticality/ })).not.toBeDisabled()
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'c.example.com' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.addInventory).toHaveBeenCalled())
+    expect(api.admin.addInventory.mock.calls[0][0]).toMatchObject({ team_id: 1, tier: 1, notification_group_id: 5, noc_notify: true })
+  })
+
+  it('inceleme 6: pano kartından kopyala — takım listesi paylaşım işaretini taşımasa da kaynak routing_locked ise kilitli, takım adıyla görünür', async () => {
+    const src = { ...RECORD, team_id: 7, team_name: 'Paylaşan Takım', routing_locked: true, tier: 1, notification_group_id: 5 }
+    render(<InventoryFormModal mode="duplicate" record={src} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('[data-slot="inv-routing-locked"]')).not.toBeNull()
+    expect(screen.getByRole('combobox', { name: /Kritiklik|Criticality/ })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /^(Takım|Team)/ })).toHaveTextContent('Paylaşan Takım')
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'd.example.com' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.addInventory).toHaveBeenCalled())
+    expect(api.admin.addInventory.mock.calls[0][0]).toMatchObject({ team_id: 7, tier: null, notification_group_id: null })
+  })
+
   it('edit: kaydet → updateInventory(record.id) çağrılır, addInventory ÇAĞRILMAZ', async () => {
     render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
     fireEvent.click(saveBtn())

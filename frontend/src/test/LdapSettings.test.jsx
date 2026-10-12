@@ -30,6 +30,26 @@ describe('LdapSettings — sertifika doğrulama uyarısı', () => {
     api.admin.getLdapSettings.mockResolvedValue({ success: true, data: base, secret_key_set: true })
   })
 
+  it('inceleme 4: yalnız boşluk yazılmış parola DEĞİŞİKLİK değildir — kayıt çubuğu etkinleşmez, istek gitmez', async () => {
+    render(<LdapSettings />)
+    await screen.findByDisplayValue('ldap.example.com')
+    const pw = document.querySelector('input[type="password"][autocomplete="new-password"]')
+    fireEvent.change(pw, { target: { value: '   ' } })
+    const save = screen.queryByRole('button', { name: /^(Save|Kaydet)/ })
+    if (save) {
+      expect(save).toBeDisabled()
+      fireEvent.click(save)
+    }
+    expect(api.admin.saveLdapSettings).not.toHaveBeenCalled()
+    // gerçek parola yazılınca etkinleşir ve yalnız parola gider
+    api.admin.saveLdapSettings.mockResolvedValueOnce({ success: true, data: base })
+    fireEvent.change(pw, { target: { value: 'yeni-parola' } })
+    const enabled = await screen.findByRole('button', { name: /^(Save|Kaydet)/ })
+    await waitFor(() => expect(enabled).not.toBeDisabled())
+    fireEvent.click(enabled)
+    await waitFor(() => expect(api.admin.saveLdapSettings).toHaveBeenCalledWith({ bind_password: 'yeni-parola' }))
+  })
+
   it('doğrulama açıkken uyarı ve "CA ile doğrulayarak test et" butonu YOK', async () => {
     render(<LdapSettings />)
     await waitFor(() => expect(api.admin.getLdapSettings).toHaveBeenCalled())

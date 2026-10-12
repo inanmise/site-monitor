@@ -225,6 +225,18 @@ describe('ChangeHistoryTab', () => {
     expect(screen.queryByRole('button', { name: /chg.restoreAction/ })).toBeNull()
   })
 
+  it('inceleme 5: paylaşımla geri yüklemede atlanan bildirim ayarları SESSİZ geçilmez — sayısıyla bilgi bildirimi', async () => {
+    api.monitoring.restoreChange.mockResolvedValue({
+      success: true, data: { restored: true, fields: ['port'], skipped_masked: [], skipped_routing: ['alertLevel', 'nocNotify'] },
+    })
+    draw({ canManage: true })
+    fireEvent.click(await screen.findByText('Oluşturuldu'))
+    fireEvent.click(await screen.findByRole('button', { name: /chg.restoreAction/ }))
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'eski port geri alındı' } })
+    fireEvent.click(screen.getAllByRole('button', { name: /chg.restoreAction/ }).at(-1))
+    expect(await screen.findByText('chg.restoreRouting:2')).toBeInTheDocument()
+  })
+
   it('geri döndürme GEREKÇE ister ve notu uca iletir, sonra listeyi tazeler', async () => {
     api.monitoring.restoreChange.mockResolvedValue({
       success: true, data: { restored: true, fields: ['port', 'active'], skipped_masked: [] },

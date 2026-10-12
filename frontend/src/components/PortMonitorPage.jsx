@@ -51,7 +51,7 @@ import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/rec
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -279,6 +279,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
   function cancelTest() { testSeq.current++; setTesting(false) }
+
+  // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
+  // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
+  const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
     cancelTest()
@@ -662,7 +667,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         <PortProxyNotes t={t} mode={form.useProxy} protocol={form.protocol} port={form.port} info={proxyInfo} />
         <FormField label={t('port.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} {...formTeamSelect(modal, teamSelectOptions, pickTeams)} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
         </FormField>
         <FormField label={t('port.group')} required {...fe.fieldProps('groupName')}>
@@ -672,14 +677,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} />
           )}
         </FormField>
-        <NotifyChannels
+        <NotifyChannels locked={routingLock}
           notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
           alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
           onChange={patch => setForm(f => ({ ...f, ...patch }))}
           teamLabel={selectedTeamLabel} teamId={form.teamId}
           groupId={form.notificationGroupId}
           onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-        <NocNotifyField type="PORT" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+        <NocNotifyField disabled={routingLock} type="PORT" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
           onChange={patch => setForm(f => ({ ...f, ...patch }))} />
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
@@ -930,7 +935,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
             <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`} />
+                <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`}
+                  // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
+                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
               </Suspense>
             </TabsContent>
 

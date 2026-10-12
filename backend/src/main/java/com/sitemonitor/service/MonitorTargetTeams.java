@@ -99,6 +99,30 @@ public class MonitorTargetTeams {
         return false;
     }
 
+    /**
+     * Hedefi YALNIZ takım erişim paylaşımıyla mı görüyor (2026-10-12) — kendi kapsamı, 7/24 ya da global görüntüleyici
+     * değil. Not yazma kuralı buna bakar.
+     */
+    public boolean viewedOnlyByGrant(HttpSession session, String type, String target) {
+        if (SessionScope.seesAllMonitoring(session)) return false;
+        boolean viaGrant = false;
+        for (Owner o : owners(type, target)) {
+            if (SessionScope.canView(session, o.teamId())
+                    || (o.ugTeamId() != null && SessionScope.canView(session, o.ugTeamId()))) return false;
+            if (SessionScope.canViewWithGrants(session, o.teamId())
+                    || (o.ugTeamId() != null && SessionScope.canViewWithGrants(session, o.ugTeamId()))) viaGrant = true;
+        }
+        return viaGrant;
+    }
+
+    /** Hedefi izleyen ve çağıranın (paylaşımla da) DÜZENLEYEBİLDİĞİ ilk takım; yoksa null. */
+    public Long operableOwnerTeam(HttpSession session, String type, String target) {
+        for (Owner o : owners(type, target)) {
+            if (o.teamId() != null && SessionScope.canOperateTeam(session, o.teamId())) return o.teamId();
+        }
+        return null;
+    }
+
     private static <T> List<Owner> plain(List<T> rows, Function<T, Long> team) {
         if (rows == null || rows.isEmpty()) return List.of();
         List<Owner> out = new ArrayList<>(rows.size());

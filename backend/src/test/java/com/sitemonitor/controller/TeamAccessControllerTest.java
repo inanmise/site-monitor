@@ -292,6 +292,10 @@ class TeamAccessControllerTest {
         row(1, A, "TEAM", B, null, "VIEW");      // u50 B üyesi → görür
         row(2, C, "USER", null, 50L, "EDIT");    // u50'ye doğrudan
         row(3, A, "USER", null, 60L, "DELETE");  // başkası
+        // Üyelik DB'den okunur (oturumdaki giriş anı listesi değil, 2026-10-12): u50 B üyesi
+        AppUser u50 = user(50L, "Kişi 50");
+        u50.setTeamId(B);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(u50));
         MockHttpSession s = session("USER", B, List.of(), 50L);
         mvc.perform(get("/api/me/shared-with-me").session(s))
                 .andExpect(status().isOk())
@@ -300,5 +304,73 @@ class TeamAccessControllerTest {
                 .andExpect(jsonPath("$.data.grants[?(@.owner_team_id==3)].level").value("EDIT"));
         MockHttpSession nobody = session("USER", C, List.of(), 70L);
         mvc.perform(get("/api/me/shared-with-me").session(nobody)).andExpect(jsonPath("$.data.grants.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("inceleme 5: benimle paylaşılanlar PASİF alıcı takım üzerinden gelen paylaşımı göstermez (uygulanmıyor); "
+            + "aynı sahipten kişiye verilen görünür")
+    void sharedWithMe_hidesGrantViaPassiveTeam() throws Exception {
+        row(1, A, "TEAM", B, null, "DELETE");    // u50'nin takımı B PASİF → uygulanmaz, listede yok
+        row(2, A, "USER", null, 50L, "VIEW");    // kişiye doğrudan → görünür
+        Team passiveB = team(B);
+        passiveB.setActive(false);
+        when(teamRepo.findAll()).thenReturn(List.of(team(A), passiveB, team(C)));
+        org.mockito.Mockito.doReturn(Optional.of(passiveB)).when(teamRepo).findById(B);
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<Team> out = new ArrayList<>();
+            for (Object o : (Iterable<?>) inv.getArgument(0)) out.add(Long.valueOf(B).equals(o) ? passiveB : team((Long) o));
+            return out;
+        }).when(teamRepo).findAllById(any());
+        AppUser u50 = user(50L, "Kişi 50");
+        u50.setTeamId(B);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(u50));
+        mvc.perform(get("/api/me/shared-with-me").session(session("USER", B, List.of(), 50L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.grants.length()").value(1))
+                .andExpect(jsonPath("$.data.grants[0].via").value("USER"))
+                .andExpect(jsonPath("$.data.grants[0].level").value("VIEW"))
+                .andExpect(jsonPath("$.data.grants[0].effective_level").value("VIEW"));
+    }
+
+    @Test
+    @DisplayName("inceleme 6: grant_write_teams — kendi kapsamıyla GÖRÜLEN (müdürün görüş alanı) ama yalnız paylaşımla YAZILAN "
+            + "takım da listede; üyesi olduğu takım ve VIEW / EXECUTE paylaşımı yok")
+    void grantWriteTeamsIncludeViewScopedTeams() throws Exception {
+        AppUser u50 = user(50L, "Kişi 50");
+        u50.setTeamId(B);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(u50));
+        row(1, A, "USER", null, 50L, "EDIT");    // A: görüş alanında (müdür) ama üyesi değil → yalnız paylaşımla yazar
+        row(2, C, "USER", null, 50L, "VIEW");    // C: yalnız görme → yazma listesinde yok
+        row(3, B, "USER", null, 50L, "DELETE");  // B: üyesi → kendi kapsamı
+        MockHttpSession s = session("ADMIN", B, List.of(), 50L);
+        s.setAttribute("viewTeamIds", List.of(A, B));
+        mvc.perform(get("/api/me/access-grants").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.access_grants.length()").value(1))          // yalnız C (A ve B görülüyor)
+                .andExpect(jsonPath("$.data.grant_write_teams.length()").value(1))
+                .andExpect(jsonPath("$.data.grant_write_teams[0].team_id").value((int) A))
+                .andExpect(jsonPath("$.data.grant_write_teams[0].team_name").value("Takım A"));
+    }
+
+    @Test
+    @DisplayName("inceleme 4: /me/access-grants — /me ile aynı biçim; kendi kapsamında gördüğü takım yok, kimlik sırası")
+    void myAccessGrants() throws Exception {
+        AppUser u50 = user(50L, "Kişi 50");
+        u50.setTeamId(B);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(u50));
+        row(1, C, "TEAM", B, null, "VIEW");      // takımı üzerinden
+        row(2, A, "USER", null, 50L, "EDIT");    // doğrudan
+        row(3, B, "USER", null, 50L, "DELETE");  // kendi takımı B (zaten görüyor) → listede yok
+        MockHttpSession s = session("USER", B, List.of(), 50L);
+        mvc.perform(get("/api/me/access-grants").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.access_grants.length()").value(2))
+                .andExpect(jsonPath("$.data.access_grants[0].team_id").value((int) A))
+                .andExpect(jsonPath("$.data.access_grants[0].level").value("EDIT"))
+                .andExpect(jsonPath("$.data.access_grants[0].team_name").value("Takım A"))
+                .andExpect(jsonPath("$.data.access_grants[1].team_id").value((int) C))
+                .andExpect(jsonPath("$.data.access_grants[1].level").value("VIEW"));
+        mvc.perform(get("/api/me/access-grants").session(session("USER", C, List.of(), 70L)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.access_grants.length()").value(0));
     }
 }

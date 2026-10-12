@@ -34,8 +34,14 @@ export function mergeSavedRow(prev, saved) {
   return prev.id === saved.id ? { ...prev, ...saved } : prev
 }
 
+/**
+ * Yalnız DOĞRUYKEN gelen paylaşım bayrakları (inceleme 5): satırda yoksa "false" demektir. Tetik yanıtında korunur;
+ * liste satırında YOKSA kopyadan da düşer (paylaşım kalktı / kişi takıma katıldı — form gereksiz kilitli kalmasın).
+ */
+const SHARE_FLAGS = ['shared_access', 'routing_locked']
+
 /** Liste satırının sunucu kapı bayrakları — tetik ("Şimdi kontrol et") yanıtı bunları taşımaz. */
-const ROW_FLAGS = ['can_check', 'can_edit', 'can_delete', 'can_diagnose']
+const ROW_FLAGS = ['can_check', 'can_edit', 'can_delete', 'can_diagnose', ...SHARE_FLAGS]
 
 /**
  * "Şimdi kontrol et" yanıtını açık pencerenin kopyasına koyarken satır bayraklarını korur (2026-10-12, takım erişim
@@ -71,7 +77,10 @@ export function withRowFlags(prev, next) {
 export function freshestRow(m, list) {
   if (!isRow(m) || !Array.isArray(list)) return m
   const row = list.find((x) => isRow(x) && x.id === m.id)
-  return row ? { ...m, ...row } : m
+  if (!row) return m
+  const out = { ...m, ...row }
+  for (const k of SHARE_FLAGS) if (!(k in row)) delete out[k]   // liste satırı bu bayraklarda tek doğru kaynak
+  return out
 }
 
 /**
@@ -87,6 +96,6 @@ export async function reloadAndSyncDetail(load, id, setDetail) {
   const rows = await load()
   if (id == null || !Array.isArray(rows)) return null
   const fresh = rows.find((x) => isRow(x) && x.id === id) || null
-  if (fresh) setDetail((prev) => mergeSavedRow(prev, fresh))
+  if (fresh) setDetail((prev) => freshestRow(prev, [fresh]))   // liste satırı: paylaşım bayrakları da tazelenir
   return fresh
 }

@@ -88,6 +88,9 @@ export default function LdapSettings() {
       // kurallarıyla değil.
       if (RM_KEYS.some((k) => k in dto)) for (const k of RM_KEYS) dto[k] = form[k]
       if (bindPw.trim()) dto.bind_password = bindPw
+      // Değişiklik yoksa istek YOK (inceleme 4; kontrol listesi 9): yalnız boşluk yazılmış parola kutusu boş PUT, "kaydedildi"
+      // bildirimi ve boş bir denetim satırı üretiyordu
+      if (Object.keys(dto).length === 0) { setBindPw(''); return }
       const res = await api.admin.saveLdapSettings(dto)
       if (res?.success) {
         toast.success(res.message || t('settings.saved'))
@@ -145,7 +148,8 @@ export default function LdapSettings() {
     return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
-  const dirty = bindPw !== '' || (loaded != null && JSON.stringify(form) !== JSON.stringify(loaded))
+  // Yalnız boşluktan oluşan parola değişiklik değildir (kayıt onu göndermez) — Kaydet etkinleşmez
+  const dirty = bindPw.trim() !== '' || (loaded != null && JSON.stringify(form) !== JSON.stringify(loaded))
 
   // Metin alanı (Field + Input) — etiket yardım balonlu, ipucu aria-describedby ile bağlı.
   const textField = (key, labelKey, helpKey, placeholder, hintKey) => (

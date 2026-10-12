@@ -423,6 +423,8 @@ export const api = {
     update: (id, body) => request(`/admin/team-access/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     remove: (id) => request(`/admin/team-access/${encodeURIComponent(id)}`, { method: 'DELETE', withStatus: true }),
     sharedWithMe: () => request('/me/shared-with-me'),
+    // Geçerli paylaşım düzeyleri (/me access_grants ile aynı) — pano veri dalgasında tazelenir (2026-10-12)
+    myGrants: () => request('/me/access-grants'),
   },
   /** Çevrimiçi kullanıcı özeti (2026-10-02) — oturum açmış HERKES; yalnız sayılar (toplam + birincil takıma göre). */
   presence: {

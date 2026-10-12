@@ -69,11 +69,14 @@ describe('bildirim bloğu standardı', () => {
     const at = src.indexOf("t('userpush.monitorToggle')")
     expect(at, 'webhook döşemesi bulunamadı').toBeGreaterThan(0)
     const from = src.lastIndexOf('<ChannelTile', at)
-    const webhookTile = src.slice(from, src.indexOf('/>', at))
+    // Tek izinli biçim `disabled={locked}`: takım erişim paylaşımıyla düzenlenen kayıtta bildirim yönlendirmesi KİLİTLİ
+    // (2026-10-12) — koşullu, varsayılan kapalı; koşulsuz pasiflik (görsel yalan) yine yasak.
+    const stripLock = (s) => s.split('disabled={locked}').join('')
+    const webhookTile = stripLock(src.slice(from, src.indexOf('/>', at)))
     expect(webhookTile).not.toMatch(/(^|[^A-Za-z])disabled([^A-Za-z]|$)/)
     expect(webhookTile).toContain('onCheckedChange')
     // Pasif olanlar SADECE iki tanedir (SMS + Sesli arama).
-    const tiles = src.split('<ChannelTile').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('/>')))
+    const tiles = src.split('<ChannelTile').slice(1).map((chunk) => stripLock(chunk.slice(0, chunk.indexOf('/>'))))
     expect(tiles).toHaveLength(4)
     expect(tiles.filter((tile) => /(^|[^A-Za-z])disabled([^A-Za-z]|$)/.test(tile))).toHaveLength(2)
   })

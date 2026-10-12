@@ -518,7 +518,9 @@ public class CertificateController {
             return ok(Map.of("success", true, "data", certService.getAllTeamsBreakdownStats(), "timestamp", now()));
         }
         if (scope.isEmpty()) return ok(Map.of("success", true, "data", Map.of(), "timestamp", now()));
-        if (scope.size() == 1) {  // single team → personal breakdown (unchanged)
+        // Tek takım ve o takım oturumun BİRİNCİL takımı → kişisel döküm (değişmedi). Paylaşımla gelen tek takımın adı
+        // oturumda yok (2026-10-12) → çok takımlı döküm adı kendisi çözer.
+        if (scope.size() == 1 && java.util.Objects.equals(scope.get(0), SessionScope.primaryTeamId(session))) {
             String teamName = (String) session.getAttribute("teamName");
             return ok(Map.of("success", true, "data", certService.getTeamBreakdownStats(scope.get(0), teamName), "timestamp", now()));
         }

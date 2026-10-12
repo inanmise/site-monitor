@@ -337,19 +337,23 @@ public class SecretRotationService {
     /**
      * Konumu kaldığı yerden yeniden şifreler; tavan ({@link #maxRows}) ya da {@code deadline} dolarsa kaldığı yeri saklar
      * ve {@code partial} döner. Konum sonuna gelince kaldığı yer silinir.
+     *
+     * <p>Tavan YAZMA girişimlerini sayar, okunan satırı değil (inceleme 4, 2026-10-12): kaldığı yer pod başınadır; sonraki
+     * çalıştırma başka poda düşerse baştan okur ve eskiden tavanı zaten güncel anahtardaki satırlarla tüketip hiç ilerlemeden
+     * "yarım" dönerdi (çok podda büyük tabloda sonsuza dek). Güncel satırlar ucuzca geçilir; okuma süre bütçesiyle sınırlı.
      */
     LocationResult reencrypt(Location loc, long deadline) {
-        int values = 0, rows = 0, changed = 0, bad = 0, seen = 0;
+        int values = 0, rows = 0, changed = 0, bad = 0, work = 0;
         try {
             long after = resumeAfter.getOrDefault(loc.id(), Long.MIN_VALUE);
             while (true) {
                 List<Row> page = page(loc, after);
                 for (Row r : page) {
-                    seen++;
                     after = r.id();
                     Rewrite w = rewrite(loc, r.value());
                     bad += w.unreadable();
                     if (w.newValue() == null) continue;
+                    work++;
                     if (write(loc, r.id(), r.value(), w.newValue())) {
                         values += w.values();
                         rows++;
@@ -361,7 +365,7 @@ public class SecretRotationService {
                     resumeAfter.remove(loc.id());
                     return new LocationResult(loc, values, rows, changed, bad, null, false);
                 }
-                if (seen >= maxRows || System.currentTimeMillis() >= deadline) {
+                if (work >= maxRows || System.currentTimeMillis() >= deadline) {
                     resumeAfter.put(loc.id(), after);
                     return new LocationResult(loc, values, rows, changed, bad, null, true);
                 }

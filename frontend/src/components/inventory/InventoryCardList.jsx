@@ -29,7 +29,7 @@ const stop = (e) => e.stopPropagation()
  * Çizim shadcn: Card, Checkbox, Switch, Badge, Button, ui/KebabMenu. Test kancası: kart `[data-inv-card]`, liste `data-slot="inv-cards"`.
  */
 export default function InventoryCardList({
-  rows, canManage, canEditRow = () => canManage, canManageRow = () => true, isAdmin, teamsCount, teamMap = {}, selected, onToggle,
+  rows, canManage, canEditRow = () => canManage, canManageRow = () => true, canSelectRow, isAdmin, teamsCount, teamMap = {}, selected, onToggle,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onDiagnose, onCheckNow, onInline, onTagClick, onGroupClick,
   platformNames = {}, onClearFilters = null,
 }) {
@@ -65,7 +65,7 @@ export default function InventoryCardList({
             <Card data-inv-card={r.domain} data-state={isSel ? 'selected' : undefined}
               className={cn('gap-2.5 rounded-[10px] px-3 py-3 shadow-none', isSel && 'border-primary bg-primary/5')}>
               <div className="flex items-start gap-2.5">
-                {canManage && !ro && (
+                {canManage && !ro && (canSelectRow || canManageRow)(r) && (
                   <Checkbox checked={isSel} onCheckedChange={() => onToggle(r.id)} className="mt-1.5 size-5" aria-label={t('bulk.selectOneFor', r.domain)} />
                 )}
                 <div className="min-w-0 flex-1">

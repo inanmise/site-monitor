@@ -558,6 +558,24 @@ class StormServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 5: envanterde UG = SY ise üye o takımın dağıtımına BİR KEZ girer (\"2 monitör\" / çift günlük satırı yok)")
+    @SuppressWarnings("unchecked")
+    void storm_ugSameAsSy_memberCountedOnce() {
+        teamWithEmail(1L);
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain("host1.example.com"); inv.setTeamId(1L); inv.setUgTeamId(1L);
+        when(inventoryRepo.findByDomain("host1.example.com")).thenReturn(java.util.Optional.of(inv));
+
+        AlertEvent a = down(1, EscalationService.TYPE_ACCESSIBILITY, 1L);
+        List<?> dispatches = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "resolveDispatches", List.of(a));
+
+        assertThat(dispatches).hasSize(1);
+        assertThat((List<AlertEvent>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(dispatches.get(0), "members"))
+                .containsExactly(a);
+    }
+
+    @Test
     @DisplayName("Fırtına (2026-09-28): bağımsız üye (tür ya da açılış damgası) envanterden takım/UG ALMAZ — host başka takımın envanterinde olsa da")
     @SuppressWarnings("unchecked")
     void storm_standaloneMember_neverUsesInventory() {

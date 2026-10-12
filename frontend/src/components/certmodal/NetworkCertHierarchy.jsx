@@ -102,7 +102,8 @@ function Summary({ summary, t }) {
   return (
     <Card data-slot="cert-hierarchy-summary" data-root-source={root} className="min-w-0 gap-2 px-3 py-3 shadow-none sm:px-4">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <Badge variant={TONE[tone].variant} className={TONE[tone].className}
+        {/* Uzun etiket ("Kök: sunucu gönderdi (güven deposunda değil)") telefonda SARAR — hap değil, kırpılmaz */}
+        <Badge variant={TONE[tone].variant} className={cn(TONE[tone].className, 'h-auto rounded-md whitespace-normal overflow-visible text-left')}
           data-slot="cert-hierarchy-root-source" data-tone={tone}>
           {t(rootLabelKey(summary))}
         </Badge>

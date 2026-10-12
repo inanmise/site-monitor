@@ -13,6 +13,7 @@ import { unwrap } from '../noc/nocModel.js'
 import { bulkToast, chunk, mergeBulkResults } from '../noc/forms/nocFormModel.js'
 import { markMonitorDeleted } from '../../utils/recentlyDeleted.js'
 import { namesPreview } from '../../utils/deleteInventory.js'
+import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -142,7 +143,13 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
               <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('bulk.team')} placeholder={t('bulk.team')}
                 options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
             </span>
-            <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy || !teamId} onClick={() => run('team', (m) => api.update(m.id, { teamId: Number(teamId) }))}>{t('bulk.apply')}</Button>
+            <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy || !teamId} onClick={() => {
+              // Takım erişim paylaşımıyla yazılan izlemenin takımı değiştirilemez (sunucu 403) — denenmez, kaç tanesinin
+              // atlandığı söylenir (inceleme 5)
+              const locked = chosen.filter(isRoutingLockedRow).length
+              if (locked) toast.info(t('bulk.teamSkippedShared', locked))
+              run('team', (m) => api.update(m.id, { teamId: Number(teamId) }), (m) => !isRoutingLockedRow(m))
+            }}>{t('bulk.apply')}</Button>
           </span>
         )}
         <span className={fieldCls}>

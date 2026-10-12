@@ -7,11 +7,13 @@ import { useToast } from '../../ui/Toast.jsx'
 import KebabMenu from '../../ui/KebabMenu.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
+import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import MonitorStatsBar from '../../MonitorStatsBar.jsx'
 import { ToolbarSearch } from '../ListToolbar.jsx'
 import { useElementWidthState } from '../../../hooks/useElementWidth.js'
 import { useUrlQuerySync, readUrlParam } from '../../../hooks/useUrlQuerySync.js'
+import { errorInfoOf } from '../../../utils/errorMessages.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -39,6 +41,8 @@ export default function TeamAccessManager() {
   const { showConfirm } = useDialog()
   const [state, setState] = useState({ status: 'loading', grants: [], teams: [], message: null })
   const [shared, setShared] = useState([])
+  // "Sizinle paylaşılanlar" okunamadı (2026-10-12): kart sessizce kaybolmaz — "yok" ile "okunamadı" ayrı söylenir
+  const [sharedFailed, setSharedFailed] = useState(false)
   const [dialog, setDialog] = useState(null)   // { grant } | { grant: null }
   const [q, setQ] = useState(() => readUrlParam('g_aq', ''))
   const [team, setTeam] = useState(() => readUrlParam('g_team', ''))
@@ -54,7 +58,12 @@ export default function TeamAccessManager() {
     setState((s) => ({ ...s, status: s.status === 'ready' ? 'refreshing' : 'loading' }))
     const [list, mine] = await Promise.allSettled([api.teamAccess.list(), api.teamAccess.sharedWithMe()])
     if (my !== seq.current) return
-    if (mine.status === 'fulfilled' && mine.value?.success) setShared(Array.isArray(mine.value.data?.grants) ? mine.value.data.grants : [])
+    if (mine.status === 'fulfilled' && mine.value?.success) {
+      setShared(Array.isArray(mine.value.data?.grants) ? mine.value.data.grants : [])
+      setSharedFailed(false)
+    } else {
+      setSharedFailed(true)   // önceki liste (varsa) kalır
+    }
     const res = list.status === 'fulfilled' ? list.value : null
     if (res && !res.success && res.status === 403) {
       // teams.sharing/view izni yok (ör. USER): hata değil — "Sizinle paylaşılanlar" kartı kalır, liste boş durumu
@@ -115,7 +124,11 @@ export default function TeamAccessManager() {
     try {
       const res = await api.teamAccess.remove(g.id)
       if (res?.success) { toast.success(t('access.toast.removed')); load() }
-      else toast.error(res?.error || t('access.err.generic'))
+      else {
+        toast.error(res?.error || t('access.err.generic'))
+        // Paylaşım zaten yok (başka sekme / yönetici kaldırdı): satır listede kalmasın. Durum gövdede değil künyede.
+        if (errorInfoOf(res)?.status === 404) load()
+      }
     } catch (e) {
       toast.error(e?.message || t('access.err.generic'))
     }
@@ -152,6 +165,11 @@ export default function TeamAccessManager() {
       </Card>
 
       {shared.length > 0 && <SharedWithMe rows={shared} t={t} />}
+      {sharedFailed && (
+        <div data-slot="access-shared-failed" className="min-w-0">
+          <AlertBanner tone="warning" className="mb-0">{t('access.shared.loadFailed')}</AlertBanner>
+        </div>
+      )}
 
       {state.status === 'loading' ? (
         <LoadingBlock label={t('access.loading')} />
@@ -199,7 +217,8 @@ export default function TeamAccessManager() {
       {dialog && (
         <TeamAccessGrantDialog open grant={dialog.grant} teams={state.teams}
           defaultOwnerTeamId={team && state.teams.some((tm) => String(tm.id) === String(team)) ? team : null}
-          onClose={() => setDialog(null)} onSaved={() => { setDialog(null); load() }} />
+          onClose={() => setDialog(null)} onSaved={() => { setDialog(null); load() }}
+          onGone={() => { setDialog(null); load() }} />
       )}
     </div>
   )

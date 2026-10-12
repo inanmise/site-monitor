@@ -66,6 +66,8 @@ public class TlsGradeDropNotifier {
     static final String SKIP_NO_RECIPIENT = "SKIPPED: alıcı yok";
     /** Alıcı vardı ama hiçbir kanal teslim edemedi (SMTP hatası, push kuyruğa girmedi) — 2026-10-12'ye kadar "alıcı yok" yazılırdı. */
     static final String NOTIFY_FAILED = "FAILED: gönderilemedi";
+    /** Takımın alıcı listesi OKUNAMADI (inceleme 4): "alıcı yok" değildir — günlük satırı bunu, düşüş satırı "gönderilemedi" der. */
+    static final String RECIPIENTS_UNREADABLE = "FAILED: alıcılar okunamadı";
     /**
      * Talep edildi ama sonuç yazılamadan tur kesildi (istisna / pod kapandı) — 2026-10-12'ye kadar satır SENDING'de sonsuza
      * dek "sırada" görünürdü. Kısmen gönderilmiş olabileceği için YENİDEN GÖNDERİLMEZ (çift bildirim olmasın).
@@ -77,7 +79,14 @@ public class TlsGradeDropNotifier {
     private static final int LOG_FIELD_MAX = 255;
 
     /** Takıma gönderimin sonucu. */
-    enum Delivery { DELIVERED, FAILED, NONE }
+    enum Delivery { DELIVERED, FAILED, NONE, RETRY }
+
+    /**
+     * Alıcılar / takım OKUNAMADI ve hiçbir kanal ulaşmadı (inceleme 5): düşüş kalıcı "gönderilemedi" ile kaybolmaz, sonraki
+     * turda (10 dk) yeniden denenir — en çok bu kadar kez (pod başına bellekte sayılır; sınırlı), sonra FAILED.
+     */
+    static final int READ_RETRY_MAX = 6;
+    private final Map<Long, Integer> readRetries = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Ekran kodu ("Son düşüşler" satırı): sent | pending | off | below | maintenance | no_team | no_recipient; özellikten
@@ -151,6 +160,7 @@ public class TlsGradeDropNotifier {
             return deliver(mine);
         } catch (RuntimeException e) {
             // Talep edilen satır SENDING'de KALMAZ: sonucu yazılmamış olanlar "yarıda kaldı" olur (yeniden gönderilmez).
+            for (TlsGradeChange c : mine) readRetries.remove(c.getId());
             List<TlsGradeChange> open = new ArrayList<>();
             for (TlsGradeChange c : changeRepo.findAllById(mine.stream().map(TlsGradeChange::getId).toList())) {
                 if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) open.add(c);
@@ -189,10 +199,12 @@ public class TlsGradeDropNotifier {
         String now = ISO.format(Instant.now());
 
         if (!appSettings.getBoolean(KEY_ENABLED, true)) {
+            for (TlsGradeChange c : mine) readRetries.remove(c.getId());   // sonuçlandı — sayaç kalmaz (inceleme 6)
             finish(mine, SKIP_OFF, now);
             return new Result(mine.size(), 0, mine.size(), 0);
         }
         if (systemMaintenance != null && safeMuted()) {
+            for (TlsGradeChange c : mine) readRetries.remove(c.getId());
             finish(mine, SKIP_MAINT, now);
             log.info("TLS notu düşüş bildirimi: {} düşüş sistem bakımı susturmasıyla gönderilmedi", mine.size());
             return new Result(mine.size(), 0, mine.size(), 0);
@@ -219,6 +231,7 @@ public class TlsGradeDropNotifier {
         }
         Set<Long> delivered = new LinkedHashSet<>();
         Set<Long> failed = new LinkedHashSet<>();
+        Set<Long> retry = new LinkedHashSet<>();
         int teamsDelivered = 0;
         String appUrl = appSettings.getString("site.monitor.app.base-url", "");
         for (Map.Entry<Long, List<TlsGradeChange>> e : byTeam.entrySet()) {
@@ -226,25 +239,45 @@ public class TlsGradeDropNotifier {
             try {
                 d = sendToTeam(e.getKey(), e.getValue(), appUrl);
             } catch (RuntimeException ex) {
-                // Bir takımın hatası ötekileri DURDURMAZ (2026-10-12): o takım "gönderilemedi", sıradaki takım sürer
+                // Bir takımın hatası ötekileri DURDURMAZ (2026-10-12): o takım "gönderilemedi", sıradaki takım sürer. Karar
+                // iz bırakır (inceleme 5: eskiden bu yolda notification_logs satırı yazılmıyordu).
                 log.warn("TLS notu düşüş bildirimi: takım {} gönderilemedi: {}", e.getKey(), ex.toString());
+                saveLog("Takım #" + e.getKey(), List.of(), "TLS yapılandırma notu düştü",
+                        NOTIFY_FAILED + " (" + ex.getClass().getSimpleName() + ")");
                 d = Delivery.FAILED;
             }
             if (d == Delivery.DELIVERED) teamsDelivered++;
             for (TlsGradeChange c : e.getValue()) {
                 if (d == Delivery.DELIVERED) delivered.add(c.getId());
                 else if (d == Delivery.FAILED) failed.add(c.getId());
+                else if (d == Delivery.RETRY) retry.add(c.getId());
             }
         }
+        // Okuma hatası (yalnız): düşüş PENDING'e döner ve sonraki turda yeniden denenir; tavan dolunca gönderilemedi
+        List<Long> backToPending = new ArrayList<>();
+        for (TlsGradeChange c : eligible) {
+            Long id = c.getId();
+            if (delivered.contains(id) || failed.contains(id) || !retry.contains(id)) continue;
+            int n = readRetries.merge(id, 1, Integer::sum);
+            if (n < READ_RETRY_MAX) backToPending.add(id);
+            else { failed.add(id); readRetries.remove(id); }
+        }
+        // Bu turda sonuçlanan her satırın sayacı düşer (eşik altı / takımsız / alıcısız da — inceleme 6)
+        for (TlsGradeChange c : mine) if (!backToPending.contains(c.getId())) readRetries.remove(c.getId());
         // En az bir sahip takıma ulaştıysa SENT; hiçbirine ulaşamadı ama denendiyse FAILED; hiç alıcı yoksa "alıcı yok".
         List<TlsGradeChange> sent = eligible.stream().filter(c -> delivered.contains(c.getId())).toList();
         List<TlsGradeChange> notDelivered = eligible.stream()
                 .filter(c -> !delivered.contains(c.getId()) && failed.contains(c.getId())).toList();
         List<TlsGradeChange> noRecipient = eligible.stream()
-                .filter(c -> !delivered.contains(c.getId()) && !failed.contains(c.getId())).toList();
+                .filter(c -> !delivered.contains(c.getId()) && !failed.contains(c.getId()) && !backToPending.contains(c.getId())).toList();
         finish(sent, TlsGradeChange.NOTIFY_SENT, now);
         finish(notDelivered, NOTIFY_FAILED, now);
         finish(noRecipient, SKIP_NO_RECIPIENT, now);
+        // Yeniden denenecekler PENDING'e EN SON döner (inceleme 6): bu geçiş hata verirse teslim edilmiş satırların sonucu
+        // zaten yazılmıştır — tur hatası onları "yarıda kaldı" yapmaz
+        if (!backToPending.isEmpty()) {
+            changeRepo.transitionNotifyState(backToPending, TlsGradeChange.NOTIFY_SENDING, TlsGradeChange.NOTIFY_PENDING);
+        }
         log.info("TLS notu düşüş bildirimi: {} düşüş · {}/{} takıma ulaştı · {} düşüş gönderilemedi · {} atlandı", mine.size(),
                 teamsDelivered, byTeam.size(), notDelivered.size(), below.size() + teamless.size() + noRecipient.size());
         return new Result(mine.size(), sent.size(), mine.size() - sent.size(), byTeam.size());
@@ -255,17 +288,39 @@ public class TlsGradeDropNotifier {
      * kuyruğa girdi) DELIVERED; bir kanal denendi ama hiçbiri ulaşmadıysa FAILED; hiç alıcı yoksa NONE.
      */
     private Delivery sendToTeam(Long teamId, List<TlsGradeChange> rows, String appUrl) {
-        String teamName = teamRepo.findById(teamId).map(Team::getName).orElse("Takım #" + teamId);
+        String teamName;
+        try {
+            teamName = teamRepo.findById(teamId).map(Team::getName).orElse("Takım #" + teamId);
+        } catch (RuntimeException ex) {
+            // Takım okunamadı: geçici okuma hatası — yeniden denenir (inceleme 5), iz bırakılır
+            log.warn("TLS notu düşüş bildirimi: takım {} okunamadı: {}", teamId, ex.toString());
+            saveLog("Takım #" + teamId, List.of(), "TLS yapılandırma notu düştü", RECIPIENTS_UNREADABLE);
+            return Delivery.RETRY;
+        }
         List<TlsGradeDropMail.Row> mailRows = rows.stream()
                 .map(c -> new TlsGradeDropMail.Row(c.getDomain(), c.getFromGrade(), c.getToGrade(), c.getReasons(), c.getChangedAt()))
                 .toList();
         boolean delivered = false;
         boolean attempted = false;
         List<String> recipients;
-        try { recipients = escalation.teamEmailsForMonitor(teamId, null); } catch (Exception ex) { recipients = List.of(); }
+        boolean unreadable = false;
+        try {
+            recipients = escalation.teamEmailsForMonitor(teamId, null);
+        } catch (Exception ex) {
+            // Okuma hatası "alıcı yok" DEĞİLDİR (inceleme 4, 2026-10-12): eskiden düşüş kalıcı "SKIPPED: alıcı yok" ile
+            // kapanıyordu — ekranda "takımın alıcısı yok" yanlışı. Şimdi denenmiş-ama-ulaşılamamış (FAILED) sayılır;
+            // push yine denenir, ulaşırsa düşüş SENT olur.
+            log.warn("TLS notu düşüş bildirimi: takım {} alıcıları okunamadı: {}", teamId, ex.toString());
+            recipients = List.of();
+            unreadable = true;
+        }
+        if (recipients == null) recipients = List.of();
         String subject = TlsGradeDropMail.subject(teamName, mailRows);
         String status;
-        if (recipients.isEmpty()) {
+        if (unreadable) {
+            status = RECIPIENTS_UNREADABLE;
+            attempted = true;
+        } else if (recipients.isEmpty()) {
             status = SKIP_NO_RECIPIENT;
         } else {
             MailDoc.Mail mail = TlsGradeDropMail.build(teamName, mailRows, appUrl);
@@ -300,7 +355,9 @@ public class TlsGradeDropNotifier {
             }
         }
         saveLog(teamName, recipients, subject, status + (queued > 0 ? " · push " + queued : ""));
-        return delivered ? Delivery.DELIVERED : attempted ? Delivery.FAILED : Delivery.NONE;
+        if (delivered) return Delivery.DELIVERED;
+        if (unreadable) return Delivery.RETRY;   // alıcılar okunamadı ve push da ulaşmadı → kalıcı hata değil, yeniden dene
+        return attempted ? Delivery.FAILED : Delivery.NONE;
     }
 
     private void saveLog(String teamName, List<String> recipients, String subject, String status) {

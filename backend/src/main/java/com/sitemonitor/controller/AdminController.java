@@ -571,6 +571,9 @@ public class AdminController {
         // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
         requireInventoryWriter(session, item.getTeamId());
         requireExistingTeam(item.getTeamId());   // O3: olmayan takıma yazılan kayıt hiçbir alıcıya ulaşmaz (2026-09-28)
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim grubu / 7/24 / kademe yeni kaydın varsayılanında kalır
+        // (güncellemedeki kural; kendi kapsamıyla oluşturanda değişiklik yok). Yüklenen sertifika oluşturma da buradan geçer.
+        if (!SessionScope.canWriteInventoryOwn(session, item.getTeamId())) requireSameInventoryRouting(new CertificateInventory(), item);
         // Devralma YOK (2026-09-26, org geneli görünürlük): alan adı envanterde zaten varsa — başka takımın
         // kaydı dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün olmamalı. DB UNIQUE kısıtı bunu zaten
         // reddederdi ama harf farkında (Example.com) kısıt kör kalıyor, ileti de kaydın var olduğunu söylemiyordu.
@@ -665,7 +668,18 @@ public class AdminController {
                 && !canManageTeamResource(session, item.getTeamId())) {
             log.warn("Inventory team move outside management scope by user={} from={} to={}",
                     actor(session), existing.getTeamId(), item.getTeamId());
-            throw new SecurityException("Access denied: the target team is outside your management scope");
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Kayıt yönetim kapsamınız dışındaki bir takıma taşınamaz; hedef takımı yöneten biri taşıyabilir.",
+                    "The record can't be moved to a team outside your management scope; someone who manages the target team can move it."));
+        }
+        // Takım erişim paylaşımı (2026-10-12): bildirim YÖNLENDİRMESİ paylaşılmaz — kayda yalnız paylaşımla yazabilen
+        // kişi bildirim grubunu / 7/24 ayarını DEĞİŞTİREMEZ (aynı değer gönderilebilir: tam yük gönderen form).
+        if (!SessionScope.canWriteInventoryOwn(session, existing.getTeamId())) {
+            requireSameInventoryRouting(existing, item);
+            // UG ortak takımı paylaşımla DÜŞÜRÜLMEZ (inceleme 5): form her düzenlemede null gönderir (tek takıma yakınsama,
+            // kendi kapsamı için ürün kararı) — paylaşımla yazanda bu, ortak takımın alarm yönlendirmesini ve görünürlüğünü
+            // sessizce siliyordu. Paylaşımla yazanın null'ı "değişmedi" demektir.
+            if (item.getUgTeamId() == null) item.setUgTeamId(existing.getUgTeamId());
         }
         // UG takımı (BO9, bug regresyon 2026-09-27 — mass assignment): gövdeden yalnız TEMİZLEME (null;
         // tek takıma yakınsama ürün kararı, ön uç her düzenlemede null gönderir) ya da AYNI değer kabul edilir.
@@ -1334,9 +1348,12 @@ public class AdminController {
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAdminOrTeamAdmin(session);
-        requirePerm(session, "inventory.crud", "edit");
         String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
+        // Toplu SİLME tekil silmeyle aynı satır kapısını kullanır (takımı yöneten ya da paylaşımda SİLME düzeyi) — paylaşımda
+        // SİLME düzeyi olan USER da toplu siler (2026-10-12). Diğer toplu eylemler takım yönetimidir: rol kapısı aynen.
+        boolean grantDelete = "delete".equals(action) && !SessionScope.grantDeleteTeamIds(session).isEmpty();
+        if (!grantDelete) requireAdminOrTeamAdmin(session);
+        requirePerm(session, "inventory.crud", "edit");
         if (!Set.of("activate", "deactivate", "delete", "set-contacts", "set-tier", "set-team").contains(action)) {
             throw new IllegalArgumentException("action must be one of: activate, deactivate, delete, set-contacts, set-tier, set-team");
         }
@@ -2197,6 +2214,7 @@ public class AdminController {
         enrichAlerts(result.getContent());
         markActScope(result.getContent(), session);   // act_scope: eylem düğmeleri yalnız sahip takımın satırında (2026-10-09)
         if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
+        maskGrantOnlyNocCalls(result.getContent(), session);   // paylaşımla okunan satırda aranan kişi yok (2026-10-12)
         if (nocAlertFacts != null) nocAlertFacts.decorate(result.getContent());   // noc_sent_at / noc_via_storm — tek sorgu
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
@@ -2732,6 +2750,7 @@ public class AdminController {
         enrichAlerts(one);
         markActScope(one, session);
         if (nocCallLog != null) nocCallLog.decorate(one);
+        maskGrantOnlyNocCalls(one, session);
         if (nocAlertFacts != null) nocAlertFacts.decorate(one);   // "7/24 ekibine iletildi · 14:05" (2026-10-04)
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", ev);
@@ -2766,7 +2785,40 @@ public class AdminController {
         c.setRecipientName(null);
         c.setRecipientEmail(com.sitemonitor.service.noc.NocLogRedaction.recipients(base.getRecipientEmail()));
         c.setCc(com.sitemonitor.service.noc.NocLogRedaction.recipients(base.getCc()));
+        // "FAILED: <istisna metni>" alıcı adresi ya da webhook adresi (gizli) taşıyabilir → yalnız durum sınıfı; SKIPPED
+        // gerekçeleri sistem metnidir (kişi taşımaz) ve kalır. Gövde (alıcı listeleri içerebilir) paylaşılmaz.
+        c.setEmailStatus(statusClass(base.getEmailStatus()));
+        c.setWebhookStatus(statusClass(base.getWebhookStatus()));
+        c.setMessage(null);
+        c.setEmailFrom(null);
         return c;
+    }
+
+    /** Durum metninin sınıfı: FAILED / SENT ekleri atılır; SKIPPED gerekçesi (sistem metni) kalır. */
+    static String statusClass(String status) {
+        if (status == null) return null;
+        String s = status.trim();
+        if (s.startsWith("FAILED")) return "FAILED";
+        if (s.startsWith("SENT")) return "SENT";
+        return s;
+    }
+
+    /**
+     * 7/24 arama kaydının KİŞİSİ (aranan ad, sonuç) yalnız paylaşımla okunan alarm satırında gizlenir (2026-10-12) — arama
+     * kayıtları paylaşılmaz ({@code NocCallLogService.canRead}); sayı kalır. Tüm uyarıları gören / kendi kapsamında
+     * okuyan kullanıcıda dokunulmaz.
+     */
+    private void maskGrantOnlyNocCalls(List<AlertEvent> events, HttpSession session) {
+        if (events == null || events.isEmpty() || seesAllAlerts(session)) return;
+        if (SessionScope.grantViewTeamIds(session).isEmpty()) return;
+        List<Long> own = SessionScope.viewTeamIds(session);
+        for (AlertEvent ev : events) {
+            Set<Long> read = new HashSet<>();
+            if (ev.getTeamId() != null) read.add(ev.getTeamId());
+            if (ev.getSyTeamId() != null) read.add(ev.getSyTeamId());
+            if (ev.getUgTeamId() != null) read.add(ev.getUgTeamId());
+            if (own == null || !AlertOwnership.ownedByAny(read, own)) ev.setNocLastCall(null);
+        }
     }
 
     @GetMapping("/alerts/{id}/notifications")
@@ -2801,6 +2853,9 @@ public class AdminController {
             org.springframework.beans.BeanUtils.copyProperties(d, c);
             c.setUsername(null);
             c.setDisplayName(null);
+            c.setError(c.getError() == null ? null : "FAILED");   // ağ geçidi metni kişi / adres taşıyabilir
+            c.setRawResponse(null);
+            c.setNotificationId(null);
             masked.add(c);
         }
         return ok(Map.of("data", masked));
@@ -3349,7 +3404,9 @@ public class AdminController {
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);
-        if (teamAccessGrants != null) teamAccessGrants.deleteForTeam(id);   // sahibi ya da alıcısı bu takım olan paylaşımlar
+        int grantsRemoved = teamAccessGrants != null ? teamAccessGrants.deleteForTeam(id) : 0;   // sahibi ya da alıcısı bu takım
+        if (grantsRemoved > 0) auditService.recordAction("TEAM_ACCESS_GRANT_DELETE", session, request, "TEAM", id.toString(),
+                com.sitemonitor.service.AuditDetail.of("cascade", "team_delete", "count", grantsRemoved));
         auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(),
                 AuditDiff.snapshotJson(before));
         return ok(Map.of("message", "Team deleted"));
@@ -3759,7 +3816,9 @@ public class AdminController {
         String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
                 "username", "displayName", "email", "teamId", "systemRole", "orgRole", "active", "authSource"));
         userService.deleteUser(id);
-        if (teamAccessGrants != null) teamAccessGrants.deleteForUser(id);   // bu kişiye verilmiş paylaşımlar (2026-10-12)
+        int grantsRemoved = teamAccessGrants != null ? teamAccessGrants.deleteForUser(id) : 0;   // bu kişiye verilmiş paylaşımlar
+        if (grantsRemoved > 0) auditService.recordAction("TEAM_ACCESS_GRANT_DELETE", session, request, "USER", id.toString(),
+                com.sitemonitor.service.AuditDetail.of("cascade", "user_delete", "count", grantsRemoved));
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User deleted"));
     }
@@ -3957,7 +4016,9 @@ public class AdminController {
         // envanterde silinmemiş alan adı. Aksi hâlde bugünkü sahiplik kuralı.
         boolean orgWide = !isAdmin(session) && note.getDeletedAt() == null && inventoryVisibility != null
                 && inventoryRepo.findByDomain(domain).map(inv -> readableOrgWide(session, inv)).orElse(false);
-        if (!isAdmin(session) && !orgWide) checkOwnership(note.getTeamId(), session);
+        // Paylaşımla okunan takımın notu (2026-10-12): not listesi paylaşılıyor, revizyonları da (yazma yine yönetimde)
+        boolean shared = note.getDeletedAt() == null && SessionScope.viewableOnlyByGrant(session, note.getTeamId());
+        if (!isAdmin(session) && !orgWide && !shared) checkOwnership(note.getTeamId(), session);
         return ok(Map.of("data", noteRevisionRepo.findByNoteIdOrderBySequenceNoAsc(noteId)));
     }
 
@@ -4148,7 +4209,30 @@ public class AdminController {
         boolean shared = SessionScope.viewableOnlyByGrant(session, inv.getTeamId());
         inv.setSharedAccess(shared ? Boolean.TRUE : null);
         inv.setCanCheck(shared ? SessionScope.canExecuteTeam(session, inv.getTeamId()) : null);
+        // Yalnız paylaşımla YAZABİLİYOR (inceleme 5): formda takım / bildirim grubu / 7/24 / kademe kilitli — sunucunun
+        // requireSameInventoryRouting ölçütüyle aynı (canWriteInventory ∧ ¬canWriteInventoryOwn)
+        boolean routingLocked = SessionScope.canWriteInventory(session, inv.getTeamId())
+                && !SessionScope.canWriteInventoryOwn(session, inv.getTeamId());
+        inv.setRoutingLocked(routingLocked ? Boolean.TRUE : null);
     }
+
+    /** Paylaşımla yazılan envanterde bildirim grubu / 7/24 değişmemeli — değişmişse 403. */
+    private static void requireSameInventoryRouting(CertificateInventory existing, CertificateInventory item) {
+        boolean groupChanged = !Objects.equals(item.getNotificationGroupId(), existing.getNotificationGroupId());
+        boolean nocChanged = item.isNocNotifySupplied()
+                && Boolean.TRUE.equals(item.getNocNotify()) != Boolean.TRUE.equals(existing.getNocNotify());
+        boolean nocGroupsChanged = item.isNocGroupIdsSupplied() && !new java.util.TreeSet<>(
+                com.sitemonitor.service.noc.NocGroupIds.fromBody(item.getNocGroupIds())).equals(new java.util.TreeSet<>(
+                com.sitemonitor.service.noc.NocGroupIds.fromBody(existing.getNocGroupIds())));
+        // Kademe (tier) sertifika alarmının eşiğini → seviyesini → eskalasyon kişilerini belirler: izlemelerdeki alarm
+        // seviyesinin karşılığı (inceleme 5) — paylaşımla değiştirilemez.
+        boolean tierChanged = !Objects.equals(item.getTier(), existing.getTier());
+        if (groupChanged || nocChanged || nocGroupsChanged || tierChanged) throw new SecurityException(SHARED_ROUTING_DENIED.get());
+    }
+
+    static final java.util.function.Supplier<String> SHARED_ROUTING_DENIED = () -> com.sitemonitor.util.Msg.t(
+            "Takım erişim paylaşımıyla bildirim ayarları (bildirim grubu, 7/24, kademe) değiştirilemez; bunları kaydın takımı değiştirebilir.",
+            "Notification settings (notification group, 24/7, tier) can't be changed through team access sharing; the record's team can change them.");
 
     /** Global admin, or a manager-scope (PO) that includes the resource's team. (Müdür → false.) */
     private boolean canManageTeamResource(HttpSession session, Long resourceTeamId) {

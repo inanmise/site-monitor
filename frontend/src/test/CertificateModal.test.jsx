@@ -777,3 +777,21 @@ describe('CertificateModal — başlıkta 7/24 göstergesi', () => {
     expect(indicator()).toBeNull()
   })
 })
+
+describe('inceleme 5: pencere başka alan adına geçince hiyerarşi eski SSL verisiyle istenmez', () => {
+  it("A'da hiyerarşi açıkken B'ye geçilir — B'nin önizlemesi gelmeden B için hiyerarşi isteği (A'nın rotasıyla) atılmaz", async () => {
+    const { api } = await import('../api/client')
+    const { healthyPreview } = await import('./helpers/sslPreviewFixture.js')
+    api.checkDomainPreview.mockImplementation((d) => (d === 'a.example.com'
+      ? Promise.resolve({ success: true, data: healthyPreview({ domain: 'a.example.com', via: 'proxy', tls_mode_used: 'browser' }) })
+      : new Promise(() => {})))
+    const props = { onClose: () => {}, currentUser: 'admin', currentUserRole: 'ADMIN', initialTab: 'ssl' }
+    const { rerender } = render(<CertificateModal domain="a.example.com" {...props} />)
+    const group = await screen.findByRole('group', { name: EN['chier.viewToggle'] })
+    fireEvent.click(within(group).getByText(EN['chier.view.hierarchy']))
+    await waitFor(() => expect(api.certHierarchy).toHaveBeenCalledWith('a.example.com', expect.anything()))
+    rerender(<CertificateModal domain="b.example.com" {...props} />)
+    await act(async () => {})
+    expect(api.certHierarchy.mock.calls.filter(([d]) => d === 'b.example.com')).toEqual([])
+  })
+})

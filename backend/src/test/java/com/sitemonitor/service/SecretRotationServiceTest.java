@@ -248,6 +248,24 @@ class SecretRotationServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 4: kaldığı yeri bilmeyen BAŞKA pod baştan okusa da ilerler — tavan güncel satırlarla tükenmez")
+    void otherPodWithoutCursorStillProgresses() {
+        List<Object[]> rows = new java.util.ArrayList<>();
+        for (int i = 1; i <= 1000; i++) rows.add(new Object[]{ i, "izleme-" + i, rotating.encrypt("guncel" + i) });   // zaten güncel
+        for (int i = 1001; i <= 1200; i++) rows.add(new Object[]{ i, "izleme-" + i, oldCipher.encrypt("p" + i) });   // önceki anahtar
+        jdbc.batchUpdate("INSERT INTO http_monitors VALUES (?, ?, ?, NULL)", rows);
+        SecretRotationService otherPod = new SecretRotationService(jdbc, rotating);
+        otherPod.maxRows = SecretRotationService.PAGE;
+        Map<String, Object> r = otherPod.reencrypt("admin");
+        assertThat(r).containsEntry("rows_rewritten", 200).doesNotContainKey("partial");
+        Integer stillOld = 0;
+        for (String v : jdbc.queryForList("SELECT basic_auth_pass_enc FROM http_monitors", String.class)) {
+            if (rotating.classify(v) == SecretCipher.KeySlot.PREVIOUS) stillOld++;
+        }
+        assertThat(stillOld).isZero();
+    }
+
+    @Test
     @DisplayName("2026-10-12: süre bütçesi dolarsa konum 'yarım' döner ve sonraki çalıştırma kaldığı id'den devam eder")
     void reencryptDeadlineResumes() {
         for (int i = 1; i <= 3; i++) {

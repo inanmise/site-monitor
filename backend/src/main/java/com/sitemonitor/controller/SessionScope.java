@@ -295,6 +295,11 @@ public final class SessionScope {
         return granted(session, ATTR_GRANT_EDIT, teamId);
     }
 
+    /** Paylaşımla SİLİNEBİLEN takımlar (DELETE düzeyi). */
+    public static List<Long> grantDeleteTeamIds(HttpSession session) {
+        return grantList(session, ATTR_GRANT_DELETE);
+    }
+
     /** Paylaşımla ÇALIŞTIRILAN takımlar (EXECUTE ve üstü). */
     public static List<Long> grantExecuteTeamIds(HttpSession session) {
         return grantList(session, ATTR_GRANT_EXECUTE);

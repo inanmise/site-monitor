@@ -27,6 +27,14 @@ final class ExecTestSupport {
                 () -> teams == null ? Map.of() : teams);
     }
 
+    /** Takım adları OKUNAMAYAN kurum bağlamı (inceleme 4): bölüm adsız tablo üretmemeli, hata vermeli. */
+    static ExecutiveSummaryContext namesFailCtx(List<CertificateDto> latest, Map<String, ExecutiveSummaryContext.InventoryRow> inv) {
+        return new ExecutiveSummaryContext(SEP, NOW, 99.9, 30,
+                () -> latest == null ? List.of() : latest,
+                () -> inv == null ? Map.of() : inv,
+                () -> { throw new IllegalStateException("Yönetici özeti: takım adları okunamadı"); });
+    }
+
     static ExecutiveSummaryContext ctx() {
         return ctx(SEP, NOW, 99.9, 30, List.of(), Map.of(), Map.of(1L, "Takım A", 2L, "Takım B"));
     }

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { api } from '../api/client'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 
@@ -18,24 +18,58 @@ export function PermissionsProvider({ children, user }) {
   // İlk snapshot geldi mi (2026-10-12): gelmeden boş `{}` "hiç yetki yok" ile karışmasın — yetkiye göre süzülen bir
   // listeyi kaydeden ekranlar (Panom) yüklenene kadar yazmaz. Oturum kapanınca (user yok) yeniden false.
   const [loaded, setLoaded] = useState(false)
+  // Son okuma başarısız (inceleme 4, 2026-10-12): `loaded` false kalırken ekranlar sonsuza dek "yükleniyor" demesin —
+  // yeniden dene gösterebilsinler. Bir snapshot gelince false. Yüklendikten SONRAKİ yoklama hatası da true yapar ama önceki
+  // snapshot (ve `loaded`) korunur; ekranlar "okunamadı"yı yalnız `!loaded && failed` iken gösterir.
+  const [failed, setFailed] = useState(false)
+  // Kullanıcı değişimi ÇİZİM sırasında (inceleme 5): efekt çalışana kadar ilk çizimde yeni kullanıcı eski kullanıcının
+  // yetkileriyle çizilmesin — React bu çizimi atıp sıfırlanmış state ile hemen yeniden çizer (alt bileşenler eskiyi görmez).
+  const [renderUser, setRenderUser] = useState(() => userKey(user))
+  if (renderUser !== userKey(user)) {
+    setRenderUser(userKey(user))
+    setPerms(keepIfSame({}))
+    setLoaded(false)
+    setFailed(false)
+  }
+  // Sıra koruması (inceleme 4): çıkıştan / kullanıcı değişiminden SONRA gelen eski yanıt eski kullanıcının yetkilerini
+  // yazmasın. Her istek bir sıra alır; yalnız EN SON isteğin yanıtı uygulanır.
+  const seq = useRef(0)
+  const lastUser = useRef(userKey(user))
 
   const refresh = useCallback(async () => {
-    if (!user) { setPerms(keepIfSame({})); setLoaded(false); return }
+    const my = ++seq.current
+    const key = userKey(user)
+    if (lastUser.current !== key) {
+      // Kullanıcı değişti: önceki kullanıcının snapshot'ı yeni kullanıcıya bir an bile uygulanmaz
+      lastUser.current = key
+      setPerms(keepIfSame({}))
+      setLoaded(false)
+      setFailed(false)
+    }
+    if (!user) { setPerms(keepIfSame({})); setLoaded(false); setFailed(false); return }
     let res = null
-    try { res = await api.me.getPermissions() } catch { return }   // ağ hatası: önceki snapshot kalır, 60 sn sonra yeniden
-    if (res?.success) { setPerms(keepIfSame(res.data || {})); setLoaded(true) }
+    try { res = await api.me.getPermissions() } catch { res = null }   // ağ hatası: önceki snapshot kalır, 60 sn sonra yeniden
+    if (my !== seq.current) return
+    if (res?.success) { setPerms(keepIfSame(res.data || {})); setLoaded(true); setFailed(false) }
+    else setFailed(true)
   }, [user])
 
   useEffect(() => { refresh() }, [refresh])   // ilk + user değişince (user yoksa perms temizlenir)
   useVisibleInterval(refresh, user ? 60_000 : 0, false)   // periyodik (yalnız user varken), gizli sekmede durur
 
-  const value = useMemo(() => ({ perms, refresh, loaded }), [perms, refresh, loaded])
+  const value = useMemo(() => ({ perms, refresh, loaded, failed }), [perms, refresh, loaded, failed])
 
   return (
     <PermissionsContext.Provider value={value}>
       {children}
     </PermissionsContext.Provider>
   )
+}
+
+/** Kullanıcı kimliği: App kullanıcı adını (metin) verir; nesne verilirse adı — aynı kişinin yeni nesnesi "değişim" değildir. */
+function userKey(user) {
+  if (user && typeof user === 'object') return user.username ?? user.id ?? null
+  return user ?? null
 }
 
 /** State güncelleyicisi: içerik aynıysa ÖNCEKİ nesneyi korur (React aynı referansta yeniden çizmez). */
@@ -57,5 +91,7 @@ export function usePermissions() {
     refresh: ctx?.refresh ?? (() => {}),
     // Sağlayıcı yoksa (eski testler / bağımsız çizim) yüklenmiş sayılır — davranış eskisiyle aynı
     loaded: ctx ? ctx.loaded !== false : true,
+    // Son okuma başarısız oldu mu (yüklenmemişken anlamlı: "yeniden dene" gösterilir)
+    failed: ctx ? ctx.failed === true : false,
   }
 }

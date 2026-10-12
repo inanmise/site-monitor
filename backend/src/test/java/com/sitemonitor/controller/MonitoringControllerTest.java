@@ -718,6 +718,64 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("inceleme 5: EDIT paylaşımıyla paylaşan takıma YENİ izleme — varsayılan yönlendirme kabul, grup / 7/24 / "
+            + "seviye seçimi 403; kendi takımına eklerken serbest")
+    void createPing_inGrantTeam_routingStaysDefault() throws Exception {
+        when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pingMonitorRepo.save(any(com.sitemonitor.model.PingMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.PingMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 9L);
+        u.setAttribute("viewTeamIds", List.of(9L));
+        u.setAttribute("memberTeamIds", List.of(9L));
+        u.setAttribute("manageTeamIds", List.of());
+        for (String a : List.of(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT)) {
+            u.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+        }
+        String base = "\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"1.2.3.4\",\"teamId\":";
+        // tam form yükü, varsayılan değerlerle → kabul
+        mvc.perform(post("/api/monitoring/ping").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "5,\"notifyEmail\":true,\"notifyWebhook\":true,\"notificationGroupId\":\"\","
+                                + "\"nocNotify\":false,\"nocGroupIds\":[],\"alertLevel\":\"WARNING\"}"))
+                .andExpect(status().isOk());
+        // bildirim grubu / 7/24 / seviye seçimi → 403, kayıt yok
+        for (String extra : List.of("\"notificationGroupId\":44", "\"nocNotify\":true", "\"alertLevel\":\"CRITICAL\"",
+                "\"notifyEmail\":false")) {
+            mvc.perform(post("/api/monitoring/ping").session(u)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{" + base + "5," + extra + "}"))
+                    .andExpect(status().isForbidden());
+        }
+        verify(pingMonitorRepo, org.mockito.Mockito.times(1)).save(any(com.sitemonitor.model.PingMonitor.class));
+        // kendi takımına: seviye seçimi serbest
+        mvc.perform(post("/api/monitoring/ping").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "9,\"alertLevel\":\"CRITICAL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_level").value("CRITICAL"));
+    }
+
+    @Test
+    @DisplayName("inceleme 5: liste satırında routing_locked = yalnız paylaşımla düzenleyebilen; kendi takımında ve VIEW/EXECUTE'ta yok")
+    void teamAccessGrant_routingLockedFlag() throws Exception {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L), httpMon(3L, 5L)));
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 5L);
+        u.setAttribute("viewTeamIds", List.of(5L));
+        u.setAttribute("memberTeamIds", List.of(5L));
+        u.setAttribute("manageTeamIds", List.of());
+        u.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(2L, 3L)));
+        u.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new java.util.ArrayList<>(List.of(2L, 3L)));
+        u.setAttribute(SessionScope.ATTR_GRANT_EDIT, new java.util.ArrayList<>(List.of(2L)));
+        mvc.perform(get("/api/monitoring/http").session(u))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id == 1)].routing_locked").value(true))
+                .andExpect(jsonPath("$.data[?(@.id == 2)].routing_locked").isEmpty())
+                .andExpect(jsonPath("$.data[?(@.id == 3)].routing_locked").isEmpty());
+    }
+
+    @Test
     @DisplayName("POST /port: HTTP tipi (küçük harf) normalize edilir + expect/send_data persist")
     void createPort_httpType_persistsCheckConfig() throws Exception {
         when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
@@ -3272,6 +3330,98 @@ class MonitoringControllerTest {
             verify(portMonitorRepo, never()).save(any());
         }
 
+        /** Takım 9 üyesi; takım 5'e verilen paylaşım düzeyleri (kümülatif). */
+        private MockHttpSession granteeOf5(String... levels) {
+            MockHttpSession s = sessionWithTeam("USER", 9L);
+            s.setAttribute("viewTeamIds", List.of(9L));
+            s.setAttribute("memberTeamIds", List.of(9L));
+            s.setAttribute("manageTeamIds", List.of());
+            for (String a : levels) s.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+            return s;
+        }
+
+        private MockHttpSession deleteGranteeOf5() {
+            return granteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE,
+                    SessionScope.ATTR_GRANT_EDIT, SessionScope.ATTR_GRANT_DELETE);
+        }
+
+        @Test
+        @DisplayName("inceleme 5: paylaşımla geri yükleyen kişi bildirim YÖNLENDİRMESİNİ geri sarmaz — atlanır ve yanıtta söylenir")
+        void restore_byGrantee_skipsRoutingFields() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L,
+                            "{\"port\":443,\"notifyEmail\":false,\"alertLevel\":\"CRITICAL\",\"notificationGroupId\":44,"
+                            + "\"nocNotify\":true,\"nocGroupIds\":\"3\"}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            live.setNotificationGroupId(12L);
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_routing.length()").value(5));
+
+            assertThat(live.getPort()).isEqualTo(443);                  // operasyonel alan döndü
+            assertThat(live.getNotifyEmail()).isTrue();                 // yönlendirme dokunulmadı
+            assertThat(live.getAlertLevel()).isNull();
+            assertThat(live.getNotificationGroupId()).isEqualTo(12L);
+            assertThat(live.getNocNotify()).isNotEqualTo(Boolean.TRUE);
+            assertThat(live.getNocGroupIds()).isNull();
+        }
+
+        @Test
+        @DisplayName("inceleme 6: paylaşımla geri yüklemede bildirim alanları AYNIYSA 'atlandı' denmez (durum kaydı her alanı taşır)")
+        void restore_byGrantee_sameRouting_noSkippedNotice() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L,
+                            "{\"port\":443,\"notifyEmail\":true,\"notifyWebhook\":true,\"alertLevel\":null,"
+                            + "\"notificationGroupId\":null,\"nocNotify\":null,\"nocGroupIds\":null}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(liveMonitor()));
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_routing").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("inceleme 5: paylaşımla geri yüklemede fark YALNIZ bildirim ayarlarındaysa 403 (\"fark yok\" denmez), kayıt yazılmaz")
+        void restore_byGrantee_onlyRoutingDiffers_is403() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"port\":8443,\"alertLevel\":\"CRITICAL\"}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(liveMonitor()));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isForbidden());
+            verify(portMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("inceleme 5: kendi kapsamıyla geri yükleyen yönetici bildirim alanlarını da geri sarar (değişmeyen davranış)")
+        void restore_byOwner_restoresRoutingToo() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"alertLevel\":\"CRITICAL\"}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_routing").doesNotExist());
+            assertThat(live.getAlertLevel()).isEqualTo("CRITICAL");
+        }
+
+        @Test
+        @DisplayName("inceleme 5: k6 (betikli) izleme paylaşımla geri YÜKLENEMEZ — DELETE paylaşımı bile olsa 403")
+        void restore_scripted_byGrantee_is403() throws Exception {
+            com.sitemonitor.model.ScriptedMonitor live = new com.sitemonitor.model.ScriptedMonitor();
+            live.setId(4L); live.setName("canli"); live.setTeamId(5L);
+            when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+            com.sitemonitor.model.MonitorChangeLog r = snapRow(5L, "{\"name\":\"eski\"}");
+            r.setResourceKind("SCRIPTED"); r.setResourceId(4L); r.setSeq(1);
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("SCRIPTED", 4L, 1)).thenReturn(Optional.of(r));
+
+            mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isForbidden());
+            verify(scriptedMonitorRepo, never()).save(any());
+        }
+
         @Test
         @DisplayName("Snapshot'sız olay geri alınamaz (liste yanıtından gelen satır gibi)")
         void restore_withoutSnapshot_isRejected() throws Exception {
@@ -4446,6 +4596,41 @@ class MonitoringControllerTest {
                 .content("{\"groupName\":\"Grup A\",\"tags\":\"edge\",\"host\":\"x.example.com\",\"teamId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.tags").value("edge"));
+    }
+
+    @Test
+    @DisplayName("inceleme 7: paylaşımla oluşturulan alan adı izlemesi kritik gün eşiğini AYAR varsayılanıyla kaydeder (sınıf varsayılanı 7 değil); "
+            + "farklı değer 403; kendi takımında serbest")
+    void createDomain_inGrantTeam_criticalDaysUsesSettingDefault() throws Exception {
+        when(domainMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(publicSuffixService.registrableDomain(anyString())).thenReturn("x.example.com");
+        when(appSettings.getInt(eq("site.monitor.domain.default-critical-days"), anyInt())).thenReturn(14);
+        when(domainMonitorRepo.save(any(com.sitemonitor.model.DomainMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.DomainMonitor d = a.getArgument(0); d.setId(81L); return d; });
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 9L);
+        u.setAttribute("viewTeamIds", List.of(9L));
+        u.setAttribute("memberTeamIds", List.of(9L));
+        u.setAttribute("manageTeamIds", List.of());
+        for (String a : List.of(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT)) {
+            u.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+        }
+        String base = "\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.example.com\",\"teamId\":";
+        mvc.perform(post("/api/monitoring/domain").session(u).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "5,\"criticalDays\":30}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/monitoring/domain").session(u).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "5,\"criticalDays\":14,\"warningDays\":60}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainMonitor.class);
+        verify(domainMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getCriticalDays()).isEqualTo(14);
+        assertThat(cap.getValue().getWarningDays()).isEqualTo(60);
+        // kendi takımında serbest
+        mvc.perform(post("/api/monitoring/domain").session(u).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "9,\"criticalDays\":30}"))
+                .andExpect(status().isOk());
     }
 
     // ── Alarm seviyesi (2026-09-19): formdan seçilir, normalize edilir, yanıtta alert_level döner ──

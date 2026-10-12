@@ -89,6 +89,9 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
 
   return (
     <DomainRegistrationPanel reg={reg} rem={rem} remError={remError} remPager={remPager}
-      stale={stale} loading={loading} onRefresh={() => load(true)} />
+      stale={stale} loading={loading}
+      // Anlık sorgu (live) yazar ve dışarı çıkar: sunucu çalıştırma kapısı ister (canExecuteTeam). Satır `can_check` false
+      // ise (salt okunur paylaşım / başka takım) Yenile çizilmez — basılıp 403 yiyen düğme yok (2026-10-12)
+      onRefresh={monitor?.can_check === false ? undefined : () => load(true)} />
   )
 }

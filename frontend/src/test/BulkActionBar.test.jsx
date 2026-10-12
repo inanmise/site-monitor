@@ -34,6 +34,19 @@ describe('BulkActionBar', () => {
     expect(api.remove).not.toHaveBeenCalledWith(3)
   })
 
+  it('inceleme 5: toplu takım değişimi paylaşımla yazılan satırı (routing_locked / shared_access) DENEMEZ ve kaçının atlandığını söyler', async () => {
+    const rows = [{ id: 1, name: 'kendi', active: true }, { id: 2, name: 'paylaşımlı', active: true, routing_locked: true },
+      { id: 3, name: 'yalnız görülen', active: true, shared_access: true }]
+    render(<BulkActionBar selected={new Set([1, 2, 3])} items={rows} api={api} teams={[{ id: 7, name: 'Takım A' }]}
+      onClear={() => {}} onDone={() => {}} />)
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /^(Takım|Team)/ }))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="listbox"] [role="option"]')].find((o) => o.textContent.trim() === 'Takım A'))
+    fireEvent.click(screen.getAllByRole('button', { name: /^(Uygula|Apply)$/ })[0])
+    await waitFor(() => expect(api.update).toHaveBeenCalledTimes(1))
+    expect(api.update).toHaveBeenCalledWith(1, { teamId: 7 })
+    expect(await screen.findByText(/2 (izleme atlandı|monitor\(s\) skipped)/)).toBeInTheDocument()
+  })
+
   it('KALICI silme (2026-10-07): onay adları sayar + danger; başarılı silinenler ANINDA işaretlenir, başarısız olan işaretlenmez', async () => {
     __resetDeletedMarks()
     api.remove.mockImplementation(async (id) => (id === 2 ? { success: false } : { success: true, data: { permanent: true } }))

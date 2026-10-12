@@ -815,4 +815,67 @@ class InventoryOrgVisibilityAdminTest {
         assertThat(foreign.getTeamId()).isEqualTo(OWN_TEAM);
         verify(derivedMonitorTeamSync).syncTeam("foreign.example.com", OWN_TEAM);
     }
+
+    // ══ Takım erişim paylaşımı — bildirim yönlendirmesi (inceleme 5) ══════════════════════════════════
+
+    /** Takım 5 üyesi; yabancı takım 9'a EDIT paylaşımı. */
+    private static MockHttpSession editGranteeOfForeign() {
+        MockHttpSession s = user();
+        for (String a : List.of(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT)) {
+            s.setAttribute(a, new ArrayList<>(List.of(FOREIGN_TEAM)));
+        }
+        return s;
+    }
+
+    @Test
+    @DisplayName("inceleme 5: paylaşımla düzenleme UG takımını SİLMEZ (gövde UG taşımasa da kayıtlı UG kalır); kademe değişimi 403")
+    void grantee_update_keepsUg_rejectsTier() throws Exception {
+        foreign.setUgTeamId(7L);
+        foreign.setTier(2);
+        String body = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"foreign.example.com\",\"port\":443,"
+                + "\"active\":true,\"team_id\":9,\"tier\":%d,\"description\":\"yeni açıklama\"}";
+        mvc.perform(put("/api/admin/inventory/2").session(editGranteeOfForeign()).contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format(body, 1)))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, never()).save(any());
+
+        mvc.perform(put("/api/admin/inventory/2").session(editGranteeOfForeign()).contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format(body, 2)))
+                .andExpect(status().isOk());
+        assertThat(foreign.getUgTeamId()).isEqualTo(7L);
+        assertThat(foreign.getTier()).isEqualTo(2);
+        assertThat(foreign.getDescription()).isEqualTo("yeni açıklama");
+    }
+
+    @Test
+    @DisplayName("inceleme 5: paylaşan takıma YENİ kayıt — kademe / bildirim grubu / 7/24 varsayılanda kalmalı (aksi 403); "
+            + "kendi takımına eklerken serbest")
+    void grantee_create_routingStaysDefault() throws Exception {
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"%s\",\"port\":443,\"team_id\":%d%s}";
+        for (String extra : List.of(",\"tier\":1", ",\"notification_group_id\":44", ",\"noc_notify\":true")) {
+            mvc.perform(post("/api/admin/inventory").session(editGranteeOfForeign()).contentType(MediaType.APPLICATION_JSON)
+                            .content(String.format(base, "yeni.example.com", FOREIGN_TEAM, extra)))
+                    .andExpect(status().isForbidden());
+        }
+        verify(inventoryRepo, never()).save(any());
+        mvc.perform(post("/api/admin/inventory").session(editGranteeOfForeign()).contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format(base, "yeni.example.com", FOREIGN_TEAM, ",\"noc_notify\":false,\"noc_group_ids\":[]")))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/admin/inventory").session(editGranteeOfForeign()).contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format(base, "kendi.example.com", OWN_TEAM, ",\"tier\":1")))
+                .andExpect(status().isOk());
+        verify(inventoryRepo, times(2)).save(any());
+    }
+
+    @Test
+    @DisplayName("inceleme 5: liste satırı routing_locked yalnız paylaşımla YAZILABİLEN kayıtta; kendi kaydında ve global yöneticide yok")
+    void grantee_rowsCarryRoutingLocked() throws Exception {
+        mvc.perform(get("/api/admin/inventory").param("scope", "all").session(editGranteeOfForeign()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.domain == 'foreign.example.com')].routing_locked").value(true))
+                .andExpect(jsonPath("$.data[?(@.domain == 'own.example.com')].routing_locked").isEmpty());
+        mvc.perform(get("/api/admin/inventory").param("scope", "all").session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].routing_locked").doesNotExist());
+    }
 }

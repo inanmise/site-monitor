@@ -109,7 +109,10 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
         }
       } else {
         const status = res?.status ?? res?.errorInfo?.status ?? null
-        if (team != null && (status === 403 || status === 404)) {
+        // Bozuk takım bağlantısı (kesilmiş posta bağlantısı → 400 field=team) da aynı yoldan (inceleme 4): ilk açılışta kapsam
+        // seçici çizilmediği için kullanıcı adresi elle düzeltmeden çıkamıyordu.
+        const badTeamLink = status === 400 && (res?.field === 'team' || res?.fields?.team != null)
+        if (team != null && (status === 403 || status === 404 || badTeamLink)) {
           // Bağlantıdaki kapsam (eski / iletilmiş / silinmiş takım) görülemiyor: "erişim yok" ya da hata ekranında kilitlenmek
           // yerine varsayılan kapsama dönülür (2026-10-12). Bildirim, varsayılan kapsam yüklenince. 400 (ör. eski ay) kapsamla
           // ilgili değildir — geçerli takım düşürülmez, ay hatası gösterilir.

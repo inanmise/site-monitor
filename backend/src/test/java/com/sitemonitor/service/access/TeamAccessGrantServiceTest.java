@@ -152,7 +152,7 @@ class TeamAccessGrantServiceTest {
     }
 
     @Test
-    @DisplayName("önbellek: TTL içinde yeniden okunmaz; invalidate düşürür; okuma hatası önceki görüntüyü korur")
+    @DisplayName("önbellek: TTL içinde yeniden okunmaz; invalidate bayat işaretler; okuma hatası önceki görüntüyü korur")
     void cacheTtlInvalidateAndFailure() {
         grant(1, A, TeamAccessGrant.TYPE_USER, null, ALICE, "VIEW", null);
         svc.levelsFor(ALICE);
@@ -160,7 +160,10 @@ class TeamAccessGrantServiceTest {
         verify(repo, times(1)).findAllByOrderByIdAsc();
         svc.invalidate();
         org.mockito.Mockito.doThrow(new IllegalStateException("db")).when(repo).findAllByOrderByIdAsc();
-        assertThat(svc.levelsFor(ALICE)).isEmpty();   // ilk görüntü düşürüldü, hata → boş (kapalı düşer)
+        // invalidate görüntüyü SİLMEZ, bayat işaretler (2026-10-12): yeniden kurulum hata verirse herkesin paylaşımı
+        // 30 sn boşalmaz — önceki görüntü kullanılır (TTL dolumundaki hata yoluyla aynı kural)
+        assertThat(svc.levelsFor(ALICE)).containsKey(A);
+        verify(repo, times(2)).findAllByOrderByIdAsc();   // bayat → yeniden denendi
         now.addAndGet(31_000);
         org.mockito.Mockito.doAnswer(inv -> List.copyOf(rows)).when(repo).findAllByOrderByIdAsc();
         assertThat(svc.levelsFor(ALICE)).containsKey(A);
@@ -236,12 +239,15 @@ class TeamAccessGrantServiceTest {
                 .isInstanceOfSatisfying(GlobalExceptionHandler.CodedConflictException.class,
                         e -> assertThat(e.getCode()).isEqualTo("GRANT_EXISTS"));
         when(repo.findByOwnerTeamIdAndGranteeKey(A, "T:" + B)).thenReturn(Optional.empty());
-        when(repo.countByOwnerTeamId(A)).thenReturn((long) TeamAccessGrantService.MAX_PER_OWNER);
+        when(repo.countLiveByOwnerTeamId(org.mockito.ArgumentMatchers.eq(A), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn((long) TeamAccessGrantService.MAX_PER_OWNER);
         assertThatThrownBy(() -> svc.create(in, "admin"))
                 .isInstanceOfSatisfying(GlobalExceptionHandler.CodedConflictException.class,
                         e -> assertThat(e.getCode()).isEqualTo("GRANT_LIMIT"));
         verify(repo, never()).saveAndFlush(any());
-        when(repo.countByOwnerTeamId(A)).thenReturn(0L);
+        // tavan YALNIZ süresi dolmamış paylaşımları sayar: sorgunun "şimdi"si saatten
+        verify(repo, org.mockito.Mockito.atLeastOnce()).countLiveByOwnerTeamId(A, "2026-10-12T09:00:00");
+        when(repo.countLiveByOwnerTeamId(org.mockito.ArgumentMatchers.eq(A), org.mockito.ArgumentMatchers.anyString())).thenReturn(0L);
         when(repo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         svc.levelsFor(ALICE);   // görüntü kuruldu
         TeamAccessGrant saved = svc.create(in, "admin");
@@ -249,6 +255,70 @@ class TeamAccessGrantServiceTest {
         assertThat(saved.getCreatedBy()).isEqualTo("admin");
         svc.levelsFor(ALICE);
         verify(repo, times(2)).findAllByOrderByIdAsc();   // kayıt sonrası yeniden kuruldu
+    }
+
+    @Test
+    @DisplayName("inceleme 4: yapım sırasında kayıt değişirse o yapım saklanmaz — sonraki okuma yeniden kurar")
+    void buildRacingInvalidateIsNotStored() {
+        grant(1, A, TeamAccessGrant.TYPE_USER, null, ALICE, "VIEW", null);
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<TeamAccessGrant> snap = List.copyOf(rows);
+            // okuma bitti, görüntü henüz saklanmadı: bu arada paylaşım silindi (başka istek)
+            if (first.getAndSet(false)) { rows.clear(); svc.invalidate(); }
+            return snap;
+        }).when(repo).findAllByOrderByIdAsc();
+        assertThat(svc.levelsFor(ALICE)).containsKey(A);   // bu istek kendi sonucunu kullanır
+        assertThat(svc.levelsFor(ALICE)).isEmpty();          // ama saklanmadı: silinmiş paylaşım 30 sn yaşamaz
+        verify(repo, times(2)).findAllByOrderByIdAsc();
+    }
+
+    @Test
+    @DisplayName("inceleme 5: süresi DOLMUŞ paylaşımı canlandırmak takım tavanına takılır (GRANT_LIMIT); canlı paylaşımın "
+            + "düzenlenmesi ve süresi dolmuşun süresiz kalmadan düzenlenmesi tavanı sormaz")
+    void reviveExpiredRespectsLimit() {
+        when(repo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(repo.countLiveByOwnerTeamId(org.mockito.ArgumentMatchers.eq(A), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn((long) TeamAccessGrantService.MAX_PER_OWNER);
+        TeamAccessGrant expired = new TeamAccessGrant();
+        expired.setOwnerTeamId(A); expired.setLevel("VIEW"); expired.setExpiresAt("2026-10-01T20:59:59");
+        // süresiz canlandırma → tavan
+        assertThatThrownBy(() -> svc.update(expired, TeamAccessLevel.EDIT, null, null, "admin"))
+                .isInstanceOfSatisfying(GlobalExceptionHandler.CodedConflictException.class,
+                        e -> assertThat(e.getCode()).isEqualTo("GRANT_LIMIT"));
+        // ileri tarihli canlandırma → tavan
+        assertThatThrownBy(() -> svc.update(expired, TeamAccessLevel.EDIT, "2026-12-31T20:59:59", null, "admin"))
+                .isInstanceOf(GlobalExceptionHandler.CodedConflictException.class);
+        assertThat(expired.getLevel()).isEqualTo("VIEW");   // reddedilen istek kaydı değiştirmedi
+        verify(repo, never()).saveAndFlush(any());
+        // süresi dolmuş kalacak düzenleme (yalnız not) tavanı sormaz
+        svc.update(expired, TeamAccessLevel.VIEW, "2026-10-01T20:59:59", "not", "admin");
+        // canlı paylaşım düzenlemesi tavanı sormaz (zaten sayılıyor)
+        TeamAccessGrant live = new TeamAccessGrant();
+        live.setOwnerTeamId(A); live.setLevel("VIEW"); live.setExpiresAt(null);
+        svc.update(live, TeamAccessLevel.DELETE, null, null, "admin");
+        assertThat(live.getLevel()).isEqualTo("DELETE");
+        verify(repo, times(2)).countLiveByOwnerTeamId(org.mockito.ArgumentMatchers.eq(A), org.mockito.ArgumentMatchers.anyString());
+        // tavan altında canlandırma geçer
+        when(repo.countLiveByOwnerTeamId(org.mockito.ArgumentMatchers.eq(A), org.mockito.ArgumentMatchers.anyString())).thenReturn(3L);
+        svc.update(expired, TeamAccessLevel.EDIT, null, null, "admin");
+        assertThat(expired.getExpiresAt()).isNull();
+        assertThat(expired.getLevel()).isEqualTo("EDIT");
+    }
+
+    @Test
+    @DisplayName("inceleme 4: bitiş en geç 2099-12-31; eşzamanlı aynı alıcı (benzersiz kısıt) GRANT_EXISTS")
+    void expiryCapAndUniqueRace() {
+        assertThat(svc.validate(A, "TEAM", B, null, "VIEW", "2099-12-31", null).expiresAt()).isNotNull();
+        assertThatThrownBy(() -> svc.validate(A, "TEAM", B, null, "VIEW", "2100-01-01", null))
+                .isInstanceOfSatisfying(GlobalExceptionHandler.FieldValidationException.class,
+                        e -> assertThat(e.getMessage()).contains("2099"));
+        TeamAccessGrantService.Input in = svc.validate(A, "TEAM", B, null, "VIEW", null, null);
+        when(repo.findByOwnerTeamIdAndGranteeKey(A, "T:" + B)).thenReturn(Optional.empty());
+        when(repo.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uk_owner_grantee"));
+        assertThatThrownBy(() -> svc.create(in, "admin"))
+                .isInstanceOfSatisfying(GlobalExceptionHandler.CodedConflictException.class,
+                        e -> assertThat(e.getCode()).isEqualTo("GRANT_EXISTS"));
     }
 
     @Test

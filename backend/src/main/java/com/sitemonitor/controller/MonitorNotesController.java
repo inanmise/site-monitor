@@ -140,6 +140,18 @@ public class MonitorNotesController {
         String name = (String) session.getAttribute("displayName");
         if (name == null || name.isBlank()) name = user;
 
+        // Takım erişim paylaşımı (2026-10-12): hedefi YALNIZ paylaşımla gören kişi not eklemek için DÜZENLEME düzeyi ister
+        // ve not PAYLAŞAN takımın damgasıyla yazılır — kendi takımıyla damgalanırsa paylaşan takım notu hiç görmezdi.
+        // Kendi kapsamıyla gören kullanıcıda kural aynı (oturum takımı damgası).
+        Long stamp = sessionTeamId(session);
+        if (targetTeams.viewedOnlyByGrant(session, t, tg)) {
+            stamp = targetTeams.operableOwnerTeam(session, t, tg);
+            if (stamp == null) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu izlemeye takım erişim paylaşımıyla yalnız bakabiliyorsunuz; not eklemek için paylaşımda en az Düzenleme düzeyi gerekir.",
+                        "You can only view this monitor through team access sharing; adding a note needs at least the Edit level in the share."));
+            }
+        }
         MonitorNote n = new MonitorNote();
         n.setMonitorType(t);
         n.setTarget(tg);
@@ -147,7 +159,7 @@ public class MonitorNotesController {
         n.setActionTaken(trimOrNull(action));
         n.setRootCause(trimOrNull(root));
         n.setRefs(trimOrNull(refs));
-        n.setTeamId(sessionTeamId(session));
+        n.setTeamId(stamp);
         n.setAuthorUsername(user);
         n.setAuthorName(name);
         n.setCreatedAt(now());
@@ -215,7 +227,10 @@ public class MonitorNotesController {
      */
     private void requireModify(HttpSession session, MonitorNote n) {
         String user = (String) session.getAttribute("username");
-        if (user != null && user.equals(n.getAuthorUsername())) return;   // kendi notu
+        // Kendi notu — ama takımın kaydına hâlâ YAZABİLİYORSA (inceleme 5): paylaşımla not yazan kişinin paylaşımı
+        // kaldırılınca notu (sahip takım damgalı) düzenlemesi / silmesi sürmesin. Takımsız eski not: yazarı değiştirebilir.
+        if (user != null && user.equals(n.getAuthorUsername())
+                && (n.getTeamId() == null || SessionScope.canOperateTeam(session, n.getTeamId()))) return;
         if (SessionScope.isGlobalAdmin(session)) return;
         // Takımsız (eski) kayıt: kime ait olduğu bilinmediği için yalnız global admin ya da yazarı
         // değiştirebilir — rol dizesine geri düşmek kapıyı yeniden açardı.

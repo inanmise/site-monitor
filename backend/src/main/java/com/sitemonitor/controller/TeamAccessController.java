@@ -127,12 +127,17 @@ public class TeamAccessController {
         if (level == null) level = grants.level(null);
         String expiresAt = body.containsKey("expires_on") ? grants.expiresAt(str(body.get("expires_on"))) : g.getExpiresAt();
         String note = body.containsKey("note") ? grants.note(str(body.get("note"))) : g.getNote();
+        boolean noteChanged = !java.util.Objects.equals(note, g.getNote());
+        // Değişiklik yoksa yazım ve denetim yok (boş PUT updated_at'i oynatmaz)
+        if (level.name().equals(beforeLevel) && java.util.Objects.equals(expiresAt, beforeExp) && !noteChanged) {
+            return ok(view(g, session));
+        }
         TeamAccessGrant saved = grants.update(g, level, expiresAt, note, actor(session));
         auditService.recordAction("TEAM_ACCESS_GRANT_UPDATE", session, request, "TEAM", String.valueOf(g.getOwnerTeamId()),
                 AuditDetail.of("grant_id", saved.getId(), "grantee_type", saved.getGranteeType(),
                         "grantee_team_id", saved.getGranteeTeamId(), "grantee_user_id", saved.getGranteeUserId(),
                         "level_before", beforeLevel, "level", saved.getLevel(),
-                        "expires_before", beforeExp, "expires_at", saved.getExpiresAt()));
+                        "expires_before", beforeExp, "expires_at", saved.getExpiresAt(), "note_changed", noteChanged));
         return ok(view(saved, session));
     }
 
@@ -151,6 +156,51 @@ public class TeamAccessController {
         return ok(data);
     }
 
+    /**
+     * Oturum sahibinin GEÇERLİ paylaşım düzeyleri (2026-10-12) — {@code /me}'deki {@code access_grants} ile AYNI biçim ve
+     * süzgeç (kendi kapsamında zaten gördüğü takım yok). İstemci pano veri dalgasında okur; paylaşım değişince kartların
+     * düğmeleri yeniden giriş beklemeden güncellenir. Yalnız düzey + takım adı, hafif.
+     */
+    @GetMapping("/me/access-grants")
+    public ResponseEntity<Map<String, Object>> myAccessGrants(HttpSession session) {
+        Object uid = session.getAttribute("userId");
+        Long userId = uid instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        List<Long> ids = new ArrayList<>();
+        Map<Long, TeamAccessLevel> levels = grants.levelsFor(userId);
+        for (Long id : levels.keySet()) if (!SessionScope.canView(session, id)) ids.add(id);
+        ids.sort(Long::compare);
+        Map<Long, String> names = new HashMap<>();
+        if (!ids.isEmpty()) for (Team t : teamRepo.findAllById(ids)) names.put(t.getId(), t.getName());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Long id : ids) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("team_id", id);
+            m.put("team_name", names.get(id));
+            m.put("level", levels.get(id).name());
+            out.add(m);
+        }
+        // Yalnız paylaşımla YAZILABİLEN takımlar (inceleme 6) — /me ile aynı alan; kendi kapsamıyla görülenler dâhil
+        List<Long> writeIds = new ArrayList<>();
+        for (Map.Entry<Long, TeamAccessLevel> e : levels.entrySet()) {
+            if (e.getValue().atLeast(TeamAccessLevel.EDIT) && !SessionScope.canOperateTeamOwn(session, e.getKey())) writeIds.add(e.getKey());
+        }
+        writeIds.sort(Long::compare);
+        List<Long> missing = new ArrayList<>();
+        for (Long id : writeIds) if (!names.containsKey(id)) missing.add(id);
+        if (!missing.isEmpty()) for (Team t : teamRepo.findAllById(missing)) names.put(t.getId(), t.getName());
+        List<Map<String, Object>> write = new ArrayList<>();
+        for (Long id : writeIds) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("team_id", id);
+            m.put("team_name", names.get(id));
+            write.add(m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("access_grants", out);
+        data.put("grant_write_teams", write);
+        return ok(data);
+    }
+
     /** Oturum sahibine paylaşılmış takımlar — kişiye ya da üyesi olduğu takıma; süresi dolmuş / pasif sahip hariç. */
     @GetMapping("/me/shared-with-me")
     public ResponseEntity<Map<String, Object>> sharedWithMe(HttpSession session) {
@@ -159,7 +209,12 @@ public class TeamAccessController {
         Map<Long, TeamAccessLevel> effective = grants.levelsFor(userId);
         List<Map<String, Object>> rows = new ArrayList<>();
         if (!effective.isEmpty()) {
-            Set<Long> myTeams = new LinkedHashSet<>(SessionScope.memberTeamIds(session));
+            // Üyelik DB'den (görüntüyle aynı kaynak) — oturumdaki giriş anı listesi değil (2026-10-12)
+            Set<Long> myTeams = new LinkedHashSet<>();
+            userRepo.findById(userId).ifPresent(u -> {
+                if (u.getTeamId() != null) myTeams.add(u.getTeamId());
+                if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) if (t != null) myTeams.add(t);
+            });
             List<TeamAccessGrant> mine = new ArrayList<>();
             for (TeamAccessGrant g : repo.findByOwnerTeamIdInOrderByIdAsc(effective.keySet())) {
                 if (grants.expired(g)) continue;
@@ -169,6 +224,8 @@ public class TeamAccessController {
             }
             Names names = names(mine);
             for (TeamAccessGrant g : mine) {
+                // Pasif alıcı takıma verilen paylaşım UYGULANMAZ (görüntü onu saymaz) — listede de gösterilmez (inceleme 5)
+                if (TeamAccessGrant.TYPE_TEAM.equals(g.getGranteeType()) && !names.teamActive(g.getGranteeTeamId())) continue;
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("owner_team_id", g.getOwnerTeamId());
                 m.put("owner_team_name", names.team(g.getOwnerTeamId()));

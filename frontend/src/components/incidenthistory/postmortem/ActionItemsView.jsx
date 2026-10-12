@@ -33,7 +33,16 @@ export default function ActionItemsView({ onOpenIncident }) {
   const [q, setQ] = useState(() => readUrlParam('ih_aq', '') || '')
   const [qTerm, setQTerm] = useState(() => (readUrlParam('ih_aq', '') || '').trim())
   const [data, setData] = useState(null)
-  const [items, setItems] = useState([])
+  const [items, setItemsState] = useState([])
+  // Liste aynası (inceleme 4): sayfa birleştirme ve "yeni satır geldi mi" kararı güncel listeyle — setState içinde yan etki yok
+  const itemsRef = useRef([])
+  const setItems = useCallback((v) => {
+    itemsRef.current = typeof v === 'function' ? v(itemsRef.current) : v
+    setItemsState(itemsRef.current)
+  }, [])
+  // Bir sayfa YENİ satır getirmediyse sayfalama durur (tekilleştirme items.length < total'ı kalıcı bırakabiliyordu —
+  // "Daha fazla (1)" boş sayfaları istemeyi sürdürüyordu)
+  const [exhausted, setExhausted] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState(null)
@@ -41,6 +50,11 @@ export default function ActionItemsView({ onOpenIncident }) {
   // Sonraki istenecek sayfa (2026-10-12): items.length'ten türetilmez — tekilleştirme satır düşürünce aynı sayfa
   // yeniden istenip "daha fazla" ilerlemeyi bırakıyordu.
   const nextPage = useRef(1)
+  // Sayaçlar (açık / gecikmiş / bana ait) süzgeçten BAĞIMSIZ (sunucu yalnız kapsamla sayar) — süzgeç değişiminde silinmez;
+  // her başarılı yanıtla tazelenir (inceleme 4: her dokunuşta üç kutucuk "—"ye düşüyordu)
+  const [totalsState, setTotalsState] = useState(null)
+  // Hata "daha fazla" yüklemesinden mi geldi: yeniden dene KALDIĞI yerden sürer (0'a dönüp 150 satırı atmaz)
+  const [failedMore, setFailedMore] = useState(false)
 
   useUrlQuerySync({ ih_astatus: status === 'open' ? null : status, ih_amine: mine ? '1' : null, ih_aover: overdue ? '1' : null, ih_aq: qTerm || null })
   useEffect(() => {
@@ -59,17 +73,39 @@ export default function ActionItemsView({ onOpenIncident }) {
     if (res?.success && res.data) {
       setError(null)
       setData(res.data)
+      if (res.data.totals && typeof res.data.totals === 'object') setTotalsState(res.data.totals)
       nextPage.current = page + 1
-      setItems((prev) => {
-        const next = res.data.items || []
-        if (page === 0) return next
-        const seen = new Set(prev.map((x) => x.id))
-        return [...prev, ...next.filter((x) => !seen.has(x.id))]
-      })
-    } else setError(res?.error || t('pm.listError'))
-  }, [status, mine, overdue, qTerm, t])
+      const next = res.data.items || []
+      if (page === 0) {
+        setItems(next)
+        setExhausted(false)
+      } else {
+        const seen = new Set(itemsRef.current.map((x) => x.id))
+        const fresh = next.filter((x) => !seen.has(x.id))
+        setItems([...itemsRef.current, ...fresh])
+        if (fresh.length === 0) setExhausted(true)
+      }
+    } else {
+      setFailedMore(page > 0)
+      setError(res?.error || t('pm.listError'))
+    }
+  }, [status, mine, overdue, qTerm, t, setItems])
 
-  useEffect(() => { load(0) }, [load])
+  // Süzgeç DEĞİŞİNCE eski süzgecin satırları, sayaçları ve sayfa konumu düşer (inceleme 4): sayfa 0 isteği başarısız
+  // olursa "Daha fazla" YENİ süzgecin 3. sayfasını ESKİ listenin sonuna ekliyordu. Dil değişimi (t) aynı süzgeçtir.
+  const filterKey = `${status}|${mine}|${overdue}|${qTerm}`
+  const lastFilter = useRef(filterKey)
+  useEffect(() => {
+    if (lastFilter.current !== filterKey) {
+      lastFilter.current = filterKey
+      setItems([])
+      setData(null)
+      setError(null)
+      setExhausted(false)
+      nextPage.current = 1
+    }
+    load(0)
+  }, [load]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function changeStatus(a, next) {
     if (next === a.status) return
@@ -85,7 +121,7 @@ export default function ActionItemsView({ onOpenIncident }) {
     } else toast.error(res?.error || t('pm.actionError'))
   }
 
-  const totals = data?.totals || {}
+  const totals = totalsState || {}
   const total = data?.total ?? 0
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Istanbul' })
   const hasFilter = status !== 'open' || mine || overdue || !!qTerm
@@ -95,7 +131,7 @@ export default function ActionItemsView({ onOpenIncident }) {
         active && 'border-primary ring-1 ring-primary')}>
       <span className={cn('grid size-9 shrink-0 place-items-center rounded-lg', tone)} aria-hidden="true"><Icon className="size-4" /></span>
       <span className="flex min-w-0 flex-col">
-        <span className="text-xl font-semibold tabular-nums leading-tight">{value ?? 0}</span>
+        <span className="text-xl font-semibold tabular-nums leading-tight">{value ?? '—'}</span>
         <span className="text-xs text-muted-foreground">{t('pm.kpi.' + key)}</span>
       </span>
     </Button>
@@ -129,7 +165,7 @@ export default function ActionItemsView({ onOpenIncident }) {
 
       {error && data && (
         <AlertBanner tone="danger" role="alert" title={t('pm.listError')} className="mb-0"
-          actions={<Button type="button" variant="outline" size="sm" onClick={() => load(0)}><RotateCcw aria-hidden="true" />{t('pm.retry')}</Button>}>{error}</AlertBanner>
+          actions={<Button type="button" variant="outline" size="sm" onClick={() => load(failedMore ? nextPage.current : 0)}><RotateCcw aria-hidden="true" />{t('pm.retry')}</Button>}>{error}</AlertBanner>
       )}
 
       {!data && !error && <LoadingBlock label={t('pm.loading')} />}
@@ -150,7 +186,7 @@ export default function ActionItemsView({ onOpenIncident }) {
           ))}
         </ul>
       )}
-      {data && items.length < total && (
+      {data && !error && !exhausted && items.length < total && (
         <Button type="button" variant="outline" onClick={() => load(nextPage.current)} disabled={loading} className={cn('self-center', TOUCH)}
           data-slot="pm-actions-more">
           {loading && <Spinner size={14} inline decorative />}{t('pm.loadMore', total - items.length)}

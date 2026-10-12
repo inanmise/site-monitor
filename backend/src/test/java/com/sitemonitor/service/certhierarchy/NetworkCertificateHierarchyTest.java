@@ -234,6 +234,102 @@ class NetworkCertificateHierarchyTest {
     }
 
     @Test
+    @DisplayName("inceleme 4: CA OLMAYAN sertifika (son kullanıcı) imzalasa da veren olarak zincire girmez → 'yanlış ara sertifika'")
+    void nonCaIssuerIsNotUsed() {
+        KeyPair signerKey = TestCerts.freshRsa();
+        X509Certificate signerLeaf = TestCerts.leaf("Rogue Signer", List.of("rogue.example.test"), signerKey,
+                chain.inter(), chain.interKey().getPrivate(), days(-5), days(90));
+        X509Certificate forged = TestCerts.leaf("api.example.test", List.of("api.example.test"), TestCerts.freshRsa(),
+                signerLeaf, signerKey.getPrivate(), days(-1), days(30));
+        assertThat(NetworkCertificateHierarchy.canIssue(signerLeaf)).isFalse();
+        assertThat(NetworkCertificateHierarchy.canIssue(chain.inter())).isTrue();
+        Map<String, Object> v = NetworkCertificateHierarchy.build(arr(forged, signerLeaf, chain.inter()),
+                List.of(chain.root()), List.of(), Instant.now());
+        assertThat(nodes(v)).extracting(m -> m.get("role")).containsExactly("leaf");
+        assertThat(v).containsEntry("missing_kind", "wrong_intermediate").containsEntry("issuer_missing", true)
+                .containsEntry("root_source", null).containsEntry("root_trusted", false);
+    }
+
+    @Test
+    @DisplayName("inceleme 5: depodaki KENDİNDEN İMZALI kök CA uzantısı taşımasa da (eski kurumsal kök) güven çapasıdır — PKIX gibi")
+    void storeRootWithoutCaExtensionsIsAnAnchor() {
+        KeyPair rootKey = TestCerts.freshRsa();
+        // basicConstraints yok, keyUsage keyCertSign içermiyor: canIssue false
+        X509Certificate legacyRoot = TestCerts.selfSignedLeaf("Legacy Corp Root", null, rootKey, days(-100), days(1000));
+        assertThat(NetworkCertificateHierarchy.canIssue(legacyRoot)).isFalse();
+        KeyPair interKey = TestCerts.freshRsa();
+        X509Certificate inter = TestCerts.intermediate("Legacy Corp Issuing", interKey, legacyRoot, rootKey.getPrivate(),
+                days(-50), days(500));
+        X509Certificate leaf = TestCerts.leaf("intra.example.test", List.of("intra.example.test"), TestCerts.freshRsa(),
+                inter, interKey.getPrivate(), days(-1), days(60));
+        Map<String, Object> v = NetworkCertificateHierarchy.build(arr(leaf, inter), List.of(), List.of(legacyRoot), Instant.now());
+        assertThat(nodes(v)).extracting(m -> m.get("role")).containsExactly("root", "intermediate", "leaf");
+        assertThat(v).containsEntry("root_source", "trust_store").containsEntry("trust_store", "corporate")
+                .containsEntry("root_trusted", true).containsEntry("missing_kind", null);
+    }
+
+    @Test
+    @DisplayName("inceleme 5: imza algoritması bu JVM'de doğrulanamıyorsa ad eşleşen veren 'imzalıyor' sayılır (yanlış ara denmez)")
+    void unsupportedSignatureAlgorithmCountsAsSigned() throws Exception {
+        X509Certificate cert = org.mockito.Mockito.mock(X509Certificate.class);
+        org.mockito.Mockito.when(cert.getIssuerX500Principal()).thenReturn(chain.inter().getSubjectX500Principal());
+        org.mockito.Mockito.doThrow(new java.security.NoSuchAlgorithmException("GOST"))
+                .when(cert).verify(org.mockito.ArgumentMatchers.any(java.security.PublicKey.class));
+        assertThat(NetworkCertificateHierarchy.signs(chain.inter(), cert)).isTrue();
+        // ad eşleşmezse yine hayır; gerçek imza hatası da hayır
+        assertThat(NetworkCertificateHierarchy.signs(chain.root(), cert)).isFalse();
+        org.mockito.Mockito.doThrow(new java.security.SignatureException("bozuk"))
+                .when(cert).verify(org.mockito.ArgumentMatchers.any(java.security.PublicKey.class));
+        assertThat(NetworkCertificateHierarchy.signs(chain.inter(), cert)).isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme 6: imzası doğrulanamayan bağ yol kurar ama GÜVEN kararına girmez — hasUnverifiedLink; doğrulanmış zincirde "
+            + "root_trusted ve signature_unverified=false")
+    void unverifiableLinkIsNeverTrusted() throws Exception {
+        X509Certificate cert = org.mockito.Mockito.mock(X509Certificate.class);
+        org.mockito.Mockito.when(cert.getIssuerX500Principal()).thenReturn(chain.inter().getSubjectX500Principal());
+        org.mockito.Mockito.doThrow(new java.security.NoSuchAlgorithmException("GOST"))
+                .when(cert).verify(org.mockito.ArgumentMatchers.any(java.security.PublicKey.class));
+        assertThat(NetworkCertificateHierarchy.signatureCheck(chain.inter(), cert)).isNull();
+        assertThat(NetworkCertificateHierarchy.signatureCheck(chain.root(), cert)).isFalse();
+        assertThat(NetworkCertificateHierarchy.signatureCheck(chain.inter(), chain.leaf())).isTrue();
+        assertThat(NetworkCertificateHierarchy.hasUnverifiedLink(List.of(cert, chain.inter(), chain.root()))).isTrue();
+        assertThat(NetworkCertificateHierarchy.hasUnverifiedLink(List.of(chain.leaf(), chain.inter(), chain.root()))).isFalse();
+        Map<String, Object> v = NetworkCertificateHierarchy.build(arr(chain.leaf(), chain.inter()), List.of(chain.root()), List.of(), Instant.now());
+        assertThat(v).containsEntry("root_trusted", true).containsEntry("signature_unverified", false);
+    }
+
+    @Test
+    @DisplayName("inceleme 4: sunucu veren ADINDA ama başka anahtarlı ara gönderdi → missing_kind=wrong_intermediate (eksik değil yanlış)")
+    void wrongIntermediateSameNameOtherKey() {
+        X509Certificate wrongInter = TestCerts.intermediate("Example Test Issuing CA", TestCerts.freshRsa(), chain.root(),
+                chain.rootKey().getPrivate(), days(-10), days(500));
+        Map<String, Object> v = NetworkCertificateHierarchy.build(arr(chain.leaf(), wrongInter), List.of(chain.root()), List.of(), Instant.now());
+        assertThat(nodes(v)).extracting(m -> m.get("role")).containsExactly("leaf");
+        assertThat(v).containsEntry("missing_kind", "wrong_intermediate").containsEntry("issuer_missing", true);
+        // doğru ara da gönderildiyse yol doğru kurulur; yanlış olan 'fazladan'
+        Map<String, Object> ok = NetworkCertificateHierarchy.build(arr(chain.leaf(), wrongInter, chain.inter()),
+                List.of(chain.root()), List.of(), Instant.now());
+        assertThat(nodes(ok)).extracting(m -> m.get("role")).containsExactly("root", "intermediate", "leaf");
+        assertThat(ok).containsEntry("missing_kind", null);
+        assertThat((List<?>) ok.get("extra_certificates")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("inceleme 4: TEK başına CA bayraklı sunucu sertifikası, veren yok → eksik olan ARA (kök değil)")
+    void loneCaLeafMissingIntermediate() {
+        X509Certificate caLeaf = TestCerts.intermediate("appliance.example.test", TestCerts.freshRsa(), chain.inter(),
+                chain.interKey().getPrivate(), days(-5), days(90));
+        Map<String, Object> v = NetworkCertificateHierarchy.build(arr(caLeaf), List.of(otherRoot), List.of(), Instant.now());
+        assertThat(nodes(v)).extracting(m -> m.get("role")).containsExactly("leaf");
+        assertThat(v).containsEntry("missing_kind", "intermediate");
+        // ara gönderilmiş, kök hiçbir depoda yok → eksik olan KÖK
+        Map<String, Object> noRoot = NetworkCertificateHierarchy.build(arr(chain.leaf(), chain.inter()), List.of(otherRoot), List.of(), Instant.now());
+        assertThat(noRoot).containsEntry("missing_kind", "root");
+    }
+
+    @Test
     @DisplayName("inceleme 2: güven deposundaki kendinden imzalı yaprak → self_signed + root_trusted")
     void selfSignedLeafInStoreIsTrusted() {
         X509Certificate ss = TestCerts.selfSignedLeaf("pinned.example.test", List.of("pinned.example.test"),

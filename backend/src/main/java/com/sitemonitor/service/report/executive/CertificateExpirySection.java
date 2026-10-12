@@ -64,7 +64,7 @@ public class CertificateExpirySection implements ExecutiveSummarySection {
         inv = ctx.inventory();                                       // okuma hatası → bölüm ERROR (2026-10-12)
         if (inv == null) inv = Map.of();
         Map<Long, String> names;
-        try { names = ctx.teamNames(); } catch (Exception e) { names = Map.of(); }
+        names = ctx.teamNames();                                     // okuma hatası → bölüm ERROR (inceleme 4)
         if (names == null) names = Map.of();
         List<CertificateDto> latest;
         latest = ctx.latestCerts();
