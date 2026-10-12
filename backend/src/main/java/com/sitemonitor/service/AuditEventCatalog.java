@@ -135,6 +135,9 @@ public final class AuditEventCatalog {
             "GUIDE_LINK_DELETE",
             "GUIDE_LINK_UPDATE",
             "HTTP_DIAGNOSTICS_RUN",       // HTTP izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-02)
+            "INCIDENT_ACTION_ADD",        // postmortem aksiyonu eklendi (2026-10-11)
+            "INCIDENT_ACTION_DELETE",     // postmortem aksiyonu silindi (2026-10-11)
+            "INCIDENT_ACTION_UPDATE",     // postmortem aksiyonu güncellendi / sahibi durumunu değiştirdi (2026-10-11)
             "INCIDENT_COMMENT_ADD",
             "INCIDENT_COMMENT_DELETE",
             "INCIDENT_CREATE",
@@ -142,6 +145,7 @@ public final class AuditEventCatalog {
             "INCIDENT_IMAGE_ADD",
             "INCIDENT_OPTION_ADD",
             "INCIDENT_OPTION_DELETE",
+            "INCIDENT_POSTMORTEM_SAVE",   // postmortem raporu kaydedildi / durumu değişti (2026-10-11)
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",
             "ISSUE_REPORT",

@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Pencil, Trash2, Siren, Eye, CheckCircle2, Clock, Hourglass, Users, Receipt, Gauge, Hash, CircleDot, Search, ShieldHalf,
-  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing,
+  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight,
 } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { navigateTo } from '../../utils/navigate.js'
@@ -20,6 +20,7 @@ import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { SeverityBadge, StatusBadge, SlaBadge, CsvChips } from './HistoryBadges.jsx'
 import { buildTimeline, csvList, detailLink, durationOf, formatMinutes, relativeFrom } from './incidentHistoryModel.js'
+import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
 
 // Arka plan kaydırma kilidi sayaçlı (ModalShell / IncidentDetailSheet sözleşmesi): iç içe pencerede erken açılmaz.
 let scrollLocks = 0
@@ -82,7 +83,7 @@ function MdSection({ icon: Icon, title, value, emptyText }) {
  * (ModalShell), onay diyaloğu ve takım üyeleri penceresi body'ye portal'lanır; Radix modal kipi onları tıklanamaz
  * yapardı. Kapatma yolları: örtü, X, Escape.
  */
-export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, allowManage = false, allowDelete = false }) {
+export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, onPostmortem, allowManage = false, allowDelete = false }) {
   const t = useT()
   const dateLocale = useDateLocale()
 
@@ -177,6 +178,25 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
             <Stat icon={Users} label={t('inc.dCustomers')} value={num(r.affected_customers) ?? '—'} />
             <Stat icon={Receipt} label={t('inc.dTransactions')} value={num(r.affected_transactions) ?? '—'} />
           </div>
+
+          {/* Postmortem + aksiyonlar (2026-10-11) — rapor durumu ve açık aksiyonlar; pencere tam rapor / aksiyon / çizelge */}
+          {onPostmortem && (
+            <Card data-slot="ih-postmortem" className="flex-row flex-wrap items-center gap-3 px-4 py-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary" aria-hidden="true">
+                <ClipboardList className="size-4" />
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="text-sm font-semibold">{t('pm.cardTitle')}</span>
+                {r.postmortem_status || Number(r.actions_total || 0) > 0
+                  ? <PostmortemBadges row={r} className="flex flex-wrap gap-1.5" />
+                  : <span className="text-xs text-muted-foreground">{t('pm.cardEmpty')}</span>}
+              </div>
+              <Button type="button" variant="outline" size="sm" className="h-9 max-sm:h-10 max-sm:w-full" data-slot="ih-open-postmortem"
+                onClick={() => onPostmortem(r)}>
+                {t('pm.open')}<ChevronRight aria-hidden="true" />
+              </Button>
+            </Card>
+          )}
 
           {/* Zaman çizelgesi */}
           <section className="min-w-0">

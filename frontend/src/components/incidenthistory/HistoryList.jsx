@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import { SeverityBadge, StatusBadge, SlaBadge, CsvChips } from './HistoryBadges.jsx'
 import { durationOf, formatMinutes, relativeFrom } from './incidentHistoryModel.js'
+import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
 
 const TH = 'h-10 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase'
 /** Örtünün (kart düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard deseni). */
@@ -49,6 +50,7 @@ function MetaLine({ r, className }) {
       <span className="font-medium text-foreground/80">{t('inc.cat' + r.category) || r.category}</span>
       {r.channel && <><span aria-hidden="true">·</span><CsvChips value={r.channel} max={2} /></>}
       {r.service && <><span aria-hidden="true">·</span><CsvChips value={r.service} max={1} chipClassName="max-w-[12rem] font-mono text-[11px]" /></>}
+      <PostmortemBadges row={r} className="inline-flex flex-wrap gap-1" />
     </span>
   )
 }

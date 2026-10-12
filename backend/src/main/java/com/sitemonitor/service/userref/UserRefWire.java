@@ -38,9 +38,9 @@ public final class UserRefWire {
     public static final Set<String> KEYS = Set.of(
             "user_id", "user_ids", "manager_id", "leader_id", "actor_id", "author_id", "editing_user_id",
             "contacted_user_id", "manager_user_id", "executed_by_id", "created_by_id", "undone_by_id",
-            "manager_id_before", "manager_id_after", "ad_manager_id", "db_manager_id",
+            "manager_id_before", "manager_id_after", "ad_manager_id", "db_manager_id", "owner_user_id",
             "userId", "userIds", "managerId", "leaderId", "actorId", "authorId", "editingUserId",
-            "contactedUserId", "managerUserId", "executedById", "createdById", "undoneById");
+            "contactedUserId", "managerUserId", "executedById", "createdById", "undoneById", "ownerUserId");
 
     /** Değeri JSON METNİ olan alanlar: denetim {@code changes / detail}, değişiklik geçmişi {@code snapshot}. */
     public static final Set<String> JSON_TEXT_KEYS = Set.of("changes", "detail", "details", "snapshot");

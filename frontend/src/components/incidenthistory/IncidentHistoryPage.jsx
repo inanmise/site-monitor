@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   ListChecks, BarChart3, Sigma, AlertOctagon, AlertTriangle, AlertCircle, ArrowDownCircle, CircleDot, Search as SearchIcon,
   Shield, CheckCircle2, ShieldCheck, CalendarDays, CalendarRange, Calendar, Lock, RotateCcw, FilterX, Plus, ArrowRightLeft, X,
+  ClipboardList,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -26,6 +27,9 @@ import HistoryList, { HistorySkeleton } from './HistoryList.jsx'
 import HistoryTrendChart from './HistoryTrendChart.jsx'
 import HistoryDetailSheet from './HistoryDetailSheet.jsx'
 import IncidentFormModal from './IncidentFormModal.jsx'
+import SegmentedControl from '../ui/SegmentedControl.jsx'
+import PostmortemModal from './postmortem/PostmortemModal.jsx'
+import ActionItemsView from './postmortem/ActionItemsView.jsx'
 import {
   EMPTY_FORM, DETAIL_KEY, LEGACY_DETAIL_KEY, FILTER_DEFAULTS, filtersFromUrl, filtersToUrl, initialDetailId, serverParams,
   localDayToUtcIso, activeFilters, patchFilters, isCardActive, applyCardFilter, toggleDayFilter, dailySeries, trendWindow,
@@ -131,8 +135,11 @@ export default function IncidentHistoryPage() {
   const [detailId, setDetailId] = useState(() => initialDetailId(readUrlParam))
   const [fallback, setFallback] = useState(null)       // sayfada olmayan (derin bağlantı / az önce kaydedilen) kayıt
   const [form, setForm] = useState(null)               // { mode: 'create'|'edit', initial }
+  // Postmortem + aksiyon takibi (2026-10-11): görünüm (olaylar | olaylar arası aksiyonlar) ve açık postmortem penceresi
+  const [view, setView] = useState(() => (readUrlParam('ih_view') === 'actions' ? 'actions' : 'incidents'))
+  const [pmFor, setPmFor] = useState(null)
 
-  useUrlQuerySync({ ...filtersToUrl({ ...filters, q: qTerm }), [DETAIL_KEY]: detailId })
+  useUrlQuerySync({ ...filtersToUrl({ ...filters, q: qTerm }), [DETAIL_KEY]: detailId, ih_view: view === 'actions' ? 'actions' : null })
 
   const load = useCallback(async () => {
     if (!allowView) return
@@ -263,6 +270,14 @@ export default function IncidentHistoryPage() {
   // ── Kayıt eylemleri ──
   // Açılan kayıt yedeğe de yazılır: liste yeniden yüklenip kayıt süzgeçten düşse bile ayrıntı açık kalır.
   const openDetail = (r) => { setFallback(r); setDetailId(String(r.id)) }
+  /** Aksiyonlar görünümünden olay aç: kayıt sayfada olmayabilir → sunucudan alınır (derin bağlantı deseni). */
+  const openIncidentById = (id) => {
+    setDetailId(String(id))
+    api.incidents.get(id).then((res) => {
+      if (res?.success && res.data) setFallback(res.data)
+      else { setDetailId(null); toast.error(res?.error || t('inc.deepLinkFail')) }
+    }).catch(() => { setDetailId(null); toast.error(t('inc.deepLinkFail')) })
+  }
   const closeDetail = () => setDetailId(null)
   const openCreate = () => setForm({ mode: 'create', initial: { ...EMPTY_FORM } })
   const openEdit = (r) => setForm({ mode: 'edit', initial: { ...EMPTY_FORM, ...r } })
@@ -413,6 +428,13 @@ export default function IncidentHistoryPage() {
       <HistoryHeader summary={sum} byStatus={byStatus} filters={effFilters} total={sp.total} loading={loading}
         onRefresh={refreshAll} onNew={openCreate} allowManage={allowManage} isActive={isActive} onCard={onCard} />
 
+      <div className="flex flex-wrap items-center gap-2" data-slot="ih-view-switch">
+        <SegmentedControl value={view} onChange={setView} ariaLabel={t('pm.viewLabel')}
+          options={[{ value: 'incidents', label: t('pm.viewIncidents'), icon: ListChecks }, { value: 'actions', label: t('pm.viewActions'), icon: ClipboardList }]} />
+      </div>
+
+      {view === 'actions' ? <ActionItemsView onOpenIncident={openIncidentById} /> : (<>
+
       {/* Ayrıntılı döküm + günlük trend — projenin tek katlanır şeridi (ui/CollapsibleSection); varsayılan kapalı */}
       <CollapsibleSection open={showSummary} onOpenChange={setShowSummary} icon={BarChart3} label={t('inc.analysis')}
         hint={t('inc.analysisHint')} toggleLabel={showSummary ? t('inc.analysisHide') : t('inc.analysisShow')}
@@ -450,10 +472,15 @@ export default function IncidentHistoryPage() {
       )}
 
       {results}
+      </>)}
 
       {detail && (
         <HistoryDetailSheet key={detail.id} record={detail} onClose={closeDetail} onEdit={openEdit} onDelete={removeIncident}
-          allowManage={allowManage} allowDelete={allowDelete} />
+          onPostmortem={(r) => setPmFor(r)} allowManage={allowManage} allowDelete={allowDelete} />
+      )}
+
+      {pmFor && (
+        <PostmortemModal key={pmFor.id} incident={pmFor} onClose={() => setPmFor(null)} onChanged={refreshAll} />
       )}
 
       {form && (

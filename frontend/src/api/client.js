@@ -912,6 +912,21 @@ export const api = {
       const path = id ? `/incidents/${id}/images` : '/incidents/images'
       return request(path, { method: 'POST', body: form })
     },
+    // Postmortem şablonu + aksiyon takibi (2026-10-11): rapor + aksiyonlar + otomatik zaman çizelgesi tek okumada
+    postmortem: (id) => request(`/incidents/${id}/postmortem`),
+    savePostmortem: (id, body) => request(`/incidents/${id}/postmortem`, { method: 'PUT', body: JSON.stringify(body) }),
+    addAction: (id, body) => request(`/incidents/${id}/actions`, { method: 'POST', body: JSON.stringify(body) }),
+    updateAction: (actionId, body) => request(`/incidents/actions/${actionId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteAction: (actionId) => request(`/incidents/actions/${actionId}`, { method: 'DELETE' }),
+    /** Olaylar arası aksiyon listesi: status open|done|all, mine, overdue, q, page, size. */
+    actions: (params = {}) => {
+      const q = new URLSearchParams()
+      for (const k of ['status', 'q', 'page', 'size']) if (params[k] != null && params[k] !== '') q.set(k, params[k])
+      if (params.mine) q.set('mine', 'true')
+      if (params.overdue) q.set('overdue', 'true')
+      const qs = q.toString()
+      return request(`/incidents/actions${qs ? '?' + qs : ''}`)
+    },
   },
 
   weeklyReports: {
