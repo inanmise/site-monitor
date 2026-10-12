@@ -404,6 +404,14 @@ export const api = {
     directory: () => request('/teams/directory'),
     members: (id) => request(`/teams/${id}/members`),
   },
+  // Nöbet çizelgesi (2026-10-11): takım çizelgesi, kayıt, yer değiştirme, şu anki nöbetçiler
+  oncall: {
+    get: (teamId) => request(`/oncall/teams/${teamId}`),
+    save: (teamId, body) => request(`/oncall/teams/${teamId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    addOverride: (teamId, body) => request(`/oncall/teams/${teamId}/overrides`, { method: 'POST', body: JSON.stringify(body) }),
+    deleteOverride: (id) => request(`/oncall/overrides/${id}`, { method: 'DELETE' }),
+    current: (teamIds) => request(`/oncall/current?teamIds=${(teamIds || []).join(',')}`),
+  },
   users: {
     directory: () => request('/users/directory'),
   },
@@ -904,6 +912,21 @@ export const api = {
       const path = id ? `/incidents/${id}/images` : '/incidents/images'
       return request(path, { method: 'POST', body: form })
     },
+    // Postmortem şablonu + aksiyon takibi (2026-10-11): rapor + aksiyonlar + otomatik zaman çizelgesi tek okumada
+    postmortem: (id) => request(`/incidents/${id}/postmortem`),
+    savePostmortem: (id, body) => request(`/incidents/${id}/postmortem`, { method: 'PUT', body: JSON.stringify(body) }),
+    addAction: (id, body) => request(`/incidents/${id}/actions`, { method: 'POST', body: JSON.stringify(body) }),
+    updateAction: (actionId, body) => request(`/incidents/actions/${actionId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteAction: (actionId) => request(`/incidents/actions/${actionId}`, { method: 'DELETE' }),
+    /** Olaylar arası aksiyon listesi: status open|done|all, mine, overdue, q, page, size. */
+    actions: (params = {}) => {
+      const q = new URLSearchParams()
+      for (const k of ['status', 'q', 'page', 'size']) if (params[k] != null && params[k] !== '') q.set(k, params[k])
+      if (params.mine) q.set('mine', 'true')
+      if (params.overdue) q.set('overdue', 'true')
+      const qs = q.toString()
+      return request(`/incidents/actions${qs ? '?' + qs : ''}`)
+    },
   },
 
   weeklyReports: {
@@ -1242,6 +1265,9 @@ export const api = {
     // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
+    // Gizli anahtar döndürme (2026-10-11): konum başına güncel / önceki / okunamayan sayıları + önceki anahtardakileri yeniden şifrele
+    secretRotationStatus: () => request('/admin/secret-tools/rotation'),
+    reencryptSecrets: () => request('/admin/secret-tools/rotation/reencrypt', { method: 'POST', body: JSON.stringify({ confirm: true }) }),
 
     // Veritabanı bilgileri (admin-only Settings sayfası) — bağlı PostgreSQL meta verisi
     getDatabaseInfo: () => request('/admin/database/info'),
@@ -1251,6 +1277,8 @@ export const api = {
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
     // verify=true: kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN sertifika doğrulaması açık denenir
     testLdap: (verify = false) => request(`/admin/ldap/test${verify ? '?verify=true' : ''}`, { method: 'POST' }),
+    // LDAP grup → rol eşlemesi "kim ne olacak" önizlemesi (2026-10-11) — formdaki kurallarla, hiçbir şey yazmaz
+    previewLdapRoleMapping: (dto) => request('/admin/ldap/role-mapping/preview', { method: 'POST', body: JSON.stringify(dto) }),
     queryLdapUser: (value, attr) => request('/admin/ldap/query-user', {
       method: 'POST', body: JSON.stringify({ value, attr }),
     }),
@@ -1579,6 +1607,10 @@ export const api = {
 
     // System health
     getSystemHealth: () => request('/admin/system'),
+    // Kendi kendini izleme (2026-10-11): durum, şimdi değerlendir, test bildirimi
+    getWatchdog: () => request('/admin/system/watchdog'),
+    evaluateWatchdog: () => request('/admin/system/watchdog/evaluate', { method: 'POST' }),
+    testWatchdog: () => request('/admin/system/watchdog/test', { method: 'POST' }),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),

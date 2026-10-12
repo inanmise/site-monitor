@@ -164,4 +164,64 @@ class PingCheckerServiceCheckTest {
         assertThat(args).last().isEqualTo("h.example");
         assertThat(args).contains("10");
     }
+
+    // ── Ondalıklı paket kaybı (2026-10-12, kullanıcı bildirimi: "paket kaybı %3333") ──
+
+    @Test
+    @DisplayName("iputils '33.3333% packet loss' (3 paketten 1'i kayıp) → up=true, kayıp 33 (eskiden 3333 → 'kapalı')")
+    void decimalPartialLoss_isUpWithRoundedLoss() {
+        Map<String, Object> r = checkWith("""
+                --- example.com ping statistics ---
+                3 packets transmitted, 2 received, 33.3333% packet loss, time 2003ms
+                rtt min/avg/max/mdev = 11.653/11.783/11.912/0.106 ms
+                """);
+        assertThat(r.get("up")).isEqualTo(true);
+        assertThat(r.get("packet_loss")).isEqualTo(33);
+        assertThat(r.get("rtt_ms")).isEqualTo(12L);
+        assertThat(r).doesNotContainKey("error");
+        assertThat(r).doesNotContainKey("failure_reason");
+    }
+
+    @Test
+    @DisplayName("'66.6667%' → 67, '16.6667%' → 17 (eskiden ikisi de 6667 okunuyordu)")
+    void decimalLoss_variants() {
+        assertThat(checkWith("3 packets transmitted, 1 received, 66.6667% packet loss").get("packet_loss")).isEqualTo(67);
+        assertThat(checkWith("6 packets transmitted, 5 received, 16.6667% packet loss").get("packet_loss")).isEqualTo(17);
+        assertThat(checkWith("3 packets transmitted, 1 received, 66.6667% packet loss").get("up")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("Türkçe Windows '(%33 kayıp)' ve virgüllü ondalık da okunur")
+    void turkishWindowsLoss() {
+        Map<String, Object> r = checkWith("""
+                Paketler: Gönderilen = 3, Alınan = 2, Kaybolan = 1 (%33 kayıp),
+                    En Az = 11ms, En Çok = 13ms, Ortalama = 12ms
+                """);
+        assertThat(r.get("packet_loss")).isEqualTo(33);
+        assertThat(r.get("up")).isEqualTo(true);
+        assertThat(PingCheckerService.parseLossPercent("12,5% packet loss")).isEqualTo(12.5);
+    }
+
+    @Test
+    @DisplayName("kısmi kayıp asla 0 ya da 100 saklanmaz; geçersiz / aralık dışı değer null")
+    void storedLoss_bounds() {
+        assertThat(PingCheckerService.storedLoss(null)).isNull();
+        assertThat(PingCheckerService.storedLoss(0.0)).isEqualTo(0);
+        assertThat(PingCheckerService.storedLoss(0.4)).isEqualTo(1);
+        assertThat(PingCheckerService.storedLoss(99.6)).isEqualTo(99);
+        assertThat(PingCheckerService.storedLoss(100.0)).isEqualTo(100);
+        assertThat(PingCheckerService.parseLossPercent("no stats here")).isNull();
+        assertThat(PingCheckerService.parseLossPercent(null)).isNull();
+        assertThat(checkWith("3 packets transmitted, 0 received, 100% packet loss").get("up")).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("ORACLE: eski kalıp '33.3333%'te 3333 yakalıyordu — yeni kalıp 33.3333")
+    void oldPatternOracle() {
+        java.util.regex.Pattern old = java.util.regex.Pattern.compile("(\\d+)%\\s*(?:packet\\s*)?loss", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m = old.matcher("3 packets transmitted, 2 received, 33.3333% packet loss");
+        assertThat(m.find()).isTrue();
+        assertThat(m.group(1)).isEqualTo("3333");
+        assertThat(PingCheckerService.parseLossPercent("3 packets transmitted, 2 received, 33.3333% packet loss")).isEqualTo(33.3333);
+    }
 }

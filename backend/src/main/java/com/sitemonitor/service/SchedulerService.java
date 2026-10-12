@@ -1815,6 +1815,7 @@ public class SchedulerService {
 
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
+        repairPingDecimalLossRows();
     }
 
     /**
@@ -1838,6 +1839,30 @@ public class SchedulerService {
      * tetikleme yolu DNS_CHANGED alarmi uretmiyordu (evaluateDnsNow yalniz DNS_FAILURE isler),
      * dolayisiyla temizlenecek sahte alarm YOK.
      */
+    /**
+     * GEÇMİŞE DÖNÜK VERİ DÜZELTMESİ — ondalıklı paket kaybının yanlış ayrıştırılması (2026-10-12, kullanıcı bildirimi:
+     * "paket kaybı %3333").
+     *
+     * <p><b>Neden.</b> {@link PingCheckerService} kayıp kalıbı yalnız tam sayı arıyordu; iputils "33.3333% packet loss"
+     * yazınca noktadan sonraki "3333" kayıp sayıldı → 3333 ≥ 100 → yanıt ALAN hedef "kapalı" yazıldı (hata metni
+     * "Yanıt yok (%3333 paket kaybı)", neden ICMP_NO_REPLY). Kök neden ayrıştırıcıda kapatıldı.
+     *
+     * <p><b>Kapsam DAR ve kanıtlanabilir:</b> yalnız {@code packet_loss > 100} — gerçek bir kayıp 100'ü aşamaz, ve
+     * ondalıklı her değer (0 &lt; x &lt; 100) KISMİ kayıptır → güncel kurala göre hedef ayaktaydı. Gerçek oran geri
+     * çıkarılamaz ("16.6667" ile "66.6667" aynı "6667"yi bırakır) → kayıp boşaltılır. İdempotent: ilk koşudan sonra hiçbir
+     * satır eşleşmez. Alarm geçmişine dokunmaz (açılmış alarmlar kayıt olarak kalır; açık olanı normal uzlaştırma kapatır).
+     */
+    private void repairPingDecimalLossRows() {
+        try {
+            int fixed = jdbcTemplate.update(
+                    "UPDATE ping_checks SET up = TRUE, packet_loss = NULL, error = NULL, failure_reason = NULL, failure_detail = NULL "
+                  + "WHERE packet_loss > 100");
+            if (fixed > 0) log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
+        } catch (Exception e) {
+            log.warn("Ping geçmişi onarımı atlandı (sonraki açılış yeniden dener): {}", e.getMessage());
+        }
+    }
+
     private void cleanupFalseDnsChangeFlags() {
         try {
             int fixed = jdbcTemplate.update(
@@ -2499,6 +2524,20 @@ public class SchedulerService {
      * Dağıtık kilit altında iş çalıştırır — cron'u {@code @Scheduled} yerine DİNAMİK tetikleyiciyle
      * kurulan görevler için ({@code CertInventoryReportScheduling}). Kilit başka pod'daysa iş atlanır.
      */
+    /**
+     * Kilit alınabildiyse işi çalıştırır ve sonucunu döner; kilit başka pod'daysa {@code Optional.empty()} (çağıran "zaten
+     * çalışıyor" der). {@link #runWithSchedulerLock}'tan farkı: istisna YUTULMAZ, çağırana gider — elle tetiklenen işler
+     * (2026-10-11, gizli anahtar yeniden şifreleme) sonucu ekranda gösterir. İş null dönmemeli.
+     */
+    public <T> java.util.Optional<T> callWithSchedulerLock(String lockName, java.util.function.Supplier<T> task) {
+        if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) return java.util.Optional.empty();
+        try {
+            return java.util.Optional.ofNullable(task.get());
+        } finally {
+            releaseSchedulerLock(lockName);
+        }
+    }
+
     public void runWithSchedulerLock(String lockName, Runnable task) {
         if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) {
             log.debug("{} — lock başka pod'da, atlanıyor", lockName);

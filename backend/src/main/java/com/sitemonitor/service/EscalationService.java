@@ -80,6 +80,15 @@ public class EscalationService {
     private com.sitemonitor.service.noc.NocNotificationService nocNotifications;
 
     /**
+     * Nöbet çizelgesi (2026-10-11, kullanıcı kararı: "takım seçerse nöbetçiye de"). Takım çizelgesinde "nöbetçiye de
+     * bildir" açıksa YÜKSEK / KRİTİK alarm bildirimi (açılış, eskalasyon, günlük tekrar, elle gönderim, çözüm) o anki
+     * nöbetçiye de gider (e-posta + push). Mevcut alıcılar değişmez; seçenek kapalıyken / çizelge yokken çıktı bayt bayt
+     * aynı. Alan enjeksiyonu + isteğe bağlı (NOC deseni): testler servisi elle kuruyor, yokken (null) hiç okunmaz.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.oncall.OnCallService onCallService;
+
+    /**
      * Zamana bağlı eskalasyon adımı kararları (2026-10-01) — anlık yolların "bu gecikmeli kişi alarmın döngüsünde mi?"
      * sorusu. Alan enjeksiyonu + isteğe bağlı (NOC deseni): testler servisi elle kuruyor. YALNIZ alıcı listesinde gecikmeli
      * kişi varken okunur; gecikme tanımsız kurulumda hiç dokunulmaz. Yokken (null) gecikmeli kişiler anlık listeden düşer.
@@ -771,6 +780,12 @@ public class EscalationService {
                     && seen.add(c.getEmail().trim().toLowerCase()))
                 out.add(new ReNotifyRecipient(c.getEmail().trim(), c.getName(), c.getRole(), "CONTACT"));
         }
+        // Nöbetçi (2026-10-11): gönderimde eklenecek kişi önizlemede de görünür (kaldırılabilir)
+        for (var p : oncallFor(targets.domainTeamId(), targets.ugTeamId(), event.getAlertLevel())) {
+            if (p.email() != null && !p.email().isBlank() && seen.add(p.email().trim().toLowerCase())) {
+                out.add(new ReNotifyRecipient(p.email().trim(), p.displayName() != null ? p.displayName() : p.username(), "Nöbetçi", "ONCALL"));
+            }
+        }
         return out;
     }
 
@@ -819,6 +834,10 @@ public class EscalationService {
         for (EscalationContact c : contacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
                     && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
+        }
+        for (var p : oncallFor(domainTeamId, ugTeamId, event.getAlertLevel())) {
+            if (p.email() != null && !p.email().isBlank() && !excluded.contains(p.email().trim().toLowerCase())
+                    && seen.add(p.email().trim().toLowerCase())) recipientCount++;
         }
         if (recipientCount == 0 && !excluded.isEmpty()) {
             // Kullanıcı pop-up'ta TÜM alıcıları çıkardıysa DB'ye yazmadan reddet (→ 400).
@@ -2220,6 +2239,10 @@ public class EscalationService {
                         && seen.add(c.getEmail().trim().toLowerCase()))
                     allEmails.add(c.getEmail().trim());
             }
+            // Nöbetçi (2026-10-11): açılışı alan kitleyle aynı kural — YÜKSEK / KRİTİK + "nöbetçiye de bildir" açık takım
+            for (var p : oncallFor(mailSy, mailUg, event.getAlertLevel())) {
+                if (p.email() != null && !p.email().isBlank() && seen.add(p.email().trim().toLowerCase())) allEmails.add(p.email().trim());
+            }
             // Bulgu 13: izlemede "E-posta" kapalıysa AÇILIŞ maili gitmiyor ama ÇÖZÜLDÜ maili
             // gidiyordu — bastırma paritesi kırıktı. Damga artık contextJson'a kalıcılaşıyor
             // (snapshotContext), böylece çözüm yolu da aynı kararı okuyabiliyor.
@@ -2873,6 +2896,14 @@ public class EscalationService {
                     && seen.add(c.getEmail().trim().toLowerCase()))
                 allEmails.add(c.getEmail().trim());
         }
+        // 1.1 NÖBETÇİ (2026-10-11): takım "nöbetçiye de bildir" seçtiyse YÜKSEK / KRİTİK alarm o anki nöbetçiye de gider.
+        // Sessiz saatte ertelenen takımın (mailSy/mailUg null) nöbetçisi de ertelenir. Elle gönderimde hariç tutulan adres atlanır.
+        List<com.sitemonitor.service.oncall.OnCallService.OnCallPerson> oncall = oncallFor(mailSy, mailUg, level);
+        for (var p : oncall) {
+            if (p.email() == null || p.email().isBlank()) continue;
+            String e = p.email().trim();
+            if (!excludeEmails.contains(e.toLowerCase()) && seen.add(e.toLowerCase())) allEmails.add(e);
+        }
         // İzlemenin "E-posta" kanalı KAPALI mı (notifyEmail=false → mailCtx damgası). Bayrak
         // bugüne kadar hiçbir yerde okunmuyordu; kutu süstü, kapatmak maili durdurmuyordu.
         boolean mailDisabled = certContext != null && Boolean.TRUE.equals(certContext.get("mail_disabled"));
@@ -3084,6 +3115,7 @@ public class EscalationService {
                 domain, level, allEmails.size(), sendContacts.size(), alertEventId, trigger);
 
         triggerUserPush(alertEventId, trigger, syTeamId, pushQuiet ? quietCtx(certContext) : certContext, excludeUsernames);
+        if (!pushQuiet) pushOnCall(alertEventId, trigger, oncall, excludeUsernames);
         // Sessiz saat: pencere İÇİNDEKİ takım bu alarm için ertelenmeyen bir bildirim aldı (YÜKSEK/KRİTİK, elle gönderim) →
         // bekleyen özet kaydı geçersizleşir (özet tekrar etmez, çözüm de normal yoldan gider). Pencere dışı = sorgu yok.
         supersedeQuietItems(alertEventId, syTeamId, ugTeamId, quietDeferred.keySet());
@@ -3279,6 +3311,40 @@ public class EscalationService {
             nocNotifications.onAlertResolved(event);
         } catch (Exception e) {
             log.warn("7/24 çözüm tetiği atlandı: {}", e.toString());
+        }
+    }
+
+    /**
+     * Bildirim nöbetçisi (2026-10-11): yalnız YÜKSEK / KRİTİK ve yalnız "nöbetçiye de bildir" açık takımlar. Çizelge
+     * yoksa ya da servis yoksa boş — çağıran yollar bugünküyle aynı. Hata bildirimi durdurmaz (servis WARN yazar).
+     */
+    List<com.sitemonitor.service.oncall.OnCallService.OnCallPerson> oncallFor(Long syTeamId, Long ugTeamId, String level) {
+        if (onCallService == null || (syTeamId == null && ugTeamId == null)) return List.of();
+        String lv = level == null ? "" : level.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!"HIGH".equals(lv) && !"CRITICAL".equals(lv)) return List.of();
+        List<Long> teams = new ArrayList<>();
+        if (syTeamId != null) teams.add(syTeamId);
+        if (ugTeamId != null && !ugTeamId.equals(syTeamId)) teams.add(ugTeamId);
+        try {
+            return new ArrayList<>(onCallService.notifyTargets(teams).values());
+        } catch (Exception e) {
+            log.warn("Nöbetçi alıcısı eklenemedi (bildirim nöbetçisiz sürer): {}", e.toString());
+            return List.of();
+        }
+    }
+
+    /** Nöbetçi push'u — kişi başına; takım push'unu zaten alan kişiye ikinci satır yazılmaz (UserPushService). */
+    private void pushOnCall(Long alertEventId, String trigger,
+                            List<com.sitemonitor.service.oncall.OnCallService.OnCallPerson> oncall, Set<String> excludeUsernames) {
+        if (oncall == null || oncall.isEmpty()) return;
+        Set<Long> done = new HashSet<>();
+        for (var p : oncall) {
+            if (p.userId() == null || !done.add(p.userId())) continue;
+            try {
+                userPushService.enqueueOnCall(alertEventId, trigger, p.teamId(), p.userId(), excludeUsernames);
+            } catch (Exception e) {
+                log.warn("Nöbetçi push'u atlandı (e-posta etkilenmedi): {}", e.toString());
+            }
         }
     }
 

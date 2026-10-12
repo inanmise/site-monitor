@@ -11,6 +11,7 @@ import CopyButton from '../ui/CopyButton.jsx'
 import CopyableRef from '../ui/CopyableRef.jsx'
 import { Spinner, ProgressBar } from '../ui/Progress.jsx'
 import ToneBadge from './ToneBadge.jsx'
+import SecretRotationPanel from './secret/SecretRotationPanel.jsx'
 import { SETTINGS_STACK, helpLabel, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -389,7 +390,10 @@ export default function SecretTools() {
         </CardContent>
       </Card>
 
-      {/* 3 — Yardımcılar: güçlü anahtar üreteci + DEV varsayılan anahtarı */}
+      {/* 3 — Anahtar döndürme (2026-10-11): değerler hangi anahtarda + önceki anahtardakileri yeniden şifrele */}
+      <SecretRotationPanel />
+
+      {/* 4 — Yardımcılar: güçlü anahtar üreteci + DEV varsayılan anahtarı */}
       <div className="grid grid-cols-1 items-start gap-5 @3xl/secret:grid-cols-2">
         <SettingsSection title={t('secret.genTitle')} description={t('secret.genDesc')} contentClassName="flex flex-col gap-3">
           <div>

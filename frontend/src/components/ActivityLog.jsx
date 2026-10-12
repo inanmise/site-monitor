@@ -1,7 +1,7 @@
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
-import { Fragment, useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { Fragment, useEffect, useId, useState, useCallback, useMemo, useRef } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
@@ -9,7 +9,7 @@ import { useServerPagination } from '../hooks/useServerPagination.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink } from 'lucide-react'
+  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink, Filter, Layers } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
 import { downloadCsv } from '../utils/csvExport.js'
 import { relTimeOrRaw } from '../utils/relativeTime.js'
@@ -19,11 +19,16 @@ import SegmentedControl from './ui/SegmentedControl.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
+import ActivityTimeline from './activity/ActivityTimeline.jsx'
+import { CHIPS_INLINE_MIN_PX, activeChips, pickLayout, removeChip } from './activity/activityModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { Card, CardContent } from '@/components/shadcn/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { cn } from '@/lib/utils'
 
 /**
@@ -152,8 +157,15 @@ export function localizeSummary(summary, t) {
 
 export default function ActivityLog({ refreshTrigger }) {
   const t = useT()
-  // Telefonda satırlar kart listesi (yapı farkı → useIsMobile; jsdom medya sorgusu uygulamaz, TEK varyant çizilir)
+  // Tablo ↔ kart KAP genişliğiyle (2026-10-11 yeniden tasarım): 768 px tablette kenar çubuğu açıkken içerik dar.
+  // Ölçüm yoksa (jsdom, ilk boyama) görünüm alanı sorgusuna düşer — TEK varyant çizilir.
   const phone = useIsMobile()
+  const uid = useId()
+  const [feedWidth, setFeedEl] = useElementWidthState()
+  const layout = pickLayout(feedWidth, phone)
+  const [filterWidth, setFilterEl] = useElementWidthState()
+  const chipsInline = filterWidth === 0 || filterWidth >= CHIPS_INLINE_MIN_PX
+  const [typesOpen, setTypesOpen] = useState(false)
   const [filters, setFilters] = useState(readParams)
   const [qInput, setQInput]   = useState(filters.q)
   const [data, setData]       = useState([])
@@ -264,7 +276,7 @@ export default function ActivityLog({ refreshTrigger }) {
   const ROW_CLICK = 'cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
   const TH = 'h-9 px-2.5 text-[0.76em] font-semibold tracking-wide text-muted-foreground uppercase'
   const teamOf = (r, isStatic = true) => (r.team_id != null
-    ? <TeamBadge teamId={r.team_id} teamName={r.team_name} static={isStatic} />
+    ? <TeamBadge teamId={r.team_id} teamName={r.team_name} static={isStatic} wrap />
     : <span className="text-muted-foreground">—</span>)
   const time = (iso, label) => <time dateTime={iso} title={formatDateSec(iso)} className="whitespace-nowrap tabular-nums">{label ?? rel(iso)}</time>
 
@@ -368,16 +380,16 @@ export default function ActivityLog({ refreshTrigger }) {
                   onClick={unfold} onKeyDown={(e) => rowKey(e, unfold)}>
                   <TableCell className="text-muted-foreground"><ChevronRight aria-hidden="true" className="size-3.5" /></TableCell>
                   <TableCell><TypeBadge type={r0.monitor_type} /></TableCell>
-                  <TableCell>
-                    <span className="block max-w-[16rem] truncate font-semibold" title={r0.monitor_name}>{r0.monitor_name}</span>
-                    <span className="block max-w-[16rem] truncate font-mono text-xs text-muted-foreground" title={r0.target}>{r0.target}</span>
+                  <TableCell className="min-w-[12rem] whitespace-normal">
+                    <span className="block font-semibold [overflow-wrap:anywhere]">{r0.monitor_name}</span>
+                    <span className="block font-mono text-xs break-all text-muted-foreground">{r0.target}</span>
                   </TableCell>
                   <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(r0)}</TableCell>
                   <TableCell className="hidden lg:table-cell" />
                   <TableCell className="min-w-[9rem] text-[0.9em] whitespace-normal text-primary">
                     {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
                   </TableCell>
-                  <TableCell className="text-right text-[0.9em] text-muted-foreground">{time(r0.activity_time, `${rel(entry.rows[entry.rows.length - 1].activity_time)} → ${rel(r0.activity_time)}`)}</TableCell>
+                  <TableCell className="text-right text-[0.9em] whitespace-normal text-muted-foreground">{time(r0.activity_time, `${rel(entry.rows[entry.rows.length - 1].activity_time)} → ${rel(r0.activity_time)}`)}</TableCell>
                   <TableCell />
                 </TableRow>
               )
@@ -396,17 +408,18 @@ export default function ActivityLog({ refreshTrigger }) {
                   onClick={toggle} onKeyDown={(e) => rowKey(e, toggle)}>
                   <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown aria-hidden="true" className="size-3.5" /> : <ChevronRight aria-hidden="true" className="size-3.5" />}</TableCell>
                   <TableCell><TypeBadge type={row.monitor_type} /></TableCell>
-                  <TableCell>
-                    {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar */}
+                  <TableCell className="min-w-[12rem] whitespace-normal">
+                    {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar. Ad ve hedef KESİLMEZ, sarar
+                        (2026-10-11 — kural: adlar ve uzun metin kırpılmaz). */}
                     {dest ? (
                       <Button type="button" variant="link" size="xs" title={t('act.goMonitor')}
-                        className="h-auto max-w-[16rem] justify-start truncate p-0 text-[1em] font-semibold text-foreground decoration-dotted underline-offset-[3px] hover:text-primary"
+                        className="h-auto justify-start p-0 text-left text-[1em] font-semibold whitespace-normal text-foreground decoration-dotted underline-offset-[3px] hover:text-primary"
                         onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
-                        <span className="truncate">{row.monitor_name}</span>
+                        <span className="[overflow-wrap:anywhere]">{row.monitor_name}</span>
                       </Button>
-                    ) : <span className="block max-w-[16rem] truncate font-semibold" title={row.monitor_name}>{row.monitor_name}</span>}
+                    ) : <span className="block font-semibold [overflow-wrap:anywhere]">{row.monitor_name}</span>}
                     {/* Hedef adın altında (ayrı sütun olsaydı zaman sütunu 1440 px'te ekran dışına itiliyordu) */}
-                    {row.target && <span className="block max-w-[16rem] truncate font-mono text-xs text-muted-foreground" title={row.target}>{row.target}</span>}
+                    {row.target && <span className="block font-mono text-xs break-all text-muted-foreground">{row.target}</span>}
                   </TableCell>
                   <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(row)}</TableCell>
                   <TableCell className="hidden text-[0.9em] whitespace-nowrap text-muted-foreground lg:table-cell">{t('act.ac.' + row.action)}</TableCell>
@@ -428,7 +441,7 @@ export default function ActivityLog({ refreshTrigger }) {
   )
 
   // ── Telefon: kart listesi — üstte tür + ad + göreli zaman, altında hedef, sonuç + eylem; alt şeritte takım +
-  // "İzlemeye git". Metinler üst üste binmez (min-w-0 + truncate/sarma); sol renk şeridi YOK, hata kartı TÜM
+  // "İzlemeye git". Metinler üst üste binmez (min-w-0 + sarma; ad ve hedef kesilmez); sol renk şeridi YOK, hata kartı TÜM
   // çerçeveyle belirtilir. ──
   const mobileFeed = (
     <ul className="flex list-none flex-col gap-2 p-0">
@@ -447,10 +460,10 @@ export default function ActivityLog({ refreshTrigger }) {
             <li key={entry.key} data-slot="act-fold" className="min-w-0 overflow-hidden rounded-lg border border-dashed border-primary/40 bg-primary/5">
               <Button type="button" variant="ghost" onClick={() => toggleFold(entry.key)}
                 className="h-auto min-h-11 w-full flex-col items-stretch gap-1 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal">
-                <span className="flex min-w-0 items-center gap-2">
+                <span className="flex min-w-0 items-start gap-2">
                   <TypeBadge type={r0.monitor_type} />
-                  <span className="min-w-0 flex-1 truncate font-semibold">{r0.monitor_name}</span>
-                  <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 font-semibold [overflow-wrap:anywhere]">{r0.monitor_name}</span>
+                  <ChevronDown aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 </span>
                 <span className="text-[0.84em] text-primary">
                   {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
@@ -470,20 +483,20 @@ export default function ActivityLog({ refreshTrigger }) {
             <Button type="button" variant="ghost" aria-expanded={isOpen}
               className="h-auto w-full flex-col items-stretch gap-1.5 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal"
               onClick={() => openDetail(row)}>
-              <span className="flex min-w-0 items-center gap-2">
+              <span className="flex min-w-0 items-start gap-2">
                 <TypeBadge type={row.monitor_type} />
-                <span className="min-w-0 flex-1 truncate font-semibold">{row.monitor_name}</span>
+                <span className="min-w-0 flex-1 font-semibold [overflow-wrap:anywhere]">{row.monitor_name}</span>
                 <span className="shrink-0 text-[0.78em] text-muted-foreground">{time(row.activity_time)}</span>
-                {isOpen ? <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+                {isOpen ? <ChevronDown aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> : <ChevronRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
               </span>
-              {row.target && <span className="block min-w-0 truncate font-mono text-[0.78em] text-muted-foreground">{row.target}</span>}
+              {row.target && <span className="block min-w-0 font-mono text-[0.78em] break-all text-muted-foreground">{row.target}</span>}
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.84em]">
                 <ResultSummary row={row} t={t} />
                 <span className="text-muted-foreground">· {t('act.ac.' + row.action)}</span>
               </span>
             </Button>
             <div className="flex min-w-0 items-center justify-between gap-2 border-t px-3 py-1.5">
-              <span className="min-w-0 truncate" data-col="team">{teamOf(row)}</span>
+              <span className="min-w-0" data-col="team">{teamOf(row)}</span>
               {dest && goButton(row, dest, true)}
             </div>
             {isOpen && <div className="border-t bg-muted/30 px-3 py-3">{detail(row)}</div>}
@@ -493,67 +506,125 @@ export default function ActivityLog({ refreshTrigger }) {
     </ul>
   )
 
-  return (
-    <div data-slot="activity-log" className="flex min-w-0 flex-col gap-3">
-      {/* Özet — tıklanabilir sayım kartları (durum süzgeci); son aktivite zamanı altta */}
-      <div className="flex min-w-0 flex-col gap-1">
-        <MonitorStatsBar items={statItems} activeFilter={filters.status || 'ALL'} onStatClick={onStat} />
-        {summary?.last_activity && (
-          <p className="-mt-2 flex items-center gap-1.5 text-[0.82em] text-muted-foreground">
-            <Clock aria-hidden="true" className="size-3" /> {t('act.lastActivity')}: {formatDateSec(summary.last_activity)}
-          </p>
-        )}
-      </div>
+  const typeCounts = summary?.type_counts || null
+  const chips = activeChips(filters)
+  const rangeLabel = (rg) => t('act.range.' + rg)
+  const chipLabel = (c) => (c.kind === 'type' ? c.value : c.kind === 'range' ? rangeLabel(c.value) : `“${c.value}”`)
 
-      {/* Süzgeç çubuğu — mobil-önce: tür çipleri sarar; aralık/durum/arama telefonda alt alta, geniş ekranda tek satır */}
-      <div className="flex min-w-0 flex-col gap-2.5">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('act.typeFilter')}>
-          {TYPES.map(({ key, Icon, color }) => {
-            const on = filters.types.includes(key)
-            return (
-              <Button key={key} type="button" variant="outline" size="sm" aria-pressed={on} onClick={() => toggleType(key)}
-                className="h-8 rounded-full px-2.5 text-[0.8em] font-medium text-muted-foreground pointer-coarse:h-10"
-                style={on ? { borderColor: color, color, background: color + '18' } : undefined}>
-                <Icon aria-hidden="true" className="size-3.5" /> {key}
+  /** Tür çipleri — sayı (tür süzgeci hariç diğer süzgeçlerle) görsel + ekran okuyucuya açıklama olarak. */
+  const typeChips = (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('act.typeFilter')} data-slot="act-type-chips">
+      {TYPES.map(({ key, Icon, color }) => {
+        const on = filters.types.includes(key)
+        const count = typeCounts ? (typeCounts[key] ?? 0) : null
+        const cntId = `${uid}-cnt-${key}`
+        return (
+          <Fragment key={key}>
+          <Button type="button" variant="outline" size="sm" aria-pressed={on} onClick={() => toggleType(key)}
+            aria-describedby={count != null ? cntId : undefined} data-type={key}
+            className={cn('h-8 gap-1.5 rounded-full px-2.5 text-[0.8em] font-medium text-muted-foreground pointer-coarse:h-10',
+              count === 0 && !on && 'opacity-60')}
+            style={on ? { borderColor: color, color, background: color + '18' } : undefined}>
+            <Icon aria-hidden="true" className="size-3.5" /> {key}
+            {count != null && (
+              <span aria-hidden="true" data-slot="act-type-count"
+                className="min-w-5 rounded-full bg-muted px-1.5 text-center text-[0.9em] font-semibold text-foreground tabular-nums">{count}</span>
+            )}
+          </Button>
+          {/* Açıklama düğmenin DIŞINDA: içeride olsaydı erişilebilir ada karışırdı ("HTTP 12 kayıt") */}
+          {count != null && <span id={cntId} className="sr-only">{t('act.typeCount', count)}</span>}
+          </Fragment>
+        )
+      })}
+    </div>
+  )
+
+  return (
+    <div data-slot="activity-log" className="flex min-w-0 flex-col gap-4">
+      {/* Özet — tıklanabilir sayım kartları (durum süzgeci) */}
+      <MonitorStatsBar items={statItems} activeFilter={filters.status || 'ALL'} onStatClick={onStat} className="mb-0" />
+
+      {/* Zaman çizelgesi — seçili aralıkta sonuç dağılımı + son aktivite + canlı göstergesi */}
+      <ActivityTimeline series={summary?.series} loading={!summary} lastActivity={summary?.last_activity}
+        live={sp.page === 1 && !error} />
+
+      {/* Süzgeç kartı — aralık / durum / arama + eylemler; tür çipleri (dar kapta katlanır); etkin süzgeç çipleri */}
+      <div ref={setFilterEl} className="min-w-0">
+      <Card data-slot="act-filters" className="min-w-0 gap-0 py-3 shadow-xs">
+        <CardContent className="flex min-w-0 flex-col gap-3 px-3 sm:px-4">
+          <div className="flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+            <SegmentedControl value={filters.range} onChange={(rg) => setFilters((f) => ({ ...f, range: rg }))}
+              ariaLabel={t('act.rangeFilter')} className="max-w-full flex-wrap"
+              options={RANGES.map((rg) => ({ value: rg, label: rangeLabel(rg) }))} />
+            {/* NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için dış kapta *:w-full */}
+            <div className="w-full *:w-full md:w-44">
+              <NativeSelect value={filters.status} aria-label={t('act.d.status')} className="pointer-coarse:h-10"
+                onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+                <NativeSelectOption value="">{t('act.allStatuses')}</NativeSelectOption>
+                {STATUSES.map((st) => <NativeSelectOption key={st} value={st}>{t('act.st.' + st)}</NativeSelectOption>)}
+              </NativeSelect>
+            </div>
+            <InputGroup className="w-full pointer-coarse:h-11 md:max-w-sm md:flex-1">
+              <InputGroupInput type="search" placeholder={t('act.searchPh')} value={qInput} aria-label={t('act.searchPh')}
+                data-page-search className="pointer-coarse:h-10" onChange={(e) => setQInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
+              <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton size="sm" variant="secondary" onClick={applySearch} className="pointer-coarse:h-10">{t('act.search')}</InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
+            <div className="flex flex-wrap items-center gap-2 md:ml-auto">
+              <Button type="button" variant="outline" size="icon" onClick={() => load(false)} title={t('act.refresh')} aria-label={t('act.refresh')}
+                className="pointer-coarse:size-10">
+                <RefreshCw aria-hidden="true" />
               </Button>
-            )
-          })}
-        </div>
-        <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
-          <SegmentedControl value={filters.range} onChange={(rg) => setFilters((f) => ({ ...f, range: rg }))}
-            ariaLabel={t('act.rangeFilter')} className="max-w-full flex-wrap"
-            options={RANGES.map((rg) => ({ value: rg, label: t('act.range.' + rg) }))} />
-          {/* NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için dış kapta *:w-full */}
-          <div className="w-full *:w-full md:w-44">
-            <NativeSelect value={filters.status} aria-label={t('act.d.status')}
-              onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-              <NativeSelectOption value="">{t('act.allStatuses')}</NativeSelectOption>
-              {STATUSES.map((s) => <NativeSelectOption key={s} value={s}>{t('act.st.' + s)}</NativeSelectOption>)}
-            </NativeSelect>
+              <Button type="button" variant="outline" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}
+                className="pointer-coarse:h-10">
+                <Download aria-hidden="true" /> CSV
+              </Button>
+            </div>
           </div>
-          <InputGroup className="w-full md:max-w-sm md:flex-1">
-            <InputGroupInput type="search" placeholder={t('act.searchPh')} value={qInput} aria-label={t('act.searchPh')}
-              onChange={(e) => setQInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
-            <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-            <InputGroupAddon align="inline-end">
-              <InputGroupButton size="sm" variant="secondary" onClick={applySearch}>{t('act.search')}</InputGroupButton>
-            </InputGroupAddon>
-          </InputGroup>
-          <div className="flex flex-wrap items-center gap-2 md:ml-auto">
-            {anyFilter && (
-              <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={clearAll}>
+
+          {chipsInline ? typeChips : (
+            <Collapsible open={typesOpen} onOpenChange={setTypesOpen} className="min-w-0">
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="outline" data-slot="act-types-toggle"
+                  className="h-10 w-full justify-between font-normal">
+                  <span className="flex items-center gap-2"><Filter aria-hidden="true" className="size-4" /> {t('act.typeFilter')}</span>
+                  <span className="flex items-center gap-1.5">
+                    {filters.types.length > 0 && <Badge variant="secondary" className="tabular-nums">{t('act.typesSelected', filters.types.length)}</Badge>}
+                    <ChevronDown aria-hidden="true" className={cn('size-4 transition-transform', typesOpen && 'rotate-180')} />
+                  </span>
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2">{typeChips}</CollapsibleContent>
+            </Collapsible>
+          )}
+
+          {(chips.length > 0 || anyFilter) && (
+            <div data-slot="act-active-filters" className="flex min-w-0 flex-wrap items-center gap-1.5 border-t pt-3">
+              <span className="mr-1 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                <Layers aria-hidden="true" className="size-3.5" /> {t('act.activeFilters')}
+              </span>
+              {chips.map((c) => (
+                <Badge key={c.key} variant="secondary" data-slot="act-chip" data-kind={c.kind}
+                  className="h-auto gap-1 py-0.5 pr-0.5 pl-2 text-xs font-medium whitespace-normal [overflow-wrap:anywhere]">
+                  {chipLabel(c)}
+                  <Button type="button" variant="ghost" size="icon-xs" className="size-6 rounded-full pointer-coarse:size-10"
+                    aria-label={t('act.removeFilter', chipLabel(c))}
+                    onClick={() => { if (c.kind === 'q') setQInput(''); setFilters((f) => removeChip(f, c)) }}>
+                    <X aria-hidden="true" />
+                  </Button>
+                </Badge>
+              ))}
+              <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive pointer-coarse:h-10"
+                onClick={clearAll}>
                 <X aria-hidden="true" /> {t('act.clearFilter')}
               </Button>
-            )}
-            <Button type="button" variant="secondary" size="icon" onClick={() => load(false)} title={t('act.refresh')} aria-label={t('act.refresh')}>
-              <RefreshCw aria-hidden="true" />
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}>
-              <Download aria-hidden="true" /> CSV
-            </Button>
-          </div>
-        </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       </div>
 
       {/* Ana liste — yükleme göstergesi yalnız elde veri yokken; sayfa değişiminde liste + çubuk yerinde kalır
@@ -567,8 +638,8 @@ export default function ActivityLog({ refreshTrigger }) {
         <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')} />
       ) : (
         <>
-          <div data-slot="act-feed" aria-busy={loading || undefined} className={cn(loading && 'opacity-70')}>
-            {phone ? mobileFeed : desktopFeed}
+          <div ref={setFeedEl} data-slot="act-feed" data-layout={layout} aria-busy={loading || undefined} className={cn('min-w-0', loading && 'opacity-70')}>
+            {layout === 'cards' ? mobileFeed : desktopFeed}
           </div>
 
           {/* Sayfalama — proje standardı (shadcn Data Table deseni) */}

@@ -13,6 +13,13 @@
     default / local / local-pg  →  DEBUG, console + file
     prod                        →  INFO,  async file only (no console)
 
+  Format (2026-10-11, user decision "prod JSON, local plain text"):
+    LOG_FORMAT      = text | json        (site.monitor.log.format; prod default json, otherwise text)
+    LOG_JSON_FORMAT = ecs | logstash | gelf   (json flavour, default ecs — Elastic Common Schema)
+    Every line carries the request id (MDC requestId, same value as the X-Request-Id header and the
+    error body's request_id) and, when tracing is on, the OpenTelemetry traceId/spanId:
+      text: "... : rid=<id> trace=<traceId> message"   json: "requestId":"…","traceId":"…"
+
   Log files produced (under LOG_DIR):
     site-monitor.log        — all levels, daily rotation, 30-day retention
     site-monitor-error.log  — ERROR only, 90-day retention
@@ -35,6 +42,10 @@
                   source="logging.level.com.sitemonitor.mail"/>
   <springProperty scope="context" name="LOG_TZ"
                   source="site.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
+  <springProperty scope="context" name="LOG_FORMAT"
+                  source="site.monitor.log.format" defaultValue="text"/>
+  <springProperty scope="context" name="LOG_JSON_FORMAT"
+                  source="site.monitor.log.json-format" defaultValue="ecs"/>
 
   <!-- ── Log patterns ────────────────────────────────────────────────────── -->
   <!--  Console: compact with highlight (works in IntelliJ / most terminals).
@@ -42,20 +53,26 @@
         ANSI escapes are emitted only when a TTY is present (controlled by
         spring.output.ansi.enabled = DETECT by default). In containers/pods or when
         stdout is redirected to a file, output is plain text (no ESC[...] gibberish). -->
+  <!--  Correlation (2026-10-11): "rid=<request id> trace=<trace id> " — each part only when present (boot, sweeps
+        and other non-request work have no request id; trace id appears when Micrometer tracing is active). -->
+  <property name="PAT_CORR"
+            value="%replace(rid=%X{requestId} ){'^rid= $', ''}%replace(trace=%X{traceId} ){'^trace= $', ''}"/>
   <property name="PAT_CONSOLE"
-            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : %msg%n%rootException"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : ${PAT_CORR}%msg%n%rootException"/>
   <!--  File: full timestamp, no ANSI codes  -->
   <property name="PAT_FILE"
-            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %-5level [%thread] %logger{50} : %msg%n%rootException"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %-5level [%thread] %logger{50} : ${PAT_CORR}%msg%n%rootException"/>
   <!--  Audit: explicit label, no stack traces (audit events are always clean)  -->
   <property name="PAT_AUDIT"
-            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} AUDIT [%thread] %logger : %msg%n"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} AUDIT [%thread] %logger : ${PAT_CORR}%msg%n"/>
 
   <!-- ═══════════════════════  APPENDERS  ════════════════════════════════ -->
 
   <!-- Console (stdout) -->
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+    <encoder class="com.sitemonitor.config.logging.SwitchableLogEncoder">
+      <format>${LOG_FORMAT}</format>
+      <jsonFormat>${LOG_JSON_FORMAT}</jsonFormat>
       <pattern>${PAT_CONSOLE}</pattern>
       <charset>UTF-8</charset>
     </encoder>
@@ -64,7 +81,9 @@
   <!-- Main rotating file — daily + 10 MB, 30 days, max 500 MB total -->
   <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>${LOG_DIR}/site-monitor.log</file>
-    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+    <encoder class="com.sitemonitor.config.logging.SwitchableLogEncoder">
+      <format>${LOG_FORMAT}</format>
+      <jsonFormat>${LOG_JSON_FORMAT}</jsonFormat>
       <pattern>${PAT_FILE}</pattern>
       <charset>UTF-8</charset>
     </encoder>
@@ -82,7 +101,9 @@
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
       <level>ERROR</level>
     </filter>
-    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+    <encoder class="com.sitemonitor.config.logging.SwitchableLogEncoder">
+      <format>${LOG_FORMAT}</format>
+      <jsonFormat>${LOG_JSON_FORMAT}</jsonFormat>
       <pattern>${PAT_FILE}</pattern>
       <charset>UTF-8</charset>
     </encoder>
@@ -97,7 +118,9 @@
   <!-- Audit file — 1-year retention for compliance / security review -->
   <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>${LOG_DIR}/site-monitor-audit.log</file>
-    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+    <encoder class="com.sitemonitor.config.logging.SwitchableLogEncoder">
+      <format>${LOG_FORMAT}</format>
+      <jsonFormat>${LOG_JSON_FORMAT}</jsonFormat>
       <pattern>${PAT_AUDIT}</pattern>
       <charset>UTF-8</charset>
     </encoder>

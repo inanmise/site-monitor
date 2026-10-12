@@ -10,6 +10,20 @@ data:
   # Log seviyesi ve @Scheduled havuzu chart'ta YOKTU → pod'a elle set edilen değer her helm upgrade'de
   # sessizce kayboluyordu. Artık chart'tan yönetiliyor (runtime override: Ayarlar → Loglama).
   LOG_LEVEL: {{ .Values.config.logLevel | default "INFO" | quote }}
+  # Günlük biçimi (2026-10-11): prod profili varsayılanı json; "text" düz metne döner. ecs | logstash | gelf.
+  LOG_FORMAT: {{ .Values.config.logFormat | default "json" | quote }}
+  LOG_JSON_FORMAT: {{ .Values.config.logJsonFormat | default "ecs" | quote }}
+  {{- with .Values.config.otel }}
+  {{- if .endpoint }}
+  # OpenTelemetry iz dışa aktarımı — yalnız uç nokta verilince (yoksa iz yalnız günlükteki traceId olarak kalır).
+  # Boot özelliği (gevşek bağlama): management.opentelemetry.tracing.export.otlp.endpoint — TAM iz URL'si.
+  MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: {{ .endpoint | quote }}
+  {{- end }}
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: {{ .samplingProbability | default "0.1" | quote }}
+  {{- if .resourceAttributes }}
+  OTEL_RESOURCE_ATTRIBUTES: {{ .resourceAttributes | quote }}
+  {{- end }}
+  {{- end }}
   SCHEDULING_POOL_SIZE: {{ .Values.config.schedulingPoolSize | default "8" | quote }}
   {{- if .Values.postgresql.enabled }}
   DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}

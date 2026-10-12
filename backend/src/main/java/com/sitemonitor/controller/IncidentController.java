@@ -44,6 +44,9 @@ public class IncidentController {
     private final IncidentNotificationService notificationService;
     /** Alarmdan açılan kayıt (2026-10-01): alert_event_id doğrulaması + alarm detayının bağlı-kayıt sorgusu. */
     private final IncidentAlertLinkService alertLinks;
+    /** Postmortem + aksiyon rozetleri ve olay silinince temizlik (2026-10-11) — dilim testlerinde bean yoksa atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.incident.IncidentPostmortemService postmortems;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -69,8 +72,10 @@ public class IncidentController {
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
                 since, until, teamId, slaBreached, open, incidentViewScope(session),
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
+        List<Map<String, Object>> rows = result.getContent().stream().map(this::dto).toList();
+        addPostmortemSummaries(rows);
         return ok(Map.of(
-                "data",  result.getContent().stream().map(this::dto).toList(),
+                "data",  rows,
                 "total", result.getTotalElements(),
                 "page",  result.getNumber(),
                 "size",  result.getSize()));
@@ -236,6 +241,9 @@ public class IncidentController {
         requireDelete(session);
         requireIncidentWrite(session, service.get(id));   // takım kapsamı (IDOR engeli)
         IncidentRecord e = service.delete(id);
+        if (postmortems != null) {
+            try { postmortems.deleteForIncident(id); } catch (Exception ex) { log.warn("Olay #{} postmortem/aksiyon temizliği başarısız (saklama öksüz kuralı siler): {}", id, ex.getMessage()); }
+        }
         auditService.recordAction("INCIDENT_DELETE", session, request,
                 "INCIDENT", id.toString(),
                 "{\"title\":\"" + safe(e.getTitle()) + "\"}");
@@ -362,6 +370,24 @@ public class IncidentController {
     private void requireDelete(HttpSession session) {
         if (!permissionService.allows(session, "incidents.delete", "execute"))
             throw new SecurityException("incidents.delete yetkisi gerekli");
+    }
+
+    /**
+     * Liste rozetleri (2026-10-11): postmortem durumu + açık / gecikmiş / biten aksiyon sayısı — sayfa başına iki gruplu
+     * sorgu (satır başına sorgu yok). Hata listeyi bozmaz (rozetsiz döner).
+     */
+    private void addPostmortemSummaries(List<Map<String, Object>> rows) {
+        if (postmortems == null || rows.isEmpty()) return;
+        try {
+            List<Long> ids = rows.stream().map(r -> (Long) r.get("id")).toList();
+            Map<Long, Map<String, Object>> sums = postmortems.summaries(ids);
+            for (Map<String, Object> r : rows) {
+                Map<String, Object> s = sums.get((Long) r.get("id"));
+                if (s != null) r.putAll(s);
+            }
+        } catch (Exception ex) {
+            log.warn("Olay listesi postmortem rozetleri okunamadı: {}", ex.getMessage());
+        }
     }
 
     private Map<String, Object> dto(IncidentRecord e) {

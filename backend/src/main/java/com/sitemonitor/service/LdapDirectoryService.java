@@ -285,6 +285,119 @@ public class LdapDirectoryService {
         return hits != null && hits.size() == 1 && hits.get(0) != null;
     }
 
+    /** Rol eşlemesi önizlemesi: bir kuralın (DN ya da CN) çözüldüğü grup DN'leri ve DOĞRUDAN üyelerinin kullanıcı adları. */
+    public record GroupMembers(String spec, List<String> groupDns, java.util.Set<String> usernames, boolean truncated) {}
+
+    /** Bir kuralda en çok kaç üye okunur (sayfa başına 500, en çok 20 sayfa) ve CN ile en çok kaç grup çözülür. */
+    public static final int MEMBER_CAP = 10_000;
+    static final int MEMBER_PAGE = 500;
+    static final int GROUP_CAP = 20;
+
+    /**
+     * Grup kurallarının DOĞRUDAN üyeleri (2026-10-11, LDAP rol eşlemesi önizlemesi). Kural {@code =} ve virgül içeriyorsa tam DN,
+     * değilse grup adı (CN) — {@code (&(objectClass=group)(cn=…))} ile en çok {@value #GROUP_CAP} grup DN'ine çözülür.
+     * Üyeler {@code (memberOf=<dn>)} aramasıyla, sayfalı (AD'nin 1000 satır sınırı) ve {@value #MEMBER_CAP} tavanıyla
+     * okunur; tavan aşılırsa {@code truncated}. Girişte kullanılan {@code memberOf} da doğrudan üyelik olduğu için iki
+     * yol aynı sonucu verir. Hizmet hesabıyla, salt okuma.
+     *
+     * @throws IllegalArgumentException LDAP yapılandırılmamışsa
+     * @throws IllegalStateException    dizine ulaşılamazsa (kök neden metniyle)
+     */
+    public List<GroupMembers> membersOfGroups(List<String> specs) {
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()) throw new IllegalArgumentException("LDAP host yapılandırılmamış");
+        if (s.getBaseDn() == null || s.getBaseDn().isBlank()) throw new IllegalArgumentException("Base DN yapılandırılmamış");
+        List<GroupMembers> out = new ArrayList<>();
+        if (specs == null || specs.isEmpty()) return out;
+        try (LdapConn conn = open(s)) {
+            return membersOn(conn.ctx, s, specs);
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new IllegalStateException(rootMessage(e), e);
+        }
+    }
+
+    /** {@link #membersOfGroups} gövdesi, açık bir bağlam üzerinde (test dikişi: bağlam taklit edilebilir). */
+    List<GroupMembers> membersOn(LdapContext ctx, LdapSettings s, List<String> specs) throws Exception {
+        List<GroupMembers> out = new ArrayList<>();
+        String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank()) ? s.getUserAttribute() : "sAMAccountName";
+        String groupBase = (s.getGroupSearchBase() != null && !s.getGroupSearchBase().isBlank()) ? s.getGroupSearchBase() : s.getBaseDn();
+        for (String spec : specs) {
+            if (spec == null || spec.isBlank()) { out.add(new GroupMembers(spec, List.of(), java.util.Set.of(), false)); continue; }
+            String trimmed = spec.trim();
+            List<String> dns = new ArrayList<>();
+            if (com.sitemonitor.service.ldap.LdapRoleMapping.isDnSpec(trimmed)) {
+                dns.add(trimmed);
+            } else {
+                String cn = trimmed.regionMatches(true, 0, "CN=", 0, 3) ? trimmed.substring(3) : trimmed;
+                SearchControls gc = new SearchControls();
+                gc.setSearchScope(SearchControls.SUBTREE_SCOPE);
+                gc.setCountLimit(GROUP_CAP);
+                gc.setTimeLimit(READ_TIMEOUT_MS);
+                gc.setReturningAttributes(new String[]{"distinguishedName"});
+                NamingEnumeration<SearchResult> gr = ctx.search(groupBase,
+                        "(&(objectClass=group)(cn=" + escapeFilter(cn.trim()) + "))", gc);
+                try {
+                    while (gr.hasMore() && dns.size() < GROUP_CAP) dns.add(gr.next().getNameInNamespace());
+                } catch (PartialResultException | javax.naming.SizeLimitExceededException ignored) {
+                    // referans / tavan — bulunanlarla devam
+                }
+            }
+            java.util.Set<String> users = new java.util.LinkedHashSet<>();
+            boolean truncated = false;
+            for (String dn : dns) {
+                truncated |= collectMembers(ctx, s.getBaseDn(), dn, userAttr, users);
+                if (users.size() >= MEMBER_CAP) { truncated = true; break; }
+            }
+            out.add(new GroupMembers(trimmed, dns, users, truncated));
+        }
+        return out;
+    }
+
+    /** {@code (memberOf=dn)} — sayfalı; tavan ya da sayfa sınırı aşılırsa true. Kullanıcı adları BÜYÜK harfe çevrilir. */
+    private boolean collectMembers(LdapContext ctx, String base, String groupDn, String userAttr, java.util.Set<String> users)
+            throws Exception {
+        SearchControls c = new SearchControls();
+        c.setSearchScope(SearchControls.SUBTREE_SCOPE);
+        c.setTimeLimit(READ_TIMEOUT_MS);
+        c.setReturningAttributes(new String[]{userAttr});
+        String filter = "(memberOf=" + escapeFilter(groupDn) + ")";
+        byte[] cookie = null;
+        int pages = 0;
+        try {
+            do {
+                ctx.setRequestControls(new javax.naming.ldap.Control[]{
+                        new javax.naming.ldap.PagedResultsControl(MEMBER_PAGE, cookie, javax.naming.ldap.Control.NONCRITICAL)});
+                NamingEnumeration<SearchResult> r = ctx.search(base, filter, c);
+                try {
+                    while (r.hasMore()) {
+                        SearchResult sr = r.next();
+                        Attribute a = sr.getAttributes() != null ? sr.getAttributes().get(userAttr) : null;
+                        Object v = (a != null && a.size() > 0) ? a.get() : null;
+                        if (v != null && !v.toString().isBlank()) users.add(v.toString().trim().toUpperCase(java.util.Locale.ROOT));
+                        if (users.size() >= MEMBER_CAP) return true;
+                    }
+                } catch (PartialResultException ignored) {
+                    // AD referansı — bu sayfada bulunanlarla devam
+                }
+                cookie = null;
+                javax.naming.ldap.Control[] resp = ctx.getResponseControls();
+                if (resp != null) {
+                    for (javax.naming.ldap.Control rc : resp) {
+                        if (rc instanceof javax.naming.ldap.PagedResultsResponseControl prc) cookie = prc.getCookie();
+                    }
+                }
+                if (++pages >= MEMBER_CAP / MEMBER_PAGE && cookie != null && cookie.length > 0) return true;
+            } while (cookie != null && cookie.length > 0);
+            return false;
+        } catch (javax.naming.SizeLimitExceededException e) {
+            return true;   // sunucu sayfalamayı desteklemiyorsa tavan
+        } finally {
+            try { ctx.setRequestControls(null); } catch (Exception ignored) { /* bağlantı kapanıyor */ }
+        }
+    }
+
     /** Reads the {@code mail} attribute of a group entry by its full DN (service account). */
     public Optional<String> groupMail(String groupDn) {
         if (groupDn == null || groupDn.isBlank()) return Optional.empty();

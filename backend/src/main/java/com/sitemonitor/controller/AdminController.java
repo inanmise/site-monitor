@@ -70,6 +70,35 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private UserPublicIds userPublicIds;
 
+    /** Nöbet çizelgesi (2026-10-11) — takım silinince çizelgesi ve yer değiştirmeleri de silinir. Dilim testinde null. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.oncall.OnCallService onCallService;
+
+    /** Alarm ayrıntısı için sahip takımların şu anki nöbetçileri (2026-10-11) — yalnız ad ve bitiş; bildirim seçeneği de. */
+    private List<Map<String, Object>> oncallFor(Long... teamIds) {
+        if (onCallService == null) return List.of();
+        List<Long> ids = new ArrayList<>();
+        for (Long t : teamIds) if (t != null && !ids.contains(t)) ids.add(t);
+        if (ids.isEmpty()) return List.of();
+        try {
+            Map<Long, com.sitemonitor.service.oncall.OnCallService.OnCallPerson> notify = onCallService.notifyTargets(ids);
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var p : onCallService.currentFor(ids).values()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("team_id", p.teamId());
+                m.put("user_id", p.userId());
+                m.put("name", p.displayName() == null || p.displayName().isBlank() ? p.username() : p.displayName());
+                m.put("until", p.until());
+                m.put("override", p.override());
+                m.put("notified", notify.containsKey(p.teamId()));
+                out.add(m);
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     /** Yoldaki/gövdedeki kullanıcı referansı → sayısal id; çözülemezse (bilinmeyen, izinsiz sayısal) 404. */
     private Long userRef(Object raw, HttpSession session) {
         Long id = UserPublicIds.resolve(userPublicIds, raw, session);
@@ -2692,6 +2721,9 @@ public class AdminController {
         body.put("data", ev);
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
         body.put("can_act", permissionService.allows(session, "alerts.actions", "execute"));
+        // Sahip takım(lar)ın şu anki nöbetçisi (2026-10-11) — alarm ayrıntısında "kimi aramalı"; çizelge yoksa boş liste
+        body.put("oncall", oncallFor(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId())
+                .toArray(Long[]::new)));
         return ok(body);
     }
 
@@ -3207,6 +3239,7 @@ public class AdminController {
                     "This team still has domains, monitors, people or notification groups — move them to another team first."));
         }
         userService.deleteTeam(id);
+        if (onCallService != null) onCallService.deleteForTeam(id);
         auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(),
                 AuditDiff.snapshotJson(before));
         return ok(Map.of("message", "Team deleted"));

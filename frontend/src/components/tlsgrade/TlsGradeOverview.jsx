@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowRight, ChevronRight, ShieldCheck, TrendingDown } from 'lucide-react'
+import { ArrowRight, ChevronRight, Clock, MailCheck, MailX, ShieldCheck, TrendingDown } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -18,6 +18,33 @@ const BAR_FILL = {
   'A+': 'bg-success', A: 'bg-success/70', B: 'bg-warning', C: 'bg-orange-500', D: 'bg-destructive/70', F: 'bg-destructive',
 }
 const PERIODS = [7, 30, 90]
+
+/**
+ * Düşüşün takıma bildirim durumu (2026-10-11): sunucu kodu → simge + ton. "sent" başarı, "pending" nötr, diğerleri
+ * (bildirilmedi + neden) uyarı. Kod yoksa (özellikten önceki satır) rozet yok.
+ */
+const NOTIFY_META = {
+  sent: { icon: MailCheck, cls: 'border-success/30 bg-success/10 text-success' },
+  pending: { icon: Clock, cls: 'text-muted-foreground' },
+  off: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
+  below: { icon: MailX, cls: 'text-muted-foreground' },
+  maintenance: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
+  no_team: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
+  no_recipient: { icon: MailX, cls: 'border-warning/30 bg-warning/10 text-warning-foreground' },
+}
+
+function NotifyBadge({ code, at }) {
+  const t = useT()
+  const meta = NOTIFY_META[code]
+  if (!meta) return null
+  const Icon = meta.icon
+  const label = code === 'sent' && at ? t('tlsg.ov.notify.sentAt', formatDateSec(at)) : t(`tlsg.ov.notify.${code}`)
+  return (
+    <Badge variant="outline" data-slot="tls-grade-drop-notify" data-notify={code} className={cn('gap-1', meta.cls)}>
+      <Icon aria-hidden="true" /> {label}
+    </Badge>
+  )
+}
 
 /**
  * Tüm Sertifikalar — "TLS notu dağılımı" şeridi (2026-10-10): A+ … F sayıları (tablonun facet'inden — süzgeçlerle
@@ -161,6 +188,7 @@ export function TlsGradeDropsDialog({ open, onClose, onOpenCert }) {
                     {r.recovered
                       ? <Badge variant="outline" className="border-success/30 bg-success/10 text-success">{t('tlsg.ov.recovered')}</Badge>
                       : r.current && <span>· {t('tlsg.ov.current', r.current)}</span>}
+                    {r.notify && <NotifyBadge code={r.notify} at={r.notified_at} />}
                   </div>
                   {Array.isArray(r.reasons) && r.reasons.length > 0 && (
                     <p className="m-0 mt-1 text-xs [overflow-wrap:anywhere]">

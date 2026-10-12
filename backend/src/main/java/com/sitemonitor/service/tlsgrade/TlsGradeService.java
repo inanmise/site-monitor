@@ -215,6 +215,8 @@ public class TlsGradeService {
             ch.setDirection(refine ? TlsGradeChange.REFINE : drop ? TlsGradeChange.DROP : TlsGradeChange.RISE);
             ch.setReasons(codes);
             ch.setChangedAt(now);
+            // Düşüş takıma bildirilecek (2026-10-11) — bildirim işi talep eder; RISE/REFINE bildirilmez
+            if (drop) ch.setNotifyState(TlsGradeChange.NOTIFY_PENDING);
             events.add(ch);
 
             st.setPreviousGrade(old);
@@ -396,6 +398,11 @@ public class TlsGradeService {
             String now = s == null ? null : s.getGrade();
             m.put("current", now);
             m.put("recovered", now != null && TlsGradeRules.rank(now) >= TlsGradeRules.rank(c.getFromGrade()));
+            String notify = TlsGradeDropNotifier.uiCode(c.getNotifyState());
+            if (notify != null) {
+                m.put("notify", notify);
+                if (c.getNotifiedAt() != null) m.put("notified_at", c.getNotifiedAt());
+            }
             out.add(m);
         }
         return out;

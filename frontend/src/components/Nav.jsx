@@ -7,7 +7,7 @@ import KeyboardShortcuts from './KeyboardShortcuts.jsx'
 import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import InboxBell from './InboxBell.jsx'
 import {
-  LayoutDashboard, ShieldCheck, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
+  LayoutDashboard, LayoutGrid, ShieldCheck, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
   Activity, Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
   BellRing, TriangleAlert, Siren, Wrench, History, Headset,
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
@@ -63,6 +63,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
   //    Aynı düzeyde iki farklı öğe aynı ikonu taşımaz. Görünürlük kuralları `show` alanında.
   const SECTIONS = [
     { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
+    // Panom (2026-10-11): kişisel, düzenlenebilir pano + TV / duvar ekranı kipi — herkes; kutular kendi izinleriyle
+    { id: 'mydash', Icon: LayoutGrid, labelKey: 'nav.myDashboard', show: true },
     {
       key: 'certificates', Icon: ShieldCheck, labelKey: 'nav.groupCertificates',
       items: [

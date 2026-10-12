@@ -90,9 +90,23 @@ public class LdapSettings {
     @Column(name = "role_mappings_json", columnDefinition = "TEXT")
     private String roleMappingsJson = "[]";
 
-    /** Role applied when no group mapping matches (AppUser.systemRole token). */
+    /**
+     * ESKİ alan — UYGULANMAZ (2026-10-11). Eşleme hiç çalışmadığı dönemde varsayılanı "ADMIN" kaydedildi; giriş yolunda
+     * okunsaydı eşleşmeyen herkes yönetici olurdu. Yerine {@link #roleMappingFallback} (null = bugünkü kural).
+     */
     @Column(name = "default_role", length = 50)
     private String defaultRole = "ADMIN";
+
+    /**
+     * Grup → rol eşlemesi AÇIK mı (2026-10-11, kullanıcı kararı). null/false = KAPALI: giriş ve eşitleme rolü bugünkü
+     * kuralla türetir, eşlemeler yalnız saklanır. Açıkken kural sırası ve korumalar: {@code LdapRoleMapping}.
+     */
+    @Column(name = "role_mapping_enabled")
+    private Boolean roleMappingEnabled;
+
+    /** Hiçbir kural eşleşmezse: null/"DERIVED" = bugünkü kural; ya da sabit rol (ADMIN/AUDIT'i düşürmez). */
+    @Column(name = "role_mapping_fallback", length = 20)
+    private String roleMappingFallback;
 
     // ── Audit ─────────────────────────────────────────────────────────────────
     @Column(name = "updated_at", length = 30)

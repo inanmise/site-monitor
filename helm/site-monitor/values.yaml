@@ -58,6 +58,19 @@ config:
   # günde on binlerce satır üretir ve prod'da hem console hem dosya appender'ına yazılır (çift I/O).
   # Restart'sız değiştirmek için: Yönetim → Genel Ayarlar → Loglama (DB override env'i ezer).
   logLevel: "INFO"
+  # Log line format (2026-10-11): json (default in prod, one JSON object per line: ECS fields +
+  # requestId / traceId) | text (plain "… : rid=<id> trace=<id> message"). logJsonFormat: ecs | logstash | gelf.
+  logFormat: "json"
+  logJsonFormat: "ecs"
+  # OpenTelemetry tracing (2026-10-11). Spans are always created (traceId in every log line) but only
+  # EXPORTED when endpoint is set: the FULL OTLP/HTTP traces URL of your collector, e.g.
+  # http://otel-collector:4318/v1/traces.
+  # samplingProbability: share of requests traced (0.0-1.0). resourceAttributes: "k=v,k2=v2" (e.g.
+  # "deployment.environment=prod"). Metrics stay on Prometheus (/metrics).
+  otel:
+    endpoint: ""
+    samplingProbability: "0.1"
+    resourceAttributes: ""
   # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
   # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.
   schedulingPoolSize: "8"
@@ -182,7 +195,7 @@ secret:
   # If existingSecret is set, an existing K8s Secret is used instead of creating one.
   # It must hold: ADMIN_USERNAME, ADMIN_PASSWORD, DB_PASSWORD, SPRING_MAIL_USERNAME,
   # SPRING_MAIL_PASSWORD, SITE_MONITOR_EMAIL_FROM, SITE_MONITOR_SECRET_KEY, HTTP_PROXY_USER,
-  # HTTP_PROXY_PASS. With existingSecret the pod is NOT restarted by a Secret edit (no checksum):
+  # HTTP_PROXY_PASS (+ optional SITE_MONITOR_SECRET_KEY_PREVIOUS while rotating). With existingSecret the pod is NOT restarted by a Secret edit (no checksum):
   # run `kubectl rollout restart deploy/<name>` after changing it.
   existingSecret: ""
   adminUsername: "admin"
@@ -201,7 +214,9 @@ secret:
   # NEVER CHANGE THE VALUE OF AN EXISTING INSTALLATION. A new key does not fail loudly:
   # every stored secret decrypts to null ("SecretCipher: decrypt failed" WARN) -> LDAP
   # logins, alert mail, header-secret monitors, push, PageSpeed and scripted checks break.
-  # There is no re-encryption tool yet; rotation is NOT supported (docs/RUNBOOK.md).
+  # To change it, ROTATE instead (2026-10-11, docs/RUNBOOK.md "Anahtar döndürme"): new key in
+  # secretKey, old key in secretKeyPrevious, deploy, Settings > Secret tools > Re-encrypt, then
+  # empty secretKeyPrevious and deploy again.
   # Carry the CURRENT value over unchanged (preferably via existingSecret).
   secretKey: ""   # new install only: >=32 random chars; existing install: the CURRENT value
   #   Yer tutucu bir DIZE BIRAKILAMAZ: SecretCipher fail-fast'i yalnizca "bos ya da
@@ -209,6 +224,11 @@ secret:
   #   metin kapidan GECIYOR ve LDAP/SMTP secret'lari git'te duran bir anahtarla
   #   sifreleniyordu (UI ise secret_key_set: true diyordu). Bos birakilirsa prod
   #   profilinde uygulama ACILMAZ — istenen davranis budur.
+
+  # Previous key, DECRYPT ONLY (key rotation, 2026-10-11). Empty = no rotation in progress (the
+  # Secret key is then omitted). Set it to the OLD key while rotating; remove it once Settings >
+  # Secret tools > Key rotation shows "All values are on the current key".
+  secretKeyPrevious: ""
 
   # Corporate proxy auth (Basic). Leave empty for anonymous proxies.
   # Inject real values via --set or external-secrets; do NOT commit them.

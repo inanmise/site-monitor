@@ -38,6 +38,8 @@ const REASON_TEXT = {
   domFallback: (t) => t('health.reasonDomFallback'),
   ldap: (t, [detail]) => t('health.reasonLdap', cfgDetailText(detail, t)),
   cleanup: (t) => t('health.reasonCleanup'),
+  watchdog: (t, [label]) => t('wd.reason', label),
+  watchdogStale: (t) => t('wd.reasonStale'),
 }
 export function reasonText(r, t) {
   const f = REASON_TEXT[r.code]

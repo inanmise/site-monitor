@@ -9,7 +9,7 @@
 
 /** Bilinen sekme anahtarları (App.jsx gezinmesi, e-posta derin bağlantıları, palet, kayıtlı görünümler). */
 export const VALID_TABS = new Set([
-  'dashboard', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
+  'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive',
   'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',

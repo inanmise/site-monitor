@@ -65,24 +65,20 @@ describe('LdapSettings — sertifika doğrulama uyarısı', () => {
   })
 
   /**
-   * Grup→rol eşleme bölümü YANLIŞ BİR ŞEY VAAT EDİYORDU.
-   *
-   * Eski yardım metni "Hiçbir grup eşleşmediğinde uygulanır" diyordu; oysa hem `role_mappings`
-   * hem `default_role` kaydediliyor ama giriş yolunda HİÇ okunmuyor — rol dizin niteliklerinden
-   * türetiliyor (LdapProvisioningService: yönetici/ürün sahibi → TEAM_ADMIN, diğerleri → USER).
-   * Üretimde bu alan bir ortamda `ADMIN` seçili duruyordu: metni okuyan bir yönetici,
-   * eşleşmeyen HERKESİN admin olduğu sonucuna varabilirdi. Güvenlik açısından yanıltıcı bir
-   * ekran, ölü bir ayardan daha tehlikelidir.
+   * Grup→rol eşleme bölümü eskiden YANLIŞ BİR ŞEY VAAT EDİYORDU ("Hiçbir grup eşleşmediğinde uygulanır" + varsayılan
+   * ADMIN seçimi) ama hiç uygulanmıyordu. 2026-10-11'den beri eşleme UYGULANIR, varsayılanı KAPALIDIR; kapalıyken ekran
+   * rolün NEREDEN geldiğini (bugünkü kural) söyler ve "eşleşmeyen herkes ADMIN" seçimi yoktur.
    */
-  it('GÜVENLİK VAADİ: eşleme bölümü "uygulanmıyor" uyarısı taşır ve rolün nereden geldiğini söyler', async () => {
+  it('GÜVENLİK VAADİ: eşleme varsayılan kapalı, rolün nereden geldiğini söyler; eski varsayılan-rol seçimi yok', async () => {
     const { container } = render(<LdapSettings />)
     await waitFor(() => expect(api.admin.getLdapSettings).toHaveBeenCalled())
     await screen.findByDisplayValue('ldap.example.com')
 
-    expect(screen.getByText(/uygulanmıyor|not currently applied/i)).toBeInTheDocument()
-    // Yalnız "çalışmıyor" demek yetmez; kullanıcı rolün NEREDEN geldiğini öğrenmeli.
+    expect(screen.getByRole('switch', { name: /Grup → rol eşlemesini uygula|Apply group → role mapping/ })).not.toBeChecked()
+    // Kapalıyken kullanıcı rolün NEREDEN geldiğini öğrenir
     expect(container.textContent).toMatch(/TEAM_ADMIN/)
-    // Ve eski yanlış vaat geri gelmemeli.
+    // Eski yanlış vaat ve "varsayılan rol" seçimi geri gelmez
     expect(container.textContent).not.toMatch(/Hiçbir grup eşleşmediğinde|Applied when no group matches/i)
+    expect(screen.queryByLabelText(/^Varsayılan rol|^Default role/i)).toBeNull()
   })
 })

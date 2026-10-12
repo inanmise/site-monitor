@@ -64,9 +64,15 @@ public class UserPreferencesService {
     public static final String LANDING_TAB = "landingTab";
     public static final String SAVED_VIEWS = "savedViews";
     public static final String LOCAL = "local";
+    /** "Panom" kişisel pano yerleşimi (2026-10-11): {@code {v:1, widgets:[{id, type, size}]}}. */
+    public static final String DASHBOARD = "dashboard";
+    public static final int MAX_WIDGETS = 24;
+    public static final Set<String> WIDGET_SIZES = Set.of("sm", "md", "lg");
+    private static final java.util.regex.Pattern WIDGET_ID = java.util.regex.Pattern.compile("[a-z0-9-]{1,40}");
+    private static final java.util.regex.Pattern WIDGET_TYPE = java.util.regex.Pattern.compile("[a-z_]{1,40}");
 
     /** Üst düzey anahtar beyaz listesi. */
-    public static final Set<String> TOP_KEYS = Set.of(FAVORITES, LANDING_TAB, SAVED_VIEWS, LOCAL);
+    public static final Set<String> TOP_KEYS = Set.of(FAVORITES, LANDING_TAB, SAVED_VIEWS, LOCAL, DASHBOARD);
 
     /** Favori olabilen izleme türleri — sekme kimlikleriyle aynı (GlobalSearchService.MONITOR_KINDS). */
     public static final Set<String> MONITOR_TYPES =
@@ -158,6 +164,7 @@ public class UserPreferencesService {
         if (patch.containsKey(LANDING_TAB)) putOrRemove(next, LANDING_TAB, normalizeLandingTab(patch.get(LANDING_TAB)));
         if (patch.containsKey(SAVED_VIEWS)) putOrRemove(next, SAVED_VIEWS, normalizeSavedViews(patch.get(SAVED_VIEWS)));
         if (patch.containsKey(LOCAL)) putOrRemove(next, LOCAL, mergeLocal(before.get(LOCAL), patch.get(LOCAL)));
+        if (patch.containsKey(DASHBOARD)) putOrRemove(next, DASHBOARD, normalizeDashboard(patch.get(DASHBOARD)));
 
         // JSON metniyle karşılaştır: okunan belgede kimlik Integer, normalleşmişte Long — değer aynıyken "değişti" denmesin.
         Set<String> changed = new LinkedHashSet<>();
@@ -220,6 +227,41 @@ public class UserPreferencesService {
         long id = Long.parseLong(s);
         if (id < 1) throw bad("Geçersiz izleme kimliği.", "Invalid monitor id.");
         return id;
+    }
+
+    /**
+     * "Panom" yerleşimi (2026-10-11): {@code {v:1, widgets:[{id, type, size}]}} — en çok {@value #MAX_WIDGETS} kutu, kimlik
+     * tekil ({@code [a-z0-9-]}), tür biçimi ({@code [a-z_]}; bilinmeyen tür istemcide gizlenir — yeni sürümde eklenen kutu
+     * eski istemcide düşmesin diye burada katalog denetimi yok), boyut sm|md|lg. null = anahtarı sil (varsayılana dön).
+     */
+    static Map<String, Object> normalizeDashboard(Object raw) {
+        if (raw == null) return null;
+        if (!(raw instanceof Map<?, ?> m)) throw bad("dashboard bir nesne olmalı.", "dashboard must be an object.");
+        if (!(m.get("widgets") instanceof List<?> list)) throw bad("dashboard.widgets bir dizi olmalı.", "dashboard.widgets must be an array.");
+        if (list.size() > MAX_WIDGETS) {
+            throw bad("Panoya en çok " + MAX_WIDGETS + " kutu eklenebilir.", "At most " + MAX_WIDGETS + " widgets can be added to the dashboard.");
+        }
+        List<Map<String, Object>> widgets = new ArrayList<>();
+        Set<String> ids = new LinkedHashSet<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> w)) throw bad("Pano kutusu bir nesne olmalı.", "A dashboard widget must be an object.");
+            String id = String.valueOf(w.get("id"));
+            String type = String.valueOf(w.get("type"));
+            String size = String.valueOf(w.get("size"));
+            if (!WIDGET_ID.matcher(id).matches() || !WIDGET_TYPE.matcher(type).matches() || !WIDGET_SIZES.contains(size)) {
+                throw bad("Geçersiz pano kutusu.", "Invalid dashboard widget.");
+            }
+            if (!ids.add(id)) throw bad("Pano kutusu kimliği tekrarlanıyor.", "Duplicate dashboard widget id.");
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("id", id);
+            out.put("type", type);
+            out.put("size", size);
+            widgets.add(out);
+        }
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("v", 1);
+        doc.put("widgets", widgets);
+        return doc;
     }
 
     /** Sekme kimliği biçimi; boş/null = anahtarı sil. */

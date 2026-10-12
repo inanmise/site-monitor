@@ -152,6 +152,10 @@ public class StartupLogger {
         try { sk = secretCipher.isKeyConfigured() ? "configured (secure)" : "not-set (insecure DEV default)"; }
         catch (Exception e) { sk = "bilinmiyor"; }
         rows.add(new Row("site.monitor.secret-key", sk, "runtime"));   // DEĞER asla — yalnız durum
+        String pk;
+        try { pk = secretCipher.isPreviousKeyConfigured() ? "set (rotation in progress, decrypt-only)" : "none"; }
+        catch (Exception e) { pk = "bilinmiyor"; }
+        rows.add(new Row("site.monitor.secret-key-previous", pk, "runtime"));
         return new Section("Güvenlik", rows);
     }
 

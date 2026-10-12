@@ -1,3 +1,4 @@
+import { watchdogReasons } from './watchdogModel.js'
 /**
  * Sistem Sağlığı türetimleri — SAF fonksiyonlar, React yok (2026-09-27 yeniden tasarım).
  *
@@ -8,7 +9,7 @@
  */
 import { toUtc } from '../../../utils/localDay.js'
 
-export const SECTION_KEYS = ['sys', 'sched', 'db', 'integrations', 'heartbeat', 'releases', 'users', 'http']
+export const SECTION_KEYS = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'releases', 'users', 'http']
 
 /** Grafik eşikleri (2026-09-12, #23) — tek pod / 100 eşzamanlı kullanıcı kabulü. */
 export const HEALTH_THRESHOLDS = {
@@ -124,10 +125,12 @@ export function poolStats(pool, dbMs) {
  * Genel durum: sebep listesi (seviye + i18n kodu + argümanlar + hedef bölüm) ve en kötü seviye.
  * Kodlar ekranda `REASON_TEXT` ile metne çevrilir (HealthStatusBanner).
  */
-export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d', configChecks = null, loadErrors = {} }) {
+export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d', configChecks = null, loadErrors = {}, watchdog = null }) {
   const h = health || {}
   const reasons = []
   const add = (level, code, section, args = []) => reasons.push({ level, code, section, args })
+  // Kendi kendini izleme (2026-10-11): onaylı sorunlar ve durmuş değerlendirme genel duruma katılır
+  for (const r of watchdogReasons(watchdog)) reasons.push(r)
 
   if (loadErrors.health) add('down', 'loadHealth', null)
   if (h.heartbeat?.alarm) add('down', 'hbAlarm', 'heartbeat')

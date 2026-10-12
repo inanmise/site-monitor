@@ -19,6 +19,8 @@
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
 | RDAP/HTTPS `PKIX path building failed` | [Kurumsal vekil CA rotasyonu](#kurumsal-vekil-ca-rotasyonu) |
 | `/metrics` dışarıdan açık mı? | [/metrics erişimi](#metrics-erişimi) |
+| Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
+| "Uygulama sorunu: …" e-postası / dış izleyici `/api/public/health/watchdog` 503 | [Kendi kendini izleme](#kendi-kendini-izleme) |
 
 ---
 
@@ -167,11 +169,11 @@ Giriş kilidi kademelidir: ihlal başına **30 sn → 2 dk → 10 dk → 30 dk**
 LDAP bind parolası, SMTP parolası, HTTP izleme Basic Auth parolası ve özel başlıkları, Keyword izleme özel
 başlıkları, senaryo (k6) env sırları, kişi-push webhook başlık sırları, PageSpeed API anahtarı.
 
-**Rotasyon DESTEKLENMİYOR.** Anahtar halkası (eski + yeni) ve yeniden şifreleme aracı yok. Anahtar değişirse
-uygulama açılır ama bu değerlerin hepsi `null` çözülür; her kullanımda tek satır
+**Anahtarı DEĞİŞTİRMEYİN, DÖNDÜRÜN** (aşağıdaki [Anahtar döndürme](#anahtar-döndürme)). Anahtar önceki anahtar
+verilmeden değişirse uygulama açılır ama bu değerlerin hepsi `null` çözülür; her kullanımda tek satır
 `SecretCipher: decrypt failed (wrong key or corrupt value?)` WARN'ı basılır; UI yine "secret key ayarlı" der.
 Sonuç: LDAP girişleri, alarm e-postaları, başlık sırrı taşıyan izlemeler (yanlış DOWN), push ve senaryo
-kontrolleri bozulur. **Anahtarı dağıtımlarda aynen taşıyın, rotasyon yapmayın.**
+kontrolleri bozulur. **Dağıtımlarda anahtarı aynen taşıyın.**
 
 Tespit:
 ```bash
@@ -185,7 +187,32 @@ Anahtar yanlışlıkla değiştiyse:
    SMTP ve LDAP parolalarını **deneme-çözer** (`POST /api/admin/secret-tools/decrypt`) — ikisi de `ok` ise
    doğru anahtar odur. Anahtar ve çözülen değer loglanmaz; denetime yalnız sayı yazılır.
 
-Anahtar **kayıpsa ya da sızdıysa** (planlı bakım işi, yayınla birlikte yapılmaz):
+### Anahtar döndürme
+
+2026-10-11'den beri desteklenir. `SITE_MONITOR_SECRET_KEY_PREVIOUS` (Helm `secret.secretKeyPrevious`, `existingSecret`
+kullanılıyorsa Secret'a aynı adla anahtar) **yalnız çözme** anahtarıdır: şifreleme her zaman güncel anahtarla, çözme önce
+güncel sonra önceki anahtarla yapılır. Saklama biçimi değişmez (`enc:v1:`), yani eski sürüme geri dönüş değerleri okur.
+Ekran: Ayarlar → Anahtar Çözümleme → **Anahtar döndürme** (aynı yetki: `settings.secrets/execute`, kapsamlı müdür 403).
+
+1. Yeni anahtar üretin (ekrandaki "Güçlü anahtar üret" ya da `openssl rand -base64 32`), kasada saklayın.
+2. Secret'ta `SITE_MONITOR_SECRET_KEY` = **yeni**, `SITE_MONITOR_SECRET_KEY_PREVIOUS` = **eski** anahtar; dağıtın
+   (`existingSecret` ise `kubectl rollout restart`). Açılış günlüğü: `site.monitor.secret-key-previous = set (rotation in
+   progress, decrypt-only)`. Bu aşamada her şey çalışır; yeni kaydedilen değerler yeni anahtarla yazılır.
+3. **Tüm pod'lar** yenilendikten sonra ekranda "Yeniden şifrele"ye basın (`POST /api/admin/secret-tools/rotation/reencrypt`,
+   `scheduler_lock` `secret-reencrypt`, denetim `SECRET_REENCRYPT` yalnız sayılarla). Önceki anahtardaki her değer koşullu
+   UPDATE ile güncel anahtara taşınır; arada değişen satır ezilmez ("arada değişti" sayılır, yeniden basın). Eski pod
+   yeni şifrelenen değeri okuyamaz, bu yüzden dağıtım bitmeden basmayın.
+4. Ekran "Tüm değerler güncel anahtarda" dediğinde (`previous_removable: true`) `SITE_MONITOR_SECRET_KEY_PREVIOUS`'ı
+   kaldırıp yeniden dağıtın.
+
+Konumlar (tek kaynak `SecretRotationService.LOCATIONS`, kapı `SecretLocationsGateTest`): LDAP bind parolası, SMTP parolası,
+HTTP / Sayfa Hızı Basic Auth parolası ve özel başlıkları, Anahtar Kelime özel başlıkları, senaryo env sırları + senaryo sürüm
+geçmişi, kişisel push başlık sırları. "Okunamayan" = hiçbir ayarlı anahtarla çözülmeyen değer: eski anahtar elinizdeyse önceki
+anahtar olarak verin, yoksa ekrandaki kayıt listesinde değeri yeniden girin. Giriş kodları (OTP) yeniden şifrelenmez: süreleri
+≤ 5 dk ve doğrulama önceki anahtarın alt anahtarıyla alınan özeti de kabul eder.
+
+Anahtar **kayıpsa ya da sızdıysa** (planlı bakım işi, yayınla birlikte yapılmaz). Sızdıysa ve eski anahtar elinizdeyse
+yukarıdaki döndürmeyi uygulayın (eski anahtar yalnız çözme için kısa süre kullanılır). Kayıpsa:
 1. Yeni rastgele anahtar (≥32 karakter) Secret'a yazılır, pod yeniden başlatılır.
 2. Yukarıdaki listedeki **her** sır UI'dan yeniden girilir: Ayarlar → LDAP (bind parolası), Ayarlar → SMTP,
    her HTTP/Keyword izlemesinin Basic Auth/özel başlıkları, her senaryonun env sırları, PageSpeed anahtarı,
@@ -249,3 +276,43 @@ Seçenekler (platform ekibi kararı):
 3. Kalıcı: ayrı yönetim portu (`management.server.port`) + Service'te yayınlamama — kod ve chart değişikliği.
 
 Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/metrics` → engellendiyse 403/404.
+
+## Günlükler ve izleme
+
+2026-10-11'den beri **prod günlüğü JSON** (satır başına bir ECS nesnesi; stdout + `/var/log/site-monitor/*.log`), yerel
+çalıştırma düz metin. Geri dönmek için `LOG_FORMAT=text` (Helm `config.logFormat: text`); çeşit `LOG_JSON_FORMAT=ecs|logstash|gelf`.
+
+- **İstek kimliği her satırda:** hata gövdesindeki `request_id` = yanıt başlığı `X-Request-Id` = günlükte `requestId`
+  (JSON) / `rid=<id>` (düz metin). Kullanıcı "Teknik ayrıntı"daki kimliği iletir:
+  ```bash
+  kubectl logs -n "$NS" "$DEPLOY" | grep '"requestId":"<id>"'          # JSON
+  kubectl logs -n "$NS" "$DEPLOY" | grep 'rid=<id>'                    # düz metin
+  ```
+  Aynı isteğin havuza düşen işleri (ör. "Şimdi kontrol et") da aynı kimlikle yazılır.
+- **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`.
+  Eski `grep "decrypt failed"` / `grep 'Şema yamaları'` komutları JSON satırda da çalışır (ileti kaçışsız UTF-8).
+- **İz (OpenTelemetry):** her isteğin ve zamanlanmış işin bir `traceId`'si vardır (günlükte `traceId` / `trace=`).
+  Örnekleme %10 (`config.otel.samplingProbability`). Span'lar YALNIZ `config.otel.endpoint` (tam OTLP/HTTP iz URL'si,
+  ör. `http://otel-collector:4318/v1/traces`) verilince dışa aktarılır; boşken uygulama hiçbir yere bağlanmaz.
+  Tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler Prometheus'ta kalır (OTLP metrik gönderimi yok). İzlenen
+  sitelere giden kontrol isteklerine `traceparent` başlığı EKLENMEZ (Boot HTTP istemci kurucuları kullanılmıyor).
+
+## Kendi kendini izleme
+
+2026-10-11'den beri uygulama dakikada bir, kümede tek pod'da (`scheduler_lock` `watchdog`) kendi işleyişini ölçer ve iki
+ardışık ölçümde doğrulanan sorunu / düzelmeyi bildirir (e-posta: Ayarlar → Genel → Kendi kendini izleme alıcıları, boşsa
+sistem yöneticisi adresi; isteğe bağlı webhook ve doğrudan push). Ekran: Sistem Sağlığı → Kendi kendini izleme. Dış izleyici:
+`GET /api/public/health/watchdog` (oturumsuz; UP/DEGRADED 200, kritik sorun ya da 5 dk'dan eski değerlendirme 503).
+
+| Kontrol | Ne zaman sorun | İlk bakılacak yer |
+|---|---|---|
+| Tarama liderliği (kritik) | Liderlik kirası bir TTL'den uzun süredir dolu, kimse almadı | Pod'lar ayakta mı, `scheduler` günlüğü; Sistem Sağlığı → Zamanlayıcı |
+| İzleme taramaları | Bir türde etkin izlemelerin ≥ %50'si zamanında kontrol edilmiyor | Görev havuzu doygunluğu (Zamanlayıcı ve yürütücüler), vekil |
+| Sertifika taraması | Son sertifika sonucu 4 saatten eski | `scheduler_lock` `cert-check`, tarama günlüğü |
+| Bildirim gönderimi | Son 30 dk'da ≥ 3 e-postanın ≥ %50'si başarısız | [SMTP düştü](#smtp-düştü) |
+| Push kuyruğu | ≥ 10 push 10 dk'dan uzun gecikmede ya da devre kesici açık | Push ağ geçidi, Webhook Push Gönderim Logu |
+| Veritabanı (DOWN kritik) | Sağlık kontrolü DEGRADED/DOWN | [DB dolması](#db-dolması), `/api/public/health/db` |
+
+Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiçbir kanaldan gidemeyen bildirim 15 dk'da
+bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
+çökükken yalnız veritabanı kontrolü pod belleğinde değerlendirilir ve e-posta / webhook / push yine gider.

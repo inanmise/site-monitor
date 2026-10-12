@@ -219,6 +219,20 @@ public class MonitoringOverviewService {
      * generated_at}. {@code healthy} = {@link #healthyOf} (pano "Sağlıklı" kutusu ile aynı formül). Toplamlar
      * okunamazsa {@code null}.
      */
+    /**
+     * Kuruluş geneli tür başına sayımlar (2026-10-11, kendi kendini izleme): {@link #orgSummary} ile AYNI bellekli hesap
+     * (ek sorgu yok). Her öğe {@code type, active, stale, down, …} (bkz. build'in "types" listesi); okunamazsa null.
+     * Dönen haritalar paylaşılır — çağıran değiştirmez.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> orgTypes() {
+        MonitoringOverviewService target = self != null ? self : this;
+        Map<String, Object> built = target.build(com.sitemonitor.util.TtlMemo.scopeKey(true, null), team -> true, true,
+                ORG_SUMMARY_WINDOW_HOURS);
+        if (built == null || !(built.get("types") instanceof List<?> list)) return null;
+        return (List<Map<String, Object>>) list;
+    }
+
     public Map<String, Object> orgSummary() {
         // Proxy (self) üzerinden — bellekli build zaten @Transactional asıl hesabı self ile çağırıyor; çağrının da proxy'den
         // geçmesi TransactionalSelfInvocationGuardTest'in aşırı yükleri ayırt edemeyen taramasını da netleştirir.

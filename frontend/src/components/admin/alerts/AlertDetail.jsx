@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import AlertSignatureStrip from './AlertSignatureStrip.jsx'
 import AlertIncidentLink from './AlertIncidentLink.jsx'
+import AlertOnCall from './AlertOnCall.jsx'   // sahip takımın şu anki nöbetçisi (2026-10-11)
 import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
@@ -190,6 +191,7 @@ export function AlertDetailBody({
                 )
                 : <span className="text-muted-foreground">{t('alh.noTeam')}</span>}
           </Fact>
+          <AlertOnCall alert={a} Fact={Fact} />
           <Fact label={t('alh.fact.opened')}><span title={a.created_at}>{when(a.created_at)}</span></Fact>
           <Fact label={t('alh.fact.duration')}><span className="tabular-nums">{dur}</span></Fact>
           {a.last_re_alert_at && <Fact label={t('alh.fact.lastNotif')}><span title={a.last_re_alert_at}>{when(a.last_re_alert_at)}</span></Fact>}

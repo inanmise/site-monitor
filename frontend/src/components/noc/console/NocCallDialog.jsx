@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookOpenText, Mail, Phone, PhoneCall, RefreshCw, UserRound, Users } from 'lucide-react'
-import { api } from '../../../api/client'
+import { BookOpenText, Mail, Phone, PhoneCall, RefreshCw, UserRound, UserRoundCheck, Users } from 'lucide-react'
+import { api, formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -109,6 +109,14 @@ export default function NocCallDialog({ row, open, onClose, onChanged }) {
           {d && (
             <>
               {d.team_id == null && <p className="m-0 text-sm text-muted-foreground">{t('noc.con.sheet.noTeam')}</p>}
+              {/* Şu anki nöbetçi (2026-10-11): çizelgesi olan takımda önce aranacak kişi */}
+              {d.oncall && (
+                <div className="flex flex-col gap-1.5 rounded-lg border border-primary/40 bg-primary/5 p-2.5">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-primary"><UserRoundCheck aria-hidden="true" className="size-3.5" />
+                    {t('noc.con.sheet.oncall')}{d.oncall.until ? ` · ${t('oncall.untilShort', formatDate(d.oncall.until))}` : ''}</span>
+                  <ul data-slot="noc-sheet-oncall" className="m-0 list-none p-0"><PersonRow person={d.oncall} t={t} /></ul>
+                </div>
+              )}
               {d.team_id != null && calls.length === 0 && (
                 <AlertBanner tone="warning" className="mb-0" title={t('noc.con.sheet.noListTitle')}>{t('noc.con.sheet.noList')}</AlertBanner>
               )}

@@ -39,7 +39,18 @@ import static com.sitemonitor.service.report.executive.SectionResult.*;
  *   <li>{@code AFTER_EXPIRY}: L &lt; 0 — "süresi dolduktan sonra".</li>
  * </ul>
  * <b>Hedef süre</b> = {@code site.monitor.executive-summary.renewal-target-days} (varsayılan 30 gün); 0 ise Vade
- * Takvimi'nin tier bazlı yenileme süresi ({@code site.monitor.renewal.lead-days[-tN]}). <b>Uyum %</b> = ON_TIME / toplam.
+ * Takvimi'nin tier bazlı yenileme süresi ({@code site.monitor.renewal.lead-days[-tN]}).
+ *
+ * <h2>Uyum % (2026-10-12, kullanıcı kararı)</h2>
+ * "Sertifikalar zamanında, bitmeden yenileniyorsa yenileme planı girilmemiş olsa bile oran %100 olmalı; yenilenmeyip
+ * süresi dolarsa oran düşer." → <b>Uyum %</b> = süresi DOLMADAN yapılan yenilemeler (L ≥ 0) / (ay içindeki yenilemeler +
+ * ay içinde YENİLENMEDEN süresi dolan sertifikalar). Eskiden ON_TIME / toplam idi: bitişe hedef süreden (30 gün) az kala
+ * yapılan her yenileme "uyumsuz" sayılıyor, oran %0 görünüyordu. Hedef süreye uyum ("hedef süreden önce" = ON_TIME /
+ * toplam) ayrı bir BİLGİ göstergesi olarak kalır, orana ve duruma etki etmez. Plan alanı orana hiç girmez.
+ * <b>Yenilenmeden dolan</b>: kapsamdaki bir alan adının parmak izi gruplarında bitişi ayın içinde (rapor anına kadar)
+ * kalan bir sertifikadan sonra AYNI AY içinde bitişi uzatan yeni sertifika görülmediyse (görüldüyse o zaten AFTER_EXPIRY
+ * yenilemesidir ve paydada bir kez sayılır). Geçmiş bir ayın raporu, ertesi ay yenilenen sertifikanın o ayki bitişini
+ * de doğru sayar.
  *
  * <h2>Plan ve gecikme (rapor anı)</h2>
  * <ul>
@@ -86,6 +97,38 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
 
     /** Tespit edilen yenileme. */
     record Renewal(String domain, Instant renewedAt, Instant prevNotAfter, long leadDays, String cls, int target) { }
+
+    /** Ay içinde yenilenmeden süresi dolan sertifika. */
+    record Lapse(String domain, Instant expiredAt) { }
+
+    /**
+     * Ay içinde YENİLENMEDEN süresi dolanlar: bitişi [from, end) aralığında kalan bir grup ve ondan sonra ay içinde
+     * (to'dan önce) bitişi uzatan yeni grup yok. Varsa o bir AFTER_EXPIRY yenilemesidir (zaten sayılır). Alan adı başına
+     * ayda en çok bir kez.
+     */
+    static List<Lapse> lapses(Map<String, List<Group>> groups, Instant from, Instant end, Instant to, Set<String> domains) {
+        List<Lapse> out = new ArrayList<>();
+        if (end == null || !end.isAfter(from)) return out;
+        for (Map.Entry<String, List<Group>> e : groups.entrySet()) {
+            if (domains != null && !domains.contains(e.getKey())) continue;
+            List<Group> gs = new ArrayList<>(e.getValue());
+            gs.removeIf(g -> AlarmNoiseSection.parse(g.firstSeen()) == null);
+            gs.sort(Comparator.comparing((Group g) -> AlarmNoiseSection.parse(g.firstSeen())));
+            for (int k = 0; k < gs.size(); k++) {
+                Instant na = CertificateExpirySection.parseUtc(gs.get(k).notAfter());
+                if (na == null || na.isBefore(from) || !na.isBefore(end)) continue;
+                boolean renewedLaterInMonth = false;
+                for (int n = k + 1; n < gs.size(); n++) {
+                    Instant seen = AlarmNoiseSection.parse(gs.get(n).firstSeen());
+                    Instant nextNa = CertificateExpirySection.parseUtc(gs.get(n).notAfter());
+                    if (seen != null && seen.isBefore(to) && nextNa != null && nextNa.isAfter(na)) { renewedLaterInMonth = true; break; }
+                }
+                if (!renewedLaterInMonth) { out.add(new Lapse(e.getKey(), na)); break; }
+            }
+        }
+        out.sort(Comparator.comparing(Lapse::expiredAt).thenComparing(Lapse::domain));
+        return out;
+    }
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
@@ -194,7 +237,14 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
         for (Renewal r : renewals) byClass.merge(r.cls(), 1, Integer::sum);
         int total = renewals.size();
         int onTime = byClass.get(ON_TIME);
-        Double compliance = total == 0 ? null : Math.round(1000.0 * onTime / total) / 10.0;
+        // Uyum (2026-10-12): süresi dolmadan yapılan yenileme / (yenilemeler + ay içinde yenilenmeden dolanlar)
+        Instant end = ctx.now().isBefore(ctx.to()) ? ctx.now() : ctx.to();
+        List<Lapse> lapsed = lapses(groups, ctx.from(), end, ctx.to(), domains);
+        int beforeExpiry = total - byClass.get(AFTER_EXPIRY);
+        int denom = total + lapsed.size();
+        Double compliance = denom == 0 ? null : Math.round(1000.0 * beforeExpiry / denom) / 10.0;
+        // Hedef süreye uyum ("hedef süreden önce") — yalnız bilgi, orana ve duruma etki etmez
+        Double early = total == 0 ? null : Math.round(1000.0 * onTime / total) / 10.0;
 
         // ── Planlar (bu aya planlananlar) ──
         String monthPrefix = ctx.month().toString();               // "2026-09"
@@ -247,15 +297,19 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
         if (!readOk && total == 0 && overdue.isEmpty()) {
             b.status(NO_DATA).verdict("NO_DATA", T_NEUTRAL, "Yenileme geçmişi okunamadı.");
         } else {
-            boolean critical = afterExpiry > 0 || overdueExpired > 0;
+            boolean critical = afterExpiry > 0 || overdueExpired > 0 || !lapsed.isEmpty();
             boolean warn = (compliance != null && compliance < COMPLIANCE_WARN_PCT) || !overdue.isEmpty() || missed > 0;
             b.status(critical ? CRITICAL : warn ? ATTENTION : OK);
-            if (total == 0) {
+            if (total == 0 && lapsed.isEmpty()) {
                 b.verdict("NO_RENEWALS", T_NEUTRAL, "Bu ay tespit edilen sertifika yenilemesi yok.");
             } else {
                 b.verdict("COMPLIANCE", compliance >= COMPLIANCE_WARN_PCT ? T_OK : T_WARN,
-                        "Ay içindeki " + total + " yenilemenin " + onTime + " tanesi (%" + ExecFormat.num(compliance, 1)
-                                + ") hedef süreden önce yapıldı.", total, onTime, pct(compliance));
+                        "Ay içindeki " + total + " yenilemenin " + beforeExpiry + " tanesi süresi dolmadan yapıldı; "
+                                + lapsed.size() + " sertifika yenilenmeden süresi doldu (uyum %" + ExecFormat.num(compliance, 1) + ").",
+                        total, beforeExpiry, pct(compliance), lapsed.size());
+            }
+            if (!lapsed.isEmpty()) {
+                b.verdict("EXPIRED_UNRENEWED", T_BAD, lapsed.size() + " sertifikanın süresi bu ay yenilenmeden doldu.", lapsed.size());
             }
             if (afterExpiry > 0) {
                 b.verdict("AFTER_EXPIRY", T_BAD, afterExpiry + " sertifika süresi dolduktan sonra yenilendi.", afterExpiry);
@@ -272,11 +326,14 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
         }
 
         boolean fixedTarget = ctx.renewalTargetDays() > 0;
-        b.kpi(new Kpi("on_time_pct", "Zamanında yenileme", compliance, "pct",
+        b.kpi(new Kpi("on_time_pct", "Süresi dolmadan yenileme", compliance, "pct",
                 compliance == null ? T_NEUTRAL : compliance >= COMPLIANCE_WARN_PCT ? T_OK : T_WARN,
-                fixedTarget ? "Hedef: bitişten en az " + ctx.renewalTargetDays() + " gün önce"
-                        : "Hedef: seviye bazlı yenileme süresi", fixedTarget ? List.of(ctx.renewalTargetDays()) : List.of(),
+                total + " yenileme · " + lapsed.size() + " sertifika yenilenmeden doldu", List.of(total, lapsed.size()),
                 null, null, null));
+        b.kpi(new Kpi("early_pct", "Hedef süreden önce", early, "pct", T_NEUTRAL,
+                fixedTarget ? "Bilgi: bitişten en az " + ctx.renewalTargetDays() + " gün önce yapılan yenileme payı"
+                        : "Bilgi: seviye bazlı yenileme süresinden önce yapılan yenileme payı",
+                fixedTarget ? List.of(ctx.renewalTargetDays()) : List.of(), null, null, null));
         b.kpi(new Kpi("renewals", "Yenilenen sertifika", total, "int", T_NEUTRAL, "bu ay tespit edilen", List.of(),
                 null, null, null));
         b.kpi(new Kpi("late", "Geç / son dakika", byClass.get(LATE) + byClass.get(LAST_MINUTE), "int",
@@ -320,6 +377,25 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
                 new Column("class", "Sınıf", "renewal_class"),
                 new Column("state", "Durum", "status")),
                 rows, renewals.size(), "Bu ay tespit edilen yenileme yok."));
+        List<Map<String, Object>> lapseRows = new ArrayList<>();
+        for (Lapse l : lapsed.subList(0, Math.min(LIST_LIMIT, lapsed.size()))) {
+            Long teamId = teamOf.apply(l.domain());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("domain", l.domain());
+            m.put("team", teamId == null ? null : names.get(teamId));
+            m.put("team_id", teamId);
+            m.put("tier", tierOf.apply(l.domain()));
+            m.put("expiry", l.expiredAt().atZone(ExecutiveSummaryContext.IST).toLocalDate().toString());
+            m.put("state", T_BAD);
+            lapseRows.add(m);
+        }
+        b.table(new Table("expired", "Yenilenmeden süresi dolan sertifikalar", List.of(
+                new Column("domain", "Sertifika", "text"),
+                new Column("team", "Takım", "team"),
+                new Column("tier", "Seviye", "tier"),
+                new Column("expiry", "Bitiş", "date"),
+                new Column("state", "Durum", "status")),
+                lapseRows, lapsed.size(), "Bu ay yenilenmeden süresi dolan sertifika yok."));
         b.table(new Table("overdue", "Gecikmedeki sertifikalar (rapor anı)", List.of(
                 new Column("domain", "Sertifika", "text"),
                 new Column("team", "Takım", "team"),
@@ -331,8 +407,10 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
                 new Column("state", "Durum", "status")),
                 overdue.subList(0, Math.min(LIST_LIMIT, overdue.size())), overdue.size(),
                 "Yenileme penceresinde planı olmayan sertifika yok."));
-        b.note("METHOD", "Yenileme = yeni sertifikanın izlemede ilk görüldüğü an; zamanında = eski sertifikanın bitişine "
-                + "en az hedef süre (gün) varken. Son dakika: son " + LAST_MINUTE_DAYS + " gün.", LAST_MINUTE_DAYS);
+        b.note("METHOD", "Yenileme = yeni sertifikanın izlemede ilk görüldüğü an. Uyum = süresi dolmadan yapılan yenilemelerin, "
+                + "ay içindeki yenilemeler ile yenilenmeden süresi dolan sertifikaların toplamına oranı; yenileme planı orana "
+                + "etki etmez. Hedef süreden önce = eski sertifikanın bitişine en az hedef süre (gün) varken (bilgi). "
+                + "Son dakika: son " + LAST_MINUTE_DAYS + " gün.", LAST_MINUTE_DAYS);
         b.note("PLANS", "Plan alanı yalnız güncel değeri tutar; plan ve gecikme sayıları rapor anına göredir ("
                 + ExecFormat.stamp(ctx.now()) + ").", datetime(ctx.nowIso()));
         if (ctx.teamScoped()) {
@@ -340,6 +418,7 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
                     + "yenilemeleri; Takım sütunu kaydın sorumlu takımıdır.");
         }
         b.data("by_class", byClass).data("total", total).data("compliance", compliance)
+                .data("before_expiry", beforeExpiry).data("expired_unrenewed", lapsed.size()).data("early_pct", early)
                 .data("plans", Map.of("planned", planned, "done", done, "missed", missed, "pending", pending))
                 .data("target_days", fixedTarget ? ctx.renewalTargetDays() : null)
                 .data("last_minute_days", LAST_MINUTE_DAYS);

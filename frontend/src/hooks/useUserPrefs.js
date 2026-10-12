@@ -314,6 +314,9 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
     },
     landingTab: typeof state.prefs.landingTab === 'string' ? state.prefs.landingTab : null,
     setLandingTab: (v) => setTop('landingTab', v || null),
+    /** "Panom" yerleşimi (2026-10-11): {v:1, widgets:[{id,type,size}]} ya da null (varsayılan). */
+    dashboard: state.prefs.dashboard && typeof state.prefs.dashboard === 'object' ? state.prefs.dashboard : null,
+    setDashboard: (v) => setTop('dashboard', v || null),
     viewsFor: (listKey) => viewsOf(state.prefs.savedViews, listKey),
     /** → { full, replaced } ya da null. */
     saveView: (listKey, name, params) => {
@@ -350,6 +353,7 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
 const NOOP = Object.freeze({
   ready: false, status: 'idle', prefs: {}, hydratedKeys: [], favorites: [],
   isFavorite: () => false, toggleFavorite: () => null, landingTab: null, setLandingTab: () => false,
+  dashboard: null, setDashboard: () => false,
   viewsFor: () => [], saveView: () => null, renameView: () => null, deleteView: () => null, flush: () => null,
 })
 

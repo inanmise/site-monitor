@@ -1,0 +1,307 @@
+package com.sitemonitor.service.watchdog;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitemonitor.model.WatchdogState;
+import com.sitemonitor.repository.WatchdogStateRepository;
+import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.SchedulerService;
+import com.sitemonitor.service.mail.WatchdogMail;
+import com.sitemonitor.service.watchdog.WatchdogProbes.Probe;
+import com.sitemonitor.service.watchdog.WatchdogTransition.Action;
+import com.sitemonitor.service.watchdog.WatchdogTransition.Result;
+import com.sitemonitor.util.Msg;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Kendi kendini izleme (watchdog, 2026-10-11, kullanıcı isteği). Dakikada bir, kümede TEK pod'da ({@code scheduler_lock}
+ * {@value #LOCK}) uygulamanın kendi işleyişini ölçer ({@link WatchdogProbes}): tarama liderliği, izleme taramaları,
+ * sertifika taraması, bildirim gönderimi, push kuyruğu, veritabanı. Durum {@code watchdog_state}'te (tüm pod'lar ve dış
+ * uç aynı durumu görür); geçişler {@link WatchdogTransition} ile onaylanır ve bir turun tüm geçişleri TEK bildirimle
+ * ({@link WatchdogNotifier}) yöneticilere gider.
+ *
+ * <p><b>Veritabanı çökerse:</b> kilit ve durum tablosu okunamaz; o zaman yalnız veritabanı kontrolü pod başına bellekte
+ * değerlendirilir ve bildirimi e-posta / webhook / push ile yine gider (DB'ye yazılamayan günlük satırı WARN olur).
+ * Dış uç ({@code /api/public/health/watchdog}) son değerlendirme {@link #STALE_FACTOR} turdan eskiyse "değerlendirme
+ * koşmuyor" der — izleyicinin kendisi durduysa da görünür.
+ */
+@Slf4j
+@Service
+public class WatchdogService {
+
+    public static final String LOCK = "watchdog";
+    static final int STALE_FACTOR = 5;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final WatchdogStateRepository repo;
+    private final WatchdogProbes probes;
+    private final WatchdogNotifier notifier;
+    private final AppSettingsService settings;
+    private SchedulerService scheduler;
+
+    /** Veritabanına yazılamayan turlarda (DB çöküşü) pod başına durum. */
+    private final Map<String, WatchdogState> memory = new ConcurrentHashMap<>();
+
+    @Value("${site.monitor.watchdog.interval-ms:60000}")
+    private long intervalMs = 60_000;
+
+    public WatchdogService(WatchdogStateRepository repo, WatchdogProbes probes, WatchdogNotifier notifier,
+                           AppSettingsService settings) {
+        this.repo = repo;
+        this.probes = probes;
+        this.notifier = notifier;
+        this.settings = settings;
+    }
+
+    @Autowired(required = false)
+    @Lazy
+    public void setScheduler(SchedulerService scheduler) {
+        this.scheduler = scheduler;
+    }
+
+    /** Bir turun özeti. */
+    public record Round(int evaluated, int alerts, int reminders, int recoveries, String outcome, boolean local) { }
+
+    @Scheduled(fixedDelayString = "${site.monitor.watchdog.interval-ms:60000}",
+               initialDelayString = "${site.monitor.watchdog.initial-delay-ms:120000}")
+    public void tick() {
+        if (!WatchdogSettings.enabled(settings)) return;
+        try {
+            Instant now = Instant.now();
+            Optional<Round> r = scheduler == null ? Optional.of(evaluate(now)) : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now));
+            if (r.isEmpty() && databaseDown(now)) evaluateLocalDatabase(now);   // kilit tablosu okunamıyor → yerel kip
+        } catch (Exception e) {
+            log.warn("Kendi kendini izleme turu tamamlanamadı: {}", e.toString());
+        }
+    }
+
+    /** Tüm kontrolleri ölçer, durumları günceller, geçişleri TEK bildirimde gönderir. Elle "Şimdi değerlendir" de bunu çağırır. */
+    public synchronized Round evaluate(Instant now) {
+        Map<String, WatchdogState> states = new HashMap<>();
+        boolean persisted = true;
+        try {
+            for (WatchdogState s : repo.findAll()) states.put(s.getCheckKey(), s);
+        } catch (Exception e) {
+            persisted = false;
+            states.putAll(memory);
+        }
+        int confirm = WatchdogSettings.confirm(settings);
+        int reminder = WatchdogSettings.reminderHours(settings);
+        List<WatchdogMail.Item> items = new ArrayList<>();
+        List<Map.Entry<WatchdogState, Action>> acted = new ArrayList<>();
+        int alerts = 0, reminders = 0, recoveries = 0;
+        for (Probe p : probes.runAll(now)) {
+            WatchdogState st = states.computeIfAbsent(p.check().key(), k -> {
+                WatchdogState n = new WatchdogState();
+                n.setCheckKey(k);
+                return n;
+            });
+            Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder);
+            if (a != Action.NONE) {
+                items.add(new WatchdogMail.Item(a.name(), p.check().labelTr(), st.getSeverity() == null ? p.check().severity().name() : st.getSeverity(),
+                        WatchdogMessages.detail(p.check(), p.facts(), false)));
+                acted.add(Map.entry(st, a));
+                switch (a) {
+                    case ALERT -> alerts++;
+                    case REMIND -> reminders++;
+                    case RECOVER -> recoveries++;
+                    default -> { }
+                }
+            }
+        }
+        String outcome = "NONE";
+        if (!items.isEmpty()) {
+            WatchdogNotifier.Report rep = notifier.send(items, false);
+            outcome = rep.outcome().name();
+            boolean delivered = rep.outcome() != WatchdogNotifier.Outcome.FAILED;   // kanal yok / susturuldu → yeniden denenmez
+            for (Map.Entry<WatchdogState, Action> e : acted) WatchdogTransition.markNotified(e.getKey(), e.getValue(), delivered, now);
+            log.info("Kendi kendini izleme: {} sorun açıldı, {} hatırlatma, {} düzeldi → bildirim {}", alerts, reminders, recoveries, outcome);
+        }
+        if (persisted) {
+            try {
+                repo.saveAll(states.values());
+                memory.clear();
+            } catch (Exception e) {
+                persisted = false;
+                log.warn("Kendi kendini izleme durumu yazılamadı (bellekte tutuluyor): {}", e.toString());
+            }
+        }
+        if (!persisted) memory.putAll(states);
+        return new Round(states.size(), alerts, reminders, recoveries, outcome, !persisted);
+    }
+
+    /** DB çökükken: yalnız veritabanı kontrolü, pod belleğinde (her pod kendisi bildirir — tek pod prod'da tek bildirim). */
+    synchronized void evaluateLocalDatabase(Instant now) {
+        Probe p = probes.run(WatchdogCheck.DATABASE, now);
+        WatchdogState st = memory.computeIfAbsent(WatchdogCheck.DATABASE.key(), k -> {
+            WatchdogState n = new WatchdogState();
+            n.setCheckKey(k);
+            return n;
+        });
+        Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now,
+                WatchdogSettings.confirm(settings), WatchdogSettings.reminderHours(settings));
+        if (a == Action.NONE) return;
+        WatchdogNotifier.Report rep = notifier.send(List.of(new WatchdogMail.Item(a.name(), WatchdogCheck.DATABASE.labelTr(),
+                st.getSeverity(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), false))), false);
+        WatchdogTransition.markNotified(st, a, rep.outcome() != WatchdogNotifier.Outcome.FAILED, now);
+    }
+
+    private boolean databaseDown(Instant now) {
+        Probe p = probes.run(WatchdogCheck.DATABASE, now);
+        return p.result() == Result.PROBLEM && WatchdogCheck.Severity.CRITICAL.name().equals(p.severity());
+    }
+
+    // ── Okuma ─────────────────────────────────────────────────────────────────────────────────
+
+    /** Kayıtlı (ya da DB çökükken bellekteki) durumlar, katalog sırasıyla. */
+    List<WatchdogState> currentStates() {
+        Map<String, WatchdogState> byKey = new HashMap<>(memory);
+        try {
+            for (WatchdogState s : repo.findAll()) byKey.putIfAbsent(s.getCheckKey(), s);
+        } catch (Exception e) {
+            log.debug("watchdog durumu okunamadı: {}", e.toString());
+        }
+        List<WatchdogState> out = new ArrayList<>();
+        for (WatchdogCheck c : WatchdogCheck.values()) {
+            WatchdogState s = byKey.get(c.key());
+            if (s != null) out.add(s);
+        }
+        return out;
+    }
+
+    /**
+     * Genel durum: DOWN (kritik sorun ya da değerlendirme durmuş) | DEGRADED (sorun var) | UP | DISABLED | UNKNOWN (hiç
+     * değerlendirilmedi).
+     */
+    public String overall(List<WatchdogState> states, Instant now) {
+        if (!WatchdogSettings.enabled(settings)) return "DISABLED";
+        if (states.isEmpty()) return "UNKNOWN";
+        if (stale(states, now)) return "DOWN";
+        boolean critical = false, problem = false;
+        for (WatchdogState s : states) {
+            if (!"PROBLEM".equals(s.getStatus())) continue;
+            problem = true;
+            if (WatchdogCheck.Severity.CRITICAL.name().equals(s.getSeverity())) critical = true;
+        }
+        return critical ? "DOWN" : problem ? "DEGRADED" : "UP";
+    }
+
+    boolean stale(List<WatchdogState> states, Instant now) {
+        Instant newest = Instant.EPOCH;
+        for (WatchdogState s : states) {
+            if (s.getEvaluatedAt() == null) continue;
+            Instant at = WatchdogTransition.parse(s.getEvaluatedAt());
+            if (at.isAfter(newest)) newest = at;
+        }
+        long limitMs = Math.max(5 * 60_000L, STALE_FACTOR * intervalMs);
+        return Duration.between(newest, now).toMillis() > limitMs;
+    }
+
+    /** Dış izleyici gövdesi — yalnız durum, kontrol anahtarları ve anlar (ad / sayı / adres yok). */
+    public Map<String, Object> publicStatus(Instant now) {
+        List<WatchdogState> states = currentStates();
+        Map<String, Object> out = new LinkedHashMap<>();
+        String overall = overall(states, now);
+        out.put("status", overall);
+        out.put("component", "watchdog");
+        String last = states.stream().map(WatchdogState::getEvaluatedAt).filter(java.util.Objects::nonNull).max(String::compareTo).orElse(null);
+        out.put("evaluated_at", last);
+        if (!"DISABLED".equals(overall) && !states.isEmpty() && stale(states, now)) out.put("reason", "evaluation_stale");
+        List<Map<String, Object>> checks = new ArrayList<>();
+        for (WatchdogState s : states) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("key", s.getCheckKey());
+            m.put("status", s.getStatus());
+            if ("PROBLEM".equals(s.getStatus())) m.put("severity", s.getSeverity());
+            m.put("since", s.getSince());
+            checks.add(m);
+        }
+        out.put("checks", checks);
+        return out;
+    }
+
+    /** Yönetici ekranı: kontroller (ad, durum, ayrıntı cümlesi, olgular, son bildirim) + ayar özeti. */
+    public Map<String, Object> adminStatus(Instant now) {
+        List<WatchdogState> states = currentStates();
+        Map<String, WatchdogState> byKey = new HashMap<>();
+        for (WatchdogState s : states) byKey.put(s.getCheckKey(), s);
+        boolean en = "en".equals(Msg.lang());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", overall(states, now));
+        out.put("enabled", WatchdogSettings.enabled(settings));
+        out.put("stale", !states.isEmpty() && stale(states, now));
+        out.put("interval_seconds", intervalMs / 1000);
+        List<Map<String, Object>> checks = new ArrayList<>();
+        for (WatchdogCheck c : WatchdogCheck.values()) {
+            WatchdogState s = byKey.get(c.key());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("key", c.key());
+            m.put("label", en ? c.labelEn() : c.labelTr());
+            m.put("problem_text", en ? c.problemEn() : c.problemTr());
+            m.put("default_severity", c.severity().name());
+            if (s == null) {
+                m.put("status", "PENDING");
+            } else {
+                Map<String, Object> facts = parse(s.getFacts());
+                m.put("status", s.getStatus());
+                m.put("last_result", s.getLastResult());
+                m.put("severity", s.getSeverity());
+                m.put("since", s.getSince());
+                m.put("evaluated_at", s.getEvaluatedAt());
+                m.put("notified_at", s.getNotifiedAt());
+                m.put("notified_kind", s.getNotifiedKind());
+                m.put("detail", WatchdogMessages.detail(c, facts, en));
+                m.put("facts", facts);
+            }
+            checks.add(m);
+        }
+        out.put("checks", checks);
+        Map<String, Object> channels = new LinkedHashMap<>();
+        channels.put("email_recipients", WatchdogSettings.recipients(settings, "").size());
+        channels.put("push_users", WatchdogSettings.pushUsers(settings).size());
+        channels.put("webhook", !WatchdogSettings.webhookUrl(settings).isBlank());
+        channels.put("reminder_hours", WatchdogSettings.reminderHours(settings));
+        channels.put("confirm_checks", WatchdogSettings.confirm(settings));
+        out.put("channels", channels);
+        return out;
+    }
+
+    /** Test bildirimi — tüm kanallardan, durum değiştirmeden. */
+    public WatchdogNotifier.Report sendTest() {
+        return notifier.send(List.of(new WatchdogMail.Item("TEST", "Kendi kendini izleme", "INFO",
+                "Bu bir test bildirimidir; bir sorun yok.")), true);
+    }
+
+    private static String json(Map<String, Object> facts) {
+        if (facts == null) return null;
+        try {
+            return MAPPER.writeValueAsString(facts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parse(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return MAPPER.readValue(json, LinkedHashMap.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+}

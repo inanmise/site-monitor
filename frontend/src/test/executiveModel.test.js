@@ -120,11 +120,16 @@ describe('executiveModel — metin (i18n + sunucu metnine düşüş)', () => {
   })
 
   it('doldurulamayan yer tutucu kalmaz: parametresiz gelen ipucu sunucu metnine düşer', () => {
-    const k = { code: 'on_time_pct', label: 'Zamanında yenileme', value: 40, format: 'pct', tone: 'warn',
-      hint: 'Hedef: seviye bazlı yenileme süresi', hint_params: [] }
-    expect(kpiView(tEN, 'renewals', k, 'en').hint).toBe('Hedef: seviye bazlı yenileme süresi')
+    // 2026-10-12: hedef süre bilgisi "early_pct" göstergesinde (uyum oranı "süresi dolmadan yenileme" oldu)
+    const k = { code: 'early_pct', label: 'Hedef süreden önce', value: 40, format: 'pct', tone: 'neutral',
+      hint: 'Bilgi: seviye bazlı yenileme süresinden önce yapılan yenileme payı', hint_params: [] }
+    expect(kpiView(tEN, 'renewals', k, 'en').hint).toBe('Bilgi: seviye bazlı yenileme süresinden önce yapılan yenileme payı')
     const withParam = { ...k, hint_params: [30] }
-    expect(kpiView(tEN, 'renewals', withParam, 'en').hint).toBe('Target: at least 30 days before expiry')
+    expect(kpiView(tEN, 'renewals', withParam, 'en').hint).toBe('For information: share of renewals made at least 30 days before expiry')
+    const onTime = { code: 'on_time_pct', label: 'Süresi dolmadan yenileme', value: 100, format: 'pct', tone: 'ok',
+      hint: '4 yenileme · 0 sertifika yenilenmeden doldu', hint_params: [4, 0] }
+    expect(kpiView(tEN, 'renewals', onTime, 'en').label).toBe('Renewed before expiry')
+    expect(kpiView(tEN, 'renewals', onTime, 'en').hint).toBe('4 renewals · 0 certificates expired unrenewed')
   })
 
   it('gösterge görünümü: etiket, değer, fark çipi', () => {

@@ -135,6 +135,9 @@ public final class AuditEventCatalog {
             "GUIDE_LINK_DELETE",
             "GUIDE_LINK_UPDATE",
             "HTTP_DIAGNOSTICS_RUN",       // HTTP izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-02)
+            "INCIDENT_ACTION_ADD",        // postmortem aksiyonu eklendi (2026-10-11)
+            "INCIDENT_ACTION_DELETE",     // postmortem aksiyonu silindi (2026-10-11)
+            "INCIDENT_ACTION_UPDATE",     // postmortem aksiyonu güncellendi / sahibi durumunu değiştirdi (2026-10-11)
             "INCIDENT_COMMENT_ADD",
             "INCIDENT_COMMENT_DELETE",
             "INCIDENT_CREATE",
@@ -142,6 +145,7 @@ public final class AuditEventCatalog {
             "INCIDENT_IMAGE_ADD",
             "INCIDENT_OPTION_ADD",
             "INCIDENT_OPTION_DELETE",
+            "INCIDENT_POSTMORTEM_SAVE",   // postmortem raporu kaydedildi / durumu değişti (2026-10-11)
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",
             "ISSUE_REPORT",
@@ -149,6 +153,7 @@ public final class AuditEventCatalog {
             "ISSUE_REPORT_REOPEN",
             "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)
             "LDAP_QUERY_USER",
+            "LDAP_ROLE_MAPPING_PREVIEW",  // Ayarlar → LDAP: grup → rol eşlemesi "kim ne olacak" önizlemesi (2026-10-11)
             "LDAP_SETTINGS_SAVE",
             "LDAP_TEST",
             "LOGIN",
@@ -203,6 +208,9 @@ public final class AuditEventCatalog {
             "NOC_MONITOR_BULK",
             "NOC_MONITOR_UPDATE",
             "NOC_TEAMS_UPDATE",
+            "ONCALL_OVERRIDE_ADD",        // nöbet yer değiştirmesi eklendi (2026-10-11)
+            "ONCALL_OVERRIDE_DELETE",     // nöbet yer değiştirmesi silindi (2026-10-11)
+            "ONCALL_SCHEDULE_SAVE",       // takım nöbet çizelgesi kaydedildi (2026-10-11)
             "NOTIFICATION_GROUP_CREATE",
             "NOTIFICATION_GROUP_DEFAULT",
             "NOTIFICATION_GROUP_DELETE",
@@ -231,11 +239,14 @@ public final class AuditEventCatalog {
             "RETENTION_SETTINGS_SAVE",
             "RETENTION_SETTINGS_SHORTENED",
             "SCHEDULER_LOCK_RELEASE",
+            "WATCHDOG_EVALUATE",          // kendi kendini izleme elle değerlendirildi (2026-10-11)
+            "WATCHDOG_TEST",              // kendi kendini izleme test bildirimi (2026-10-11)
             "SCHEDULER_RUN",
             "SCHEMA_PATCH",
             "SCRIPTED_DRAFT_DELETE",
             "SCRIPTED_DRAFT_SAVE",
             "SECRET_DECRYPT",
+            "SECRET_REENCRYPT",           // gizli anahtar döndürme: önceki anahtardaki değerler yeniden şifrelendi (2026-10-11)
             "SELF_PASSWORD_CHANGE",
             "SESSION_ENDED_INACTIVE",     // pasife alınan hesabın canlı oturumu kesildi (2026-10-02)
             "SESSION_ENDED_MAINTENANCE",  // sistem bakımı başladı — global yönetici olmayan oturum kesildi (2026-10-02)
@@ -291,6 +302,7 @@ public final class AuditEventCatalog {
             "USER_LDAP_RESYNC",           // yönetici: kullanıcıyı AD'den yeniden eşitle (2026-09-26)
             "USER_LDAP_SYNC",             // giriş/müdür provizyonunda LDAP kaynaklı üyelik/müdür değişikliği (2026-09-26)
             "USER_ORG_ROLE_UNLOCK",
+            "USER_ROLE_FROM_AD",          // LDAP grup → rol eşlemesi giriş/eşitlemede sistem rolünü değiştirdi (2026-10-11)
             "USER_PASSWORD_AUTO_RESET",
             "USER_PREFERENCES_UPDATE",    // kişi favorilerini / açılış sekmesini / kayıtlı görünümlerini değiştirdi (2026-10-02)
             "USER_PUSH_EXPORT",
@@ -349,7 +361,7 @@ public final class AuditEventCatalog {
 
         // Güvenlik reddi her şeyden önce gelir: "*_DENIED" bir izleme olayı değil, bir yetki olayıdır.
         if (t.equals("ACCESS_DENIED") || t.equals("AUTH_REQUIRED") || t.endsWith("_DENIED")) return SECURITY;
-        if (t.equals("SECRET_DECRYPT")) return SECURITY;
+        if (t.equals("SECRET_DECRYPT") || t.equals("SECRET_REENCRYPT")) return SECURITY;
 
         if (t.startsWith("LOGIN") || t.equals("LOGOUT") || t.equals("ACCOUNT_LOCKED")
                 || t.startsWith("SESSION_") || t.startsWith("REMEMBER_TOKEN")
@@ -365,6 +377,7 @@ public final class AuditEventCatalog {
         // yönetimidir; gruplar/yapılandırma bildirim ENTEGRASYONUdur (NOTIFICATION_GROUP_* ile aynı yer).
         if (t.startsWith("NOC_MONITOR_")) return MONITOR;
         if (t.startsWith("NOC_CALL_LIST")) return TEAM;
+        if (t.startsWith("ONCALL_")) return TEAM;                   // nöbet çizelgesi (2026-10-11) — takım düzeni
         if (t.startsWith("NOC_CALL_LOG")) return INCIDENT;          // uyarı üzerinden arama kaydı (ALERT_* ile aynı yer)
         // 7/24 izleme ekibi takımları (2026-10-04): kimin TÜM izlemeleri göreceğini belirler — erişim/yetki değişikliği
         if (t.equals("NOC_TEAMS_UPDATE")) return PERMISSION;
@@ -399,7 +412,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 
-        if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.equals("SCHEMA_PATCH")
+        if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 
         // Kalan her şey bir AYAR yüzeyidir (settings/branding/storm/guide-link/template…).

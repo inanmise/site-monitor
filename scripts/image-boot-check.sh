@@ -66,7 +66,8 @@ else
     err "şema yaması BAŞARISIZ:"
     printf '%s\n' "$patch_fail_lines"
   fi
-  error_lines="$(printf '%s\n' "$clean" | grep -aE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} +ERROR ' || true)"
+  # Düz metin satırı ya da (prod profili 2026-10-11'den beri) JSON satırı: ECS "log.level" / {"log":{"level"…}}, logstash "level"
+  error_lines="$(printf '%s\n' "$clean" | grep -aE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} +ERROR |^\{.*("log\.level"|"level"|"log":\{"level"):"ERROR"' || true)"
   if [ -n "$error_lines" ]; then
     err "açılışta ERROR düzeyinde günlük ($(printf '%s\n' "$error_lines" | wc -l) satır):"
     printf '%s\n' "$error_lines" | head -50

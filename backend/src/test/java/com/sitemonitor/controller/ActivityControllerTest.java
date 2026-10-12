@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,6 +128,68 @@ class ActivityControllerTest {
         mvc.perform(get("/api/activity/7").session(scopedUser(1L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(7));
+    }
+
+    @Test
+    @DisplayName("2026-10-11 summary: tür sayıları (tür süzgeci hariç, durum dahil) + saatlik seri (sıfır dolgulu, TIMEOUT hata)")
+    void summary_typeCountsAndHourlySeries() throws Exception {
+        when(repo.countByStatusFiltered(anyBoolean(), anyList(), anyBoolean(), anyList(), any(), any(), any(), any()))
+                .thenReturn(java.util.Collections.singletonList(new Object[]{"SUCCESS", 3L}));
+        when(repo.countByTypeFiltered(anyBoolean(), anyList(), any(), any(), any(), any(), any()))
+                .thenReturn(List.of(new Object[]{"HTTP", 5L}, new Object[]{"CERT", 2L}));
+        when(repo.countByHourAndStatus(anyBoolean(), anyList(), anyBoolean(), anyList(), any(), any(), any(), any()))
+                .thenReturn(List.of(new Object[]{"2026-10-11T08", "SUCCESS", 4L}, new Object[]{"2026-10-11T08", "TIMEOUT", 1L},
+                        new Object[]{"2026-10-11T09", "ERROR", 2L}));
+        mvc.perform(get("/api/activity/summary?type=HTTP&status=error&from=2026-10-11T00:00:00&to=2026-10-11T23:59:59")
+                        .session(scopedUser(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.type_counts.HTTP").value(5))
+                .andExpect(jsonPath("$.type_counts.CERT").value(2))
+                .andExpect(jsonPath("$.series.bucket").value("hour"))
+                .andExpect(jsonPath("$.series.points.length()").value(24))
+                .andExpect(jsonPath("$.series.points[8].t").value("2026-10-11T08:00:00Z"))
+                .andExpect(jsonPath("$.series.points[8].success").value(4))
+                .andExpect(jsonPath("$.series.points[8].error").value(1))
+                .andExpect(jsonPath("$.series.points[9].error").value(2))
+                .andExpect(jsonPath("$.series.points[0].success").value(0));
+        // tür sayımına durum (büyük harf) geçer, tür süzgeci geçmez
+        verify(repo).countByTypeFiltered(eq(true), anyList(), isNull(), eq("ERROR"), eq("2026-10-11T00:00:00"),
+                eq("2026-10-11T23:59:59"), isNull());
+    }
+
+    @Test
+    @DisplayName("2026-10-11 series: 48 saatten uzun pencere İstanbul gününe toplanır (UTC 22:00 = ertesi gün)")
+    void series_dailyIstanbulBuckets() {
+        java.time.Instant from = java.time.Instant.parse("2026-10-04T21:00:00Z");   // İstanbul 5 Ekim 00:00
+        java.time.Instant to = java.time.Instant.parse("2026-10-11T20:59:59Z");     // İstanbul 11 Ekim 23:59
+        Map<String, Object> s = ActivityController.series(List.of(
+                new Object[]{"2026-10-10T22", "WARNING", 3L},     // İstanbul 11 Ekim 01:00
+                new Object[]{"2026-10-10T20", "SUCCESS", 2L},     // İstanbul 10 Ekim 23:00
+                new Object[]{"bozuk", "SUCCESS", 9L}), from, to);
+        assertThat(s.get("bucket")).isEqualTo("day");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> pts = (List<Map<String, Object>>) s.get("points");
+        assertThat(pts).hasSize(7);
+        assertThat(pts.get(0).get("t")).isEqualTo("2026-10-05");
+        Map<String, Object> d11 = pts.stream().filter(p -> "2026-10-11".equals(p.get("t"))).findFirst().orElseThrow();
+        Map<String, Object> d10 = pts.stream().filter(p -> "2026-10-10".equals(p.get("t"))).findFirst().orElseThrow();
+        assertThat(d11.get("warning")).isEqualTo(3L);
+        assertThat(d10.get("success")).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("2026-10-11 summary: aralıksız istek son 30 güne sınırlanır (seri sorgusu from ile kesilir)")
+    void summary_seriesDefaultWindow() throws Exception {
+        mvc.perform(get("/api/activity/summary").session(globalViewer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.series.bucket").value("day"))
+                .andExpect(jsonPath("$.type_counts").isMap());
+        ArgumentCaptor<String> from = ArgumentCaptor.forClass(String.class);
+        verify(repo).countByHourAndStatus(eq(false), anyList(), eq(false), anyList(), isNull(), from.capture(), isNull(), isNull());
+        java.time.Instant f = java.time.LocalDateTime.parse(from.getValue()).toInstant(java.time.ZoneOffset.UTC);
+        assertThat(f).isBetween(java.time.Instant.now().minus(java.time.Duration.ofDays(30)).minusSeconds(60),
+                java.time.Instant.now().minus(java.time.Duration.ofDays(30)).plusSeconds(60));
     }
 
     @Test

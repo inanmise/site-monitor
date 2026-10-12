@@ -228,4 +228,18 @@ class TlsProfileJobServiceTest {
         assertThat(p.getDomain()).isEqualTo("a.example.com");
         verify(certs).evictAllCaches();
     }
+
+    @Test
+    @DisplayName("2026-10-11: her tur karşılaştırmadan SONRA bekleyen düşüşler takıma bildirilir (kilit altında, bir kez)")
+    void tickNotifiesPendingDropsAfterReconcile() {
+        TlsGradeDropNotifier notifier = org.mockito.Mockito.mock(TlsGradeDropNotifier.class);
+        job.setDropNotifier(notifier);
+        add("a.example.com");
+        profiles.put("a.example.com", profile("a.example.com", "OK"));
+        job.runTick(Instant.now());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(grades, notifier);
+        order.verify(grades).reconcile(any());
+        order.verify(notifier).notifyPending();
+        org.mockito.Mockito.verify(notifier, times(1)).notifyPending();
+    }
 }

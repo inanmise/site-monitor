@@ -83,6 +83,15 @@ public class LdapProvisioningService {
     private final TeamMembershipSourceService teamSources;
     private final AuditService auditService;
 
+    /**
+     * AD grubu → rol eşlemesi (2026-10-11). Opsiyonel: dilim/birim testleri ve eşleme KAPALIYKEN null döner → rol
+     * bugünkü kuralla türetilir (davranış birebir aynı).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private LdapSettingsService ldapSettings;
+
+    void setLdapSettings(LdapSettingsService s) { this.ldapSettings = s; }   // test kancası
+
     /** Hangi yoldan çağrıldı — budama kuralı ve denetim kaydı buna göre. */
     public enum Mode { LOGIN, MANAGER, ADMIN_RESYNC }
 
@@ -167,7 +176,10 @@ public class LdapProvisioningService {
         // bootstrap hesabı ve admin panelinden elle verilerek kalır. Elle verilmiş ADMIN/AUDIT
         // applyRole tarafından korunur — bu değişiklik kimsenin mevcut yetkisini geri almaz.
         boolean isManager = !resolveManager || userRepo.existsByManagerId(u.getId());
-        applyRole(u, (isPo || isManager) ? "TEAM_ADMIN" : "USER");
+        String derivedRole = (isPo || isManager) ? "TEAM_ADMIN" : "USER";
+        LdapSettingsService.RoleMappingConfig mapping = activeMapping();
+        if (mapping == null) applyRole(u, derivedRole);            // eşleme kapalı → bugünkü davranış AYNEN
+        else applyMappedRole(u, mapping, memberOfList(attrs), derivedRole, mode);
 
         // ── Takım(lar): YALNIZ bu kişinin KENDİ nitelikleri — memberOf (OU=ScrumGroups) → boşsa company ──
         // Özyinelemeli müdür yolunda da attrs müdürün KENDİ AD kaydıdır; astın takımı müdüre geçmez.
@@ -230,6 +242,72 @@ public class LdapProvisioningService {
         if (Boolean.TRUE.equals(u.getRoleLocked())) return;   // admin manuel kilitledi → LDAP dokunmaz
         String cur = u.getSystemRole();
         if (!"ADMIN".equals(cur) && !"AUDIT".equals(cur)) u.setSystemRole(desired);
+    }
+
+    private LdapSettingsService.RoleMappingConfig activeMapping() {
+        if (ldapSettings == null) return null;
+        try {
+            return ldapSettings.activeRoleMapping();
+        } catch (RuntimeException e) {
+            // Ayar okunamazsa giriş DÜŞMEZ: bugünkü kural uygulanır (rol eşlemesi yokmuş gibi).
+            log.warn("LDAP rol eşlemesi okunamadı, bugünkü kural uygulanıyor: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Eşleme AÇIKKEN rol (2026-10-11, kullanıcı kararı: "açılırsa, elle değişeni ezmez"):
+     * <ol>
+     *   <li>Rol yönetici tarafından KİLİTLİYSE ({@code role_locked}) hiç dokunulmaz — elle verilen rol ezilmez.</li>
+     *   <li>Açık bir grup kuralı eşleştiyse o rol uygulanır (düşürme dahil), ANCAK bu kişi sistemdeki SON etkin
+     *       ADMIN ise ADMIN'den düşürülmez (yönetim paneline kimse giremez hâle gelmesin).</li>
+     *   <li>Eşleşme yoksa: "bugünkü kural" seçiliyse {@link #applyRole}; sabit rol seçiliyse o rol, ama elle verilmiş
+     *       ADMIN/AUDIT düşürülmez (bugünkü kuralla aynı koruma).</li>
+     * </ol>
+     * Bootstrap admin yerel hesaptır — bu yola hiç gelmez. Rol gerçekten değişirse {@code USER_ROLE_FROM_AD} denetlenir.
+     */
+    void applyMappedRole(AppUser u, LdapSettingsService.RoleMappingConfig mapping, List<String> groups,
+                         String derivedRole, Mode mode) {
+        if (Boolean.TRUE.equals(u.getRoleLocked())) return;
+        String before = u.getSystemRole();
+        com.sitemonitor.service.ldap.LdapRoleMapping.Decision d =
+                com.sitemonitor.service.ldap.LdapRoleMapping.decide(mapping.rules(), mapping.fallback(), groups);
+        switch (d.source()) {
+            case DERIVED -> applyRole(u, derivedRole);
+            case FALLBACK -> {
+                if (!com.sitemonitor.service.ldap.LdapRoleMapping.PROTECTED_FROM_FALLBACK.contains(before)) u.setSystemRole(d.role());
+            }
+            case GROUP -> {
+                if ("ADMIN".equals(before) && !"ADMIN".equals(d.role()) && isLastActiveAdmin(u)) {
+                    log.warn("LDAP rol eşlemesi son etkin yöneticiyi düşürmedi (user={}, kural={} → {})",
+                            u.getUsername(), d.rule().group(), d.role());
+                } else {
+                    u.setSystemRole(d.role());
+                }
+            }
+        }
+        String after = u.getSystemRole();
+        if (java.util.Objects.equals(before, after) || before == null) return;   // yeni hesap: oluşturma denetimi yeter
+        try {
+            auditService.recordSystemEvent("USER_ROLE_FROM_AD", "USER", String.valueOf(u.getId()), AuditDetail.of(
+                    "username", u.getUsername(),
+                    "role_before", before,
+                    "role_after", after,
+                    "source", d.source().name(),
+                    "rule_group", d.rule() != null ? d.rule().group() : null,
+                    "via", mode.name()));
+        } catch (RuntimeException e) {
+            log.warn("USER_ROLE_FROM_AD denetimi yazılamadı: {}", e.getMessage());
+        }
+    }
+
+    /** Bu hesap, sistemdeki tek etkin ADMIN mi (eşleme onu düşürürse yönetim paneline kimse giremez). */
+    private boolean isLastActiveAdmin(AppUser u) {
+        try {
+            return Boolean.TRUE.equals(u.getActive()) && userRepo.countBySystemRoleAndActiveTrue("ADMIN") <= 1;
+        } catch (RuntimeException e) {
+            return true;   // sayılamazsa güvenli taraf: düşürme
+        }
     }
 
     /**

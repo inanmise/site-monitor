@@ -67,6 +67,23 @@ class CorrelationIdFilterTest {
     }
 
     @Test
+    @DisplayName("2026-10-11: kimlik istek boyunca MDC'de (her günlük satırı); bitince — hata olsa da — silinir")
+    void mdcDuringRequestOnly() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/x");
+        req.addHeader("X-Request-Id", "rid-mdc-1");
+        String[] seen = new String[1];
+        filter.doFilter(req, new MockHttpServletResponse(),
+                (rq, rs) -> seen[0] = org.slf4j.MDC.get(CorrelationIdFilter.MDC_KEY));
+        assertEquals("rid-mdc-1", seen[0]);
+        assertNull(org.slf4j.MDC.get(CorrelationIdFilter.MDC_KEY), "istek sonrası MDC temiz");
+
+        MockHttpServletRequest boom = new MockHttpServletRequest("GET", "/api/x");
+        assertThrows(jakarta.servlet.ServletException.class, () -> filter.doFilter(boom, new MockHttpServletResponse(),
+                (rq, rs) -> { throw new jakarta.servlet.ServletException("x"); }));
+        assertNull(org.slf4j.MDC.get(CorrelationIdFilter.MDC_KEY), "hatada da temiz");
+    }
+
+    @Test
     @DisplayName("current(): istek bağlamından okur, bağlam yoksa null")
     void current() {
         assertNull(CorrelationIdFilter.current());

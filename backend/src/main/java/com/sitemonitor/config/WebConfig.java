@@ -242,6 +242,7 @@ public class WebConfig implements WebMvcConfigurer {
         executor.setMaxPoolSize(executorMaxSize);
         executor.setQueueCapacity(executorQueueCapacity);
         executor.setThreadNamePrefix("cert-check-");
+        executor.setTaskDecorator(new MdcTaskDecorator());   // istek kimliği (rid=) havuz işinde de günlükte (2026-10-11)
         // Tek-pod CPU koruması: havuz+queue dolarsa görevi REDDETME (sweep'i kırma) — çağıran
         // (scheduler) thread'inde çalıştır. Böylece büyük ölçekte (1000 domain) tarama geri-basınçla
         // yavaşlar ama kullanıcı isteklerini aç bırakacak kadar thread açmaz + RejectedExecutionException
@@ -264,6 +265,16 @@ public class WebConfig implements WebMvcConfigurer {
      * Volüm zaten IP başına 3/saat rate-limit ile sınırlı → küçük havuz + kuyruk yeter; aşırı burst'te
      * CallerRunsPolicy geri-basınç uygular (mail yine de best-effort, DB kaydı birincil).
      */
+    /**
+     * Boot'un {@code applicationTaskExecutor}'u (adsız {@code @Async}) için günlük bağlamı aktarımı (2026-10-11). Global bir
+     * {@code TaskDecorator} bean'i DEĞİL: o zamanlayıcıya da uygulanır ve bir istekten kurulan dinamik zamanlanmış görev
+     * (ör. rapor cron'u) o isteğin kimliğini her koşuda taşırdı.
+     */
+    @Bean
+    public org.springframework.boot.task.ThreadPoolTaskExecutorCustomizer mdcTaskExecutorCustomizer() {
+        return executor -> executor.setTaskDecorator(new MdcTaskDecorator());
+    }
+
     @Bean(name = "loginIssueMailExecutor")
     public ThreadPoolTaskExecutor loginIssueMailExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -271,6 +282,7 @@ public class WebConfig implements WebMvcConfigurer {
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("login-mail-");
+        executor.setTaskDecorator(new MdcTaskDecorator());
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;

@@ -32,3 +32,21 @@ export function stampedName(base) {
   const p = (n) => String(n).padStart(2, '0')
   return `${base}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
 }
+
+/**
+ * Metin dosyası indir (2026-10-11, postmortem Markdown dışa aktarımı) — {@link downloadCsv} ile aynı yol, tür parametreli.
+ * downloadCsv'nin gövdesi (karakterizasyon testi) DEĞİŞMEDİ.
+ */
+export function downloadText(filename, text, type = 'text/plain;charset=utf-8') {
+  try {
+    const blob = new Blob([text], { type })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch { /* indirme ortamı yok */ }
+}
