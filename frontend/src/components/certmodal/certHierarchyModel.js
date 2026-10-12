@@ -62,6 +62,9 @@ export function normalizeNode(raw, index = 0) {
     sha256: str(r.sha256_fingerprint),
     sha1: str(r.sha1_fingerprint),
     pem: str(r.pem),
+    // Ağ sertifikası (2026-10-12): düğüm sunucudan mı geldi, kök güven deposundan mı bulundu (manuelde yok → null)
+    source: r.source === 'server' || r.source === 'trust_store' ? r.source : null,
+    trustStore: r.trust_store === 'system' || r.trust_store === 'corporate' ? r.trust_store : null,
   }
   node.label = nodeLabel(node)
   return node

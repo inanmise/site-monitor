@@ -55,8 +55,10 @@ public class LdapSettingsService {
             LdapSettings db = repo.findById(LdapSettings.SINGLETON_ID).orElse(null);
             String dbUa  = db     != null ? db.getUpdatedAt()     : null;
             String curUa = cached != null ? cached.getUpdatedAt() : null;
+            // Satır her turda alınır (2026-10-12): updated_at saniye çözünürlüklü — iki pod aynı saniyede kaydederse damga
+            // eşit kalıp önbellek bir sonraki kayda dek bayat kalıyordu. Sorgu zaten her turda koşuyor; ek maliyet yok.
+            this.cached = db;
             if (!java.util.Objects.equals(dbUa, curUa)) {
-                this.cached = db;
                 log.info("LDAP settings cache refreshed from DB (updated by another instance)");
             }
         } catch (Exception e) {
@@ -67,7 +69,11 @@ public class LdapSettingsService {
     /** Stored configuration, or sensible form defaults when nothing is configured yet. */
     public LdapSettings getOrDefaults() {
         if (cached != null) return cached;
-        // Form defaults (matches the requested initial toggle states).
+        return defaults();
+    }
+
+    /** Form varsayılanları (istenen ilk anahtar durumları) — ilk kayıtta gövdede olmayan alanlar bunlardan gelir. */
+    static LdapSettings defaults() {
         LdapSettings d = new LdapSettings();
         d.setEnabled(true);
         d.setUseLdaps(true);
@@ -103,7 +109,10 @@ public class LdapSettingsService {
 
     /** Persists incoming settings and refreshes the live cache. */
     public synchronized LdapSettings save(Map<String, Object> body, String actor) {
-        LdapSettings s = (cached != null) ? cached : new LdapSettings();
+        // Kayıt DB'deki GÜNCEL satır üzerine uygulanır (2026-10-12): pod önbelleği başka pod'un son kaydından ≤ 10 sn geri
+        // olabilir; gövdede olmayan alanlar önbellekten alınınca o kayıt (ör. rol eşlemesi) sessizce geri alınıyordu.
+        // Önbellek nesnesi de yerinde DEĞİŞTİRİLMEZ (kayıt düşerse canlı ayar yarım kalmasın). İlk kayıtta varsayılanlar.
+        LdapSettings s = repo.findById(LdapSettings.SINGLETON_ID).orElseGet(LdapSettingsService::defaults);
         s.setId(LdapSettings.SINGLETON_ID);
 
         s.setEnabled(boolVal(body, "enabled", s.getEnabled()));

@@ -39,6 +39,13 @@ import {
 export const UserPrefsContext = createContext(null)
 
 const RETRY_GET_MS = 60_000
+/** Görünürlük / odak ile sunucudan yeniden okuma aralığı (sekmeler arası tutarlılık; sunucuyu yormaz). */
+const REFRESH_MIN_MS = 30_000
+/**
+ * Sekmeler arası revizyon damgası (2026-10-12): başarılı her PUT'tan sonra yazılır (aynalanan anahtar DEĞİL). Diğer sekmeler
+ * `storage` olayıyla HEMEN yeniden okur — odak / görünürlük kısıtlaması (REFRESH_MIN_MS) başka sekmenin kaydını geciktirmesin.
+ */
+export const PREFS_REV_KEY = 'sm.prefs.rev'
 const FLUSH_TIMEOUT_MS = 2_000
 
 function safeStorage() {
@@ -95,6 +102,9 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
   const synced = new Map()     // sunucunun bildiği local değerleri
   const early = new Map()      // belge gelmeden önce kullanıcının değiştirdiği anahtarlar
   const initial = readLocalSnapshot(storage)
+  // Yazma kuşağı (2026-10-12): her yerel değişiklik / açık seçim / PUT başlangıcı ve sonucu artırır. Okuma sürerken artan
+  // kuşak = belge eskimiş olabilir → yenileme sonucu atılır (aynı sekmede yeni değişikliği geri almasın).
+  let gen = 0
 
   const hasPending = () => dirty.size > 0 || Object.keys(pendingTop).length > 0
 
@@ -116,6 +126,7 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
     const base = sending.has(key) ? sending.get(key) : (synced.has(key) ? synced.get(key) : null)
     if (base === value) { if (dirty.delete(key) && !hasPending() && timer) { clearTimeout(timer); timer = null } return }
     dirty.set(key, value)
+    gen++
     schedule()
   }
 
@@ -139,6 +150,7 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
     pendingTop = {}
     dirty.clear()
     sending = sentLocal
+    gen++
     inflight = (async () => {
       let res = null
       let threw = false
@@ -159,6 +171,7 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
     })().finally(() => {
       inflight = null
       sending = new Map()
+      gen++
       if (again) { again = false; if (hasPending()) schedule() }
     })
     return inflight
@@ -176,12 +189,19 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
    * `migrate=false` (paylaşılan makine: tarayıcıdaki tercihler BAŞKA bir kullanıcıdan kalma — App, personalStorage sahibine
    * bakar): tarayıcıda olup sunucuda olmayanlar bu kullanıcının belgesine YÜKLENMEZ; yalnız bu oturumda yapılan değişiklikler.
    */
-  function hydrate(doc, { migrate = true } = {}) {
+  function hydrate(doc, { migrate = true, refresh = false } = {}) {
     if (disposed) return []
     const snapshot = readLocalSnapshot(storage)
     const skip = new Set(early.keys())
     const plan = planHydration(doc?.local, snapshot, skip)
-    const { toWrite, server } = plan
+    const { server } = plan
+    let toWrite = plan.toWrite
+    if (refresh) {
+      // Yenilemede (2026-10-12): bu motorun son bildiği değerden FARKLI yerel değer başka bir sekmenin yeni yazımıdır (o
+      // sekme kendi PUT'unu gönderir) — sunucunun belki eski değeriyle ezilmez; yalnız sunucunun değiştirdiği anahtarlar yazılır.
+      toWrite = Object.fromEntries(Object.entries(toWrite).filter(([k]) =>
+        (snapshot[k] ?? null) === (synced.has(k) ? synced.get(k) : null)))
+    }
     const toUpload = migrate ? plan.toUpload : Object.fromEntries(Object.entries(plan.toUpload).filter(([k]) => skip.has(k)))
     const written = []
     suppress = true
@@ -203,6 +223,7 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
   function setTop(key, value) {
     if (!ready || disposed) return
     pendingTop[key] = value == null ? null : value
+    gen++
     schedule()
   }
 
@@ -216,6 +237,7 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
     hydrate, setTop, flush, flushNow, dispose, hasPending,
     isReady: () => ready,
     isBusy: () => !!inflight || hasPending(),
+    generation: () => gen,
     serverLocal: () => cleanServerLocal(Object.fromEntries(synced)),
   }
 }
@@ -246,6 +268,8 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
         if (!alive) return
         prefsRef.current = doc
         setState((s) => ({ ...s, prefs: doc }))
+        // Diğer sekmelere "belge değişti" (storage olayı) — aynalanan anahtar değil, sunucuya gitmez
+        try { safeStorage()?.setItem(PREFS_REV_KEY, String(Date.now())) } catch { /* kapalı depo: odak yenilemesi yeter */ }
       },
     })
     engineRef.current = engine
@@ -265,10 +289,43 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
     }
     load()
 
+    /**
+     * Başka sekmede yapılan değişikliği al (2026-10-12): bu sekme görünür olunca / odak alınca, bekleyen kaydı YOKSA sunucudaki
+     * belge yeniden okunur (en çok REFRESH_MIN_MS'de bir). Aksi hâlde eski kopyadan kurulan tam pano listesi diğer sekmenin
+     * eklediği kutuyu sessizce silerdi. Taşıma (migrate) yapılmaz: başka sekmenin sildiği yerel değer geri yüklenmez.
+     */
+    let refreshing = false
+    let refreshAgain = false
+    const refresh = async (force = false) => {
+      if (!engine.isReady() || engine.isBusy()) return
+      if (!force && Date.now() - lastAttempt < REFRESH_MIN_MS) return
+      if (refreshing) { refreshAgain = true; return }   // üst üste binmez; en çok bir yeniden okuma kuyruğa girer
+      refreshing = true
+      lastAttempt = Date.now()
+      const startGen = engine.generation()
+      try {
+        let res = null
+        try { res = await api.me.getPreferences() } catch { return }
+        // Okuma sürerken bu sekmede yazım / PUT olduysa belge eskimiş olabilir — atılır (yeni değişiklik geri alınmasın)
+        if (!alive || !res?.success || engine.isBusy() || engine.generation() !== startGen) return
+        const doc = res.prefs && typeof res.prefs === 'object' && !Array.isArray(res.prefs) ? res.prefs : {}
+        const hydratedKeys = engine.hydrate(doc, { migrate: false, refresh: true })
+        prefsRef.current = doc
+        setState({ status: 'ready', prefs: doc, hydratedKeys })
+      } finally {
+        refreshing = false
+        if (refreshAgain && alive) { refreshAgain = false; refresh(true) }
+      }
+    }
+    const onStorage = (e) => { if (e?.key === PREFS_REV_KEY && engine.isReady()) refresh(true) }
+    window.addEventListener('storage', onStorage)
+
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') { engine.flush({ keepalive: true }); return }
-      if (!engine.isReady() && Date.now() - lastAttempt >= RETRY_GET_MS) load()
+      if (!engine.isReady()) { if (Date.now() - lastAttempt >= RETRY_GET_MS) load() } else refresh()
     }
+    const onFocus = () => { if (engine.isReady()) refresh() }
+    window.addEventListener('focus', onFocus)
     const onPageHide = () => { engine.flush({ keepalive: true }) }
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', onPageHide)
@@ -276,6 +333,8 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
       alive = false
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('storage', onStorage)
       engine.dispose()
       if (engineRef.current === engine) engineRef.current = null
     }

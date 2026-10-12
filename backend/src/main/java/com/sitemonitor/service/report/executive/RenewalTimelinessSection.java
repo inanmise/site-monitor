@@ -132,32 +132,26 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
-        Map<String, List<Group>> groups = Map.of();
-        boolean readOk = true;
-        try {
-            String from = ExecutiveSummaryContext.UTC_ISO.format(ctx.from().minus(Duration.ofDays(LOOKBACK_DAYS)));
-            // Kurum geneli parmak izi grupları koşu boyu paylaşılır (takım özetleri aynı sorguyu yeniden koşmaz);
-            // takım süzmesi evaluate'te kapsamdaki alan adlarıyla (bağlamın envanteri / son sertifikaları).
-            groups = ctx.shared("renewals.groups|" + from + "|" + ctx.toIso(), () -> {
-                Map<String, List<Group>> out = new HashMap<>();
-                jdbc.query(SQL, rs -> {
-                    String d = rs.getString("domain");
-                    if (d == null) return;
-                    out.computeIfAbsent(d, k -> new ArrayList<>())
-                            .add(new Group(rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")));
-                }, from, ctx.toIso());
-                return out;
-            });
-        } catch (Exception e) {
-            readOk = false;
-            log.debug("Yönetici özeti: yenileme geçmişi okunamadı: {}", e.toString());
-        }
+        String from = ExecutiveSummaryContext.UTC_ISO.format(ctx.from().minus(Duration.ofDays(LOOKBACK_DAYS)));
+        // Kurum geneli parmak izi grupları koşu boyu paylaşılır (takım özetleri aynı sorguyu yeniden koşmaz);
+        // takım süzmesi evaluate'te kapsamdaki alan adlarıyla (bağlamın envanteri / son sertifikaları). Okuma hatası
+        // bölümü ERROR yapar (2026-10-12): eskiden "Bu ay tespit edilen yenileme yok" diyen yanlış bir hüküm üretebiliyordu.
+        Map<String, List<Group>> groups = ctx.shared("renewals.groups|" + from + "|" + ctx.toIso(), () -> {
+            Map<String, List<Group>> out = new HashMap<>();
+            jdbc.query(SQL, rs -> {
+                String d = rs.getString("domain");
+                if (d == null) return;
+                out.computeIfAbsent(d, k -> new ArrayList<>())
+                        .add(new Group(rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")));
+            }, from, ctx.toIso());
+            return out;
+        });
         if (groups == null) groups = Map.of();
         Map<String, Integer> lead = null;
         if (ctx.renewalTargetDays() <= 0) {
             try { lead = forecast.leadDays(); } catch (Exception e) { log.debug("Yenileme süresi okunamadı: {}", e.toString()); }
         }
-        return evaluate(ctx, groups, lead, readOk);
+        return evaluate(ctx, groups, lead);
     }
 
     /** Hedef süre (gün): ayar &gt; 0 ise o; değilse tier bazlı Vade Takvimi süresi (o da yoksa 30). */
@@ -198,17 +192,16 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
         return out;
     }
 
-    SectionResult evaluate(ExecutiveSummaryContext ctx, Map<String, List<Group>> groups, Map<String, Integer> lead,
-                           boolean readOk) {
+    SectionResult evaluate(ExecutiveSummaryContext ctx, Map<String, List<Group>> groups, Map<String, Integer> lead) {
         SectionResult.Builder b = SectionResult.builder(KEY, ORDER, TITLE).headlineKpi("on_time_pct");
         Map<String, ExecutiveSummaryContext.InventoryRow> inv;
-        try { inv = ctx.inventory(); } catch (Exception e) { inv = Map.of(); }
+        inv = ctx.inventory();                                       // okuma hatası → bölüm ERROR (2026-10-12)
         if (inv == null) inv = Map.of();
         Map<Long, String> names;
         try { names = ctx.teamNames(); } catch (Exception e) { names = Map.of(); }
         if (names == null) names = Map.of();
         List<CertificateDto> latest;
-        try { latest = ctx.latestCerts(); } catch (Exception e) { latest = List.of(); }
+        latest = ctx.latestCerts();
         if (latest == null) latest = List.of();
 
         Map<String, CertificateDto> byDomain = new HashMap<>();
@@ -294,35 +287,31 @@ public class RenewalTimelinessSection implements ExecutiveSummarySection {
 
         // ── Durum + hükümler ──
         int afterExpiry = byClass.get(AFTER_EXPIRY);
-        if (!readOk && total == 0 && overdue.isEmpty()) {
-            b.status(NO_DATA).verdict("NO_DATA", T_NEUTRAL, "Yenileme geçmişi okunamadı.");
+        boolean critical = afterExpiry > 0 || overdueExpired > 0 || !lapsed.isEmpty();
+        boolean warn = (compliance != null && compliance < COMPLIANCE_WARN_PCT) || !overdue.isEmpty() || missed > 0;
+        b.status(critical ? CRITICAL : warn ? ATTENTION : OK);
+        if (total == 0 && lapsed.isEmpty()) {
+            b.verdict("NO_RENEWALS", T_NEUTRAL, "Bu ay tespit edilen sertifika yenilemesi yok.");
         } else {
-            boolean critical = afterExpiry > 0 || overdueExpired > 0 || !lapsed.isEmpty();
-            boolean warn = (compliance != null && compliance < COMPLIANCE_WARN_PCT) || !overdue.isEmpty() || missed > 0;
-            b.status(critical ? CRITICAL : warn ? ATTENTION : OK);
-            if (total == 0 && lapsed.isEmpty()) {
-                b.verdict("NO_RENEWALS", T_NEUTRAL, "Bu ay tespit edilen sertifika yenilemesi yok.");
-            } else {
-                b.verdict("COMPLIANCE", compliance >= COMPLIANCE_WARN_PCT ? T_OK : T_WARN,
-                        "Ay içindeki " + total + " yenilemenin " + beforeExpiry + " tanesi süresi dolmadan yapıldı; "
-                                + lapsed.size() + " sertifika yenilenmeden süresi doldu (uyum %" + ExecFormat.num(compliance, 1) + ").",
-                        total, beforeExpiry, pct(compliance), lapsed.size());
-            }
-            if (!lapsed.isEmpty()) {
-                b.verdict("EXPIRED_UNRENEWED", T_BAD, lapsed.size() + " sertifikanın süresi bu ay yenilenmeden doldu.", lapsed.size());
-            }
-            if (afterExpiry > 0) {
-                b.verdict("AFTER_EXPIRY", T_BAD, afterExpiry + " sertifika süresi dolduktan sonra yenilendi.", afterExpiry);
-            }
-            if (!overdue.isEmpty()) {
-                b.verdict("OVERDUE", overdueExpired > 0 ? T_BAD : T_WARN, overdue.size()
-                        + " sertifika yenileme penceresinde ve planı yok ya da planı geçmiş (" + overdueExpired
-                        + " tanesinin süresi dolmuş).", overdue.size(), overdueExpired);
-            }
-            if (missed > 0) {
-                b.verdict("PLANS_MISSED", T_WARN, "Bu aya planlanan " + planned + " yenilemenin " + missed
-                        + " tanesi tarihinde yapılmadı.", planned, missed);
-            }
+            b.verdict("COMPLIANCE", compliance >= COMPLIANCE_WARN_PCT ? T_OK : T_WARN,
+                    "Ay içindeki " + total + " yenilemenin " + beforeExpiry + " tanesi süresi dolmadan yapıldı; "
+                            + lapsed.size() + " sertifika yenilenmeden süresi doldu (uyum %" + ExecFormat.num(compliance, 1) + ").",
+                    total, beforeExpiry, pct(compliance), lapsed.size());
+        }
+        if (!lapsed.isEmpty()) {
+            b.verdict("EXPIRED_UNRENEWED", T_BAD, lapsed.size() + " sertifikanın süresi bu ay yenilenmeden doldu.", lapsed.size());
+        }
+        if (afterExpiry > 0) {
+            b.verdict("AFTER_EXPIRY", T_BAD, afterExpiry + " sertifika süresi dolduktan sonra yenilendi.", afterExpiry);
+        }
+        if (!overdue.isEmpty()) {
+            b.verdict("OVERDUE", overdueExpired > 0 ? T_BAD : T_WARN, overdue.size()
+                    + " sertifika yenileme penceresinde ve planı yok ya da planı geçmiş (" + overdueExpired
+                    + " tanesinin süresi dolmuş).", overdue.size(), overdueExpired);
+        }
+        if (missed > 0) {
+            b.verdict("PLANS_MISSED", T_WARN, "Bu aya planlanan " + planned + " yenilemenin " + missed
+                    + " tanesi tarihinde yapılmadı.", planned, missed);
         }
 
         boolean fixedTarget = ctx.renewalTargetDays() > 0;

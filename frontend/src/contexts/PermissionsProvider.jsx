@@ -15,17 +15,21 @@ const PermissionsContext = (globalThis.__smPermissionsCtx ??= createContext(null
  */
 export function PermissionsProvider({ children, user }) {
   const [perms, setPerms] = useState({})
+  // İlk snapshot geldi mi (2026-10-12): gelmeden boş `{}` "hiç yetki yok" ile karışmasın — yetkiye göre süzülen bir
+  // listeyi kaydeden ekranlar (Panom) yüklenene kadar yazmaz. Oturum kapanınca (user yok) yeniden false.
+  const [loaded, setLoaded] = useState(false)
 
   const refresh = useCallback(async () => {
-    if (!user) { setPerms(keepIfSame({})); return }
-    const res = await api.me.getPermissions()
-    if (res?.success) setPerms(keepIfSame(res.data || {}))
+    if (!user) { setPerms(keepIfSame({})); setLoaded(false); return }
+    let res = null
+    try { res = await api.me.getPermissions() } catch { return }   // ağ hatası: önceki snapshot kalır, 60 sn sonra yeniden
+    if (res?.success) { setPerms(keepIfSame(res.data || {})); setLoaded(true) }
   }, [user])
 
   useEffect(() => { refresh() }, [refresh])   // ilk + user değişince (user yoksa perms temizlenir)
   useVisibleInterval(refresh, user ? 60_000 : 0, false)   // periyodik (yalnız user varken), gizli sekmede durur
 
-  const value = useMemo(() => ({ perms, refresh }), [perms, refresh])
+  const value = useMemo(() => ({ perms, refresh, loaded }), [perms, refresh, loaded])
 
   return (
     <PermissionsContext.Provider value={value}>
@@ -51,5 +55,7 @@ export function usePermissions() {
     canEdit:    (r) => can(r, 'edit'),
     canExecute: (r) => can(r, 'execute'),
     refresh: ctx?.refresh ?? (() => {}),
+    // Sağlayıcı yoksa (eski testler / bağımsız çizim) yüklenmiş sayılır — davranış eskisiyle aynı
+    loaded: ctx ? ctx.loaded !== false : true,
   }
 }

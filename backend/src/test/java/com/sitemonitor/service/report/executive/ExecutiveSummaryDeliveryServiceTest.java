@@ -107,7 +107,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(row.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.SKIPPED_DISABLED);
         assertThat(row.getValue().getReportMonth()).isEqualTo(9);
         assertThat(row.getValue().getAttempts()).isZero();
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
         assertThat(svc.catchUp().status()).isEqualTo("DISABLED");
     }
 
@@ -193,7 +193,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
         when(repo.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("uk_esr_year_month"));
         assertThat(svc.runScheduled().status()).isEqualTo("IN_PROGRESS");
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
     }
 
     @Test
@@ -209,7 +209,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo("IN_PROGRESS");   // taze talep: gerçekten sürüyor
         stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minus(java.time.Duration.ofHours(2))));
         assertThat(svc.runScheduled().status()).isEqualTo("IN_PROGRESS");                              // zamanlanmış yol devralmaz
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
         when(repo.reclaim(eq(9L), eq("SENDING"), eq(1), eq(2), anyString(), eq("MANUAL"), eq("yonetici"))).thenReturn(1);
         assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo(ExecutiveSummaryReport.SENT);
         verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
@@ -219,15 +219,16 @@ class ExecutiveSummaryDeliveryServiceTest {
     @DisplayName("2026-10-12: talepten sonra beklenmeyen hata kaydı SENDING'de BIRAKMAZ (FAILED → telafi yeniden dener); istisna dışarı sızmaz")
     void unexpectedErrorAfterClaimIsFailed() {
         enable("a@x.com", false);
-        // 1. çağrı talep anı, 2. çağrı e-posta gövdesinin damgası (beklenmeyen hata), 3. çağrı kaydın kapanış anı
-        when(summaryService.now()).thenReturn(NOW).thenThrow(new IllegalStateException("saat okunamadı")).thenReturn(NOW);
+        // 1. çağrı veri hazır mı kapısı, 2. talep anı, 3. e-posta gövdesinin damgası (beklenmeyen hata), 4. kaydın kapanış anı
+        when(summaryService.now()).thenReturn(NOW).thenReturn(NOW).thenThrow(new IllegalStateException("saat okunamadı"))
+                .thenReturn(NOW);
         ArgumentCaptor<ExecutiveSummaryReport> saved = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
         var r = svc.runScheduled();
         assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
         verify(repo, atLeastOnce()).save(saved.capture());
         assertThat(saved.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.FAILED);
         assertThat(saved.getValue().getDetail()).contains("yarıda kesildi");
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
     }
 
     @Test
@@ -242,7 +243,7 @@ class ExecutiveSummaryDeliveryServiceTest {
 
         when(repo.reclaim(eq(7L), eq("FAILED"), eq(1), eq(2), anyString(), eq("SCHEDULED"), eq("system"))).thenReturn(0);
         assertThat(svc.runScheduled().status()).isEqualTo("NOT_CLAIMED");
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
 
         when(repo.reclaim(eq(7L), eq("FAILED"), eq(1), eq(2), anyString(), eq("SCHEDULED"), eq("system"))).thenReturn(1);
         assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
@@ -253,6 +254,66 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(svc.runScheduled().status()).isEqualTo("NOT_CLAIMED");
         when(repo.reclaim(eq(7L), eq("FAILED"), eq(3), eq(4), anyString(), eq("MANUAL"), eq("yonetici"))).thenReturn(1);
         assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo(ExecutiveSummaryReport.SENT);
+    }
+
+    /** Örnek özet + hesaplanamamış ("error") bir bölüm. */
+    static ExecutiveSummary withFailedSection() {
+        ExecutiveSummary ok = sample();
+        List<SectionResult> secs = new ArrayList<>(ok.sections());
+        secs.add(SectionResult.failed("expirations", 30, "Yaklaşan sertifika bitişleri"));
+        return new ExecutiveSummary(ok.month(), ok.monthLabel(), ok.from(), ok.to(), ok.complete(), ok.generatedAt(),
+                ok.source(), SectionResult.ERROR, ok.headline(), ok.headlineKpis(), secs, ok.settings(), ok.scope());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: zamanlanmış gönderimde hesaplanamayan bölüm → posta YOK, FAILED (telafi yeniden dener); son denemede ve elle gönderilir")
+    void failedSectionIsRetriedNotSent() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-01T06:00:00Z"));   // planlanan an (telafi penceresinin başı)
+        when(summaryService.compute(any())).thenReturn(withFailedSection());
+        ArgumentCaptor<ExecutiveSummaryReport> saved = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
+
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();               // 1. deneme
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        assertThat(r.detail()).contains("expirations").contains("telafi");
+        verify(repo, atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        assertThat(saved.getValue().getSummaryJson()).as("yarım görüntü saklanmaz").isNull();
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+
+        // 3. deneme (tavan) → elde olanla gönderilir: rapor hiç gitmemekten iyidir
+        ExecutiveSummaryReport row = new ExecutiveSummaryReport();
+        row.setId(7L);
+        row.setStatus(ExecutiveSummaryReport.FAILED);
+        row.setAttempts(2);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(row));
+        when(repo.reclaim(eq(7L), eq("FAILED"), eq(2), eq(3), anyString(), eq("CATCH_UP"), eq("system"))).thenReturn(1);
+        when(repo.reclaim(eq(7L), eq("FAILED"), eq(2), eq(3), anyString(), eq("SCHEDULED"), eq("system"))).thenReturn(1);
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        // Elle gönderim (ilk deneme olsa bile) her zaman gönderir — yönetici sayfada hatayı görerek karar verir
+        when(repo.findByReportYearAndReportMonth(2026, 8)).thenReturn(Optional.empty());
+        when(summaryService.compute(YearMonth.of(2026, 8))).thenReturn(withFailedSection());
+        assertThat(svc.sendNow(YearMonth.of(2026, 8), "yonetici").status()).isEqualTo(ExecutiveSummaryReport.SENT);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: global yöneticiler okunamazsa (seçenek açık) eksik listeyle GÖNDERİLMEZ — FAILED, telafi yeniden dener; önizleme çizilir")
+    void adminReadFailureDoesNotSendPartial() {
+        enable("a@x.com", true);
+        when(users.findByActiveTrueOrderByUsernameAsc()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        ExecutiveSummaryDeliveryService.Recipients rc = svc.recipients();
+        assertThat(rc.complete()).isFalse();
+        assertThat(rc.emails()).containsExactly("a@x.com");                       // ayar ekranı önizlemesi yine çizilir
+
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+
+        // Seçenek kapalıyken kullanıcı listesi okunmaz → tam sayılır
+        when(appSettings.getBoolean(eq(ExecutiveSummarySettings.INCLUDE_ADMINS_KEY), anyBoolean())).thenReturn(false);
+        assertThat(svc.recipients().complete()).isTrue();
     }
 
     @Test
@@ -301,7 +362,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(svc.catchUp().status()).isEqualTo("NOT_DUE");
         when(summaryService.now()).thenReturn(Instant.parse("2026-10-04T06:01:00Z"));
         assertThat(svc.catchUp().status()).isEqualTo("WINDOW_CLOSED");
-        verifyNoInteractions(email);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
 
         when(summaryService.now()).thenReturn(Instant.parse("2026-10-01T07:17:00Z"));
         assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
@@ -311,6 +372,31 @@ class ExecutiveSummaryDeliveryServiceTest {
         sent.setAttempts(1);
         when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(sent));
         assertThat(svc.catchUp().status()).isEqualTo("NOTHING_TO_DO");
+    }
+
+    @Test
+    @DisplayName("2026-10-12: ayın verisi hazır olmadan (sonraki ayın 1'i 06:00 TR öncesi) zamanlanmış / telafi gönderim BEKLER — kayıt açılmaz, posta yok")
+    void waitsForNightlyRollup() {
+        enable("a@x.com", false);
+        assertThat(ExecutiveSummaryService.dataReady(YearMonth.of(2026, 10), Instant.parse("2026-11-01T02:59:00Z"))).isFalse();
+        assertThat(ExecutiveSummaryService.dataReady(YearMonth.of(2026, 10), Instant.parse("2026-11-01T03:00:00Z"))).isTrue();
+        assertThat(ExecutiveSummaryService.dataReady(YearMonth.of(2026, 9), Instant.parse("2026-11-01T00:00:00Z"))).isTrue();
+        assertThat(ExecutiveSummaryService.dataReady(YearMonth.of(2026, 11), Instant.parse("2026-11-20T00:00:00Z"))).isFalse();
+
+        // Cron 1'i 01:00'e kurulmuş: tetik 01:00 TR'de bekler, saatlik telafi 06:00 sonrası gönderir
+        when(appSettings.getString(eq(ExecutiveSummarySettings.CRON_KEY), any())).thenReturn("0 0 1 1 * *");
+        when(summaryService.currentMonth()).thenReturn(YearMonth.of(2026, 11));
+        when(summaryService.defaultMonth()).thenReturn(YearMonth.of(2026, 10));
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-31T22:00:00Z"));          // 1 Kasım 01:00 TR
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryDeliveryService.DATA_PENDING);
+        when(summaryService.now()).thenReturn(Instant.parse("2026-11-01T01:30:00Z"));          // 04:30 TR
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryDeliveryService.DATA_PENDING);
+        verify(repo, never()).saveAndFlush(any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+
+        when(summaryService.now()).thenReturn(Instant.parse("2026-11-01T03:10:00Z"));          // 06:10 TR
+        when(summaryService.compute(YearMonth.of(2026, 10))).thenReturn(sample());
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
     }
 
     @Test
@@ -335,5 +421,70 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(svc.allowTest("admin")).isTrue();
         assertThat(svc.allowTest("admin")).isFalse();
         assertThat(svc.allowTest("baska")).isTrue();
+    }
+
+    @Test
+    @DisplayName("2026-10-12: elle kurum gönderimi alıcı listesi eksikken TALEP ETMEZ (gönderilmiş ay FAILED'e dönmez) — RECIPIENTS_UNAVAILABLE + iz")
+    void manualSendChecksRecipientsBeforeClaim() {
+        enable("a@x.com", true);
+        when(users.findByActiveTrueOrderByUsernameAsc()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        ExecutiveSummaryDeliveryService.Result r = svc.sendNow(YearMonth.of(2026, 9), "yonetici");
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE);
+        verify(repo, never()).saveAndFlush(any());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: global yöneticiler okunamadı");
+        assertThat(svc.status()).containsEntry("recipient_complete", false);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: tek LDAP yöneticisinin kapsamı okunamazsa liste EKSİK işaretlenir (sessizce düşmez)")
+    void unreadableAdminScopeMarksIncomplete() {
+        enable("a@x.com", true);
+        AppUser ldapAdmin = user("ldapadmin", "ADMIN", "LDAP", "lg@x.com");
+        when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of(ldapAdmin));
+        when(userService.computeViewTeamIds(ldapAdmin)).thenThrow(new IllegalStateException("ldap"));
+        ExecutiveSummaryDeliveryService.Recipients rc = svc.recipients();
+        assertThat(rc.complete()).isFalse();
+        assertThat(rc.emails()).containsExactly("a@x.com");
+        assertThat(svc.isGlobalAdmin(ldapAdmin)).isFalse();
+    }
+
+    @Test
+    @DisplayName("2026-10-12: 06:00 öncesi zamanlamada kurum kapalıysa SKIPPED_DISABLED izi yine yazılır, DATA_PENDING döner")
+    void dataPendingStillRecordsDisabled() {
+        when(summaryService.defaultMonth()).thenReturn(YearMonth.of(2026, 10));
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-31T22:00:00Z"));   // 1 Kasım 01:00 TR
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryDeliveryService.DATA_PENDING);
+        ArgumentCaptor<ExecutiveSummaryReport> row = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
+        verify(repo).saveAndFlush(row.capture());
+        assertThat(row.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.SKIPPED_DISABLED);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+    }
+
+    @Test
+    @DisplayName("2026-10-12: hatalı bölümde erteleme izi yazılır; telafi penceresinin son saatinde ertelenmez, gönderilir")
+    void deferralTraceAndLastChance() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-01T06:00:00Z"));
+        when(summaryService.compute(any())).thenReturn(withFailedSection());
+        svc.runScheduled();
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs, atLeastOnce()).save(log.capture());
+        assertThat(log.getAllValues()).extracting(NotificationLog::getEmailStatus)
+                .anyMatch(s -> s.startsWith("SKIPPED: Bölüm hesaplanamadı (expirations)"));
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+
+        // Planlanan an 1 Ekim 09:00 TR (06:00Z); 71 sa 30 dk sonra son şans → 1. denemede bile gönderilir
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
+        when(summaryService.currentMonth()).thenReturn(YearMonth.of(2026, 10));
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-04T05:30:00Z"));
+        assertThat(svc.lastCatchUpChance(YearMonth.of(2026, 9))).isTrue();
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        when(summaryService.now()).thenReturn(Instant.parse("2026-10-02T06:00:00Z"));
+        assertThat(svc.lastCatchUpChance(YearMonth.of(2026, 9))).isFalse();
     }
 }

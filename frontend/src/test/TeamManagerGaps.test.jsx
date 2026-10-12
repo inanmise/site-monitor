@@ -79,6 +79,26 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     await waitFor(() => expect(Number(chip('leader')?.getAttribute('data-count'))).toBeGreaterThan(1))
   })
 
+  it('2026-10-12: AUDIT tam listeyi görür (görünmeyen lider eksiktir); kapsamlı görüntüleyicide PASİF lider gerçek eksik, görünmeyen lider "atanmış (görüş alanı dışında)"', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS.filter((u) => String(u.id) !== '7') })
+    const a = render(<TeamManager systemRole="AUDIT" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(Number(chip('leader')?.getAttribute('data-count'))).toBeGreaterThan(1))
+    a.unmount()
+    // Kapsamlı: lider listede ama PASİF → gerçek eksik
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS.map((u) => (String(u.id) === '7' ? { ...u, active: false } : u)) })
+    const b = render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(Number(chip('leader')?.getAttribute('data-count'))).toBeGreaterThan(1))
+    b.unmount()
+    // Kapsamlı: lider listede YOK → satır "atanmış (görüş alanı dışında)", "lider yok" değil; rozet nedeni kapsam
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS.filter((u) => String(u.id) !== '7') })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(rowOf('Payments')?.querySelector('[data-slot="team-leader-unknown"]')).not.toBeNull())
+    expect(rowOf('Payments').textContent).not.toMatch(/No leader assigned|Lider atanmadı/)
+  })
+
   it('her eksik bir çip: sayısı o eksikle kaç takım olduğunu gösterir', async () => {
     await mount()
     const counts = Object.fromEntries([...document.querySelectorAll('[data-slot="team-gap-chip"]')]
@@ -267,5 +287,65 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     const nameSpan = rowOf('Payments').querySelector('[data-slot="team-badge"] span')
     expect(nameSpan.className).not.toContain('truncate')
     expect(nameSpan.className).toContain('[overflow-wrap:anywhere]')
+  })
+
+  it('2026-10-12: kullanıcı listesi gelmeden lider / müdür "yok" denmez (yükleniyor); CSV takımı "tam denetlenmedi" işaretler', async () => {
+    api.admin.getUsers.mockReturnValue(new Promise(() => {}))
+    await mount()
+    const owners = rowOf('Payments').querySelector('[data-slot="team-owners"]')
+    const pending = owners.querySelectorAll('[data-slot="team-owner-pending"]')
+    expect(pending).toHaveLength(2)
+    expect(pending[0].textContent).toBe(EN['app.loading'])
+    expect(owners.textContent).not.toContain(EN['team.noLeader'])
+    expect(owners.textContent).not.toContain(EN['team.filterNoManager'])
+    fireEvent.click(screen.getByRole('button', { name: EN['team.exportCsv'] }))
+    const payments = csv.rows.split(/\r?\n/).find((l) => l.includes('Payments'))
+    expect(payments).toContain(EN['team.gap.unknown'])
+  })
+
+  it('2026-10-12: kullanıcı listesi okunamazsa "yükleniyor" sonsuza dek kalmaz — "okunamadı" yazar, eksik sayılmaz', async () => {
+    api.admin.getUsers.mockRejectedValue(new Error('ağ'))
+    await mount()
+    const owners = rowOf('Payments').querySelector('[data-slot="team-owners"]')
+    await waitFor(() => expect(owners.querySelector('[data-slot="team-owner-pending"]').textContent).toBe(EN['team.ownerUnreadable']))
+    expect(owners.textContent).not.toContain(EN['team.noLeader'])
+    expect(kpi('gaps')?.textContent).toContain('—')
+  })
+
+  it('2026-10-12 inceleme: liste okunamazsa rozet "okunamadı" der ("gelince görünür" değil); "lider yok" süzgeci atanmış lideri listelemez', async () => {
+    api.admin.getUsers.mockRejectedValue(new Error('ağ'))
+    const first = render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(rowOf('Payments')?.querySelector('[data-slot="team-gap-badge"]')).toHaveAttribute('data-reason', 'failed'))
+    expect(rowOf('Payments').querySelector('[data-slot="team-gap-badge"]').getAttribute('title')).toBe(EN['team.gap.loadFailed'])
+    first.unmount()
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_leader=none')
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Ledger')
+    await waitFor(() => expect(rowNames()).toEqual(['Ledger']))   // yalnız lideri hiç atanmamış takım
+  })
+
+  it('2026-10-12 inceleme 2: liste gelmeden "müdür yok" süzgeci boş; sayaçlar okunamazsa alarm KPI ve sayaç çipleri "—", alarm süzgeci kimseyi "alarmsız" saymaz', async () => {
+    api.admin.getUsers.mockReturnValue(new Promise(() => {}))
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_mgr=none')
+    const first = render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await waitFor(() => expect(api.admin.getTeams).toHaveBeenCalled())
+    await waitFor(() => expect(rowNames()).toEqual([]))
+    first.unmount()
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS })
+    api.admin.teamStats.mockRejectedValue(new Error('ağ'))
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_alerts=none')
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await waitFor(() => expect(kpi('alerts')?.textContent).toContain('—'))
+    expect(chip('groups').querySelector('[data-slot="team-gap-count"]').textContent).toBe('—')
+    expect(rowNames()).toEqual([])
+  })
+
+  it('2026-10-12 inceleme 2: elle atanmış ama görüş alanı dışındaki müdür "müdürü yok" değil', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: true, data: USERS.filter((u) => String(u.id) !== '8') })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(rowOf('Payments')?.querySelector('[data-slot="team-manager-unknown"]')).not.toBeNull())
+    expect(rowOf('Payments').querySelector('[data-slot="team-owners"]').textContent).not.toContain(EN['team.filterNoManager'])
   })
 })

@@ -22,7 +22,8 @@ import { cn } from '@/lib/utils'
 import ExecHistory from './ExecHistory.jsx'
 import { PanelSection, PanelTitle } from './ExecPanel.jsx'
 import {
-  TEAM_NOTE_KEY, filterMembers, fmtDateTime, invalidEmails, isCompletedMonth, monthLabel, teamDirty, teamToBody, teamToForm,
+  TEAM_NOTE_KEY, changedFields, filterMembers, fmtDateTime, invalidEmails, runHintKey, monthLabel, teamDirty, teamToBody,
+  teamToForm,
 } from './executiveModel.js'
 
 /** Seçilebilir üye sayısı bu eşiği geçince arama kutusu görünür. */
@@ -146,6 +147,8 @@ function MemberPicker({ members, selected, onChange, error, name }) {
  * gösterilir). Önizleme KAYDEDİLMİŞ ayara göredir; test postası yalnız isteyenin adresine; "Şimdi gönder" onaylı.
  */
 export default function ExecTeamSettings({ teamId, month, onDirtyChange, onSaved }) {
+  // "Şimdi gönder" kapalıysa nedeni (içinde bulunulan ay / gece özeti bekleniyor); açıksa null
+  const runHint = runHintKey(month)
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -181,9 +184,12 @@ export default function ExecTeamSettings({ teamId, month, onDirtyChange, onSaved
   async function save() {
     const bad = invalidEmails(form.extra)
     if (fe.check({ extra: bad.length > 0 && t('exec.cfg.badEmails', bad.slice(0, 3).join(', ')) })) return
+    const members = data?.members || []
+    const body = changedFields(teamToBody(form, members), teamToBody(teamToForm(data), members))
+    if (Object.keys(body).length === 0) return
     setSaving(true)
     try {
-      const res = await api.executiveSummary.saveTeam(teamId, teamToBody(form, data?.members))
+      const res = await api.executiveSummary.saveTeam(teamId, body)
       if (res?.success && res.data) {
         setState({ loading: false, error: null, data: res.data })
         setForm(teamToForm(res.data))
@@ -342,14 +348,14 @@ export default function ExecTeamSettings({ teamId, month, onDirtyChange, onSaved
             data-slot="ex-team-test" className="h-10 lg:h-9">
             {testing ? <Spinner decorative size={14} /> : <Mail aria-hidden="true" />}{t('exec.cfg.sendTest')}
           </Button>
-          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty || !isCompletedMonth(month)} aria-busy={running || undefined}
-            title={isCompletedMonth(month) ? undefined : t('exec.cfg.runCurrentMonth')}
+          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty || !!runHint} aria-busy={running || undefined}
+            title={runHint ? t(runHint) : undefined}
             data-slot="ex-team-run" className="h-10 lg:h-9">
             {running ? <Spinner decorative size={14} /> : <Send aria-hidden="true" />}{t('exec.cfg.runNow')}
           </Button>
         </div>
         <p className="m-0 text-xs text-muted-foreground">{t('exec.cfg.testHint')}</p>
-        {!isCompletedMonth(month) && <p data-slot="ex-cfg-run-hint" className="m-0 text-xs text-muted-foreground">{t('exec.cfg.runCurrentMonth')}</p>}
+        {runHint && <p data-slot="ex-cfg-run-hint" className="m-0 text-xs text-muted-foreground">{t(runHint)}</p>}
         {dirty && <p className="m-0 text-xs text-muted-foreground">{t('exec.send.saveFirst')}</p>}
       </PanelSection>
 

@@ -145,7 +145,7 @@ function TeamTable({ teams, onOpen }) {
                 <div className="flex flex-wrap items-center gap-1.5"><BandBadge band={tm.band} /><DeltaChip delta={tm.delta_7d} compact /></div>
               </TableCell>
               <TableCell className="text-right tabular-nums">{tm.findings ?? 0}</TableCell>
-              <TableCell className="min-w-0"><TopIssues issues={tm.top_issues} compact /></TableCell>
+              <TableCell className="min-w-0 whitespace-normal"><TopIssues issues={tm.top_issues} compact /></TableCell>
               <TableCell className="text-right">
                 <Button type="button" size="sm" variant="outline" data-action="dq-team-open"
                   aria-label={t('dq.openTeamAria', tm.name)} onClick={() => onOpen(tm)}>

@@ -131,6 +131,12 @@ public class LdapProvisioningService {
         String now = now();
         AppUser u = userRepo.findByUsername(uname).orElseGet(AppUser::new);   // case-insensitive → eski satırı bulur
         boolean isNew = (u.getId() == null);
+        // YEREL hesaba (bootstrap admin dahil) müdür yolu DOKUNMAZ (2026-10-12): aynı adlı yerel satırı bulunca yerel parolayı
+        // siliyor, rolü / profili değiştiriyordu (kişi kimlik bile doğrulamamıştı). provisionManager ön denetimi bunu zaten
+        // engeller; burası son savunma hattı. (Giriş yönlendirmesi yerel hesabı AD'ye götürmez, yeniden eşitleme reddeder.)
+        if (mode == Mode.MANAGER && !isNew && !isLdapAccount(u)) {
+            throw new IllegalStateException("LDAP provizyonu yerel hesaba dokunmaz (user=" + uname + ", mode=" + mode + ")");
+        }
         List<Long> teamsBefore = isNew ? List.of() : ownTeams(u);
         String mgrSicilBefore = u.getManagerSicil();
         Long mgrIdBefore = u.getManagerId();
@@ -561,7 +567,20 @@ public class LdapProvisioningService {
         if (mgrAttrs.isEmpty()) return Optional.empty();
         String mgrUsername = str(mgrAttrs.get(), "sAMAccountName");
         if (mgrUsername == null || mgrUsername.isBlank()) return Optional.empty();
+        // Aynı adlı YEREL hesap varsa müdür olarak bağlanmaz ve dokunulmaz (2026-10-12; ör. bootstrap admin ya da yerel
+        // acil durum hesabı AD'deki bir kişiyle aynı adı taşıyorsa) — astın girişi düşmez, müdür bağı boş kalır.
+        Optional<AppUser> same = userRepo.findByUsername(UserService.normalizeUsername(mgrUsername));
+        if (same.isPresent() && !isLdapAccount(same.get())) {
+            log.warn("Müdür provizyonu atlandı: sicil {} AD'de {} hesabına çıkıyor, aynı adlı YEREL hesap var (ast={})",
+                    sicil, mgrUsername, viaUsername);
+            return Optional.empty();
+        }
         return Optional.of(upsert(mgrUsername, mgrAttrs.get(), false, Mode.MANAGER, viaUsername).user());
+    }
+
+    /** LDAP kaynaklı hesap mı (kaynak boş = eski yerel satır; giriş yönlendirmesiyle aynı kural). */
+    static boolean isLdapAccount(AppUser u) {
+        return u != null && "LDAP".equalsIgnoreCase(u.getAuthSource());
     }
 
     /** Bayat müdür kaydını AD'den tazeler — yalnız AD'deki {@code cn=<sicil>} kaydı AYNI hesapsa. */

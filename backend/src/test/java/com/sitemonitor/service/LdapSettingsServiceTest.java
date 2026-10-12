@@ -26,11 +26,38 @@ class LdapSettingsServiceTest {
         SecretCipher cipher = new SecretCipher();
         cipher.init();
         service = new LdapSettingsService(repo, cipher);
-        // repo.save echoes its argument so the in-memory cache mirrors the persisted row.
-        // lenient: the defaults-only test never saves.
+        // repo.save echoes its argument and findById returns the last saved row — the service now applies each save to
+        // the CURRENT database row (2026-10-12), so the fake must behave like a table. lenient: defaults-only test never saves.
         org.mockito.Mockito.lenient()
                 .when(repo.save(org.mockito.ArgumentMatchers.any(LdapSettings.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+                .thenAnswer(inv -> { stored = inv.getArgument(0); return stored; });
+        org.mockito.Mockito.lenient()
+                .when(repo.findById(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> java.util.Optional.ofNullable(stored));
+    }
+
+    private LdapSettings stored;
+
+    @Test
+    @DisplayName("2026-10-12: kayıt DB'deki güncel satıra uygulanır — başka pod'un kaydettiği rol eşlemesi bayat önbellekle geri alınmaz")
+    void saveAppliesToCurrentRowNotStaleCache() {
+        service.save(Map.of("host", "h", "role_mappings", List.of()), "admin");
+        // Başka pod eşleme ekledi (DB satırı değişti; bu pod'un önbelleği ≤ 10 sn bayat)
+        LdapSettings other = new LdapSettings();
+        other.setId(LdapSettings.SINGLETON_ID);
+        other.setHost("h");
+        other.setRoleMappingsJson("[{\"group\":\"CN=Admins\",\"role\":\"admin\"}]");
+        other.setUpdatedAt("2099-01-01T00:00:00");
+        stored = other;
+        // Bu pod yalnız değişen alanı (host) gönderir
+        service.save(Map.of("host", "h2"), "admin");
+        assertThat(stored.getHost()).isEqualTo("h2");
+        assertThat(stored.getRoleMappingsJson()).contains("CN=Admins");
+        // İlk kayıtta gövdede olmayan alanlar varsayılandan gelir
+        stored = null;
+        LdapSettings first = service.save(Map.of("host", "yeni"), "admin");
+        assertThat(first.getUserAttribute()).isEqualTo("sAMAccountName");
+        assertThat(first.getPort()).isEqualTo(636);
     }
 
     @Test

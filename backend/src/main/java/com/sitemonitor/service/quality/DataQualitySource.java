@@ -117,13 +117,19 @@ public class DataQualitySource {
 
     // ── Yükleme ──────────────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * ZORUNLU girdiler (2026-10-12): takımlar, üyeler, eskalasyon, bildirim grupları, envanter, izlemeler ve duraklatma
+     * geçmişi okunamazsa hesap YAPILMAZ ({@link IllegalStateException}) — boş yedek gerçek veri sayılıp "her takımın üyesi
+     * yok" / "her kayıt sahipsiz" puanı üretmesin, o günün görüntüsü kısmi veriyle dondurulmasın. İsteğe bağlı girdiler
+     * (hijyen, tarama hata sayıları, 7/24 yapılandırması) okunamazsa ilgili kural "bilinmiyor" sayılır (not düşer).
+     */
     public Facts load(Instant now) {
-        List<TeamFact> teams = safe("takımlar", this::teams, List.of());
+        List<TeamFact> teams = required("takımlar", this::teams);
         List<Long> teamIds = teams.stream().map(TeamFact::id).toList();
-        Map<Long, Integer> members = safe("üyeler", this::activeMembers, Map.of());
-        Map<Long, Escalation> escalation = safe("eskalasyon", () -> escalation(teamIds), Map.of());
-        Set<Long> groupAddress = safe("bildirim grupları", () -> groupAddress(teamIds), Set.of());
-        List<CertificateInventory> inventory = safe("envanter", inventoryRepo::findByDeletedAtIsNullOrderByDomainAsc, List.of());
+        Map<Long, Integer> members = required("üyeler", this::activeMembers);
+        Map<Long, Escalation> escalation = required("eskalasyon", () -> escalation(teamIds));
+        Set<Long> groupAddress = required("bildirim grupları", () -> groupAddress(teamIds));
+        List<CertificateInventory> inventory = required("envanter", inventoryRepo::findByDeletedAtIsNullOrderByDomainAsc);
 
         Map<String, Set<String>> hygieneCodes = null;
         Map<String, String> hygieneErrors = new HashMap<>();
@@ -133,8 +139,8 @@ public class DataQualitySource {
             log.warn("Veri kalitesi: envanter hijyeni okunamadı: {}", e.getMessage());
         }
         Map<String, Integer> errorCounts = safe("tarama hata sayıları", () -> errorCounts(now), null);
-        List<MonitorFact> monitors = monitors(inventory);
-        Map<String, String> paused = safe("duraklatma geçmişi", () -> pausedSince(inventory, monitors), Map.of());
+        List<MonitorFact> monitors = required("izlemeler", () -> monitors(inventory));
+        Map<String, String> paused = required("duraklatma geçmişi", () -> pausedSince(inventory, monitors));
         NocState noc = safe("7/24 yapılandırması", this::noc, NocState.unknown());
         return new Facts(teams, members, escalation, groupAddress, inventory, hygieneCodes, hygieneErrors,
                 errorCounts, monitors, paused, noc);
@@ -237,11 +243,9 @@ public class DataQualitySource {
         List<MonitorFact> out = new ArrayList<>();
         for (NocType t : NocType.values()) {
             if (t == NocType.SSL) continue;   // envanter ayrı okunur
-            try {
-                load(t, live, out);
-            } catch (Exception e) {
-                log.warn("Veri kalitesi: {} izlemeleri okunamadı: {}", t, e.getMessage());
-            }
+            // Bir türün okunamaması TÜM hesabı durdurur (2026-10-12): o türün izlemeleri eksik kalırsa kuralları onları hiç
+            // görmez ve puan sessizce yükselirdi. Çağıran (load → required) hatayı "puan hesaplanmadı" olarak yükseltir.
+            load(t, live, out);
         }
         return out;
     }
@@ -378,6 +382,16 @@ public class DataQualitySource {
     // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────
 
     private interface Step<T> { T get() throws Exception; }
+
+    private static <T> T required(String what, Step<T> step) {
+        try {
+            return step.get();
+        } catch (Exception e) {
+            // 503 DB_UNAVAILABLE + iki dilli metin (GlobalExceptionHandler.handleDbUnavailable) — 409 "çakışma" değil
+            throw new org.springframework.dao.DataAccessResourceFailureException(
+                    "Veri kalitesi: " + what + " okunamadı — puan hesaplanmadı", e);
+        }
+    }
 
     private static <T> T safe(String what, Step<T> step, T fallback) {
         try {

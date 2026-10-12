@@ -22,6 +22,15 @@ public interface TlsGradeChangeRepository extends JpaRepository<TlsGradeChange, 
     List<TlsGradeChange> findRecent(@Param("since") String since, @Param("direction") String direction, Pageable page);
 
     /**
+     * {@link #findRecent} — yalnız SY ya da UG takımı {@code teams} içinde olanlar (2026-10-12: kapsam süzgeci SQL'de;
+     * eskiden kurum geneli ilk 500 satır okunup bellekte süzülüyordu, kalabalık bir ayda takımın düşüşleri hiç görünmezdi).
+     */
+    @Query("SELECT c FROM TlsGradeChange c WHERE c.changedAt >= :since AND c.direction = :direction "
+            + "AND (c.teamId IN :teams OR c.ugTeamId IN :teams) ORDER BY c.changedAt DESC, c.id DESC")
+    List<TlsGradeChange> findRecentForTeams(@Param("since") String since, @Param("direction") String direction,
+                                            @Param("teams") java.util.Collection<Long> teams, Pageable page);
+
+    /**
      * Yarı açık pencere {@code [from, to)} içindeki değişimler, yeniden eskiye — aylık yönetici özeti (ay sınırları
      * İstanbul takvimi, UTC damga). Sayfa sınırı çağıranda (sorgu sınırsız olmasın).
      */
@@ -47,6 +56,13 @@ public interface TlsGradeChangeRepository extends JpaRepository<TlsGradeChange, 
     @Transactional
     @Query("UPDATE TlsGradeChange c SET c.notifyState = :state, c.notifiedAt = :at WHERE c.id IN :ids")
     int finishNotify(@Param("ids") java.util.Collection<Long> ids, @Param("state") String state, @Param("at") String at);
+
+    /** Koşullu sonuç: yalnız {@code expected} durumundaki satırlar (yarıda kalan SENDING süpürmesi, 2026-10-12). */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TlsGradeChange c SET c.notifyState = :state, c.notifiedAt = :at WHERE c.id IN :ids AND c.notifyState = :expected")
+    int finishNotifyIfState(@Param("ids") java.util.Collection<Long> ids, @Param("expected") String expected,
+                            @Param("state") String state, @Param("at") String at);
 
     /** {@link #findBetween} penceresindeki TAM sayı (liste sınırlıyken de doğru toplam). */
     @Query("SELECT COUNT(c) FROM TlsGradeChange c WHERE c.changedAt >= :from AND c.changedAt < :to AND c.direction = :direction")

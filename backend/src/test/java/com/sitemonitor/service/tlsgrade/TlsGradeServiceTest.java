@@ -167,6 +167,30 @@ class TlsGradeServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: yalnız 'HSTS ölçülmedi' eklenerek A+ → A bir BİLGİ değişimidir (bildirim yok); gerçek bulgu eklenince düşüş")
+    void hstsUnknownIsRefinement() {
+        CertificateInventory i = inv(1, "a.example.com");
+        run(i, "A+");
+        TlsGradeService.ReconcileResult r = run(i, "A", "HSTS_NOT_CHECKED");
+        assertThat(r.drops()).isZero();
+        assertThat(r.refined()).isEqualTo(1);
+        assertThat(changes.get(0).getNotifyState()).isNull();
+        assertThat(statuses.get(1L).getDroppedFrom()).isNull();
+        // HSTS hâlâ ölçülmemişken TLS 1.0 açıldı → gerçek bulgu → DÜŞÜŞ (bildirim bekler)
+        TlsGradeService.ReconcileResult r2 = run(i, "B", "HSTS_NOT_CHECKED", "TLS10_ENABLED");
+        assertThat(r2.drops()).isEqualTo(1);
+        assertThat(changes.get(1).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
+        assertThat(TlsGradeService.onlyMeasurementGapAdded(List.of(), List.of("HSTS_NOT_CHECKED"))).isTrue();
+        // Yükseliş: TLS 1.0 kapatıldı (B → A) ama HSTS de ölçülmez oldu → gerçek düzelme RISE, bilgi değişimi DEĞİL
+        CertificateInventory j = inv(2, "b.example.com");
+        run(j, "B", "TLS10_ENABLED");
+        TlsGradeService.ReconcileResult up = run(j, "A", "HSTS_NOT_CHECKED");
+        assertThat(up.rises()).isEqualTo(1);
+        assertThat(up.refined()).isZero();
+        assertThat(TlsGradeService.onlyMeasurementGapAdded(List.of("HSTS_NOT_CHECKED"), List.of("HSTS_NOT_CHECKED"))).isFalse();
+    }
+
+    @Test
     @DisplayName("Not ve nedenler aynıysa hiçbir şey yazılmaz")
     void unchangedWritesNothing() {
         CertificateInventory i = inv(1, "a.example.com");
@@ -234,6 +258,8 @@ class TlsGradeServiceTest {
         TlsGradeChange ug = change(2L, "ug.example.com", 3L, 9L, "A+", "B");
         TlsGradeChange other = change(3L, "other.example.com", 4L, 5L, "A", "F");
         when(changeRepo.findRecent(anyString(), eq("DROP"), any())).thenReturn(List.of(mine, ug, other));
+        // 2026-10-12: kapsam süzgeci SQL'de (kurum geneli ilk N satırı bellekte süzmek kalabalık ayda takımı boş bırakırdı)
+        when(changeRepo.findRecentForTeams(anyString(), eq("DROP"), eq(Set.of(7L, 9L)), any())).thenReturn(List.of(mine, ug));
         TlsGradeStatus now = new TlsGradeStatus();
         now.setInventoryId(2L); now.setGrade("A+");
         statuses.put(2L, now);
@@ -241,6 +267,7 @@ class TlsGradeServiceTest {
         assertThat(rows).extracting(m -> m.get("domain")).containsExactly("mine.example.com", "ug.example.com");
         assertThat(rows.get(0).get("team_name")).isEqualTo("Ödeme");
         assertThat(rows.get(1).get("recovered")).isEqualTo(true);
+        verify(changeRepo, never()).findRecent(anyString(), anyString(), any());
         assertThat(service.drops(List.of(), 30, 50, Map.of())).isEmpty();
         assertThat(service.drops(null, 30, 50, Map.of())).hasSize(3);
     }

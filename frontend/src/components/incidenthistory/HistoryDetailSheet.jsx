@@ -189,7 +189,9 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
                 <span className="text-sm font-semibold">{t('pm.cardTitle')}</span>
                 {r.postmortem_status || Number(r.actions_total || 0) > 0
                   ? <PostmortemBadges row={r} className="flex flex-wrap gap-1.5" />
-                  : <span className="text-xs text-muted-foreground">{t('pm.cardEmpty')}</span>}
+                  : <span className="text-xs text-muted-foreground" data-slot="ih-postmortem-empty">
+                      {r.pm_summary === true ? t('pm.cardEmpty') : t('pm.cardOpenHint')}
+                    </span>}
               </div>
               <Button type="button" variant="outline" size="sm" className="h-9 max-sm:h-10 max-sm:w-full" data-slot="ih-open-postmortem"
                 onClick={() => onPostmortem(r)}>

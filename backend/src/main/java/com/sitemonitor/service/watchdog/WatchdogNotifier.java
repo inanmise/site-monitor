@@ -37,8 +37,11 @@ public class WatchdogNotifier {
     public static final String TRIGGER = "WATCHDOG";
     public static final String TRIGGER_TEST = "WATCHDOG_TEST";
 
-    /** Teslim sonucu: en az bir kanal ulaştı / denenen kanalların hiçbiri ulaşamadı / denenecek kanal yok ya da susturuldu. */
-    public enum Outcome { DELIVERED, FAILED, NO_CHANNEL }
+    /**
+     * Teslim sonucu: en az bir kanal ulaştı / denenen kanalların hiçbiri ulaşamadı / denenecek kanal yok / sistem bakımı
+     * susturdu ({@code MUTED}, 2026-10-12: susturma bitince süren sorun bir kez bildirilir — {@link WatchdogTransition}).
+     */
+    public enum Outcome { DELIVERED, FAILED, NO_CHANNEL, MUTED }
 
     /** Kanal ayrıntısı (yönetici ekranı ve test sonucu). */
     public record Report(Outcome outcome, String email, String webhook, String push, int recipients) { }
@@ -70,7 +73,7 @@ public class WatchdogNotifier {
         String trigger = test ? TRIGGER_TEST : TRIGGER;
         List<String> to = WatchdogSettings.recipients(settings, systemAdminEmail);
         if (!test && muted()) {
-            Report r = new Report(Outcome.NO_CHANNEL, "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", to.size());
+            Report r = new Report(Outcome.MUTED, "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", "SKIPPED: sistem bakımı", to.size());
             saveLog(subject, to, r, trigger);
             return r;
         }
@@ -146,7 +149,8 @@ public class WatchdogNotifier {
         return r;
     }
 
-    private boolean muted() {
+    /** Sistem bakımı bildirimleri susturuyor mu (hata → hayır; turun başında bir kez okunur). */
+    boolean muted() {
         try {
             return maintenance != null && maintenance.notificationsMuted();
         } catch (Exception e) {
@@ -199,9 +203,9 @@ public class WatchdogNotifier {
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
             n.setSentAt(WatchdogTransition.ISO.format(Instant.now()));
             n.setRecipientName("Kendi kendini izleme");
-            n.setRecipientEmail(clip(String.join(", ", to), 1000));
+            n.setRecipientEmail(String.join(", ", to));     // varlık listeyi kolona sığdırır ("… +N")
             n.setRecipientRole("SYSTEM_ADMIN");
-            n.setSubject(clip(subject, 500));
+            n.setSubject(subject);
             n.setEmailStatus(clip(r.email() + ("SKIPPED".equals(r.push()) ? "" : " · push " + r.push()), 250));
             n.setWebhookStatus(clip(r.webhook(), 250));
             n.setTrigger(trigger);

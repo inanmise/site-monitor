@@ -14,11 +14,12 @@ export const SIZES = Object.freeze(['sm', 'md', 'lg'])
 /**
  * Kutu kataloğu — SIRA "Kutu ekle" penceresinin sırasıdır. `perm` = görmek için gereken izin anahtarı (view), `tab` =
  * "Sayfayı aç" hedefi (yoksa düğme yok), `size` = eklenince boyutu. Kapı izinleri sunucudaki uçlarla aynı:
- * fırtına `alerts.read`, nöbet `oncall.read`, bekçi `system_health.read`, veri kalitesi `data_quality.view`.
+ * açık alarmlar ve fırtına `alerts.read`, izleme sağlığı `monitoring.read`, nöbet `oncall.read`, bekçi `system_health.read`,
+ * veri kalitesi `data_quality.view` (2026-10-12: alarm / izleme kutuları da uçlarının iznini ister).
  */
 export const WIDGET_CATALOG = Object.freeze([
-  { type: 'alerts_open',     size: 'md', tab: 'alerthistory', perm: null },
-  { type: 'monitor_health',  size: 'md', tab: 'monitoring',   perm: null },
+  { type: 'alerts_open',     size: 'md', tab: 'alerthistory', perm: 'alerts.read' },
+  { type: 'monitor_health',  size: 'md', tab: 'monitoring',   perm: 'monitoring.read' },
   { type: 'cert_expiring',   size: 'sm', tab: 'warnings',     perm: null },
   { type: 'status_services', size: 'md', tab: 'status',       perm: null },
   { type: 'storms',          size: 'sm', tab: 'storms',       perm: 'alerts.read' },
@@ -240,7 +241,12 @@ export function alertsSummary(data, limit = 6) {
   }
   items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || n(b.id) - n(a.id))
   const total = n(data?.total)
-  return { total, ...levels, unacked, items: items.slice(0, limit), tone: levels.critical > 0 ? 'danger' : total > 0 ? 'warning' : 'success' }
+  // `visible:false` = alarm okuma yetkisi yok (sunucu boş özet döner) — "sorun yok" DEĞİL (2026-10-12)
+  const hidden = data?.visible === false
+  return {
+    total, ...levels, unacked, items: items.slice(0, limit), hidden,
+    tone: hidden ? 'muted' : levels.critical > 0 ? 'danger' : total > 0 ? 'warning' : 'success',
+  }
 }
 
 /** İzleme sağlığı (`/api/monitoring/overview`): toplamlar + sorunlu türler önce. */
@@ -256,7 +262,8 @@ export function monitorSummary(ov) {
   return {
     active, down, stale, unknown, healthy, paused: n(t.paused), successRate: Number.isFinite(rate) ? rate : null,
     healthyPct: active > 0 ? Math.round((healthy * 1000) / active) / 10 : null,
-    types, tone: down > 0 ? 'danger' : stale > 0 ? 'warning' : 'success',
+    // Yeşil yalnız ölçülmüş ve sorunsuz filoda: etkin izleme yoksa ya da ölçülmemiş (unknown) varsa nötr (2026-10-12)
+    types, tone: down > 0 ? 'danger' : stale > 0 ? 'warning' : active > 0 && unknown === 0 ? 'success' : 'muted',
   }
 }
 
@@ -267,7 +274,8 @@ export function certSummary(s, limit = 5) {
   return {
     total: n(s?.total_certificates), valid: n(s?.valid_count), expired, exp7, exp30, errors: n(s?.error_count),
     urgent: urgent.slice(0, limit), urgentMore: Math.max(0, urgent.length - limit),
-    tone: expired > 0 || exp7 > 0 ? 'danger' : exp30 > 0 ? 'warning' : 'success',
+    // Son taraması başarısız sertifika varsa ya da hiç sertifika yoksa "sorun yok" denmez (2026-10-12)
+    tone: expired > 0 || exp7 > 0 ? 'danger' : exp30 > 0 || n(s?.error_count) > 0 ? 'warning' : n(s?.total_certificates) > 0 ? 'success' : 'muted',
   }
 }
 
@@ -281,11 +289,16 @@ export function statusSummary(sp, limit = 5) {
   for (const s of services) if (s && counts[s.state] != null) counts[s.state] += 1
   const problems = services.filter((s) => PROBLEM.has(s?.state))
     .sort((a, b) => (STATE_RANK[b.state] - STATE_RANK[a.state]) || String(a.since || '').localeCompare(String(b.since || '')))
-  const worst = services.reduce((acc, s) => (STATE_RANK[s?.state] > STATE_RANK[acc] ? s.state : acc), services.length ? 'operational' : 'no_data')
+  // En kötü durum `no_data`dan başlar (2026-10-12): hepsi veri yok → "çalışıyor" değil "veri yok"
+  const worst = services.reduce((acc, s) => (STATE_RANK[s?.state] > STATE_RANK[acc] ? s.state : acc), 'no_data')
+  // "Bütün hizmetler çalışıyor" yalnız hepsi gerçekten çalışırken — veri yok / bakım varken değil
+  const allOk = counts.operational > 0 && counts.operational === services.length
+  const shownState = worst === 'operational' && !allOk ? 'no_data' : worst
   return {
     total: services.length, counts, problems: problems.slice(0, limit), problemsMore: Math.max(0, problems.length - limit),
-    problemCount: problems.length, worst,
-    tone: worst === 'major_outage' || worst === 'partial_outage' ? 'danger' : worst === 'degraded' ? 'warning' : services.length ? 'success' : 'muted',
+    problemCount: problems.length, worst, allOk, shownState,
+    tone: worst === 'major_outage' || worst === 'partial_outage' ? 'danger' : worst === 'degraded' ? 'warning'
+      : worst === 'maintenance' ? 'info' : allOk ? 'success' : 'muted',
   }
 }
 

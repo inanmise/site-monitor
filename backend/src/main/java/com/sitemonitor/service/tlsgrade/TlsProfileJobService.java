@@ -2,10 +2,8 @@ package com.sitemonitor.service.tlsgrade;
 
 import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.CertificateInventory;
-import com.sitemonitor.model.LatestCheck;
 import com.sitemonitor.model.TlsProfile;
 import com.sitemonitor.repository.CertificateInventoryRepository;
-import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.TlsProfileRepository;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.SchedulerService;
@@ -65,7 +63,6 @@ public class TlsProfileJobService {
 
     private final CertificateInventoryRepository inventoryRepo;
     private final TlsProfileRepository profileRepo;
-    private final LatestCheckRepository latestRepo;
     private final TlsProfileProbeService probeService;
     private final TlsGradeService gradeService;
 
@@ -102,11 +99,10 @@ public class TlsProfileJobService {
     private volatile ThreadPoolExecutor executor;
 
     public TlsProfileJobService(CertificateInventoryRepository inventoryRepo, TlsProfileRepository profileRepo,
-                                LatestCheckRepository latestRepo, TlsProfileProbeService probeService,
+                                TlsProfileProbeService probeService,
                                 TlsGradeService gradeService) {
         this.inventoryRepo = inventoryRepo;
         this.profileRepo = profileRepo;
-        this.latestRepo = latestRepo;
         this.probeService = probeService;
         this.gradeService = gradeService;
     }
@@ -162,10 +158,18 @@ public class TlsProfileJobService {
             }
             if (TlsProfile.STATUS_FAILED.equals(p.getStatus()) || TlsProfile.STATUS_BLOCKED.equals(p.getStatus())) failed++;
         }
+        if (Thread.currentThread().isInterrupted()) {
+            // Kapanış (2026-10-12): yarım yoklama turuyla not karşılaştırılmaz / bildirim gönderilmez — sonraki tur yapar
+            return new TickResult(due.size(), results.size(), failed, new TlsGradeService.ReconcileResult(0, 0, 0, 0));
+        }
+        // Karşılaştırma TAZE listeyle (2026-10-12): profil başka pod'da elle yeniden tarandıysa ya da lider değiştiyse bu
+        // pod'un liste önbelleği eskidir — eski notla karşılaştırma sahte düşüş / yükseliş yazardı. Yalnız liste önbelleği
+        // boşaltılır (kart ekleri vb. dokunulmaz); ilk okuma onu yeniden kurar.
         if (!results.isEmpty()) evict();
+        else evictLatestList();
         TlsGradeService.ReconcileResult grades = reconcileAll(active);
         if (grades.changed()) evict();
-        // Bekleyen düşüşler (bu turun ya da elle yeniden taramanın) takıma bildirilir — kilit altında, bir kez
+        // Bekleyen düşüşler (bu turun karşılaştırmasından) takıma bildirilir — kilit altında, bir kez
         if (dropNotifier != null) dropNotifier.notifyPending();
         return new TickResult(due.size(), results.size(), failed, grades);
     }
@@ -251,25 +255,37 @@ public class TlsProfileJobService {
     }
 
     /**
-     * Elle yeniden tarama (sertifika penceresi): tek ucu ŞİMDİ yoklar, kaydeder, notu karşılaştırır ve önbellekleri
-     * boşaltır. Kapı (izin + takım kapsamı + hız sınırı) çağıranda. Elle yüklenen kayıt için çağrılmaz.
+     * Elle yeniden tarama (sertifika penceresi): tek ucu ŞİMDİ yoklar, kaydeder ve önbellekleri boşaltır (pencere yeni
+     * notu hemen gösterir). Kapı (izin + takım kapsamı + hız sınırı) çağıranda. Elle yüklenen kayıt için çağrılmaz.
+     *
+     * <p>Not KARŞILAŞTIRILMAZ (2026-10-12): kilitsiz ve liste satırından farklı girdiyle (güvenlik bayrakları olmadan)
+     * hesaplanan not, turun karşılaştırmasıyla yarışıp sahte düşüş / yükseliş çiftleri yazıyordu. Değişimi bir sonraki tur
+     * ({@code tls-profile} kilidi altında, taze listeyle) kaydeder ve düşüşü bildirir.
      */
     public TlsProfile rescan(CertificateInventory inv, String actor) {
         int port = inv.getPort() == null ? 443 : inv.getPort();
         TlsProfile p = probeService.probe(inv.getDomain(), port, Boolean.TRUE.equals(inv.getUseProxy()),
                 TlsProfile.TRIGGER_MANUAL, actor);
         profileRepo.save(p);
-        try {
-            LatestCheck lc = latestRepo.findById(inv.getDomain()).orElse(null);
-            TlsGradeRules.Grade g = TlsGradeRules.evaluate(lc, p, false);
-            if (g.graded() && !Boolean.FALSE.equals(inv.getActive())) {
-                gradeService.reconcile(List.of(new TlsGradeService.Evaluated(inv, g.grade(), g.codes())));
-            }
-        } catch (Exception e) {
-            log.debug("Yeniden tarama sonrası not karşılaştırılamadı ({}): {}", inv.getDomain(), e.toString());
-        }
         evict();
         return p;
+    }
+
+    /** Spring önbellek yöneticisi — isteğe bağlı (birim testinde yok → tüm sertifika önbellekleri boşaltılır). */
+    @Autowired(required = false)
+    private org.springframework.cache.CacheManager cacheManager;
+
+    void setCacheManager(org.springframework.cache.CacheManager m) { this.cacheManager = m; }
+
+    /** Yalnız sertifika liste önbelleği ({@code cert-latest}). */
+    private void evictLatestList() {
+        try {
+            org.springframework.cache.Cache c = cacheManager == null ? null : cacheManager.getCache("cert-latest");
+            if (c != null) c.clear();
+            else evict();
+        } catch (Exception e) {
+            log.debug("Sertifika liste önbelleği boşaltılamadı: {}", e.toString());
+        }
     }
 
     private void evict() {

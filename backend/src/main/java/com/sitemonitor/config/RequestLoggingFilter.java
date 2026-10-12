@@ -98,6 +98,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             "(?i)(\"(?:" + SENSITIVE_FIELD_NAMES + ")\"\\s*:\\s*)\"[^\"]*\""
     );
 
+    /**
+     * SON EKİ hassas olan JSON anahtarları (2026-10-12): {@code bind_password}, {@code admin_password},
+     * {@code webhook_secret}, {@code push_token} … tam ad listesinde yoktu ve TRACE günlüğüne düz düşüyordu. Önek SINIRLI
+     * ({@code {0,64}}, desen {@code "} ile başlar) — doğrusal tarama, geri izleme patlaması yok.
+     */
+    private static final Pattern SENSITIVE_JSON_SUFFIX_FIELDS = Pattern.compile(
+            "(?i)(\"[A-Za-z0-9_\\-]{0,64}(?:password|passwd|secret|token|api_key|apikey|private_key)\"\\s*:\\s*)\"[^\"]*\""
+    );
+
     private static final Pattern SENSITIVE_FORM_FIELDS = Pattern.compile(
             "(?i)((?:^|&)(?:" + SENSITIVE_FIELD_NAMES + ")=)[^&]*"
     );
@@ -116,8 +125,13 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     // eklemek her `code`/`error_code` logunu körleştirirdi). Kod HİÇBİR log'a düşmez sözü bu uçlarda da tutulsun.
     // Manuel sertifika yükleme (2026-10-06): gövde dosya parolası + anahtar deposu/özel anahtar içerebilir — HİÇ loglanmaz.
     // Önek eğik çizgisiz: koleksiyon ucu (POST /api/manual-certs) da kapsansın.
+    // 2026-10-12: LDAP ayarları (bağlama parolası, test bağlaması, öznitelik görüntüleyici), betikli izleme (env DEĞERLERİ
+    // serbest adlı sırlardır — ad listesiyle maskelenemez) ve kişisel push ayarları (ağ geçidi URL'si / başlıkları jeton
+    // taşır) da gövdesiz loglanır.
     private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/", "/api/login/otp/",
-            "/api/manual-certs");
+            "/api/manual-certs", "/api/admin/ldap", "/api/monitoring/scripted", "/api/admin/user-push",
+            // Genel ayarlar katalogu ham değerleri genel "value" anahtarıyla taşır (push ağ geçidi URL'si jeton içerir)
+            "/api/admin/general/settings");
     static final String BODY_OMITTED = "[omitted: sensitive endpoint]";
 
     private static final int MAX_BODY_LOG = 2000;
@@ -232,13 +246,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     public static String redactSensitiveFields(String text) {
         if (text == null || text.isEmpty()) return text;
         String redacted = SENSITIVE_JSON_FIELDS.matcher(text).replaceAll("$1\"" + MASK + "\"");
+        redacted = SENSITIVE_JSON_SUFFIX_FIELDS.matcher(redacted).replaceAll("$1\"" + MASK + "\"");
         return SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
     }
 
     private String redact(String body) {
         if (body == null || body.isEmpty()) return body;
-        // JSON: "field":"value"
+        // JSON: "field":"value" — tam ad listesi, sonra hassas son ekli anahtarlar (bind_password, webhook_secret …)
         String redacted = SENSITIVE_JSON_FIELDS.matcher(body).replaceAll("$1\"" + MASK + "\"");
+        redacted = SENSITIVE_JSON_SUFFIX_FIELDS.matcher(redacted).replaceAll("$1\"" + MASK + "\"");
         // Form: field=value&...
         redacted = SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
         return redacted;

@@ -101,8 +101,12 @@ describe('Olay geçmişi — postmortem akışı', () => {
     fireEvent.click(screen.getByRole('button', { name: /^(Finished|Biten)$/ }))
     await waitFor(() => expect(apiMock.incidents.actions).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'done' })))
 
+    const before = apiMock.incidents.actions.mock.calls.length
     fireEvent.change(within(document.querySelector('[data-slot="pm-actions-list"] [data-slot="pm-action"]')).getByRole('combobox'), { target: { value: 'DONE' } })
     await waitFor(() => expect(apiMock.incidents.updateAction).toHaveBeenCalledWith(11, { status: 'DONE' }))
+    // 2026-10-12: durum değişince liste + sayaçlar sayfa 0'dan yeniden (süzgeçten çıkan satır "daha fazla"yı kaydırmasın)
+    await waitFor(() => expect(apiMock.incidents.actions.mock.calls.length).toBeGreaterThan(before))
+    expect(apiMock.incidents.actions).toHaveBeenLastCalledWith(expect.objectContaining({ page: 0 }))
 
     fireEvent.click(document.querySelector('[data-slot="pm-open-incident"]'))
     await waitFor(() => expect(apiMock.incidents.get).toHaveBeenCalledWith(7))
@@ -122,5 +126,21 @@ describe('Olay geçmişi — postmortem akışı', () => {
     expect(kpi).toHaveTextContent('2')
     fireEvent.click(kpi)
     await waitFor(() => expect(apiMock.incidents.actions).toHaveBeenLastCalledWith(expect.objectContaining({ mine: true })))
+  })
+
+  it('2026-10-12: "daha fazla" sonraki SAYFAYI ister — yinelenen satır düşse de aynı sayfayı tekrar istemez', async () => {
+    const mk = (from, n) => Array.from({ length: n }, (_, i) => ({ ...ACTION, id: 1000 + from + i, title: `Aksiyon ${from + i}` }))
+    apiMock.incidents.actions = vi.fn(({ page }) => Promise.resolve({ success: true, data: {
+      // sayfa 1'in ilk satırı sayfa 0'ın son satırının yinelemesi (araya yeni kayıt girdi)
+      items: page === 0 ? mk(0, 50) : page === 1 ? [...mk(49, 1), ...mk(50, 49)] : mk(99, 5),
+      total: 104, page, size: 50, totals: { open: 104, overdue: 0, mine: 0 } } }))
+    window.history.replaceState({}, '', '/?tab=incident-history&ih_view=actions')
+    render(<IncidentHistoryPage />)
+    const more = await waitFor(() => { const el = document.querySelector('[data-slot="pm-actions-more"]'); expect(el).not.toBeNull(); return el })
+    fireEvent.click(more)
+    await waitFor(() => expect(apiMock.incidents.actions).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 })))
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="pm-actions-list"] [data-slot="pm-action"]')).toHaveLength(99))
+    fireEvent.click(document.querySelector('[data-slot="pm-actions-more"]'))
+    await waitFor(() => expect(apiMock.incidents.actions).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 })))
   })
 })

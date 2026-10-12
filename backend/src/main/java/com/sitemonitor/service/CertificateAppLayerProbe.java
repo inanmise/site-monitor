@@ -72,6 +72,8 @@ public class CertificateAppLayerProbe {
         try {
             LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
             if (lc == null) return;                    // hiç kontrol edilmemiş domain — yazacak satır yok
+            // Doğrulanamayan deneme UNKNOWN yazar (2026-10-08 kararı: eski ayrıntı yanıltmasın). TLS notu bunu "ölçülmedi"
+            // sayar ve A+ → A değişimini DÜŞÜŞ değil bilgi değişimi kaydeder (TlsGradeService.onlyMeasurementGapAdded).
             lc.setHstsStatus(hsts.status());
             lc.setHstsAt(now);
             // UNKNOWN'un SEBEBİ saklanır: sağlık satırında "Doğrulanamadı" yazıp nedenini

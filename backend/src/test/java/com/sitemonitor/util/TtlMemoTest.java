@@ -114,4 +114,18 @@ class TtlMemoTest {
                 .isInstanceOf(IllegalStateException.class);
         org.assertj.core.api.Assertions.assertThat(memo.get("e", 60_000, false, () -> "ok")).isEqualTo("ok");
     }
+
+    @Test
+    @DisplayName("2026-10-12: değere özgü üst ömür — kısa ömürlü (ör. hatalı) sonuç okumadaki uzun TTL'den önce yenilenir")
+    void perValueMaxAge() {
+        TtlMemo<String> m = new TtlMemo<>(10, now::get);
+        java.util.function.ToLongFunction<String> age = v -> v.equals("v1") ? 1_000L : Long.MAX_VALUE;
+        assertThat(m.get("k", 60_000, false, this::compute, age)).isEqualTo("v1");
+        now.addAndGet(999);
+        assertThat(m.get("k", 60_000, false, this::compute, age)).isEqualTo("v1");
+        now.addAndGet(1);
+        assertThat(m.get("k", 60_000, false, this::compute, age)).isEqualTo("v2");   // hatalı sonuç 1 sn'de yenilendi
+        now.addAndGet(30_000);
+        assertThat(m.get("k", 60_000, false, this::compute, age)).isEqualTo("v2");   // sağlıklı sonuç uzun TTL'de kalır
+    }
 }

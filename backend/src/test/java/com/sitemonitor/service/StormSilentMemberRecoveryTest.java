@@ -77,6 +77,35 @@ class StormSilentMemberRecoveryTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: fırtına çözüm postası, kurtulan üyeyi NÖBETÇİ olarak almış adreslere de gider (tekil, takım adresiyle birleşik)")
+    void recoveryMailReachesOncallWhoGotTheAlarm() {
+        assertThat(StormService.withOncall(List.of("takim@example.com", "TAKIM@example.com"), List.of()))
+                .containsExactly("takim@example.com");
+        AlertEvent m = member(3L, false);
+        m.setAlertLevel("CRITICAL");
+        m.setOncallEmails("nobetci@example.com,takim@example.com");
+        AlertEvent n = member(4L, false);
+        n.setOncallEmails(" Nobetci@Example.com ");
+        assertThat(StormService.withOncall(List.of("takim@example.com"), List.of(m, n)))
+                .containsExactly("takim@example.com", "nobetci@example.com");
+        // SY + UG ortak üyesi iki gönderimde: nöbetçi adresi YALNIZ ilk gönderime girer; başka gönderimin takım adresi hiç
+        java.util.Set<String> taken = new java.util.HashSet<>(java.util.Set.of("takim@example.com", "ug-takim@example.com"));
+        AlertEvent shared = member(5L, false);
+        shared.setOncallEmails("nobetci@example.com,ug-takim@example.com");
+        assertThat(StormService.withOncall(List.of("takim@example.com"), List.of(shared), taken))
+                .containsExactly("takim@example.com", "nobetci@example.com");
+        assertThat(StormService.withOncall(List.of("ug-takim@example.com"), List.of(shared), taken))
+                .containsExactly("ug-takim@example.com");
+
+        EmailNotificationService mail = (EmailNotificationService) ReflectionTestUtils.getField(storm, "emailService");
+        lenient().when(mail.sendHtml(any(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any())).thenReturn("SENT");
+        ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(), List.of(m), List.of());
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(mail).sendHtml(to.capture(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
+        assertThat(to.getValue()).contains("nobetci@example.com");
+    }
+
+    @Test
     @DisplayName("O-b2: kurtulanların TAMAMI sessiz kapandı → fırtına çözüm bildirimi (7/24 dâhil) HİÇ gönderilmez")
     void allSilent_noRecoveryNotification() {
         ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(),

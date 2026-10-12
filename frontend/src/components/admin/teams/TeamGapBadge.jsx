@@ -20,18 +20,23 @@ const TRIGGER_TONE = {
  * @param team     takım kaydı (ad başlıkta TAM yazılır — kesilmez)
  * @param gaps     eksik anahtarları (katalog sırası)
  * @param actions  `{ [gapKey]: () => void }` — yalnız kullanıcının yapabildiği düzeltmeler; yoksa yalnız açıklama
- * @param partial  sayaçlar henüz gelmedi (bazı kurallar değerlendirilemedi) — pencere bunu söyler
+ * @param partial  bazı kurallar değerlendirilemedi — pencere ve rozet bunu söyler
+ * @param partialReason `pending` (sayaçlar / kullanıcı listesi henüz gelmedi) | `failed` (okunamadı) | `scope` (lider / müdür görüş alanı dışında)
  */
-export default function TeamGapBadge({ team, gaps = [], actions = {}, partial = false }) {
+export default function TeamGapBadge({ team, gaps = [], actions = {}, partial = false, partialReason = 'pending' }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   // Bilinmeyen ne eksik ne eksiksizdir (2026-10-12): sayaçlar / kullanıcı listesi gelmeden (ya da hiç gelmezse) eksik
   // görünmeyen satır yeşil "Eksiksiz" demez — nötr "henüz tam denetlenmedi".
+  const reasonText = partialReason === 'scope' ? t('team.gap.scopeUnknown')
+    : partialReason === 'failed' ? t('team.gap.loadFailed') : t('team.gap.statsPending')
   if (gaps.length === 0 && partial) {
+    // Neden ekran okuyucuya ve dokunmatiğe de ulaşır (yalnız title değil): görünmeyen ama okunan kısa açıklama
     return (
-      <span data-slot="team-gap-badge" data-state="unknown" title={t('team.gap.statsPending')}
+      <span data-slot="team-gap-badge" data-state="unknown" data-reason={partialReason} title={reasonText}
         className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
         <CircleDashed aria-hidden="true" className="size-3.5 shrink-0" />{t('team.gap.unknown')}
+        <span className="sr-only">{`: ${reasonText}`}</span>
       </span>
     )
   }
@@ -88,7 +93,7 @@ export default function TeamGapBadge({ team, gaps = [], actions = {}, partial = 
             )
           })}
         </ul>
-        {partial && <p className="border-t px-3 py-2 text-xs text-muted-foreground">{t('team.gap.statsPending')}</p>}
+        {partial && <p className="border-t px-3 py-2 text-xs text-muted-foreground">{reasonText}</p>}
       </PopoverContent>
     </Popover>
   )

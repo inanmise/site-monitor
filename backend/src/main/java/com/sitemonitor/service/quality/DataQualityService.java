@@ -299,9 +299,14 @@ public class DataQualityService {
         public static final MonthEnds NONE = new MonthEnds(null, null, Map.of(), Map.of());
     }
 
-    static final String SQL_MONTH_END_DAYS = "SELECT MAX(CASE WHEN snap_day < ? THEN snap_day END) AS prev_day, "
-            + "MAX(CASE WHEN snap_day >= ? THEN snap_day END) AS cur_day FROM data_quality_daily "
-            + "WHERE team_key = 0 AND snap_day >= ? AND snap_day <= ?";
+    /**
+     * Görüntü günü D, D gününün 00:25'inde (İstanbul) yazılır → D-1 gününün SONUNU yansıtır (2026-10-12). Bu yüzden ay
+     * sonu = sonraki ayın 1'inin görüntüsü: önceki ay için {@code (prevStart, monthStart]}, bu ay için
+     * {@code (monthStart, monthLast + 1]} aralığındaki en son görüntü.
+     */
+    static final String SQL_MONTH_END_DAYS = "SELECT MAX(CASE WHEN snap_day <= ? THEN snap_day END) AS prev_day, "
+            + "MAX(CASE WHEN snap_day > ? THEN snap_day END) AS cur_day FROM data_quality_daily "
+            + "WHERE team_key = 0 AND snap_day > ? AND snap_day <= ?";
     static final String SQL_DAYS_SCORES = "SELECT snap_day, team_key, score FROM data_quality_daily WHERE snap_day IN (?, ?)";
 
     /**
@@ -317,7 +322,7 @@ public class DataQualityService {
             jdbc.query(SQL_MONTH_END_DAYS, rs -> {
                 days[0] = rs.getString(1);
                 days[1] = rs.getString(2);
-            }, monthStart.toString(), monthStart.toString(), prevStart.toString(), monthLast.toString());
+            }, monthStart.toString(), monthStart.toString(), prevStart.toString(), monthLast.plusDays(1).toString());
             if (days[0] == null && days[1] == null) return MonthEnds.NONE;
             Map<Long, Integer> prev = new HashMap<>();
             Map<Long, Integer> cur = new HashMap<>();
@@ -331,10 +336,21 @@ public class DataQualityService {
                 if (day != null && day.equals(days[0])) prev.put(rs.getLong(2), score);
                 if (day != null && day.equals(days[1])) cur.put(rs.getLong(2), score);
             }, a, b);
-            return new MonthEnds(days[0], days[1], prev, cur);
+            // Gösterilen gün = görüntünün yansıttığı gün (görüntü gününün bir öncesi)
+            return new MonthEnds(reflectedDay(days[0]), reflectedDay(days[1]), prev, cur);
         } catch (Exception e) {
-            log.debug("Veri kalitesi ay sonu görüntüleri okunamadı (tablo henüz yok?): {}", e.getMessage());
-            return MonthEnds.NONE;
+            // Okuma hatası "görüntü yok" DEĞİLDİR (2026-10-12): bölüm ERROR olur, zamanlanmış gönderim yeniden dener
+            throw new IllegalStateException("Veri kalitesi ay sonu görüntüleri okunamadı", e);
+        }
+    }
+
+    /** Görüntü günü → yansıttığı gün (bir gün önce); null → null. */
+    static String reflectedDay(String snapDay) {
+        if (snapDay == null) return null;
+        try {
+            return LocalDate.parse(snapDay).minusDays(1).toString();
+        } catch (Exception e) {
+            return snapDay;
         }
     }
 

@@ -84,18 +84,16 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
+        // Okuma hatası bölümü ERROR yapar (2026-10-12) — önceki ay / envanter düşerse karşılaştırma ya da takım eşlemesi
+        // sessizce eksik kalıp gönderilen ay o görüntüyle kapanmasın; zamanlanmış gönderim yeniden dener.
         List<Ev> events = rows(ctx, ctx.fromIso(), ctx.toIso());
-        Long prev = null;
-        try {
-            if (ctx.teamScoped()) {
-                long n = 0;
-                for (Ev e : rows(ctx, ctx.prevFromIso(), ctx.fromIso())) if (inScope(ctx, e)) n++;
-                prev = n;
-            } else {
-                prev = alertRepo.countCreatedBetween(ctx.prevFromIso(), ctx.fromIso());
-            }
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: önceki ay alarm sayısı okunamadı: {}", e.toString());
+        Long prev;
+        if (ctx.teamScoped()) {
+            long n = 0;
+            for (Ev e : rows(ctx, ctx.prevFromIso(), ctx.fromIso())) if (inScope(ctx, e)) n++;
+            prev = n;
+        } else {
+            prev = alertRepo.countCreatedBetween(ctx.prevFromIso(), ctx.fromIso());
         }
         return evaluate(ctx, events, prev);
     }
@@ -145,12 +143,8 @@ public class AlarmNoiseSection implements ExecutiveSummarySection {
         boolean teamScope = ctx.teamScoped();
         SectionResult.Builder b = SectionResult.builder(KEY, ORDER, TITLE).headlineKpi("total_alarms");
         Map<String, Long> domainTeam = new java.util.HashMap<>();
-        try {
-            for (ExecutiveSummaryContext.InventoryRow inv : ctx.inventory().values()) {
-                if (inv.domain() != null && inv.teamId() != null) domainTeam.put(inv.domain(), inv.teamId());
-            }
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: envanter okunamadı: {}", e.toString());
+        for (ExecutiveSummaryContext.InventoryRow inv : ctx.inventory().values()) {
+            if (inv.domain() != null && inv.teamId() != null) domainTeam.put(inv.domain(), inv.teamId());
         }
         Map<Long, String> names = names(ctx);
 

@@ -341,6 +341,66 @@ class PdfCanvas implements AutoCloseable {
         return out;
     }
 
+    /**
+     * Tablo hücresi sarması (2026-10-12; adlar ve uzun metin kesilmez): kelime sınırında böler; sütundan geniş tek
+     * "kelime" (boşluksuz alan adı, e-posta) karakter sınırında bölünür. En fazla {@code maxLines} satır — döngü metin
+     * uzunluğuyla sınırlı, sığmayan kalan son satırda "…" ile biter.
+     */
+    List<String> wrapCell(String s, float maxWidth, PDFont font, float size, int maxLines) throws IOException {
+        List<String> out = new ArrayList<>();
+        if (s == null || maxLines < 1) return out;
+        String v = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ').trim();
+        if (v.isEmpty()) return out;
+        StringBuilder line = new StringBuilder();
+        for (String word : v.split(" ")) {
+            if (word.isEmpty()) continue;
+            String candidate = line.isEmpty() ? word : line + " " + word;
+            if (width(candidate, font, size) <= maxWidth) {
+                line.setLength(0);
+                line.append(candidate);
+                continue;
+            }
+            if (!line.isEmpty()) {
+                out.add(line.toString());
+                line.setLength(0);
+                if (out.size() == maxLines) return ellipsize(out, maxWidth, font, size);
+            }
+            int start = 0;
+            while (start < word.length()) {
+                int end = fitChars(word, start, maxWidth, font, size);
+                if (end >= word.length()) {
+                    line.append(word, start, end);
+                    break;
+                }
+                out.add(word.substring(start, end));
+                if (out.size() == maxLines) return ellipsize(out, maxWidth, font, size);
+                start = end;
+            }
+        }
+        if (!line.isEmpty()) out.add(line.toString());
+        return out;
+    }
+
+    /** {@code word[start..end)} genişliğe sığan en uzun parça (en az bir karakter; vekil çift bölünmez). */
+    private int fitChars(String word, int start, float maxWidth, PDFont font, float size) throws IOException {
+        int lo = start + 1, hi = word.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (width(word.substring(start, mid), font, size) <= maxWidth) lo = mid;
+            else hi = mid - 1;
+        }
+        int end = lo;
+        if (end < word.length() && Character.isLowSurrogate(word.charAt(end)) && end - 1 > start) end--;
+        return end;
+    }
+
+    /** Kesilen sarmanın son satırı "…" ile biter (genişliğe sığdırılarak). */
+    private List<String> ellipsize(List<String> out, float maxWidth, PDFont font, float size) throws IOException {
+        int last = out.size() - 1;
+        out.set(last, clip(out.get(last) + "…", maxWidth, font, size));
+        return out;
+    }
+
     private static String sanitize(String s) {
         return s.replace('ş', 's').replace('Ş', 'S').replace('ğ', 'g').replace('Ğ', 'G')
                 .replace('ı', 'i').replace('İ', 'I').replace('ç', 'c').replace('Ç', 'C')

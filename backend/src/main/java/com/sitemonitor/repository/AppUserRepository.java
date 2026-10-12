@@ -17,9 +17,10 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     /**
      * Kullanıcı dizini satırları (2026-10-09, performans): {@code /api/users/directory} her girişte (ve komut paletinde)
      * çağrılıyor; {@code findAll()} her kullanıcının AD fotoğrafını (base64 TEXT) ve takım koleksiyonunu yüklüyordu, uç
-     * yalnız id / kullanıcı adı / görünen ad / e-posta döndürüyor. Sıra: id, username, displayName, firstName, lastName, email.
+     * yalnız id / kullanıcı adı / görünen ad / e-posta döndürüyor. Sıra: id, username, displayName, firstName, lastName, email,
+     * active (2026-10-12: seçiciler pasif hesabı süzebilsin — ad haritası pasifleri de içermeye devam eder).
      */
-    @org.springframework.data.jpa.repository.Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.email"
+    @org.springframework.data.jpa.repository.Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.email, u.active"
             + " FROM AppUser u WHERE u.username IS NOT NULL")
     List<Object[]> findDirectoryRows();
     // Username eşleştirmesi CASE-INSENSITIVE (DB UPPER): canonical saklama BÜYÜK harf olsa da yazılan/eski

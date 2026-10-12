@@ -100,7 +100,7 @@ public final class ExecutiveSummarySamples {
                     new RenewalTimelinessSection.Group("O1", "2026-05-01T00:00:00", "2026-12-01T00:00:00"),
                     new RenewalTimelinessSection.Group("O2", "2026-09-10T00:00:00", "2027-12-01T00:00:00")));
         }
-        SectionResult d = rn.evaluate(ctx, groups, null, true);
+        SectionResult d = rn.evaluate(ctx, groups, null);
 
         // (e) TLS notu
         TlsGradeSection tls = new TlsGradeSection(mock(TlsGradeService.class));
@@ -228,7 +228,7 @@ public final class ExecutiveSummarySamples {
                     new RenewalTimelinessSection.Group("B1", "2026-05-01T00:00:00", "2026-12-01T00:00:00"),
                     new RenewalTimelinessSection.Group("B2", "2026-09-10T00:00:00", "2027-12-01T00:00:00")));
         }
-        SectionResult d = rn.evaluate(ctx, groups, null, true);
+        SectionResult d = rn.evaluate(ctx, groups, null);
 
         // (e) TLS notu — takımın uç noktaları; düşüş penceresi sınırlı (busy) → takım notu
         TlsGradeSection tls = new TlsGradeSection(mock(TlsGradeService.class));

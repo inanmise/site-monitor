@@ -311,6 +311,19 @@ class DataQualityQueriesTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: zorunlu sorgu düşerse yükleme 'puan hesaplanmadı' ile durur — boş yedek gerçek veri sayılmaz")
+    void requiredQueryFailureStopsLoad() {
+        JdbcTemplate broken = org.mockito.Mockito.mock(JdbcTemplate.class);
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("bağlantı yok"))
+                .when(broken).query(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.RowCallbackHandler.class));
+        DataQualitySource s = new DataQualitySource(broken, inventoryRepo, contactRepo, groupRepo, changeLogRepo, hygiene, nocConfig, nocGroups);
+        // 503 DB_UNAVAILABLE (iki dilli metin) — 409 "çakışma" değil
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> s.load(java.time.Instant.now()))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class).hasMessageContaining("puan hesaplanmadı");
+    }
+
+    @Test
     @DisplayName("URL normalizasyonu: şema + ana makine küçük harf, yol korunur, tek '/' yok sayılır")
     void normUrl() {
         assertThat(DataQualitySource.normUrl("HTTPS://Api.Example.com/")).isEqualTo("https://api.example.com");

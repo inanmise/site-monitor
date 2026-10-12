@@ -87,7 +87,7 @@ class CertificateSectionsTeamScopeTest {
     @DisplayName("yenileme (a) yalnız takımın SY/UG alan adlarının yenilemeleri + gecikmeleri, (c) kapsam notu, kurum ifadesi yok")
     void renewalsTeam() {
         RenewalTimelinessSection s = new RenewalTimelinessSection(mock(JdbcTemplate.class), mock(RenewalForecastService.class));
-        SectionResult r = s.evaluate(teamCtx(1, LATEST, INV), groups(), null, true);
+        SectionResult r = s.evaluate(teamCtx(1, LATEST, INV), groups(), null);
         assertThat(kpi(r, "renewals").value()).isEqualTo(2);
         assertThat(table(r, "renewals").rows()).extracting(m -> m.get("domain"))
                 .containsExactlyInAnyOrder("sy.example.com", "ug.example.com");
@@ -98,7 +98,7 @@ class CertificateSectionsTeamScopeTest {
         assertThat(noteCodes(r)).containsExactly("METHOD", "PLANS", "TEAM_SCOPE");
         assertNoOrgWording(r);
 
-        SectionResult org = s.evaluate(orgCtx(LATEST, INV), groups(), null, true);
+        SectionResult org = s.evaluate(orgCtx(LATEST, INV), groups(), null);
         assertThat(kpi(org, "renewals").value()).isEqualTo(4);
         assertThat(noteCodes(org)).containsExactly("METHOD", "PLANS");
     }
@@ -115,13 +115,16 @@ class CertificateSectionsTeamScopeTest {
         verify(jdbc, times(1)).query(eq(RenewalTimelinessSection.SQL), any(RowCallbackHandler.class),
                 eq("2026-07-02T21:00:00"), eq("2026-09-30T21:00:00"));
 
-        // Okuma hatası paylaşılmaz (saklanmaz): sonraki bağlam yeniden dener, ikisi de VERİ YOK
+        // Okuma hatası paylaşılmaz (saklanmaz): sonraki bağlam yeniden dener; ikisi de hesaplanamaz (2026-10-12: ERROR,
+        // "veri yok" değil — bölüm döngüsü istisnayı SectionResult.failed'e çevirir)
         JdbcTemplate bad = mock(JdbcTemplate.class);
         doThrow(new RuntimeException("db")).when(bad).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
         RenewalTimelinessSection f = new RenewalTimelinessSection(bad, mock(RenewalForecastService.class));
         Map<String, Object> shared2 = new ConcurrentHashMap<>();
-        assertThat(f.compute(teamCtx(1, List.of(), Map.of(), shared2)).status()).isEqualTo(SectionResult.NO_DATA);
-        assertThat(f.compute(teamCtx(2, List.of(), Map.of(), shared2)).status()).isEqualTo(SectionResult.NO_DATA);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> f.compute(teamCtx(1, List.of(), Map.of(), shared2)))
+                .isInstanceOf(RuntimeException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> f.compute(teamCtx(2, List.of(), Map.of(), shared2)))
+                .isInstanceOf(RuntimeException.class);
         verify(bad, times(2)).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
     }
 }

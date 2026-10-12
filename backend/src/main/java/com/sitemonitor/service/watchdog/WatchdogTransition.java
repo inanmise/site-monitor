@@ -38,6 +38,16 @@ public final class WatchdogTransition {
      */
     public static Action apply(WatchdogState state, Result result, String severity, String factsJson,
                                Instant now, int confirm, int reminderHours) {
+        return apply(state, result, severity, factsJson, now, confirm, reminderHours, false);
+    }
+
+    /**
+     * {@code muted}: sistem bakımı bildirimleri susturuyor. Susturulan açılış / hatırlatma ({@code *_MUTED}) susturma
+     * sürerken yinelenmez (günlük şişmesin), susturma bitince sorun sürüyorsa BİR KEZ gönderilir (2026-10-12; eskiden
+     * "gönderildi" sayılıp hiç bildirilmiyordu).
+     */
+    public static Action apply(WatchdogState state, Result result, String severity, String factsJson,
+                               Instant now, int confirm, int reminderHours, boolean muted) {
         int need = Math.max(1, confirm);
         String nowIso = ISO.format(now);
         state.setLastResult(result.name());
@@ -67,6 +77,10 @@ public final class WatchdogTransition {
                 if (notified == null || kind == null || notified.isBefore(parse(state.getSince()))) return Action.ALERT;
                 if (kind.endsWith("_FAILED")) {
                     if (Duration.between(notified, now).toMinutes() < RETRY_MINUTES) return Action.NONE;
+                    return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
+                }
+                if (kind.endsWith(MUTED)) {
+                    if (muted) return Action.NONE;
                     return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
                 }
                 if (reminderHours > 0 && Duration.between(notified, now).toHours() >= reminderHours) return Action.REMIND;
@@ -103,13 +117,26 @@ public final class WatchdogTransition {
         }
     }
 
+    /** Bildirim türü ekleri: teslim edilemedi (yeniden denenir) / bakım susturdu (susturma bitince) / kanal yok. */
+    public static final String FAILED = "_FAILED";
+    public static final String MUTED = "_MUTED";
+    public static final String NO_CHANNEL = "_NOCHANNEL";
+
     /**
      * Bildirim denendi: en az bir kanal teslim ettiyse {@code ALERT|REMIND|RECOVER}, hiçbiri edemediyse {@code *_FAILED}
      * (yeniden denenir; iyileşme bildirimi yeniden denenmez — sorun zaten bitti).
      */
     public static void markNotified(WatchdogState state, Action action, boolean delivered, Instant now) {
+        markNotified(state, action, delivered ? "" : FAILED, now);
+    }
+
+    /**
+     * Ekli işaretleme: {@code ""} teslim, {@link #FAILED}, {@link #MUTED} ya da {@link #NO_CHANNEL}. Kanal yok → yeniden
+     * denenmez (hatırlatma süresi işler) ama yönetici ekranı "gitti" demez.
+     */
+    public static void markNotified(WatchdogState state, Action action, String suffix, Instant now) {
         state.setNotifiedAt(ISO.format(now));
-        state.setNotifiedKind(action.name() + (delivered ? "" : "_FAILED"));
+        state.setNotifiedKind(action.name() + (suffix == null ? "" : suffix));
         if (action == Action.RECOVER) state.setSeverity(null);
     }
 

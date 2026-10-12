@@ -12,7 +12,7 @@ import { Button } from '@/components/shadcn/button'
 import { ItemGroup, Item, ItemTitle } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import { relTime } from './healthModel.js'
-import { OVERALL_TONE, checkState, checkTone } from './watchdogModel.js'
+import { OVERALL_TONE, checkState, checkTone, notifiedKey } from './watchdogModel.js'
 
 const STATE_ICON = {
   problem: AlertOctagon, watch: Activity, ok: CheckCircle2, unknown: HelpCircle, na: MinusCircle, pending: CircleDashed,
@@ -122,9 +122,9 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
                 {c.since && state !== 'pending' && (
                   <span title={formatDateSec(c.since)}>{state === 'problem' ? t('wd.problemSince', relTime(c.since, t)) : t('wd.okSince', relTime(c.since, t))}</span>
                 )}
-                {c.notified_at && (
+                {c.notified_at && notifiedKey(c.notified_kind) && (
                   <span className="inline-flex items-center gap-1" title={formatDateSec(c.notified_at)}>
-                    <Bell aria-hidden="true" className="size-3" /> {t(`wd.notified.${String(c.notified_kind || '').replace('_FAILED', 'Failed')}`, relTime(c.notified_at, t))}
+                    <Bell aria-hidden="true" className="size-3" /> {t(notifiedKey(c.notified_kind), relTime(c.notified_at, t))}
                   </span>
                 )}
               </div>

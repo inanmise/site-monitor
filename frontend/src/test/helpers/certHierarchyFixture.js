@@ -71,3 +71,26 @@ export function chainResponse(nodes = fullChainNodes(), over = {}) {
     },
   }
 }
+
+/**
+ * Ağ sertifikası hiyerarşisi yanıtı (2026-10-12) — GERÇEK tel biçimi: `GET /api/certificates/{domain}/hierarchy` →
+ * NetworkCertificateHierarchy (düğümler aynı biçim + `source` / `trust_store`; kök sunucudan gelmedi, sistem deposundan).
+ */
+export function networkHierarchyResponse(over = {}, nodes = null) {
+  const list = nodes || fullChainNodes().map((n) => ({
+    ...n,
+    source: n.role === 'root' ? 'trust_store' : 'server',
+    trust_store: n.role === 'root' ? 'system' : null,
+  }))
+  const top = list[0]
+  return {
+    success: true,
+    data: {
+      domain: 'odeme-api.example.test', port: 443, via: 'direct', checked_at: '2026-10-12T09:00:00',
+      presented_count: 2, root_source: 'trust_store', trust_store: 'system', root_trusted: true, missing_kind: null,
+      order_ok: true, extra_certificates: [],
+      certificate_count: list.length, issuer_missing: !!top?.issuer_missing,
+      missing_issuer_dn: top?.issuer_missing ? top.issuer_dn : null, nodes: list, ...over,
+    },
+  }
+}

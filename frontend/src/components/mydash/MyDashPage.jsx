@@ -32,7 +32,7 @@ import MyDashTv from './MyDashTv.jsx'
 export default function MyDashPage() {
   const t = useT()
   const prefs = useUserPrefs()
-  const { perms, canView } = usePermissions()
+  const { perms, canView, loaded: permsLoaded = true } = usePermissions()
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -53,11 +53,13 @@ export default function MyDashPage() {
   const addable = useMemo(() => addableTypes(list, canView), [list, perms])
   const isVisible = useCallback((w) => typeVisible(w.type, canView), [perms]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canEdit = prefs.ready
+  // Yetkiler gelmeden düzenleme / kayıt yok (2026-10-12): varsayılan düzen yetkiye göre süzülür; boş snapshot'la
+  // kaydedilirse yetkili kutular belgeden düşerdi.
+  const canEdit = prefs.ready && permsLoaded
   const titleOf = (type) => t('mydash.w.' + type)
 
   const apply = (next, message) => {
-    if (!prefs.ready) return
+    if (!canEdit) return
     prefs.setDashboard(toDoc(next))
     if (message) setAnnounce(message)
   }
@@ -111,7 +113,8 @@ export default function MyDashPage() {
     }
   }
 
-  const loadingPrefs = prefs.status === 'loading'
+  // Yetkiler gelmeden görünür kutu yoksa "pano boş" DENMEZ (bilinmiyor ≠ boş) — yükleniyor gösterilir
+  const loadingPrefs = prefs.status === 'loading' || (!permsLoaded && shown.length === 0)
 
   return (
     <div className="tab-content active" data-slot="mydash-page" data-edit={edit ? 'on' : 'off'}>
@@ -163,7 +166,8 @@ export default function MyDashPage() {
               <Button type="button" variant="outline" onClick={reset}><RotateCcw aria-hidden="true" /> {t('mydash.reset')}</Button>
             </>
           ) : null} />
-      ) : (
+      ) : tv ? null : (
+        // TV kipi açıkken altındaki ızgara çizilmez: her kutu iki kez yoklanmasın (2026-10-12)
         <div className="@container" data-slot="mydash-grid-wrap">
           <div className="grid grid-flow-row-dense grid-cols-1 gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4" data-slot="mydash-grid">
             {shown.map((w, i) => {

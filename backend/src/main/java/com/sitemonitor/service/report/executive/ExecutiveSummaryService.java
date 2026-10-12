@@ -112,6 +112,20 @@ public class ExecutiveSummaryService {
     public YearMonth defaultMonth() { return currentMonth().minusMonths(1); }
 
     /**
+     * Ayın verisi gönderime hazır olduğu saat (İstanbul, sonraki ayın 1'i). Saatlik / günlük özet gece temizliğinde (varsayılan
+     * 03:00, {@code RetentionCatalog.CLEANUP_CRON_DEFAULT}) yazılır; ayın son ~21 saatinin kovaları ancak o koşuda oluşur.
+     * Hazır olmadan gönderilen ay eksik görüntüyle "gönderildi" diye kapanırdı (2026-10-12).
+     */
+    public static final int DATA_READY_HOUR = 6;
+
+    /** {@code month}'un verisi gönderime hazır mı: {@code now} ≥ sonraki ayın 1'i {@value #DATA_READY_HOUR}:00 (İstanbul). */
+    public static boolean dataReady(YearMonth month, Instant now) {
+        if (month == null || now == null) return true;
+        YearMonth shifted = YearMonth.from(now.atZone(ExecutiveSummaryContext.IST).minusHours(DATA_READY_HOUR));
+        return month.isBefore(shifted);
+    }
+
+    /**
      * {@code YYYY-MM} ayrıştırır; boşsa varsayılan ay. Gelecek ay ya da {@value #MAX_MONTHS_BACK} aydan eskisi 400
      * {@code VALIDATION_FAILED} ({@code field=month}).
      */
@@ -151,7 +165,8 @@ public class ExecutiveSummaryService {
         }
         String key = month + "|" + (teamId == null ? "org" : "team:" + teamId);
         boolean past = month.isBefore(currentMonth());
-        long ttl = past ? PAST_TTL_MS : CURRENT_TTL_MS;
+        // Biten ay da gece özeti yazılmadan (1'i 06:00 öncesi) "değişmez" sayılmaz; hatalı bölümlü sonuç da kısa tutulur
+        long ttl = past && dataReady(month, now()) ? PAST_TTL_MS : CURRENT_TTL_MS;
         boolean doFresh = false;
         if (fresh) {
             long nowMs = now().toEpochMilli();
@@ -161,7 +176,15 @@ public class ExecutiveSummaryService {
                 doFresh = true;
             }
         }
-        return memo.get(key, ttl, doFresh, () -> compute(month, teamId, null));
+        return memo.get(key, ttl, doFresh, () -> compute(month, teamId, null),
+                s -> hasErrorSection(s) ? CURRENT_TTL_MS : Long.MAX_VALUE);
+    }
+
+    /** Özette hesaplanamayan (ERROR) bölüm var mı. */
+    static boolean hasErrorSection(ExecutiveSummary s) {
+        if (s == null || s.sections() == null) return false;
+        for (SectionResult r : s.sections()) if (r != null && SectionResult.ERROR.equals(r.status())) return true;
+        return false;
     }
 
     /** Gönderilmiş kurum ayının kaydı (eski imza). */
@@ -305,12 +328,17 @@ public class ExecutiveSummaryService {
 
     // ── Paylaşılan tembel veri (bağlam başına TEK okuma) ──
 
+    /**
+     * Ortak ham veriler okunamazsa İSTİSNA (2026-10-12): boş liste "sertifika yok / bitiş yok / envanter yok" demekti —
+     * bölümler hatayı "temiz" ya da "veri yok" diye raporlar, gönderilen ay o yanlış görüntüyle kapanırdı. İstisna bölüm
+     * döngüsünde yakalanır → bölüm {@link SectionResult#ERROR}; zamanlanmış gönderim hatalı bölümle göndermez, yeniden dener.
+     * Paylaşılan bellek istisnayı saklamaz — sonraki bölüm / takım yeniden okumayı dener.
+     */
     private List<CertificateDto> loadLatest() {
         try {
             return certificateService.getAllLatest();
         } catch (Exception e) {
-            log.warn("Yönetici özeti: sertifika durumu okunamadı: {}", e.toString());
-            return List.of();
+            throw new IllegalStateException("Yönetici özeti: sertifika durumu okunamadı", e);
         }
     }
 
@@ -327,17 +355,18 @@ public class ExecutiveSummaryService {
                         r.get("renewal_planned_at") == null ? null : String.valueOf(r.get("renewal_planned_at"))));
             }
         } catch (Exception e) {
-            log.warn("Yönetici özeti: envanter okunamadı: {}", e.toString());
+            throw new IllegalStateException("Yönetici özeti: envanter okunamadı", e);
         }
         return out;
     }
 
+    /** Takım adları — okuma hatası İSTİSNA (2026-10-12): boş harita her takımı postada / PDF'te "Takımsız" yazdırırdı. */
     private Map<Long, String> loadTeamNames() {
         Map<Long, String> out = new HashMap<>();
         try {
             for (Team t : teamRepo.findAll()) if (t.getId() != null) out.put(t.getId(), t.getName());
         } catch (Exception e) {
-            log.debug("Yönetici özeti: takım adları okunamadı: {}", e.toString());
+            throw new IllegalStateException("Yönetici özeti: takım adları okunamadı", e);
         }
         return out;
     }

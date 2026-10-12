@@ -182,4 +182,22 @@ class ExecutiveSummaryControllerTest {
                 .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
         verify(delivery, never()).sendNow(any(), any());
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("2026-10-12: biten ay da gece özeti yazılmadan (1'i 06:00 TR öncesi) elle gönderilemez (400, nedeni söyler); 06:00'da açılır")
+    void runWaitsForNightlyRollup() {
+        MockHttpSession s = session("ADMIN", null);
+        when(service.currentMonth()).thenReturn(YearMonth.of(2026, 11));
+        when(service.parseMonth(any())).thenReturn(YearMonth.of(2026, 10));
+        when(service.now()).thenReturn(java.time.Instant.parse("2026-10-31T23:00:00Z"));      // 1 Kasım 02:00 TR
+        assertThatThrownBy(() -> c.run(Map.of("month", "2026-10"), s))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class)
+                .hasMessageContaining("06:00");
+        verify(delivery, never()).sendNow(any(), any());
+
+        when(service.now()).thenReturn(java.time.Instant.parse("2026-11-01T03:00:00Z"));      // 06:00 TR
+        when(delivery.sendNow(any(), eq("kullanici")))
+                .thenReturn(new ExecutiveSummaryDeliveryService.Result("SENT", "2026-10", 1, 1, "SENT ×1"));
+        assertThat(c.run(Map.of("month", "2026-10"), s).getBody()).containsEntry("success", true);
+    }
 }

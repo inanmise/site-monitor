@@ -23,7 +23,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import { api } from '../api/client'
-import { useUserPrefsController, UserPrefsContext } from '../hooks/useUserPrefs.js'
+import { useUserPrefsController, UserPrefsContext, createPrefsEngine, PREFS_REV_KEY } from '../hooks/useUserPrefs.js'
 
 /** Sunucu birleştirmesinin taklidi: üst düzey anahtar değiştirilir, `local` girdi bazında birleşir. */
 function fakeSave(patch) {
@@ -273,5 +273,60 @@ describe('useUserPrefsController — sonraki yazımlar', () => {
     await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(2))
     expect(api.me.savePreferences.mock.calls[1][0]).toEqual({ savedViews: null })
     h.unmount()
+  })
+})
+
+describe('sekmeler arası yenileme (2026-10-12)', () => {
+  it('başka sekmenin kaydı (revizyon damgası) 30 sn kısıtlamasını beklemeden HEMEN okunur', async () => {
+    server.doc = { favorites: [] }
+    const { result, unmount } = mount()
+    await waitFor(() => expect(result.current.ready).toBe(true))
+    const before = api.me.getPreferences.mock.calls.length
+    server.doc = { favorites: [{ type: 'http', id: '9' }] }
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: PREFS_REV_KEY, newValue: '2' })) })
+    await waitFor(() => expect(api.me.getPreferences.mock.calls.length).toBe(before + 1))
+    await waitFor(() => expect(result.current.prefs.favorites).toEqual([{ type: 'http', id: '9' }]))
+    unmount()
+  })
+
+  it('başarılı kayıttan sonra revizyon damgası yazılır (aynalanmaz, sunucuya gitmez)', async () => {
+    const { result, unmount } = mount()
+    await waitFor(() => expect(result.current.ready).toBe(true))
+    act(() => { result.current.setTop?.('landingTab', 'alerts') ?? result.current.setLandingTab?.('alerts') })
+    await settle()
+    expect(localStorage.getItem(PREFS_REV_KEY)).not.toBeNull()
+    for (const call of api.me.savePreferences.mock.calls) expect(JSON.stringify(call[0])).not.toContain(PREFS_REV_KEY)
+    unmount()
+  })
+})
+
+describe('motor — yenileme güvenliği (2026-10-12)', () => {
+  it('yazma kuşağı her yerel değişiklik / açık seçim / PUT ile artar', async () => {
+    const saves = []
+    const engine = createPrefsEngine({ storage: localStorage, debounceMs: 10, save: (p) => { saves.push(p); return Promise.resolve({ success: true, prefs: {} }) } })
+    engine.hydrate({}, { migrate: false })
+    const g0 = engine.generation()
+    localStorage.setItem('site-monitor-theme', 'dark')
+    expect(engine.generation()).toBeGreaterThan(g0)
+    const g1 = engine.generation()
+    engine.setTop('landingTab', 'alerts')
+    expect(engine.generation()).toBeGreaterThan(g1)
+    await engine.flushNow()
+    expect(saves).toHaveLength(1)
+    engine.dispose()
+  })
+
+  it('yenilemede başka sekmenin yeni yerel değeri sunucunun eski değeriyle EZİLMEZ; sunucunun değiştirdiği anahtar yazılır', () => {
+    localStorage.setItem('site-monitor-theme', 'light')
+    const engine = createPrefsEngine({ storage: localStorage, debounceMs: 10, save: () => Promise.resolve({ success: true, prefs: {} }) })
+    engine.hydrate({ local: { 'site-monitor-theme': 'light', 'sm.pageSize.dashboard-certs': '25' } }, { migrate: false })
+    // başka sekme temayı değiştirdi (bu sekmenin izleme kancasından geçmez — storage olayı)
+    const ORIG = Storage.prototype.setItem
+    ORIG.call(localStorage, 'site-monitor-theme', 'dark')
+    // eski belge (tema hâlâ light) + sunucuda değişen sayfa boyu
+    engine.hydrate({ local: { 'site-monitor-theme': 'light', 'sm.pageSize.dashboard-certs': '50' } }, { migrate: false, refresh: true })
+    expect(localStorage.getItem('site-monitor-theme')).toBe('dark')
+    expect(localStorage.getItem('sm.pageSize.dashboard-certs')).toBe('50')
+    engine.dispose()
   })
 })

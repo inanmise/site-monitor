@@ -121,14 +121,17 @@ class ExecutiveSectionQueriesTest {
     void dataQualityMonthEnds() {
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         String ins = "INSERT INTO data_quality_daily(snap_day, team_key, score, findings, items, created_at) VALUES (?, ?, ?, 0, 0, ?)";
+        // 2026-10-12: D gününün görüntüsü D'nin 00:25'inde yazılır = D-1'in SONU. Ay sonu = sonraki ayın 1'inin görüntüsü.
         jdbc.update(ins, "2026-08-15", 0L, 70, "x");
-        jdbc.update(ins, "2026-08-31", 0L, 72, "x");
-        jdbc.update(ins, "2026-08-31", 5L, 60, "x");
+        jdbc.update(ins, "2026-08-31", 0L, 71, "x");                 // 30 Ağustos sonu — Ağustos sonu DEĞİL
+        jdbc.update(ins, "2026-09-01", 0L, 72, "x");                 // 31 Ağustos sonu
+        jdbc.update(ins, "2026-09-01", 5L, 60, "x");
         jdbc.update(ins, "2026-09-10", 0L, 75, "x");
-        jdbc.update(ins, "2026-09-30", 0L, 80, "x");
-        jdbc.update(ins, "2026-09-30", 5L, 66, "x");
-        jdbc.update(ins, "2026-09-30", -1L, null, "x");
-        jdbc.update(ins, "2026-10-01", 0L, 90, "x");                 // sonraki ay — Eylül'e girmez
+        jdbc.update(ins, "2026-09-30", 0L, 79, "x");                 // 29 Eylül sonu
+        jdbc.update(ins, "2026-10-01", 0L, 80, "x");                 // 30 Eylül sonu = Eylül sonu
+        jdbc.update(ins, "2026-10-01", 5L, 66, "x");
+        jdbc.update(ins, "2026-10-01", -1L, null, "x");
+        jdbc.update(ins, "2026-10-02", 0L, 90, "x");                 // 1 Ekim sonu — Eylül'e girmez
         DataQualityService svc = new DataQualityService(mock(DataQualitySource.class), jdbc, 60_000);
 
         DataQualityService.MonthEnds sep = svc.monthEnds(LocalDate.of(2026, 9, 1));
@@ -219,8 +222,9 @@ class ExecutiveSectionQueriesTest {
         Map<String, Object> shared = new java.util.concurrent.ConcurrentHashMap<>();
         SectionResult t1 = section.compute(ExecTestSupport.teamCtx(1, List.of(), TEAM_INV, shared));
         SectionResult t2 = section.compute(ExecTestSupport.teamCtx(2, List.of(), TEAM_INV, shared));
-        // izleme toplamı (queryForList) + izleme × gün (query) — koşuda BİR kez; kurum kova sorgusu hiç
-        assertThat(sectionQueries(jdbc, "AvailabilitySection")).isEqualTo(2);
+        // izleme toplamı (queryForList) + izleme × gün (query) + duraklatılmış envanter (2026-10-12) — koşuda BİR kez;
+        // kurum kova sorgusu hiç
+        assertThat(sectionQueries(jdbc, "AvailabilitySection")).isEqualTo(3);
         // Takım 1: HTTP|1 (40/37) + UPTIME ug (10/10) = 50 / 47; takım 2: HTTP|2 (10/5) + UPTIME ug (SY=2) = 20 / 15
         assertThat(ExecTestSupport.kpi(t1, "team_availability").value()).isEqualTo(AvailabilitySection.pctOf(47, 50));
         assertThat(ExecTestSupport.kpi(t2, "team_availability").value()).isEqualTo(AvailabilitySection.pctOf(15, 20));
@@ -291,5 +295,18 @@ class ExecutiveSectionQueriesTest {
         assertThat(t1.data().get("prev_total")).isEqualTo(1L);
         assertThat(ExecTestSupport.kpi(t3, "total_alarms").value()).isEqualTo(1);
         assertThat(t3.data().get("prev_total")).isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("2026-10-12: veri kalitesi ay sonu okuma hatası 'görüntü yok' DEĞİL — istisna (bölüm ERROR)")
+    void monthEndsReadFailureThrows() {
+        JdbcTemplate broken = mock(JdbcTemplate.class);
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("db"))
+                .when(broken).query(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.RowCallbackHandler.class),
+                        org.mockito.ArgumentMatchers.any(Object[].class));
+        DataQualityService svc = new DataQualityService(mock(DataQualitySource.class), broken, 60_000);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> svc.monthEnds(LocalDate.of(2026, 9, 1)))
+                .isInstanceOf(IllegalStateException.class);
     }
 }

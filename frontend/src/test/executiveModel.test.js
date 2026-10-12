@@ -3,7 +3,7 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   buildMonthlyCron, dailyPoints, formatValue, invalidEmails, isSummaryPayload, kpiView, localized, monthLabel,
-  isCompletedMonth, legacyRenewals, monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
+  changedFields, isCompletedMonth, monthSendState, runHintKey, legacyRenewals, monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
   distributionSegments, TLS_GRADE_SEGMENTS, CRYPTO_CATEGORY_SEGMENTS, CODE_LABEL_KEY,
   scopeOptions, statusCounts, STATUS_SEGMENTS, teamToForm, teamToBody, teamDirty, filterMembers, filterTeams, isTeamScope,
   TEAM_NOTE_KEY, TEAM_ID_RE,
@@ -267,8 +267,29 @@ describe('elle gönderim ayı (2026-10-12)', () => {
     expect(isCompletedMonth('2026-10', now)).toBe(false)
     expect(isCompletedMonth('2026-11', now)).toBe(false)
     expect(isCompletedMonth('', now)).toBe(false)
-    // Ayın son gecesi UTC 21:30 = İstanbul 1 Kasım 00:30 → Ekim artık tamamlanmış
-    expect(isCompletedMonth('2026-10', new Date('2026-10-31T21:30:00Z'))).toBe(true)
+    // Ayın son gecesi UTC 21:30 = İstanbul 1 Kasım 00:30 → Ekim bitti, ama gece özeti yazılmadan gönderilemez (aşağıda)
+    expect(isCompletedMonth('2026-10', new Date('2026-10-31T21:30:00Z'))).toBe(false)
+    // 2026-10-12: ay bitti ama gece özeti 1'i 06:00'ya (İstanbul) dek hazır değil → 'pending', gönderim kapalı
+    expect(monthSendState('2026-10', new Date('2026-10-31T21:30:00Z'))).toBe('pending')    // 1 Kasım 00:30 TR
+    expect(isCompletedMonth('2026-10', new Date('2026-11-01T02:59:00Z'))).toBe(false)     // 05:59 TR
+    expect(isCompletedMonth('2026-10', new Date('2026-11-01T03:00:00Z'))).toBe(true)      // 06:00 TR
+    expect(monthSendState('2026-09', new Date('2026-10-31T21:30:00Z'))).toBe('ok')         // daha eski ay etkilenmez
+    expect(monthSendState('2026-11', new Date('2026-10-31T21:30:00Z'))).toBe('current')
+    expect(runHintKey('2026-10', new Date('2026-10-31T21:30:00Z'))).toBe('exec.cfg.runDataPending')
+    expect(runHintKey('2026-11', new Date('2026-10-31T21:30:00Z'))).toBe('exec.cfg.runCurrentMonth')
+    expect(runHintKey('2026-10', new Date('2026-11-01T03:00:00Z'))).toBeNull()
   })
 })
 
+
+describe('kayıt gövdesi yalnız değişen alanlar (2026-10-12)', () => {
+  it('değişmeyen alan gitmez; dizi / boş değer / yeni alan karşılaştırması kararlı', () => {
+    const base = { enabled: false, recipients: 'a@x.com', user_ids: ['1', '2'], extra_emails: '' }
+    expect(changedFields({ ...base }, base)).toEqual({})
+    expect(changedFields({ ...base, enabled: true }, base)).toEqual({ enabled: true })
+    expect(changedFields({ ...base, user_ids: ['1'] }, base)).toEqual({ user_ids: ['1'] })
+    expect(changedFields({ ...base, user_ids: ['2', '1'] }, base)).toEqual({ user_ids: ['2', '1'] })
+    expect(changedFields({ ...base, extra_emails: 'b@x.com' }, base)).toEqual({ extra_emails: 'b@x.com' })
+    expect(changedFields({ cron: '0 0 9 1 * *' }, null)).toEqual({ cron: '0 0 9 1 * *' })
+  })
+})

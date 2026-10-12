@@ -94,8 +94,9 @@ class WatchdogNotifierTest {
     @DisplayName("sistem bakımı susturuyorsa hiçbir kanal denenmez, iz 'SKIPPED: sistem bakımı'; test bildirimi susturulmaz")
     void mutedByMaintenance() {
         when(maintenance.notificationsMuted()).thenReturn(true);
+        assertThat(n.muted()).isTrue();
         WatchdogNotifier.Report r = n.send(items, false);
-        assertThat(r.outcome()).isEqualTo(WatchdogNotifier.Outcome.NO_CHANNEL);
+        assertThat(r.outcome()).isEqualTo(WatchdogNotifier.Outcome.MUTED);
         verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), any());
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logs).save(log.capture());

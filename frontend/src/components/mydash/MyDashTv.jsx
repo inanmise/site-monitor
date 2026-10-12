@@ -92,6 +92,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
   const [fullscreen, setFullscreen] = useState(() => typeof document !== 'undefined' && !!document.fullscreenElement)
   const hideTimer = useRef(null)
   const mainRef = useRef(null)
+  const rootRef = useRef(null)
   const count = pages.length
   const cur = count ? Math.min(slide, count - 1) : 0
   const { fit, clipped } = useFitScale(mainRef, [cur, count, cols, rows])
@@ -105,11 +106,17 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
     document.body.style.overflow = 'hidden'
     html.style.overflow = 'hidden'
     html.style.scrollbarGutter = 'auto'
+    // Kalıcı pencere (2026-10-12): odak katmana alınır (Boşluk duraklatır, gizli "TV modu" düğmesine gitmez), kapanınca
+    // açan düğmeye döner; katman kapanırken (Çık, Esc ya da başka sekmeye geçiş) tam ekrandan da çıkılır.
+    const opener = document.activeElement
+    rootRef.current?.focus({ preventScroll: true })
     return () => {
       setTvModeActive(false)
       document.body.style.overflow = prev.body
       html.style.overflow = prev.html
       html.style.scrollbarGutter = prev.gutter
+      try { if (document.fullscreenElement) document.exitFullscreen?.() } catch { /* yoksay */ }
+      try { if (opener && opener.isConnected) opener.focus?.({ preventScroll: true }) } catch { /* yoksay */ }
     }
   }, [])
 
@@ -172,6 +179,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
       const tag = e.target?.tagName
       if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === 'Tab') { trapTab(e); return }
       if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); exit() }
       else if (e.key === 'ArrowRight') { e.preventDefault(); go(1) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) }
@@ -180,6 +188,20 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [poke, go, exit])
+
+  /** Tab / Shift+Tab katmanın denetimleri arasında döner — arkadaki (görünmeyen) uygulamaya geçmez. */
+  function trapTab(e) {
+    const root = rootRef.current
+    if (!root) return
+    const items = [...root.querySelectorAll('button:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+      .filter((el) => !el.closest('[hidden]'))
+    if (!items.length) { e.preventDefault(); root.focus(); return }
+    const first = items[0]
+    const last = items[items.length - 1]
+    const active = document.activeElement
+    if (e.shiftKey && (active === first || active === root || !root.contains(active))) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && (active === last || !root.contains(active))) { e.preventDefault(); first.focus() }
+  }
 
   const toggleFullscreen = async () => {
     try {
@@ -196,9 +218,9 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
 
   const btn = 'h-10 min-w-10'
   return (
-    <div data-slot="mydash-tv" data-controls={controls ? 'shown' : 'hidden'} data-page={cur + 1} data-pages={count}
-      role="region" aria-label={t('mydash.tv.region')}
-      className={cn('fixed inset-0 z-[1900] flex flex-col bg-background text-foreground', !controls && 'cursor-none')}
+    <div ref={rootRef} tabIndex={-1} data-slot="mydash-tv" data-controls={controls ? 'shown' : 'hidden'} data-page={cur + 1} data-pages={count}
+      role="dialog" aria-modal="true" aria-label={t('mydash.tv.region')}
+      className={cn('fixed inset-0 z-[1900] flex flex-col bg-background text-foreground outline-none', !controls && 'cursor-none')}
       onMouseMove={poke} onPointerDown={poke} onTouchStart={poke}>
       <header className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 transition-opacity sm:px-6',
         !controls && 'opacity-0 focus-within:opacity-100')} data-slot="mydash-tv-bar">

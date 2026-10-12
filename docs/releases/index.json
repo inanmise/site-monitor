@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-12T10:10:05Z",
+  "generatedAt": "2026-10-12T15:01:32Z",
   "repo": "inanmise/site-monitor",
-  "count": 736,
+  "count": 737,
   "releases": [
+    {
+      "version": "20.124.0",
+      "tag": "v20.124.0",
+      "releasedAt": "2026-10-12T15:01:25Z",
+      "commit": "10d2cad1e04ee2977521a2878e4964704382a608",
+      "prevVersion": "20.123.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "10d2cad1",
+          "subject": "ağ sertifikası hiyerarşisinin ham zincir okuması için test (CI JaCoCo sınıf eşiği)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "fd773635",
+          "subject": "ağ sertifikalarında tarayıcı gibi hiyerarşi + üçüncü inceleme turunun düzeltmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.123.2",
       "tag": "v20.123.2",

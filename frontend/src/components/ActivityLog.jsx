@@ -101,11 +101,19 @@ function ResultSummary({ row, t, className }) {
 const STATUSES = ['SUCCESS', 'WARNING', 'ERROR', 'UNKNOWN']
 const RANGES = ['today', '24h', '7d', 'all']
 
-/** range → {from,to} ISO (UTC, yyyy-MM-ddTHH:mm:ss) — backend string karşılaştırmasıyla uyumlu. */
-function rangeToFromTo(range) {
+/** İstanbul gününün başlangıcı (ms) — Europe/Istanbul sabit UTC+3, yaz saati yok (2026-10-12: "bugün" ve gün grupları
+ *  UTC / tarayıcı gece yarısı değil İstanbul gece yarısı; 00:00–03:00 arası etkinlik "bugün"de). */
+export function istanbulDayStartMs(now = Date.now()) {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(now))
+  return new Date(`${ymd}T00:00:00+03:00`).getTime()
+}
+
+/** range → {from,to} ISO (UTC, yyyy-MM-ddTHH:mm:ss) — backend string karşılaştırmasıyla uyumlu. Her istekte o anki zamanla
+ *  hesaplanır (canlı tazeleme "son 24 saat"i dondurmasın). */
+export function rangeToFromTo(range, now = Date.now()) {
   const iso = (d) => d.toISOString().slice(0, 19)
-  const now = Date.now()
-  if (range === 'today') { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return { from: iso(d), to: null } }
+  if (range === 'today') return { from: iso(new Date(istanbulDayStartMs(now))), to: null }
   if (range === '24h') return { from: iso(new Date(now - 24 * 3600 * 1000)), to: null }
   if (range === '7d')  return { from: iso(new Date(now - 7 * 24 * 3600 * 1000)), to: null }
   return { from: null, to: null }
@@ -174,7 +182,7 @@ export default function ActivityLog({ refreshTrigger }) {
   const [unfolded, setUnfolded] = useState(() => new Set())
   const groupedFeed = useMemo(() => {
     const out = []
-    const now = new Date(); const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const startToday = istanbulDayStartMs()
     const startYesterday = startToday - 86400000, startWeek = startToday - 6 * 86400000
     const groupOf = (iso) => { const ms = new Date(iso && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso).getTime()
       return !Number.isFinite(ms) ? 'older' : ms >= startToday ? 'today' : ms >= startYesterday ? 'yesterday' : ms >= startWeek ? 'week' : 'older' }
@@ -199,6 +207,7 @@ export default function ActivityLog({ refreshTrigger }) {
   // Süzgeç değişince sayfa 1 (değer karşılaştırmalı, mount'ta değil); API 0-tabanlı.
   const sp = useServerPagination({ listKey: 'activity-log', preset: 'page', resetDeps: [filters], apiBase: 0 })
   const [summary, setSummary] = useState(null)
+  const [summaryError, setSummaryError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(false)
   const [openId, setOpenId]   = useState(null)
@@ -207,19 +216,28 @@ export default function ActivityLog({ refreshTrigger }) {
   // Ortak yardımcı (utils/relativeTime.relTimeOrRaw — öneri 29): boş damga "—", çözülemeyen damga olduğu gibi; çıktı aynı.
   const rel = useCallback((iso) => relTimeOrRaw(iso, t), [t])
 
-  const params = useMemo(() => {
-    const { from, to } = rangeToFromTo(filters.range)
-    return { type: filters.types.join(','), status: filters.status, from, to, q: filters.q }
-  }, [filters])
+  // Aralık (from/to) BURADA değil, her istekte hesaplanır: 30 sn'lik canlı tazeleme ve Yenile hep "şimdi"ye göre süzer.
+  const baseParams = useMemo(() => ({ type: filters.types.join(','), status: filters.status, q: filters.q }), [filters])
 
   // Yarış koruması: sayfa/süzgeç hızlı değişirse yalnız SON isteğin yanıtı uygulanır.
   const loadSeq = useRef(0)
+  const summaryKey = useRef(null)   // özetin ait olduğu süzgeç — sayfa değişimi özeti SİLMEZ (özet sayfadan bağımsız)
   const { apiPage, pageSize } = sp
   const load = useCallback((silent) => {
     const seq = ++loadSeq.current
+    const params = { ...baseParams, ...rangeToFromTo(filters.range) }
+    const key = JSON.stringify([baseParams, filters.range])
+    const filterChanged = summaryKey.current !== key
+    summaryKey.current = key
     if (!silent) setLoading(true)
+    if (filterChanged) {
+      // Süzgeç değişti: önceki süzgecin sayaçları / grafiği yeni liste yüklenirken GÖSTERİLMEZ (2026-10-12). Sayfa
+      // değişimi / Yenile aynı süzgecin özetini yeni yanıt gelene kadar tutar.
+      setSummary(null)
+      setSummaryError(false)
+    }
     setError(false)
-    api.getActivity({ ...params, page: apiPage, size: pageSize })
+    const list = api.getActivity({ ...params, page: apiPage, size: pageSize })
       .then((res) => {
         if (seq !== loadSeq.current) return
         if (res?.success) { setData(res.data); sp.bind(res) }
@@ -227,9 +245,17 @@ export default function ActivityLog({ refreshTrigger }) {
       })
       .catch(() => { if (seq === loadSeq.current) setError(true) })
       .finally(() => { if (seq === loadSeq.current) setLoading(false) })
-    // Özet de aynı sıra damgasıyla (2026-10-09): eski süzgecin geç gelen özeti yeni listenin sayaçlarını ezmesin
-    api.getActivitySummary(params).then((res) => { if (res?.success && seq === loadSeq.current) setSummary(res) }).catch(() => {})
-  }, [params, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Özet de aynı sıra damgasıyla (2026-10-09): eski süzgecin geç gelen özeti yeni listenin sayaçlarını ezmesin. Hata
+    // durumunda sayaçlar "0" değil "—" ve grafik hata satırı gösterir (2026-10-12).
+    const sum = api.getActivitySummary(params)
+      .then((res) => {
+        if (seq !== loadSeq.current) return
+        if (res?.success) { setSummary(res); setSummaryError(false) } else setSummaryError(true)
+      })
+      .catch(() => { if (seq === loadSeq.current) setSummaryError(true) })
+    // İkisi bitene kadar söz döner: canlı tazeleme (useVisibleInterval) süren istek varken YENİSİNİ başlatmaz
+    return Promise.allSettled([list, sum])
+  }, [baseParams, filters.range, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Süzgeç değişince URL'yi güncelle + açık detayı kapat; sayfa sıfırlamasını useServerPagination yapar.
   useEffect(() => { writeParams(filters); setOpenId(null) }, [filters])
@@ -237,7 +263,7 @@ export default function ActivityLog({ refreshTrigger }) {
   useEffect(() => { if (refreshTrigger) load(true) }, [refreshTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Görünür sekmede, 1. sayfadayken sessiz otomatik tazeleme (gizli sekmede durur).
-  useVisibleInterval(() => { if (sp.page === 1) load(true) }, 30000, false)
+  useVisibleInterval(() => (sp.page === 1 ? load(true) : undefined), 30000, false)
 
   const toggleType = (key) =>
     setFilters((f) => ({ ...f, types: f.types.includes(key) ? f.types.filter((x) => x !== key) : [...f.types, key] }))
@@ -261,9 +287,9 @@ export default function ActivityLog({ refreshTrigger }) {
   // kartın etkin olduğu duyulmazdı.
   const statItems = [
     ['ALL', summary?.total ?? '—', t('act.sum.total'), Activity, 'total'],
-    ['SUCCESS', summary?.success_count ?? 0, t('act.st.SUCCESS'), CheckCircle, 'valid'],
-    ['WARNING', summary?.warning ?? 0, t('act.st.WARNING'), AlertTriangle, 'warning'],
-    ['ERROR', summary?.error ?? 0, t('act.st.ERROR'), XCircle, 'critical'],
+    ['SUCCESS', summary ? summary.success_count ?? 0 : '—', t('act.st.SUCCESS'), CheckCircle, 'valid'],
+    ['WARNING', summary ? summary.warning ?? 0 : '—', t('act.st.WARNING'), AlertTriangle, 'warning'],
+    ['ERROR', summary ? summary.error ?? 0 : '—', t('act.st.ERROR'), XCircle, 'critical'],
   ].map(([key, value, label, Icon, cls]) => {
     const on = (filters.status || 'ALL') === key
     return { key, value, label, Icon, cls, hint: t('act.sumFilterHint'),
@@ -545,8 +571,8 @@ export default function ActivityLog({ refreshTrigger }) {
       <MonitorStatsBar items={statItems} activeFilter={filters.status || 'ALL'} onStatClick={onStat} className="mb-0" />
 
       {/* Zaman çizelgesi — seçili aralıkta sonuç dağılımı + son aktivite + canlı göstergesi */}
-      <ActivityTimeline series={summary?.series} loading={!summary} lastActivity={summary?.last_activity}
-        live={sp.page === 1 && !error} />
+      <ActivityTimeline series={summary?.series} loading={!summary && !summaryError} failed={!summary && summaryError} lastActivity={summary?.last_activity}
+        live={sp.page === 1 && !error && !(!summary && summaryError)} />
 
       {/* Süzgeç kartı — aralık / durum / arama + eylemler; tür çipleri (dar kapta katlanır); etkin süzgeç çipleri */}
       <div ref={setFilterEl} className="min-w-0">

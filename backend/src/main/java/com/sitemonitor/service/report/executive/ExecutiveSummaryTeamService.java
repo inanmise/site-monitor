@@ -163,20 +163,33 @@ public class ExecutiveSummaryTeamService {
     /**
      * Birden çok takımın alıcıları TEK okumayla (zamanlanmış koşu: N açık takım için üyeler / müdürler bir kez okunur).
      * Silinmiş ya da PASİF takım sonuçta yer almaz.
+     *
+     * <p>GÖNDERİM yolu (2026-10-12): takımlar, ayarlar, üyeler ya da müdürler okunamazsa {@link IllegalStateException}
+     * — varsayılan ayarlarla (seçili üyeler / ek adresler düşmüş) ya da eksik kişi listesiyle yanlış kişilere gönderip
+     * ayı "gönderildi" diye kapatmak yerine o tur hiç gönderilmez; kayıt açılmadığı için telafi bir saat sonra yeniden dener.
      */
     public Map<Long, Recipients> recipientsFor(Collection<Long> teamIds) {
         Map<Long, Recipients> out = new LinkedHashMap<>();
-        List<Team> teams = teams(teamIds);
-        teams.removeIf(t -> Boolean.FALSE.equals(t.getActive()));
+        List<Team> teams;
+        try {
+            teams = new ArrayList<>();
+            if (teamIds != null && !teamIds.isEmpty()) teams.addAll(teamRepo.findAllById(new LinkedHashSet<>(teamIds)));
+        } catch (Exception e) {
+            throw new IllegalStateException("Takım yönetici özeti: takımlar okunamadı — gönderilmedi", e);
+        }
+        teams.removeIf(t -> t == null || t.getId() == null || Boolean.FALSE.equals(t.getActive()));
         if (teams.isEmpty()) return out;
         List<Long> ids = teams.stream().map(Team::getId).toList();
         Map<Long, ExecutiveSummaryTeamSettings> rows = new HashMap<>();
         try {
             for (ExecutiveSummaryTeamSettings r : settingsRepo.findAllById(ids)) rows.put(r.getTeamId(), r);
         } catch (Exception e) {
-            log.warn("Takım yönetici özeti: ayarlar okunamadı: {}", e.toString());
+            throw new IllegalStateException("Takım yönetici özeti: ayarlar okunamadı — gönderilmedi", e);
         }
         Snapshot snap = snapshot(ids);
+        if (!snap.complete()) {
+            throw new IllegalStateException("Takım yönetici özeti: takım üyeleri ya da müdürler okunamadı — gönderilmedi");
+        }
         for (Team t : teams) out.put(t.getId(), resolve(toSettings(t.getId(), rows.get(t.getId())), t, snap));
         return out;
     }
@@ -191,16 +204,20 @@ public class ExecutiveSummaryTeamService {
         }
     }
 
-    /** Ayar ekranı / liste için toplu okunmuş kullanıcı verisi (takım başına sorgu yok). */
+    /**
+     * Ayar ekranı / liste için toplu okunmuş kullanıcı verisi (takım başına sorgu yok). {@code complete=false}: üyeler,
+     * müdürler ya da bir müdürün yönetim kapsamı okunamadı — ekran yine çizilir, gönderim YAPILMAZ.
+     */
     record Snapshot(Map<Long, AppUser> usersById, Map<Long, List<AppUser>> membersByTeam,
-                    Map<Long, List<AppUser>> adminsByTeam) { }
+                    Map<Long, List<AppUser>> adminsByTeam, boolean complete) { }
 
     Snapshot snapshot(Collection<Long> teamIds) {
         Map<Long, AppUser> byId = new HashMap<>();
         Map<Long, List<AppUser>> members = new HashMap<>();
         Map<Long, List<AppUser>> admins = new HashMap<>();
         Set<Long> scope = new LinkedHashSet<>(teamIds == null ? List.of() : teamIds);
-        if (scope.isEmpty()) return new Snapshot(byId, members, admins);
+        if (scope.isEmpty()) return new Snapshot(byId, members, admins, true);
+        boolean complete = true;
         try {
             for (AppUser u : userRepo.findMembersOfTeams(scope)) {
                 if (u == null || u.getId() == null) continue;
@@ -208,6 +225,7 @@ public class ExecutiveSummaryTeamService {
                 for (Long t : teamsOf(u)) if (scope.contains(t)) members.computeIfAbsent(t, k -> new ArrayList<>()).add(u);
             }
         } catch (Exception e) {
+            complete = false;
             log.warn("Takım yönetici özeti: takım üyeleri okunamadı: {}", e.toString());
         }
         try {
@@ -219,15 +237,19 @@ public class ExecutiveSummaryTeamService {
                 try {
                     manage = userService.computeManageTeamIds(u);
                 } catch (Exception e) {
-                    manage = null;
+                    // Okunamayan kapsam "global" SAYILMAZ (sessizce alıcıdan düşerdi) — anlık görüntü eksik işaretlenir.
+                    complete = false;
+                    log.warn("Takım yönetici özeti: {} müdürünün yönetim kapsamı okunamadı: {}", u.getUsername(), e.toString());
+                    continue;
                 }
                 if (manage == null) continue;           // global → kurum özetinin alıcısı, takım müdürü sayılmaz
                 for (Long t : manage) if (t != null && scope.contains(t)) admins.computeIfAbsent(t, k -> new ArrayList<>()).add(u);
             }
         } catch (Exception e) {
+            complete = false;
             log.warn("Takım yönetici özeti: müdürler okunamadı: {}", e.toString());
         }
-        return new Snapshot(byId, members, admins);
+        return new Snapshot(byId, members, admins, complete);
     }
 
     private static List<Long> teamsOf(AppUser u) {

@@ -2235,18 +2235,67 @@ class SchedulerServiceTest {
         assertThat(Thread.interrupted()).as("kesme bayrağı geri konur").isTrue();
     }
 
+    /** {@code getDatabaseProductName} = {@code product}; {@code product == null} → bağlantı hatası. */
+    private static javax.sql.DataSource dataSource(String product) throws Exception {
+        javax.sql.DataSource ds = mock(javax.sql.DataSource.class);
+        if (product == null) {
+            when(ds.getConnection()).thenThrow(new java.sql.SQLException("bağlantı yok"));
+            return ds;
+        }
+        java.sql.Connection c = mock(java.sql.Connection.class);
+        java.sql.DatabaseMetaData md = mock(java.sql.DatabaseMetaData.class);
+        when(md.getDatabaseProductName()).thenReturn(product);
+        when(c.getMetaData()).thenReturn(md);
+        when(ds.getConnection()).thenReturn(c);
+        return ds;
+    }
+
     @Test
-    @DisplayName("2026-10-12: ping özet yeniden hesabı tek seferlik — nişan varsa hiçbir şey; PostgreSQL değilse nişan yazılır, özet sorgusu koşmaz")
-    void rebuildPingRollupsOnce_markerGated() {
+    @DisplayName("2026-10-12: ping özet yeniden hesabı tek seferlik — nişan varsa hiçbir şey; PostgreSQL değilse onarım + nişan, özet sorgusu koşmaz")
+    void rebuildPingRollupsOnce_markerGated() throws Exception {
+        javax.sql.DataSource h2 = dataSource("H2");
+        when(jdbcTemplate.getDataSource()).thenReturn(h2);
         when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
                 .thenReturn(1);
         scheduler.rebuildPingRollupsOnce();
         verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+        verify(jdbcTemplate, never()).update(SchedulerService.PING_DECIMAL_LOSS_REPAIR_SQL);
         when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
                 .thenReturn(0);
         scheduler.rebuildPingRollupsOnce();
         verify(jdbcTemplate, never()).queryForObject(contains("MIN(checked_at) FROM ping_checks"), eq(String.class));
+        verify(jdbcTemplate).update(SchedulerService.PING_DECIMAL_LOSS_REPAIR_SQL);
         verify(jdbcTemplate).update(startsWith("INSERT INTO schema_patch_markers"), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY), anyString(), eq(0));
+    }
+
+    @Test
+    @DisplayName("2026-10-12: veritabanı türü okunamazsa (bağlantı hatası) nişan YAZILMAZ — iş kalıcı olarak atlanmaz; onarım hatasında da nişan yok")
+    void rebuildPingRollupsOnce_unknownDialectRetries() throws Exception {
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(0);
+        javax.sql.DataSource broken = dataSource(null);
+        when(jdbcTemplate.getDataSource()).thenReturn(broken);
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+        verify(jdbcTemplate, never()).update(SchedulerService.PING_DECIMAL_LOSS_REPAIR_SQL);
+
+        javax.sql.DataSource h2 = dataSource("H2");
+        when(jdbcTemplate.getDataSource()).thenReturn(h2);
+        when(jdbcTemplate.update(SchedulerService.PING_DECIMAL_LOSS_REPAIR_SQL)).thenThrow(new org.springframework.dao.QueryTimeoutException("zaman aşımı"));
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: nişan kilit İÇİNDE yeniden okunur — kilidi alırken başka pod bitirdiyse iş yinelenmez; kilit 120 dk")
+    void rebuildPingRollupsOnce_rechecksMarkerInsideLock() throws Exception {
+        when(jdbcTemplate.queryForObject(contains("schema_patch_markers"), eq(Integer.class), eq(SchedulerService.PING_ROLLUP_REBUILD_KEY)))
+                .thenReturn(0, 1);
+        scheduler.rebuildPingRollupsOnce();
+        verify(jdbcTemplate, never()).getDataSource();                       // tür okunmadan döndü
+        verify(jdbcTemplate, never()).update(SchedulerService.PING_DECIMAL_LOSS_REPAIR_SQL);
+        verify(jdbcTemplate, never()).update(startsWith("INSERT INTO schema_patch_markers"), any(), any(), any());
+        assertThat(SchedulerService.PING_ROLLUP_REBUILD_LOCK_MINUTES).isGreaterThanOrEqualTo(60);
     }
 
     // ── Elle kontrol sweep kararlarını TÜKETMEZ (2026-09-29) ─────────────────────────────────

@@ -103,6 +103,29 @@ export function ActionRow({ action, today, canWrite, onStatus, onEdit, onDelete,
   )
 }
 
+/** Kullanıcı rehberi → seçici seçenekleri: yalnız AKTİF hesaplar (sunucu pasif sahibi 400 ile reddeder), A→Z (Türkçe). */
+export function activePeople(list) {
+  return (Array.isArray(list) ? list : []).filter((p) => p && p.active !== false)
+    .map((p) => ({ value: String(p.id), label: p.display_name || p.username || String(p.id) }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'tr', { sensitivity: 'base' }))
+}
+
+/**
+ * Sahip seçenekleri: "sahipsiz" + aktif kişiler; kayıtlı sahip listede yoksa (pasifleşti) kendi adıyla "(pasif)" etiketli
+ * eklenir — seçici boş görünüp sahip sessizce düşmüş sanılmasın; değiştirilmezse sunucu onu korur.
+ */
+export function ownerOptions(people, initial, t) {
+  const known = Array.isArray(people)
+  const list = [{ value: '', label: t('pm.noOwner') }, ...(known ? people : [])]
+  const cur = initial?.owner_user_id == null ? '' : String(initial.owner_user_id)
+  if (cur && !list.some((o) => o.value === cur)) {
+    // Rehber henüz yüklenmedi / okunamadı (null) → bilinmiyor: kayıtlı adıyla, "(pasif)" DENMEZ (2026-10-12)
+    const name = initial.owner_name || '—'
+    list.push({ value: cur, label: known ? t('pm.ownerInactive', name) : name })
+  }
+  return list
+}
+
 /**
  * Aksiyon ekleme / düzenleme formu (satır içi kart). Alan hataları alanın altında (useFormErrors) — sunucunun
  * `fields` yanıtı da aynı yere düşer. `people`: [{value, label}] (kullanıcı rehberi).
@@ -141,7 +164,7 @@ export function ActionForm({ initial, people, onSubmit, onCancel, busy }) {
       <Field label={t('pm.aOwner')} hint={t('pm.aOwnerHint')} {...fe.fieldProps('owner_user_id')} className="mb-0">
         {() => (
           <div data-touch-picker="">
-            <SearchableSelect value={f.owner_user_id} options={[{ value: '', label: t('pm.noOwner') }, ...(people || [])]}
+            <SearchableSelect value={f.owner_user_id} options={ownerOptions(people, initial, t)}
               onChange={(v) => set('owner_user_id', v ?? '')} placeholder={t('pm.pickOwner')} ariaLabel={t('pm.aOwner')} />
           </div>
         )}

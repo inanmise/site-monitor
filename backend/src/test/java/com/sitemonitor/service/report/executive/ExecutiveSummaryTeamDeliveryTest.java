@@ -216,6 +216,21 @@ class ExecutiveSummaryTeamDeliveryTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: alıcılar okunamazsa takım özetleri o turda HİÇ gönderilmez, kayıt açılmaz (telafi yeniden dener); elle → RECIPIENTS_UNAVAILABLE")
+    void recipientsUnavailableSendsNothing() {
+        when(teamService.recipientsFor(any())).thenThrow(new IllegalStateException("Takım yönetici özeti: ayarlar okunamadı"));
+        svc.runTeams(YearMonth.of(2026, 9), "SCHEDULED", false);
+        verify(teamRepo, never()).saveAndFlush(any());
+        verify(summaryService, never()).compute(any(), anyLong(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+
+        ExecutiveSummaryDeliveryService.Result r = svc.sendTeamNow(5L, YearMonth.of(2026, 9), "yonetici");
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE);
+        verify(teamRepo, never()).saveAndFlush(any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
+    }
+
+    @Test
     @DisplayName("takım yolu kurulmamışsa (bean yok) kurum yolu eskisi gibi; takım çağrısı yapılmaz")
     void withoutTeamParts() {
         ExecutiveSummaryDeliveryService plain = new ExecutiveSummaryDeliveryService(summaryService,

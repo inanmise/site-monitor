@@ -766,6 +766,16 @@ export const api = {
   // Canlı TLS kontrolü (OCSP/CRL/HSTS dahil) — sunucu tarafı süre sınırlı; istemci eskisi gibi beklemeyi kesmez.
   checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
   checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
+  // Ağ sertifikasının tarayıcı gibi hiyerarşisi (2026-10-12): canlı el sıkışma (sunucu tarafı süre sınırlı), kök güven
+  // deposundan; salt okuma. 429 RATE_LIMITED / 502 HIERARCHY_UNREACHABLE / 409 MANUAL_CERT gövdeyle döner.
+  // `route` (isteğe bağlı): SSL sekmesinin başarılı önizlemesinin yolu {tlsMode, via} — sunucu yalnız browser|default ve proxy|direct kabul eder.
+  certHierarchy: (domain, route) => {
+    const q = new URLSearchParams()
+    if (route?.tlsMode) q.set('tls_mode', route.tlsMode)
+    if (route?.via) q.set('via', route.via)
+    const qs = q.toString()
+    return request(`/certificates/${encodeURIComponent(domain)}/hierarchy${qs ? `?${qs}` : ''}`, { timeoutMs: 0, withStatus: true })
+  },
   // Envanter formundaki "Test et": YAZILAN degerlerle canli el sikismasi, KAYIT YOK.
   // check-preview'dan farki portu/TLS modunu/proxy'yi envanterden degil GOVDEDEN almasi —
   // henuz kaydedilmemis bir kayitta formdaki 8443 ancak boyle test edilebiliyor.

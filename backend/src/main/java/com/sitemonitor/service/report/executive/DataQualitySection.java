@@ -61,14 +61,10 @@ public class DataQualitySection implements ExecutiveSummarySection {
 
     @Override
     public SectionResult compute(ExecutiveSummaryContext ctx) {
-        DataQualityService.MonthEnds me;
-        try {
-            // İki günün BÜTÜN kova puanları (kurum + takımlar) — koşu boyu paylaşılır, takım kendi satırını okur
-            me = ctx.shared("data-quality.month_ends|" + ctx.month(), () -> quality.monthEnds(ctx.month().atDay(1)));
-        } catch (Exception e) {
-            log.debug("Yönetici özeti: veri kalitesi görüntüleri okunamadı: {}", e.toString());
-            me = DataQualityService.MonthEnds.NONE;
-        }
+        // İki günün BÜTÜN kova puanları (kurum + takımlar) — koşu boyu paylaşılır, takım kendi satırını okur. Okuma hatası
+        // bölümü ERROR yapar (2026-10-12): "ay sonu görüntüsü yok" diye yanlış bir karşılaştırma notu üretmesin.
+        DataQualityService.MonthEnds me = ctx.shared("data-quality.month_ends|" + ctx.month(),
+                () -> quality.monthEnds(ctx.month().atDay(1)));
         if (me == null) me = DataQualityService.MonthEnds.NONE;
         if (ctx.teamScoped()) return evaluateTeam(ctx, quality.teamDigest(ctx.scopeTeamId()), me);
         DataQualityService.Digest d = quality.digest();

@@ -17,6 +17,11 @@ import { previewTarget } from './certmodal/certHierarchyModel.js'
 
 // Tarayıcı gibi hiyerarşi (2026-10-07) yalnız manuel kayıtta ve istenince yüklenir — ağ satırının paketine girmez.
 const ManualCertHierarchy = lazy(() => import('./certmodal/ManualCertHierarchy.jsx'))
+// Ağ sertifikasının hiyerarşisi (2026-10-12) — aynı desen: yalnız seçilince ayrı parça olarak yüklenir
+const NetworkCertHierarchy = lazy(() => import('./certmodal/NetworkCertHierarchy.jsx'))
+// Hiyerarşi sonuçları önizleme yanıtına (nesne kimliği) bağlı — MODÜL düzeyinde: pencere sekmeleri arasında gidip gelmek
+// paneli yeniden kurar ama aynı önizleme için yeniden el sıkışma yapılmaz; önizleme nesnesi düşünce kayıt da çöpe gider.
+const hierarchyCache = new WeakMap()
 
 /**
  * Sertifika penceresi → "SSL Kontrol" sekmesi (2026-09-28 shadcn yeniden tasarım). Canlı el sıkışmasının
@@ -44,7 +49,12 @@ const ManualCertHierarchy = lazy(() => import('./certmodal/ManualCertHierarchy.j
  * varsayılan) | "Hiyerarşi (tarayıcı gibi)" seçici (ui/SegmentedControl). Hiyerarşi, güncel sürümün zincirini
  * `GET /manual-certs/{id}/versions/{vid}/chain` ile çeker (önizlemenin `inventory_id` + `manual_version_id`'si; yoksa
  * kayıt alan adından) ve certmodal/CertHierarchyView ile kök → ara → yaprak çizer. Seçim `chainView` / `onChainViewChange`
- * ile dışarıda tutulabilir (sertifika penceresi oturum boyunca hatırlar); verilmezse bileşen içi. Ağ satırında seçici YOK.
+ * ile dışarıda tutulabilir (sertifika penceresi oturum boyunca hatırlar); verilmezse bileşen içi.
+ *
+ * AĞ satırında hiyerarşi (2026-10-12, kullanıcı isteği: "otomatik çekilen sertifikalarda da aynı gösterim, mevcut işlevleri
+ * bozmadan"): `networkHierarchyDomain` verilirse (sertifika penceresi, envanter kaydı — ad-hoc önizlemede verilmez) aynı
+ * seçici ağ satırında da çizilir; "Hiyerarşi" `GET /certificates/{domain}/hierarchy` ile sunucunun sunduğu zinciri okur,
+ * kökü güven deposundan tamamlar (certmodal/NetworkCertHierarchy). Varsayılan yine "Zincir"; prop yoksa ağ satırı eskisi gibi.
  */
 
 const VERDICT = {
@@ -243,7 +253,40 @@ function UploadChainArea({ data, chain, view, onViewChange, t }) {
   )
 }
 
-export default function SslCheckerPanel({ data, onRecheck, rechecking = false, recheckError = null, chainView, onChainViewChange }) {
+/**
+ * Ağ kaydının zincir bölümü (2026-10-12): aynı seçici + seçilen görünüm. Hiyerarşi sonucu önizleme verisine bağlı önbellekte
+ * (WeakMap) tutulur — görünümler arasında gidip gelmek sunucuya yeniden bağlanmaz.
+ */
+/** Önizlemenin başarılı yolu — hiyerarşi aynı yoldan okunur (kontrolün TLS kipi / proxy geri düşüşüyle başaran hostlar). */
+function routeOf(data) {
+  const r = {}
+  if (data?.tls_mode_used === 'browser' || data?.tls_mode_used === 'default') r.tlsMode = data.tls_mode_used
+  if (data?.via === 'proxy' || data?.via === 'direct') r.via = data.via
+  return Object.keys(r).length ? r : null
+}
+
+function NetworkChainArea({ data, chain, view, onViewChange, domain, cache, t }) {
+  return (
+    <div data-slot="ssl-chain-area" data-view={view} className="flex min-w-0 flex-col gap-3">
+      <SegmentedControl value={view} onChange={onViewChange} ariaLabel={t('chier.viewToggle')}
+        className="max-w-full self-start" itemClassName="max-sm:h-10 pointer-coarse:h-10"
+        options={[
+          { value: 'chain', label: t('chier.view.chain'), icon: ListOrdered },
+          { value: 'hierarchy', label: t('chier.view.hierarchy'), icon: ListTree },
+        ]} />
+      {view === 'hierarchy' ? (
+        <Suspense fallback={<LoadingBlock label={t('chier.net.loading')} fullWidth />}>
+          <NetworkCertHierarchy domain={domain} cache={cache} cacheKey={data} route={routeOf(data)} />
+        </Suspense>
+      ) : (
+        <SslChainView chain={chain} trustStatus={data.trust_status} />
+      )}
+    </div>
+  )
+}
+
+export default function SslCheckerPanel({ data, onRecheck, rechecking = false, recheckError = null, chainView, onChainViewChange,
+  networkHierarchyDomain = null }) {
   const t = useT()
   // Manuel kayıtta zincir görünümü: dışarıdan denetlenebilir (pencere oturum boyunca hatırlar), yoksa bileşen içi
   const [ownView, setOwnView] = useState('chain')
@@ -277,7 +320,10 @@ export default function SslCheckerPanel({ data, onRecheck, rechecking = false, r
         <SslCheckGroups groups={groups} />
         {upload
           ? <UploadChainArea data={data} chain={chain} view={view} onViewChange={setView} t={t} />
-          : <SslChainView chain={chain} trustStatus={data.trust_status} />}
+          : networkHierarchyDomain
+            ? <NetworkChainArea data={data} chain={chain} view={view} onViewChange={setView} domain={networkHierarchyDomain}
+                cache={hierarchyCache} t={t} />
+            : <SslChainView chain={chain} trustStatus={data.trust_status} />}
       </div>
       {/* Dosyadan yüklenen sertifikada bağlantı yok — ayrıntı bölümü hiç çizilmez */}
       {!upload && <ConnectionDetails data={data} t={t} />}

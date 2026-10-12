@@ -38,4 +38,12 @@ describe('HistoryDetailSheet — kaynak alarm', () => {
     render(<HistoryDetailSheet record={rec()} onClose={() => {}} />)
     expect(backLink()).toBeNull()
   })
+
+  it('2026-10-12: postmortem özeti okunmamışsa (bağlantı / hata) "yok" DEMEZ, açmaya çağırır; okunmuşsa "henüz yok"', () => {
+    const { unmount } = render(<HistoryDetailSheet record={rec()} onClose={() => {}} onPostmortem={() => {}} />)
+    expect(document.querySelector('[data-slot="ih-postmortem-empty"]').textContent).toMatch(/^(Postmortem raporunu ve aksiyon maddelerini görmek için açın\.|Open to see the postmortem report and the action items\.)$/)
+    unmount()
+    render(<HistoryDetailSheet record={rec({ pm_summary: true })} onClose={() => {}} onPostmortem={() => {}} />)
+    expect(document.querySelector('[data-slot="ih-postmortem-empty"]').textContent).toMatch(/^(Henüz postmortem raporu ya da aksiyon yok\.|No postmortem report or action items yet\.)$/)
+  })
 })

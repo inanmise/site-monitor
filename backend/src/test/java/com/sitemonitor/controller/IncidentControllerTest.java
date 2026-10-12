@@ -36,6 +36,7 @@ class IncidentControllerTest {
     @MockitoBean com.sitemonitor.service.IncidentNotificationService notificationService;
     /** Alarm bağı doğrulaması (2026-10-01) — bu dosyanın senaryoları alert_event_id göndermez; davranışı IncidentAlertLinkControllerTest'te. */
     @MockitoBean com.sitemonitor.service.IncidentAlertLinkService alertLinks;
+    @MockitoBean com.sitemonitor.service.incident.IncidentPostmortemService postmortems;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
@@ -245,6 +246,25 @@ class IncidentControllerTest {
 
         mvc.perform(get("/api/incidents/images/9").session(adminSession()))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: ayrıntı ucu da postmortem özetini taşır (bağlantıyla açılan kart 'postmortem yok' demesin); okunduğu işaretlenir")
+    void getCarriesPostmortemSummary() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.get(1L)).thenReturn(sample());
+        when(postmortems.summaries(any())).thenReturn(java.util.Map.of(1L, new java.util.LinkedHashMap<>(java.util.Map.of(
+                "postmortem_status", "PUBLISHED", "actions_open", 2, "actions_total", 3))));
+        mvc.perform(get("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postmortem_status").value("PUBLISHED"))
+                .andExpect(jsonPath("$.data.actions_open").value(2))
+                .andExpect(jsonPath("$.data.pm_summary").value(true));
+        // Özet okunamazsa ayrıntı yine döner, işaret YOK (istemci "yok" demez, "açın" der)
+        when(postmortems.summaries(any())).thenThrow(new IllegalStateException("db"));
+        mvc.perform(get("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pm_summary").doesNotExist());
     }
 
     private IncidentRecord sample() {

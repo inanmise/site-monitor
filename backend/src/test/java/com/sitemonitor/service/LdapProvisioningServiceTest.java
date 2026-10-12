@@ -144,6 +144,33 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: müdür AD'de aynı adlı YEREL hesaba (ör. bootstrap admin) çıkarsa o hesaba DOKUNULMAZ ve bağlanmaz; astın girişi düşmez")
+    void managerPathNeverTouchesLocalAccount() {
+        AppUser local = new AppUser();
+        local.setId(1L);
+        local.setUsername("ADMIN");
+        local.setAuthSource("LOCAL");
+        local.setSystemRole("ADMIN");
+        local.setPasswordHash("$2a$10$sahte-hash");
+        local.setDisplayName("Yerel Yönetici");
+        when(userRepo.findByUsername("ADMIN")).thenReturn(Optional.of(local));
+        when(directory.findOne("cn", "77777")).thenReturn(Optional.of(Map.of(
+                "sAMAccountName", "admin", "displayName", "AD'deki Başka Kişi", "cn", "77777")));
+        Map<String, Object> attrs = Map.of("cn", "80003", "displayName", "Ast Kişi",
+                "extensionAttribute4", "CN=77777,OU=Staff,DC=example,DC=com");
+
+        AppUser u = service.provisionFromAd("ast1", "CN=ast1,DC=example,DC=com", attrs);
+
+        assertThat(u.getManagerSicil()).isEqualTo("77777");
+        assertThat(u.getManagerId()).as("yerel hesap müdür olarak bağlanmaz").isNull();
+        assertThat(local.getPasswordHash()).as("yerel parola silinmez").isEqualTo("$2a$10$sahte-hash");
+        assertThat(local.getSystemRole()).isEqualTo("ADMIN");
+        assertThat(local.getDisplayName()).isEqualTo("Yerel Yönetici");
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).save(local);
+        assertThat(LdapProvisioningService.isLdapAccount(local)).isFalse();
+    }
+
+    @Test
     @DisplayName("Faz 3b: recursively-provisioned manager (müdür) → systemRole ADMIN")
     void recursiveManager_becomesAdmin() {
         when(directory.findOne("cn", "99999")).thenReturn(Optional.of(Map.of(
