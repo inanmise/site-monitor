@@ -74,7 +74,8 @@ describe('7/24 rozeti + süzgeç', () => {
     expect(document.querySelector('[data-slot="alert-noc-filter"]')).toHaveAttribute('aria-pressed', 'true')
     const chip = document.querySelector('[data-slot="active-filters"] [data-filter="noc"]')
     expect(chip).toHaveTextContent('Sent to 24/7')
-    await waitFor(() => expect(window.location.search).toMatch(/noc=sent/))
+    // URL eşitlemesi gecikmeli yazar — ağır yükte (tam koşu) 1 sn yetmiyordu
+    await waitFor(() => expect(window.location.search).toMatch(/noc=sent/), { timeout: 5000 })
     fireEvent.click(within(chip).getByRole('button', { name: /Sent to 24\/7/ }))
     await waitFor(() => expect(listCalls().at(-1).noc).toBeUndefined())
   })

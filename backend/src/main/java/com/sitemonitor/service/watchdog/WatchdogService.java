@@ -56,6 +56,14 @@ public class WatchdogService {
     /** Veritabanına yazılamayan turlarda (DB çöküşü) pod başına durum. */
     private final Map<String, WatchdogState> memory = new ConcurrentHashMap<>();
 
+    /**
+     * Kesintide bu pod'un DUYURDUĞU ama kayıtlı satırı henüz "sağlıklı" görünmeyen sorunlar (inceleme 6): kayıtlı satır
+     * durum OK ama son ölçüm doğrulanmamış hata / bilinmiyor iken "düzeldi" erken gönderilmez, ama bellek budanınca da
+     * kaybolmaz — her turda yeniden bakılır: satır sağlıklıysa RECOVER, satır PROBLEM'e döndüyse sorun artık o satırın
+     * (öbür pod onu duyurur ve kapatır), başka pod düzelmeyi duyurduysa düşer. Kontrol anahtarı başına bir giriş (sınırlı).
+     */
+    private final Map<String, WatchdogState> pendingRecoveries = new ConcurrentHashMap<>();
+
     @Value("${site.monitor.watchdog.interval-ms:60000}")
     private long intervalMs = 60_000;
 
@@ -139,10 +147,25 @@ public class WatchdogService {
             memory.entrySet().removeIf(en -> {
                 WatchdogState stored = states.get(en.getKey());
                 if (stored == null || newer(en.getValue().getEvaluatedAt(), stored.getEvaluatedAt())) return false;
-                if (announcedProblem(en.getValue()) && !"PROBLEM".equals(stored.getStatus())
-                        && !recoveryAnnounced(stored, en.getValue())) orphans.add(stored);
+                // "Düzeldi" yalnız kayıtlı satır SAĞLIKLIYKEN (OK; NA da OK yazılır) — durumsuz / bilinmeyen satır iyileşme
+                // sayılmaz (inceleme 4: eskiden PROBLEM olmayan her şey, ör. hiç değerlendirilmemiş satır, RECOVER gönderiyordu).
+                // Henüz sağlıklı görünmüyorsa bekleme listesine alınır (inceleme 6) — budanınca kaybolmaz.
+                if (announcedProblem(en.getValue()) && !recoveryAnnounced(stored, en.getValue())) {
+                    pendingRecoveries.put(en.getKey(), en.getValue());
+                }
                 return true;
             });
+            for (java.util.Iterator<Map.Entry<String, WatchdogState>> it = pendingRecoveries.entrySet().iterator(); it.hasNext();) {
+                Map.Entry<String, WatchdogState> en = it.next();
+                WatchdogState stored = states.get(en.getKey());
+                if (stored == null) continue;                                   // satır yok — bekler
+                if ("PROBLEM".equals(stored.getStatus()) || recoveryAnnounced(stored, en.getValue())) {
+                    it.remove();                                                // sorun artık kayıtlı satırın / düzelme duyuruldu
+                } else if (storedHealthy(stored)) {
+                    orphans.add(stored);
+                    it.remove();
+                }
+            }
             if (!orphans.isEmpty()) recoverOrphans(orphans, now);
             // Yalnız KAYITLI satırlara bakılır: bu pod'un DB kesintisindeki yerel değerlendirmesi "yakın tur" sayılmaz.
             if (!manual && evaluatedRecently(states.values(), now)) {
@@ -216,6 +239,17 @@ public class WatchdogService {
         String k = s.getNotifiedKind();
         if (!"PROBLEM".equals(s.getStatus()) || k == null) return false;
         return "ALERT".equals(k) || "REMIND".equals(k) || "REMIND_FAILED".equals(k) || "REMIND_MUTED".equals(k);
+    }
+
+    /**
+     * Kayıtlı satır SAĞLIKLI mı (inceleme 5): durum OK VE son ölçüm OK / NA. Durum OK ama son ölçüm PROBLEM (henüz
+     * doğrulanmamış hata) ya da UNKNOWN ise "düzeldi" duyurulmaz — öbür pod bir sonraki turda sorunu doğrularsa
+     * ALARM → DÜZELDİ → ALARM dalgalanması olurdu.
+     */
+    static boolean storedHealthy(WatchdogState stored) {
+        if (!"OK".equals(stored.getStatus())) return false;
+        String r = stored.getLastResult();
+        return "OK".equals(r) || "NA".equals(r);
     }
 
     /** Kayıtlı satır bu sorunun düzelmesini zaten duyurmuş mu (başka pod RECOVER göndermiş) — ikinci "düzeldi" gitmesin. */

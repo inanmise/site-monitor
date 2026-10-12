@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { Lock, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import NotificationGroupSelect from './NotificationGroupSelect.jsx'
 import SimpleTooltip from './SimpleTooltip.jsx'
@@ -35,6 +35,9 @@ import { cn } from '@/lib/utils'
  * @param teamLabel     hedef takımın görünen adı (grup seçili değilken gösterilir)
  * @param teamId        bildirim grubu listesini kapsamlayan takım; boşsa seçici pasif olur
  * @param groupId       seçili bildirim grubu (boş = takım varsayılanı)
+ * @param locked        bildirim YÖNLENDİRMESİ salt okunur (2026-10-12): kayıt yalnız takım erişim paylaşımıyla düzenleniyor —
+ *                      sunucu bu alanların değişmesini reddeder (MonitoringController.guardSharedNotificationFields).
+ *                      Kanallar, seviye ve grup kayıtlı değerleriyle görünür ama değiştirilemez; neden notu çizilir.
  */
 
 // Alarm seviyesi (2026-09-19, ürün kararı): süre-bitişi dışındaki her alarm varsayılan WARNING ile açılır;
@@ -51,7 +54,7 @@ const LEVEL_ON = {
 export default function NotifyChannels({
   notifyEmail, notifyWebhook, onChange,
   teamLabel, teamId, groupId, onGroupChange, groupName,
-  alertLevel, onAlertLevelChange,
+  alertLevel, onAlertLevelChange, locked = false,
 }) {
   const t = useT()
   const levelId = useId()
@@ -62,14 +65,21 @@ export default function NotifyChannels({
   const target = groupId ? (groupName || t('notify.groupTarget')) : (teamLabel || '—')
 
   return (
-    <div role="group" aria-labelledby={titleId} data-slot="notify-channels" className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3.5 py-3 sm:col-span-2">
+    <div role="group" aria-labelledby={titleId} data-slot="notify-channels" data-locked={locked ? 'true' : undefined}
+      className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3.5 py-3 sm:col-span-2">
       <FieldTitle id={titleId} className="font-semibold">{t('notify.title')}</FieldTitle>
       <FieldDescription className="text-xs">
         {groupId ? t('notify.infoGroup', target) : t('notify.infoTeam', target)}
       </FieldDescription>
+      {locked && (
+        <p data-slot="notify-locked" className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Lock size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{t('access.routingLocked')}</span>
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <ChannelTile icon={Mail} label={t('notify.chEmail')} checked={!!notifyEmail}
+        <ChannelTile icon={Mail} label={t('notify.chEmail')} checked={!!notifyEmail} disabled={locked}
           onCheckedChange={(v) => onChange({ notifyEmail: v })}
           end={<span data-slot="notify-target" className="ml-auto max-w-[45%] truncate text-xs font-medium text-primary">{target}</span>} />
 
@@ -79,7 +89,7 @@ export default function NotifyChannels({
         <ChannelTile icon={Phone} label={t('notify.chVoice')} disabled hint={t('notify.soonHint')}
           end={<Badge variant="warning" className="ml-auto text-[10px] font-bold tracking-[.04em] uppercase">{t('notify.soon')}</Badge>} />
 
-        <ChannelTile icon={Smartphone} label={t('userpush.monitorToggle')} checked={!!notifyWebhook}
+        <ChannelTile icon={Smartphone} label={t('userpush.monitorToggle')} checked={!!notifyWebhook} disabled={locked}
           hint={t('userpush.monitorToggleHint')}
           onCheckedChange={(v) => onChange({ notifyWebhook: v })} />
       </div>
@@ -91,8 +101,8 @@ export default function NotifyChannels({
             <span className="text-xs text-muted-foreground">{t('notify.levelHint')}</span>
           </div>
           {/* Eski sözleşme korunur: role="group" + aria-pressed'li düğmeler (ui/SegmentedControl ile aynı). */}
-          <ToggleGroup type="single" variant="outline" role="group" aria-labelledby={levelId}
-            value={level} onValueChange={(v) => { if (v) onAlertLevelChange(v) }}>
+          <ToggleGroup type="single" variant="outline" role="group" aria-labelledby={levelId} disabled={locked}
+            value={level} onValueChange={(v) => { if (v && !locked) onAlertLevelChange(v) }}>
             {LEVELS.map((lv) => (
               <ToggleGroupItem key={lv} value={lv} role="button" aria-pressed={level === lv} aria-checked={undefined}
                 data-level={lv} className={cn('h-8 px-3 text-xs font-semibold', LEVEL_ON[lv])}>
@@ -110,7 +120,7 @@ export default function NotifyChannels({
       {onGroupChange && (
         <div className="mt-2.5 min-w-0 [&>label]:flex [&>label]:flex-col [&>label]:gap-1.5 [&>label]:text-sm [&>label]:font-medium">
           {/* Etiket seçicinin kendisinde (ng.selectorLabel) — burada ikinci kez yazılmaz (2026-09-12: "Bildirim grubu" çift görünüyordu). */}
-          <NotificationGroupSelect teamId={teamId} value={groupId} onChange={onGroupChange} />
+          <NotificationGroupSelect teamId={teamId} value={groupId} onChange={onGroupChange} disabled={locked} />
         </div>
       )}
     </div>

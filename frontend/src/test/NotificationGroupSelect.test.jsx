@@ -24,6 +24,25 @@ describe('NotificationGroupSelect', () => {
     state.byTeam = {}
   })
 
+  it('inceleme 4: sunucu reddi (404) → kayıtlı seçim nötr etiketle, seçici KİLİTLİ', async () => {
+    api.notificationGroups.list.mockResolvedValueOnce({ success: false, status: 404, error: 'yok' })
+    render(<NotificationGroupSelect teamId="1" value="12" onChange={() => {}} />)
+    expect(await screen.findByText(/can't be read here/)).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: /notification group/i })).toBeDisabled()
+  })
+
+  it('inceleme 4: ağ hatası / sunucu hatası → "yüklenemedi" etiketi, seçici KİLİTLİ DEĞİL (kendi takımında seçim sürer)', async () => {
+    api.notificationGroups.list.mockRejectedValueOnce(new Error('Failed to fetch'))
+    const { unmount } = render(<NotificationGroupSelect teamId="1" value="12" onChange={() => {}} />)
+    expect(await screen.findByText(/group list couldn't be loaded/)).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: /notification group/i })).not.toBeDisabled()
+    unmount()
+    api.notificationGroups.list.mockResolvedValueOnce({ success: false, status: 500, error: 'boom' })
+    render(<NotificationGroupSelect teamId="1" value="12" onChange={() => {}} />)
+    expect(await screen.findByText(/group list couldn't be loaded/)).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: /notification group/i })).not.toBeDisabled()
+  })
+
   it('Takım seçilmeden liste ÇEKİLMEZ ve seçici kilitli olur', async () => {
     render(<NotificationGroupSelect teamId="" value="" onChange={() => {}} />)
     // Takımsız bir istek boş liste döndürürdü ama yine de gereksiz bir sorgudur;

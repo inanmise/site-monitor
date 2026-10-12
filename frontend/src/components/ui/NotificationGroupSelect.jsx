@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from './SearchableSelect.jsx'
+import { errorInfoOf } from '../../utils/errorMessages.js'
+
+/** Sunucu "bu takımın gruplarını göremezsin" dedi mi (403 / 404) — ağ hatası, zaman aşımı ya da 5xx DEĞİL. */
+function deniedBy(r) {
+  const st = errorInfoOf(r)?.status
+  return st === 403 || st === 404
+}
 
 /**
  * İzlemenin alarmlarının gideceği Bildirim Grubu seçicisi.
@@ -25,17 +32,21 @@ export default function NotificationGroupSelect({ teamId, value, onChange, disab
   // grupları alıcıya açılmaz (yönetim verisi). Bu durumda seçici "Takım varsayılanı" diye YALAN söylemez; kayıtlı
   // seçimi nötr bir etiketle gösterir ve kilitlenir (değer aynen korunur, kaydetme onu değiştirmez).
   const [hidden, setHidden] = useState(false)
+  // Liste YÜKLENEMEDİ (ağ / zaman aşımı / sunucu hatası): seçici kilitlenmez (kendi takımında kullanıcı yine seçebilir),
+  // ama kayıtlı seçim "Takım varsayılanı" diye de gösterilmez — "yüklenemedi" etiketiyle durur (değer korunur).
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let alive = true
     setHidden(false)
+    setFailed(false)
     if (teamId === '' || teamId == null) { setGroups([]); return () => { alive = false } }
     // includeInactive: kayıtlı seçim silinmiş bir gruba işaret ediyorsa rozetle gösterebilmek için.
     api.notificationGroups.list(teamId, true).then(r => {
       if (!alive) return
       if (r?.success) setGroups(r.data?.groups ?? [])
-      else { setGroups([]); setHidden(true) }
-    }).catch(() => { if (alive) { setGroups([]); setHidden(true) } })
+      else { setGroups([]); if (deniedBy(r)) setHidden(true); else setFailed(true) }
+    }).catch(() => { if (alive) { setGroups([]); setFailed(true) } })
     return () => { alive = false }
   }, [teamId])
 
@@ -46,6 +57,9 @@ export default function NotificationGroupSelect({ teamId, value, onChange, disab
   const hasValue = value != null && value !== ''
   const options = noTeam ? [] : hidden ? [
     hasValue ? { value: String(value), label: t('ng.selectorHidden') } : { value: '', label: t('ng.selectorDefault') },
+  ] : failed ? [
+    ...(hasValue ? [{ value: String(value), label: t('ng.selectorLoadFailed') }] : []),
+    { value: '', label: t('ng.selectorDefault') },
   ] : [
     { value: '', label: t('ng.selectorDefault') },
     ...groups
@@ -68,6 +82,7 @@ export default function NotificationGroupSelect({ teamId, value, onChange, disab
         options={options}
         disabled={disabled || noTeam || hidden}
         searchThreshold={4}
+        wrapLabels
         placeholder={noTeam ? t('ng.selectorNoTeam') : t('ng.selectorDefault')}
         ariaLabel={t('ng.selectorLabel')}
       />

@@ -122,6 +122,9 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
       toast.success(t('chg.restoreDone', (r.data?.fields || []).length))
       // Atlanan gizli alanlar SESSİZ geçilmez: kullanıcı parolanın dönmediğini bilmeli.
       if (skipped.length) toast.info(t('chg.restoreMasked', skipped.length))
+      // Takım erişim paylaşımıyla geri yüklemede bildirim yönlendirmesi geri sarılmaz (inceleme 5) — o da söylenir
+      const routingSkipped = r.data?.skipped_routing || []
+      if (routingSkipped.length) toast.info(t('chg.restoreRouting', routingSkipped.length))
       load()
       // Sayfanın açık detay kopyası da tazelensin (bkz. bileşen notu). Sayfanın hatası geri alma sonucunu bozmaz.
       if (onRestored) {

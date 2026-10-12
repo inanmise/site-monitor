@@ -184,7 +184,7 @@ const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
 /** Pano veri dalgaları (2026-10-09, açılış performansı) — kaynak anahtarları App içindeki `loadSources`'ta. Sertifikalar
  *  ilk sırada istenir. Tam dalga: giriş, 5 dk tazelemesi, Yenile, envanter değişikliği. Kontrol dalgası: "Şimdi Kontrol Et"
  *  ve tek kart kontrolünden sonra (eskiden de yalnız bu üçü). */
-const FULL_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent', 'paused', 'mailFail', 'extras'])
+const FULL_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent', 'paused', 'mailFail', 'extras', 'grants'])
 const CHECK_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent'])
 
 // Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
@@ -727,6 +727,13 @@ export default function App() {
     },
     mailFail: { fetch: () => api.getMailFailureDomains(), apply: (r) => setMailFailureDomains(new Set(r.data ?? [])) },
     extras:   { fetch: () => api.getCardExtras(), apply: (r) => setCardExtras(r.data || {}) },
+    // Paylaşım düzeyleri (2026-10-12): /me yalnız girişte okunuyordu — paylaşım eklenince / kaldırılınca kart düğmeleri ve
+    // ekleme formlarının takım listesi yeniden girişe kadar bayat kalıyordu. Uç yoksa (eski test sahtesi) atlanır.
+    grants:   {
+      fetch: () => (typeof api.teamAccess?.myGrants === 'function' ? api.teamAccess.myGrants() : null),
+      ok: (r) => r?.success && Array.isArray(r.data?.access_grants),
+      apply: (r) => { setGrantLevels(grantLevelsFromMe(r.data)); setGrantWriteTeams(grantWriteTeamsFromMe(r.data)) },
+    },
   }), [setCerts, setPausedCerts])
 
   /**
@@ -1992,7 +1999,9 @@ export default function App() {
                     const c = certsRef.current.find((x) => x.domain === row.domain)
                     const meta = { cert_source: 'MANUAL', manual_version: c?.manual_version ?? row.current_version?.version ?? null,
                       manual_uploaded_at: c?.manual_uploaded_at ?? row.current_version?.uploaded_at ?? null }
-                    if (row.can_manage === false) setModalCert({ ...(c || {}), ...row, ...meta, _readOnly: true })
+                    // Paylaşımla görülen satır (shared_access, 2026-10-12) yabancı salt okunur DEĞİL: tam pencere; Yeniden değerlendir /
+                    // Düzenle / Sil paylaşım düzeyinden (cardActions → certGrantAccess)
+                    if (row.can_manage === false && row.shared_access !== true) setModalCert({ ...(c || {}), ...row, ...meta, _readOnly: true })
                     else setModalCert(c ? { ...c, ...meta } : { domain: row.domain, team_id: row.team_id ?? null, ...meta })
                   }} />
               </div>
@@ -2121,7 +2130,8 @@ export default function App() {
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
-            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {/* k6 paylaşımla oluşturulamaz / düzenlenemez (2026-10-12, sunucu requireOwnScopeForScripted): seçici yalnız üyelik takımları */}
+            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             {/* Markalı 404 (2026-10-08): tanınmayan ?tab= → "Sayfa bulunamadı"; rolüne kapalı sekme → "Erişim yok" (eskiden boş) */}
             {tab === NOT_FOUND_TAB && (

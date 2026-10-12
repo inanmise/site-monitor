@@ -9,6 +9,16 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import { SIZES } from './myDashModel.js'
+import { WIDGET_POLL_MS } from './useWidgetData.js'
+
+/**
+ * Son başarılı veriden bu kadar süre sonra hâlâ hata varsa kutu "bayat" sayılır (inceleme 4, 2026-10-12): duvar ekranında
+ * kesinti sırasında eski yeşil "sorun yok" süresiz kalıyordu ("bilinmeyen asla yeşil değildir"). Durum rozeti düşer, ton
+ * muted olur ve gövde renksiz (gri) çizilir. Eşik ≈ iki yoklama aralığı, 15 sn PAYLA: `at` başarılı yanıtın GELDİĞİ an
+ * damgalanır, başarısız yanıt genellikle daha hızlı döner — pay olmadan ikinci başarısız tur eşiğin hemen altında kalıp
+ * yeşil üç dakikaya uzuyordu. Tek seferlik hata (ilk başarısız tur ≈ 60 sn) kutuyu oynatmaz.
+ */
+export const STALE_AFTER_MS = 2 * WIDGET_POLL_MS - 15_000
 
 /** Boyut → ızgara açıklığı (kap sorguları; sütun eşikleri myDashModel.columnsFor ile aynı). */
 export const SPAN_CLASS = {
@@ -35,10 +45,12 @@ export default function WidgetCard({
   // Hiç veri alınamadıysa (ilk yükleme hatası) gövde ÇİZİLMEZ: özet fonksiyonları boş veride "her şey yolunda" der ve duvar
   // ekranı kesintide yeşil görünürdü (2026-10-12). Durum rozeti de gösterilmez; kutu "veri yok" der.
   const failed = !!error && !at
+  const stale = !!error && !!at && Date.now() - at >= STALE_AFTER_MS
   const showBody = !(loading && !at)
-  const shownTone = failed ? 'muted' : tone
+  const shownTone = failed || stale ? 'muted' : tone
   return (
     <div data-slot="mydash-widget" data-type={widget.type} data-size={widget.size} data-tone={shownTone} data-failed={failed || undefined}
+      data-stale={stale || undefined}
       className={cn('min-w-0', tv ? null : SPAN_CLASS[widget.size], dnd?.over ? 'rounded-xl ring-2 ring-primary ring-offset-2 ring-offset-background' : null, className)}
       style={tv ? { gridColumn: `span ${frame.span || 1} / span ${frame.span || 1}` } : undefined}
       draggable={edit && !!dnd} onDragStart={dnd?.onDragStart} onDragEnd={dnd?.onDragEnd}
@@ -52,7 +64,7 @@ export default function WidgetCard({
               </span>
             )}
             <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
-            {toneLabel && !failed && <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>}
+            {toneLabel && !failed && !stale && <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>}
           </CardTitle>
           {description && !tv && <CardDescription className="[overflow-wrap:anywhere]">{description}</CardDescription>}
           {tab && !tv && !edit && (
@@ -105,7 +117,13 @@ export default function WidgetCard({
                 {error && error !== 'error' && <span className="block text-xs text-muted-foreground">{error}</span>}
               </span>
             </div>
-          ) : showBody ? children : <LoadingBlock label={t('mydash.loading')} />}
+          ) : showBody ? (
+            // Bayat veri renksiz (inceleme 4): gövdedeki yeşil sayı / "açık alarm yok" de kesinti sırasında yeşil kalmasın
+            <div data-slot="mydash-widget-body" data-stale={stale || undefined}
+              className={cn('flex min-w-0 flex-1 flex-col gap-3', stale && 'opacity-60 grayscale')}>
+              {children}
+            </div>
+          ) : <LoadingBlock label={t('mydash.loading')} />}
         </CardContent>
 
         {at && (
@@ -115,6 +133,9 @@ export default function WidgetCard({
                 <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
                 <span className="[overflow-wrap:anywhere]">{at ? t('mydash.staleData') : error}</span>
               </span>
+            ) : null}
+            {error && at ? (
+              <span className="[overflow-wrap:anywhere]" data-slot="mydash-widget-age">· {t('mydash.updated', agoText(at, t))}</span>
             ) : (
               <span>{t('mydash.updated', agoText(at, t))}</span>
             )}

@@ -187,6 +187,48 @@ describe('TeamAccessManager', () => {
     expect(confirmMock).not.toHaveBeenCalled()
   })
 
+  it('inceleme 4: "sizinle paylaşılanlar" okunamazsa uyarı (kart sessizce kaybolmaz); kaldırmada 404 → liste tazelenir', async () => {
+    api.teamAccess.sharedWithMe.mockResolvedValueOnce({ success: false, error: 'x' })
+    render(<TeamAccessManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    expect(await screen.findByText(EN['access.shared.loadFailed'])).toBeTruthy()
+    api.teamAccess.remove.mockResolvedValueOnce({ success: false, status: 404, error: 'Paylaşım bulunamadı' })
+    pressMenuTrigger(within(rowOf(LONG_TEAM)).getByRole('button', { name: new RegExp(EN['access.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['access.remove.ok'] }))
+    await waitFor(() => expect(api.teamAccess.remove).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(api.teamAccess.list).toHaveBeenCalledTimes(2))
+    // tazelemede okundu → uyarı kalkar
+    await waitFor(() => expect(screen.queryByText(EN['access.shared.loadFailed'])).toBeNull())
+    // başka bir hata (500) listeyi yeniden yüklemez
+    api.teamAccess.remove.mockResolvedValueOnce({ success: false, status: 500, error: 'x' })
+    pressMenuTrigger(within(rowOf(LONG_TEAM)).getByRole('button', { name: new RegExp(EN['access.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['access.remove.ok'] }))
+    await waitFor(() => expect(api.teamAccess.remove).toHaveBeenCalledTimes(2))
+    expect(api.teamAccess.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('inceleme 4: alıcı dizini okunamazsa "yüklenemedi" + yeniden dene; grantee_type hatası görünen alıcı alanına bağlanır', async () => {
+    api.teams.directory.mockRejectedValueOnce(new Error('ağ'))
+    render(<TeamAccessManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    fireEvent.click(document.querySelector('[data-slot="access-new"]'))
+    const form = await waitFor(() => { const f = document.querySelector('[data-slot="access-form"]'); expect(f).not.toBeNull(); return f })
+    const failed = await waitFor(() => { const b = form.querySelector('[data-slot="access-dir-failed"]'); expect(b).not.toBeNull(); return b })
+    expect(failed.textContent).toContain(EN['access.f.dirFailed'])
+    fireEvent.click(within(failed).getByRole('button', { name: EN['hist.retry'] }))
+    await waitFor(() => expect(api.teams.directory).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(form.querySelector('[data-slot="access-dir-failed"]')).toBeNull())
+    const teamPicker = within(form).getByRole('combobox', { name: new RegExp(`^${EN['access.f.team']}`) })
+    await waitFor(() => expect(teamPicker).not.toBeDisabled())
+    fireEvent.mouseDown(teamPicker)
+    pick(await screen.findByRole('option', { name: LONG_TEAM }))
+    api.teamAccess.create.mockResolvedValueOnce({ success: false, status: 400, field: 'grantee_type', error: 'Alıcı türü geçersiz bir değer.' })
+    fireEvent.click(document.querySelector('[data-slot="access-submit"]'))
+    await waitFor(() => expect(api.teamAccess.create).toHaveBeenCalled())
+    const err = await waitFor(() => { const e = form.querySelector('[data-field="granteeTeamId"]'); expect(e?.textContent).toContain('Alıcı türü geçersiz'); return e })
+    expect(err).toBeTruthy()
+  })
+
   it('"Tam" düzey ayrıca onay ister; vazgeçilirse kayıt yok', async () => {
     render(<TeamAccessManager />)
     await waitFor(() => expect(rows()).toHaveLength(3))
@@ -224,5 +266,22 @@ describe('TeamAccessManager', () => {
     fireEvent.click(document.querySelector('[data-slot="access-submit"]'))
     await waitFor(() => expect(api.teamAccess.update).toHaveBeenCalledWith(1, { level: 'EXECUTE' }))
     await waitFor(() => expect(form.querySelector('[data-field="level"]')).toHaveTextContent('Düzey geçersiz (test).'))
+  })
+
+  it('inceleme 5: düzenlenen paylaşım bu arada kaldırıldıysa (404) pencere kapanır, liste tazelenir, neden söylenir', async () => {
+    render(<TeamAccessManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    pressMenuTrigger(within(rowOf(LONG_TEAM)).getByRole('button', { name: new RegExp(EN['access.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['access.edit'] }))
+    const form = await waitFor(() => { const f = document.querySelector('[data-slot="access-form"]'); expect(f).not.toBeNull(); return f })
+    fireEvent.click(within(form).getByRole('radio', { name: new RegExp(EN['access.level.EXECUTE']) }))
+    // durum gövdede değil künyede (errorInfo, sayılamaz) — istemcinin gerçek biçimi
+    const gone = { success: false, code: 'NOT_FOUND', error: 'Paylaşım bulunamadı' }
+    Object.defineProperty(gone, 'errorInfo', { value: { status: 404, code: 'NOT_FOUND' }, enumerable: false })
+    api.teamAccess.update.mockResolvedValueOnce(gone)
+    fireEvent.click(document.querySelector('[data-slot="access-submit"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="access-form"]')).toBeNull())
+    await waitFor(() => expect(api.teamAccess.list).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(EN['access.err.gone'])).toBeTruthy()
   })
 })

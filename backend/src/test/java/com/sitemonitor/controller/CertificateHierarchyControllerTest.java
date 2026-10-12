@@ -153,6 +153,46 @@ class CertificateHierarchyControllerTest {
     }
 
     @Test
+    @DisplayName("inceleme 4: erişim paylaşımıyla GÖRÜNTÜLEYEN okur; ilgisiz takım o alan adında 403 ve el sıkışma yapılmaz")
+    void grantViewerReadsOthersDenied() throws Exception {
+        MockHttpSession viewer = session("USER", 7L, 40L);
+        viewer.setAttribute(SessionScope.ATTR_GRANT_VIEW, List.of(5L));
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").session(viewer)).andExpect(status().isOk());
+        // ayrı alan adında (başka hiçbir istek o alana gitmedi): reddedilen istek ağa çıkmaz
+        mvc.perform(get("/api/certificates/ug.example.com/hierarchy").session(session("USER", 7L, 41L)))
+                .andExpect(status().isForbidden());
+        verify(checkerService, never()).capturePresentedChain(eq("ug.example.com"), anyInt(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("inceleme 4: kullanıcı başına eşzamanlı tavan → 429 (ağa çıkılmaz); bitince sayaç temizlenir")
+    void perUserConcurrencyCap() throws Exception {
+        controller.userInFlight.put("u:88", CertificateHierarchyController.MAX_PER_USER_CONCURRENT);
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").session(session("USER", 5L, 88L)))
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        verify(checkerService, never()).capturePresentedChain(anyString(), anyInt(), anyBoolean(), any(), any());
+        controller.userInFlight.remove("u:88");
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").session(session("USER", 5L, 88L))).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(controller.userInFlight).doesNotContainKey("u:88");
+        org.assertj.core.api.Assertions.assertThat(controller.tryAcquireUser("u:89")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(controller.tryAcquireUser("u:89")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(controller.tryAcquireUser("u:89")).isFalse();
+        controller.releaseUser("u:89");
+        controller.releaseUser("u:89");
+        org.assertj.core.api.Assertions.assertThat(controller.userInFlight).doesNotContainKey("u:89");
+    }
+
+    @Test
+    @DisplayName("inceleme 4: sistem güven deposu okunamadıysa trust_store_readable=false (istemci 'bilinmiyor' der)")
+    void trustStoreUnreadableFlag() throws Exception {
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").session(session("USER", 5L, 50L)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.trust_store_readable").value(true));
+        when(trustEvaluator.trustAnchors()).thenReturn(new TrustEvaluator.Anchors(List.of(), List.of(), false));
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").session(session("USER", 5L, 51L)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.trust_store_readable").value(false));
+    }
+
+    @Test
     @DisplayName("elle yüklenen kayıt → 409 MANUAL_CERT, ağa çıkılmaz")
     void manualIsConflict() throws Exception {
         mvc.perform(get("/api/certificates/up.example.com/hierarchy").session(session("USER", 5L, 1L)))
@@ -214,6 +254,8 @@ class CertificateHierarchyControllerTest {
     @Test
     @DisplayName("inceleme: önizlemenin başarılı yolu (via / tls_mode) kullanılır; tanınmayan ipucu yok sayılır")
     void routeHints() throws Exception {
+        // Kontrol geri düşüşü AÇIK: proxy'li kayıtta önizleme doğrudan yoldan geçtiyse hiyerarşi de doğrudan okur
+        when(checkerService.retryFallbackEnabled()).thenReturn(true);
         mvc.perform(get("/api/certificates/a.example.com/hierarchy").param("via", "direct").param("tls_mode", "browser")
                         .session(session("USER", 5L, 21L)))
                 .andExpect(status().isOk());
@@ -222,6 +264,15 @@ class CertificateHierarchyControllerTest {
                         .session(session("USER", 5L, 22L)))
                 .andExpect(status().isOk());
         verify(checkerService, org.mockito.Mockito.atLeastOnce()).capturePresentedChain("a.example.com", 8443, true, "default", 15);
+    }
+
+    @Test
+    @DisplayName("inceleme 4: geri düşüş KAPALIYKEN proxy'ye yönlendirilmiş kayıt via=direct ipucuyla doğrudan denenmez")
+    void directHintIgnoredForProxyRecordWithoutFallback() throws Exception {
+        mvc.perform(get("/api/certificates/a.example.com/hierarchy").param("via", "direct").session(session("USER", 5L, 23L)))
+                .andExpect(status().isOk());
+        verify(checkerService).capturePresentedChain(eq("a.example.com"), anyInt(), eq(true), any(), any());
+        verify(checkerService, org.mockito.Mockito.never()).capturePresentedChain(eq("a.example.com"), anyInt(), eq(false), any(), any());
     }
 
     @Test
@@ -256,8 +307,13 @@ class CertificateHierarchyControllerTest {
         mvc.perform(get("/api/certificates/ug.example.com/hierarchy").param("via", "proxy").session(session("USER", 9L, 31L)))
                 .andExpect(status().isOk());
         verify(checkerService).capturePresentedChain(eq("ug.example.com"), anyInt(), eq(false), any(), any());
+        // otomatik proxy geri düşüşü açık ama kontrolün geri düşüşü KAPALI: kontrol proxy'ye hiç geçemez → ipucu yok sayılır
         when(checkerService.autoProxyFallbackEnabled()).thenReturn(true);
         mvc.perform(get("/api/certificates/ug.example.com/hierarchy").param("via", "proxy").session(session("USER", 9L, 32L)))
+                .andExpect(status().isOk());
+        verify(checkerService, org.mockito.Mockito.never()).capturePresentedChain(eq("ug.example.com"), anyInt(), eq(true), any(), any());
+        when(checkerService.retryFallbackEnabled()).thenReturn(true);
+        mvc.perform(get("/api/certificates/ug.example.com/hierarchy").param("via", "proxy").session(session("USER", 9L, 33L)))
                 .andExpect(status().isOk());
         verify(checkerService).capturePresentedChain(eq("ug.example.com"), anyInt(), eq(true), any(), any());
     }

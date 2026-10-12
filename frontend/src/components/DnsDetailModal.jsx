@@ -126,7 +126,8 @@ function DnsSection({ icon: Icon, title, children }) {
  * `children` pencerenin İÇİNDE çizilir — sayfa düzenleme formunu buraya verir, böylece form detay
  * penceresinin üstünde katmanlanır (ModalShell derinliği React ağacından okur).
  */
-export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false,
+// canRestore (2026-10-12): değişiklik geçmişinden geri yükleme SİLME kapısı ister (sunucu canDeleteTeamResource); verilmezse canManage
+export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false, canRestore,
                                         status = 'unknown', badge = null,
                                         // Hızlı eylemler DnsMonitorPage'ten prop olarak gelir: tetikleyiciler
                                         // (checkNow/openEdit/openDuplicate/deleteMonitor) orada yaşıyor ve
@@ -459,12 +460,13 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
           </Suspense>
         </TabsContent>
 
-        <TabsContent value="notes"><MonitorNotes type="DNS" target={monitor.domain} /></TabsContent>
+        <TabsContent value="notes"><MonitorNotes type="DNS" target={monitor.domain}
+          canManage={monitor.shared_access === true ? !!canManage : undefined} /></TabsContent>
 
         <TabsContent value="changes">
           <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
             {/* Takım adları sayfadan gelir; modal takım listesini kendisi çekmez (tek istek yeter). */}
-            <ChangeHistoryTab t={t} kind="dns" monitorId={monitor.id} teamNames={teamNames} canManage={canManage}
+            <ChangeHistoryTab t={t} kind="dns" monitorId={monitor.id} teamNames={teamNames} canManage={canRestore ?? canManage}
               onRestored={onRestored} />
           </Suspense>
         </TabsContent>

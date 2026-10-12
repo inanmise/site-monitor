@@ -104,10 +104,19 @@ const RANGES = ['today', '24h', '7d', 'all']
 /** İstanbul gününün başlangıcı (ms) — Europe/Istanbul sabit UTC+3, yaz saati yok (2026-10-12: "bugün" ve gün grupları
  *  UTC / tarayıcı gece yarısı değil İstanbul gece yarısı; 00:00–03:00 arası etkinlik "bugün"de). */
 export function istanbulDayStartMs(now = Date.now()) {
-  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(new Date(now))
-  return new Date(`${ymd}T00:00:00+03:00`).getTime()
+  // formatToParts (inceleme 4): `format()` çıktısının "YYYY-MM-DD" olacağı varsayılmaz — bazı ICU sürümlerinde en-CA
+  // biçimi değişti; Invalid Date `toISOString()`te istisna atıp listeyi düşürürdü. Parçalar eksikse sabit UTC+3 hesabı.
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date(now))
+    const get = (type) => parts.find((p) => p.type === type)?.value
+    const y = Number(get('year')), m = Number(get('month')), d = Number(get('day'))
+    if (y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= 31) return Date.UTC(y, m - 1, d) - ISTANBUL_OFFSET_MS
+  } catch { /* Intl yok / saat dilimi bilinmiyor → aşağıdaki sabit hesap */ }
+  return Math.floor((now + ISTANBUL_OFFSET_MS) / DAY_MS) * DAY_MS - ISTANBUL_OFFSET_MS
 }
+const ISTANBUL_OFFSET_MS = 3 * 3_600_000
+const DAY_MS = 86_400_000
 
 /** range → {from,to} ISO (UTC, yyyy-MM-ddTHH:mm:ss) — backend string karşılaştırmasıyla uyumlu. Her istekte o anki zamanla
  *  hesaplanır (canlı tazeleme "son 24 saat"i dondurmasın). */

@@ -12,6 +12,7 @@ import DateTimeField from '../../ui/DateTimeField.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import { useFormErrors } from '../../../hooks/useFormErrors.js'
+import { errorInfoOf } from '../../../utils/errorMessages.js'
 import { Button } from '@/components/shadcn/button'
 import { Textarea } from '@/components/shadcn/textarea'
 import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
@@ -37,7 +38,7 @@ function todayIstanbul() {
  * Props: `open`, `onClose`, `onSaved(row)`, `grant` (düzenlenen satır; yoksa yeni), `teams` (yönetebildiği takımlar
  * `[{id,name}]`), `defaultOwnerTeamId`.
  */
-export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = null, teams = [], defaultOwnerTeamId = null }) {
+export default function TeamAccessGrantDialog({ open, onClose, onSaved, onGone, grant = null, teams = [], defaultOwnerTeamId = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -47,6 +48,9 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = 
   const [busy, setBusy] = useState(false)
   const [teamDir, setTeamDir] = useState(null)
   const [userDir, setUserDir] = useState(null)
+  // Dizin okunamadı (2026-10-12): boş liste "seçilecek kimse yok" gibi görünüyordu — hata + yeniden dene
+  const [dirFailed, setDirFailed] = useState({ team: false, user: false })
+  const [dirNonce, setDirNonce] = useState(0)
   const levelLabelId = useId()
 
   useEffect(() => {
@@ -59,16 +63,31 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = 
   useEffect(() => {
     if (!open || !isNew) return undefined
     let alive = true
-    if (teamDir == null) {
-      api.teams.directory().then((r) => { if (alive) setTeamDir(r?.success && Array.isArray(r.data) ? r.data : []) })
-        .catch(() => { if (alive) setTeamDir([]) })
+    const settle = (key, setDir) => (r) => {
+      if (!alive) return
+      const ok = r?.success && Array.isArray(r.data)
+      setDir(ok ? r.data : [])
+      setDirFailed((f) => ({ ...f, [key]: !ok }))
     }
-    if (userDir == null) {
-      api.users.directory().then((r) => { if (alive) setUserDir(r?.success && Array.isArray(r.data) ? r.data : []) })
-        .catch(() => { if (alive) setUserDir([]) })
-    }
+    const fail = (key, setDir) => () => { if (alive) { setDir([]); setDirFailed((f) => ({ ...f, [key]: true })) } }
+    if (teamDir == null) api.teams.directory().then(settle('team', setTeamDir)).catch(fail('team', setTeamDir))
+    if (userDir == null) api.users.directory().then(settle('user', setUserDir)).catch(fail('user', setUserDir))
     return () => { alive = false }
-  }, [open, isNew]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, isNew, dirNonce]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const retryDir = (key) => {
+    setDirFailed((f) => ({ ...f, [key]: false }))
+    if (key === 'team') setTeamDir(null); else setUserDir(null)
+    setDirNonce((n) => n + 1)
+  }
+  const dirError = (key) => (dirFailed[key] ? (
+    <div data-slot="access-dir-failed" className="min-w-0">
+      <AlertBanner tone="danger" className="mb-0"
+        actions={<Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => retryDir(key)}>{t('hist.retry')}</Button>}>
+        {t('access.f.dirFailed')}
+      </AlertBanner>
+    </div>
+  ) : null)
 
   const patch = (p) => setForm((f) => ({ ...f, ...p }))
 
@@ -106,7 +125,17 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = 
         onSaved?.(res.data)
         return
       }
-      const field = FIELD_MAP[res?.field]
+      // Düzenlenen paylaşım bu arada kaldırıldı (başka sekme / yönetici): form açık kalıp tekrar tekrar 404 yemesin —
+      // pencere kapanır, liste tazelenir (inceleme 5)
+      if (!isNew && errorInfoOf(res)?.status === 404) {
+        toast.error(t('access.err.gone'))
+        onGone?.()
+        return
+      }
+      // grantee_type hatası o an görünen alıcı alanına (takım / kişi) bağlanır
+      const field = res?.field === 'grantee_type'
+        ? (form.granteeType === 'USER' ? 'granteeUserId' : 'granteeTeamId')
+        : FIELD_MAP[res?.field]
       if (field) fe.check({ [field]: res?.error || t('access.err.generic') })
       else toast.error(res?.error || t('access.err.generic'))
     } catch (e) {
@@ -166,7 +195,9 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = 
                     onChange={(v) => { patch({ granteeTeamId: v === '' ? null : v }); fe.clear('granteeTeamId') }} />
                 )}
               </Field>
-            ) : (
+            ) : null}
+            {form.granteeType === 'TEAM' ? dirError('team') : null}
+            {form.granteeType !== 'TEAM' ? (
               <Field label={t('access.f.person')} required hint={t('access.f.personHint')} {...fe.fieldProps('granteeUserId')}>
                 {({ id }) => (
                   <SearchableSelect wrapLabels id={id} value={form.granteeUserId ?? ''} options={userOptions}
@@ -174,7 +205,8 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, grant = 
                     onChange={(v) => { patch({ granteeUserId: v === '' ? null : v }); fe.clear('granteeUserId') }} />
                 )}
               </Field>
-            )}
+            ) : null}
+            {form.granteeType !== 'TEAM' ? dirError('user') : null}
           </div>
         )}
 
@@ -231,7 +263,6 @@ const FIELD_MAP = {
   owner_team_id: 'ownerTeamId',
   grantee_team_id: 'granteeTeamId',
   grantee_user_id: 'granteeUserId',
-  grantee_type: 'granteeTeamId',
   level: 'level',
   expires_on: 'expiresOn',
   note: 'note',

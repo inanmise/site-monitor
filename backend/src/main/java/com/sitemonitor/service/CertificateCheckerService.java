@@ -703,6 +703,17 @@ public class CertificateCheckerService {
         return autoProxyFallback;
     }
 
+    /**
+     * Kontrol başarısızlıkta yol / TLS kipi değiştirip yeniden dener mi ({@code site.monitor.check.retry-fallback}) —
+     * kapalıyken kontrol proxy'li kaydı ASLA doğrudan denemez; hiyerarşi ucunun {@code via=direct} ipucu da denemez.
+     */
+    public boolean retryFallbackEnabled() {
+        // Kontrolün yol değiştirmesi GERÇEKTEN mümkün mü (inceleme 5): geri düşüş yalnız geçici hata yeniden denemesi açık
+        // ve en az iki deneme varken koşar (checkWithRetry) — yalnız retry-fallback bayrağına bakmak, CHECK_RETRY=false iken
+        // proxy'li kaydın hiyerarşide doğrudan okunmasına izin veriyordu.
+        return retryFallback && retryOnTransient && Math.min(Math.max(maxAttempts, 1), MAX_ATTEMPTS_CAP) >= 2;
+    }
+
     /** Sunucunun el sıkışmada sunduğu zincir (yaprak ilk) + gidilen yol. */
     public record PresentedChain(X509Certificate[] certificates, boolean viaProxy) { }
 
@@ -718,16 +729,36 @@ public class CertificateCheckerService {
      */
     public PresentedChain capturePresentedChain(String domain, int port, boolean forceProxy,
                                                 String tlsModeOverride, Integer timeoutOverride) throws IOException {
-        ssrfGuard.validate(domain);
+        // SSRF korumasının DOĞRULADIĞI adreslere bağlanılır — ikinci bir çözümleme (DNS yeniden bağlama) aralık açmaz
+        List<java.net.InetAddress> allowed = ssrfGuard.validate(domain);
         CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain, timeoutOverride);
         int timeoutSec = opts.timeoutSeconds();
+        SNIHostName sni;
+        try {
+            sni = new SNIHostName(domain);
+        } catch (IllegalArgumentException e) {
+            // Alt çizgili ad, IPv6 sabiti, sondaki nokta … SNI olamaz → bağlantı hatası (500 + yığın izi değil)
+            throw new IOException("SNI adı olarak kullanılamayan host: " + domain);
+        }
+        List<String> ips = new ArrayList<>();
+        if (allowed != null) for (java.net.InetAddress a : allowed) if (a != null) ips.add(a.getHostAddress());
+        long startedNs = System.nanoTime();
         SSLSocket socket = opts.viaProxy()
                 ? openViaProxy(TRUST_ALL_FACTORY, domain, port, timeoutSec)
-                : connectFirstReachable(TRUST_ALL_FACTORY, domain, port, timeoutSec, resolveAllIps(domain));
+                : connectFirstReachable(TRUST_ALL_FACTORY, domain, port, timeoutSec, ips.isEmpty() ? resolveAllIps(domain) : ips);
+        // Okuma zaman aşımı OKUMA BAŞINA; el sıkışmayı damla damla yollayan sunucu isteği çok daha uzun tutabilirdi. Toplam
+        // tavan: 2 × zaman aşımında soket kapatılır (el sıkışma IOException ile biter; izin / iş parçacığı bırakılır). Bağlantı
+        // dahil TOPLAM süre {@link #CAPTURE_TOTAL_SEC} saniyeyi geçmez (inceleme 5): istemcinin 90 sn GET zaman aşımı dolup
+        // vazgeçtiği hâlde sunucu izinleri tutmasın (kullanıcı başına 2'lik tavan yeniden denemeyi engellerdi).
+        long elapsedSec = (System.nanoTime() - startedNs) / 1_000_000_000L;
+        long budgetSec = Math.max(1, Math.min(2L * Math.max(1, timeoutSec), CAPTURE_TOTAL_SEC - elapsedSec));
+        java.util.concurrent.ScheduledFuture<?> deadline = CAPTURE_DEADLINE.schedule(() -> {
+            try { socket.close(); } catch (IOException ignore) { /* zaten kapandı */ }
+        }, budgetSec, java.util.concurrent.TimeUnit.SECONDS);
         try (socket) {
             socket.setSoTimeout(timeoutSec * 1000);
             SSLParameters params = socket.getSSLParameters();
-            params.setServerNames(Collections.singletonList(new SNIHostName(domain)));
+            params.setServerNames(Collections.singletonList(sni));
             if ("browser".equalsIgnoreCase(opts.tlsMode())) {
                 params.setApplicationProtocols(BROWSER_ALPN);
                 params.setProtocols(BROWSER_TLS_PROTOCOLS);
@@ -738,7 +769,29 @@ public class CertificateCheckerService {
             List<X509Certificate> out = new ArrayList<>(peer.length);
             for (Certificate c : peer) if (c instanceof X509Certificate x) out.add(x);
             return new PresentedChain(out.toArray(new X509Certificate[0]), opts.viaProxy());
+        } finally {
+            deadline.cancel(false);
         }
+    }
+
+    /** Hiyerarşi yakalamasında bağlantı + el sıkışmanın toplam üst sınırı (sn) — istemcinin 90 sn GET zaman aşımının altında. */
+    static final long CAPTURE_TOTAL_SEC = 75;
+
+    /**
+     * Hiyerarşi yakalamasının toplam süre tavanı için tek, cin (daemon) zamanlayıcı — yalnız soket kapatır. İptal edilen görev
+     * kuyruktan HEMEN düşer (inceleme 5: varsayılan zamanlayıcı iptal edilen görevi — ve kapalı soketi — süresi dolana dek
+     * tutuyordu).
+     */
+    private static final java.util.concurrent.ScheduledExecutorService CAPTURE_DEADLINE = captureDeadlineExecutor();
+
+    private static java.util.concurrent.ScheduledExecutorService captureDeadlineExecutor() {
+        java.util.concurrent.ScheduledThreadPoolExecutor ex = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "cert-capture-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.setRemoveOnCancelPolicy(true);
+        return ex;
     }
 
     public X509Certificate[] captureProxyChain(String host, int port) throws IOException {

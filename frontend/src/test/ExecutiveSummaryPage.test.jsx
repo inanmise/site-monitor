@@ -183,6 +183,18 @@ describe('Yönetici Özeti sayfası — rapor', () => {
     expect(window.location.search).not.toContain('ex_team')
   })
 
+  it('inceleme 4: bozuk takım bağlantısı (400 field=team) da varsayılan kapsama döner — adres elle düzeltilmeden takılı kalınmaz', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=123456789012345678')
+    ex().get.mockImplementation(async (q) => (q?.team === '123456789012345678'
+      ? { success: false, status: 400, code: 'VALIDATION_FAILED', field: 'team', error: 'Takım kimliği geçersiz; listeden bir takım seçin.' }
+      : response()))
+    render(<ExecutiveSummaryPage globalAdmin />)
+    await waitFor(() => expect(ex().get).toHaveBeenCalledWith(expect.objectContaining({ team: null })))
+    expect(await screen.findByText(SCOPE_FALLBACK)).toBeInTheDocument()
+    expect(screen.queryByText('Takım kimliği geçersiz; listeden bir takım seçin.')).toBeNull()
+    await waitFor(() => expect(window.location.search).not.toContain('ex_team'))   // adres eşitlemesi gecikmeli
+  })
+
   it('2026-10-12: varsayılan kapsam da yüklenemezse "geri dönüldü" bildirimi GÖSTERİLMEZ (hata gösterilir)', async () => {
     window.history.replaceState({}, '', '/?tab=executive&ex_team=99')
     ex().get.mockImplementation(async (q) => (q?.team === '99'

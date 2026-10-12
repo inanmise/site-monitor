@@ -22,6 +22,12 @@ public interface TeamAccessGrantRepository extends JpaRepository<TeamAccessGrant
 
     long countByOwnerTeamId(Long ownerTeamId);
 
+    /** Takımın SÜRESİ DOLMAMIŞ paylaşımları — takım başına tavan bunları sayar (süresi dolanlar tavanı doldurmaz). */
+    @org.springframework.data.jpa.repository.Query("select count(g) from TeamAccessGrant g where g.ownerTeamId = :owner "
+            + "and (g.expiresAt is null or g.expiresAt > :now)")
+    long countLiveByOwnerTeamId(@org.springframework.data.repository.query.Param("owner") Long owner,
+                                @org.springframework.data.repository.query.Param("now") String now);
+
     /** Takım silinince: sahibi ya da alıcısı o takım olan paylaşımlar gider. */
     @Transactional
     @Modifying

@@ -27,6 +27,33 @@ describe('NotifyChannels', () => {
   // Kutular shadcn Checkbox (role="checkbox"): 4 döşeme sırasıyla e-posta, SMS, sesli, webhook.
   const channelBoxes = () => screen.getAllByRole('checkbox')
 
+  it('locked (takım erişim paylaşımı): kanallar, seviye ve grup kayıtlı değerle görünür ama değiştirilemez; neden notu var', () => {
+    const onChange = vi.fn()
+    const onAlertLevelChange = vi.fn()
+    draw({ onChange, locked: true, alertLevel: 'HIGH', onAlertLevelChange })
+    const boxes = channelBoxes()
+    expect(boxes[0]).toBeDisabled()
+    expect(boxes[3]).toBeDisabled()
+    expect(boxes[0]).toBeChecked()
+    fireEvent.click(boxes[0])
+    fireEvent.click(boxes[3])
+    expect(onChange).not.toHaveBeenCalled()
+    const level = screen.getByRole('group', { name: /alarm seviyesi|alert level/i })
+    for (const btn of within(level).getAllByRole('button')) expect(btn).toBeDisabled()
+    fireEvent.click(within(level).getAllByRole('button')[2])
+    expect(onAlertLevelChange).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="notify-locked"]')).toBeTruthy()
+    expect(document.querySelector('[data-slot="notify-channels"]').getAttribute('data-locked')).toBe('true')
+    // bildirim grubu seçicisi de kilitli (inceleme 5 test boşluğu)
+    expect(screen.getByRole('combobox', { name: /notification group|bildirim grubu/i })).toBeDisabled()
+  })
+
+  it('locked verilmezse not çizilmez ve kutular açık (varsayılan davranış aynı)', () => {
+    draw()
+    expect(document.querySelector('[data-slot="notify-locked"]')).toBeNull()
+    expect(channelBoxes()[0]).not.toBeDisabled()
+  })
+
   it('e-posta ve webhook kutuları DEĞİŞTİRİLEBİLİR (ikisi de gerçek kanal)', () => {
     const onChange = vi.fn()
     draw({ onChange })

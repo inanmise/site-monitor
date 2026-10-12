@@ -260,8 +260,11 @@
                          yeni testle CI'da 4 @DataJpaTest sınıfı bağlam kurarken "Java heap space" verdi (test hatası
                          yok, yerelde %94 ile geçti). 2 çekirdekli runner'ın 7 GB belleği 3 GB fork + Maven'ı taşır.
                          -Xmx4096m (2026-10-12, takım erişim paylaşımı): yeşil koşu sonda %90'daydı (2782/3072 MB, 7683
-                         test). Kural ≥ %90'da artırmak; 7 GB runner 4 GB fork + Maven'ı (~1 GB) taşır. -->
-                    <argLine>@{argLine} -Xmx4096m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
+                         test). Kural ≥ %90'da artırmak; 7 GB runner 4 GB fork + Maven'ı (~1 GB) taşır.
+                         -Xmx4608m (2026-10-13, inceleme turları): yeşil koşu sonda %91'deydi (3753/4096 MB, 7743 test;
+                         bir önceki koşu %79 — anlık ölçüm oynak). Ölçülü artış: 4,5 GB fork + Maven ~1 GB 7 GB runner'da
+                         pay bırakır; sonraki adım bağlam önbelleğini (spring.properties) küçültmek olmalı, heap'i değil. -->
+                    <argLine>@{argLine} -Xmx4608m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                     <!-- Etiket süzgeci (2026-10-02): postgres etiketli entegrasyon testleri varsayılan koşumda dışarıda;
                          -Ppostgres-it bu iki özelliği ters çevirir (yukarıdaki <properties> notu). -->
                     <groups>${surefire.groups}</groups>

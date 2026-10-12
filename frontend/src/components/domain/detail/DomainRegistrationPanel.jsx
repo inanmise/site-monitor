@@ -482,7 +482,7 @@ function csv(v) {
  * @param {object}   remPager   usePagination (modal ön ayarı) — liste sayfalanır
  * @param {boolean}  stale      anlık sorgu başarısız, kayıtlı bilgi gösteriliyor
  * @param {boolean}  loading    anlık sorgu sürüyor (Yenile düğmesi döner)
- * @param {Function} onRefresh  anlık sorguyu yeniden çalıştır
+ * @param {Function} onRefresh  anlık sorguyu yeniden çalıştır (verilmezse Yenile çizilmez — çalıştırma yetkisi yok)
  */
 export default function DomainRegistrationPanel({ reg: d, rem, remError = false, remPager, stale = false, loading = false, onRefresh }) {
   const t = useT()
@@ -497,10 +497,12 @@ export default function DomainRegistrationPanel({ reg: d, rem, remError = false,
             {at ? <>{t('domdet.lookedUp')} <time dateTime={toUtc(at)} className="font-medium text-foreground/80">{relativeTime(at, t) || formatDateSec(at)}</time> · <span className="tabular-nums">{formatDateSec(at)}</span></> : t('domdet.neverChecked')}
           </p>
         )}
-        <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-busy={loading || undefined}
-          title={t('domdet.refreshHint')} className="shrink-0 self-end pointer-coarse:h-10 @md:self-auto">
-          {loading ? <Spinner size={13} inline decorative /> : <RefreshCw aria-hidden="true" />}{t('dreg.refresh')}
-        </Button>
+        {onRefresh && (
+          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-busy={loading || undefined}
+            title={t('domdet.refreshHint')} className="shrink-0 self-end pointer-coarse:h-10 @md:self-auto">
+            {loading ? <Spinner size={13} inline decorative /> : <RefreshCw aria-hidden="true" />}{t('dreg.refresh')}
+          </Button>
+        )}
       </div>
       {/* items-start: kısa bölüm (ör. boş EPP) komşusunun boyuna uzayıp boş kutu çizmesin */}
       <div className="grid min-w-0 items-start gap-3 @3xl:grid-cols-2">

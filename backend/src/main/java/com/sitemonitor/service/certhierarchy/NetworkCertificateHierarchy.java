@@ -33,8 +33,13 @@ import java.util.Objects;
  * <p><b>Kök</b>: {@code root_source} yalnız tepe KENDİNDEN İMZALI ise dolar ({@code trust_store | server | self_signed});
  * değilse {@code null} + en üst düğümde {@code issuer_missing} — {@code missing_kind}: {@code intermediate} (sunucu yalnız
  * yaprağı gönderdi, ara eksik), {@code anchor} (zincir depodaki bir ARA sertifikaya bağlanıyor, kök depoda yok),
- * {@code root} (kök bulunamadı). {@code root_trusted}: tepe kök güven deposunda (aynı sertifika ya da aynı ad + anahtar) —
- * sunucunun gönderdiği ama depoda olmayan kök "güvenilir" SAYILMAZ.
+ * {@code root} (kök bulunamadı), {@code wrong_intermediate} (sunucu verenle AYNI ADDA bir sertifika gönderdi ama o bunu
+ * imzalamıyor ya da CA değil — yenilenmiş / farklı anahtarlı eski ara sertifika). {@code root_trusted}: tepe kök güven
+ * deposunda (aynı sertifika ya da aynı ad + anahtar) — sunucunun gönderdiği ama depoda olmayan kök "güvenilir" SAYILMAZ.
+ *
+ * <p><b>Veren olabilir mi</b> ({@link #canIssue}, 2026-10-12): ad + imza YETMEZ — veren CA olmalı (basicConstraints;
+ * uzantısız eski v1 kök yalnız kendinden imzalıysa) ve keyUsage varsa keyCertSign taşımalı. Tarayıcı / PKIX son kullanıcı
+ * sertifikasının imzaladığı zinciri reddeder; ağaç onu "güven deposundan kök" diye yeşil göstermemeli.
  *
  * <p>Saf fonksiyon: ağ yok, yazma yok.
  */
@@ -61,6 +66,7 @@ public final class NetworkCertificateHierarchy {
     public static final String MISSING_INTERMEDIATE = "intermediate";
     public static final String MISSING_ANCHOR = "anchor";
     public static final String MISSING_ROOT = "root";
+    public static final String MISSING_WRONG_INTERMEDIATE = "wrong_intermediate";
 
     private record Found(X509Certificate cert, String store) { }
 
@@ -146,9 +152,16 @@ public final class NetworkCertificateHierarchy {
             rootSource = rootStore != null ? ROOT_TRUST_STORE : (last == 0 ? ROOT_SELF_SIGNED : ROOT_SERVER);
         } else if (stores.get(last) != null) {
             missingKind = MISSING_ANCHOR;
+        } else if (sentSameNameAsIssuer(top, sent, chain)) {
+            missingKind = MISSING_WRONG_INTERMEDIATE;
         } else {
-            missingKind = ManualCertificateChains.isCa(top) ? MISSING_ROOT : MISSING_INTERMEDIATE;
+            // Yalnız sunucu sertifikası (CA bayraklı olsa da ağaçta YAPRAK) → eksik olan veren ara sertifika
+            missingKind = last > 0 && ManualCertificateChains.isCa(top) ? MISSING_ROOT : MISSING_INTERMEDIATE;
         }
+
+        // Bir bağ yalnız ADLA kabul edildiyse (imza algoritması bu JVM'de doğrulanamıyor) zincir gösterilir ama kök
+        // "güvenilir" SAYILMAZ (inceleme 6): bilinmeyen yeşil olmasın — arayüz kökü "bilinmiyor" gösterir.
+        boolean unverified = hasUnverifiedLink(chain);
 
         Map<String, Object> view = ManualCertificateHierarchy.view(chain, now);
         annotateSources(view, stores);
@@ -156,7 +169,8 @@ public final class NetworkCertificateHierarchy {
 
         out.put("root_source", rootSource);
         out.put("trust_store", rootStore);
-        out.put("root_trusted", topSelfSigned && rootTrusted);
+        out.put("root_trusted", topSelfSigned && rootTrusted && !unverified);
+        out.put("signature_unverified", unverified);
         out.put("missing_kind", missingKind);
         out.put("order_ok", orderOk(distinctPool(leaf, pool), serverPart(chain, stores)));
         out.put("extra_certificates", extras(sent, chain, now));
@@ -174,6 +188,9 @@ public final class NetworkCertificateHierarchy {
         for (X509Certificate cand : anchors) {
             if (cand == null || !signs(cand, cert)) continue;
             if (selfSignedOnly && !ManualCertificateChains.isSelfSigned(cand)) continue;
+            // Depodaki KENDİNDEN İMZALI kök bir güven çapasıdır: PKIX çapanın uzantılarına bakmaz (inceleme 5) — uzantısız
+            // ya da keyCertSign'sız kurumsal kök bulunmamazlık etmesin. Depodaki ARA sertifika (yol sürer) CA olmalı.
+            if (!selfSignedOnly && !canIssue(cand)) continue;
             if (best == null || better(cand, best, now)) best = cand;
         }
         return best == null ? null : new Found(best, store);
@@ -184,20 +201,65 @@ public final class NetworkCertificateHierarchy {
                                                    List<X509Certificate> chain, Instant now) {
         X509Certificate best = null;
         for (X509Certificate cand : pool) {
-            if (containsSame(chain, cand) || !signs(cand, cert)) continue;
+            if (containsSame(chain, cand) || !canIssue(cand) || !signs(cand, cert)) continue;
             if (best == null || better(cand, best, now)) best = cand;
         }
         return best;
     }
 
-    /** {@code issuer}, {@code cert}'i imzalamış mı: konu adı = veren adı VE imza bu anahtarla doğrulanıyor. */
+    /**
+     * Sertifika VEREN olabilir mi: CA (basicConstraints) — uzantısız eski v1 sertifika yalnız kendinden imzalı kökse — ve
+     * keyUsage varsa keyCertSign. Son kullanıcı sertifikası (ya da CA olmayan "ara") zincire veren olarak giremez.
+     */
+    static boolean canIssue(X509Certificate c) {
+        boolean ca = c.getBasicConstraints() >= 0
+                || (c.getVersion() < 3 && ManualCertificateChains.isSelfSigned(c));
+        if (!ca) return false;
+        boolean[] ku = c.getKeyUsage();
+        return ku == null || (ku.length > 5 && ku[5]);
+    }
+
+    /**
+     * Sunucu, yolun tepesindeki sertifikanın VERENİYLE AYNI ADDA bir sertifika gönderdi mi (yola giremeyen: imzalamıyor ya
+     * da CA değil) — "ara sertifika eksik" değil "yanlış ara sertifika" tanısı için.
+     */
+    private static boolean sentSameNameAsIssuer(X509Certificate top, List<X509Certificate> sent, List<X509Certificate> chain) {
+        for (X509Certificate c : sent) {
+            if (containsSame(chain, c)) continue;
+            if (c.getSubjectX500Principal().equals(top.getIssuerX500Principal())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * {@code issuer}, {@code cert}'i imzalamış mı (yol kurmak için): konu adı = veren adı VE imza bu anahtarla doğrulanıyor.
+     * İmza algoritması bu JVM'de doğrulanamıyorsa (inceleme 5) ad eşleşmesi yeter — "imzalamıyor" denirse doğru ara
+     * sertifika "yanlış ara sertifika" görünürdü ({@code ManualCertificateChains.isSelfSigned} ile aynı kural). Böyle bir
+     * bağ GÜVEN kararına giremez ({@link #signatureCheck}, inceleme 6).
+     */
     static boolean signs(X509Certificate issuer, X509Certificate cert) {
-        if (!issuer.getSubjectX500Principal().equals(cert.getIssuerX500Principal())) return false;
+        Boolean r = signatureCheck(issuer, cert);
+        return r == null || r;
+    }
+
+    /** Yaprak → kök yolunda imzası bu JVM'de doğrulanamayan (yalnız adla kabul edilen) bir bağ var mı. */
+    static boolean hasUnverifiedLink(List<X509Certificate> chain) {
+        for (int i = 0; i + 1 < chain.size(); i++) {
+            if (signatureCheck(chain.get(i + 1), chain.get(i)) == null) return true;
+        }
+        return false;
+    }
+
+    /** Üç durumlu imza denetimi: TRUE doğrulandı, FALSE imzalamıyor / ad farklı, null bu JVM'de doğrulanamıyor. */
+    static Boolean signatureCheck(X509Certificate issuer, X509Certificate cert) {
+        if (!issuer.getSubjectX500Principal().equals(cert.getIssuerX500Principal())) return Boolean.FALSE;
         try {
             cert.verify(issuer.getPublicKey());
-            return true;
+            return Boolean.TRUE;
+        } catch (java.security.NoSuchAlgorithmException | java.security.NoSuchProviderException unsupported) {
+            return null;
         } catch (Exception e) {
-            return false;
+            return Boolean.FALSE;
         }
     }
 

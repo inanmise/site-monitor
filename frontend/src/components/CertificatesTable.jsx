@@ -188,9 +188,11 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   // ── Süzgeç / sıralama / görünüm eylemleri ──
   function updateFilters(next) { setFilters(next); setSelected(new Set()) }
   function changeScope(v) { const n = normalizeScope(v); setScopeRaw(n); writeView({ scope: n }); setSelected(new Set()) }
-  // Başka takımın satırı (can_manage=false) toplu işleme SEÇİLEMEZ; "tümünü seç" ve sayaçlar onları atlar.
+  // Başka takımın satırı (can_manage=false) toplu işleme SEÇİLEMEZ; "tümünü seç" ve sayaçlar onları atlar. Yalnız
+  // paylaşımla görülen satır da (2026-10-12): toplu pasife alma / kontak / kademe takım yönetimidir, sunucu atlar.
   const manageable = (c) => c?.can_manage !== false
-  const selectableCerts = certs.filter(manageable)
+  const bulkSelectable = (c) => manageable(c) && c?.shared_access !== true
+  const selectableCerts = certs.filter(bulkSelectable)
   function reset() {
     updateFilters({ ...EMPTY_FILTERS })
     setSortBy('priority|asc')
@@ -351,7 +353,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                   onEdit={canManage && manageable(cert) ? onEdit : null} onCopyLink={copyRowLink}
                   // Erişim paylaşımıyla görülen satır (shared_access, 2026-10-12) yabancı salt okunur DEĞİL: tam pencere açılır,
                   // eylemler satır bayraklarından; toplu seçim yine yalnız değiştirilebilen satırda
-                  readOnly={!manageable(cert) && cert.shared_access !== true} selectable={manageable(cert)}
+                  readOnly={!manageable(cert) && cert.shared_access !== true} selectable={bulkSelectable(cert)}
                   onOpenReadOnly={onOpenReadOnly} showTeam={cols.includes('team')}
                   onSameCert={(fp) => updateFilters({ ...filters, fp })} />
               ))}

@@ -49,8 +49,10 @@ public class LdapSettingsService {
 
     /** Çok-pod tutarlılığı: başka bir instance kaydettiyse (updated_at farklı) cache'i DB'den tazele.
      *  Aynı pod kaydında no-op. Aralık: site.monitor.settings.refresh-ms (vars. 10 sn). */
+    // synchronized (inceleme 4, 2026-10-12): kayıtla aynı kilit — tazeleme kayıttan ÖNCE okuduğu eski satırı kayıttan
+    // SONRA önbelleğe yazıp bu pod'un az önceki kaydını bir tur (≤ 10 sn) geri alamasın.
     @Scheduled(fixedDelayString = "${site.monitor.settings.refresh-ms:10000}", initialDelayString = "15000")
-    void refreshFromDb() {
+    synchronized void refreshFromDb() {
         try {
             LdapSettings db = repo.findById(LdapSettings.SINGLETON_ID).orElse(null);
             String dbUa  = db     != null ? db.getUpdatedAt()     : null;

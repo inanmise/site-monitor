@@ -79,23 +79,22 @@ class StormSilentMemberRecoveryTest {
     @Test
     @DisplayName("2026-10-12: fırtına çözüm postası, kurtulan üyeyi NÖBETÇİ olarak almış adreslere de gider (tekil, takım adresiyle birleşik)")
     void recoveryMailReachesOncallWhoGotTheAlarm() {
-        assertThat(StormService.withOncall(List.of("takim@example.com", "TAKIM@example.com"), List.of()))
+        assertThat(StormService.mergeAddresses(List.of("takim@example.com", "TAKIM@example.com"), List.of()))
                 .containsExactly("takim@example.com");
         AlertEvent m = member(3L, false);
         m.setAlertLevel("CRITICAL");
         m.setOncallEmails("nobetci@example.com,takim@example.com");
         AlertEvent n = member(4L, false);
         n.setOncallEmails(" Nobetci@Example.com ");
-        assertThat(StormService.withOncall(List.of("takim@example.com"), List.of(m, n)))
+        // takım postası gidecek: takım adresi o postanın üyeleriyle tohumlanır → nöbetçi eki olarak bir daha eklenmez
+        java.util.Map<String, java.util.Set<Long>> seeded = new java.util.HashMap<>();
+        StormService.seedTeamMail(seeded, List.of("takim@example.com"), List.of(m, n));
+        // nöbetçi gönderimin BÜTÜN üyelerini almış → takım postasına katılır
+        StormService.OncallPlan all = StormService.planOncall(List.of(m, n), List.of(), seeded);
+        assertThat(all.joinTeam()).containsExactly("nobetci@example.com");
+        assertThat(all.separate()).isEmpty();
+        assertThat(StormService.mergeAddresses(List.of("takim@example.com"), all.joinTeam()))
                 .containsExactly("takim@example.com", "nobetci@example.com");
-        // SY + UG ortak üyesi iki gönderimde: nöbetçi adresi YALNIZ ilk gönderime girer; başka gönderimin takım adresi hiç
-        java.util.Set<String> taken = new java.util.HashSet<>(java.util.Set.of("takim@example.com", "ug-takim@example.com"));
-        AlertEvent shared = member(5L, false);
-        shared.setOncallEmails("nobetci@example.com,ug-takim@example.com");
-        assertThat(StormService.withOncall(List.of("takim@example.com"), List.of(shared), taken))
-                .containsExactly("takim@example.com", "nobetci@example.com");
-        assertThat(StormService.withOncall(List.of("ug-takim@example.com"), List.of(shared), taken))
-                .containsExactly("ug-takim@example.com");
 
         EmailNotificationService mail = (EmailNotificationService) ReflectionTestUtils.getField(storm, "emailService");
         lenient().when(mail.sendHtml(any(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any())).thenReturn("SENT");
@@ -103,6 +102,93 @@ class StormSilentMemberRecoveryTest {
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         verify(mail).sendHtml(to.capture(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
         assertThat(to.getValue()).contains("nobetci@example.com");
+    }
+
+    @Test
+    @DisplayName("inceleme 4: nöbetçi YALNIZ açılışını aldığı üyeleri görür — kısmi nöbetçi ayrı posta; ortak üye iki gönderimde tek kez bildirilir")
+    void oncallSeesOnlyTheMembersItGot() {
+        // A gönderimi: a1 (yalnız A, CRITICAL — A nöbetçisi), shared (SY=A, UG=B — iki nöbetçi), a2 (WARNING — nöbetçi yok)
+        AlertEvent a1 = member(11L, false);
+        a1.setOncallEmails("a-nobet@example.com");
+        AlertEvent shared = member(12L, false);
+        shared.setOncallEmails("a-nobet@example.com,b-nobet@example.com");
+        AlertEvent a2 = member(13L, false);
+        java.util.Map<String, java.util.Set<Long>> reported = new java.util.HashMap<>();
+        StormService.OncallPlan planA = StormService.planOncall(List.of(a1, shared, a2), List.of(), reported);
+        // a-nobet a2'yi almadı → takım postasına KATILMAZ (a2 hedefini görmez), kendi iki üyesiyle ayrı posta
+        assertThat(planA.joinTeam()).isEmpty();
+        assertThat(planA.separate()).hasSize(2);
+        StormService.OncallMail aMail = planA.separate().stream().filter(x -> x.to().contains("a-nobet@example.com")).findFirst().orElseThrow();
+        assertThat(aMail.recovered()).extracting(AlertEvent::getId).containsExactly(11L, 12L);
+        StormService.OncallMail bMail = planA.separate().stream().filter(x -> x.to().contains("b-nobet@example.com")).findFirst().orElseThrow();
+        // B'nin nöbetçisi A'ya özel hedefleri (a1, a2) GÖRMEZ — yalnız ortak üye
+        assertThat(bMail.recovered()).extracting(AlertEvent::getId).containsExactly(12L);
+        // B gönderimi: ortak üye + b1 (yalnız B). b-nobet ortak üyeyi zaten aldı → yalnız b1 için bildirilir
+        AlertEvent b1 = member(14L, false);
+        b1.setOncallEmails("b-nobet@example.com");
+        StormService.OncallPlan planB = StormService.planOncall(List.of(shared, b1), List.of(), reported);
+        assertThat(planB.joinTeam()).isEmpty();
+        assertThat(planB.separate()).singleElement().satisfies(x -> {
+            assertThat(x.to()).containsExactly("b-nobet@example.com");
+            assertThat(x.recovered()).extracting(AlertEvent::getId).containsExactly(14L);
+        });
+        // aynı plan tekrar: her şey bildirildi → hiçbir ek yok
+        StormService.OncallPlan again = StormService.planOncall(List.of(shared, b1), List.of(), reported);
+        assertThat(again.joinTeam()).isEmpty();
+        assertThat(again.separate()).isEmpty();
+        // hâlâ-down üye: nöbetçinin almadığı hâlâ-down üye varsa takım postasına katılmaz; aldığı hâlâ-down ayrı postada listelenir
+        AlertEvent down = member(15L, false);
+        down.setOncallEmails("c-nobet@example.com");
+        AlertEvent rec = member(16L, false);
+        rec.setOncallEmails("c-nobet@example.com");
+        AlertEvent otherDown = member(17L, false);
+        StormService.OncallPlan planC = StormService.planOncall(List.of(rec), List.of(down, otherDown), new java.util.HashMap<>());
+        assertThat(planC.joinTeam()).isEmpty();
+        assertThat(planC.separate()).singleElement().satisfies(x -> {
+            assertThat(x.recovered()).extracting(AlertEvent::getId).containsExactly(16L);
+            assertThat(x.stillDown()).extracting(AlertEvent::getId).containsExactly(15L);
+        });
+    }
+
+    @Test
+    @DisplayName("inceleme 5: bir takımın adresi BAŞKA takımın nöbetçisi de olsa o takımın üyelerinin çözümünü kaçırmaz; UG = SY çift sayılmaz")
+    void teamAddressThatIsAlsoOncallStillGetsItsMembers() {
+        // X: B takımının adresi; A'nın nöbetçisi olarak A'ya özel M1, M2'nin açılışını aldı
+        AlertEvent m1 = member(31L, false);
+        m1.setOncallEmails("x@example.com");
+        AlertEvent m2 = member(32L, false);
+        m2.setOncallEmails("x@example.com");
+        AlertEvent bOnly = member(33L, false);
+        java.util.Map<String, java.util.Set<Long>> reported = new java.util.HashMap<>();
+        StormService.seedTeamMail(reported, List.of("x@example.com"), List.of(bOnly));   // B'nin postası X'e gider (yalnız B üyesi)
+        StormService.OncallPlan planA = StormService.planOncall(List.of(m1, m2), List.of(), reported);
+        assertThat(planA.joinTeam()).containsExactly("x@example.com");   // A'nın bütün üyelerini almış → A postasına katılır
+        // B'nin hiç kurtulanı yoksa (posta gitmez → tohum yok) X yine A üyelerini öğrenir
+        StormService.OncallPlan noB = StormService.planOncall(List.of(m1, m2), List.of(), new java.util.HashMap<>());
+        assertThat(noB.joinTeam()).containsExactly("x@example.com");
+    }
+
+    @Test
+    @DisplayName("inceleme 4: kısmi nöbetçi uçtan uca — takım postası nöbetçisiz, nöbetçiye kendi üyesiyle ayrı posta + günlük satırı")
+    void partialOncallGetsSeparateMail() {
+        AlertEvent got = member(21L, false);
+        got.setOncallEmails("nobet@example.com");
+        AlertEvent notGot = member(22L, false);
+        EmailNotificationService mail = (EmailNotificationService) ReflectionTestUtils.getField(storm, "emailService");
+        lenient().when(mail.sendHtml(any(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any())).thenReturn("SENT");
+        ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(), List.of(got, notGot), List.of());
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        verify(mail, org.mockito.Mockito.atLeastOnce()).sendHtml(to.capture(), any(), subject.capture(), any(), any(), anyList(), anyBoolean(), any());
+        List<String[]> calls = to.getAllValues();
+        assertThat(calls).anySatisfy(arr -> assertThat(arr).containsExactly("nobet@example.com"));
+        assertThat(calls).noneSatisfy(arr -> {
+            assertThat(arr).contains("nobet@example.com");
+            assertThat(arr.length).isGreaterThan(1);
+        });
+        int idx = 0;
+        for (int i = 0; i < calls.size(); i++) if (java.util.Arrays.asList(calls.get(i)).contains("nobet@example.com")) idx = i;
+        assertThat(subject.getAllValues().get(idx)).contains("1 monitör kurtarıldı");
     }
 
     @Test

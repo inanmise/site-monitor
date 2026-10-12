@@ -582,8 +582,14 @@ public class MonitoringController {
         // takımına aktarılır; A'nın yöneticisi eski seq ile restore çağırdığında kapı A'ya bakıp
         // geçiyor ve B takımının CANLI monitörünün url/interval/expectedStatus/active alanlarını
         // geri sarıyordu. Geçmiş satırının takımı yalnız OKUMA için doğru kaynaktır.
-        if (!SessionScope.canDeleteTeamResource(session, liveTeamOf(resolved, entity)))
+        Long liveTeam = liveTeamOf(resolved, entity);
+        if (!SessionScope.canDeleteTeamResource(session, liveTeam))
             return forbidden("Bu izleme üzerinde yetkiniz yok");
+        // Takım erişim paylaşımı (inceleme 5): geri yükleme de bir güncellemedir — k6 paylaşımla düzenlenemez, bildirim
+        // YÖNLENDİRMESİ (e-posta / webhook, seviye, grup, 7/24) paylaşımla değiştirilemez. Bu alanlar paylaşımla geri
+        // yükleyende atlanır ve yanıtta söylenir (sessiz değil).
+        if (MonitorHistoryService.SCRIPTED.equals(resolved)) requireOwnScopeForScripted(session, liveTeam);
+        boolean routingLocked = !SessionScope.canOperateTeamOwn(session, liveTeam);
 
         String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS
                 : MonitorHistoryService.PAGESPEED.equals(resolved) ? PAGESPEED_FIELDS : MON_FIELDS;
@@ -600,8 +606,19 @@ public class MonitoringController {
         // yetki sınıfını çevirebilir (ve kısmi unique index ile çakışıp 500 üretebilirdi).
         // script/description (yalnız SENTETİK): snapshot'ta 512 karakterde kırpılırlar; betik kendi
         // sürüm geçmişinden (script versions → RESTORE) geri yüklenir, buradan YAZILMAZ.
-        var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields,
-                MonitorHistoryService.SCRIPTED.equals(resolved) ? RESTORE_SKIP_SCRIPTED : RESTORE_SKIP);
+        Set<String> skip = new java.util.HashSet<>(MonitorHistoryService.SCRIPTED.equals(resolved) ? RESTORE_SKIP_SCRIPTED : RESTORE_SKIP);
+        List<String> routingSkipped = new ArrayList<>();
+        if (routingLocked) {
+            for (String f : fields) {
+                if (SHARED_NOTIFY_KEYS.contains(f)) {
+                    skip.add(f);
+                    // Yalnız kayıttakinden FARKLI olan "geri yüklenmedi" sayılır (inceleme 6): durum kaydı her alanı (null
+                    // dâhil) taşıdığı için eskiden her geri yüklemede altı alan "atlandı" deniyordu
+                    if (snapshot.containsKey(f) && !sameNotifyValue(f, snapshot.get(f), before.get(f))) routingSkipped.add(f);
+                }
+            }
+        }
+        var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
 
         // "Yazılan alan" ile "DEĞİŞEN alan" aynı şey değil: snapshot güncel değerin aynısını
@@ -611,6 +628,12 @@ public class MonitoringController {
         // yani kaydetmeden dönmek veritabanına hiçbir şey yazmaz.
         Map<String, Object> after = AuditDiff.snapshot(entity, fields);
         String effective = AuditDiff.diff(before, after);
+        if (effective == null && !routingSkipped.isEmpty()) {
+            // Tek fark bildirim ayarlarıysa "fark yok" denmez — neden yapılamadığı söylenir
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu kayıttaki fark yalnız bildirim ayarlarında; bildirim ayarları takım erişim paylaşımıyla geri yüklenemez.",
+                    "This entry differs only in notification settings, which can't be restored through team access sharing."));
+        }
         if (effective == null)
             return badRequest("Geri yüklenecek bir fark yok — ayarlar zaten o andaki gibi");
         List<String> applied = MonitorHistoryService.changedFields(effective);
@@ -630,6 +653,7 @@ public class MonitoringController {
         out.put("fields", applied);
         // Atlananlar SESSİZ kalmamalı: kullanıcı parolanın eski değerine dönmediğini bilmeli.
         out.put("skipped_masked", maskedSkipped);
+        if (!routingSkipped.isEmpty()) out.put("skipped_routing", routingSkipped);
         return ok(out);
     }
 
@@ -845,7 +869,16 @@ public class MonitoringController {
         // Kapsam (2026-09-25): izlemenin takımı VEYA değişikliği yapan ekip üyesi — takımı boş satırlar
         // (envanter türevi / sentetik) takım arkadaşının değişikliği olarak da görünür. Boş IN listeleri
         // kukla değerle korunur (TeamActorScope).
-        TeamActorScope sc = all ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(view, appUserRepo);
+        TeamActorScope sc;
+        if (all) sc = TeamActorScope.unrestricted();
+        else {
+            // Aktör dalı (takımsız satır + o takım üyesinin değişikliği) KENDİ görüş kapsamıyla (2026-10-12): paylaşım
+            // takımının üyelerinin başka takımların takımsız izlemelerinde yaptığı değişiklikler sızmasın. Paylaşılan
+            // takımlar yalnız takım dalına eklenir.
+            List<Long> own = SessionScope.viewTeamIds(session);
+            TeamActorScope actors = TeamActorScope.ofTeams(own == null ? view : own, appUserRepo);
+            sc = new TeamActorScope(false, view, actors.actorIds(), actors.actorNames());
+        }
         // Takım SÜZGECİ aynı kuralla: o takımın izlemesi VEYA o takım üyesinin değişikliği.
         TeamActorScope fl = teamId == null ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(List.of(teamId), appUserRepo);
         return new ChangeScope(all, sc, fl);
@@ -971,10 +1004,96 @@ public class MonitoringController {
             // 2026-10-12 (takım erişim paylaşımı): üç bayrak üç uç kapısıyla AYNI — çalıştır (tetik/tanıla), düzenle
             // (güncelle), sil. Arayüz düğmeleri rol dizesinden değil bunlardan çizer.
             row.put("can_check", SessionScope.canExecuteTeam(session, team));
-            row.put("can_edit", SessionScope.canOperateTeam(session, team));
+            boolean edit = SessionScope.canOperateTeam(session, team);
+            row.put("can_edit", edit);
             row.put("can_delete", SessionScope.canDeleteTeamResource(session, team));
+            // Yalnız paylaşımla görülen satır (2026-10-12): okuma rozeti / sekmeler için; diğerinde alan YOK
+            if (SessionScope.viewableOnlyByGrant(session, team)) row.put("shared_access", true);
+            else row.remove("shared_access");
+            // Düzenleyebilir ama KENDİ kapsamı değil (yalnız paylaşımla yazıyor) → takım ve bildirim yönlendirmesi kilitli
+            // (inceleme 5). Sunucu korumasıyla (guardSharedNotificationFields / resolveTeamChange) AYNI ölçüt: görebildiği
+            // ama yönetemediği takıma paylaşımla yazan AUDIT / kapsamlı yönetici de kilitli form görür, 403 yemez.
+            if (edit && !SessionScope.canOperateTeamOwn(session, team)) row.put("routing_locked", true);
+            else row.remove("routing_locked");
         }
         return rows;
+    }
+
+    /**
+     * Bildirim YÖNLENDİRMESİ alanları — paylaşımla yazan kişi değiştiremez. {@code criticalDays} (inceleme 6): alan adı
+     * izlemesinde alarm SEVİYESİNİ belirler (kalan gün ≤ eşik → CRITICAL → eskalasyon kişileri + nöbetçi) — alarm
+     * seviyesinin karşılığı. Bu alanı taşımayan türde gövdeden düşer.
+     */
+    private static final List<String> SHARED_NOTIFY_KEYS =
+            List.of("notifyEmail", "notifyWebhook", "notificationGroupId", "nocNotify", "nocGroupIds", "alertLevel", "criticalDays");
+
+    /**
+     * Takım erişim paylaşımı (2026-10-12): bildirim YÖNLENDİRMESİ paylaşılmaz. Kayda yalnız paylaşımla yazabilen kişinin
+     * gövdesindeki bildirim alanları (e-posta / webhook anahtarı, bildirim grubu, 7/24) KAYITLI değerle aynıysa gövdeden
+     * düşürülür (tam yük gönderen form), farklıysa 403. Kendi kapsamıyla (üyelik / yönetim) yazan kullanıcıda hiçbir şey
+     * değişmez. Varlıkta olmayan alan (tür o ayarı taşımıyor) yok sayılır.
+     */
+    static void guardSharedNotificationFields(HttpSession session, Long teamId, Map<String, Object> body, Object entity) {
+        if (body == null || entity == null || SessionScope.canOperateTeamOwn(session, teamId)) return;
+        org.springframework.beans.BeanWrapper bw = new org.springframework.beans.BeanWrapperImpl(entity);
+        for (String key : SHARED_NOTIFY_KEYS) {
+            if (!body.containsKey(key)) continue;
+            if (!bw.isReadableProperty(key)) { body.remove(key); continue; }
+            if (!sameNotifyValue(key, body.get(key), bw.getPropertyValue(key))) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Takım erişim paylaşımıyla bildirim ayarları (e-posta / webhook, alarm seviyesi, kritik gün eşiği, bildirim grubu, 7/24) "
+                                + "değiştirilemez; bunları izlemenin takımı değiştirebilir.",
+                        "Notification settings (email / webhook, alert level, critical-days threshold, notification group, 24/7) can't be "
+                                + "changed through team access sharing; the monitor's team can change them."));
+            }
+            body.remove(key);
+        }
+    }
+
+    /** Gönderilen ile kayıtlı bildirim değeri aynı mı — varsayılan / boş eşdeğerleri normalleştirilir. */
+    static boolean sameNotifyValue(String key, Object sent, Object stored) {
+        return switch (key) {
+            // e-posta / webhook: null = açık (gönderim tarafı !Boolean.FALSE.equals ile okur)
+            case "notifyEmail", "notifyWebhook" -> !Boolean.FALSE.equals(sent) == !Boolean.FALSE.equals(stored);
+            // 7/24: null = kapalı
+            case "nocNotify" -> Boolean.TRUE.equals(sent) == Boolean.TRUE.equals(stored);
+            // Alarm seviyesi (eskalasyon kontaklarının alıcıya girip girmediği): null / geçersiz / WARNING = WARNING
+            case "alertLevel" -> java.util.Objects.equals(com.sitemonitor.model.MonitorAlertPrefs.normalize(sent),
+                    com.sitemonitor.model.MonitorAlertPrefs.normalize(stored));
+            case "notificationGroupId" -> java.util.Objects.equals(groupIdOf(sent), groupIdOf(stored));
+            // Kritik gün eşiği: yalnız SAYI uygulanır (applyDomainFields, en az 1) — sayı olmayan gönderim kaydı değiştirmez
+            // kayıtlı null = 7 (DomainCheckerService / DomainExpiryReminderService ile aynı; form da `?? 7` gönderir)
+            case "criticalDays" -> !(sent instanceof Number n)
+                    || Math.max(1, n.intValue()) == (stored instanceof Number s ? s.intValue() : 7);
+            // 7/24 grupları KÜME olarak: "2,1" ile [1, 2] aynı seçim
+            case "nocGroupIds" -> new java.util.TreeSet<>(com.sitemonitor.service.noc.NocGroupIds.fromBody(sent))
+                    .equals(new java.util.TreeSet<>(com.sitemonitor.service.noc.NocGroupIds.fromBody(stored)));
+            default -> java.util.Objects.equals(sent, stored);
+        };
+    }
+
+    /** Bildirim grubu kimliği: sayı ya da sayısal metin → Long; boş → null; başka değer kendisi (eşleşmez). */
+    private static Object groupIdOf(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return Long.valueOf(n.longValue());
+        String s = v.toString().trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Long.valueOf(s);
+        } catch (NumberFormatException e) {
+            return s;
+        }
+    }
+
+    /**
+     * k6 (betikli) izlemeyi oluşturmak / düzenlemek KENDİ kapsamı ister (2026-10-12): betik keyfi koddur ve takımın şifreli
+     * ortam değerleriyle koşar — paylaşım DÜZENLEME düzeyi bunu açmaz (çalıştırma ve silme paylaşımla kalır).
+     */
+    private static void requireOwnScopeForScripted(HttpSession session, Long teamId) {
+        if (SessionScope.canOperateTeamOwn(session, teamId)) return;
+        throw new SecurityException(com.sitemonitor.util.Msg.t(
+                "Betikli (k6) izlemeler takım erişim paylaşımıyla oluşturulamaz ve düzenlenemez; bunu izlemenin takımı yapabilir.",
+                "Scripted (k6) monitors can't be created or edited through team access sharing; the monitor's team can do this."));
     }
 
     /**
@@ -1864,6 +1983,9 @@ public class MonitoringController {
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
             return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PortMonitor());
         String now = ISO.format(Instant.now());
         PortMonitor m = new PortMonitor();
         m.setName(blank(body.get("name")) ? host : body.get("name").toString().trim());
@@ -1910,6 +2032,16 @@ public class MonitoringController {
         return findLivePort(id).map(m -> {
             if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
+            guardSharedNotificationFields(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()), body, m);
+            // Takım değişimi YAN ETKİDEN ÖNCE çözülür (inceleme 5): paylaşım kaynaklı 403, duraklatmanın alarm kapatması
+            // gibi bir yan etki olduktan sonra gelmesin ("hiçbir şey kaydedilmez" sözü). Envanter türevi satır listede
+            // ETKİN takımla gelir (enrichPort): gövdedeki takım o takımsa taşıma değil hizalamadır — yukarıda yetkisi zaten
+            // doğrulanan takım; kayıtlı takımı farklı (eski / boş) türev satır yersiz 403 vermesin (inceleme 7)
+            final Long _effTeam = effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
+            final Long _reqTeam = body.get("teamId") instanceof Number _rn ? Long.valueOf(_rn.longValue()) : null;
+            final Long _nextTeam = !body.containsKey("teamId") ? m.getTeamId()
+                    : !Boolean.TRUE.equals(m.getStandalone()) && _reqTeam != null && _reqTeam.equals(_effTeam) ? _reqTeam
+                    : resolveTeamChange(session, m.getTeamId(), body.get("teamId"));
             final String  _prevHost = m.getHost();
             final Integer _prevPort = m.getPort();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -1936,7 +2068,7 @@ public class MonitoringController {
             }
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW), ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
-            if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.containsKey("teamId"))    m.setTeamId(_nextTeam);
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
@@ -2346,6 +2478,9 @@ public class MonitoringController {
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
             return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.DnsMonitor());
         m.setTeamId(teamId);   // alarm yönlendirme + liste kapsamı için takım
         Object ev = body.get("expectedValue");          // beklenen-değer kilidi (opsiyonel)
         m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
@@ -2400,6 +2535,11 @@ public class MonitoringController {
             // kullanıcı bunu yetki kuralı değil ARIZA sanıyordu.
             if (!canOperateTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu monitörü düzenleme yetkiniz yok");
+            guardSharedNotificationFields(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()), body, m);
+            // Takım değişimi YAN ETKİDEN (alan adı değişince alarm kapatma) ÖNCE çözülür (inceleme 5); yalnız BAĞIMSIZ satırda —
+            // türetilmiş satır envanterin takımını izler, gövdedeki takım zaten yok sayılır (inceleme 6: yersiz 403 vermesin)
+            final Long _nextTeam = Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId")
+                    ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
             // Kayıt tipi izin listesi (2026-10-08): createDns/testDns'teki DNS_RECORD_TYPES güncellemede yoktu — "SOA"/"x"
             // gibi değerler saklanıp her taramada hata üretiyordu. Yan etkilerden (alarm kapatma) ÖNCE; saklı değerle AYNI
             // gelen eski tip muaf (eski kayıt düzenlenebilir kalır).
@@ -2444,7 +2584,7 @@ public class MonitoringController {
             if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
-                m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+                m.setTeamId(_nextTeam);
             if (body.containsKey("expectedValue")) {   // beklenen-değer kilidi (boş = kilit kapalı)
                 Object ev = body.get("expectedValue");
                 m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
@@ -2753,6 +2893,9 @@ public class MonitoringController {
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.KeywordMonitor());
         // Mükerrer koruması (diğer türlerle aynı desen): aynılık anahtarı url + keyword + takım —
         // aynı URL'i FARKLI kelimeyle izlemek meşrudur, engellenmez.
         // Şemasız URL kontrol edilemez (host çıkarılamaz) → mükerrer kontrolünden ÖNCE normalize et,
@@ -2808,6 +2951,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = keywordMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             // Edit ile mükerrere dönüşmeyi de engelle (ping PUT'undaki desen; excludeId = kendisi).
             String intendedUrl  = body.get("url")     != null ? MonitorUrls.normalize(body.get("url").toString()) : m.getUrl();
             String intendedWord = body.get("keyword") != null ? body.get("keyword").toString().trim() : m.getKeyword();
@@ -3459,6 +3603,9 @@ public class MonitoringController {
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.HttpMonitor());
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         {   // gelişmiş istek alanları (2026-10-01) — yalnız gövdede gelenler sınanır; eklentisiz gövdede hiçbir şey değişmez
@@ -3511,6 +3658,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = httpMonitorRepo.findById(id).map(MonitoringController::httpSnapshot).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             {   // gelişmiş istek alanları (2026-10-01) — hiçbir şeye dokunmadan ÖNCE; eklentisiz gövdede no-op
                 String effMethod = body.get("method") != null ? normalizeHttpMethod(body.get("method")) : m.getMethod();
                 String advErr = validateHttpAdvanced(body, SessionScope.isGlobalAdmin(session), effMethod,
@@ -3903,6 +4051,9 @@ public class MonitoringController {
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageMonitor());
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         if (pageMonitorRepo.existsDuplicate(url, teamId, null))           // mükerrer kontrolü normalize edilmiş değerle
@@ -3944,6 +4095,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = pageMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pageMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -4167,6 +4319,9 @@ public class MonitoringController {
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageSpeedMonitor());
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         if (pageSpeedMonitorRepo.existsDuplicate(url, teamId, null))
@@ -4200,6 +4355,7 @@ public class MonitoringController {
         Map<String, Object> _before = pageSpeedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, PAGESPEED_FIELDS)).orElse(null);
         return pageSpeedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.get("name") != null) m.setName((String) body.get("name"));
             if (body.get("url")  != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -4761,7 +4917,13 @@ public class MonitoringController {
                     return item;
                 }).toList();
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("monitors", withCheckFlag(session, result));
+        // k6 düzenleme paylaşımla açılmaz (2026-10-12): satırın can_edit'i KENDİ kapsamı (çalıştırma / silme paylaşımla kalır)
+        List<Map<String, Object>> scriptedRows = withCheckFlag(session, result);
+        for (Map<String, Object> row : scriptedRows) {
+            Long team = row.get("team_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            row.put("can_edit", SessionScope.canOperateTeamOwn(session, team));
+        }
+        out.put("monitors", scriptedRows);
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
@@ -4782,6 +4944,7 @@ public class MonitoringController {
         if (blank(body.get("name"))) return badRequest("ad zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        requireOwnScopeForScripted(session, teamId);
         if (blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur; izleme oluşturulamıyor.");
         String name = body.get("name").toString().trim();
         if (scriptedMonitorRepo.existsDuplicate(name, teamId, null))
@@ -4847,6 +5010,8 @@ public class MonitoringController {
         if (diag.blocked()) return badRequest(diag.blocking());
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            requireOwnScopeForScripted(session, m.getTeamId());
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
             // Env doğrulaması (2026-10-08) — ad değişikliği/alarm taşıma gibi yan etkilerden ÖNCE. Monitörde ZATEN kayıtlı
             // adlar biçim kurallarından muaf (eski kayıt düzenlenebilir kalır); koşumu etkileyen ayrılmış adlar her zaman 400.
@@ -5770,10 +5935,23 @@ public class MonitoringController {
         if (reg == null || reg.isBlank()) return badRequest("Geçersiz/çözümlenemeyen alan adı");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        // yeni kaydın "varsayılanı": formun aldığı AYAR değeri (kritik gün eşiği; inceleme 6)
+        final int defaultCriticalDays = appSettings.getInt("site.monitor.domain.default-critical-days", 7);
+        final boolean grantOnlyWriter = !SessionScope.canOperateTeamOwn(session, teamId);
+        {
+            com.sitemonitor.model.DomainMonitor template = new com.sitemonitor.model.DomainMonitor();
+            template.setCriticalDays(defaultCriticalDays);
+            guardSharedNotificationFields(session, teamId, body, template);
+        }
         if (domainMonitorRepo.existsDuplicate(reg, teamId, null))
             return badRequest("Bu alan adı bu takımda zaten izleniyor.");
         String now = ISO.format(Instant.now());
         DomainMonitor m = new DomainMonitor();
+        // Koruma eşit değeri gövdeden düşürür (inceleme 7): paylaşımla oluşturulan kayıt kritik gün eşiğini sınıf varsayılanı
+        // (7) değil AYAR varsayılanıyla alır — formda gösterilen ve doğrulanan değer
+        if (grantOnlyWriter) m.setCriticalDays(defaultCriticalDays);
         m.setName(blank(body.get("name")) ? reg : normalizeMonitorName(body.get("name").toString()));
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -5805,6 +5983,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = domainMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.get("name") != null) m.setName(normalizeMonitorName((String) body.get("name")));
             if (!blank(body.get("domain"))) {
                 String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
@@ -6213,6 +6392,9 @@ public class MonitoringController {
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
+        // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PingMonitor());
         String host = ((String) body.get("host")).trim();
         requireValidPingHost(host);   // 2026-10-08: ad/IP biçimi, '-' ile başlayamaz → 400 fields.host
         if (pingMonitorRepo.existsDuplicate(host, teamId, null))
@@ -6262,6 +6444,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = pingMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             // Host doğrulaması (2026-10-08) — alarm kapatma gibi yan etkilerden ÖNCE. DEĞİŞMEYEN eski host biçim
             // kuralından muaf (eski kayıt düzenlenebilir kalır); '-' ile başlayan host ise her zaman 400 (koşumda zaten
             // çalıştırılmıyor).

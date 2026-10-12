@@ -330,7 +330,9 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_mgr=none')
     const first = render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
     await waitFor(() => expect(api.admin.getTeams).toHaveBeenCalled())
-    await waitFor(() => expect(rowNames()).toEqual([]))
+    // inceleme 4: takımlar GERÇEKTEN yüklendikten sonra bakılır (eski test istek anında, hiç satır yokken geçiyordu)
+    await waitFor(() => expect(kpi('total')?.textContent).toContain(String(TEAMS.length)))
+    expect(rowNames()).toEqual([])
     first.unmount()
     api.admin.getUsers.mockResolvedValue({ success: true, data: USERS })
     api.admin.teamStats.mockRejectedValue(new Error('ağ'))
@@ -339,6 +341,22 @@ describe('TeamManager — eksik bilgi süzgeci (2026-10-11)', () => {
     await waitFor(() => expect(kpi('alerts')?.textContent).toContain('—'))
     expect(chip('groups').querySelector('[data-slot="team-gap-count"]').textContent).toBe('—')
     expect(rowNames()).toEqual([])
+  })
+
+  it('inceleme 4: "bilinmiyor" rozetinin nedeni dokunarak da okunur (Popover) — yalnız title / sr-only değil', async () => {
+    api.admin.getUsers.mockRejectedValue(new Error('ağ'))
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    const badge = await waitFor(() => {
+      const b = rowOf('Payments')?.querySelector('[data-slot="team-gap-badge"][data-state="unknown"]')
+      expect(b).not.toBeNull()
+      return b
+    })
+    expect(badge.tagName).toBe('BUTTON')
+    fireEvent.click(badge)
+    const pop = await waitFor(() => { const p = document.querySelector('[data-slot="team-gap-unknown-pop"]'); expect(p).not.toBeNull(); return p })
+    expect(pop.textContent).toContain(EN['team.gap.loadFailed'])
+    expect(pop.textContent).toContain('Payments')
   })
 
   it('2026-10-12 inceleme 2: elle atanmış ama görüş alanı dışındaki müdür "müdürü yok" değil', async () => {

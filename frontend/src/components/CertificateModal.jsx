@@ -131,6 +131,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Manuel kaydın SSL sekmesi zincir görünümü (2026-10-07): 'chain' (varsayılan) | 'hierarchy' (tarayıcı gibi). Pencere
   // kalıcı mount'lu → seçim sekme değişiminde ve sonraki açılışlarda oturum boyunca hatırlanır (tarayıcı deposu yok).
   const [sslChainView, setSslChainView] = useState('chain')
+  // Ağ kaydında hiyerarşi CANLI bağlantı açar: başka bir alan adına geçince görünüm "Zincir"e döner — bir kez seçilen
+  // "Hiyerarşi" sonraki her pencerede tıklanmadan bağlantı başlatmasın (2026-10-12). Manuel kayıt çevrimdışı: seçim kalır.
+  useEffect(() => { if (!manual) setSslChainView('chain') }, [domain, manual])
   const bodyRef = useRef(null)   // ModalShell kaydırılan gövdesi — sekme değişince başa sarılır
   const [activeTab, setActiveTab]     = useState('ssl')
   const [showDiag, setShowDiag]       = useState(false)
@@ -307,6 +310,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   }, [refreshCert])
 
   const sslUpload = isUploadResult(sslData)
+  // SSL verisi GÖSTERİLEN alan adına mı ait (inceleme 5): pencere başka kayda geçince ilk çizimde önceki kaydın verisi hâlâ
+  // state'te (sıfırlama efektte) — hiyerarşi o çizimde yeni alan adını eski verinin rotası / önbelleğiyle istemesin.
+  const sslForDomain = !sslData?.domain || !domain || String(sslData.domain).toLowerCase() === String(domain).toLowerCase()
   const isManual = !!manual || manualDetected || isManualCert(certData) || sslUpload
   useEffect(() => {
     if (!domain || activeTab !== 'ssl' || sslData || sslLoading || sslError != null) return
@@ -531,7 +537,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           {sslData ? (
             <SslCheckerPanel data={sslData} onRecheck={() => probeSsl(domain)} rechecking={sslLoading} recheckError={sslError}
               chainView={sslChainView} onChainViewChange={setSslChainView}
-              networkHierarchyDomain={!previewMode && !isManual ? domain : null} />
+              networkHierarchyDomain={!previewMode && !isManual && sslForDomain ? domain : null} />
           ) : sslError != null ? (
             <StatusBlock tone="danger" icon={ShieldX} title={t(isManual ? 'sslv.m.loadFailed' : 'sslv.loadFailed')} description={sslError || t('sslv.loadFailedHint')}
               actions={(

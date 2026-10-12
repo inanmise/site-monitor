@@ -39,6 +39,42 @@ class LdapSettingsServiceTest {
     private LdapSettings stored;
 
     @Test
+    @DisplayName("inceleme 4: tazeleme kayıttan ÖNCE okuduğu eski satırı kayıttan SONRA önbelleğe yazamaz (aynı kilit)")
+    void refreshCannotOverwriteConcurrentSave() throws Exception {
+        LdapSettings old = new LdapSettings();
+        old.setId(LdapSettings.SINGLETON_ID);
+        old.setHost("eski.example.com");
+        old.setUpdatedAt("2026-10-12T08:00:00");
+        stored = old;
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch proceed = new java.util.concurrent.CountDownLatch(1);
+        when(repo.findById(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> {
+            if ("ldap-refresh".equals(Thread.currentThread().getName())) {
+                LdapSettings snapshot = new LdapSettings();
+                snapshot.setId(LdapSettings.SINGLETON_ID);
+                snapshot.setHost(stored.getHost());
+                snapshot.setUpdatedAt(stored.getUpdatedAt());
+                reading.countDown();
+                proceed.await(5, java.util.concurrent.TimeUnit.SECONDS);   // okuma bitti, önbelleğe yazmadan önce bekle
+                return java.util.Optional.of(snapshot);
+            }
+            return java.util.Optional.ofNullable(stored);
+        });
+        Thread refresh = new Thread(service::refreshFromDb, "ldap-refresh");
+        refresh.start();
+        assertThat(reading.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Thread save = new Thread(() -> service.save(Map.of("host", "yeni.example.com"), "admin"), "ldap-save");
+        save.start();
+        save.join(300);                     // kilit yoksa kayıt burada biter ve tazeleme ardından eskisini yazar
+        proceed.countDown();
+        refresh.join(5_000);
+        save.join(5_000);
+        assertThat(refresh.isAlive()).isFalse();
+        assertThat(save.isAlive()).isFalse();
+        assertThat(service.getOrDefaults().getHost()).isEqualTo("yeni.example.com");
+    }
+
+    @Test
     @DisplayName("2026-10-12: kayıt DB'deki güncel satıra uygulanır — başka pod'un kaydettiği rol eşlemesi bayat önbellekle geri alınmaz")
     void saveAppliesToCurrentRowNotStaleCache() {
         service.save(Map.of("host", "h", "role_mappings", List.of()), "admin");

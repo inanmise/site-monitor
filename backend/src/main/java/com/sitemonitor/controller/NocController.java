@@ -144,8 +144,9 @@ public class NocController {
     /** Satırda 7/24'ü değiştirebilir mi — izlemenin kendi güncelleme kapısı. */
     boolean canEdit(HttpSession session, NocType type, Long teamId) {
         if (!permissionService.allows(session, type.permission, "edit")) return false;
-        return type == NocType.SSL ? SessionScope.canWriteInventory(session, teamId)
-                                   : SessionScope.canOperateTeam(session, teamId);
+        // 7/24 yönlendirmesi takım erişim paylaşımıyla değiştirilemez (2026-10-12) — KENDİ kapsamı
+        return type == NocType.SSL ? SessionScope.canWriteInventoryOwn(session, teamId)
+                                   : SessionScope.canOperateTeamOwn(session, teamId);
     }
 
     @GetMapping("/coverage")

@@ -345,12 +345,7 @@ public class ExecutiveSummaryDeliveryService {
 
     /** Elle gönderim (global yönetici, "Şimdi gönder"): kayıt durumundan bağımsız gönderir; yalnız süren gönderim engeller. */
     public Result sendNow(YearMonth month, String actor) {
-        // Alıcılar TALEPTEN ÖNCE (2026-10-12): eksik listede talep edilirse gönderilmiş ay FAILED'e döner, kayıtlı görüntü
-        // kaybolurdu. Takım yolu (sendTeamNow) da aynı sırayla.
-        if (!recipients().complete()) {
-            trace(orgSlot, "—", null, null, "SKIPPED: global yöneticiler okunamadı — gönderilmedi", TRIGGER);
-            return new Result(RECIPIENTS_UNAVAILABLE, month.toString(), 0, 0, null);
-        }
+        // Alıcılar TALEPTEN ÖNCE (deliver içinde, bütün kurum yolları için). Takım yolu (sendTeamNow) da aynı sırayla.
         return deliver(month, "MANUAL", actor == null ? "admin" : actor, true);
     }
 
@@ -450,14 +445,48 @@ public class ExecutiveSummaryDeliveryService {
         return r.getAttempts() == null ? 0 : r.getAttempts();
     }
 
-    /** Kurum ayı kaydı TALEP edilir (tam bir kez), sonra özet + PDF + BCC dilimleri. */
+    /**
+     * Kurum ayı kaydı TALEP edilir (tam bir kez), sonra özet + PDF + BCC dilimleri.
+     *
+     * <p>Alıcı listesi TALEPTEN ÖNCE okunur (inceleme 4, 2026-10-12 — eskiden yalnız elle gönderimde): global yönetici
+     * listesi okunamazsa zamanlanmış / telafi gönderimi de ayı talep ETMEZ — deneme hakkı yanmaz, kayıt FAILED'e dönmez,
+     * saatlik telafi yeniden dener; iz satırı yazılır. Okunan liste gönderimde kullanılır (ikinci okuma yok).
+     */
     Result deliver(YearMonth month, String trigger, String actor, boolean force) {
-        return deliverTo(orgSlot, month, trigger, actor, force, () -> summaryService.compute(month), () -> {
-            Recipients rc = recipients();
-            // Talep edilmiş kayıt FAILED olur (yarıda kesilme yolu) → telafi yeniden dener.
-            if (!rc.complete()) throw new IllegalStateException("Yönetici özeti: global yöneticiler okunamadı — gönderilmedi");
-            return new Audience(rc.emails(), rc.droppedInactive());
-        }, ExecutiveSummarySettings.RECIPIENTS_KEY + " ve global yönetici seçeneği");
+        // Ay zaten gönderilmiş / gönderiliyorsa (zamanlanmış yeniden tetik) alıcı okunmaz — talep edilemeyecek ay için
+        // yanıltıcı "okunamadı" izi yazılmasın (inceleme 5). Sonuç satırın kendisinden döner, talep DENENMEZ (inceleme 6:
+        // arada elle gönderim satırı FAILED yaparsa talep edip özeti hesaplayıp alıcısız "yarıda kesildi" yazabiliyordu)
+        ExecutiveReportRow settledRow = force ? null : orgSlot.find(month);
+        if (settled(settledRow)) {
+            String cs = settledRow.getStatus();
+            String st = ExecutiveReportRow.SENDING.equals(cs) ? "IN_PROGRESS" : "ALREADY_SENT";
+            log.info("Aylık yönetici özeti {} ({}) — {} ({}), gönderim yapılmadı", month, orgSlot.label(), st, cs);
+            return new Result(st, month.toString(), 0, 0, cs);
+        }
+        Recipients pre = recipients();
+        if (!pre.complete()) {
+            // İz ay başına pod'da BİR KEZ (saatlik telafi 72 satır yazmasın); günlük her denemede
+            if (recipientsTraced.add(month)) {
+                trace(orgSlot, "—", null, null, "SKIPPED: global yöneticiler okunamadı — gönderilmedi", TRIGGER);
+            }
+            log.warn("Aylık yönetici özeti {} (kurum, {}): global yöneticiler okunamadı — talep edilmedi, telafi yeniden dener",
+                    month, trigger);
+            return new Result(RECIPIENTS_UNAVAILABLE, month.toString(), 0, 0, null);
+        }
+        recipientsTraced.remove(month);
+        return deliverTo(orgSlot, month, trigger, actor, force, () -> summaryService.compute(month),
+                () -> new Audience(pre.emails(), pre.droppedInactive()),
+                ExecutiveSummarySettings.RECIPIENTS_KEY + " ve global yönetici seçeneği");
+    }
+
+    /** Alıcı okunamadı izi yazılmış aylar (pod başına; ay başına tek iz). */
+    private final Set<YearMonth> recipientsTraced = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Ay kaydı talep edilemeyecek durumda mı: gönderildi, kısmen gönderildi ya da gönderiliyor. */
+    private static boolean settled(ExecutiveReportRow row) {
+        if (row == null) return false;
+        String s = row.getStatus();
+        return ExecutiveReportRow.SENT.equals(s) || ExecutiveReportRow.PARTIAL.equals(s) || ExecutiveReportRow.SENDING.equals(s);
     }
 
     /** Takım ayı kaydı TALEP edilir, sonra takım özeti + PDF + BCC dilimleri (takımın alıcılarına). */

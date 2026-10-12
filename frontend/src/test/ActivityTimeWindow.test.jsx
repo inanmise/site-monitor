@@ -32,6 +32,25 @@ describe('Aktivite — zaman penceresi ve özet hatası', () => {
     expect(rangeToFromTo('all', now)).toEqual({ from: null, to: null })
   })
 
+  it('inceleme 4: Intl biçimi beklenmedikse (format() "YYYY-MM-DD" değil) de gün başı doğru; Intl bozuksa sabit UTC+3', () => {
+    const now = Date.parse('2026-10-12T01:30:00+03:00')
+    const RealDTF = Intl.DateTimeFormat
+    try {
+      // format() başka bir biçim döndüren ICU — formatToParts doğru parçaları verir
+      Intl.DateTimeFormat = function (...args) {
+        const real = new RealDTF(...args)
+        return { format: () => '10/12/2026', formatToParts: (d) => real.formatToParts(d), resolvedOptions: () => real.resolvedOptions() }
+      }
+      expect(new Date(istanbulDayStartMs(now)).toISOString()).toBe('2026-10-11T21:00:00.000Z')
+      // Intl tamamen bozuk → sabit hesap
+      Intl.DateTimeFormat = function () { throw new RangeError('timeZone desteklenmiyor') }
+      expect(new Date(istanbulDayStartMs(now)).toISOString()).toBe('2026-10-11T21:00:00.000Z')
+      expect(new Date(istanbulDayStartMs(Date.parse('2026-10-11T23:59:59+03:00'))).toISOString()).toBe('2026-10-10T21:00:00.000Z')
+    } finally {
+      Intl.DateTimeFormat = RealDTF
+    }
+  })
+
   it('özet alınamazsa sayaçlar "0" değil "—", grafik iskelet değil hata satırı', async () => {
     api.getActivitySummary.mockResolvedValue({ success: false, error: 'boom' })
     render(<ActivityLog />)

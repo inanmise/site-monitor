@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useId } from 'react'
-import { Copy, FlaskConical, Trash2, RefreshCw, ShieldCheck, Globe, Users, Server, FolderOpen, ToggleRight, NotebookPen, FileUp } from 'lucide-react'
+import { Copy, FlaskConical, Trash2, RefreshCw, ShieldCheck, Globe, Users, Server, FolderOpen, ToggleRight, NotebookPen, FileUp, Lock } from 'lucide-react'
 import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
 // Markdown editörü (~1 MB) form açılıp Notlar alanı çizilince yüklenir; Envanter sekmesi onu açılışta taşımaz (2026-10-09).
 import LazyMdEditor from '../ui/mdEditor/LazyMdEditor.jsx'
@@ -25,6 +25,7 @@ import { announceInventoryRenamed } from '../../utils/inventoryEvent.js'
 import { deleteConfirmMessage } from '../../utils/deleteInventory.js'
 import { isManualCert, trackingKeyError } from '../manualcert/manualCertModel.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { INVENTORY_ROUTING_DEFAULTS, isGrantTeam, isRoutingLockedRow, withRoutingDefaults } from '../../hooks/useMonitorTeamPick.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import {
   MonitorFormModal, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
@@ -222,7 +223,20 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   // Düzenlemede takım değişikliği TEAM_ADMIN ve USER için sunucuda YOK SAYILIR (updateInventory mevcut takımı
   // yazar; seçilen takımın bildirim grubu düşer, grup adı eski takımın altında yaratılır) ama ekran "Kaydedildi"
   // diyordu → kutu yalnız sunucunun takımı gerçekten yazdığı rolde açık (R4, 2026-09-25).
-  const teamPickable = mode === 'edit' ? (canMoveTeam && fieldsEnabled) : fieldsEnabled
+  // Yalnız takım erişim paylaşımıyla düzenlenen kayıt (2026-10-12): takım, bildirim grubu ve 7/24 kaydın takımında kalır —
+  // sunucu bunların değişmesini reddeder (AdminController.requireSameInventoryRouting / takım aktarımı). Hangi çağıran
+  // açarsa açsın (envanter, pano kartı, yüklenen sertifikalar) form kendisi kilitler.
+  // inceleme 5: `routing_locked` = kaydı yalnız paylaşımla YAZABİLEN (kendi kapsamıyla görse bile) — sunucu kuralıyla aynı.
+  const sharedOnly = mode === 'edit' && isRoutingLockedRow(record)
+  // Paylaşan takıma YENİ kayıt (ekle / kopyala): kademe, bildirim grubu ve 7/24 varsayılanda kalır (sunucu farkı 403 ile reddeder)
+  // Kopyala (inceleme 6): pano kartından açılan formun takım listesi paylaşım işaretini taşımayabilir — kaynak satır yalnız
+  // paylaşımla yazılıyorsa (`routing_locked` / `shared_access`) ve takımı değişmediyse yeni kayıt da kilitli
+  const routingLocked = sharedOnly || (mode !== 'edit' && (isGrantTeam(form.team_id, teams)
+    || (mode === 'duplicate' && isRoutingLockedRow(record) && String(form.team_id) === String(record?.team_id))))
+  useEffect(() => {
+    if (mode !== 'edit' && routingLocked) setForm(prev => withRoutingDefaults(prev, INVENTORY_ROUTING_DEFAULTS))
+  }, [mode, routingLocked])
+  const teamPickable = mode === 'edit' ? (canMoveTeam && fieldsEnabled && !sharedOnly) : fieldsEnabled
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [platforms, setPlatforms] = useState([])   // Ayarlar → Platformlar kataloğu (aktifler); düzenlenen kayıttaki pasif kod da listede kalır
@@ -678,6 +692,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                 options={[
                   { value: '', label: t('inv.selectTeam') },
                   ...teams.map(team => ({ value: team.id, label: team.name })),
+                  // Kayıtlı takım listede yoksa (paylaşımla düzenlenen kayıt) adıyla görünür — çıplak kimlik değil
+                  ...(mode !== 'add' && record?.team_id != null && !teams.some(x => String(x.id) === String(record.team_id))
+                    ? [{ value: record.team_id, label: record.team_name || String(record.team_id) }] : []),
                 ]}
               />
             )}
@@ -723,6 +740,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                 id={id}
                 value={form.tier ?? ''}
                 onChange={v => f('tier', v ? Number(v) : null)}
+                disabled={routingLocked}
                 options={[
                   { value: '', label: t('inv.tierNone') },
                   { value: '1', label: t('inv.tier1') },
@@ -820,13 +838,19 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               teamId={form.team_id}
               value={form.notification_group_id}
               onChange={v => f('notification_group_id', v)}
-              disabled={!fieldsEnabled}
+              disabled={!fieldsEnabled || routingLocked}
             />
           </LabelSlot>
+          {routingLocked && (
+            <p data-slot="inv-routing-locked" className="flex items-start gap-1.5 text-xs text-muted-foreground sm:col-span-2">
+              <Lock size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{t('access.routingLockedInv')}</span>
+            </p>
+          )}
 
           {/* 7/24 izleme ekibine bildir (2026-09-27) — dokuz izleme formuyla ORTAK alan (tür SSL). */}
           <NocNotifyField type="SSL" checked={form.noc_notify} groupIds={form.noc_group_ids} canOpenSettings={canOpenSettings}
-            disabled={!fieldsEnabled}
+            disabled={!fieldsEnabled || routingLocked}
             onChange={(patch) => {
               if ('nocNotify' in patch) f('noc_notify', patch.nocNotify)
               if ('nocGroupIds' in patch) f('noc_group_ids', patch.nocGroupIds)

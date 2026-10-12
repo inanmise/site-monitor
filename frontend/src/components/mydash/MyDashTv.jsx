@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Expand, LayoutGrid, Minimize, Pause, Play, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Expand, LayoutGrid, Minimize, Pause, Play, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { setTvModeActive } from '../../utils/tvMode.js'
 import { Button } from '@/components/shadcn/button'
@@ -79,7 +79,11 @@ function TvClock() {
  * (destekleyen tarayıcıda). Esc (tam ekran dışındayken) ya da "Çık" kipi kapatır. Tüm sayfalar bağlı kalır, yalnız
  * etkin sayfa görünür — dönüşte kutular yeniden yüklenmez, veri arka planda tazelenir.
  */
-export default function MyDashTv({ widgets, refreshKey, onExit }) {
+/**
+ * @param permsFailed  yetkiler okunamadı (inceleme 4): yetki isteyen kutular listede YOK — duvar ekranı bunu her an görünür
+ *                     bir şeritle söyler (denetimlerle birlikte gizlenmez), "sakin" görünmez; `onRetryPerms` yeniden dener.
+ */
+export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = false, onRetryPerms }) {
   const t = useT()
   const [vw, vh] = useViewport()
   const cols = columnsFor(vw - PAD)
@@ -177,6 +181,10 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
     const onKey = (e) => {
       poke()
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
+      // Üstte BAŞKA bir pencere (komut paleti, bakım / pasif hesap geri sayımı …) odaktaysa TV karışmaz (inceleme 4):
+      // eskiden Tab odağı TV denetimlerine çekiyor, Escape o pencere yerine TV'yi kapatıyordu.
+      const dlg = e.target?.closest?.('[role="dialog"], [role="alertdialog"]')
+      if (dlg && dlg !== rootRef.current && !rootRef.current?.contains(dlg)) return
       const tag = e.target?.tagName
       if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 'Tab') { trapTab(e); return }
@@ -267,6 +275,19 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
           </Button>
         </div>
       </header>
+
+      {permsFailed && (
+        <div role="status" data-slot="mydash-tv-perms"
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-amber-800 sm:px-6 dark:text-amber-300">
+          <TriangleAlert className="size-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-base [overflow-wrap:anywhere]">{t('mydash.tvPermsFailed')}</span>
+          {onRetryPerms && (
+            <Button type="button" variant="outline" className={btn} onClick={onRetryPerms} data-slot="mydash-tv-perms-retry">
+              <RotateCcw aria-hidden="true" /><span>{t('hist.retry')}</span>
+            </Button>
+          )}
+        </div>
+      )}
 
       <main ref={mainRef} className={cn('min-h-0 flex-1 p-4 sm:p-6', fit < 1 && !clipped ? 'overflow-hidden' : 'overflow-y-auto')} data-fit={fit}
         data-clipped={clipped || undefined}>

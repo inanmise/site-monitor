@@ -85,5 +85,57 @@ describe('PermissionsProvider — eşit yetki yanıtı yeniden çizim üretmez',
   it('2026-10-12: sağlayıcı yoksa loaded=true (eski davranış)', () => {
     render(<Consumer />)
     expect(latest.loaded).toBe(true)
+    expect(latest.failed).toBe(false)
+  })
+
+  it('inceleme 4: ilk snapshot OKUNAMAZSA failed=true (sonsuz yükleniyor değil); başarılı yeniden okuma temizler', async () => {
+    getPermissions.mockResolvedValueOnce({ success: false, error: 'x' })
+    render(<PermissionsProvider user="u"><Consumer /></PermissionsProvider>)
+    await waitFor(() => expect(latest.failed).toBe(true))
+    expect(latest.loaded).toBe(false)
+    getPermissions.mockResolvedValueOnce({ success: true, data: { 'alerts.read': { view: true } } })
+    await act(async () => { await latest.refresh() })
+    expect(latest.loaded).toBe(true)
+    expect(latest.failed).toBe(false)
+    expect(latest.canView('alerts.read')).toBe(true)
+  })
+
+  it('inceleme 4: çıkıştan SONRA gelen eski yanıt uygulanmaz; başka kullanıcı önceki snapshot ile bir an bile çalışmaz', async () => {
+    let resolveA
+    getPermissions.mockImplementationOnce(() => new Promise((r) => { resolveA = r }))
+    const { rerender } = render(<PermissionsProvider user="ayse"><Consumer /></PermissionsProvider>)
+    rerender(<PermissionsProvider user={null}><Consumer /></PermissionsProvider>)        // çıkış
+    await act(async () => { resolveA({ success: true, data: { 'alerts.read': { view: true } } }) })
+    expect(latest.loaded).toBe(false)
+    expect(latest.canView('alerts.read')).toBe(false)                                  // geç yanıt yazılmadı
+
+    getPermissions.mockResolvedValueOnce({ success: true, data: { 'alerts.read': { view: true } } })
+    rerender(<PermissionsProvider user="ayse"><Consumer /></PermissionsProvider>)
+    await waitFor(() => expect(latest.canView('alerts.read')).toBe(true))
+    let resolveB
+    getPermissions.mockImplementationOnce(() => new Promise((r) => { resolveB = r }))
+    rerender(<PermissionsProvider user="mehmet"><Consumer /></PermissionsProvider>)
+    await waitFor(() => expect(latest.loaded).toBe(false))
+    expect(latest.canView('alerts.read')).toBe(false)                                  // önceki kullanıcının yetkisi düştü
+    await act(async () => { resolveB({ success: true, data: {} }) })
+    expect(latest.loaded).toBe(true)
+    expect(latest.canView('alerts.read')).toBe(false)
+  })
+
+  it('inceleme 5: kullanıcı değişince YENİ kullanıcının İLK çizimi bile önceki kullanıcının yetkisini görmez', async () => {
+    const seen = []
+    function Spy({ who }) {
+      const p = usePermissions()
+      seen.push([who, p.canView('alerts.read'), p.loaded])
+      return null
+    }
+    getPermissions.mockResolvedValueOnce({ success: true, data: { 'alerts.read': { view: true } } })
+    const { rerender } = render(<PermissionsProvider user="ayse"><Spy who="ayse" /></PermissionsProvider>)
+    await waitFor(() => expect(seen.some(([w, can]) => w === 'ayse' && can)).toBe(true))
+    getPermissions.mockImplementationOnce(() => new Promise(() => {}))   // yeni kullanıcının yanıtı gelmesin
+    rerender(<PermissionsProvider user="mehmet"><Spy who="mehmet" /></PermissionsProvider>)
+    const mehmet = seen.filter(([w]) => w === 'mehmet')
+    expect(mehmet.length).toBeGreaterThan(0)
+    expect(mehmet.every(([, can, loaded]) => can === false && loaded === false)).toBe(true)
   })
 })

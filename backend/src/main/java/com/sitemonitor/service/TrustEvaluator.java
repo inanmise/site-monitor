@@ -231,14 +231,23 @@ public class TrustEvaluator {
 
     /** PEM değiştiyse extra TM'i yeniden kur; bozuk PEM'i tolere et (yalnız default truststore). */
     /** Güven kökleri: JVM varsayılan deposu ({@code system}) + admin'in kurumsal CA paketi ({@code corporate}). */
-    public record Anchors(List<X509Certificate> system, List<X509Certificate> corporate) { }
+    /**
+     * @param systemReadable sistem güven deposu okunabildi mi — okunamadıysa (boş) görünüm kökü "güvenilmez / bulunamadı"
+     *                       DEMEZ, "bilinmiyor" der (bilinmeyen ≠ kötü).
+     */
+    public record Anchors(List<X509Certificate> system, List<X509Certificate> corporate, boolean systemReadable) {
+        public Anchors(List<X509Certificate> system, List<X509Certificate> corporate) {
+            this(system, corporate, true);
+        }
+    }
 
     /**
      * Güven deposundaki sertifikalar (2026-10-12, hiyerarşi görünümü): sunucunun göndermediği KÖKÜ tarayıcının yaptığı gibi
-     * buradan bulmak için. Yalnız açık CA sertifikaları; okunamazsa boş liste (görünüm kökü "bulunamadı" der).
+     * buradan bulmak için. Yalnız açık CA sertifikaları; okunamazsa boş liste + {@code systemReadable=false}.
      */
     public Anchors trustAnchors() {
-        return new Anchors(acceptedIssuers(defaultTm), acceptedIssuers(currentExtraTm()));
+        List<X509Certificate> system = acceptedIssuers(defaultTm);
+        return new Anchors(system, acceptedIssuers(currentExtraTm()), !system.isEmpty());
     }
 
     private static List<X509Certificate> acceptedIssuers(X509TrustManager tm) {

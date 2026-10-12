@@ -53,6 +53,8 @@ public class TeamAccessGrantService {
 
     public static final int MAX_PER_OWNER = 200;
     public static final int NOTE_MAX = 500;
+    /** Bitiş günü üst sınırı — daha ileri tarih kolona (UTC ISO, 19 karakter) sığmazdı. */
+    public static final int MAX_EXPIRY_YEAR = 2099;
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -69,7 +71,17 @@ public class TeamAccessGrantService {
     /** Değişmez görüntü: kullanıcı → (paylaşan takım → düzey). */
     record Snapshot(Map<Long, Map<Long, TeamAccessLevel>> byUser, long builtAt) { }
 
-    private volatile Snapshot snapshot;
+    /**
+     * Görüntü REFERANSI (inceleme 5): yapım yalnız başladığı andaki referans hâlâ yerindeyse karşılaştır-değiştir ile saklanır.
+     * {@link #invalidate} her zaman YENİ bir (bayat) nesne koyar — sürüm denetimiyle yazma arasına giren bir kayıt da yapımı
+     * geçersiz kılar (eskiden kontrol ile atama atomik değildi; kayıttan önce okunmuş görüntü 30 sn kalabiliyordu).
+     */
+    private final java.util.concurrent.atomic.AtomicReference<Snapshot> snapshot = new java.util.concurrent.atomic.AtomicReference<>();
+    /**
+     * Kayıt sürümü (2026-10-12): {@link #invalidate} artırır. Bir yapım başladıktan SONRA kayıt değiştiyse o yapım saklanmaz —
+     * aksi hâlde silinen paylaşımı okuyan yarım kalmış yapım bayat görüntüyü 30 sn daha yerleştirirdi.
+     */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     public TeamAccessGrantService(TeamAccessGrantRepository repo, TeamRepository teamRepo, AppUserRepository userRepo) {
         this.repo = repo;
@@ -123,24 +135,30 @@ public class TeamAccessGrantService {
 
     /** Bu podun görüntüsünü düşürür (kayıt sonrası; testler). */
     public void invalidate() {
-        snapshot = null;
+        generation.incrementAndGet();
+        // Görüntü SİLİNMEZ, bayat işaretlenir: bir sonraki okuma yeniden kurar; o kurulum hata verirse önceki görüntü
+        // kullanılır (eskiden null'a düşüp HERKESİN paylaşımı 30 sn boşalıyordu).
+        snapshot.getAndUpdate(s -> new Snapshot(s != null ? s.byUser() : Map.of(), Long.MIN_VALUE / 2));
     }
 
     Snapshot current() {
-        Snapshot s = snapshot;
+        Snapshot s = snapshot.get();
         long now = clock.getAsLong();
         if (s != null && now - s.builtAt() < cacheMs) return s;
         synchronized (this) {
-            s = snapshot;
-            if (s != null && now - s.builtAt() < cacheMs) return s;
+            Snapshot prev = snapshot.get();
+            if (prev != null && now - prev.builtAt() < cacheMs) return prev;
+            long gen = generation.get();
+            Snapshot built;
             try {
-                s = build(now);
+                built = build(now);
             } catch (Exception e) {
                 log.warn("Takım erişim paylaşımları tazelenemedi ({}): önceki görüntü kullanılıyor", e.toString());
-                s = snapshot != null ? new Snapshot(snapshot.byUser(), now) : new Snapshot(Map.of(), now);
+                built = prev != null ? new Snapshot(prev.byUser(), now) : new Snapshot(Map.of(), now);
             }
-            snapshot = s;
-            return s;
+            // Yapım sırasında kayıt değiştiyse saklanmaz (bu istek sonucu kullanır; sonraki okuma yeniden kurar)
+            if (generation.get() == gen) snapshot.compareAndSet(prev, built);
+            return built;
         }
     }
 
@@ -269,6 +287,10 @@ public class TeamAccessGrantService {
         } catch (DateTimeParseException e) {
             throw field("expires_on", Msg.t("Bitiş tarihi yyyy-AA-GG biçiminde olmalı.", "The end date must be yyyy-MM-dd."));
         }
+        if (d.getYear() > MAX_EXPIRY_YEAR) {
+            throw field("expires_on", Msg.t("Bitiş tarihi en geç " + MAX_EXPIRY_YEAR + "-12-31 olabilir; süresiz paylaşım için boş bırakın.",
+                    "The end date can be " + MAX_EXPIRY_YEAR + "-12-31 at the latest; leave it empty for a share with no end date."));
+        }
         Instant end = d.plusDays(1).atStartOfDay(IST).toInstant();
         if (!end.isAfter(Instant.ofEpochMilli(clock.getAsLong()))) {
             throw field("expires_on", Msg.t("Bitiş tarihi geçmişte — bugün ya da sonrası bir tarih seçin.",
@@ -295,7 +317,7 @@ public class TeamAccessGrantService {
                     "Bu takım ya da kişi zaten erişime sahip — mevcut paylaşımı düzenleyin.",
                     "This team or person already has access — edit the existing share instead."));
         }
-        if (repo.countByOwnerTeamId(in.ownerTeamId()) >= MAX_PER_OWNER) {
+        if (repo.countLiveByOwnerTeamId(in.ownerTeamId(), ISO.format(Instant.ofEpochMilli(clock.getAsLong()))) >= MAX_PER_OWNER) {
             throw new GlobalExceptionHandler.CodedConflictException("GRANT_LIMIT", Msg.t(
                     "Bir takım en çok " + MAX_PER_OWNER + " paylaşım yapabilir — kullanılmayanları kaldırın.",
                     "A team can have at most " + MAX_PER_OWNER + " shares — remove the ones you no longer need."));
@@ -314,13 +336,30 @@ public class TeamAccessGrantService {
         g.setCreatedBy(actor);
         g.setUpdatedAt(now);
         g.setUpdatedBy(actor);
-        TeamAccessGrant saved = repo.saveAndFlush(g);
+        TeamAccessGrant saved;
+        try {
+            saved = repo.saveAndFlush(g);
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            // Aynı alıcıya eşzamanlı ikinci ekleme (benzersiz kısıt) — genel DUPLICATE_RECORD değil, aynı açık kod
+            throw new GlobalExceptionHandler.CodedConflictException("GRANT_EXISTS", Msg.t(
+                    "Bu takım ya da kişi zaten erişime sahip — mevcut paylaşımı düzenleyin.",
+                    "This team or person already has access — edit the existing share instead."));
+        }
         invalidate();
         return saved;
     }
 
     /** Düzey / bitiş / not güncellemesi — sahip ve alıcı DEĞİŞMEZ (değiştirmek = sil + yeni). */
     public TeamAccessGrant update(TeamAccessGrant g, TeamAccessLevel level, String expiresAt, String note, String actor) {
+        // Süresi dolmuş paylaşımı YENİDEN CANLANDIRMAK yeni paylaşım gibidir (inceleme 5): takım başına tavan burada da
+        String nowIso = ISO.format(Instant.ofEpochMilli(clock.getAsLong()));
+        boolean wasExpired = g.getExpiresAt() != null && g.getExpiresAt().compareTo(nowIso) <= 0;
+        boolean becomesLive = expiresAt == null || expiresAt.compareTo(nowIso) > 0;
+        if (wasExpired && becomesLive && repo.countLiveByOwnerTeamId(g.getOwnerTeamId(), nowIso) >= MAX_PER_OWNER) {
+            throw new GlobalExceptionHandler.CodedConflictException("GRANT_LIMIT", Msg.t(
+                    "Bir takım en çok " + MAX_PER_OWNER + " paylaşım yapabilir — süresi dolmuş paylaşımı canlandırmadan önce kullanılmayanları kaldırın.",
+                    "A team can have at most " + MAX_PER_OWNER + " shares — remove the ones you no longer need before reviving an expired share."));
+        }
         g.setLevel(level.name());
         g.setExpiresAt(expiresAt);
         g.setNote(note);

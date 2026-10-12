@@ -2384,6 +2384,15 @@ public class SchedulerService {
     static final int PING_ROLLUP_REBUILD_LOCK_MINUTES = 120;
 
     /**
+     * Yeniden deneme tavanı (pod başına, inceleme 4): kalıcı bir hatada iş saatte bir bütün seriyi sonsuza dek yeniden
+     * özetlemesin. Tavanda bir kez ERROR yazılır ve bu pod denemeyi bırakır (pod yeniden başlayınca ya da başka pod dener).
+     */
+    static final int PING_ROLLUP_REBUILD_MAX_ATTEMPTS = 24;
+    private final java.util.concurrent.atomic.AtomicInteger pingRebuildFailures = new java.util.concurrent.atomic.AtomicInteger();
+    /** Son başarılı haftalık dilimin sonu (pod başına) — yeniden deneme baştan değil, yarıda kalan dilimden sürer (upsert idempotent). */
+    private volatile Instant pingRebuildResumeFrom;
+
+    /**
      * TEK SEFERLİK (2026-10-12): ondalıklı paket kaybı hatasının (20.123.0'da onarılan) yanlış "kapalı" saydığı ping satırları
      * günlük / saatlik özetlerde hâlâ duruyordu — gece rollup'ı yalnız son {@code lookback-days} günü yeniler. Bu iş önce
      * satırları onarır ({@code packet_loss > 100}), sonra ping serisinin tamamını haftalık dilimlerle yeniden özetler
@@ -2395,17 +2404,28 @@ public class SchedulerService {
      */
     @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}", fixedDelay = 3_600_000L)
     public void rebuildPingRollupsOnce() {
+        if (pingRebuildFailures.get() >= PING_ROLLUP_REBUILD_MAX_ATTEMPTS) return;   // bu pod denemeyi bıraktı (bir kez ERROR)
         if (pingRollupRebuildDone()) return;
         if (!tryAcquireSchedulerLock("ping-rollup-rebuild", PING_ROLLUP_REBUILD_LOCK_MINUTES)) {
             log.debug("ping-rollup-rebuild — kilit başka pod'da, atlanıyor");
             return;
         }
         try {
-            rebuildPingRollupsLocked();
+            if (rebuildPingRollupsLocked()) pingRebuildFailures.set(0);
+            else notePingRebuildFailure();
         } catch (Exception e) {
             log.warn("Ping özet yeniden hesabı başarısız (bir saat sonra yeniden denenecek): {}", e.toString());
+            notePingRebuildFailure();
         } finally {
             releaseSchedulerLock("ping-rollup-rebuild");
+        }
+    }
+
+    private void notePingRebuildFailure() {
+        int n = pingRebuildFailures.incrementAndGet();
+        if (n == PING_ROLLUP_REBUILD_MAX_ATTEMPTS) {
+            log.error("Ping özet yeniden hesabı {} denemede tamamlanamadı — bu pod yeniden denemeyi bırakıyor (nişan yazılmadı; "
+                    + "pod yeniden başlayınca ya da başka pod yeniden dener)", n);
         }
     }
 
@@ -2422,15 +2442,16 @@ public class SchedulerService {
         }
     }
 
-    private void rebuildPingRollupsLocked() {
-        if (pingRollupRebuildDone()) return;                       // kilidi beklerken başka pod bitirmiş olabilir
+    /** {@code true}: iş bitti (ya da başka pod bitirmiş); {@code false}: yarıda kaldı, yeniden denenecek. */
+    private boolean rebuildPingRollupsLocked() {
+        if (pingRollupRebuildDone()) return true;                  // kilidi beklerken başka pod bitirmiş olabilir
         Boolean pg = com.sitemonitor.service.schema.DeferredIndexBuilder.postgresOrNull(jdbcTemplate.getDataSource());
         if (pg == null) {
             log.warn("Ping özet yeniden hesabı: veritabanı türü okunamadı — bir saat sonra yeniden denenecek");
-            return;
+            return false;
         }
         int repaired = repairPingDecimalLossRows();
-        if (repaired < 0) return;
+        if (repaired < 0) return false;
         int written = 0;
         if (pg) {
             String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks", String.class);
@@ -2439,6 +2460,8 @@ public class SchedulerService {
                 // En eski ham gün saklama budamasıyla YARIM kalmıştır: o günün (ve saatlerinin) özeti eksik sayılarla
                 // ezilmesin (içindeki bir kesinti özetten kaybolurdu) — ilk TAM günden başlanır, o günün özeti olduğu gibi kalır.
                 Instant from = java.time.LocalDate.parse(oldest.substring(0, 10)).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+                Instant resume = pingRebuildResumeFrom;
+                if (resume != null && resume.isAfter(from)) from = resume;   // önceki denemenin bitirdiği dilimler yinelenmez
                 for (Instant s = from; s.isBefore(todayStart.plus(1, ChronoUnit.DAYS)); s = s.plus(7, ChronoUnit.DAYS)) {
                     Instant e = s.plus(7, ChronoUnit.DAYS);
                     String f = ISO.format(s);
@@ -2446,12 +2469,13 @@ public class SchedulerService {
                     if (s.isBefore(todayStart)) {
                         int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", f,
                                 ISO.format(e.isAfter(todayStart) ? todayStart : e));
-                        if (d < 0) { log.warn("Ping günlük özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                        if (d < 0) { log.warn("Ping günlük özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return false; }
                         written += d;
                     }
                     int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", f, ISO.format(e));
-                    if (h < 0) { log.warn("Ping saatlik özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                    if (h < 0) { log.warn("Ping saatlik özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return false; }
                     written += h;
+                    pingRebuildResumeFrom = e;
                 }
             }
         }
@@ -2463,6 +2487,8 @@ public class SchedulerService {
         } catch (org.springframework.dao.DuplicateKeyException dup) {
             log.debug("Ping özet yeniden hesabı nişanı başka pod tarafından yazılmış");
         }
+        pingRebuildResumeFrom = null;
+        return true;
     }
 
     // monitor_id-anahtarlı tipler (boolean up-kolonu). table/upCol/respCol yalnız KOD-kontrollü (injection yok).

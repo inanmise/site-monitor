@@ -34,7 +34,7 @@ class CertificateInventoryOpsTest {
             "nocNotify",
             // Takım erişim paylaşımı (2026-10-12): istek başına hesaplanan @Transient satır bayrakları (silebilir mi, yalnız
             // paylaşımla mı görülüyor, kontrol edebilir mi) — kayıt alanı değil, e-postada görünmez.
-            "canDelete", "sharedAccess", "canCheck");
+            "canDelete", "sharedAccess", "canCheck", "routingLocked");
 
     private static List<String> booleanFieldNames() {
         List<String> out = new ArrayList<>();

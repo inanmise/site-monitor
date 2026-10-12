@@ -97,6 +97,21 @@ describe('CertificatesTable', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: /tümünü seç|select all/i }))
       expect(await screen.findByText(/^1 .*(seçili|selected)/i)).toBeInTheDocument()
     })
+
+    it('inceleme 4: paylaşımla görülen satır tam pencere açar, Düzenle var ama TOPLU seçime girmez; tümünü seç onu atlar', async () => {
+      const sharedRow = cert({ domain: 'shared.example.com', team_id: 7, team_name: 'Takım Ö', can_manage: true, shared_access: true, can_check: true })
+      api.getCertificatesPaginated.mockResolvedValue({ ...withScope([ownRow, sharedRow]), scope: 'mine' })
+      const onRowClick = vi.fn()
+      const { container } = render(<CertificatesTable onRowClick={onRowClick} onOpenReadOnly={() => {}} onEdit={() => {}} canManage />)
+      await screen.findByText('shared.example.com')
+      const shared = container.querySelector('tr[data-domain="shared.example.com"]')
+      expect(shared).not.toHaveAttribute('data-readonly', 'true')
+      expect(shared.querySelector('[role="checkbox"]')).toBeNull()
+      fireEvent.click(shared)
+      expect(onRowClick).toHaveBeenCalledWith('shared.example.com')
+      fireEvent.click(screen.getByRole('checkbox', { name: /tümünü seç|select all/i }))
+      expect(await screen.findByText(/^1 .*(seçili|selected)/i)).toBeInTheDocument()
+    })
   })
 
   it('satıra tıklayınca onRowClick alan adıyla çağrılır', async () => {

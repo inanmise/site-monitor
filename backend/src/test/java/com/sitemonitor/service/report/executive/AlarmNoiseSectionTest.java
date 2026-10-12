@@ -19,6 +19,17 @@ class AlarmNoiseSectionTest {
     private final AlertEventRepository repo = mock(AlertEventRepository.class);
     private final AlarmNoiseSection section = new AlarmNoiseSection(repo);
 
+    @Test
+    @DisplayName("inceleme 4: takım adları okunamazsa bölüm hata verir (adsız takım satırlarıyla 'temiz' görünmez)")
+    void teamNamesFailureIsAnError() {
+        when(repo.findExecutiveRows(anyString(), anyString())).thenReturn(List.<Object[]>of(new Object[]{
+                "a.example.com", "HTTP_DOWN", "HIGH", "2026-09-10T08:00:00", "2026-09-10T09:00:00", true, false, true,
+                "2026-09-10T08:10:00", 1L}));
+        when(repo.countCreatedBetween(anyString(), anyString())).thenReturn(0L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> section.compute(namesFailCtx(List.of(), Map.of())))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
     /** [domain, type, level, created, resolvedAt, resolved, silent, acked, ackedAt, team]. */
     private static Object[] ev(String domain, String type, String level, String created, String resolvedAt,
                                boolean resolved, boolean silent, boolean acked, String ackedAt, Long team) {

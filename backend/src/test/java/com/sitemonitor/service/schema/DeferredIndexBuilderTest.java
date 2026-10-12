@@ -377,6 +377,61 @@ class DeferredIndexBuilderTest {
     }
 
     @Test
+    @DisplayName("inceleme 4-5: tür OKUNAMAZSA (null) yedek DDL koşmaz; arka plan iş parçacığı türü sınırlı kez yeniden okur; null belleklenmez")
+    void unknownDialect_doesNothingAndIsNotMemoized() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<Boolean> answer = new java.util.concurrent.atomic.AtomicReference<>(null);
+        AtomicInteger reads = new AtomicInteger();
+        java.util.function.Supplier<Boolean> memo = DeferredIndexBuilder.memoKnown(() -> { reads.incrementAndGet(); return answer.get(); });
+        DeferredIndexBuilder b = new DeferredIndexBuilder(DeferredIndexBuilder.CATALOG, memo, FakeSession::new,
+                ms -> { }, 0, 60_000, 1, 0);
+        List<String> patched = new ArrayList<>();
+        b.applyFallbacks(patched::add);
+        assertThat(patched).isEmpty();
+        // arka plan: tür hiç okunamazsa 1 + DIALECT_RETRIES okuma, sonra "başarısız" sonuç (sonsuz deneme yok)
+        var r = b.startInBackground();
+        assertThat(r).isNotNull();
+        assertThat(r.get(5, java.util.concurrent.TimeUnit.SECONDS).failed()).isEqualTo(1);
+        assertThat(reads.get()).isEqualTo(2 + DeferredIndexBuilder.DIALECT_RETRIES);   // null belleklenmedi — her deneme okudu
+        answer.set(Boolean.FALSE);                            // bağlantı düzeldi: H2
+        b.applyFallbacks(patched::add);
+        assertThat(patched).isNotEmpty();
+        answer.set(Boolean.TRUE);                             // bilinen sonuç belleklendi — bir daha okunmaz
+        assertThat(b.startInBackground()).isNull();
+        assertThat(reads.get()).isEqualTo(3 + DeferredIndexBuilder.DIALECT_RETRIES);
+    }
+
+    @Test
+    @DisplayName("inceleme 6: bellekte bilinen tür yoksa ilk okuma da arka plan iş parçacığında — çağıran bağlantı zaman aşımını beklemez")
+    void unknownDialectIsReadOffTheCaller() throws Exception {
+        java.util.List<String> readers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.function.Supplier<Boolean> memo = DeferredIndexBuilder.memoKnown(() -> {
+            readers.add(Thread.currentThread().getName());
+            return Boolean.TRUE;
+        });
+        FakeSession s = new FakeSession();
+        DeferredIndexBuilder b = new DeferredIndexBuilder(DeferredIndexBuilder.CATALOG, memo, () -> s, ms -> { }, 0, 60_000, 1, 0);
+        var r = b.startInBackground();
+        assertThat(r).isNotNull();
+        r.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(readers).isNotEmpty().allMatch("schema-deferred-indexes"::equals);
+        assertThat(s.executed).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("inceleme 5: açılışta tür okunamadı ama yeniden denemede PostgreSQL çıktı → kurulum yine yapılır")
+    void unknownDialect_retriesThenBuilds() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<Boolean> memo = DeferredIndexBuilder.memoKnown(() -> reads.incrementAndGet() < 3 ? null : Boolean.TRUE);
+        FakeSession s = new FakeSession();
+        DeferredIndexBuilder b = new DeferredIndexBuilder(DeferredIndexBuilder.CATALOG, memo, () -> s, ms -> { }, 0, 60_000, 1, 0);
+        var r = b.startInBackground();
+        assertThat(r).isNotNull();
+        Result res = r.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(res.failed()).isZero();
+        assertThat(s.executed).isNotEmpty();                   // indeksler kuruldu
+    }
+
+    @Test
     @DisplayName("PostgreSQL: açılışta (senkron) HİÇBİR indeks kurulmaz")
     void applyFallbacks_postgres_runsNothing() {
         List<String> patched = new ArrayList<>();

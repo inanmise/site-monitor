@@ -76,6 +76,12 @@ public class CertificateHierarchyController {
     private final ConcurrentHashMap<String, Deque<Long>> rate = new ConcurrentHashMap<>();
     /** Paket-özel: testler her yolda iznin geri verildiğini doğrular. */
     final Semaphore inFlight = new Semaphore(MAX_CONCURRENT);
+    /**
+     * Kullanıcı başına eşzamanlı istek (2026-10-12): bir kişi farklı yavaş alan adlarıyla pod'un tüm {@value #MAX_CONCURRENT}
+     * yuvasını tutup herkesi "meşgul"e düşürmesin. Paket-özel: testler her yolda sayacın geri verildiğini doğrular.
+     */
+    static final int MAX_PER_USER_CONCURRENT = 2;
+    final ConcurrentHashMap<String, Integer> userInFlight = new ConcurrentHashMap<>();
 
     @GetMapping("/certificates/{domain}/hierarchy")
     public ResponseEntity<Map<String, Object>> hierarchy(@PathVariable String domain,
@@ -89,25 +95,35 @@ public class CertificateHierarchyController {
         requireReadable(session, inv);
         if (inv.isManual()) throw CertificateController.manualCertConflict();
 
-        // Önce eşzamanlılık: "meşgul" reddi kullanıcının dakikalık hakkını harcamasın
+        // Önce eşzamanlılık: "meşgul" reddi kullanıcının dakikalık hakkını harcamasın. Kullanıcı başına tavan → pod geneli tavan.
+        String user = userKey(session);
+        if (!tryAcquireUser(user)) {
+            return error(429, "RATE_LIMITED", Msg.t(
+                    "Aynı anda en çok " + MAX_PER_USER_CONCURRENT + " hiyerarşi isteğiniz çalışabilir; önceki bitince yeniden deneyin.",
+                    "At most " + MAX_PER_USER_CONCURRENT + " of your hierarchy requests can run at once; try again when the previous one finishes."));
+        }
         if (!inFlight.tryAcquire()) {
+            releaseUser(user);
             return error(429, "RATE_LIMITED", Msg.t(
                     "Şu an başka hiyerarşi istekleri çalışıyor; birkaç saniye sonra yeniden deneyin.",
                     "Other hierarchy requests are running right now; try again in a few seconds."));
         }
         try {
-            if (!tryAcquireRate(userKey(session) + "|" + inv.getDomain().toLowerCase(Locale.ROOT))) {
+            if (!tryAcquireRate(user + "|" + inv.getDomain().toLowerCase(Locale.ROOT))) {
                 return error(429, "RATE_LIMITED", Msg.t(
                         "Çok sık hiyerarşi isteği — kullanıcı ve alan adı başına dakikada en fazla " + MAX_PER_MINUTE
                                 + " kez. Biraz bekleyip yeniden deneyin.",
                         "Too many hierarchy requests — at most " + MAX_PER_MINUTE
                                 + " per minute per user and domain. Wait a moment and try again."));
             }
-            // "direct" her zaman kabul (varsayılan yol); "proxy" yalnız kontrolün de gidebileceği yerde: kayıt proxy'li ya da
-            // otomatik proxy geri düşüşü açık (kontrolün chooseFallback kuralı) — elle yazılmış bağlantı tercihi ezmesin.
+            // Yol ipucu YALNIZ kontrolün de gidebileceği yere: "proxy" → kayıt proxy'li ya da (geri düşüş açık VE otomatik proxy
+            // geri düşüşü açık); "direct" → kayıt proxy'siz ya da geri düşüş açık (kontrolün chooseFallback kuralı: proxy
+            // aşaması başarısızsa doğrudan dener). Operatörün proxy'ye yönlendirdiği kayıt, geri düşüş kapalıyken doğrudan
+            // DENENMEZ (2026-10-12).
             boolean recordProxy = Boolean.TRUE.equals(inv.getUseProxy());
-            boolean forceProxy = "direct".equals(viaHint) ? false
-                    : "proxy".equals(viaHint) ? (recordProxy || checkerService.autoProxyFallbackEnabled())
+            boolean fallback = checkerService.retryFallbackEnabled();
+            boolean forceProxy = "direct".equals(viaHint) ? (recordProxy && !fallback)
+                    : "proxy".equals(viaHint) ? (recordProxy || (fallback && checkerService.autoProxyFallbackEnabled()))
                     : recordProxy;
             String tlsMode = "browser".equals(tlsModeHint) || "default".equals(tlsModeHint) ? tlsModeHint : inv.getTlsMode();
             int port = inv.getPort() != null && inv.getPort() > 0 ? inv.getPort() : 443;
@@ -120,6 +136,8 @@ public class CertificateHierarchyController {
             data.put("port", port);
             data.put("via", presented.viaProxy() ? "proxy" : "direct");
             data.put("checked_at", CertificateFacts.iso(now));
+            // Sistem güven deposu okunamadıysa kök kararı "bilinmiyor" (arayüz yeşil / kırmızı demez, 2026-10-12)
+            data.put("trust_store_readable", anchors.systemReadable());
             data.putAll(NetworkCertificateHierarchy.build(presented.certificates(), anchors.system(),
                     anchors.corporate(), now));
             Map<String, Object> body = new LinkedHashMap<>();
@@ -155,7 +173,25 @@ public class CertificateHierarchyController {
                             + "report it to the system administrator with the request id."));
         } finally {
             inFlight.release();
+            releaseUser(user);
         }
+    }
+
+    /** Kullanıcının çalışan istek sayısını atomik artırır; tavandaysa artırmaz ve false döner. */
+    boolean tryAcquireUser(String user) {
+        boolean[] ok = {false};
+        userInFlight.compute(user, (k, n) -> {
+            int cur = n == null ? 0 : n;
+            if (cur >= MAX_PER_USER_CONCURRENT) return n;
+            ok[0] = true;
+            return cur + 1;
+        });
+        return ok[0];
+    }
+
+    /** Atomik azaltır; sıfıra inen kayıt silinir (harita yalnız çalışan isteği olan kullanıcıları tutar). */
+    void releaseUser(String user) {
+        userInFlight.computeIfPresent(user, (k, n) -> n <= 1 ? null : n - 1);
     }
 
     /**

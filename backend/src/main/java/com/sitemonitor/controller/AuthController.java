@@ -1513,6 +1513,38 @@ public class AuthController {
         resp.put("team_ids", ids);
         resp.put("team_names", userService.teamNamesFor(ids));
         resp.put("access_grants", accessGrants(user, session));
+        resp.put("grant_write_teams", grantWriteTeams(user, session));
+    }
+
+    /**
+     * Yalnız erişim paylaşımıyla YAZILABİLEN takımlar (inceleme 6): {@code [{team_id, team_name}]} — EDIT+ paylaşım VE kendi
+     * kapsamıyla yazamıyor ({@link SessionScope#canOperateTeamOwn} false). {@code access_grants}'ın düşürdüğü, kendi
+     * kapsamıyla GÖREBİLDİĞİ takımlar (müdürün görüş alanı, AUDIT) da dâhil. İstemci bu takımlarda YENİ kaydın bildirim
+     * yönlendirmesini kilitler ve varsayılana çeker — sunucu farklı değeri 403 ile reddeder.
+     */
+    private List<Map<String, Object>> grantWriteTeams(AppUser user, HttpSession session) {
+        if (teamGrants == null || user == null || user.getId() == null || session == null) return List.of();
+        try {
+            Map<Long, com.sitemonitor.service.access.TeamAccessLevel> levels = teamGrants.levelsFor(user.getId());
+            List<Long> ids = new ArrayList<>();
+            for (Map.Entry<Long, com.sitemonitor.service.access.TeamAccessLevel> e : levels.entrySet()) {
+                if (e.getValue().atLeast(com.sitemonitor.service.access.TeamAccessLevel.EDIT)
+                        && !SessionScope.canOperateTeamOwn(session, e.getKey())) ids.add(e.getKey());
+            }
+            if (ids.isEmpty()) return List.of();
+            ids.sort(Long::compare);
+            Map<Long, String> names = userService.teamNameMap(ids);   // tek sorgu
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Long id : ids) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("team_id", id);
+                m.put("team_name", names.get(id));
+                out.add(m);
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     /**

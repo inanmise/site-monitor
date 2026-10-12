@@ -5,7 +5,7 @@ import {
   ACCESS_LEVELS, createPayload, daysLeft, emptyForm, filterGrants, formErrors, formOf, grantState, levelIncludes, normalizeGrant,
   sortGrants, summarize, updatePayload,
 } from '../components/admin/access/teamAccessModel.js'
-import { grantLevelsFromMe, grantWriteTeamsFromMe, mergeWriteTeams, rowGrantAccess } from '../hooks/useMonitorTeamPick.js'
+import { formTeamSelect, grantLevelsFromMe, grantWriteTeamsFromMe, mergeWriteTeams, rowGrantAccess } from '../hooks/useMonitorTeamPick.js'
 import { withRowFlags } from '../utils/monitorDetailSync.js'
 
 /**
@@ -87,12 +87,25 @@ describe('teamAccessModel', () => {
     expect(formErrors({ level: 'VIEW', note: '' }, { isNew: false })).toEqual({})
   })
 
+  it('inceleme 4: izleme formunun takım seçicisi — yeni kayıtta hepsi; kendi kaydında paylaşım takımı düşer; paylaşımlı kayıtta kilit', () => {
+    const pickTeams = [{ id: 1, name: 'Kendi' }, { id: 7, name: 'Ödeme', grant: true }]
+    const options = [{ value: '1', label: 'Kendi' }, { value: '7', label: 'Ödeme' }]
+    expect(formTeamSelect('new', options, pickTeams)).toEqual({ options })
+    expect(formTeamSelect(null, options, pickTeams)).toEqual({ options })
+    expect(formTeamSelect({ id: 3, team_id: 1 }, options, pickTeams)).toEqual({ options: [{ value: '1', label: 'Kendi' }] })
+    expect(formTeamSelect({ id: 4, team_id: 7, shared_access: true }, options, pickTeams)).toEqual({ options, disabled: true })
+    // kayıtlı değer paylaşım takımındaysa (bayrak yok — eski yanıt) seçenekte KALIR, kaybolmaz
+    expect(formTeamSelect({ id: 5, team_id: 7 }, options, pickTeams).options.map((o) => o.value)).toEqual(['1', '7'])
+    // paylaşımı olmayan kullanıcı: aynı dizi
+    expect(formTeamSelect({ id: 3, team_id: 1 }, options, [{ id: 1, name: 'Kendi' }]).options).toBe(options)
+  })
+
   it('/me paylaşımından yazılabilir takımlar: yalnız EDIT / DELETE; üyelikle birleşir, tekrar etmez', () => {
     const me = { access_grants: [{ team_id: 7, team_name: 'Ödeme', level: 'EDIT' }, { team_id: 8, team_name: 'Kart', level: 'VIEW' },
       { team_id: 3, team_name: 'Kendi', level: 'DELETE' }] }
     const gt = grantWriteTeamsFromMe(me)
-    expect(gt).toEqual([{ id: 7, name: 'Ödeme' }, { id: 3, name: 'Kendi' }])
-    expect(mergeWriteTeams([{ id: 3, name: 'Kendi' }], gt)).toEqual([{ id: 3, name: 'Kendi' }, { id: 7, name: 'Ödeme' }])
+    expect(gt).toEqual([{ id: 7, name: 'Ödeme', grant: true }, { id: 3, name: 'Kendi', grant: true }])
+    expect(mergeWriteTeams([{ id: 3, name: 'Kendi' }], gt)).toEqual([{ id: 3, name: 'Kendi' }, { id: 7, name: 'Ödeme', grant: true }])
     expect(grantWriteTeamsFromMe({})).toEqual([])
   })
 

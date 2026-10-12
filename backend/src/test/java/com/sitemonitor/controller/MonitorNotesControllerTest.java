@@ -277,12 +277,35 @@ class MonitorNotesControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /notes/{id}: kendi notunu her kullanıcı silebilir (takım kapsın ya da kapsamasın)")
+    @DisplayName("DELETE /notes/{id}: kendi notunu kullanıcı, notun takımında hâlâ YAZABİLİYORSA silebilir (inceleme 5)")
     void deleteNote_ownNoteAcrossTeams_returns200() throws Exception {
         when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 2L, "u")));   // oturum username = "u"
         when(noteRepo.save(any(MonitorNote.class))).thenAnswer(a -> a.getArgument(0));
 
+        // Takım 2'ye EDIT paylaşımıyla yazan kişi kendi notunu siler
+        MockHttpSession s = teamSession("USER", 1L);
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(2L)));
+        s.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new java.util.ArrayList<>(List.of(2L)));
+        s.setAttribute(SessionScope.ATTR_GRANT_EDIT, new java.util.ArrayList<>(List.of(2L)));
+        mvc.perform(delete("/api/monitoring/notes/9").session(s)).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("inceleme 5: paylaşım kaldırılınca (ya da takım değişince) yazar, artık yazamadığı takımın notunu "
+            + "değiştiremez/silemez — not zaten listesinde görünmüyordu; takımsız eski notu yazarı yine değiştirir")
+    void ownNote_afterAccessRevoked_returns403() throws Exception {
+        when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 2L, "u")));
         mvc.perform(delete("/api/monitoring/notes/9").session(teamSession("USER", 1L)))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/monitoring/notes/9").session(teamSession("USER", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"problem\":\"değiştirildi\"}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(noteRepo, org.mockito.Mockito.never()).save(any(MonitorNote.class));
+
+        MonitorNote legacy = note(10L, null, "u");
+        when(noteRepo.findById(10L)).thenReturn(Optional.of(legacy));
+        when(noteRepo.save(any(MonitorNote.class))).thenAnswer(a -> a.getArgument(0));
+        mvc.perform(delete("/api/monitoring/notes/10").session(teamSession("USER", 1L)))
                 .andExpect(status().isOk());
     }
 

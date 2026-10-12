@@ -18,6 +18,13 @@ class CertificateExpirySectionTest {
 
     private final CertificateExpirySection section = new CertificateExpirySection();
 
+    @Test
+    @DisplayName("inceleme 4: takım adları okunamazsa bölüm adsız tablo ÜRETMEZ — hata (bölüm döngüsünde ERROR, gönderim yeniden dener)")
+    void teamNamesFailureIsAnError() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> section.compute(namesFailCtx(List.of(), Map.of())))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("takım adları");
+    }
+
     /** NOW'dan {@code days} gün + 1 saat sonra biten sertifika (tam gün aşağı yuvarlanır → {@code days}). */
     private static String in(int days) {
         return NOW.plusSeconds(days * 86_400L + 3600).toString();

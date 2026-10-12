@@ -25,19 +25,34 @@ const TRIGGER_TONE = {
  */
 export default function TeamGapBadge({ team, gaps = [], actions = {}, partial = false, partialReason = 'pending' }) {
   const t = useT()
-  const [open, setOpen] = useState(false)
+  // Açık pencere HANGİ kipe ait (inceleme 5): "henüz denetlenmedi" penceresi açıkken veriler gelip satır "N eksik"e dönerse
+  // eksik penceresi kendiliğinden açılmasın — açık durum kipe bağlı, kip değişince kapanır.
+  const mode = gaps.length > 0 ? 'gaps' : partial ? 'unknown' : 'complete'
+  const [openMode, setOpenMode] = useState(null)
+  const open = openMode === mode
+  const setOpen = (v) => setOpenMode(v ? mode : null)
   // Bilinmeyen ne eksik ne eksiksizdir (2026-10-12): sayaçlar / kullanıcı listesi gelmeden (ya da hiç gelmezse) eksik
   // görünmeyen satır yeşil "Eksiksiz" demez — nötr "henüz tam denetlenmedi".
   const reasonText = partialReason === 'scope' ? t('team.gap.scopeUnknown')
     : partialReason === 'failed' ? t('team.gap.loadFailed') : t('team.gap.statsPending')
   if (gaps.length === 0 && partial) {
-    // Neden ekran okuyucuya ve dokunmatiğe de ulaşır (yalnız title değil): görünmeyen ama okunan kısa açıklama
+    // Neden dokunmatiğe de ulaşır (inceleme 4): title dokunmatikte görünmez, sr-only görünmez — dokununca açılan Popover
+    // nedeni yazar (eksik rozetiyle aynı kalıp). title fare kullanıcıları için kalır.
     return (
-      <span data-slot="team-gap-badge" data-state="unknown" data-reason={partialReason} title={reasonText}
-        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-        <CircleDashed aria-hidden="true" className="size-3.5 shrink-0" />{t('team.gap.unknown')}
-        <span className="sr-only">{`: ${reasonText}`}</span>
-      </span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button type="button" variant="ghost" size="xs" data-slot="team-gap-badge" data-state="unknown" data-reason={partialReason}
+            title={reasonText} aria-label={`${t('team.gap.unknown')}: ${reasonText}`}
+            className={cn('relative h-auto gap-1 rounded-md overflow-visible whitespace-normal px-2 py-0.5 text-left text-xs font-medium text-muted-foreground', TEAM_TOUCH_CHIP)}>
+            <CircleDashed aria-hidden="true" className="size-3.5 shrink-0" />{t('team.gap.unknown')}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" collisionPadding={8} data-slot="team-gap-unknown-pop"
+          className="z-(--z-menu) w-[min(20rem,calc(100vw-2rem))] p-3 text-xs [overflow-wrap:anywhere]">
+          {team?.name && <p className="mb-1 text-sm font-semibold">{team.name}</p>}
+          <p className="m-0 text-muted-foreground">{reasonText}</p>
+        </PopoverContent>
+      </Popover>
     )
   }
   if (gaps.length === 0) {

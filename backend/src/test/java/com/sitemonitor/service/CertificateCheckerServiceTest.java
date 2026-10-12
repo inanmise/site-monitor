@@ -654,4 +654,23 @@ class CertificateCheckerServiceTest {
         verify(s1).close();
         verify(s2).close();
     }
+
+    @Test
+    @DisplayName("inceleme 5: retryFallbackEnabled — kontrol yol DEĞİŞTİREBİLİYORSA true (geri düşüş + geçici hata denemesi + en az 2 deneme)")
+    void retryFallbackEnabledMirrorsRealRetryGate() {
+        ReflectionTestUtils.setField(service, "retryFallback", true);
+        ReflectionTestUtils.setField(service, "retryOnTransient", true);
+        ReflectionTestUtils.setField(service, "maxAttempts", 2);
+        assertThat(service.retryFallbackEnabled()).isTrue();
+        ReflectionTestUtils.setField(service, "retryOnTransient", false);   // CHECK_RETRY=false: yeniden deneme yok
+        assertThat(service.retryFallbackEnabled()).isFalse();
+        ReflectionTestUtils.setField(service, "retryOnTransient", true);
+        ReflectionTestUtils.setField(service, "maxAttempts", 1);            // tek deneme: ikinci yol hiç denenmez
+        assertThat(service.retryFallbackEnabled()).isFalse();
+        ReflectionTestUtils.setField(service, "maxAttempts", 0);            // 0 → 1 sayılır
+        assertThat(service.retryFallbackEnabled()).isFalse();
+        ReflectionTestUtils.setField(service, "maxAttempts", 3);
+        ReflectionTestUtils.setField(service, "retryFallback", false);      // geri düşüş kapalı
+        assertThat(service.retryFallbackEnabled()).isFalse();
+    }
 }

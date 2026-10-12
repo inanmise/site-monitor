@@ -121,10 +121,11 @@ export default function HistoryList({
                 </Button>
                 <MetaLine r={r} className="mt-1.5 mb-3 px-3" />
                 <div className="mt-auto flex min-w-0 items-center gap-2 border-t px-2 py-1">
-                  {allowManage && (
+                  {/* Yazılamayan satırda boş (içi kutusuz) etiket çizilmez — 40 px'lik görünmez dokunma alanı kalmasın */}
+                  {allowManage && r?.can_edit !== false && (
                     <Label className={cn(LAYER, 'size-10 shrink-0 cursor-pointer justify-center')}>{selectBox(r)}</Label>
                   )}
-                  <span className={cn('flex min-w-0 flex-1 items-center gap-2 text-xs', !allowManage && 'pl-1')}>
+                  <span className={cn('flex min-w-0 flex-1 items-center gap-2 text-xs', (!allowManage || r?.can_edit === false) && 'pl-1')}>
                     {r.team_name
                       ? <TeamBadge static teamId={r.team_id} teamName={r.team_name} className="min-w-0" />
                       : <span className="text-muted-foreground">{t('inc.noTeam')}</span>}
@@ -160,7 +161,7 @@ export default function HistoryList({
             {allowManage && (
               <TableHead className={cn(TH, 'w-10')}>
                 <Checkbox checked={allOnPage ? true : someOnPage ? 'indeterminate' : false} onCheckedChange={onToggleAll}
-                  aria-label={t('inc.selectAll')} title={t('inc.selectAll')} />
+                  disabled={writable.length === 0} aria-label={t('inc.selectAll')} title={t('inc.selectAll')} />
               </TableHead>
             )}
             <TableHead className={TH}>{t('inc.colIncident')}</TableHead>

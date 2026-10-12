@@ -415,12 +415,10 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     }
 
     private static Map<Long, String> safeTeamNames(ExecutiveSummaryContext ctx) {
-        try {
-            Map<Long, String> m = ctx.teamNames();
-            return m == null ? Map.of() : m;
-        } catch (Exception e) {
-            return Map.of();
-        }
+        // Takım adları okunamazsa bölüm ERROR (inceleme 4, 2026-10-12): adsız takım tablolarıyla "temiz" görünen ay
+        // gönderilmesin — istisna bölüm döngüsünde yakalanır, zamanlanmış gönderim yeniden dener
+        Map<Long, String> m = ctx.teamNames();
+        return m == null ? Map.of() : m;
     }
 
     // ── Değerlendirme (saf — birim testleri doğrudan sınar) ─────────────────────────────────────────────────────────

@@ -480,7 +480,16 @@ public class ManualCertificateController {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
-        body.put("data", manualService.listRows(rows, SessionScope.inventoryWriteTest(session), teamNames()));
+        List<Map<String, Object>> listRows = manualService.listRows(rows, SessionScope.inventoryWriteTest(session), teamNames());
+        // Yalnız paylaşımla görülen satır (2026-10-12): "başka takımın salt okunur kaydı" DEĞİL; çalıştırma kapısı ayrı
+        for (Map<String, Object> r : listRows) {
+            Long team = r.get("team_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            if (SessionScope.viewableOnlyByGrant(session, team)) {
+                r.put("shared_access", true);
+                r.put("can_check", SessionScope.canExecuteTeam(session, team));
+            }
+        }
+        body.put("data", listRows);
         body.put("scope", orgWide || globalViewer && "all".equalsIgnoreCase(scope == null ? "" : scope.trim()) ? "all" : "mine");
         body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabledFor(session));
         body.put("timestamp", now());

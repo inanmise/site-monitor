@@ -35,7 +35,7 @@ import DnsDetailModal from './DnsDetailModal.jsx'
 import DnsMonitorCard from './dns/DnsMonitorCard.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
@@ -266,6 +266,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
   function cancelTest() { testSeq.current++; setTesting(false) }
+
+  // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
+  // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
+  const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
     cancelTest()
@@ -628,7 +633,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           <FormField label={t('dns.team')} required {...fe.fieldProps('teamId')}>
             {({ id }) => canPickTeam
               ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }}
-                  options={teamSelectOptions} searchThreshold={2} />
+                  {...formTeamSelect(modal, teamSelectOptions, pickTeams)} searchThreshold={2} />
               : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
           </FormField>
         )}
@@ -645,14 +650,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dns.noGroup')} />
           )}
         </FormField>
-        <NotifyChannels
+        <NotifyChannels locked={routingLock}
           notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
           alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
           onChange={patch => setForm(f => ({ ...f, ...patch }))}
           teamLabel={selectedTeamLabel} teamId={form.teamId}
           groupId={form.notificationGroupId}
           onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-        <NocNotifyField type="DNS" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+        <NocNotifyField disabled={routingLock} type="DNS" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
           onChange={patch => setForm(f => ({ ...f, ...patch }))} />
         <FormField label={t('dns.recordType')} required>
           {({ id }) => (
@@ -878,6 +883,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         <DnsDetailModal monitor={detailMonitor} onClose={closeDetail} teamNames={teamNameById}
           status={statusKey(detailMonitor)} badge={statusBadge(detailMonitor)}
           canManage={canManageRow(detailMonitor)}
+          canRestore={canDeleteRow(detailMonitor)}
           running={isRunning(detailMonitor.id)}
           onCheck={canCheckRow(detailMonitor) ? () => checkNow(detailMonitor) : undefined}
           onEdit={canManageRow(detailMonitor) ? () => openEdit(detailMonitor) : undefined}

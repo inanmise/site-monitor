@@ -7,6 +7,7 @@ import { useCoarsePointer } from '../../hooks/useCoarsePointer.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -32,7 +33,7 @@ import MyDashTv from './MyDashTv.jsx'
 export default function MyDashPage() {
   const t = useT()
   const prefs = useUserPrefs()
-  const { perms, canView, loaded: permsLoaded = true } = usePermissions()
+  const { perms, canView, loaded: permsLoaded = true, failed: permsFailed = false, refresh: refreshPerms } = usePermissions()
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -42,6 +43,7 @@ export default function MyDashPage() {
   const [dragId, setDragId] = useState(null)
   const [overId, setOverId] = useState(null)
   const [announce, setAnnounce] = useState('')
+  const [retryingPerms, setRetryingPerms] = useState(false)
 
   useUrlQuerySync({ md_tv: tv ? '1' : null }, { debounceMs: 0 })
 
@@ -113,8 +115,17 @@ export default function MyDashPage() {
     }
   }
 
-  // Yetkiler gelmeden görünür kutu yoksa "pano boş" DENMEZ (bilinmiyor ≠ boş) — yükleniyor gösterilir
-  const loadingPrefs = prefs.status === 'loading' || (!permsLoaded && shown.length === 0)
+  // Yetkiler gelmeden görünür kutu yoksa "pano boş" DENMEZ (bilinmiyor ≠ boş) — yükleniyor gösterilir; yetkiler
+  // OKUNAMADIYSA sonsuz "yükleniyor" yerine hata + yeniden dene (inceleme 4)
+  const permsUnavailable = !permsLoaded && permsFailed
+  const loadingPrefs = prefs.status === 'loading' || (!permsLoaded && !permsFailed && shown.length === 0)
+  const editHint = !permsLoaded ? t('mydash.editUnavailablePerms') : t('mydash.editUnavailable')
+  // Yeniden dene geri bildirim verir (inceleme 4): istek sürerken düğme meşgul — yine başarısız olursa "hiçbir şey olmadı" gibi durmaz
+  const retryPerms = () => {
+    if (retryingPerms) return
+    setRetryingPerms(true)
+    Promise.resolve().then(() => refreshPerms()).catch(() => {}).finally(() => setRetryingPerms(false))
+  }
 
   return (
     <div className="tab-content active" data-slot="mydash-page" data-edit={edit ? 'on' : 'off'}>
@@ -136,7 +147,7 @@ export default function MyDashPage() {
               </>
             )}
             <Button type="button" variant={edit ? 'default' : 'outline'} className="pointer-coarse:h-10" disabled={!canEdit}
-              title={canEdit ? undefined : t('mydash.editUnavailable')} aria-pressed={edit}
+              title={canEdit ? undefined : editHint} aria-pressed={edit}
               onClick={() => { setEdit((v) => !v); setAnnounce('') }} data-slot="mydash-edit">
               {edit ? <Check aria-hidden="true" /> : <Pencil aria-hidden="true" />} {edit ? t('mydash.done') : t('mydash.edit')}
             </Button>
@@ -154,16 +165,33 @@ export default function MyDashPage() {
         </p>
       )}
 
+      {permsUnavailable && shown.length > 0 && (
+        <div data-slot="mydash-perms-failed" className="mb-3">
+          <AlertBanner tone="warning" className="mb-0"
+            actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={retryPerms}
+              disabled={retryingPerms} aria-busy={retryingPerms || undefined}>
+              <RotateCcw aria-hidden="true" className={retryingPerms ? 'animate-spin' : undefined} /> {t('hist.retry')}</Button>}>
+            {t('mydash.permsFailedBody')}
+          </AlertBanner>
+        </div>
+      )}
+
       {loadingPrefs ? (
         <LoadingBlock label={t('mydash.loading')} />
+      ) : permsUnavailable && shown.length === 0 ? (
+        <div data-slot="mydash-perms-failed">
+          <StatusBlock tone="danger" icon={LayoutGrid} title={t('mydash.permsFailed')} description={t('mydash.permsFailedBody')}
+            actions={<Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={retryPerms} disabled={retryingPerms} aria-busy={retryingPerms || undefined}>
+              <RotateCcw aria-hidden="true" className={retryingPerms ? 'animate-spin' : undefined} /> {t('hist.retry')}</Button>} />
+        </div>
       ) : shown.length === 0 ? (
         <StatusBlock icon={LayoutGrid} title={t('mydash.emptyTitle')} description={t('mydash.emptyBody')}
           actions={canEdit ? (
             <>
-              <Button type="button" onClick={() => { setEdit(true); setCatalogOpen(true) }} disabled={!addable.length}>
+              <Button type="button" className="pointer-coarse:h-10" onClick={() => { setEdit(true); setCatalogOpen(true) }} disabled={!addable.length}>
                 <Plus aria-hidden="true" /> {t('mydash.add')}
               </Button>
-              <Button type="button" variant="outline" onClick={reset}><RotateCcw aria-hidden="true" /> {t('mydash.reset')}</Button>
+              <Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={reset}><RotateCcw aria-hidden="true" /> {t('mydash.reset')}</Button>
             </>
           ) : null} />
       ) : tv ? null : (
@@ -220,7 +248,8 @@ export default function MyDashPage() {
         </ModalShell>
       )}
 
-      {tv && <MyDashTv widgets={shown} refreshKey={refreshKey} onExit={() => setTv(false)} />}
+      {tv && <MyDashTv widgets={shown} refreshKey={refreshKey} onExit={() => setTv(false)}
+        permsFailed={permsUnavailable} onRetryPerms={retryPerms} />}
     </div>
   )
 }

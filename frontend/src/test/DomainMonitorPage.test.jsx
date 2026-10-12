@@ -62,6 +62,22 @@ describe('DomainMonitorPage', () => {
     expect(screen.getByText(/new domain monitor|yeni alan adı monit/i)).toBeInTheDocument()
   })
 
+  it('inceleme 6: paylaşımla yazılabilen takıma yeni alan adı izlemesi — kritik gün eşiği kilitli ve ayar varsayılanında (alarm seviyesini belirler)', async () => {
+    api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { domain: { intervalSeconds: 86400, warningDays: 30, criticalDays: 10, thresholds: '60,30,14,7,3,1' } } })
+    api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<DomainMonitorPage systemRole="USER" teamId={null} myTeams={[{ id: 7, name: 'Paylaşan', grant: true }]} />)
+    await waitFor(() => expect(api.monitoring.monitorDefaults).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    const crit = await screen.findByLabelText(/critical|kritik/i, { selector: 'input' })
+    expect(crit).toBeDisabled()
+    await waitFor(() => expect(crit.value).toBe('10'))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createDomainMonitor.mock.calls[0][0]).toMatchObject({ teamId: 7, criticalDays: 10, alertLevel: 'WARNING' })
+  })
+
   it('alan adı girip kaydet → createDomainMonitor doğru payload ile çağrılır', async () => {
     api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
     render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)   // USER → takım otomatik dolar (zorunlu takım)

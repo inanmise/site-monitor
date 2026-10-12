@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Lock } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { api } from '../../../api/client'
 import SearchableSelect from '../../ui/SearchableSelect.jsx'
@@ -7,6 +8,7 @@ import NotificationGroupSelect from '../../ui/NotificationGroupSelect.jsx'
 import NocNotifyField from '../../noc/forms/NocNotifyField.jsx'
 import { FormField, FormGrid, FormSection, LabelSlot } from '../../monitoring/MonitorForm.jsx'
 import { Input } from '@/components/shadcn/input'
+import { INVENTORY_ROUTING_DEFAULTS, isGrantTeam, withRoutingDefaults } from '../../../hooks/useMonitorTeamPick.js'
 
 /**
  * Sihirbazın "Yeni takip kaydı" envanter alanları (2026-10-06) — Envanter ekleme formuyla (InventoryFormModal) AYNI
@@ -48,6 +50,16 @@ export default function TrackingFields({ form, onField, teams, fe, canOpenSettin
 
   const set = (k) => (v) => { onField(k, v); fe.clear(k) }
 
+  // Paylaşan takıma YENİ kayıt (inceleme 5): kademe, bildirim grubu ve 7/24 varsayılanda kalır — sunucu farkı 403 ile reddeder
+  // (envanter formuyla aynı kural). Takım paylaşımla yazılabilen bir takıma geçince alanlar varsayılana çekilir ve kilitlenir.
+  const routingLocked = isGrantTeam(form.team_id, teams)
+  useEffect(() => {
+    if (!routingLocked) return
+    const next = withRoutingDefaults(form, INVENTORY_ROUTING_DEFAULTS)
+    if (next === form) return
+    for (const k of Object.keys(INVENTORY_ROUTING_DEFAULTS)) if (next[k] !== form[k]) onField(k, next[k])
+  }, [routingLocked]) // eslint-disable-line react-hooks/exhaustive-deps -- yalnız kilit açılınca
+
   return (
     <FormGrid>
       <FormField label={t('inv.formTeam')} required {...fe.fieldProps('team_id')}>
@@ -59,7 +71,7 @@ export default function TrackingFields({ form, onField, teams, fe, canOpenSettin
 
       <FormField label={t('inv.formTier')}>
         {({ id }) => (
-          <SearchableSelect id={id} value={form.tier ?? ''} onChange={(v) => onField('tier', v ? Number(v) : null)}
+          <SearchableSelect id={id} value={form.tier ?? ''} onChange={(v) => onField('tier', v ? Number(v) : null)} disabled={routingLocked}
             options={[
               { value: '', label: t('inv.tierNone') },
               { value: '1', label: t('inv.tier1') }, { value: '2', label: t('inv.tier2') },
@@ -78,8 +90,15 @@ export default function TrackingFields({ form, onField, teams, fe, canOpenSettin
 
       {/* NotificationGroupSelect kendi <label>'ını çizer — LabelSlot ona dikey alan düzenini verir. */}
       <LabelSlot>
-        <NotificationGroupSelect teamId={form.team_id} value={form.notification_group_id} onChange={(v) => onField('notification_group_id', v)} />
+        <NotificationGroupSelect teamId={form.team_id} value={form.notification_group_id} onChange={(v) => onField('notification_group_id', v)}
+          disabled={routingLocked} />
       </LabelSlot>
+      {routingLocked && (
+        <p data-slot="mcert-routing-locked" className="flex items-start gap-1.5 text-xs text-muted-foreground sm:col-span-2">
+          <Lock size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{t('access.routingLockedInv')}</span>
+        </p>
+      )}
 
       <FormSection title={t('inv.formTags')} required hint={t('inv.tagsHint')} {...fe.fieldProps('tags')}>
         <TagInput value={form.tags} onChange={set('tags')} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
@@ -113,6 +132,7 @@ export default function TrackingFields({ form, onField, teams, fe, canOpenSettin
       </FormField>
 
       <NocNotifyField type="SSL" checked={form.noc_notify} groupIds={form.noc_group_ids} canOpenSettings={canOpenSettings}
+        disabled={routingLocked}
         onChange={(patch) => {
           if ('nocNotify' in patch) onField('noc_notify', patch.nocNotify)
           if ('nocGroupIds' in patch) onField('noc_group_ids', patch.nocGroupIds)

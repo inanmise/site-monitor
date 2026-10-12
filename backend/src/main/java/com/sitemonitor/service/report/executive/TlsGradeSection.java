@@ -125,13 +125,15 @@ public class TlsGradeSection implements ExecutiveSummarySection {
         } catch (Exception e) {
             log.debug("Yönetici özeti: TLS profil kapsaması okunamadı: {}", e.toString());
         }
-        TlsGradeService.DropWindow drops = null;
+        // Kurum geneli ay penceresi koşu boyu paylaşılır; takım süzmesi evaluate'te (alan adı kapsamdaki envanterde mi).
+        // Okunamazsa bölüm ERROR (inceleme 5): düşüş sayısı bölüm durumunu belirler — eksik günlükle "temiz / OK" hükmü
+        // verilip ay o görüntüyle gönderilmesin; zamanlanmış gönderim yeniden dener. (Kapsama yalnız bilgi notudur, yutulur.)
+        TlsGradeService.DropWindow drops;
         try {
-            // Kurum geneli ay penceresi koşu boyu paylaşılır; takım süzmesi evaluate'te (alan adı kapsamdaki envanterde mi)
             drops = ctx.shared("tls-grade.drops|" + ctx.fromIso() + "|" + ctx.toIso(),
                     () -> gradeService.dropsBetween(ctx.fromIso(), ctx.toIso(), DROP_SCAN));
         } catch (Exception e) {
-            log.debug("Yönetici özeti: TLS not değişim günlüğü okunamadı: {}", e.toString());
+            throw new IllegalStateException("Yönetici özeti: TLS not değişim günlüğü okunamadı", e);
         }
         return evaluate(ctx, new Inputs(graded, ungraded, notApplicable, coverage, drops));
     }
@@ -451,12 +453,10 @@ public class TlsGradeSection implements ExecutiveSummarySection {
     }
 
     private static Map<Long, String> safeNames(ExecutiveSummaryContext ctx) {
-        try {
-            Map<Long, String> m = ctx.teamNames();
-            return m == null ? Map.of() : m;
-        } catch (Exception e) {
-            return Map.of();
-        }
+        // Takım adları okunamazsa bölüm ERROR (inceleme 4, 2026-10-12): adsız takım tablolarıyla "temiz" görünen ay
+        // gönderilmesin — istisna bölüm döngüsünde yakalanır, zamanlanmış gönderim yeniden dener
+        Map<Long, String> m = ctx.teamNames();
+        return m == null ? Map.of() : m;
     }
 
     static double round1(double v) { return Math.round(v * 10) / 10.0; }

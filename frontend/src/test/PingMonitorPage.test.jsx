@@ -174,6 +174,26 @@ describe('PingMonitorPage', () => {
     expect(payload.slowThresholdPercent).toBe(40)
   })
 
+  it('inceleme 5: paylaşımla yazılabilen takıma YENİ izleme — bildirim kanalları, seviye, grup ve 7/24 kilitli ve varsayılan', async () => {
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [] })
+    api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
+    // Kendi takımı olmayan, yalnız takım 7'ye DÜZENLEME paylaşımı olan kullanıcı: form o takımla açılır
+    render(<PingMonitorPage systemRole="USER" teamId={null} myTeams={[{ id: 7, name: 'Paylaşan', grant: true }]} />)
+    await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    const channels = document.querySelector('[data-slot="notify-channels"]')
+    expect(channels.getAttribute('data-locked')).toBe('true')
+    expect(document.querySelector('[data-slot="notify-locked"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="noc-notify-field"] [role="switch"]')).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText('1.2.3.4 / host.example.com'), { target: { value: '10.0.0.9' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPingMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPingMonitor.mock.calls[0][0]).toMatchObject({
+      teamId: 7, notifyEmail: true, notifyWebhook: true, alertLevel: 'WARNING', notificationGroupId: null, nocNotify: false,
+    })
+  })
+
   it('istatistik panosu: sayımlar doğru + karta tıklayınca grid filtrelenir/temizlenir', async () => {
     api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [
       { id: 1, host: '10.0.0.1', status: 'up',   active: true },

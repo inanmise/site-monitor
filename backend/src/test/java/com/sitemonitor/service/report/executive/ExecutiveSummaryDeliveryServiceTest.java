@@ -299,7 +299,7 @@ class ExecutiveSummaryDeliveryServiceTest {
     }
 
     @Test
-    @DisplayName("2026-10-12: global yöneticiler okunamazsa (seçenek açık) eksik listeyle GÖNDERİLMEZ — FAILED, telafi yeniden dener; önizleme çizilir")
+    @DisplayName("2026-10-12: global yöneticiler okunamazsa (seçenek açık) eksik listeyle GÖNDERİLMEZ — talep yok (inceleme 4), telafi yeniden dener; önizleme çizilir")
     void adminReadFailureDoesNotSendPartial() {
         enable("a@x.com", true);
         when(users.findByActiveTrueOrderByUsernameAsc()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
@@ -308,7 +308,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(rc.emails()).containsExactly("a@x.com");                       // ayar ekranı önizlemesi yine çizilir
 
         ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
-        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE);
         verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
 
         // Seçenek kapalıyken kullanıcı listesi okunmaz → tam sayılır
@@ -437,6 +437,49 @@ class ExecutiveSummaryDeliveryServiceTest {
         verify(logs).save(log.capture());
         assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: global yöneticiler okunamadı");
         assertThat(svc.status()).containsEntry("recipient_complete", false);
+    }
+
+    @Test
+    @DisplayName("inceleme 4: ZAMANLANMIŞ kurum gönderimi de alıcı listesi eksikken ayı TALEP ETMEZ — deneme hakkı yanmaz, telafi dener")
+    void scheduledSendChecksRecipientsBeforeClaim() {
+        enable("a@x.com", true);
+        when(users.findByActiveTrueOrderByUsernameAsc()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE);
+        verify(repo, never()).saveAndFlush(any());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: global yöneticiler okunamadı");
+    }
+
+    @Test
+    @DisplayName("inceleme 5: ay zaten gönderilmiş / gönderiliyorsa alıcılar OKUNMAZ ve 'okunamadı' izi yazılmaz; "
+            + "okunamayan ayda iz pod başına bir kez (saatlik telafi her saat satır yazmaz)")
+    void settledMonthSkipsRecipientsAndTraceOnce() {
+        enable("a@x.com", true);
+        when(users.findByActiveTrueOrderByUsernameAsc()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        ExecutiveSummaryReport sent = new ExecutiveSummaryReport();
+        sent.setId(1L);
+        sent.setStatus(ExecutiveSummaryReport.SENT);
+        sent.setAttempts(1);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(sent));
+        assertThat(svc.runScheduled().status()).isEqualTo("ALREADY_SENT");
+        sent.setStatus(ExecutiveSummaryReport.SENDING);
+        assertThat(svc.runScheduled().status()).isEqualTo("IN_PROGRESS");
+        verify(users, never()).findByActiveTrueOrderByUsernameAsc();
+        verify(logs, never()).save(any());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());   // talep denenmez (inceleme 6)
+        verify(summaryService, never()).compute(any());
+
+        // talep edilmemiş ay + okunamayan alıcılar: üç deneme, TEK iz satırı
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
+        for (int i = 0; i < 3; i++) {
+            assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryDeliveryService.RECIPIENTS_UNAVAILABLE);
+        }
+        verify(logs, org.mockito.Mockito.times(1)).save(any());
+        verify(repo, never()).saveAndFlush(any());
     }
 
     @Test

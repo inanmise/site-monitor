@@ -18,7 +18,6 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -165,6 +164,13 @@ public final class DeferredIndexBuilder {
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}
 
+    /**
+     * Açılışta tür OKUNAMADIYSA (havuz dolu / kısa kesinti) kurulum iş parçacığı türü bu kadar kez, aralıklarla yeniden okur
+     * (inceleme 5): tek podlu kurulumda katalog indeksleri haftalarca (sonraki açılışa dek) eksik kalmasın. Sınırlı.
+     */
+    static final int DIALECT_RETRIES = 5;
+    static final long DIALECT_RETRY_MS = 30_000;
+
     /** Bir indeksin veritabanındaki durumu. */
     enum State { ABSENT, VALID, INVALID, BUILDING }
 
@@ -190,7 +196,8 @@ public final class DeferredIndexBuilder {
     public static CompletableFuture<Result> lastRun() { return LAST.get(); }
 
     private final List<Spec> specs;
-    private final BooleanSupplier postgres;
+    /** Üç durumlu tür: TRUE PostgreSQL, FALSE başka (H2), null OKUNAMADI (inceleme 4). */
+    private final java.util.function.Supplier<Boolean> postgres;
     private final SessionFactory sessions;
     private final Sleeper sleeper;
     private final long lockWaitMs;
@@ -199,11 +206,11 @@ public final class DeferredIndexBuilder {
     private final long retryDelayMs;
 
     public DeferredIndexBuilder(JdbcTemplate jdbc) {
-        this(CATALOG, memo(() -> isPostgres(jdbc.getDataSource())), () -> JdbcSession.open(jdbc.getDataSource()),
+        this(CATALOG, memoKnown(() -> postgresOrNull(jdbc.getDataSource())), () -> JdbcSession.open(jdbc.getDataSource()),
                 Thread::sleep, LOCK_WAIT_MS, PATCH_YIELD_MS, POLL_MS, RETRY_DELAY_MS);
     }
 
-    DeferredIndexBuilder(List<Spec> specs, BooleanSupplier postgres, SessionFactory sessions, Sleeper sleeper,
+    DeferredIndexBuilder(List<Spec> specs, java.util.function.Supplier<Boolean> postgres, SessionFactory sessions, Sleeper sleeper,
                          long lockWaitMs, long patchYieldMs, long pollMs, long retryDelayMs) {
         this.specs = List.copyOf(specs);
         this.postgres = postgres;
@@ -220,7 +227,14 @@ public final class DeferredIndexBuilder {
      * ({@code patch} = {@code SchemaPatchRunner#patch}); PostgreSQL'de hiçbir şey yapmaz — kurulum hazır olduktan sonra.
      */
     public void applyFallbacks(Consumer<String> patch) {
-        if (postgres.getAsBoolean()) return;
+        Boolean pg = postgres.get();
+        if (pg == null) {
+            // Tür OKUNAMADI (inceleme 4): taşınabilir yedekler (düz CREATE INDEX) PostgreSQL'de büyük tabloyu kilitler —
+            // bilinmeyen türde koşulmaz; sonraki açılış yeniden karar verir.
+            log.warn("Ertelenmiş indeksler: veritabanı türü okunamadı — taşınabilir indeks yedekleri bu açılışta atlandı");
+            return;
+        }
+        if (pg) return;
         for (Spec s : specs) {
             if (s.fallbackDdl() != null) patch.accept(s.fallbackDdl());
         }
@@ -231,11 +245,27 @@ public final class DeferredIndexBuilder {
      * (çağıranı hiçbir koşulda bekletmez, istisna sızdırmaz). PostgreSQL değilse {@code null}.
      */
     public CompletableFuture<Result> startInBackground() {
-        if (!postgres.getAsBoolean()) return null;
+        // Bellekte bilinen sonuç yoksa ilk okuma da İŞ PARÇACIĞINDA (inceleme 6): DB sağlıksızken açılış iş parçacığı
+        // bağlantı havuzunun zaman aşımını (30 sn) beklemesin — "çağıranı bloklamaz" sözü
+        boolean readNow = !(postgres instanceof KnownMemo);
+        Boolean pg = readNow ? postgres.get() : ((KnownMemo) postgres).peek();
+        if (Boolean.FALSE.equals(pg)) return null;
         CompletableFuture<Result> done = new CompletableFuture<>();
         LAST.set(done);
         Thread t = new Thread(() -> {
             try {
+                Boolean known = pg != null || readNow ? pg : postgres.get();
+                for (int i = 0; known == null && i < DIALECT_RETRIES; i++) {
+                    sleeper.sleep(DIALECT_RETRY_MS);
+                    known = postgres.get();
+                }
+                if (known == null) {
+                    log.warn("Ertelenmiş indeks kurulumu: veritabanı türü {} denemede okunamadı — sonraki açılışta yeniden denenecek",
+                            DIALECT_RETRIES + 1);
+                    done.complete(new Result(0, 0, 0, 0, 1, false, 0));
+                    return;
+                }
+                if (!known) { done.complete(new Result(0, 0, 0, 0, 0, false, 0)); return; }
                 done.complete(runBlocking());
             } catch (Throwable e) {
                 log.warn("Ertelenmiş indeks kurulumu yarıda kaldı (sonraki açılışta yeniden denenecek): {}", firstLine(e));
@@ -384,13 +414,31 @@ public final class DeferredIndexBuilder {
         return line.length() > 200 ? line.substring(0, 200) + "…" : line;
     }
 
-    private static BooleanSupplier memo(BooleanSupplier s) {
-        AtomicReference<Boolean> v = new AtomicReference<>();
-        return () -> {
+    /**
+     * Türü BİLİNEN sonuçla bellekler (inceleme 4, 2026-10-12): eskiden ilk okumadaki geçici bağlantı hatası "PostgreSQL
+     * değil" diye kalıcı belleğe giriyordu — o pod ömrü boyunca indeks kurulumu yapılmıyor, açılışta PostgreSQL'e düz
+     * (kilitleyen) yedek DDL'ler koşabiliyordu. {@code null} (okunamadı) belleklenmez, sonraki çağrı yeniden okur.
+     */
+    static java.util.function.Supplier<Boolean> memoKnown(java.util.function.Supplier<Boolean> s) {
+        return new KnownMemo(s);
+    }
+
+    /** {@link #memoKnown}'un belleği; {@link #peek} veri tabanına GİTMEDEN bilinen sonucu (yoksa null) verir. */
+    static final class KnownMemo implements java.util.function.Supplier<Boolean> {
+        private final AtomicReference<Boolean> v = new AtomicReference<>();
+        private final java.util.function.Supplier<Boolean> source;
+
+        KnownMemo(java.util.function.Supplier<Boolean> source) { this.source = source; }
+
+        Boolean peek() { return v.get(); }
+
+        @Override public Boolean get() {
             Boolean b = v.get();
-            if (b == null) { b = s.getAsBoolean(); v.set(b); }
+            if (b != null) return b;
+            b = source.get();
+            if (b != null) v.set(b);
             return b;
-        };
+        }
     }
 
     public static boolean isPostgres(DataSource ds) {

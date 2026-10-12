@@ -1413,28 +1413,95 @@ public class StormService {
         }
     }
 
-    /** Takım adresleri + kurtulan üyeleri nöbetçi olarak almış adresler (büyük/küçük harf duyarsız tekil, sıra korunur). */
-    static List<String> withOncall(List<String> teamEmails, List<AlertEvent> recovered) {
-        return withOncall(teamEmails, recovered, new java.util.HashSet<>());
-    }
+    /** Bir takım gönderiminin nöbetçi planı: takım postasına katılan adresler + yalnız kendi üyelerini listeleyen ayrı postalar. */
+    record OncallPlan(List<String> joinTeam, List<OncallMail> separate) { }
+
+    /** Nöbetçiye ayrı çözüm postası: yalnız bu adreslerin AÇILIŞINI aldığı üyeler. */
+    record OncallMail(List<String> to, List<AlertEvent> recovered, List<AlertEvent> stillDown) { }
 
     /**
-     * {@code oncallTaken}: bu fırtına çözümünde nöbetçi adresi olarak ZATEN bir gönderime girmiş (ya da herhangi bir
-     * gönderimin takım adresi olan) adresler — SY + UG ortak üyesinin damgası iki takımın nöbetçisini taşır; her adres
-     * tek posta alır (2026-10-12). Çağıran kümeyi bütün gönderimlerin takım adresleriyle tohumlar.
+     * Fırtına çözümünde nöbetçi alıcıları (inceleme 4, 2026-10-12). Üyenin damgası ({@code alert_events.oncall_emails})
+     * açılışı GERÇEKTEN almış nöbetçi adresleridir; SY + UG ortak üyesinde iki takımın nöbetçisini birden taşır. Eskiden
+     * damgadaki her adres takımın TOPLU postasına ekleniyordu: B'nin nöbetçisi A'nın gönderimindeki A'ya özel hedef
+     * adlarını da görüyordu (takım yalıtımı) ve ortak üye yüzünden ilk gönderimde "alındı" sayılıp kendi takımının
+     * gönderimindeki üyelerin çözümünü kaçırıyordu. Şimdi:
+     * <ul>
+     *   <li>adres bu gönderimin BÜTÜN üyelerinin (kurtulan + hâlâ-down) açılışını aldıysa takım postasına katılır (içerik
+     *       zaten onun gördüğü kadardır);</li>
+     *   <li>aksi hâlde yalnız kendi aldığı üyeleri listeleyen AYRI bir posta alır (aynı üye kümesini alan adresler tek
+     *       postada);</li>
+     *   <li>bir üyenin çözümü bir adrese tek kez bildirilir ({@code reported}: adres → bildirilen üye kimlikleri, bütün
+     *       gönderimler boyunca). Çağıran, GERÇEKTEN gönderilecek takım postalarının adreslerini o postanın kurtulan
+     *       üyeleriyle ÖNCEDEN tohumlar ({@link #seedTeamMail}) — bir takımın adresi başka takımın nöbetçisi de olsa o
+     *       takıma ait üyelerin çözümünü kaçırmaz (inceleme 5: eskiden her takım adresi nöbetçi ekinden tümden düşüyordu).</li>
+     * </ul>
      */
-    static List<String> withOncall(List<String> teamEmails, List<AlertEvent> recovered, Set<String> oncallTaken) {
-        List<String> out = new ArrayList<>();
-        Set<String> seen = new java.util.HashSet<>();
-        for (String e : teamEmails == null ? List.<String>of() : teamEmails) {
-            if (e != null && !e.isBlank() && seen.add(e.trim().toLowerCase(java.util.Locale.ROOT))) out.add(e.trim());
-        }
-        for (AlertEvent m : recovered == null ? List.<AlertEvent>of() : recovered) {
+    static OncallPlan planOncall(List<AlertEvent> mineRecovered, List<AlertEvent> mineStillDown,
+                                 Map<String, Set<Long>> reported) {
+        Map<String, String> display = new LinkedHashMap<>();
+        Map<String, List<AlertEvent>> rec = new LinkedHashMap<>();
+        for (AlertEvent m : mineRecovered == null ? List.<AlertEvent>of() : mineRecovered) {
             for (String e : EscalationService.oncallMailedFor(m)) {
                 String k = e.toLowerCase(java.util.Locale.ROOT);
-                if (seen.contains(k) || !oncallTaken.add(k)) continue;
-                seen.add(k);
-                out.add(e);
+                if (m.getId() != null && reported.getOrDefault(k, Set.of()).contains(m.getId())) continue;
+                display.putIfAbsent(k, e);
+                List<AlertEvent> l = rec.computeIfAbsent(k, x -> new ArrayList<>());
+                if (!l.contains(m)) l.add(m);
+            }
+        }
+        if (rec.isEmpty()) return new OncallPlan(List.of(), List.of());
+        Map<String, List<AlertEvent>> down = new LinkedHashMap<>();
+        for (AlertEvent m : mineStillDown == null ? List.<AlertEvent>of() : mineStillDown) {
+            for (String e : EscalationService.oncallMailedFor(m)) {
+                String k = e.toLowerCase(java.util.Locale.ROOT);
+                if (!rec.containsKey(k)) continue;
+                List<AlertEvent> l = down.computeIfAbsent(k, x -> new ArrayList<>());
+                if (!l.contains(m)) l.add(m);
+            }
+        }
+        int recTotal = mineRecovered.size();
+        int downTotal = mineStillDown == null ? 0 : mineStillDown.size();
+        List<String> joinTeam = new ArrayList<>();
+        Map<String, OncallMail> groups = new LinkedHashMap<>();
+        for (Map.Entry<String, List<AlertEvent>> en : rec.entrySet()) {
+            String k = en.getKey();
+            List<AlertEvent> r = en.getValue();
+            List<AlertEvent> d = down.getOrDefault(k, List.of());
+            Set<Long> done = reported.computeIfAbsent(k, x -> new java.util.HashSet<>());
+            for (AlertEvent m : r) if (m.getId() != null) done.add(m.getId());
+            if (r.size() == recTotal && d.size() == downTotal) {
+                joinTeam.add(display.get(k));
+            } else {
+                String key = idsOf(r) + "|" + idsOf(d);
+                groups.computeIfAbsent(key, x -> new OncallMail(new ArrayList<>(), r, d)).to().add(display.get(k));
+            }
+        }
+        return new OncallPlan(joinTeam, List.copyOf(groups.values()));
+    }
+
+    /** Gönderilecek takım postasının alıcıları o postadaki kurtulan üyeleri ZATEN alır — nöbetçi planına tohum. */
+    static void seedTeamMail(Map<String, Set<Long>> reported, List<String> teamEmails, List<AlertEvent> recovered) {
+        if (teamEmails == null || recovered == null || recovered.isEmpty()) return;
+        for (String e : teamEmails) {
+            if (e == null || e.isBlank()) continue;
+            Set<Long> s = reported.computeIfAbsent(e.trim().toLowerCase(java.util.Locale.ROOT), x -> new java.util.HashSet<>());
+            for (AlertEvent m : recovered) if (m.getId() != null) s.add(m.getId());
+        }
+    }
+
+    private static String idsOf(List<AlertEvent> events) {
+        StringBuilder sb = new StringBuilder();
+        for (AlertEvent e : events) sb.append(e.getId() != null ? e.getId() : System.identityHashCode(e)).append(',');
+        return sb.toString();
+    }
+
+    /** Takım adresleri + eklenecek adresler — büyük/küçük harf duyarsız tekil, sıra korunur, boşluklar kırpılır. */
+    static List<String> mergeAddresses(List<String> teamEmails, List<String> extra) {
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (List<String> src : List.of(teamEmails == null ? List.<String>of() : teamEmails, extra == null ? List.<String>of() : extra)) {
+            for (String e : src) {
+                if (e != null && !e.isBlank() && seen.add(e.trim().toLowerCase(java.util.Locale.ROOT))) out.add(e.trim());
             }
         }
         return out;
@@ -1464,10 +1531,13 @@ public class StormService {
             Set<Long> recoveredIds = new java.util.HashSet<>();
             for (AlertEvent e : recovered) if (e.getId() != null) recoveredIds.add(e.getId());
             Map<String, String> sentWebhooks = new LinkedHashMap<>();
-            // Nöbetçi adresleri gönderimler arasında TEKİL: her takım adresi zaten tek gönderimdedir (resolveDispatches)
-            Set<String> oncallTaken = new java.util.HashSet<>();
+            // Nöbetçi ekleri (planOncall): bir üyenin çözümü bir adrese bütün gönderimler boyunca TEK kez bildirilir. Takım
+            // postası GİDECEK gönderimlerin adresleri o postanın kurtulan üyeleriyle önceden tohumlanır (seedTeamMail).
+            Map<String, Set<Long>> oncallReported = new HashMap<>();
             for (TeamDispatch d : dispatches) {
-                for (String e : d.emails()) if (e != null) oncallTaken.add(e.trim().toLowerCase(java.util.Locale.ROOT));
+                List<AlertEvent> rec = new ArrayList<>();
+                for (AlertEvent m : d.members()) if (m.getId() != null && recoveredIds.contains(m.getId())) rec.add(m);
+                seedTeamMail(oncallReported, d.emails(), rec);
             }
 
             for (TeamDispatch d : dispatches) {
@@ -1492,9 +1562,10 @@ public class StormService {
                 List<String> stillDownTargets = sampleTargets(mineStillDown);
 
                 // Kurtulan üyeyi NÖBETÇİ olarak almış adresler de çözümü öğrenir (2026-10-12; bireysel çözüm yoluyla aynı kural —
-                // EscalationService.oncallMailedFor): fırtınadan önce tek tek duyurulan alarmın nöbetçisi "düzeldi"yi kaçırıyordu.
-                // Damga üyenin KENDİ takımının nöbetçisidir (TeamDispatch takım üyeleri) — takım yalıtımı korunur.
-                List<String> mailTo = withOncall(d.emails(), mineRecovered, oncallTaken);
+                // EscalationService.oncallMailedFor). Yalnız gönderimin bütün üyelerini almış nöbetçi takım postasına katılır;
+                // diğerleri kendi üyelerini listeleyen ayrı posta alır (planOncall — takım yalıtımı).
+                OncallPlan oncallPlan = planOncall(mineRecovered, mineStillDown, oncallReported);
+                List<String> mailTo = mergeAddresses(d.emails(), oncallPlan.joinTeam());
                 String mailStatus = "SKIPPED: alıcı yok";
                 String html = null;
                 if (!mailTo.isEmpty()) {
@@ -1512,6 +1583,7 @@ public class StormService {
                 // Çözüm postası yalnız KURTULAN üyelerin günlüğüne (hâlâ-down üye için bu bir çözüm değildir).
                 logStormMail(new TeamDispatch(d.teamId(), d.teamName(), mailTo, d.webhooks(), mineRecovered, List.of()),
                         storm, TRIGGER_STORM_RESOLVE, subject, html, mailStatus);
+                for (OncallMail om : oncallPlan.separate()) sendOncallStormRecovery(storm, d, scopeLabel, om);
 
                 enqueueStormPush(storm, d, "RESOLVE", new UserPushService.LocalizedText(
                         mineRecovered.size() + " monitör kurtarıldı — " + scopeLabel
@@ -1544,6 +1616,29 @@ public class StormService {
         }
     }
 
+    /** Nöbetçiye ayrı çözüm postası — yalnız açılışını aldığı üyeler; her kurtulan üyenin günlüğüne bir satır. */
+    private void sendOncallStormRecovery(AlertStorm storm, TeamDispatch d, String scopeLabel, OncallMail om) {
+        String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
+                + om.recovered().size() + " monitör kurtarıldı — " + scopeLabel;
+        String html = null;
+        String status;
+        try {
+            List<String> targets = sampleTargets(om.recovered());
+            int extra = Math.max(0, om.recovered().size() - targets.size());
+            List<String> stillDownTargets = sampleTargets(om.stillDown());
+            html = emailService.buildStormRecoveryHtml(om.recovered().size(), om.stillDown().size(), scopeLabel,
+                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+            String text = emailService.buildStormRecoveryText(om.recovered().size(), om.stillDown().size(), scopeLabel,
+                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+            status = emailService.sendHtml(om.to().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+        } catch (Exception e) {
+            log.warn("Storm #{} nöbetçi çözüm postası gönderilemedi: {}", storm.getId(), e.toString());
+            status = "FAILED: " + e.getClass().getSimpleName();
+        }
+        logStormMail(new TeamDispatch(d.teamId(), d.teamName(), om.to(), Map.of(), om.recovered(), List.of()),
+                storm, TRIGGER_STORM_RESOLVE, subject, html, status);
+    }
+
     private List<TeamDispatch> resolveDispatches(List<AlertEvent> members) {
         Map<Long, TeamInfo> teamCache = new HashMap<>();
         Map<Long, Dispatch> byTeam = new LinkedHashMap<>();
@@ -1573,6 +1668,9 @@ public class StormService {
                 }
             }
             boolean mailOff = mailDisabled(m);
+            // UG = SY ise üye bir kez sayılır (inceleme 5; EscalationContactScope ile aynı): aynı gönderime iki kez girip
+            // "2 monitör kurtarıldı" ve çift günlük satırı üretiyordu
+            if (ugTeamId != null && ugTeamId.equals(teamId)) ugTeamId = null;
             for (Long tid : new Long[]{teamId, ugTeamId}) {
                 if (tid == null) continue;
                 Dispatch d = byTeam.computeIfAbsent(tid, id -> {

@@ -89,6 +89,16 @@ class TlsGradeDropNotifierTest {
                     }
                     return k;
                 });
+        // SENDING → PENDING (okuma hatasında yeniden deneme, inceleme 5)
+        when(repo.transitionNotifyState(anyCollection(), eq(TlsGradeChange.NOTIFY_SENDING), eq(TlsGradeChange.NOTIFY_PENDING)))
+                .thenAnswer(inv -> {
+                    int k = 0;
+                    for (Long id : (Collection<Long>) inv.getArgument(0)) {
+                        TlsGradeChange c = store.get(id);
+                        if (c != null && TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) { c.setNotifyState(TlsGradeChange.NOTIFY_PENDING); k++; }
+                    }
+                    return k;
+                });
         when(repo.findAllById(anyCollection())).thenAnswer(inv -> {
             List<TlsGradeChange> out = new ArrayList<>();
             for (Long id : (Collection<Long>) inv.getArgument(0)) if (store.containsKey(id)) out.add(store.get(id));
@@ -215,6 +225,30 @@ class TlsGradeDropNotifierTest {
     }
 
     @Test
+    @DisplayName("inceleme 4-5: alıcı listesi OKUNAMADI → 'alıcı yok' DEĞİL; düşüş PENDING'e döner ve yeniden denenir, tavanda FAILED; push ulaştıysa SENT")
+    void recipientLookupFailureIsNotNoRecipient() {
+        when(escalation.teamEmailsForMonitor(any(), isNull())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(Map.of("queued", 0));
+        drop(1, "a.example.com", 1L, null, "A", "B");
+        n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);   // geçici hata: kaybolmaz
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepo).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith(TlsGradeDropNotifier.RECIPIENTS_UNREADABLE);
+        verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+        // sınırlı yeniden deneme: tavana gelince kalıcı FAILED (sonsuz döngü yok)
+        for (int i = 1; i < TlsGradeDropNotifier.READ_RETRY_MAX; i++) n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED);
+        // push takım üyelerine ulaştı → düşüş bildirildi
+        when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(Map.of("queued", 2));
+        drop(2, "b.example.com", 1L, null, "A", "B");
+        n.notifyPending();
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+    }
+
+    @Test
     @DisplayName("e-posta: tek düşüşte konu alan adı + notlar; nedenler Türkçe adla; sertifika penceresine derin bağlantı")
     void mail() {
         var rows = List.of(new TlsGradeDropMail.Row("a.example.com", "A", "B", "TLS10_ENABLED,HSTS_MISSING", "2026-10-11T08:00:00"));
@@ -257,15 +291,49 @@ class TlsGradeDropNotifierTest {
     }
 
     @Test
-    @DisplayName("2026-10-12: bir takımın hatası ötekileri durdurmaz — o takımın satırları 'gönderilemedi', diğer takım gönderilir")
+    @DisplayName("2026-10-12 / inceleme 5: bir takımın OKUMA hatası ötekileri durdurmaz — o takımın satırları yeniden denenir "
+            + "(PENDING), tavan dolunca 'gönderilemedi'; diğer takım gönderilir")
     void oneTeamFailureDoesNotStopOthers() {
         drop(1, "a.example.com", 7L, null, "A", "C");
         drop(2, "b.example.com", 8L, null, "A", "C");
         when(teamRepo.findById(7L)).thenThrow(new IllegalStateException("bağlantı koptu"));
         TlsGradeDropNotifier.Result r = n.notifyPending();
         assertThat(r.claimed()).isEqualTo(2);
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);   // geçici: yeniden denenecek
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+        for (int i = 1; i < TlsGradeDropNotifier.READ_RETRY_MAX; i++) n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED); // sınırlı: sonsuz deneme yok
+        verify(email, times(1)).sendHtml(any(), any(), anyString(), anyString(), any());          // takım 8 bir kez
+    }
+
+    @Test
+    @DisplayName("inceleme 6: yeniden deneme geçişi (SENDING→PENDING) hata verirse teslim edilmiş satır 'yarıda kaldı' OLMAZ — sonucu önce yazılır")
+    void retryTransitionFailureKeepsDeliveredRows() {
+        drop(1, "a.example.com", 7L, null, "A", "C");
+        drop(2, "b.example.com", 8L, null, "A", "C");
+        when(teamRepo.findById(7L)).thenThrow(new IllegalStateException("bağlantı koptu"));
+        when(repo.transitionNotifyState(anyCollection(), eq(TlsGradeChange.NOTIFY_SENDING), eq(TlsGradeChange.NOTIFY_PENDING)))
+                .thenThrow(new IllegalStateException("db"));
+        n.notifyPending();                                              // tur hatası yakalanıp günlüklenir
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
+    }
+
+    @Test
+    @DisplayName("inceleme 5: gönderim sırasında beklenmeyen hata → o takım 'gönderilemedi' + notification_logs izi; öteki takım sürer")
+    void unexpectedSendFailureLeavesTrace() {
+        drop(1, "a.example.com", 7L, null, "A", "C");
+        drop(2, "b.example.com", 8L, null, "A", "C");
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenAnswer(inv -> {
+            if (java.util.Arrays.toString((Object[]) inv.getArgument(0)).contains("takim7")) throw new IllegalStateException("smtp çöktü");
+            return "SENT";
+        });
+        n.notifyPending();
         assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED);
         assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+        ArgumentCaptor<com.sitemonitor.model.NotificationLog> log = ArgumentCaptor.forClass(com.sitemonitor.model.NotificationLog.class);
+        verify(logRepo, org.mockito.Mockito.atLeastOnce()).save(log.capture());
+        assertThat(log.getAllValues()).anySatisfy(l -> assertThat(l.getEmailStatus()).startsWith(TlsGradeDropNotifier.NOTIFY_FAILED));
     }
 
     @Test

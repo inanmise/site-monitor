@@ -126,11 +126,17 @@ export function nameRows(p) {
  * en çok 100 karakter; ad yoksa `certificate.pem`.
  */
 export function pemFileName(node) {
-  const base = String(node?.subject?.cn || node?.subject?.o || '')
+  // Ağdan gelen CN sunucunun verisidir (~32 KB olabilir): önce SINIRLA, uç noktalama DOĞRUSAL kırp. Eski
+  // `/^[._-]+|[._-]+$/` uzun nokta dizisinde karesel geri izleme yapıyordu (CLAUDE.md "No unbounded … regex").
+  const s = String(node?.subject?.cn || node?.subject?.o || '')
+    .slice(0, 300)
     .replace(/\*/g, 'wildcard')
     .replace(/[^A-Za-z0-9._-]+/g, '_')
-    .replace(/^[._-]+|[._-]+$/g, '')
-    .slice(0, 100)
+  let a = 0
+  let b = s.length
+  while (a < b && '._-'.includes(s[a])) a++
+  while (b > a && '._-'.includes(s[b - 1])) b--
+  const base = s.slice(a, b).slice(0, 100)
   return `${base || 'certificate'}.pem`
 }
 

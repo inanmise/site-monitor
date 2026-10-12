@@ -1429,7 +1429,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
             <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <MonitorNotes type="SCRIPTED" target={selected.name} />
+                <MonitorNotes type="SCRIPTED" target={selected.name}
+                  // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
+                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
               </Suspense>
             </TabsContent>
 
