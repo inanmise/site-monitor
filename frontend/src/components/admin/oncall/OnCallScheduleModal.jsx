@@ -253,7 +253,7 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
               )}
               {canEdit && (
                 <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-                  <div className="ss-touch min-w-0 flex-1">
+                  <div data-touch-picker="" className="min-w-0 flex-1">
                     <SearchableSelect value={pick} onChange={setPick} options={addable} placeholder={t('oncall.pickPerson')}
                       ariaLabel={t('oncall.pickPerson')} disabled={addable.length === 0} />
                   </div>
@@ -318,7 +318,7 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
                 <div className="grid min-w-0 grid-cols-1 gap-2 rounded-md bg-muted/30 p-2 sm:grid-cols-2">
                   <Field label={t('oncall.ovrPerson')} error={ovrErrors.user ? t(ovrErrors.user) : undefined} className="mb-0 sm:col-span-2">
                     {() => (
-                      <div className="ss-touch">
+                      <div data-touch-picker="">
                         <SearchableSelect value={ovr.userId === '' ? '' : String(ovr.userId)} options={personOptions}
                           onChange={(v) => { setOvr((o) => ({ ...o, userId: v })); setOvrErrors((e) => ({ ...e, user: undefined })) }}
                           placeholder={t('oncall.pickPerson')} ariaLabel={t('oncall.ovrPerson')} />

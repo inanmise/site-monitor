@@ -41,7 +41,7 @@ public class IncidentPostmortemController {
     private final IncidentService incidents;
     private final IncidentPostmortemService pm;
     private final PermissionService permissions;
-    private final AuditService audit;
+    private final AuditService auditService;
 
     /** Opak kullanıcı kimliği çözümü (yoksa sayısal — dilim testleri). */
     @Autowired(required = false) private UserPublicIds userPublicIds;
@@ -51,7 +51,7 @@ public class IncidentPostmortemController {
         this.incidents = incidents;
         this.pm = pm;
         this.permissions = permissions;
-        this.audit = audit;
+        this.auditService = audit;
     }
 
     // ── Rapor + aksiyonlar + zaman çizelgesi (tek okuma) ───────────────────────────────────────────────
@@ -81,7 +81,7 @@ public class IncidentPostmortemController {
         IncidentRecord inc = incidents.get(id);
         requireWrite(session, inc);
         IncidentPostmortem saved = pm.save(inc, body, actor(session));
-        audit.recordAction("INCIDENT_POSTMORTEM_SAVE", session, request, "INCIDENT", String.valueOf(id),
+        auditService.recordAction("INCIDENT_POSTMORTEM_SAVE", session, request, "INCIDENT", String.valueOf(id),
                 "{\"status\":\"" + saved.getStatus() + "\",\"version\":" + saved.getVersion() + "}");
         return ok(Map.of("data", pm.postmortemView(inc)));
     }
@@ -96,7 +96,7 @@ public class IncidentPostmortemController {
         requireWrite(session, inc);
         Long owner = body != null && body.get("owner_user_id") != null ? resolveOwner(body.get("owner_user_id"), session) : null;
         IncidentActionItem a = pm.createAction(inc, body, owner, actor(session));
-        audit.recordAction("INCIDENT_ACTION_ADD", session, request, "INCIDENT", String.valueOf(id),
+        auditService.recordAction("INCIDENT_ACTION_ADD", session, request, "INCIDENT", String.valueOf(id),
                 "{\"action_id\":" + a.getId() + ",\"priority\":\"" + a.getPriority() + "\",\"kind\":\"" + a.getKind() + "\"}");
         return ok(Map.of("data", withMine(IncidentPostmortemService.actionDto(a, IncidentPostmortemService.today()), a, sessionUserId(session))));
     }
@@ -120,7 +120,7 @@ public class IncidentPostmortemController {
         Long ownerId = ownerSent && b.get("owner_user_id") != null ? resolveOwner(b.get("owner_user_id"), session) : null;
         String before = a.getStatus();
         IncidentActionItem saved = pm.updateAction(a, b, ownerId, ownerSent, !writer, actor(session));
-        audit.recordAction("INCIDENT_ACTION_UPDATE", session, request, "INCIDENT", String.valueOf(saved.getIncidentId()),
+        auditService.recordAction("INCIDENT_ACTION_UPDATE", session, request, "INCIDENT", String.valueOf(saved.getIncidentId()),
                 "{\"action_id\":" + saved.getId() + ",\"status_before\":\"" + before + "\",\"status\":\"" + saved.getStatus()
                         + "\",\"by_owner\":" + (!writer) + "}");
         return ok(Map.of("data", withMine(IncidentPostmortemService.actionDto(saved, IncidentPostmortemService.today()), saved, me)));
@@ -134,7 +134,7 @@ public class IncidentPostmortemController {
         IncidentRecord inc = incidents.get(a.getIncidentId());
         requireWrite(session, inc);
         pm.deleteAction(a);
-        audit.recordAction("INCIDENT_ACTION_DELETE", session, request, "INCIDENT", String.valueOf(inc.getId()),
+        auditService.recordAction("INCIDENT_ACTION_DELETE", session, request, "INCIDENT", String.valueOf(inc.getId()),
                 "{\"action_id\":" + a.getId() + ",\"title\":\"" + safe(a.getTitle()) + "\"}");
         return ok(Map.of("message", "Deleted"));
     }

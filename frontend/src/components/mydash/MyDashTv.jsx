@@ -81,7 +81,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
   const cols = columnsFor(vw - PAD)
   const rows = rowsFor(vh)
   const pages = useMemo(() => paginate(widgets, cols, rows), [widgets, cols, rows])
-  const [page, setPage] = useState(0)
+  const [slide, setSlide] = useState(0)
   const [settings, setSettings] = useState(readTvSettings)
   const [paused, setPaused] = useState(false)
   const [controls, setControls] = useState(true)
@@ -89,7 +89,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
   const hideTimer = useRef(null)
   const mainRef = useRef(null)
   const count = pages.length
-  const cur = count ? Math.min(page, count - 1) : 0
+  const cur = count ? Math.min(slide, count - 1) : 0
   const fit = useFitScale(mainRef, [cur, count, cols, rows])
 
   useEffect(() => {
@@ -141,11 +141,11 @@ export default function MyDashTv({ widgets, refreshKey, onExit }) {
   // Sayfa dönüşü
   useEffect(() => {
     if (!settings.interval || paused || count < 2) return undefined
-    const id = setInterval(() => setPage((p) => (p + 1) % count), settings.interval * 1000)
+    const id = setInterval(() => setSlide((p) => (p + 1) % count), settings.interval * 1000)
     return () => clearInterval(id)
   }, [settings.interval, paused, count])
 
-  const go = useCallback((dir) => setPage((p) => (count ? (Math.min(p, count - 1) + dir + count) % count : 0)), [count])
+  const go = useCallback((dir) => setSlide((p) => (count ? (Math.min(p, count - 1) + dir + count) % count : 0)), [count])
 
   const poke = useCallback(() => {
     setControls(true)

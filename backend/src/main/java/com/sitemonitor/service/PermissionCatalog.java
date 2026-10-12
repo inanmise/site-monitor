@@ -55,7 +55,7 @@ public final class PermissionCatalog {
         // ad/e-posta/aktiflik alanlarına dokunamasın diye. Uç ayrıca üyelik doğrular.
         r("teams.weekly_notifications", "management", EDIT),
         r("teams.lifecycle",    "management", EXECUTE, Set.of(EXECUTE)),
-        // Nöbet çizelgesi (2026-10-11): okuma herkes (kapsam uçta — takımın izleme okuması); yazma takımı yöneten
+        // Nöbet çizelgesi (2026-10-11): okuma herkes, kapsam uçta (takımın izleme okuması), yazma takımı yöneten
         // (uç ayrıca SessionScope.canManage ister). VIEW ve EDIT ayrı satır: AUDIT'e yazma sızmasın.
         r("oncall.read",        "management", VIEW),
         r("oncall.manage",      "management", EDIT),
@@ -118,7 +118,7 @@ public final class PermissionCatalog {
         r("weekly_reports.crud",    "reports", EDIT),
         r("weekly_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
         // Aylık yönetici özeti (2026-10-10): KURUM GENELİ rapor (tüm takımların erişilebilirliği, alarmları, sertifikaları).
-        // Varsayılan ADMIN + AUDIT (auditDefaults VIEW kuralı); TEAM_ADMIN/USER'a verilmez. İzin GEREKLİ ama YETMEZ: uç
+        // Varsayılan ADMIN + AUDIT, auditDefaults VIEW kuralı. TEAM_ADMIN/USER'a verilmez. İzin GEREKLİ ama YETMEZ: uç
         // ayrıca kurum geneli görüntüleyici ister: global yönetici ya da AUDIT, SessionScope.isGlobalViewer. Kapsamlı
         // müdür ADMIN satırından izni alsa da açamaz — takım kapsamlı bir kullanıcıya diğer takımların sayıları açılmaz.
         r("executive_summary.view", "reports", VIEW),

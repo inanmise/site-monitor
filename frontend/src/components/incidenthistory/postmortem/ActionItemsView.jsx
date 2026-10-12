@@ -49,9 +49,10 @@ export default function ActionItemsView({ onOpenIncident }) {
     const my = ++seq.current
     setLoading(true)
     let res = null
-    try { res = await api.incidents.actions({ status, mine, overdue, q: qTerm, page, size: PAGE }) } catch (e) { res = { success: false, error: e?.message } }
+    try { res = await api.incidents.actions({ status, mine, overdue, q: qTerm, page, size: PAGE }) } catch (e) { res = { success: false, error: e?.message } } finally {
+      if (my === seq.current) setLoading(false)
+    }
     if (my !== seq.current) return
-    setLoading(false)
     if (res?.success && res.data) {
       setError(null)
       setData(res.data)
@@ -65,8 +66,7 @@ export default function ActionItemsView({ onOpenIncident }) {
     if (next === a.status) return
     setBusyId(a.id)
     let res = null
-    try { res = await api.incidents.updateAction(a.id, { status: next }) } catch (e) { res = { success: false, error: e?.message } }
-    setBusyId(null)
+    try { res = await api.incidents.updateAction(a.id, { status: next }) } catch (e) { res = { success: false, error: e?.message } } finally { setBusyId(null) }
     if (res?.success && res.data) {
       setItems((list) => list.map((x) => (x.id === a.id ? { ...x, ...res.data } : x)))
       toast.success(t('pm.statusSaved', t('pm.astatus.' + next)))

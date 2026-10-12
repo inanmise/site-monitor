@@ -140,7 +140,7 @@ export function ActionForm({ initial, people, onSubmit, onCancel, busy }) {
       </Field>
       <Field label={t('pm.aOwner')} hint={t('pm.aOwnerHint')} {...fe.fieldProps('owner_user_id')} className="mb-0">
         {() => (
-          <div className="ss-touch">
+          <div data-touch-picker="">
             <SearchableSelect value={f.owner_user_id} options={[{ value: '', label: t('pm.noOwner') }, ...(people || [])]}
               onChange={(v) => set('owner_user_id', v ?? '')} placeholder={t('pm.pickOwner')} ariaLabel={t('pm.aOwner')} />
           </div>

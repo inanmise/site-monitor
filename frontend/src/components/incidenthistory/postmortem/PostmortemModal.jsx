@@ -126,8 +126,7 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
     const body = { ...changedFields(form, original, !!pm?.exists), version: pm?.version ?? null }
     setSaving(true)
     let res = null
-    try { res = await api.incidents.savePostmortem(incident.id, body) } catch (e) { res = { success: false, error: e?.message } }
-    setSaving(false)
+    try { res = await api.incidents.savePostmortem(incident.id, body) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success && res.data) {
       const f = formFromPostmortem(res.data)
       setData((d) => ({ ...d, postmortem: res.data }))
@@ -160,8 +159,7 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
     let res = null
     try {
       res = isEdit ? await api.incidents.updateAction(editing.id, body) : await api.incidents.addAction(incident.id, body)
-    } catch (e) { res = { success: false, error: e?.message } }
-    setActionBusy(null)
+    } catch (e) { res = { success: false, error: e?.message } } finally { setActionBusy(null) }
     if (res?.success && res.data) {
       if (isEdit) replaceAction(res.data)
       else setData((d) => ({ ...d, actions: [...d.actions, res.data] }))
@@ -178,8 +176,7 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
     if (status === a.status) return
     setActionBusy(a.id)
     let res = null
-    try { res = await api.incidents.updateAction(a.id, { status }) } catch (e) { res = { success: false, error: e?.message } }
-    setActionBusy(null)
+    try { res = await api.incidents.updateAction(a.id, { status }) } catch (e) { res = { success: false, error: e?.message } } finally { setActionBusy(null) }
     if (res?.success && res.data) {
       replaceAction(res.data)
       changed.current = true
@@ -193,8 +190,7 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
     if (!ok) return
     setActionBusy(a.id)
     let res = null
-    try { res = await api.incidents.deleteAction(a.id) } catch (e) { res = { success: false, error: e?.message } }
-    setActionBusy(null)
+    try { res = await api.incidents.deleteAction(a.id) } catch (e) { res = { success: false, error: e?.message } } finally { setActionBusy(null) }
     if (res?.success) {
       setData((d) => ({ ...d, actions: d.actions.filter((x) => x.id !== a.id) }))
       changed.current = true
