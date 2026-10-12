@@ -197,6 +197,40 @@ class ExecutiveSummaryDeliveryServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: SENDING'de kalmış ay — zamanlanmış yol dokunmaz; elle gönderim yalnız 1 saatten eski talebi devralır")
+    void staleSendingTakeover() {
+        enable("a@x.com", false);
+        ExecutiveSummaryReport stuck = new ExecutiveSummaryReport();
+        stuck.setId(9L);
+        stuck.setStatus(ExecutiveSummaryReport.SENDING);
+        stuck.setAttempts(1);
+        stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minus(java.time.Duration.ofMinutes(10))));
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo("IN_PROGRESS");   // taze talep: gerçekten sürüyor
+        stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minus(java.time.Duration.ofHours(2))));
+        assertThat(svc.runScheduled().status()).isEqualTo("IN_PROGRESS");                              // zamanlanmış yol devralmaz
+        verifyNoInteractions(email);
+        when(repo.reclaim(eq(9L), eq("SENDING"), eq(1), eq(2), anyString(), eq("MANUAL"), eq("yonetici"))).thenReturn(1);
+        assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("2026-10-12: talepten sonra beklenmeyen hata kaydı SENDING'de BIRAKMAZ (FAILED → telafi yeniden dener); istisna dışarı sızmaz")
+    void unexpectedErrorAfterClaimIsFailed() {
+        enable("a@x.com", false);
+        // 1. çağrı talep anı, 2. çağrı e-posta gövdesinin damgası (beklenmeyen hata), 3. çağrı kaydın kapanış anı
+        when(summaryService.now()).thenReturn(NOW).thenThrow(new IllegalStateException("saat okunamadı")).thenReturn(NOW);
+        ArgumentCaptor<ExecutiveSummaryReport> saved = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
+        var r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(repo, atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        assertThat(saved.getValue().getDetail()).contains("yarıda kesildi");
+        verifyNoInteractions(email);
+    }
+
+    @Test
     @DisplayName("FAILED (deneme < 3) koşullu UPDATE ile yeniden talep edilir; UPDATE 0 satır → başka pod aldı; tavan dolunca yalnız elle")
     void reclaim() {
         enable("a@x.com", false);

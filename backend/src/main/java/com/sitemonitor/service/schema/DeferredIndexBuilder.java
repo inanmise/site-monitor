@@ -393,7 +393,7 @@ public final class DeferredIndexBuilder {
         };
     }
 
-    static boolean isPostgres(DataSource ds) {
+    public static boolean isPostgres(DataSource ds) {
         if (ds == null) return false;
         try (Connection c = ds.getConnection()) {
             String p = c.getMetaData().getDatabaseProductName();

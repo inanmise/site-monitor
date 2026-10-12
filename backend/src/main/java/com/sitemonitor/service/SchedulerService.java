@@ -1855,24 +1855,12 @@ public class SchedulerService {
      */
     private void repairPingDecimalLossRows() {
         try {
-            String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks WHERE packet_loss > 100", String.class);
             int fixed = jdbcTemplate.update(
                     "UPDATE ping_checks SET up = TRUE, packet_loss = NULL, error = NULL, failure_reason = NULL, failure_detail = NULL "
                   + "WHERE packet_loss > 100");
-            if (fixed > 0) {
-                log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
-                // Günlük / saatlik özetler de aynı satırlardan yeniden hesaplanır (2026-10-12): gece rollup'ı yalnız son 3 günü
-                // yeniler; daha eski günlerin özeti (yönetici özeti erişilebilirliği, haftalık rapor, eğilim) yanlış "kapalı"yı
-                // taşımaya devam ederdi. Upsert idempotent — yalnız PING türü.
-                if (oldest != null && oldest.length() >= 10) {
-                    String from = oldest.substring(0, 10) + "T00:00:00";
-                    Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
-                    int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", from, ISO.format(todayStart));
-                    int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", from,
-                            ISO.format(todayStart.plus(1, ChronoUnit.DAYS)));
-                    log.info("Ping özetleri onarılan satırlardan yeniden hesaplandı: {} gün, {} saat kovası ({} sonrası)", d, h, from);
-                }
-            }
+            if (fixed > 0) log.info("Ping geçmişi onarıldı: {} satır ondalıklı paket kaybı yüzünden yanlışlıkla 'yanıt yok' yazılmıştı", fixed);
+            // Özetlerin (günlük / saatlik) yeniden hesabı açılış yolunda DEĞİL: rebuildPingRollupsOnce (tek seferlik, kilitli,
+            // nişanlı, açılıştan birkaç dakika sonra) — 20.123.0'da satırları zaten onarılmış ortamlar da kapsanır.
         } catch (Exception e) {
             log.warn("Ping geçmişi onarımı atlandı (sonraki açılış yeniden dener): {}", e.getMessage());
         }
@@ -2381,6 +2369,60 @@ public class SchedulerService {
         return total;
     }
 
+    /** Ping özet yeniden hesabının nişanı — DEĞİŞTİRİLMEZ (değişirse iş yeniden koşar; idempotent, zararsız). */
+    static final String PING_ROLLUP_REBUILD_KEY = "2026-10-12-ping-rollup-rebuild";
+
+    /**
+     * TEK SEFERLİK (2026-10-12): ondalıklı paket kaybı hatasının (20.123.0'da onarılan) yanlış "kapalı" saydığı ping satırları
+     * günlük / saatlik özetlerde hâlâ duruyordu — gece rollup'ı yalnız son {@code lookback-days} günü yeniler. Bu iş ping
+     * serisinin tamamını haftalık dilimlerle yeniden özetler (idempotent upsert). Açılış yolunda değil: açılıştan 5 dk sonra,
+     * {@code scheduler_lock} altında; nişan ({@code schema_patch_markers}) yalnız TÜM dilimler başarılıysa yazılır — yarıda
+     * kalırsa bir saat sonra yeniden denenir. PostgreSQL dışında (H2) iş yok, nişan yazılır.
+     */
+    @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}", fixedDelay = 3_600_000L)
+    public void rebuildPingRollupsOnce() {
+        try {
+            jdbcTemplate.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
+            Integer done = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?",
+                    Integer.class, PING_ROLLUP_REBUILD_KEY);
+            if (done != null && done > 0) return;
+        } catch (Exception e) {
+            log.debug("Ping özet yeniden hesabı nişanı okunamadı: {}", e.getMessage());
+            return;
+        }
+        runWithSchedulerLock("ping-rollup-rebuild", () -> {
+            int written = 0;
+            if (com.sitemonitor.service.schema.DeferredIndexBuilder.isPostgres(jdbcTemplate.getDataSource())) {
+                String oldest = jdbcTemplate.queryForObject("SELECT MIN(checked_at) FROM ping_checks", String.class);
+                if (oldest != null && oldest.length() >= 10) {
+                    Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
+                    Instant from = java.time.LocalDate.parse(oldest.substring(0, 10)).atStartOfDay(ZoneOffset.UTC).toInstant();
+                    for (Instant s = from; s.isBefore(todayStart.plus(1, ChronoUnit.DAYS)); s = s.plus(7, ChronoUnit.DAYS)) {
+                        Instant e = s.plus(7, ChronoUnit.DAYS);
+                        String f = ISO.format(s);
+                        // Günlük özet yalnız TAMAMLANMIŞ günler (bugün gece rollup'ının işi); saatlik bugün dahil.
+                        if (s.isBefore(todayStart)) {
+                            int d = rollupInto("monitor_check_daily", "day", 10, "PING", "ping_checks", "up", "rtt_ms", f,
+                                    ISO.format(e.isAfter(todayStart) ? todayStart : e));
+                            if (d < 0) { log.warn("Ping günlük özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                            written += d;
+                        }
+                        int h = rollupInto(HOURLY_TABLE, HOURLY_COL, 13, "PING", "ping_checks", "up", "rtt_ms", f, ISO.format(e));
+                        if (h < 0) { log.warn("Ping saatlik özet yeniden hesabı yarıda kaldı ({}) — bir saat sonra yeniden denenecek", f); return; }
+                        written += h;
+                    }
+                }
+            }
+            try {
+                jdbcTemplate.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                        PING_ROLLUP_REBUILD_KEY, ISO.format(Instant.now()), written);
+                log.info("Ping özetleri tüm seriden yeniden hesaplandı ({} kova) — tek seferlik iş tamam", written);
+            } catch (org.springframework.dao.DuplicateKeyException dup) {
+                log.debug("Ping özet yeniden hesabı nişanı başka pod tarafından yazılmış");
+            }
+        });
+    }
+
     // monitor_id-anahtarlı tipler (boolean up-kolonu). table/upCol/respCol yalnız KOD-kontrollü (injection yok).
     private int rollupUpsert(String type, String table, String upCol, String respCol, String from, String to) {
         return rollupInto("monitor_check_daily", "day", 10, type, table, upCol, respCol, from, to);
@@ -2731,11 +2773,19 @@ public class SchedulerService {
             long maxWaitMs = Math.max(1L, certCheckMaxWaitSeconds) * 1000L;
             List<Map<String, Object>> results = new java.util.ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
+                if (startupCheckStopped) break;   // kapanış: kalan sonuçlar beklenmez
                 Map<String, Object> r = awaitCertCheck(futures.get(i), (String) domains.get(i).get("domain"),
                         lastProgressNanos, maxWaitMs);
                 Map<String, Object> m = new LinkedHashMap<>(r);
                 m.put("run_id", runId);
                 results.add(m);
+            }
+            // Kapanış başladıysa (2026-10-12) sonuçlar İŞLENMEZ: kaydetme, alarm ve e-posta kapanan bağlamda (bean'ler yok
+            // ediliyor, tarama liderliği bırakılmış) koşmasın. Saatlik tarama yeni pod'da telafi eder.
+            if (startupCheckStopped) {
+                log.info("Kapanış başladı — sertifika taraması sonuçları işlenmeden bırakıldı (runId={}, {} / {} sonuç)",
+                        runId, results.size(), futures.size());
+                return;
             }
 
             results.forEach(certService::saveResult);
@@ -2861,6 +2911,8 @@ public class SchedulerService {
                     break;   // istisnayla bitti — aşağıdaki join() aynı istisnayı fırlatır (eski davranış)
                 } catch (InterruptedException ie) {
                     interrupted = true;   // join() gibi: bekleme sürer, bayrak sonunda geri konur
+                    // Kapanış kesmesi (2026-10-12): beklemeyi bırak — çağıran sonuçları işlemeden döner
+                    if (startupCheckStopped) return CertificateCheckerService.sweepWaitTimeoutResult(domain, 0);
                 }
             }
             return f.join();

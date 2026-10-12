@@ -214,7 +214,7 @@ function ServiceChips({ names, more = 0 }) {
   return (
     <span className="flex min-w-0 flex-wrap gap-1">
       {names.map((n) => (
-        <Badge key={n} variant="outline" className="h-auto max-w-full rounded-full px-2 py-0.5 text-[11px] font-normal whitespace-normal [overflow-wrap:anywhere]">{n}</Badge>
+        <Badge key={n} variant="outline" className="h-auto max-w-full rounded-md px-2 py-0.5 text-[11px] font-normal whitespace-normal [overflow-wrap:anywhere] overflow-visible">{n}</Badge>
       ))}
       {more > 0 && <Badge variant="secondary" className="h-5 rounded-full px-1.5 text-[11px] font-normal">{t('sp.maint.more', more)}</Badge>}
     </span>

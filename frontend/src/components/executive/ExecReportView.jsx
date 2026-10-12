@@ -122,9 +122,9 @@ export default function ExecReportView({ data, loading = false }) {
           <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
             <div className="flex min-w-0 flex-col gap-1.5">
               <span data-slot="ex-scope-chip"
-                className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                <ScopeIcon aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="truncate">{team ? t('exec.scope.teamChip', data.scope.team_name || `#${data.scope.team_id}`) : t('exec.scope.org')}</span>
+                className="inline-flex w-fit max-w-full items-start gap-1.5 rounded-md border bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                <ScopeIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{team ? t('exec.scope.teamChip', data.scope.team_name || `#${data.scope.team_id}`) : t('exec.scope.org')}</span>
               </span>
               <h3 id={headId} className="m-0 text-xl leading-tight font-semibold tracking-tight sm:text-2xl">
                 {t('exec.headline.title', monthLabel(data.month, lang))}

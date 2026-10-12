@@ -49,6 +49,7 @@ class ExecutiveSummaryControllerTeamTest {
         c = new ExecutiveSummaryController(service, delivery, settings, perms, audit);
         c.setTeamService(teamService);
         when(service.parseMonth(any())).thenReturn(YearMonth.of(2026, 9));
+        when(service.currentMonth()).thenReturn(YearMonth.of(2026, 10));
         when(service.defaultMonth()).thenReturn(YearMonth.of(2026, 9));
         when(service.get(any(), anyBoolean(), anyBoolean())).thenReturn(ExecutiveSummarySamples.quiet());
         when(service.get(any(), anyLong(), anyBoolean(), anyBoolean())).thenReturn(ExecutiveSummarySamples.quiet());

@@ -130,6 +130,12 @@ public class WatchdogService {
             states.putAll(memory);
         }
         if (persisted) {
+            // Kayıtlı satırdan YENİ olmayan bellek durumu artık geçersizdir (başka pod DB dönünce değerlendirip yazdı) — silinir.
+            // RECENT ile sürekli atlayan bir pod bayat "sorun" durumunu sonraki DB kesintisinde yeniden kullanmasın (2026-10-12).
+            memory.entrySet().removeIf(en -> {
+                WatchdogState stored = states.get(en.getKey());
+                return stored != null && !newer(en.getValue().getEvaluatedAt(), stored.getEvaluatedAt());
+            });
             // Yalnız KAYITLI satırlara bakılır: bu pod'un DB kesintisindeki yerel değerlendirmesi "yakın tur" sayılmaz.
             if (!manual && evaluatedRecently(states.values(), now)) {
                 return new Round(states.size(), 0, 0, 0, "RECENT", false);

@@ -17,7 +17,7 @@ import { Textarea } from '@/components/shadcn/textarea'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import ExecHistory from './ExecHistory.jsx'
 import { PanelSection, PanelTitle } from './ExecPanel.jsx'
-import { buildMonthlyCron, fmtDateTime, invalidEmails, monthLabel, parseMonthlyCron } from './executiveModel.js'
+import { buildMonthlyCron, fmtDateTime, invalidEmails, monthLabel, parseMonthlyCron, isCompletedMonth } from './executiveModel.js'
 
 const DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
 
@@ -227,7 +227,7 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
             <ul className="m-0 flex list-none flex-wrap gap-1 p-0" aria-label={t('exec.recipients.preview')}>
               {data.recipient_preview.map((e) => (
                 <li key={e} className="min-w-0 max-w-full">
-                  <Badge variant="secondary" className="h-auto max-w-full justify-start text-left font-normal whitespace-normal [overflow-wrap:anywhere]">{e}</Badge>
+                  <Badge variant="secondary" className="h-auto max-w-full justify-start rounded-md text-left font-normal whitespace-normal [overflow-wrap:anywhere] overflow-visible">{e}</Badge>
                 </li>
               ))}
             </ul>
@@ -264,12 +264,14 @@ export default function ExecOrgSettings({ month, onDirtyChange }) {
             data-slot="ex-cfg-test" className="h-10 lg:h-9">
             {testing ? <Spinner decorative size={14} /> : <Mail aria-hidden="true" />}{t('exec.cfg.sendTest')}
           </Button>
-          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty} aria-busy={running || undefined}
+          <Button type="button" variant="outline" onClick={runNow} disabled={busy || dirty || !isCompletedMonth(month)} aria-busy={running || undefined}
+            title={isCompletedMonth(month) ? undefined : t('exec.cfg.runCurrentMonth')}
             data-slot="ex-cfg-run" className="h-10 lg:h-9">
             {running ? <Spinner decorative size={14} /> : <Send aria-hidden="true" />}{t('exec.cfg.runNow')}
           </Button>
         </div>
         <p className="m-0 text-xs text-muted-foreground">{t('exec.cfg.testHint')}</p>
+        {!isCompletedMonth(month) && <p data-slot="ex-cfg-run-hint" className="m-0 text-xs text-muted-foreground">{t('exec.cfg.runCurrentMonth')}</p>}
         {dirty && <p className="m-0 text-xs text-muted-foreground">{t('exec.send.saveFirst')}</p>}
       </PanelSection>
 

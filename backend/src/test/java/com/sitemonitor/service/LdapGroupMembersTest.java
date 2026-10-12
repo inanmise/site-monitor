@@ -124,6 +124,25 @@ class LdapGroupMembersTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: base DN kullanıcı OU'su olsa da CN grubu dizin KÖKÜNDE (DC= son eki) aranır; üyeler kullanıcı tabanında")
+    void cnSearchedAtNamingContext() throws Exception {
+        assertThat(LdapDirectoryService.namingContextOf("OU=Users,OU=Merkez,DC=ornek,DC=local")).isEqualTo("DC=ornek,DC=local");
+        assertThat(LdapDirectoryService.namingContextOf("dc=ornek, dc=local")).isEqualTo("dc=ornek,dc=local");
+        assertThat(LdapDirectoryService.namingContextOf("O=Kurum")).isEqualTo("O=Kurum");
+        LdapSettings s = settings();
+        s.setBaseDn("OU=Users," + BASE);
+        s.setGroupSearchBase("OU=ScrumGroups," + BASE);
+        LdapContext ctx = mock(LdapContext.class);
+        String dn = "CN=CertAdmins,OU=Security," + BASE;
+        when(ctx.search(eq(BASE), eq("(&(objectClass=group)(cn=CertAdmins))"), any(SearchControls.class))).thenReturn(results(group(dn)));
+        when(ctx.search(eq("OU=Users," + BASE), eq("(memberOf=" + dn + ")"), any(SearchControls.class)))
+                .thenReturn(results(user("sAMAccountName", "ali")));
+        var out = service(s).membersOn(ctx, s, List.of("CertAdmins"));
+        assertThat(out.get(0).groupDns()).containsExactly(dn);
+        assertThat(out.get(0).usernames()).containsExactly("ALI");
+    }
+
+    @Test
     @DisplayName("AD referansı bulunanları korur; sunucu tavanı ya da CN aramasında tavan → kısmi sonuç işaretlenir")
     void partialAndSizeLimit() throws Exception {
         LdapContext ctx = mock(LdapContext.class);

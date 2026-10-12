@@ -324,8 +324,9 @@ public class LdapDirectoryService {
         String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank()) ? s.getUserAttribute() : "sAMAccountName";
         // CN kuralı TÜM dizinde aranır (2026-10-12): girişte eşleme kullanıcının memberOf DN'lerinin CN'ine bakar, grubun nerede
         // durduğuna değil. Grup arama tabanıyla sınırlamak, taban dışındaki bir grubun üyelerini önizlemede "değişmez" gösterip
-        // anahtar açılınca rollerini değiştirirdi.
-        String groupBase = s.getBaseDn();
+        // anahtar açılınca rollerini değiştirirdi. Base DN çoğu kurulumda KULLANICI arama tabanıdır (OU=Users,DC=…) — kök onun
+        // DC= son eki (adlandırma bağlamı); DC bileşeni yoksa base DN'in kendisi.
+        String groupBase = namingContextOf(s.getBaseDn());
         for (String spec : specs) {
             if (spec == null || spec.isBlank()) { out.add(new GroupMembers(spec, List.of(), java.util.Set.of(), false)); continue; }
             String trimmed = spec.trim();
@@ -356,6 +357,23 @@ public class LdapDirectoryService {
             out.add(new GroupMembers(trimmed, dns, users, truncated));
         }
         return out;
+    }
+
+    /** DN'in DC= son eki ("OU=Users,DC=ornek,DC=local" → "DC=ornek,DC=local"); DC bileşeni yoksa DN'in kendisi. */
+    static String namingContextOf(String dn) {
+        if (dn == null) return null;
+        String[] parts = dn.split(",");
+        int first = -1;
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].trim().regionMatches(true, 0, "DC=", 0, 3)) { first = i; break; }
+        }
+        if (first < 0) return dn.trim();
+        StringBuilder sb = new StringBuilder();
+        for (int i = first; i < parts.length; i++) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(parts[i].trim());
+        }
+        return sb.toString();
     }
 
     /** {@code (memberOf=dn)} — sayfalı; tavan ya da sayfa sınırı aşılırsa true. Kullanıcı adları BÜYÜK harfe çevrilir. */

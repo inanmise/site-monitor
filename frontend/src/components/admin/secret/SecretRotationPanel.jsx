@@ -20,6 +20,7 @@ import { PHASE_TONE, normFilter, rotationPhase, splitLocations } from './secretR
 /** Aşama → başlık ikonu (ton AlertBanner'dan). */
 const PHASE_ICON = {
   dev_key: AlertTriangle, pending: RotateCw, done: CheckCircle2, incomplete: AlertTriangle, unreadable: ShieldAlert, steady: ShieldCheck,
+  done_unreadable: ShieldAlert,
 }
 
 /** Tek konum: ad + kolon, yuva sayıları, okunamayan kayıtların TAM listesi (sunucu en çok 20 örnek; fazlası sayıyla). */
@@ -171,8 +172,8 @@ export default function SecretRotationPanel() {
         {status && (
           <>
             <AlertBanner tone={PHASE_TONE[phase]} icon={PhaseIcon}
-              title={t(`secret.rot.phase.${phase}.title`, phase === 'unreadable' ? (totals.unreadable ?? 0) : (totals.previous ?? 0))}
-              className="mb-0" role={phase === 'unreadable' ? 'alert' : 'status'}>
+              title={t(`secret.rot.phase.${phase}.title`, phase === 'unreadable' || phase === 'done_unreadable' ? (totals.unreadable ?? 0) : (totals.previous ?? 0))}
+              className="mb-0" role={phase === 'unreadable' || phase === 'done_unreadable' ? 'alert' : 'status'}>
               {t(`secret.rot.phase.${phase}.body`)}
             </AlertBanner>
 

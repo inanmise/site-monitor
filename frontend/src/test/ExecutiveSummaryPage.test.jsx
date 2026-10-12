@@ -154,6 +154,15 @@ describe('Yönetici Özeti sayfası — rapor', () => {
     expect(await screen.findByText(/PDF indirilemedi/)).toBeInTheDocument()
   })
 
+  it('2026-10-12: bağlantıdaki takım kapsamı 403 → "erişim yok"ta kalmaz; varsayılan kapsamla yeniden istenir, ex_team düşer', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_team=99')
+    ex().get.mockImplementation(async (q) => (q?.team === '99' ? { success: false, status: 403, error: 'FORBIDDEN' } : response()))
+    render(<ExecutiveSummaryPage globalAdmin />)
+    await waitFor(() => expect(ex().get).toHaveBeenCalledWith(expect.objectContaining({ team: null })))
+    await waitFor(() => expect(window.location.search).not.toContain('ex_team'))
+    expect(document.querySelector('[data-slot="ex-forbidden"]')).toBeNull()
+  })
+
   it('403 → erişim yok paneli (ham hata değil); görünüm sekmeleri yok', async () => {
     ex().get.mockResolvedValue({ success: false, status: 403, error: 'FORBIDDEN' })
     render(<ExecutiveSummaryPage />)

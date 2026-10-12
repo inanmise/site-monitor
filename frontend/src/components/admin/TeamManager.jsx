@@ -300,18 +300,28 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const statsOf = (tm) => stats[String(tm.id)] || null
 
   /** Takım başına eksikler (2026-10-11) — sayaç / kullanıcı listesi gelmeden ilgili kurallar "bilinmiyor" (atlanır). */
-  const gapsById = useMemo(() => {
+  const gapIndex = useMemo(() => {
     const m = new Map()
+    const unknown = new Set()   // lideri / müdürü bu görüntüleyiciye göre bilinmeyen takımlar (rozet "henüz tam denetlenmedi")
     for (const tm of teams) {
       const lid = leaderIdOf(tm)
+      const manual = manualManagerId(tm)
+      // Global olmayan görüntüleyicinin kullanıcı listesi yalnız kapsamındaki takımların üyeleri (2026-10-12): atanmış lider /
+      // elle müdür listede yoksa "yok" değil BİLİNMİYOR — başka takımdan bir yönetici sahte "lider yok / müdür yok" üretmesin.
+      // Global yöneticide liste tüm etkin kullanıcılardır → listede olmayan atanmış kişi gerçekten etkin değildir (eksik).
+      const hasLeader = !usersReady ? null : lid == null ? false : userMap[lid] ? true : globalAdmin ? false : null
+      const hasManager = !usersReady ? null : managerEntries.get(tm.id)?.label ? true
+        : manual != null && !globalAdmin ? null : false
+      if (usersReady && (hasLeader == null || hasManager == null)) unknown.add(tm.id)
       m.set(tm.id, teamGaps(tm, {
         stats: statsReady ? statsOf(tm) : null,
-        hasLeader: usersReady ? (lid != null && !!userMap[lid]) : null,
-        hasManager: usersReady ? !!managerEntries.get(tm.id)?.label : null,
+        hasLeader,
+        hasManager,
       }))
     }
-    return m
-  }, [teams, stats, statsReady, usersReady, userMap, managerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+    return { gaps: m, unknown }
+  }, [teams, stats, statsReady, usersReady, userMap, managerEntries, globalAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
+  const gapsById = gapIndex.gaps
   const gapsOf = (tm) => gapsById.get(tm.id) ?? []
   const gapKnown = (key) => {
     const g = TEAM_GAPS.find((x) => x.key === key)
@@ -494,7 +504,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     { key: 'total', Icon: UsersRound, cls: 'total', label: t('team.kpi.total'), value: teams.length, hint: t('team.kpi.totalHint') },
     { key: 'active', Icon: CircleCheck, cls: 'valid', label: t('team.kpi.active'), value: activeCount },
     { key: 'inactive', Icon: CirclePause, cls: 'paused', label: t('team.kpi.inactive'), value: teams.length - activeCount },
-    { key: 'gaps', Icon: TriangleAlert, cls: 'warning', label: t('team.kpi.gaps'), value: usersReady ? coreGapTeams : '…', hint: t('team.kpi.gapsHint') },
+    { key: 'gaps', Icon: TriangleAlert, cls: 'warning', label: t('team.kpi.gaps'), value: usersReady && statsReady ? coreGapTeams : '…', hint: t('team.kpi.gapsHint') },
     { key: 'alerts', Icon: Siren, cls: 'critical', label: t('team.kpi.alerts'), value: statsReady ? alertTeams : '…', hint: t('team.kpi.alertsHint') },
   ]
   const onKpi = (key) => {
@@ -535,7 +545,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const statusBlock = (team) => (
     <div className="flex flex-wrap items-center gap-1.5 px-1">
       <ToneBadge tone={team.active ? 'success' : 'danger'}>{team.active ? t('team.active') : t('team.inactive')}</ToneBadge>
-      <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)} partial={!statsReady || !usersReady} />
+      <TeamGapBadge team={team} gaps={gapsOf(team)} actions={gapActionsFor(team)} partial={!statsReady || !usersReady || gapIndex.unknown.has(team.id)} />
     </div>
   )
   /** Kişinin sicili (2026-10-11, kullanıcı isteği: "müdür ve liderin ad-soyad yanında sicil olsun"); yoksa null. */

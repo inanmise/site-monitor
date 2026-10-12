@@ -108,7 +108,7 @@ describe('SecretRotationPanel', () => {
     expect(result).toHaveTextContent('3 values re-encrypted with the current key')
     expect(result).toHaveTextContent('1 values were left as they are')
     // 1 değer hiçbir anahtarla çözülemiyor → "tüm değerler güncel anahtarda" (done) denmez (2026-10-12)
-    expect(container.querySelector('[data-slot="secret-rotation"]').getAttribute('data-phase')).toBe('unreadable')
+    expect(container.querySelector('[data-slot="secret-rotation"]').getAttribute('data-phase')).toBe('done_unreadable')
     expect(screen.getByRole('button', { name: 'Re-encrypt' })).toBeDisabled()
   })
 

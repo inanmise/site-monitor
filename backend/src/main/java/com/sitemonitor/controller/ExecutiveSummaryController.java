@@ -187,6 +187,7 @@ public class ExecutiveSummaryController {
                                                    HttpSession session) {
         requireGlobalAdmin(session);
         YearMonth m = service.parseMonth(monthOf(body));
+        requireCompletedMonth(m);
         ExecutiveSummaryDeliveryService.Result r = delivery.sendNow(m, actor(session));
         auditService.recordAction("EXECUTIVE_SUMMARY_RUN", session, "REPORT", "executive-summary",
                 AuditDetail.of("month", m.toString(), "status", r.status(), "recipients", r.recipients(), "chunks", r.chunks()), null);
@@ -277,11 +278,26 @@ public class ExecutiveSummaryController {
                                                        HttpSession session) {
         Long id = requireConfigurableTeam(teamId, session);
         YearMonth m = service.parseMonth(monthOf(body));
+        requireCompletedMonth(m);
         ExecutiveSummaryDeliveryService.Result r = delivery.sendTeamNow(id, m, actor(session));
         auditService.recordAction("EXECUTIVE_SUMMARY_RUN", session, "REPORT", "executive-summary",
                 AuditDetail.of("month", m.toString(), "team", id, "status", r.status(), "recipients", r.recipients(),
                         "chunks", r.chunks()), null);
         return runResponse(m, r, true);
+    }
+
+    /**
+     * Elle gönderim yalnız TAMAMLANMIŞ ay için (2026-10-12): içinde bulunulan ay gönderilirse kayıt SENT olur, ay bitince
+     * zamanlanmış tam özet "zaten gönderildi" diye gitmez ve ekran o ay için yarım anlık görüntüyü gösterirdi. Test e-postası
+     * etkilenmez (kayıt yazmaz).
+     */
+    private void requireCompletedMonth(YearMonth m) {
+        YearMonth cur = service.currentMonth();
+        if (m != null && cur != null && !m.isBefore(cur)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("month", Msg.t(
+                    "İçinde bulunulan ay henüz bitmedi; özet ay bitince gönderilebilir. Test e-postasıyla şimdiden önizleyebilirsiniz.",
+                    "The current month hasn't ended yet; the summary can be sent once it has. You can preview it now with a test e-mail."));
+        }
     }
 
     // ── Ortak gövdeler ──────────────────────────────────────────────────────────────────────────────────────────────

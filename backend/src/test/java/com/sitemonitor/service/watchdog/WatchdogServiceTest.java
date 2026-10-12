@@ -160,6 +160,33 @@ class WatchdogServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-12: RECENT ile atlayan pod, kayıtlı satırdan eski bellek durumunu siler — sonraki DB kesintisinde bayat 'sorun' yeniden kullanılmaz")
+    void staleMemoryPrunedOnRecentSkip() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(repo.findAll()).thenAnswer(i -> {
+            if (down.get()) throw new RuntimeException("DB yok");
+            return new ArrayList<>(table.values());
+        });
+        when(probes.run(eq(WatchdogCheck.DATABASE), any())).thenAnswer(i -> new WatchdogProbes.Probe(WatchdogCheck.DATABASE,
+                results.get(WatchdogCheck.DATABASE), "CRITICAL", Map.of("status", "DOWN")));
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        svc.evaluate(T0);
+        assertThat(svc.evaluate(T0.plusSeconds(60)).alerts()).isEqualTo(1);   // bu pod kesintide uyardı (bellek)
+        // DB döndü; BAŞKA pod hemen değerlendirip yazdı → bu pod'un turu RECENT ile atlanır
+        down.set(false);
+        WatchdogState other = new WatchdogState();
+        other.setCheckKey(WatchdogCheck.DATABASE.key());
+        other.setStatus("OK");
+        other.setEvaluatedAt(WatchdogTransition.ISO.format(T0.plusSeconds(150)));
+        table.put(other.getCheckKey(), other);
+        assertThat(svc.evaluate(T0.plusSeconds(160), false).outcome()).isEqualTo("RECENT");
+        // Yeni kısa kesinti: tek sorunlu yerel ölçüm onay beklemeden bildirim üretmemeli (bellek temizlendi)
+        down.set(true);
+        svc.evaluateLocalDatabase(T0.plusSeconds(400));
+        verify(notifier, times(1)).send(anyList(), anyBoolean());
+    }
+
+    @Test
     @DisplayName("2026-10-12: zamanlanmış tur, başka pod son aralıkta değerlendirdiyse atlanır (RECENT); elle değerlendirme atlanmaz")
     void scheduledRoundSkipsRecentEvaluation() {
         svc.evaluate(T0);

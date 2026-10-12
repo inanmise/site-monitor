@@ -8,10 +8,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/shadcn/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
-import {
-  STATUS_VARIANT, TONE_TEXT, NUMERIC_TYPES, columnLabel, formatValue, kpiView, keys, localized, noteText, sectionTitle,
-  verdictText, fmtDateTime,
-} from './executiveModel.js'
+import { columnLabel, fmtDateTime, formatValue, keys, kpiView, legacyRenewals, localized, noteText, NUMERIC_TYPES, sectionTitle, STATUS_VARIANT, TONE_TEXT, verdictText } from './executiveModel.js'
 import { AvailabilityTrend, CryptoCategoryDistribution, RenewalDistribution, TlsGradeDistribution } from './ExecVisuals.jsx'
 
 /** Bölüm anahtarı → başlık ikonu (bilinmeyen bölüm genel ikonla çizilir — genişleme noktası). */
@@ -266,7 +263,7 @@ export function SectionCard({ section, index = null }) {
           <ul data-slot="ex-notes" aria-label={t('exec.notes')} className="m-0 flex list-none flex-col gap-1 border-t pt-3 pl-0">
             {section.notes.map((n) => (
               <li key={n.code} data-code={n.code} className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                {noteText(t, section.key, n, lang)}
+                {noteText(t, section.key, n, lang, legacyRenewals(section))}
               </li>
             ))}
           </ul>

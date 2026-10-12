@@ -102,13 +102,21 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
           defaultMonth: res.default_month || null, scopes: res.scopes || null, canConfigure: !!res.can_configure,
           canConfigureAny: !!res.can_configure_any_team })
       } else {
-        setState((s) => ({ ...s, loading: false, error: res?.error || t('exec.loadError'), status: res?.status ?? null }))
+        const status = res?.status ?? res?.errorInfo?.status ?? null
+        if (status === 403 && team != null) {
+          // Bağlantıdaki kapsam (eski / iletilmiş ex_team) artık görülemiyor: "erişim yok" ekranında kilitlenmek yerine varsayılan
+          // kapsama dönülür — kapsam seçici ve sekmeler yeniden görünür (2026-10-12).
+          toast.info(t('exec.scopeFallback'))
+          setTeam(null)
+          return
+        }
+        setState((s) => ({ ...s, loading: false, error: res?.error || t('exec.loadError'), status }))
       }
     } catch (e) {
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('exec.loadError'), status: 0 }))
     }
-  }, [month, team, live, t])
+  }, [month, team, live, t]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
 
   const data = state.data
@@ -168,9 +176,9 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
             </div>
           ) : (
             <p data-slot="ex-scope-static" className="m-0 flex min-h-10 items-center gap-2 text-sm font-medium lg:min-h-9">
-              {isTeamScope(data) ? <Users aria-hidden="true" className="size-4 text-muted-foreground" />
-                : <Building2 aria-hidden="true" className="size-4 text-muted-foreground" />}
-              <span className="truncate">{isTeamScope(data) ? (data.scope.team_name || `#${data.scope.team_id}`) : t('exec.scope.org')}</span>
+              {isTeamScope(data) ? <Users aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                : <Building2 aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+              <span className="min-w-0 [overflow-wrap:anywhere]">{isTeamScope(data) ? (data.scope.team_name || `#${data.scope.team_id}`) : t('exec.scope.org')}</span>
             </p>
           )}
         </div>

@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-12T07:17:01Z",
+  "generatedAt": "2026-10-12T10:10:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 735,
+  "count": 736,
   "releases": [
+    {
+      "version": "20.123.2",
+      "tag": "v20.123.2",
+      "releasedAt": "2026-10-12T10:09:57Z",
+      "commit": "25a0e2eac2ea3084f73bad6201a76639e8f1732f",
+      "prevVersion": "20.123.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "25a0e2ea",
+          "subject": "ikinci kod incelemesinde bulunan 20 hata — yönetici özeti gönderimi, takımlar, veri kalitesi, kendi kendini izleme, LDAP önizleme, ping özetleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.123.1",
       "tag": "v20.123.1",

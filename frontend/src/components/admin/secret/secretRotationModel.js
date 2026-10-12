@@ -12,7 +12,9 @@ export const ROTATION_FILTERS = ['all', 'current', 'previous', 'unreadable']
  *  - `pending`     önceki anahtar ayarlı ve ona bağlı değer var — yeniden şifrele.
  *  - `done`        önceki anahtar ayarlı, ona bağlı değer kalmadı — önceki anahtarı kaldır.
  *  - `incomplete`  önceki anahtar ayarlı ama sayım eksik (bir konum okunamadı ya da sayım tavanına ulaştı) — kaldırma önerilmez.
- *  - `unreadable`  önceki anahtar yok ve hiçbir anahtarla çözülemeyen değer var — eski anahtarı önceki olarak ver ya da
+ *  - `done_unreadable` önceki anahtar ayarlı, ona bağlı değer kalmadı (kaldırılabilir) ama bazı değerler İKİ anahtarla da
+ *                  çözülemiyor — başka bir anahtarla şifrelenmiş; kayıtlarda yeniden girilmeli.
+ *  - `unreadable`  önceki anahtar YOK ve hiçbir anahtarla çözülemeyen değer var — eski anahtarı önceki olarak ver ya da
  *                  değerleri yeniden gir.
  *  - `steady`      döndürme yok, her şey güncel anahtarda.
  */
@@ -23,9 +25,12 @@ export function rotationPhase(status) {
   if (!key.current_configured) return 'dev_key'
   if (key.previous_configured) {
     if ((totals.previous || 0) > 0) return 'pending'
-    // Hiçbir anahtarla çözülemeyen değer varken "tüm değerler güncel anahtarda" denmez (2026-10-12)
-    if ((totals.unreadable || 0) > 0) return 'unreadable'
-    return status.previous_removable ? 'done' : 'incomplete'
+    // Sayım eksikse (okunamayan konum / tavan) önce o söylenir — kaldırma önerilmez
+    if (!status.previous_removable) return 'incomplete'
+    // Önceki anahtara bağlı değer kalmadı ama iki anahtarla da çözülemeyen değer var: "tüm değerler güncel anahtarda"
+    // denmez, "önceki anahtarı ver" de denmez (zaten ayarlı) — 2026-10-12
+    if ((totals.unreadable || 0) > 0) return 'done_unreadable'
+    return 'done'
   }
   if ((totals.unreadable || 0) > 0) return 'unreadable'
   return 'steady'
@@ -37,6 +42,7 @@ export const PHASE_TONE = {
   pending: 'info',
   done: 'success',
   incomplete: 'warning',
+  done_unreadable: 'warning',
   unreadable: 'danger',
   steady: 'success',
 }

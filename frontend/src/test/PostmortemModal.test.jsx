@@ -134,6 +134,23 @@ describe('PostmortemModal', () => {
     await waitFor(() => expect(document.querySelectorAll('[data-slot="pm-action"]')).toHaveLength(3))
   })
 
+  it('2026-10-12: aksiyon düzenleme yalnız değişen alanı gönderir; hiçbir şey değişmediyse istek atılmaz', async () => {
+    api.incidents.updateAction.mockImplementation(async (id, body) => ({ success: true, data: { ...base().actions[0], ...body } }))
+    render(<PostmortemModal incident={incident} onClose={() => {}} />)
+    await waitFor(() => expect(section('summary')).not.toBeNull())
+    openTab('pm-tab-actions')
+    fireEvent.click(await screen.findByRole('button', { name: /^(Edit action item|Aksiyonu düzenle) Alarm eşiğini düşür/ }))
+    let form = document.querySelector('[data-slot="pm-action-form"]')
+    fireEvent.click(form.querySelector('[data-slot="pm-action-submit"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="pm-action-form"]')).toBeNull())
+    expect(api.incidents.updateAction).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /^(Edit action item|Aksiyonu düzenle) Alarm eşiğini düşür/ }))
+    form = document.querySelector('[data-slot="pm-action-form"]')
+    fireEvent.change(within(form).getByLabelText(/^(Priority|Öncelik)$/), { target: { value: 'LOW' } })
+    fireEvent.click(form.querySelector('[data-slot="pm-action-submit"]'))
+    await waitFor(() => expect(api.incidents.updateAction).toHaveBeenCalledWith(1, { priority: 'LOW' }))
+  })
+
   it('aksiyon sil onaylı; sunucu alan hatası formda gösterilir', async () => {
     api.incidents.deleteAction.mockResolvedValue({ success: true })
     render(<PostmortemModal incident={incident} onClose={() => {}} />)

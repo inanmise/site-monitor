@@ -3,7 +3,7 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   buildMonthlyCron, dailyPoints, formatValue, invalidEmails, isSummaryPayload, kpiView, localized, monthLabel,
-  monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
+  isCompletedMonth, legacyRenewals, monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
   distributionSegments, TLS_GRADE_SEGMENTS, CRYPTO_CATEGORY_SEGMENTS, CODE_LABEL_KEY,
   scopeOptions, statusCounts, STATUS_SEGMENTS, teamToForm, teamToBody, teamDirty, filterMembers, filterTeams, isTeamScope,
   TEAM_NOTE_KEY, TEAM_ID_RE,
@@ -137,6 +137,15 @@ describe('executiveModel — metin (i18n + sunucu metnine düşüş)', () => {
     expect(kpiView(tEN, 'renewals', legacy, 'en').label).toBe('Renewed on time')
     expect(kpiView(tEN, 'renewals', legacy, 'en').hint).toBe('Target: at least 30 days before expiry')
     expect(kpiView(tEN, 'renewals', legacy, 'en').code).toBe('on_time_pct')
+    // Aynı eski bölümün hükmü (3 parametre) ve yöntem notu da eski metinle — yeni metin eski değerle çelişirdi
+    expect(verdictText(tEN, 'renewals', { code: 'COMPLIANCE', text: 'x', params: [4, 3, '%75'] }, 'en'))
+      .toBe('3 of the 4 renewals this month (%75) were made ahead of the target lead time.')
+    expect(verdictText(tEN, 'renewals', { code: 'COMPLIANCE', text: 'x', params: [4, 4, '%100', 0] }, 'en')).toMatch(/before the certificate expired/)
+    const section = { key: 'renewals', kpis: [legacy] }
+    expect(legacyRenewals(section)).toBe(true)
+    expect(legacyRenewals({ key: 'renewals', kpis: [onTime] })).toBe(false)
+    expect(noteText(tEN, 'renewals', { code: 'METHOD', text: 'x', params: [7] }, 'en', legacyRenewals(section))).toMatch(/^Renewal = when the new certificate is first seen by monitoring; on time/)
+    expect(noteText(tEN, 'renewals', { code: 'METHOD', text: 'x', params: [7] }, 'en')).toMatch(/Compliance = renewals made before expiry/)
   })
 
   it('gösterge görünümü: etiket, değer, fark çipi', () => {
@@ -251,3 +260,15 @@ describe('takım kapsamı ve alıcı modeli (2026-10-10)', () => {
     }
   })
 })
+describe('elle gönderim ayı (2026-10-12)', () => {
+  it('yalnız TAMAMLANMIŞ ay gönderilebilir (Europe/Istanbul); bu ay ve gelecek değil; bozuk değer değil', () => {
+    const now = new Date('2026-10-12T09:00:00Z')
+    expect(isCompletedMonth('2026-09', now)).toBe(true)
+    expect(isCompletedMonth('2026-10', now)).toBe(false)
+    expect(isCompletedMonth('2026-11', now)).toBe(false)
+    expect(isCompletedMonth('', now)).toBe(false)
+    // Ayın son gecesi UTC 21:30 = İstanbul 1 Kasım 00:30 → Ekim artık tamamlanmış
+    expect(isCompletedMonth('2026-10', new Date('2026-10-31T21:30:00Z'))).toBe(true)
+  })
+})
+

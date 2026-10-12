@@ -18,7 +18,9 @@ describe('rotationPhase', () => {
     expect(rotationPhase(st(key, { previous: 0 }, { previous_removable: true }))).toBe('done')
     expect(rotationPhase(st(key, { previous: 0 }, { previous_removable: false }))).toBe('incomplete')
     // 2026-10-12: hiçbir anahtarla çözülemeyen değer varken "tüm değerler güncel anahtarda" (done) denmez
-    expect(rotationPhase(st(key, { previous: 0, unreadable: 2 }, { previous_removable: true }))).toBe('unreadable')
+    expect(rotationPhase(st(key, { previous: 0, unreadable: 2 }, { previous_removable: true }))).toBe('done_unreadable')
+    // sayım eksikse (tavan / okunamayan konum) önce o: kaldırma önerilmez
+    expect(rotationPhase(st(key, { previous: 0, unreadable: 2 }, { previous_removable: false }))).toBe('incomplete')
   })
   it('önceki anahtar yokken okunamayan değer → unreadable; yoksa steady; durum yoksa null', () => {
     const key = { current_configured: true, previous_configured: false }
