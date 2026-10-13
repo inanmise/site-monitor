@@ -98,6 +98,14 @@ class HttpDiagnosticsServiceTest {
             ex.sendResponseHeaders(200, b.length);
             try (OutputStream os = ex.getResponseBody()) { os.write(b); }
         });
+        // Kısa gecikmeli 200 (2026-10-13): hızlı CI'da /ok 0 ms sürüp 0 ms eşiğini aşmıyordu — "yavaş" testi kararsızdı
+        http.createContext("/okslow", ex -> {
+            try { Thread.sleep(40); } catch (InterruptedException ignore) { Thread.currentThread().interrupt(); }
+            byte[] b = "<html><body>merhaba</body></html>".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
+            ex.sendResponseHeaders(200, b.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(b); }
+        });
         http.createContext("/slow", ex -> {
             try { Thread.sleep(3000); } catch (InterruptedException ignore) { Thread.currentThread().interrupt(); }
             try { ex.sendResponseHeaders(200, -1); } catch (IOException ignore) { /* istemci gitti */ }
@@ -455,7 +463,7 @@ class HttpDiagnosticsServiceTest {
     @Test
     @DisplayName("yavaşlık eşiği: başarılı ama eşik üstü → SLOW uyarısı")
     void slowWarning() {
-        HttpMonitor mon = monitor(base + "/ok", 1500);
+        HttpMonitor mon = monitor(base + "/okslow", 1500);
         mon.setSlowResponseEnabled(true);
         mon.setSlowThresholdMs(0);
         Map<String, Object> data = service(null).diagnose(mon, false);
