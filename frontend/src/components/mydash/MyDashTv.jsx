@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Expand, LayoutGrid, Minimize, Pause, Play, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Expand, LayoutGrid, Minimize, Palette, Pause, Play, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { setTvModeActive } from '../../utils/tvMode.js'
 import { Button } from '@/components/shadcn/button'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Toggle } from '@/components/shadcn/toggle'
 import { cn } from '@/lib/utils'
-import { TV_INTERVALS, columnsFor, paginate, readTvSettings, rowsFor, spanOf, writeTvSettings } from './myDashModel.js'
+import { TV_INTERVALS, columnsFor, paginate, readTvSettings, rowsFor, spanOf, statStyleOf, writeTvSettings } from './myDashModel.js'
 import { WIDGETS } from './widgets.jsx'
 
 const CONTROLS_HIDE_MS = 4000
@@ -99,7 +100,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
   const rootRef = useRef(null)
   const count = pages.length
   const cur = count ? Math.min(slide, count - 1) : 0
-  const { fit, clipped } = useFitScale(mainRef, [cur, count, cols, rows])
+  const { fit, clipped } = useFitScale(mainRef, [cur, count, cols, rows, settings.panels])
 
   useEffect(() => {
     setTvModeActive(true)
@@ -219,7 +220,13 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
   }
 
   const setInterval_ = (v) => {
-    const next = { interval: Number(v) }
+    const next = { ...settings, interval: Number(v) }
+    setSettings(next)
+    writeTvSettings(next)
+  }
+  // Renkli paneller (2026-10-13): TV'de varsayılan AÇIK; kapatılınca kutular ayrıntılı çizilir (bu tarayıcıda hatırlanır)
+  const setPanels = (on) => {
+    const next = { ...settings, panels: on ? 'stat' : 'detail' }
     setSettings(next)
     writeTvSettings(next)
   }
@@ -265,6 +272,10 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
               </NativeSelect>
             </>
           )}
+          <Toggle variant="outline" pressed={settings.panels !== 'detail'} onPressedChange={setPanels} className={cn(btn, 'gap-1.5 px-3')}
+            aria-label={t('mydash.tv.panelsTitle')} title={t('mydash.tv.panelsTitle')} data-slot="mydash-tv-panels">
+            <Palette aria-hidden="true" /><span>{t('mydash.tv.panels')}</span>
+          </Toggle>
           <Button type="button" variant="outline" className={btn} onClick={toggleFullscreen} data-slot="mydash-tv-fullscreen">
             {fullscreen ? <Minimize aria-hidden="true" /> : <Expand aria-hidden="true" />}
             <span>{fullscreen ? t('mydash.tv.exitFullscreen') : t('mydash.tv.fullscreen')}</span>
@@ -304,7 +315,8 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
               const def = WIDGETS[w.type]
               if (!def) return null
               const C = def.Component
-              return <C key={w.id} refreshKey={refreshKey} frame={{ widget: w, tv: true, edit: false, span: spanOf(w.size, cols) }} />
+              return <C key={w.id} refreshKey={refreshKey}
+                frame={{ widget: w, tv: true, edit: false, span: spanOf(w.size, cols), stat: statStyleOf(w, true, settings.panels) }} />
             })}
           </div>
         ))}

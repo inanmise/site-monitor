@@ -9,7 +9,7 @@ const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Se
 const LONG_SERVICE = 'Kurumsal İnternet Bankacılığı Ödeme ve Fatura Tahsilat Hizmetleri (Çağrı Merkezi Entegrasyonu)'
 
 let saved = []
-async function mock(page, { dashboard = null } = {}) {
+async function mock(page, { dashboard = null, noc = false } = {}) {
   saved = []
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
@@ -19,9 +19,11 @@ async function mock(page, { dashboard = null } = {}) {
     const p = new URL(req.url()).pathname
     let body = { success: true, data: [] }
     if (p === '/api/me') {
-      body = { success: true, username: 'demo', system_role: 'ADMIN', global_admin: true, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
+      body = { success: true, username: 'demo', system_role: 'ADMIN', global_admin: true, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 },
+        ...(noc ? { noc_operator: true, noc_can_write: true } : {}) }
     } else if (p === '/api/me/permissions') {
-      body = { success: true, data: { 'alerts.read': { view: true }, 'monitoring.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true } } }
+      body = { success: true, data: { 'alerts.read': { view: true }, 'monitoring.read': { view: true }, 'oncall.read': { view: true }, 'system_health.read': { view: true }, 'data_quality.view': { view: true },
+        ...(noc ? { 'maintenance.view': { view: true }, 'incidents.view': { view: true } } : {}) } }
     } else if (p === '/api/me/preferences') {
       if (req.method() === 'PUT') {
         const b = JSON.parse(req.postData() || '{}')
@@ -29,7 +31,7 @@ async function mock(page, { dashboard = null } = {}) {
         body = { success: true, prefs: { ...(dashboard ? { dashboard } : {}), ...b } }
       } else body = { success: true, prefs: dashboard ? { dashboard } : {} }
     } else if (p === '/api/me/open-alerts') {
-      body = { success: true, data: { total: 3, tabs: { http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [
+      body = { success: true, data: { total: 3, oldest_open_at: '2026-10-11T05:00:00', oldest_severe_at: '2026-10-11T07:00:00', tabs: { http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [
         { id: 7, domain: 'odeme-servisleri-uzun-alan-adi.kurumsal.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: '2026-10-11T08:00:00', team_name: LONG_TEAM },
         { id: 8, domain: 'kart.example.com', alert_type: 'PING_DOWN', alert_level: 'HIGH', created_at: '2026-10-11T07:00:00', team_name: 'Kartlar' }] } } } }
     } else if (p === '/api/monitoring/overview') {
@@ -41,7 +43,19 @@ async function mock(page, { dashboard = null } = {}) {
     } else if (p === '/api/status-page') {
       body = { success: true, data: { overall: { state: 'partial_outage' }, services: [
         { key: 'a', name: LONG_SERVICE, team_name: LONG_TEAM, state: 'partial_outage', since: '2026-10-11T07:00:00' },
-        { key: 'b', name: 'Mobil Bankacılık', team_name: 'Mobil', state: 'degraded' }, { key: 'c', name: 'Kartlar', state: 'operational' }] } }
+        { key: 'b', name: 'Mobil Bankacılık', team_name: 'Mobil', state: 'degraded', maintenance: 3, monitors_visible: true }, { key: 'c', name: 'Kartlar', state: 'operational' }],
+        maintenance: { active: [{ id: 1, name: 'Veri merkezi ağ anahtarlarının yazılım güncellemesi ve yedekli hat geçiş testi (gece bakımı)', state: 'active',
+          starts_at: '2026-10-11T06:00:00Z', ends_at: '2026-10-11T10:00:00Z', all_monitors: false, monitor_count: 3, team_name: LONG_TEAM }],
+          active_total: 1, active_hidden: 0, upcoming: [{ id: 2, name: 'Kart sistemi', state: 'upcoming', starts_at: '2026-10-14T21:00:00Z',
+            ends_at: '2026-10-14T23:00:00Z', all_monitors: true, team_name: 'Kartlar' }], upcoming_total: 1, upcoming_hidden: 0, days: 7 },
+        incidents: { active: [{ id: 41, title: 'Mobil uygulamada giriş yapılamıyor — kimlik doğrulama servisi zaman aşımına düşüyor', severity: 'CRITICAL',
+          status: 'INVESTIGATING', started_at: '2026-10-11T07:10:00', team_name: LONG_TEAM }], active_total: 2, active_visible: 1, active_hidden: 1 } } }
+    } else if (p === '/api/noc/console') {
+      body = { success: true, data: { kpis: { not_called: 2 }, total: 2, items: [
+        { id: 8, domain: 'kart.example.com', level: 'HIGH', team_name: 'Kartlar', call_count: 0, created_at: new Date().toISOString(),
+          noc: { sent_at: new Date().toISOString() } },
+        { id: 7, domain: 'odeme-servisleri-uzun-alan-adi.kurumsal.example.com', level: 'CRITICAL', team_name: LONG_TEAM, call_count: 0,
+          created_at: '2026-10-11T07:00:00', noc: { sent_at: '2026-10-11T07:01:00' } }] } }
     } else if (p === '/api/monitoring/storm/status') {
       body = { success: true, data: { settings: { enabled: true }, totals: { storming: 1, near: 0 }, teams: [{ team_id: 5, team_name: LONG_TEAM, status: 'STORM', window_targets: 7 }] } }
     } else if (p === '/api/teams/directory') {
@@ -135,6 +149,53 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/mydash-${vp.name}.png`, fullPage: true })
     })
 
+    test('2026-10-13: 7/24 komuta düzeni + renkli panel görünümü; kesilme / taşma yok, hedefler ≥ 40 px', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page, { noc: true })
+      await page.goto('/?tab=mydash')
+      const root = page.locator('[data-slot="mydash-page"]')
+      await expect(root.locator('[data-slot="mydash-widget"]')).toHaveCount(7, { timeout: 20_000 })
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await page.locator('[data-slot="mydash-add"]').click()
+      await page.locator('[data-slot="mydash-preset-apply"]').click()
+      await page.getByRole('dialog', { name: /Apply the 24.7 command layout|7.24 komuta düzeni uygulansın/ })
+        .getByRole('button', { name: /Apply this layout|Bu düzeni uygula/ }).click()
+      await expect.poll(() => saved.at(-1)?.dashboard?.widgets?.map((w) => w.type)).toEqual(['noc_light', 'noc_uncalled', 'alerts_open', 'maintenance',
+        'monitor_health', 'storms', 'incidents_open', 'oncall', 'status_services'])
+      await expect(root.locator('[data-slot="mydash-widget"]')).toHaveCount(9)
+      const light = root.locator('[data-slot="mydash-widget"][data-type="noc_light"]')
+      await expect(light.locator('[data-slot="mydash-light"]')).toHaveAttribute('data-tone', 'danger')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="noc_uncalled"]')).toHaveAttribute('data-tone', 'danger')
+      // Bakım kutusu küçük (sm): liste yok, sayılar var — süren 1, bakımdaki izleme 3
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="maintenance"] [data-slot="mydash-maint-active"]')).toContainText('1')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="maintenance"] [data-slot="mydash-maint-monitors"]')).toContainText('3')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="maintenance"]')).toHaveAttribute('data-tone', 'warning')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="incidents_open"]')).toContainText('Mobil uygulamada giriş yapılamıyor')
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), 'küçük hedef (düzenleme)').toEqual([])
+      // Renkli panel: kutu başına; kaydedilir; zemin durum renginde
+      const alerts = root.locator('[data-slot="mydash-widget"][data-type="alerts_open"]')
+      await alerts.locator('[data-slot="mydash-style"]').click()
+      await expect.poll(() => saved.at(-1)?.dashboard?.widgets?.find((w) => w.type === 'alerts_open')?.style).toBe('stat')
+      await expect(alerts).toHaveAttribute('data-stat', 'on')
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await expect(alerts.locator('[data-slot="mydash-stat-value"]')).toHaveText('3')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'yatay taşma').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="mydash-page"]'), 'kırpılan metin').toEqual([])
+      const overflow = await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-widget"]')]
+        .filter((w) => w.scrollWidth > w.clientWidth + 1).map((w) => w.getAttribute('data-type')))
+      expect(overflow, 'kutu içi taşma').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), 'küçük hedef').toEqual([])
+      // Bağlantı düğmeleri tarayıcının varsayılan (2 px kabarık) kenarlığını almaz — sıfırlama `[data-slot]` üzerinden
+      expect(await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-page"] [data-link="true"]')]
+        .filter((b) => !b.hasAttribute('data-slot') || getComputedStyle(b).borderTopWidth !== '0px').map((b) => b.textContent.slice(0, 30))), 'kenarlıklı bağlantı').toEqual([])
+      // Tam sayfa görüntüsü dokunmatik ölçümlerden SONRA (fullPage dokunmatik öykünmeyi sıfırlar); tıklama bundan etkilenmez
+      await page.screenshot({ path: `test-results/mydash-noc-${vp.name}.png`, fullPage: true })
+      // Renkli panele tıklamak süzülmüş listeyi açar
+      await alerts.locator('[data-slot="mydash-stat"]').click()
+      await expect(page).toHaveURL(/tab=alerthistory/)
+    })
+
     test('TV kipi ekranı kaplar, sayfalar döner, Esc ile kapanır', async ({ page }) => {
       test.setTimeout(120_000)
       const dashboard = { v: 1, widgets: [
@@ -155,6 +216,8 @@ for (const vp of VIEWPORTS) {
       const pages = Number(await tv.getAttribute('data-pages'))
       expect(pages).toBeGreaterThan(1)
       await expect(tv.locator('[data-slot="mydash-tv-page"]:visible [data-slot="mydash-widget"]').first()).toBeVisible()
+      // 2026-10-13: TV'de renkli paneller varsayılan (büyük sayısı olan kutular); düğmeyle ayrıntılıya döner
+      await expect(tv.locator('[data-slot="mydash-widget"][data-stat="on"]').first()).toBeVisible()
       expect(await page.evaluate(clipped, '[data-slot="mydash-tv"]'), 'TV kırpılan metin').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-tv-bar"]'), 'TV küçük hedef').toEqual([])
       await page.screenshot({ path: `test-results/mydash-tv-${vp.name}.png` })
@@ -167,6 +230,10 @@ for (const vp of VIEWPORTS) {
       await expect(tv).toHaveAttribute('data-controls', 'hidden')
       await page.mouse.move(vp.width / 2, vp.height / 2)
       await expect(tv).toHaveAttribute('data-controls', 'shown')
+      await tv.locator('[data-slot="mydash-tv-panels"]').click()
+      await expect(tv.locator('[data-slot="mydash-widget"][data-stat="on"]')).toHaveCount(0)
+      await tv.locator('[data-slot="mydash-tv-panels"]').click()
+      await expect(tv.locator('[data-slot="mydash-tv-page"][data-active="true"] [data-slot="mydash-widget"][data-stat="on"]').first()).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(tv).toHaveCount(0)
       await expect(page).not.toHaveURL(/md_tv=1/)

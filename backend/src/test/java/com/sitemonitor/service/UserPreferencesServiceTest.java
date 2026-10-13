@@ -123,6 +123,23 @@ class UserPreferencesServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-13: kutu görünümü `style` — yalnız `stat` saklanır; bilinmeyen değer reddedilmez, düşürülür")
+    void dashboardWidgetStyle() {
+        var r = service.merge(3L, map("dashboard", map("widgets", List.of(
+                map("id", "w1", "type", "alerts_open", "size", "md", "style", "stat"),
+                map("id", "w2", "type", "oncall", "size", "sm", "style", "gauge"),
+                map("id", "w3", "type", "activity", "size", "sm", "style", 7),
+                map("id", "w4", "type", "storms", "size", "sm")))));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> widgets = (List<Map<String, Object>>) ((Map<String, Object>) r.prefs().get("dashboard")).get("widgets");
+        assertThat(widgets).hasSize(4);
+        assertThat(widgets.get(0)).containsEntry("style", "stat");
+        assertThat(widgets.get(1)).doesNotContainKey("style");
+        assertThat(widgets.get(2)).doesNotContainKey("style");
+        assertThat(widgets.get(3)).doesNotContainKey("style");
+    }
+
+    @Test
     @DisplayName("bilinmeyen üst düzey anahtar 400 (IAE) — belge yazılmaz")
     void unknownKeyRejected() {
         assertThatThrownBy(() -> service.merge(1L, map("theme", "dark")))

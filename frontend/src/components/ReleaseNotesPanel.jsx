@@ -79,6 +79,9 @@ export default function ReleaseNotesPanel() {
   const [error, setError] = useState(null)
   const [openId, setOpenId] = useState(null)
   const loadSeq = useRef(0)
+  // Kapanınca bekleyen yanıt düşer (2026-10-13, CI'da HelpPage testi bittikten sonra gelen yanıt setState çağırıp
+  // "window is not defined" ile koşuyu düşürdü) — sıra numarası ilerletilir, geç yanıt kendi sırasını tutmaz
+  useEffect(() => () => { loadSeq.current += 1 }, [])
   const lastSeen = useMemo(() => readLastSeenVersion(), [])
 
   useEffect(() => { const id = setTimeout(() => setQTerm(q.trim()), 300); return () => clearTimeout(id) }, [q])

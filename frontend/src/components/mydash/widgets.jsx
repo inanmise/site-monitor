@@ -1,149 +1,35 @@
 import { useCallback } from 'react'
 import {
-  Activity, BellRing, CircleCheck, CircleHelp, CloudLightning, HeartPulse, ListChecks, Radar, ShieldAlert, SignalHigh, UserRoundCheck,
+  Activity, BellRing, CircleHelp, CloudLightning, HeartPulse, ListChecks, Radar, ShieldAlert, SignalHigh, UserRoundCheck,
 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { activityTarget } from '../../utils/activityTarget.js'
 import { alertTypeLabel } from '../../utils/alertTypeMeta.js'
-import { navigateTo } from '../../utils/navigate.js'
 import { relTimeOrRaw } from '../../utils/relativeTime.js'
 import ToneBadge from '../admin/ToneBadge.jsx'
 import { TYPE_META } from '../monitoring/overviewMeta.js'
 import { Button } from '@/components/shadcn/button'
-import { cn } from '@/lib/utils'
 import WidgetCard from './WidgetCard.jsx'
+import {
+  Empty, LEVEL_TONE, List, Metric, More, Row, Tile, fetchOpenAlerts, fetchStatus, levelKey, linkTo, listLimit,
+} from './widgetParts.jsx'
+import { NOC_WIDGETS } from './nocWidgets.jsx'
 import { useWidgetData } from './useWidgetData.js'
 import {
   WATCHDOG_TONE, alertsSummary, certSummary, formatPct, monitorSummary, oncallRows, qualityTone, statusSummary, stormSummary,
 } from './myDashModel.js'
 
-// ── Ortak sunum parçaları ─────────────────────────────────────────────────────────────────────────────────────
-
-/**
- * Kutu içi bağlantı (2026-10-13, kullanıcı isteği: "Kişisel Panom'dan hızlıca tıklayıp geçebilmeliyim"): sayılar, kutucuklar
- * ve satırlar ilgili SÜZÜLMÜŞ ekranı ya da kaydın kendisini açar. Düzenleme kipinde (sürükle / boyut) ve TV / duvar ekranında
- * tıklanmaz — kazara gezinme olmasın; o zaman düz metin çizilir (eski görünüm).
- */
-export const linkTo = (frame, tab, params) => (frame?.edit || frame?.tv || !tab ? undefined : () => navigateTo(tab, params))
-
-/** Tıklanabilir öğenin ortak sınıfı: shadcn Button'ın yükseklik / hizalama / satır kırma varsayılanları kutu içine uyarlanır. */
-const LINK_RESET = 'h-auto min-w-0 justify-start gap-0 whitespace-normal text-left font-normal shadow-none'
-
-/** Büyük sayı + etiket. */
-function Metric({ value, label, tone = 'neutral', tv, slot, onClick, hint }) {
-  const ink = { danger: 'text-destructive', warning: 'text-amber-700 dark:text-amber-300', success: 'text-success', neutral: 'text-foreground', muted: 'text-muted-foreground' }[tone]
-  const body = (
-    <>
-      <span className={cn('font-semibold tabular-nums leading-none', tv ? 'text-4xl' : 'text-3xl', ink)}>{value}</span>
-      <span className={cn('mt-1 text-muted-foreground [overflow-wrap:anywhere]', tv ? 'text-base' : 'text-sm')}>{label}</span>
-    </>
-  )
-  if (!onClick) return <div className="flex min-w-0 flex-col" data-slot={slot}>{body}</div>
-  return (
-    <Button type="button" variant="ghost" onClick={onClick} title={hint} data-slot={slot} data-link="true"
-      className={cn(LINK_RESET, '-m-1.5 flex-col items-start rounded-lg p-1.5 hover:bg-muted/70 pointer-coarse:min-h-10')}>
-      {body}
-    </Button>
-  )
-}
-
-/** Kutucuk tonları. */
-const TILE_TONE = {
-  danger: 'bg-destructive/10 text-destructive',
-  warning: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
-  success: 'bg-success/10 text-success',
-  muted: 'bg-muted text-foreground',
-}
-/** Tıklanabilir kutucukta üzerine gelince ton KORUNUR (Button'ın gri vurgusu ezilir); statik kutucukta vurgu yok. */
-const TILE_HOVER = {
-  danger: 'hover:bg-destructive/20 dark:hover:bg-destructive/20 hover:text-destructive',
-  warning: 'hover:bg-amber-500/20 dark:hover:bg-amber-500/20 hover:text-amber-800 dark:hover:text-amber-300',
-  success: 'hover:bg-success/20 dark:hover:bg-success/20 hover:text-success',
-  muted: 'hover:bg-muted/60 dark:hover:bg-muted/60 hover:text-foreground',
-}
-
-/** Sayılı küçük kutucuk (ızgara). `onClick` verilirse süzülmüş listeyi açan düğme olur. */
-function Tile({ value, label, tone = 'muted', tv, slot, onClick, hint }) {
-  const t0 = TILE_TONE[tone] ? tone : 'muted'
-  const cls = cn('flex min-w-0 flex-col rounded-lg px-3 py-2', TILE_TONE[t0])
-  const body = (
-    <>
-      <span className={cn('font-semibold tabular-nums leading-tight', tv ? 'text-2xl' : 'text-xl')}>{value}</span>
-      <span className={cn('text-xs font-medium break-words hyphens-auto opacity-90', tv && 'text-sm')}>{label}</span>
-    </>
-  )
-  if (!onClick) return <div className={cls} data-slot={slot} data-tone={tone}>{body}</div>
-  return (
-    <Button type="button" variant="ghost" onClick={onClick} title={hint} data-slot={slot} data-tone={tone} data-link="true"
-      className={cn(LINK_RESET, cls, TILE_HOVER[t0], 'items-start hover:ring-1 hover:ring-border')}>
-      {body}
-    </Button>
-  )
-}
-
-function Empty({ icon: Icon = CircleCheck, text, tone = 'success', tv }) {
-  return (
-    <p className={cn('m-0 flex items-center gap-2', tone === 'success' ? 'text-success' : 'text-muted-foreground', tv ? 'text-lg' : 'text-sm')} data-slot="mydash-empty">
-      <Icon className="size-4 shrink-0" aria-hidden="true" />
-      <span className="[overflow-wrap:anywhere]">{text}</span>
-    </p>
-  )
-}
-
-function List({ children, slot }) {
-  return <ul className="m-0 flex list-none flex-col divide-y divide-border p-0" data-slot={slot}>{children}</ul>
-}
-
-/**
- * Liste satırı: solda rozet/ikon, ortada ad (tam genişlik, sarar) ve altında ayrıntı, sağda kısa sayı rozetleri. Ad ile
- * ayrıntı AYNI esnek satırda yarışmaz — uzun takım adı adı birkaç piksele sıkıştırıp harf harf sardırıyordu (TV e2e).
- */
-function Row({ lead, title, meta, trail, slot, onClick, hint }) {
-  // <button> yalnız satır içi (phrasing) içerik alır — tıklanabilir satırda <div>/<p> yerine blok <span>
-  const Box = onClick ? 'span' : 'div'
-  const Line = onClick ? 'span' : 'p'
-  const inner = (
-    <>
-      {lead && <span className="shrink-0 pt-px">{lead}</span>}
-      <Box className="block min-w-0 flex-1">
-        <Line className="m-0 block font-medium [overflow-wrap:anywhere]">{title}</Line>
-        {meta && <Line className="m-0 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{meta}</Line>}
-      </Box>
-      {trail && <span className="flex max-w-[55%] shrink-0 flex-wrap justify-end gap-1">{trail}</span>}
-    </>
-  )
-  if (!onClick) return <li className="flex min-w-0 items-start gap-2 py-2" data-slot={slot}>{inner}</li>
-  // Tıklanabilir satır: tüm satır tek düğme (en az 40 px), kenarlara taşan vurgu satır çizgisiyle hizalı
-  return (
-    <li className="min-w-0" data-slot={slot}>
-      <Button type="button" variant="ghost" onClick={onClick} title={hint} data-link="true"
-        className={cn(LINK_RESET, '-mx-2 my-0.5 flex w-[calc(100%+1rem)] min-h-10 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/70')}>
-        {inner}
-      </Button>
-    </li>
-  )
-}
-
-function More({ n, t }) {
-  if (!n) return null
-  return <p className="m-0 text-xs text-muted-foreground">{t('mydash.more', n)}</p>
-}
-
-const LEVEL_TONE = { CRITICAL: 'danger', HIGH: 'danger', WARNING: 'warning', MEDIUM: 'warning' }
-// TV'de liste kısa tutulur (satır yüksekliği sabit, duvar ekranında kaydırılamaz); sayfada boyuta göre
-const listLimit = (size, tv, base) => (tv ? (size === 'sm' ? Math.max(2, base - 2) : base) : size === 'lg' ? base + 3 : size === 'sm' ? 0 : base)
-
 // ── Kutular ───────────────────────────────────────────────────────────────────────────────────────────────────
-
-const fetchOpenAlerts = () => api.me.openAlerts(false)
 
 function AlertsWidget({ frame, refreshKey }) {
   const t = useT()
   const { data, loading, error, at } = useWidgetData(fetchOpenAlerts, { refreshKey })
   const s = alertsSummary(data, listLimit(frame.widget.size, frame.tv, 5))
   return (
-    <WidgetCard frame={frame} Icon={BellRing} title={t('mydash.w.alerts_open')} tab="alerthistory" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={BellRing} title={t('mydash.w.alerts_open')}
+      stat={s.hidden ? null : { value: s.total, label: t('mydash.alerts.open'), sub: t('mydash.stat.alertsSub', s.critical, s.high),
+        onClick: linkTo(frame, 'alerthistory'), hint: t('mydash.linkHint') }} tab="alerthistory" loading={loading} error={error} at={at}
       tone={s.tone} toneLabel={s.hidden ? t('mydash.noAccess') : s.total > 0 ? t('mydash.openCount', s.total) : t('mydash.allClear')}>
       {s.hidden ? <Empty tone="muted" text={t('mydash.noAccessBody')} tv={frame.tv} /> : (<>
       <div className="flex flex-col gap-3 @md:flex-row @md:items-end @md:gap-x-6">
@@ -182,13 +68,6 @@ function AlertsWidget({ frame, refreshKey }) {
   )
 }
 
-function levelKey(level) {
-  const l = String(level || '').toUpperCase()
-  if (l === 'CRITICAL') return 'critical'
-  if (l === 'HIGH') return 'high'
-  return 'warning'
-}
-
 const fetchOverview = () => api.monitoring.getOverview(24, false)
 
 function MonitorHealthWidget({ frame, refreshKey }) {
@@ -199,7 +78,9 @@ function MonitorHealthWidget({ frame, refreshKey }) {
   const pct = (v) => (s.active > 0 ? `${(v * 100) / s.active}%` : '0%')
   const limit = frame.tv ? (frame.widget.size === 'lg' ? 4 : 2) : listLimit(frame.widget.size, false, 4)
   return (
-    <WidgetCard frame={frame} Icon={Radar} title={t('mydash.w.monitor_health')} tab="monitoring" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={Radar} title={t('mydash.w.monitor_health')}
+      stat={{ value: formatPct(s.healthyPct, lang), label: t('mydash.monitor.healthy', s.healthy, s.active),
+        sub: t('mydash.stat.monitorSub', s.down, s.stale), onClick: linkTo(frame, 'monitoring'), hint: t('mydash.linkHint') }} tab="monitoring" loading={loading} error={error} at={at}
       tone={s.tone} toneLabel={s.down ? t('mydash.monitor.downCount', s.down) : s.stale ? t('mydash.monitor.staleCount', s.stale)
         : s.tone === 'success' ? t('mydash.allClear') : s.active === 0 ? t('mydash.monitor.none') : t('mydash.monitor.unknownCount', s.unknown)}>
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -258,8 +139,15 @@ function CertWidget({ frame, refreshKey }) {
   const t = useT()
   const { data, loading, error, at } = useWidgetData(fetchStats, { refreshKey })
   const s = certSummary(data, listLimit(frame.widget.size, frame.tv, 4))
+  // Renkli panelin büyük sayısı: dolmuş + 7 gün → 30 gün → taraması başarısız → izlenen (tonla aynı öncelik)
+  const urgent = s.expired + s.exp7
+  const certStat = urgent ? { value: urgent, label: t('mydash.stat.certUrgent'), onClick: linkTo(frame, 'warnings') }
+    : s.exp30 ? { value: s.exp30, label: t('mydash.stat.cert30'), onClick: linkTo(frame, 'all', { c_win: '30' }) }
+      : s.errors ? { value: s.errors, label: t('mydash.stat.certErrors'), onClick: linkTo(frame, 'all', { c_st: 'error' }) }
+        : { value: s.total, label: t('mydash.stat.certOk'), onClick: linkTo(frame, 'all') }
   return (
-    <WidgetCard frame={frame} Icon={ShieldAlert} title={t('mydash.w.cert_expiring')} tab="warnings" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={ShieldAlert} title={t('mydash.w.cert_expiring')}
+      stat={s.total ? { ...certStat, sub: t('mydash.stat.certSub', s.total), hint: t('mydash.linkHint') } : null} tab="warnings" loading={loading} error={error} at={at}
       tone={s.tone} toneLabel={s.expired ? t('mydash.cert.expiredCount', s.expired) : s.exp7 ? t('mydash.cert.exp7Count', s.exp7)
         : s.exp30 ? t('mydash.cert.exp30Count', s.exp30) : s.errors ? t('mydash.cert.scanFailures', s.errors)
         : s.total === 0 ? t('mydash.noData') : t('mydash.allClear')}>
@@ -295,7 +183,6 @@ function CertWidget({ frame, refreshKey }) {
   )
 }
 
-const fetchStatus = () => api.statusPage.get(false)
 const SP_TONE = { major_outage: 'danger', partial_outage: 'danger', degraded: 'warning', maintenance: 'info', operational: 'success', no_data: 'muted' }
 
 function StatusWidget({ frame, refreshKey }) {
@@ -303,7 +190,9 @@ function StatusWidget({ frame, refreshKey }) {
   const { data, loading, error, at } = useWidgetData(fetchStatus, { refreshKey })
   const s = statusSummary(data, listLimit(frame.widget.size, frame.tv, 4))
   return (
-    <WidgetCard frame={frame} Icon={SignalHigh} title={t('mydash.w.status_services')} tab="status" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={SignalHigh} title={t('mydash.w.status_services')}
+      stat={s.total ? { value: s.problemCount, label: t('mydash.stat.statusProblems'), sub: t('mydash.stat.statusSub', s.counts.operational, s.total),
+        onClick: linkTo(frame, 'status'), hint: t('mydash.linkHint') } : null} tab="status" loading={loading} error={error} at={at}
       tone={s.tone} toneLabel={s.total ? t('sp.state.' + s.shownState) : null}>
       {s.total === 0 ? (
         <Empty tone="muted" text={t('mydash.status.none')} tv={frame.tv} />
@@ -343,7 +232,9 @@ function StormsWidget({ frame, refreshKey }) {
   const { data, loading, error, at } = useWidgetData(fetchStorms, { refreshKey })
   const s = stormSummary(data, listLimit(frame.widget.size, frame.tv, 4) || 3)
   return (
-    <WidgetCard frame={frame} Icon={CloudLightning} title={t('mydash.w.storms')} tab="storms" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={CloudLightning} title={t('mydash.w.storms')}
+      stat={s.enabled ? { value: s.storming, label: t('mydash.stat.storming'), sub: t('mydash.stat.stormNear', s.near),
+        onClick: linkTo(frame, 'storms'), hint: t('mydash.linkHint') } : null} tab="storms" loading={loading} error={error} at={at}
       tone={s.enabled ? s.tone : 'muted'} toneLabel={!s.enabled ? t('mydash.storm.off') : s.storming ? t('mydash.storm.activeCount', s.storming) : t('mydash.allClear')}>
       {!s.enabled ? (
         <Empty tone="muted" text={t('mydash.storm.offBody')} tv={frame.tv} />
@@ -450,7 +341,11 @@ function WatchdogWidget({ frame, refreshKey }) {
   const problems = (Array.isArray(data?.checks) ? data.checks : []).filter((c) => c.status === 'PROBLEM')
     .sort((a, b) => (a.severity === 'CRITICAL' ? 0 : 1) - (b.severity === 'CRITICAL' ? 0 : 1))
   return (
-    <WidgetCard frame={frame} Icon={HeartPulse} title={t('mydash.w.watchdog')} tab="health" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={HeartPulse} title={t('mydash.w.watchdog')}
+      stat={data && data.enabled !== false ? {
+        value: data.stale ? t('mydash.stat.wdStale') : t('wd.status.' + status), text: true,
+        label: problems.length ? t('mydash.stat.wdProblems', problems.length) : t('mydash.stat.wdNoProblems'),
+        onClick: linkTo(frame, 'health'), hint: t('mydash.linkHint') } : null} tab="health" loading={loading} error={error} at={at}
       tone={data?.stale ? 'danger' : WATCHDOG_TONE[status] || 'muted'} toneLabel={data ? t('wd.status.' + status) : null}>
       {data?.enabled === false && <Empty tone="muted" text={t('wd.disabledTitle')} tv={frame.tv} />}
       {data?.enabled !== false && data?.stale && <p className="m-0 font-medium text-destructive">{t('mydash.watchdog.stale')}</p>}
@@ -492,7 +387,9 @@ function QualityWidget({ frame, refreshKey }) {
     .sort((a, b) => a.score - b.score).slice(0, listLimit(frame.widget.size, frame.tv, 3))
   const delta = Number(org?.delta_7d)
   return (
-    <WidgetCard frame={frame} Icon={ListChecks} title={t('mydash.w.data_quality')} tab="dataquality" loading={loading} error={error} at={at}
+    <WidgetCard frame={frame} Icon={ListChecks} title={t('mydash.w.data_quality')}
+      stat={org ? { value: org.score ?? '—', label: t('mydash.quality.score'), sub: t('dq.band.' + band),
+        onClick: linkTo(frame, 'dataquality'), hint: t('mydash.linkHint') } : null} tab="dataquality" loading={loading} error={error} at={at}
       tone={qualityTone(band)} toneLabel={org ? t('dq.band.' + band) : null}>
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
         <Metric value={org?.score ?? '—'} label={t('mydash.quality.score')} tone={qualityTone(band) === 'muted' ? 'neutral' : qualityTone(band)} tv={frame.tv} slot="mydash-quality-score"
@@ -525,5 +422,6 @@ export const WIDGETS = {
   activity:        { Icon: Activity,       Component: ActivityWidget },
   watchdog:        { Icon: HeartPulse,     Component: WatchdogWidget },
   data_quality:    { Icon: ListChecks,     Component: QualityWidget },
+  ...NOC_WIDGETS,
 }
 

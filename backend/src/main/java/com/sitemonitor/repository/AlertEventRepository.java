@@ -768,10 +768,11 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * Menü alarm rozetleri ({@code OpenAlertsSummaryService}): AÇIK alarmların (tip, seviye, sahiplenildi) kırılımı — TEK
      * gruplu sorgu, KESİN sayılar (eskiden seviye/sahiplenilmemiş kırılımı en yeni 200 alarmdan örneklenirdi). Takım
      * kapsamı {@link #findFiltered} ile AYNI yüklem (damgalı takım ya da envanterin SY/UG'si).
-     * Sütunlar: {@code [alertType, alertLevel, acknowledged, count]}.
+     * Sütunlar: {@code [alertType, alertLevel, acknowledged, count, minCreatedAt]} (5. sütun 2026-10-13: Kişisel Panom
+     * "durum lambası" en eski açık alarmın süresi — aynı gruplu sorgu, ek sorgu yok).
      */
     @Query("""
-            SELECT e.alertType, e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e
+            SELECT e.alertType, e.alertLevel, e.acknowledged, COUNT(e), MIN(e.createdAt) FROM AlertEvent e
             WHERE e.resolved = false
               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
                       SELECT 1 FROM CertificateInventory i

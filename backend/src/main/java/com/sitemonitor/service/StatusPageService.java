@@ -295,11 +295,13 @@ public class StatusPageService {
         maintenance.put("upcoming_total", upcomingTotal);
         maintenance.put("upcoming_hidden", upcomingHidden);
         maintenance.put("days", DAYS);
+        if (Boolean.TRUE.equals(maintBase.get("unavailable"))) maintenance.put("unavailable", true);
 
         // ── Olay kayıtları ──
         Map<String, Object> incBase = base.get("incidents") instanceof Map<?, ?> ib ? (Map<String, Object>) ib : Map.of();
         Map<String, Object> incidents = new LinkedHashMap<>();
         putIncidentBlock(incidents, "active", listOf(incBase.get(K_ACTIVE_ROWS)), incBase.get(K_ACTIVE_COUNTS), v);
+        if (Boolean.TRUE.equals(incBase.get("active_unavailable"))) incidents.put("active_unavailable", true);
         putIncidentBlock(incidents, "resolved", listOf(incBase.get(K_RESOLVED_ROWS)), incBase.get(K_RESOLVED_COUNTS), v);
         incidents.put("days", DAYS);
 
@@ -437,6 +439,7 @@ public class StatusPageService {
         Map<String, Object> maintenance = new LinkedHashMap<>();
         maintenance.put(K_WINDOWS, allWindows);
         maintenance.put("days", DAYS);
+        if (maint.failed) maintenance.put("unavailable", true);
 
         LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
         Map<String, Object> up = new LinkedHashMap<>();
@@ -607,6 +610,8 @@ public class StatusPageService {
         final Map<Long, Instant> allEnds = new LinkedHashMap<>();                 // "tüm izlemeler" pencereleri
         final Map<String, Map<Long, Instant>> endsByTarget = new HashMap<>();
         final List<WindowRef> windows = new ArrayList<>();
+        /** Pencereler okunamadı (2026-10-13): boş dizin "bakım yok" DEĞİL — yanıtta {@code maintenance.unavailable}. */
+        boolean failed;
 
         boolean covers(String target) { return !allEnds.isEmpty() || (target != null && endsByTarget.containsKey(target)); }
 
@@ -621,7 +626,7 @@ public class StatusPageService {
         MaintenanceIndex idx = new MaintenanceIndex();
         List<MaintenanceWindow> list;
         try { list = maintenanceRepo.findByActiveTrue(); }
-        catch (Exception e) { log.debug("durum sayfası: bakım pencereleri okunamadı: {}", e.toString()); return idx; }
+        catch (Exception e) { log.debug("durum sayfası: bakım pencereleri okunamadı: {}", e.toString()); idx.failed = true; return idx; }
         Instant horizon = now.plus(DAYS, ChronoUnit.DAYS);
         long synthetic = -1;   // id'siz (kaydedilmemiş) pencere — yalnız testlerde; çakışmasın
         for (MaintenanceWindow w : list) {
@@ -694,6 +699,7 @@ public class StatusPageService {
         String since = ISO.format(now.minus(DAYS, ChronoUnit.DAYS));
         List<Map<String, Object>> active = new ArrayList<>(), resolved = new ArrayList<>();
         List<Object[]> activeCounts = List.of(), resolvedCounts = List.of();
+        boolean activeFailed = false;
         try {
             for (Object[] r : incidentRepo.statusPageActive(PageRequest.of(0, INCIDENT_BASE_LIMIT))) {
                 if (r == null || r.length < 9) continue;
@@ -710,7 +716,11 @@ public class StatusPageService {
                 active.add(m);
             }
             activeCounts = incidentRepo.statusPageActiveCounts();
-        } catch (Exception e) { log.debug("durum sayfası: açık olaylar okunamadı: {}", e.toString()); }
+        } catch (Exception e) {
+            // Okunamadı (2026-10-13): boş liste "açık olay yok" sanılmasın — yanıtta incidents.active_unavailable
+            log.debug("durum sayfası: açık olaylar okunamadı: {}", e.toString());
+            activeFailed = true;
+        }
         try {
             for (Object[] r : incidentRepo.statusPageResolvedSince(since, PageRequest.of(0, INCIDENT_BASE_LIMIT))) {
                 if (r == null || r.length < 10) continue;
@@ -733,6 +743,7 @@ public class StatusPageService {
         out.put(K_ACTIVE_ROWS, active);
         out.put(K_ACTIVE_COUNTS, activeCounts == null ? List.of() : activeCounts);
         out.put("active_total", Math.max(sumCounts(activeCounts), active.size()));
+        if (activeFailed) out.put("active_unavailable", true);
         out.put(K_RESOLVED_ROWS, resolved);
         out.put(K_RESOLVED_COUNTS, resolvedCounts == null ? List.of() : resolvedCounts);
         out.put("resolved_total", Math.max(sumCounts(resolvedCounts), resolved.size()));

@@ -1183,6 +1183,8 @@ Giriş sonrası açılan ana ekrandır. En üstte sayfa başlığı ve eylem çu
 | "Yenile" | Başlık çubuğunda; listeyi ve sayaçları beklemeden tazeler |
 | Dil / tema değiştirme | Kullanıcı menüsünden TR/EN ve Açık/Koyu arasında geçiş |
 
+**Kişisel Panom** (`?tab=mydash`) sizin seçtiğiniz kutulardan oluşan ikinci panodur; düzen hesabınıza kaydedilir, her cihazda aynı açılır. **Düzenle** ile kutu ekler, kaldırır, boyutlandırır ve sıralarsınız. Kutudaki sayılara, kutucuklara ve satırlara tıklamak ilgili ekranı o sayının süzgeciyle açar (ör. "Kritik" kutucuğu yalnız kritik açık alarmları, bir alarm satırı o alarmın ayrıntısını). **7/24 kutuları** nöbet ekibi içindir: **Durum lambası** görebildiğiniz açık alarmlara göre kırmızı (kritik/yüksek var), turuncu (yalnız uyarı) ya da yeşil (açık alarm yok) yanar ve en eski alarmın ne zamandır açık olduğunu yazar; **Aranmayı bekleyenler** 7/24'e gidip henüz aranmamış alarmları gösterir, 15 dakikayı aşan kırmızıdır; **Bakım pencereleri** ve **Açık olaylar** da aynı renk kuralıyla çalışır. Kutu ekle penceresindeki **7/24 komuta düzeni** bu kutuları tek tıkla yerleştirir. Düzenleme kipinde bir kutunun **Renkli panel** düğmesi kutunun tüm zeminini durum rengine boyar ve ortada büyük sayıyı gösterir; **TV modu** bunu varsayılan olarak kullanır (üst çubuktaki **Renkli paneller** ile kapatılır). Okunamayan ya da eski veri hiçbir zaman yeşil gösterilmez.
+
 ### 14.5 Sertifika Detay Penceresi
 
 Herhangi bir sertifika kartına tıkladığınızda beş sekmeli pencere açılır:

@@ -6,7 +6,12 @@
  * <p>Sunucu (UserPreferencesService.normalizeDashboard) yalnız BİÇİMİ denetler: en çok {@link MAX_WIDGETS} kutu, kimlik
  * `[a-z0-9-]`, tür `[a-z_]`, boyut sm|md|lg. Bilinmeyen tür (daha yeni sürümde eklenmiş kutu) ya da yetkisi olmayan kutu
  * SAKLANIR ama çizilmez — düzenleme işlemleri listenin tamamı üzerinde çalışır, gizli kutular kaybolmaz.
+ *
+ * <p>2026-10-13: kutu başına isteğe bağlı görünüm `style: 'stat'` (Grafana "stat panel": tüm zemin durum renginde, ortada
+ * büyük sayı). Sunucu yalnız `stat`ı saklar; bilinmeyen değeri düşürür. TV / duvar ekranında renkli panel VARSAYILAN.
  */
+
+import { zonedMs } from '../../utils/relativeTime.js'
 
 export const MAX_WIDGETS = 24
 export const SIZES = Object.freeze(['sm', 'md', 'lg'])
@@ -18,6 +23,10 @@ export const SIZES = Object.freeze(['sm', 'md', 'lg'])
  * veri kalitesi `data_quality.view` (2026-10-12: alarm / izleme kutuları da uçlarının iznini ister).
  */
 export const WIDGET_CATALOG = Object.freeze([
+  // 7/24 Komuta (2026-10-13): durum lambası + aranmayı bekleyenler önde. Konsol kutusu 7/24 konsolunu açabilenlere
+  // ({@link NOC_CONSOLE}: 7/24 izleme ekibi üyesi ya da global görüntüleyici — NocPage ile aynı kural).
+  { type: 'noc_light',       size: 'sm', tab: 'alerthistory', perm: 'alerts.read' },
+  { type: 'noc_uncalled',    size: 'md', tab: 'noc',          perm: ['alerts.read', '@noc_console'] },
   { type: 'alerts_open',     size: 'md', tab: 'alerthistory', perm: 'alerts.read' },
   { type: 'monitor_health',  size: 'md', tab: 'monitoring',   perm: 'monitoring.read' },
   { type: 'cert_expiring',   size: 'sm', tab: 'warnings',     perm: null },
@@ -27,6 +36,23 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'activity',        size: 'md', tab: 'activity',     perm: null },
   { type: 'watchdog',        size: 'sm', tab: 'health',       perm: 'system_health.read' },
   { type: 'data_quality',    size: 'sm', tab: 'dataquality',  perm: 'data_quality.view' },
+  { type: 'maintenance',     size: 'sm', tab: 'maintenance',  perm: 'maintenance.view' },
+  { type: 'incidents_open',  size: 'md', tab: 'incident-history', perm: 'incidents.view' },
+])
+
+/** Sahte izin: 7/24 konsolunu açabilir mi (sayfa `canView`'u sarar; izin matrisi anahtarı DEĞİL). */
+export const NOC_CONSOLE = '@noc_console'
+
+/**
+ * 7/24 komuta düzeni (2026-10-13, kullanıcı isteği "7/24 ekibi önünde olsun"): tek tıkla uygulanan hazır yerleşim. Sıra 3
+ * sütunda boşluksuz satırlar verir (küçük + orta çiftleri). Yetkisi olmayan kutu düşer.
+ */
+export const NOC_PRESET = Object.freeze([
+  { type: 'noc_light', size: 'sm' }, { type: 'noc_uncalled', size: 'md' },
+  { type: 'alerts_open', size: 'md' }, { type: 'maintenance', size: 'sm' },
+  { type: 'monitor_health', size: 'md' }, { type: 'storms', size: 'sm' },
+  { type: 'incidents_open', size: 'md' }, { type: 'oncall', size: 'sm' },
+  { type: 'status_services', size: 'lg' },
 ])
 
 const BY_TYPE = new Map(WIDGET_CATALOG.map((w) => [w.type, w]))
@@ -43,7 +69,8 @@ export const DEFAULT_TYPES = Object.freeze(['alerts_open', 'cert_expiring', 'mon
 export function typeVisible(type, canView) {
   const e = BY_TYPE.get(type)
   if (!e) return false
-  return !e.perm || !!(canView && canView(e.perm))
+  const need = Array.isArray(e.perm) ? e.perm : [e.perm]
+  return need.every((p) => !p || !!(canView && canView(p)))
 }
 
 export function widgetId(type) { return String(type).replace(/_/g, '-') }
@@ -55,6 +82,8 @@ export function defaultLayout(canView) {
 
 const ID_RE = /^[a-z0-9-]{1,40}$/
 const TYPE_RE = /^[a-z_]{1,40}$/
+/** Kutu görünümleri (sunucu UserPreferencesService.WIDGET_STYLES ile aynı). Alan yok = ayrıntılı (klasik) görünüm. */
+export const STYLES = Object.freeze(['stat'])
 
 /**
  * Sunucudan gelen belge → temiz liste (biçimi bozuk satır, yinelenen kimlik ya da tür, tavan aşımı düşer). Belge yoksa
@@ -71,7 +100,7 @@ export function normalizeLayout(doc) {
     if (!ID_RE.test(id) || !TYPE_RE.test(type) || !SIZES.includes(size)) continue
     if (ids.has(id) || types.has(type)) continue
     ids.add(id); types.add(type)
-    out.push({ id, type, size })
+    out.push(STYLES.includes(w.style) ? { id, type, size, style: w.style } : { id, type, size })
     if (out.length >= MAX_WIDGETS) break
   }
   return out
@@ -88,7 +117,11 @@ export function visibleWidgets(list, canView) {
 }
 
 export function toDoc(list) {
-  return { v: 1, widgets: (list || []).slice(0, MAX_WIDGETS).map(({ id, type, size }) => ({ id, type, size })) }
+  return {
+    v: 1,
+    widgets: (list || []).slice(0, MAX_WIDGETS)
+      .map(({ id, type, size, style }) => (STYLES.includes(style) ? { id, type, size, style } : { id, type, size })),
+  }
 }
 
 /** Eklenebilecek türler: görünür ve henüz panoda olmayanlar (her tür bir kez — her kutu kendi verisini çeker). */
@@ -111,6 +144,34 @@ export function removeWidget(list, id) { return (list || []).filter((w) => w.id 
 export function resizeWidget(list, id, size) {
   if (!SIZES.includes(size)) return list
   return (list || []).map((w) => (w.id === id ? { ...w, size } : w))
+}
+
+/** Kutu görünümü: `'stat'` renkli panel, `null` ayrıntılı (alan silinir). Bilinmeyen değer → liste aynen döner. */
+export function setWidgetStyle(list, id, style) {
+  if (style != null && !STYLES.includes(style)) return list
+  return (list || []).map((w) => {
+    if (w.id !== id) return w
+    const rest = { ...w }
+    delete rest.style
+    return style ? { ...rest, style } : rest
+  })
+}
+
+/**
+ * Hazır düzen: önayar listesinden görünür kutular (yeni kimlikler), ardından mevcut listedeki ÇİZİLEMEYEN kutular
+ * (yetkisi şimdilik yok / daha yeni sürümün kutusu) — gizli kutular düzen değişince kaybolmaz.
+ */
+export function presetLayout(preset, list, canView) {
+  const out = []
+  for (const p of preset || []) {
+    if (!BY_TYPE.has(p.type) || !typeVisible(p.type, canView) || out.some((w) => w.type === p.type)) continue
+    out.push({ id: widgetId(p.type), type: p.type, size: SIZES.includes(p.size) ? p.size : BY_TYPE.get(p.type).size })
+  }
+  for (const w of list || []) {
+    if (typeVisible(w.type, canView) || out.some((x) => x.type === w.type || x.id === w.id)) continue
+    out.push(w)
+  }
+  return out.slice(0, MAX_WIDGETS)
 }
 
 /**
@@ -145,7 +206,7 @@ export function moveWidgetTo(list, id, targetId) {
 export function sameLayout(a, b) {
   const x = a || [], y = b || []
   if (x.length !== y.length) return false
-  return x.every((w, i) => w.id === y[i].id && w.type === y[i].type && w.size === y[i].size)
+  return x.every((w, i) => w.id === y[i].id && w.type === y[i].type && w.size === y[i].size && (w.style || null) === (y[i].style || null))
 }
 
 // ── Izgara + TV sayfalaması ─────────────────────────────────────────────────────────────────────────────────
@@ -206,22 +267,36 @@ export function formatPct(v, lang, digits = 1) {
 }
 
 export const TV_INTERVALS = Object.freeze([0, 15, 30, 60, 120])
-export const TV_DEFAULT = Object.freeze({ interval: 30 })
+/** `panels`: TV'de kutular renkli panel (`stat`, varsayılan — uzaktan tek bakışta okunur) ya da ayrıntılı (`detail`). */
+export const TV_PANELS = Object.freeze(['stat', 'detail'])
+export const TV_DEFAULT = Object.freeze({ interval: 30, panels: 'stat' })
 const TV_KEY = 'sm.mydash.tv'
 
-/** TV ayarı (dönüş aralığı) — izleyici başına kolaylık, yalnız bu tarayıcıda (eşitlenmez). */
+/** TV ayarı (dönüş aralığı + panel görünümü) — izleyici başına kolaylık, yalnız bu tarayıcıda (eşitlenmez). */
 export function readTvSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(TV_KEY) || 'null')
     const interval = Number(raw?.interval)
-    return { interval: TV_INTERVALS.includes(interval) ? interval : TV_DEFAULT.interval }
+    return {
+      interval: TV_INTERVALS.includes(interval) ? interval : TV_DEFAULT.interval,
+      panels: TV_PANELS.includes(raw?.panels) ? raw.panels : TV_DEFAULT.panels,
+    }
   } catch {
     return { ...TV_DEFAULT }
   }
 }
 
 export function writeTvSettings(s) {
-  try { localStorage.setItem(TV_KEY, JSON.stringify({ interval: s.interval })) } catch { /* depolama kapalı */ }
+  try {
+    localStorage.setItem(TV_KEY, JSON.stringify({
+      interval: s.interval, panels: TV_PANELS.includes(s.panels) ? s.panels : TV_DEFAULT.panels,
+    }))
+  } catch { /* depolama kapalı */ }
+}
+
+/** Kutu renkli panel olarak mı çizilir: kutunun kendi görünümü ya da TV'nin "renkli paneller" ayarı. */
+export function statStyleOf(widget, tv, tvPanels) {
+  return widget?.style === 'stat' || (!!tv && tvPanels !== 'detail')
 }
 
 // ── Kutu özetleri (sunucu yanıtı → ekran) ────────────────────────────────────────────────────────────────────
@@ -333,4 +408,102 @@ export function qualityTone(band) {
   if (band === 'NEEDS_ATTENTION') return 'warning'
   if (band === 'POOR') return 'danger'
   return 'muted'
+}
+
+// ── 7/24 Komuta özetleri (2026-10-13) ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Durum lambası (`/api/me/open-alerts`): kritik/yüksek açık alarm → kırmızı, yalnız uyarı/diğer → turuncu, açık alarm yok →
+ * yeşil. Okuma yetkisi yoksa (`visible:false`) gri — "sorun yok" DEĞİL. En eski açılış sunucudan (`oldest_*_at`; eski
+ * sunucu göndermezse null — tahmin edilmez).
+ */
+export function lightSummary(data) {
+  const a = alertsSummary(data, 0)
+  const severe = a.critical + a.high
+  return {
+    hidden: a.hidden, total: a.total, severe, warn: a.warning + a.other, unacked: a.unacked,
+    oldest: typeof data?.oldest_open_at === 'string' ? data.oldest_open_at : null,
+    oldestSevere: typeof data?.oldest_severe_at === 'string' ? data.oldest_severe_at : null,
+    tone: a.hidden ? 'muted' : severe > 0 ? 'danger' : a.total > 0 ? 'warning' : 'success',
+  }
+}
+
+/** 7/24'e gidip bu kadar dakika aranmayan alarm kırmızı (istemci kuralı; sunucuda arama süresi ayarı yok). */
+export const NOC_CALL_SLA_MIN = 15
+
+/**
+ * Aranmayı bekleyenler (`/api/noc/console?noc=sent&called=no&state=open`, ilk + gerekirse SON sayfa): en uzun bekleyen
+ * önce. Bekleme 7/24'e gönderilişten (`noc.sent_at`; yoksa alarm açılışı) sayılır. Sunucunun süzgeci yine de satırda
+ * doğrulanır (çözülmüş / aranmış satır sayılmaz), iki sayfa kesişirse satır bir kez sayılır. Toplam okunandan fazlaysa
+ * gecikmiş sayısı ALT SINIRDIR (`overdueAtLeast`). Konsol listesi sunucuda kesildiyse (`truncated`, en eski açık
+ * alarmlar düşer) `partial`: bekleyen yok görünse de YEŞİL verilmez.
+ */
+export function nocUncalledSummary(d, nowMs = Date.now(), slaMin = NOC_CALL_SLA_MIN) {
+  const seen = new Set()
+  const raw = (Array.isArray(d?.items) ? d.items : []).filter((it) => {
+    if (!it || it.id == null) return !!it
+    if (seen.has(it.id)) return false
+    seen.add(it.id)
+    return true
+  })
+  const rows = raw
+    .filter((it) => it && it.resolved !== true && n(it.call_count) === 0)
+    .map((it) => {
+      const sentAt = it.noc?.sent_at || it.created_at || null
+      const ms = zonedMs(sentAt)
+      const waitMin = Number.isFinite(ms) ? Math.max(0, Math.floor((nowMs - ms) / 60000)) : null
+      return { ...it, sentAt, waitMin, overdue: waitMin != null && waitMin >= slaMin }
+    })
+    .sort((a, b) => (b.waitMin ?? -1) - (a.waitMin ?? -1) || n(a.id) - n(b.id))
+  const total = Math.max(n(d?.total), rows.length)
+  const overdue = rows.filter((r) => r.overdue).length
+  const partial = d?.truncated === true
+  return {
+    // Atlanan satır (okunmayan orta sayfalar) ya da sunucuda kesilen en eskiler → gecikmiş sayısı alt sınır ("N+")
+    total, rows, overdue, overdueAtLeast: (total > raw.length || partial) && overdue > 0, partial,
+    oldestSentAt: rows.length ? rows[0].sentAt : null,
+    tone: total === 0 ? (partial ? 'muted' : 'success') : overdue > 0 ? 'danger' : 'warning',
+  }
+}
+
+/**
+ * Bakım pencereleri (`/api/status-page` `maintenance`): süren bakım → turuncu (o izlemelerin alarmları susturulur), yoksa
+ * yeşil. `unavailable` = sunucu pencereleri okuyamadı → kutu hata durumunda (yeşil değil). Bakımdaki izleme sayısı görülebilen
+ * hizmetlerin `maintenance` toplamı.
+ */
+export function maintenanceSummary(sp) {
+  const m = sp?.maintenance || {}
+  const active = Array.isArray(m.active) ? m.active : []
+  const upcoming = Array.isArray(m.upcoming) ? m.upcoming : []
+  // Görülebilen = toplam − gizli (inceleme 2026-10-13: gizli pencere renge girip "yok" metniyle çelişiyordu; olay kutusuyla aynı kural)
+  const activeTotal = Math.max(n(m.active_total) - n(m.active_hidden), active.length)
+  const upcomingTotal = Math.max(n(m.upcoming_total) - n(m.upcoming_hidden), upcoming.length)
+  const services = Array.isArray(sp?.services) ? sp.services : []
+  // Hizmet listesi kurum geneli; izlemeleri yalnız `monitors_visible` hizmetlerde görülebilir (inceleme 2026-10-13 tur 2)
+  const monitorsInMaintenance = services.reduce((acc, x) => acc + (x?.monitors_visible === true ? n(x?.maintenance) : 0), 0)
+  return {
+    active, upcoming, activeTotal, upcomingTotal, monitorsInMaintenance,
+    hidden: n(m.active_hidden) + n(m.upcoming_hidden),
+    unavailable: m.unavailable === true,
+    tone: activeTotal > 0 ? 'warning' : 'success',
+  }
+}
+
+const SEVERE = new Set(['CRITICAL', 'HIGH'])
+
+/**
+ * Açık olaylar (`/api/status-page` `incidents.active`, önem sırasıyla): görülebilen kritik/yüksek → kırmızı, başka açık olay
+ * → turuncu, yoksa yeşil. Sayılar görülebilen kayıtlardan (`active_visible`); başka takımlarınki yalnız `hidden` sayısıdır.
+ * `unavailable` = olaylar okunamadı → kutu hata durumunda.
+ */
+export function incidentsSummary(sp) {
+  const inc = sp?.incidents || {}
+  const rows = Array.isArray(inc.active) ? inc.active : []
+  const visible = Math.max(n(inc.active_visible), rows.length)
+  // Satırlar en çok 50; kritik/yüksek sayısı satırlardan — önem sırasıyla geldiği için tavan aşılsa da ilk satırlar ağır olanlar
+  const severe = rows.filter((r) => SEVERE.has(String(r?.severity || '').toUpperCase())).length
+  return {
+    rows, visible, severe, hidden: n(inc.active_hidden), unavailable: inc.active_unavailable === true,
+    tone: severe > 0 ? 'danger' : visible > 0 ? 'warning' : 'success',
+  }
 }

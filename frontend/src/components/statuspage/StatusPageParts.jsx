@@ -3,6 +3,7 @@
 // sol şerit yok (SHADCN.md §1). Mobil-önce: satırlar telefonda alt alta, ≥ 640 px yan yana; uzun adlar sarar.
 import { useState } from 'react'
 import {
+  TriangleAlert,
   Users, ChevronDown, Siren, History, Wrench, Info, CircleCheck, CalendarClock, Repeat, Activity, EyeOff,
 } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
@@ -250,9 +251,12 @@ export function ActiveIncidents({ incidents, nowMs }) {
   const visible = Number(incidents?.active_visible ?? list.length)
   return (
     <Card data-slot="sp-incidents" className="gap-3 py-4">
-      <SectionHeader Icon={Siren} title={t('sp.inc.title')} count={total} desc={t('sp.inc.desc')} />
+      <SectionHeader Icon={Siren} title={t('sp.inc.title')} count={total === 0 && incidents?.active_unavailable === true ? null : total} desc={t('sp.inc.desc')} />
       <CardContent className="flex flex-col gap-3 px-4 sm:px-5">
-        {total === 0 ? (
+        {total === 0 && incidents?.active_unavailable === true ? (
+          // Sunucu olayları okuyamadı (2026-10-13): boş liste "açık olay yok" DEĞİL
+          <StatusBlock tone="neutral" icon={TriangleAlert} title={t('sp.inc.unavailable')} description={t('sp.inc.unavailableText')} className="py-6" />
+        ) : total === 0 ? (
           <StatusBlock tone="success" icon={CircleCheck} title={t('sp.inc.none')} description={t('sp.inc.noneText')} className="py-6" />
         ) : (
           <>
@@ -360,9 +364,13 @@ export function MaintenanceCard({ maintenance }) {
   const showUpcoming = upcoming.length > 0 || upcomingHidden > 0
   return (
     <Card data-slot="sp-maintenance" className="gap-3 py-4">
-      <SectionHeader Icon={Wrench} title={t('sp.maint.title')} count={total} />
+      <SectionHeader Icon={Wrench} title={t('sp.maint.title')} count={total === 0 && maintenance?.unavailable === true ? null : total} />
       <CardContent className="flex flex-col gap-3 px-4 sm:px-5">
-        {total === 0 ? (
+        {total === 0 && maintenance?.unavailable === true ? (
+          <p className="m-0 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300" role="status" data-slot="sp-maint-unavailable">
+            <TriangleAlert className="size-4 shrink-0" aria-hidden="true" /><span>{t('sp.maint.unavailable')}</span>
+          </p>
+        ) : total === 0 ? (
           <p className="m-0 text-sm text-muted-foreground">{t('sp.maint.none')}</p>
         ) : (
           <>

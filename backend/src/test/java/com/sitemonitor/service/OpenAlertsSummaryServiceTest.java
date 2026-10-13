@@ -44,6 +44,40 @@ class OpenAlertsSummaryServiceTest {
         return new Object[]{ type, level, acked, n };
     }
 
+    /** 5 sütunlu satır (2026-10-13): [alertType, alertLevel, acknowledged, count, minCreatedAt]. */
+    private static Object[] grp(String type, String level, boolean acked, long n, String minCreated) {
+        return new Object[]{ type, level, acked, n, minCreated };
+    }
+
+    @Test
+    @DisplayName("2026-10-13: en eski açık alarm — genel + sekme başına + yalnız kritik/yüksek; bilinmeyen tür ve 4 sütunlu satır sayılmaz")
+    void oldestOpenAt() {
+        when(alertEventRepo.countOpenByTypeLevelAck(eq(false), anyList())).thenReturn(List.of(
+                grp("HTTP_DOWN", "WARNING", false, 2, "2026-10-12T08:00:00"),
+                grp("HTTP_DOWN", "CRITICAL", true, 1, "2026-10-13T01:00:00"),
+                grp("PING_DOWN", "HIGH", false, 1, "2026-10-12T22:00:00"),
+                grp("BOGUS", "CRITICAL", false, 3, "2020-01-01T00:00:00"),
+                grp("PORT_DOWN", "WARNING", false, 1)));
+        when(alertEventRepo.findOpenSummaryItems(anyCollection(), eq(false), anyList(), any(Pageable.class))).thenReturn(List.of());
+
+        Map<String, Object> out = svc().build(true, null);
+
+        assertThat(out).containsEntry("oldest_open_at", "2026-10-12T08:00:00").containsEntry("oldest_severe_at", "2026-10-12T22:00:00");
+        @SuppressWarnings("unchecked") Map<String, Map<String, Object>> tabs = (Map<String, Map<String, Object>>) out.get("tabs");
+        assertThat(tabs.get("http")).containsEntry("oldest_open_at", "2026-10-12T08:00:00");
+        assertThat(tabs.get("ping")).containsEntry("oldest_open_at", "2026-10-12T22:00:00");
+        assertThat(tabs.get("port")).doesNotContainKey("oldest_open_at");
+        assertThat(tabs.get("dns")).doesNotContainKey("oldest_open_at");
+    }
+
+    @Test
+    @DisplayName("2026-10-13: açık alarm yokken en eski alanları yazılmaz (yanıt eskisiyle aynı)")
+    void oldestAbsentWhenNothingOpen() {
+        when(alertEventRepo.countOpenByTypeLevelAck(eq(false), anyList())).thenReturn(List.of());
+        Map<String, Object> out = svc().build(true, null);
+        assertThat(out).doesNotContainKeys("oldest_open_at", "oldest_severe_at");
+    }
+
     private OpenAlertsSummaryService svc() {
         return new OpenAlertsSummaryService(alertEventRepo);
     }

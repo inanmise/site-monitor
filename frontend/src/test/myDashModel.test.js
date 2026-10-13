@@ -3,7 +3,8 @@ import {
   MAX_WIDGETS, WIDGET_CATALOG, DEFAULT_TYPES, addWidget, addableTypes, alertsSummary, certSummary, columnsFor, defaultLayout,
   effectiveLayout, monitorSummary, moveWidget, moveWidgetTo, normalizeLayout, oncallRows, paginate, qualityTone, readTvSettings,
   removeWidget, resizeWidget, rowsFor, sameLayout, spanOf, statusSummary, stormSummary, toDoc, typeVisible, visibleWidgets,
-  writeTvSettings,
+  writeTvSettings, NOC_CONSOLE, NOC_PRESET, NOC_CALL_SLA_MIN, STYLES, incidentsSummary, lightSummary, maintenanceSummary,
+  nocUncalledSummary, presetLayout, setWidgetStyle, statStyleOf,
 } from '../components/mydash/myDashModel.js'
 import { WIDGETS } from '../components/mydash/widgets.jsx'
 
@@ -118,14 +119,111 @@ describe('ızgara + TV sayfaları', () => {
   describe('TV ayarı', () => {
     beforeEach(() => { localStorage.clear() })
     it('geçersiz değer varsayılana düşer; yazılan okunur', () => {
-      expect(readTvSettings()).toEqual({ interval: 30 })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
       localStorage.setItem('sm.mydash.tv', '{"interval": 7}')
-      expect(readTvSettings()).toEqual({ interval: 30 })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
       writeTvSettings({ interval: 60 })
-      expect(readTvSettings()).toEqual({ interval: 60 })
+      expect(readTvSettings()).toEqual({ interval: 60, panels: 'stat' })
       localStorage.setItem('sm.mydash.tv', 'bozuk')
-      expect(readTvSettings()).toEqual({ interval: 30 })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
     })
+    it('2026-10-13: renkli paneller TV\'de varsayılan; kapatılınca hatırlanır; bilinmeyen değer varsayılana düşer', () => {
+      writeTvSettings({ interval: 15, panels: 'detail' })
+      expect(readTvSettings()).toEqual({ interval: 15, panels: 'detail' })
+      localStorage.setItem('sm.mydash.tv', '{"interval": 15, "panels": "neon"}')
+      expect(readTvSettings()).toEqual({ interval: 15, panels: 'stat' })
+      // Kutunun kendi görünümü her yerde; TV ayarı yalnız TV'de
+      expect(statStyleOf({ style: 'stat' }, false, 'detail')).toBe(true)
+      expect(statStyleOf({}, false, 'stat')).toBe(false)
+      expect(statStyleOf({}, true, 'stat')).toBe(true)
+      expect(statStyleOf({}, true, 'detail')).toBe(false)
+    })
+  })
+})
+
+describe('2026-10-13: 7/24 Komuta kutuları + renkli panel görünümü', () => {
+  it('konsol kutusu 7/24 konsolunu açabilene görünür (sahte izin), diğer yeni kutular kendi iznine bağlı', () => {
+    expect(typeVisible('noc_uncalled', (p) => p === 'alerts.read')).toBe(false)
+    expect(typeVisible('noc_uncalled', (p) => p === 'alerts.read' || p === NOC_CONSOLE)).toBe(true)
+    expect(typeVisible('noc_uncalled', (p) => p === NOC_CONSOLE)).toBe(false)
+    expect(typeVisible('noc_light', (p) => p === 'alerts.read')).toBe(true)
+    expect(typeVisible('maintenance', NONE)).toBe(false)
+    expect(typeVisible('maintenance', (p) => p === 'maintenance.view')).toBe(true)
+    expect(typeVisible('incidents_open', (p) => p === 'incidents.view')).toBe(true)
+    // Varsayılan pano değişmedi (mevcut kullanıcıların düzeni bozulmaz)
+    expect(DEFAULT_TYPES).not.toContain('noc_light')
+  })
+  it('görünüm alanı: yalnız "stat" saklanır, belgeye yazılır, karşılaştırmaya girer; set/sil', () => {
+    expect(STYLES).toEqual(['stat'])
+    const list = normalizeLayout({ widgets: [
+      { id: 'a', type: 'alerts_open', size: 'md', style: 'stat' },
+      { id: 'b', type: 'storms', size: 'sm', style: 'neon' }] })
+    expect(list).toEqual([{ id: 'a', type: 'alerts_open', size: 'md', style: 'stat' }, { id: 'b', type: 'storms', size: 'sm' }])
+    expect(toDoc(list).widgets).toEqual(list)
+    const off = setWidgetStyle(list, 'a', null)
+    expect(off[0]).toEqual({ id: 'a', type: 'alerts_open', size: 'md' })
+    expect(sameLayout(list, off)).toBe(false)
+    expect(setWidgetStyle(off, 'b', 'stat')[1].style).toBe('stat')
+    expect(setWidgetStyle(off, 'b', 'neon')).toBe(off)
+  })
+  it('7/24 hazır düzeni: yetkisiz kutu düşer, çizilemeyen mevcut kutular korunur, tekrar yok, tavan aşılmaz', () => {
+    const canSee = (p) => p !== NOC_CONSOLE && p !== 'incidents.view'
+    const current = [{ id: 'x', type: 'gelecek_kutu', size: 'sm' }, { id: 'alerts-open', type: 'alerts_open', size: 'sm' }]
+    const out = presetLayout(NOC_PRESET, current, canSee)
+    expect(out.map((w) => w.type)).toEqual(['noc_light', 'alerts_open', 'maintenance', 'monitor_health', 'storms', 'oncall',
+      'status_services', 'gelecek_kutu'])
+    expect(out.find((w) => w.type === 'alerts_open').size).toBe('md')
+    expect(new Set(out.map((w) => w.id)).size).toBe(out.length)
+    expect(presetLayout(NOC_PRESET, [], ALL).length).toBeLessThanOrEqual(MAX_WIDGETS)
+  })
+  it('durum lambası: kritik/yüksek kırmızı, yalnız uyarı turuncu, açık alarm yok yeşil; yetkisiz gri; en eski sunucudan', () => {
+    const tabs = (lv) => ({ http: { count: 1, unacked: 0, levels: lv, items: [] } })
+    expect(lightSummary({ total: 2, tabs: tabs({ critical: 0, high: 1, warning: 1, other: 0 }), oldest_open_at: '2026-10-13T05:00:00', oldest_severe_at: '2026-10-13T06:00:00' }))
+      .toMatchObject({ tone: 'danger', severe: 1, oldest: '2026-10-13T05:00:00', oldestSevere: '2026-10-13T06:00:00' })
+    expect(lightSummary({ total: 1, tabs: tabs({ critical: 0, high: 0, warning: 0, other: 1 }) })).toMatchObject({ tone: 'warning', oldest: null })
+    expect(lightSummary({ total: 0, tabs: {} }).tone).toBe('success')
+    expect(lightSummary({ visible: false, total: 0, tabs: {} }).tone).toBe('muted')
+  })
+  it('aranmayı bekleyenler: en uzun bekleyen önce; SLA aşan kırmızı; aranmış/çözülmüş satır sayılmaz; okunan < toplam → alt sınır', () => {
+    const now = Date.parse('2026-10-13T10:00:00Z')
+    const d = { total: 60, items: [
+      { id: 1, domain: 'a.example.com', noc: { sent_at: '2026-10-13T09:55:00' }, call_count: 0 },
+      { id: 2, domain: 'b.example.com', noc: { sent_at: '2026-10-13T09:30:00Z' }, call_count: 0 },
+      { id: 3, domain: 'c.example.com', noc: { sent_at: '2026-10-13T09:00:00' }, call_count: 2 },
+      { id: 4, domain: 'd.example.com', created_at: '2026-10-13T09:40:00', noc: null, call_count: 0, resolved: true }] }
+    const s = nocUncalledSummary(d, now)
+    expect(s.rows.map((r) => r.id)).toEqual([2, 1])
+    expect(s.rows[0]).toMatchObject({ waitMin: 30, overdue: true })
+    expect(s.rows[1]).toMatchObject({ waitMin: 5, overdue: false })
+    expect(s).toMatchObject({ total: 60, overdue: 1, overdueAtLeast: true, tone: 'danger', oldestSentAt: '2026-10-13T09:30:00Z' })
+    expect(nocUncalledSummary({ total: 1, items: [{ id: 9, noc: { sent_at: '2026-10-13T09:58:00' }, call_count: 0 }] }, now).tone).toBe('warning')
+    expect(nocUncalledSummary({ total: 0, items: [] }, now).tone).toBe('success')
+    expect(NOC_CALL_SLA_MIN).toBe(15)
+    // İki sayfa (ilk + son) kesişirse satır bir kez sayılır
+    const dup = nocUncalledSummary({ total: 2, items: [d.items[0], d.items[1], d.items[1]] }, now)
+    expect(dup.rows.map((r) => r.id)).toEqual([2, 1])
+    // Konsol listesi sunucuda kesildi: bekleyen görünmese de YEŞİL değil; görünen gecikmişler alt sınır ("N+")
+    expect(nocUncalledSummary({ total: 0, items: [], truncated: true }, now)).toMatchObject({ tone: 'muted', partial: true })
+    expect(nocUncalledSummary({ total: 2, items: d.items.slice(0, 2), truncated: true }, now)).toMatchObject({ overdue: 1, overdueAtLeast: true })
+  })
+  it('bakım: süren turuncu, yoksa yeşil; okunamadı işareti taşınır; bakımdaki izleme hizmetlerden', () => {
+    // Bakımdaki izleme yalnız izlemeleri görülebilen hizmetlerden (hizmet listesi kurum geneli; inceleme tur 2)
+    const sp = { services: [{ maintenance: 2, monitors_visible: true }, { maintenance: 0, monitors_visible: true }, { maintenance: 12, monitors_visible: false }],
+      maintenance: { active: [{ id: 1 }], active_total: 2, active_hidden: 1,
+      upcoming: [{ id: 5 }], upcoming_total: 1, upcoming_hidden: 0 } }
+    expect(maintenanceSummary(sp)).toMatchObject({ activeTotal: 1, upcomingTotal: 1, hidden: 1, monitorsInMaintenance: 2, tone: 'warning', unavailable: false })
+    // Yalnız başka takımın süren bakımı: renk ve sayı GÖRÜLEBİLENDEN (olay kutusuyla aynı kural) — "1 sürüyor" + "yok" çelişkisi yok
+    expect(maintenanceSummary({ maintenance: { active: [], active_total: 1, active_hidden: 1, upcoming: [], upcoming_total: 0 } }))
+      .toMatchObject({ activeTotal: 0, hidden: 1, tone: 'success' })
+    expect(maintenanceSummary({ maintenance: { active: [], upcoming: [] } }).tone).toBe('success')
+    expect(maintenanceSummary({ maintenance: { unavailable: true } }).unavailable).toBe(true)
+  })
+  it('olaylar: görülebilen kritik/yüksek kırmızı, başka açık turuncu, yok yeşil; gizli yalnız sayı; okunamadı işareti', () => {
+    const inc = (rows, extra = {}) => ({ incidents: { active: rows, active_visible: rows.length, active_hidden: 0, ...extra } })
+    expect(incidentsSummary(inc([{ id: 1, severity: 'HIGH' }, { id: 2, severity: 'LOW' }]))).toMatchObject({ visible: 2, severe: 1, tone: 'danger' })
+    expect(incidentsSummary(inc([{ id: 2, severity: 'MEDIUM' }]))).toMatchObject({ severe: 0, tone: 'warning' })
+    expect(incidentsSummary(inc([], { active_hidden: 3 }))).toMatchObject({ visible: 0, hidden: 3, tone: 'success' })
+    expect(incidentsSummary(inc([], { active_unavailable: true })).unavailable).toBe(true)
   })
 })
 
