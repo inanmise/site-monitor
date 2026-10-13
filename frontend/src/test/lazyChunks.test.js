@@ -85,6 +85,12 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(exportStaticUsers).toEqual([])
   })
 
+  it('Sistem Sağlığı → Metrikler görünümü (grafikler) yalnız açılınca yüklenir (2026-10-13)', () => {
+    const page = 'components/admin/SystemHealth.jsx'
+    expect(hasStatic(page, /metrics\/MetricsView(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(page, /metrics\/MetricsView\.jsx$/)).toBe(true)
+  })
+
   it('Olaylar sayfasında sayfa düzeyinde saniyelik saat yok — süre kendi yaprağında (LiveDuration)', () => {
     const page = read('components/IncidentsPage.jsx')
     expect(page).not.toMatch(/setNowMs/)

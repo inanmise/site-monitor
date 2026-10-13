@@ -97,7 +97,7 @@ const ALLOW = {
       'lm.stats.trend.failed', 'lm.stats.users.col.failed', 'login.helpErrorText',
       'loginIssues.errorText', 'loginIssues.mailFailed', 'loginIssues.mailTypeClientError', 'mo.att.lastFailed',
       'mo.colf.checks.failed', 'mo.csv.failed', 'mo.csv.lastError', 'mo.kpi.failed', 'mo.live.failed',
-      'mon.checkAllRowFailed', 'myact.alert.showFailed', 'myact.s.failed', 'myact.tile.failed', 'ndx.steps.copyError',
+      'mon.checkAllRowFailed', 'mx.series.logError', 'myact.alert.showFailed', 'myact.s.failed', 'myact.tile.failed', 'ndx.steps.copyError',
       'ndx.steps.error', 'page.card.configError', 'page.card.httpError', 'page.statusConfigError', 'perm.failed',
       'perm.failedCount', 'ping.card.reasonError', 'pl.detail.failedTitle', 'pl.kpiFailedUsers', 'port.card.why.error',
       'psdx.kv.failed', 'psdx.res.failed', 'pspd.statusConfigError', 'ret.colFailed', 'ret.filterFailed',
