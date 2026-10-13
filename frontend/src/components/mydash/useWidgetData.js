@@ -4,6 +4,9 @@ import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 /** Kutu yoklama aralığı — sekme gizliyken durur; TV kipinde de aynı (sunucu uçları 10–60 sn paylaşımlı bellek tutar). */
 export const WIDGET_POLL_MS = 60_000
 
+export { sharedFetch, clearSharedFetches } from '../../utils/sharedFetch.js'
+import { sharedFetch } from '../../utils/sharedFetch.js'
+
 /**
  * Panom kutusu veri kancası: `fetcher()` → `{success, data}`. İlk yükleme + görünürken periyodik tazeleme; yığılma yok
  * (useVisibleInterval), geç gelen eski yanıt yenisini ezmez (sıra numarası). Hata son bilinen veriyi SİLMEZ — kutu eski
@@ -15,11 +18,11 @@ export function useWidgetData(fetcher, { pollMs = WIDGET_POLL_MS, enabled = true
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     if (!enabled) return
     const my = ++seq.current
     try {
-      const res = await fetcher()
+      const res = await sharedFetch(fetcher, { fresh: fresh === true })
       if (!alive.current || my !== seq.current) return
       // 401 / pasif / bakım: uygulama oturumu ele alır; kutu boş veriden "sorun yok" ÇİZMESİN — hata durumunda kalır (2026-10-12)
       if (res == null) { setState((s) => ({ ...s, loading: false, error: 'error', status: null })); return }
@@ -40,12 +43,12 @@ export function useWidgetData(fetcher, { pollMs = WIDGET_POLL_MS, enabled = true
   useEffect(() => {
     if (lastFetcher.current === fetcher) return
     lastFetcher.current = fetcher
-    load()
+    load(true)
   }, [fetcher, load])
   const first = useRef(true)
   useEffect(() => {
     if (first.current) { first.current = false; return }
-    load()
+    load(true)
   }, [refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return { ...state, reload: load }

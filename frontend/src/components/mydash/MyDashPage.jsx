@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Building2, Check, LayoutGrid, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Tv, Users } from 'lucide-react'
+import { Building2, Check, LayoutGrid, Palette, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Tv, Users } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUserPrefs } from '../../hooks/useUserPrefs.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -14,8 +14,8 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import {
-  MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, addWidget, addableTypes, effectiveLayout, moveWidget, moveWidgetTo, presetLayout, removeWidget,
-  resizeWidget, setWidgetStyle, toDoc, typeVisible, visibleWidgets,
+  MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, STAT_PRESET, addWidget, addableTypes, catalogEntry, effectiveLayout, moveWidget, moveWidgetTo,
+  presetLayout, removeWidget, resizeWidget, setWidgetStyle, toDoc, typeVisible, visibleWidgets,
 } from './myDashModel.js'
 import { WIDGETS } from './widgets.jsx'
 import MyDashTv from './MyDashTv.jsx'
@@ -58,6 +58,10 @@ export default function MyDashPage({ nocConsole = false }) {
   const addable = useMemo(() => addableTypes(list, canView), [list, canView])
   const isVisible = useCallback((w) => typeVisible(w.type, canView), [canView])
   const presetAvailable = typeVisible('noc_light', canView)
+  const statWallAvailable = STAT_PRESET.some((p) => typeVisible(p.type, canView))
+  // Katalog iki grupta: kutular ve renkli paneller (tek gösterge)
+  const addableWidgets = addable.filter((type) => catalogEntry(type)?.group !== 'stat')
+  const addableStats = addable.filter((type) => catalogEntry(type)?.group === 'stat')
 
   // Yetkiler gelmeden düzenleme / kayıt yok (2026-10-12): varsayılan düzen yetkiye göre süzülür; boş snapshot'la
   // kaydedilirse yetkili kutular belgeden düşerdi.
@@ -89,12 +93,12 @@ export default function MyDashPage({ nocConsole = false }) {
   }
 
   // 7/24 komuta düzeni: tek tıkla hazır yerleşim (onaylı — mevcut düzen değişir; çizilemeyen kutular korunur)
-  const applyPreset = async () => {
+  const applyPreset = async (preset = NOC_PRESET, keys = 'mydash.preset') => {
     if (!canEdit) return
-    const ok = await showConfirm({ title: t('mydash.preset.confirmTitle'), message: t('mydash.preset.confirmMsg'),
+    const ok = await showConfirm({ title: t(keys + '.confirmTitle'), message: t('mydash.preset.confirmMsg'),
       confirmText: t('mydash.preset.apply'), cancelText: t('dlg.cancel'), variant: 'warning' })
     if (!ok) return
-    apply(presetLayout(NOC_PRESET, list, canView), t('mydash.preset.done'))
+    apply(presetLayout(preset, list, canView), t(keys + '.done'))
     setCatalogOpen(false)
   }
 
@@ -252,8 +256,23 @@ export default function MyDashPage({ nocConsole = false }) {
                   <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{t('mydash.preset.desc')}</ItemDescription>
                 </ItemContent>
                 <ItemActions>
-                  <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={applyPreset} disabled={!canEdit}
-                    data-slot="mydash-preset-apply">
+                  <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={() => applyPreset()} disabled={!canEdit}
+                    aria-label={`${t('mydash.preset.apply')}: ${t('mydash.preset.title')}`} data-slot="mydash-preset-apply">
+                    {t('mydash.preset.apply')}
+                  </Button>
+                </ItemActions>
+              </Item>
+            )}
+            {statWallAvailable && (
+              <Item variant="muted" className="mb-4 flex-wrap" data-slot="mydash-preset-stat">
+                <ItemMedia variant="icon"><Palette aria-hidden="true" /></ItemMedia>
+                <ItemContent className="min-w-[12rem]">
+                  <ItemTitle className="[overflow-wrap:anywhere]">{t('mydash.statWall.title')}</ItemTitle>
+                  <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{t('mydash.statWall.desc')}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={() => applyPreset(STAT_PRESET, 'mydash.statWall')}
+                    disabled={!canEdit} aria-label={`${t('mydash.preset.apply')}: ${t('mydash.statWall.title')}`} data-slot="mydash-preset-stat-apply">
                     {t('mydash.preset.apply')}
                   </Button>
                 </ItemActions>
@@ -263,26 +282,32 @@ export default function MyDashPage({ nocConsole = false }) {
             {addable.length === 0 ? (
               <p className="m-0 text-sm text-muted-foreground" data-slot="mydash-catalog-empty">{t('mydash.catalogEmpty')}</p>
             ) : (
-              <ItemGroup className="gap-2">
-                {addable.map((type) => {
-                  const Icon = WIDGETS[type]?.Icon
-                  return (
-                    <Item key={type} variant="outline" data-slot="mydash-catalog-item" data-type={type} className="flex-wrap">
-                      {Icon && <ItemMedia variant="icon"><Icon aria-hidden="true" /></ItemMedia>}
-                      <ItemContent className="min-w-[12rem]">
-                        <ItemTitle className="[overflow-wrap:anywhere]">{titleOf(type)}</ItemTitle>
-                        <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{t('mydash.wd.' + type)}</ItemDescription>
-                      </ItemContent>
-                      <ItemActions>
-                        <Button type="button" size="sm" className="pointer-coarse:h-10" onClick={() => add(type)}
-                          disabled={list.length >= MAX_WIDGETS} aria-label={t('mydash.addOne', titleOf(type))}>
-                          <Plus aria-hidden="true" /> {t('mydash.addShort')}
-                        </Button>
-                      </ItemActions>
-                    </Item>
-                  )
-                })}
-              </ItemGroup>
+              [['widgets', addableWidgets], ['stats', addableStats]].filter(([, types]) => types.length > 0).map(([group, types]) => (
+                <section key={group} className="mb-4 last:mb-0" data-slot="mydash-catalog-group" data-group={group}>
+                  <h3 className="mb-1 text-sm font-semibold">{t('mydash.catalogGroup.' + group)}</h3>
+                  <p className="mb-2 text-xs text-muted-foreground">{t('mydash.catalogGroup.' + group + 'Hint')}</p>
+                  <ItemGroup className="gap-2">
+                    {types.map((type) => {
+                      const Icon = WIDGETS[type]?.Icon
+                      return (
+                        <Item key={type} variant="outline" data-slot="mydash-catalog-item" data-type={type} className="flex-wrap">
+                          {Icon && <ItemMedia variant="icon"><Icon aria-hidden="true" /></ItemMedia>}
+                          <ItemContent className="min-w-[12rem]">
+                            <ItemTitle className="[overflow-wrap:anywhere]">{titleOf(type)}</ItemTitle>
+                            <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{t('mydash.wd.' + type)}</ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
+                            <Button type="button" size="sm" className="pointer-coarse:h-10" onClick={() => add(type)}
+                              disabled={list.length >= MAX_WIDGETS} aria-label={t('mydash.addOne', titleOf(type))}>
+                              <Plus aria-hidden="true" /> {t('mydash.addShort')}
+                            </Button>
+                          </ItemActions>
+                        </Item>
+                      )
+                    })}
+                  </ItemGroup>
+                </section>
+              ))
             )}
           </div>
         </ModalShell>

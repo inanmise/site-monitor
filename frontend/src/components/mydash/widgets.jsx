@@ -12,10 +12,11 @@ import { TYPE_META } from '../monitoring/overviewMeta.js'
 import { Button } from '@/components/shadcn/button'
 import WidgetCard from './WidgetCard.jsx'
 import {
-  Empty, LEVEL_TONE, List, Metric, More, Row, Tile, fetchOpenAlerts, fetchOverview, fetchStatus, levelKey, linkTo, listLimit,
+  Empty, LEVEL_TONE, List, Metric, More, Row, Tile, fetchOpenAlerts, fetchOverview, fetchStats, fetchStatus, levelKey, linkTo, listLimit,
 } from './widgetParts.jsx'
 import { NOC_WIDGETS } from './nocWidgets.jsx'
 import { GRID_WIDGETS } from './gridWidgets.jsx'
+import { STAT_WIDGETS } from './statWidgets.jsx'
 import { useWidgetData } from './useWidgetData.js'
 import {
   WATCHDOG_TONE, alertsSummary, certSummary, formatPct, monitorSummary, oncallRows, qualityTone, statusSummary, stormSummary,
@@ -133,7 +134,6 @@ function MonitorHealthWidget({ frame, refreshKey }) {
   )
 }
 
-const fetchStats = () => api.getStats()
 
 function CertWidget({ frame, refreshKey }) {
   const t = useT()
@@ -424,5 +424,6 @@ export const WIDGETS = {
   data_quality:    { Icon: ListChecks,     Component: QualityWidget },
   ...NOC_WIDGETS,
   ...GRID_WIDGETS,
+  ...STAT_WIDGETS,
 }
 

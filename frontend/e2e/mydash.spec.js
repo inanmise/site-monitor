@@ -242,6 +242,37 @@ for (const vp of VIEWPORTS) {
       await expect(page).toHaveURL(/mo_type=http/)
     })
 
+    test('2026-10-13: renkli panel duvarı — 14 tek göstergeli panel; renkli zemin, kesilme / taşma yok, hedefler ≥ 40 px', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page, { noc: true })
+      await page.goto('/?tab=mydash')
+      const root = page.locator('[data-slot="mydash-page"]')
+      await expect(root.locator('[data-slot="mydash-widget"]')).toHaveCount(7, { timeout: 20_000 })
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await page.locator('[data-slot="mydash-add"]').click()
+      await expect(page.locator('[data-slot="mydash-catalog-group"][data-group="stats"]')).toBeVisible()
+      await page.locator('[data-slot="mydash-preset-stat-apply"]').click()
+      await page.getByRole('dialog', { name: /Apply the colour panel wall|Renkli panel duvarı uygulansın/ })
+        .getByRole('button', { name: /^(Apply this layout|Bu düzeni uygula)$/ }).click()
+      await expect.poll(() => saved.at(-1)?.dashboard?.widgets?.length).toBe(14)
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await expect(root.locator('[data-slot="mydash-widget"][data-type^="stat_"]')).toHaveCount(14)
+      // Kritik alarm kırmızı, 30 gün turuncu, 7 gün kırmızı; renkli zeminli paneller
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="stat_alarms_critical"]')).toHaveAttribute('data-stat', 'on')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="stat_alarms_critical"]')).toHaveAttribute('data-tone', 'danger')
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="stat_certs_month"]')).toHaveAttribute('data-tone', 'warning')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'yatay taşma').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="mydash-page"]'), 'kırpılan metin').toEqual([])
+      const overflow = await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-widget"]')]
+        .filter((w) => w.scrollWidth > w.clientWidth + 1).map((w) => w.getAttribute('data-type')))
+      expect(overflow, 'kutu içi taşma').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), 'küçük hedef').toEqual([])
+      await page.screenshot({ path: `test-results/mydash-statwall-${vp.name}.png`, fullPage: true })
+      await root.locator('[data-slot="mydash-widget"][data-type="stat_certs_month"] [data-slot="mydash-stat"]').click()
+      await expect(page).toHaveURL(/c_win=30/)
+    })
+
     test('TV kipi ekranı kaplar, sayfalar döner, Esc ile kapanır', async ({ page }) => {
       test.setTimeout(120_000)
       const dashboard = { v: 1, widgets: [

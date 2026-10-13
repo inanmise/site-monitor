@@ -107,6 +107,7 @@ const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOvervie
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
 const DataQualityPage = lazy(() => import('./components/dataquality/DataQualityPage'))   // Veri Kalitesi (2026-10-10)
+import { clearSharedFetches } from './utils/sharedFetch.js'   // Kişisel Panom paylaşılan istekleri (hafif, ana paket)
 const MyDashPage = lazy(() => import('./components/mydash/MyDashPage'))   // Panom — kişisel pano + TV kipi (2026-10-11)
 // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT; takım özeti — ayrıca takım müdürü
 // (kapsamlı ADMIN). Sunucu ayrıca executive_summary.view ister ve kapsamı kendisi süzer.
@@ -989,6 +990,8 @@ export default function App() {
    */
   function resetSessionData() {
     loadAliveRef.current = false
+    // Kişisel Panom: önceki oturumun süren paylaşılan kutu istekleri yeni kullanıcıya geçmesin (2026-10-13)
+    clearSharedFetches()
     // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
     loadFloorRef.current = loadSeqRef.current
     loadAppliedRef.current = {}
