@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-13T14:51:55Z",
+  "generatedAt": "2026-10-13T16:45:29Z",
   "repo": "inanmise/site-monitor",
-  "count": 745,
+  "count": 746,
   "releases": [
+    {
+      "version": "20.131.0",
+      "tag": "v20.131.0",
+      "releasedAt": "2026-10-13T16:45:19Z",
+      "commit": "ab043740f6dbc44405bcdce42c8ab8b7b6d3cbe5",
+      "prevVersion": "20.130.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ab043740",
+          "subject": "TV kipi hareketsizlik bayrağı katmanla aynı anda iner (yerleşim etkisi)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "729481c4",
+          "subject": "Kişisel Panom TV modunda bir ekranda daha çok kutu (yoğunluk + ekranı dolduran yerleşim)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.130.0",
       "tag": "v20.130.0",

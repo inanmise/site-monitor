@@ -119,19 +119,24 @@ describe('ızgara + TV sayfaları', () => {
   describe('TV ayarı', () => {
     beforeEach(() => { localStorage.clear() })
     it('geçersiz değer varsayılana düşer; yazılan okunur', () => {
-      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat', density: 'compact' })
       localStorage.setItem('sm.mydash.tv', '{"interval": 7}')
-      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat', density: 'compact' })
       writeTvSettings({ interval: 60 })
-      expect(readTvSettings()).toEqual({ interval: 60, panels: 'stat' })
+      expect(readTvSettings()).toEqual({ interval: 60, panels: 'stat', density: 'compact' })
       localStorage.setItem('sm.mydash.tv', 'bozuk')
-      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat' })
+      expect(readTvSettings()).toEqual({ interval: 30, panels: 'stat', density: 'compact' })
     })
     it('2026-10-13: renkli paneller TV\'de varsayılan; kapatılınca hatırlanır; bilinmeyen değer varsayılana düşer', () => {
       writeTvSettings({ interval: 15, panels: 'detail' })
-      expect(readTvSettings()).toEqual({ interval: 15, panels: 'detail' })
+      expect(readTvSettings()).toEqual({ interval: 15, panels: 'detail', density: 'compact' })
       localStorage.setItem('sm.mydash.tv', '{"interval": 15, "panels": "neon"}')
-      expect(readTvSettings()).toEqual({ interval: 15, panels: 'stat' })
+      expect(readTvSettings()).toEqual({ interval: 15, panels: 'stat', density: 'compact' })
+      // 2026-10-13: yoğunluk hatırlanır; bilinmeyen değer varsayılana (Sık) düşer
+      writeTvSettings({ interval: 15, panels: 'stat', density: 'dense' })
+      expect(readTvSettings().density).toBe('dense')
+      writeTvSettings({ interval: 15, panels: 'stat', density: 'devasa' })
+      expect(readTvSettings().density).toBe('compact')
       // Kutunun kendi görünümü her yerde; TV ayarı yalnız TV'de
       expect(statStyleOf({ style: 'stat' }, false, 'detail')).toBe(true)
       expect(statStyleOf({}, false, 'stat')).toBe(false)
