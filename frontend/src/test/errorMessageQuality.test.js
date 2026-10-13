@@ -136,7 +136,7 @@ const ALLOW = {
       'health.smtpNoErrors', 'hreq.sort.errorRate', 'http.errorsPerMin', 'http.exp.errors',
       'httpdx.finding.BODY_TIMEOUT.title.error', 'httpdx.finding.RESPONSE_TIMEOUT.title.error', 'inv.hy.error',
       'inv.osslFlagVerifyFailed', 'lastLogin.lastFailedIp', 'lastLogin.lastFailedReason',
-      'loginIssues.sourceClientError', 'modal.notifError', 'modal.statusError', 'ndx.kv.error', 'ndx.kv.error_kind',
+      'loginIssues.sourceClientError', 'modal.notifError', 'modal.statusError', 'mydash.w.stat_cert_errors', 'ndx.kv.error', 'ndx.kv.error_kind',
       'ndx.val.error', 'stv.kpi.error', 'tier.legendError', 'ts.error', 'uact.failed24h', 'uact.sort_failed',
     ],
   },

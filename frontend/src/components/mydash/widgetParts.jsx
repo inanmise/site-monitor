@@ -15,6 +15,8 @@ export const fetchOpenAlerts = () => api.me.openAlerts(false)
 export const fetchStatus = () => api.statusPage.get(false)
 /** İzleme Panosu özeti — izleme sağlığı, tür ısı haritası ve takım × tür matrisi aynı ucu okur (sunucuda 30 sn bellek). */
 export const fetchOverview = () => api.monitoring.getOverview(24, false)
+/** Sertifika istatistikleri — sertifika bitişleri kutusu ve sertifika renkli panelleri aynı ucu okur. */
+export const fetchStats = () => api.getStats()
 
 // ── Ortak sunum parçaları ─────────────────────────────────────────────────────────────────────────────────────
 

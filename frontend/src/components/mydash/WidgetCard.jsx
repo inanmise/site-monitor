@@ -75,7 +75,7 @@ function StatBody({ stat, tv }) {
  * başlık bilgisini ekleyip buraya yayar.
  */
 export default function WidgetCard({
-  frame, Icon, title, description, tone = 'muted', toneLabel, tab, tabParams, loading, error, at, children, className, stat,
+  frame, Icon, title, description, tone = 'muted', toneLabel, tab, tabParams, loading, error, at, children, className, stat, forceStat = false,
 }) {
   const t = useT()
   const { widget, edit, tv, canPrev, canNext, onMove, onResize, onRemove, onStyle, dnd } = frame
@@ -85,9 +85,12 @@ export default function WidgetCard({
   const stale = !!error && !!at && Date.now() - at >= STALE_AFTER_MS
   const showBody = !(loading && !at)
   const shownTone = failed || stale ? 'muted' : tone
-  // Renkli panel: kutu destekliyorsa (`stat` verildi), görünüm açıksa ve veri GEÇERLİYSE; tonu boyanabilir değilse klasik kart
-  const surface = frame.stat && stat && showBody && !failed && !stale ? STAT_SURFACE[shownTone] : null
+  // Renkli panel: kutu destekliyorsa (`stat` verildi), görünüm açıksa ve veri GEÇERLİYSE; tonu boyanabilir değilse klasik kart.
+  // `forceStat` (renkli panel kutuları, 2026-10-13): her zaman büyük sayı; boyanamayan ton (bilinmiyor / bayat) zeminsiz çizilir
+  const wantStat = !!(stat && showBody && !failed && (frame.stat || forceStat))
+  const surface = wantStat && !stale ? STAT_SURFACE[shownTone] : null
   const statOn = !!surface
+  const plainStat = forceStat && wantStat && !statOn
   return (
     <div data-slot="mydash-widget" data-type={widget.type} data-size={widget.size} data-tone={shownTone} data-failed={failed || undefined}
       data-stale={stale || undefined} data-stat={statOn ? 'on' : undefined}
@@ -98,12 +101,15 @@ export default function WidgetCard({
       <Card className={cn('h-full gap-3 py-4', surface, dnd?.dragging && 'opacity-50')}>
         <CardHeader className="gap-1 px-4">
           <CardTitle className={cn('flex min-w-0 flex-wrap items-center gap-2 text-base', tv && 'text-xl')}>
-            {Icon && (
-              <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg', statOn ? 'bg-black/15 text-current' : 'bg-muted text-foreground', tv && 'size-10')} aria-hidden="true">
-                <Icon className={tv ? 'size-5' : 'size-4'} />
-              </span>
-            )}
-            <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
+            {/* İkon ve başlık AYNI satırda; uzun başlık kendi içinde sarar (ikon tek başına satırda kalmasın) */}
+            <span className="flex min-w-0 items-center gap-2">
+              {Icon && (
+                <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg', statOn ? 'bg-black/15 text-current' : 'bg-muted text-foreground', tv && 'size-10')} aria-hidden="true">
+                  <Icon className={tv ? 'size-5' : 'size-4'} />
+                </span>
+              )}
+              <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
+            </span>
             {toneLabel && !failed && !stale && (statOn
               // Renkli zeminde rozet yerine sade etiket — durum rengin yanında METİNLE de söylenir
               ? <span data-slot="mydash-widget-tone" className={cn('rounded-md bg-black/15 px-2 py-0.5 font-semibold', tv ? 'text-sm' : 'text-xs')}>{toneLabel}</span>
@@ -135,7 +141,7 @@ export default function WidgetCard({
               aria-label={t('mydash.moveNext', title)} title={t('mydash.moveNext', title)} onClick={() => onMove(1)}>
               <ArrowRight aria-hidden="true" />
             </Button>
-            {stat !== undefined && onStyle && (
+            {stat !== undefined && onStyle && !forceStat && (
               // Renkli panel görünümü (kutu başına, sunucuda saklanır) — yalnız büyük sayısı olan kutularda
               <Toggle variant="outline" size="sm" pressed={widget.style === 'stat'} onPressedChange={(on) => onStyle(on ? 'stat' : null)}
                 aria-label={t('mydash.styleTitle', title)} title={t('mydash.styleTitle', title)} data-slot="mydash-style"
@@ -171,6 +177,11 @@ export default function WidgetCard({
             </div>
           ) : statOn ? (
             <StatBody stat={stat} tv={tv} />
+          ) : plainStat ? (
+            // Zeminsiz büyük sayı: bilinmeyen / bayat veri asla yeşil boyanmaz; bayatsa renksiz
+            <div data-slot="mydash-widget-body" data-stale={stale || undefined} className={cn('flex min-w-0 flex-1 flex-col', stale && 'opacity-60 grayscale')}>
+              <StatBody stat={stat} tv={tv} />
+            </div>
           ) : showBody ? (
             // Bayat veri renksiz (inceleme 4): gövdedeki yeşil sayı / "açık alarm yok" de kesinti sırasında yeşil kalmasın
             <div data-slot="mydash-widget-body" data-stale={stale || undefined}

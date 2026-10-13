@@ -12,6 +12,7 @@
  */
 
 import { zonedMs } from '../../utils/relativeTime.js'
+import { STAT_DEFS } from './statDefs.js'
 
 export const MAX_WIDGETS = 24
 export const SIZES = Object.freeze(['sm', 'md', 'lg'])
@@ -43,7 +44,12 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'service_grid',    size: 'md', tab: 'status',       perm: null },
   { type: 'type_heatmap',    size: 'sm', tab: 'monitoring',   perm: 'monitoring.read' },
   { type: 'team_matrix',     size: 'lg', tab: 'monitoring',   perm: 'monitoring.read' },
+  // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
+  ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])
+
+/** "Renkli panel duvarı" hazır düzeni: tüm renkli panel kutuları küçük boyutta (TV / duvar ekranı için). */
+export const STAT_PRESET = Object.freeze(STAT_DEFS.map((d) => ({ type: d.type, size: 'sm' })))
 
 /** Sahte izin: 7/24 konsolunu açabilir mi (sayfa `canView`'u sarar; izin matrisi anahtarı DEĞİL). */
 export const NOC_CONSOLE = '@noc_console'
