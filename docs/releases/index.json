@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-12T22:49:51Z",
+  "generatedAt": "2026-10-13T06:33:34Z",
   "repo": "inanmise/site-monitor",
-  "count": 739,
+  "count": 740,
   "releases": [
+    {
+      "version": "20.125.2",
+      "tag": "v20.125.2",
+      "releasedAt": "2026-10-13T06:33:23Z",
+      "commit": "86d707996ab890ca6942426c8798c6a138f04539",
+      "prevVersion": "20.125.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "86d70799",
+          "subject": "HTTP tanılama 'yavaş' uyarısı testi kararsızdı — hızlı CI'da 0 ms yanıt 0 ms eşiği aşmıyordu; kısa gecikmeli uç"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "173c969d",
+          "subject": "menüde iki pano karışmasın — \"Sertifika Panosu\" ve \"Kişisel Panom\" adları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.125.1",
       "tag": "v20.125.1",
