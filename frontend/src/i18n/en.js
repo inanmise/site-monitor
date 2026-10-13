@@ -12523,6 +12523,8 @@ export const EN = {
   'mydash.removed': '{0} removed from the dashboard.',
   'mydash.resized': '{0} size: {1}.',
   'mydash.openPage': 'Open the {0} page',
+  'mydash.linkHint': 'Click to open the records behind this number, already filtered',
+  'mydash.linkDetail': 'Click to open the record',
   'mydash.dragHint': 'Drag and drop onto another widget',
   'mydash.movePrev': 'Move {0} one place earlier',
   'mydash.moveNext': 'Move {0} one place later',
