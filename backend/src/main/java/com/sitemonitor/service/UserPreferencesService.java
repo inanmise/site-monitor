@@ -68,6 +68,12 @@ public class UserPreferencesService {
     public static final String DASHBOARD = "dashboard";
     public static final int MAX_WIDGETS = 24;
     public static final Set<String> WIDGET_SIZES = Set.of("sm", "md", "lg");
+    /**
+     * Kutu görünümü (2026-10-13, kullanıcı kararı: Grafana "stat panel"): {@code stat} = kutunun tüm zemini durum rengine
+     * boyanır. Alan yoksa klasik görünüm. Bilinmeyen değer REDDEDİLMEZ, düşürülür — daha yeni bir istemcinin eklediği
+     * görünüm eski sunucuda kaydı bozmasın (kutu klasik görünüme döner).
+     */
+    public static final Set<String> WIDGET_STYLES = Set.of("stat");
     private static final java.util.regex.Pattern WIDGET_ID = java.util.regex.Pattern.compile("[a-z0-9-]{1,40}");
     private static final java.util.regex.Pattern WIDGET_TYPE = java.util.regex.Pattern.compile("[a-z_]{1,40}");
 
@@ -256,6 +262,7 @@ public class UserPreferencesService {
             out.put("id", id);
             out.put("type", type);
             out.put("size", size);
+            if (w.get("style") instanceof String style && WIDGET_STYLES.contains(style)) out.put("style", style);
             widgets.add(out);
         }
         Map<String, Object> doc = new LinkedHashMap<>();

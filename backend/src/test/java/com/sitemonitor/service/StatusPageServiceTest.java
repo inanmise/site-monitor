@@ -542,6 +542,23 @@ class StatusPageServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-13: bakım pencereleri / açık olaylar okunamazsa yanıt bunu söyler (boş liste 'yok' sanılmaz); okunabilirse alan yok")
+    void unreadableBlocksAreFlagged() {
+        Map<String, Object> ok = svc.view("ALL", Viewer.all(), true);
+        assertThat(sub(ok, "maintenance")).doesNotContainKey("unavailable");
+        assertThat(sub(ok, "incidents")).doesNotContainKey("active_unavailable");
+
+        when(maintenanceRepo.findByActiveTrue()).thenThrow(new RuntimeException("bağlantı yok"));
+        when(incidentRepo.statusPageActive(any(Pageable.class))).thenThrow(new RuntimeException("bağlantı yok"));
+        Map<String, Object> bad = svc.view("ALL", Viewer.all(), true);
+        assertThat(sub(bad, "maintenance")).containsEntry("unavailable", true).containsEntry("active_total", 0L);
+        assertThat(sub(bad, "incidents")).containsEntry("active_unavailable", true);
+        Map<String, Object> scoped = svc.view("T:14", SCOPED_14, false);
+        assertThat(sub(scoped, "maintenance")).containsEntry("unavailable", true);
+        assertThat(sub(scoped, "incidents")).containsEntry("active_unavailable", true);
+    }
+
+    @Test
     @DisplayName("Pano verisi yoksa (izleme yok) kurum durumu no_data, listeler boş — çökmez")
     void emptyOrg() {
         Map<String, Object> out = svc.view("ALL", Viewer.all(), false);

@@ -2119,7 +2119,7 @@ export default function App() {
             {tab === 'monitoring' && <MonitoringOverviewPage />}
             {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
-            {tab === 'mydash' && <MyDashPage />}
+            {tab === 'mydash' && <MyDashPage nocConsole={noc.operator || globalViewer} />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}

@@ -80,8 +80,9 @@ public class OpenAlertsSummaryService {
         if (scoped && (viewTeamIds == null || viewTeamIds.isEmpty())) return out;   // kapsamsız → hiçbir alarm
         List<Long> scopeList = scoped ? viewTeamIds : List.of(-1L);
 
-        // 1) Kesin sayılar: tip × seviye × sahiplenildi (tek gruplu sorgu)
+        // 1) Kesin sayılar: tip × seviye × sahiplenildi (tek gruplu sorgu) + en eski açılış (aynı sorgunun MIN sütunu)
         long total = 0;
+        String oldest = null, oldestSevere = null;
         Map<String, Set<String>> typesByFamily = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countOpenByTypeLevelAck(scoped, scopeList)) {
             if (row == null || row.length < 4 || row[0] == null) continue;
@@ -96,8 +97,19 @@ public class OpenAlertsSummaryService {
             if (!Boolean.TRUE.equals(row[2])) tab.put("unacked", ((Number) tab.get("unacked")).longValue() + n);
             typesByFamily.computeIfAbsent(family, k -> new TreeSet<>()).add(alertType);
             total += n;
+            // En eski açık alarm (2026-10-13): satır eski biçimde (4 sütun) gelirse alan yok sayılır — tahmin edilmez
+            String created = row.length > 4 && row[4] != null ? String.valueOf(row[4]) : null;
+            if (created != null && !created.isBlank()) {
+                tab.put("oldest_open_at", earlier((String) tab.get("oldest_open_at"), created));
+                oldest = earlier(oldest, created);
+                String lk = levelKey(row[1] == null ? null : String.valueOf(row[1]));
+                if ("critical".equals(lk) || "high".equals(lk)) oldestSevere = earlier(oldestSevere, created);
+            }
         }
         out.put("total", total);
+        // Ek alanlar: yalnız açık alarm varken (yoksa yazılmaz — eski istemci için yanıt aynı kalır)
+        if (oldest != null) out.put("oldest_open_at", oldest);
+        if (oldestSevere != null) out.put("oldest_severe_at", oldestSevere);
         if (total == 0) return out;
 
         // 2) Özet kartı satırları: en yeni açık alarmlar (dar projeksiyon), sekmeye dağıtılır
@@ -140,6 +152,13 @@ public class OpenAlertsSummaryService {
         m.put("levels", levels);
         m.put("items", new ArrayList<Map<String, Object>>());
         return m;
+    }
+
+    /** İki ISO zaman damgasından erken olanı (metin karşılaştırması — {@code created_at} her yerde aynı ISO biçiminde). */
+    static String earlier(String a, String b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.compareTo(b) <= 0 ? a : b;
     }
 
     static String levelKey(String level) {

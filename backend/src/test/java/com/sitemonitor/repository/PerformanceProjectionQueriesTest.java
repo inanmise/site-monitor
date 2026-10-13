@@ -92,6 +92,11 @@ class PerformanceProjectionQueriesTest {
                 Map.entry("HTTP_DOWN|CRITICAL|false", 2L), Map.entry("HTTP_DOWN|CRITICAL|true", 1L),
                 Map.entry("EXPIRY|WARNING|false", 1L), Map.entry("EXPIRY|HIGH|false", 1L));
 
+        // 5. sütun (2026-10-13): grubun en eski açılışı
+        Map<String, String> oldest = new HashMap<>();
+        for (Object[] r : alertRepo.countOpenByTypeLevelAck(true, List.of(7L))) oldest.put(r[0] + "|" + r[1] + "|" + r[2], String.valueOf(r[4]));
+        assertThat(oldest).containsEntry("HTTP_DOWN|CRITICAL|false", "2026-07-01T10:00:00");
+
         Map<String, Long> all = groupCounts(alertRepo.countOpenByTypeLevelAck(false, List.of(-1L)));
         assertThat(all.values().stream().mapToLong(Long::longValue).sum()).isEqualTo(6L);
         assertThat(all).containsEntry("PING_DOWN|HIGH|false", 1L);

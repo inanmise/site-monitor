@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ArrowUpRight, GripVertical, TriangleAlert, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUpRight, GripVertical, Palette, TriangleAlert, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { navigateTo } from '../../utils/navigate.js'
 import { agoText } from '../../utils/relativeTime.js'
@@ -6,10 +6,12 @@ import ToneBadge from '../admin/ToneBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Toggle } from '@/components/shadcn/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import { SIZES } from './myDashModel.js'
 import { WIDGET_POLL_MS } from './useWidgetData.js'
+import { LINK_RESET } from './widgetParts.jsx'
 
 /**
  * Son başarılı veriden bu kadar süre sonra hâlâ hata varsa kutu "bayat" sayılır (inceleme 4, 2026-10-12): duvar ekranında
@@ -30,6 +32,41 @@ export const SPAN_CLASS = {
 const HIT = 'pointer-coarse:size-10'
 
 /**
+ * Renkli panel zemini (2026-10-13, Grafana "stat panel"): kutunun TÜM zemini durum renginde. Sabit palet — her temada
+ * aynı anlam; metin kontrastı ≥ 4.5:1 (beyaz / kırmızı-700·800, yeşil-700·800, gök-700·800; koyu kahve / kehribar-400·500).
+ * `muted` (bilinmiyor, bayat, okunamadı) zemin BOYAMAZ — bilinmeyen asla yeşil değildir.
+ */
+export const STAT_SURFACE = {
+  danger:  'border-transparent bg-red-700 text-white dark:bg-red-800',
+  warning: 'border-transparent bg-amber-400 text-amber-950 dark:bg-amber-500',
+  success: 'border-transparent bg-green-700 text-white dark:bg-green-800',
+  info:    'border-transparent bg-sky-700 text-white dark:bg-sky-800',
+}
+
+/** Renkli panel gövdesi: ortada büyük değer, altında etiket ve kısa ayrıntı; tıklanınca ilgili süzülmüş ekran. */
+function StatBody({ stat, tv }) {
+  const content = (
+    <>
+      <span data-slot="mydash-stat-value"
+        className={cn('block font-bold tabular-nums leading-none [overflow-wrap:anywhere]',
+          stat.text ? (tv ? 'text-4xl' : 'text-3xl') : (tv ? 'text-7xl' : 'text-6xl'))}>
+        {stat.value ?? '—'}
+      </span>
+      {stat.label && <span className={cn('mt-2 block font-medium [overflow-wrap:anywhere]', tv ? 'text-xl' : 'text-base')}>{stat.label}</span>}
+      {stat.sub && <span className={cn('mt-1 block opacity-90 [overflow-wrap:anywhere]', tv ? 'text-lg' : 'text-sm')}>{stat.sub}</span>}
+    </>
+  )
+  const cls = 'flex min-h-28 flex-1 flex-col items-center justify-center py-2 text-center'
+  if (!stat.onClick) return <div className={cls} data-slot="mydash-stat">{content}</div>
+  return (
+    <Button type="button" variant="ghost" onClick={stat.onClick} title={stat.hint} data-slot="mydash-stat" data-link="true"
+      className={cn(LINK_RESET, cls, 'rounded-lg text-current hover:bg-black/10 hover:text-current dark:hover:bg-black/10')}>
+      {content}
+    </Button>
+  )
+}
+
+/**
  * Panom kutusu çerçevesi: başlık (ikon, ad, durum rozeti, "Sayfayı aç"), düzenleme kipinde araç çubuğu (sürükle tutamacı,
  * önceki/sonraki, boyut, kaldır), gövde ve alt not (son güncelleme; hata varsa son verinin gösterildiği). Durum yalnız
  * rozet + `data-tone` ile — kartta renkli sol şerit YOK (ürün kuralı).
@@ -38,39 +75,45 @@ const HIT = 'pointer-coarse:size-10'
  * başlık bilgisini ekleyip buraya yayar.
  */
 export default function WidgetCard({
-  frame, Icon, title, description, tone = 'muted', toneLabel, tab, loading, error, at, children, className,
+  frame, Icon, title, description, tone = 'muted', toneLabel, tab, tabParams, loading, error, at, children, className, stat,
 }) {
   const t = useT()
-  const { widget, edit, tv, canPrev, canNext, onMove, onResize, onRemove, dnd } = frame
+  const { widget, edit, tv, canPrev, canNext, onMove, onResize, onRemove, onStyle, dnd } = frame
   // Hiç veri alınamadıysa (ilk yükleme hatası) gövde ÇİZİLMEZ: özet fonksiyonları boş veride "her şey yolunda" der ve duvar
   // ekranı kesintide yeşil görünürdü (2026-10-12). Durum rozeti de gösterilmez; kutu "veri yok" der.
   const failed = !!error && !at
   const stale = !!error && !!at && Date.now() - at >= STALE_AFTER_MS
   const showBody = !(loading && !at)
   const shownTone = failed || stale ? 'muted' : tone
+  // Renkli panel: kutu destekliyorsa (`stat` verildi), görünüm açıksa ve veri GEÇERLİYSE; tonu boyanabilir değilse klasik kart
+  const surface = frame.stat && stat && showBody && !failed && !stale ? STAT_SURFACE[shownTone] : null
+  const statOn = !!surface
   return (
     <div data-slot="mydash-widget" data-type={widget.type} data-size={widget.size} data-tone={shownTone} data-failed={failed || undefined}
-      data-stale={stale || undefined}
+      data-stale={stale || undefined} data-stat={statOn ? 'on' : undefined}
       className={cn('min-w-0', tv ? null : SPAN_CLASS[widget.size], dnd?.over ? 'rounded-xl ring-2 ring-primary ring-offset-2 ring-offset-background' : null, className)}
       style={tv ? { gridColumn: `span ${frame.span || 1} / span ${frame.span || 1}` } : undefined}
       draggable={edit && !!dnd} onDragStart={dnd?.onDragStart} onDragEnd={dnd?.onDragEnd}
       onDragOver={dnd?.onDragOver} onDragLeave={dnd?.onDragLeave} onDrop={dnd?.onDrop}>
-      <Card className={cn('h-full gap-3 py-4', dnd?.dragging && 'opacity-50')}>
+      <Card className={cn('h-full gap-3 py-4', surface, dnd?.dragging && 'opacity-50')}>
         <CardHeader className="gap-1 px-4">
           <CardTitle className={cn('flex min-w-0 flex-wrap items-center gap-2 text-base', tv && 'text-xl')}>
             {Icon && (
-              <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-foreground', tv && 'size-10')} aria-hidden="true">
+              <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg', statOn ? 'bg-black/15 text-current' : 'bg-muted text-foreground', tv && 'size-10')} aria-hidden="true">
                 <Icon className={tv ? 'size-5' : 'size-4'} />
               </span>
             )}
             <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
-            {toneLabel && !failed && !stale && <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>}
+            {toneLabel && !failed && !stale && (statOn
+              // Renkli zeminde rozet yerine sade etiket — durum rengin yanında METİNLE de söylenir
+              ? <span data-slot="mydash-widget-tone" className={cn('rounded-md bg-black/15 px-2 py-0.5 font-semibold', tv ? 'text-sm' : 'text-xs')}>{toneLabel}</span>
+              : <ToneBadge tone={tone} data-slot="mydash-widget-tone" className={tv ? 'text-sm' : null}>{toneLabel}</ToneBadge>)}
           </CardTitle>
-          {description && !tv && <CardDescription className="[overflow-wrap:anywhere]">{description}</CardDescription>}
+          {description && !tv && !statOn && <CardDescription className="[overflow-wrap:anywhere]">{description}</CardDescription>}
           {tab && !tv && !edit && (
             <CardAction>
-              <Button type="button" variant="ghost" size="icon" className={cn('size-8', HIT)} data-slot="mydash-open"
-                aria-label={t('mydash.openPage', title)} title={t('mydash.openPage', title)} onClick={() => navigateTo(tab)}>
+              <Button type="button" variant="ghost" size="icon" className={cn('size-8', HIT, statOn && 'text-current hover:bg-black/10 hover:text-current dark:hover:bg-black/10')} data-slot="mydash-open"
+                aria-label={t('mydash.openPage', title)} title={t('mydash.openPage', title)} onClick={() => navigateTo(tab, tabParams)}>
                 <ArrowUpRight aria-hidden="true" />
               </Button>
             </CardAction>
@@ -78,7 +121,8 @@ export default function WidgetCard({
         </CardHeader>
 
         {edit && (
-          <div className="flex flex-wrap items-center gap-1.5 border-y border-border bg-muted/40 px-3 py-1.5" data-slot="mydash-widget-tools">
+          <div className={cn('flex flex-wrap items-center gap-1.5 border-y border-border px-3 py-1.5', statOn ? 'bg-background text-foreground' : 'bg-muted/40')}
+            data-slot="mydash-widget-tools">
             <span className={cn('grid size-8 cursor-grab place-items-center rounded-md text-muted-foreground active:cursor-grabbing', HIT, !dnd && 'hidden')}
               title={t('mydash.dragHint')} aria-hidden="true">
               <GripVertical className="size-4" />
@@ -91,6 +135,14 @@ export default function WidgetCard({
               aria-label={t('mydash.moveNext', title)} title={t('mydash.moveNext', title)} onClick={() => onMove(1)}>
               <ArrowRight aria-hidden="true" />
             </Button>
+            {stat !== undefined && onStyle && (
+              // Renkli panel görünümü (kutu başına, sunucuda saklanır) — yalnız büyük sayısı olan kutularda
+              <Toggle variant="outline" size="sm" pressed={widget.style === 'stat'} onPressedChange={(on) => onStyle(on ? 'stat' : null)}
+                aria-label={t('mydash.styleTitle', title)} title={t('mydash.styleTitle', title)} data-slot="mydash-style"
+                className="h-8 gap-1.5 px-2 text-xs font-semibold pointer-coarse:h-10">
+                <Palette aria-hidden="true" /><span>{t('mydash.style')}</span>
+              </Toggle>
+            )}
             <ToggleGroup type="single" variant="outline" size="sm" value={widget.size} aria-label={t('mydash.size', title)}
               onValueChange={(v) => { if (v) onResize(v) }} className="ml-auto">
               {SIZES.map((s) => (
@@ -117,6 +169,8 @@ export default function WidgetCard({
                 {error && error !== 'error' && <span className="block text-xs text-muted-foreground">{error}</span>}
               </span>
             </div>
+          ) : statOn ? (
+            <StatBody stat={stat} tv={tv} />
           ) : showBody ? (
             // Bayat veri renksiz (inceleme 4): gövdedeki yeşil sayı / "açık alarm yok" de kesinti sırasında yeşil kalmasın
             <div data-slot="mydash-widget-body" data-stale={stale || undefined}
@@ -127,9 +181,12 @@ export default function WidgetCard({
         </CardContent>
 
         {at && (
-          <div className={cn('flex flex-wrap items-center gap-1.5 px-4 text-xs text-muted-foreground', tv && 'text-sm')} data-slot="mydash-widget-foot">
+          <div className={cn('flex flex-wrap items-center gap-1.5 px-4 text-xs', statOn ? 'text-current opacity-90' : 'text-muted-foreground', tv && 'text-sm')}
+            data-slot="mydash-widget-foot">
             {error ? (
-              <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300" role="status" data-slot="mydash-widget-error">
+              // Renkli zeminde kehribar metin okunmuyordu (inceleme 2026-10-13) — zeminin metin rengi + koyu çip
+              <span className={cn('inline-flex items-center gap-1', statOn ? 'rounded-md bg-black/20 px-1.5 py-0.5 font-semibold text-current'
+                : 'text-amber-700 dark:text-amber-300')} role="status" data-slot="mydash-widget-error">
                 <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
                 <span className="[overflow-wrap:anywhere]">{at ? t('mydash.staleData') : error}</span>
               </span>

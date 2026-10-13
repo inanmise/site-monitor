@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Check, LayoutGrid, Pencil, Plus, RefreshCw, RotateCcw, Tv } from 'lucide-react'
+import { Check, LayoutGrid, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Tv } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUserPrefs } from '../../hooks/useUserPrefs.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -14,8 +14,8 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import {
-  MAX_WIDGETS, addWidget, addableTypes, effectiveLayout, moveWidget, moveWidgetTo, removeWidget, resizeWidget, toDoc,
-  typeVisible, visibleWidgets,
+  MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, addWidget, addableTypes, effectiveLayout, moveWidget, moveWidgetTo, presetLayout, removeWidget,
+  resizeWidget, setWidgetStyle, toDoc, typeVisible, visibleWidgets,
 } from './myDashModel.js'
 import { WIDGETS } from './widgets.jsx'
 import MyDashTv from './MyDashTv.jsx'
@@ -30,10 +30,13 @@ import MyDashTv from './MyDashTv.jsx'
  * Kutular mevcut uçları kullanır ve kendi kapsam/izin kurallarını taşır; yetkisi olmayan kutu ne katalogda ne panoda
  * görünür. "TV modu" (URL `md_tv=1`) duvar ekranı katmanını açar.
  */
-export default function MyDashPage() {
+export default function MyDashPage({ nocConsole = false }) {
   const t = useT()
   const prefs = useUserPrefs()
-  const { perms, canView, loaded: permsLoaded = true, failed: permsFailed = false, refresh: refreshPerms } = usePermissions()
+  const { perms, canView: canViewPerm, loaded: permsLoaded = true, failed: permsFailed = false, refresh: refreshPerms } = usePermissions()
+  // `nocConsole` (App): 7/24 konsolunu açabilir mi — izin matrisinde anahtarı yok; katalog bunu sahte izinle sorar (2026-10-13)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const canView = useCallback((p) => (p === NOC_CONSOLE ? !!nocConsole : canViewPerm(p)), [perms, nocConsole])
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -47,13 +50,11 @@ export default function MyDashPage() {
 
   useUrlQuerySync({ md_tv: tv ? '1' : null }, { debounceMs: 0 })
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const list = useMemo(() => effectiveLayout(prefs.dashboard, canView), [prefs.dashboard, perms])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shown = useMemo(() => visibleWidgets(list, canView), [list, perms])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const addable = useMemo(() => addableTypes(list, canView), [list, perms])
-  const isVisible = useCallback((w) => typeVisible(w.type, canView), [perms]) // eslint-disable-line react-hooks/exhaustive-deps
+  const list = useMemo(() => effectiveLayout(prefs.dashboard, canView), [prefs.dashboard, canView])
+  const shown = useMemo(() => visibleWidgets(list, canView), [list, canView])
+  const addable = useMemo(() => addableTypes(list, canView), [list, canView])
+  const isVisible = useCallback((w) => typeVisible(w.type, canView), [canView])
+  const presetAvailable = typeVisible('noc_light', canView)
 
   // Yetkiler gelmeden düzenleme / kayıt yok (2026-10-12): varsayılan düzen yetkiye göre süzülür; boş snapshot'la
   // kaydedilirse yetkili kutular belgeden düşerdi.
@@ -82,6 +83,16 @@ export default function MyDashPage() {
 
   const add = (type) => {
     apply(addWidget(list, type), t('mydash.added', titleOf(type)))
+  }
+
+  // 7/24 komuta düzeni: tek tıkla hazır yerleşim (onaylı — mevcut düzen değişir; çizilemeyen kutular korunur)
+  const applyPreset = async () => {
+    if (!canEdit) return
+    const ok = await showConfirm({ title: t('mydash.preset.confirmTitle'), message: t('mydash.preset.confirmMsg'),
+      confirmText: t('mydash.preset.apply'), cancelText: t('dlg.cancel'), variant: 'warning' })
+    if (!ok) return
+    apply(presetLayout(NOC_PRESET, list, canView), t('mydash.preset.done'))
+    setCatalogOpen(false)
   }
 
   const dndFor = (w) => {
@@ -207,6 +218,8 @@ export default function MyDashPage() {
                 onMove: (dir) => move(w, dir),
                 onResize: (size) => apply(resizeWidget(list, w.id, size), t('mydash.resized', titleOf(w.type), t('mydash.size.' + size))),
                 onRemove: () => apply(removeWidget(list, w.id), t('mydash.removed', titleOf(w.type))),
+                onStyle: (style) => apply(setWidgetStyle(list, w.id, style), t(style ? 'mydash.styleOn' : 'mydash.styleOff', titleOf(w.type))),
+                stat: w.style === 'stat',
                 dnd: dndFor(w),
               }
               return <C key={w.id} frame={frame} refreshKey={refreshKey} />
@@ -219,6 +232,21 @@ export default function MyDashPage() {
         <ModalShell open onClose={() => setCatalogOpen(false)} title={t('mydash.catalogTitle')} icon={Plus} size="lg" scrollBody
           footer={<Button type="button" variant="outline" onClick={() => setCatalogOpen(false)}>{t('mydash.close')}</Button>}>
           <div data-slot="mydash-catalog">
+            {presetAvailable && (
+              <Item variant="muted" className="mb-4 flex-wrap" data-slot="mydash-preset">
+                <ItemMedia variant="icon"><RadioTower aria-hidden="true" /></ItemMedia>
+                <ItemContent className="min-w-[12rem]">
+                  <ItemTitle className="[overflow-wrap:anywhere]">{t('mydash.preset.title')}</ItemTitle>
+                  <ItemDescription className="line-clamp-none [overflow-wrap:anywhere]">{t('mydash.preset.desc')}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={applyPreset} disabled={!canEdit}
+                    data-slot="mydash-preset-apply">
+                    {t('mydash.preset.apply')}
+                  </Button>
+                </ItemActions>
+              </Item>
+            )}
             <p className="mb-3 text-sm text-muted-foreground">{t('mydash.catalogHint')}</p>
             {addable.length === 0 ? (
               <p className="m-0 text-sm text-muted-foreground" data-slot="mydash-catalog-empty">{t('mydash.catalogEmpty')}</p>

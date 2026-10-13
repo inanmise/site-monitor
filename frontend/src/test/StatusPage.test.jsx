@@ -191,6 +191,20 @@ describe('Durum Sayfası (2026-10-01)', () => {
     expect(container.querySelector('[data-slot="sp-by-state"]')).toBeNull()
   })
 
+  it('2026-10-13: olaylar / bakım pencereleri OKUNAMADIYSA "açık olay yok" / "bakım yok" denmez', async () => {
+    api.statusPage.get.mockResolvedValue({ success: true, data: { ...DATA,
+      incidents: { active: [], active_total: 0, active_unavailable: true, resolved: [], resolved_total: 0, days: 7 },
+      maintenance: { active: [], upcoming: [], active_total: 0, upcoming_total: 0, unavailable: true, days: 7 } } })
+    const { container } = render(<StatusPage />)
+    await waitFor(() => expect(screen.getByText('Open incidents could not be read')).toBeInTheDocument())
+    expect(screen.queryByText('No open incidents')).toBeNull()
+    expect(container.querySelector('[data-slot="sp-maint-unavailable"]')).toHaveTextContent('could not be read')
+    expect(screen.queryByText('No maintenance in progress or scheduled for the next 7 days.')).toBeNull()
+    // Bilinmeyen ≠ 0: okunamayan bölümün başlığında "0" rozeti yok
+    expect(container.querySelector('[data-slot="sp-incidents"] [data-slot="badge"]')).toBeNull()
+    expect(container.querySelector('[data-slot="sp-maintenance"] [data-slot="badge"]')).toBeNull()
+  })
+
   it('hata: ilk yükleme başarısız → hata bloğu + Yeniden dene; yeniden deneme taze istekle yükler', async () => {
     api.statusPage.get.mockResolvedValueOnce({ success: false, error: 'Sunucu hatası' })
     const { container } = render(<StatusPage />)
