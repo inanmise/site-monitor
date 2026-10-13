@@ -15,6 +15,9 @@ const PermissionsContext = (globalThis.__smPermissionsCtx ??= createContext(null
  */
 export function PermissionsProvider({ children, user }) {
   const [perms, setPerms] = useState({})
+  // Görüş kapsamı (2026-10-13): `/api/me/permissions` `scope` — { monitoring_all, noc_operator, noc_console }; aynı 60 sn
+  // döngüde tazelenir (7/24 takımına eklenen / çıkarılan yeniden girmeden görür). Eski sunucu göndermezse null (bilinmiyor).
+  const [scope, setScope] = useState(null)
   // İlk snapshot geldi mi (2026-10-12): gelmeden boş `{}` "hiç yetki yok" ile karışmasın — yetkiye göre süzülen bir
   // listeyi kaydeden ekranlar (Panom) yüklenene kadar yazmaz. Oturum kapanınca (user yok) yeniden false.
   const [loaded, setLoaded] = useState(false)
@@ -28,6 +31,7 @@ export function PermissionsProvider({ children, user }) {
   if (renderUser !== userKey(user)) {
     setRenderUser(userKey(user))
     setPerms(keepIfSame({}))
+    setScope(null)
     setLoaded(false)
     setFailed(false)
   }
@@ -43,21 +47,26 @@ export function PermissionsProvider({ children, user }) {
       // Kullanıcı değişti: önceki kullanıcının snapshot'ı yeni kullanıcıya bir an bile uygulanmaz
       lastUser.current = key
       setPerms(keepIfSame({}))
+      setScope(null)
       setLoaded(false)
       setFailed(false)
     }
-    if (!user) { setPerms(keepIfSame({})); setLoaded(false); setFailed(false); return }
+    if (!user) { setPerms(keepIfSame({})); setScope(null); setLoaded(false); setFailed(false); return }
     let res = null
     try { res = await api.me.getPermissions() } catch { res = null }   // ağ hatası: önceki snapshot kalır, 60 sn sonra yeniden
     if (my !== seq.current) return
-    if (res?.success) { setPerms(keepIfSame(res.data || {})); setLoaded(true); setFailed(false) }
+    if (res?.success) {
+      setPerms(keepIfSame(res.data || {}))
+      setScope(keepIfSame(res.scope && typeof res.scope === 'object' ? res.scope : null))
+      setLoaded(true); setFailed(false)
+    }
     else setFailed(true)
   }, [user])
 
   useEffect(() => { refresh() }, [refresh])   // ilk + user değişince (user yoksa perms temizlenir)
   useVisibleInterval(refresh, user ? 60_000 : 0, false)   // periyodik (yalnız user varken), gizli sekmede durur
 
-  const value = useMemo(() => ({ perms, refresh, loaded, failed }), [perms, refresh, loaded, failed])
+  const value = useMemo(() => ({ perms, scope, refresh, loaded, failed }), [perms, scope, refresh, loaded, failed])
 
   return (
     <PermissionsContext.Provider value={value}>
@@ -85,6 +94,8 @@ export function usePermissions() {
   const can = (resource, action) => Boolean(ctx?.perms?.[resource]?.[action])
   return {
     perms: ctx?.perms ?? {},
+    // Görüş kapsamı (null = bilinmiyor / eski sunucu): monitoring_all, noc_operator, noc_console
+    scope: ctx?.scope ?? null,
     canView:    (r) => can(r, 'view'),
     canEdit:    (r) => can(r, 'edit'),
     canExecute: (r) => can(r, 'execute'),

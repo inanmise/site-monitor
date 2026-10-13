@@ -8,6 +8,13 @@ const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Ge
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
 const LONG_SERVICE = 'Kurumsal İnternet Bankacılığı Ödeme ve Fatura Tahsilat Hizmetleri (Çağrı Merkezi Entegrasyonu)'
 
+// Takım × tür matrisi için izleme satırları: uzun AD takım adları, her türden, sorunlu / gecikmiş / sağlıklı karışık
+const MATRIX_TEAMS = [[5, LONG_TEAM], [6, 'Ödeme Sistemleri ve Kart Operasyonları (Bireysel / Kurumsal Kanallar)'], [7, 'Altyapı'], [8, 'Çağrı Merkezi']]
+const MATRIX_MONITORS = MATRIX_TEAMS.flatMap(([id, name], i) => ['http', 'ping', 'dns', 'pagespeed', 'scripted']
+  .filter((_, j) => (i + j) % 4 !== 3)
+  .map((type, j) => ({ id: id * 100 + j, team_id: id, team_name: name, type, active: true, status: (i + j) % 5 === 0 ? 'down' : (i + j) % 7 === 0 ? 'stale' : 'up' })))
+  .concat([{ id: 999, team_id: null, team_name: null, type: 'http', active: true, status: 'up' }])
+
 let saved = []
 async function mock(page, { dashboard = null, noc = false } = {}) {
   saved = []
@@ -36,7 +43,9 @@ async function mock(page, { dashboard = null, noc = false } = {}) {
         { id: 8, domain: 'kart.example.com', alert_type: 'PING_DOWN', alert_level: 'HIGH', created_at: '2026-10-11T07:00:00', team_name: 'Kartlar' }] } } } }
     } else if (p === '/api/monitoring/overview') {
       body = { success: true, data: { totals: { active: 120, down: 3, stale: 2, unknown: 1, success_rate_window: 98.4 },
-        types: [{ type: 'http', active: 60, down: 2, stale: 0 }, { type: 'ping', active: 40, down: 1, stale: 2 }, { type: 'dns', active: 20, down: 0, stale: 0 }], monitors: [] } }
+        types: [{ type: 'http', total: 60, active: 60, down: 2, stale: 0 }, { type: 'ping', total: 40, active: 40, down: 1, stale: 2 },
+          { type: 'dns', total: 20, active: 20, down: 0, stale: 0 }, { type: 'pagespeed', total: 4, active: 4 }, { type: 'scripted', total: 3, active: 3, unknown: 1 }],
+        monitors: MATRIX_MONITORS } }
     } else if (p === '/api/stats') {
       body = { success: true, data: { total_certificates: 240, valid_count: 220, expired: 1, expiring_in_7_days: 2, expiring_in_30_days: 6, error_count: 1,
         expired_domains: ['eski-sertifika.example.com'], critical_domains: ['kart-odeme-yonetim-paneli.kurumsal.example.com'] } }
@@ -196,6 +205,43 @@ for (const vp of VIEWPORTS) {
       await expect(page).toHaveURL(/tab=alerthistory/)
     })
 
+    test('2026-10-13: Grafana ızgaraları — hizmet ızgarası, tür ısı haritası, takım × tür matrisi; taşma / kesilme yok, hedefler ≥ 40 px', async ({ page }) => {
+      test.setTimeout(120_000)
+      const dashboard = { v: 1, widgets: [
+        { id: 'team-matrix', type: 'team_matrix', size: 'lg' }, { id: 'service-grid', type: 'service_grid', size: 'md' },
+        { id: 'type-heatmap', type: 'type_heatmap', size: 'sm' }] }
+      await mock(page, { dashboard })
+      await page.goto('/?tab=mydash')
+      const root = page.locator('[data-slot="mydash-page"]')
+      const matrix = root.locator('[data-slot="mydash-widget"][data-type="team_matrix"]')
+      await expect(matrix.locator('[data-slot="mydash-matrix-card"]').first()).toBeAttached({ timeout: 20_000 })
+      // Geniş kapta matris, dar kapta takım kartları (yatay kaydırma yok)
+      if (vp.width >= 1024) {
+        await expect(matrix.locator('[data-slot="mydash-matrix"]')).toBeVisible()
+        await expect(matrix.locator('[data-slot="mydash-matrix-cards"]')).toBeHidden()
+      } else {
+        await expect(matrix.locator('[data-slot="mydash-matrix-cards"]')).toBeVisible()
+        await expect(matrix.locator('[data-slot="mydash-matrix"]')).toBeHidden()
+      }
+      await expect(matrix).toContainText(LONG_TEAM)
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="service_grid"] [data-slot="mydash-grid-service"]').first()).toBeVisible()
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="type_heatmap"] [data-slot="mydash-heat-cell"]')).toHaveCount(5)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'yatay taşma').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="mydash-page"]'), 'kırpılan metin').toEqual([])
+      const overflow = await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-widget"]')]
+        .filter((w) => w.scrollWidth > w.clientWidth + 1).map((w) => w.getAttribute('data-type')))
+      expect(overflow, 'kutu içi taşma').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), 'küçük hedef').toEqual([])
+      expect(await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-page"] [data-link="true"]')]
+        .filter((b) => !b.hasAttribute('data-slot') || getComputedStyle(b).borderTopWidth !== '0px').map((b) => b.textContent.slice(0, 30))), 'kenarlıklı bağlantı').toEqual([])
+      await page.screenshot({ path: `test-results/mydash-grids-${vp.name}.png`, fullPage: true })
+      // Hücre tıklaması süzülmüş İzleme Panosu'nu açar
+      await root.locator('[data-slot="mydash-widget"][data-type="type_heatmap"] [data-slot="mydash-heat-cell"][data-type="http"] button').click()
+      await expect(page).toHaveURL(/tab=monitoring/)
+      await expect(page).toHaveURL(/mo_type=http/)
+    })
+
     test('TV kipi ekranı kaplar, sayfalar döner, Esc ile kapanır', async ({ page }) => {
       test.setTimeout(120_000)
       const dashboard = { v: 1, widgets: [
@@ -251,7 +297,8 @@ test.describe('Panom TV — 1920×1080 duvar ekranı', () => {
       { id: 'oncall', type: 'oncall', size: 'sm' }, { id: 'monitor-health', type: 'monitor_health', size: 'md' },
       { id: 'storms', type: 'storms', size: 'sm' }, { id: 'watchdog', type: 'watchdog', size: 'sm' },
       { id: 'status-services', type: 'status_services', size: 'lg' }, { id: 'data-quality', type: 'data_quality', size: 'sm' },
-      { id: 'activity', type: 'activity', size: 'md' }] }
+      { id: 'activity', type: 'activity', size: 'md' }, { id: 'team-matrix', type: 'team_matrix', size: 'lg' },
+      { id: 'service-grid', type: 'service_grid', size: 'md' }, { id: 'type-heatmap', type: 'type_heatmap', size: 'sm' }] }
     await mock(page, { dashboard })
     await page.goto('/?tab=mydash&md_tv=1')
     const tv = page.locator('[data-slot="mydash-tv"]')

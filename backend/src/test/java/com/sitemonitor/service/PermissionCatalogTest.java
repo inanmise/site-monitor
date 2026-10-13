@@ -181,7 +181,7 @@ class PermissionCatalogTest {
         assertThat(PermissionCatalog.NOC_OPERATOR_GRANTS).containsExactlyInAnyOrder(
                 "alerts.read:view", "monitoring.read:view", "inventory.list:view", "notes.read:view",
                 "incidents.view:view", "maintenance.view:view", "domain.registration.view:view",
-                "monitoring.group:view", "noc_calls.write:edit");
+                "monitoring.group:view", "oncall.read:view", "data_quality.view:view", "noc_calls.write:edit");
         java.util.Set<String> known = new java.util.HashSet<>();
         for (PermissionCatalog.Resource r : PermissionCatalog.ALL) for (String a : r.actions) known.add(r.key + ":" + a);
         for (String g : PermissionCatalog.NOC_OPERATOR_GRANTS) {

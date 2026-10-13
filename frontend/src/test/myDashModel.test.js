@@ -4,7 +4,7 @@ import {
   effectiveLayout, monitorSummary, moveWidget, moveWidgetTo, normalizeLayout, oncallRows, paginate, qualityTone, readTvSettings,
   removeWidget, resizeWidget, rowsFor, sameLayout, spanOf, statusSummary, stormSummary, toDoc, typeVisible, visibleWidgets,
   writeTvSettings, NOC_CONSOLE, NOC_PRESET, NOC_CALL_SLA_MIN, STYLES, incidentsSummary, lightSummary, maintenanceSummary,
-  nocUncalledSummary, presetLayout, setWidgetStyle, statStyleOf,
+  nocUncalledSummary, presetLayout, setWidgetStyle, statStyleOf, MATRIX_NO_TEAM, healthTone, matrixCellFocus, serviceGrid, teamTypeMatrix, typeHeat,
 } from '../components/mydash/myDashModel.js'
 import { WIDGETS } from '../components/mydash/widgets.jsx'
 
@@ -224,6 +224,84 @@ describe('2026-10-13: 7/24 Komuta kutuları + renkli panel görünümü', () => 
     expect(incidentsSummary(inc([{ id: 2, severity: 'MEDIUM' }]))).toMatchObject({ severe: 0, tone: 'warning' })
     expect(incidentsSummary(inc([], { active_hidden: 3 }))).toMatchObject({ visible: 0, hidden: 3, tone: 'success' })
     expect(incidentsSummary(inc([], { active_unavailable: true })).unavailable).toBe(true)
+  })
+})
+
+describe('2026-10-13: Grafana tarzı ızgaralar', () => {
+  it('ton tablosu: çalışmıyor kırmızı, gecikmiş turuncu, ölçülmemiş / yalnız duraklatılmış gri, aksi yeşil', () => {
+    expect(healthTone({ active: 5, down: 1, stale: 2 })).toBe('danger')
+    expect(healthTone({ active: 5, stale: 2 })).toBe('warning')
+    expect(healthTone({ active: 5, unknown: 1 })).toBe('muted')
+    expect(healthTone({ active: 0 })).toBe('muted')
+    expect(healthTone({ active: 5 })).toBe('success')
+    expect(healthTone()).toBe('muted')
+  })
+  it('hizmet ızgarası: en kötü önce, sonra takım + ad (Türkçe); bilinmeyen durum "veri yok" (yeşil değil); tavan + kalan', () => {
+    const sp = { services: [
+      { key: 'a', name: 'Çağrı', team_name: 'B', state: 'operational' },
+      { key: 'b', name: 'Ödeme', team_name: 'A', state: 'major_outage' },
+      { key: 'c', name: 'Kart', team_name: 'A', state: 'degraded' },
+      { key: 'd', name: 'Arşiv', team_name: 'A', state: 'garip' },
+      { key: 'e', name: 'Bakım', team_name: 'A', state: 'maintenance' }] }
+    const g = serviceGrid(sp, 4)
+    expect(g.tiles.map((x) => x.key)).toEqual(['b', 'c', 'e', 'a'])
+    expect(g.more).toBe(1)
+    expect(g.total).toBe(5)
+    expect(serviceGrid(sp, 10).tiles.find((x) => x.key === 'd')).toMatchObject({ state: 'no_data', tone: 'muted' })
+    expect(serviceGrid(null).total).toBe(0)
+  })
+  it('tür ısı haritası: izlemesi olmayan / yalnız silinmiş tür çizilmez; sağlıklı = etkin − sorunlu − ölçülmemiş', () => {
+    const h = typeHeat({ types: [
+      { type: 'http', total: 10, active: 10, down: 2, stale: 1, unknown: 0 },
+      { type: 'ping', total: 4, active: 4, down: 0, stale: 0, unknown: 1 },
+      { type: 'dns', total: 3, active: 0, paused: 3 },
+      { type: 'port', total: 0 },
+      { type: 'page', total: 2, deleted: 2 },
+      { type: 'domain', total: 5, active: 5 }] })
+    expect(h.cells.map((c) => [c.type, c.tone])).toEqual([['http', 'danger'], ['ping', 'muted'], ['dns', 'muted'], ['domain', 'success']])
+    expect(h.cells[0].healthy).toBe(7)
+    expect(h).toMatchObject({ down: 2, stale: 1, problemTypes: 1, tone: 'danger' })
+    expect(typeHeat({ types: [] })).toMatchObject({ cells: [], tone: 'muted' })
+  })
+  it('takım × tür matrisi: silinmiş / envanterden çıkmış sayılmaz; en kötü takım önce, takımsız AYNI tondakiler arasında sonda; tavan', () => {
+    const row = (team_id, team_name, type, status, extra = {}) => ({ team_id, team_name, type, status, active: status !== 'paused', ...extra })
+    const ov = { types: [{ type: 'http' }, { type: 'ping' }, { type: 'dns' }], monitors: [
+      row(1, 'Ödeme', 'http', 'up'), row(1, 'Ödeme', 'ping', 'stale'),
+      row(2, 'Çağrı', 'http', 'down'), row(2, 'Çağrı', 'http', 'up'),
+      row(3, 'Arşiv', 'http', 'up'),
+      row(null, null, 'ping', 'down'),
+      row(4, 'Eski', 'dns', 'down', { deleted: true }),
+      row(5, 'Envanter', 'dns', 'paused', { inventory_inactive: true }),
+      row(3, 'Arşiv', 'ping', 'paused')] }
+    const m = teamTypeMatrix(ov, 10)
+    // Envanterden çıkmış satır İzleme Panosu'nda "duraklatılmış" listelenir → matris de sayar (hücre sayısı = liste)
+    expect(m.types).toEqual(['http', 'ping', 'dns'])
+    // inceleme: kırmızı takımsız satır tavanın altında kalmasın — ton önce, takımsız yalnız aynı tondakiler arasında sonda;
+    // yalnız duraklatılmış takım en sonda
+    expect(m.rows.map((r) => r.key)).toEqual(['2', MATRIX_NO_TEAM, '1', '3', '5'])
+    expect(m.rows[0].cells.http).toMatchObject({ total: 2, active: 2, down: 1, tone: 'danger' })
+    // Sağlıklı takımdaki yalnız duraklatılmış tür takımı griye çekmez (ısı haritasıyla aynı — inceleme tur 2)
+    expect(m.rows[3].cells.ping).toMatchObject({ paused: 1, active: 0, tone: 'muted' })
+    expect(m.rows[3].worst).toBe('success')
+    expect(m.rows[4]).toMatchObject({ worst: 'muted', live: false })
+    expect(matrixCellFocus(m.rows[4].cells.dns)).toEqual({ status: 'paused', count: 1 })
+    expect(m).toMatchObject({ totalTeams: 5, problemTeams: 3, tone: 'danger' })
+    expect(teamTypeMatrix(ov, 2)).toMatchObject({ more: 3 })
+    expect(teamTypeMatrix(ov, 2).rows.map((r) => r.key)).toEqual(['2', MATRIX_NO_TEAM])
+    expect(teamTypeMatrix({ monitors: [] })).toMatchObject({ rows: [], tone: 'muted' })
+    // Tümüyle duraklatılmış takım genel tonu griye çekmez (ısı haritasıyla aynı)
+    const calm = teamTypeMatrix({ types: [{ type: 'http' }, { type: 'ping' }], monitors: [row(1, 'A', 'http', 'up'), row(1, 'A', 'ping', 'paused'),
+      row(2, 'B', 'http', 'paused')] })
+    expect(calm.tone).toBe('success')
+    expect(calm.rows.map((r) => [r.key, r.worst])).toEqual([['1', 'success'], ['2', 'muted']])
+  })
+  it('matris hücresi: yazan sayı = bağlantının süzdüğü listedeki sayı (durum sırası çalışmıyor → gecikmiş → ölçülmedi → sağlıklı → duraklatılmış)', () => {
+    expect(matrixCellFocus({ down: 2, stale: 1, unknown: 1, active: 9, paused: 1 })).toEqual({ status: 'down', count: 2 })
+    expect(matrixCellFocus({ down: 0, stale: 3, active: 9 })).toEqual({ status: 'stale', count: 3 })
+    expect(matrixCellFocus({ down: 0, stale: 0, unknown: 2, active: 9 })).toEqual({ status: 'unknown', count: 2 })
+    expect(matrixCellFocus({ down: 0, stale: 0, unknown: 0, active: 9, paused: 4 })).toEqual({ status: 'up', count: 9 })
+    expect(matrixCellFocus({ active: 0, paused: 4 })).toEqual({ status: 'paused', count: 4 })
+    expect(matrixCellFocus(null)).toEqual({ status: null, count: 0 })
   })
 })
 

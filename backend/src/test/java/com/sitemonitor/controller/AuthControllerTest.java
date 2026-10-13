@@ -1380,4 +1380,50 @@ class AuthControllerTest {
         assertThat(unknownBlocked.replaceAll("\"wait_seconds\":\\d+", "\"wait_seconds\":N"))
                 .isEqualTo(existingBlocked.replaceAll("\"wait_seconds\":\\d+", "\"wait_seconds\":N"));
     }
+
+    @Test
+    @DisplayName("2026-10-13: GET /api/me/permissions görüş kapsamını taşır — 7/24 operatörü ve global görüntüleyici tüm kurum, düz kullanıcı kendi takımları")
+    void myPermissions_carriesScope() throws Exception {
+        MockHttpSession user = new MockHttpSession();
+        user.setAttribute("authenticated", Boolean.TRUE);
+        user.setAttribute("username", "kullanici");
+        user.setAttribute("systemRole", "USER");
+        mvc.perform(get("/api/me/permissions").session(user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope.monitoring_all").value(false))
+                .andExpect(jsonPath("$.scope.noc_operator").value(false))
+                .andExpect(jsonPath("$.scope.noc_console").value(false));
+
+        MockHttpSession operator = new MockHttpSession();
+        operator.setAttribute("authenticated", Boolean.TRUE);
+        operator.setAttribute("username", "nobetci");
+        operator.setAttribute("systemRole", "USER");
+        operator.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        mvc.perform(get("/api/me/permissions").session(operator))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope.monitoring_all").value(true))
+                .andExpect(jsonPath("$.scope.noc_operator").value(true))
+                .andExpect(jsonPath("$.scope.noc_console").value(true));
+
+        // Kapsamlı müdür: ADMIN rol satırı noc_calls.write verir ama konsol onu reddeder (inceleme); servis yokken yedek kural da reddeder
+        MockHttpSession scoped = new MockHttpSession();
+        scoped.setAttribute("authenticated", Boolean.TRUE);
+        scoped.setAttribute("username", "mudur");
+        scoped.setAttribute("systemRole", "ADMIN");
+        scoped.setAttribute("viewTeamIds", java.util.List.of(5L));
+        mvc.perform(get("/api/me/permissions").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope.monitoring_all").value(false))
+                .andExpect(jsonPath("$.scope.noc_console").value(false));
+
+        MockHttpSession audit = new MockHttpSession();
+        audit.setAttribute("authenticated", Boolean.TRUE);
+        audit.setAttribute("username", "denetci");
+        audit.setAttribute("systemRole", "AUDIT");
+        mvc.perform(get("/api/me/permissions").session(audit))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope.monitoring_all").value(true))
+                .andExpect(jsonPath("$.scope.noc_operator").value(false))
+                .andExpect(jsonPath("$.scope.noc_console").value(true));
+    }
 }

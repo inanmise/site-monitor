@@ -82,6 +82,21 @@ describe('PermissionsProvider — eşit yetki yanıtı yeniden çizim üretmez',
     expect(latest.canView('alerts.read')).toBe(true)
   })
 
+  it('2026-10-13: görüş kapsamı (scope) yanıttan okunur, tazelenince değişir; eski sunucu göndermezse null', async () => {
+    getPermissions.mockResolvedValue({ success: true, data: { 'alerts.read': { view: true } },
+      scope: { monitoring_all: true, noc_operator: true, noc_console: true } })
+    render(<PermissionsProvider user="u"><Consumer /></PermissionsProvider>)
+    await waitFor(() => expect(latest.scope).toEqual({ monitoring_all: true, noc_operator: true, noc_console: true }))
+    // 7/24 takımından çıkarıldı: bir sonraki yoklamada kapsam daralır (yeniden giriş gerekmez)
+    getPermissions.mockResolvedValue({ success: true, data: { 'alerts.read': { view: true } },
+      scope: { monitoring_all: false, noc_operator: false, noc_console: false } })
+    await act(async () => { await latest.refresh() })
+    expect(latest.scope.noc_console).toBe(false)
+    getPermissions.mockResolvedValue({ success: true, data: { 'alerts.read': { view: true } } })
+    await act(async () => { await latest.refresh() })
+    expect(latest.scope).toBeNull()
+  })
+
   it('2026-10-12: sağlayıcı yoksa loaded=true (eski davranış)', () => {
     render(<Consumer />)
     expect(latest.loaded).toBe(true)

@@ -38,6 +38,11 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'data_quality',    size: 'sm', tab: 'dataquality',  perm: 'data_quality.view' },
   { type: 'maintenance',     size: 'sm', tab: 'maintenance',  perm: 'maintenance.view' },
   { type: 'incidents_open',  size: 'md', tab: 'incident-history', perm: 'incidents.view' },
+  // Grafana tarzı ızgaralar (2026-10-13): renkli kutucuk / ısı haritası / matris — kendileri zaten renkli panel olduğundan
+  // "renkli panel" (stat) görünümleri yok, TV'de ızgara olarak kalırlar
+  { type: 'service_grid',    size: 'md', tab: 'status',       perm: null },
+  { type: 'type_heatmap',    size: 'sm', tab: 'monitoring',   perm: 'monitoring.read' },
+  { type: 'team_matrix',     size: 'lg', tab: 'monitoring',   perm: 'monitoring.read' },
 ])
 
 /** Sahte izin: 7/24 konsolunu açabilir mi (sayfa `canView`'u sarar; izin matrisi anahtarı DEĞİL). */
@@ -506,4 +511,125 @@ export function incidentsSummary(sp) {
     rows, visible, severe, hidden: n(inc.active_hidden), unavailable: inc.active_unavailable === true,
     tone: severe > 0 ? 'danger' : visible > 0 ? 'warning' : 'success',
   }
+}
+
+// ── Grafana tarzı ızgaralar (2026-10-13) ────────────────────────────────────────────────────────────────────
+
+/** Hizmet durumu → ton (durum sayfasıyla aynı anlam). */
+export const SERVICE_TONE = Object.freeze({
+  major_outage: 'danger', partial_outage: 'danger', degraded: 'warning', maintenance: 'info', operational: 'success', no_data: 'muted',
+})
+const TR_COLLATOR = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })
+
+/**
+ * Hizmet ızgarası (`/api/status-page` services): her hizmet bir kutucuk, EN KÖTÜ durum önce, sonra takım + ad (Türkçe
+ * sıralama). Bilinmeyen durum `no_data` sayılır (asla yeşil değil). `limit` kadar kutucuk, kalanı `more`.
+ */
+export function serviceGrid(sp, limit = 24) {
+  const services = (Array.isArray(sp?.services) ? sp.services : []).filter((x) => x && typeof x === 'object')
+  const tiles = services.map((x) => {
+    const state = SERVICE_TONE[x.state] ? x.state : 'no_data'
+    return { ...x, state, tone: SERVICE_TONE[state] }
+  }).sort((a, b) => (STATE_RANK[b.state] - STATE_RANK[a.state])
+    || TR_COLLATOR.compare(String(a.team_name || ''), String(b.team_name || ''))
+    || TR_COLLATOR.compare(String(a.name || ''), String(b.name || '')))
+  const cap = Math.max(0, limit | 0)
+  return { tiles: tiles.slice(0, cap), more: Math.max(0, tiles.length - cap), total: tiles.length, summary: statusSummary(sp, 0) }
+}
+
+/** İzleme sayaçlarından ton: çalışmıyor → kırmızı, gecikmiş → turuncu, ölçülmemiş / yalnız duraklatılmış → gri, aksi yeşil. */
+export function healthTone({ active = 0, down = 0, stale = 0, unknown = 0 } = {}) {
+  if (down > 0) return 'danger'
+  if (stale > 0) return 'warning'
+  if (active <= 0 || unknown > 0) return 'muted'
+  return 'success'
+}
+
+/**
+ * İzleme türü ısı haritası (`/api/monitoring/overview` types): her tür bir hücre, en kötü durumunun renginde. Hiç izlemesi
+ * olmayan tür (toplam 0) çizilmez; yalnız duraklatılmış izlemeleri olan tür gri. Sıra sunucunun (katalog) sırası.
+ */
+export function typeHeat(ov) {
+  const cells = (Array.isArray(ov?.types) ? ov.types : [])
+    .filter((x) => x && n(x.total) - n(x.deleted) > 0)
+    .map((x) => {
+      const c = { type: String(x.type), active: n(x.active), down: n(x.down), stale: n(x.stale), unknown: n(x.unknown), paused: n(x.paused) }
+      return { ...c, healthy: Math.max(0, c.active - c.down - c.stale - c.unknown), tone: healthTone(c) }
+    })
+  const down = cells.reduce((a, c) => a + c.down, 0)
+  const stale = cells.reduce((a, c) => a + c.stale, 0)
+  const unknown = cells.reduce((a, c) => a + c.unknown, 0)
+  const active = cells.reduce((a, c) => a + c.active, 0)
+  return { cells, down, stale, unknown, active, problemTypes: cells.filter((c) => c.tone === 'danger' || c.tone === 'warning').length,
+    tone: healthTone({ active, down, stale, unknown }) }
+}
+
+/**
+ * Matris hücresinin sayısı ve bağlantı durumu: hücrede yazan sayı, bağlantının açtığı (takım + tür + durum süzülmüş)
+ * İzleme Panosu listesindeki satır sayısıyla aynıdır (inceleme 2026-10-13). Çalışmıyor → gecikmiş → ölçülmedi → sağlıklı →
+ * duraklatılmış.
+ */
+export function matrixCellFocus(c) {
+  if (!c) return { status: null, count: 0 }
+  if (c.down > 0) return { status: 'down', count: c.down }
+  if (c.stale > 0) return { status: 'stale', count: c.stale }
+  if (c.unknown > 0) return { status: 'unknown', count: c.unknown }
+  if (c.active > 0) return { status: 'up', count: c.active }
+  return { status: 'paused', count: c.paused }
+}
+
+/** Takımsız izlemelerin anahtarı (İzleme Panosu `mo_team` süzgeciyle aynı: overviewFilters.NO_TEAM). */
+export const MATRIX_NO_TEAM = '__none'
+const TONE_RANK = Object.freeze({ danger: 0, warning: 1, muted: 2, success: 3 })
+
+/**
+ * Takım × izleme türü matrisi (`/api/monitoring/overview` monitors): silinmiş ve envanterden çıkmış (taranmayan) satırlar
+ * sayılmaz. Hücre = o takımın o türdeki izlemeleri; ton `healthTone`. Sütunlar yalnız en az bir izlemesi olan türler
+ * (sunucunun tür sırasıyla). Takımlar en kötü hücreye göre (kırmızı → turuncu → gri → yeşil), sonra ad; takımsız en sonda.
+ */
+export function teamTypeMatrix(ov, limit = 10) {
+  const order = (Array.isArray(ov?.types) ? ov.types : []).map((x) => String(x?.type))
+  const teams = new Map()
+  const used = new Set()
+  for (const r of Array.isArray(ov?.monitors) ? ov.monitors : []) {
+    // Envanterden çıkmış (taranmayan) satır İzleme Panosu'nda "duraklatılmış" listelenir (sunucu: active=false, status
+    // paused) — matris de duraklatılmış sayar; atlanınca hücre sayısı bağlantının listesinden az çıkıyordu (inceleme tur 2)
+    if (!r || r.deleted === true || !r.type) continue
+    const key = r.team_id != null ? String(r.team_id) : MATRIX_NO_TEAM
+    let tm = teams.get(key)
+    if (!tm) { tm = { key, name: r.team_name || null, cells: {} }; teams.set(key, tm) }
+    const type = String(r.type)
+    used.add(type)
+    const c = tm.cells[type] || (tm.cells[type] = { total: 0, active: 0, down: 0, stale: 0, unknown: 0, paused: 0 })
+    c.total += 1
+    if (r.active === true) {
+      c.active += 1
+      if (r.status === 'down') c.down += 1
+      else if (r.status === 'stale') c.stale += 1
+      else if (r.status !== 'up') c.unknown += 1
+    } else c.paused += 1
+  }
+  const types = [...order.filter((t) => used.has(t)), ...[...used].filter((t) => !order.includes(t)).sort()]
+  const rows = [...teams.values()].map((tm) => {
+    for (const c of Object.values(tm.cells)) c.tone = healthTone(c)
+    // Takımın tonu yalnız ETKİN izlemesi olan hücrelerden (yalnız duraklatılmış tür, sağlıklı takımı griye çekmez — inceleme
+    // tur 2); hiç etkin izlemesi yoksa gri ve en sonda
+    const liveCells = Object.values(tm.cells).filter((c) => c.active > 0)
+    const live = liveCells.length > 0
+    const worst = live ? liveCells.map((c) => c.tone).reduce((w, t) => (TONE_RANK[t] < TONE_RANK[w] ? t : w), 'success') : 'muted'
+    const problems = Object.values(tm.cells).reduce((a, c) => a + c.down + c.stale, 0)
+    return { ...tm, worst, problems, live }
+  // En kötü ton ÖNCE; takımsız satır yalnız aynı tondakiler arasında sonda (inceleme 2026-10-13: kırmızı takımsız satır satır
+  // tavanının altında kalıp "+N" içinde kayboluyordu — sahipsiz alarm kimseye gitmez, en çok görünmesi gereken o); yalnız
+  // duraklatılmış takımlar en sonda
+  }).sort((a, b) => (a.live ? TONE_RANK[a.worst] : 4) - (b.live ? TONE_RANK[b.worst] : 4)
+    || (a.key === MATRIX_NO_TEAM) - (b.key === MATRIX_NO_TEAM) || b.problems - a.problems
+    || TR_COLLATOR.compare(String(a.name || a.key), String(b.name || b.key)))
+  const cap = Math.max(0, limit | 0)
+  const problemTeams = rows.filter((r) => r.worst === 'danger' || r.worst === 'warning').length
+  // Genel ton etkin izlemesi olan takımlardan (tümüyle duraklatılmış takım "her şey yolunda"yı griye çekmez — ısı haritasıyla aynı)
+  const live = rows.filter((r) => r.live)
+  const tone = live.length === 0 ? 'muted' : live.some((r) => r.worst === 'danger') ? 'danger'
+    : live.some((r) => r.worst === 'warning') ? 'warning' : live.every((r) => r.worst === 'success') ? 'success' : 'muted'
+  return { types, rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap), totalTeams: rows.length, problemTeams, tone }
 }
