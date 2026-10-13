@@ -3,6 +3,7 @@
 // kipinde dokunmatik hedefler ≥ 40 px ve taşı / boyut / kaldır doğru tercih gövdesiyle kaydedilir; TV kipi ekranı kaplar,
 // sayfalar arasında geçer, Esc / Çık ile kapanır. API mock'lu (bildirim yok).
 import { test, expect } from '@playwright/test'
+import { STAT_DEFS } from '../src/components/mydash/statDefs.js'
 
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
@@ -100,7 +101,8 @@ function clipped(sel) {
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
   return [...root.querySelectorAll('span, p, li')]
-    .filter((n) => n.childElementCount === 0 && n.textContent.trim().length > 20
+    // Ekran okuyucuya özel metin (sr-only) kasıtlı olarak 1 px'tir — kırpılma sayılmaz
+    .filter((n) => n.childElementCount === 0 && n.textContent.trim().length > 20 && !n.closest('.sr-only')
       && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis')).map((n) => n.textContent.slice(0, 30))
 }
 
@@ -353,3 +355,131 @@ test.describe('Panom TV — 1920×1080 duvar ekranı', () => {
     }
   })
 })
+
+// TV yoğunluğu (2026-10-13, kullanıcı isteği: "TV modunda bir ekranda daha fazla kutu; büyüklüğü ona göre; boş alanlar
+// kullanılsın"): 1920 × 1080'de 14 renkli panel varsayılan "Sık"ta TEK ekrana sığar (eski düzende iki sayfa), "Rahat" iki
+// sayfa, "Çok sık" tek; az kutulu sayfa ekranı doldurur; yazılar hücreyle ölçeklenir, kesilmez, taşmaz.
+test.describe('Panom TV — yoğunluk 1920×1080', () => {
+  test.use({ viewport: { width: 1920, height: 1080 } })
+  test('daha çok kutu tek ekranda; seyrek sayfa ekranı doldurur; okunur yazı', async ({ page }) => {
+    test.setTimeout(120_000)
+    const dashboard = { v: 1, widgets: STAT_DEFS.map((d) => ({ id: d.type.replace(/_/g, '-'), type: d.type, size: 'sm' })) }
+    await mock(page, { dashboard, noc: true })
+    await page.goto('/?tab=mydash&md_tv=1')
+    const tv = page.locator('[data-slot="mydash-tv"]')
+    await expect(tv.locator('[data-slot="mydash-widget"][data-stat="on"]').first()).toBeVisible({ timeout: 20_000 })
+    await expect(tv.locator('[data-slot="mydash-tv-density"]')).toHaveValue('compact')
+    await expect(tv).toHaveAttribute('data-pages', '1')
+    const active = tv.locator('[data-slot="mydash-tv-page"][data-active="true"]')
+    await expect(active.locator('[data-slot="mydash-widget"]')).toHaveCount(14)
+    await page.waitForTimeout(400)
+    const check = async (label) => {
+      const r = await page.evaluate(() => {
+        const m = document.querySelector('[data-slot="mydash-tv"] main')
+        const g = m.querySelector('[data-slot="mydash-tv-page"][data-active="true"]')
+        const mr = m.getBoundingClientRect()
+        const cs = getComputedStyle(m)
+        const innerBottom = mr.bottom - parseFloat(cs.paddingBottom)
+        const values = [...g.querySelectorAll('[data-slot="mydash-stat-value"]')].map((v) => parseFloat(getComputedStyle(v).fontSize))
+        const outside = [...g.querySelectorAll('[data-slot="mydash-widget"]')]
+          .filter((w) => { const b = w.getBoundingClientRect(); return b.bottom > innerBottom + 1 || b.right > mr.right + 1 }).length
+        const overflow = [...g.querySelectorAll('[data-slot="mydash-widget"] [data-slot="card"]')]
+          .filter((c) => c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1)
+          .map((c) => `${c.closest('[data-slot="mydash-widget"]').getAttribute('data-type')} ${c.scrollHeight}/${c.clientHeight}`)
+        return { fit: Number(m.getAttribute('data-fit')), gap: Math.round(innerBottom - g.getBoundingClientRect().bottom),
+          minFont: Math.min(...values), outside, overflow }
+      })
+      expect(r.fit, `${label}: ölçeklenmedi`).toBe(1)
+      expect(r.outside, `${label}: ekran dışında kutu`).toBe(0)
+      expect(r.overflow, `${label}: kart içi taşma`).toEqual([])
+      expect(r.gap, `${label}: sayfa ekranı doldurur (alt boşluk)`).toBeLessThanOrEqual(24)
+      expect(r.minFont, `${label}: değer okunur`).toBeGreaterThanOrEqual(28)
+      expect(await page.evaluate(clipped, '[data-slot="mydash-tv"]'), `${label}: kırpılan metin`).toEqual([])
+    }
+    await check('Sık')
+    await page.screenshot({ path: 'test-results/mydash-tv-density-compact.png' })
+
+    await tv.locator('[data-slot="mydash-tv-density"]').selectOption('comfortable')
+    await expect(tv).toHaveAttribute('data-pages', '2')
+    await expect(tv).toHaveAttribute('data-page', '1')
+    await page.waitForTimeout(300)
+    await check('Rahat s1')
+    await tv.locator('[data-slot="mydash-tv-next"]').click()
+    await expect(tv).toHaveAttribute('data-page', '2')
+    // Son sayfadaki 6 panel 4 × 2 ızgarada iki boş hücre bırakmaz — kendi ızgarası (3 × 2) ekranı doldurur
+    await expect(tv.locator('[data-slot="mydash-tv-page"][data-active="true"]')).toHaveAttribute('data-cols', '3')
+    await page.waitForTimeout(300)
+    await check('Rahat s2')
+    await page.screenshot({ path: 'test-results/mydash-tv-density-comfortable-p2.png' })
+
+    await tv.locator('[data-slot="mydash-tv-density"]').selectOption('dense')
+    await expect(tv).toHaveAttribute('data-pages', '1')
+    await page.waitForTimeout(300)
+    await check('Çok sık')
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('sm.mydash.tv')).density)).toBe('dense')
+  })
+})
+
+// Küçük duvar ekranları (inceleme 2026-10-13): Çok sık / Sık yoğunlukta 1366 × 768 ve 1280 × 720'de uzun alt satırlı paneller
+// (bakım, olaylar, izleme sağlığı) dahil HİÇBİR kart taşmaz / kırpılmaz, sayfa küçültülmez; panel hücresinde liste gövdesi yok.
+for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }, { width: 1440, height: 900, failAlerts: true }]) {
+  test.describe(`Panom TV — küçük duvar ${vp.width}×${vp.height}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } })
+    test('Çok sık ve Sık: taşma, kırpılma, küçültme yok', async ({ page }) => {
+      test.setTimeout(120_000)
+      const extra = ['maintenance', 'incidents_open', 'monitor_health', 'noc_light', 'storms', 'data_quality']
+      const dashboard = { v: 1, widgets: [
+        ...STAT_DEFS.map((d) => ({ id: d.type.replace(/_/g, '-'), type: d.type, size: 'sm' })),
+        ...extra.map((type) => ({ id: type.replace(/_/g, '-'), type, size: 'md' })),
+      ] }
+      await mock(page, { dashboard, noc: true })
+      // 1440 × 900: alarm özeti ilk yüklemede 500 — panel hücrelerinde hata durumu da sığmalı (inceleme 2026-10-13)
+      if (vp.failAlerts) {
+        await page.route((u) => new URL(u).pathname === '/api/me/open-alerts', (route) => route.fulfill({
+          status: 500, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'INTERNAL', error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra yeniden deneyin.' }),
+        }))
+      }
+      await page.addInitScript(() => { try { localStorage.setItem('sm.mydash.tv', JSON.stringify({ interval: 0, panels: 'stat', density: 'dense' })) } catch { /* yok */ } })
+      await page.goto('/?tab=mydash&md_tv=1')
+      const tv = page.locator('[data-slot="mydash-tv"]')
+      await expect(tv.locator('[data-slot="mydash-widget"]').first()).toBeVisible({ timeout: 20_000 })
+      for (const density of ['dense', 'compact']) {
+        await tv.locator('[data-slot="mydash-tv-density"]').selectOption(density)
+        const pages = Number(await tv.getAttribute('data-pages'))
+        for (let i = 0; i < pages; i++) {
+          await expect(tv).toHaveAttribute('data-page', String(i + 1))
+          await page.waitForTimeout(350)
+          const r = await page.evaluate(() => {
+            const m = document.querySelector('[data-slot="mydash-tv"] main')
+            const g = m.querySelector('[data-slot="mydash-tv-page"][data-active="true"]')
+            // Dikdörtgen denetimi: kartın HER görünür öğesi kartın içinde (scrollHeight, içeriğin alt satırla çakışmasını görmez)
+            const over = []
+            for (const c of g.querySelectorAll('[data-slot="mydash-widget"] [data-slot="card"]')) {
+              const cr = c.getBoundingClientRect()
+              const bad = [...c.querySelectorAll('*')].filter((el) => {
+                if (el.closest('.sr-only')) return false
+                const r = el.getBoundingClientRect()
+                return r.width > 0 && r.height > 0 && (r.bottom > cr.bottom + 1 || r.right > cr.right + 1 || r.top < cr.top - 1)
+              })
+              if (bad.length) over.push(`${c.closest('[data-slot="mydash-widget"]').getAttribute('data-type')} ${bad[0].tagName}`)
+            }
+            const listInCell = [...g.querySelectorAll('[data-slot="mydash-widget"]')]
+              .filter((w) => w.querySelector('[data-slot="card"]')?.style.containerType === 'size'
+                && w.querySelector('[data-slot="mydash-widget-body"]:not([data-placeholder]) ul, [data-slot="mydash-widget-body"]:not([data-placeholder]) table'))
+              .map((w) => w.getAttribute('data-type'))
+            return { fit: Number(m.getAttribute('data-fit')), clipped: m.hasAttribute('data-clipped'), over, listInCell }
+          })
+          const label = `${density} s${i + 1}`
+          expect(r.over, `${label}: kart taşması`).toEqual([])
+          expect(r.listInCell, `${label}: panel hücresinde liste`).toEqual([])
+          expect(r.clipped, `${label}: sayfa kayıyor`).toBe(false)
+          expect(r.fit, `${label}: çok küçültüldü`).toBeGreaterThanOrEqual(0.85)
+          expect(await page.evaluate(clipped, '[data-slot="mydash-tv"]'), `${label}: kırpılan metin`).toEqual([])
+          if (i === 0) await page.screenshot({ path: `test-results/mydash-tv-small-${vp.width}-${density}.png` })
+          if (vp.failAlerts && i === 0) await expect(tv.locator('[data-slot="mydash-widget-failed"][data-short="true"]').first()).toBeVisible()
+          if (i < pages - 1) await tv.locator('[data-slot="mydash-tv-next"]').click()
+        }
+      }
+    })
+  })
+}

@@ -311,8 +311,19 @@ describe('MyDashPage', () => {
     })
     expect(isTvModeActive()).toBe(true)
     await waitFor(() => expect(window.location.search).toContain('md_tv=1'))
-    // jsdom 1024×768 → 3 sütun × 1 satır → 7 varsayılan kutu (orta + küçük çiftleri) dört sayfa
-    expect(tv).toHaveAttribute('data-pages', '4')
+    // jsdom 1024×768, varsayılan "Sık" yoğunluk (2026-10-13): 3 × 2 ızgara, renkli paneller tek hücre → 7 varsayılan kutu
+    // İKİ sayfa (eski 3 × 1 düzende dört sayfaydı); "Çok sık" daha fazla değil, "Rahat" daha çok sayfa
+    expect(tv).toHaveAttribute('data-pages', '2')
+    const density = within(tv).getByRole('combobox', { name: /^(Widget density|Kutu yoğunluğu)$/ })
+    fireEvent.change(density, { target: { value: 'dense' } })
+    expect(Number(tv.getAttribute('data-pages'))).toBeLessThanOrEqual(2)
+    expect(Number(tv.querySelector('[data-slot="mydash-tv-page"][data-active="true"]').getAttribute('data-cols')) *
+      Number(tv.querySelector('[data-slot="mydash-tv-page"][data-active="true"]').getAttribute('data-rows'))).toBeGreaterThanOrEqual(6)
+    fireEvent.change(density, { target: { value: 'comfortable' } })
+    expect(Number(tv.getAttribute('data-pages'))).toBeGreaterThan(2)
+    expect(JSON.parse(localStorage.getItem('sm.mydash.tv')).density).toBe('comfortable')
+    fireEvent.change(density, { target: { value: 'compact' } })
+    expect(tv).toHaveAttribute('data-pages', '2')
     expect(tv).toHaveAttribute('data-page', '1')
     fireEvent.click(within(tv).getByRole('button', { name: /^(Next page|Sonraki sayfa)$/ }))
     expect(tv).toHaveAttribute('data-page', '2')

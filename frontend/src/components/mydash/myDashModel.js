@@ -13,6 +13,7 @@
 
 import { zonedMs } from '../../utils/relativeTime.js'
 import { STAT_DEFS } from './statDefs.js'
+import { TV_DEFAULT_DENSITY, normalizeDensity } from './tvLayout.js'
 
 export const MAX_WIDGETS = 24
 export const SIZES = Object.freeze(['sm', 'md', 'lg'])
@@ -280,7 +281,7 @@ export function formatPct(v, lang, digits = 1) {
 export const TV_INTERVALS = Object.freeze([0, 15, 30, 60, 120])
 /** `panels`: TV'de kutular renkli panel (`stat`, varsayılan — uzaktan tek bakışta okunur) ya da ayrıntılı (`detail`). */
 export const TV_PANELS = Object.freeze(['stat', 'detail'])
-export const TV_DEFAULT = Object.freeze({ interval: 30, panels: 'stat' })
+export const TV_DEFAULT = Object.freeze({ interval: 30, panels: 'stat', density: TV_DEFAULT_DENSITY })
 const TV_KEY = 'sm.mydash.tv'
 
 /** TV ayarı (dönüş aralığı + panel görünümü) — izleyici başına kolaylık, yalnız bu tarayıcıda (eşitlenmez). */
@@ -291,6 +292,7 @@ export function readTvSettings() {
     return {
       interval: TV_INTERVALS.includes(interval) ? interval : TV_DEFAULT.interval,
       panels: TV_PANELS.includes(raw?.panels) ? raw.panels : TV_DEFAULT.panels,
+      density: normalizeDensity(raw?.density),
     }
   } catch {
     return { ...TV_DEFAULT }
@@ -301,6 +303,7 @@ export function writeTvSettings(s) {
   try {
     localStorage.setItem(TV_KEY, JSON.stringify({
       interval: s.interval, panels: TV_PANELS.includes(s.panels) ? s.panels : TV_DEFAULT.panels,
+      density: normalizeDensity(s.density),
     }))
   } catch { /* depolama kapalı */ }
 }
@@ -308,6 +311,20 @@ export function writeTvSettings(s) {
 /** Kutu renkli panel olarak mı çizilir: kutunun kendi görünümü ya da TV'nin "renkli paneller" ayarı. */
 export function statStyleOf(widget, tv, tvPanels) {
   return widget?.style === 'stat' || (!!tv && tvPanels !== 'detail')
+}
+
+/** Renkli panel (tek büyük sayı) görünümü OLMAYAN kutular — liste / ızgara; TV'de okunur yükseklik ister. */
+export const DETAIL_ONLY_TYPES = Object.freeze(new Set(['oncall', 'activity', 'service_grid', 'type_heatmap', 'team_matrix']))
+
+/**
+ * TV'de kutu ayrıntılı mı çizilecek (liste / ızgara — tek hücreye sığmaz): renkli paneli hiç olmayan tür ya da renkli panel
+ * kapalıyken (ayar "ayrıntılı" ve kutunun kendi görünümü stat değil) normal kutu. Renkli panel kutuları (stat_*) hep paneldir.
+ */
+export function tvDetail(widget, tvPanels) {
+  const type = widget?.type
+  if (DETAIL_ONLY_TYPES.has(type)) return true
+  if (catalogEntry(type)?.group === 'stat') return false
+  return !statStyleOf(widget, true, tvPanels)
 }
 
 // ── Kutu özetleri (sunucu yanıtı → ekran) ────────────────────────────────────────────────────────────────────

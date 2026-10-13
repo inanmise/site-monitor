@@ -6,11 +6,13 @@ import { Button } from '@/components/shadcn/button'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Toggle } from '@/components/shadcn/toggle'
 import { cn } from '@/lib/utils'
-import { TV_INTERVALS, columnsFor, paginate, readTvSettings, rowsFor, spanOf, statStyleOf, writeTvSettings } from './myDashModel.js'
+import { TV_INTERVALS, readTvSettings, statStyleOf, tvDetail, writeTvSettings } from './myDashModel.js'
+import { TV_DENSITIES, TV_GAP, cellSize, layoutTv } from './tvLayout.js'
 import { WIDGETS } from './widgets.jsx'
 
 const CONTROLS_HIDE_MS = 4000
-const PAD = 48   // yatay iç boşluk (sütun eşiği için)
+const PAD = 48   // ana alanın iç boşluğu (ölçüm yokken tahmin)
+const BAR = 64   // üst çubuk (ölçüm yokken tahmin)
 /** Sığdırma ölçeğinin alt sınırı — daha küçüğü duvardan okunmaz; o durumda sayfa kayar (satır tahmini yanılmış demektir). */
 export const MIN_FIT = 0.6
 
@@ -57,6 +59,30 @@ function useViewport() {
   return vp
 }
 
+/**
+ * Sayfa ızgarasının kullanabileceği alan (px): ana alanın iç boyu (ölçülür — üst çubuk / izin şeridi değişince de doğru);
+ * ölçüm yoksa (ilk çizim, jsdom) pencereden tahmin. Tam sayıya yuvarlanır, küçük titreşimde yeniden hesaplanmaz.
+ */
+function useAvailableArea(mainRef, vw, vh) {
+  const [area, setArea] = useState(null)
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main) return undefined
+    const measure = () => {
+      const cs = getComputedStyle(main)
+      const w = Math.floor(main.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0))
+      const h = Math.floor(main.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0))
+      if (w > 0 && h > 0) setArea((prev) => (prev && Math.abs(prev.w - w) < 2 && Math.abs(prev.h - h) < 2 ? prev : { w, h }))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(measure)
+    ro.observe(main)
+    return () => ro.disconnect()
+  }, [mainRef])
+  return area || { w: Math.max(1, vw - PAD), h: Math.max(1, vh - BAR - PAD) }
+}
+
 /** Saat (SS:dd) — kendi bileşeninde, 15 sn'de bir; üst bileşen her tıkta yeniden çizilmez. */
 function TvClock() {
   const [now, setNow] = useState(() => new Date())
@@ -87,20 +113,24 @@ function TvClock() {
 export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = false, onRetryPerms }) {
   const t = useT()
   const [vw, vh] = useViewport()
-  const cols = columnsFor(vw - PAD)
-  const rows = rowsFor(vh)
-  const pages = useMemo(() => paginate(widgets, cols, rows), [widgets, cols, rows])
-  const [slide, setSlide] = useState(0)
   const [settings, setSettings] = useState(readTvSettings)
+  const mainRef = useRef(null)
+  const area = useAvailableArea(mainRef, vw, vh)
+  // Sayfalar (2026-10-13): yoğunluğa göre en çok ızgara, iki boyutlu ilk-uyan dizilim, her sayfa kendi en büyük hücreli
+  // ızgarası — ekranda daha çok kutu, az kutulu sayfada boş alan kalmaz (tvLayout.js)
+  const pages = useMemo(() => layoutTv(
+    (widgets || []).filter((w) => WIDGETS[w.type]).map((w) => ({ id: w.id, size: w.size, detail: tvDetail(w, settings.panels), widget: w })),
+    area.w, area.h, settings.density,
+  ), [widgets, area.w, area.h, settings.density, settings.panels])
+  const [slide, setSlide] = useState(0)
   const [paused, setPaused] = useState(false)
   const [controls, setControls] = useState(true)
   const [fullscreen, setFullscreen] = useState(() => typeof document !== 'undefined' && !!document.fullscreenElement)
   const hideTimer = useRef(null)
-  const mainRef = useRef(null)
   const rootRef = useRef(null)
   const count = pages.length
   const cur = count ? Math.min(slide, count - 1) : 0
-  const { fit, clipped } = useFitScale(mainRef, [cur, count, cols, rows, settings.panels])
+  const { fit, clipped } = useFitScale(mainRef, [cur, count, area.w, area.h, settings.panels, settings.density])
 
   useEffect(() => {
     setTvModeActive(true)
@@ -203,7 +233,7 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
     const root = rootRef.current
     if (!root) return
     const items = [...root.querySelectorAll('button:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
-      .filter((el) => !el.closest('[hidden]'))
+      .filter((el) => !el.closest('[hidden]') && !el.closest('[aria-hidden="true"]'))
     if (!items.length) { e.preventDefault(); root.focus(); return }
     const first = items[0]
     const last = items[items.length - 1]
@@ -229,6 +259,15 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
     const next = { ...settings, panels: on ? 'stat' : 'detail' }
     setSettings(next)
     writeTvSettings(next)
+    // Ayrıntılı kutular daha çok yer ister → sayfalar değişir; eski sayfa numarası başka kutuları gösterirdi
+    setSlide(0)
+  }
+  // Yoğunluk (2026-10-13): ekrana sığan en çok kutu — Rahat (büyük, uzaktan), Sık (varsayılan), Çok sık; bu tarayıcıda
+  const setDensity = (v) => {
+    const next = { ...settings, density: v }
+    setSettings(next)
+    writeTvSettings(next)
+    setSlide(0)
   }
 
   const btn = 'h-10 min-w-10'
@@ -244,13 +283,15 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
           <span className="min-w-0 [overflow-wrap:anywhere]">{t('mydash.title')}</span>
         </div>
         <span className="text-lg text-muted-foreground sm:text-xl"><TvClock /></span>
-        {count > 1 && (
-          <span className="text-sm text-muted-foreground tabular-nums" aria-live="polite" data-slot="mydash-tv-pageinfo">
-            {t('mydash.tv.page', cur + 1, count)}
-          </span>
-        )}
+        {/* Tek sayfada da YER kaplar (görünmez): üst çubuk boyu sayfa sayısıyla değişirse ölçülen alan → yerleşim → sayfa
+            sayısı döngüye girebiliyordu (inceleme 2026-10-13) */}
+        <span className={cn('text-sm text-muted-foreground tabular-nums', count < 2 && 'invisible')} aria-hidden={count < 2 || undefined}
+          aria-live="polite" data-slot="mydash-tv-pageinfo">
+          {t('mydash.tv.page', cur + 1, Math.max(1, count))}
+        </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {count > 1 && (
+          <div className={cn('flex flex-wrap items-center gap-2', count < 2 && 'invisible')} aria-hidden={count < 2 || undefined}
+            data-slot="mydash-tv-nav">
             <>
               <Button type="button" variant="outline" size="icon" className={btn} aria-label={t('mydash.tv.prev')} title={t('mydash.tv.prev')} onClick={() => go(-1)}>
                 <ChevronLeft aria-hidden="true" />
@@ -271,7 +312,13 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
                 ))}
               </NativeSelect>
             </>
-          )}
+          </div>
+          <NativeSelect value={settings.density} onChange={(e) => setDensity(e.target.value)} className="h-10"
+            aria-label={t('mydash.tv.density')} title={t('mydash.tv.densityTitle')} data-slot="mydash-tv-density">
+            {TV_DENSITIES.map((d) => (
+              <NativeSelectOption key={d} value={d}>{t(`mydash.tv.density.${d}`)}</NativeSelectOption>
+            ))}
+          </NativeSelect>
           <Toggle variant="outline" pressed={settings.panels !== 'detail'} onPressedChange={setPanels} className={cn(btn, 'gap-1.5 px-3')}
             aria-label={t('mydash.tv.panelsTitle')} title={t('mydash.tv.panelsTitle')} data-slot="mydash-tv-panels">
             <Palette aria-hidden="true" /><span>{t('mydash.tv.panels')}</span>
@@ -304,22 +351,32 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
         data-clipped={clipped || undefined}>
         {count === 0 ? (
           <p className="m-0 text-lg text-muted-foreground">{t('mydash.emptyBody')}</p>
-        ) : pages.map((list, i) => (
-          <div key={i} hidden={i !== cur} data-slot="mydash-tv-page" data-index={i} data-active={i === cur ? 'true' : undefined}
-            className={cn('min-h-full gap-4 sm:gap-5', i === cur ? 'grid' : 'hidden')}
-            style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: 'minmax(min-content, 1fr)', gridAutoFlow: 'row dense',
-              ...(i === cur && fit < 1 ? { transform: `scale(${fit})`, transformOrigin: 'top center' } : null),
-            }}>
-            {list.map((w) => {
-              const def = WIDGETS[w.type]
-              if (!def) return null
-              const C = def.Component
-              return <C key={w.id} refreshKey={refreshKey}
-                frame={{ widget: w, tv: true, edit: false, span: spanOf(w.size, cols), stat: statStyleOf(w, true, settings.panels) }} />
-            })}
-          </div>
-        ))}
+        ) : pages.map((page, i) => {
+          // Satırlar hücre boyundan küçük olmaz (ekranı doldurur); ayrıntılı kutu daha çok yer isterse satır uzar ve sayfa
+          // ölçeklenir (useFitScale) — kırpılmaz
+          const cell = cellSize(area.w, area.h, page.cols, page.rows)
+          return (
+            <div key={i} hidden={i !== cur} data-slot="mydash-tv-page" data-index={i} data-active={i === cur ? 'true' : undefined}
+              data-cols={page.cols} data-rows={page.rows}
+              className={cn('min-h-full', i === cur ? 'grid' : 'hidden')}
+              style={{
+                gap: `${TV_GAP}px`,
+                gridTemplateColumns: `repeat(${page.cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${page.rows}, minmax(${Math.max(0, Math.floor(cell.h))}px, auto))`,
+                ...(i === cur && fit < 1 ? { transform: `scale(${fit})`, transformOrigin: 'top center' } : null),
+              }}>
+              {page.placed.map(({ item, col, row, c, r }) => {
+                const w = item.widget
+                const def = WIDGETS[w.type]
+                if (!def) return null
+                const C = def.Component
+                return <C key={w.id} refreshKey={refreshKey}
+                  frame={{ widget: w, tv: true, edit: false, span: c, place: { col, row, c, r }, stat: statStyleOf(w, true, settings.panels),
+                    tvPanel: !item.detail }} />
+              })}
+            </div>
+          )
+        })}
       </main>
     </div>
   )
