@@ -74,7 +74,7 @@ for (const vp of VIEWPORTS) {
         nf.locator('[data-slot="nf-home"]').click(),
       ])
       await expect(page.locator('.app-main')).toBeVisible({ timeout: 45_000 })
-      await expect.poll(() => page.title()).toBe('Dashboard · SiteMonitor')
+      await expect.poll(() => page.title()).toBe('Certificate dashboard · SiteMonitor')
     })
 
     test('oturum açıkken bilinmeyen ?tab= → uygulama içi panel; Panoya git; taşma yok', async ({ page }) => {
@@ -98,7 +98,7 @@ for (const vp of VIEWPORTS) {
       await panel.locator('[data-slot="nf-dashboard"]').click()
       await expect(panel).toHaveCount(0)
       await expect(page).toHaveURL(/tab=dashboard/)
-      await expect.poll(() => page.title()).toBe('Dashboard · SiteMonitor')
+      await expect.poll(() => page.title()).toBe('Certificate dashboard · SiteMonitor')
     })
   })
 }

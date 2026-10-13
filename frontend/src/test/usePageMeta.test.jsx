@@ -34,7 +34,7 @@ beforeEach(() => {
 describe('usePageMeta', () => {
   it('başlık "<Sayfa> · SiteMonitor" + meta açıklaması yazılır (meta etiketi yoksa oluşturulur)', () => {
     render(<Probe metaKey={tabMetaKey('dashboard')} />)
-    expect(document.title).toBe('Dashboard · SiteMonitor')
+    expect(document.title).toBe('Certificate dashboard · SiteMonitor')
     expect(description()).toBe(EN['meta.tab.dashboard.description'])
   })
 

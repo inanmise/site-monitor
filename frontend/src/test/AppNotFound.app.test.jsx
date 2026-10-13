@@ -69,13 +69,13 @@ describe('App — bilinmeyen sekme paneli', () => {
     await waitFor(() => expect(panel()).not.toBeNull())
     expect(panel().getAttribute('data-kind')).toBe('notFound')
     expect(panel().querySelector('[data-slot="nf-requested"]').textContent).toBe('?tab=eski-rapor')
-    expect(screen.queryByRole('heading', { name: 'Dashboard' })).toBeNull()   // Pano içeriği SESSİZCE açılmadı
+    expect(screen.queryByRole('heading', { name: 'Certificate dashboard' })).toBeNull()   // Pano içeriği SESSİZCE açılmadı
     await waitFor(() => expect(document.title).toBe('Page not found · SiteMonitor'))
 
-    fireEvent.click(screen.getByRole('button', { name: /Go to dashboard/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Go to the Certificate dashboard/ }))
     await waitFor(() => expect(panel()).toBeNull())
     expect(tabParam()).toBe('dashboard')
-    await waitFor(() => expect(document.title).toBe('Dashboard · SiteMonitor'))
+    await waitFor(() => expect(document.title).toBe('Certificate dashboard · SiteMonitor'))
 
     // Tarayıcı Geri: önceki (tanınmayan) adrese dönülünce panel yeniden görünür
     act(() => {
@@ -88,7 +88,7 @@ describe('App — bilinmeyen sekme paneli', () => {
   it('bayat açılış sekmesi tercihi panele düşürmez — Pano açılır, adrese ?tab yazılmaz', async () => {
     state.prefs = { landingTab: 'kaldirilmis-sekme' }
     await boot('/')
-    await waitFor(() => expect(document.title).toBe('Dashboard · SiteMonitor'))
+    await waitFor(() => expect(document.title).toBe('Certificate dashboard · SiteMonitor'))
     expect(panel()).toBeNull()
     expect(tabParam()).toBeNull()
   })

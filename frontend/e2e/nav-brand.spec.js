@@ -15,7 +15,7 @@ async function mockApi(page) {
 // Etkin sekme: `aria-current="page"` — üst öğe (Pano) de alt menü öğesi (Uyarılar, Alarmlar bölümünde) de taşır
 // (2026-09-26 kenar çubuğu yeniden tasarımı: sekmeler bölümlerin SidebarMenuSub'ına taşındı).
 const activeTab = (page, rx) => page.locator('[data-slot="sidebar"] [aria-current="page"]', { hasText: rx })
-const dashboardActive = (page) => activeTab(page, /^(Pano|Dashboard)$/)
+const dashboardActive = (page) => activeTab(page, /^(Sertifika Panosu|Certificate dashboard)$/)
 // Başlangıç sekmesi URL'den uygulanana kadar bekle — yoksa tıklama, uygulamanın ?tab= okumasıyla yarışır.
 const warningsReady = (page) => expect(activeTab(page, /^(Uyarılar|Warnings)/)).toHaveCount(1)
 
