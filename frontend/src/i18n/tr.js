@@ -12546,6 +12546,8 @@ export const TR = {
   'mydash.removed': '{0} kutusu panodan kaldırıldı.',
   'mydash.resized': '{0} kutusunun boyutu: {1}.',
   'mydash.openPage': '{0} sayfasını aç',
+  'mydash.linkHint': 'Tıklayın: bu sayıyı oluşturan kayıtlar süzülmüş olarak açılır',
+  'mydash.linkDetail': 'Tıklayın: kaydın ayrıntısı açılır',
   'mydash.dragHint': 'Sürükleyip başka bir kutunun üzerine bırakın',
   'mydash.movePrev': '{0} kutusunu bir önceye taşı',
   'mydash.moveNext': '{0} kutusunu bir sonraya taşı',

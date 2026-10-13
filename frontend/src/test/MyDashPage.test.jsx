@@ -151,6 +151,64 @@ describe('MyDashPage', () => {
     expect(api.admin.getWatchdog).not.toHaveBeenCalled()
   })
 
+  it('2026-10-13: sayılar ve satırlar tıklanır → ilgili SÜZÜLMÜŞ ekran / kayıt açılır; düzenleme kipinde tıklama yok', async () => {
+    const navs = []
+    const onNav = (e) => navs.push(e.detail)
+    window.addEventListener('sm:navigate', onNav)
+    try {
+      const initial = { v: 1, widgets: [
+        { id: 'alerts-open', type: 'alerts_open', size: 'md' }, { id: 'cert-expiring', type: 'cert_expiring', size: 'md' },
+        { id: 'monitor-health', type: 'monitor_health', size: 'md' }, { id: 'activity', type: 'activity', size: 'md' }] }
+      render(<Shell initial={initial}><MyDashPage /></Shell>)
+      await waitFor(() => expect(widget('alerts_open').querySelector('[data-slot="mydash-alerts-critical"]')).toHaveTextContent('1'))
+      const critical = widget('alerts_open').querySelector('[data-slot="mydash-alerts-critical"]')
+      expect(critical.tagName).toBe('BUTTON')
+      fireEvent.click(critical)
+      expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { level: 'CRITICAL' } })
+      fireEvent.click(widget('alerts_open').querySelector('[data-slot="mydash-alerts-warning"]'))
+      expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { level: 'WARNING' } })
+      fireEvent.click(within(widget('alerts_open')).getByRole('button', { name: /odeme\.example\.com/ }))
+      expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { alert: 7 } })
+      fireEvent.click(widget('alerts_open').querySelector('[data-slot="mydash-alerts-unacked"]'))
+      expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { ack: 'unack' } })
+      await waitFor(() => expect(widget('monitor_health').querySelector('[data-slot="mydash-monitor-down"]')).toHaveTextContent('1'))
+      fireEvent.click(widget('monitor_health').querySelector('[data-slot="mydash-monitor-down"]'))
+      expect(navs.at(-1)).toEqual({ tab: 'monitoring', params: { mo_status: 'down' } })
+      await waitFor(() => expect(widget('cert_expiring')).toHaveTextContent('kart.example.com'))
+      fireEvent.click(widget('cert_expiring').querySelector('[data-slot="mydash-cert-7"]'))
+      expect(navs.at(-1)).toEqual({ tab: 'all', params: { c_win: '7' } })
+      fireEvent.click(within(widget('cert_expiring')).getByRole('button', { name: /kart\.example\.com/ }))
+      expect(navs.at(-1)).toEqual({ tab: 'dashboard', params: { domain: 'kart.example.com', open: 'cert' } })
+      await waitFor(() => expect(widget('activity')).toHaveTextContent('Ödeme API'))
+      fireEvent.click(within(widget('activity')).getByRole('button', { name: /Ödeme API/ }))
+      expect(navs.at(-1)).toMatchObject({ tab: 'http' })
+      // Düzenleme kipinde sayı kutucuğu düz metin — sürükleme / boyutlama sırasında kazara gezinme olmaz
+      fireEvent.click(screen.getByRole('button', { name: /^(Edit|Düzenle)$/ }))
+      await waitFor(() => expect(widget('alerts_open').querySelector('[data-slot="mydash-alerts-critical"]').tagName).toBe('DIV'))
+      const before = navs.length
+      fireEvent.click(widget('alerts_open').querySelector('[data-slot="mydash-alerts-critical"]'))
+      expect(navs).toHaveLength(before)
+    } finally {
+      window.removeEventListener('sm:navigate', onNav)
+    }
+  })
+
+  it('2026-10-13: "Uyarı" kutusu seviyesiz alarmları da sayar → o zaman WARNING süzgeci yok (sayı ile liste uyuşsun)', async () => {
+    api.me.openAlerts.mockResolvedValue({ success: true, data: { total: 3, tabs: {
+      http: { count: 3, unacked: 0, levels: { critical: 0, high: 0, warning: 1, other: 2 }, items: [] } } } })
+    const navs = []
+    const onNav = (e) => navs.push(e.detail)
+    window.addEventListener('sm:navigate', onNav)
+    try {
+      render(<Shell initial={{ v: 1, widgets: [{ id: 'alerts-open', type: 'alerts_open', size: 'md' }] }}><MyDashPage /></Shell>)
+      await waitFor(() => expect(widget('alerts_open').querySelector('[data-slot="mydash-alerts-warning"]')).toHaveTextContent('3'))
+      fireEvent.click(widget('alerts_open').querySelector('[data-slot="mydash-alerts-warning"]'))
+      expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: undefined })
+    } finally {
+      window.removeEventListener('sm:navigate', onNav)
+    }
+  })
+
   it('düzenle: sonraya taşı, boyut, kaldır — gizli kutu korunur, duyuru yapılır', async () => {
     perm.value = {}
     const initial = { v: 1, widgets: [

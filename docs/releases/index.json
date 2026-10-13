@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-13T06:33:34Z",
+  "generatedAt": "2026-10-13T07:20:48Z",
   "repo": "inanmise/site-monitor",
-  "count": 740,
+  "count": 741,
   "releases": [
+    {
+      "version": "20.126.0",
+      "tag": "v20.126.0",
+      "releasedAt": "2026-10-13T07:20:42Z",
+      "commit": "fcc5d40d63dbaf332dc91391e283283824ac38dc",
+      "prevVersion": "20.125.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "fcc5d40d",
+          "subject": "TLS notu açılır penceresinde dokunma hedefi ölçümü animasyon bitene kadar yeniden denenir"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "90aff667",
+          "subject": "Kişisel Panom tıklanabilir — sayılar, kutucuklar ve satırlar süzülmüş ekranı ya da kaydı açar"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.125.2",
       "tag": "v20.125.2",
