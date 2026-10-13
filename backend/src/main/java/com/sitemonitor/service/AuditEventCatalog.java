@@ -288,6 +288,14 @@ public final class AuditEventCatalog {
             "TEAM_UPDATE",
             "TEAM_BULK_UPDATE",
             "TEAM_WEEKLY_NOTIFICATIONS",
+            "TECH_ERROR_CHANNEL_CREATE",  // kanal teknik hata raporu: kanal açıldı (2026-10-13)
+            "TECH_ERROR_CHANNEL_DELETE",  // kanal + raporları kalıcı silindi
+            "TECH_ERROR_CHANNEL_UPDATE",  // kanal adı / açıklaması / aktifliği
+            "TECH_ERROR_REPORT_CREATE",   // ay raporu açıldı
+            "TECH_ERROR_REPORT_DELETE",
+            "TECH_ERROR_REPORT_SEND",     // PDF takımın e-posta adresine gönderildi (sonuç detayda)
+            "TECH_ERROR_REPORT_UPDATE",   // değer kaydı, görsel ekle/kaldır, şablonun son hâlini uygula
+            "TECH_ERROR_TEMPLATE_SAVE",   // kanal şablonu kaydedildi
             "TEMPLATE_CREATE",
             "TEMPLATE_DELETE",
             "TEMPLATE_DEMOTE",
@@ -389,6 +397,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
         if (t.startsWith("EXECUTIVE_SUMMARY")) return REPORT;        // _EXPORT / SETTINGS kurallarından ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
+        if (t.startsWith("TECH_ERROR_")) return REPORT;             // kanal teknik hata raporu (2026-10-13) — TEMPLATE_ / SETTINGS'ten ÖNCE
         if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
         if (t.startsWith("CRYPTO_INVENTORY")) return CERTIFICATE;   // kripto envanteri (2026-10-10) — Zayıf Algoritma ile aynı kova
 

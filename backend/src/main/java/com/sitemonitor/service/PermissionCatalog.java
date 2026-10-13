@@ -126,6 +126,11 @@ public final class PermissionCatalog {
         // ayrıca kurum geneli görüntüleyici ister: global yönetici ya da AUDIT, SessionScope.isGlobalViewer. Kapsamlı
         // müdür ADMIN satırından izni alsa da açamaz — takım kapsamlı bir kullanıcıya diğer takımların sayıları açılmaz.
         r("executive_summary.view", "reports", VIEW),
+        // Kanal teknik hata raporu (2026-10-13): takımın kanalları, kanal şablonları ve aylık raporları (PDF + takım
+        // e-postası). Okuma ve yazma ayrıca TAKIM kapsamı ister: uç üyeliğe, yönetime ve görüş kapsamına bakar. Kanal ve
+        // gönderilmiş rapor silmesi yönetim kapsamı ister. Varsayılan: TEAM_ADMIN ve USER okur + yazar, AUDIT okur, ADMIN hepsi.
+        r("tech_error_reports.read", "reports", VIEW),
+        r("tech_error_reports.crud", "reports", EDIT),
 
         // ── Olay & Hata Geçmişi (SRE incident ledger) — kendi grubu (reports'tan ayrı) ──
         r("incidents.view",   "incidents", VIEW),
@@ -254,6 +259,7 @@ public final class PermissionCatalog {
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
+            "tech_error_reports.read", "tech_error_reports.crud",   // kanal teknik hata raporu (2026-10-13)
             "incidents.view", "incidents.manage", "incidents.delete",
             "maintenance.view", "maintenance.manage", "maintenance.delete",
             "diagnostics.history",
@@ -326,6 +332,9 @@ public final class PermissionCatalog {
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
             // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)
             "weekly_reports.read", "weekly_reports.crud",
+            // Kanal teknik hata raporu (2026-10-13): takım üyesi kendi takımının kanal şablonunu ve aylık raporunu
+            // hazırlar ve takım adresine gönderir (uç ÜYELİK doğrular); kanal silmesi yönetici kapsamında kalır.
+            "tech_error_reports.read", "tech_error_reports.crud",
             // Olay geçmişi: USER kendi takımı için olay girer/düzenler (incidents.manage);
             // silme yetkisi (incidents.delete) yalnız TEAM_ADMIN/ADMIN'de
             "incidents.view", "incidents.manage",

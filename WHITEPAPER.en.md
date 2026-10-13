@@ -1007,6 +1007,7 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 | Reports | Weak Algorithm Report | `?tab=weakalgo` | Permission-based |
 | Reports | Weekly Reports | `?tab=weeklyreports` | Permission-based |
 | Reports | Incident and Error History | `?tab=incident-history` | Permission-based |
+| Reports | Technical Error Reports | `?tab=channelreports` | Permission-based (team scope) |
 | Logs | Activity Log | `?tab=activity` | Everyone — own teams only |
 | Logs | My Activity | `?tab=myactivity` | Everyone — own records only |
 | Logs | Audit Log | `?tab=system` | Global administrator or auditor only |
@@ -1273,6 +1274,20 @@ If something breaks overnight your team may well be asleep, and the 24/7 monitor
 | Call list | An ordered list of people per team — the team manager, a team administrator or an administrator edits it (move up/down, add/remove). Anyone with no phone number in Active Directory is flagged; if the list is empty, the e-mail shows the team manager instead |
 
 If there is no active group, an administrator sees a link to Settings and everyone else sees a note to ask their administrator. The dashboard strip "N monitors aren't set to alert the 24/7 monitoring team if they go down overnight" leads here and can be hidden for the session.
+
+### 14.32 Channel Technical Error Reports
+
+For every channel a team is responsible for (Mobile, Retail Internet Banking, Corporate Internet, POS, ATM …), the previous month's technical error report is prepared on this screen (`?tab=channelreports`) and sent as a PDF to the **team's e-mail address**; the team forwards it to senior management. Every figure is entered by the team — Site Monitor doesn't calculate them, it only formats, lays out and delivers them.
+
+| Item | Content |
+|---|---|
+| Channels | A team can have several channels. The card shows the previous month's report status (Not started / Draft / Sent / Changed after sending) and the result of the last sending attempt |
+| Template | **Per channel**: "open channel X's template" opens X's, "open channel Y's template" opens Y's. Sections: figures (number, percentage, yes/no, short/long text), anomaly topics, text and chart slots (half = one column, full = two columns). `{channel}`, `{month}`, `{year}` in titles fill in with the report's channel and period |
+| Report | Opens only for a month that has ended; the template as it is at that moment is copied into the report. Each figure shows last month's value and a change hint. An anomaly title is built from the subject ("Card limit issue") and can be changed by hand |
+| Charts | A PNG or JPEG per slot (at most 5 MB; 40 MB per report). In the PDF two consecutive half slots sit side by side and a full slot takes a row |
+| PDF and sending | "Download PDF" downloads the same file as the e-mail attachment. "Send to team" sends the PDF to the team's address on record; the subject is the report title ("Mobile Channel Technical Error Messages - September 2026"). Every attempt is written to the notification log (`TECH_ERROR_REPORT`). If the mail server is busy the send shows as "queued" and doesn't count as sent yet; when the mail service delivers it the status turns to "Sent" by itself, and if it can't deliver it the send shows as failed. Don't send it again while it is queued; if it stays queued for long, check the SMTP delivery log |
+
+Who does what: the team's members and managers open channels, edit templates, fill in and send reports; only a team manager deletes a channel or a sent report; AUDIT and global administrators read every team. If two people save the same template or report at once, the second gets a "changed while you were editing" warning — nothing is overwritten silently; unsaved changes are backed up in the browser. A later template change doesn't alter a sent report; a draft takes it only with "Apply the latest template".
 
 ---
 

@@ -1138,6 +1138,7 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 | Raporlar | Zayıf Algoritma Raporu | `?tab=weakalgo` | Yetkiye bağlı |
 | Raporlar | Haftalık Raporlar | `?tab=weeklyreports` | Yetkiye bağlı |
 | Raporlar | Olay ve Hata Geçmişi | `?tab=incident-history` | Yetkiye bağlı |
+| Raporlar | Teknik Hata Raporları | `?tab=channelreports` | Yetkiye bağlı (takım kapsamı) |
 | Kayıtlar | Aktivite Logu | `?tab=activity` | Herkes — yalnız kendi takımlarının kayıtları |
 | Kayıtlar | Etkinliklerim | `?tab=myactivity` | Herkes — yalnız kendi kayıtları |
 | Kayıtlar | Denetim Logu | `?tab=system` | Yalnız global yönetici veya denetçi |
@@ -1418,6 +1419,20 @@ Gece bir kesinti olduğunda takımınız uyuyor olabilir; 7/24 izleme ekibi yaln
 | Arama listesi | Takım başına sıralı kişi listesi — takım müdürü, takım yöneticisi ve yönetici düzenler (yukarı/aşağı, ekle/çıkar). Active Directory'de telefonu olmayan kişi işaretlenir; liste boşsa e-postada Takım Müdürü gösterilir |
 
 Hiç aktif grup yoksa yönetici Ayarlar bağlantısını, diğer kullanıcılar "yöneticinize sorun" notunu görür. Sertifika Panosu'ndaki "N izleme gece kesintisinde 7/24 izleme ekibine bildirilmiyor" şeridi bu ekrana götürür ve oturum boyunca gizlenebilir.
+
+### 14.32 Kanal Teknik Hata Raporları
+
+Takımın sorumlu olduğu her kanal (Mobil, Bireysel İnternet Şubesi, Kurumsal İnternet, POS, ATM …) için her ay önceki ayın teknik hata raporu bu ekrandan (`?tab=channelreports`) hazırlanır ve PDF olarak **takımın e-posta adresine** gönderilir; ekip postayı üst yönetime iletir. Rakamların hepsi ekibin girdiği değerlerdir — Site Monitor hesaplamaz, yalnız biçimler, düzenler ve iletir.
+
+| Öğe | İçerik |
+|---|---|
+| Kanallar | Bir takımın birden çok kanalı olur. Kart, önceki ayın rapor durumunu (Başlanmadı / Taslak / Gönderildi / Gönderimden sonra değişti) ve son gönderim denemesinin sonucunu gösterir |
+| Şablon | **Kanal başınadır**: "X kanalının şablonunu aç" X'in, "Y kanalının şablonunu aç" Y'nin şablonunu açar. Bölümler: göstergeler (sayı, yüzde, evet/hayır, kısa/uzun metin), anomali başlıkları, metin ve grafik yuvaları (yarım = bir kolon, tam = iki kolon). Başlıkta `{kanal}`, `{ay}`, `{yil}` raporun kanalı ve dönemiyle dolar |
+| Rapor | Yalnız bitmiş bir ay için açılır; açılırken şablonun o anki hâli rapora kopyalanır. Her göstergenin altında geçen ayın değeri ve değişim ipucu görünür. Anomali başlığı konudan otomatik oluşur ("Kart Limiti Konusu ile yaşanan problem"), istenirse elle değiştirilir |
+| Grafikler | Her yuvaya PNG ya da JPEG (en çok 5 MB; rapor başına toplam 40 MB). PDF'te ardışık iki yarım yuva yan yana, tam yuva tek satır |
+| PDF ve gönderim | "PDF indir" e-posta ekinin aynısını indirir. "Takıma gönder" PDF'i takımın kayıtlı adresine gönderir; konu raporun başlığıdır ("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026"). Her deneme bildirim günlüğüne (`TECH_ERROR_REPORT`) yazılır. Posta sunucusu yoğunsa gönderim "kuyrukta" görünür ve henüz "gönderildi" sayılmaz; posta servisi teslim edince durum kendiliğinden "Gönderildi" olur, teslim edemezse "başarısız" görünür. Kuyruktayken tekrar göndermeyin; uzun süre kuyrukta kalırsa SMTP gönderim kaydına bakın |
+
+Kim ne yapar: takımın üyeleri ve yöneticileri kanal açar, şablonu düzenler, raporu doldurur ve gönderir; kanalı ve gönderilmiş raporu yalnız takım yöneticisi siler; AUDIT ve global yönetici tüm takımları okur. İki kişi aynı şablonu ya da raporu aynı anda kaydederse ikincisi "siz düzenlerken değişti" uyarısı alır — hiçbir değişiklik sessizce ezilmez; kaydedilmemiş değişiklikler tarayıcıda yedeklenir. Şablon sonradan değişse de gönderilmiş rapor değişmez; taslakta "Şablonun son hâlini uygula" ile isteyerek alınır.
 
 ---
 

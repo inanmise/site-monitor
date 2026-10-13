@@ -112,6 +112,9 @@ const MyDashPage = lazy(() => import('./components/mydash/MyDashPage'))   // Pan
 // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — global yönetici + AUDIT; takım özeti — ayrıca takım müdürü
 // (kapsamlı ADMIN). Sunucu ayrıca executive_summary.view ister ve kapsamı kendisi süzer.
 const ExecutiveSummaryPage = lazy(() => import('./components/executive/ExecutiveSummaryPage'))
+// Kanal teknik hata raporları (2026-10-13): kanal başına şablon + aylık rapor, PDF ve takım e-postasına gönderim.
+// Herkese açık sekme; izin (tech_error_reports.read) ve takım kapsamı sunucuda.
+const TechErrorReportsPage = lazy(() => import('./components/techerror/TechErrorReportsPage'))
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -2125,6 +2128,7 @@ export default function App() {
             {tab === 'mydash' && <MyDashPage nocConsole={noc.operator || globalViewer} />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
+            {tab === 'channelreports' && <TechErrorReportsPage />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}

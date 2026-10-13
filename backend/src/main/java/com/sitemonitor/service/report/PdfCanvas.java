@@ -59,6 +59,9 @@ class PdfCanvas implements AutoCloseable {
     /** Yeni sayfa açıldığında çağrılır — tablo başlıklarını tekrar çizmek için. */
     private Runnable pageHeaderHook;
 
+    /** Sayfa numarası öneki (varsayılan Türkçe; İngilizce raporlar "Page" verir — 2026-10-13, teknik hata raporu). */
+    private String pageLabel = "Sayfa";
+
     PdfCanvas() {
         PDType0Font r = loadFont("Roboto-Regular.ttf");
         PDType0Font b = loadFont("Roboto-Bold.ttf");
@@ -93,6 +96,8 @@ class PdfCanvas implements AutoCloseable {
 
     void setPageHeaderHook(Runnable hook) { this.pageHeaderHook = hook; }
 
+    void setPageLabel(String label) { if (label != null && !label.isBlank()) this.pageLabel = label; }
+
     private void closeStream() throws IOException {
         if (cs != null) { cs.close(); cs = null; }
     }
@@ -117,7 +122,7 @@ class PdfCanvas implements AutoCloseable {
                 s.beginText();
                 s.setFont(regular, 7f);
                 s.newLineAtOffset(PAGE.getWidth() - MARGIN - 60, MARGIN - 18);
-                s.showText("Sayfa " + (i + 1) + " / " + total);
+                s.showText(pageLabel + " " + (i + 1) + " / " + total);
                 s.endText();
             }
         }
@@ -160,6 +165,30 @@ class PdfCanvas implements AutoCloseable {
                     org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, "logo");
             cs.drawImage(img, x, yy, w, h);
         } catch (Exception ignored) { /* logosuz devam */ }
+    }
+
+    /**
+     * Kullanıcının yüklediği görsel (teknik hata raporu grafikleri, 2026-10-13): {@link #image}'den farkı sonucu
+     * BİLDİRMESİ — çizilemeyen grafik sessizce kaybolmasın, çağıran yerine "çizilemedi" kutusu koysun.
+     */
+    boolean tryImage(byte[] bytes, String name, float x, float yy, float w, float h) {
+        if (bytes == null || bytes.length == 0) return false;
+        try {
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject img =
+                    org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, name);
+            cs.drawImage(img, x, yy, w, h);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** İnce çerçeve (görsel / yer tutucu kutusu). */
+    void strokeRect(float x, float yy, float w, float h, float[] color) throws IOException {
+        cs.setStrokingColor(color[0], color[1], color[2]);
+        cs.setLineWidth(0.6f);
+        cs.addRect(x, yy, w, h);
+        cs.stroke();
     }
 
     /** Küçük renkli etiket (seviye/rozet). Çizimden sonraki x'i döner. */

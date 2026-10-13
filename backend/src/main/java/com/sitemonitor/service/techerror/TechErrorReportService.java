@@ -1,0 +1,690 @@
+package com.sitemonitor.service.techerror;
+
+import com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException;
+import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
+import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.TechErrorChannel;
+import com.sitemonitor.model.TechErrorReport;
+import com.sitemonitor.model.TechErrorReportImage;
+import com.sitemonitor.repository.AppUserRepository;
+import com.sitemonitor.repository.TechErrorChannelRepository;
+import com.sitemonitor.repository.TechErrorReportImageRepository;
+import com.sitemonitor.repository.TechErrorReportRepository;
+import com.sitemonitor.service.report.TechErrorReportPdfWriter;
+import com.sitemonitor.service.techerror.TechErrorTemplate.Template;
+import com.sitemonitor.service.techerror.TechErrorValues.Values;
+import com.sitemonitor.util.Msg;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.IOException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Kanal teknik hata raporu iş kuralları (2026-10-13). Kapsam (kim hangi takımı görür / yazar) UÇTA denetlenir
+ * ({@code TechErrorReportController}); burada veri kuralları, eşzamanlılık ve PDF üretimi var.
+ *
+ * <ul>
+ *   <li>Kanal adı takım içinde tekil (büyük/küçük harf duyarsız, Türkçe); takım başına en çok 50 kanal.</li>
+ *   <li>Şablon koşullu UPDATE ile yazılır (okunan sürüm değiştiyse 409); kanal adı/açıklaması şablon sürümünü artırmaz.</li>
+ *   <li>Rapor dönemi yalnız BİTMİŞ bir ay olabilir (Europe/Istanbul); kanal × ay tekil.</li>
+ *   <li>Değer kaydı {@code @Version} ile korunur; görsel yükleme sürümü artırmaz, "içerik değişti" damgasını vurur.</li>
+ *   <li>Görsel: yuva başına bir, PNG/JPEG, ≤ 5 MB; rapordaki görsellerin toplamı ≤ 40 MB.</li>
+ *   <li>PDF üretimi pod başına en çok 2 eşzamanlı (büyük görseller belleği zorlamasın); sıra 15 sn'de gelmezse 429.</li>
+ * </ul>
+ */
+@Slf4j
+@Service
+public class TechErrorReportService {
+
+    public static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
+    public static final int MAX_CHANNELS_PER_TEAM = 50;
+    public static final int MAX_NAME = 120;
+    public static final int MAX_DESCRIPTION = 500;
+    public static final long MAX_REPORT_IMAGE_BYTES = 40L * 1024 * 1024;
+    static final int PDF_CONCURRENCY = 2;
+
+    private final TechErrorChannelRepository channels;
+    private final TechErrorReportRepository reports;
+    private final TechErrorReportImageRepository images;
+    private final AppUserRepository users;
+    private final Semaphore pdfSlots = new Semaphore(PDF_CONCURRENCY, true);
+
+    /** Testler sabit "şimdi" verir ({@link #useClock}; alan doğrudan yazılırsa işlem vekili hedefe ulaşmaz). */
+    private volatile Clock clock = Clock.systemUTC();
+
+    public void useClock(Clock c) {
+        this.clock = c == null ? Clock.systemUTC() : c;
+    }
+
+    /** Kuyruktaki gönderimin günlük satırını okumak için (yoksa — dilim testleri — kuyruk sonuçlandırılmaz). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.repository.NotificationLogRepository notificationLogs;
+
+    public TechErrorReportService(TechErrorChannelRepository channels, TechErrorReportRepository reports,
+                                  TechErrorReportImageRepository images, AppUserRepository users) {
+        this.channels = channels;
+        this.reports = reports;
+        this.images = images;
+        this.users = users;
+    }
+
+    // ── Dönem ────────────────────────────────────────────────────────────────────────────────────────
+
+    /** Varsayılan rapor dönemi: İstanbul saatine göre bir önceki ay (Ocak'ta önceki yılın Aralık'ı). */
+    public YearMonth defaultPeriod() {
+        return YearMonth.now(clock.withZone(ZONE)).minusMonths(1);
+    }
+
+    /** Ay BİTTİ mi (İstanbul)? İçinde bulunulan ay ve gelecek reddedilir. */
+    public boolean isClosedMonth(int year, int month) {
+        if (month < 1 || month > 12 || year < 2000 || year > 2100) return false;
+        return YearMonth.of(year, month).isBefore(YearMonth.now(clock.withZone(ZONE)));
+    }
+
+    public Instant now() {
+        return Instant.now(clock).truncatedTo(ChronoUnit.MILLIS);
+    }
+
+    // ── Kanallar ─────────────────────────────────────────────────────────────────────────────────────
+
+    /** {@code teamIds == null} → tüm kanallar (kurum geneli görüntüleyici). Sıra: takım, sıra no, ad (Türkçe). */
+    public List<TechErrorChannel> channels(Collection<Long> teamIds) {
+        List<TechErrorChannel> list = teamIds == null ? channels.findAll()
+                : teamIds.isEmpty() ? List.of() : channels.findByTeamIdIn(teamIds);
+        List<TechErrorChannel> out = new ArrayList<>(list);
+        java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
+        col.setStrength(java.text.Collator.SECONDARY);
+        out.sort(Comparator.comparing(TechErrorChannel::getTeamId)
+                .thenComparing(ch -> ch.getSortOrder() == null ? Integer.MAX_VALUE : ch.getSortOrder())
+                .thenComparing(TechErrorChannel::getName, col));
+        return out;
+    }
+
+    public TechErrorChannel channel(Long id) {
+        return channels.findById(id).orElseThrow(TechErrorReportService::channelNotFound);
+    }
+
+    @Transactional
+    public TechErrorChannel createChannel(Long teamId, String rawName, String rawDescription, Template template, Long by) {
+        String name = channelName(rawName);
+        String key = nameKey(name);
+        if (channels.existsByTeamIdAndNameKey(teamId, key)) throw channelExists(name);
+        if (channels.countByTeamId(teamId) >= MAX_CHANNELS_PER_TEAM) {
+            throw new CodedConflictException("CHANNEL_LIMIT", Msg.t(
+                    "Bir takımın en çok 50 kanalı olabilir. Kullanılmayan bir kanalı silip tekrar deneyin.",
+                    "A team can have at most 50 channels. Delete a channel you no longer use and try again."));
+        }
+        Instant now = now();
+        TechErrorChannel ch = new TechErrorChannel();
+        ch.setTeamId(teamId);
+        ch.setName(name);
+        ch.setNameKey(key);
+        ch.setDescription(description(rawDescription));
+        ch.setActive(true);
+        ch.setTemplateJson(TechErrorTemplate.toJson(template));
+        ch.setTemplateVersion(1);
+        ch.setTemplateUpdatedAt(now);
+        ch.setTemplateUpdatedById(by);
+        ch.setCreatedAt(now);
+        ch.setCreatedById(by);
+        ch.setUpdatedAt(now);
+        ch.setUpdatedById(by);
+        try {
+            return channels.saveAndFlush(ch);
+        } catch (DataIntegrityViolationException e) {
+            throw channelExists(name);   // eşzamanlı aynı ad (tekillik kısıtı)
+        }
+    }
+
+    /** YALNIZ gönderilen alanlar: name, description, active, sort_order. Gönderilmeyen değişmez. */
+    @Transactional
+    public TechErrorChannel updateChannel(Long id, Map<String, Object> body, Long by) {
+        TechErrorChannel ch = channel(id);
+        boolean changed = false;
+        if (body.containsKey("name")) {
+            String name = channelName(body.get("name") == null ? null : String.valueOf(body.get("name")));
+            if (!name.equals(ch.getName())) {
+                String key = nameKey(name);
+                if (channels.existsByTeamIdAndNameKeyAndIdNot(ch.getTeamId(), key, ch.getId())) throw channelExists(name);
+                ch.setName(name);
+                ch.setNameKey(key);
+                changed = true;
+            }
+        }
+        if (body.containsKey("description")) {
+            String d = description(body.get("description") == null ? null : String.valueOf(body.get("description")));
+            if (!Objects.equals(d, ch.getDescription())) {
+                ch.setDescription(d);
+                changed = true;
+            }
+        }
+        if (body.containsKey("active")) {
+            Object a = body.get("active");
+            if (!(a instanceof Boolean b)) throw new FieldValidationException("active", Msg.t(
+                    "Kanal durumu açık ya da kapalı olmalı.", "The channel status must be on or off."));
+            if (b != ch.isActive()) {
+                ch.setActive(b);
+                changed = true;
+            }
+        }
+        if (body.containsKey("sort_order")) {
+            Object so = body.get("sort_order");
+            Integer v = so == null ? null : so instanceof Number n ? Integer.valueOf(n.intValue()) : null;
+            if (so != null && v == null) throw new FieldValidationException("sort_order", Msg.t(
+                    "Sıra numarası bir sayı olmalı.", "The order must be a number."));
+            if (v != null && (v < 0 || v > 10_000)) throw new FieldValidationException("sort_order", Msg.t(
+                    "Sıra numarası 0 ile 10 000 arasında olmalı.", "The order must be between 0 and 10,000."));
+            if (!Objects.equals(v, ch.getSortOrder())) {
+                ch.setSortOrder(v);
+                changed = true;
+            }
+        }
+        if (!changed) return ch;
+        ch.setUpdatedAt(now());
+        ch.setUpdatedById(by);
+        try {
+            return channels.saveAndFlush(ch);
+        } catch (DataIntegrityViolationException e) {
+            throw channelExists(ch.getName());
+        }
+    }
+
+    /** Kanalı, raporlarını ve görsellerini KALICI siler (tek işlem). Silinen rapor sayısını döner. */
+    @Transactional
+    public int deleteChannel(Long id) {
+        TechErrorChannel ch = channel(id);
+        if (reports.countSendingForChannel(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM)) > 0) {
+            throw new CodedConflictException("REPORT_SENT_OR_SENDING", Msg.t(
+                    "Bu kanalın bir raporu şu anda gönderiliyor; kanal silinmedi. Gönderim bitince tekrar deneyin.",
+                    "One of this channel's reports is being sent right now, so the channel wasn't deleted. Try again when the send finishes."));
+        }
+        List<Long> ids = reports.idsForChannel(ch.getId());
+        if (!ids.isEmpty()) {
+            for (int i = 0; i < ids.size(); i += 500) images.deleteAllForReports(ids.subList(i, Math.min(ids.size(), i + 500)));
+        }
+        // Karar silme anında: arada bir gönderim talebi alındıysa (ya da yeni rapor açıldıysa) sayılar tutmaz → geri al
+        int n = reports.deleteAllForChannelUnlessSending(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM));
+        if (n != ids.size()) {
+            throw new CodedConflictException("REPORT_SENT_OR_SENDING", Msg.t(
+                    "Bu kanalın raporları siz silerken değişti (biri gönderiliyor ya da yeni rapor açıldı); kanal silinmedi. Sayfayı yenileyip tekrar deneyin.",
+                    "This channel's reports changed while you were deleting it (one is being sent or a new one was opened), so the channel wasn't deleted. Reload the page and try again."));
+        }
+        channels.delete(ch);
+        channels.flush();
+        return n;
+    }
+
+    /** Şablonu yazar; okunan sürüm eskiyse {@link OptimisticLockingFailureException} → 409. Yeni sürümü döner. */
+    @Transactional
+    public int saveTemplate(Long channelId, int expectedVersion, Template template, Long by) {
+        int n = channels.saveTemplate(channelId, expectedVersion, TechErrorTemplate.toJson(template), now(), by);
+        if (n == 0) {
+            if (!channels.existsById(channelId)) throw channelNotFound();
+            throw new OptimisticLockingFailureException("tech_error_channel template version");
+        }
+        return expectedVersion + 1;
+    }
+
+    // ── Raporlar ─────────────────────────────────────────────────────────────────────────────────────
+
+    public TechErrorReport report(Long id) {
+        return reports.findById(id).orElseThrow(TechErrorReportService::reportNotFound);
+    }
+
+    public List<TechErrorReportRepository.Row> reportRows(Long channelId) {
+        List<TechErrorReportRepository.Row> rows = reports.findByChannelIdOrderByReportYearDescReportMonthDesc(channelId);
+        return rows.size() > 600 ? rows.subList(0, 600) : rows;   // 50 yıl — fiilen sınırsız, ama sınırlı
+    }
+
+    public Map<Long, TechErrorReportRepository.Row> periodRows(Collection<Long> channelIds, YearMonth ym) {
+        Map<Long, TechErrorReportRepository.Row> out = new HashMap<>();
+        if (channelIds.isEmpty()) return out;
+        for (var r : reports.findByChannelIdInAndReportYearAndReportMonth(channelIds, ym.getYear(), ym.getMonthValue())) {
+            out.put(r.getChannelId(), r);
+        }
+        return out;
+    }
+
+    public Map<Long, Long> reportCounts(Collection<Long> channelIds) {
+        Map<Long, Long> out = new HashMap<>();
+        if (channelIds.isEmpty()) return out;
+        for (Object[] row : reports.countByChannel(channelIds)) {
+            out.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        }
+        return out;
+    }
+
+    @Transactional
+    public TechErrorReport createReport(TechErrorChannel ch, int year, int month, Long by) {
+        if (!isClosedMonth(year, month)) {
+            throw new FieldValidationException("month", Msg.t(
+                    "Rapor yalnız bitmiş bir ay için açılabilir (içinde bulunulan ay ve sonrası olmaz).",
+                    "A report can only be opened for a month that has ended (not the current or a future month)."));
+        }
+        if (!ch.isActive()) {
+            throw new CodedConflictException("CHANNEL_INACTIVE", Msg.t(
+                    "Bu kanal pasif; yeni rapor açmak için önce kanalı etkinleştirin.",
+                    "This channel is inactive; turn it back on before opening a new report."));
+        }
+        Optional<TechErrorReport> existing = reports.findByChannelIdAndReportYearAndReportMonth(ch.getId(), year, month);
+        if (existing.isPresent()) throw reportExists(existing.get().getId());
+        Template t = TechErrorTemplate.fromStored(ch.getTemplateJson());
+        Instant now = now();
+        TechErrorReport r = new TechErrorReport();
+        r.setChannelId(ch.getId());
+        r.setTeamId(ch.getTeamId());
+        r.setReportYear(year);
+        r.setReportMonth(month);
+        r.setTemplateJson(TechErrorTemplate.toJson(t));
+        stampTitle(r, t);
+        r.setValuesJson(TechErrorValues.toJson(Values.empty()));
+        r.setCreatedAt(now);
+        r.setCreatedById(by);
+        r.setUpdatedAt(now);
+        r.setUpdatedById(by);
+        r.setContentChangedAt(now);
+        try {
+            return reports.saveAndFlush(r);
+        } catch (DataIntegrityViolationException e) {
+            // Aynı anda iki kişi aynı ayı açtı. PostgreSQL'de işlem artık bozuk (25P02): aynı işlemde kazananı okumak
+            // 500 verirdi (inceleme 2026-10-13) — kimliksiz 409; istemci listeyi yenileyip mevcut raporu gösterir.
+            throw reportExists(null);
+        }
+    }
+
+    /** Değerleri kaydeder; {@code expectedVersion} okunan sürüm — farklıysa 409. */
+    @Transactional
+    public TechErrorReport saveValues(Long reportId, Long expectedVersion, Object raw, Long by) {
+        TechErrorReport r = report(reportId);
+        requireVersion(r, expectedVersion);
+        Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+        Values v = TechErrorValues.normalize(raw, t);
+        String json = TechErrorValues.toJson(v);
+        if (json.equals(r.getValuesJson())) return r;      // değişiklik yok → sürüm artmaz, yazılmaz
+        Instant now = now();
+        r.setValuesJson(json);
+        r.setUpdatedAt(now);
+        r.setUpdatedById(by);
+        r.setContentChangedAt(now);
+        TechErrorReport saved = reports.saveAndFlush(r);
+        reports.touchContent(saved.getId(), now);      // içerik sayacı (atomik, aynı işlem)
+        return saved;
+    }
+
+    public record RefreshResult(TechErrorReport report, int removedValues, int removedImages) { }
+
+    /**
+     * Taslağa kanal şablonunun SON hâlini uygular: aynı kimlikli alanların değerleri ve yuvaların görselleri korunur;
+     * şablondan çıkarılanlar silinir (istemci onaydan önce sayıları gösterir — {@link #refreshPreview}).
+     */
+    @Transactional
+    public RefreshResult refreshTemplate(Long reportId, Long expectedVersion, Long by) {
+        TechErrorReport r = report(reportId);
+        requireVersion(r, expectedVersion);
+        TechErrorChannel ch = channel(r.getChannelId());
+        Template next = TechErrorTemplate.fromStored(ch.getTemplateJson());
+        Template prev = TechErrorTemplate.fromStored(r.getTemplateJson());
+        Values before = TechErrorValues.fromStored(r.getValuesJson(), prev);
+        Values after = carry(before, prev, next);
+        int removedValues = countValues(before) - countValues(after);
+        Set<String> keep = new HashSet<>();
+        for (var s : next.allSlots()) keep.add(s.id());
+        int removedImages = keep.isEmpty() ? images.deleteAllForReport(r.getId()) : images.deleteSlotsNotIn(r.getId(), keep);
+        Instant now = now();
+        r.setTemplateJson(TechErrorTemplate.toJson(next));
+        stampTitle(r, next);
+        r.setValuesJson(TechErrorValues.toJson(after));
+        r.setUpdatedAt(now);
+        r.setUpdatedById(by);
+        r.setContentChangedAt(now);
+        TechErrorReport saved = reports.saveAndFlush(r);
+        reports.touchContent(saved.getId(), now);
+        return new RefreshResult(saved, Math.max(0, removedValues), removedImages);
+    }
+
+    /** Şablonun son hâli uygulanırsa kaybolacak değer ve görsel sayısı + şablon farklı mı (salt okuma). */
+    public Map<String, Object> refreshPreview(TechErrorReport r, TechErrorChannel ch) {
+        Template next = TechErrorTemplate.fromStored(ch.getTemplateJson());
+        Template prev = TechErrorTemplate.fromStored(r.getTemplateJson());
+        Values before = TechErrorValues.fromStored(r.getValuesJson(), prev);
+        Values after = carry(before, prev, next);
+        Set<String> keep = new HashSet<>();
+        for (var s : next.allSlots()) keep.add(s.id());
+        int lostImages = 0;
+        for (var m : images.findByReportIdOrderByIdAsc(r.getId())) if (!keep.contains(m.getSlotId())) lostImages++;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("differs", !TechErrorTemplate.toJson(next).equals(TechErrorTemplate.toJson(prev)));
+        out.put("lost_values", Math.max(0, countValues(before) - countValues(after)));
+        out.put("lost_images", lostImages);
+        return out;
+    }
+
+    /**
+     * Raporu ve görsellerini siler. {@code onlyUnsent}: üye yalnız hiç gönderilmemiş taslağı siler. Karar SİLME anında
+     * veritabanında verilir (koşullu DELETE): arada biten bir gönderim ya da süren bir talep varsa 409, hiçbir şey silinmez.
+     */
+    @Transactional
+    public boolean deleteReport(Long reportId, boolean onlyUnsent) {
+        TechErrorReport r = report(reportId);
+        boolean wasSent = r.getLastSentAt() != null;
+        images.deleteAllForReport(r.getId());
+        int n = reports.deleteIfAllowed(r.getId(), onlyUnsent, now().minus(TechErrorReportSender.STALE_CLAIM));
+        if (n == 0) {
+            // İşlem geri alınır (görseller de) — sebep: gönderildi ya da gönderiliyor
+            throw new CodedConflictException("REPORT_SENT_OR_SENDING", Msg.t(
+                    "Rapor şu anda gönderiliyor ya da az önce gönderildi; silinmedi. Sayfayı yenileyin; gönderilmiş raporu yalnız takım yöneticisi silebilir.",
+                    "The report is being sent or was just sent, so it wasn't deleted. Reload the page; only a team manager can delete a sent report."));
+        }
+        return wasSent;
+    }
+
+    /**
+     * Kuyruğa alınmış gönderimleri SONUÇLANDIRIR (okuma uçları çağırır): posta servisi yeniden denemeyi bitirince
+     * gönderimin {@code notification_logs} satırını SENT / FAILED yapar; burada rapor buna göre yazılır (koşullu,
+     * yalnız aynı günlük satırı ve QUEUED iken). Bir sorgu + kuyrukta olan her satır için en çok bir UPDATE; okuma
+     * hatası okumayı bozmaz (kuyrukta görünmeye devam eder). Sonuçlanan rapor sayısını döner.
+     */
+    public int reconcileQueued(Collection<Long> channelIds) {
+        if (notificationLogs == null || channelIds == null || channelIds.isEmpty()) return 0;
+        try {
+            List<Object[]> rows = reports.queuedForChannels(channelIds);
+            if (rows.isEmpty()) return 0;
+            Set<Long> logIds = new HashSet<>();
+            for (Object[] r : rows) if (r[1] != null) logIds.add(((Number) r[1]).longValue());
+            Map<Long, String> status = new HashMap<>();
+            for (var l : notificationLogs.findAllById(logIds)) status.put(l.getId(), l.getEmailStatus());
+            int changed = 0;
+            for (Object[] r : rows) {
+                Long id = ((Number) r[0]).longValue();
+                Long logId = ((Number) r[1]).longValue();
+                String st = status.get(logId);
+                if ("SENT".equals(st)) changed += reports.confirmQueued(id, logId);
+                else if (st != null && st.startsWith("FAILED")) {
+                    changed += reports.failQueued(id, logId, st.length() > 255 ? st.substring(0, 255) : st);
+                }
+            }
+            return changed;
+        } catch (RuntimeException e) {
+            log.warn("Kuyruktaki teknik hata raporu gönderimleri sonuçlandırılamadı: {}", e.toString());
+            return 0;
+        }
+    }
+
+    /** Kanal × ay raporunun kimliği (yoksa null) — eşzamanlı açılış çakışmasından SONRA, yeni bir okumayla. */
+    public Long findReportId(Long channelId, int year, int month) {
+        return reports.findByChannelIdAndReportYearAndReportMonth(channelId, year, month).map(TechErrorReport::getId).orElse(null);
+    }
+
+    /** Aynı kanalın bir önceki ayının raporu (varsa) — "geçen ay" ipuçları için. */
+    public Optional<TechErrorReport> previousReport(TechErrorReport r) {
+        YearMonth prev = YearMonth.of(r.getReportYear(), r.getReportMonth()).minusMonths(1);
+        return reports.findByChannelIdAndReportYearAndReportMonth(r.getChannelId(), prev.getYear(), prev.getMonthValue());
+    }
+
+    // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
+
+    public List<TechErrorReportImageRepository.Meta> imageMeta(Long reportId) {
+        return images.findByReportIdOrderByIdAsc(reportId);
+    }
+
+    public Map<Long, long[]> imageCounts(Collection<Long> reportIds) {
+        Map<Long, long[]> out = new HashMap<>();
+        if (reportIds.isEmpty()) return out;
+        for (Object[] row : images.countsByReport(reportIds)) {
+            out.put(((Number) row[0]).longValue(), new long[]{ ((Number) row[1]).longValue(), ((Number) row[2]).longValue() });
+        }
+        return out;
+    }
+
+    public TechErrorReportImage image(Long imageId) {
+        return images.findById(imageId).orElseThrow(TechErrorReportService::imageNotFound);
+    }
+
+    static NoSuchElementException imageNotFound() {
+        return new NoSuchElementException(Msg.t(
+                "Görsel bulunamadı; silinmiş ya da yerine yenisi yüklenmiş olabilir. Raporu yenileyin.",
+                "The image wasn't found; it may have been deleted or replaced. Reload the report."));
+    }
+
+    /** Yuvaya görsel yükler (varsa eskisinin yerine). Sürüm artmaz; "içerik değişti" damgası vurulur. */
+    @Transactional
+    public TechErrorReportImage upload(Long reportId, String slotId, byte[] data, String fileName, Long by) {
+        TechErrorReport r = report(reportId);
+        Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+        if (slotId == null || t.slot(slotId) == null) {
+            throw new FieldValidationException("slot", Msg.t(
+                    "Bu grafik yuvası raporun şablonunda yok. Raporu yenileyip tekrar deneyin.",
+                    "This chart slot isn't in the report's template. Reload the report and try again."));
+        }
+        TechErrorImageValidator.Checked ck = TechErrorImageValidator.check(data);
+        long others = 0;
+        for (var m : images.findByReportIdOrderByIdAsc(reportId)) if (!m.getSlotId().equals(slotId)) others += m.getSizeBytes();
+        if (others + data.length > MAX_REPORT_IMAGE_BYTES) {
+            throw new FieldValidationException("file", Msg.t(
+                    "Rapordaki görsellerin toplamı 40 MB'ı geçemez. Büyük görselleri küçültüp ya da JPEG olarak kaydedip yeniden yükleyin.",
+                    "The images in a report can add up to at most 40 MB. Make the large images smaller or save them as JPEG, then upload again."));
+        }
+        images.deleteSlot(reportId, slotId);
+        Instant now = now();
+        TechErrorReportImage img = new TechErrorReportImage();
+        img.setReportId(reportId);
+        img.setTeamId(r.getTeamId());
+        img.setSlotId(slotId);
+        img.setContentType(ck.contentType());
+        img.setFileName(fileName(fileName));
+        img.setWidth(ck.width());
+        img.setHeight(ck.height());
+        img.setSizeBytes(data.length);
+        img.setData(data);
+        img.setUploadedAt(now);
+        img.setUploadedById(by);
+        TechErrorReportImage saved;
+        try {
+            saved = images.saveAndFlush(img);
+        } catch (DataIntegrityViolationException e) {
+            throw new OptimisticLockingFailureException("tech_error_report_image slot race", e);
+        }
+        reports.touchContent(reportId, now);
+        return saved;
+    }
+
+    @Transactional
+    public TechErrorReportImage deleteImage(Long reportId, Long imageId) {
+        TechErrorReportImage img = image(imageId);
+        if (!img.getReportId().equals(reportId)) throw imageNotFound();
+        images.delete(img);
+        images.flush();
+        reports.touchContent(reportId, now());
+        return img;
+    }
+
+    // ── PDF ──────────────────────────────────────────────────────────────────────────────────────────
+
+    public TechErrorPdfInput pdfInput(TechErrorReport r, TechErrorChannel ch, String teamName) {
+        Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+        Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        for (TechErrorReportImage i : images.findAllByReportIdOrderByIdAsc(r.getId())) {
+            imgs.put(i.getSlotId(), new TechErrorPdfInput.Image(i.getData(), i.getWidth(), i.getHeight()));
+        }
+        String prepared = displayName(r.getUpdatedById() != null ? r.getUpdatedById() : r.getCreatedById());
+        return new TechErrorPdfInput(t, v, ch.getName(), teamName, r.getReportYear(), r.getReportMonth(), prepared, now(), imgs);
+    }
+
+    /** Üretilen PDF + girdinin görselsiz hâli (posta gövdesi / dosya adı için; görsel baytları bellekte tutulmaz). */
+    public record Rendered(TechErrorPdfInput meta, byte[] pdf) { }
+
+    /** PDF sırası dolu — gönderim "denendi" sayılmaz (FAILED yazılmaz), istemci 429 alır. */
+    public static class PdfBusyException extends org.springframework.web.server.ResponseStatusException {
+        public PdfBusyException(String reason) {
+            super(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, reason);
+        }
+    }
+
+    /**
+     * PDF üretir. Pod başına en çok {@link #PDF_CONCURRENCY} eşzamanlı üretim; izin, görseller (rapor başına ≤ 40 MB)
+     * BELLEĞE YÜKLENMEDEN ÖNCE alınır (inceleme 2026-10-13: bekleyen her istek görselleri tutuyordu). Sıra 15 sn'de
+     * gelmezse {@link PdfBusyException} (429).
+     */
+    public Rendered renderPdf(java.util.function.Supplier<TechErrorPdfInput> loader) {
+        boolean acquired;
+        try {
+            acquired = pdfSlots.tryAcquire(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            acquired = false;
+        }
+        if (!acquired) {
+            throw new PdfBusyException(Msg.t("Şu anda başka raporların PDF'i hazırlanıyor. Birkaç saniye sonra tekrar deneyin.",
+                    "Other reports' PDFs are being prepared right now. Try again in a few seconds."));
+        }
+        TechErrorPdfInput in = null;
+        try {
+            in = loader.get();
+            byte[] pdf = TechErrorReportPdfWriter.render(in);
+            return new Rendered(in.withoutImages(), pdf);
+        } catch (IOException e) {
+            log.warn("Teknik hata raporu PDF'i üretilemedi ({}): {}", in == null ? "?" : in.channelName(), e.toString());
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                    Msg.t("PDF hazırlanamadı. Sayfayı yenileyip tekrar deneyin; sorun sürerse sistem yöneticisine bildirin.",
+                    "The PDF couldn't be prepared. Reload the page and try again; if it keeps happening, tell a system administrator."));
+        } finally {
+            pdfSlots.release();
+        }
+    }
+
+    // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────
+
+    /** Kullanıcı kimliği → görünen ad (yoksa kullanıcı adı); bulunamazsa null. */
+    public String displayName(Long userId) {
+        if (userId == null) return null;
+        return users.findById(userId).map(TechErrorReportService::nameOf).orElse(null);
+    }
+
+    /** Toplu ad çözümü (liste uçları — tek sorgu). */
+    public Map<Long, String> displayNames(Collection<Long> ids) {
+        Map<Long, String> out = new HashMap<>();
+        Set<Long> want = new HashSet<>();
+        for (Long id : ids) if (id != null) want.add(id);
+        if (want.isEmpty()) return out;
+        for (AppUser u : users.findAllById(want)) out.put(u.getId(), nameOf(u));
+        return out;
+    }
+
+    private static String nameOf(AppUser u) {
+        return u.getDisplayName() != null && !u.getDisplayName().isBlank() ? u.getDisplayName() : u.getUsername();
+    }
+
+    /**
+     * Değerleri yeni şablona taşır: aynı kimlik + AYNI tür (inceleme 2026-10-13 — kimliği yeniden kullanılmış bir alan
+     * eski alanın değerini almasın; sayıdan yüzdeye geçen alanın değeri de taşınmaz). Anomali ve metin bölümleri kimlik
+     * ve türle (issues / text) eşleşir.
+     */
+    static Values carry(Values before, Template prev, Template next) {
+        Map<String, String> prevTypes = new HashMap<>();
+        for (var f : prev.allFields()) prevTypes.put(f.id(), f.type());
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (var f : next.allFields()) {
+            Object v = before.fields().get(f.id());
+            if (v != null && f.type().equals(prevTypes.get(f.id()))) fields.put(f.id(), v);
+        }
+        Map<String, String> prevKinds = new HashMap<>();
+        for (var s : prev.sections()) prevKinds.put(s.id(), s.kind());
+        Map<String, List<TechErrorValues.Issue>> issues = new LinkedHashMap<>();
+        Map<String, String> texts = new LinkedHashMap<>();
+        for (var s : next.sections()) {
+            if (!s.kind().equals(prevKinds.get(s.id()))) continue;
+            if ("issues".equals(s.kind()) && before.issues().containsKey(s.id())) issues.put(s.id(), before.issues().get(s.id()));
+            if ("text".equals(s.kind()) && before.texts().containsKey(s.id())) texts.put(s.id(), before.texts().get(s.id()));
+        }
+        return new Values(fields, issues, texts);
+    }
+
+    /** Liste başlığı için kopyanın başlık kalıbı + dili (sütun sınırına sığdırılır). */
+    static void stampTitle(TechErrorReport r, Template t) {
+        String title = t.title() == null ? "" : t.title();
+        r.setTitlePattern(title.length() > 250 ? title.substring(0, 250) : title);
+        r.setTemplateLang(t.lang());
+    }
+
+    private static void requireVersion(TechErrorReport r, Long expected) {
+        if (expected == null) {
+            throw new FieldValidationException("version", Msg.t(
+                    "Raporun okunan sürümü gönderilmedi. Sayfayı yenileyip tekrar deneyin.",
+                    "The report version you read wasn't sent. Reload the page and try again."));
+        }
+        if (!expected.equals(r.getVersion())) throw new OptimisticLockingFailureException("tech_error_report version");
+    }
+
+    private static int countValues(Values v) {
+        int n = v.fields().size() + v.texts().size();
+        for (var l : v.issues().values()) n += l.size();
+        return n;
+    }
+
+    static String channelName(String raw) {
+        String n = TechErrorTemplate.line(raw);
+        if (n.isEmpty()) throw new FieldValidationException("name", Msg.t("Kanal adı boş olamaz.", "The channel name can't be empty."));
+        if (n.length() > MAX_NAME) throw new FieldValidationException("name", Msg.t(
+                "Kanal adı en çok 120 karakter olabilir.", "The channel name can be at most 120 characters."));
+        return n;
+    }
+
+    static String nameKey(String name) {
+        return name.trim().replaceAll("\\s+", " ").toLowerCase(Locale.forLanguageTag("tr"));
+    }
+
+    static String description(String raw) {
+        String d = TechErrorTemplate.line(raw);
+        if (d.length() > MAX_DESCRIPTION) throw new FieldValidationException("description", Msg.t(
+                "Açıklama en çok 500 karakter olabilir.", "The description can be at most 500 characters."));
+        return d.isEmpty() ? null : d;
+    }
+
+    static String fileName(String raw) {
+        if (raw == null) return null;
+        String n = raw.replace('\\', '/');
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) n = n.substring(slash + 1);
+        n = TechErrorTemplate.line(n);
+        if (n.isEmpty()) return null;
+        return n.length() > 200 ? n.substring(n.length() - 200) : n;
+    }
+
+    private static CodedConflictException channelExists(String name) {
+        return new CodedConflictException("CHANNEL_EXISTS", Msg.t(
+                "Bu takımda “" + name + "” adlı bir kanal zaten var. Başka bir ad seçin.",
+                "This team already has a channel named “" + name + "”. Choose another name."));
+    }
+
+    private static CodedConflictException reportExists(Long id) {
+        Map<String, Object> extra = new HashMap<>();
+        if (id != null) extra.put("report_id", id);
+        return new CodedConflictException("REPORT_EXISTS", Msg.t(
+                "Bu kanalın bu ay için raporu zaten açılmış; mevcut raporu açabilirsiniz.",
+                "A report for this channel and month already exists; you can open the existing one."), extra);
+    }
+
+    static NoSuchElementException channelNotFound() {
+        return new NoSuchElementException(Msg.t(
+                "Kanal bulunamadı; silinmiş olabilir ya da görme yetkiniz yok. Listeyi yenileyin.",
+                "The channel wasn't found; it may have been deleted or you can't see it. Refresh the list."));
+    }
+
+    static NoSuchElementException reportNotFound() {
+        return new NoSuchElementException(Msg.t(
+                "Rapor bulunamadı; silinmiş olabilir ya da görme yetkiniz yok. Listeyi yenileyin.",
+                "The report wasn't found; it may have been deleted or you can't see it. Refresh the list."));
+    }
+}

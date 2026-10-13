@@ -5,6 +5,7 @@
  *     e-posta, başka takımların alan adları)
  *   - `sm.dexp.recent`    — alan adı teşhis son sorguları
  *   - `wr.draft.<id>`     — haftalık rapor oturum-kesintisi yedekleri
+ *   - `sm.te.draft.<id>` / `sm.te.tpl.<id>` — kanal teknik hata raporu / şablonu kaydedilmemiş taslakları (2026-10-13)
  *
  * Kural: anahtarlar kullanıcıya göre ayrılır ({@link personalKey}: `<taban>:<kullanıcı>`) ve çıkışta (elle ya da
  * boşta kalma) hepsi silinir ({@link clearPersonalStorage}). Sahip `sm.storage.owner`'da tutulur: oturum düşüp
@@ -12,7 +13,7 @@
  * (oturum-kesintisi yedeği tam da bunun için) korunur ({@link claimPersonalStorage}). Kardeş desen: `inbox-seen:<kullanıcı>`.
  */
 export const OWNER_KEY = 'sm.storage.owner'
-export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.']
+export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.']
 
 function store() {
   try { return globalThis.localStorage || null } catch { return null }

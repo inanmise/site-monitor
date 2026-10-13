@@ -406,6 +406,20 @@ public final class RetentionCatalog {
                 "Takım yönetici özeti ayarı (2026-10-10): takım başına TEK satır — açık/kapalı, alıcı seçenekleri, seçilen "
                 + "üyelerin kullanıcı kimlikleri ve ek e-posta adresleri. Takım silinince yetim satır burada temizlenir; aksi "
                 + "hâlde takım sayısı kadar satır."),
+        orphan("tech-error-channels-orphan", "tech_error_channels",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = tech_error_channels.team_id)", DataClass.PERSONAL,
+                "Kanal teknik hata raporu kanalları (2026-10-13): takım başına birkaç satır — kanal adı, şablon ve onu "
+                + "kaydedenin kullanıcı kimliği. Kanal ve raporlar ekip kararıyla silinir (ASLA otomatik değil); takımı "
+                + "silinmiş kanal burada temizlenir, raporları ve görselleri sonraki yetim kurallarıyla gider."),
+        orphan("tech-error-reports-orphan", "tech_error_reports",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.CONTENT,
+                "Kanal teknik hata raporları (2026-10-13): kanal × ay başına TEK satır — ekibin girdiği oranlar, adetler, "
+                + "anomali açıklamaları ve gönderim sonucu. Üst yönetime giden belgenin kaydı olduğu için süreyle "
+                + "silinmez (kanal başına yılda 12 satır); kanalı silinmiş rapor burada temizlenir."),
+        orphan("tech-error-report-images-orphan", "tech_error_report_images",
+                "report_id NOT IN (SELECT id FROM tech_error_reports)", DataClass.CONTENT,
+                "Teknik hata raporu grafik görselleri (2026-10-13; BYTEA, ≤ 5 MB/satır, rapor başına ≤ 40 MB). Raporuyla "
+                + "yaşar (rapor silme aynı işlemde siler); raporu silinmiş öksüz görsel burada temizlenir."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
