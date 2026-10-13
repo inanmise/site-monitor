@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 export function LogHeader({ icon: Icon, title, subtitle, backLabel, onBack, actions }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button type="button" variant="secondary" onClick={onBack}><ArrowLeft size={14} /> {backLabel}</Button>
+      <Button type="button" variant="secondary" onClick={onBack} className="pointer-coarse:h-10"><ArrowLeft size={14} /> {backLabel}</Button>
       <div className="flex min-w-0 flex-1 basis-[240px] items-center gap-2.5">
         <Icon size={18} aria-hidden="true" className="shrink-0 text-primary" />
         <div>

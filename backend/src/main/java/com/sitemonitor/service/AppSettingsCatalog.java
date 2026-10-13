@@ -240,6 +240,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.dns.slow-confirm-interval-ms", "monitoring", Type.INT),
         // HTTP metrik kalıcı serisi — gün-bazlı saklama (Sistem Sağlığı HTTP paneli + gece temizlik).
         new Setting("site.monitor.metrics.http.retention-days",  "monitoring", Type.INT),
+        // SiteMonitor'ün kendi dakikalık metrik örnekleri (Sistem Sağlığı → Metrikler, 2026-10-13) — pod başına satır.
+        new Setting("site.monitor.metrics.system.retention-days", "monitoring", Type.INT),
         // Haftalık rapor görselleri (base64 ≤8MB/satır) — bu günden eski görseller gece temizlenir (rapor metni korunur).
         new Setting("site.monitor.weekly-report.image-retention-days", "monitoring", Type.INT),
         // Haftalık rapor SON GİRİŞ zamanı (2026-09-12): sayfa başlığı + hatırlatma maili + hatırlatma günü buradan.

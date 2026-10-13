@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { Database, Globe, HeartPulse, Plug, Radar, Rocket, Server, Users, Zap } from 'lucide-react'
+import { Activity, ChevronRight, Database, Globe, HeartPulse, Plug, Radar, Rocket, Server, Users, Zap } from 'lucide-react'
 import { api } from '../../api/client'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { useT } from '../../i18n/index.jsx'
@@ -17,6 +17,7 @@ import DbAnalyticsPanel from './DbAnalyticsPanel.jsx'   // Veritabanı Analitiğ
 import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Card } from '@/components/shadcn/card'
 import { SECTION_KEYS, deriveOverall, deriveKpis, sectionLevels, executorStats, poolStats, relTime, formatDurationShort } from './health/healthModel.js'
 import { HealthSection, HealthSkeleton } from './health/HealthParts.jsx'
 import { HealthStatusBanner, HealthStickyBar, HealthKpiGrid } from './health/HealthStatusBanner.jsx'
@@ -28,6 +29,8 @@ import HttpSection from './health/HttpSection.jsx'
 import WeeklyAvailLogsModal from './health/WeeklyAvailLogsModal.jsx'
 import WatchdogSection from './health/WatchdogSection.jsx'   // Kendi kendini izleme (2026-10-11)
 import HttpExplorerModal from './httpmetrics/HttpExplorerModal.jsx'   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
+// Metrikler (2026-10-13): pod başına dakikalık kalıcı örnekler — tam sayfa alt görünüm, ilk açılışta yüklenir
+const MetricsView = lazy(() => import('./metrics/MetricsView.jsx'))
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 
 /**
@@ -123,7 +126,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const [waLogsModal, setWaLogsModal] = useState(false)
 
   // SMTP / Push tam sayfa alt görünümleri (`?view=smtp|push`, süzgeçler `m_*` / `p_*`).
-  const [view, setView] = useState(() => { const v = readUrlParam('view', ''); return v === 'smtp' || v === 'push' ? v : null })
+  const [view, setView] = useState(() => { const v = readUrlParam('view', ''); return v === 'smtp' || v === 'push' || v === 'metrics' ? v : null })
+  const [metricsInitial, setMetricsInitial] = useState(() => ({ range: readUrlParam('mx_range', ''), pod: readUrlParam('mx_pod', '') }))
   const [smtpPeriod, setSmtpPeriod] = useState('7d')
   const [smtpInitial, setSmtpInitial] = useState(null)
   const [pushPeriod, setPushPeriod] = useState('7d')
@@ -153,6 +157,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         const d = e.detail
         setPushInitial({ range: d.p_range, status: d.p_status, username: d.p_user, teamId: d.p_team, errorClass: d.p_cls, level: d.p_level, q: d.p_q })
         setView('push')
+      }
+      if (e?.detail?.view === 'metrics') {
+        setMetricsInitial({ range: e.detail.mx_range || '', pod: e.detail.mx_pod || '' })
+        setView('metrics')
       }
     }
     window.addEventListener('sm:tab-params', on)
@@ -285,8 +293,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   useVisibleInterval(loadPushKpi, 60_000, false)
 
   const closeSubView = useCallback(() => {
-    setView(null); setSmtpInitial(null); setPushInitial(null)
-    replaceUrl((p) => { p.delete('view'); for (const k of [...p.keys()]) if (k.startsWith('m_') || k.startsWith('p_')) p.delete(k) })
+    setView(null); setSmtpInitial(null); setPushInitial(null); setMetricsInitial({ range: '', pod: '' })
+    replaceUrl((p) => { p.delete('view'); for (const k of [...p.keys()]) if (k.startsWith('m_') || k.startsWith('p_') || k.startsWith('mx_')) p.delete(k) })
+  }, [])
+
+  const openMetricsView = useCallback(() => {
+    setMetricsInitial({ range: '', pod: '' })
+    setView('metrics')
+    replaceUrl((p) => { p.set('view', 'metrics'); for (const k of [...p.keys()]) if (k.startsWith('mx_')) p.delete(k) })
   }, [])
 
   useEffect(() => {
@@ -377,6 +391,15 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       </div>
     )
   }
+  if (view === 'metrics') {
+    return (
+      <div data-slot="system-health" className="py-1">
+        <Suspense fallback={<LoadingBlock />}>
+          <MetricsView key={JSON.stringify(metricsInitial)} initial={metricsInitial} onBack={closeSubView} />
+        </Suspense>
+      </div>
+    )
+  }
 
   const failedSections = Object.entries(loadErrors).filter(([, v]) => v)
     .map(([k]) => t(`health.part${k.charAt(0).toUpperCase() + k.slice(1)}`))
@@ -463,6 +486,17 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       )}
 
       <HealthKpiGrid t={t} kpis={kpis} onGoSection={goSection} sectionLabel={sectionLabel} />
+
+      <Card data-slot="mx-entry" className="flex-row flex-wrap items-center gap-3 px-3 py-3 shadow-xs sm:px-4">
+        <Activity aria-hidden="true" className="size-5 shrink-0 text-primary" />
+        <div className="flex min-w-0 flex-1 basis-[220px] flex-col gap-0.5">
+          <h3 className="m-0 text-sm font-semibold text-foreground">{t('mx.entry.title')}</h3>
+          <p className="m-0 text-xs text-muted-foreground">{t('mx.entry.body')}</p>
+        </div>
+        <Button type="button" variant="outline" onClick={openMetricsView} className="w-full sm:w-auto pointer-coarse:h-10">
+          {t('mx.entry.open')}<ChevronRight aria-hidden="true" />
+        </Button>
+      </Card>
 
       {visible.map((k) => section(k, openSection === k ? content[k]() : null))}
 

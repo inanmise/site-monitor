@@ -66,15 +66,16 @@ export function EndpointLabel({ endpoint, method, path, className }) {
  * Özet kutucuğu. Açıklama DOKUN-GÖR (`ui/HintPopover`, telefonda da açılır). `onClick` verilirse kutucuk bir eylem
  * düğmesidir (ör. "en yavaş uç" → gezgini o uçla açar) ve açıklama yerine alt satır okunur. Erişilebilir ad =
  * etiket + değer + ton + alt satır. Test kancaları: `data-slot="hreq-tile"`, `data-kpi`, `data-tone`.
+ * `wrapText` (2026-10-13, isteğe bağlı): etiket ve alt satır kırpılmaz, sarar — verilmezse çizim birebir eskisi gibi.
  */
-export function Tile({ id, label, value, sub, hint, tone = 'neutral', t, onClick, actionLabel, className, valueClassName }) {
+export function Tile({ id, label, value, sub, hint, tone = 'neutral', t, onClick, actionLabel, className, valueClassName, wrapText = false }) {
   const Icon = TONE_ICON[tone]
   // Düğme adı açıkça: iç içe span metinleri boşluksuz birleşip "Toplam istek1.500ort. 25/dk" okunuyordu.
   const name = [label, value, (tone === 'warn' || tone === 'crit') ? t(`hreq.tone.${tone}`) : null, sub].filter(Boolean).join(', ')
   const body = (
     <>
       <span className="flex w-full items-center gap-1 text-xs font-medium text-muted-foreground">
-        <span className="min-w-0 truncate">{label}</span>
+        <span className={cn('min-w-0', wrapText ? '[overflow-wrap:anywhere]' : 'truncate')}>{label}</span>
         {!onClick && hint && <Info aria-hidden="true" className="ml-auto size-3 shrink-0 opacity-50" />}
       </span>
       <span className="flex max-w-full min-w-0 items-center gap-1.5">
@@ -82,7 +83,7 @@ export function Tile({ id, label, value, sub, hint, tone = 'neutral', t, onClick
         {Icon && tone !== 'ok' && <Icon aria-hidden="true" className={cn('size-4 shrink-0', TONE_INK[tone])} />}
         {(tone === 'warn' || tone === 'crit') && <span className="sr-only">({t(`hreq.tone.${tone}`)})</span>}
       </span>
-      {sub && <span className="w-full truncate text-xs text-muted-foreground tabular-nums">{sub}</span>}
+      {sub && <span className={cn('w-full text-xs text-muted-foreground tabular-nums', wrapText ? '[overflow-wrap:anywhere]' : 'truncate')}>{sub}</span>}
     </>
   )
   const box = cn(

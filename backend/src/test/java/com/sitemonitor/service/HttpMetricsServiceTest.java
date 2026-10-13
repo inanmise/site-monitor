@@ -278,4 +278,30 @@ class HttpMetricsServiceTest {
         // Taşma kovası kaybolan istekleri YUTMAZ: toplam req_count korunur.
         assertThat(rows.stream().mapToLong(HttpMetricMinute::getReqCount).sum()).isEqualTo(5000L);
     }
+
+    @Test
+    @DisplayName("completedMinutesAfter: yalnız verilen ts'den SONRA bitenler, eskiden yeniye; null → yalnız son; tavanlı")
+    void completedMinutesAfter_consumesEachMinuteOnce() throws Exception {
+        var ctor = Class.forName("com.sitemonitor.service.HttpMetricsService$MinuteBucket")
+                .getDeclaredConstructor(String.class);
+        ctor.setAccessible(true);
+        var add = ctor.getDeclaringClass().getDeclaredMethod("add", int.class, long.class);
+        add.setAccessible(true);
+        var fin = HttpMetricsService.class.getDeclaredMethod("finalize", ctor.getDeclaringClass());
+        fin.setAccessible(true);
+        assertThat(service.completedMinutesAfter(null, 10)).isEmpty();
+        for (String ts : new String[]{"2000-01-01T00:01:00", "2000-01-01T00:02:00", "2000-01-01T00:03:00"}) {
+            Object b = ctor.newInstance(ts);
+            add.invoke(b, 200, 7L);
+            fin.invoke(service, b);
+        }
+        assertThat(service.completedMinutesAfter(null, 10)).extracting(m -> m.get("ts")).containsExactly("2000-01-01T00:03:00");
+        assertThat(service.completedMinutesAfter("2000-01-01T00:01:00", 10)).extracting(m -> m.get("ts"))
+                .containsExactly("2000-01-01T00:02:00", "2000-01-01T00:03:00");
+        assertThat(service.completedMinutesAfter("2000-01-01T00:03:00", 10)).isEmpty();
+        assertThat(service.completedMinutesAfter("1999-12-31T23:00:00", 2)).extracting(m -> m.get("ts"))
+                .as("tavan: en yeni 2 dakika").containsExactly("2000-01-01T00:02:00", "2000-01-01T00:03:00");
+        service.completedMinutesAfter(null, 10).get(0).put("count", 999L);
+        assertThat(service.completedMinutesAfter(null, 10).get(0).get("count")).as("kopya döner").isEqualTo(1L);
+    }
 }

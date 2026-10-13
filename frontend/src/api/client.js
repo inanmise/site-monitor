@@ -1634,6 +1634,12 @@ export const api = {
     testWatchdog: () => request('/admin/system/watchdog/test', { method: 'POST' }),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
     getMetrics: () => request('/admin/system/metrics'),
+    // Sistem Sağlığı → Metrikler (2026-10-13): pod başına dakikalık kalıcı örnekler
+    systemMetrics: {
+      overview: () => request('/admin/system/metrics/overview'),
+      series: (range = '6h', instance = null) => request(`/admin/system/metrics/series?range=${encodeURIComponent(range)}`
+        + (instance ? `&instance=${encodeURIComponent(instance)}` : '')),
+    },
     getHttpMetrics: () => request('/admin/system/http-metrics'),
     getHttpMetricsEndpoints: (from, to) =>
       request(`/admin/system/http-metrics/endpoints?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),

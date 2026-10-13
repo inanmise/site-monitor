@@ -185,6 +185,10 @@ public final class RetentionCatalog {
         age("http-metric-minute", "http_metric_minute", "bucket_minute", "site.monitor.metrics.http.retention-days",
                 7, 1, false, DataClass.OPERATIONAL,
                 "Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir."),
+        age("system-metric-samples", "system_metric_samples", "sampled_at", "site.monitor.metrics.system.retention-days",
+                7, 1, false, DataClass.OPERATIONAL,
+                "SiteMonitor'ün kendi çalışma metrikleri (JVM, havuzlar, HTTP, günlük olayları) — pod başına dakikada bir satır "
+                + "(Sistem Sağlığı → Metrikler, 2026-10-13). Kısa tutulur."),
         guarded("login-anomaly", "login_anomaly_incident", "opened_at", "site.monitor.failed-login.retention-days",
                 365, 7, "resolved = true AND {t}", DataClass.SECURITY_AUDIT,
                 "Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. "

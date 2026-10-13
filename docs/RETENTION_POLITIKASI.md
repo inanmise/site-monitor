@@ -95,6 +95,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `login_anomaly_ack` | öksüz temizliği | — | — | `audit_id NOT IN (SELECT id FROM audit_log)` | Denetim satırı budanmış anomali onayı damgası (System Health #3). Ebeveyn audit_log yaş kuralına uyar. |
 | `dns_records` | öksüz temizliği | — | — | `monitor_id NOT IN (SELECT id FROM dns_monitors)` | Monitörü kalıcı silinmiş DNS serisi. FK/CASCADE yok; öksüz satırlar hiçbir yaş kuralına takılmıyordu. |
 | `http_metric_minute` | 7 gün | 1 g | `site.monitor.metrics.http.retention-days` | `bucket_minute < ?` | Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir. |
+| `system_metric_samples` | 7 gün | 1 g | `site.monitor.metrics.system.retention-days` | `sampled_at < ?` | SiteMonitor'ün kendi çalışma metrikleri (JVM, havuzlar, HTTP, günlük olayları) — pod başına dakikada bir satır (Sistem Sağlığı → Metrikler, 2026-10-13). Kısa tutulur. |
 | `http_checks` | 180 gün | 30 g | `site.monitor.series.http.retention-days` | `checked_at < ?` | HTTP kontrol ham serisi (en hızlı büyüyen serilerden). |
 | `page_resource_issues` | 90 gün | 1 g | `site.monitor.metrics.page-issues.retention-days` | `checked_at < ?` | Sayfa kaynak sorunları — kontrol başına 0..N satır. Ana kayıttan ÖNCE silinir (çocuk-ebeveyn sırası). |
 | `page_checks` | 180 gün | 1 g | `site.monitor.metrics.page.retention-days` | `checked_at < ?` | Sayfa bütünlüğü kontrol serisi. |

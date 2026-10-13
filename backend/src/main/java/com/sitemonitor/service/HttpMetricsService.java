@@ -139,6 +139,24 @@ public class HttpMetricsService {
 
     // ── Queries (toplam, bellek-içi — mini-grafikler) ───────────────────────────
 
+    /**
+     * {@code afterTs}'den SONRA biten dakikaların toplamları (bu podun, eskiden yeniye) — sistem metrik örnekleyicisi okur
+     * (2026-10-13). Dakika döndürme ile örnekleyici ayrı zamanlayıcılarda çalışır: "son dakika"yı okumak aynı dakikayı iki
+     * kez saydırır ya da birini atlatırdı; okuyan son tükettiği {@code ts}'yi verir. {@code afterTs} null → yalnız son biten
+     * dakika. Sondan geriye tarar, en çok {@code max} kova (sınırlı).
+     */
+    public synchronized List<Map<String, Object>> completedMinutesAfter(String afterTs, int max) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        java.util.Iterator<Map<String, Object>> it = history.descendingIterator();
+        while (it.hasNext() && out.size() < Math.max(1, max)) {
+            Map<String, Object> b = it.next();
+            if (afterTs != null && String.valueOf(b.get("ts")).compareTo(afterTs) <= 0) break;
+            out.add(0, new LinkedHashMap<>(b));
+            if (afterTs == null) break;
+        }
+        return out;
+    }
+
     public synchronized List<Map<String, Object>> getHistory() {
         List<Map<String, Object>> out = new ArrayList<>(history);
         Map<String, Object> cur = current.snapshot();
