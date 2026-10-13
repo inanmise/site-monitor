@@ -102,7 +102,8 @@ for (const vp of VIEWPORTS) {
     await expect(detail.locator('[data-slot="tls-grade-drop"]')).toBeVisible()
     await fitsViewport(detail, vp)
     const open = detail.locator('[data-slot="tls-grade-open"]')
-    if (vp.width < 768) expect((await open.boundingBox()).height).toBeGreaterThanOrEqual(39)
+    // Açılır pencere büyüyerek açılır (zoom-in-95): ölçüm animasyon bitene kadar yeniden denenir (yüklü makinede kararsızdı)
+    if (vp.width < 768) await expect.poll(async () => (await open.boundingBox()).height).toBeGreaterThanOrEqual(39)
     await page.screenshot({ path: `test-results/tls-grade-popover-${vp.name}.png` })
 
     // 3) Ayrıntı → pencere Sağlık sekmesinde, TLS notu bölümü ilk sırada
