@@ -61,7 +61,7 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     return [...list.filter((c) => c.active), ...list.filter((c) => !c.active)]
   }, [data])
   const period = data?.period
-  const teams = data?.teams || []
+  const teams = useMemo(() => data?.teams || [], [data])
   const teamOptions = useMemo(() => [{ value: ALL, label: t('te.allTeams') },
     ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))], [teams, t])
   const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email && channels.some((c) => c.team_id === tm.id))

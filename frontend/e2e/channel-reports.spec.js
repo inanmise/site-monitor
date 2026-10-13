@@ -13,7 +13,9 @@ const TEMPLATE = {
   sections: [
     { id: 'summary', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Özeti', fields: [
       { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent', hint: 'İlgili ay/yıl verilerine göre' },
-      { id: 'error-rate-excl', label: 'Kesinti günleri hariç teknik hata oranı', type: 'percent' },
+      { id: 'had-outage', label: 'Dönemde kesinti oldu mu?', type: 'yesno', hint: "“Hayır” işaretlenirse kesinti alanları istenmez, PDF'e girmez" },
+      { id: 'error-rate-excl', label: 'Kesinti günleri hariç teknik hata oranı', type: 'percent', skip_if_no: 'had-outage' },
+      { id: 'outage-errors', label: 'Kesinti kaynaklı teknik hata adedi', type: 'number', skip_if_no: 'had-outage' },
       { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
       { id: 'tx-increase', label: 'Önceki aya göre artış var mı?', type: 'yesno' },
       { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent' },
@@ -198,10 +200,22 @@ for (const vp of VIEWPORTS) {
         expect(Math.abs(full.width - a.width)).toBeLessThanOrEqual(2)
       }
 
+      // 2026-10-14: "Dönemde kesinti oldu mu?" → "Hayır" kesinti alanlarını muaf eder (gizli + not), "Evet" geri getirir
+      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı')).toBeVisible()
+      const outage = editor.getByLabel('Dönemde kesinti oldu mu?')
+      await outage.getByRole('radio', { name: /^(Hayır|No)$/ }).click()
+      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı')).toHaveCount(0)
+      await expect(editor.getByLabel('Kesinti kaynaklı teknik hata adedi')).toHaveCount(0)
+      await expect(editor.locator('[data-slot="te-exempt-note"]')).toBeVisible()
+      expect(await page.evaluate(overflowX), 'yatay taşma (muaf)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (muaf)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (muaf)').toEqual([])
+
       await editor.getByLabel('Toplam işlem adedi').fill('1.250.000')
       await page.locator('[data-slot="te-save"]').click()
       await expect.poll(() => savedReport?.version).toBe(4)
-      expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000 })
+      expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000, 'had-outage': false })
+      expect(savedReport.values.fields).not.toHaveProperty('error-rate-excl')
       await expect(page.locator('[data-slot="te-report-actions"]')).toContainText(/Tüm değişiklikler kaydedildi|All changes saved/)
 
       await editor.locator('[data-slot-id="monthly-tx"] input[type="file"]').setInputFiles({ name: 'aylik-islem.png', mimeType: 'image/png', buffer: PNG })

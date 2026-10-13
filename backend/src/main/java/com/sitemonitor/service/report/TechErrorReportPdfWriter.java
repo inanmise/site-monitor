@@ -101,14 +101,16 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     // ── Bölümler ─────────────────────────────────────────────────────────────────────────────────────
 
     private void metrics(TechErrorPdfInput in, Section s) throws IOException {
-        sectionTitle(in.resolve(s.title()));
         List<Field> cards = new ArrayList<>();
         List<Field> texts = new ArrayList<>();
+        Map<String, Object> vals = in.values().fields();
         for (Field f : s.fields()) {
+            if (TechErrorTemplate.exempt(f, vals)) continue;     // "Hayır" cevabıyla muaf alan PDF'e girmez
             if ("text".equals(f.type()) || "textarea".equals(f.type())) texts.add(f);
             else cards.add(f);
         }
-        Map<String, Object> vals = in.values().fields();
+        if (cards.isEmpty() && texts.isEmpty()) return;          // bölümün tüm alanları muaf → başlık da basılmaz
+        sectionTitle(in.resolve(s.title()));
         if (!cards.isEmpty()) {
             int perRow = cards.size() == 1 ? 1 : cards.size() == 2 || cards.size() == 4 ? 2 : 3;
             float w = (CONTENT_W - GAP * (perRow - 1)) / perRow;

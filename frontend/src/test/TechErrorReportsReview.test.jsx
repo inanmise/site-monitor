@@ -277,6 +277,124 @@ describe('rapor düzenleyici — 3. inceleme turu', () => {
   })
 })
 
+// 2026-10-14 (kullanıcı isteği): "kesinti yok işareti koyarsa bu alan muaf olsun" — kesinti alanları sorusuna bağlı
+const OUTAGE_TPL = {
+  ...TEMPLATE,
+  sections: [
+    { id: 'summary', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Özeti', fields: [
+      { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' },
+      { id: 'had-outage', label: 'Dönemde kesinti oldu mu?', type: 'yesno' },
+      { id: 'error-rate-excl', label: 'Kesinti günleri hariç teknik hata oranı', type: 'percent', skip_if_no: 'had-outage' },
+      { id: 'outage-errors', label: 'Kesinti kaynaklı teknik hata adedi', type: 'number', skip_if_no: 'had-outage' },
+      { id: 'outage-share', label: 'Kesinti kaynaklı hataların toplam hataya oranı', type: 'percent', skip_if_no: 'had-outage' },
+    ] },
+    ...TEMPLATE.sections.slice(1),
+  ],
+}
+
+describe('kesinti yok işareti — bağlı alanlar muaf', () => {
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+  })
+
+  it('cevapsızken kesinti alanları istenir; "Hayır" seçilince üçü gizlenir ve muaf notu çıkar; "Evet" geri getirir', async () => {
+    te().report.mockResolvedValue(reportResponse({ template: OUTAGE_TPL, values: { fields: {}, issues: {}, texts: {} } }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(screen.getByLabelText('Kesinti günleri hariç teknik hata oranı')).toBeInTheDocument()
+    expect(screen.getByLabelText('Kesinti kaynaklı teknik hata adedi')).toBeInTheDocument()
+    const q = screen.getByLabelText('Dönemde kesinti oldu mu?')
+    fireEvent.click(within(q).getByRole('radio', { name: 'Hayır' }))
+    await waitFor(() => expect(screen.queryByLabelText('Kesinti günleri hariç teknik hata oranı')).toBeNull())
+    expect(screen.queryByLabelText('Kesinti kaynaklı teknik hata adedi')).toBeNull()
+    expect(screen.queryByLabelText('Kesinti kaynaklı hataların toplam hataya oranı')).toBeNull()
+    expect(screen.getByText(/buna bağlı 3 alan bu rapordan muaf/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Teknik hata oranı')).toBeInTheDocument()
+    fireEvent.click(within(q).getByRole('radio', { name: 'Evet' }))
+    expect(await screen.findByLabelText('Kesinti günleri hariç teknik hata oranı')).toBeInTheDocument()
+  })
+
+  it('gizlenen alanın geçersiz yazımı kaydı kilitlemez; kayıt "Hayır" ile gider', async () => {
+    te().report.mockResolvedValue(reportResponse({ template: OUTAGE_TPL, values: { fields: {}, issues: {}, texts: {} } }))
+    te().saveReport.mockResolvedValue({ success: true, data: { version: 5, changed: true, updated_at: '2026-10-14T09:00:00Z',
+      values: { fields: { 'had-outage': false }, issues: {}, texts: {} } } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.change(screen.getByLabelText('Kesinti kaynaklı teknik hata adedi'), { target: { value: 'çok' } })
+    expect(await screen.findByText('Geçerli bir sayı yazın (ör. 1.250.000 ya da 0,42).')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByLabelText('Dönemde kesinti oldu mu?')).getByRole('radio', { name: 'Hayır' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalled())
+    expect(te().saveReport.mock.calls[0][1].fields['had-outage']).toBe(false)
+  })
+
+  it('"Hayır" iken gizli alanın değeri gönderilmez (sunucu katı doğrulamaz); taslakta kalır, "Evet" geri getirir', async () => {
+    te().report.mockResolvedValue(reportResponse({ template: OUTAGE_TPL, values: { fields: {}, issues: {}, texts: {} } }))
+    te().saveReport.mockResolvedValue({ success: false, code: 'CONCURRENT_MODIFICATION', status: 409, error: 'x' })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.change(screen.getByLabelText('Kesinti kaynaklı teknik hata adedi'), { target: { value: '12' } })
+    const q = screen.getByLabelText('Dönemde kesinti oldu mu?')
+    fireEvent.click(within(q).getByRole('radio', { name: 'Hayır' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalled())
+    const sent = te().saveReport.mock.calls[0][1].fields
+    expect(sent['had-outage']).toBe(false)
+    expect(sent).not.toHaveProperty('outage-errors')
+    fireEvent.click(within(q).getByRole('radio', { name: 'Evet' }))
+    expect(await screen.findByLabelText('Kesinti kaynaklı teknik hata adedi')).toHaveValue('12')
+  })
+
+  it('bölümün tüm alanları muafsa boş kart yerine not', async () => {
+    const tpl = { ...OUTAGE_TPL, sections: [OUTAGE_TPL.sections[0],
+      { id: 'detail', kind: 'metrics', title: 'Kesinti Ayrıntıları', fields: [
+        { id: 'outage-days', label: 'Kesinti gün sayısı', type: 'number', skip_if_no: 'had-outage' }] },
+      ...OUTAGE_TPL.sections.slice(1)] }
+    te().report.mockResolvedValue(reportResponse({ template: tpl, values: { fields: { 'had-outage': false }, issues: {}, texts: {} } }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(screen.getByText('Bu bölümün alanları “Hayır” cevabıyla muaf; PDF\'e girmez.')).toBeInTheDocument()
+    expect(screen.getByText(/buna bağlı 4 alan bu rapordan muaf/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Kesinti gün sayısı')).toBeNull()
+  })
+
+  it('temiz taslak: başka sekmede uygulanan şablon yeni bağ eklese de sahte çakışma çıkmaz, taze hâl alınır', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+    const linked = { ...TEMPLATE, sections: [{ ...TEMPLATE.sections[0], fields: [
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number', skip_if_no: 'sla-above' },
+      { id: 'sla-above', label: 'SLA hedefin üstünde mi?', type: 'yesno' },
+    ] }, ...TEMPLATE.sections.slice(1)] }
+    te().report
+      .mockResolvedValueOnce(reportResponse({ values: { fields: { 'error-rate': 0.42, 'total-tx': 5, 'sla-above': false }, issues: {}, texts: {} } }))
+      .mockResolvedValue(reportResponse({ report: { ...reportResponse().data.report, version: 9 }, template: linked,
+        values: { fields: { 'sla-above': false }, issues: {}, texts: {} } }))
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: ['dijital@example.com'] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).getByRole('button', { name: 'Gönder' }))
+    await waitFor(() => expect(te().report).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByLabelText('Toplam işlem adedi')).toBeNull())   // yeni bağla muaf
+    expect(screen.queryByText('Rapor siz düzenlerken değişti')).toBeNull()
+    expect(screen.getByText('Tüm değişiklikler kaydedildi')).toBeInTheDocument()
+  })
+
+  it('şablon: alan bir evet/hayır sorusuna bağlanır, kayda skip_if_no gider', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+    te().saveTemplate.mockResolvedValue({ success: true, data: { template: TEMPLATE, version: 4 } })
+    render(<TechErrorReportsPage />)
+    await screen.findByText('Rapor başlığı ve dili')
+    // TEMPLATE: error-rate (yüzde), total-tx (sayı), sla-above (evet/hayır) → yüzde ve sayı alanı soruya bağlanabilir
+    const selects = screen.getAllByLabelText('Bu soru “Hayır” ise alanı sorma')
+    expect(selects).toHaveLength(2)
+    fireEvent.change(selects[1], { target: { value: 'sla-above' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Şablonu kaydet' }))
+    await waitFor(() => expect(te().saveTemplate).toHaveBeenCalled())
+    const sent = te().saveTemplate.mock.calls[0][1]
+    expect(sent.sections[0].fields.find((f) => f.id === 'total-tx').skip_if_no).toBe('sla-above')
+  })
+})
+
 describe('kanallar ve şablon — inceleme düzeltmeleri', () => {
   it('sayfa durumu paramları sekme değişince temizlenir (te_ ailesi kayıtlı); taslak yedekleri kişisel kayıt', () => {
     for (const k of ['te_view', 'te_ch', 'te_tab', 'te_rep', 'te_team']) {

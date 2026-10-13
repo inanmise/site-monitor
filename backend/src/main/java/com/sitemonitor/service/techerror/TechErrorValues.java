@@ -104,11 +104,21 @@ public final class TechErrorValues {
         Map<?, ?> rt = root.get("texts") instanceof Map<?, ?> m ? m : Map.of();
 
         Map<String, Object> fields = new LinkedHashMap<>();
+        Map<String, Field> byId = new LinkedHashMap<>();
+        for (Field f : t.allFields()) byId.put(f.id(), f);
         for (Field f : t.allFields()) {
+            if (f.skipIfNo() != null) {
+                // Sorusu açıkça "Hayır" ise alan muaf: değeri hiç okunmaz / doğrulanmaz (ekranda olmayan bir değer
+                // kaydı 400 ile reddettiremez). Soru kendi sırasında katı doğrulanır; burada hoşgörülü okunur.
+                Field q = byId.get(f.skipIfNo());
+                if (q != null && Boolean.FALSE.equals(field(q, rf.get(q.id()), false))) continue;
+            }
             Object v = rf.get(f.id());
             Object n = field(f, v, strict);
             if (n != null) fields.put(f.id(), n);
         }
+        // Bağlı olduğu soru "Hayır" olan alan MUAF: değeri saklanmaz (gizlenmiş eski değer PDF'e sızmasın)
+        for (Field f : t.allFields()) if (TechErrorTemplate.exempt(f, fields)) fields.remove(f.id());
         Map<String, List<Issue>> issues = new LinkedHashMap<>();
         Map<String, String> texts = new LinkedHashMap<>();
         for (Section s : t.sections()) {

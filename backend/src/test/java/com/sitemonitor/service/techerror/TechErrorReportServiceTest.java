@@ -368,6 +368,36 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("şablonun son hâli: yeni bağla muaf kalan değer KAYIP sayılır ve taşınmaz (hayalet değer yok)")
+    void refreshTemplateDropsValuesExemptUnderNewLink() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> fields = new HashMap<>();
+        fields.put("sla-above", false);
+        fields.put("sla-rate", 95);
+        TechErrorReport s = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", fields), 7L);
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        Map<String, Object> summary = new LinkedHashMap<>(secs.get(0));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> fs = new ArrayList<>((List<Map<String, Object>>) summary.get("fields"));
+        fs.replaceAll(f -> {
+            if (!"sla-rate".equals(f.get("id"))) return f;
+            Map<String, Object> m = new LinkedHashMap<>(f);
+            m.put("skip_if_no", "sla-above");
+            return m;
+        });
+        summary.put("fields", fs);
+        secs.set(0, summary);
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel fresh = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), fresh)).containsEntry("lost_values", 1);
+        var res = service.refreshTemplate(r.getId(), s.getVersion(), 7L);
+        assertThat(res.removedValues()).isEqualTo(1);
+        assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("sla-above").doesNotContain("sla-rate");
+    }
+
+    @Test
     @DisplayName("kanal silme: raporlarından biri gönderiliyorsa 409, hiçbir şey silinmez")
     void deleteChannelRefusedWhileSending() {
         TechErrorChannel ch = channel(1, "POS");

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  LIMITS, MAX_RESOLVED, canonicalTemplate, canonicalValues, changePercent, formatBytes, formatNumber, formatPercent, imageRows,
+  LIMITS, MAX_RESOLVED, canonicalTemplate, canonicalValues, fieldExempt, sanitizeSkipRefs, changePercent, formatBytes, formatNumber, formatPercent, imageRows,
   issueDisplayTitle, monthName, move, newId, parseNumber, periodOptions, preflightImage, resolveIssueTitle, resolvePlaceholders,
   stableJson, statusMeta, templateErrors,
 } from '../components/techerror/techErrorModel.js'
@@ -151,6 +151,44 @@ describe('techErrorModel — kanonik karşılaştırma ve sınırlar (inceleme 2
   it('formatBytes: 0 bayt "0 KB" (1 KB değil)', () => {
     expect(formatBytes(0, 'tr')).toBe('0 KB')
     expect(formatBytes(1, 'tr')).toBe('1 KB')
+  })
+})
+
+describe('techErrorModel — "Hayır ise sorma" bağı (2026-10-14)', () => {
+  const tpl = { sections: [{ id: 's', kind: 'metrics', fields: [
+    { id: 'q', type: 'yesno' }, { id: 'a', type: 'percent', skip_if_no: 'q' },
+    { id: 'n', type: 'number' }, { id: 'b', type: 'number', skip_if_no: 'n' },
+  ] }] }
+
+  it('kanonik değer şablonla muaf alanı düşürür (gönderilmez / karşılaştırılmaz)', () => {
+    const v = { fields: { q: false, a: 3, n: 1 }, issues: {}, texts: {} }
+    expect(canonicalValues(v, tpl).fields).toEqual({ q: false, n: 1 })
+    expect(canonicalValues({ ...v, fields: { ...v.fields, q: true } }, tpl).fields).toEqual({ q: true, a: 3, n: 1 })
+    expect(canonicalValues(v).fields).toEqual({ q: false, a: 3, n: 1 })   // şablonsuz: eski davranış
+  })
+
+  it('yalnız açıkça "Hayır" muaf eder; cevapsız / "Evet" istenir', () => {
+    const a = tpl.sections[0].fields[1]
+    expect(fieldExempt(a, { q: false })).toBe(true)
+    expect(fieldExempt(a, { q: true })).toBe(false)
+    expect(fieldExempt(a, {})).toBe(false)
+    expect(fieldExempt({ id: 'x' }, { q: false })).toBe(false)
+  })
+
+  it('geçersiz bağlar kalkar (evet/hayır olmayan hedef, kendisi, zincir, silinmiş); değişiklik yoksa aynı nesne', () => {
+    const clean = sanitizeSkipRefs(tpl)
+    expect(clean.sections[0].fields.find((f) => f.id === 'b').skip_if_no).toBeUndefined()
+    expect(clean.sections[0].fields.find((f) => f.id === 'a').skip_if_no).toBe('q')
+    expect(sanitizeSkipRefs(clean)).toBe(clean)
+    const chained = { sections: [{ id: 's', kind: 'metrics', fields: [
+      { id: 'q', type: 'yesno', skip_if_no: 'r' }, { id: 'r', type: 'yesno' }, { id: 'a', type: 'number', skip_if_no: 'q' },
+      { id: 'self', type: 'yesno', skip_if_no: 'self' }, { id: 'gone', type: 'number', skip_if_no: 'deleted' },
+    ] }] }
+    const fs = sanitizeSkipRefs(chained).sections[0].fields
+    expect(fs.find((f) => f.id === 'a').skip_if_no).toBeUndefined()
+    expect(fs.find((f) => f.id === 'self').skip_if_no).toBeUndefined()
+    expect(fs.find((f) => f.id === 'gone').skip_if_no).toBeUndefined()
+    expect(fs.find((f) => f.id === 'q').skip_if_no).toBe('r')
   })
 })
 

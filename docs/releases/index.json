@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-13T21:52:08Z",
+  "generatedAt": "2026-10-13T23:15:24Z",
   "repo": "inanmise/site-monitor",
-  "count": 747,
+  "count": 748,
   "releases": [
+    {
+      "version": "20.133.0",
+      "tag": "v20.133.0",
+      "releasedAt": "2026-10-13T23:15:15Z",
+      "commit": "7552309aeb5bfb0924ead2d2d5fd976490a73d1f",
+      "prevVersion": "20.132.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7552309a",
+          "subject": "teknik hata raporunda kesinti yok işareti — kesinti alanları muaf (sorulmaz, PDF'e ve e-postaya girmez)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.132.0",
       "tag": "v20.132.0",

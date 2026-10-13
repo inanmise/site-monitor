@@ -9,8 +9,8 @@ import { Textarea } from '@/components/shadcn/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
-  LIMITS, MAX_RESOLVED_TEXT, changePercent, formatNumber, formatPercent, formatValue, isIncompleteNumber, issueDisplayTitle,
-  move, newIssue, parseNumber, resolveIssueTitle,
+  LIMITS, MAX_RESOLVED_TEXT, changePercent, fieldExempt, formatNumber, formatPercent, formatValue, isIncompleteNumber,
+  issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle,
 } from './techErrorModel.js'
 import { periodLabel } from './TechErrorParts.jsx'
 
@@ -99,9 +99,12 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
   )
 }
 
-export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError }) {
+export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields }) {
   const t = useT()
-  const fields = section.fields || []
+  // Bağlı evet/hayır sorusu "Hayır" olan alan MUAF: sorulmaz (PDF'e de girmez)
+  const fields = (section.fields || []).filter((f) => !fieldExempt(f, values.fields))
+  const exemptCount = (f) => (f.type === 'yesno' && values.fields[f.id] === false
+    ? (templateFields || section.fields || []).filter((x) => x.skip_if_no === f.id).length : 0)
   const compact = fields.filter((f) => f.type !== 'textarea')
   const long = fields.filter((f) => f.type === 'textarea')
   const renderField = (f) => {
@@ -146,9 +149,22 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
         </label>
         {control}
         {f.hint && <p id={hintId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(f.hint)}</p>}
+        {exemptCount(f) > 0 && (
+          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-exempt-note" role="status">
+            {t('te.exemptNote', exemptCount(f))}
+          </p>
+        )}
         <PreviousHint field={f} prev={previous?.fields?.[f.id]} cur={v} previous={previous} uiLang={uiLang} t={t} />
         {err && <p id={errId} className="text-sm text-destructive" role="alert">{err}</p>}
       </div>
+    )
+  }
+  if (fields.length === 0) {
+    // Bölümün tüm alanları "Hayır" cevabıyla muaf: boş kart yerine kısa not (PDF'te bölüm hiç basılmaz)
+    return (
+      <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
+        <p className="text-sm text-muted-foreground" data-slot="te-section-exempt">{t('te.sectionExempt')}</p>
+      </SectionShell>
     )
   }
   return (
