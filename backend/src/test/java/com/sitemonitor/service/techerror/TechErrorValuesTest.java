@@ -18,6 +18,31 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorValuesTest {
 
     @Test
+    @DisplayName("kesinti yok ('Hayır'): kesinti alanlarının değeri saklanmaz; 'Evet' ya da cevapsızken saklanır")
+    void outageFieldsExemptWhenNoOutage() {
+        var t = TechErrorTemplate.defaults("tr");
+        Map<String, Object> f = new java.util.HashMap<>(Map.of("error-rate", 0.4, "error-rate-excl", 0.3, "outage-errors", 12,
+                "outage-share", 5.5, "error-count", 300));
+        f.put("had-outage", false);
+        var no = TechErrorValues.normalize(Map.of("fields", f), t);
+        assertThat(no.fields()).containsEntry("had-outage", false).containsKeys("error-rate", "error-count")
+                .doesNotContainKeys("error-rate-excl", "outage-errors", "outage-share");
+        f.put("had-outage", true);
+        assertThat(TechErrorValues.normalize(Map.of("fields", f), t).fields())
+                .containsKeys("error-rate-excl", "outage-errors", "outage-share");
+        f.remove("had-outage");
+        assertThat(TechErrorValues.normalize(Map.of("fields", f), t).fields())
+                .containsKeys("error-rate-excl", "outage-errors", "outage-share");
+        // "Hayır" iken gizli alandaki GEÇERSİZ değer kaydı reddettirmez (katı doğrulanmaz, düşer)
+        Map<String, Object> bad = new java.util.HashMap<>(Map.of("had-outage", false, "outage-share", 5_000_000_000_000_000.0,
+                "outage-errors", "çok"));
+        assertThat(TechErrorValues.normalize(Map.of("fields", bad), t).fields()).containsOnlyKeys("had-outage");
+        bad.put("had-outage", true);
+        assertThatThrownBy(() -> TechErrorValues.normalize(Map.of("fields", bad), t))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+    }
+
+    @Test
     @DisplayName("metin bölümü çözülmüş varsayılan kadar (12 000) uzun olabilir; üstü reddedilir")
     void textSectionAllowsResolvedLength() {
         var t = TechErrorTemplate.defaults("tr");

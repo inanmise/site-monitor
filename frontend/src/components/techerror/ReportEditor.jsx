@@ -15,7 +15,9 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
 import { IssuesBlock, MetricsBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
-import { canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson } from './techErrorModel.js'
+import {
+  allFields, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
+} from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
@@ -40,7 +42,6 @@ function dropBackup(id) {
   try { localStorage.removeItem(BACKUP_PREFIX + id) } catch { /* depolama yok */ }
 }
 
-const canonJson = (v) => stableJson(canonicalValues(v))
 const hasAny = (o) => Object.values(o).some(Boolean)
 
 /** Sürüklenen bir DOSYA mı (metin / bağlantı sürüklemesine dokunulmaz)? */
@@ -87,6 +88,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   const draftRef = useRef(draft)
   draftRef.current = draft
   const baseRef = useRef(base)
+  // Kanonik karşılaştırma şablonu bilir: "Hayır" cevabıyla muaf alanların (gizli) değeri sayılmaz / gönderilmez
+  const canonTpl = useRef(null)
+  const canonJson = useCallback((v) => stableJson(canonicalValues(v, canonTpl.current)), [])
   // Dil değişimi taslağı yeniden yüklemesin: yükleyici t'ye bağlı değil (yalnız hata metni için okunur)
   const tRef = useRef(t)
   tRef.current = t
@@ -98,15 +102,21 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
 
   /** Sunucudan okunan raporu uygular. `keepDraft`: kaydedilmemiş taslak korunur (gönderim sonrası / yeniden dene). */
   const applyLoaded = useCallback((resData, keepDraft) => {
+    // Taban, hangi şablonla kanonikleştirildiyse onunla karşılaştırılır: "temiz miydi?" ESKİ şablonla, yeni hâl YENİ
+    // şablonla (yeni şablonun eklediği bir bağ temiz taslağı sahte çakışmaya düşürmesin)
+    const prevTpl = canonTpl.current
+    const nextTpl = resData.template || prevTpl
+    const canonWith = (v, tpl) => stableJson(canonicalValues(v, tpl))
     const values = normalizeValues(resData.values)
-    const json = canonJson(values)
+    const json = canonWith(values, nextTpl)
     const cur = draftRef.current
-    const wasClean = cur == null || canonJson(cur) === baseRef.current.json
+    const wasClean = cur == null || canonWith(cur, prevTpl) === baseRef.current.json
     const versionMoved = baseRef.current.version != null && resData.report.version !== baseRef.current.version
     setData(resData)
     setImages(resData.images || [])
-    if (keepDraft && !wasClean && versionMoved && json === canonJson(cur)) {
+    if (keepDraft && !wasClean && versionMoved && json === canonWith(cur, nextTpl)) {
       // Sunucu tam olarak bu taslağı tutuyor (ör. kayıt yanıtı ağda kayboldu): çakışma değil — taban benimsenir
+      canonTpl.current = nextTpl
       applyBase({ json, version: resData.report.version })
       setConflict(false)
       return
@@ -117,8 +127,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
       setConflict(true)
       return
     }
+    canonTpl.current = nextTpl
     applyBase({ json, version: resData.report.version })
-    if (!keepDraft || (wasClean && canonJson(cur) !== json)) {
+    if (!keepDraft || (wasClean && canonWith(cur, nextTpl) !== json)) {
       setDraft(values)
       setGen((g) => g + 1)
       setClientErrors({})
@@ -126,7 +137,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
     }
     if (!keepDraft) {
       const b = readBackup(reportId)
-      const same = b && canonJson(normalizeValues(b.values)) === json
+      const same = b && canonWith(normalizeValues(b.values), nextTpl) === json
       setBackup(b && !same ? b : null)
       if (same) dropBackup(reportId)
     }
@@ -225,6 +236,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   const setField = (id, v) => {
     setDraft((d) => ({ ...d, fields: { ...d.fields, [id]: v } }))
     clearServer((k) => k === `values.${id}`)
+    if (v === false) {
+      // Muaf olan (gizlenen) alanın hatası görünmeden kaydı kilitlemesin
+      for (const dep of allFields(data?.template).filter((f) => f.skip_if_no === id)) {
+        setFieldError(`values.${dep.id}`, null)
+        clearServer((k) => k === `values.${dep.id}`)
+      }
+    }
   }
   const setIssues = (sid, list) => {
     setDraft((d) => ({ ...d, issues: { ...d.issues, [sid]: list } }))
@@ -246,7 +264,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   async function save({ quiet = false } = {}) {
     if (!draftRef.current || readOnly) return false
     if (hasClientErrors) { toast.error(t('te.fixFieldErrors')); return false }
-    const sent = canonicalValues(draftRef.current)
+    const sent = canonicalValues(draftRef.current, canonTpl.current)
     const sentJson = stableJson(sent)
     if (sentJson === baseRef.current.json) return true
     // Uçuştaki bir yükleme (ör. gönderim sonrası) bu kaydın sürümünü eskisiyle ezmesin: düşürülür ve kayıttan SONRA
@@ -534,7 +552,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
         const key = `${s.id}:${gen}`
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
-            readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} />
+            readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} />
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}

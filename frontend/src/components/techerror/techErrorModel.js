@@ -230,6 +230,52 @@ export function allFields(template) {
   return (template?.sections || []).filter((s) => s.kind === 'metrics').flatMap((s) => s.fields || [])
 }
 
+/**
+ * Alan bu değerlerle MUAF mı (2026-10-14, kullanıcı isteği: "kesinti yok işareti koyarsa bu alan muaf olsun")?
+ * `skip_if_no` = bağlı evet/hayır sorusu; o soru açıkça "Hayır" (false) ise alan sorulmaz, PDF'e girmez. Soru boşsa ya
+ * da "Evet" ise alan istenir. Sunucudaki TechErrorTemplate.exempt ile aynı.
+ */
+export function fieldExempt(field, fields) {
+  return !!field?.skip_if_no && fields?.[field.skip_if_no] === false
+}
+
+/** Bir evet/hayır sorusuna bağlı alanlar (tüm gösterge bölümlerinden). */
+export function dependentsOf(template, questionId) {
+  return allFields(template).filter((f) => f.skip_if_no === questionId)
+}
+
+/**
+ * Şablondaki geçersiz `skip_if_no` bağlarını kaldırır (sunucunun katı kuralıyla aynı: hedef bir evet/hayır alanı,
+ * kendisi değil, kendisi başka bir soruya bağlı değil). Değişiklik yoksa AYNI nesne döner. Düzenleyici her
+ * değişiklikte çağırır: soru silinince ya da türü değişince bağ sessizce kalkar, kayıt reddedilmez.
+ */
+export function sanitizeSkipRefs(template) {
+  if (!template?.sections) return template
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  let changed = false
+  const sections = template.sections.map((s) => {
+    if (s.kind !== 'metrics' || !Array.isArray(s.fields)) return s
+    let sChanged = false
+    const fields = s.fields.map((f) => {
+      if (!f.skip_if_no) return f
+      const target = byId.get(f.skip_if_no)
+      const ok = target && f.skip_if_no !== f.id && target.type === 'yesno' && !target.skip_if_no
+      if (ok) return f
+      sChanged = true
+      return withoutSkip(f)
+    })
+    if (!sChanged) return s
+    changed = true
+    return { ...s, fields }
+  })
+  return changed ? { ...template, sections } : template
+}
+
+/** Alanın "Hayır cevabında sorma" bağı olmadan kopyası. */
+export function withoutSkip(field) {
+  return Object.fromEntries(Object.entries(field || {}).filter(([k]) => k !== 'skip_if_no'))
+}
+
 export function allSlots(template) {
   return (template?.sections || []).filter((s) => s.kind === 'images').flatMap((s) => s.slots || [])
 }
@@ -334,13 +380,16 @@ export function newIssue(list) {
  * bölümlerinde boş metin KORUNUR (bilerek boşaltılmış bölüm basılmaz). İnceleme 2026-10-13: konu ekleyip silmek
  * ya da boş alan sahte "kaydedilmemiş değişiklik" gösteriyordu.
  */
-export function canonicalValues(v) {
+export function canonicalValues(v, template = null) {
   const fields = {}
   for (const [k, x] of Object.entries(v?.fields || {})) {
     if (x == null) continue
     if (typeof x === 'string' && x.trim() === '') continue
     fields[k] = x
   }
+  // Şablon verildiyse "Hayır" cevabıyla muaf alanların değeri gönderilmez / karşılaştırılmaz (sunucu da saklamaz);
+  // taslakta kalır: kayıttan önce "Evet"e dönülürse yazılan değer geri gelir
+  if (template) for (const f of allFields(template)) if (fieldExempt(f, fields)) delete fields[f.id]
   const issues = {}
   for (const [k, list] of Object.entries(v?.issues || {})) {
     if (!Array.isArray(list) || list.length === 0) continue

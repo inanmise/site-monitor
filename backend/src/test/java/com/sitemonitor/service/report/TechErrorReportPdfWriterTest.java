@@ -123,6 +123,56 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
+    @DisplayName("kesinti yok ('Hayır'): kesinti günleri hariç oran ve kesinti kaynaklı alanlar PDF'e girmez; 'Evet' ise girer")
+    void outageFieldsLeftOutWhenNoOutage() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, Object> f = new HashMap<>();
+        f.put("error-rate", 0.42);
+        f.put("had-outage", false);
+        f.put("error-rate-excl", 0.3);
+        f.put("outage-errors", 12);
+        TechErrorValues.Values no = TechErrorValues.normalize(Map.of("fields", f), t);
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, no, "ATM", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(s).contains("Dönemde kesinti oldu mu?").contains("Hayır").contains("Teknik hata oranı");
+        assertThat(s).doesNotContain("Kesinti günleri hariç").doesNotContain("Kesinti kaynaklı");
+        f.put("had-outage", true);
+        TechErrorValues.Values yes = TechErrorValues.normalize(Map.of("fields", f), t);
+        String y = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, yes, "ATM", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(y).contains("Kesinti günleri hariç").contains("Kesinti kaynaklı");
+    }
+
+    @Test
+    @DisplayName("tüm alanları muaf gösterge bölümü başlığıyla birlikte basılmaz; e-posta özetinde yönetici soru yer kaplamaz")
+    void fullyExemptSectionAndMailStats() throws IOException {
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new java.util.ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("id", "outage-detail");
+        extra.put("kind", "metrics");
+        extra.put("title", "Kesinti Ayrıntıları");
+        extra.put("fields", List.of(Map.of("id", "outage-days", "label", "Kesinti gün sayısı", "type", "number", "skip_if_no", "had-outage")));
+        secs.add(1, extra);
+        raw.put("sections", secs);
+        Template t = TechErrorTemplate.normalize(raw);
+        Map<String, Object> f = new HashMap<>();
+        f.put("had-outage", false);
+        f.put("error-count", 52500);
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("fields", f), t);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 9, null, null, Map.of());
+        assertThat(text(TechErrorReportPdfWriter.render(in))).doesNotContain("Kesinti Ayrıntıları");
+        f.put("had-outage", true);
+        TechErrorPdfInput yes = new TechErrorPdfInput(t, TechErrorValues.normalize(Map.of("fields", f), t), "ATM", "Takım", 2026, 9,
+                null, null, Map.of());
+        assertThat(text(TechErrorReportPdfWriter.render(yes))).contains("Kesinti Ayrıntıları");
+        // e-posta: "Dönemde kesinti oldu mu?" 8 göstergelik özetin yerini almaz → hata adedi özette kalır
+        String html = com.sitemonitor.service.mail.TechErrorReportMail.build(yes, null, "atm.pdf").html();
+        assertThat(html).doesNotContain("Dönemde kesinti oldu mu?").contains("Ay içindeki teknik hata adedi");
+        // "Hayır": rakamlar muaf, soru e-postada görünür (PDF ile aynı bilgi)
+        String noHtml = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "atm.pdf").html();
+        assertThat(noHtml).contains("Dönemde kesinti oldu mu?").doesNotContain("Kesinti günleri hariç");
+    }
+
+    @Test
     @DisplayName("çok uzun metin sessizce kesilmez: sınırı aşınca 'kısaltıldı' notu basılır")
     void overlongTextIsMarked() throws IOException {
         Template t = TechErrorTemplate.defaults("tr");

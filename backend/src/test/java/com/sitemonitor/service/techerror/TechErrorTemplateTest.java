@@ -131,6 +131,69 @@ class TechErrorTemplateTest {
         assertThat(t.sections()).extracting(s -> s.id()).containsExactly("b");
     }
 
+    @Test
+    @DisplayName("kesinti sorusu: varsayılanda 'Dönemde kesinti oldu mu?' üç kesinti alanını yönetir (TR + EN), JSON'da korunur")
+    void defaultOutageQuestionControlsOutageFields() {
+        for (String lang : List.of("tr", "en")) {
+            Template t = TechErrorTemplate.defaults(lang);
+            Map<String, TechErrorTemplate.Field> byId = new LinkedHashMap<>();
+            for (var f : t.allFields()) byId.put(f.id(), f);
+            assertThat(byId.get("had-outage").type()).isEqualTo("yesno");
+            assertThat(byId.get("had-outage").skipIfNo()).isNull();
+            for (String id : List.of("error-rate-excl", "outage-errors", "outage-share")) {
+                assertThat(byId.get(id).skipIfNo()).as(lang + " " + id).isEqualTo("had-outage");
+            }
+            assertThat(byId.get("error-rate").skipIfNo()).isNull();
+            Template back = TechErrorTemplate.fromStored(TechErrorTemplate.toJson(t));
+            assertThat(back).isEqualTo(t);
+            assertThat(TechErrorTemplate.normalize(TechErrorTemplate.toMap(t))).isEqualTo(t);
+        }
+        var excl = TechErrorTemplate.defaults("tr").allFields().stream().filter(f -> f.id().equals("error-rate-excl")).findFirst().orElseThrow();
+        assertThat(TechErrorTemplate.exempt(excl, Map.of("had-outage", false))).isTrue();
+        assertThat(TechErrorTemplate.exempt(excl, Map.of("had-outage", true))).isFalse();
+        assertThat(TechErrorTemplate.exempt(excl, Map.of())).isFalse();          // cevaplanmadı → istenir
+    }
+
+    @Test
+    @DisplayName("'Hayır ise sorma' bağı: yalnız evet/hayır sorusuna, kendisine değil, zincirsiz; katı reddeder, saklı düşürür")
+    void skipIfNoReferenceRules() {
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        for (String bad : List.of("total-tx", "error-rate-excl", "yok-boyle-alan")) {
+            Map<String, Object> copy = withSkip(raw, "error-rate", bad);
+            assertInvalid(copy);
+            // saklı (hoşgörülü) okumada bağ düşer, alan kalır
+            Template lenient = TechErrorTemplate.fromStored(TechErrorTemplate.JSON.writeValueAsString(copy));
+            assertThat(lenient.allFields().stream().filter(f -> f.id().equals("error-rate")).findFirst().orElseThrow().skipIfNo()).isNull();
+        }
+        assertInvalid(withSkip(raw, "had-outage", "had-outage"));               // kendisine
+        assertInvalid(withSkip(raw, "had-outage", "sla-above"));                // zincir: bağlı alanların sorusu kendisi bağlı
+        // geçerli bağ: evet/hayır sorusuna, zincirsiz
+        Template ok = TechErrorTemplate.normalize(withSkip(raw, "sla-rate", "sla-above"));
+        assertThat(ok.allFields().stream().filter(f -> f.id().equals("sla-rate")).findFirst().orElseThrow().skipIfNo())
+                .isEqualTo("sla-above");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withSkip(Map<String, Object> raw, String fieldId, String target) {
+        Map<String, Object> copy = new LinkedHashMap<>(raw);
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(s);
+            if (s.get("fields") instanceof List<?> fl) {
+                List<Map<String, Object>> fs = new ArrayList<>();
+                for (Object o : fl) {
+                    Map<String, Object> fm = new LinkedHashMap<>((Map<String, Object>) o);
+                    if (fieldId.equals(fm.get("id"))) fm.put("skip_if_no", target);
+                    fs.add(fm);
+                }
+                sc.put("fields", fs);
+            }
+            secs.add(sc);
+        }
+        copy.put("sections", secs);
+        return copy;
+    }
+
     private static void assertInvalid(Map<String, Object> raw) {
         assertThatThrownBy(() -> TechErrorTemplate.normalize(raw))
                 .isInstanceOf(FieldValidationException.class)

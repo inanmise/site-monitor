@@ -599,6 +599,8 @@ public class TechErrorReportService {
             Object v = before.fields().get(f.id());
             if (v != null && f.type().equals(prevTypes.get(f.id()))) fields.put(f.id(), v);
         }
+        // Yeni şablonda "Hayır" cevabıyla muaf kalan alanın değeri taşınmaz (önizleme kaybı doğru saysın)
+        for (var f : next.allFields()) if (TechErrorTemplate.exempt(f, fields)) fields.remove(f.id());
         Map<String, String> prevKinds = new HashMap<>();
         for (var s : prev.sections()) prevKinds.put(s.id(), s.kind());
         Map<String, List<TechErrorValues.Issue>> issues = new LinkedHashMap<>();

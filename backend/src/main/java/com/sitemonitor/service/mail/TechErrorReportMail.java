@@ -47,6 +47,10 @@ public final class TechErrorReportMail {
             for (Field f : s.fields()) {
                 if (stats.size() >= MAX_STATS) break;
                 if (!"number".equals(f.type()) && !"percent".equals(f.type()) && !"yesno".equals(f.type())) continue;
+                if (com.sitemonitor.service.techerror.TechErrorTemplate.exempt(f, in.values().fields())) continue;   // muaf alan
+                // "Kesinti oldu mu?" gibi yönetici soru: "Evet" iken bağlı rakamlar zaten özette → yer kaplamaz;
+                // "Hayır" iken (rakamlar muaf) ve cevapsızken gösterilir — e-posta PDF ile aynı şeyi söyler
+                if (Boolean.TRUE.equals(in.values().fields().get(f.id())) && controlsInSection(s, f)) continue;
                 stats.add(Stat.of(in.resolve(f.label()), TechErrorFormat.value(f, in.values().fields().get(f.id()), lang)));
             }
             break;   // yalnız ilk gösterge bölümü (raporun özeti)
@@ -67,4 +71,11 @@ public final class TechErrorReportMail {
     private static boolean blank(String s) { return s == null || s.isBlank(); }
 
     private static String nz(String s) { return blank(s) ? "—" : s.trim(); }
+
+    /** Bu evet/hayır sorusuna AYNI bölümde bağlı alan var mı (özet yalnız ilk gösterge bölümünü okur)? */
+    private static boolean controlsInSection(Section s, Field q) {
+        if (!"yesno".equals(q.type())) return false;
+        for (Field f : s.fields()) if (q.id().equals(f.skipIfNo())) return true;
+        return false;
+    }
 }

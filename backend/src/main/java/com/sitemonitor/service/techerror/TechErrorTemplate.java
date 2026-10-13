@@ -5,6 +5,7 @@ import com.sitemonitor.util.Msg;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,7 +60,22 @@ public final class TechErrorTemplate {
     static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
     static final ObjectMapper JSON = new ObjectMapper();
 
-    public record Field(String id, String label, String type, String hint) { }
+    /**
+     * Gösterge alanı. {@code skipIfNo} (2026-10-14, kullanıcı isteği: "kesinti yok işareti koyarsa bu alan muaf olsun"):
+     * şablondaki bir evet/hayır sorusunun kimliği — o soru "Hayır" işaretlenirse alan MUAF olur: formda sorulmaz,
+     * değeri saklanmaz, PDF'e ve e-postaya girmez. Soru boşsa ya da "Evet" ise alan istenir. Zincir yok: bağlanılan
+     * soru kendisi başka bir soruya bağlı olamaz.
+     */
+    public record Field(String id, String label, String type, String hint, String skipIfNo) {
+        public Field(String id, String label, String type, String hint) {
+            this(id, label, type, hint, null);
+        }
+    }
+
+    /** Alan bu değerlerle muaf mı (bağlı olduğu evet/hayır sorusu açıkça "Hayır")? */
+    public static boolean exempt(Field f, Map<String, Object> values) {
+        return f != null && f.skipIfNo() != null && values != null && Boolean.FALSE.equals(values.get(f.skipIfNo()));
+    }
 
     public record Slot(String id, String label, String width) { }
 
@@ -133,6 +149,7 @@ public final class TechErrorTemplate {
                         fm.put("label", f.label());
                         fm.put("type", f.type());
                         if (f.hint() != null && !f.hint().isEmpty()) fm.put("hint", f.hint());
+                        if (f.skipIfNo() != null) fm.put("skip_if_no", f.skipIfNo());
                         fs.add(fm);
                     }
                     sm.put("fields", fs);
@@ -263,7 +280,37 @@ public final class TechErrorTemplate {
             }
         }
         if (sections.isEmpty()) return new Template(lang, title, defaults(lang).sections());
-        return new Template(lang, title, List.copyOf(sections));
+        return new Template(lang, title, resolveSkipRefs(sections, strict));
+    }
+
+    /**
+     * {@code skip_if_no} bağlarını doğrular: hedef aynı şablondaki bir EVET/HAYIR alanı olmalı, alanın kendisi olmamalı
+     * ve kendisi başka bir soruya bağlı olmamalı (zincir / döngü yok). Katı: hata; hoşgörülü: bağ düşer.
+     */
+    private static List<Section> resolveSkipRefs(List<Section> sections, boolean strict) {
+        Map<String, Field> byId = new HashMap<>();
+        for (Section s : sections) for (Field f : s.fields()) byId.put(f.id(), f);
+        List<Section> out = new ArrayList<>(sections.size());
+        for (Section s : sections) {
+            if (!"metrics".equals(s.kind())) { out.add(s); continue; }
+            List<Field> fs = new ArrayList<>(s.fields().size());
+            for (Field f : s.fields()) {
+                String ref = f.skipIfNo();
+                if (ref == null) { fs.add(f); continue; }
+                Field target = byId.get(ref);
+                boolean ok = target != null && !ref.equals(f.id()) && "yesno".equals(target.type()) && target.skipIfNo() == null;
+                if (!ok && strict) {
+                    throw invalid(Msg.t("“" + f.label() + "” alanı yalnız şablondaki bir evet/hayır sorusuna bağlanabilir "
+                                    + "(kendisine ya da başka bir soruya bağlı bir soruya değil). Bağı kaldırıp yeniden seçin.",
+                            "The “" + f.label() + "” field can only be tied to a yes/no question in the template "
+                                    + "(not to itself or to a question that is tied to another one). Remove the link and pick again."));
+                }
+                fs.add(ok ? f : new Field(f.id(), f.label(), f.type(), f.hint(), null));
+            }
+            out.add(new Section(s.id(), s.kind(), s.title(), List.copyOf(fs), s.slots(), s.itemTitle(), s.descriptionLabel(),
+                    s.customersLabel(), s.errorsLabel(), s.text()));
+        }
+        return List.copyOf(out);
     }
 
     private static List<Field> fields(Object raw, int si, Set<String> ids, boolean strict) {
@@ -296,7 +343,13 @@ public final class TechErrorTemplate {
             String hint = cut(line(fm.get("hint")), MAX_HINT, strict, at + Msg.t("açıklama en çok 300 karakter olabilir.",
                     "the description can be at most 300 characters."));
             String id = id(fm.get("id"), "f", ids.size() + 1, ids, strict, at);
-            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint));
+            // Bağ burada yalnız biçimce okunur; hedefin varlığı / türü tüm bölümler okununca denetlenir (resolveSkipRefs)
+            String skip = str(fm.get("skip_if_no"));
+            if (skip != null && (skip.isBlank() || !ID.matcher(skip).matches())) {
+                if (strict && !skip.isBlank()) throw invalid(at + Msg.t("bağlı soru kimliği geçersiz.", "the linked question id is invalid."));
+                skip = null;
+            }
+            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint, skip));
         }
         return out;
     }
@@ -424,16 +477,18 @@ public final class TechErrorTemplate {
         List<Section> s = new ArrayList<>();
         s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Özeti", List.of(
                 new Field("error-rate", "Teknik hata oranı", "percent", "İlgili ay/yıl verilerine göre"),
+                new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
+                        "“Hayır” işaretlenirse kesinti günleri hariç oran ve kesinti kaynaklı hatalar istenmez, PDF'e girmez"),
                 new Field("error-rate-excl", "Kesinti günleri hariç teknik hata oranı", "percent",
-                        "Kesintilerin olduğu günlerde alınan hatalar çıkarıldığında"),
+                        "Kesintilerin olduğu günlerde alınan hatalar çıkarıldığında", "had-outage"),
                 new Field("total-tx", "Toplam işlem adedi", "number", "{kanal} kanalından yapılan toplam işlem"),
                 new Field("tx-increase", "Önceki aya göre artış var mı?", "yesno", null),
                 new Field("tx-increase-pct", "Önceki aya göre artış oranı", "percent", null),
                 new Field("sla-rate", "Kritik fonksiyonların SLA oranı", "percent", "SLA taahhüdü kapsamındaki kritik fonksiyonlar"),
                 new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", null),
                 new Field("error-count", "Ay içindeki teknik hata adedi", "number", null),
-                new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null),
-                new Field("outage-share", "Kesinti kaynaklı hataların toplam hataya oranı", "percent", null))));
+                new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null, "had-outage"),
+                new Field("outage-share", "Kesinti kaynaklı hataların toplam hataya oranı", "percent", null, "had-outage"))));
         s.add(new Section("issues", "issues", "Teknik hataların anomali olarak arttığı konular", List.of(), List.of(),
                 "{konu} Konusu ile yaşanan problem", "Ne zaman, nerede, nasıl gerçekleşti?", "Etkilenen müşteri sayısı",
                 "Bu sorundan kaynaklı teknik hata adedi", null));
@@ -468,16 +523,18 @@ public final class TechErrorTemplate {
         List<Section> s = new ArrayList<>();
         s.add(metrics("summary", "{channel} Channel — {month} {year} Summary", List.of(
                 new Field("error-rate", "Technical error rate", "percent", "Based on this month's figures"),
+                new Field("had-outage", "Was there an outage in the period?", "yesno",
+                        "If “No”, the rate excluding outage days and the outage-caused errors aren't asked or printed"),
                 new Field("error-rate-excl", "Technical error rate excluding outage days", "percent",
-                        "With errors from outage days left out"),
+                        "With errors from outage days left out", "had-outage"),
                 new Field("total-tx", "Total transactions", "number", "All transactions made through {channel}"),
                 new Field("tx-increase", "Increase compared with the previous month?", "yesno", null),
                 new Field("tx-increase-pct", "Increase compared with the previous month", "percent", null),
                 new Field("sla-rate", "SLA rate of critical functions", "percent", "Critical functions covered by the SLA commitment"),
                 new Field("sla-above", "Above the SLA target?", "yesno", null),
                 new Field("error-count", "Technical errors in the month", "number", null),
-                new Field("outage-errors", "Technical errors caused by outages", "number", null),
-                new Field("outage-share", "Share of outage-caused errors in all errors", "percent", null))));
+                new Field("outage-errors", "Technical errors caused by outages", "number", null, "had-outage"),
+                new Field("outage-share", "Share of outage-caused errors in all errors", "percent", null, "had-outage"))));
         s.add(new Section("issues", "issues", "Topics where technical errors rose abnormally", List.of(), List.of(),
                 "{topic} issue", "When, where and how did it happen?", "Affected customers",
                 "Technical errors caused by this issue", null));

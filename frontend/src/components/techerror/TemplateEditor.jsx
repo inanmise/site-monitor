@@ -21,8 +21,8 @@ import {
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
-  FIELD_TYPES, LIMITS, allSlots, canonicalTemplate, imageRows, move, newId, newSection, resolvePlaceholders, stableJson,
-  templateErrors,
+  FIELD_TYPES, LIMITS, allFields, allSlots, canonicalTemplate, imageRows, move, newId, newSection, resolvePlaceholders,
+  sanitizeSkipRefs, stableJson, templateErrors, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 
@@ -146,7 +146,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   useEffect(() => () => flushBackup.current?.(), [])
   const shownErrors = showErrors ? errors : {}
 
-  const update = (fn) => setDraft((d) => (d ? fn(d) : d))
+  // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti)
+  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(fn(d)) : d))
   const updateSection = (id, fn) => update((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? fn(s) : s)) }))
 
   async function save() {
@@ -462,6 +463,12 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
                     {FIELD_TYPES.map((ty) => <NativeSelectOption key={ty} value={ty}>{t(`te.type.${ty}`)}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
+                <SkipIfNoSelect field={f} draft={draft} resolveLabel={(x) => x.label || t('te.tpl.field')}
+                  onChange={(v) => onChange((x) => ({ ...x, fields: x.fields.map((y) => {
+                    if (y.id !== f.id) return y
+                    if (!v) return withoutSkip(y)
+                    return { ...y, skip_if_no: v }
+                  }) }))} />
                 <div className="flex flex-col gap-1 md:col-span-2">
                   <label htmlFor={`te-fh-${f.id}`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.fieldHint')}</label>
                   <Input id={`te-fh-${f.id}`} className="pointer-coarse:h-10" value={f.hint || ''} maxLength={LIMITS.hint}
@@ -478,6 +485,30 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
         onClick={() => onChange((x) => ({ ...x, fields: [...(x.fields || []), { id: newId('f', draft), label: t('te.tpl.newField'), type: 'number' }] }))}>
         <Plus aria-hidden="true" /> {t('te.tpl.addField')}
       </Button>
+    </div>
+  )
+}
+
+/**
+ * "Bu soru Hayır ise alanı sorma": şablondaki evet/hayır sorularından biri (alanın kendisi ve kendisi bağlı sorular
+ * hariç — sunucu zincire izin vermez). Seçilen soru "Hayır" işaretlenirse alan raporda muaf olur.
+ */
+function SkipIfNoSelect({ field, draft, resolveLabel, onChange }) {
+  const t = useT()
+  const options = allFields(draft).filter((q) => q.type === 'yesno' && q.id !== field.id && !q.skip_if_no)
+  // Başka alanların bağlandığı bir soru kendisi bağlanamaz (zincir) — seçenek gösterilmez
+  const isTarget = allFields(draft).some((x) => x.skip_if_no === field.id)
+  if (options.length === 0 || isTarget) return null
+  const id = `te-fs-${field.id}`
+  return (
+    <div className="flex flex-col gap-1 md:col-span-2">
+      <label htmlFor={id} className="text-xs font-medium text-muted-foreground">{t('te.tpl.skipIfNo')}</label>
+      <NativeSelect id={id} value={field.skip_if_no || ''} className="w-full pointer-coarse:h-10"
+        onChange={(e) => onChange(e.target.value || null)}>
+        <NativeSelectOption value="">{t('te.tpl.skipIfNoNone')}</NativeSelectOption>
+        {options.map((q) => <NativeSelectOption key={q.id} value={q.id}>{resolveLabel(q)}</NativeSelectOption>)}
+      </NativeSelect>
+      <p className="text-xs text-muted-foreground">{t('te.tpl.skipIfNoHint')}</p>
     </div>
   )
 }
