@@ -547,5 +547,20 @@ final class EmailSamples {
                     e.getValue(), BASE, "10.10.2026 12:00", "site-monitor-yonetici-ozeti-2026-09.pdf");
             add(e.getKey(), "report", com.sitemonitor.service.mail.ExecutiveSummaryMail.subject(e.getValue()), m.html(), m.text(), "ok");
         }
+        // Kanal teknik hata raporu (2026-10-13): TR (dolu) ve EN (boş değerler) — gövde kısa, asıl içerik PDF ekinde.
+        for (String lang : java.util.List.of("tr", "en")) {
+            var t = com.sitemonitor.service.techerror.TechErrorTemplate.defaults(lang);
+            var v = "tr".equals(lang)
+                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", java.util.Map.of(
+                            "error-rate", 0.42, "error-rate-excl", 0.31, "total-tx", 12500000, "tx-increase", true,
+                            "tx-increase-pct", 3.2, "sla-rate", 99.6, "sla-above", true, "error-count", 52500)), t)
+                    : com.sitemonitor.service.techerror.TechErrorValues.Values.empty();
+            var in = new com.sitemonitor.service.techerror.TechErrorPdfInput(t, v, "Bireysel İnternet Şubesi",
+                    "Dijital Kanallar Uygulama Geliştirme (Bireysel / Mobil)", 2026, 9, "Ayşe Yılmaz",
+                    java.time.Instant.parse("2026-10-02T06:30:00Z"), java.util.Map.of());
+            com.sitemonitor.service.mail.MailDoc.Mail m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, BASE,
+                    "bireysel-internet-subesi-teknik-hata-2026-09.pdf");
+            add("report-tech-error-" + lang, "report", com.sitemonitor.service.mail.TechErrorReportMail.subject(in), m.html(), m.text(), "ok");
+        }
     }
 }

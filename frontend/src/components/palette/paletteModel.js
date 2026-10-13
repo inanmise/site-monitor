@@ -5,7 +5,7 @@ import {
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
   Logs, UserCheck, Fingerprint, FilePenLine,
   Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning, SignalHigh, ClipboardCheck, Presentation,
+  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning, SignalHigh, ClipboardCheck, Presentation, FileWarning
 } from 'lucide-react'
 import { personalKey } from '../../utils/personalStorage.js'
 
@@ -49,6 +49,7 @@ export const TAB_META = {
   weeklyreports:      { Icon: FileChartColumn, section: 'nav.groupReports' },
   'incident-history': { Icon: FileClock,       section: 'nav.groupReports' },
   executive:          { Icon: Presentation,    section: 'nav.groupReports' },   // Aylık Yönetici Özeti (2026-10-10)
+  channelreports:     { Icon: FileWarning,     section: 'nav.groupReports' },   // Kanal teknik hata raporları (2026-10-13)
   activity:           { Icon: Logs,        section: 'nav.groupLogs' },
   myactivity:         { Icon: UserCheck,   section: 'nav.groupLogs' },
   system:             { Icon: Fingerprint, section: 'nav.groupLogs' },

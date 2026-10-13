@@ -198,12 +198,13 @@ describe('CertificateModal', () => {
     const onLeave = vi.fn()
     const props = { domain: 'example.com', currentUser: 'admin', currentUserRole: 'ADMIN', initialTab: 'inventory' }
     const r = render(<CertificateModal {...props} onClose={onClose} onLeave={onLeave} />)
-    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }))
+    // Envanter sekmesi tembel yüklenen parça (lazyChunks): tam koşunun yükünde 1 sn'lik varsayılan bekleme yetmiyordu
+    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }, { timeout: 5000 }))
     expect(onLeave).toHaveBeenCalledTimes(1)
     r.unmount()
     render(<CertificateModal {...props} onClose={onClose} />)
     onClose.mockClear()
-    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }, { timeout: 5000 }))
     expect(onClose).toHaveBeenCalled()
   })
 

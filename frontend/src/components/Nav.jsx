@@ -13,7 +13,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation,
+  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation, FileWarning
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -124,6 +124,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         { id: 'incident-history', Icon: FileClock,       labelKey: 'nav.incidentHistory', show: true },
         // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — yalnız global yönetici + AUDIT (uç ayrıca izin ister)
         { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: systemRole === 'ADMIN' || systemRole === 'AUDIT' },
+        // Kanal teknik hata raporları (2026-10-13): takımın kanalları, şablonları ve aylık PDF raporu — herkes (kapsam sunucuda)
+        { id: 'channelreports',   Icon: FileWarning,     labelKey: 'nav.channelReports',  show: true },
       ],
     },
     {

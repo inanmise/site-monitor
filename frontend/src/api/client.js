@@ -503,6 +503,63 @@ export const api = {
       }
     },
   },
+  /**
+   * Kanal teknik hata raporu (2026-10-13): takımın kanalları, kanal başına şablon, aylık rapor (değerler + grafik
+   * görselleri), PDF indirme ve takım e-postasına gönderim. Kapsam sunucuda (üyelik / yönetim / görüş).
+   */
+  techErrors: {
+    overview: (team = null) => request(`/tech-error-reports/overview${team ? `?team=${encodeURIComponent(team)}` : ''}`, { withStatus: true }),
+    createChannel: (body) => request('/tech-error-reports/channels', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    updateChannel: (id, body) => request(`/tech-error-reports/channels/${id}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    deleteChannel: (id) => request(`/tech-error-reports/channels/${id}`, { method: 'DELETE', withStatus: true }),
+    template: (id) => request(`/tech-error-reports/channels/${id}/template`, { withStatus: true }),
+    saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
+      { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),
+    defaultTemplate: (lang) => request(`/tech-error-reports/templates/default?lang=${encodeURIComponent(lang || 'tr')}`, { withStatus: true }),
+    reports: (channelId) => request(`/tech-error-reports/channels/${channelId}/reports`, { withStatus: true }),
+    createReport: (channelId, year, month) => request('/tech-error-reports/reports',
+      { method: 'POST', body: JSON.stringify({ channel_id: channelId, year, month }), withStatus: true }),
+    report: (id) => request(`/tech-error-reports/reports/${id}`, { withStatus: true }),
+    saveReport: (id, values, version) => request(`/tech-error-reports/reports/${id}`,
+      { method: 'PUT', body: JSON.stringify({ values, version }), withStatus: true }),
+    refreshTemplate: (id, version) => request(`/tech-error-reports/reports/${id}/refresh-template`,
+      { method: 'POST', body: JSON.stringify({ version }), withStatus: true }),
+    deleteReport: (id) => request(`/tech-error-reports/reports/${id}`, { method: 'DELETE', withStatus: true }),
+    uploadImage: (id, slotId, file) => {
+      const form = new FormData()
+      form.append('file', file)
+      return request(`/tech-error-reports/reports/${id}/images/${encodeURIComponent(slotId)}`, { method: 'POST', body: form, withStatus: true })
+    },
+    deleteImage: (id, imageId) => request(`/tech-error-reports/reports/${id}/images/${imageId}`, { method: 'DELETE', withStatus: true }),
+    imageUrl: (imageId) => `${BASE}/tech-error-reports/images/${imageId}`,
+    send: (id) => request(`/tech-error-reports/reports/${id}/send`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    /** PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. */
+    downloadPdf: async (id) => {
+      try {
+        const res = await fetch(`${BASE}/tech-error-reports/reports/${id}/pdf`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        if (!res.ok) {
+          let body = null
+          try { body = await res.json() } catch { body = null }
+          return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
+        }
+        const blob = await res.blob()
+        const disp = res.headers.get('Content-Disposition') || ''
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+        const plain = /filename="?([^";]+)"?/.exec(disp)
+        let name = 'teknik-hata-raporu.pdf'
+        try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : name) } catch { /* ham ad */ }
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = name
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        return { success: true, name }
+      } catch (e) {
+        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+    },
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),

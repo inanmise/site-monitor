@@ -1,0 +1,307 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Trash2, Users } from 'lucide-react'
+import { api } from '../../api/client'
+import { useT, useLanguage } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
+import { useElementWidth } from '../../hooks/useElementWidth.js'
+import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card, CardContent } from '@/components/shadcn/card'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
+import TemplateEditor from './TemplateEditor.jsx'
+import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
+import { TAB_REPORTS, TAB_TEMPLATE, periodOptions } from './techErrorModel.js'
+
+const TABLE_MIN_PX = 760
+
+/**
+ * Tek kanal: raporları ve ŞABLONU. "Şablonu aç" bu görünümü Şablon sekmesinde açar (`te_tab=template`); şablon
+ * yalnız BU kanalındır. Rapor listesi kap genişliğine göre tablo ya da kart.
+ */
+export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpenReport }) {
+  const t = useT()
+  const { lang } = useLanguage()
+  const toast = useToast()
+  const { showConfirm } = useDialog()
+  const [state, setState] = useState({ loading: true, error: null, status: null, data: null })
+  const [newOpen, setNewOpen] = useState(false)
+  const [templateDirty, setTemplateDirty] = useState(false)
+  const [listRef, listWidth] = useElementWidth()
+  const seq = useRef(0)
+
+  const load = useCallback(async () => {
+    const my = ++seq.current
+    setState((s) => ({ ...s, loading: true }))
+    try {
+      const res = await api.techErrors.reports(channelId)
+      if (my !== seq.current) return
+      if (res?.success && res.data) setState({ loading: false, error: null, status: null, data: res.data })
+      else setState((s) => ({ ...s, loading: false, error: res?.error || t('te.loadError'), status: res?.status ?? null }))
+    } catch (e) {
+      if (my !== seq.current) return
+      setState((s) => ({ ...s, loading: false, error: e?.message || t('te.loadError'), status: 0 }))
+    }
+  }, [channelId, t])
+  useEffect(() => { load() }, [load])
+
+  const ch = state.data?.channel
+  const reports = state.data?.reports || []
+  const narrow = listWidth > 0 && listWidth < TABLE_MIN_PX
+
+  async function guardLeave(next) {
+    if (!templateDirty) { next(); return }
+    const ok = await showConfirm({ title: t('te.leaveTitle'), message: t('te.leaveBody'), variant: 'warning',
+      confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
+    if (ok) { setTemplateDirty(false); next() }
+  }
+
+  async function removeReport(r) {
+    const ok = await showConfirm({
+      title: t('te.deleteReportTitle'),
+      message: t('te.deleteReportBody', periodLabel(r, t), ch?.name || ''),
+      variant: 'danger', confirmText: t('te.deleteReportConfirm'), cancelText: t('te.cancel'),
+    })
+    if (!ok) return
+    try {
+      const res = await api.techErrors.deleteReport(r.id)
+      if (res?.success) { toast.success(t('te.reportDeleted')); load() }
+      else {
+        toast.error(res?.error || t('te.deleteError'), { details: res?.errorInfo })
+        if (res?.code === 'REPORT_SENT_OR_SENDING') load()
+      }
+    } catch (e) {
+      toast.error(e?.message || t('te.deleteError'))
+    }
+  }
+
+  const back = (
+    <Button type="button" variant="ghost" size="sm" onClick={() => guardLeave(onBack)} className="w-fit pointer-coarse:min-h-10"
+      data-slot="te-back">
+      <ArrowLeft aria-hidden="true" /> {t('te.backToChannels')}
+    </Button>
+  )
+
+  if (state.loading && !state.data) {
+    return (
+      <div className="flex flex-col gap-4" role="status" aria-live="polite">
+        {back}
+        <span className="sr-only">{t('te.loading')}</span>
+        <Skeleton className="h-24 w-full rounded-xl motion-reduce:animate-none" />
+        <Skeleton className="h-64 w-full rounded-xl motion-reduce:animate-none" />
+      </div>
+    )
+  }
+  if (state.error && !state.data) {
+    return (
+      <div className="flex flex-col gap-4">
+        {back}
+        <StatusBlock tone={state.status === 404 || state.status === 403 ? 'neutral' : 'danger'} icon={CircleAlert}
+          title={state.status === 404 || state.status === 403 ? t('te.channelGoneTitle') : t('te.loadErrorTitle')}
+          description={state.error}
+          actions={<Button type="button" variant="outline" onClick={state.status === 404 ? onBack : load}>
+            {state.status === 404 ? t('te.backToChannels') : t('te.retry')}</Button>} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4" data-slot="te-channel" data-channel={ch?.id}>
+      {back}
+      <header className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl" data-slot="te-channel-title">{ch?.name}</h2>
+          {ch && !ch.active && <Badge variant="outline">{t('te.inactive')}</Badge>}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+          <Users aria-hidden="true" className="size-4 shrink-0" />
+          <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} static wrap />
+        </div>
+        {ch?.description && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{ch.description}</p>}
+      </header>
+
+      {state.error && (
+        <AlertBanner tone="danger" title={t('te.refreshFailed')}
+          actions={<Button type="button" size="sm" variant="outline" onClick={load}>{t('te.retry')}</Button>}>
+          {state.error}
+        </AlertBanner>
+      )}
+
+      <Tabs value={tab} onValueChange={(v) => guardLeave(() => onTabChange(v))} className="gap-4">
+        <TabsList className="w-full sm:w-fit">
+          <TabsTrigger value={TAB_REPORTS} className="pointer-coarse:min-h-10" data-slot="te-tab-reports">
+            <FileText aria-hidden="true" /> {t('te.tab.reports')}
+          </TabsTrigger>
+          <TabsTrigger value={TAB_TEMPLATE} className="pointer-coarse:min-h-10" data-slot="te-tab-template">
+            <LayoutTemplate aria-hidden="true" /> {t('te.tab.template')}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value={TAB_REPORTS} className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">{t('te.reportsHint')}</p>
+            {ch?.can_edit && ch?.active && (
+              <Button type="button" onClick={() => setNewOpen(true)} data-slot="te-new-report">
+                <Plus aria-hidden="true" /> {t('te.newReport')}
+              </Button>
+            )}
+          </div>
+          <div ref={listRef}>
+            {reports.length === 0 ? (
+              <StatusBlock tone="neutral" icon={FileText} title={t('te.noReportsTitle')}
+                description={ch?.can_edit ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
+            ) : narrow ? (
+              <ul className="flex flex-col gap-2" data-slot="te-report-cards">
+                {reports.map((r) => (
+                  <li key={r.id}>
+                    <Card className="gap-2 py-3" data-slot="te-report-row" data-report={r.id}>
+                      <CardContent className="flex flex-col gap-2 px-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold">{periodLabel(r, t)}</span>
+                          <StatusBadge status={r.status} sendState={r.last_send_status} />
+                        </div>
+                        <p className="text-sm [overflow-wrap:anywhere]">{r.title}</p>
+                        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {t('te.updatedBy', fmtDateTime(r.updated_at, lang), r.updated_by_name || '—')}
+                          {r.last_sent_at ? ` · ${t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}` : ''}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" onClick={() => onOpenReport(r.id, ch.id)} className="pointer-coarse:min-h-10">
+                            {t('te.open')}
+                          </Button>
+                          {r.can_delete && (
+                            <Button type="button" size="sm" variant="ghost" onClick={() => removeReport(r)}
+                              className="text-destructive pointer-coarse:min-h-10">
+                              <Trash2 aria-hidden="true" /> {t('te.delete')}
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="overflow-hidden rounded-xl border" data-slot="te-report-table">
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-36">{t('te.col.period')}</TableHead>
+                      <TableHead>{t('te.col.title')}</TableHead>
+                      <TableHead className="w-44">{t('te.col.status')}</TableHead>
+                      <TableHead className="w-48">{t('te.col.updated')}</TableHead>
+                      <TableHead className="w-44 text-right">{t('te.col.actions')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reports.map((r) => (
+                      <TableRow key={r.id} data-slot="te-report-row" data-report={r.id}>
+                        <TableCell className="font-medium">{periodLabel(r, t)}</TableCell>
+                        <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{r.title}</TableCell>
+                        <TableCell className="whitespace-normal"><StatusBadge status={r.status} sendState={r.last_send_status} /></TableCell>
+                        <TableCell className="whitespace-normal text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {fmtDateTime(r.updated_at, lang)} · {r.updated_by_name || '—'}
+                          {r.last_sent_at && <div>{t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10"
+                              onClick={() => onOpenReport(r.id, ch.id)}>{t('te.open')}</Button>
+                            {r.can_delete && (
+                              <Button type="button" size="sm" variant="ghost" aria-label={t('te.deleteReportAria', periodLabel(r, t))}
+                                onClick={() => removeReport(r)} className="text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10">
+                                <Trash2 aria-hidden="true" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value={TAB_TEMPLATE} forceMount hidden={tab !== TAB_TEMPLATE}>
+          {tab === TAB_TEMPLATE && (
+            <TemplateEditor channelId={channelId} onDirtyChange={setTemplateDirty} onSaved={load} />
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {newOpen && ch && (
+        <NewReportDialog channel={ch} reports={reports} defaultPeriod={state.data?.default_period}
+          onClose={() => setNewOpen(false)}
+          onOpen={(id) => { setNewOpen(false); onOpenReport(id, ch.id) }} />
+      )}
+    </div>
+  )
+}
+
+function NewReportDialog({ channel, reports, defaultPeriod, onClose, onOpen }) {
+  const t = useT()
+  const toast = useToast()
+  const options = useMemo(() => periodOptions(defaultPeriod, 24), [defaultPeriod])
+  const existing = useMemo(() => new Map(reports.map((r) => [`${r.year}-${String(r.month).padStart(2, '0')}`, r.id])), [reports])
+  const firstFree = options.find((o) => !existing.has(o.key))?.key || options[0]?.key || ''
+  const [key, setKey] = useState(firstFree)
+  const [busy, setBusy] = useState(false)
+  const existingId = existing.get(key)
+
+  async function submit(e) {
+    e?.preventDefault?.()
+    if (busy || !key) return
+    if (existingId) { onOpen(existingId); return }
+    const [y, m] = key.split('-').map(Number)
+    setBusy(true)
+    try {
+      const res = await api.techErrors.createReport(channel.id, y, m)
+      if (res?.success && res.data?.id) onOpen(res.data.id)
+      else if (res?.code === 'REPORT_EXISTS' && res?.report_id) onOpen(res.report_id)
+      else toast.error(res?.error || t('te.createReportError'), { details: res?.errorInfo })
+    } catch (err) {
+      toast.error(err?.message || t('te.createReportError'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose() }}>
+      <DialogContent className="max-h-[92dvh] overflow-y-auto" data-slot="te-new-report-dialog">
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <DialogHeader>
+            <DialogTitle>{t('te.newReport')}</DialogTitle>
+            <DialogDescription>{t('te.newReportHint', channel.name)}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="te-period" className="text-sm font-semibold">{t('te.field.period')}</label>
+            <NativeSelect id="te-period" value={key} onChange={(e) => setKey(e.target.value)} className="w-full pointer-coarse:h-10">
+              {options.map((o) => (
+                <NativeSelectOption key={o.key} value={o.key}>
+                  {periodLabel(o, t)}{existing.has(o.key) ? ` — ${t('te.periodExists')}` : ''}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            <p className="text-xs text-muted-foreground">{existingId ? t('te.periodExistsHint') : t('te.periodHint')}</p>
+          </div>
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
+            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>{t('te.cancel')}</Button>
+            <Button type="submit" disabled={busy || !key} data-slot="te-new-report-submit">
+              {existingId ? t('te.openExisting') : t('te.createReport')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
