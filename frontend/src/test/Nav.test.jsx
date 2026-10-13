@@ -42,7 +42,7 @@ describe('Nav — sürüm çipi (2026-09-11)', () => {
 describe('Nav', () => {
   it('renders the main tabs of every section', () => {
     render(withSidebar(<Nav {...DEFAULT_PROPS} />))
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+    expect(screen.getByText('Certificate dashboard')).toBeInTheDocument()
     expect(screen.getByText('Warnings')).toBeInTheDocument()
     expect(screen.getByText('All Certificates')).toBeInTheDocument()
     expect(screen.getByText('Renewal Advice')).toBeInTheDocument()
@@ -85,7 +85,7 @@ describe('Nav', () => {
     const warningsBtn = screen.getByRole('button', { name: /^Warnings$/ })
     expect(warningsBtn).toHaveAttribute('data-active', 'true')
     expect(warningsBtn).toHaveAttribute('aria-current', 'page')
-    const dashboardBtn = screen.getByRole('button', { name: /^Dashboard$/ })
+    const dashboardBtn = screen.getByRole('button', { name: /^Certificate dashboard$/ })
     expect(dashboardBtn).toHaveAttribute('data-active', 'false')
     expect(dashboardBtn).not.toHaveAttribute('aria-current')
     expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
@@ -94,7 +94,7 @@ describe('Nav', () => {
   it('calls onTabChange with tab id when a tab is clicked', () => {
     const onTabChange = vi.fn()
     render(withSidebar(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />))
-    fireEvent.click(screen.getByRole('button', { name: /^Dashboard$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Certificate dashboard$/ }))
     expect(onTabChange).toHaveBeenCalledWith('dashboard')
   })
 
@@ -102,13 +102,13 @@ describe('Nav', () => {
   it('marka (logo ve ad) tıklanınca Pano açılır; adın tekrar eden Tab durağı yok', () => {
     const onTabChange = vi.fn()
     render(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="warnings" onTabChange={onTabChange} />))
-    fireEvent.click(screen.getByRole('button', { name: /go to the dashboard|Pano'ya git/ }))
+    fireEvent.click(screen.getByRole('button', { name: /go to the Certificate dashboard|Sertifika Panosu'na git/ }))
     expect(onTabChange).toHaveBeenLastCalledWith('dashboard')
     onTabChange.mockClear()
     fireEvent.click(screen.getByText('SiteMonitor', { selector: 'span' }))
     expect(onTabChange).toHaveBeenLastCalledWith('dashboard')
-    expect(screen.getAllByRole('button', { name: /go to the dashboard|Pano'ya git/ })).toHaveLength(1)
-    expect(screen.getByTestId('nav-brand')).toHaveAccessibleName(/go to the dashboard/)
+    expect(screen.getAllByRole('button', { name: /go to the Certificate dashboard|Sertifika Panosu'na git/ })).toHaveLength(1)
+    expect(screen.getByTestId('nav-brand')).toHaveAccessibleName(/go to the Certificate dashboard/)
   })
 
   it('calls onTabChange with "admin" when Admin Panel is clicked (after opening its section)', () => {
@@ -536,7 +536,7 @@ describe('Nav — ikon kipi: ipuçları ve yana açılan bölüm menüsü', () =
   it('her öğenin ipucu var: odaklanınca adı ipucu olarak görünür (Pano, bölümler, arama, kullanıcı)', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />, { open: false }))
     const cases = [
-      [tabButton(container, 'dashboard'), /^Dashboard$/],
+      [tabButton(container, 'dashboard'), /^Certificate dashboard$/],
       [sectionTrigger(container, 'alerts'), /^Alerts$/],
       [container.querySelector('[data-tour="nav-search"]'), /^Quick search$/],
       [tabButton(container, 'help'), /^Help$/],
@@ -576,11 +576,11 @@ describe('Nav — telefon (Sheet) ve mobil üst çubuk', () => {
     const bar = document.querySelector('[data-slot="mobile-top-bar"]')
     expect(within(bar).getByRole('button', { name: /^(Open menu|Menüyü aç)$/ })).toHaveAttribute('aria-expanded', 'false')
     expect(within(bar).getByRole('button', { name: /^(Notifications|Bildirimler)$/ })).toBeInTheDocument()
-    fireEvent.click(within(bar).getByRole('button', { name: /go to the dashboard|Pano'ya git/ }))
+    fireEvent.click(within(bar).getByRole('button', { name: /go to the Certificate dashboard|Sertifika Panosu'na git/ }))
     expect(onTabChange).toHaveBeenCalledWith('dashboard')
     fireEvent.click(within(bar).getByRole('button', { name: /^(Open menu|Menüyü aç)$/ }))
     const sheet = screen.getByRole('dialog')
-    expect(within(sheet).getByRole('button', { name: /^Dashboard$/ })).toBeInTheDocument()
+    expect(within(sheet).getByRole('button', { name: /^Certificate dashboard$/ })).toBeInTheDocument()
     // Çekmece (Radix modal) açıkken dışarısı aria-hidden → gizlileri de say: zil yine TEK
     expect(screen.getAllByRole('button', { name: /^(Notifications|Bildirimler)$/, hidden: true })).toHaveLength(1)
     expect(within(sheet).queryByRole('button', { name: /^(Notifications|Bildirimler)$/ })).toBeNull()
@@ -647,7 +647,7 @@ describe('Nav — telefon (Sheet) ve mobil üst çubuk', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     act(() => { window.dispatchEvent(new CustomEvent('sm:nav-reveal', { detail: { tab: '*' } })) })
     const sheet = screen.getByRole('dialog')
-    expect(within(sheet).getByRole('button', { name: /^Dashboard$/ })).toBeInTheDocument()
+    expect(within(sheet).getByRole('button', { name: /^Certificate dashboard$/ })).toBeInTheDocument()
     // '*' hiçbir bölümü açmaz → Alarmlar bölümünün alt sekmeleri görünmez
     expect(within(sheet).queryByRole('button', { name: /^Incidents$/ })).toBeNull()
     act(() => { window.dispatchEvent(new CustomEvent('sm:nav-conceal')) })

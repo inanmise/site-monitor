@@ -105,7 +105,7 @@ describe('NotFoundPanel — uygulama içi', () => {
     const { container } = render(<NotFoundPanel requested="eski-sekme" onNavigate={nav} />)
     expect(screen.getByRole('heading', { level: 2, name: 'Page not found' })).toBeInTheDocument()
     expect(container.querySelector('[data-slot="nf-requested"]').textContent).toBe('?tab=eski-sekme')
-    fireEvent.click(screen.getByRole('button', { name: /Go to dashboard/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Go to the Certificate dashboard/ }))
     fireEvent.click(screen.getByRole('button', { name: /^Help$/ }))
     const certs = screen.getByRole('link', { name: /All Certificates/ })
     expect(certs).toHaveAttribute('href', '/?tab=all')

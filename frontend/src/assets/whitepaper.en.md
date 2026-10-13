@@ -956,7 +956,7 @@ To check your own permissions, open your profile from the user menu; to inspect 
 
 ## 14. Screens and Actions
 
-This section is a tour of the interface, tab by tab. The tabs are grouped in the sidebar: Certificates, Monitoring, Alerts, Reports, Logs and Management. The conceptual detail behind the monitoring tabs lives in [10. Monitor Types](#10-monitor-types); here we focus on what the screens do. We start with the behaviour that is common to every screen — learn it once and it serves you everywhere.
+This section is a tour of the interface, tab by tab. The tabs are grouped in the sidebar: the Certificate dashboard and the Personal dashboard at the top, then Certificates, Monitoring, Alerts, Reports, Logs and Management. The conceptual detail behind the monitoring tabs lives in [10. Monitor Types](#10-monitor-types); here we focus on what the screens do. We start with the behaviour that is common to every screen — learn it once and it serves you everywhere.
 
 ### 14.1 Behaviour Common to Every Screen
 
@@ -978,7 +978,8 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 
 | Group | Screen | Address | Who sees it |
 |---|---|---|---|
-| — | Dashboard | `?tab=dashboard` | Everyone |
+| — | Certificate dashboard | `?tab=dashboard` | Everyone |
+| — | Personal dashboard | `?tab=mydash` | Everyone (widgets follow their own permissions) |
 | Certificates | All Certificates | `?tab=all` | Everyone |
 | Certificates | Domain Inventory | `?tab=domains` | Everyone; editing depends on permission |
 | Certificates | Status | `?tab=uptime` | Everyone |
@@ -1029,7 +1030,7 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 | Report a Problem | A locked-out user can leave a report with a screenshot (see §14.23) |
 | Signing in with a session elsewhere | A conflict and a confirmation dialogue; accept and the older session is dropped |
 
-### 14.4 Dashboard
+### 14.4 Certificate dashboard
 
 The screen you land on after signing in. An expandable statistics panel — total, valid, warning, error, expiring within 30 days, expired — sits above cards carrying each certificate's domain, days remaining, status badge, issuer and last check.
 
@@ -1057,11 +1058,11 @@ Clicking any certificate card opens a window with five tabs:
 
 ### 14.6 Statistics
 
-Detailed certificate counts, a tier distribution pie chart and a per-team breakdown of valid, warning and error states. Click a tier slice or a team row to filter the **Dashboard** to that slice. Users with a limited scope see only the teams they can reach.
+Detailed certificate counts, a tier distribution pie chart and a per-team breakdown of valid, warning and error states. Click a tier slice or a team row to filter the **Certificate dashboard** to that slice. Users with a limited scope see only the teams they can reach.
 
 ### 14.7 Warnings
 
-Shows only certificates in a warning or error state; filtering and sorting work exactly as on the **Dashboard**. It is the quick worklist for whatever is broken.
+Shows only certificates in a warning or error state; filtering and sorting work exactly as on the **Certificate dashboard**. It is the quick worklist for whatever is broken.
 
 ### 14.8 All Certificates
 
@@ -1276,7 +1277,7 @@ This section is the recipe book for everyday work: the tasks people do often, st
 1. Go to the **Domain Inventory** tab and click add.
 2. Under basics, enter the domain (for example `api.example.com`), the port (usually `443`), the owning team and the tier.
 3. Tick the operational flags that apply and save.
-4. The system checks the domain on the next hourly sweep; the first results appear on the **Dashboard**.
+4. The system checks the domain on the next hourly sweep; the first results appear on the **Certificate dashboard**.
 
 Tip: use "Check Now" if you do not want to wait for the sweep.
 

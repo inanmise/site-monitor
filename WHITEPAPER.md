@@ -755,7 +755,7 @@ Kurumsal 7/24 izleme ekibi (NOC) ekranları sürekli izler ve bir sorun gördü�
 - **7/24 izleme ekibi takımları (2026-10-04) ve operatörler:** Ayarlar → 7/24 → "7/24 izleme ekibi takımları" bölümünden bir ya da birden çok takım seçilir (yalnız global yönetici; değişiklik denetim kaydına yazılır, kaydetmeden önce kimlerin operatör olacağı önizlenir). Bu takımların etkin üyeleri **rolleri değişmeden** 7/24 operatörü olur: tüm takımların izlemelerini, alarmlarını, olaylarını, bakım pencerelerini, durum sayfasını ve fırtınalarını **salt okur**; her alarma arama kaydı (`noc_calls.write`) ve not ekler. Sahiplenme, çözme, yeniden bildirim, izleme / envanter düzenleme ve olaylara müdahale yalnız kendi takımlarında kalır; denetim kaydı, sistem sağlığı ve yönetim ekranları açılmaz. Takım listeden çıkarılınca yetki en geç 30 saniyede, yeniden giriş gerekmeden kalkar. Eski düzen de çalışmaya devam eder: **AUDIT** rolündeki bir kullanıcıya `noc_calls.write` verilirse o da operatördür (izin AUDIT'e varsayılan olarak açıktır; yöneticinin **Yetkiler** ekranından bilerek kapattığı izne dokunulmaz).
 - **7/24 konsolu:** operatörler 7/24 sekmesinde (`?tab=noc`) şirket genelindeki açık alarmları ve son bildirimleri görür: kanallar, 7/24'e gidiş saati, son arama (kim, ne zaman, sonuç). Süzgeçler: takım, seviye, tür, "7/24'e gidenler", arandı / aranmadı, 1 sa / 24 sa / 7 gün. "Ara" düğmesi alarmın takımının arama listesini (sıra, ad, telefon), müdürünü, eskalasyon kişilerini ve talimatları arama kaydı formuyla birlikte açar. Alarm Geçmişi'nde de "7/24'e gidenler" süzgeci ve "7/24 · ss:dd" rozeti vardır; alarm ayrıntısının bildirim günlüğü 7/24 e-postasını "7/24 ekibine iletildi" diye işaretler.
 
-Hangi izlemelerin NOC'a gitmediği **7/24 Kapsamı** ekranında görünür (bkz. §14.31); Genel Bakış'taki uyarı şeridi oraya götürür.
+Hangi izlemelerin NOC'a gitmediği **7/24 Kapsamı** ekranında görünür (bkz. §14.31); Sertifika Panosu'ndaki uyarı şeridi oraya götürür.
 
 ### 9.6 Kişisel Push Bildirimleri
 
@@ -1051,7 +1051,7 @@ Aşağıdaki varsayılanlar **Yetkiler** ekranından rol bazında düzenlenebili
 
 | İşlev | ADMIN | TEAM_ADMIN (PO) | USER | AUDIT |
 |---|---|---|---|---|
-| Dashboard / sertifika görüntüleme | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✓ (tümü) |
+| Sertifika Panosu / sertifika görüntüleme | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✓ (tümü) |
 | "Şimdi Kontrol Et" / canlı tarama | ✓ | ✗ | ✗ | ✗ |
 | Sertifika Envanteri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Alarm onay / yeniden bildir / çözüldü | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✗ |
@@ -1095,7 +1095,7 @@ Kendi yetkinizi merak ediyorsanız kullanıcı menüsünden profilinize bakabili
 ---
 ## 14. Kullanıcı Ekranları ve Aksiyonlar
 
-Bu bölüm arayüzün sekme sekme gezisidir. Sekmeler kenar çubuğunda, her birinin kendi ikonu olan bölümlerde gruplanır: Genel Bakış, Sertifikalar, İzleme, Alarmlar, Raporlar, Kayıtlar ve Yönetim; Yardım en altta ayrı durur. Etkin sekmenin bölümü kendiliğinden açılır. Kenar çubuğu Ctrl+B ile ikon görünümüne daraltılabilir; bu görünümde bir bölüm ikonuna tıklamak o bölümün sekmelerini yanda açar. Telefonda kenar çubuğu üst çubuktaki menü düğmesiyle kayarak açılır ve bir sekmeye dokununca kapanır; bildirim zili üst çubuktadır. İzleme sekmelerinin kavramsal ayrıntısı [10. İzleme Türleri](#10-izleme-turleri) bölümündedir; burada ekran davranışlarına odaklanılır. Önce tüm ekranlarda geçerli olan ortak davranışlarla başlıyoruz — bunları bir kez öğrendiğinizde her sayfada işinize yarayacaklar.
+Bu bölüm arayüzün sekme sekme gezisidir. Sekmeler kenar çubuğunda, her birinin kendi ikonu olan bölümlerde gruplanır: Sertifika Panosu ve Kişisel Panom, Sertifikalar, İzleme, Alarmlar, Raporlar, Kayıtlar ve Yönetim; Yardım en altta ayrı durur. Etkin sekmenin bölümü kendiliğinden açılır. Kenar çubuğu Ctrl+B ile ikon görünümüne daraltılabilir; bu görünümde bir bölüm ikonuna tıklamak o bölümün sekmelerini yanda açar. Telefonda kenar çubuğu üst çubuktaki menü düğmesiyle kayarak açılır ve bir sekmeye dokununca kapanır; bildirim zili üst çubuktadır. İzleme sekmelerinin kavramsal ayrıntısı [10. İzleme Türleri](#10-izleme-turleri) bölümündedir; burada ekran davranışlarına odaklanılır. Önce tüm ekranlarda geçerli olan ortak davranışlarla başlıyoruz — bunları bir kez öğrendiğinizde her sayfada işinize yarayacaklar.
 
 ### 14.1 Tüm Ekranlarda Ortak Davranışlar
 
@@ -1117,7 +1117,8 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 
 | Grup | Ekran | Adres | Kim görür |
 |---|---|---|---|
-| — | Genel Bakış | `?tab=dashboard` | Herkes |
+| — | Sertifika Panosu | `?tab=dashboard` | Herkes |
+| — | Kişisel Panom | `?tab=mydash` | Herkes (kutular kendi izinleriyle) |
 | Sertifikalar | Tüm Sertifikalar | `?tab=all` | Herkes |
 | Sertifikalar | Sertifika Envanteri | `?tab=domains` | Herkes (yazma yetkiye bağlı) |
 | Sertifikalar | Durum İzleme | `?tab=uptime` | Herkes |
@@ -1168,7 +1169,7 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 | Sorun Bildir | Giriş yapamayan kullanıcı ekran görüntülü sorun kaydı bırakır (bkz. §14.23) |
 | Başka cihazda oturum varken giriş | 409 + onay penceresi → onaylarsanız eski oturum düşürülür |
 
-### 14.4 Genel Bakış
+### 14.4 Sertifika Panosu
 
 Giriş sonrası açılan ana ekrandır. En üstte sayfa başlığı ve eylem çubuğu bulunur: başlığın altında sertifika sayısı ile son güncelleme zamanı, sağında **Yenile**, **Şimdi Kontrol Et** (tarama sürerken ilerleme düğmenin üstünde yazar) ve yetkiliyseniz **Domain Ekle** (telefonda düğmeler başlığın altına iner). Altında genişletilebilir istatistik paneli (Toplam / Geçerli / Uyarı / Yüksek / Kritik / Hata / 7 günde / 30 günde doluyor / Süresi dolmuş / zayıf algoritma / sertifika sorunu; kutucuklar alanı ekran genişliğine göre dengeli doldurur), onunla aynı hizada **Sizin için — bugün** paneli ve her sertifika için domain, kalan gün, durum rozeti, veren kurum ve son kontrol bilgisini taşıyan **Sertifika kartları** gelir; kart listesinin başlık satırında Kompakt/Zengin görünüm seçici, alan adı arama, Platform süzgeci ve SSL Checker alanı vardır.
 
@@ -1198,11 +1199,11 @@ Herhangi bir sertifika kartına tıkladığınızda beş sekmeli pencere açıl�
 
 ### 14.6 İstatistikler
 
-Detaylı sertifika sayıları, Tier 1–4 dağılım pastası ve takım bazlı geçerli/uyarı/hata kırılımı. Tier dilimine veya takım satırına tıklayarak **Genel Bakış** ekranını o kesite filtreleyebilirsiniz. Kapsamlı rollerde yalnız erişebildiğiniz takımlar görünür.
+Detaylı sertifika sayıları, Tier 1–4 dağılım pastası ve takım bazlı geçerli/uyarı/hata kırılımı. Tier dilimine veya takım satırına tıklayarak **Sertifika Panosu** ekranını o kesite filtreleyebilirsiniz. Kapsamlı rollerde yalnız erişebildiğiniz takımlar görünür.
 
 ### 14.7 Uyarılar
 
-Yalnız `warning` veya `error` durumundaki sertifikaları gösterir; filtreleme ve sıralama **Genel Bakış** ile aynıdır. Sertifikası sorunlu olanların hızlı çalışma listesidir.
+Yalnız `warning` veya `error` durumundaki sertifikaları gösterir; filtreleme ve sıralama **Sertifika Panosu** ile aynıdır. Sertifikası sorunlu olanların hızlı çalışma listesidir.
 
 ### 14.8 Tüm Sertifikalar
 
@@ -1393,11 +1394,11 @@ Uygulamaya **ilk kez giren** kullanıcıya, veriler yüklendikten kısa süre so
 
 **Tur sırasında:** karartılmış ekranda yalnız anlatılan öğe aydınlıktır ve tıklanabilir. Balonda başlık, kısa açıklama, ilerleme (örn. 7/20), **Geri / İleri**, "Daha fazla" (o konunun kılavuz bölümünü yan panelde açar), "Turu atla" ve "Bir daha gösterme" bulunur. Klavye: **→** ileri, **←** geri, **Esc** kapatır. Bazı adımlar sizden bir şey yapmanızı ister ("karta tıklayın", "Ctrl K'ya basın"); yaptığınızda tur kendiliğinden ilerler, isterseniz **Benim yerime yap** düğmesi sizin adınıza yapar.
 
-**Rolünüze göre içerik:** herkes Genel Bakış sayaçları, süzgeçler, "Şimdi Kontrol Et", sertifika kartı ve detay penceresi, Tüm Sertifikalar, İzleme, Uyarılar, Raporlar, komut paleti, bildirimler, kullanıcı menüsü (tema/dil dahil) ve yardım adımlarını görür. Takım yöneticileri ek olarak alan ekleme adımını; yöneticiler Yönetim ve Sistem Sağlığı adımlarını; denetçi (AUDIT) rolü Denetim Kaydı adımını görür. Dar ekranda (telefon) kısaltılmış sürüm alt sayfa olarak açılır.
+**Rolünüze göre içerik:** herkes Sertifika Panosu sayaçları, süzgeçler, "Şimdi Kontrol Et", sertifika kartı ve detay penceresi, Tüm Sertifikalar, İzleme, Uyarılar, Raporlar, komut paleti, bildirimler, kullanıcı menüsü (tema/dil dahil) ve yardım adımlarını görür. Takım yöneticileri ek olarak alan ekleme adımını; yöneticiler Yönetim ve Sistem Sağlığı adımlarını; denetçi (AUDIT) rolü Denetim Kaydı adımını görür. Dar ekranda (telefon) kısaltılmış sürüm alt sayfa olarak açılır.
 
 **Sayfa turları:** bazı sayfalar kendi kısa turunu taşır (Tüm Sertifikalar: süzgeçler, durum menüsü, sütunlar, ön ayarlar, CSV, satır seçimi, satır menüsü; HTTP izleme: nasıl çalışır, yeni izleme, nasıl doldurulur, kartlar). Böyle bir sayfaya ilk gelişinizde sağ altta "Bu sayfayı tanımak ister misiniz?" çipi görünür; kapatırsanız o sayfa için bir daha çıkmaz.
 
-**Başlangıç listesi:** Genel Bakış'ın üstünde yeni kullanıcı için altı maddelik küçük bir liste durur (turu tamamla, bir kart aç, Tüm Sertifikalar'ı gez, bir izleme sayfasına bak, haftalık raporları gör, yardımı aç). Maddeler siz sayfaları gezdikçe kendiliğinden işaretlenir; hepsi bitince ya da ✕ ile gizlediğinizde kaybolur.
+**Başlangıç listesi:** Sertifika Panosu'nun üstünde yeni kullanıcı için altı maddelik küçük bir liste durur (turu tamamla, bir kart aç, Tüm Sertifikalar'ı gez, bir izleme sayfasına bak, haftalık raporları gör, yardımı aç). Maddeler siz sayfaları gezdikçe kendiliğinden işaretlenir; hepsi bitince ya da ✕ ile gizlediğinizde kaybolur.
 
 **Turu yeniden bulmak:** kullanıcı menüsü → **Ürün turu**; sağ alttaki "?" yardım çekmecesinde **Ürün turu** ve (varsa) **Bu sayfada tur**; Yardım sayfasındaki düğme; komut paletinde (Ctrl K) "Ürün turunu başlat". "Bir daha gösterme" demiş olsanız da bu yollarla turu istediğiniz zaman açabilirsiniz.
 
@@ -1417,7 +1418,7 @@ Gece bir kesinti olduğunda takımınız uyuyor olabilir; 7/24 izleme ekibi yaln
 | Eylemler | Düzenleme yetkiniz olan izlemede tek tıkla **7/24'e bildir**; toplu seçim + "Seçilenleri bildir"; bildirimi açık izlemede "…" menüsünden kapatma |
 | Arama listesi | Takım başına sıralı kişi listesi — takım müdürü, takım yöneticisi ve yönetici düzenler (yukarı/aşağı, ekle/çıkar). Active Directory'de telefonu olmayan kişi işaretlenir; liste boşsa e-postada Takım Müdürü gösterilir |
 
-Hiç aktif grup yoksa yönetici Ayarlar bağlantısını, diğer kullanıcılar "yöneticinize sorun" notunu görür. Genel Bakış'taki "N izleme gece kesintisinde 7/24 izleme ekibine bildirilmiyor" şeridi bu ekrana götürür ve oturum boyunca gizlenebilir.
+Hiç aktif grup yoksa yönetici Ayarlar bağlantısını, diğer kullanıcılar "yöneticinize sorun" notunu görür. Sertifika Panosu'ndaki "N izleme gece kesintisinde 7/24 izleme ekibine bildirilmiyor" şeridi bu ekrana götürür ve oturum boyunca gizlenebilir.
 
 ---
 
@@ -1430,7 +1431,7 @@ Bu bölüm günlük operasyonun tarif defteridir: sık yapılan işlerin adım a
 1. **Sertifika Envanteri** sekmesine gidin ve "Alan Ekle" butonuna tıklayın.
 2. Temel Bilgiler bölümünde domaini (ör. `api.example.com`), portu (çoğunlukla `443`), sorumlu takımı ve tier'ı girin.
 3. Operasyonel bayrakları işaretleyin ve kaydedin.
-4. Sistem domaini bir sonraki saatlik taramada kontrol eder; ilk sonuçları **Genel Bakış** ekranında görürsünüz.
+4. Sistem domaini bir sonraki saatlik taramada kontrol eder; ilk sonuçları **Sertifika Panosu** ekranında görürsünüz.
 
 İpucu: "Şimdi Kontrol Et" ile taramayı beklemeden tetikleyebilirsiniz.
 
