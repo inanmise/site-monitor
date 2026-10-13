@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Check, LayoutGrid, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Tv } from 'lucide-react'
+import { Building2, Check, LayoutGrid, Pencil, Plus, RadioTower, RefreshCw, RotateCcw, Tv, Users } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUserPrefs } from '../../hooks/useUserPrefs.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -33,10 +33,13 @@ import MyDashTv from './MyDashTv.jsx'
 export default function MyDashPage({ nocConsole = false }) {
   const t = useT()
   const prefs = useUserPrefs()
-  const { perms, canView: canViewPerm, loaded: permsLoaded = true, failed: permsFailed = false, refresh: refreshPerms } = usePermissions()
-  // `nocConsole` (App): 7/24 konsolunu açabilir mi — izin matrisinde anahtarı yok; katalog bunu sahte izinle sorar (2026-10-13)
+  const { perms, scope, canView: canViewPerm, loaded: permsLoaded = true, failed: permsFailed = false, refresh: refreshPerms } = usePermissions()
+  // 7/24 konsolu kapısı: sunucunun CANLI kapsamı (60 sn'de bir tazelenir — takıma eklenen / çıkarılan yeniden girmeden
+  // görür); eski sunucu `scope` göndermezse App'in giriş anındaki bilgisi (`nocConsole`). İzin matrisinde anahtarı yok —
+  // katalog bunu sahte izinle sorar (2026-10-13).
+  const consoleOk = typeof scope?.noc_console === 'boolean' ? scope.noc_console : !!nocConsole
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const canView = useCallback((p) => (p === NOC_CONSOLE ? !!nocConsole : canViewPerm(p)), [perms, nocConsole])
+  const canView = useCallback((p) => (p === NOC_CONSOLE ? consoleOk : canViewPerm(p)), [perms, consoleOk])
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -141,6 +144,15 @@ export default function MyDashPage({ nocConsole = false }) {
   return (
     <div className="tab-content active" data-slot="mydash-page" data-edit={edit ? 'on' : 'off'}>
       <PageHeader icon={LayoutGrid} title={t('mydash.title')} description={t('mydash.desc')}
+        // Görüş kapsamı (2026-10-13, kullanıcı isteği: 7/24 ekibi tüm sistemleri görür) — kutular bu kapsamı okur
+        meta={typeof scope?.monitoring_all === 'boolean' ? (
+          <span data-slot="mydash-scope" data-scope={scope.monitoring_all ? 'all' : 'teams'}
+            title={t(scope.monitoring_all ? (scope.noc_operator ? 'mydash.scope.nocHint' : 'mydash.scope.allHint') : 'mydash.scope.teamsHint')}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 font-medium text-foreground">
+            {scope.monitoring_all ? <Building2 className="size-3.5" aria-hidden="true" /> : <Users className="size-3.5" aria-hidden="true" />}
+            {t(scope.monitoring_all ? (scope.noc_operator ? 'mydash.scope.noc' : 'mydash.scope.all') : 'mydash.scope.teams')}
+          </span>
+        ) : null}
         actions={(
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={() => setRefreshKey((k) => k + 1)} data-slot="mydash-refresh">

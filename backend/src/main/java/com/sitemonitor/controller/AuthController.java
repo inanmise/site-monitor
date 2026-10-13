@@ -1052,7 +1052,18 @@ public class AuthController {
         Map<String, Map<String, Boolean>> snapshot = permissionService != null
             ? permissionService.snapshotForSession(session)
             : PermissionCatalog.defaultsFor(role);
-        return ResponseEntity.ok(Map.of("success", true, "data", snapshot));
+        // Görüş kapsamı (2026-10-13, kullanıcı isteği: "7/24 ekibi kişisel panoda tüm sistemleri görebilsin"): izin
+        // snapshot'ıyla AYNI 60 sn döngüde okunur — 7/24 takımına eklenen / çıkarılan kişi yeniden girmeden görür.
+        // noc_console = 7/24 konsolu kapısı (NocCallLogService.seesAllAlerts: global görüntüleyici ∨ arama kaydı yazabilen).
+        // (inceleme 2026-10-13: matris snapshot'ı DEĞİL — kapsamlı müdür ADMIN satırından noc_calls.write alır ama konsol onu
+        // reddeder; kapı servisin kendisinden okunur, servis yoksa global görüntüleyici ∨ operatör)
+        boolean nocOperator = SessionScope.isNocOperator(session);
+        Map<String, Object> scope = new java.util.LinkedHashMap<>();
+        scope.put("monitoring_all", SessionScope.seesAllMonitoring(session));
+        scope.put("noc_operator", nocOperator);
+        scope.put("noc_console", nocCallLogService != null ? nocCallLogService.seesAllAlerts(session)
+                : SessionScope.isGlobalViewer(session) || nocOperator);
+        return ResponseEntity.ok(Map.of("success", true, "data", snapshot, "scope", scope));
     }
 
     @GetMapping("/me/audit")

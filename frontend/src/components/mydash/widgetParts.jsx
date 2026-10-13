@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 export const fetchOpenAlerts = () => api.me.openAlerts(false)
 /** Durum sayfası — hizmetler, bakım pencereleri ve açık olaylar kutuları aynı ucu okur (sunucuda 30 sn bellek). */
 export const fetchStatus = () => api.statusPage.get(false)
+/** İzleme Panosu özeti — izleme sağlığı, tür ısı haritası ve takım × tür matrisi aynı ucu okur (sunucuda 30 sn bellek). */
+export const fetchOverview = () => api.monitoring.getOverview(24, false)
 
 // ── Ortak sunum parçaları ─────────────────────────────────────────────────────────────────────────────────────
 

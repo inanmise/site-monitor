@@ -20,10 +20,10 @@ vi.mock('../api/client', () => ({
   }),
 }))
 
-const perm = vi.hoisted(() => ({ value: {} }))
+const perm = vi.hoisted(() => ({ value: {}, scope: null }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({
-    perms: perm.value, canView: (r) => !!perm.value[r]?.view, canEdit: () => false, canExecute: () => false,
+    perms: perm.value, scope: perm.scope, canView: (r) => !!perm.value[r]?.view, canEdit: () => false, canExecute: () => false,
     refresh: () => {}, loaded: true, failed: false,
   }),
   PermissionsProvider: ({ children }) => children,
@@ -75,6 +75,7 @@ beforeEach(() => {
   setSpy.mockImplementation((v) => { setterRef.current?.(v); return true })
   window.history.replaceState({}, '', '/?tab=mydash')
   perm.value = PERMS
+  perm.scope = null
   api.me.openAlerts.mockResolvedValue({ success: true, data: { total: 3, oldest_open_at: isoMinAgo(300), oldest_severe_at: isoMinAgo(120), tabs: {
     http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [] } } } })
   api.statusPage.get.mockResolvedValue(statusPage())
@@ -262,6 +263,31 @@ describe('7/24 Komuta kutuları', () => {
     render(<Shell initial={layout(['incidents_open'])}><MyDashPage /></Shell>)
     await waitFor(() => expect(widget('incidents_open').querySelector('[data-slot="mydash-widget-failed"]')).toHaveTextContent(EN['mydash.inc.unavailable']))
     expect(widget('incidents_open')).not.toHaveTextContent(EN['sp.inc.noneText'])
+  })
+})
+
+describe('2026-10-13: 7/24 ekibi tüm kurumu görür — canlı kapsam', () => {
+  it('sunucu kapsamı 7/24 konsolunu açıyorsa konsol kutusu görünür (giriş anındaki bilgiye bakılmaz) ve sayfa "tüm kurum (7/24)" der', async () => {
+    perm.scope = { monitoring_all: true, noc_operator: true, noc_console: true }
+    render(<Shell initial={layout(['noc_uncalled'], ['noc_light', 'sm'])}><MyDashPage /></Shell>)
+    await waitFor(() => expect(ids()).toEqual(['noc_uncalled', 'noc_light']))
+    const chip = document.querySelector('[data-slot="mydash-scope"]')
+    expect(chip).toHaveAttribute('data-scope', 'all')
+    expect(chip).toHaveTextContent(EN['mydash.scope.noc'])
+  })
+
+  it('7/24 takımından çıkarılınca (kapsam: konsol yok) kutu gizlenir — App giriş anında operatör dese bile; kapsam "takımlarınız"', async () => {
+    perm.scope = { monitoring_all: false, noc_operator: false, noc_console: false }
+    render(<Shell initial={layout(['noc_uncalled'], ['noc_light', 'sm'])}><MyDashPage nocConsole /></Shell>)
+    await waitFor(() => expect(ids()).toEqual(['noc_light']))
+    expect(api.noc.console).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="mydash-scope"]')).toHaveAttribute('data-scope', 'teams')
+  })
+
+  it('eski sunucu kapsam göndermezse App\'in bilgisi kullanılır, kapsam rozeti çizilmez', async () => {
+    render(<Shell initial={layout(['noc_uncalled'])}><MyDashPage nocConsole /></Shell>)
+    await waitFor(() => expect(ids()).toEqual(['noc_uncalled']))
+    expect(document.querySelector('[data-slot="mydash-scope"]')).toBeNull()
   })
 })
 

@@ -356,7 +356,9 @@ public final class PermissionCatalog {
      * bunları göstermez (rol değil, takım üyeliği).
      *
      * <p>Yalnız İZLEME OKUMA izinleri + arama kaydı: alarmlar, izlemeler, envanter/sertifikalar (+ notları), olaylar,
-     * bakım pencereleri, alan adı kaydı sekmesi, izleme grupları. Hiçbir yazma/çalıştırma izni ({@code alerts.actions},
+     * bakım pencereleri, alan adı kaydı sekmesi, izleme grupları, nöbetçiler ve veri kalitesi (2026-10-13, kullanıcı
+     * isteği: Kişisel Panom'da tüm kurum — iki uç zaten operatöre kurum geneli okur; matris USER satırından kapatılsa da
+     * operatör görür). Hiçbir yazma/çalıştırma izni ({@code alerts.actions},
      * {@code monitoring.crud/trigger}, {@code inventory.crud} …) ve hiçbir yönetim okuması ({@code audit_log.read},
      * {@code system_health.read}, {@code users.list}, {@code settings.*}) YOKTUR. Alarm yorumu/notu izni ayrı bir matris
      * anahtarı değildir: {@code IncidentsController.addComment} 7/24 operatörüne kendi kapısıyla açar.
@@ -372,6 +374,8 @@ public final class PermissionCatalog {
             "maintenance.view:view",
             "domain.registration.view:view",
             "monitoring.group:view",
+            "oncall.read:view",
+            "data_quality.view:view",
             "noc_calls.write:edit");
 
     private static Map<String, Map<String, Boolean>> auditDefaults() {
