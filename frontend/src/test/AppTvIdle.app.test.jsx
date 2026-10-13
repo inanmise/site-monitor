@@ -48,7 +48,8 @@ describe('App — TV kipi hareketsizlik çıkışını erteler', () => {
   it('TV açıkken uyarı yok, çıkış yok; TV kapanınca uyarı gelir', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelector('[data-slot="mydash-tv"]')).not.toBeNull(), { timeout: 8000 })
-    expect(isTvModeActive()).toBe(true)
+    // Bayrak katmanla aynı anda (yerleşim etkisi) — yine de yavaş ortamda tek okumaya güvenme
+    await waitFor(() => expect(isTvModeActive()).toBe(true))
 
     await sleep(3600)   // toplam sürenin ötesi
     expect(document.querySelector('[data-slot="inactivity-warning"]')).toBeNull()

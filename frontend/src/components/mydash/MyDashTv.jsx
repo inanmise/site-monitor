@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Expand, LayoutGrid, Minimize, Palette, Pause, Play, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { setTvModeActive } from '../../utils/tvMode.js'
@@ -132,7 +132,9 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
   const cur = count ? Math.min(slide, count - 1) : 0
   const { fit, clipped } = useFitScale(mainRef, [cur, count, area.w, area.h, settings.panels, settings.density])
 
-  useEffect(() => {
+  // Yerleşim etkisi (2026-10-13): katman DOM'a girdiği anda hareketsizlik çıkışı ertelenir ve kaydırma kilitlenir — pasif
+  // etkide, katman görünürken bayrağın henüz inmediği kısa bir aralık vardı (yavaş CI'da AppTvIdle testi yakaladı)
+  useLayoutEffect(() => {
     setTvModeActive(true)
     // Belge kaydırması kilitli ve kaydırma çubuğu oluğu kapalı (App.css ≥ 640 px'te html'e `scrollbar-gutter: stable`
     // koyar): katman ekranın TAMAMINI kaplasın, sağda boş şerit kalmasın
