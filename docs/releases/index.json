@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-13T07:20:48Z",
+  "generatedAt": "2026-10-13T08:39:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 741,
+  "count": 742,
   "releases": [
+    {
+      "version": "20.127.0",
+      "tag": "v20.127.0",
+      "releasedAt": "2026-10-13T08:39:01Z",
+      "commit": "53931c34ded7f125b3bb9e1a1e8197179f1f991e",
+      "prevVersion": "20.126.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "53931c34",
+          "subject": "sürüm notları paneli kapandıktan sonra gelen yanıtı düşürür"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9a2227b4",
+          "subject": "Kişisel Panom 7/24 komuta kutuları ve renkli panel görünümü (Grafana \"stat panel\")"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.126.0",
       "tag": "v20.126.0",
