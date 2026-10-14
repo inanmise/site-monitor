@@ -36,6 +36,13 @@ export const LIMITS = Object.freeze({
   reportImageBytes: 40 * 1024 * 1024,
   imageSide: 6000,
   imagePixels: 12000000,
+  // Yönetici özeti ve tablo (2026-10-14; TechErrorTemplate.MAX_SUMMARY_* / MAX_COLUMNS / MAX_ROWS, TechErrorValues.MAX_CELL_TEXT)
+  summaryLines: 20,
+  summaryLine: 500,
+  columns: 10,
+  rows: 40,
+  columnLabel: 120,
+  cellText: 200,
 })
 
 /** Yer tutucu çözümünün üst sınırı (TechErrorTemplate.MAX_RESOLVED) — başlık / etiket bu uzunlukta "…" ile kesilir. */
@@ -51,8 +58,9 @@ function capResolved(s, max = MAX_RESOLVED) {
   return `${s.slice(0, end)}…`
 }
 
-export const KINDS = ['metrics', 'issues', 'text', 'images']
+export const KINDS = ['metrics', 'issues', 'text', 'images', 'summary', 'table']
 export const FIELD_TYPES = ['number', 'percent', 'yesno', 'text', 'textarea']
+export const COLUMN_TYPES = ['number', 'percent', 'text']
 export const WIDTHS = ['half', 'full']
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/
 
@@ -201,6 +209,425 @@ export function ratioPercent(part, whole) {
   return (a / b) * 100
 }
 
+// ── Zengin metin (TechErrorRichText aynası) ──────────────────────────────────────────────────────────
+
+export const RICH_MAX_LEVEL = 2
+export const RICH_MAX_BLOCKS = 2000
+
+/**
+ * Ayrıştırıcının boşluk tanımı — sunucudaki TechErrorRichText.ws ile AYNI küme: Java `Character.isWhitespace` artı
+ * bölünmez boşluklar (U+00A0, U+2007, U+202F) ve U+FEFF. JS `trim()` kullanılmaz: kümesi Java'nınkinden farklıdır
+ * (inceleme 2026-10-14: ekranda paragraf aralığı olan satır PDF'te boş paragraf basılıyordu).
+ */
+export function isRichSpace(ch) {
+  const c = ch.charCodeAt(0)
+  if (c === 0x20 || (c >= 0x09 && c <= 0x0d) || (c >= 0x1c && c <= 0x1f)) return true
+  if (c < 0xa0) return false
+  return c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f
+    || c === 0x205f || c === 0x3000 || c === 0xfeff
+}
+
+/** {@link isRichSpace} kümesine göre iki uçtan kırpar (sunucudaki TechErrorRichText.strip). */
+export function richStrip(s) {
+  const str = s == null ? '' : String(s)
+  let a = 0
+  let b = str.length
+  while (a < b && isRichSpace(str[a])) a++
+  while (b > a && isRichSpace(str[b - 1])) b--
+  return str.slice(a, b)
+}
+
+/** {@link isRichSpace} kümesine göre boş mu (sunucudaki TechErrorRichText.blank)? */
+export function richBlank(s) {
+  return richStrip(s) === ''
+}
+
+/** Unicode noktalama ya da simge (CommonMark "punctuation" = P* + S*; sunucudaki TechErrorRichText.punct). */
+const PUNCT_RE = /[\p{P}\p{S}]/u
+function isRichPunct(ch) {
+  return PUNCT_RE.test(ch)
+}
+
+/**
+ * Sekme, sunucuda kaydedilen metindeki gibi (TechErrorTemplate.multiline / TechErrorRichText.tabs): satır başındaki her
+ * sekme iki boşluk (bir alt düzey), satır içindeki tek boşluk — "1.\tMadde" önizlemede de madde.
+ */
+function richTabs(line) {
+  if (!line.includes('\t')) return line
+  let out = ''
+  let lead = true
+  for (const ch of line) {
+    if (ch === '\t') out += lead ? '  ' : ' '
+    else {
+      out += ch
+      if (ch !== ' ') lead = false
+    }
+  }
+  return out
+}
+
+/**
+ * Satır içi kalın (sunucudaki TechErrorRichText.inline ile AYNI kural). Aday işaret = TAM iki yıldızlık dizi; açabilir /
+ * kapatabilir CommonMark'ın bitişik kuralıyla (açılıştan sonra boşluk olmaz; sonraki karakter noktalamaysa öncesi
+ * boşluk / noktalama / satır başı olmalı; kapanış aynası). Soldan sağa: açık işaret varken kapatabilen aday kapatır,
+ * yoksa açabilen aday yeni açılıştır. Eşlenmeyen her şey düz metin — yıldız SİLİNMEZ ("4543 **** 1234",
+ * "ab**@x.com ve cd**@y.com" olduğu gibi kalır; inceleme 2026-10-14). Doğrusal.
+ */
+export function richInline(s) {
+  const out = []
+  if (!s) return out
+  const n = s.length
+  const pairs = []
+  let open = -1
+  for (let i = 0; i < n;) {
+    if (s[i] !== '*') { i++; continue }
+    let j = i
+    while (j < n && s[j] === '*') j++
+    if (j - i === 2) {
+      const beforeWs = i === 0 || isRichSpace(s[i - 1])
+      const afterWs = j >= n || isRichSpace(s[j])
+      const canOpen = !afterWs && (!isRichPunct(s[j]) || beforeWs || isRichPunct(s[i - 1]))
+      const canClose = !beforeWs && (!isRichPunct(s[i - 1]) || afterWs || isRichPunct(s[j]))
+      if (open >= 0 && canClose) {
+        pairs.push([open, i])
+        open = -1
+      } else if (canOpen) {
+        open = i
+      }
+    }
+    i = j
+  }
+  let pos = 0
+  for (const [a, b] of pairs) {
+    if (a > pos) out.push({ text: s.slice(pos, a), bold: false })
+    out.push({ text: s.slice(a + 2, b), bold: true })
+    pos = b + 2
+  }
+  if (pos < n) out.push({ text: s.slice(pos), bold: false })
+  return out
+}
+
+/**
+ * Açıklama biçimi (2026-10-14, kullanıcı isteği: "madde, alt madde, kalın yazı") — sunucudaki TechErrorRichText ile
+ * AYNI kural: `- ` / `* ` / `• ` madde, başındaki her 2 boşluk bir alt düzey (en çok 3 düzey), `1. ` / `1) ` numaralı
+ * madde, `**kalın**`, boş satır paragraf aralığı. Blok: `{ kind: 'p'|'li'|'gap', level, marker, runs }`.
+ */
+export function parseRichText(text) {
+  const out = []
+  if (!text) return out
+  const lines = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  let pendingGap = false
+  for (const line of lines) {
+    if (out.length >= RICH_MAX_BLOCKS) break
+    const raw = richTabs(line)
+    if (richBlank(raw)) {
+      if (out.length) pendingGap = true
+      continue
+    }
+    if (pendingGap) {
+      out.push({ kind: 'gap', level: 0, marker: null, runs: [] })
+      pendingGap = false
+    }
+    let i = 0
+    let spaces = 0
+    while (i < raw.length && raw[i] === ' ') {
+      spaces++
+      i++
+    }
+    const level = Math.min(RICH_MAX_LEVEL, Math.floor(spaces / 2))
+    const rest = raw.slice(i)
+    if (rest.length >= 2 && (rest.startsWith('- ') || rest.startsWith('• ') || (rest[0] === '*' && rest[1] === ' '))) {
+      out.push({ kind: 'li', level, marker: null, runs: richInline(richStrip(rest.slice(2))) })
+      continue
+    }
+    let d = 0
+    while (d < rest.length && d < 3 && rest[d] >= '0' && rest[d] <= '9') d++
+    if (d > 0 && d + 1 < rest.length && (rest[d] === '.' || rest[d] === ')') && rest[d + 1] === ' ') {
+      out.push({ kind: 'li', level, marker: `${rest.slice(0, d)}.`, runs: richInline(richStrip(rest.slice(d + 2))) })
+      continue
+    }
+    out.push({ kind: 'p', level, marker: null, runs: richInline(richStrip(rest)) })
+  }
+  return out
+}
+
+/** İşaretsiz düz metin (karşılaştırma, ekran okuyucu özeti): kalın işaretleri düşer, maddeler "- " olur. */
+export function richPlain(text) {
+  return parseRichText(text).map((b) => {
+    if (b.kind === 'gap') return ''
+    const marker = b.kind === 'li' ? `${b.marker || '-'} ` : ''
+    return `${'  '.repeat(b.level)}${marker}${b.runs.map((r) => r.text).join('')}`
+  }).join('\n').trim()
+}
+
+// ── Yönetici özeti (TechErrorSummary aynası) ───────────────────────────────────────────────────────
+
+const MAX_REFS = 100
+
+/** `{f:id}` ya da `{f:id?evet|hayır}` başvuruları (doğrusal tarama; kapanmayan başvuru düz metin). */
+export function summaryRefs(line) {
+  const out = []
+  if (line == null) return out
+  const str = String(line)
+  let i = str.indexOf('{f:')
+  while (i >= 0 && out.length < MAX_REFS) {
+    const close = str.indexOf('}', i + 3)
+    if (close < 0) break
+    const body = str.slice(i + 3, close)
+    // İç içe süslü parantez okunamaz (ilk "}"de biterdi, bozuk basılırdı): başvuru sayılmaz → summaryMalformed (sunucu)
+    if (body.includes('{')) {
+      i = str.indexOf('{f:', close + 1)
+      continue
+    }
+    const q = body.indexOf('?')
+    const id = richStrip(q < 0 ? body : body.slice(0, q))
+    let yes = null
+    let no = null
+    if (q >= 0) {
+      const choice = body.slice(q + 1)
+      const bar = choice.indexOf('|')
+      // Kesilmez (sunucu ile aynı): gövde en çok 500 karakterlik cümlenin bir parçası
+      yes = bar < 0 ? choice : choice.slice(0, bar)
+      no = bar < 0 ? '' : choice.slice(bar + 1)
+    }
+    if (ID_RE.test(id)) out.push({ id, yes, no, start: i, end: close + 1 })
+    i = str.indexOf('{f:', close + 1)
+  }
+  return out
+}
+
+/** Kalıpta çözülemeyen bir `{f:` var mı (kapanmamış / geçersiz kimlik)? Sunucu kaydı reddeder. */
+export function summaryMalformed(line) {
+  if (line == null) return false
+  const str = String(line)
+  let count = 0
+  for (let i = str.indexOf('{f:'); i >= 0; i = str.indexOf('{f:', i + 3)) count++
+  return count !== summaryRefs(str).length
+}
+
+function summaryYesNo(lang) {
+  return (b) => (lang === 'en' ? (b ? 'Yes' : 'No') : (b ? 'Evet' : 'Hayır'))
+}
+
+/**
+ * Kısa metin değerinin sunucuda saklanan hâli (TechErrorTemplate.line): denetim karakterleri boşluk, çift boşluk teke
+ * iner, iki uçtan U+0020 ve altı kırpılır. Taslaktaki "   " sunucuda yok sayılır — önizleme de cümleyi düşürmeli.
+ */
+export function shortTextValue(v) {
+  if (v == null) return ''
+  let out = ''
+  for (const ch of String(v)) {
+    const c = ch.codePointAt(0)
+    out += c < 0x20 || (c >= 0x7f && c <= 0x9f) ? ' ' : ch
+  }
+  out = out.replace(/ {2,}/g, ' ')
+  let a = 0
+  let b = out.length
+  while (a < b && out.charCodeAt(a) <= 0x20) a++
+  while (b > a && out.charCodeAt(b - 1) <= 0x20) b--
+  return out.slice(a, b)
+}
+
+/** Değer cümleye girerken işaretlemeyi bozmasın: 2+ yıldız dizisi TEK yıldız, satır sonu boşluk (sunucudaki neutral). */
+function neutralValue(s) {
+  return String(s).replace(/\n/g, ' ').replace(/\*{2,}/g, '*')
+}
+
+/** Özet cümlesinde kullanılabilir değer mi? Sunucu ile aynı: boş / null yok; kısa metin saklandığı hâliyle. */
+function summaryValue(f, v) {
+  if (v == null) return null
+  if (f.type === 'text') {
+    const t = shortTextValue(v)
+    return t === '' ? null : t
+  }
+  if (typeof v === 'string' && v.trim() === '') return null
+  return v
+}
+
+/**
+ * Tek cümle: dayandığı değer boş / muaf / şablonda yoksa `null` (cümle düşer). Sayı ve yüzde KALIN yazılır (`**…**`);
+ * metin değerindeki yıldız dizisi tek yıldıza iner (işaretleme bozulmasın). Uzun açıklama (`textarea`) alanına
+ * başvuran cümle düşer (sunucudaki TechErrorSummary.line ile aynı; inceleme 2026-10-14).
+ */
+export function summaryLine(pattern, byId, fields, lang, resolveLiteral) {
+  if (pattern == null || richBlank(pattern)) return null
+  const str = String(pattern)
+  let out = ''
+  let pos = 0
+  for (const r of summaryRefs(str)) {
+    out += resolveLiteral(str.slice(pos, r.start))
+    const f = byId.get(r.id)
+    if (!f || f.type === 'textarea' || fieldExempt(f, fields)) return null
+    const v = summaryValue(f, fields?.[f.id])
+    if (v == null) return null
+    if (r.yes != null) {
+      if (typeof v !== 'boolean') return null
+      out += resolveLiteral(v ? r.yes : r.no)
+    } else if (f.type === 'number' || f.type === 'percent') {
+      out += `**${formatValue(f, v, lang, summaryYesNo(lang))}**`
+    } else {
+      out += neutralValue(formatValue(f, v, lang, summaryYesNo(lang)))
+    }
+    pos = r.end
+  }
+  out += resolveLiteral(str.slice(pos))
+  return richStrip(out.replace(/ {2,}/g, ' '))
+}
+
+/** Satır başında madde gibi okunacak düz cümle: işaretten sonraki boşluk U+00A0 (sunucudaki keepParagraph). */
+function keepParagraph(r) {
+  if (!isItemLine(r)) return r
+  let k = 0
+  while (k < r.length && k < 3 && r[k] >= '0' && r[k] <= '9') k++
+  k = k > 0 ? k + 1 : 1
+  return k < r.length && r[k] === ' ' ? `${r.slice(0, k)}\u00A0${r.slice(k + 1)}` : r
+}
+
+/** Cümle kalıbı madde mi? Karar KALIBINDIR (değer ya da kanal adı "1. …" ile başlasa da paragraf akışı bozulmaz). */
+function isItemLine(pattern) {
+  const b = parseRichText(pattern)
+  return b.length > 0 && b[0].kind === 'li'
+}
+
+/**
+ * Kalıplardan üretilen özet (sunucudaki TechErrorSummary.auto): düz cümleler tek paragrafta akar, madde satırı ayrı
+ * satır, maddeden sonraki düz cümle yeni paragraf. `fields` = raporun değerleri.
+ */
+export function summaryAutoText(section, template, fields, channel, year, month) {
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const lang = template?.lang
+  const lit = (x) => resolveTextPlaceholders(x, channel, year, month, lang)
+  let out = ''
+  let inParagraph = false
+  for (const line of section?.lines || []) {
+    // Sınır aşıldıysa sonraki cümleler üretilmez — sonuç zaten sınırda kesilir (sunucu ile aynı)
+    if (out.length > MAX_RESOLVED_TEXT) break
+    let r = summaryLine(line, byId, fields, lang, lit)
+    if (!r || richBlank(r)) continue
+    const item = isItemLine(line)
+    // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (sunucu ile aynı)
+    if (item && !isItemLine(r)) continue
+    // Paragraf başındaki düz cümle değerle "1. " / "- " ile başlarsa işaretten sonraki boşluk bölünmez boşluk olur
+    if (!item && !inParagraph) r = keepParagraph(r)
+    if (item) {
+      if (out) out += '\n'
+      out += r
+      inParagraph = false
+    } else if (inParagraph) {
+      out += ` ${r}`
+    } else {
+      if (out) out += '\n\n'
+      out += r
+      inParagraph = true
+    }
+  }
+  return capResolved(out, MAX_RESOLVED_TEXT)
+}
+
+/**
+ * Raporda görünen özet: elle düzenlenmişse o metin (yer tutucular çözülür), değilse kalıplardan üretilen. BOŞ elle
+ * metin "otomatik" sayılır (inceleme 2026-10-14: boş bir özetle "Metni elle düzenle"ye basmak özeti kalıcı olarak
+ * boş bırakıyordu; sonradan girilen rakamlar onu hiç doldurmuyordu). Sunucu aynı kuralı uygular.
+ */
+export function summaryEffective(section, template, values, channel, year, month) {
+  const override = values?.texts?.[section?.id]
+  if (override != null && !richBlank(override)) return resolveTextPlaceholders(override, channel, year, month, template?.lang)
+  return summaryAutoText(section, template, values?.fields || {}, channel, year, month)
+}
+
+/**
+ * Özet cümlelerinden hangileri ŞU AN özete girmiyor ve neden: `missing` = dayandığı rakam girilmemiş (alan adları, her
+ * alan bir kez), `exempt` = "Hayır" cevabıyla muaf rakama dayanıyor, `broken` = kullanılamayan alana bağlı; `reason`:
+ * `removed` (şablonda yok), `notYesNo` (seçim evet/hayır olmayan alanda), `textarea` (uzun açıklama alanı).
+ */
+export function summaryLineStatus(section, template, fields) {
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  return (section?.lines || []).map((line, index) => {
+    const missing = []
+    const seen = new Set()
+    let exempt = false
+    let reason = null
+    for (const r of summaryRefs(line)) {
+      const f = byId.get(r.id)
+      if (!f) { reason = reason || 'removed'; continue }
+      if (r.yes != null && f.type !== 'yesno') { reason = reason || 'notYesNo'; continue }
+      if (f.type === 'textarea') { reason = reason || 'textarea'; continue }
+      if (fieldExempt(f, fields)) { exempt = true; continue }
+      if (summaryValue(f, fields?.[f.id]) == null && !seen.has(f.id)) {
+        seen.add(f.id)
+        missing.push(f)
+      }
+    }
+    const state = reason ? 'broken' : exempt ? 'exempt' : missing.length ? 'missing' : 'ok'
+    return { index, line, state, missing, reason }
+  })
+}
+
+/**
+ * Şablon düzenleyicisinin cümle uyarıları: `malformed` (kaydı engeller), `missing` (alan şablonda yok — cümle raporda
+ * hiç görünmez), `notYesNo` (seçim yalnız evet/hayır alanında çalışır), `textarea` (uzun açıklama alanı özete girmez).
+ * Uyarılar kaydı engellemez (sunucu da kabul eder). Aynı başvurunun uyarısı bir kez.
+ */
+export function summaryLineIssues(line, template) {
+  if (summaryMalformed(line)) return [{ kind: 'malformed' }]
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const out = []
+  const seen = new Set()
+  const push = (x) => {
+    const k = `${x.kind}:${x.id}`
+    if (!seen.has(k)) { seen.add(k); out.push(x) }
+  }
+  for (const r of summaryRefs(line)) {
+    const f = byId.get(r.id)
+    if (!f) push({ kind: 'missing', id: r.id })
+    else if (r.yes != null && f.type !== 'yesno') push({ kind: 'notYesNo', id: r.id, label: f.label })
+    else if (f.type === 'textarea') push({ kind: 'textarea', id: r.id, label: f.label })
+  }
+  return out
+}
+
+/**
+ * Cümle kalıbının okunur hâli: `{f:id}` → `[Alan adı]`, `{f:id?a|b}` → `[a / b]` (düzenleyici önizlemesi). Şablonda
+ * olmayan alan `removedLabel` ile gösterilir (kimlik kullanıcıya gösterilmez; verilmezse kimlik). Alan adları `resolve`
+ * ile, satırın tamamı `resolveLine` ile çözülür — başlık sınırlı (300) çözücü 500 karakterlik cümleyi "…" ile kesiyordu.
+ */
+export function summaryLinePreview(line, template, resolve = (x) => x, removedLabel = null, resolveLine = resolve) {
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const str = String(line || '')
+  let out = ''
+  let pos = 0
+  for (const r of summaryRefs(str)) {
+    out += str.slice(pos, r.start)
+    const f = byId.get(r.id)
+    if (r.yes != null) out += `[${r.yes} / ${r.no}]`
+    else out += `[${f ? resolve(f.label) : (removedLabel ?? r.id)}]`
+    pos = r.end
+  }
+  return resolveLine(out + str.slice(pos))
+}
+
+/** Bir alanı kullanan özet cümleleri (alan silinirken uyarmak için). */
+export function summaryLinesUsing(template, fieldId) {
+  const out = []
+  for (const s of template?.sections || []) {
+    if (s.kind !== 'summary') continue
+    for (const line of s.lines || []) if (summaryRefs(line).some((r) => r.id === fieldId)) out.push(line)
+  }
+  return out
+}
+
+/** Metne, imlecin olduğu yere bir parça ekler (başında / sonunda gerekirse boşluk). `[yeni metin, yeni imleç]`. */
+export function insertToken(value, token, at = null) {
+  const v = String(value || '')
+  const pos = at == null || at < 0 || at > v.length ? v.length : at
+  const before = v.slice(0, pos)
+  const after = v.slice(pos)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && !/^\s/.test(after) ? ' ' : ''
+  const next = `${before}${lead}${token}${trail}${after}`
+  return [next, pos + lead.length + token.length]
+}
+
 // ── Grafik ızgarası ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -291,6 +718,8 @@ export function newId(prefix, template, now = Date.now(), rand = Math.random) {
     used.add(s.id)
     for (const f of s.fields || []) used.add(f.id)
     for (const sl of s.slots || []) used.add(sl.id)
+    for (const c of s.columns || []) used.add(c.id)
+    for (const r of s.rows || []) used.add(r.id)
   }
   const stamp = Math.max(0, Math.floor(now)).toString(36)
   for (let n = 0; n < 50; n++) {
@@ -309,6 +738,11 @@ export function newSection(kind, template, labels) {
   if (kind === 'issues') {
     return { ...base, item_title: labels.itemTitle, description_label: labels.descriptionLabel,
       customers_label: labels.customersLabel, errors_label: labels.errorsLabel }
+  }
+  if (kind === 'summary') return { ...base, lines: [labels.summaryLine] }
+  if (kind === 'table') {
+    return { ...base, columns: [{ id: newId('c', template), label: labels.column, type: 'number' }],
+      rows: [{ id: newId('r', template), label: labels.row }] }
   }
   return { ...base, text: '' }
 }
@@ -348,6 +782,34 @@ export function templateErrors(template) {
       if (!(s.slots || []).length) errs[`section:${s.id}`] = 'te.err.noSlots'
       for (const sl of s.slots || []) if (!(sl.label || '').trim()) errs[`slot:${sl.id}`] = 'te.err.slotLabelRequired'
     }
+    if (s.kind === 'summary') {
+      const lines = (s.lines || []).filter((l) => String(l || '').trim())
+      if (!lines.length) errs[`section:${s.id}`] = 'te.err.noLines'
+      if ((s.lines || []).length > LIMITS.summaryLines) errs[`section:${s.id}`] = 'te.err.tooManyLines'
+      ;(s.lines || []).forEach((l, i) => {
+        // Sunucu gibi ölçülür (TechErrorTemplate.line: çift boşluk teke iner) — sunucunun kabul ettiği cümle reddedilmez
+        if (shortTextValue(l).length > LIMITS.summaryLine) errs[`line:${s.id}:${i}`] = 'te.err.lineTooLong'
+        else if (summaryMalformed(l)) errs[`line:${s.id}:${i}`] = 'te.err.lineMalformed'
+      })
+    }
+    if (s.kind === 'table') {
+      if (!(s.columns || []).length) errs[`section:${s.id}`] = 'te.err.noColumns'
+      else if (!(s.rows || []).length) errs[`section:${s.id}`] = 'te.err.noRows'
+      if ((s.columns || []).length > LIMITS.columns) errs[`section:${s.id}`] = 'te.err.tooManyColumns'
+      if ((s.rows || []).length > LIMITS.rows) errs[`section:${s.id}`] = 'te.err.tooManyRows'
+      // Uzunluk da istemcide denetlenir (sunucu da reddeder; yalnız sunucuda kalınca hata alan altında değil şeritte çıkıyordu)
+      // Uzunluk sunucudaki gibi ölçülür (TechErrorTemplate.line: çift boşluk teke iner) — sunucunun kabul ettiği ad reddedilmez
+      for (const c of s.columns || []) {
+        const l = shortTextValue(c.label)
+        if (!l) errs[`col:${s.id}:${c.id}`] = 'te.err.columnLabelRequired'
+        else if (l.length > LIMITS.columnLabel) errs[`col:${s.id}:${c.id}`] = 'te.err.columnLabelTooLong'
+      }
+      for (const r of s.rows || []) {
+        const l = shortTextValue(r.label)
+        if (!l) errs[`row:${s.id}:${r.id}`] = 'te.err.rowLabelRequired'
+        else if (l.length > LIMITS.label) errs[`row:${s.id}:${r.id}`] = 'te.err.rowLabelTooLong'
+      }
+    }
   }
   return errs
 }
@@ -364,7 +826,27 @@ export function normalizeValues(values) {
     fields: { ...(values?.fields || {}) },
     issues: Object.fromEntries(Object.entries(values?.issues || {}).map(([k, v]) => [k, Array.isArray(v) ? v.map((i) => ({ ...i })) : []])),
     texts: { ...(values?.texts || {}) },
+    tables: Object.fromEntries(Object.entries(values?.tables || {}).map(([sid, rows]) => [sid,
+      Object.fromEntries(Object.entries(rows || {}).map(([rid, cells]) => [rid, { ...(cells || {}) }]))])),
   }
+}
+
+/**
+ * Tablonun okunur en az genişliği (px): satır adı sütunu (176, `w-44`) + sütun başına (sayı / yüzde 112, metin 160).
+ * Kap bundan darsa tablo yerine satır başına kart çizilir — on sütunlu bir tablo dar ekranda okunmaz kutulara
+ * sıkışmasın. Tablo hücresinde giriş sıkıdır (13 px, dar iç boşluk): "125.000.000" ve "%99,95" kırpılmadan sığar ve
+ * 6 sütunlu varsayılan SLA tablosu 1280 px dizüstünde (kenar çubuğu açık, kap ≈ 860 px) tablo kalır (inceleme
+ * 2026-10-14: 136 px'lik bütçe onu karta düşürüyordu).
+ */
+export function tableMinWidth(columns) {
+  let w = 176
+  for (const c of columns || []) w += c?.type === 'text' ? 160 : 112
+  return Math.max(640, w)
+}
+
+/** Tablo değerinin hata anahtarı (sunucu da aynısını döner). */
+export function tableCellKey(sectionId, rowId, colId) {
+  return `tables.${sectionId}.${rowId}.${colId}`
 }
 
 export function newIssue(list) {
@@ -395,7 +877,31 @@ export function canonicalValues(v, template = null) {
     if (!Array.isArray(list) || list.length === 0) continue
     issues[k] = list.map((i) => Object.fromEntries(Object.entries(i || {}).filter(([, x]) => x != null)))
   }
-  return { fields, issues, texts: { ...(v?.texts || {}) } }
+  // Tablo: boş hücre / satır / tablo düşer; hiç değer yoksa anahtar hiç yazılmaz (tablosuz raporun belgesi öncekiyle
+  // aynı kalsın — sunucu da boş tabloyu yazmaz)
+  const tables = {}
+  for (const [sid, rows] of Object.entries(v?.tables || {})) {
+    const outRows = {}
+    for (const [rid, cells] of Object.entries(rows || {})) {
+      const c = {}
+      for (const [cid, x] of Object.entries(cells || {})) {
+        if (x == null || (typeof x === 'string' && x.trim() === '')) continue
+        c[cid] = x
+      }
+      if (Object.keys(c).length) outRows[rid] = c
+    }
+    if (Object.keys(outRows).length) tables[sid] = outRows
+  }
+  const texts = { ...(v?.texts || {}) }
+  // Boş elle özet = otomatik (anahtar gönderilmez; sunucu da saklamaz) — metin bölümünde boş metin ANLAMLIDIR, korunur
+  if (template) {
+    for (const s of template.sections || []) {
+      if (s.kind === 'summary' && typeof texts[s.id] === 'string' && richBlank(texts[s.id])) delete texts[s.id]
+    }
+  }
+  const out = { fields, issues, texts }
+  if (Object.keys(tables).length) out.tables = tables
+  return out
 }
 
 /** Şablonun karşılaştırma hâli: boş isteğe bağlı metinler (ipucu vb.) "yok" ile aynı sayılır. */
@@ -405,9 +911,13 @@ export function canonicalTemplate(tpl) {
   return {
     ...strip({ lang: tpl.lang, title: tpl.title }),
     sections: (tpl.sections || []).map((s) => {
-      const out = strip({ ...s, fields: undefined, slots: undefined })
+      const out = strip({ ...s, fields: undefined, slots: undefined, columns: undefined, rows: undefined, lines: undefined })
       if (Array.isArray(s.fields)) out.fields = s.fields.map(strip)
       if (Array.isArray(s.slots)) out.slots = s.slots.map(strip)
+      if (Array.isArray(s.lines)) out.lines = s.lines.slice()
+      if (Array.isArray(s.columns)) out.columns = s.columns.map(strip)
+      // Sunucu grup bayrağını yalnız "true" iken yazar: false ile yokluk aynı sayılır
+      if (Array.isArray(s.rows)) out.rows = s.rows.map((r) => strip({ ...r, group: r.group ? true : undefined }))
       return out
     }),
   }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, Trash2, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2,
+  Trash2, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -15,18 +16,41 @@ import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
-  FIELD_TYPES, LIMITS, allFields, allSlots, canonicalTemplate, imageRows, move, newId, newSection, resolvePlaceholders,
-  sanitizeSkipRefs, stableJson, templateErrors, withoutSkip,
+  COLUMN_TYPES, FIELD_TYPES, LIMITS, allFields, allSlots, canonicalTemplate, imageRows, insertToken, move, newId, newSection,
+  resolvePlaceholders, resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs,
+  templateErrors, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 
-const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn }
+const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn, summary: ScrollText, table: Table2 }
+// "Bölüm ekle" menüsünün sırası (raporun doğal akışı: özet → göstergeler → konular → tablo → metin → grafikler)
+const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images']
+
+/**
+ * Özet cümlesine eklenecek alan başvurusu. Evet/hayır alanı cevaba göre iki ifadeden birini yazar: ifadeler
+ * kullanıcıdan iki ayrı kutuyla alınır (ör. "artış" / "azalış"); `|` ve `}` ifadede kullanılamaz (sözdizimini bozar).
+ */
+function fieldToken(f, yes = null, no = null) {
+  if (f.type === 'yesno' && yes != null) return `{f:${f.id}?${cleanChoice(yes)}|${cleanChoice(no)}}`
+  return `{f:${f.id}}`
+}
+
+function cleanChoice(s) {
+  return String(s ?? '').replace(/[|}{]/g, ' ').replace(/ {2,}/g, ' ').trim()
+}
+
+/** Cümleden bir başvuruyu (şablondan silinmiş alanınkini) çıkarır; artan çift boşluk teke iner. */
+function removeRef(line, ref) {
+  return `${line.slice(0, ref.start)}${line.slice(ref.end)}`.replace(/ {2,}/g, ' ').trim()
+}
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const TPL_BACKUP_PREFIX = 'sm.te.tpl.'
@@ -66,6 +90,11 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const [state, setState] = useState({ loading: true, error: null, status: null })
   const [channel, setChannel] = useState(null)
   const [draft, setDraft] = useState(null)
+  // Taslak DIŞARIDAN değiştiğinde (yükleme, vazgeç, kayıt yanıtı, varsayılana dönüş, yedekten geri yükleme) artar:
+  // bölüm kartları yeniden kurulur — cümle kimlikleri, hatırlanan imleç ve açık evet/hayır paneli eski şablondan
+  // yenisine taşınmaz (inceleme 2026-10-14)
+  const [gen, setGen] = useState(0)
+  const replaceDraft = (tpl) => { setDraft(tpl); setGen((g) => g + 1) }
   const [base, setBase] = useState({ json: null, version: null })
   const [serverError, setServerError] = useState(null)
   const [conflict, setConflict] = useState(false)
@@ -90,6 +119,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
         const json = tplJson(res.data.template)
         setChannel(res.data.channel)
         setDraft(res.data.template)
+        setGen((g) => g + 1)
         setBase({ json, version: res.data.version })
         const b = res.data.channel?.can_edit ? readTplBackup(channelId) : null
         const same = b && tplJson(b.template) === json
@@ -163,7 +193,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     try {
       const res = await api.techErrors.saveTemplate(channelId, draft, base.version)
       if (res?.success && res.data?.template) {
-        setDraft(res.data.template)
+        replaceDraft(res.data.template)
         setBase({ json: tplJson(res.data.template), version: res.data.version })
         dropTplBackup(channelId)
         setBackup(null)
@@ -190,7 +220,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     if (!ok) return
     try {
       const res = await api.techErrors.defaultTemplate(draft?.lang || 'tr')
-      if (res?.success && res.data?.template) setDraft(res.data.template)
+      if (res?.success && res.data?.template) replaceDraft(res.data.template)
       else toast.error(res?.error || t('te.loadError'), { details: res?.errorInfo })
     } catch (e) {
       toast.error(e?.message || t('te.loadError'))
@@ -218,6 +248,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     ? { year: nowDate.getFullYear() - 1, month: 12 }
     : { year: nowDate.getFullYear(), month: nowDate.getMonth() }
   const resolve = (p) => resolvePlaceholders(p, channel?.name, previewPeriod.year, previewPeriod.month, draft.lang)
+  // Uzun metin (cümle önizlemesi) başlık sınırıyla (300) kesilmesin
+  const resolveLong = (p) => resolveTextPlaceholders(p, channel?.name, previewPeriod.year, previewPeriod.month, draft.lang)
   const slotCount = allSlots(draft).length
 
   return (
@@ -246,7 +278,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
         <AlertBanner tone="info" icon={History} title={t('te.tpl.backupTitle')}
           actions={(
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" onClick={() => { setDraft(backup.template); setBackup(null) }}>{t('te.backupRestore')}</Button>
+              <Button type="button" size="sm" onClick={() => { replaceDraft(backup.template); setBackup(null) }}>{t('te.backupRestore')}</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => { dropTplBackup(channelId); setBackup(null) }}>{t('te.backupDiscard')}</Button>
             </div>
           )}>
@@ -288,12 +320,17 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
           </Card>
 
           {draft.sections.map((s, i) => (
-            <SectionCard key={s.id} section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
-              draft={draft} resolve={resolve}
+            <SectionCard key={`${s.id}:${gen}`} section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
+              draft={draft} resolve={resolve} resolveLong={resolveLong}
               onChange={(fn) => updateSection(s.id, fn)}
               onMove={(delta) => update((d) => ({ ...d, sections: move(d.sections, i, delta) }))}
               onRemove={async () => {
-                const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message: t('te.tpl.removeSectionBody', s.title || ''),
+                // Bölümün alanları yönetici özetinde kullanılıyorsa söylenir (alan tek tek silinirken olduğu gibi)
+                const used = new Set()
+                for (const f of s.fields || []) for (const l of summaryLinesUsing(draft, f.id)) used.add(l)
+                const message = t('te.tpl.removeSectionBody', s.title || '')
+                  + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
+                const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                   variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                 if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
               }} />
@@ -308,7 +345,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="z-(--z-menu)">
-                {['metrics', 'issues', 'text', 'images'].map((kind) => {
+                {ADD_KINDS.map((kind) => {
                   const Icon = KIND_ICON[kind]
                   return (
                     <DropdownMenuItem key={kind} onSelect={() => update((d) => ({
@@ -359,6 +396,9 @@ function sectionLabels(kind, t) {
     descriptionLabel: t('te.tpl.defaultDescriptionLabel'),
     customersLabel: t('te.tpl.defaultCustomersLabel'),
     errorsLabel: t('te.tpl.defaultErrorsLabel'),
+    summaryLine: t('te.tpl.newSummaryLine'),
+    column: t('te.tpl.newColumn'),
+    row: t('te.tpl.newRow'),
   }
 }
 
@@ -381,9 +421,9 @@ function MoveButtons({ index, count, onMove, label, onRemove, removeLabel }) {
   return (
     <div className="flex shrink-0 items-center gap-0.5">
       <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" aria-label={t('te.moveUp', label)}
-        disabled={index === 0} onClick={() => onMove(-1)}><ArrowUp aria-hidden="true" /></Button>
+        disabled={index === 0} onClick={() => onMove(-1)} data-move="up"><ArrowUp aria-hidden="true" /></Button>
       <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" aria-label={t('te.moveDown', label)}
-        disabled={index === count - 1} onClick={() => onMove(1)}><ArrowDown aria-hidden="true" /></Button>
+        disabled={index === count - 1} onClick={() => onMove(1)} data-move="down"><ArrowDown aria-hidden="true" /></Button>
       {onRemove && (
         <Button type="button" size="icon" variant="ghost" className="size-8 text-destructive pointer-coarse:size-10"
           aria-label={removeLabel} onClick={onRemove}><Trash2 aria-hidden="true" /></Button>
@@ -392,7 +432,7 @@ function MoveButtons({ index, count, onMove, label, onRemove, removeLabel }) {
   )
 }
 
-function SectionCard({ section: s, index, count, errors, slotCount, draft, resolve, onChange, onMove, onRemove }) {
+function SectionCard({ section: s, index, count, errors, slotCount, draft, resolve, resolveLong, onChange, onMove, onRemove }) {
   const t = useT()
   const Icon = KIND_ICON[s.kind] || FileText
   const err = errors[`section:${s.id}`]
@@ -419,6 +459,8 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
         {s.kind === 'metrics' && <FieldsEditor section={s} errors={errors} draft={draft} onChange={onChange} />}
         {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} onChange={onChange} />}
         {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
+        {s.kind === 'summary' && <SummaryLinesEditor section={s} errors={errors} draft={draft} resolve={resolve} resolveLong={resolveLong} onChange={onChange} />}
+        {s.kind === 'table' && <TableEditor section={s} errors={errors} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'text' && (
           <div className="flex flex-col gap-1.5">
             <label htmlFor={`${titleId}-text`} className="text-sm font-semibold">{t('te.tpl.defaultText')}</label>
@@ -434,7 +476,18 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
 
 function FieldsEditor({ section: s, errors, draft, onChange }) {
   const t = useT()
+  const { showConfirm } = useDialog()
   const fields = s.fields || []
+  // Özet cümlesinde kullanılan alan silinirken uyarılır: o cümleler raporda artık görünmez (kayıt engellenmez)
+  const removeField = async (f) => {
+    const used = summaryLinesUsing(draft, f.id)
+    if (used.length) {
+      const ok = await showConfirm({ title: t('te.tpl.removeFieldUsedTitle'), message: t('te.tpl.removeFieldUsedBody', f.label || '', used.length),
+        variant: 'warning', confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
+      if (!ok) return
+    }
+    onChange((x) => ({ ...x, fields: x.fields.filter((y) => y.id !== f.id) }))
+  }
   return (
     <div className="flex flex-col gap-2">
       <ol className="flex flex-col gap-2">
@@ -445,7 +498,7 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
               <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.fieldN', i + 1)}</span>
               <MoveButtons index={i} count={fields.length} label={f.label || t('te.tpl.field')}
                 onMove={(d) => onChange((x) => ({ ...x, fields: move(x.fields, i, d) }))}
-                onRemove={fields.length > 1 ? () => onChange((x) => ({ ...x, fields: x.fields.filter((y) => y.id !== f.id) })) : null}
+                onRemove={fields.length > 1 ? () => removeField(f) : null}
                 removeLabel={t('te.tpl.removeFieldAria', f.label || '')} />
             </div>
             <div>
@@ -613,12 +666,419 @@ function LayoutPreview({ draft, resolve }) {
             ) : (
               <p className="text-muted-foreground">
                 {s.kind === 'metrics' ? t('te.tpl.previewFields', (s.fields || []).length)
-                  : s.kind === 'issues' ? t('te.tpl.previewIssues') : t('te.tpl.previewText')}
+                  : s.kind === 'issues' ? t('te.tpl.previewIssues')
+                    : s.kind === 'summary' ? t('te.tpl.previewSummary', (s.lines || []).length)
+                      : s.kind === 'table' ? t('te.tpl.previewTable', (s.columns || []).length, (s.rows || []).length)
+                        : t('te.tpl.previewText')}
               </p>
             )}
           </div>
         ))}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * Yönetici özeti cümleleri (2026-10-14): her satır bir cümle kalıbı. "Alan ekle" imlecin olduğu yere `{f:…}` koyar
+ * (evet/hayır alanı için iki ifade iki ayrı kutudan alınır); altında okunur önizleme ("[Teknik hata oranı]") ve
+ * uyarılar: silinmiş alan ("Başvuruyu kaldır" ile temizlenir) / evet-hayır olmayan alanda seçim (cümle raporda
+ * görünmez — kayıt engellenmez), okunamayan başvuru (kayıt engellenir). Satırların istemci tarafında KARARLI
+ * kimliği vardır: taşıma / silme sonrası odak ve imleç doğru cümlede kalır.
+ */
+function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = resolve, onChange }) {
+  const t = useT()
+  const lines = s.lines || []
+  const ids = useRef([])
+  const seq = useRef(0)
+  // Kimlik listesi satır sayısını izler (dışarıdan yükleme / sıfırlama sayıyı değiştirebilir)
+  while (ids.current.length < lines.length) ids.current.push(`l${++seq.current}`)
+  if (ids.current.length > lines.length) ids.current.length = lines.length
+  const caret = useRef({})
+  const root = useRef(null)
+  // Menüden alan seçildiyse odak cümleye / seçim kutusuna gider; Escape ile kapanışta Radix odağı tetiğe döndürür
+  const picked = useRef(false)
+  const [choice, setChoice] = useState(null)        // { lineId, field, yes, no }
+  const tokenFields = allFields(draft).filter((f) => f.type !== 'textarea')
+  const indexOf = (lineId) => ids.current.indexOf(lineId)
+  // Kimlikler (l1, l2 …) bölüm başınadır: arama bu bölümün kabıyla sınırlı (iki özet bölümü birbirine karışmaz)
+  const focusLine = (lineId, pos = null, selector = 'textarea') => requestAnimationFrame(() => {
+    const item = root.current?.querySelector(`[data-line-id="${lineId}"]`)
+    if (!item) return
+    let el = item.querySelector(selector)
+    // Taşınan cümle en üste / en alta vardıysa o düğme kapanır: odak cümlenin açık taşıma düğmesine, yoksa metne
+    if (!el || el.disabled) el = item.querySelector('[data-move]:not(:disabled)') || item.querySelector('textarea')
+    if (!el) return
+    el.focus()
+    if (pos != null && el.setSelectionRange) { try { el.setSelectionRange(pos, pos) } catch { /* gizli alan */ } }
+  })
+  const setLine = (lineId, v) => {
+    const i = indexOf(lineId)
+    onChange((x) => ({ ...x, lines: (x.lines || []).map((l, j) => (j === i ? v : l)) }))
+  }
+  const insert = (lineId, token) => {
+    const i = indexOf(lineId)
+    if (i < 0) return
+    const [next, pos] = insertToken(lines[i], token, caret.current[lineId])
+    caret.current[lineId] = pos
+    onChange((x) => ({ ...x, lines: (x.lines || []).map((l, j) => (j === i ? next : l)) }))
+    focusLine(lineId, pos)
+  }
+  const moveLine = (lineId, delta) => {
+    const i = indexOf(lineId)
+    ids.current = move(ids.current, i, delta)
+    onChange((x) => ({ ...x, lines: move(x.lines, i, delta) }))
+    // Odak taşınan cümlenin aynı düğmesinde kalır (ikinci basış geri almaz)
+    focusLine(lineId, null, `[data-move="${delta < 0 ? 'up' : 'down'}"]`)
+  }
+  const removeLine = (lineId) => {
+    const i = indexOf(lineId)
+    const neighbour = ids.current[i + 1] ?? ids.current[i - 1]
+    ids.current = ids.current.filter((x) => x !== lineId)
+    delete caret.current[lineId]
+    if (choice?.lineId === lineId) setChoice(null)
+    onChange((x) => ({ ...x, lines: x.lines.filter((_, j) => j !== i) }))
+    // Silinen cümlenin düğmesi kayboldu: odak komşu cümleye (yoksa "Cümle ekle"ye) — <body>'ye düşmesin
+    if (neighbour) focusLine(neighbour)
+    else requestAnimationFrame(() => root.current?.querySelector('[data-slot="te-tpl-add-line"]')?.focus())
+  }
+  const addLine = () => {
+    const lineId = `l${++seq.current}`
+    ids.current = [...ids.current, lineId]
+    onChange((x) => ({ ...x, lines: [...(x.lines || []), ''] }))
+    focusLine(lineId)
+  }
+  const remember = (lineId) => (e) => { caret.current[lineId] = e.target.selectionStart }
+  const placeholders = draft.lang === 'en'
+    ? [['{channel}', 'te.tpl.insertChannel'], ['{month}', 'te.tpl.insertMonth'], ['{year}', 'te.tpl.insertYear']]
+    : [['{kanal}', 'te.tpl.insertChannel'], ['{ay}', 'te.tpl.insertMonth'], ['{yil}', 'te.tpl.insertYear']]
+  return (
+    <div ref={root} className="flex flex-col gap-2" data-slot="te-tpl-summary">
+      <p className="m-0 text-xs text-muted-foreground">{t('te.tpl.summaryHint')}</p>
+      <ol className="m-0 flex list-none flex-col gap-2 p-0">
+        {lines.map((line, i) => {
+          const lineId = ids.current[i]
+          const id = `te-l-${s.id}-${lineId}`
+          const err = errors[`line:${s.id}:${i}`]
+          const refs = summaryRefs(line)
+          const issues = summaryLineIssues(line, draft).filter((x) => x.kind !== 'malformed')
+          const warnId = issues.length ? `${id}-w` : undefined
+          const errId = err ? `${id}-e` : undefined
+          const open = choice?.lineId === lineId
+          return (
+            <li key={lineId} className="rounded-lg border p-3" data-slot="te-tpl-line" data-line-id={lineId} data-field={`line:${s.id}:${i}`}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <label htmlFor={id} className="text-xs font-medium text-muted-foreground">{t('te.tpl.lineN', i + 1)}</label>
+                <MoveButtons index={i} count={lines.length} label={t('te.tpl.lineN', i + 1)}
+                  onMove={(d) => moveLine(lineId, d)}
+                  onRemove={lines.length > 1 ? () => removeLine(lineId) : null}
+                  removeLabel={t('te.tpl.removeLineAria', i + 1)} />
+              </div>
+              <Textarea id={id} rows={2} value={line} maxLength={LIMITS.summaryLine + 20} aria-invalid={err ? true : undefined}
+                aria-describedby={[warnId, errId].filter(Boolean).join(' ') || undefined}
+                onSelect={remember(lineId)} onKeyUp={remember(lineId)} onClick={remember(lineId)}
+                // Cümle tek satırdır (sunucu satır sonunu boşluğa çevirir): Enter satır açmaz, yapıştırılan satır sonu boşluk
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing) e.preventDefault() }}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  const v = raw.replace(/\r?\n/g, ' ')
+                  // Satır sonu değişince React değeri yeniden yazar ve imleç sona kaçar: imleç değişmiş metne göre geri konur
+                  const at = raw.slice(0, e.target.selectionStart).replace(/\r?\n/g, ' ').length
+                  caret.current[lineId] = at
+                  setLine(lineId, v)
+                  if (v !== raw) focusLine(lineId, at)
+                }} />
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs pointer-coarse:h-10"
+                      disabled={tokenFields.length === 0} data-slot="te-tpl-insert-field">
+                      <Braces aria-hidden="true" /> {t('te.tpl.insertField')}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  {/* Alan seçilince odak menü düğmesine değil cümleye (imleç eklenen alanın ardında) ya da seçim
+                      kutusuna gider; seçimsiz kapanışta (Escape / dışarı) Radix odağı menü düğmesine döndürür */}
+                  <DropdownMenuContent align="start" className="z-(--z-menu) max-h-72 max-w-[min(24rem,calc(100vw-2rem))] overflow-y-auto"
+                    onCloseAutoFocus={(e) => { if (picked.current) { e.preventDefault(); picked.current = false } }}>
+                    {tokenFields.map((f) => (
+                      <DropdownMenuItem key={f.id} className="whitespace-normal" onSelect={() => {
+                        picked.current = true
+                        if (f.type === 'yesno') {
+                          setChoice({ lineId, field: f, yes: '', no: '' })
+                          requestAnimationFrame(() => document.getElementById(`${id}-yes`)?.focus())
+                        } else insert(lineId, fieldToken(f))
+                      }}>
+                        <span className="min-w-0 [overflow-wrap:anywhere]">{resolve(f.label)}</span>
+                        <span className="ms-auto shrink-0 text-xs text-muted-foreground">{t(`te.type.${f.type}`)}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {placeholders.map(([ph, key]) => (
+                  <Button key={ph} type="button" size="sm" variant="outline" className="h-7 px-2 font-mono text-xs pointer-coarse:h-10"
+                    aria-label={`${ph} — ${t(key)}`} title={t(key)} onClick={() => insert(lineId, ph)}>{ph}</Button>
+                ))}
+              </div>
+              {open && (
+                <div className="mt-2 flex flex-col gap-2 rounded-md border bg-muted/30 p-3" data-slot="te-tpl-choice"
+                  role="group" aria-label={t('te.tpl.choiceTitle', resolve(choice.field.label))}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setChoice(null); focusLine(lineId) } }}>
+                  <p className="m-0 text-xs font-medium [overflow-wrap:anywhere]">{t('te.tpl.choiceTitle', resolve(choice.field.label))}</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <label htmlFor={`${id}-yes`} className="text-xs text-muted-foreground">{t('te.tpl.choiceYes')}</label>
+                      <Input id={`${id}-yes`} className="pointer-coarse:h-10" value={choice.yes} maxLength={120}
+                        placeholder={t('te.tpl.choiceYesPh')} onChange={(e) => setChoice((c) => ({ ...c, yes: e.target.value }))} />
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <label htmlFor={`${id}-no`} className="text-xs text-muted-foreground">{t('te.tpl.choiceNo')}</label>
+                      <Input id={`${id}-no`} className="pointer-coarse:h-10" value={choice.no} maxLength={120}
+                        placeholder={t('te.tpl.choiceNoPh')} onChange={(e) => setChoice((c) => ({ ...c, no: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" className="pointer-coarse:min-h-10"
+                      disabled={!cleanChoice(choice.yes) && !cleanChoice(choice.no)}
+                      onClick={() => { const c = choice; setChoice(null); insert(lineId, fieldToken(c.field, c.yes, c.no)) }}>
+                      <Plus aria-hidden="true" /> {t('te.tpl.choiceInsert')}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="pointer-coarse:min-h-10"
+                      onClick={() => { setChoice(null); focusLine(lineId) }}>{t('te.cancel')}</Button>
+                  </div>
+                </div>
+              )}
+              <p className="m-0 mt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-line-preview">
+                {t('te.tpl.linePreview')} <span className="text-foreground">{summaryLinePreview(line, draft, resolve, t('te.sum.removedField'), resolveLong)}</span>
+              </p>
+              {issues.length > 0 && (
+                <div id={warnId} className="mt-1 flex flex-col gap-1">
+                  {issues.map((x) => {
+                    const ref = refs.find((r) => r.id === x.id)
+                    return (
+                      <div key={`${x.kind}:${x.id}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]"
+                        data-slot="te-tpl-line-warn">
+                        <span>{x.kind === 'missing' ? t('te.tpl.lineMissingField')
+                          : x.kind === 'textarea' ? t('te.tpl.lineTextarea', resolve(x.label || ''))
+                          : t('te.tpl.lineNotYesNo', resolve(x.label || ''))}</span>
+                        {x.kind === 'missing' && ref && (
+                          <Button type="button" size="sm" variant="link" className="h-auto p-0 text-xs pointer-coarse:min-h-10"
+                            onClick={() => {
+                              // Cümle kısaldı: hatırlanan imleç başvurunun yerine çekilir (eski konum yeni metnin
+                              // ortasına alan sokuyordu); düğme kendi uyarısıyla kaybolur → odak cümleye
+                              const next = removeRef(line, ref)
+                              const at = Math.min(ref.start, next.length)
+                              caret.current[lineId] = at
+                              setLine(lineId, next)
+                              focusLine(lineId, at)
+                            }}>{t('te.tpl.removeRef')}</Button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {err && <p id={errId} className="m-0 mt-1 text-sm text-destructive" role="alert">{t(err)}</p>}
+            </li>
+          )
+        })}
+      </ol>
+      <Button type="button" variant="outline" size="sm" className="w-fit pointer-coarse:min-h-10" disabled={lines.length >= LIMITS.summaryLines}
+        onClick={addLine} data-slot="te-tpl-add-line">
+        <Plus aria-hidden="true" /> {t('te.tpl.addLine')}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * Tablo bölümü (2026-10-14): sütunlar (ad + tür: sayı / yüzde / metin) ve satırlar (ad + "grup satırı" — kalın,
+ * zeminli; ör. kanal toplamı). Değerler raporda girilir. Kimlikler kalıcıdır: satır / sütun adı değişse de geçmiş
+ * raporların hücreleri kaybolmaz.
+ */
+function TableEditor({ section: s, errors, draft, resolve, onChange }) {
+  const t = useT()
+  const cols = s.columns || []
+  const rows = s.rows || []
+  const root = useRef(null)
+  // Kimlikler bölüm kimliğiyle: iki tablo aynı satır / sütun kimliğini taşısa da (API, kopyalanmış şablon) etiketler
+  // yanlış kutuyu işaretlemez
+  const cid = (kind, id) => `te-${kind}-${s.id}-${id}`
+  // Silinen kartın düğmesi kayboldu: odak komşu kartın silme / taşıma düğmesine, yoksa ekleme düğmesine
+  const focusAfterRemove = (kind, list, id) => {
+    const i = list.findIndex((x) => x.id === id)
+    const next = list[i + 1] ?? list[i - 1]
+    requestAnimationFrame(() => {
+      const scope = root.current
+      if (!scope) return
+      const card = next ? scope.querySelector(`[data-slot="te-tpl-${kind}"][data-item="${next.id}"]`) : null
+      const target = card?.querySelector('input') || scope.querySelector(`[data-slot="te-tpl-add-${kind}"]`)
+      target?.focus?.()
+    })
+  }
+  // Taşınan kartın odağı: React düğümü taşıyınca odak düşer; uca varınca basılan düğme kapanır → aynı kartın açık
+  // taşıma düğmesine, o da yoksa adına
+  const focusItem = (kind, id, selector) => requestAnimationFrame(() => {
+    const card = root.current?.querySelector(`[data-slot="te-tpl-${kind}"][data-item="${id}"]`)
+    if (!card) return
+    let el = selector ? card.querySelector(selector) : null
+    if (!el || el.disabled) el = card.querySelector('[data-move]:not(:disabled)') || card.querySelector('input')
+    el?.focus?.()
+  })
+  const add = (kind, item) => {
+    onChange((x) => ({ ...x, [kind === 'column' ? 'columns' : 'rows']: [...(x[kind === 'column' ? 'columns' : 'rows'] || []), item] }))
+    // Yeni kartın adına odak (sınırda "ekle" düğmesi kapanır; odak ona kalmasın)
+    focusItem(kind, item.id, 'input')
+  }
+  const colName = (c, i) => resolve(c.label || '') || t('te.tpl.columnN', i + 1)
+  const rowName = (r, i) => resolve(r.label || '') || t('te.tpl.rowN', i + 1)
+  return (
+    <div ref={root} className="flex flex-col gap-4">
+    <TablePreview cols={cols} rows={rows} resolve={resolve} title={resolve(s.title || '')} />
+    <div className="grid gap-4 lg:grid-cols-2" data-slot="te-tpl-table">
+      <div className="flex min-w-0 flex-col gap-2">
+        <p className="text-sm font-semibold">{t('te.tpl.columns')} <span className="font-normal text-muted-foreground">{t('te.tpl.columnCount', cols.length, LIMITS.columns)}</span></p>
+        <ol className="flex flex-col gap-2">
+          {cols.map((c, i) => (
+            <li key={c.id} className="rounded-lg border p-3" data-slot="te-tpl-column" data-item={c.id} data-field={`col:${s.id}:${c.id}`}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.columnN', i + 1)}</span>
+                <MoveButtons index={i} count={cols.length} label={colName(c, i)}
+                  onMove={(d) => {
+                    onChange((x) => ({ ...x, columns: move(x.columns, i, d) }))
+                    focusItem('column', c.id, `[data-move="${d < 0 ? 'up' : 'down'}"]`)
+                  }}
+                  onRemove={cols.length > 1 ? () => {
+                    focusAfterRemove('column', cols, c.id)
+                    onChange((x) => ({ ...x, columns: x.columns.filter((y) => y.id !== c.id) }))
+                  } : null}
+                  removeLabel={t('te.tpl.removeColumnAria', colName(c, i))} />
+              </div>
+              {/* Ad tam genişlik, tür altında: yarım kolonluk kartta ad kutusu sığsın (2026-10-14 görsel kontrol) */}
+              <div className="flex min-w-0 flex-col gap-2">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <label htmlFor={cid('col', c.id)} className="text-xs font-medium text-muted-foreground">{t('te.tpl.columnLabel')}</label>
+                  <Input id={cid('col', c.id)} className="pointer-coarse:h-10" value={c.label || ''} maxLength={LIMITS.columnLabel + 20}
+                    aria-invalid={errors[`col:${s.id}:${c.id}`] ? true : undefined}
+                    aria-describedby={errors[`col:${s.id}:${c.id}`] ? `${cid('col', c.id)}-e` : undefined}
+                    onChange={(e) => onChange((x) => ({ ...x, columns: x.columns.map((y) => (y.id === c.id ? { ...y, label: e.target.value } : y)) }))} />
+                </div>
+                <div className="flex flex-col gap-1 sm:max-w-48">
+                  <label htmlFor={cid('colt', c.id)} className="text-xs font-medium text-muted-foreground">{t('te.tpl.columnType')}</label>
+                  <NativeSelect id={cid('colt', c.id)} value={c.type || 'number'} className="w-full pointer-coarse:h-10"
+                    onChange={(e) => onChange((x) => ({ ...x, columns: x.columns.map((y) => (y.id === c.id ? { ...y, type: e.target.value } : y)) }))}>
+                    {COLUMN_TYPES.map((ty) => <NativeSelectOption key={ty} value={ty}>{t(`te.type.${ty}`)}</NativeSelectOption>)}
+                  </NativeSelect>
+                </div>
+              </div>
+              {errors[`col:${s.id}:${c.id}`] && <p id={`${cid('col', c.id)}-e`} className="mt-1 text-sm text-destructive" role="alert">{t(errors[`col:${s.id}:${c.id}`])}</p>}
+            </li>
+          ))}
+        </ol>
+        <Button type="button" variant="outline" size="sm" className="w-fit pointer-coarse:min-h-10" disabled={cols.length >= LIMITS.columns}
+          onClick={() => add('column', { id: newId('c', draft), label: t('te.tpl.newColumn'), type: 'number' })}
+          data-slot="te-tpl-add-column">
+          <Plus aria-hidden="true" /> {t('te.tpl.addColumn')}
+        </Button>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2">
+        <p className="text-sm font-semibold">{t('te.tpl.rows')} <span className="font-normal text-muted-foreground">{t('te.tpl.rowCount', rows.length, LIMITS.rows)}</span></p>
+        <ol className="flex flex-col gap-2">
+          {rows.map((r, i) => (
+            <li key={r.id} className={cn('rounded-lg border p-3', r.group && 'bg-muted/40')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.rowN', i + 1)}</span>
+                <MoveButtons index={i} count={rows.length} label={rowName(r, i)}
+                  onMove={(d) => {
+                    onChange((x) => ({ ...x, rows: move(x.rows, i, d) }))
+                    focusItem('row', r.id, `[data-move="${d < 0 ? 'up' : 'down'}"]`)
+                  }}
+                  onRemove={rows.length > 1 ? () => {
+                    focusAfterRemove('row', rows, r.id)
+                    onChange((x) => ({ ...x, rows: x.rows.filter((y) => y.id !== r.id) }))
+                  } : null}
+                  removeLabel={t('te.tpl.removeRowAria', rowName(r, i))} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <label htmlFor={cid('row', r.id)} className="text-xs font-medium text-muted-foreground">{t('te.tpl.rowLabel')}</label>
+                <Input id={cid('row', r.id)} className="pointer-coarse:h-10" value={r.label || ''} maxLength={LIMITS.label + 20}
+                  aria-invalid={errors[`row:${s.id}:${r.id}`] ? true : undefined}
+                  aria-describedby={errors[`row:${s.id}:${r.id}`] ? `${cid('row', r.id)}-e` : undefined}
+                  onChange={(e) => onChange((x) => ({ ...x, rows: x.rows.map((y) => (y.id === r.id ? { ...y, label: e.target.value } : y)) }))} />
+                {resolve(r.label) !== (r.label || '') && (
+                  <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.tpl.linePreview')} {resolve(r.label)}</p>
+                )}
+              </div>
+              <div className="mt-2 flex items-start gap-2">
+                <Checkbox id={cid('rowg', r.id)} checked={!!r.group} className="mt-0.5"
+                  onCheckedChange={(v) => onChange((x) => ({ ...x, rows: x.rows.map((y) => {
+                    if (y.id !== r.id) return y
+                    if (v === true) return { ...y, group: true }
+                    return Object.fromEntries(Object.entries(y).filter(([k]) => k !== 'group'))
+                  }) }))} />
+                <label htmlFor={cid('rowg', r.id)} className="text-sm leading-snug">
+                  {t('te.tpl.rowGroup')}
+                  <span className="block text-xs text-muted-foreground">{t('te.tpl.rowGroupHint')}</span>
+                </label>
+              </div>
+              {errors[`row:${s.id}:${r.id}`] && <p id={`${cid('row', r.id)}-e`} className="mt-1 text-sm text-destructive" role="alert">{t(errors[`row:${s.id}:${r.id}`])}</p>}
+            </li>
+          ))}
+        </ol>
+        <Button type="button" variant="outline" size="sm" className="w-fit pointer-coarse:min-h-10" disabled={rows.length >= LIMITS.rows}
+          onClick={() => add('row', { id: newId('r', draft), label: t('te.tpl.newRow') })}
+          data-slot="te-tpl-add-row">
+          <Plus aria-hidden="true" /> {t('te.tpl.addRow')}
+        </Button>
+      </div>
+    </div>
+    </div>
+  )
+}
+
+/**
+ * Tablonun okunur önizlemesi (2026-10-14, inceleme: "satır / sütun düzenlemesi tabloyu göstermiyor"): PDF'teki gibi
+ * koyu başlık, grup satırı kalın ve zeminli, altındaki satırlar içeriden. Değer yok — yalnız yapı. Geniş tablo kendi
+ * kabında kayar (sayfa kaymaz).
+ */
+function TablePreview({ cols, rows, resolve, title }) {
+  const t = useT()
+  // İçeriden başlama yalnız bir grup satırının ALTINDAKİ satırlar için (rapor ve PDF ile aynı)
+  const afterGroup = new Set()
+  let seenGroup = false
+  for (const r of rows) {
+    if (seenGroup && !r.group) afterGroup.add(r.id)
+    if (r.group) seenGroup = true
+  }
+  return (
+    <figure className="m-0 flex min-w-0 flex-col gap-1" data-slot="te-tpl-table-preview">
+      <figcaption className="text-xs font-medium text-muted-foreground">{t('te.tpl.tablePreview')}</figcaption>
+      {/* Geniş tablo shadcn Table'ın kendi kabında kayar (sayfa değil); tablo içeriği kadar geniş, en az kap kadar */}
+      <div className="max-w-full rounded-md border" data-slot="te-tpl-table-scroll">
+        <Table className="min-w-full text-xs" aria-label={title ? `${t('te.tpl.tablePreview')}: ${title}` : t('te.tpl.tablePreview')}>
+          <TableHeader>
+            <TableRow className="bg-foreground hover:bg-foreground">
+              <TableHead scope="col" className="h-auto px-2 py-1.5 text-background"><span className="sr-only">{t('te.tbl.rowHeader')}</span></TableHead>
+              {cols.map((c) => (
+                <TableHead key={c.id} scope="col" className={cn('h-auto min-w-24 whitespace-normal px-2 py-1.5 font-semibold text-background [overflow-wrap:anywhere]',
+                  c.type === 'text' ? 'text-left' : 'text-right')}>
+                  {resolve(c.label) || '—'}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.id} className={cn(r.group && 'bg-muted font-semibold hover:bg-muted')}>
+                <TableHead scope="row" className={cn('h-auto min-w-32 whitespace-normal px-2 py-1.5 text-left text-foreground [overflow-wrap:anywhere]',
+                  r.group ? 'font-semibold' : 'font-normal', afterGroup.has(r.id) && 'ps-5')}>
+                  {resolve(r.label) || '—'}
+                </TableHead>
+                {cols.map((c) => <TableCell key={c.id} className="px-2 py-1.5 text-right text-muted-foreground">—</TableCell>)}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </figure>
   )
 }

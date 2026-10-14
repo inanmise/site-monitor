@@ -114,7 +114,7 @@ class TechErrorValuesTest {
         String json = TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 1.5, "quota-count", 7)), t));
         Map<String, Object> raw = TechErrorTemplate.toMap(t);
         @SuppressWarnings("unchecked") List<Object> secs = new ArrayList<>((List<Object>) raw.get("sections"));
-        secs.remove(3);   // kota bölümü çıkarıldı
+        secs.removeIf(o -> "quota".equals(((Map<?, ?>) o).get("id")));   // kota bölümü çıkarıldı
         Map<String, Object> smaller = new HashMap<>(raw);
         smaller.put("sections", secs);
         Values v = TechErrorValues.fromStored(json, TechErrorTemplate.normalize(smaller));

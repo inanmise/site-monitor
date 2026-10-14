@@ -2,6 +2,8 @@
 // sığar ve uzun adlar sarar; "Şablonu aç" TIKLANAN kanalın şablonunu açar; şablon kaydı okunan sürümle gider; rapor
 // düzenleyicide Türkçe sayı çözülür ve sürümle kaydedilir, grafik yuvaları 768+ ekranda iki kolon (yarım yan yana, tam iki
 // kolon), telefonda tek kolon; görsel yükleme ve gönderim onayı. API mock'lu (bildirim yok, e-posta gönderilmez).
+// 2026-10-14: yönetici özeti (rakamlarla canlı, kalın), grup satırlı tablo (geniş kapta tablo, telefonda kart; yatay
+// taşma yok), açıklamada madde / kalın araç çubuğu ve önizleme; şablonda özet cümlesi ve tablo düzenleme.
 import { test, expect } from '@playwright/test'
 
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
@@ -11,6 +13,11 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const TEMPLATE = {
   v: 1, lang: 'tr', title: '{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}',
   sections: [
+    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: [
+      '{kanal} Kanalı {ay} {yil} verilerine göre teknik hata oranı {f:error-rate} olarak gerçekleşmiştir.',
+      '{kanal} Kanalından yapılan toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.',
+      'SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} ile {f:sla-above?hedefin üzerinde|hedefin altında} gerçekleşmiştir.',
+    ] },
     { id: 'summary', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Özeti', fields: [
       { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent', hint: 'İlgili ay/yıl verilerine göre' },
       { id: 'had-outage', label: 'Dönemde kesinti oldu mu?', type: 'yesno', hint: "“Hayır” işaretlenirse kesinti alanları istenmez, PDF'e girmez" },
@@ -27,6 +34,19 @@ const TEMPLATE = {
     { id: 'unmapped', kind: 'metrics', title: 'Map Yapılmamış Hata Adedi', fields: [
       { id: 'unmapped-count', label: 'Map yapılmamış hata adedi', type: 'number' },
       { id: 'unmapped-note', label: 'Açıklama', type: 'textarea' },
+    ] },
+    { id: 'sla', kind: 'table', title: 'SLA Erişilebilirlik Tablosu', columns: [
+      { id: 'functions', label: 'Fonksiyon adedi', type: 'number' },
+      { id: 'success-tx', label: 'Başarılı işlem adedi', type: 'number' },
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
+      { id: 'failed-tx', label: 'Teknik başarısız işlem adedi (kesinti günleri dahil)', type: 'number' },
+      { id: 'availability', label: 'Erişilebilirlik (kesintisiz)', type: 'percent' },
+      { id: 'volume-share', label: 'Toplam işlem hacmi payı', type: 'percent' },
+    ], rows: [
+      { id: 'total', label: '{kanal} Kanalı Toplam', group: true },
+      { id: 'sla-critical', label: 'SLA dahil ve kritik fonksiyonlar (müşteri işlemleri)' },
+      { id: 'sla-noncritical', label: 'SLA dahil ve kritik olmayan' },
+      { id: 'out-of-sla', label: 'SLA kapsamında olmayan' },
     ] },
     { id: 'trend-note', kind: 'text', title: 'Grafikler hakkında', text: 'Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır.' },
     { id: 'charts', kind: 'images', title: 'Grafikler', slots: [
@@ -113,7 +133,8 @@ function smallTargets(sel) {
   const out = []
   for (const b of root.querySelectorAll('button, select, input, textarea')) {
     const r = b.getBoundingClientRect()
-    if (r.width === 0 || r.height === 0 || b.disabled || b.type === 'file') continue
+    // Onay kutusu 16 px görünür ama dokunmatikte ::after ile 40 px vuruş alanı taşır (shadcn/checkbox.jsx proje eki)
+    if (r.width === 0 || r.height === 0 || b.disabled || b.type === 'file' || b.getAttribute('role') === 'checkbox') continue
     if (r.height < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(r.height)}`)
   }
   return out
@@ -167,12 +188,30 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon)').toEqual([])
 
+      // Yönetici özeti cümlesi ve tablo düzenleyicisi de sığar; cümleye alan eklenir, tabloya grup satırı eklenir
+      const sum = page.locator('[data-slot="te-tpl-section"][data-kind="summary"]')
+      const firstLine = sum.locator('textarea').first()
+      await firstLine.fill('Oran')
+      await sum.locator('[data-slot="te-tpl-insert-field"]').first().click()
+      await page.getByRole('menuitem', { name: /Kritik fonksiyonların SLA oranı/ }).click()
+      await expect(firstLine).toHaveValue('Oran {f:sla-rate}')
+      await expect(sum.locator('[data-slot="te-tpl-line-preview"]').first()).toContainText('[Kritik fonksiyonların SLA oranı]')
+      const table = page.locator('[data-slot="te-tpl-section"][data-kind="table"]')
+      await table.getByRole('button', { name: /Satır ekle|Add row/ }).click()
+      await table.locator('[data-slot="te-tpl-row"]').last().getByRole('checkbox').click()
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon özet/tablo)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon özet/tablo)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon özet/tablo)').toEqual([])
+
       const slots = page.locator('[data-slot="te-tpl-section"][data-kind="images"]')
       await slots.getByRole('button', { name: /Grafik yuvası ekle|Add chart slot/ }).click()
       await page.locator('[data-slot="te-tpl-save"]').click()
       await expect.poll(() => savedTemplate?.version).toBe(3)
       expect(savedTemplate.id).toBe(10)
       expect(savedTemplate.template.sections.find((s) => s.id === 'charts').slots).toHaveLength(4)
+      expect(savedTemplate.template.sections.find((s) => s.id === 'exec').lines[0]).toBe('Oran {f:sla-rate}')
+      expect(savedTemplate.template.sections.find((s) => s.id === 'sla').rows.at(-1)).toMatchObject({ group: true })
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
     })
 
@@ -211,11 +250,44 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (muaf)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (muaf)').toEqual([])
 
-      await editor.getByLabel('Toplam işlem adedi').fill('1.250.000')
+      await editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true }).fill('1.250.000')
+
+      // Yönetici özeti: girilen rakamla canlı yazılır, rakam kalın; bekleyen cümle neyi beklediğini söyler
+      const summary = editor.locator('[data-slot="te-sum-text"]')
+      await expect(summary).toContainText(`${LONG_CHANNEL} Kanalından yapılan toplam işlem adedi 1.250.000 olarak gerçekleşmiştir.`)
+      await expect(summary.locator('strong', { hasText: '1.250.000' })).toBeVisible()
+      await expect(editor.locator('[data-slot="te-sum-pending"]')).toContainText(/Kritik fonksiyonların SLA oranı/)
+
+      // Tablo: geniş kapta gerçek tablo, dar kapta kart; ikisinde de yatay sayfa taşması yok
+      const tableBlock = editor.locator('[data-slot="te-table"] [data-layout]')
+      const layout = await tableBlock.getAttribute('data-layout')
+      if (vp.width < 768) expect(layout, 'telefonda kart').toBe('cards')
+      if (vp.width >= 1280) expect(layout, 'geniş ekranda tablo').toBe('table')
+      await editor.getByLabel(`${LONG_CHANNEL} Kanalı Toplam — Fonksiyon adedi`).or(
+        editor.locator('[data-row="total"]').getByLabel('Fonksiyon adedi', { exact: true })).fill('1250')
+      await editor.getByLabel(`${LONG_CHANNEL} Kanalı Toplam — Erişilebilirlik (kesintisiz)`).or(
+        editor.locator('[data-row="total"]').getByLabel('Erişilebilirlik (kesintisiz)', { exact: true })).fill('99,5')
+
+      // Açıklama: madde + kalın araç çubuğu, önizleme madde işaretini gösterir
+      const note = editor.getByLabel('Açıklama', { exact: true })
+      await note.fill('Limit sorgusu yavaşladı')
+      const noteBox = editor.locator('[data-field="values.unmapped-note"] [data-slot="te-rich-input"]')
+      await noteBox.locator('[data-tool="bullet"]').click()
+      await expect(note).toHaveValue('- Limit sorgusu yavaşladı')
+      await noteBox.locator('[data-tool="preview"]').click()
+      await expect(noteBox.locator('[data-slot="te-rich-item"]')).toContainText('Limit sorgusu yavaşladı')
+
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (özet/tablo)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (özet/tablo)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (özet/tablo)').toEqual([])
+
       await page.locator('[data-slot="te-save"]').click()
       await expect.poll(() => savedReport?.version).toBe(4)
-      expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000, 'had-outage': false })
+      expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000, 'had-outage': false,
+        'unmapped-note': '- Limit sorgusu yavaşladı' })
       expect(savedReport.values.fields).not.toHaveProperty('error-rate-excl')
+      expect(savedReport.values.tables).toEqual({ sla: { total: { functions: 1250, availability: 99.5 } } })
       await expect(page.locator('[data-slot="te-report-actions"]')).toContainText(/Tüm değişiklikler kaydedildi|All changes saved/)
 
       await editor.locator('[data-slot-id="monthly-tx"] input[type="file"]').setInputFiles({ name: 'aylik-islem.png', mimeType: 'image/png', buffer: PNG })

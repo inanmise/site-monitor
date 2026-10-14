@@ -22,7 +22,12 @@ import java.util.regex.Pattern;
  *   <li>{@code issues} — tekrarlanan anomali başlıkları ("{konu} Konusu ile yaşanan problem", açıklama, etkilenen
  *       müşteri, hata adedi);</li>
  *   <li>{@code text} — serbest metin (varsayılan metin şablonda, düzenlemesi raporda);</li>
- *   <li>{@code images} — grafik yuvaları; {@code half} iki kolonlu ızgarada bir kolon, {@code full} iki kolon genişliği.</li>
+ *   <li>{@code images} — grafik yuvaları; {@code half} iki kolonlu ızgarada bir kolon, {@code full} iki kolon genişliği;</li>
+ *   <li>{@code summary} — YÖNETİCİ ÖZETİ (2026-10-14): cümle kalıpları; {@code {f:<alan>}} girilen değerle dolar,
+ *       {@code {f:<evet/hayır alanı>?evet metni|hayır metni}} cevaba göre seçer. Değeri boş ya da muaf bir alana
+ *       dayanan cümle kendiliğinden düşer ({@link TechErrorSummary}); rapor metni elle de düzenleyebilir;</li>
+ *   <li>{@code table} — sütunları (sayı / yüzde / metin) ve satırları (grup başlığı ya da satır) şablonda tanımlı
+ *       tablo; değerler raporda girilir (ör. SLA erişilebilirlik tablosu).</li>
  * </ul>
  * Başlıklarda {@code {kanal}} / {@code {ay}} / {@code {yil}} (EN: {@code {channel}} / {@code {month}} / {@code {year}})
  * raporun kanalı ve dönemiyle dolar. Alan ve yuva kimlikleri KALICIDIR: ad değişse de geçmiş raporların değerleri kaybolmaz.
@@ -51,8 +56,14 @@ public final class TechErrorTemplate {
      */
     public static final int MAX_RESOLVED = 300;
     public static final int MAX_RESOLVED_TEXT = 12_000;
+    public static final int MAX_SUMMARY_LINES = 20;
+    public static final int MAX_SUMMARY_LINE = 500;
+    public static final int MAX_COLUMNS = 10;
+    public static final int MAX_ROWS = 40;
+    public static final int MAX_COLUMN_LABEL = 120;
 
-    public static final List<String> KINDS = List.of("metrics", "issues", "text", "images");
+    public static final List<String> KINDS = List.of("metrics", "issues", "text", "images", "summary", "table");
+    public static final List<String> COLUMN_TYPES = List.of("number", "percent", "text");
     public static final List<String> FIELD_TYPES = List.of("number", "percent", "yesno", "text", "textarea");
     public static final List<String> WIDTHS = List.of("half", "full");
     public static final List<String> LANGS = List.of("tr", "en");
@@ -79,8 +90,21 @@ public final class TechErrorTemplate {
 
     public record Slot(String id, String label, String width) { }
 
+    /** Tablo sütunu: {@code type} sayı / yüzde / metin. */
+    public record Column(String id, String label, String type) { }
+
+    /** Tablo satırı: {@code group} = kalın grup başlığı satırı (kendi değerleri olabilir, ör. ara toplam). */
+    public record TableRow(String id, String label, boolean group) { }
+
     public record Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
-                          String descriptionLabel, String customersLabel, String errorsLabel, String text) { }
+                          String descriptionLabel, String customersLabel, String errorsLabel, String text,
+                          List<String> lines, List<Column> columns, List<TableRow> rows) {
+        public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
+                       String descriptionLabel, String customersLabel, String errorsLabel, String text) {
+            this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    List.of(), List.of(), List.of());
+        }
+    }
 
     public record Template(String lang, String title, List<Section> sections) {
 
@@ -170,6 +194,27 @@ public final class TechErrorTemplate {
                     sm.put("description_label", s.descriptionLabel());
                     sm.put("customers_label", s.customersLabel());
                     sm.put("errors_label", s.errorsLabel());
+                }
+                case "summary" -> sm.put("lines", new ArrayList<>(s.lines()));
+                case "table" -> {
+                    List<Map<String, Object>> cs = new ArrayList<>();
+                    for (Column c : s.columns()) {
+                        Map<String, Object> cm = new LinkedHashMap<>();
+                        cm.put("id", c.id());
+                        cm.put("label", c.label());
+                        cm.put("type", c.type());
+                        cs.add(cm);
+                    }
+                    List<Map<String, Object>> rs = new ArrayList<>();
+                    for (TableRow r : s.rows()) {
+                        Map<String, Object> rm = new LinkedHashMap<>();
+                        rm.put("id", r.id());
+                        rm.put("label", r.label());
+                        if (r.group()) rm.put("group", true);
+                        rs.add(rm);
+                    }
+                    sm.put("columns", cs);
+                    sm.put("rows", rs);
                 }
                 default -> sm.put("text", s.text() == null ? "" : s.text());
             }
@@ -271,6 +316,27 @@ public final class TechErrorTemplate {
                             : "Bu sorundan kaynaklı teknik hata adedi", MAX_ISSUE_LABEL, strict, si);
                     sections.add(new Section(id, kind, stitle, List.of(), List.of(), item, d, c, e, null));
                 }
+                case "summary" -> {
+                    List<String> lines = summaryLines(sm.get("lines"), si, strict);
+                    if (lines.isEmpty()) {
+                        if (strict) throw invalid(where(si) + Msg.t("yönetici özetinde en az bir cümle olmalı.",
+                                "an executive summary needs at least one sentence."));
+                        continue;
+                    }
+                    sections.add(new Section(id, kind, stitle, List.of(), List.of(), null, null, null, null, null,
+                            lines, List.of(), List.of()));
+                }
+                case "table" -> {
+                    List<Column> cols = columns(sm.get("columns"), si, strict);
+                    List<TableRow> rows = tableRows(sm.get("rows"), si, strict);
+                    if (cols.isEmpty() || rows.isEmpty()) {
+                        if (strict) throw invalid(where(si) + Msg.t("tabloda en az bir sütun ve bir satır olmalı.",
+                                "a table needs at least one column and one row."));
+                        continue;
+                    }
+                    sections.add(new Section(id, kind, stitle, List.of(), List.of(), null, null, null, null, null,
+                            List.of(), cols, rows));
+                }
                 default -> {
                     String text = multiline(sm.get("text"));
                     text = cut(text, MAX_SECTION_TEXT, strict, where(si) + Msg.t("metin en çok 10 000 karakter olabilir.",
@@ -280,7 +346,107 @@ public final class TechErrorTemplate {
             }
         }
         if (sections.isEmpty()) return new Template(lang, title, defaults(lang).sections());
-        return new Template(lang, title, resolveSkipRefs(sections, strict));
+        List<Section> resolved = resolveSkipRefs(sections, strict);
+        if (strict) validateSummaryRefs(resolved);
+        return new Template(lang, title, resolved);
+    }
+
+    /**
+     * Özet cümlelerinin YAZIMI denetlenir (kapanmamış ya da geçersiz kimlikli {@code {f:…}} → 400). Şablondan çıkarılmış
+     * bir alana ya da türü evet/hayır olmayan bir alanda seçime dayanan cümle REDDEDİLMEZ: alan silmek özet yüzünden
+     * kilitlenmesin; o cümle raporda kendiliğinden düşer ve şablon düzenleyicisi cümlenin altında uyarır
+     * ({@code techErrorModel.summaryLineIssues}).
+     */
+    private static void validateSummaryRefs(List<Section> sections) {
+        for (Section s : sections) {
+            if (!"summary".equals(s.kind())) continue;
+            for (String line : s.lines()) {
+                if (TechErrorSummary.malformed(line)) {
+                    throw invalid(Msg.t("Yönetici özeti: “" + line + "” cümlesinde okunamayan bir alan başvurusu var. Biçim {f:alan-kimliği} ya da {f:alan-kimliği?evet metni|hayır metni} olmalı.",
+                            "Executive summary: the sentence “" + line + "” has a field reference that can't be read. Use {f:field-id} or {f:field-id?yes text|no text}."));
+                }
+            }
+        }
+    }
+
+    private static List<String> summaryLines(Object raw, int si, boolean strict) {
+        List<?> list = raw instanceof List<?> l ? l : List.of();
+        if (list.size() > MAX_SUMMARY_LINES) {
+            if (strict) throw invalid(where(si) + Msg.t("yönetici özetinde en çok 20 cümle olabilir.",
+                    "an executive summary can have at most 20 sentences."));
+            list = list.subList(0, MAX_SUMMARY_LINES);
+        }
+        List<String> out = new ArrayList<>();
+        for (Object o : list) {
+            String v = line(o);
+            if (v.isEmpty()) continue;
+            out.add(cut(v, MAX_SUMMARY_LINE, strict, where(si) + Msg.t("bir özet cümlesi en çok 500 karakter olabilir.",
+                    "a summary sentence can be at most 500 characters.")));
+        }
+        return List.copyOf(out);
+    }
+
+    private static List<Column> columns(Object raw, int si, boolean strict) {
+        List<?> list = raw instanceof List<?> l ? l : List.of();
+        if (list.size() > MAX_COLUMNS) {
+            if (strict) throw invalid(where(si) + Msg.t("bir tabloda en çok 10 sütun olabilir.", "a table can have at most 10 columns."));
+            list = list.subList(0, MAX_COLUMNS);
+        }
+        Set<String> ids = new HashSet<>();
+        List<Column> out = new ArrayList<>();
+        int ci = 0;
+        for (Object o : list) {
+            ci++;
+            String at = where(si) + Msg.t(ci + ". sütun: ", "column " + ci + ": ");
+            if (!(o instanceof Map<?, ?> m)) {
+                if (strict) throw invalid(at + Msg.t("okunamadı.", "couldn't be read."));
+                continue;
+            }
+            String label = line(m.get("label"));
+            if (label.isEmpty()) {
+                if (strict) throw invalid(at + Msg.t("sütun adı boş olamaz.", "the column name can't be empty."));
+                continue;
+            }
+            label = cut(label, MAX_COLUMN_LABEL, strict, at + Msg.t("sütun adı en çok 120 karakter olabilir.",
+                    "the column name can be at most 120 characters."));
+            String type = str(m.get("type"));
+            if (type == null || !COLUMN_TYPES.contains(type)) {
+                if (strict && type != null && !type.isEmpty()) {
+                    throw invalid(at + Msg.t("sütun türü sayı, yüzde ya da metin olmalı.", "the column type must be number, percentage or text."));
+                }
+                type = "number";
+            }
+            out.add(new Column(id(m.get("id"), "c", ci, ids, strict, at), label, type));
+        }
+        return List.copyOf(out);
+    }
+
+    private static List<TableRow> tableRows(Object raw, int si, boolean strict) {
+        List<?> list = raw instanceof List<?> l ? l : List.of();
+        if (list.size() > MAX_ROWS) {
+            if (strict) throw invalid(where(si) + Msg.t("bir tabloda en çok 40 satır olabilir.", "a table can have at most 40 rows."));
+            list = list.subList(0, MAX_ROWS);
+        }
+        Set<String> ids = new HashSet<>();
+        List<TableRow> out = new ArrayList<>();
+        int ri = 0;
+        for (Object o : list) {
+            ri++;
+            String at = where(si) + Msg.t(ri + ". satır: ", "row " + ri + ": ");
+            if (!(o instanceof Map<?, ?> m)) {
+                if (strict) throw invalid(at + Msg.t("okunamadı.", "couldn't be read."));
+                continue;
+            }
+            String label = line(m.get("label"));
+            if (label.isEmpty()) {
+                if (strict) throw invalid(at + Msg.t("satır adı boş olamaz.", "the row name can't be empty."));
+                continue;
+            }
+            label = cut(label, MAX_LABEL, strict, at + Msg.t("satır adı en çok 200 karakter olabilir.",
+                    "the row name can be at most 200 characters."));
+            out.add(new TableRow(id(m.get("id"), "r", ri, ids, strict, at), label, Boolean.TRUE.equals(m.get("group"))));
+        }
+        return List.copyOf(out);
     }
 
     /**
@@ -308,7 +474,7 @@ public final class TechErrorTemplate {
                 fs.add(ok ? f : new Field(f.id(), f.label(), f.type(), f.hint(), null));
             }
             out.add(new Section(s.id(), s.kind(), s.title(), List.copyOf(fs), s.slots(), s.itemTitle(), s.descriptionLabel(),
-                    s.customersLabel(), s.errorsLabel(), s.text()));
+                    s.customersLabel(), s.errorsLabel(), s.text(), s.lines(), s.columns(), s.rows()));
         }
         return List.copyOf(out);
     }
@@ -475,6 +641,16 @@ public final class TechErrorTemplate {
 
     private static Template defaultsTr() {
         List<Section> s = new ArrayList<>();
+        s.add(summary("exec-summary", "Yönetici Özeti", List.of(
+                "{kanal} Kanalı {ay} {yil} verilerine göre teknik hata oranı {f:error-rate} olarak gerçekleşmiştir.",
+                "Kesintiler hariç teknik hata oranı {f:error-rate-excl} olarak hesaplanmaktadır.",
+                "{kanal} Kanalından yapılan toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.",
+                "Bir önceki aya göre işlem adedinde {f:tx-increase-pct} {f:tx-increase?artış|azalış} görülmüştür.",
+                "Ay içindeki teknik hata adedi {f:error-count} olarak gerçekleşmiştir.",
+                "Map yapılmamış hata adedi {f:unmapped-count} olarak kaydedilmiştir.",
+                "Kota hatası adedi {f:quota-count} olarak kaydedilmiştir.",
+                "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup toplam hataların {f:outage-share} kadarını oluşturmaktadır.",
+                "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} ile {f:sla-above?hedefin üzerinde|hedefin altında} gerçekleşmiştir.")));
         s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Özeti", List.of(
                 new Field("error-rate", "Teknik hata oranı", "percent", "İlgili ay/yıl verilerine göre"),
                 new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
@@ -483,7 +659,8 @@ public final class TechErrorTemplate {
                         "Kesintilerin olduğu günlerde alınan hatalar çıkarıldığında", "had-outage"),
                 new Field("total-tx", "Toplam işlem adedi", "number", "{kanal} kanalından yapılan toplam işlem"),
                 new Field("tx-increase", "Önceki aya göre artış var mı?", "yesno", null),
-                new Field("tx-increase-pct", "Önceki aya göre artış oranı", "percent", null),
+                new Field("tx-increase-pct", "Önceki aya göre değişim oranı", "percent",
+                        "Artış ya da azalış oranını işaretsiz yazın (ör. 3,5); yönü yukarıdaki soru belirler"),
                 new Field("sla-rate", "Kritik fonksiyonların SLA oranı", "percent", "SLA taahhüdü kapsamındaki kritik fonksiyonlar"),
                 new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", null),
                 new Field("error-count", "Ay içindeki teknik hata adedi", "number", null),
@@ -498,6 +675,17 @@ public final class TechErrorTemplate {
         s.add(metrics("quota", "Kota Hatası Adedi", List.of(
                 new Field("quota-count", "Kota hatası adedi", "number", null),
                 new Field("quota-note", "Açıklama", "textarea", null))));
+        s.add(table("sla-table", "SLA Erişilebilirlik Tablosu", List.of(
+                new Column("functions", "Fonksiyon adedi", "number"),
+                new Column("success-tx", "Başarılı işlem adedi", "number"),
+                new Column("total-tx", "Toplam işlem adedi", "number"),
+                new Column("failed-tx", "Teknik başarısız işlem adedi", "number"),
+                new Column("availability", "Erişilebilirlik (kesintisiz)", "percent"),
+                new Column("volume-share", "Toplam işlem hacmi payı", "percent")), List.of(
+                new TableRow("total", "{kanal} Kanalı Toplam", true),
+                new TableRow("sla-critical", "SLA dahil ve kritik", false),
+                new TableRow("sla-noncritical", "SLA dahil ve kritik olmayan", false),
+                new TableRow("out-of-sla", "SLA kapsamında olmayan", false))));
         s.add(new Section("trend-note", "text", "Grafikler hakkında", List.of(), List.of(), null, null, null, null,
                 "Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır."));
         s.add(new Section("charts", "images", "Grafikler", List.of(), List.of(
@@ -521,6 +709,16 @@ public final class TechErrorTemplate {
 
     private static Template defaultsEn() {
         List<Section> s = new ArrayList<>();
+        s.add(summary("exec-summary", "Executive Summary", List.of(
+                "Based on {month} {year} figures, the {channel} channel's technical error rate was {f:error-rate}.",
+                "Excluding outage days, the technical error rate is {f:error-rate-excl}.",
+                "Total transactions through {channel} were {f:total-tx}.",
+                "Compared with the previous month, transactions show a {f:tx-increase-pct} {f:tx-increase?increase|decrease}.",
+                "There were {f:error-count} technical errors in the month.",
+                "The number of unmapped errors was {f:unmapped-count}.",
+                "The number of quota errors was {f:quota-count}.",
+                "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of all errors.",
+                "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate}, {f:sla-above?above|below} the target.")));
         s.add(metrics("summary", "{channel} Channel — {month} {year} Summary", List.of(
                 new Field("error-rate", "Technical error rate", "percent", "Based on this month's figures"),
                 new Field("had-outage", "Was there an outage in the period?", "yesno",
@@ -529,7 +727,8 @@ public final class TechErrorTemplate {
                         "With errors from outage days left out", "had-outage"),
                 new Field("total-tx", "Total transactions", "number", "All transactions made through {channel}"),
                 new Field("tx-increase", "Increase compared with the previous month?", "yesno", null),
-                new Field("tx-increase-pct", "Increase compared with the previous month", "percent", null),
+                new Field("tx-increase-pct", "Change compared with the previous month", "percent",
+                        "Enter the size of the increase or decrease without a sign (e.g. 3.5); the question above sets the direction"),
                 new Field("sla-rate", "SLA rate of critical functions", "percent", "Critical functions covered by the SLA commitment"),
                 new Field("sla-above", "Above the SLA target?", "yesno", null),
                 new Field("error-count", "Technical errors in the month", "number", null),
@@ -544,6 +743,17 @@ public final class TechErrorTemplate {
         s.add(metrics("quota", "Quota Error Count", List.of(
                 new Field("quota-count", "Quota errors", "number", null),
                 new Field("quota-note", "Notes", "textarea", null))));
+        s.add(table("sla-table", "SLA Availability Table", List.of(
+                new Column("functions", "Functions", "number"),
+                new Column("success-tx", "Successful transactions", "number"),
+                new Column("total-tx", "Total transactions", "number"),
+                new Column("failed-tx", "Technically failed transactions", "number"),
+                new Column("availability", "Availability (outage-free)", "percent"),
+                new Column("volume-share", "Share of total volume", "percent")), List.of(
+                new TableRow("total", "{channel} Channel Total", true),
+                new TableRow("sla-critical", "In SLA, critical", false),
+                new TableRow("sla-noncritical", "In SLA, non-critical", false),
+                new TableRow("out-of-sla", "Outside the SLA", false))));
         s.add(new Section("trend-note", "text", "About the charts", List.of(), List.of(), null, null, null, null,
                 "The yearly trend and detail charts are shared below."));
         s.add(new Section("charts", "images", "Charts", List.of(), List.of(
@@ -567,6 +777,14 @@ public final class TechErrorTemplate {
 
     private static Section metrics(String id, String title, List<Field> fields) {
         return new Section(id, "metrics", title, fields, List.of(), null, null, null, null, null);
+    }
+
+    private static Section summary(String id, String title, List<String> lines) {
+        return new Section(id, "summary", title, List.of(), List.of(), null, null, null, null, null, lines, List.of(), List.of());
+    }
+
+    private static Section table(String id, String title, List<Column> cols, List<TableRow> rows) {
+        return new Section(id, "table", title, List.of(), List.of(), null, null, null, null, null, List.of(), cols, rows);
     }
 
     // ── Metin yardımcıları ───────────────────────────────────────────────────────────────────────────
@@ -595,17 +813,39 @@ public final class TechErrorTemplate {
         return b.toString().replaceAll(" {2,}", " ").trim();
     }
 
-    /** Çok satır: \n korunur, diğer denetim karakterleri düşer, \r\n → \n. */
+    /**
+     * Çok satır: \n korunur, diğer denetim karakterleri düşer, \r\n → \n. Satır BAŞINDAKİ sekme iki boşluk olur (zengin
+     * metinde bir alt düzey — ekrandaki önizleme sekmeyi de iki boşluk sayar; inceleme 2026-10-14: Word / Outlook'tan
+     * yapıştırılan "\t- madde" önizlemede alt madde, PDF'te üst madde çıkıyordu); satır içindeki sekme tek boşluk.
+     */
     static String multiline(Object o) {
         if (o == null) return "";
         String s = String.valueOf(o).replace("\r\n", "\n").replace('\r', '\n');
         // Tarama sınırı en uzun izinli metin (çözülmüş metin bölümü, 12 000) + pay: üstünü çağıran sınır denetimi yakalar
         StringBuilder b = new StringBuilder(Math.min(s.length(), MAX_RESOLVED_TEXT + 64));
+        boolean lineStart = true;
         for (int i = 0; i < s.length() && b.length() <= MAX_RESOLVED_TEXT + 32; i++) {
             char c = s.charAt(i);
-            if (c == '\n' || c == '\t' || !Character.isISOControl(c)) b.append(c == '\t' ? ' ' : c);
+            if (c == '\t') {
+                b.append(lineStart ? "  " : " ");
+                continue;
+            }
+            if (c == '\n' || !Character.isISOControl(c)) b.append(c);
+            lineStart = c == '\n' || (lineStart && c == ' ');
         }
-        return b.toString().strip();
+        // Baştaki BOŞ satırlar ve sondaki boşluk düşer; ilk dolu satırın girintisi KALIR ("  - alt madde" ile başlayan
+        // açıklama PDF'te de alt madde — eskiden strip() onu üst maddeye çeviriyordu)
+        String out = b.toString();
+        int from = 0;
+        for (int k = 0; k < out.length(); ) {
+            int nl = out.indexOf('\n', k);
+            int end = nl < 0 ? out.length() : nl;
+            if (!TechErrorRichText.blank(out.substring(k, end))) { from = k; break; }
+            if (nl < 0) { from = out.length(); break; }
+            k = nl + 1;
+            from = k;
+        }
+        return out.substring(from).stripTrailing();
     }
 
     private static String cut(String s, int max, boolean strict, String msg) {

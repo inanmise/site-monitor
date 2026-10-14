@@ -20,7 +20,8 @@ import java.util.Set;
  * <pre>
  * { "fields": { "&lt;alan&gt;": 0.42 | 12000 | true | "metin" },
  *   "issues": { "&lt;bölüm&gt;": [ { id, topic, title, title_auto, description, customers, errors } ] },
- *   "texts":  { "&lt;bölüm&gt;": "serbest metin" } }
+ *   "texts":  { "&lt;bölüm&gt;": "serbest metin" },            // metin bölümü ve elle düzenlenmiş yönetici özeti
+ *   "tables": { "&lt;bölüm&gt;": { "&lt;satır&gt;": { "&lt;sütun&gt;": 12 | 99.5 | "metin" } } } }   // 2026-10-14
  * </pre>
  *
  * Şablonda olmayan kimlikler düşer (şablondan çıkarılan alanın değeri raporda tutulmaz). Boş değer saklanmaz. Sayı
@@ -35,6 +36,7 @@ public final class TechErrorValues {
     public static final int MAX_SHORT_TEXT = 500;
     public static final int MAX_LONG_TEXT = 10_000;
     public static final int MAX_TOPIC = 120;
+    public static final int MAX_CELL_TEXT = 200;
     static final double MAX_NUMBER = 1e15;
     static final double MAX_PERCENT = 1_000_000;
 
@@ -49,8 +51,20 @@ public final class TechErrorValues {
     }
 
     /** Okunmuş, şablona göre süzülmüş değerler. */
-    public record Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts) {
-        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of()); }
+    public record Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
+                         Map<String, Map<String, Map<String, Object>>> tables) {
+        public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts) {
+            this(fields, issues, texts, Map.of());
+        }
+
+        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of(), Map.of()); }
+
+        /** Tablo hücresi (yoksa null). */
+        public Object cell(String section, String row, String col) {
+            Map<String, Map<String, Object>> t = tables.get(section);
+            Map<String, Object> r = t == null ? null : t.get(row);
+            return r == null ? null : r.get(col);
+        }
     }
 
     // ── Doğrulama (istemciden) ───────────────────────────────────────────────────────────────────────
@@ -94,6 +108,16 @@ public final class TechErrorValues {
         }
         m.put("issues", iss);
         m.put("texts", new LinkedHashMap<>(v.texts()));
+        // Tablosuz raporun JSON'u önceki sürümle bayt bayt aynı kalsın (karşılaştırma / içerik sürümü)
+        if (!v.tables().isEmpty()) {
+            Map<String, Object> tb = new LinkedHashMap<>();
+            for (var e : v.tables().entrySet()) {
+                Map<String, Object> rows = new LinkedHashMap<>();
+                for (var r : e.getValue().entrySet()) rows.put(r.getKey(), new LinkedHashMap<>(r.getValue()));
+                tb.put(e.getKey(), rows);
+            }
+            m.put("tables", tb);
+        }
         return m;
     }
 
@@ -102,6 +126,7 @@ public final class TechErrorValues {
         Map<?, ?> rf = root.get("fields") instanceof Map<?, ?> m ? m : Map.of();
         Map<?, ?> ri = root.get("issues") instanceof Map<?, ?> m ? m : Map.of();
         Map<?, ?> rt = root.get("texts") instanceof Map<?, ?> m ? m : Map.of();
+        Map<?, ?> rtb = root.get("tables") instanceof Map<?, ?> m ? m : Map.of();
 
         Map<String, Object> fields = new LinkedHashMap<>();
         Map<String, Field> byId = new LinkedHashMap<>();
@@ -121,11 +146,16 @@ public final class TechErrorValues {
         for (Field f : t.allFields()) if (TechErrorTemplate.exempt(f, fields)) fields.remove(f.id());
         Map<String, List<Issue>> issues = new LinkedHashMap<>();
         Map<String, String> texts = new LinkedHashMap<>();
+        Map<String, Map<String, Map<String, Object>>> tables = new LinkedHashMap<>();
         for (Section s : t.sections()) {
             if ("issues".equals(s.kind())) {
                 List<Issue> list = issues(ri.get(s.id()), s, strict);
                 if (!list.isEmpty()) issues.put(s.id(), list);
-            } else if ("text".equals(s.kind())) {
+            } else if ("table".equals(s.kind())) {
+                Map<String, Map<String, Object>> tb = table(rtb.get(s.id()), s, strict);
+                if (!tb.isEmpty()) tables.put(s.id(), tb);
+            } else if ("text".equals(s.kind()) || "summary".equals(s.kind())) {
+                // summary: elle düzenlenmiş yönetici özeti (yoksa kalıplardan üretilir — TechErrorSummary)
                 Object v = rt.get(s.id());
                 if (v != null) {
                     String text = TechErrorTemplate.multiline(v);
@@ -136,11 +166,14 @@ public final class TechErrorValues {
                                 "The “" + s.title() + "” text can be at most 12,000 characters."));
                         text = text.substring(0, TechErrorTemplate.MAX_RESOLVED_TEXT);
                     }
-                    texts.put(s.id(), text);   // boş metin de saklanır: kullanıcı varsayılan metni bilerek silmiş olabilir
+                    // Metin bölümünde boş metin saklanır (varsayılanı bilerek silmek = bölüm basılmaz); yönetici
+                    // özetinde boş elle metin "otomatik" demektir → saklanmaz
+                    if ("summary".equals(s.kind()) && TechErrorRichText.blank(text)) continue;
+                    texts.put(s.id(), text);
                 }
             }
         }
-        Values out = new Values(fields, issues, texts);
+        Values out = new Values(fields, issues, texts, tables);
         if (strict && toJson(out).length() > MAX_JSON_CHARS) {
             throw bad("values", Msg.t("Rapor içeriği çok büyük (en çok 256 KB). Uzun açıklamaları kısaltın.",
                     "The report content is too large (at most 256 KB). Shorten the long descriptions."));
@@ -197,6 +230,52 @@ public final class TechErrorValues {
                 return s;
             }
         }
+    }
+
+    /** Tablo değerleri: yalnız şablondaki satır × sütun; boş hücre saklanmaz. */
+    private static Map<String, Map<String, Object>> table(Object raw, Section s, boolean strict) {
+        Map<?, ?> rows = raw instanceof Map<?, ?> m ? m : Map.of();
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (TechErrorTemplate.TableRow r : s.rows()) {
+            Map<?, ?> cells = rows.get(r.id()) instanceof Map<?, ?> m ? m : Map.of();
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (TechErrorTemplate.Column c : s.columns()) {
+                Object n = cell(c, cells.get(c.id()), "tables." + s.id() + "." + r.id() + "." + c.id(),
+                        r.label() + " · " + c.label(), strict);
+                if (n != null) row.put(c.id(), n);
+            }
+            if (!row.isEmpty()) out.put(r.id(), row);
+        }
+        return out;
+    }
+
+    private static Object cell(TechErrorTemplate.Column c, Object v, String key, String label, boolean strict) {
+        if (v == null || (v instanceof String s && s.isBlank())) return null;
+        if ("text".equals(c.type())) {
+            String s = TechErrorTemplate.line(v);
+            if (s.isEmpty()) return null;
+            if (s.length() > MAX_CELL_TEXT) {
+                if (strict) throw bad(key, Msg.t("“" + label + "” en çok 200 karakter olabilir.",
+                        "“" + label + "” can be at most 200 characters."));
+                s = s.substring(0, MAX_CELL_TEXT);
+            }
+            return s;
+        }
+        Double d = number(v);
+        boolean pct = "percent".equals(c.type());
+        if (d == null) {
+            if (strict) throw bad(key, Msg.t("“" + label + "” bir sayı olmalı.", "“" + label + "” must be a number."));
+            return null;
+        }
+        if (!pct && d < 0) {
+            if (strict) throw bad(key, Msg.t("“" + label + "” negatif olamaz.", "“" + label + "” can't be negative."));
+            return null;
+        }
+        if (Math.abs(d) > (pct ? MAX_PERCENT : MAX_NUMBER)) {
+            if (strict) throw bad(key, Msg.t("“" + label + "” çok büyük.", "“" + label + "” is too large."));
+            return null;
+        }
+        return compact(d);
     }
 
     private static List<Issue> issues(Object raw, Section s, boolean strict) {
