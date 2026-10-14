@@ -180,7 +180,8 @@ describe('Yönetici Özeti sayfası — rapor', () => {
     expect(screen.queryByText(SCOPE_FALLBACK)).toBeNull()
     release()
     expect(await screen.findByText(SCOPE_FALLBACK)).toBeInTheDocument()
-    expect(window.location.search).not.toContain('ex_team')
+    // Adres bir efektle güncellenir — bildirimle aynı karede olmayabilir (CI yükünde gecikti, 2026-10-14); 403 kardeşi gibi beklenir
+    await waitFor(() => expect(window.location.search).not.toContain('ex_team'))
   })
 
   it('inceleme 4: bozuk takım bağlantısı (400 field=team) da varsayılan kapsama döner — adres elle düzeltilmeden takılı kalınmaz', async () => {
