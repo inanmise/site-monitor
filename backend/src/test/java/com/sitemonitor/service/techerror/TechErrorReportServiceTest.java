@@ -378,7 +378,8 @@ class TechErrorReportServiceTest {
         TechErrorReport s = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", fields), 7L);
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
-        Map<String, Object> summary = new LinkedHashMap<>(secs.get(0));
+        int at = metricsSummaryIndex(secs);
+        Map<String, Object> summary = new LinkedHashMap<>(secs.get(at));
         @SuppressWarnings("unchecked") List<Map<String, Object>> fs = new ArrayList<>((List<Map<String, Object>>) summary.get("fields"));
         fs.replaceAll(f -> {
             if (!"sla-rate".equals(f.get("id"))) return f;
@@ -387,7 +388,7 @@ class TechErrorReportServiceTest {
             return m;
         });
         summary.put("fields", fs);
-        secs.set(0, summary);
+        secs.set(at, summary);
         raw.put("sections", secs);
         service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
         TechErrorChannel fresh = service.channel(ch.getId());
@@ -449,7 +450,8 @@ class TechErrorReportServiceTest {
                 Map.of("fields", Map.of("total-tx", 1250000, "error-count", 12)), 7L);
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
-        Map<String, Object> summary = new LinkedHashMap<>(secs.get(0));
+        int at = metricsSummaryIndex(secs);
+        Map<String, Object> summary = new LinkedHashMap<>(secs.get(at));
         @SuppressWarnings("unchecked") List<Map<String, Object>> fields = new ArrayList<>((List<Map<String, Object>>) summary.get("fields"));
         fields.replaceAll(f -> {
             if (!"total-tx".equals(f.get("id"))) return f;
@@ -458,7 +460,7 @@ class TechErrorReportServiceTest {
             return m;
         });
         summary.put("fields", fields);
-        secs.set(0, summary);
+        secs.set(at, summary);
         raw.put("sections", secs);
         service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
         TechErrorChannel fresh = service.channel(ch.getId());
@@ -501,5 +503,11 @@ class TechErrorReportServiceTest {
         assertThat(new String(pdf, 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
         assertThat(rendered.meta().images()).isEmpty();                       // görsel baytları elde tutulmaz
         assertThat(rendered.meta().title()).isEqualTo(in.title());
+    }
+
+    /** Gösterge özeti bölümünün sırası (2026-10-14'ten beri 0. sırada yönetici özeti var). */
+    private static int metricsSummaryIndex(List<Map<String, Object>> secs) {
+        for (int i = 0; i < secs.size(); i++) if ("summary".equals(secs.get(i).get("id"))) return i;
+        throw new AssertionError("gösterge özeti bölümü yok");
     }
 }

@@ -5,6 +5,8 @@ import com.sitemonitor.service.mail.MailKit.Stat;
 import com.sitemonitor.service.mail.MailTokens.Tone;
 import com.sitemonitor.service.techerror.TechErrorFormat;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
+import com.sitemonitor.service.techerror.TechErrorRichText;
+import com.sitemonitor.service.techerror.TechErrorSummary;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Field;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Section;
@@ -16,6 +18,7 @@ import java.util.List;
  * Kanal teknik hata raporu e-postası (2026-10-13). Konu raporun ÇÖZÜMLENMİŞ başlığıdır ("Mobil Kanalı Teknik Hata
  * Mesajları - Eylül 2026") — ekip postayı üst yönetime olduğu gibi iletebilsin. Gövde kısadır: ilk gösterge bölümünün
  * değerleri + "PDF ektedir"; asıl içerik ekteki PDF'tedir. Bağlantısız düz metin eşi de üretilir (MailDoc).
+ * 2026-10-14: şablonda yönetici özeti varsa gövde onunla açılır (PDF'teki metnin aynısı; madde ve kalın yazı korunur).
  */
 public final class TechErrorReportMail {
 
@@ -41,6 +44,15 @@ public final class TechErrorReportMail {
                         + " channel. The full report, with its topics and charts, is in the attached PDF (" + fileName + ")."
                 : nz(in.teamName()) + " takımı " + nz(in.channelName()) + " kanalının aylık raporunu hazırladı. Başlıklar ve "
                         + "grafiklerle tam rapor ekteki PDF'tedir (" + fileName + ").");
+        for (Section s : in.template().sections()) {
+            if (!"summary".equals(s.kind())) continue;
+            String text = TechErrorSummary.effective(s, in.template(), in.values(), in.channelName(), in.year(), in.month());
+            if (text != null && !text.isBlank()) {
+                d.heading(in.resolve(s.title()));
+                d.raw(richHtml(text), TechErrorRichText.plain(text));
+            }
+            break;   // yalnız ilk özet
+        }
         List<Stat> stats = new ArrayList<>();
         for (Section s : in.template().sections()) {
             if (!"metrics".equals(s.kind())) continue;
@@ -66,6 +78,33 @@ public final class TechErrorReportMail {
         d.footerWhyCustom(MailKit.esc(why), why);
         d.footerMeta(en ? "Site Monitor — technical error report" : "Site Monitor — teknik hata raporu", "Site Monitor");
         return d.build();
+    }
+
+    /**
+     * Zengin metnin e-posta HTML'i: paragraf satırları {@code <p>}, maddeler asılı girintili satır (liste etiketi yok —
+     * Outlook {@code <ul>} girintisini bozar), kalın {@code <strong>}. Her metin kaçırılır.
+     */
+    static String richHtml(String text) {
+        StringBuilder b = new StringBuilder("<div>");
+        for (TechErrorRichText.Block bl : TechErrorRichText.parse(text)) {
+            if (bl.gap()) {
+                b.append("<div style=\"height:10px;line-height:10px;font-size:1px\">&nbsp;</div>");
+                continue;
+            }
+            StringBuilder inner = new StringBuilder();
+            for (TechErrorRichText.Run r : bl.runs()) {
+                String e = MailKit.esc(r.text());
+                inner.append(r.bold() ? "<strong>" + e + "</strong>" : e);
+            }
+            int pad = bl.level() * 18 + (bl.item() ? 16 : 0);
+            String marker = bl.item() ? (bl.marker() != null ? MailKit.esc(bl.marker()) : bl.level() == 0 ? "&#8226;" : bl.level() == 1 ? "&#8211;" : "&#183;") + "&nbsp;" : "";
+            b.append("<p style=\"margin:0 0 ").append(bl.item() ? 4 : 2).append("px;padding-left:").append(pad)
+             .append("px;").append(bl.item() ? "text-indent:-16px;" : "")
+             .append("font-family:").append(MailTokens.FONT).append(";font-size:15px;line-height:24px;color:").append(MailTokens.FG)
+             .append(";word-break:break-word;overflow-wrap:anywhere\">")
+             .append(marker).append(inner).append("</p>");
+        }
+        return b.append("</div>").toString();
     }
 
     private static boolean blank(String s) { return s == null || s.isBlank(); }

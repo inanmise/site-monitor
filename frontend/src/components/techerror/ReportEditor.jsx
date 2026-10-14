@@ -13,7 +13,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
-import { IssuesBlock, MetricsBlock, TextBlock } from './ReportSections.jsx'
+import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import {
   allFields, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
@@ -251,6 +251,26 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   const setText = (sid, v) => {
     setDraft((d) => ({ ...d, texts: { ...d.texts, [sid]: v } }))
     clearServer((k) => k === `text.${sid}`)
+  }
+  /** Elle düzenlenmiş özeti kaldırır (anahtar silinir — "boş metin" bölümü basmamak demektir, "yok" ise otomatik). */
+  const clearText = (sid) => {
+    setDraft((d) => {
+      if (!(sid in (d.texts || {}))) return d
+      const texts = { ...d.texts }
+      delete texts[sid]
+      return { ...d, texts }
+    })
+    clearServer((k) => k === `text.${sid}`)
+  }
+  const setCell = (sid, rid, cid, v) => {
+    setDraft((d) => {
+      const tables = { ...(d.tables || {}) }
+      const rows = { ...(tables[sid] || {}) }
+      rows[rid] = { ...(rows[rid] || {}), [cid]: v }
+      tables[sid] = rows
+      return { ...d, tables }
+    })
+    clearServer((k) => k === `tables.${sid}.${rid}.${cid}`)
   }
   const setFieldError = useCallback((key, msg) => setClientErrors((e) => {
     if ((e[key] || null) === (msg || null)) return e
@@ -557,6 +577,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
             errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError} />
+        }
+        if (s.kind === 'summary') {
+          return <SummaryBlock key={key} section={s} template={tpl} values={draft} channelName={channel?.name} year={report?.year}
+            month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText} />
+        }
+        if (s.kind === 'table') {
+          return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}
+            errors={fieldErrors} onCell={setCell} onFieldError={setFieldError} />
         }
         if (s.kind === 'images') {
           return <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}

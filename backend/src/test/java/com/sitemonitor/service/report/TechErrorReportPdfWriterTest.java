@@ -151,7 +151,7 @@ class TechErrorReportPdfWriterTest {
         extra.put("kind", "metrics");
         extra.put("title", "Kesinti Ayrıntıları");
         extra.put("fields", List.of(Map.of("id", "outage-days", "label", "Kesinti gün sayısı", "type", "number", "skip_if_no", "had-outage")));
-        secs.add(1, extra);
+        secs.add(2, extra);   // gösterge özetinin (1) ardına; 0 = yönetici özeti
         raw.put("sections", secs);
         Template t = TechErrorTemplate.normalize(raw);
         Map<String, Object> f = new HashMap<>();
@@ -221,5 +221,149 @@ class TechErrorReportPdfWriterTest {
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             assertThat(doc.getNumberOfPages()).isGreaterThan(2);
         }
+    }
+
+    @Test
+    @DisplayName("yönetici özeti PDF'in başında, rakamlar kalıptan; boş tablo basılmaz, dolu tablo grup satırıyla basılır")
+    void executiveSummaryAndTable() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        String sla = t.sections().stream().filter(x -> "table".equals(x.kind())).findFirst().orElseThrow().id();
+        String empty = text(TechErrorReportPdfWriter.render(input("tr", Map.of())));
+        assertThat(empty).contains("Yönetici Özeti").contains("verilerine göre teknik hata oranı").contains("%0,42");
+        assertThat(empty.indexOf("Yönetici Özeti")).isLessThan(empty.indexOf("Teknik hata oranı"));   // özet göstergelerden önce
+        assertThat(empty).doesNotContain("SLA Erişilebilirlik Tablosu");                             // değer yok → basılmaz
+        Map<String, Object> rows = new LinkedHashMap<>();
+        rows.put("total", Map.of("functions", 1250, "availability", 99.5));
+        rows.put("sla-critical", Map.of("functions", 40));
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42),
+                "tables", Map.of(sla, rows)), t);
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(s).contains("SLA Erişilebilirlik Tablosu").contains("Mobil Kanalı Toplam").contains("SLA dahil ve kritik")
+                .contains("1.250").contains("%99,5").contains("Fonksiyon");
+    }
+
+    @Test
+    @DisplayName("uzun tablo sayfaya bölünür ve başlık satırı yeni sayfada tekrar çizilir")
+    void longTableRepeatsHeader() throws IOException {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        List<Object> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) rows.add(Map.of("id", "r" + i, "label", "Satır " + i, "group", i % 10 == 0));
+        raw.put("sections", List.of(Map.of("id", "tb", "kind", "table", "title", "Uzun Tablo",
+                "columns", List.of(Map.of("id", "a", "label", "Benzersiz Sütun Başlığı", "type", "text")), "rows", rows)));
+        Template t = TechErrorTemplate.normalize(raw);
+        Map<String, Object> vals = new LinkedHashMap<>();
+        for (int i = 0; i < 40; i++) vals.put("r" + i, Map.of("a", ("uzun hücre metni " + i + " ").repeat(8)));
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("tables", Map.of("tb", vals)), t);
+        byte[] pdf = TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 9, null, null, Map.of()));
+        String s = text(pdf);
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isGreaterThan(1);
+        }
+        assertThat(s.split("Benzersiz Sütun Başlığı", -1).length - 1).isGreaterThan(1);
+        assertThat(s).contains("Satır 39");
+    }
+
+    @Test
+    @DisplayName("sayı hücresi karakter ortasından bölünmez: önce küçülür, sığmazsa yalnız ayraçtan bölünür")
+    void numberCellNeverSplitsDigits() throws IOException {
+        try (PdfCanvas c = new PdfCanvas()) {
+            PdfCanvas.NumberCell fits = c.numberCell("125.430.112", 31.8f, c.regular, 8f, 5.5f, '.');
+            assertThat(fits.lines()).containsExactly("125.430.112");
+            assertThat(fits.size()).isLessThan(8f).isGreaterThanOrEqualTo(5.5f);
+            PdfCanvas.NumberCell big = c.numberCell("1.250.000.000.000.000", 31.8f, c.regular, 8f, 5.5f, '.');
+            assertThat(big.lines().size()).isGreaterThan(1);
+            assertThat(String.join("", big.lines())).isEqualTo("1.250.000.000.000.000");
+            for (int i = 0; i < big.lines().size() - 1; i++) assertThat(big.lines().get(i)).endsWith(".");
+            assertThat(c.numberCell("%99,5", 200f, c.regular, 8f, 5.5f, '.')).isEqualTo(new PdfCanvas.NumberCell(List.of("%99,5"), 8f));
+            // Ondalık kısım ve işaret ayrılmaz: yalnız binlik ayracından bölünür (TR '.', EN ',')
+            PdfCanvas.NumberCell dec = c.numberCell("%-1.234.567,89", 12f, c.regular, 8f, 5.5f, '.');
+            assertThat(String.join("", dec.lines())).isEqualTo("%-1.234.567,89");
+            assertThat(dec.lines().get(dec.lines().size() - 1)).endsWith("567,89");
+            PdfCanvas.NumberCell en = c.numberCell("1,234,567.89", 12f, c.regular, 8f, 5.5f, ',');
+            assertThat(en.lines().get(en.lines().size() - 1)).isEqualTo("567.89");
+        }
+    }
+
+    /** {@code n} sütunlu tablo (her biri sayı, ya da {@code textCol} ile bir metin sütunu). */
+    static Template wideTable(int n, boolean textCol) {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        List<Object> cols = new java.util.ArrayList<>();
+        for (int k = 0; k < n; k++) cols.add(Map.of("id", "c" + k, "label", "Sütun " + k, "type", textCol && k == 0 ? "text" : "number"));
+        raw.put("sections", List.of(Map.of("id", "tb", "kind", "table", "title", "Geniş Tablo", "columns", cols,
+                "rows", List.of(Map.of("id", "a", "label", "Toplam", "group", true), Map.of("id", "b", "label", "Alt")))));
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    @Test
+    @DisplayName("10 sütunlu tablo: 9 haneli sayı tek parça basılır; sığmayan metin hücresi kısaltılırsa tablo altına not düşülür")
+    void wideTableKeepsNumbersAndNotesCuts() throws IOException {
+        Template t = wideTable(10, false);
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (int k = 0; k < 10; k++) row.put("c" + k, 125430112);
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("tables", Map.of("tb", Map.of("a", row))), t);
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(s.split("125\\.430\\.112", -1).length - 1).isEqualTo(10);
+        assertThat(s).doesNotContain("kısaltıldı");
+        Template tt = wideTable(10, true);
+        TechErrorValues.Values tv = TechErrorValues.normalize(Map.of("tables", Map.of("tb", Map.of("b",
+                Map.of("c0", "çok uzun açıklama metni ".repeat(8).trim())))), tt);
+        String ts = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(tt, tv, "ATM", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(ts).contains("Bu tablodaki bazı hücreler kısaltıldı; tamamı Site Monitor'de.");
+    }
+
+    @Test
+    @DisplayName("tablo başlığı sayfa sonunda yalnız kalmaz: başlık ile sütun başlıkları her uzunlukta aynı sayfada")
+    void tableTitleNeverOrphaned() throws IOException {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        raw.put("sections", List.of(
+                Map.of("id", "pad", "kind", "text", "title", "Dolgu", "text", ""),
+                Map.of("id", "tb", "kind", "table", "title", "Erişilebilirlik Tablosu",
+                        "columns", List.of(Map.of("id", "a", "label", "Benzersizbaşlık", "type", "number")),
+                        "rows", List.of(Map.of("id", "r", "label", "Satır")))));
+        Template t = TechErrorTemplate.normalize(raw);
+        for (int lines = 1; lines <= 70; lines++) {
+            TechErrorValues.Values v = TechErrorValues.normalize(Map.of(
+                    "texts", Map.of("pad", "dolgu satırı\n".repeat(lines).trim()),
+                    "tables", Map.of("tb", Map.of("r", Map.of("a", 5)))), t);
+            byte[] pdf = TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 9, null, null, Map.of()));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                for (int p = 1; p <= doc.getNumberOfPages(); p++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(p);
+                    st.setEndPage(p);
+                    String page = st.getText(doc);
+                    if (page.contains("Erişilebilirlik Tablosu")) {
+                        assertThat(page).as("dolgu %d satır, sayfa %d", lines, p).contains("Benzersizbaşlık").contains("Satır");
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("açıklamalarda madde, alt madde ve kalın yazı PDF'te işaretleriyle basılır; ** işareti görünmez")
+    void richTextInPdf() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("fields", Map.of(
+                "unmapped-note", "Giriş satırı\n- Birinci madde\n  - Alt madde\n1. Numaralı\n**Kalın** son")), t);
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 9, null, null, Map.of())));
+        assertThat(s).contains("• Birinci madde").contains("– Alt madde").contains("1. Numaralı").contains("Kalın son");
+        assertThat(s).doesNotContain("**");
+    }
+
+    @Test
+    @DisplayName("e-posta yönetici özetiyle açılır: kalın rakam HTML'de <strong>, düz metin eşinde işaretsiz")
+    void mailOpensWithSummary() {
+        TechErrorPdfInput in = input("tr", Map.of());
+        var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, "https://sm.example", "mobil.pdf");
+        assertThat(m.html()).contains("Yönetici Özeti").contains("<strong>%0,42</strong>");
+        assertThat(m.text()).contains("teknik hata oranı %0,42 olarak").doesNotContain("**");
+        assertThat(m.html().indexOf("Yönetici Özeti")).isLessThan(m.html().indexOf("Değerleri ekip girmiştir"));
     }
 }

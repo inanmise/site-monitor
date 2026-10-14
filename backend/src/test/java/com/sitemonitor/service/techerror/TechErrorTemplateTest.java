@@ -18,14 +18,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon kullanıcının verdiği düzen: özet → anomali → map yok → kota → not → 2 kolonlu grafikler")
+    @DisplayName("varsayılan şablon: yönetici özeti → göstergeler → anomali → map yok → kota → SLA tablosu → not → 2 kolonlu grafikler")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("metrics", "issues", "metrics", "metrics", "text", "images");
-        assertThat(t.sections().get(2).title()).isEqualTo("Map Yapılmamış Hata Adedi");
-        assertThat(t.sections().get(3).title()).isEqualTo("Kota Hatası Adedi");
+                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "table", "text", "images");
+        assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
+        assertThat(t.sections().get(3).title()).isEqualTo("Map Yapılmamış Hata Adedi");
+        assertThat(t.sections().get(4).title()).isEqualTo("Kota Hatası Adedi");
+        var sla = t.sections().get(5);
+        assertThat(sla.title()).isEqualTo("SLA Erişilebilirlik Tablosu");
+        assertThat(sla.columns()).extracting(c -> c.type()).containsExactly("number", "number", "number", "number", "percent", "percent");
+        assertThat(sla.rows()).extracting(r -> r.group()).containsExactly(true, false, false, false);
         List<Slot> slots = t.allSlots();
         // 1. sıra: iki yarım, 2. sıra: iki yarım, 3. ve 4. sıra tam, ardından ek tam genişlik grafikler
         assertThat(slots.subList(0, 4)).extracting(Slot::width).containsOnly("half");

@@ -605,12 +605,35 @@ public class TechErrorReportService {
         for (var s : prev.sections()) prevKinds.put(s.id(), s.kind());
         Map<String, List<TechErrorValues.Issue>> issues = new LinkedHashMap<>();
         Map<String, String> texts = new LinkedHashMap<>();
+        Map<String, Map<String, Map<String, Object>>> tables = new LinkedHashMap<>();
+        Map<String, TechErrorTemplate.Section> prevSections = new HashMap<>();
+        for (var s : prev.sections()) prevSections.put(s.id(), s);
         for (var s : next.sections()) {
             if (!s.kind().equals(prevKinds.get(s.id()))) continue;
             if ("issues".equals(s.kind()) && before.issues().containsKey(s.id())) issues.put(s.id(), before.issues().get(s.id()));
-            if ("text".equals(s.kind()) && before.texts().containsKey(s.id())) texts.put(s.id(), before.texts().get(s.id()));
+            if (("text".equals(s.kind()) || "summary".equals(s.kind())) && before.texts().containsKey(s.id())) {
+                texts.put(s.id(), before.texts().get(s.id()));
+            }
+            if ("table".equals(s.kind()) && before.tables().containsKey(s.id())) {
+                // Hücre: satır ve sütun kimliği yeni tabloda olmalı, sütun türü değişmemiş olmalı
+                Map<String, String> prevCols = new HashMap<>();
+                for (var c : prevSections.get(s.id()).columns()) prevCols.put(c.id(), c.type());
+                Map<String, Map<String, Object>> old = before.tables().get(s.id());
+                Map<String, Map<String, Object>> rows = new LinkedHashMap<>();
+                for (var r : s.rows()) {
+                    Map<String, Object> cells = old.get(r.id());
+                    if (cells == null) continue;
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (var c : s.columns()) {
+                        Object v = cells.get(c.id());
+                        if (v != null && c.type().equals(prevCols.get(c.id()))) row.put(c.id(), v);
+                    }
+                    if (!row.isEmpty()) rows.put(r.id(), row);
+                }
+                if (!rows.isEmpty()) tables.put(s.id(), rows);
+            }
         }
-        return new Values(fields, issues, texts);
+        return new Values(fields, issues, texts, tables);
     }
 
     /** Liste başlığı için kopyanın başlık kalıbı + dili (sütun sınırına sığdırılır). */
@@ -632,6 +655,7 @@ public class TechErrorReportService {
     private static int countValues(Values v) {
         int n = v.fields().size() + v.texts().size();
         for (var l : v.issues().values()) n += l.size();
+        for (var t : v.tables().values()) for (var r : t.values()) n += r.size();
         return n;
     }
 

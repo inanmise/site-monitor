@@ -338,7 +338,8 @@ class PdfCanvas implements AutoCloseable {
             Map.entry(0x2713, "+"), Map.entry(0x2014, "-"), Map.entry(0x2013, "-"),
             Map.entry(0x2026, "..."), Map.entry(0x00B7, "-"), Map.entry(0x25B2, "^"),
             Map.entry(0x25BC, "v"), Map.entry(0x201C, "\""), Map.entry(0x201D, "\""),
-            Map.entry(0x2018, "'"), Map.entry(0x2019, "'"));
+            Map.entry(0x2018, "'"), Map.entry(0x2019, "'"), Map.entry(0x00A0, " "), Map.entry(0x202F, " "),
+            Map.entry(0x2007, " "));
 
     /** Tek satıra sığdır; taşarsa sonunu "…" ile kes. */
     String clip(String s, float maxWidth, PDFont font, float size) throws IOException {
@@ -376,10 +377,17 @@ class PdfCanvas implements AutoCloseable {
      * uzunluğuyla sınırlı, sığmayan kalan son satırda "…" ile biter.
      */
     List<String> wrapCell(String s, float maxWidth, PDFont font, float size, int maxLines) throws IOException {
+        return wrapCellChecked(s, maxWidth, font, size, maxLines).lines();
+    }
+
+    /** Sarma sonucu: satırlar ve metnin sığmayıp "…" ile kesilip kesilmediği (kesilen yerde not düşmek için). */
+    record Wrapped(List<String> lines, boolean truncated) { }
+
+    Wrapped wrapCellChecked(String s, float maxWidth, PDFont font, float size, int maxLines) throws IOException {
         List<String> out = new ArrayList<>();
-        if (s == null || maxLines < 1) return out;
+        if (s == null || maxLines < 1) return new Wrapped(out, false);
         String v = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ').trim();
-        if (v.isEmpty()) return out;
+        if (v.isEmpty()) return new Wrapped(out, false);
         StringBuilder line = new StringBuilder();
         for (String word : v.split(" ")) {
             if (word.isEmpty()) continue;
@@ -392,7 +400,7 @@ class PdfCanvas implements AutoCloseable {
             if (!line.isEmpty()) {
                 out.add(line.toString());
                 line.setLength(0);
-                if (out.size() == maxLines) return ellipsize(out, maxWidth, font, size);
+                if (out.size() == maxLines) return new Wrapped(ellipsize(out, maxWidth, font, size), true);
             }
             int start = 0;
             while (start < word.length()) {
@@ -402,12 +410,151 @@ class PdfCanvas implements AutoCloseable {
                     break;
                 }
                 out.add(word.substring(start, end));
-                if (out.size() == maxLines) return ellipsize(out, maxWidth, font, size);
+                if (out.size() == maxLines) return new Wrapped(ellipsize(out, maxWidth, font, size), true);
                 start = end;
             }
         }
         if (!line.isEmpty()) out.add(line.toString());
+        return new Wrapped(out, false);
+    }
+
+    /** Sayı hücresi: satırlar ve çizim boyu. */
+    record NumberCell(List<String> lines, float size) { }
+
+    /**
+     * Sayı / yüzde hücresi (2026-10-14 inceleme: dar sütunda "125.430.112" → "125.430.1" + "12" yanıltıcı rakam basıyordu).
+     * Sayı karakter ortasından ASLA bölünmez: önce yazı {@code minSize}'a kadar küçültülerek tek satıra sığdırılır;
+     * yine sığmazsa yalnız BİNLİK ayracından sonra ("125.430." + "112") satıra bölünür — ondalık kısım ("%99," + "95")
+     * ve işaret ayrılmaz. {@code group}: dilin binlik ayracı (TR '.', EN ','). Döngüler metin uzunluğu ve 0,5 puntoluk
+     * adımlarla sınırlı.
+     */
+    NumberCell numberCell(String s, float maxWidth, PDFont font, float size, float minSize, char group) throws IOException {
+        String v = s == null ? "" : s.trim();
+        if (v.isEmpty()) return new NumberCell(List.of(), size);
+        float sz = size;
+        while (sz - 0.5f >= minSize && width(v, font, sz) > maxWidth) sz -= 0.5f;
+        if (width(v, font, sz) <= maxWidth) return new NumberCell(List.of(v), sz);
+        List<String> parts = new ArrayList<>();
+        int from = 0;
+        for (int i = 0; i < v.length(); i++) {
+            char c = v.charAt(i);
+            if (c == group && i + 1 < v.length()) {
+                parts.add(v.substring(from, i + 1));
+                from = i + 1;
+            }
+        }
+        parts.add(v.substring(from));
+        List<String> lines = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String p : parts) {
+            if (!cur.isEmpty() && width(cur + p, font, sz) > maxWidth) {
+                lines.add(cur.toString().trim());
+                cur.setLength(0);
+            }
+            cur.append(p);
+        }
+        if (!cur.isEmpty()) lines.add(cur.toString().trim());
+        return new NumberCell(lines, sz);
+    }
+
+    /** Karışık yazı tipli metin parçası (kalın / normal) — zengin metin sarması için (2026-10-14, teknik hata raporu). */
+    record Span(String text, boolean bold) { }
+
+    /**
+     * Kalın ve normal parçalardan oluşan metni satırlara böler (kelime sınırında; sütundan geniş tek kelime karakter
+     * sınırında). En fazla {@code maxLines} satır; sığmayan kalan son satırda "…" ile biter. Döngü metin uzunluğuyla
+     * sınırlı.
+     */
+    List<List<Span>> wrapSpans(List<Span> in, float maxWidth, float size, int maxLines) throws IOException {
+        List<List<Span>> out = new ArrayList<>();
+        if (in == null || maxLines < 1) return out;
+        List<Span> line = new ArrayList<>();
+        float lineW = 0;
+        boolean space = false;
+        for (Span sp : in) {
+            if (sp == null || sp.text() == null) continue;
+            String t = sp.text().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
+            PDFont f = sp.bold() ? bold : regular;
+            int i = 0;
+            while (i < t.length()) {
+                if (t.charAt(i) == ' ') { space = true; i++; continue; }
+                int j = t.indexOf(' ', i);
+                if (j < 0) j = t.length();
+                String word = t.substring(i, j);
+                i = j;
+                float sw = space && !line.isEmpty() ? width(" ", f, size) : 0;
+                float ww = width(word, f, size);
+                space = false;
+                if (lineW + sw + ww <= maxWidth) {
+                    addSpan(line, (sw > 0 ? " " : "") + word, sp.bold());
+                    lineW += sw + ww;
+                    continue;
+                }
+                if (!line.isEmpty()) {
+                    out.add(line);
+                    if (out.size() == maxLines) return ellipsizeSpans(out, maxWidth, size);
+                    line = new ArrayList<>();
+                    lineW = 0;
+                }
+                int start = 0;
+                while (start < word.length()) {
+                    int end = ww <= maxWidth && start == 0 ? word.length() : fitChars(word, start, maxWidth, f, size);
+                    String part = word.substring(start, end);
+                    if (end >= word.length()) {
+                        addSpan(line, part, sp.bold());
+                        lineW = width(part, f, size);
+                        break;
+                    }
+                    addSpan(line, part, sp.bold());
+                    out.add(line);
+                    if (out.size() == maxLines) return ellipsizeSpans(out, maxWidth, size);
+                    line = new ArrayList<>();
+                    lineW = 0;
+                    start = end;
+                }
+            }
+        }
+        if (!line.isEmpty()) out.add(line);
         return out;
+    }
+
+    private static void addSpan(List<Span> line, String text, boolean b) {
+        if (!line.isEmpty() && line.get(line.size() - 1).bold() == b) {
+            Span last = line.remove(line.size() - 1);
+            line.add(new Span(last.text() + text, b));
+        } else {
+            line.add(new Span(text, b));
+        }
+    }
+
+    private List<List<Span>> ellipsizeSpans(List<List<Span>> out, float maxWidth, float size) throws IOException {
+        List<Span> last = new ArrayList<>(out.get(out.size() - 1));
+        last.add(new Span("…", false));
+        for (int guard = 0; spansWidth(last, size) > maxWidth && guard < 4096; guard++) {
+            int k = last.size() - 2;               // "…" kalır, ondan önceki parça kısalır
+            if (k < 0) break;
+            String t = last.get(k).text();
+            if (t.length() <= 1) last.remove(k);
+            else last.set(k, new Span(t.substring(0, t.length() - 1), last.get(k).bold()));
+        }
+        out.set(out.size() - 1, last);
+        return out;
+    }
+
+    float spansWidth(List<Span> line, float size) throws IOException {
+        float w = 0;
+        for (Span s : line) w += width(s.text(), s.bold() ? bold : regular, size);
+        return w;
+    }
+
+    /** Bir zengin metin satırını çizer. */
+    void spans(List<Span> line, float x, float yy, float size, float[] color) throws IOException {
+        float cx = x;
+        for (Span s : line) {
+            PDFont f = s.bold() ? bold : regular;
+            text(f, size, cx, yy, s.text(), color);
+            cx += width(s.text(), f, size);
+        }
     }
 
     /** {@code word[start..end)} genişliğe sığan en uzun parça (en az bir karakter; vekil çift bölünmez). */
@@ -434,7 +581,8 @@ class PdfCanvas implements AutoCloseable {
         return s.replace('ş', 's').replace('Ş', 'S').replace('ğ', 'g').replace('Ğ', 'G')
                 .replace('ı', 'i').replace('İ', 'I').replace('ç', 'c').replace('Ç', 'C')
                 .replace('ö', 'o').replace('Ö', 'O').replace('ü', 'u').replace('Ü', 'U')
-                .replace('…', '.').replace('—', '-').replace('·', '-')
+                .replace('…', '.').replace('—', '-').replace('·', '-').replace('•', '-').replace('–', '-')
+                .replace('\u00A0', ' ').replace('\u202F', ' ').replace('\u2007', ' ')
                 .replaceAll("[^\\x20-\\x7E]", "?");
     }
 

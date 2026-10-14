@@ -3,10 +3,14 @@ package com.sitemonitor.service.report;
 import com.sitemonitor.service.BrandMailAssets;
 import com.sitemonitor.service.techerror.TechErrorFormat;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
+import com.sitemonitor.service.techerror.TechErrorRichText;
+import com.sitemonitor.service.techerror.TechErrorSummary;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
+import com.sitemonitor.service.techerror.TechErrorTemplate.Column;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Field;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Section;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Slot;
+import com.sitemonitor.service.techerror.TechErrorTemplate.TableRow;
 import com.sitemonitor.service.techerror.TechErrorValues.Issue;
 
 import java.io.IOException;
@@ -25,6 +29,10 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  * İKİ KOLONLU grafik ızgarası — ardışık iki "yarım" görsel yan yana, "tam" görsel tek satır; en-boy oranı korunur,
  * sayfaya sığmayan satır sonraki sayfaya geçer. Boş alan "—"; yüklenmemiş yuva PDF'e girmez; çizilemeyen görsel
  * sessizce kaybolmaz, yerine "çizilemedi" kutusu gelir.
+ *
+ * <p>2026-10-14: YÖNETİCİ ÖZETİ (kalıplardan üretilen ya da elle düzenlenen paragraf, rakamlar kalın), grup / alt
+ * satırlı TABLO (başlık her sayfada tekrar, sayılar sağa yaslı) ve açıklamalarda madde / alt madde / kalın yazı
+ * ({@link TechErrorRichText}).
  *
  * <p>Rakamların hepsi kullanıcının girdiğidir; yazıcı hesaplamaz. Dil şablondan gelir (TR / EN etiketleri, ay adları,
  * sayı biçimi). Döngüler girdiyle sınırlıdır (bölüm ≤ 20, alan ≤ 30, başlık ≤ 30, yuva ≤ 40, metin ≤ 10 000 karakter).
@@ -67,6 +75,8 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                 case "metrics" -> metrics(in, s);
                 case "issues" -> issues(in, s);
                 case "images" -> images(in, s);
+                case "summary" -> summary(in, s);
+                case "table" -> table(in, s);
                 default -> text(in, s);
             }
         }
@@ -144,7 +154,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                 c.text(c.regular, 8.5f, MARGIN, c.y, TechErrorFormat.EMPTY, MUTED);
                 c.y -= 13;
             } else {
-                paragraphs(String.valueOf(v), 8.5f, MARGIN, CONTENT_W, INK);
+                rich(String.valueOf(v), 8.5f, MARGIN, CONTENT_W, INK);
                 c.y -= 3;
             }
         }
@@ -178,7 +188,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             }
             if (i.description() != null && !i.description().isBlank()) {
                 c.y -= 1;
-                paragraphs(i.description(), 8.5f, MARGIN, CONTENT_W, INK);
+                rich(i.description(), 8.5f, MARGIN, CONTENT_W, INK);
             }
             c.y -= 4;
             c.ensureSpace(8);
@@ -193,8 +203,161 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         String text = stored != null ? stored : s.text();
         if (text == null || text.isBlank()) return;     // kullanıcı metni bilerek boşalttı → bölüm basılmaz
         sectionTitle(in.resolve(s.title()));
-        paragraphs(in.resolveText(text), 9f, MARGIN, CONTENT_W, INK);
+        rich(in.resolveText(text), 9f, MARGIN, CONTENT_W, INK);
         c.y -= 8;
+    }
+
+    /** Yönetici özeti: kalıplardan üretilen (ya da elle düzenlenen) metin; hiç cümle kalmadıysa bölüm basılmaz. */
+    private void summary(TechErrorPdfInput in, Section s) throws IOException {
+        String text = TechErrorSummary.effective(s, in.template(), in.values(), in.channelName(), in.year(), in.month());
+        if (text == null || text.isBlank()) return;
+        sectionTitle(in.resolve(s.title()));
+        rich(text, 10f, MARGIN, CONTENT_W, INK);
+        c.y -= 10;
+    }
+
+    private static final float TABLE_PAD = 5f;
+    private static final float TABLE_FONT = 8f;
+    private static final float TABLE_FONT_MIN = 5.5f;
+    private static final float TABLE_HEAD_FONT = 7.5f;
+    private static final int TABLE_HEAD_LINES = 6;
+    private static final int TABLE_LABEL_LINES = 6;
+    private static final int TABLE_TEXT_LINES = 8;
+    private static final float[] GROUP_BG = { 238 / 255f, 242 / 255f, 255 / 255f };
+
+    /** Bir tablo satırının yerleşimi: satır adı satırları, hücre başına satırlar ve çizim boyu, yükseklik. */
+    private record RowLayout(TableRow row, boolean group, float indent, List<String> label, List<List<String>> cells,
+                             float[] sizes, float height) { }
+
+    /**
+     * Grup / alt satırlı tablo: ilk sütun satır adı, diğerleri şablon sütunları; başlık her yeni sayfada tekrar çizilir.
+     * Hiç değer girilmemiş tablo basılmaz. İnceleme 2026-10-14:
+     * <ul>
+     *   <li>metin sütunu sayı sütununun iki katı yer alır; çok sütunda satır adı sütunu daralır;</li>
+     *   <li>sayı hücresi karakter ortasından BÖLÜNMEZ ({@link PdfCanvas#numberCell}: küçült, gerekirse ayraçtan böl);</li>
+     *   <li>sığmayan başlık / satır adı / metin hücresi "…" ile biterse tablonun altına "kısaltıldı" notu düşülür
+     *       (modül kuralı: metin sessizce kesilmez);</li>
+     *   <li>başlık, tablo başlığı ve ilk satır birlikte sığmıyorsa tablo yeni sayfada başlar (başlık yalnız kalmaz);</li>
+     *   <li>içeriden başlama yalnız bir grup satırının ALTINDAKİ satırlar için (ilk grup satırından önceki satırlar düz).</li>
+     * </ul>
+     */
+    private void table(TechErrorPdfInput in, Section s) throws IOException {
+        boolean any = false;
+        for (TableRow r : s.rows()) for (Column col : s.columns()) if (in.values().cell(s.id(), r.id(), col.id()) != null) any = true;
+        if (!any) return;                                   // hiç değer girilmemiş tablo yönetici raporunda yer kaplamaz
+        List<Column> cols = s.columns();
+        int n = cols.size();
+        float labelW = n > 8 ? Math.max(100f, CONTENT_W * 0.20f) : n > 6 ? Math.max(120f, CONTENT_W * 0.24f) : CONTENT_W * 0.30f;
+        float[] colW = new float[n];
+        float[] colX = new float[n];
+        float weights = 0;
+        for (Column col : cols) weights += "text".equals(col.type()) ? 2f : 1f;
+        float x = MARGIN + labelW;
+        for (int k = 0; k < n; k++) {
+            colW[k] = (CONTENT_W - labelW) * ("text".equals(cols.get(k).type()) ? 2f : 1f) / Math.max(1f, weights);
+            colX[k] = x;
+            x += colW[k];
+        }
+        boolean cut = false;
+        List<List<String>> heads = new ArrayList<>();
+        float headH = 0;
+        for (int k = 0; k < n; k++) {
+            PdfCanvas.Wrapped h = c.wrapCellChecked(in.resolve(cols.get(k).label()), colW[k] - TABLE_PAD * 2, c.bold,
+                    TABLE_HEAD_FONT, TABLE_HEAD_LINES);
+            cut |= h.truncated();
+            heads.add(h.lines());
+            headH = Math.max(headH, h.lines().size() * 9f);
+        }
+        headH += TABLE_PAD * 2;
+        String lang = in.template().lang();
+        List<RowLayout> layouts = new ArrayList<>();
+        boolean seenGroup = false;
+        for (TableRow r : s.rows()) {
+            boolean group = r.group();
+            float indent = seenGroup && !group ? 8f : 0;
+            seenGroup |= group;
+            var font = group ? c.bold : c.regular;
+            PdfCanvas.Wrapped label = c.wrapCellChecked(in.resolve(r.label()), labelW - TABLE_PAD * 2 - indent, font,
+                    TABLE_FONT, TABLE_LABEL_LINES);
+            cut |= label.truncated();
+            List<List<String>> cells = new ArrayList<>();
+            float[] sizes = new float[n];
+            int maxLines = Math.max(1, label.lines().size());
+            for (int k = 0; k < n; k++) {
+                Column col = cols.get(k);
+                String v = TechErrorFormat.cell(col, in.values().cell(s.id(), r.id(), col.id()), lang);
+                float w = colW[k] - TABLE_PAD * 2;
+                if ("text".equals(col.type())) {
+                    PdfCanvas.Wrapped t = c.wrapCellChecked(v, w, font, TABLE_FONT, TABLE_TEXT_LINES);
+                    cut |= t.truncated();
+                    cells.add(t.lines());
+                    sizes[k] = TABLE_FONT;
+                } else {
+                    PdfCanvas.NumberCell nc = c.numberCell(v, w, font, TABLE_FONT, TABLE_FONT_MIN, "en".equals(lang) ? ',' : '.');
+                    cells.add(nc.lines());
+                    sizes[k] = nc.size();
+                }
+                maxLines = Math.max(maxLines, cells.get(k).size());
+            }
+            layouts.add(new RowLayout(r, group, indent, label.lines(), cells, sizes, maxLines * 10f + TABLE_PAD * 2 - 2));
+        }
+        // Tablo başlığı + sütun başlıkları + ilk satır birlikte sığmazsa yeni sayfa: başlık sayfa sonunda yalnız kalmasın
+        String title = in.resolve(s.title());
+        int titleLines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3).size();
+        c.ensureSpace(titleLines * 15 + 6 + headH + 20 + (layouts.isEmpty() ? 0 : layouts.get(0).height()));
+        sectionTitle(title);
+        tableHead(heads, colX, colW, headH, cols);
+        for (RowLayout row : layouts) {
+            float rowH = row.height();
+            if (c.y - rowH < BOTTOM) {
+                c.newPage();
+                tableHead(heads, colX, colW, headH, cols);
+            }
+            float top = c.y;
+            var font = row.group() ? c.bold : c.regular;
+            if (row.group()) c.rect(MARGIN, top - rowH, CONTENT_W, rowH, GROUP_BG);
+            float ty = top - TABLE_PAD - TABLE_FONT + 1;
+            for (String l : row.label()) {
+                c.text(font, TABLE_FONT, MARGIN + TABLE_PAD + row.indent(), ty, l, INK);
+                ty -= 10f;
+            }
+            for (int k = 0; k < n; k++) {
+                Column col = cols.get(k);
+                boolean empty = in.values().cell(s.id(), row.row().id(), col.id()) == null;
+                float size = row.sizes()[k];
+                float cy = top - TABLE_PAD - TABLE_FONT + 1;
+                for (String l : row.cells().get(k)) {
+                    float lx = "text".equals(col.type()) ? colX[k] + TABLE_PAD : colX[k] + colW[k] - TABLE_PAD - c.width(l, font, size);
+                    c.text(font, size, lx, cy, l, empty ? MUTED : INK);
+                    cy -= 10f;
+                }
+            }
+            c.line(MARGIN, top - rowH, MARGIN + CONTENT_W, RULE);
+            c.y = top - rowH;
+        }
+        if (cut) {
+            c.y -= 6;
+            note(en ? "Some cells of this table were shortened; the full text is in Site Monitor."
+                    : "Bu tablodaki bazı hücreler kısaltıldı; tamamı Site Monitor'de.");
+            c.y -= 10;
+        } else {
+            c.y -= 22;
+        }
+    }
+
+    private void tableHead(List<List<String>> heads, float[] colX, float[] colW, float headH, List<Column> cols) throws IOException {
+        if (c.y - headH - 20 < BOTTOM) c.newPage();
+        float top = c.y;
+        c.rect(MARGIN, top - headH, CONTENT_W, headH, DARK);
+        for (int k = 0; k < heads.size(); k++) {
+            float hy = top - TABLE_PAD - TABLE_HEAD_FONT + 1;
+            for (String l : heads.get(k)) {
+                float lx = "text".equals(cols.get(k).type()) ? colX[k] + TABLE_PAD : colX[k] + colW[k] - TABLE_PAD - c.width(l, c.bold, TABLE_HEAD_FONT);
+                c.text(c.bold, TABLE_HEAD_FONT, lx, hy, l, WHITE);
+                hy -= 9f;
+            }
+        }
+        c.y = top - headH;
     }
 
     /** İki kolonlu grafik ızgarası: ardışık iki yarım yan yana; tam tek satır. Yüklenmemiş yuva atlanır. */
@@ -297,21 +460,37 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     }
 
     /**
-     * Satır sonlarını koruyarak sarar; art arda boş satırlar TEK paragraf aralığı olur. Metin başına en çok
-     * {@code 2 × MAX_PARAGRAPH_LINES} satır; aşan metin sessizce kesilmez, sonuna "kısaltıldı" notu düşülür.
+     * Zengin metin ({@link TechErrorRichText}): paragraf satırları, madde / alt madde (asılı girinti), numaralı madde,
+     * kalın yazı; boş satır paragraf aralığı. Metin başına en çok {@code 2 × MAX_PARAGRAPH_LINES} satır; aşan metin
+     * sessizce kesilmez, sonuna "kısaltıldı" notu düşülür.
      */
-    private void paragraphs(String text, float size, float x, float width, float[] color) throws IOException {
+    private void rich(String text, float size, float x, float width, float[] color) throws IOException {
+        if (text == null || text.isBlank()) return;
         float lh = size + 3.5f;
         int total = 0;
-        boolean gap = false;
-        for (String para : text.split("\n", -1)) {
-            if (para.isBlank()) {
-                if (!gap && total > 0) c.y -= lh / 2;
-                gap = true;
+        for (TechErrorRichText.Block b : TechErrorRichText.parse(text)) {
+            if (b.gap()) {
+                c.y -= lh / 2;
                 continue;
             }
-            gap = false;
-            for (String l : c.wrapCell(para, width, c.regular, size, MAX_PARAGRAPH_LINES)) {
+            float indent = b.level() * 14f;
+            float markerW = 0;
+            String marker = null;
+            if (b.item()) {
+                marker = b.marker() != null ? b.marker() : switch (b.level()) {
+                    case 0 -> "•";
+                    case 1 -> "–";
+                    default -> "·";
+                };
+                markerW = Math.max(10f, c.width(marker, c.regular, size) + 4f);
+            }
+            float tx = x + indent + markerW;
+            float tw = Math.max(40f, width - indent - markerW);
+            List<PdfCanvas.Span> spans = new ArrayList<>();
+            for (TechErrorRichText.Run r : b.runs()) spans.add(new PdfCanvas.Span(r.text(), r.bold()));
+            List<List<PdfCanvas.Span>> lines = c.wrapSpans(spans, tw, size, MAX_PARAGRAPH_LINES);
+            boolean first = true;
+            for (List<PdfCanvas.Span> l : lines) {
                 if (++total > MAX_PARAGRAPH_LINES * 2) {
                     c.ensureSpace(lh);
                     c.text(c.regular, size - 1, x, c.y, en ? "… (text shortened; the full text is in Site Monitor)"
@@ -320,9 +499,17 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                     return;
                 }
                 c.ensureSpace(lh);
-                c.text(c.regular, size, x, c.y, l, color);
+                if (first && marker != null) c.text(c.regular, size, x + indent, c.y, marker, LABEL);
+                first = false;
+                c.spans(l, tx, c.y, size, color);
                 c.y -= lh;
             }
+            if (lines.isEmpty() && marker != null) {      // boş madde: işaret yine görünsün (yazan bilerek koymuş)
+                c.ensureSpace(lh);
+                c.text(c.regular, size, x + indent, c.y, marker, LABEL);
+                c.y -= lh;
+            }
+            if (b.item()) c.y -= 1.5f;
         }
     }
 

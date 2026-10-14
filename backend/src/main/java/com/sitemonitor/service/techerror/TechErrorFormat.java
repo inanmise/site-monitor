@@ -29,6 +29,17 @@ public final class TechErrorFormat {
         };
     }
 
+    /** Tablo hücresi: sütun türüne göre (sayı / yüzde / metin); boş "—". */
+    public static String cell(TechErrorTemplate.Column c, Object v, String lang) {
+        if (v == null) return EMPTY;
+        boolean en = "en".equals(lang);
+        return switch (c.type()) {
+            case "number" -> v instanceof Number n ? number(n.doubleValue(), en) : String.valueOf(v);
+            case "percent" -> v instanceof Number n ? percent(n.doubleValue(), en) : String.valueOf(v);
+            default -> String.valueOf(v);
+        };
+    }
+
     public static String yesNo(boolean b, boolean en) {
         return en ? (b ? "Yes" : "No") : (b ? "Evet" : "Hayır");
     }

@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-13T23:15:24Z",
+  "generatedAt": "2026-10-14T07:28:55Z",
   "repo": "inanmise/site-monitor",
-  "count": 748,
+  "count": 749,
   "releases": [
+    {
+      "version": "20.134.0",
+      "tag": "v20.134.0",
+      "releasedAt": "2026-10-14T07:28:49Z",
+      "commit": "4ab743b6dfed1befd30b4200b04fcfb50ca7a87d",
+      "prevVersion": "20.133.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "4ab743b6",
+          "subject": "yönetici özeti sayfası — silinmiş takım testinde adres güncellemesi beklenir (CI'da zamanlamaya bağlı düşüyordu)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3107e424",
+          "subject": "teknik hata raporunda yönetici özeti, grup satırlı tablo ve madde / kalın biçim (PDF ve e-posta dahil)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.133.0",
       "tag": "v20.133.0",
