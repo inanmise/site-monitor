@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-15T09:06:36Z",
+  "generatedAt": "2026-10-15T10:25:17Z",
   "repo": "inanmise/site-monitor",
-  "count": 751,
+  "count": 752,
   "releases": [
+    {
+      "version": "20.136.1",
+      "tag": "v20.136.1",
+      "releasedAt": "2026-10-15T10:25:10Z",
+      "commit": "9e8566530da098715ef9baa39221eec5986e6670",
+      "prevVersion": "20.136.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9e856653",
+          "subject": "rapor ekranında yazarken trend grafikleri ve görsel yuvaları yeniden çizilmez"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.136.0",
       "tag": "v20.136.0",
