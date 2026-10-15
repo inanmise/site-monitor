@@ -33,8 +33,8 @@ public final class TechErrorImageValidator {
 
     public static Checked check(byte[] data) {
         if (data == null || data.length == 0) {
-            throw bad(Msg.t("Dosya boş. Grafiği PNG ya da JPEG olarak kaydedip yeniden yükleyin.",
-                    "The file is empty. Save the chart as PNG or JPEG and upload it again."));
+            throw bad(Msg.t("Dosya boş. Görseli PNG ya da JPEG olarak kaydedip yeniden yükleyin.",
+                    "The file is empty. Save the image as PNG or JPEG and upload it again."));
         }
         if (data.length > MAX_BYTES) {
             throw bad(Msg.t("Görsel en çok 5 MB olabilir. Ekran görüntüsünü küçültüp ya da JPEG olarak kaydedip yeniden yükleyin.",
@@ -47,8 +47,8 @@ public final class TechErrorImageValidator {
         }
         int[] size = dimensions(data, "image/png".equals(type) ? "png" : "jpeg");
         if (size == null) {
-            throw bad(Msg.t("Görsel okunamadı; dosya bozuk olabilir. Grafiği yeniden dışa aktarıp yükleyin.",
-                    "The image couldn't be read; the file may be damaged. Export the chart again and upload it."));
+            throw bad(Msg.t("Görsel okunamadı; dosya bozuk olabilir. Görseli yeniden dışa aktarıp yükleyin.",
+                    "The image couldn't be read; the file may be damaged. Export the image again and upload it."));
         }
         int w = size[0], h = size[1];
         if (w < MIN_SIDE || h < MIN_SIDE) {

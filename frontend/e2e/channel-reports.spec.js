@@ -75,7 +75,36 @@ const REPORT = {
     customers: 1200, errors: 3400 }] }, texts: {} },
   images: [], previous: { id: 90, year: 2026, month: 8, fields: { 'error-rate': 0.5, 'total-tx': 1000000 } },
   can_edit: true, can_delete: true, team_email_set: true, template_update: { differs: false, lost_values: 0, lost_images: 0 },
+  neighbors: { prev: { id: 90, year: 2026, month: 8 }, next: null },
 }
+
+// Faz B (2026-10-14): değişiklik geçmişi ve şablon sürümleri — gerçek uzunlukta adlar / değerler
+const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Demirtaş (Dijital Kanallar / Uygulama Geliştirme Yöneticisi)'
+const HISTORY = {
+  has_more: false, recorded_since: '2026-10-01T08:00:00Z',
+  report: { created_at: '2026-10-01T08:00:00Z', created_by_name: LONG_PERSON, updated_at: '2026-10-13T09:00:00Z', updated_by_name: LONG_PERSON },
+  events: [
+    { id: 9, kind: 'SEND', at: '2026-10-13T10:00:00Z', actor_name: LONG_PERSON, system: false,
+      detail: { state: 'SENT', recipient_count: 3, recipients: ['dijital-kanallar-uygulama-gelistirme@example.com', 'kanal-yonetimi-raporlama@example.com', 'ust-yonetim@example.com'] } },
+    { id: 8, kind: 'VALUES', at: '2026-10-13T09:00:00Z', actor_name: LONG_PERSON, system: false, version: 5,
+      detail: { changes: [
+        { section: `${LONG_CHANNEL} Kanalı — Eylül 2026 Özeti`, label: 'Kesinti günleri hariç teknik hata oranı (kesintilerin olduğu günler çıkarıldığında)', type: 'percent', op: 'change', before: '%0,4235', after: '%0,5112' },
+        { section: 'Teknik hataların anomali olarak arttığı konular', label: 'Kart Limiti Sorgulama Servisi Konusu ile yaşanan problem · Ne zaman, nerede, nasıl gerçekleşti?', type: 'textarea', op: 'change',
+          before: '12 Eylül 09:40–11:15 arasında mobil uygulamada limit sorgusu zaman aşımına uğradı.', after: '12 Eylül 09:40–11:15 arasında mobil uygulamada limit sorgusu zaman aşımına uğradı; servis yeniden başlatıldı ve kalıcı çözüm için kapasite artırımı planlandı.', after_length: 640 },
+        { section: 'SLA Erişilebilirlik Tablosu', label: `${LONG_CHANNEL} Kanalı Toplam — Teknik başarısız işlem adedi`, type: 'table', op: 'set', before: null, after: '125.430.112' },
+      ] } },
+    { id: 7, kind: 'IMAGE_ADD', at: '2026-10-12T08:00:00Z', actor_name: LONG_PERSON, system: false,
+      detail: { slot: `${LONG_CHANNEL} Kanalı Ay Bazlı Toplam İşlem Adetleri`, file_name: 'aylik-toplam-islem-adetleri-grafigi-2026-eylul-son-surum.png', width: 1600, height: 900, size_bytes: 412000 } },
+    { id: 1, kind: 'CREATE', at: '2026-10-01T08:00:00Z', actor_name: LONG_PERSON, system: false, detail: { template_version: 3 } },
+  ],
+}
+const VERSIONS = { current_version: 3, max_versions: 100, versions: [
+  { version: 3, current: true, recorded: true, saved_at: '2026-10-03T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 5, field_count: 8, slot_count: 3 },
+  { version: 2, current: false, recorded: true, saved_at: '2026-10-02T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 4, field_count: 9, slot_count: 3 },
+] }
+const TEMPLATE_V2 = { ...TEMPLATE, title: 'Eski rapor başlığı: {kanal} Kanalı Aylık Teknik Hata ve Erişilebilirlik Değerlendirmesi - {ay} {yil}',
+  sections: TEMPLATE.sections.map((x, i) => (i === TEMPLATE.sections.findIndex((y) => y.kind === 'metrics')
+    ? { ...x, fields: [...x.fields, { id: 'eski-alan', label: 'Kaldırılan uzun alan adı: kota ve map yapılmamış hataların toplam içindeki payı', type: 'percent' }] } : x)) }
 
 let savedTemplate = null
 let savedReport = null
@@ -100,6 +129,14 @@ async function mock(page) {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
         teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false }],
         channels: [channel(10, LONG_CHANNEL), channel(20, 'POS')] } }
+    } else if (p === '/api/tech-error-reports/reports/100/history') {
+      body = { success: true, data: HISTORY }
+    } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
+      body = { success: true, data: VERSIONS }
+    } else if (/^\/api\/tech-error-reports\/channels\/10\/template\/versions\/[23]$/.test(p)) {
+      const v = Number(p.split('/').pop())
+      body = { success: true, data: { version: v, saved_at: '2026-10-0' + v + 'T08:00:00Z', saved_by_name: LONG_PERSON,
+        template: v === 2 ? TEMPLATE_V2 : TEMPLATE, current: v === 3 } }
     } else if (/^\/api\/tech-error-reports\/channels\/(10|20)\/template$/.test(p)) {
       const id = Number(p.split('/')[4])
       if (req.method() === 'PUT') {
@@ -110,7 +147,10 @@ async function mock(page) {
       const id = Number(p.split('/')[4])
       body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), default_period: { year: 2026, month: 9 },
         reports: [{ id: 100, year: 2026, month: 9, status: 'draft', title: `${id === 10 ? LONG_CHANNEL : 'POS'} Kanalı Teknik Hata Mesajları - Eylül 2026`,
-          updated_at: '2026-10-02T07:00:00Z', updated_by_name: 'Ayşegül Nur Karaosmanoğlu', can_delete: true, image_count: 0 }] } }
+          updated_at: '2026-10-02T07:00:00Z', updated_by_name: 'Ayşegül Nur Karaosmanoğlu', can_delete: true, image_count: 0 },
+        { id: 80, year: 2025, month: 12, status: 'sent', title: `${id === 10 ? LONG_CHANNEL : 'POS'} Kanalı Teknik Hata Mesajları - Aralık 2025`,
+          updated_at: '2026-01-05T07:00:00Z', updated_by_name: 'Ayşegül Nur Karaosmanoğlu', can_delete: false, image_count: 2,
+          last_sent_at: '2026-01-05T08:00:00Z' }] } }
     } else if (p === '/api/tech-error-reports/reports/100') {
       if (req.method() === 'PUT') {
         savedReport = JSON.parse(req.postData() || '{}')
@@ -205,7 +245,7 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon özet/tablo)').toEqual([])
 
       const slots = page.locator('[data-slot="te-tpl-section"][data-kind="images"]')
-      await slots.getByRole('button', { name: /Grafik yuvası ekle|Add chart slot/ }).click()
+      await slots.getByRole('button', { name: /Görsel yuvası ekle|Add image slot/ }).click()
       await page.locator('[data-slot="te-tpl-save"]').click()
       await expect.poll(() => savedTemplate?.version).toBe(3)
       expect(savedTemplate.id).toBe(10)
@@ -302,5 +342,75 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => sends).toBe(1)
       await page.screenshot({ path: `test-results/channel-reports-report-${vp.name}.png` })
     })
-  })
+  
+    test('Faz B: geçmiş paneli ve şablon sürümleri sığar, uzun adlar kesilmez; yıllara göre liste; ay geçişi', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      await expect(page.locator('[data-slot="te-report-title"]')).toBeVisible()
+      await expect(page.locator('[data-slot="te-nav-prev"]')).toContainText(/August 2026|Ağustos 2026/)
+      await page.locator('[data-slot="te-history-open"]').click()
+      const sheet = page.locator('[data-slot="te-history"]')
+      await expect(sheet.locator('[data-kind="VALUES"]')).toBeVisible()
+      await expect(sheet.locator('[data-kind="CREATE"]')).toBeVisible()
+      expect(await page.evaluate(clipped, '[data-slot="te-history"]')).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-history"]')).toEqual([])
+      // Panel sağdan kayarak açılır: kenar, canlandırma bitince ölçülür (taşıyorsa yoklama yine düşer)
+      await expect.poll(async () => { const b = await sheet.boundingBox(); return Math.round(b.x + b.width) }, { timeout: 4000 })
+        .toBeLessThanOrEqual(vp.width + 1)
+      expect((await sheet.boundingBox()).x).toBeGreaterThanOrEqual(-1)
+      // Değişiklik satırı kendi kabından taşmaz (uzun ad + uzun değer sarar)
+      const overflowing = await page.evaluate(() => [...document.querySelectorAll('[data-slot="te-history-change"]')]
+        .filter((n) => n.scrollWidth > n.clientWidth + 1).length)
+      expect(overflowing).toBe(0)
+      await page.keyboard.press('Escape')
+      await expect(sheet).toHaveCount(0)
+      // Kapanınca odak açan düğmeye döner (inceleme 2026-10-14: sayfanın başına düşüyordu)
+      await expect(page.locator('[data-slot="te-history-open"]')).toBeFocused()
+
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
+      const years = page.locator('[data-slot="te-report-year"]')
+      await expect(years).toHaveCount(2)
+      await expect(years.first()).toHaveAttribute('data-year', '2026')
+      expect(await page.evaluate(overflowX)).toBeLessThanOrEqual(0)
+
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      await page.locator('[data-slot="te-versions-open"]').click()
+      const dlg = page.locator('[data-slot="te-versions"]')
+      await expect(dlg.locator('[data-slot="te-version-item"]')).toHaveCount(2)
+      await dlg.locator('[data-slot="te-version-item"][data-version="2"]').click()
+      await expect(dlg.locator('[data-slot="te-version-load"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-version-outline"]')).toBeVisible()
+      if (vp.width < 768) {
+        // Dar ekran: ayrıntıya geçince odak geri düğmesinde; bölme sonuna kaydırılsa da geri düğmesi görünür (yapışkan)
+        const back = dlg.locator('[data-slot="te-versions-back"]')
+        await expect(back).toBeFocused()
+        const inside = await page.evaluate(() => {
+          const pane = document.querySelector('[data-slot="te-version-detail"]')
+          pane.scrollTop = pane.scrollHeight
+          const p = pane.getBoundingClientRect()
+          const b = document.querySelector('[data-slot="te-versions-back"]').getBoundingClientRect()
+          return b.top >= p.top - 1 && b.bottom <= p.bottom + 1
+        })
+        expect(inside).toBe(true)
+      }
+      expect(await page.evaluate(clipped, '[data-slot="te-versions"]')).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-versions"]')).toEqual([])
+      await expect.poll(async () => { const b = await dlg.boundingBox(); return Math.round(b.x + b.width) }, { timeout: 4000 })
+        .toBeLessThanOrEqual(vp.width + 1)
+      expect((await dlg.boundingBox()).x).toBeGreaterThanOrEqual(-1)
+      // Sürüm 3'ün farkı (sürüm 2'ye göre): kaldırılan uzun adlı alan
+      // Dar ekranda (md altı) liste ve ayrıntı ayrı görünümler: önce listeye dönülür
+      const pick = async (v) => {
+        if (vp.width < 768) await dlg.getByRole('button', { name: /Back to the version list|Sürüm listesine dön/ }).click()
+        await dlg.locator(`[data-slot="te-version-item"][data-version="${v}"]`).click()
+      }
+      await pick(3)
+      await expect(dlg.locator('[data-slot="te-version-diff"]')).toContainText('Kaldırılan uzun alan adı')
+      await pick(2)
+      await dlg.locator('[data-slot="te-version-load"]').click()
+      await expect(dlg).toHaveCount(0)
+      await expect(page.locator('[data-slot="te-versions-open"]')).toBeFocused()
+      await expect(page.getByLabel(/Report title|Rapor başlığı/)).toHaveValue(/^Eski rapor başlığı/)
+    })
+})
 }

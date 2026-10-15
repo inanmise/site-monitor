@@ -15,7 +15,7 @@ import { LIMITS, formatBytes, imageRows, preflightImage } from './techErrorModel
  * yuvaya bir görsel (PNG / JPEG, ≤ 5 MB); yeni yükleme eskisinin yerini alır. Yükleme sunucuda baytlardan doğrulanır;
  * hata yuvanın altında yazar. Görsel yüklemek rapor sürümünü artırmaz (açık değer düzenlemesi çakışmaya düşmez).
  */
-export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange }) {
+export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true }) {
   const t = useT()
   const bySlot = new Map(images.map((i) => [i.slot_id, i]))
   const total = images.reduce((a, i) => a + (i.size_bytes || 0), 0)
@@ -24,10 +24,14 @@ export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOn
     <Card className="gap-3" data-slot="te-images" data-section={section.id}>
       <CardHeader className="gap-1">
         <h3 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{resolve(section.title)}</h3>
-        <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
-        <p className="text-xs text-muted-foreground" data-slot="te-img-total">
-          {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
-        </p>
+        {showTotals && (
+          <>
+            <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
+            <p className="text-xs text-muted-foreground" data-slot="te-img-total">
+              {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
+            </p>
+          </>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {rows.map((row) => (

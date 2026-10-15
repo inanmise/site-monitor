@@ -18,28 +18,58 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon: yönetici özeti → göstergeler → anomali → map yok → kota → SLA tablosu → not → 2 kolonlu grafikler")
+    @DisplayName("varsayılan şablon: özet → göstergeler → anomali → map yok → kota → SLA (ekran görüntüsü) → not → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "table", "text", "images");
+                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "images", "text", "images", "images", "images", "images");
         assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
         assertThat(t.sections().get(3).title()).isEqualTo("Map Yapılmamış Hata Adedi");
         assertThat(t.sections().get(4).title()).isEqualTo("Kota Hatası Adedi");
+        // Kullanıcı kararı 2026-10-15: SLA tablosu elle girilmez — raporlama aracının tablosunun ekran görüntüsü, tam genişlik
+        // (iki kolon); tek görüntü ya da iki ayrı görüntü
         var sla = t.sections().get(5);
         assertThat(sla.title()).isEqualTo("SLA Erişilebilirlik Tablosu");
-        assertThat(sla.columns()).extracting(c -> c.type()).containsExactly("number", "number", "number", "number", "percent", "percent");
-        assertThat(sla.rows()).extracting(r -> r.group()).containsExactly(true, false, false, false);
-        List<Slot> slots = t.allSlots();
-        // 1. sıra: iki yarım, 2. sıra: iki yarım, 3. ve 4. sıra tam, ardından ek tam genişlik grafikler
-        assertThat(slots.subList(0, 4)).extracting(Slot::width).containsOnly("half");
-        assertThat(slots.get(0).label()).isEqualTo("{kanal} Kanalı Ay Bazlı Toplam İşlem Adetleri");
-        assertThat(slots.get(1).label()).isEqualTo("{kanal} Kanalı Teknik Hata Grafiği");
-        assertThat(slots.get(4).label()).isEqualTo("{kanal} Kanalı Teknik Hata (Günlük)");
-        assertThat(slots.get(5).label()).isEqualTo("{kanal} Kanalı Özet (Aylık)");
-        assertThat(slots.subList(4, slots.size())).extracting(Slot::width).containsOnly("full");
-        assertThat(slots).hasSize(14);
+        assertThat(sla.columns()).isEmpty();
+        assertThat(sla.slots()).extracting(Slot::width).containsExactly("full", "full");
+        assertThat(t.sections()).noneMatch(s -> "table".equals(s.kind()));
+
+        // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
+        // dağılımı → gün bazlı; her bölüm kendi başlığıyla
+        assertThat(t.sections().subList(7, 11)).extracting(s -> s.title()).containsExactly("12 Aylık Özetler",
+                "Ay Bazlı Hata ve İşlem Adetleri (Son 12 Ay)", "{ay} {yil} Birim Bazlı Hata Dağılımı",
+                "Gün Bazlı Hata ve İşlem Adetleri ({ay} {yil})");
+        List<Slot> summary = t.sections().get(7).slots(), monthly = t.sections().get(8).slots(),
+                dist = t.sections().get(9).slots(), daily = t.sections().get(10).slots();
+        assertThat(summary).extracting(Slot::label, Slot::width).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
+                org.assertj.core.groups.Tuple.tuple("Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
+                org.assertj.core.groups.Tuple.tuple("Son 12 Ay Operasyon ve Hata Özet Tablosu", "full"));
+        // Her kırılım iki tabanda: toplam işlem, toplam hata, teknik, business, maplenmemiş, kota
+        for (String k : List.of("Toplam İşlem", "Toplam Hata", "Teknik Hata", "Business Hata", "Maplenmemiş Hata", "Kota Hata")) {
+            assertThat(monthly).extracting(Slot::label).anyMatch(l -> l.startsWith("Ay Bazlı " + k));
+            assertThat(daily).extracting(Slot::label).anyMatch(l -> l.startsWith("Gün Bazlı " + k));
+        }
+        assertThat(monthly).extracting(Slot::label).allMatch(l -> l.startsWith("Ay Bazlı ") && l.endsWith("(Son 12 Ay)"));
+        assertThat(daily).extracting(Slot::label).allMatch(l -> l.startsWith("Gün Bazlı ") && l.endsWith("({ay} {yil})"));
+        assertThat(dist).extracting(Slot::label).allMatch(l -> l.startsWith("{ay} {yil} ") && l.endsWith("(Birim Bazlı)"));
+        // Yarımlar çift çift (PDF'te yan yana), tamlar bölüm sonunda
+        for (List<Slot> group : List.of(summary, monthly, dist, daily)) {
+            long halves = group.stream().filter(x -> "half".equals(x.width())).count();
+            assertThat(halves % 2).isZero();
+            assertThat(group.subList(0, (int) halves)).extracting(Slot::width).containsOnly("half");
+        }
+        List<Slot> slots = t.allSlots().subList(2, t.allSlots().size());
+        assertThat(slots).hasSize(22);
+        // Eski "(Aylık)" / "(Günlük)" / "Grafiği" adları kalmadı
+        assertThat(slots).extracting(Slot::label).noneMatch(l -> l.contains("(Aylık)") || l.contains("(Günlük)") || l.contains("Grafiği"));
+        // EN: aynı yapı
+        Template en = TechErrorTemplate.defaults("en");
+        assertThat(en.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Monthly ") && l.endsWith("(Last 12 Months)"));
+        assertThat(en.sections().get(10).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Daily ") && l.endsWith("({month} {year})"));
+        assertThat(en.sections().get(7).slots().get(0).label())
+                .isEqualTo("Annual Operations and Error Distribution Summary (Last 12 Months)");
         assertThat(t.allFields()).extracting(f -> f.id()).contains("error-rate", "error-rate-excl", "total-tx",
                 "tx-increase", "tx-increase-pct", "sla-rate", "sla-above", "error-count", "outage-errors", "outage-share",
                 "unmapped-count", "quota-count");

@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-14T07:28:55Z",
+  "generatedAt": "2026-10-15T00:22:44Z",
   "repo": "inanmise/site-monitor",
-  "count": 749,
+  "count": 750,
   "releases": [
+    {
+      "version": "20.135.0",
+      "tag": "v20.135.0",
+      "releasedAt": "2026-10-15T00:22:38Z",
+      "commit": "3221316cd7bb1b05fbf913305e1be87f544c771e",
+      "prevVersion": "20.134.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3221316c",
+          "subject": "teknik hata raporunda değişiklik geçmişi, şablon sürümleri ve ay geçişi; SLA tablosu ekran görüntüsü, 22 grafiklik akış"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.134.0",
       "tag": "v20.134.0",

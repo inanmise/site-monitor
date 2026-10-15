@@ -58,6 +58,7 @@ public class TechErrorReportService {
     private final TechErrorReportRepository reports;
     private final TechErrorReportImageRepository images;
     private final AppUserRepository users;
+    private final TechErrorHistoryService history;
     private final Semaphore pdfSlots = new Semaphore(PDF_CONCURRENCY, true);
 
     /** Testler sabit "şimdi" verir ({@link #useClock}; alan doğrudan yazılırsa işlem vekili hedefe ulaşmaz). */
@@ -71,12 +72,22 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.repository.NotificationLogRepository notificationLogs;
 
+    /** Kuyruk sonucu ile geçmiş olayını aynı işlemde yazmak için (dilim testlerinde yok → işlemsiz). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    org.springframework.transaction.PlatformTransactionManager txManager;
+
     public TechErrorReportService(TechErrorChannelRepository channels, TechErrorReportRepository reports,
-                                  TechErrorReportImageRepository images, AppUserRepository users) {
+                                  TechErrorReportImageRepository images, AppUserRepository users,
+                                  TechErrorHistoryService history) {
         this.channels = channels;
         this.reports = reports;
         this.images = images;
         this.users = users;
+        this.history = history;
+    }
+
+    public TechErrorHistoryService history() {
+        return history;
     }
 
     // ── Dönem ────────────────────────────────────────────────────────────────────────────────────────
@@ -140,11 +151,14 @@ public class TechErrorReportService {
         ch.setCreatedById(by);
         ch.setUpdatedAt(now);
         ch.setUpdatedById(by);
+        TechErrorChannel saved;
         try {
-            return channels.saveAndFlush(ch);
+            saved = channels.saveAndFlush(ch);
         } catch (DataIntegrityViolationException e) {
             throw channelExists(name);   // eşzamanlı aynı ad (tekillik kısıtı)
         }
+        history.recordTemplateVersion(saved, 1, saved.getTemplateJson(), now, by);
+        return saved;
     }
 
     /** YALNIZ gönderilen alanlar: name, description, active, sort_order. Gönderilmeyen değişmez. */
@@ -212,7 +226,9 @@ public class TechErrorReportService {
         List<Long> ids = reports.idsForChannel(ch.getId());
         if (!ids.isEmpty()) {
             for (int i = 0; i < ids.size(); i += 500) images.deleteAllForReports(ids.subList(i, Math.min(ids.size(), i + 500)));
+            history.deleteForReports(ids);
         }
+        history.deleteForChannel(ch.getId());
         // Karar silme anında: arada bir gönderim talebi alındıysa (ya da yeni rapor açıldıysa) sayılar tutmaz → geri al
         int n = reports.deleteAllForChannelUnlessSending(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n != ids.size()) {
@@ -225,14 +241,29 @@ public class TechErrorReportService {
         return n;
     }
 
-    /** Şablonu yazar; okunan sürüm eskiyse {@link OptimisticLockingFailureException} → 409. Yeni sürümü döner. */
+    /**
+     * Şablonu yazar; okunan sürüm eskiyse {@link OptimisticLockingFailureException} → 409. Yeni sürümü döner. Sürüm
+     * geçmişine yeni sürüm yazılır; bu özellikten önceki kanalda o anki (değişen) sürüm de taban olarak yazılır. Koşullu
+     * UPDATE ÖNCE koşar: satırı kilitler, aynı sürüme yarışan ikinci kayıt 409 alır ve geçmişe hiçbir şey yazmaz.
+     */
     @Transactional
     public int saveTemplate(Long channelId, int expectedVersion, Template template, Long by) {
-        int n = channels.saveTemplate(channelId, expectedVersion, TechErrorTemplate.toJson(template), now(), by);
+        TechErrorChannel before = channels.findById(channelId).orElseThrow(TechErrorReportService::channelNotFound);
+        String prevJson = before.getTemplateJson();
+        int prevVersion = before.getTemplateVersion();
+        Instant prevAt = before.getTemplateUpdatedAt();
+        Long prevBy = before.getTemplateUpdatedById();
+        Instant now = now();
+        String json = TechErrorTemplate.toJson(template);
+        int n = channels.saveTemplate(channelId, expectedVersion, json, now, by);
         if (n == 0) {
             if (!channels.existsById(channelId)) throw channelNotFound();
             throw new OptimisticLockingFailureException("tech_error_channel template version");
         }
+        // Okunan hâl kilitli satırın değiştirilen sürümüyse taban olarak yazılır (sürüm tekdüze artar: UPDATE başarılıysa
+        // okunan sürüm == beklenen sürüm olan JSON, o sürümün gerçek içeriğidir)
+        if (prevVersion == expectedVersion) history.recordTemplateVersion(before, prevVersion, prevJson, prevAt, prevBy);
+        history.recordTemplateVersion(before, expectedVersion + 1, json, now, by);
         return expectedVersion + 1;
     }
 
@@ -294,13 +325,16 @@ public class TechErrorReportService {
         r.setUpdatedAt(now);
         r.setUpdatedById(by);
         r.setContentChangedAt(now);
+        TechErrorReport saved;
         try {
-            return reports.saveAndFlush(r);
+            saved = reports.saveAndFlush(r);
         } catch (DataIntegrityViolationException e) {
             // Aynı anda iki kişi aynı ayı açtı. PostgreSQL'de işlem artık bozuk (25P02): aynı işlemde kazananı okumak
             // 500 verirdi (inceleme 2026-10-13) — kimliksiz 409; istemci listeyi yenileyip mevcut raporu gösterir.
             throw reportExists(null);
         }
+        history.record(saved, "CREATE", by, saved.getVersion(), Map.of("template_version", ch.getTemplateVersion()), now);
+        return saved;
     }
 
     /** Değerleri kaydeder; {@code expectedVersion} okunan sürüm — farklıysa 409. */
@@ -311,7 +345,8 @@ public class TechErrorReportService {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
         Values v = TechErrorValues.normalize(raw, t);
         String json = TechErrorValues.toJson(v);
-        if (json.equals(r.getValuesJson())) return r;      // değişiklik yok → sürüm artmaz, yazılmaz
+        if (json.equals(r.getValuesJson())) return r;      // değişiklik yok → sürüm artmaz, yazılmaz, olay yok
+        Values before = TechErrorValues.fromStored(r.getValuesJson(), t);
         Instant now = now();
         r.setValuesJson(json);
         r.setUpdatedAt(now);
@@ -319,6 +354,7 @@ public class TechErrorReportService {
         r.setContentChangedAt(now);
         TechErrorReport saved = reports.saveAndFlush(r);
         reports.touchContent(saved.getId(), now);      // içerik sayacı (atomik, aynı işlem)
+        history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now);
         return saved;
     }
 
@@ -350,6 +386,11 @@ public class TechErrorReportService {
         r.setContentChangedAt(now);
         TechErrorReport saved = reports.saveAndFlush(r);
         reports.touchContent(saved.getId(), now);
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("template_version", ch.getTemplateVersion());
+        detail.put("removed_values", Math.max(0, removedValues));
+        detail.put("removed_images", removedImages);
+        history.record(saved, "TEMPLATE_REFRESH", by, saved.getVersion(), detail, now);
         return new RefreshResult(saved, Math.max(0, removedValues), removedImages);
     }
 
@@ -379,6 +420,7 @@ public class TechErrorReportService {
         TechErrorReport r = report(reportId);
         boolean wasSent = r.getLastSentAt() != null;
         images.deleteAllForReport(r.getId());
+        history.deleteForReport(r.getId());
         int n = reports.deleteIfAllowed(r.getId(), onlyUnsent, now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n == 0) {
             // İşlem geri alınır (görseller de) — sebep: gönderildi ya da gönderiliyor
@@ -409,9 +451,12 @@ public class TechErrorReportService {
                 Long id = ((Number) r[0]).longValue();
                 Long logId = ((Number) r[1]).longValue();
                 String st = status.get(logId);
-                if ("SENT".equals(st)) changed += reports.confirmQueued(id, logId);
-                else if (st != null && st.startsWith("FAILED")) {
-                    changed += reports.failQueued(id, logId, st.length() > 255 ? st.substring(0, 255) : st);
+                if (!"SENT".equals(st) && (st == null || !st.startsWith("FAILED"))) continue;
+                try {
+                    changed += inNewTx(() -> finishQueuedWithEvent(id, logId, st));
+                } catch (RuntimeException e) {
+                    // Bu satır sonraki okumada yeniden denenir (koşullu UPDATE geri alındı); diğerleri sürer
+                    log.warn("Kuyruktaki teknik hata raporu #{} sonuçlandırılamadı: {}", id, e.toString());
                 }
             }
             return changed;
@@ -419,6 +464,34 @@ public class TechErrorReportService {
             log.warn("Kuyruktaki teknik hata raporu gönderimleri sonuçlandırılamadı: {}", e.toString());
             return 0;
         }
+    }
+
+    /**
+     * Koşullu sonuçlandırma + geçmiş olayı (sistem). Olay yalnız UPDATE bu çağrıda kazandıysa yazılır — iki pod aynı sonucu
+     * iki kez yazmaz; olay yazılamazsa işlem geri alınır ve sonuç bir sonraki okumada yeniden denenir. Olayın zamanı sonucun
+     * OKUNDUĞU an (posta servisi teslim anını saklamaz) — arayüz bunu söyler.
+     */
+    private int finishQueuedWithEvent(Long id, Long logId, String st) {
+        boolean sent = "SENT".equals(st);
+        int c = sent ? reports.confirmQueued(id, logId)
+                : reports.failQueued(id, logId, st.length() > 255 ? st.substring(0, 255) : st);
+        if (c > 0) {
+            TechErrorReport rep = reports.findById(id).orElse(null);
+            if (rep != null) {
+                history.record(rep, "SEND_RESULT", null, null, TechErrorHistoryService.sendDetail(sent ? "SENT" : "FAILED", null,
+                        sent ? null : TechErrorHistoryService.sendReason(st)), now());
+            }
+        }
+        return c;
+    }
+
+    /** Yeni bir işlemde çalıştırır (işlem yöneticisi yoksa doğrudan). */
+    private <T> T inNewTx(java.util.function.Supplier<T> work) {
+        if (txManager == null) return work.get();
+        org.springframework.transaction.support.TransactionTemplate tx =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return tx.execute(s -> work.get());
     }
 
     /** Kanal × ay raporunun kimliği (yoksa null) — eşzamanlı açılış çakışmasından SONRA, yeni bir okumayla. */
@@ -464,12 +537,16 @@ public class TechErrorReportService {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
         if (slotId == null || t.slot(slotId) == null) {
             throw new FieldValidationException("slot", Msg.t(
-                    "Bu grafik yuvası raporun şablonunda yok. Raporu yenileyip tekrar deneyin.",
-                    "This chart slot isn't in the report's template. Reload the report and try again."));
+                    "Bu görsel yuvası raporun şablonunda yok. Raporu yenileyip tekrar deneyin.",
+                    "This image slot isn't in the report's template. Reload the report and try again."));
         }
         TechErrorImageValidator.Checked ck = TechErrorImageValidator.check(data);
         long others = 0;
-        for (var m : images.findByReportIdOrderByIdAsc(reportId)) if (!m.getSlotId().equals(slotId)) others += m.getSizeBytes();
+        boolean replaced = false;
+        for (var m : images.findByReportIdOrderByIdAsc(reportId)) {
+            if (!m.getSlotId().equals(slotId)) others += m.getSizeBytes();
+            else replaced = true;
+        }
         if (others + data.length > MAX_REPORT_IMAGE_BYTES) {
             throw new FieldValidationException("file", Msg.t(
                     "Rapordaki görsellerin toplamı 40 MB'ı geçemez. Büyük görselleri küçültüp ya da JPEG olarak kaydedip yeniden yükleyin.",
@@ -496,17 +573,39 @@ public class TechErrorReportService {
             throw new OptimisticLockingFailureException("tech_error_report_image slot race", e);
         }
         reports.touchContent(reportId, now);
+        history.record(r, replaced ? "IMAGE_REPLACE" : "IMAGE_ADD", by, null, imageDetail(r, t, saved), now);
         return saved;
     }
 
     @Transactional
-    public TechErrorReportImage deleteImage(Long reportId, Long imageId) {
+    public TechErrorReportImage deleteImage(Long reportId, Long imageId, Long by) {
         TechErrorReportImage img = image(imageId);
         if (!img.getReportId().equals(reportId)) throw imageNotFound();
+        TechErrorReport r = report(reportId);
         images.delete(img);
         images.flush();
-        reports.touchContent(reportId, now());
+        Instant now = now();
+        reports.touchContent(reportId, now);
+        history.record(r, "IMAGE_DELETE", by, null, imageDetail(r, TechErrorTemplate.fromStored(r.getTemplateJson()), img), now);
         return img;
+    }
+
+    /** Görsel olayının ayrıntısı: yuvanın (çözülmüş) adı + dosya bilgisi. */
+    private Map<String, Object> imageDetail(TechErrorReport r, Template t, TechErrorReportImage img) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        TechErrorTemplate.Slot slot = t.slot(img.getSlotId());
+        m.put("slot", slot == null ? img.getSlotId() : TechErrorTemplate.resolve(slot.label(), channelName(r.getChannelId()),
+                r.getReportYear(), r.getReportMonth(), t.lang()));
+        if (img.getFileName() != null) m.put("file_name", img.getFileName());
+        m.put("width", img.getWidth());
+        m.put("height", img.getHeight());
+        m.put("size_bytes", img.getSizeBytes());
+        return m;
+    }
+
+    /** Kanal adı (geçmiş etiketlerinin yer tutucuları için); kanal yoksa boş. */
+    private String channelName(Long channelId) {
+        return channels.findById(channelId).map(TechErrorChannel::getName).orElse("");
     }
 
     // ── PDF ──────────────────────────────────────────────────────────────────────────────────────────

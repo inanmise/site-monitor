@@ -19,6 +19,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -88,7 +89,7 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("Etkilenen müşteri sayısı: 1.200").contains("3.400");
         assertThat(s).contains("İlk satır").contains("İkinci satır");
         assertThat(s).contains("Map Yapılmamış Hata Adedi").contains("Kota Hatası Adedi");
-        assertThat(s).contains("Bu bölüme grafik yüklenmedi.");
+        assertThat(s).contains("Bu bölüme görsel yüklenmedi.");
         assertThat(s).contains("Sayfa 1 /");
         assertThat(s).contains("Hazırlayan: Ayşe Yılmaz");
     }
@@ -100,12 +101,14 @@ class TechErrorReportPdfWriterTest {
         imgs.put("monthly-tx", new TechErrorPdfInput.Image(chart(800, 400, Color.BLUE), 800, 400));
         imgs.put("tech-errors", new TechErrorPdfInput.Image(chart(800, 400, Color.RED), 800, 400));
         imgs.put("daily-errors", new TechErrorPdfInput.Image(chart(1600, 500, Color.GREEN), 1600, 500));
-        imgs.put("summary-monthly", new TechErrorPdfInput.Image(new byte[]{ 1, 2, 3 }, 100, 100));   // bozuk
+        imgs.put("business-monthly", new TechErrorPdfInput.Image(new byte[]{ 1, 2, 3 }, 100, 100));   // bozuk
         byte[] pdf = TechErrorReportPdfWriter.render(input("tr", imgs));
         String s = text(pdf);
-        assertThat(s).contains("Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri").contains("Mobil Kanalı Teknik Hata Grafiği")
-                .contains("Mobil Kanalı Teknik Hata (Günlük)");
-        assertThat(s).doesNotContain("Kota Hata Grafiği (Aylık)");          // yüklenmedi → yok
+        String flat = s.replaceAll("[\\s\\u00a0]+", " ");                          // yarım sütunda başlık iki satıra sarabilir
+        assertThat(flat).contains("Ay Bazlı Toplam İşlem Adetleri (Son 12 Ay)")
+                .contains("Ay Bazlı Teknik Hata Adetleri (Son 12 Ay)")
+                .contains("Gün Bazlı Teknik Hata Adetleri (Eylül 2026)");
+        assertThat(s).doesNotContain("Ay Bazlı Kota Hata Adetleri");          // yüklenmedi → yok
         assertThat(s).contains("Görsel çizilemedi");
         assertThat(imageCount(pdf)).isGreaterThanOrEqualTo(3 + 1);           // 3 grafik + marka logosu
     }
@@ -224,14 +227,56 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
+    @DisplayName("görsel bölümü başlığı sayfa sonunda yalnız kalmaz: başlık ile ilk görsel satırı aynı sayfada (inceleme 2026-10-15)")
+    void imageSectionTitleNeverOrphaned() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("annual-summary", new TechErrorPdfInput.Image(chart(800, 600, Color.BLUE), 800, 600));
+        imgs.put("annual-tech-rate", new TechErrorPdfInput.Image(chart(800, 600, Color.RED), 800, 600));
+        // Konu sayısı bölümün sayfadaki yerini kaydırır: sınır durumlarını da tarar
+        for (int n = 0; n < 28; n++) {
+            List<Object> issues = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                issues.add(Map.of("id", "k" + i, "topic", "Konu " + i, "title_auto", true, "description", ("Satır " + i + " ").repeat(12)));
+            }
+            TechErrorValues.Values v = TechErrorValues.normalize(Map.of("issues", Map.of("issues", issues)), t);
+            byte[] pdf = TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, imgs));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                int titlePage = -1, captionPage = -1;
+                for (int pg = 1; pg <= doc.getNumberOfPages(); pg++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(pg);
+                    st.setEndPage(pg);
+                    String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (titlePage < 0 && txt.contains("12 Aylık Özetler")) titlePage = pg;
+                    if (captionPage < 0 && txt.contains("Yıllık Operasyon ve Hata")) captionPage = pg;
+                }
+                assertThat(titlePage).as("konu sayısı %d", n).isPositive();
+                assertThat(captionPage).as("konu sayısı %d", n).isEqualTo(titlePage);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("yönetici özeti PDF'in başında, rakamlar kalıptan; boş tablo basılmaz, dolu tablo grup satırıyla basılır")
     void executiveSummaryAndTable() throws IOException {
-        Template t = TechErrorTemplate.defaults("tr");
-        String sla = t.sections().stream().filter(x -> "table".equals(x.kind())).findFirst().orElseThrow().id();
+        // Varsayılanda tablo yok (SLA tablosu ekran görüntüsü, 2026-10-15) — tablo bölümü türü sınanır: şablona eklenir
+        Map<String, Object> rawT = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr")));
+        List<Object> secsT = new ArrayList<>((List<?>) rawT.get("sections"));
+        secsT.add(Map.of("id", "sla-table", "kind", "table", "title", "SLA Erişilebilirlik Tablosu",
+                "columns", List.of(Map.of("id", "functions", "label", "Fonksiyon adedi", "type", "number"),
+                        Map.of("id", "availability", "label", "Erişilebilirlik (kesintisiz)", "type", "percent")),
+                "rows", List.of(Map.of("id", "total", "label", "{kanal} Kanalı Toplam", "group", true),
+                        Map.of("id", "sla-critical", "label", "SLA dahil ve kritik"))));
+        rawT.put("sections", secsT);
+        Template t = TechErrorTemplate.normalize(rawT);
+        String sla = "sla-table";
         String empty = text(TechErrorReportPdfWriter.render(input("tr", Map.of())));
         assertThat(empty).contains("Yönetici Özeti").contains("verilerine göre teknik hata oranı").contains("%0,42");
         assertThat(empty.indexOf("Yönetici Özeti")).isLessThan(empty.indexOf("Teknik hata oranı"));   // özet göstergelerden önce
-        assertThat(empty).doesNotContain("SLA Erişilebilirlik Tablosu");                             // değer yok → basılmaz
+        // Boş TABLO basılmaz (SLA ekran görüntüsü bölümü ise başlığı ve "görsel yüklenmedi" notuyla basılır)
+        assertThat(text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, TechErrorValues.normalize(Map.of(), t), "Mobil",
+                "Takım", 2026, 9, null, null, Map.of())))).doesNotContain("Fonksiyon adedi").doesNotContain("Mobil Kanalı Toplam");
         Map<String, Object> rows = new LinkedHashMap<>();
         rows.put("total", Map.of("functions", 1250, "availability", 99.5));
         rows.put("sla-critical", Map.of("functions", 40));

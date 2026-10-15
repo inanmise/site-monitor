@@ -103,9 +103,9 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Transactional
     @Query("UPDATE TechErrorReport r SET r.sendState = CASE WHEN r.lastSendStatus IS NULL THEN NULL "
             + "WHEN r.lastSendStatus = 'SENT' THEN 'SENT' WHEN r.lastSendStatus LIKE 'QUEUED_RETRY%' THEN 'QUEUED' "
-            + "WHEN r.lastSendStatus LIKE 'SKIPPED%' THEN 'SKIPPED' ELSE 'FAILED' END "
+            + "WHEN r.lastSendStatus LIKE 'SKIPPED%' THEN 'SKIPPED' ELSE 'FAILED' END, r.sendClaimedAt = :previous "
             + "WHERE r.id = :id AND r.sendState = 'SENDING' AND r.sendClaimedAt = :claimedAt")
-    int releaseClaim(@Param("id") Long id, @Param("claimedAt") Instant claimedAt);
+    int releaseClaim(@Param("id") Long id, @Param("claimedAt") Instant claimedAt, @Param("previous") Instant previous);
 
     /**
      * Koşullu silme (inceleme 2026-10-13): okunan satır üzerinden karar verip silmek, arada biten bir gönderimi göremezdi.

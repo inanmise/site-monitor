@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, CircleAlert, Download, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send, Trash2, Undo2,
+  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send, Trash2,
+  Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
@@ -13,6 +14,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
+import ReportHistorySheet from './ReportHistory.jsx'
 import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import {
@@ -66,7 +68,7 @@ function isFileDrag(e) {
  * düzenlenince kalkar ve kaydı kilitlemez, yeniden yükleme hatası görünür, sayfaya bırakılan dosya tarayıcıyı
  * rapordan uzaklaştırmaz.
  */
-export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
+export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
   const toast = useToast()
@@ -82,6 +84,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   const [conflict, setConflict] = useState(false)
   const [backup, setBackup] = useState(null)
   const [busy, setBusy] = useState(null)   // 'save' | 'pdf' | 'send' | 'refresh' | 'delete'
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyBtnRef = useRef(null)
+  const titleRef = useRef(null)
   const seq = useRef(0)
   const loadInFlight = useRef(false)
   const inFlightKeepDraft = useRef(true)
@@ -167,6 +172,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
     }
   }, [reportId, applyLoaded])
   useEffect(() => { load() }, [load])
+  // Ay geçişiyle açıldıysa odak yeni raporun başlığına (tıklanan düğme yeniden kurulumda kaybolur — inceleme 2026-10-14)
+  const hasData = !!data && !!draft
+  useEffect(() => {
+    if (!hasData || !focusTitleRef?.current) return
+    focusTitleRef.current = false
+    titleRef.current?.focus()
+  }, [hasData, focusTitleRef])
 
   const dirty = draft != null && base.json != null && canonJson(draft) !== base.json
   const readOnly = !data?.can_edit
@@ -456,7 +468,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   }
 
   async function leave(next) {
-    if (dirty && !readOnly) {
+    // Alanda yazılı ama geçersiz (taslağa girmemiş) metin de kaybolmadan sorulur (inceleme 2026-10-14)
+    if ((dirty || hasClientErrors) && !readOnly) {
       const ok = await showConfirm({ title: t('te.leaveTitle'), message: t('te.leaveBody'), variant: 'warning',
         confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
       if (!ok) return
@@ -472,6 +485,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
   }
 
   const sections = useMemo(() => tpl?.sections || [], [tpl])
+  // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
+  const firstImagesId = sections.find((s) => s.kind === 'images')?.id
 
   const back = (
     <Button type="button" variant="ghost" size="sm" data-slot="te-back"
@@ -511,9 +526,38 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
     <div className="flex flex-col gap-4 pb-24" data-slot="te-report" data-report={reportId}>
       {back}
       <header className="flex flex-col gap-2">
-        <h2 className="text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl" data-slot="te-report-title">
+        <h2 ref={titleRef} tabIndex={-1} className="text-xl font-bold leading-tight outline-none [overflow-wrap:anywhere] sm:text-2xl"
+          data-slot="te-report-title">
           {resolve(tpl.title)}
         </h2>
+        {/* Ay geçişi + değişiklik geçmişi (2026-10-14, Faz B): aynı kanalın önceki / sonraki EN YAKIN raporu; geçiş
+            kaydedilmemiş değişiklikte onay ister (leave) */}
+        <div className="flex flex-wrap items-center justify-between gap-2" data-slot="te-report-nav">
+          {onOpenReport && (data.neighbors?.prev || data.neighbors?.next) ? (
+            <nav aria-label={t('te.nav.label')} className="flex flex-wrap items-center gap-2">
+              {data.neighbors?.prev && (
+                <Button type="button" variant="outline" size="sm" data-slot="te-nav-prev" disabled={busy != null}
+                  className="h-auto min-h-8 whitespace-normal py-1.5 pointer-coarse:min-h-10"
+                  aria-label={t('te.nav.prevAria', periodLabel(data.neighbors.prev, t))}
+                  onClick={() => leave(() => onOpenReport(data.neighbors.prev.id, channel?.id))}>
+                  <ChevronLeft aria-hidden="true" /> {periodLabel(data.neighbors.prev, t)}
+                </Button>
+              )}
+              {data.neighbors?.next && (
+                <Button type="button" variant="outline" size="sm" data-slot="te-nav-next" disabled={busy != null}
+                  className="h-auto min-h-8 whitespace-normal py-1.5 pointer-coarse:min-h-10"
+                  aria-label={t('te.nav.nextAria', periodLabel(data.neighbors.next, t))}
+                  onClick={() => leave(() => onOpenReport(data.neighbors.next.id, channel?.id))}>
+                  {periodLabel(data.neighbors.next, t)} <ChevronRight aria-hidden="true" />
+                </Button>
+              )}
+            </nav>
+          ) : <span />}
+          <Button ref={historyBtnRef} type="button" variant="ghost" size="sm" className="pointer-coarse:min-h-10" data-slot="te-history-open"
+            onClick={() => setHistoryOpen(true)}>
+            <History aria-hidden="true" /> {t('te.hist.open')}
+          </Button>
+        </div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <StatusBadge status={report.status} sendState={report.last_send_status} />
           <TeamBadge teamId={channel?.team_id} teamName={channel?.team_name} static wrap />
@@ -588,12 +632,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate }) {
         }
         if (s.kind === 'images') {
           return <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
-            readOnly={readOnly} onImagesChange={(fn) => { setImages(fn); setData((d) => (d ? { ...d, report: { ...d.report,
+            showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={(fn) => { setImages(fn); setData((d) => (d ? { ...d, report: { ...d.report,
               status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d)) }} />
         }
         return <TextBlock key={key} section={s} values={draft} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
           errors={fieldErrors} onText={setText} />
       })}
+
+      <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
+        returnFocusRef={historyBtnRef} />
 
       <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">

@@ -248,7 +248,7 @@ describe('Teknik hata raporları — rapor düzenleyici', () => {
     render(<TechErrorReportsPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Şablonun son hâlini uygula' }))
     const dlg = await screen.findByRole('dialog', { name: 'Şablonun son hâli uygulansın mı?' })
-    expect(within(dlg).getByText(/2 değer ve 1 grafik/)).toBeInTheDocument()
+    expect(within(dlg).getByText(/2 değer ve 1 görsel/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: 'Uygula' }))
     await waitFor(() => expect(te().refreshTemplate).toHaveBeenCalledWith('100', 4))
   })
