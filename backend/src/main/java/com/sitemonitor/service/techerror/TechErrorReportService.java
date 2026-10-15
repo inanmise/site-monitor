@@ -618,7 +618,32 @@ public class TechErrorReportService {
             imgs.put(i.getSlotId(), new TechErrorPdfInput.Image(i.getData(), i.getWidth(), i.getHeight()));
         }
         String prepared = displayName(r.getUpdatedById() != null ? r.getUpdatedById() : r.getCreatedById());
-        return new TechErrorPdfInput(t, v, ch.getName(), teamName, r.getReportYear(), r.getReportMonth(), prepared, now(), imgs);
+        return new TechErrorPdfInput(t, v, ch.getName(), teamName, r.getReportYear(), r.getReportMonth(), prepared, now(), imgs,
+                trend(r, t, v));
+    }
+
+    /**
+     * Otomatik trend verisi (2026-10-15, Faz C): şablonda trend bölümü yoksa hiç sorgu yok; varsa kanalın rapor
+     * listesinden (≤ 600 hafif satır) yalnız pencere içindeki ≤ 11 rapor okunur. Okuma hatası FIRLATILIR: eksik veriyle
+     * "en az iki ay gerekir" diyen bir PDF üretilmez (bilinmiyor ≠ yok); rapor ekranı hatayı yakalayıp "okunamadı" der.
+     */
+    public TechErrorTrend trend(TechErrorReport r, Template t, Values v) {
+        if (TechErrorTrend.referencedFields(t).isEmpty()) return TechErrorTrend.empty();
+        return trend(r, t, v, reportRows(r.getChannelId()));
+    }
+
+    /** Kanalın rapor satırları zaten okunduysa (rapor ekranı: komşu raporlar) aynı liste — ikinci okuma yok. */
+    public TechErrorTrend trend(TechErrorReport r, Template t, Values v, List<TechErrorReportRepository.Row> channelRows) {
+        if (TechErrorTrend.referencedFields(t).isEmpty()) return TechErrorTrend.empty();
+        java.time.YearMonth end = java.time.YearMonth.of(r.getReportYear(), r.getReportMonth());
+        java.time.YearMonth start = end.minusMonths(TechErrorTrend.MONTHS - 1);
+        List<Long> ids = new ArrayList<>();
+        for (TechErrorReportRepository.Row row : channelRows) {
+            java.time.YearMonth ym = java.time.YearMonth.of(row.getReportYear(), row.getReportMonth());
+            if (!row.getId().equals(r.getId()) && !ym.isBefore(start) && ym.isBefore(end)) ids.add(row.getId());
+        }
+        List<TechErrorReport> others = ids.isEmpty() ? List.of() : reports.findAllById(ids);
+        return TechErrorTrend.build(t, v, r.getReportYear(), r.getReportMonth(), others);
     }
 
     /** Üretilen PDF + girdinin görselsiz hâli (posta gövdesi / dosya adı için; görsel baytları bellekte tutulmaz). */

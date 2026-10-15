@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -224,6 +225,135 @@ class TechErrorReportPdfWriterTest {
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             assertThat(doc.getNumberOfPages()).isGreaterThan(2);
         }
+    }
+
+    @Test
+    @DisplayName("otomatik trend: girilen rakamlardan son 12 ay çubuk grafik (kısaltılmış etiket, ay adları); iki aydan az veri → not")
+    void trendCharts() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        TechErrorValues.Values cur = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42, "total-tx", 125_430_112)), t);
+        com.sitemonitor.model.TechErrorReport aug = new com.sitemonitor.model.TechErrorReport();
+        aug.setId(2L);
+        aug.setReportYear(2026);
+        aug.setReportMonth(8);
+        aug.setTemplateJson(TechErrorTemplate.toJson(t));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.5)), t)));
+        var trend = com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of(aug));
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, cur, "Mobil", "Takım", 2026, 9, null, null, Map.of(), trend)))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("Otomatik Trendler (Son 12 Ay)").contains("Teknik hata oranı (Son 12 Ay)")
+                .contains("%0,42").contains("%0,5").contains("Eki").contains("Ağu").contains("Eyl");
+        // toplam işlem yalnız bu ay → grafik yerine not; diğerleri hiç → not
+        assertThat(s).contains("Toplam işlem adedi (Son 12 Ay)").contains("Trend için en az iki ayın rakamı gerekir");
+        assertThat(s).doesNotContain("125Mn");
+        // EN
+        Template en = TechErrorTemplate.defaults("en");
+        TechErrorValues.Values ev = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1_250_000)), en);
+        aug.setTemplateJson(TechErrorTemplate.toJson(en));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 900_000)), en)));
+        var et = com.sitemonitor.service.techerror.TechErrorTrend.build(en, ev, 2026, 9, List.of(aug));
+        String e = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(en, ev, "ATM", "Team", 2026, 9, null, null, Map.of(), et)))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(e).contains("Automatic Trends (Last 12 Months)").contains("Total transactions (Last 12 Months)")
+                .contains("1.3M").contains("900K").contains("Sep");
+    }
+
+    @Test
+    @DisplayName("trend: bu ay muaf alanın grafiği basılmaz; uzun adda zaman tabanı kalır; negatif değerler çizilir (inceleme 2026-10-15)")
+    @SuppressWarnings("unchecked")
+    void trendReviewRules() throws IOException {
+        Template base = TechErrorTemplate.defaults("tr");
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(base));
+        List<Object> sections = new ArrayList<>();
+        for (Object o : (List<Object>) raw.get("sections")) {
+            Map<String, Object> sec = new LinkedHashMap<>((Map<String, Object>) o);
+            if ("auto-trend".equals(sec.get("id"))) sec.put("series", List.of("error-rate", "outage-errors"));
+            if ("metrics".equals(sec.get("kind"))) {
+                List<Object> fs = new ArrayList<>();
+                for (Object fo : (List<Object>) sec.get("fields")) {
+                    Map<String, Object> f = new LinkedHashMap<>((Map<String, Object>) fo);
+                    if ("error-rate".equals(f.get("id"))) f.put("label", "Kanalın tüm işlemleri içinde teknik hataların oranı ".repeat(3).trim());
+                    fs.add(f);
+                }
+                sec.put("fields", fs);
+            }
+            sections.add(sec);
+        }
+        raw.put("sections", sections);
+        Template t = TechErrorTemplate.normalize(raw);
+        com.sitemonitor.model.TechErrorReport aug = new com.sitemonitor.model.TechErrorReport();
+        aug.setId(2L);
+        aug.setReportYear(2026);
+        aug.setReportMonth(8);
+        aug.setTemplateJson(TechErrorTemplate.toJson(t));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(
+                Map.of("fields", Map.of("error-rate", -12.25, "had-outage", true, "outage-errors", 437)), t)));
+        com.sitemonitor.model.TechErrorReport jul = new com.sitemonitor.model.TechErrorReport();
+        jul.setId(3L);
+        jul.setReportYear(2026);
+        jul.setReportMonth(7);
+        jul.setTemplateJson(TechErrorTemplate.toJson(t));
+        jul.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", -7.75)), t)));
+        // Bu ay "Dönemde kesinti oldu mu?" = Hayır → kesinti alanı muaf: grafiği de basılmaz
+        TechErrorValues.Values cur = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", -2.5, "had-outage", false)), t);
+        var trend = com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of(aug, jul));
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, cur, "Mobil", "Takım", 2026, 9, null, null, Map.of(), trend)))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).doesNotContain("Kesinti kaynaklı teknik hata adedi (Son 12 Ay)");
+        // Uzun ad kısaltılır ama "(Son 12 Ay)" düşmez: kısaltmanın hemen ardında (bölüm başlığındaki ek değil)
+        assertThat(s).contains("… (Son 12 Ay)");
+        // Yalnız grafikte olan değerler (Temmuz / Ağustos): negatif çubuk etiketleri basılır
+        assertThat(s).contains("%-7,75").contains("%-12,25");
+        // Soru "Evet" ise kesinti grafiği (ya da notu) basılır
+        TechErrorValues.Values yes = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.4, "had-outage", true, "outage-errors", 12)), t);
+        var yt = com.sitemonitor.service.techerror.TechErrorTrend.build(t, yes, 2026, 9, List.of(aug));
+        String y = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, yes, "Mobil", "Takım", 2026, 9, null, null, Map.of(), yt)))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(y).contains("Kesinti kaynaklı teknik hata adedi (Son 12 Ay)").contains("437");
+    }
+
+    /** Sayfadaki sözcükler: metin, sol / sağ x, taban çizgisi (yukarıdan aşağı), sayfa. */
+    private record Word(String text, float left, float right, float baseline, int page) {
+        float center() { return (left + right) / 2; }
+    }
+
+    private static List<Word> words(byte[] pdf) throws IOException {
+        List<Word> out = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            PDFTextStripper st = new PDFTextStripper() {
+                @Override
+                protected void writeString(String text, List<TextPosition> pos) {
+                    if (pos.isEmpty()) return;
+                    TextPosition a = pos.get(0);
+                    TextPosition b = pos.get(pos.size() - 1);
+                    out.add(new Word(text.trim(), a.getXDirAdj(), b.getXDirAdj() + b.getWidthDirAdj(), a.getYDirAdj(), getCurrentPageNo()));
+                }
+            };
+            st.setSortByPosition(true);
+            st.getText(doc);
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("trend: en derin negatif çubuğun etiketi ay adının ÜSTÜNDE kalır (alt etiket payı — inceleme 2026-10-15)")
+    void trendNegativeLabelClearsMonthNames() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        com.sitemonitor.model.TechErrorReport aug = new com.sitemonitor.model.TechErrorReport();
+        aug.setId(2L);
+        aug.setReportYear(2026);
+        aug.setReportMonth(8);
+        aug.setTemplateJson(TechErrorTemplate.toJson(t));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", -12.25)), t)));
+        TechErrorValues.Values cur = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", -2.5)), t);
+        var trend = com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of(aug));
+        List<Word> ws = words(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, cur, "Mobil", "Takım", 2026, 9, null, null, Map.of(), trend)));
+        Word label = ws.stream().filter(w -> w.text().equals("%-12,25")).findFirst().orElseThrow();
+        // Aynı çubuğun ay adı: aynı sayfada, merkezi etiketin merkezine yakın
+        Word month = ws.stream().filter(w -> w.text().equals("Ağu") && w.page() == label.page()
+                && Math.abs(w.center() - label.center()) < 6).findFirst().orElseThrow();
+        // Yukarıdan aşağı: ay adının taban çizgisi etiketinkinden en az bir satır aşağıda (pay yokken fark ~1,4 pt idi)
+        assertThat(month.baseline() - label.baseline()).isGreaterThan(6f);
     }
 
     @Test

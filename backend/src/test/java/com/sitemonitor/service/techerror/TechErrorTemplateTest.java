@@ -18,12 +18,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon: özet → göstergeler → anomali → map yok → kota → SLA (ekran görüntüsü) → not → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
+    @DisplayName("varsayılan şablon: özet → göstergeler → anomali → map yok → kota → SLA (ekran görüntüsü) → not → otomatik trend → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "images", "text", "images", "images", "images", "images");
+                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "images", "text", "trend", "images", "images", "images", "images");
         assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
         assertThat(t.sections().get(3).title()).isEqualTo("Map Yapılmamış Hata Adedi");
         assertThat(t.sections().get(4).title()).isEqualTo("Kota Hatası Adedi");
@@ -37,11 +37,12 @@ class TechErrorTemplateTest {
 
         // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
         // dağılımı → gün bazlı; her bölüm kendi başlığıyla
-        assertThat(t.sections().subList(7, 11)).extracting(s -> s.title()).containsExactly("12 Aylık Özetler",
+        assertThat(t.sections().get(7).title()).isEqualTo("Otomatik Trendler (Son 12 Ay)");      // girilen rakamlardan, Faz C
+        assertThat(t.sections().subList(8, 12)).extracting(s -> s.title()).containsExactly("12 Aylık Özetler",
                 "Ay Bazlı Hata ve İşlem Adetleri (Son 12 Ay)", "{ay} {yil} Birim Bazlı Hata Dağılımı",
                 "Gün Bazlı Hata ve İşlem Adetleri ({ay} {yil})");
-        List<Slot> summary = t.sections().get(7).slots(), monthly = t.sections().get(8).slots(),
-                dist = t.sections().get(9).slots(), daily = t.sections().get(10).slots();
+        List<Slot> summary = t.sections().get(8).slots(), monthly = t.sections().get(9).slots(),
+                dist = t.sections().get(10).slots(), daily = t.sections().get(11).slots();
         assertThat(summary).extracting(Slot::label, Slot::width).containsExactly(
                 org.assertj.core.groups.Tuple.tuple("Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
                 org.assertj.core.groups.Tuple.tuple("Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
@@ -66,9 +67,9 @@ class TechErrorTemplateTest {
         assertThat(slots).extracting(Slot::label).noneMatch(l -> l.contains("(Aylık)") || l.contains("(Günlük)") || l.contains("Grafiği"));
         // EN: aynı yapı
         Template en = TechErrorTemplate.defaults("en");
-        assertThat(en.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Monthly ") && l.endsWith("(Last 12 Months)"));
-        assertThat(en.sections().get(10).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Daily ") && l.endsWith("({month} {year})"));
-        assertThat(en.sections().get(7).slots().get(0).label())
+        assertThat(en.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Monthly ") && l.endsWith("(Last 12 Months)"));
+        assertThat(en.sections().get(11).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Daily ") && l.endsWith("({month} {year})"));
+        assertThat(en.sections().get(8).slots().get(0).label())
                 .isEqualTo("Annual Operations and Error Distribution Summary (Last 12 Months)");
         assertThat(t.allFields()).extracting(f -> f.id()).contains("error-rate", "error-rate-excl", "total-tx",
                 "tx-increase", "tx-increase-pct", "sla-rate", "sla-above", "error-count", "outage-errors", "outage-share",

@@ -227,19 +227,33 @@ describe('Teknik hata raporları — rapor düzenleyici', () => {
     expect(screen.getByRole('button', { name: 'PDF indir' })).toBeEnabled()
   })
 
-  it('görsel ön denetimi: GIF yüklenmez, hata yuvanın altında; PNG yüklenir', async () => {
+  it('görsel ön denetimi: PDF yüklenmez, ne yapılacağı yuvanın altında; yuvaya sığan PNG olduğu gibi yüklenir', async () => {
     te().uploadImage.mockResolvedValue({ success: true, data: { id: 501, slot_id: 'monthly-tx', file_name: 'a.png', width: 800,
       height: 400, size_bytes: 2048 } })
-    const { container } = render(<TechErrorReportsPage />)
-    await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
-    const slot = container.querySelector('[data-slot-id="monthly-tx"]')
-    const input = slot.querySelector('input[type="file"]')
-    fireEvent.change(input, { target: { files: [new File(['GIF89a'], 'x.gif', { type: 'image/gif' })] } })
-    expect(await within(slot).findByText('Yalnız PNG ya da JPEG görsel yüklenebilir.')).toBeInTheDocument()
-    expect(te().uploadImage).not.toHaveBeenCalled()
-    fireEvent.change(input, { target: { files: [new File([new Uint8Array([0x89, 0x50])], 'a.png', { type: 'image/png' })] } })
-    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledWith('100', 'monthly-tx', expect.any(File)))
-    expect(await within(slot).findByRole('img', { name: 'Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' })).toBeInTheDocument()
+    // jsdom'da görsel çözücü yok: tarayıcının createImageBitmap'i yalnız boyutu döndürecek kadar taklit edilir
+    const had = 'createImageBitmap' in globalThis
+    const prev = globalThis.createImageBitmap
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 800, height: 400, close() {} }))
+    try {
+      const { container } = render(<TechErrorReportsPage />)
+      await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
+      const slot = container.querySelector('[data-slot-id="monthly-tx"]')
+      const input = slot.querySelector('input[type="file"]')
+      fireEvent.change(input, { target: { files: [new File(['%PDF-1.7 rapor'], 'rapor.pdf', { type: 'application/pdf' })] } })
+      expect(await within(slot).findByText(/PDF dosyası görsel yuvasına yüklenemez\. Sayfanın ekran görüntüsünü alıp PNG/))
+        .toBeInTheDocument()
+      expect(te().uploadImage).not.toHaveBeenCalled()
+      const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])], 'a.png', { type: 'image/png' })
+      fireEvent.change(input, { target: { files: [png] } })
+      await waitFor(() => expect(te().uploadImage).toHaveBeenCalledWith('100', 'monthly-tx', png))
+      expect(await within(slot).findByRole('img', { name: 'Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' })).toBeInTheDocument()
+      // Küçültme / çevirme olmadı: not yok, hata kalmadı
+      expect(slot.querySelector('[data-slot="te-image-note"]')).toBeNull()
+      expect(slot.querySelector('[data-slot="te-image-error"]')).toBeNull()
+    } finally {
+      if (had) globalThis.createImageBitmap = prev
+      else delete globalThis.createImageBitmap
+    }
   })
 
   it('şablon değiştiyse uyarı + uygula (kayıp sayıları onayda)', async () => {

@@ -519,6 +519,31 @@ class TechErrorReportServiceTest {
         assertThat(rendered.meta().title()).isEqualTo(in.title());
     }
 
+    @Test
+    @DisplayName("otomatik trend (H2): aynı kanalın pencere içindeki raporları okunur; başka kanal ve gelecek ay karışmaz")
+    void trendReadsChannelReports() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorChannel other = channel(1, "POS");
+        TechErrorReport jul = service.createReport(ch, 2026, 7, 7L);
+        service.saveValues(jul.getId(), jul.getVersion(), Map.of("fields", Map.of("error-rate", 0.3)), 7L);
+        TechErrorReport aug = service.createReport(ch, 2026, 8, 7L);
+        service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("error-rate", 0.5)), 7L);
+        TechErrorReport oct = service.createReport(ch, 2026, 9, 7L);           // raporun ayı
+        TechErrorReport posAug = service.createReport(other, 2026, 8, 7L);
+        service.saveValues(posAug.getId(), posAug.getVersion(), Map.of("fields", Map.of("error-rate", 9.9)), 7L);
+        TechErrorReport r = reports.findById(oct.getId()).orElseThrow();
+        Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+        var v = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42)), t);
+        var trend = service.trend(r, t, v);
+        assertThat(trend.series("error-rate").subList(9, 12)).containsExactly(0.3, 0.5, 0.42);
+        assertThat(trend.series("error-rate")).doesNotContain(9.9);
+        assertThat(trend.points("error-rate")).isEqualTo(3);
+        // Haziran raporu için Temmuz / Ağustos "gelecek" — pencereye girmez
+        TechErrorReport jun = service.createReport(ch, 2026, 6, 7L);
+        var junTrend = service.trend(reports.findById(jun.getId()).orElseThrow(), t, TechErrorValues.normalize(Map.of(), t));
+        assertThat(junTrend.points("error-rate")).isZero();
+    }
+
     // ── Değişiklik ve sürüm geçmişi (2026-10-14, Faz B) ──────────────────────────────────────────────
 
     private List<com.sitemonitor.model.TechErrorReportEvent> eventsOf(Long reportId) {

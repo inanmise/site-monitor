@@ -4,11 +4,52 @@
 // kolon), telefonda tek kolon; görsel yükleme ve gönderim onayı. API mock'lu (bildirim yok, e-posta gönderilmez).
 // 2026-10-14: yönetici özeti (rakamlarla canlı, kalın), grup satırlı tablo (geniş kapta tablo, telefonda kart; yatay
 // taşma yok), açıklamada madde / kalın araç çubuğu ve önizleme; şablonda özet cümlesi ve tablo düzenleme.
+// 2026-10-15 (Faz C): otomatik trend grafikleri sığar, çubuk etiketleri üst üste binmez, ilk ay / Ocak altında yıl;
+// büyük görsel tarayıcıda yuva ölçüsüne küçültülüp yüklenir (gerçek canvas), PDF yüklenmez.
 import { test, expect } from '@playwright/test'
+import zlib from 'node:zlib'
 
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_CHANNEL = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Kanalı (Dijital Kanallar / Bireysel Bankacılık)'
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
+
+// Büyük ekran görüntüsü yerine geçen PNG (çizgili, RGB) — küçültme gerçek tarayıcı canvas'ında denenir
+const CRC = Array.from({ length: 256 }, (_, n) => {
+  let c = n
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+  return c >>> 0
+})
+const crc32 = (buf) => {
+  let c = 0xffffffff
+  for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+const chunk = (type, data) => {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+  const td = Buffer.concat([Buffer.from(type, 'ascii'), data])
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td))
+  return Buffer.concat([len, td, crc])
+}
+function stripedPng(w, h) {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2
+  const raw = Buffer.alloc((w * 3 + 1) * h)
+  for (let y = 0; y < h; y++) {
+    const o = y * (w * 3 + 1)
+    for (let x = 0; x < w; x++) {
+      const on = (Math.floor(x / 40) + Math.floor(y / 40)) % 2 === 0
+      raw[o + 1 + x * 3] = on ? 20 : 240; raw[o + 2 + x * 3] = on ? 90 : 240; raw[o + 3 + x * 3] = on ? 200 : 240
+    }
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
+// Çok parçalı yükleme gövdesindeki PNG'nin boyutu (IHDR)
+function pngSize(body) {
+  const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+  if (i < 0) return null
+  return { w: body.readUInt32BE(i + 16), h: body.readUInt32BE(i + 20), bytes: body.length }
+}
 
 const TEMPLATE = {
   v: 1, lang: 'tr', title: '{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}',
@@ -49,6 +90,8 @@ const TEMPLATE = {
       { id: 'out-of-sla', label: 'SLA kapsamında olmayan' },
     ] },
     { id: 'trend-note', kind: 'text', title: 'Grafikler hakkında', text: 'Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır.' },
+    { id: 'auto-trend', kind: 'trend', title: 'Otomatik Trendler (Son 12 Ay)',
+      series: ['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'] },
     { id: 'charts', kind: 'images', title: 'Grafikler', slots: [
       { id: 'monthly-tx', label: '{kanal} Kanalı Ay Bazlı Toplam İşlem Adetleri', width: 'half' },
       { id: 'tech-errors', label: '{kanal} Kanalı Teknik Hata Grafiği', width: 'half' },
@@ -76,6 +119,17 @@ const REPORT = {
   images: [], previous: { id: 90, year: 2026, month: 8, fields: { 'error-rate': 0.5, 'total-tx': 1000000 } },
   can_edit: true, can_delete: true, team_email_set: true, template_update: { differs: false, lost_values: 0, lost_images: 0 },
   neighbors: { prev: { id: 90, year: 2026, month: 8 }, next: null },
+  // Faz C: kanalın önceki raporlarına girilmiş rakamlar (Ekim 2025 … Eylül 2026; bu ay düzenleyicideki taslaktan)
+  trend: {
+    months: Array.from({ length: 12 }, (_, i) => (i < 3 ? { year: 2025, month: 10 + i } : { year: 2026, month: i - 2 })),
+    values: {
+      'error-rate': [0.61, 0.58, 0.55, 0.52, 0.6, 0.49, 0.47, 0.51, 0.45, 0.48, 0.5, 0.42],
+      'total-tx': [98.2e6, 101.4e6, 110e6, 120e6, 115.6e6, 118e6, 121.3e6, 119e6, 123e6, 124.9e6, 125.43e6, null],
+      'unmapped-count': [1200, 1540, 1810, 2400, 1999, 2650, 3010, 2875, 3120, 2990, 3340, null],
+      'outage-errors': [null, null, null, null, null, null, null, null, null, null, 412, null],
+    },
+    min_points: 2,
+  },
 }
 
 // Faz B (2026-10-14): değişiklik geçmişi ve şablon sürümleri — gerçek uzunlukta adlar / değerler
@@ -109,9 +163,10 @@ const TEMPLATE_V2 = { ...TEMPLATE, title: 'Eski rapor başlığı: {kanal} Kanal
 let savedTemplate = null
 let savedReport = null
 let uploads = []
+let uploadSizes = []
 let sends = 0
 async function mock(page) {
-  savedTemplate = null; savedReport = null; uploads = []; sends = 0
+  savedTemplate = null; savedReport = null; uploads = []; uploadSizes = []; sends = 0
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -158,6 +213,7 @@ async function mock(page) {
       } else body = { success: true, data: REPORT }
     } else if (p === '/api/tech-error-reports/reports/100/images/monthly-tx') {
       uploads.push(req.headers()['content-type'] || '')
+      uploadSizes.push(pngSize(req.postDataBuffer() || Buffer.alloc(0)))
       body = { success: true, data: { id: 501, slot_id: 'monthly-tx', content_type: 'image/png', file_name: 'aylik-islem.png', width: 1, height: 1, size_bytes: PNG.length } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
       sends++
@@ -252,6 +308,8 @@ for (const vp of VIEWPORTS) {
       expect(savedTemplate.template.sections.find((s) => s.id === 'charts').slots).toHaveLength(4)
       expect(savedTemplate.template.sections.find((s) => s.id === 'exec').lines[0]).toBe('Oran {f:sla-rate}')
       expect(savedTemplate.template.sections.find((s) => s.id === 'sla').rows.at(-1)).toMatchObject({ group: true })
+      expect(savedTemplate.template.sections.find((s) => s.id === 'auto-trend').series)
+        .toEqual(['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'])
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
     })
 
@@ -330,7 +388,9 @@ for (const vp of VIEWPORTS) {
       expect(savedReport.values.tables).toEqual({ sla: { total: { functions: 1250, availability: 99.5 } } })
       await expect(page.locator('[data-slot="te-report-actions"]')).toContainText(/Tüm değişiklikler kaydedildi|All changes saved/)
 
-      await editor.locator('[data-slot-id="monthly-tx"] input[type="file"]').setInputFiles({ name: 'aylik-islem.png', mimeType: 'image/png', buffer: PNG })
+      // Yuvaya sığan PNG (en az 16 px — sunucu kuralı) olduğu gibi yüklenir
+      await editor.locator('[data-slot-id="monthly-tx"] input[type="file"]').setInputFiles({ name: 'aylik-islem.png', mimeType: 'image/png',
+        buffer: stripedPng(400, 200) })
       await expect.poll(() => uploads.length).toBe(1)
       expect(uploads[0]).toContain('multipart/form-data')
       await expect(editor.locator('[data-slot-id="monthly-tx"] img')).toBeVisible()
@@ -343,6 +403,91 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/channel-reports-report-${vp.name}.png` })
     })
   
+    test('Faz C: otomatik trend sığar, etiketler binmez; büyük görsel tarayıcıda küçültülür, PDF yüklenmez', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const block = editor.locator('[data-slot="te-trend"]')
+      await expect(block).toBeVisible({ timeout: 20_000 })
+      const charts = block.locator('[data-slot="te-trend-chart"]')
+      await expect(charts).toHaveCount(4)
+      await expect(block.locator('[data-field="error-rate"]')).toHaveAttribute('data-points', '12')
+      await expect(block.locator('[data-field="total-tx"]')).toHaveAttribute('data-points', '11')
+      await expect(block.locator('[data-field="total-tx"] figcaption')).toHaveText('Toplam işlem adedi (Son 12 Ay)')
+      await expect(block.locator('[data-field="outage-errors"] [data-slot="te-trend-note"]'))
+        .toContainText(/en az iki ayın rakamı|at least two months/)
+      // Çubuklar çizildi; ay adları 12, ilk ayın ve Ocak'ın altında yıl
+      await expect(block.locator('[data-field="total-tx"] .recharts-bar-rectangle')).toHaveCount(11, { timeout: 10_000 })
+      // Ay adları: genişse 12, dar grafikte bir atlanarak (raporun ayı hep görünür); yıl görünen ilk ayda ve yıl değişince
+      const ticks = block.locator('[data-field="total-tx"] [data-slot="te-trend-tick"]')
+      await expect.poll(() => ticks.count()).toBeGreaterThanOrEqual(6)
+      const tickTexts = await ticks.allTextContents()
+      expect(tickTexts.at(-1)).toBe('Eyl')
+      expect(tickTexts[0]).toMatch(/^(Eki|Kas)\s*2025$/)
+      expect(tickTexts.filter((x) => /2026$/.test(x))).toHaveLength(1)
+      if (vp.width >= 1280) expect(tickTexts).toHaveLength(12)
+      await page.waitForTimeout(300)
+      // Çubuk etiketleri komşusuyla çakışmaz ve grafiğin dışına taşmaz (telefonda yalnız bu ayınki yazılır)
+      const labelProblems = await page.evaluate(() => {
+        const out = []
+        for (const fig of document.querySelectorAll('[data-slot="te-trend-chart"]')) {
+          const svg = fig.querySelector('svg.recharts-surface')
+          if (!svg) continue
+          const s = svg.getBoundingClientRect()
+          // Çubuk etiketleri ve ay adları ayrı ayrı: komşusuyla çakışmaz, grafiğin dışına taşmaz
+          for (const sel of ['.recharts-label-list text', '[data-slot="te-trend-tick"]']) {
+            const boxes = [...fig.querySelectorAll(sel)].filter((n) => n.textContent.trim())
+              .map((n) => ({ t: n.textContent, r: n.getBoundingClientRect() })).sort((a, b) => a.r.left - b.r.left)
+            for (let i = 0; i < boxes.length; i++) {
+              const { t, r } = boxes[i]
+              if (r.left < s.left - 1 || r.right > s.right + 1) out.push(`${fig.dataset.field}: ${t} dışarıda`)
+              if (i && boxes[i - 1].r.right > r.left - 2) out.push(`${fig.dataset.field}: ${boxes[i - 1].t} / ${t} çakışıyor ${Math.round(boxes[i - 1].r.left)}-${Math.round(boxes[i - 1].r.right)} ${Math.round(r.left)}-${Math.round(r.right)}`)
+            }
+          }
+        }
+        return out
+      })
+      expect(labelProblems, 'çubuk etiketleri').toEqual([])
+      if (vp.width < 768) await expect(block.locator('[data-field="total-tx"]')).toHaveAttribute('data-labels', 'current')
+      for (const fig of await charts.all()) {
+        const r = await fig.boundingBox()
+        const b = await block.boundingBox()
+        expect(r.x, 'grafik kartın içinde').toBeGreaterThanOrEqual(b.x - 1)
+        expect(r.x + r.width, 'grafik kartın içinde').toBeLessThanOrEqual(b.x + b.width + 1)
+      }
+      expect(await page.evaluate(overflowX), 'yatay taşma (trend)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-trend"]'), 'kırpılan metin (trend)').toEqual([])
+
+      // Bu ayın çubuğu taslaktan: "Toplam işlem" rakamı girilince 12. nokta (raporun ayı) eklenir
+      await editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true }).fill('126.000.000')
+      await expect(block.locator('[data-field="total-tx"]')).toHaveAttribute('data-points', '12')
+
+      // Görsel: 3000 × 1500 PNG yarım yuvaya göre küçültülür, küçültülmüş dosya yüklenir, not yuvanın altında
+      const big = stripedPng(3000, 1500)
+      const slot = editor.locator('[data-slot-id="monthly-tx"]')
+      await slot.locator('input[type="file"]').setInputFiles({ name: 'buyuk-ekran-goruntusu.png', mimeType: 'image/png', buffer: big })
+      await expect.poll(() => uploads.length, { timeout: 15_000 }).toBe(1)
+      const up = uploadSizes[0]
+      expect(up, 'yüklenen PNG').not.toBeNull()
+      expect(up.w, 'yarım yuva genişliği').toBeLessThanOrEqual(900)
+      expect(up.w).toBeGreaterThanOrEqual(600)
+      expect(Math.abs(up.w / up.h - 2), 'en-boy oranı korunur').toBeLessThan(0.02)
+      await expect(slot.locator('[data-slot="te-image-note"]')).toContainText(`3000 × 1500 → ${up.w} × ${up.h}`)
+
+      // PDF yuvaya yüklenmez; ne yapılacağı yuvanın altında
+      const other = editor.locator('[data-slot-id="tech-errors"]')
+      await other.locator('input[type="file"]').setInputFiles({ name: 'rapor.pdf', mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF-1.7\n%rapor') })
+      await expect(other.locator('[data-slot="te-image-error"]')).toContainText(/PDF dosyası görsel yuvasına yüklenemez|A PDF file can't go/)
+      expect(uploads.length).toBe(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (görsel)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (trend/görsel)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma (görsel)').toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/channel-reports-trend-${vp.name}.png` })
+      await block.screenshot({ path: `test-results/channel-reports-trend-block-${vp.name}.png` })
+    })
+
     test('Faz B: geçmiş paneli ve şablon sürümleri sığar, uzun adlar kesilmez; yıllara göre liste; ay geçişi', async ({ page }) => {
       await mock(page)
       await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')

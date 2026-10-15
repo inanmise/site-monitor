@@ -14,6 +14,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
+import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
@@ -629,6 +630,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (s.kind === 'table') {
           return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}
             errors={fieldErrors} onCell={setCell} onFieldError={setFieldError} />
+        }
+        if (s.kind === 'trend') {
+          return <TrendBlock key={key} section={s} template={tpl} trend={data.trend} draftFields={draft.fields} resolve={resolve}
+            tplLang={tpl?.lang} />
         }
         if (s.kind === 'images') {
           return <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}

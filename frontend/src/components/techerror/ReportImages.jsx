@@ -8,7 +8,12 @@ import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
-import { LIMITS, formatBytes, imageRows, preflightImage } from './techErrorModel.js'
+import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
+import { ImagePrepError, prepareImage } from './imagePrep.js'
+
+/** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
+const BYTE_PARAMS = new Set(['te.img.errTooBig', 'te.img.errStillLarge'])
 
 /**
  * Grafik yuvaları — iki kolonlu ızgara (PDF'in aynısı): yarım yuvalar yan yana, tam yuva iki kolon genişliğinde. Her
@@ -19,6 +24,11 @@ export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOn
   const t = useT()
   const bySlot = new Map(images.map((i) => [i.slot_id, i]))
   const total = images.reduce((a, i) => a + (i.size_bytes || 0), 0)
+  // Rapor toplamı yükleme ANINDA okunur: hazırlama sürerken başka yuvaya yüklenen görsel de sayılır (inceleme 2026-10-15)
+  const imagesRef = useRef(images)
+  imagesRef.current = images
+  const otherBytesOf = (slotId) => (imagesRef.current || [])
+    .reduce((a, i) => a + (i.slot_id === slotId ? 0 : (i.size_bytes || 0)), 0)
   const rows = imageRows(section.slots || [])
   return (
     <Card className="gap-3" data-slot="te-images" data-section={section.id}>
@@ -39,6 +49,7 @@ export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOn
             {row.map((slot) => (
               <SlotTile key={slot.id} slot={slot} image={bySlot.get(slot.id)} reportId={reportId} resolve={resolve}
                 uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange}
+                otherBytes={() => otherBytesOf(slot.id)}
                 className={slot.width === 'full' ? 'md:col-span-2' : row.length === 1 ? 'md:col-span-1' : ''} />
             ))}
           </div>
@@ -48,26 +59,61 @@ export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOn
   )
 }
 
-function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className }) {
+function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0 }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
+  const [phase, setPhase] = useState(null)        // 'prep' (tarayıcıda hazırlanıyor) | 'upload'
   const [error, setError] = useState(null)
+  const [note, setNote] = useState(null)          // son yüklemenin küçültme / çevirme özeti
   const [drag, setDrag] = useState(false)
   const label = resolve(slot.label)
+  /** Küçültme / çevirme / döndürme özeti (yuvanın altında ve başarı bildiriminde) */
+  const noteText = (n) => [
+    n.resized && t('te.img.resized', `${n.fromW} × ${n.fromH}`, `${n.toW} × ${n.toH}`, formatBytes(n.fromBytes, uiLang), formatBytes(n.toBytes, uiLang)),
+    n.converted && t('te.img.converted', n.fromKind, n.toKind),
+    n.rotated && t('te.img.rotated'),
+  ].filter(Boolean).join(' ')
 
   async function upload(file) {
-    const pre = preflightImage(file)
-    if (pre) { setError(t(pre)); return }
     setError(null)
+    setNote(null)
     setBusy(true)
+    setPhase('prep')
     try {
-      const res = await api.techErrors.uploadImage(reportId, slot.id, file)
+      // Tarayıcıda hazırla (2026-10-15, Faz C): PDF'teki yuva ölçüsüne küçült, gerekirse PNG / JPEG'e çevir; neyin yanlış
+      // olduğunu ve ne yapılacağını söyleyen hata
+      let prepared
+      try {
+        prepared = await prepareImage(file, slot.width)
+      } catch (e) {
+        if (e instanceof ImagePrepError) {
+          const params = BYTE_PARAMS.has(e.key) ? e.params.map((n) => formatBytes(n, uiLang)) : e.params
+          setError(t(e.key, ...params))
+        } else {
+          // Açma hatası errDecode olarak gelir; beklenmeyen hata çizim / bellek tarafıdır — "dosya bozuk" denmez
+          setError(t('te.img.errBrowser'))
+        }
+        return
+      }
+      // Rapor toplamı (sunucu da denetler; burada yüklemeden ÖNCE söylenir)
+      const others = otherBytes()
+      if (others + prepared.file.size > LIMITS.reportImageBytes) {
+        setError(t('te.img.errTotal', formatBytes(others + prepared.file.size, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang)))
+        return
+      }
+      setPhase('upload')
+      const res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
       if (res?.success && res.data) {
         onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), res.data])
-        toast.success(t('te.img.uploaded', label))
+        const changed = prepared.info.resized || prepared.info.converted || prepared.info.rotated
+        // Not YÜKLENEN görsele bağlı: başka biri görseli değiştirip yeniden okunursa eski not o görselin altında kalmaz
+        if (changed) setNote({ imageId: res.data.id, info: prepared.info })
+        // Not bildirimde de okunur (yuvanın altındaki not görselle birlikte eklendiği için duyurulmaz); uzun metin → uzun süre
+        if (changed) toast.success(`${t('te.img.uploaded', label)} ${noteText(prepared.info)}`, 8000)
+        else toast.success(t('te.img.uploaded', label))
       } else {
         setError(res?.error || t('te.img.uploadError'))
       }
@@ -75,6 +121,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       setError(e?.message || t('te.img.uploadError'))
     } finally {
       setBusy(false)
+      setPhase(null)
       if (inputRef.current) inputRef.current.value = ''
     }
   }
@@ -86,7 +133,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     setBusy(true)
     try {
       const res = await api.techErrors.deleteImage(reportId, image.id)
-      if (res?.success) onImagesChange((list) => list.filter((i) => i.id !== image.id))
+      if (res?.success) { setNote(null); onImagesChange((list) => list.filter((i) => i.id !== image.id)) }
       else setError(res?.error || t('te.img.removeError'))
     } catch (e) {
       setError(e?.message || t('te.img.removeError'))
@@ -118,6 +165,9 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {[image.file_name, `${image.width} × ${image.height}`, formatBytes(image.size_bytes, uiLang)].filter(Boolean).join(' · ')}
           </p>
+          {note && note.imageId === image.id && (
+            <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-image-note">{noteText(note.info)}</p>
+          )}
         </>
       ) : (
         <div className="flex min-h-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
@@ -127,14 +177,14 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       )}
       {!readOnly && (
         <div className="flex flex-wrap gap-2">
-          <Input ref={inputRef} id={inputId} type="file" accept="image/png,image/jpeg" hidden tabIndex={-1} aria-hidden="true"
+          <Input ref={inputRef} id={inputId} type="file" accept={ACCEPT} hidden tabIndex={-1} aria-hidden="true"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }} />
           {/* Erişilebilir ad görünen metni İÇERİR (yuva adı yalnız ekran okuyucuya eklenir — etiket-adda kuralı) */}
           <Button type="button" size="sm" variant={image ? 'outline' : 'default'} disabled={busy}
             onClick={() => inputRef.current?.click()} className="pointer-coarse:min-h-10" data-slot="te-image-upload">
             {busy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
               : image ? <RefreshCw aria-hidden="true" /> : <Upload aria-hidden="true" />}
-            {busy ? t('te.img.uploading') : image ? t('te.img.replace') : t('te.img.upload')}
+            {busy ? (phase === 'prep' ? t('te.img.preparing') : t('te.img.uploading')) : image ? t('te.img.replace') : t('te.img.upload')}
             <span className="sr-only">{`: ${label}`}</span>
           </Button>
           {image && (

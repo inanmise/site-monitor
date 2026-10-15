@@ -260,6 +260,7 @@ function outlineCount(s, t) {
   if (s.kind === 'images') return ` · ${t('te.ver.nSlots', (s.slots || []).length)}`
   if (s.kind === 'summary') return ` · ${t('te.ver.nLines', (s.lines || []).length)}`
   if (s.kind === 'table') return ` · ${t('te.ver.nTable', (s.columns || []).length, (s.rows || []).length)}`
+  if (s.kind === 'trend') return ` · ${t('te.ver.nCharts', (s.series || []).length)}`
   return ''
 }
 
@@ -280,6 +281,7 @@ export function diffText(d, t, resolve) {
     case 'section.labels': return t('te.ver.d.section.labels', r(d.label))
     case 'summary.change': return t('te.ver.d.summary.change', r(d.label), d.before, d.after)
     case 'text.change': return t('te.ver.d.text.change', r(d.label))
+    case 'trend.change': return t('te.ver.d.trend.change', r(d.label), d.before, d.after)
     case 'field.retype': case 'column.retype': return t(`te.ver.d.${d.group}.retype`, r(d.label), typeName(d.before), typeName(d.after))
     case 'slot.resize': return t('te.ver.d.slot.resize', r(d.label), t(`te.width.${d.before}`), t(`te.width.${d.after}`))
     case 'field.move': case 'slot.move': return t(`te.ver.d.${d.group}.move`, r(d.label), r(d.section), r(d.to))

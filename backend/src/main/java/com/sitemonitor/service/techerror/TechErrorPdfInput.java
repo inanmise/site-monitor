@@ -11,14 +11,25 @@ import java.util.Map;
  * Yazıcı ({@code service.report.TechErrorReportPdfWriter}) veritabanına dokunmaz; testler doğrudan kurar.
  */
 public record TechErrorPdfInput(Template template, Values values, String channelName, String teamName, int year,
-                                int month, String preparedBy, Instant generatedAt, Map<String, Image> images) {
+                                int month, String preparedBy, Instant generatedAt, Map<String, Image> images,
+                                TechErrorTrend trend) {
+
+    /** Trend verisi olmadan (trend bölümü yoksa ya da testlerde): grafikler "en az iki ay" notuna düşer. */
+    public TechErrorPdfInput(Template template, Values values, String channelName, String teamName, int year, int month,
+                             String preparedBy, Instant generatedAt, Map<String, Image> images) {
+        this(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, TechErrorTrend.empty());
+    }
+
+    public TechErrorPdfInput {
+        if (trend == null) trend = TechErrorTrend.empty();
+    }
 
     /** Yuvaya yüklenmiş görsel: baytlar + doğrulanmış piksel ölçüsü (en-boy oranı için). */
     public record Image(byte[] data, int width, int height) { }
 
     /** Aynı girdi, görsel baytları olmadan (PDF üretildikten sonra posta gövdesi için). */
     public TechErrorPdfInput withoutImages() {
-        return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, Map.of());
+        return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, Map.of(), trend);
     }
 
     public String title() {

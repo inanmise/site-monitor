@@ -53,6 +53,8 @@ import java.util.*;
 @RequestMapping("/api/tech-error-reports")
 public class TechErrorReportController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TechErrorReportController.class);
+
     static final String READ = "tech_error_reports.read";
     static final String CRUD = "tech_error_reports.crud";
 
@@ -336,7 +338,18 @@ public class TechErrorReportController {
         data.put("values", TechErrorValues.toMap(v));
         data.put("images", imgs);
         data.put("previous", previousDto(r, t));
-        data.put("neighbors", neighborsDto(r));
+        List<TechErrorReportRepository.Row> channelRows = service.reportRows(r.getChannelId());
+        data.put("neighbors", neighborsDto(r, channelRows));
+        // Otomatik trend (2026-10-15, Faz C): yalnız şablonda trend bölümü varsa; okunamazsa rapor yine açılır, trend
+        // "okunamadı" der (boş grafik ya da "en az iki ay" denmez)
+        if (!com.sitemonitor.service.techerror.TechErrorTrend.referencedFields(t).isEmpty()) {
+            try {
+                data.put("trend", trendDto(service.trend(r, t, v, channelRows)));
+            } catch (RuntimeException e) {
+                log.warn("Teknik hata raporu #{} trend verisi okunamadı: {}", r.getId(), e.toString());
+                data.put("trend", Map.of("unavailable", true));
+            }
+        }
         data.put("can_edit", canEdit);
         data.put("can_delete", writer && canDeleteReport(session, r.getTeamId(), r.getLastSentAt(), r.getSendState()));
         data.put("team_email_set", team != null && !TechErrorReportSender.recipients(team).isEmpty());
@@ -849,14 +862,27 @@ public class TechErrorReportController {
         return m;
     }
 
+    /** Trend: aylar (eskiden yeniye) + alan → değerler (boş ay null). Değerler kayıtlı hâl; düzenleyici kendi ayını taslakla günceller. */
+    private static Map<String, Object> trendDto(com.sitemonitor.service.techerror.TechErrorTrend tr) {
+        if (tr == null) tr = com.sitemonitor.service.techerror.TechErrorTrend.empty();
+        List<Map<String, Object>> months = new ArrayList<>();
+        for (java.time.YearMonth ym : tr.months()) months.add(Map.of("year", ym.getYear(), "month", ym.getMonthValue()));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("months", months);
+        m.put("values", new LinkedHashMap<>(tr.values()));
+        m.put("min_points", com.sitemonitor.service.techerror.TechErrorTrend.MIN_POINTS);
+        return m;
+    }
+
     /**
      * Aynı kanalın bu rapordan önceki ve sonraki EN YAKIN raporu (dönem sırası; ara ay boş olabilir) — rapor ekranında
-     * tek tıkla geçiş. Kanalın rapor listesi zaten sınırlı ({@code reportRows}, ≤ 600 hafif satır).
+     * tek tıkla geçiş. Kanalın rapor listesi zaten sınırlı ({@code reportRows}, ≤ 600 hafif satır); trend aynı listeyi
+     * kullanır (bir kez okunur).
      */
-    private Map<String, Object> neighborsDto(TechErrorReport r) {
+    private Map<String, Object> neighborsDto(TechErrorReport r, List<TechErrorReportRepository.Row> rows) {
         int here = r.getReportYear() * 12 + r.getReportMonth();
         TechErrorReportRepository.Row prev = null, next = null;
-        for (var row : service.reportRows(r.getChannelId())) {
+        for (var row : rows) {
             int p = row.getReportYear() * 12 + row.getReportMonth();
             if (p < here && (prev == null || p > prev.getReportYear() * 12 + prev.getReportMonth())) prev = row;
             if (p > here && (next == null || p < next.getReportYear() * 12 + next.getReportMonth())) next = row;
