@@ -77,6 +77,8 @@ describe('raporda otomatik trend', () => {
     expect(tx).toHaveAttribute('data-points', '1')
     expect(within(tx).getByText('Trend için en az iki ayın rakamı gerekir; şu ana kadar rakamı girilmiş ay: 1.')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Toplam işlem adedi'), { target: { value: '1.250.000' } })
+    // Yazarken grafik çizilmez (performans): değer, yazma durunca grafiğe geçer
+    expect(chart(container, 'total-tx')).toHaveAttribute('data-points', '1')
     await waitFor(() => expect(chart(container, 'total-tx')).toHaveAttribute('data-points', '2'))
     expect(within(chart(container, 'total-tx')).getByText('Eylül 2026: 1.250.000')).toBeInTheDocument()
     // Taslakta silinen değer: bu ay yeniden boş (sunucudaki eski değer gösterilmez)

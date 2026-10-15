@@ -233,6 +233,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const tpl = data?.template
   const report = data?.report
   const channel = data?.channel
+  // Görsel bölümlerinin geri çağrısı SABİT: ImagesBlock memo'su yazarken yeniden çizimi atlasın
+  const onImagesChange = useCallback((fn) => {
+    setImages(fn)
+    setData((d) => (d ? { ...d, report: { ...d.report, status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d))
+  }, [])
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
   const resolveText = useCallback((p) => resolveTextPlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
@@ -637,8 +642,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         }
         if (s.kind === 'images') {
           return <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
-            showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={(fn) => { setImages(fn); setData((d) => (d ? { ...d, report: { ...d.report,
-              status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d)) }} />
+            showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={onImagesChange} />
         }
         return <TextBlock key={key} section={s} values={draft} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
           errors={fieldErrors} onText={setText} />
