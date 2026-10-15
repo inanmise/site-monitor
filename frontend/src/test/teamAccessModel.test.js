@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  k6EditGrants,
   ACCESS_LEVELS, createPayload, daysLeft, emptyForm, filterGrants, formErrors, formOf, grantState, levelIncludes, normalizeGrant,
   sortGrants, summarize, updatePayload,
 } from '../components/admin/access/teamAccessModel.js'
@@ -133,5 +134,14 @@ describe('teamAccessModel', () => {
     expect(withRowFlags(null, other)).toBe(other)
     const same = { id: 1, can_check: true, can_edit: false, can_delete: false, can_diagnose: true }
     expect(withRowFlags(prev, same)).toBe(same)                                 // kopya yok
+  })
+
+  it('2026-10-16: k6 bildirimi süresi dolmamış, yönetilebilen EDIT / Tam paylaşımlarının HEPSİNİ sayar (tarihten bağımsız)', () => {
+    const g = (extra) => ({ canEdit: true, expired: false, level: 'EDIT', createdAt: '2026-10-12T08:00:00', updatedAt: null, ...extra })
+    expect(k6EditGrants([g({ id: 1 }), g({ id: 2, level: 'DELETE' }), g({ id: 3, createdAt: '2026-10-20T08:00:00' })]).map((x) => x.id))
+      .toEqual([1, 2, 3])
+    expect(k6EditGrants([g({ level: 'VIEW' }), g({ level: 'EXECUTE' })])).toEqual([])
+    expect(k6EditGrants([g({ expired: true }), g({ canEdit: false })])).toEqual([])
+    expect(k6EditGrants(null)).toEqual([])
   })
 })

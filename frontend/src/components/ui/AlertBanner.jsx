@@ -65,7 +65,7 @@ export default function AlertBanner({
         <div data-slot="alert-actions" className="col-start-3 row-start-1 flex items-center gap-1.5 self-start">
           {actions}
           {onDismiss && (
-            <Button type="button" variant="ghost" size="icon-xs" className="opacity-70 hover:opacity-100"
+            <Button type="button" variant="ghost" size="icon-xs" className="opacity-70 hover:opacity-100 pointer-coarse:size-10"
               onClick={onDismiss} aria-label={dismissLabel}>
               <X />
             </Button>

@@ -59,7 +59,7 @@ import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
-import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { ROUTING_DEFAULTS, formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { VersionChip } from './scripted/VersionTimeline.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -479,6 +479,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => pickTeams.map(tm => ({ value: String(tm.id), label: tm.name })), [pickTeams])
+  // Takım erişim paylaşımı (2026-10-16, kullanıcı kararı: k6 da paylaşımla TAM düzenlenir — öteki sekiz türle aynı kural):
+  // yalnız paylaşımla yazılan kayıtta / paylaşılan takıma yeni kayıtta bildirim yönlendirmesi kilitli ve varsayılanda,
+  // takım taşınamaz. Bu sayfada yeni kayıt `{}` — ortak yardımcılar 'new' bekler.
+  const modalKey = modal && typeof modal === 'object' && modal.id == null ? 'new' : modal
+  const routingLock = routingLockOf(modalKey, form.teamId, pickTeams)
+  useEffect(() => { if (modalKey === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modalKey, routingLock])
+  const teamPick = formTeamSelect(modalKey, teamSelectOptions, pickTeams)
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
@@ -736,7 +743,17 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   function applyDraft(draft) {
     try {
       const parsed = JSON.parse(draft.form_json || '{}')
-      setForm(f => ({ ...emptyForm, ...f, ...parsed }))
+      setForm(f => {
+        const next = { ...emptyForm, ...f, ...parsed }
+        // Kilitli formda (yalnız paylaşımla yazılan kayıt / paylaşılan takıma yeni kayıt) taslak bildirim yönlendirmesini
+        // ve takımı GERİ GETİRMEZ: arada sahibi değiştirmişse kilitli alanlar bayat kalır ve kayıt 403'e kilitlenirdi
+        // (inceleme 2026-10-16) — bu alanlar formun mevcut (kayıtlı / varsayılan) değerinde kalır.
+        if (routingLock) {
+          for (const k of Object.keys(ROUTING_DEFAULTS)) next[k] = f[k]
+          next.teamId = f.teamId
+        }
+        return next
+      })
       setPendingDraft(null)
       toast.success(t('scripted.draftRestore'))
     } catch { toast.error(t('scripted.saveError')) }
@@ -791,7 +808,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       const src = monitors.find(x => String(x.id) === value.slice(6))
       if (!src) return
       const base = formFrom(src)
-      setForm(f => ({ ...f, template: value, script: base.script, env: base.env }))
+      // Gizli değerler BAŞKA izlemeden taşınmaz (sunucu yalnız düzenlenen izlemenin kayıtlı değerini korur): "ayarlı"
+      // görünmesin — yalnız kendi kaydına dönülüyorsa ayarlı kalır
+      const env = base.env.map(e => (e.secret && src.id !== modal?.id ? { ...e, value: '', value_set: false } : e))
+      setForm(f => ({ ...f, template: value, script: base.script, env }))
       setTestResult(lastCheckResult(src))
       return
     }
@@ -892,7 +912,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // kaydederse ARADA BAŞKASININ yaptığı değişikliği sessizce geri alıyordu.
         // Yeni kayıtta taban sunucudan dönen monitör olur (artık id'si var); düzenlemede kaydedilen
         // içerik olur. Kullanıcı tekrar yazmaya başlarsa doğal olarak yine kirli sayılır.
+        // Paylaşılan takıma yeni kayıt sonrası form açık kalırsa (doğrulama bandı / uyarılar) kilit sürer: oluşturma yanıtı
+        // satır bayrağı taşımaz, `modal` artık 'new' değil (inceleme 2026-10-16)
         setModal(m => ({ ...(m || {}), ...(res.data?.id ? res.data : {}),
+                         // Silme yetkisi paylaşım DÜZEYİNE bağlı ve oluşturma yanıtı bayrak taşımaz: liste satırı gelene kadar
+                         // "Sil" gösterilmez (rol yedeği paylaşım takımını "kendi takımı" sayıp 403'lük düğme çiziyordu)
+                         ...(routingLock && !m?.id ? { routing_locked: true, can_delete: false } : {}),
                          script: payload.script, name: payload.name }))
         // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
         // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
@@ -911,7 +936,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // Liste ÖNCE tazelenir (2026-09-28): koşumun sonucu KARTA da işlenir (checkNow → setMonitors) ve bunun için
         // yeni kart ızgarada olmalı. Eskiden liste koşumdan önce çekilip sonuç yalnız forma yazılıyordu — pencere
         // kapanınca kart bir sonraki yenilemeye kadar BOŞ kalıyordu (kullanıcı bildirimi).
-        await load()
+        const rows = await load()
+        // Açık formun tabanı liste satırının sunucu bayraklarını alır (yeni kayıt dahil) — "Sil" / kilit satırdan gelir
+        const freshRow = savedId != null && Array.isArray(rows) ? rows.find((x) => x?.id === savedId) : null
+        if (freshRow) setModal((m) => (m && typeof m === 'object' && m.id === savedId ? freshestRow(m, [freshRow]) : m))
         if (fresh && savedId != null) {
           // Uyarı varken bant yok (uyarılar okunuyor) ama ilk / taze koşum yine KARTTA başlar — kart boş kalmasın.
           if (warned) startCheckAfterSave(checkNow, { id: savedId }, { silent: true })
@@ -1126,7 +1154,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
+    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
   )
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1707,7 +1735,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1800,7 +1828,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
         <FormField label={t('scripted.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
             ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }}
-                options={[{ value: '', label: t('scripted.selectTeam') }, ...teamSelectOptions]} searchThreshold={2} />
+                options={[{ value: '', label: t('scripted.selectTeam') }, ...(teamPick?.options || teamSelectOptions)]}
+                disabled={teamPick?.disabled} searchThreshold={2} />
             // Kilitli kutu formun GERÇEK takımını gösterir (oturum teamName'i boşken varsayılan = tek takım).
             : <Input id={id} value={(teamSelectOptions || []).find(o => String(o.value) === String(form.teamId))?.label || teamName || t('scripted.selectTeam')} disabled />}
         </FormField>
@@ -1816,14 +1845,14 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
               placeholder={t('scripted.groupPick')} />
           )}
         </FormField>
-        <NotifyChannels
+        <NotifyChannels locked={routingLock}
           notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
           alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
           onChange={patch => setForm(f => ({ ...f, ...patch }))}
           teamLabel={selectedTeamLabel} teamId={form.teamId}
           groupId={form.notificationGroupId}
           onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-        <NocNotifyField type="SCRIPTED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={canOpenSettings}
+        <NocNotifyField disabled={routingLock} type="SCRIPTED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={canOpenSettings}
           onChange={patch => setForm(f => ({ ...f, ...patch }))} />
 
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}

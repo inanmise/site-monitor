@@ -100,7 +100,7 @@ describe('paylaşımla görülen satırların yüzeyleri', () => {
     expect(badges[0].closest('tr, li').textContent).toContain('foreign-keystore')
   })
 
-  it('sözleşme: sekiz izleme formu paylaşımlı kayıtta (ve paylaşan takıma yeni kayıtta) bildirim bloğunu, 7/24 alanını ve takım seçicisini kilitler; k6 seçicisi yalnız üyelik', () => {
+  it('sözleşme: dokuz izleme formu paylaşımlı kayıtta (ve paylaşan takıma yeni kayıtta) bildirim bloğunu, 7/24 alanını ve takım seçicisini kilitler; k6 da paylaşımla yazılabilen takımları alır (2026-10-16)', () => {
     const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components')
     for (const page of ['Dns', 'Domain', 'Http', 'Keyword', 'Page', 'PageSpeed', 'Ping', 'Port']) {
       const src = fs.readFileSync(path.join(dir, `${page}MonitorPage.jsx`), 'utf8')
@@ -112,7 +112,14 @@ describe('paylaşımla görülen satırların yüzeyleri', () => {
       expect(src, page).not.toContain('shared_access === true}')
       expect(src, page).toContain('{...formTeamSelect(modal, teamSelectOptions, pickTeams)}')
     }
+    // Sentetik (k6) — 2026-10-16 kullanıcı kararı: paylaşımda tam düzenlenir, aynı kilit kuralı (yeni kayıt bu sayfada `{}`)
+    const k6 = fs.readFileSync(path.join(dir, 'ScriptedMonitorPage.jsx'), 'utf8')
+    expect(k6).toContain('const routingLock = routingLockOf(modalKey, form.teamId, pickTeams)')
+    expect(k6).toMatch(/if \(modalKey === 'new' && routingLock\)[\s\S]{0,40}setForm\(f => [\s\S]{0,40}withRoutingDefaults\(f\)/)
+    expect(k6).toContain('<NotifyChannels locked={routingLock}')
+    expect(k6).toContain('<NocNotifyField disabled={routingLock}')
+    expect(k6).toContain('const teamPick = formTeamSelect(modalKey, teamSelectOptions, pickTeams)')
     const app = fs.readFileSync(path.join(dir, '..', 'App.jsx'), 'utf8')
-    expect(app).toMatch(/<ScriptedMonitorPage [^>]*myTeams=\{myTeams\}/)
+    expect(app).toMatch(/<ScriptedMonitorPage [^>]*myTeams=\{writeTeams\}/)
   })
 })

@@ -711,6 +711,18 @@ public class ScriptedCheckerService {
         return extractTargetUrls(m.getScript(), parseEnv(m.getEnvJson(), true));
     }
 
+    /**
+     * İzlemenin GİZLİ ortam değerleri (çözülmüş) — yalnız API'ye giden metinleri maskelemek için (teşhis adresi / aday
+     * adresler / bacak çıktısı; 2026-10-16). Değerler hiçbir yere yazılmaz.
+     */
+    public List<String> secretValues(ScriptedMonitor m) {
+        List<String> out = new ArrayList<>();
+        for (EnvVar v : parseEnv(m == null ? null : m.getEnvJson(), true)) {
+            if (v.secret() && v.value() != null && !v.value().isBlank()) out.add(v.value());
+        }
+        return out;
+    }
+
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
     public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
         return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), proxyUseFor(useProxy));
@@ -1099,6 +1111,9 @@ public class ScriptedCheckerService {
             output = SecretMask.maskValues(r.output(), secretValues);
 
             Summary s = safeParseSummary(summaryFile);
+            // Kontrol ADLARI da maskelenir (2026-10-16): `check(r, { [__ENV.X]: … })` ile ad gizli değeri taşıyabilir ve
+            // checks_json izlemeyi gören herkese gider (paylaşımla görenler dahil)
+            if (s != null && s.checksJson != null) s.checksJson = SecretMask.maskValues(s.checksJson, secretValues);
 
             // ── Katman 2: yorumlama guard'ı ──
             String status;

@@ -21,7 +21,12 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import TeamAccessGrantDialog, { LEVEL_ICON } from './TeamAccessGrantDialog.jsx'
-import { ACCESS_LEVELS, daysLeft, filterGrants, grantState, normalizeGrant, sortGrants, summarize } from './teamAccessModel.js'
+import { ACCESS_LEVELS, daysLeft, filterGrants, grantState, k6EditGrants, normalizeGrant, sortGrants, summarize } from './teamAccessModel.js'
+import { personalKey } from '../../../utils/personalStorage.js'
+
+const K6_NOTICE_KEY = 'sm.access.k6Notice'
+const readFlag = (k) => { try { return localStorage.getItem(personalKey(k)) === '1' } catch { return false } }
+const writeFlag = (k) => { try { localStorage.setItem(personalKey(k), '1') } catch { /* depolama yok */ } }
 
 /** Kap bu genişliğin altındaysa kartlar (tablo telefonda / dar kapta okunmaz). */
 export const ACCESS_TABLE_MIN_PX = 860
@@ -36,6 +41,7 @@ export const ACCESS_TABLE_MIN_PX = 860
  * (yalnız sunucunun `can_edit` dediği satırda). Adlar sarar, kırpılmaz.
  */
 export default function TeamAccessManager() {
+  const [k6Dismissed, setK6Dismissed] = useState(() => readFlag(K6_NOTICE_KEY))
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -81,6 +87,7 @@ export default function TeamAccessManager() {
   useEffect(() => { load() }, [load])
 
   const grants = state.grants
+  const k6Legacy = useMemo(() => k6EditGrants(grants), [grants])
   // KPI'lar arama / takım / düzey süzgeciyle daralır (tür ve durum KPI'nın kendi süzgecidir) — Takımlar menüsünden takımla
   // gelince sayılar o takımın paylaşımlarıdır
   const sum = useMemo(() => summarize(filterGrants(grants, { q, team, level })), [grants, q, team, level])
@@ -164,6 +171,14 @@ export default function TeamAccessManager() {
         </div>
       </Card>
 
+      {k6Legacy.length > 0 && !k6Dismissed && (
+        <div data-slot="access-k6-notice" className="min-w-0">
+          <AlertBanner tone="warning" className="mb-0" title={t('access.k6Notice.title')}
+            onDismiss={() => { writeFlag(K6_NOTICE_KEY); setK6Dismissed(true) }} dismissLabel={t('access.k6Notice.dismiss')}>
+            {t('access.k6Notice.body', k6Legacy.length)}
+          </AlertBanner>
+        </div>
+      )}
       {shared.length > 0 && <SharedWithMe rows={shared} t={t} />}
       {sharedFailed && (
         <div data-slot="access-shared-failed" className="min-w-0">
