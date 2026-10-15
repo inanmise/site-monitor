@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { TrendingUp } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -15,6 +15,7 @@ const MARGIN = { top: 18, right: 12, bottom: 0, left: 12 }
 // Gerçek yazı genişliği (canvas measureText, sayfanın yazı tipiyle) — karakter tahmini işletim sistemine göre değişiyordu
 // (CI Linux'ta etiketler bitişti). jsdom'da canvas yok: ölçüm null, model tahmine düşer.
 let measureCtx
+let fontFamily = ''
 function measureWith(px) {
   return (text) => {
     if (measureCtx === undefined) {
@@ -26,8 +27,10 @@ function measureWith(px) {
       } catch { measureCtx = null }
     }
     if (!measureCtx) return null
-    const family = getComputedStyle(document.body).fontFamily || 'sans-serif'
-    measureCtx.font = `${px}px ${family}`
+    // Sayfanın yazı tipi bir kez okunur (her etikette getComputedStyle stil hesabını zorluyordu)
+    if (!fontFamily) fontFamily = getComputedStyle(document.body).fontFamily || 'sans-serif'
+    const font = `${px}px ${fontFamily}`
+    if (measureCtx.font !== font) measureCtx.font = font
     return measureCtx.measureText(text).width
   }
 }
@@ -41,8 +44,12 @@ const measureTick = measureWith(10)
  * gerekir" diye gösterilmez — "okunamadı" der. Bu ay "Hayır" cevabıyla muaf olan alanın grafiği gösterilmez (PDF'e de
  * girmez — muaf alanın kuralı).
  */
-export function TrendBlock({ section, template, trend, draftFields, resolve, tplLang }) {
+export function TrendBlock({ section, template, trend, draftFields: liveFields, resolve, tplLang }) {
   const t = useT()
+  // Yazarken grafik çizilmez: bu ayın değeri yazma durunca (TREND_DRAFT_DELAY_MS) grafiğe geçer. 2026-10-15 ölçümü (4×
+  // yavaş CPU): her tuş 5 grafiği yeniden çiziyordu (tek uzun görev 740 ms); düşük öncelik (useDeferredValue) yazılan
+  // alanın grafiğini yine her tuşta çizdi. Her grafik ayrıca yalnız kendi verisi değişince çizilir (TrendChart memo).
+  const draftFields = useSettled(liveFields, TREND_DRAFT_DELAY_MS)
   // Web yazı tipi yüklenince yeniden ölçülür (önce yedek yazı tipiyle ölçülmüş olabilir)
   const [, setFontsReady] = useState(false)
   useEffect(() => {
@@ -81,7 +88,33 @@ export function TrendBlock({ section, template, trend, draftFields, resolve, tpl
   )
 }
 
-function TrendChart({ field, points, resolve, tplLang }) {
+/** Yazma durunca grafiğe geçen gecikme (ms) */
+const TREND_DRAFT_DELAY_MS = 250
+
+/** Değer `delay` ms boyunca değişmeyince döner (ilk değer hemen) — yazarken ağır çizimi erteler. */
+function useSettled(value, delay) {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    if (settled === value) return undefined
+    const h = setTimeout(() => setSettled(value), delay)
+    return () => clearTimeout(h)
+  }, [value, delay, settled])
+  return settled
+}
+
+/** Noktalar değer olarak aynı mı (her çizimde yeni dizi gelir) */
+function samePoints(a, b) {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.year !== y.year || x.month !== y.month || x.value !== y.value || x.current !== y.current) return false
+  }
+  return true
+}
+
+const TrendChart = memo(function TrendChart({ field, points, resolve, tplLang }) {
   const t = useT()
   const [boxRef, boxWidth] = useElementWidth()
   const lang = tplLang === 'en' ? 'en' : 'tr'
@@ -140,7 +173,8 @@ function TrendChart({ field, points, resolve, tplLang }) {
       )}
     </figure>
   )
-}
+}, (prev, next) => prev.field === next.field && prev.resolve === next.resolve && prev.tplLang === next.tplLang
+  && samePoints(prev.points, next.points))
 
 /** Ay adı; yıl değişen ilk görünen ayın altında yıl (gizli ay çizilmez) */
 function MonthTick({ x, y, payload, data }) {

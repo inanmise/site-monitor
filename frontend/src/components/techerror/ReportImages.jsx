@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { ImagePlus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -20,7 +20,9 @@ const BYTE_PARAMS = new Set(['te.img.errTooBig', 'te.img.errStillLarge'])
  * yuvaya bir görsel (PNG / JPEG, ≤ 5 MB); yeni yükleme eskisinin yerini alır. Yükleme sunucuda baytlardan doğrulanır;
  * hata yuvanın altında yazar. Görsel yüklemek rapor sürümünü artırmaz (açık değer düzenlemesi çakışmaya düşmez).
  */
-export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true }) {
+// memo: yazarken (her tuşta düzenleyici yeniden çizilir) değişmeyen görsel bölümleri — 22 yuva — yeniden çizilmez;
+// düzenleyici geri çağrıyı sabit verir (useCallback)
+export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true }) {
   const t = useT()
   const bySlot = new Map(images.map((i) => [i.slot_id, i]))
   const total = images.reduce((a, i) => a + (i.size_bytes || 0), 0)
@@ -57,7 +59,7 @@ export function ImagesBlock({ section, reportId, images, resolve, uiLang, readOn
       </CardContent>
     </Card>
   )
-}
+})
 
 function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0 }) {
   const t = useT()
