@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-15T00:22:44Z",
+  "generatedAt": "2026-10-15T09:06:36Z",
   "repo": "inanmise/site-monitor",
-  "count": 750,
+  "count": 751,
   "releases": [
+    {
+      "version": "20.136.0",
+      "tag": "v20.136.0",
+      "releasedAt": "2026-10-15T09:06:31Z",
+      "commit": "8e8203a384b8f61fd3bc62de2dff4e0f2727726e",
+      "prevVersion": "20.135.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8e8203a3",
+          "subject": "trend grafiği etiketlerinin sığıp sığmadığı gerçek yazı genişliğiyle ölçülür"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7c3c7906",
+          "subject": "teknik hata raporunda otomatik trend grafikleri ve görselin tarayıcıda yuvaya göre hazırlanması"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.135.0",
       "tag": "v20.135.0",

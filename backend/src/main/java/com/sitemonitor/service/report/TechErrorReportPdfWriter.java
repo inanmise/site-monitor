@@ -77,6 +77,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                 case "images" -> images(in, s);
                 case "summary" -> summary(in, s);
                 case "table" -> table(in, s);
+                case "trend" -> trend(in, s);
                 default -> text(in, s);
             }
         }
@@ -394,6 +395,148 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             } else {
                 imageRow(in, List.of(a), CONTENT_W, FULL_MAX_H);
                 i += 1;
+            }
+        }
+    }
+
+    // ── Otomatik trend (2026-10-15, Faz C) ─────────────────────────────────────────────────────────
+
+    private static final float TREND_CAPTION_LINE = 10.5f;
+    private static final float TREND_LABEL_H = 9f;      // en uzun (ve en derin negatif) çubuğun değer etiketi payı
+    private static final float TREND_CHART_H = 100f;
+    private static final float TREND_AXIS_H = 18f;      // ay + yıl etiketleri
+    private static final int TREND_LABEL_STEPS = 7;    // 5,6 pt'den 0,2'şer en çok 7 adım = 4,2 pt; sığmazsa yazılmaz
+    private static final float[] TREND_BAR = { 148 / 255f, 163 / 255f, 184 / 255f };
+
+    /**
+     * Girilen rakamlardan son 12 ayın çubuk grafikleri: alan başına bir hücre, iki hücre yan yana (yarım yuva gibi).
+     * Raporun ayı vurgulu; değeri olmayan ay boş (sıfır çizilmez). İki aydan az değerli alan grafik yerine kısa not
+     * basar. Şablonda olmayan ya da sayı / yüzde olmayan başvuru çizilmez (düzenleyici uyarır).
+     */
+    private void trend(TechErrorPdfInput in, Section s) throws IOException {
+        List<Field> fields = new ArrayList<>();
+        Map<String, Object> vals = in.values().fields();
+        for (String ref : s.lines()) {
+            for (Field f : in.template().allFields()) {
+                // "Hayır" cevabıyla bu ay muaf olan alan PDF'e girmez — grafiği de (inceleme 2026-10-15)
+                if (f.id().equals(ref) && TechErrorTemplate.trendable(f) && !TechErrorTemplate.exempt(f, vals)) fields.add(f);
+            }
+        }
+        if (fields.isEmpty()) return;
+        String title = in.resolve(s.title());
+        int titleLines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3).size();
+        float colW = (CONTENT_W - GAP * 2) / 2;
+        c.ensureSpace(titleLines * 15 + 6 + trendRowHeight(in, fields, 0, colW));   // başlık ilk grafik satırıyla birlikte
+        sectionTitle(title);
+        for (int i = 0; i < fields.size(); i += 2) {
+            float rowH = trendRowHeight(in, fields, i, colW);
+            float capH = trendCaptionH(in, fields, i, colW);
+            c.ensureSpace(rowH);
+            float top = c.y;
+            trendCell(in, fields.get(i), MARGIN, top, colW, capH);
+            if (i + 1 < fields.size()) trendCell(in, fields.get(i + 1), MARGIN + colW + GAP * 2, top, colW, capH);
+            c.y = top - rowH;
+        }
+        c.y -= 4;
+    }
+
+    /**
+     * Grafik başlığı satırları. Zaman tabanı ("(Son 12 Ay)") hiç düşmez: ad ile birlikte iki satıra sığmıyorsa ad iki
+     * satıra kısaltılır ("…") ve ek kendi satırında kalır (inceleme 2026-10-15: kesilen kısım ekti).
+     */
+    private List<String> trendCaption(TechErrorPdfInput in, Field f, float w) throws IOException {
+        String label = in.resolve(f.label());
+        String suffix = en ? "(Last 12 Months)" : "(Son 12 Ay)";
+        PdfCanvas.Wrapped full = c.wrapCellChecked(label + " " + suffix, w, c.bold, 8.5f, 2);
+        if (!full.truncated()) return full.lines();
+        List<String> out = new ArrayList<>(c.wrapCell(label, w, c.bold, 8.5f, 2));
+        out.add(suffix);
+        return out;
+    }
+
+    /** Satırın başlık yüksekliği — iki hücrenin uzun olanı; grafikler aynı hizada başlar. */
+    private float trendCaptionH(TechErrorPdfInput in, List<Field> fields, int i, float colW) throws IOException {
+        int lines = trendCaption(in, fields.get(i), colW).size();
+        if (i + 1 < fields.size()) lines = Math.max(lines, trendCaption(in, fields.get(i + 1), colW).size());
+        return Math.max(1, lines) * TREND_CAPTION_LINE;
+    }
+
+    /** Satır yüksekliği; iki hücrede de grafik yoksa ("en az iki ay" notu) boş grafik alanı bırakılmaz. */
+    private float trendRowHeight(TechErrorPdfInput in, List<Field> fields, int i, float colW) throws IOException {
+        int min = com.sitemonitor.service.techerror.TechErrorTrend.MIN_POINTS;
+        boolean chart = in.trend().points(fields.get(i).id()) >= min
+                || (i + 1 < fields.size() && in.trend().points(fields.get(i + 1).id()) >= min);
+        float head = trendCaptionH(in, fields, i, colW) + 4 + TREND_LABEL_H;
+        return head + (chart ? TREND_CHART_H + TREND_AXIS_H + 10 : 10 + 32);
+    }
+
+    private void trendCell(TechErrorPdfInput in, Field f, float x, float top, float w, float capH) throws IOException {
+        float y = top;
+        for (String l : trendCaption(in, f, w)) {
+            c.text(c.bold, 8.5f, x, y, l, INK);
+            y -= TREND_CAPTION_LINE;
+        }
+        float chartTop = top - capH - 4 - TREND_LABEL_H;
+        float chartBottom = chartTop - TREND_CHART_H;
+        List<Double> vals = in.trend().series(f.id());
+        List<java.time.YearMonth> months = in.trend().months();
+        int points = in.trend().points(f.id());
+        if (points < com.sitemonitor.service.techerror.TechErrorTrend.MIN_POINTS || months.size() != vals.size()) {
+            String n = en ? "A trend needs figures for at least two months; months with figures so far: " + points + "."
+                    : "Trend için en az iki ayın rakamı gerekir; şu ana kadar rakamı girilmiş ay: " + points + ".";
+            float ny = chartTop - 10;
+            for (String l : c.wrapCell(n, w, c.regular, 7.5f, 3)) {
+                c.text(c.regular, 7.5f, x, ny, l, MUTED);
+                ny -= 10;
+            }
+            return;
+        }
+        double max = 0, min = 0;
+        for (Double d : vals) {
+            if (d == null) continue;
+            max = Math.max(max, d);
+            min = Math.min(min, d);
+        }
+        if (max - min <= 0) max = min + 1;                           // hepsi sıfır: düz çizgi, bölme yok
+        // Negatif değer varsa altta da etiket payı: en derin çubuğun etiketi ay adlarına binmez (inceleme 2026-10-15)
+        float plotBottom = chartBottom + (min < 0 ? TREND_LABEL_H : 0);
+        float plotH = chartTop - plotBottom;
+        float zeroY = plotBottom + (float) ((0 - min) / (max - min)) * plotH;
+        float slot = w / vals.size();
+        float bw = slot * 0.62f;
+        c.line(x, zeroY, x + w, RULE);
+        for (int i = 0; i < vals.size(); i++) {
+            float sx = x + i * slot;
+            Double d = vals.get(i);
+            if (d != null) {
+                float h = (float) (Math.abs(d) / (max - min) * plotH);
+                if (d != 0 && h < 0.8f) h = 0.8f;
+                float by = d >= 0 ? zeroY : zeroY - h;
+                if (h > 0) c.rect(sx + (slot - bw) / 2, by, bw, h, i == vals.size() - 1 ? BLUE : TREND_BAR);
+                String lab = TechErrorFormat.compact(d, f.type(), en);
+                float size = 5.6f;
+                float lw = c.width(lab, c.regular, size);
+                // Dar hücrede etiket komşusuna taşmasın: tamsayı adım (5,6 − 7 × 0,2f kayan noktada 4,2'den büyük kalıp
+                // bir adım daha atıyordu)
+                for (int step = 1; lw > slot - 1 && step <= TREND_LABEL_STEPS; step++) {
+                    size = 5.6f - step * 0.2f;
+                    lw = c.width(lab, c.regular, size);
+                }
+                // En küçük puntoda bile sığmayan (aşırı büyük) değer yazılmaz — komşu etiketin üstüne binmez
+                if (lw <= slot - 1) {
+                    float ly = d >= 0 ? zeroY + h + 2 : zeroY - h - size - 1;
+                    c.text(c.regular, size, sx + slot / 2 - lw / 2, ly, lab, i == vals.size() - 1 ? INK : LABEL);
+                }
+            }
+            java.time.YearMonth ym = months.get(i);
+            String mon = TechErrorTemplate.monthName(ym.getMonthValue(), in.template().lang());
+            mon = mon.length() > 3 ? mon.substring(0, 3) : mon;
+            float mw = c.width(mon, c.regular, 5.8f);
+            c.text(c.regular, 5.8f, sx + slot / 2 - mw / 2, chartBottom - 8, mon, LABEL);
+            if (i == 0 || ym.getMonthValue() == 1) {
+                String yy = String.valueOf(ym.getYear());
+                float yw = c.width(yy, c.regular, 5.2f);
+                c.text(c.regular, 5.2f, sx + slot / 2 - yw / 2, chartBottom - 15, yy, MUTED);
             }
         }
     }

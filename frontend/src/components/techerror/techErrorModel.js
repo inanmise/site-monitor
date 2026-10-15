@@ -43,6 +43,8 @@ export const LIMITS = Object.freeze({
   rows: 40,
   columnLabel: 120,
   cellText: 200,
+  // Otomatik trend (2026-10-15, Faz C; TechErrorTemplate.MAX_TREND_SERIES)
+  trendSeries: 8,
 })
 
 /** Yer tutucu çözümünün üst sınırı (TechErrorTemplate.MAX_RESOLVED) — başlık / etiket bu uzunlukta "…" ile kesilir. */
@@ -58,7 +60,7 @@ function capResolved(s, max = MAX_RESOLVED) {
   return `${s.slice(0, end)}…`
 }
 
-export const KINDS = ['metrics', 'issues', 'text', 'images', 'summary', 'table']
+export const KINDS = ['metrics', 'issues', 'text', 'images', 'summary', 'table', 'trend']
 export const FIELD_TYPES = ['number', 'percent', 'yesno', 'text', 'textarea']
 export const COLUMN_TYPES = ['number', 'percent', 'text']
 export const WIDTHS = ['half', 'full']
@@ -733,6 +735,8 @@ export function newId(prefix, template, now = Date.now(), rand = Math.random) {
 export function newSection(kind, template, labels) {
   const id = newId('s', template)
   const base = { id, kind, title: labels.title }
+  // Otomatik trend: şablondaki ilk dört sayı / yüzde alanıyla başlar (kullanıcı seçimi değiştirir)
+  if (kind === 'trend') return { ...base, series: trendableFields(template).slice(0, 4).map((f) => f.id) }
   if (kind === 'metrics') return { ...base, fields: [{ id: newId('f', template), label: labels.field, type: 'number' }] }
   if (kind === 'images') return { ...base, slots: [{ id: newId('g', template), label: labels.slot, width: 'half' }] }
   if (kind === 'issues') {
@@ -791,6 +795,10 @@ export function templateErrors(template) {
         if (shortTextValue(l).length > LIMITS.summaryLine) errs[`line:${s.id}:${i}`] = 'te.err.lineTooLong'
         else if (summaryMalformed(l)) errs[`line:${s.id}:${i}`] = 'te.err.lineMalformed'
       })
+    }
+    if (s.kind === 'trend') {
+      if (!(s.series || []).length) errs[`section:${s.id}`] = 'te.err.noSeries'
+      else if ((s.series || []).length > LIMITS.trendSeries) errs[`section:${s.id}`] = 'te.err.tooManySeries'
     }
     if (s.kind === 'table') {
       if (!(s.columns || []).length) errs[`section:${s.id}`] = 'te.err.noColumns'
@@ -984,14 +992,178 @@ export function formatBytes(n, lang) {
   return `${formatNumber(Math.round((v / 1048576) * 10) / 10, lang)} MB`
 }
 
-/** İstemci ön denetimi (sunucu baytlardan yine doğrular): tür ve boyut. Hata → i18n anahtarı, yoksa null. */
-export function preflightImage(file) {
-  if (!file) return 'te.img.errNone'
-  const okType = file.type === 'image/png' || file.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(file.name || '')
-  if (!okType) return 'te.img.errType'
-  if (file.size > LIMITS.imageBytes) return 'te.img.errSize'
-  if (file.size === 0) return 'te.img.errEmpty'
-  return null
+// Görsel ön denetimi ve hazırlama: imagePrep.js (2026-10-15, Faz C — tarayıcıda küçültme / çevirme)
+
+// ── Otomatik trend (2026-10-15, Faz C) ──────────────────────────────────────────────────────────────
+
+/** Sunucuyla aynı (TechErrorTrend.MONTHS / MIN_POINTS). */
+export const TREND_MONTHS = 12
+export const TREND_MIN_POINTS = 2
+/** Grafik başlığının eki, şablon dilinde (PDF yazıcısıyla aynı metin — test Java kaynağından okur). */
+export const TREND_SUFFIX = Object.freeze({ tr: ' (Son 12 Ay)', en: ' (Last 12 Months)' })
+
+/** Grafiğe dökülebilen alan: sayı ya da yüzde (TechErrorTemplate.trendable). */
+export function isTrendable(field) {
+  return !!field && (field.type === 'number' || field.type === 'percent')
+}
+
+/** Şablondaki grafiğe dökülebilen alanlar, bölüm adıyla (`{ ...field, section }`), şablon sırasıyla. */
+export function trendableFields(template) {
+  return (template?.sections || []).filter((s) => s.kind === 'metrics')
+    .flatMap((s) => (s.fields || []).filter(isTrendable).map((f) => ({ ...f, section: s.title || '' })))
+}
+
+/**
+ * Trend bölümünün başvuruları: `{ id, field, status }` — status ok | missing (şablonda yok) | notNumeric (sayı / yüzde
+ * değil). Kayıtta reddedilmez (alan silmek kilitlenmesin); düzenleyici uyarır, grafik çizilmez.
+ */
+export function trendRefs(template, section) {
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  return (section?.series || []).map((id) => {
+    const field = byId.get(id) || null
+    return { id, field, status: !field ? 'missing' : isTrendable(field) ? 'ok' : 'notNumeric' }
+  })
+}
+
+/** Alanı grafiğe döken trend bölümleri (alan silinirken uyarı için). */
+export function trendSectionsUsing(template, fieldId) {
+  return (template?.sections || []).filter((s) => s.kind === 'trend' && (s.series || []).includes(fieldId))
+}
+
+/**
+ * Bu değişiklikle şablondan ÇIKAN alanları trend seçimlerinden de düşürür (alan / bölüm silindi — kullanıcı onayladı).
+ * Önceden kalan, şablonda zaten olmayan başvurulara dokunmaz (düzenleyici onları ayrıca gösterir); başka bölüme taşınan
+ * alan kimliğini korur, düşmez. Bölümün SON alanı silinirse seçim olduğu gibi kalır (boş seçim kaydı reddettirirdi —
+ * inceleme 2026-10-15; grafik çizilmez, düzenleyici uyarır). Değişiklik yoksa AYNI nesne döner.
+ */
+export function pruneRemovedTrendRefs(prev, next) {
+  if (!prev || !next || prev === next) return next
+  const after = new Set(allFields(next).map((f) => f.id))
+  const gone = new Set(allFields(prev).map((f) => f.id).filter((id) => !after.has(id)))
+  if (!gone.size) return next
+  let changed = false
+  const sections = (next.sections || []).map((s) => {
+    if (s.kind !== 'trend') return s
+    const keep = (s.series || []).filter((id) => !gone.has(id))
+    // Son alan da gidiyorsa başvuru bırakılır (düzenleyici "şablonda yok" der): boş seçim kaydı kilitlerdi
+    if (keep.length === (s.series || []).length || keep.length === 0) return s
+    changed = true
+    return { ...s, series: keep }
+  })
+  return changed ? { ...next, sections } : next
+}
+
+/**
+ * Bir alanın 12 aylık noktaları: sunucunun kayıtlı değerleri, raporun AYI için düzenleyicideki taslak (kaydedilmemiş
+ * değişiklik grafikte hemen görünsün). Boş ay null — sıfır değildir. Dönüş: `[{ year, month, value, current }]`.
+ */
+export function trendPoints(trend, fieldId, draftFields, field) {
+  const months = Array.isArray(trend?.months) ? trend.months : []
+  const vals = Array.isArray(trend?.values?.[fieldId]) ? trend.values[fieldId] : []
+  if (!months.length || vals.length !== months.length) return []
+  return months.map((m, i) => {
+    const current = i === months.length - 1
+    let value = vals[i] == null ? null : Number(vals[i])
+    if (current && draftFields) {
+      const raw = draftFields[fieldId]
+      value = fieldExempt(field, draftFields) || raw == null || raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw)
+    }
+    return { year: m.year, month: m.month, value: Number.isFinite(value) ? value : null, current }
+  })
+}
+
+/**
+ * Çubuk etiketi — sunucudaki TechErrorFormat.compact ile AYNI: sayı TR B / Mn / Mr, EN K / M / B, 100'ün altında bir
+ * ondalık; yuvarlanınca 1000 olacak değer bir üst birime geçer ("1Mn", "1.000B" değil). Yüzde en çok iki ondalık, 0,1'in
+ * altında iki anlamlı basamak kalacak kadar (en çok altı — saklama hassasiyeti). Yuvarlama Java HALF_UP ile aynı (Intl "halfExpand"). Tam
+ * değer araç ipucunda ve ekran okuyucu listesinde.
+ */
+/** Yüzde etiketinde ondalık: 0,1 ve üstü 2; altında iki anlamlı basamak kalacak kadar (değerler 6 ondalığa kadar saklanır). */
+function percentDigits(a) {
+  if (a === 0 || a >= 0.1) return 2
+  if (a >= 0.01) return 3
+  if (a >= 0.001) return 4
+  if (a >= 0.0001) return 5
+  return 6
+}
+
+export function compactNumber(value, type, lang) {
+  if (value == null || !Number.isFinite(Number(value))) return '—'
+  const v = Number(value) + 0                                          // -0 → 0 (sunucu 0 saklar; "%-0" yazılmasın)
+  const en = lang === 'en'
+  const fmt = (n, digits) => new Intl.NumberFormat(en ? 'en-US' : 'tr-TR', { maximumFractionDigits: digits, roundingMode: 'halfExpand' }).format(n)
+  const a = Math.abs(v)
+  if (type === 'percent') {
+    const n = fmt(v, percentDigits(a))
+    return en ? `${n}%` : `%${n}`
+  }
+  if (a < 1000) return formatNumber(v, lang)
+  const units = en ? ['K', 'M', 'B'] : ['B', 'Mn', 'Mr']
+  let u = a < 1e6 ? 0 : a < 1e9 ? 1 : 2
+  let scaled = v / 1000 ** (u + 1)
+  if (Math.abs(scaled) >= 999.5 && u < units.length - 1) {           // 999,5 → 1000: bir üst birim
+    u += 1
+    scaled = v / 1000 ** (u + 1)
+  }
+  return fmt(scaled, Math.abs(scaled) < 100 ? 1 : 0) + units[u]
+}
+
+/**
+ * Yazı ölçülemezse (canvas yok) karakter başına tahmin — TEMKİNLİ: Linux'ta "%0,49" 9 px'te ≈ 30 px (Windows'ta ≈ 25);
+ * Windows ölçüsüne göre seçilen 5,0 CI'da etiketleri bitiştirdi (2026-10-15). Tarayıcıda gerçek ölçü kullanılır.
+ */
+export const TREND_LABEL_CHAR_PX = 6.0
+/** 10 px ay adı için aynı temkinli tahmin (px / karakter) */
+export const TREND_TICK_CHAR_PX = 7.0
+/** Komşu etiketler / ay adları arasında en az boşluk (px) */
+const TREND_TEXT_GAP = 4
+
+/** Metin genişliği: ölçüm (`measure(text)` → px) varsa o, yoksa karakter tahmini. */
+function textWidthOf(text, measure, charPx) {
+  const s = String(text || '')
+  if (!s) return 0
+  const m = typeof measure === 'function' ? measure(s) : null
+  return Number.isFinite(m) && m > 0 ? m : s.length * charPx
+}
+
+/**
+ * Çubuk etiketleri sığıyor mu? Çizim genişliği (px) ÷ çubuk sayısı en geniş etiketten (+ boşluk) darsa yalnız bu ayın
+ * etiketi yazılır (`current`; telefonda "125Mn" komşusunun üstüne biniyordu) — tam değerler araç ipucunda ve ekran
+ * okuyucu listesinde. `measure(text)` gerçek yazı genişliği (px; tarayıcı); verilmezse karakter tahmini. Genişlik
+ * bilinmiyorsa (0: jsdom, ilk boyama) `all`.
+ */
+export function trendLabelMode(plotWidth, texts, measure) {
+  if (!plotWidth || !texts?.length) return 'all'
+  const widest = Math.max(0, ...texts.map((s) => textWidthOf(s, measure, TREND_LABEL_CHAR_PX)))
+  return plotWidth / texts.length >= widest + TREND_TEXT_GAP ? 'all' : 'current'
+}
+
+/**
+ * Ay ekseni yazıları: `[{ label, year }]` (gizli ay `label: ''`). Ay adları sığmıyorsa (telefon) atlanarak yazılır — en
+ * küçük sığan adımla (2, 3 …), raporun ayı her zaman görünür, oradan geriye adım adım. Yıl, görünen İLK ayın ve yılı bir
+ * öncekinden farklı görünen ayın altında (PDF'teki gibi; 12 ay iki yıla yayılır). Genişlik bilinmiyorsa (0) hepsi.
+ */
+export function trendTicks(points, lang, plotWidth, measure) {
+  const names = (points || []).map((p) => shortMonth(p.month, lang))
+  const n = names.length
+  if (!n) return []
+  const need = Math.max(...names.map((s) => textWidthOf(s, measure, TREND_TICK_CHAR_PX))) + TREND_TEXT_GAP
+  let step = 1
+  if (plotWidth) while (step < n && (plotWidth / n) * step < need) step++
+  let prevYear = null
+  return points.map((p, i) => {
+    const shown = (n - 1 - i) % step === 0
+    if (!shown) return { label: '', year: '' }
+    const year = prevYear === p.year ? '' : String(p.year)
+    prevYear = p.year
+    return { label: names[i], year }
+  })
+}
+
+/** Ayın kısa adı (şablon dilinde): Oca, Şub … / Jan, Feb … */
+export function shortMonth(month, lang) {
+  const n = monthName(month, lang) || ''
+  return n.length > 3 ? n.slice(0, 3) : n
 }
 
 // ── Geçmiş ve sürümler (2026-10-14, Faz B) ──────────────────────────────────────────────────────────
@@ -1073,6 +1245,11 @@ export function templateDiff(prev, cur) {
       if (a.join('\u0000') !== b.join('\u0000')) out.push({ group: 'summary', op: 'change', label: section, before: a.length, after: b.length })
     }
     if (s.kind === 'text' && (p.text || '') !== (s.text || '')) out.push({ group: 'text', op: 'change', label: section })
+    if (s.kind === 'trend') {
+      const a = p.series || []
+      const b = s.series || []
+      if (a.join('\u0000') !== b.join('\u0000')) out.push({ group: 'trend', op: 'change', label: section, before: a.length, after: b.length })
+    }
     if (s.kind === 'issues') {
       const keys = ['item_title', 'description_label', 'customers_label', 'errors_label']
       if (keys.some((k) => (p[k] || '') !== (s[k] || ''))) out.push({ group: 'section', op: 'labels', label: section })

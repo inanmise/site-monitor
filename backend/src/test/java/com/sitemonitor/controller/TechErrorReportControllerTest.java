@@ -255,6 +255,27 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("rapor okuma: şablonda trend varsa son 12 ayın verisi; okunamazsa rapor yine açılır, trend 'okunamadı' der")
+    void readReportTrend() throws Exception {
+        report(100, 10, A, null);
+        when(service.imageMeta(100L)).thenReturn(List.of());
+        TechErrorTemplate.Template t = TechErrorTemplate.defaults("tr");
+        var cur = com.sitemonitor.service.techerror.TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42)), t);
+        when(service.trend(any(), any(), any(), any())).thenReturn(com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of()));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trend.months.length()").value(12))
+                .andExpect(jsonPath("$.data.trend.months[11].month").value(9))
+                .andExpect(jsonPath("$.data.trend.values['error-rate'][11]").value(0.42))
+                .andExpect(jsonPath("$.data.trend.min_points").value(2));
+        when(service.trend(any(), any(), any(), any())).thenThrow(new IllegalStateException("db"));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trend.unavailable").value(true))
+                .andExpect(jsonPath("$.data.template").exists());
+    }
+
+    @Test
     @DisplayName("rapor okuma: şablon + değer + düzenleme bayrakları; AUDIT için can_edit false ve şablon güncelleme önizlemesi yok")
     void readReport() throws Exception {
         report(100, 10, A, null);
@@ -266,7 +287,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.report.version").value(4))
                 .andExpect(jsonPath("$.data.can_edit").value(true))
                 .andExpect(jsonPath("$.data.team_email_set").value(true))
-                .andExpect(jsonPath("$.data.template.sections.length()").value(11))
+                .andExpect(jsonPath("$.data.template.sections.length()").value(12))
                 .andExpect(jsonPath("$.data.template_update.differs").value(false));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(audit()))
                 .andExpect(jsonPath("$.data.can_edit").value(false))

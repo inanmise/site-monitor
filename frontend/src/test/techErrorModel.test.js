@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   LIMITS, MAX_RESOLVED, canonicalTemplate, canonicalValues, fieldExempt, sanitizeSkipRefs, changePercent, formatBytes, formatNumber, formatPercent, imageRows,
-  issueDisplayTitle, monthName, move, newId, parseNumber, periodOptions, preflightImage, resolveIssueTitle, resolvePlaceholders,
+  issueDisplayTitle, monthName, move, newId, parseNumber, periodOptions, resolveIssueTitle, resolvePlaceholders,
   stableJson, statusMeta, templateErrors,
 } from '../components/techerror/techErrorModel.js'
 import { TEMPLATE } from './helpers/techErrorFixtures.js'
@@ -207,12 +207,5 @@ describe('techErrorModel — durum ve dönem', () => {
   it('dönem seçenekleri Ocak sınırında önceki yıla geçer, en yeni önce', () => {
     const opts = periodOptions({ year: 2026, month: 2 }, 3)
     expect(opts.map((o) => o.key)).toEqual(['2026-02', '2026-01', '2025-12'])
-  })
-
-  it('görsel ön denetimi: tür ve boyut', () => {
-    expect(preflightImage({ name: 'a.png', type: 'image/png', size: 100 })).toBeNull()
-    expect(preflightImage({ name: 'a.gif', type: 'image/gif', size: 100 })).toBe('te.img.errType')
-    expect(preflightImage({ name: 'a.jpg', type: 'image/jpeg', size: LIMITS.imageBytes + 1 })).toBe('te.img.errSize')
-    expect(preflightImage({ name: 'a.png', type: 'image/png', size: 0 })).toBe('te.img.errEmpty')
   })
 })

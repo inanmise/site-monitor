@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,7 +63,9 @@ public final class TechErrorTemplate {
     public static final int MAX_ROWS = 40;
     public static final int MAX_COLUMN_LABEL = 120;
 
-    public static final List<String> KINDS = List.of("metrics", "issues", "text", "images", "summary", "table");
+    public static final List<String> KINDS = List.of("metrics", "issues", "text", "images", "summary", "table", "trend");
+    /** Otomatik trend bölümünde en çok bu kadar alan (her alan bir grafik; 2026-10-15, Faz C). */
+    public static final int MAX_TREND_SERIES = 8;
     public static final List<String> COLUMN_TYPES = List.of("number", "percent", "text");
     public static final List<String> FIELD_TYPES = List.of("number", "percent", "yesno", "text", "textarea");
     public static final List<String> WIDTHS = List.of("half", "full");
@@ -196,6 +199,7 @@ public final class TechErrorTemplate {
                     sm.put("errors_label", s.errorsLabel());
                 }
                 case "summary" -> sm.put("lines", new ArrayList<>(s.lines()));
+                case "trend" -> sm.put("series", new ArrayList<>(s.lines()));
                 case "table" -> {
                     List<Map<String, Object>> cs = new ArrayList<>();
                     for (Column c : s.columns()) {
@@ -326,6 +330,18 @@ public final class TechErrorTemplate {
                     sections.add(new Section(id, kind, stitle, List.of(), List.of(), null, null, null, null, null,
                             lines, List.of(), List.of()));
                 }
+                case "trend" -> {
+                    // Kanalın son 12 ayının GİRİLEN rakamlarından çubuk grafikler (2026-10-15, Faz C): alan kimlikleri
+                    // `lines` içinde tutulur, dışarıda `series` adıyla
+                    List<String> series = trendSeries(sm.get("series"), si, strict);
+                    if (series.isEmpty()) {
+                        if (strict) throw invalid(where(si) + Msg.t("otomatik trend bölümünde en az bir alan seçilmeli.",
+                                "an automatic trend section needs at least one field."));
+                        continue;
+                    }
+                    sections.add(new Section(id, kind, stitle, List.of(), List.of(), null, null, null, null, null,
+                            series, List.of(), List.of()));
+                }
                 case "table" -> {
                     List<Column> cols = columns(sm.get("columns"), si, strict);
                     List<TableRow> rows = tableRows(sm.get("rows"), si, strict);
@@ -349,6 +365,35 @@ public final class TechErrorTemplate {
         List<Section> resolved = resolveSkipRefs(sections, strict);
         if (strict) validateSummaryRefs(resolved);
         return new Template(lang, title, resolved);
+    }
+
+    /**
+     * Trend alanı: sayı ya da yüzde (grafiğe dökülebilen) gösterge. Trend bölümünün başvurusu kayıtta REDDEDİLMEZ
+     * (şablonda olmayan ya da türü sayı / yüzde olmayan alan — alan silmek / türünü değiştirmek trend yüzünden
+     * kilitlenmesin, özet cümleleriyle aynı kural): o grafik çizilmez, düzenleyici bölümün altında uyarır.
+     */
+    public static boolean trendable(Field f) {
+        return f != null && ("number".equals(f.type()) || "percent".equals(f.type()));
+    }
+
+    private static List<String> trendSeries(Object raw, int si, boolean strict) {
+        List<?> list = raw instanceof List<?> l ? l : List.of();
+        if (list.size() > MAX_TREND_SERIES) {
+            if (strict) throw invalid(where(si) + Msg.t("otomatik trend bölümünde en çok 8 alan olabilir.",
+                    "an automatic trend section can have at most 8 fields."));
+            list = list.subList(0, MAX_TREND_SERIES);
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (Object o : list) {
+            String ref = str(o);
+            if (ref == null || !ID.matcher(ref).matches()) {
+                if (strict) throw invalid(where(si) + Msg.t("otomatik trend bölümünde okunamayan bir alan kimliği var.",
+                        "an automatic trend section has a field id that can't be read."));
+                continue;
+            }
+            out.add(ref);
+        }
+        return List.copyOf(out);
     }
 
     /**
@@ -686,6 +731,9 @@ public final class TechErrorTemplate {
         // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
         // dağılımı → gün bazlı. Her kırılım (toplam işlem, toplam hata, teknik, business, maplenmemiş, kota) iki tabanda da
         // var; adlar zaman tabanını açıkça söyler. Kimlikler eski varsayılanla aynı anlamda kaldıysa korunur.
+        // Otomatik trend (kullanıcı kararı 2026-10-15): girilen rakamlardan son 12 ay, 12 aylık özetlerin başında
+        s.add(trend("auto-trend", "Otomatik Trendler (Son 12 Ay)", "error-rate", "total-tx", "error-count", "unmapped-count",
+                "quota-count"));
         s.add(images("charts", "12 Aylık Özetler",
                 new Slot("annual-summary", "Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
                 new Slot("annual-tech-rate", "Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
@@ -757,6 +805,8 @@ public final class TechErrorTemplate {
                 null, null, null, null, null));
         s.add(new Section("trend-note", "text", "About the charts", List.of(), List.of(), null, null, null, null,
                 "The yearly trend and detail charts are shared below."));
+        s.add(trend("auto-trend", "Automatic Trends (Last 12 Months)", "error-rate", "total-tx", "error-count",
+                "unmapped-count", "quota-count"));
         s.add(images("charts", "12-Month Summaries",
                 new Slot("annual-summary", "Annual Operations and Error Distribution Summary (Last 12 Months)", "half"),
                 new Slot("annual-tech-rate", "Annual Technical Error Rate Trend (Last 12 Months)", "half"),
@@ -784,6 +834,11 @@ public final class TechErrorTemplate {
                 new Slot("tech-ratio", "Daily Technical Errors as a Share of All Operations ({month} {year})", "full"),
                 new Slot("business-ratio", "Daily Business Errors as a Share of All Operations ({month} {year})", "full")));
         return new Template("en", "{channel} Channel Technical Error Messages - {month} {year}", List.copyOf(s));
+    }
+
+    private static Section trend(String id, String title, String... fieldIds) {
+        return new Section(id, "trend", title, List.of(), List.of(), null, null, null, null, null, List.of(fieldIds),
+                List.of(), List.of());
     }
 
     private static Section images(String id, String title, Slot... slots) {

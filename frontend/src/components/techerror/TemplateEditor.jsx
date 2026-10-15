@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2, Trash2, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2, Trash2,
+  TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -25,14 +26,14 @@ import { cn } from '@/lib/utils'
 import {
   COLUMN_TYPES, FIELD_TYPES, LIMITS, allFields, allSlots, canonicalTemplate, imageRows, insertToken, move, newId, newSection,
   resolvePlaceholders, resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs,
-  templateErrors, withoutSkip,
+  templateErrors, pruneRemovedTrendRefs, trendRefs, trendSectionsUsing, trendableFields, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
 
-const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn, summary: ScrollText, table: Table2 }
+const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn, summary: ScrollText, table: Table2, trend: TrendingUp }
 // "Bölüm ekle" menüsünün sırası (raporun doğal akışı: özet → göstergeler → konular → tablo → metin → grafikler)
-const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images']
+const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images', 'trend']
 
 /**
  * Özet cümlesine eklenecek alan başvurusu. Evet/hayır alanı cevaba göre iki ifadeden birini yazar: ifadeler
@@ -178,8 +179,9 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   useEffect(() => () => flushBackup.current?.(), [])
   const shownErrors = showErrors ? errors : {}
 
-  // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti)
-  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(fn(d)) : d))
+  // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti); silinen
+  // alan otomatik trend seçimlerinden de düşer (silme onayında söylenir)
+  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(pruneRemovedTrendRefs(d, fn(d))) : d))
   const updateSection = (id, fn) => update((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? fn(s) : s)) }))
 
   async function save() {
@@ -358,11 +360,14 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
               onChange={(fn) => updateSection(s.id, fn)}
               onMove={(delta) => update((d) => ({ ...d, sections: move(d.sections, i, delta) }))}
               onRemove={async () => {
-                // Bölümün alanları yönetici özetinde kullanılıyorsa söylenir (alan tek tek silinirken olduğu gibi)
+                // Bölümün alanları yönetici özetinde ya da otomatik trendde kullanılıyorsa söylenir (alan tek tek
+                // silinirken olduğu gibi; trend seçimi update içinde düşer)
                 const used = new Set()
                 for (const f of s.fields || []) for (const l of summaryLinesUsing(draft, f.id)) used.add(l)
+                const charted = (s.fields || []).filter((f) => trendSectionsUsing(draft, f.id).length).length
                 const message = t('te.tpl.removeSectionBody', s.title || '')
                   + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
+                  + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
                 const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                   variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                 if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
@@ -416,6 +421,63 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Otomatik trend bölümü (2026-10-15, Faz C): grafiğe dökülecek sayı / yüzde alanları. Her alan raporda bir çubuk grafik
+ * (son 12 ay, girilen rakamlardan). Şablonda olmayan ya da sayı / yüzde olmayan başvuru kaydı engellemez — burada uyarılır
+ * ve kaldırılabilir; raporda o grafik çizilmez.
+ */
+function TrendEditor({ section, draft, resolve, onChange }) {
+  const t = useT()
+  const options = trendableFields(draft)
+  const series = section.series || []
+  const selected = new Set(series)
+  const problems = trendRefs(draft, section).filter((r) => r.status !== 'ok')
+  const full = series.length >= LIMITS.trendSeries
+  const set = (id, on) => onChange((x) => {
+    const cur = x.series || []
+    return { ...x, series: on ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((v) => v !== id) }
+  })
+  return (
+    <div className="flex flex-col gap-2" data-slot="te-tpl-trend">
+      <p className="text-sm text-muted-foreground">{t('te.tpl.trendHint')}</p>
+      {options.length === 0 ? (
+        <p className="text-sm text-muted-foreground" data-slot="te-tpl-trend-none">{t('te.tpl.trendNoFields')}</p>
+      ) : (
+        <ul className="m-0 grid list-none gap-1.5 p-0 sm:grid-cols-2">
+          {options.map((f) => {
+            const cid = `te-trend-${section.id}-${f.id}`
+            const on = selected.has(f.id)
+            return (
+              <li key={f.id}>
+                <div className="flex min-h-10 items-start gap-2 rounded-md border px-3 py-2">
+                  <Checkbox id={cid} checked={on} disabled={!on && full} className="mt-0.5" data-slot="te-tpl-trend-field"
+                    data-field-id={f.id} onCheckedChange={(v) => set(f.id, v === true)} />
+                  <label htmlFor={cid} className="min-w-0 text-sm leading-snug [overflow-wrap:anywhere]">
+                    {resolve(f.label)}
+                    <span className="block text-xs text-muted-foreground">{resolve(f.section)} · {t(`te.type.${f.type}`)}</span>
+                  </label>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {full && <p className="text-xs text-muted-foreground">{t('te.tpl.trendFull', LIMITS.trendSeries)}</p>}
+      {problems.map((r) => (
+        <div key={r.id} data-slot="te-tpl-trend-problem"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+          <span className="min-w-0 [overflow-wrap:anywhere]">
+            {r.status === 'missing' ? t('te.tpl.trendMissing', r.id) : t('te.tpl.trendNotNumeric', resolve(r.field?.label || r.id))}
+          </span>
+          <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10" onClick={() => set(r.id, false)}>
+            {t('te.tpl.trendRemoveRef')}
+          </Button>
+        </div>
+      ))}
     </div>
   )
 }
@@ -494,6 +556,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
         {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
         {s.kind === 'summary' && <SummaryLinesEditor section={s} errors={errors} draft={draft} resolve={resolve} resolveLong={resolveLong} onChange={onChange} />}
         {s.kind === 'table' && <TableEditor section={s} errors={errors} draft={draft} resolve={resolve} onChange={onChange} />}
+        {s.kind === 'trend' && <TrendEditor section={s} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'text' && (
           <div className="flex flex-col gap-1.5">
             <label htmlFor={`${titleId}-text`} className="text-sm font-semibold">{t('te.tpl.defaultText')}</label>
@@ -511,12 +574,18 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const fields = s.fields || []
-  // Özet cümlesinde kullanılan alan silinirken uyarılır: o cümleler raporda artık görünmez (kayıt engellenmez)
+  // Özet cümlesinde ya da otomatik trendde kullanılan alan silinirken uyarılır: o cümleler raporda artık görünmez, alanın
+  // grafiği trendden düşer (kayıt engellenmez)
   const removeField = async (f) => {
     const used = summaryLinesUsing(draft, f.id)
-    if (used.length) {
-      const ok = await showConfirm({ title: t('te.tpl.removeFieldUsedTitle'), message: t('te.tpl.removeFieldUsedBody', f.label || '', used.length),
-        variant: 'warning', confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
+    const charts = trendSectionsUsing(draft, f.id)
+    if (used.length || charts.length) {
+      const [title, message] = used.length && charts.length
+        ? [t('te.tpl.removeFieldUsedAnyTitle'), t('te.tpl.removeFieldBothBody', f.label || '', used.length)]
+        : used.length
+          ? [t('te.tpl.removeFieldUsedTitle'), t('te.tpl.removeFieldUsedBody', f.label || '', used.length)]
+          : [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
+      const ok = await showConfirm({ title, message, variant: 'warning', confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
       if (!ok) return
     }
     onChange((x) => ({ ...x, fields: x.fields.filter((y) => y.id !== f.id) }))
@@ -701,6 +770,7 @@ function LayoutPreview({ draft, resolve }) {
                 {s.kind === 'metrics' ? t('te.tpl.previewFields', (s.fields || []).length)
                   : s.kind === 'issues' ? t('te.tpl.previewIssues')
                     : s.kind === 'summary' ? t('te.tpl.previewSummary', (s.lines || []).length)
+                    : s.kind === 'trend' ? t('te.tpl.previewTrend', (s.series || []).length)
                       : s.kind === 'table' ? t('te.tpl.previewTable', (s.columns || []).length, (s.rows || []).length)
                         : t('te.tpl.previewText')}
               </p>
