@@ -188,6 +188,13 @@ describe('çubuk etiketleri', () => {
     expect(trendLabelMode(480, texts)).toBe('all')       // 40 px / çubuk ≥ 37,6
     expect(trendLabelMode(260, ['%0,4', '%0,5'])).toBe('all')
     expect(trendLabelMode(100, [])).toBe('all')
+    // Gerçek ölçüm varsa o kullanılır (Linux'ta "%0,49" ≈ 30 px: 32 px çubukta 4 px boşluk kalmaz → yalnız bu ay)
+    const pct = Array(12).fill('%0,49')
+    expect(trendLabelMode(384, pct, () => 30)).toBe('current')
+    expect(trendLabelMode(384, pct, () => 25)).toBe('all')
+    // Ölçüm null dönerse (canvas yok) temkinli tahmine düşer: 5 × 6 + 4 = 34 px gerekir
+    expect(trendLabelMode(384, pct, () => null)).toBe('current')
+    expect(trendLabelMode(480, pct, () => null)).toBe('all')
   })
 })
 
@@ -199,6 +206,9 @@ describe('ay ekseni', () => {
     expect(t.map((x) => x.year).filter(Boolean)).toEqual(['2025', '2026'])
     expect(t[3].year).toBe('2026')
     expect(trendTicks(pts, 'tr', 0)).toEqual(t)        // genişlik bilinmiyor → hepsi
+    // Ölçülen ay adı genişliği: 300 px / 12 = 25 px; 22 px adlar sığmaz (22 + 4) → bir atlanır
+    expect(trendTicks(pts, 'tr', 300, () => 22).filter((x) => x.label)).toHaveLength(6)
+    expect(trendTicks(pts, 'tr', 300, () => 18).filter((x) => x.label)).toHaveLength(12)
   })
   it('dar grafikte bir atlanarak, raporun ayı hep görünür; yıl görünen ilk ayda ve yıl değişince', () => {
     const t = trendTicks(pts, 'en', 260)

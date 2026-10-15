@@ -1108,20 +1108,34 @@ export function compactNumber(value, type, lang) {
   return fmt(scaled, Math.abs(scaled) < 100 ? 1 : 0) + units[u]
 }
 
-/** 9 px çubuk etiketinde karakter başına genişlik (rakam / harf ortalaması, px; Chromium'da ölçüldü — "126Mn" ≈ 25 px) */
-export const TREND_LABEL_CHAR_PX = 5.0
-/** 10 px ay adında karakter başına genişlik (px) */
-export const TREND_TICK_CHAR_PX = 6.2
+/**
+ * Yazı ölçülemezse (canvas yok) karakter başına tahmin — TEMKİNLİ: Linux'ta "%0,49" 9 px'te ≈ 30 px (Windows'ta ≈ 25);
+ * Windows ölçüsüne göre seçilen 5,0 CI'da etiketleri bitiştirdi (2026-10-15). Tarayıcıda gerçek ölçü kullanılır.
+ */
+export const TREND_LABEL_CHAR_PX = 6.0
+/** 10 px ay adı için aynı temkinli tahmin (px / karakter) */
+export const TREND_TICK_CHAR_PX = 7.0
+/** Komşu etiketler / ay adları arasında en az boşluk (px) */
+const TREND_TEXT_GAP = 4
+
+/** Metin genişliği: ölçüm (`measure(text)` → px) varsa o, yoksa karakter tahmini. */
+function textWidthOf(text, measure, charPx) {
+  const s = String(text || '')
+  if (!s) return 0
+  const m = typeof measure === 'function' ? measure(s) : null
+  return Number.isFinite(m) && m > 0 ? m : s.length * charPx
+}
 
 /**
- * Çubuk etiketleri sığıyor mu? Çizim genişliği (px) ÷ çubuk sayısı en uzun etiketten darsa yalnız bu ayın etiketi
- * yazılır (`current`; telefonda "125Mn" komşusunun üstüne biniyordu) — tam değerler araç ipucunda ve ekran okuyucu
- * listesinde. Genişlik bilinmiyorsa (0: jsdom, ilk boyama) `all`.
+ * Çubuk etiketleri sığıyor mu? Çizim genişliği (px) ÷ çubuk sayısı en geniş etiketten (+ boşluk) darsa yalnız bu ayın
+ * etiketi yazılır (`current`; telefonda "125Mn" komşusunun üstüne biniyordu) — tam değerler araç ipucunda ve ekran
+ * okuyucu listesinde. `measure(text)` gerçek yazı genişliği (px; tarayıcı); verilmezse karakter tahmini. Genişlik
+ * bilinmiyorsa (0: jsdom, ilk boyama) `all`.
  */
-export function trendLabelMode(plotWidth, texts) {
+export function trendLabelMode(plotWidth, texts, measure) {
   if (!plotWidth || !texts?.length) return 'all'
-  const longest = Math.max(0, ...texts.map((s) => String(s || '').length))
-  return plotWidth / texts.length >= longest * TREND_LABEL_CHAR_PX + 3 ? 'all' : 'current'
+  const widest = Math.max(0, ...texts.map((s) => textWidthOf(s, measure, TREND_LABEL_CHAR_PX)))
+  return plotWidth / texts.length >= widest + TREND_TEXT_GAP ? 'all' : 'current'
 }
 
 /**
@@ -1129,11 +1143,11 @@ export function trendLabelMode(plotWidth, texts) {
  * küçük sığan adımla (2, 3 …), raporun ayı her zaman görünür, oradan geriye adım adım. Yıl, görünen İLK ayın ve yılı bir
  * öncekinden farklı görünen ayın altında (PDF'teki gibi; 12 ay iki yıla yayılır). Genişlik bilinmiyorsa (0) hepsi.
  */
-export function trendTicks(points, lang, plotWidth) {
+export function trendTicks(points, lang, plotWidth, measure) {
   const names = (points || []).map((p) => shortMonth(p.month, lang))
   const n = names.length
   if (!n) return []
-  const need = Math.max(...names.map((s) => s.length)) * TREND_TICK_CHAR_PX + 4
+  const need = Math.max(...names.map((s) => textWidthOf(s, measure, TREND_TICK_CHAR_PX))) + TREND_TEXT_GAP
   let step = 1
   if (plotWidth) while (step < n && (plotWidth / n) * step < need) step++
   let prevYear = null

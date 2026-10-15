@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { TrendingUp } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -11,6 +12,28 @@ import {
 // Çizim kenar boşlukları (px): sağda bu ayın etiketi son çubuğun dışına taşabilsin diye pay
 const MARGIN = { top: 18, right: 12, bottom: 0, left: 12 }
 
+// Gerçek yazı genişliği (canvas measureText, sayfanın yazı tipiyle) — karakter tahmini işletim sistemine göre değişiyordu
+// (CI Linux'ta etiketler bitişti). jsdom'da canvas yok: ölçüm null, model tahmine düşer.
+let measureCtx
+function measureWith(px) {
+  return (text) => {
+    if (measureCtx === undefined) {
+      measureCtx = null
+      try {
+        if (typeof document !== 'undefined' && !/jsdom/i.test(globalThis.navigator?.userAgent || '')) {
+          measureCtx = document.createElement('canvas').getContext('2d')
+        }
+      } catch { measureCtx = null }
+    }
+    if (!measureCtx) return null
+    const family = getComputedStyle(document.body).fontFamily || 'sans-serif'
+    measureCtx.font = `${px}px ${family}`
+    return measureCtx.measureText(text).width
+  }
+}
+const measureLabel = measureWith(9)
+const measureTick = measureWith(10)
+
 /**
  * Otomatik trend bölümü (2026-10-15, Faz C): seçilen her sayı / yüzde alanı için son 12 ayın çubuk grafiği — rakamlar
  * kanalın önceki raporlarına GİRİLMİŞ değerlerden (sunucu `trend`), bu ayınki düzenleyicideki taslaktan (kaydedilmemiş
@@ -20,6 +43,13 @@ const MARGIN = { top: 18, right: 12, bottom: 0, left: 12 }
  */
 export function TrendBlock({ section, template, trend, draftFields, resolve, tplLang }) {
   const t = useT()
+  // Web yazı tipi yüklenince yeniden ölçülür (önce yedek yazı tipiyle ölçülmüş olabilir)
+  const [, setFontsReady] = useState(false)
+  useEffect(() => {
+    let alive = true
+    globalThis.document?.fonts?.ready?.then(() => { if (alive) setFontsReady(true) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
   const refs = trendRefs(template, section).filter((r) => r.status === 'ok' && !fieldExempt(r.field, draftFields))
   if (!refs.length) return null                     // çizilecek alan yok (şablon düzenleyici uyarır)
   const unavailable = !trend || trend.unavailable === true
@@ -59,7 +89,7 @@ function TrendChart({ field, points, resolve, tplLang }) {
   const withValue = points.filter((p) => p.value != null)
   const plotWidth = boxWidth ? boxWidth - MARGIN.left - MARGIN.right : 0
   // Ay adı + yıl (dar grafikte bir atlanarak; yıl değişen ilk görünen ayın altında)
-  const ticks = trendTicks(points, lang, plotWidth)
+  const ticks = trendTicks(points, lang, plotWidth, measureTick)
   const data = points.map((p, i) => {
     const text = p.value == null ? '' : compactNumber(p.value, field.type, lang)
     return {
@@ -73,7 +103,7 @@ function TrendChart({ field, points, resolve, tplLang }) {
       current: p.current,
     }
   })
-  const labels = trendLabelMode(plotWidth, data.map((d) => d.text))
+  const labels = trendLabelMode(plotWidth, data.map((d) => d.text), measureLabel)
   return (
     <figure className="m-0 flex min-w-0 flex-col gap-1.5 rounded-xl border p-3" data-slot="te-trend-chart" data-field={field.id}
       data-points={withValue.length} data-labels={labels}>
