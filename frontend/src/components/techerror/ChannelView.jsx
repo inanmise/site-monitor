@@ -18,7 +18,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import TemplateEditor from './TemplateEditor.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
-import { TAB_REPORTS, TAB_TEMPLATE, periodOptions } from './techErrorModel.js'
+import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 
 const TABLE_MIN_PX = 760
 
@@ -157,75 +157,89 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
             {reports.length === 0 ? (
               <StatusBlock tone="neutral" icon={FileText} title={t('te.noReportsTitle')}
                 description={ch?.can_edit ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
-            ) : narrow ? (
-              <ul className="flex flex-col gap-2" data-slot="te-report-cards">
-                {reports.map((r) => (
-                  <li key={r.id}>
-                    <Card className="gap-2 py-3" data-slot="te-report-row" data-report={r.id}>
-                      <CardContent className="flex flex-col gap-2 px-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-semibold">{periodLabel(r, t)}</span>
-                          <StatusBadge status={r.status} sendState={r.last_send_status} />
-                        </div>
-                        <p className="text-sm [overflow-wrap:anywhere]">{r.title}</p>
-                        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                          {t('te.updatedBy', fmtDateTime(r.updated_at, lang), r.updated_by_name || '—')}
-                          {r.last_sent_at ? ` · ${t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}` : ''}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" size="sm" onClick={() => onOpenReport(r.id, ch.id)} className="pointer-coarse:min-h-10">
-                            {t('te.open')}
-                          </Button>
-                          {r.can_delete && (
-                            <Button type="button" size="sm" variant="ghost" onClick={() => removeReport(r)}
-                              className="text-destructive pointer-coarse:min-h-10">
-                              <Trash2 aria-hidden="true" /> {t('te.delete')}
-                            </Button>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </li>
-                ))}
-              </ul>
             ) : (
-              <div className="overflow-hidden rounded-xl border" data-slot="te-report-table">
-                <Table className="table-fixed">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-36">{t('te.col.period')}</TableHead>
-                      <TableHead>{t('te.col.title')}</TableHead>
-                      <TableHead className="w-44">{t('te.col.status')}</TableHead>
-                      <TableHead className="w-48">{t('te.col.updated')}</TableHead>
-                      <TableHead className="w-44 text-right">{t('te.col.actions')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {reports.map((r) => (
-                      <TableRow key={r.id} data-slot="te-report-row" data-report={r.id}>
-                        <TableCell className="font-medium">{periodLabel(r, t)}</TableCell>
-                        <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{r.title}</TableCell>
-                        <TableCell className="whitespace-normal"><StatusBadge status={r.status} sendState={r.last_send_status} /></TableCell>
-                        <TableCell className="whitespace-normal text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                          {fmtDateTime(r.updated_at, lang)} · {r.updated_by_name || '—'}
-                          {r.last_sent_at && <div>{t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}</div>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10"
-                              onClick={() => onOpenReport(r.id, ch.id)}>{t('te.open')}</Button>
-                            {r.can_delete && (
-                              <Button type="button" size="sm" variant="ghost" aria-label={t('te.deleteReportAria', periodLabel(r, t))}
-                                onClick={() => removeReport(r)} className="text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10">
-                                <Trash2 aria-hidden="true" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              // Yıllara göre (2026-10-14, Faz B): en yeni yıl önce, her yılın başlığı ve rapor sayısı
+              <div className="flex flex-col gap-5" data-slot="te-report-years">
+                {groupByYear(reports).map((g) => (
+                  // Yıl grubu başlıkla ayrılır, yer imi (region) değildir
+                  <div key={g.year} className="flex flex-col gap-2" data-slot="te-report-year" data-year={g.year}>
+                    <h3 className="m-0 flex flex-wrap items-baseline gap-2 text-base font-semibold">
+                      {g.year}
+                      <span className="text-sm font-normal text-muted-foreground">{t('te.yearCount', g.items.length)}</span>
+                    </h3>
+                    {narrow ? (
+                      <ul className="flex flex-col gap-2" data-slot="te-report-cards">
+                        {g.items.map((r) => (
+                          <li key={r.id}>
+                            <Card className="gap-2 py-3" data-slot="te-report-row" data-report={r.id}>
+                              <CardContent className="flex flex-col gap-2 px-4">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-semibold">{periodLabel(r, t)}</span>
+                                  <StatusBadge status={r.status} sendState={r.last_send_status} />
+                                </div>
+                                <p className="text-sm [overflow-wrap:anywhere]">{r.title}</p>
+                                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                                  {t('te.updatedBy', fmtDateTime(r.updated_at, lang), r.updated_by_name || '—')}
+                                  {r.last_sent_at ? ` · ${t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}` : ''}
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  <Button type="button" size="sm" onClick={() => onOpenReport(r.id, ch.id)} className="pointer-coarse:min-h-10">
+                                    {t('te.open')}
+                                  </Button>
+                                  {r.can_delete && (
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => removeReport(r)}
+                                      className="text-destructive pointer-coarse:min-h-10">
+                                      <Trash2 aria-hidden="true" /> {t('te.delete')}
+                                    </Button>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="overflow-hidden rounded-xl border" data-slot="te-report-table">
+                        <Table className="table-fixed">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-36">{t('te.col.period')}</TableHead>
+                              <TableHead>{t('te.col.title')}</TableHead>
+                              <TableHead className="w-44">{t('te.col.status')}</TableHead>
+                              <TableHead className="w-48">{t('te.col.updated')}</TableHead>
+                              <TableHead className="w-44 text-right">{t('te.col.actions')}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {g.items.map((r) => (
+                              <TableRow key={r.id} data-slot="te-report-row" data-report={r.id}>
+                                <TableCell className="font-medium">{periodLabel(r, t)}</TableCell>
+                                <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{r.title}</TableCell>
+                                <TableCell className="whitespace-normal"><StatusBadge status={r.status} sendState={r.last_send_status} /></TableCell>
+                                <TableCell className="whitespace-normal text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                                  {fmtDateTime(r.updated_at, lang)} · {r.updated_by_name || '—'}
+                                  {r.last_sent_at && <div>{t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}</div>}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-1">
+                                    <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10"
+                                      onClick={() => onOpenReport(r.id, ch.id)}>{t('te.open')}</Button>
+                                    {r.can_delete && (
+                                      <Button type="button" size="sm" variant="ghost" aria-label={t('te.deleteReportAria', periodLabel(r, t))}
+                                        onClick={() => removeReport(r)} className="text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10">
+                                        <Trash2 aria-hidden="true" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>

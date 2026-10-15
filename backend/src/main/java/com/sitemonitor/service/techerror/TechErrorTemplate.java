@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
  *       {@code {f:<evet/hayır alanı>?evet metni|hayır metni}} cevaba göre seçer. Değeri boş ya da muaf bir alana
  *       dayanan cümle kendiliğinden düşer ({@link TechErrorSummary}); rapor metni elle de düzenleyebilir;</li>
  *   <li>{@code table} — sütunları (sayı / yüzde / metin) ve satırları (grup başlığı ya da satır) şablonda tanımlı
- *       tablo; değerler raporda girilir (ör. SLA erişilebilirlik tablosu).</li>
+ *       tablo; değerler raporda girilir. Varsayılan şablonda kullanılmaz (SLA tablosu ekran görüntüsüdür).</li>
  * </ul>
  * Başlıklarda {@code {kanal}} / {@code {ay}} / {@code {yil}} (EN: {@code {channel}} / {@code {month}} / {@code {year}})
  * raporun kanalı ve dönemiyle dolar. Alan ve yuva kimlikleri KALICIDIR: ad değişse de geçmiş raporların değerleri kaybolmaz.
@@ -297,8 +297,8 @@ public final class TechErrorTemplate {
                 case "images" -> {
                     List<Slot> slots = slots(sm.get("slots"), si, slotIds, strict, MAX_SLOTS - slotCount);
                     if (slots.isEmpty()) {
-                        if (strict) throw invalid(where(si) + Msg.t("grafik bölümünde en az bir yuva olmalı.",
-                                "a charts section needs at least one slot."));
+                        if (strict) throw invalid(where(si) + Msg.t("görsel bölümünde en az bir yuva olmalı.",
+                                "an images section needs at least one slot."));
                         continue;
                     }
                     slotCount += slots.size();
@@ -523,8 +523,8 @@ public final class TechErrorTemplate {
     private static List<Slot> slots(Object raw, int si, Set<String> ids, boolean strict, int room) {
         List<?> list = raw instanceof List<?> l ? l : List.of();
         if (list.size() > room) {
-            if (strict) throw invalid(where(si) + Msg.t("şablonda toplam en çok 40 grafik yuvası olabilir.",
-                    "a template can have at most 40 chart slots in total."));
+            if (strict) throw invalid(where(si) + Msg.t("şablonda toplam en çok 40 görsel yuvası olabilir.",
+                    "a template can have at most 40 image slots in total."));
             list = list.subList(0, Math.max(0, room));
         }
         List<Slot> out = new ArrayList<>();
@@ -538,11 +538,11 @@ public final class TechErrorTemplate {
             }
             String label = line(m.get("label"));
             if (label.isEmpty()) {
-                if (strict) throw invalid(at + Msg.t("grafik adı boş olamaz.", "the chart name can't be empty."));
+                if (strict) throw invalid(at + Msg.t("görsel adı boş olamaz.", "the image name can't be empty."));
                 continue;
             }
-            label = cut(label, MAX_LABEL, strict, at + Msg.t("grafik adı en çok 200 karakter olabilir.",
-                    "the chart name can be at most 200 characters."));
+            label = cut(label, MAX_LABEL, strict, at + Msg.t("görsel adı en çok 200 karakter olabilir.",
+                    "the image name can be at most 200 characters."));
             String width = str(m.get("width"));
             if (width == null || !WIDTHS.contains(width)) {
                 if (strict && width != null && !width.isEmpty()) {
@@ -675,35 +675,43 @@ public final class TechErrorTemplate {
         s.add(metrics("quota", "Kota Hatası Adedi", List.of(
                 new Field("quota-count", "Kota hatası adedi", "number", null),
                 new Field("quota-note", "Açıklama", "textarea", null))));
-        s.add(table("sla-table", "SLA Erişilebilirlik Tablosu", List.of(
-                new Column("functions", "Fonksiyon adedi", "number"),
-                new Column("success-tx", "Başarılı işlem adedi", "number"),
-                new Column("total-tx", "Toplam işlem adedi", "number"),
-                new Column("failed-tx", "Teknik başarısız işlem adedi", "number"),
-                new Column("availability", "Erişilebilirlik (kesintisiz)", "percent"),
-                new Column("volume-share", "Toplam işlem hacmi payı", "percent")), List.of(
-                new TableRow("total", "{kanal} Kanalı Toplam", true),
-                new TableRow("sla-critical", "SLA dahil ve kritik", false),
-                new TableRow("sla-noncritical", "SLA dahil ve kritik olmayan", false),
-                new TableRow("out-of-sla", "SLA kapsamında olmayan", false))));
+        // SLA erişilebilirlik tablosu ELLE GİRİLMEZ (kullanıcı kararı 2026-10-15): raporlama aracındaki tablonun ekran
+        // görüntüsü tam genişlikte (iki kolon) yüklenir — tek görüntü ya da iki ayrı görüntü (ör. iki alt kanal)
+        s.add(new Section("sla-shots", "images", "SLA Erişilebilirlik Tablosu", List.of(), List.of(
+                new Slot("sla-shot-1", "{kanal} Kanalı SLA Erişilebilirlik Tablosu", "full"),
+                new Slot("sla-shot-2", "{kanal} Kanalı SLA Erişilebilirlik Tablosu (ikinci görüntü)", "full")),
+                null, null, null, null, null));
         s.add(new Section("trend-note", "text", "Grafikler hakkında", List.of(), List.of(), null, null, null, null,
                 "Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır."));
-        s.add(new Section("charts", "images", "Grafikler", List.of(), List.of(
-                new Slot("monthly-tx", "{kanal} Kanalı Ay Bazlı Toplam İşlem Adetleri", "half"),
-                new Slot("tech-errors", "{kanal} Kanalı Teknik Hata Grafiği", "half"),
-                new Slot("unmapped-monthly", "{kanal} Kanalı Maplenmemiş Hata Grafiği (Aylık)", "half"),
-                new Slot("quota-monthly", "Kota Hata Grafiği (Aylık)", "half"),
-                new Slot("daily-errors", "{kanal} Kanalı Teknik Hata (Günlük)", "full"),
-                new Slot("summary-monthly", "{kanal} Kanalı Özet (Aylık)", "full"),
-                new Slot("month-tech-counts", "{ay} {yil} Teknik Hata Adetleri", "full"),
-                new Slot("month-business-counts", "{ay} {yil} Business Hata Adetleri", "full"),
-                new Slot("quota-unmapped-monthly", "Kota ve Maplenmemiş Hata Adetleri (Ay Bazlı)", "full"),
-                new Slot("daily-tech-business", "Gün Bazlı Teknik ve Business Hata Adetleri", "full"),
-                new Slot("month-quota-counts", "{ay} {yil} Kota Hata Adetleri", "full"),
-                new Slot("month-unmapped-daily", "{ay} {yil} Maplenmemiş Hata Adetleri (Gün Bazlı)", "full"),
-                new Slot("tech-ratio", "{ay} {yil} Teknik Hataların Tüm Operasyonlara Oranı", "full"),
-                new Slot("business-ratio", "{ay} {yil} Business Hataların Tüm Operasyonlara Oranı", "full")),
-                null, null, null, null, null));
+        // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
+        // dağılımı → gün bazlı. Her kırılım (toplam işlem, toplam hata, teknik, business, maplenmemiş, kota) iki tabanda da
+        // var; adlar zaman tabanını açıkça söyler. Kimlikler eski varsayılanla aynı anlamda kaldıysa korunur.
+        s.add(images("charts", "12 Aylık Özetler",
+                new Slot("annual-summary", "Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
+                new Slot("annual-tech-rate", "Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
+                new Slot("annual-table", "Son 12 Ay Operasyon ve Hata Özet Tablosu", "full")));
+        s.add(images("charts-monthly", "Ay Bazlı Hata ve İşlem Adetleri (Son 12 Ay)",
+                new Slot("monthly-tx", "Ay Bazlı Toplam İşlem Adetleri (Son 12 Ay)", "half"),
+                new Slot("monthly-failed", "Ay Bazlı Toplam Hata (Başarısız İşlem) Adetleri (Son 12 Ay)", "half"),
+                new Slot("tech-errors", "Ay Bazlı Teknik Hata Adetleri (Son 12 Ay)", "half"),
+                new Slot("business-monthly", "Ay Bazlı Business Hata Adetleri (Son 12 Ay)", "half"),
+                new Slot("unmapped-monthly", "Ay Bazlı Maplenmemiş Hata Adetleri (Son 12 Ay)", "half"),
+                new Slot("quota-monthly", "Ay Bazlı Kota Hata Adetleri (Son 12 Ay)", "half"),
+                new Slot("business-tech-monthly", "Ay Bazlı Business ve Teknik Hata Adetleri (Son 12 Ay)", "full"),
+                new Slot("quota-unmapped-monthly", "Ay Bazlı Kota ve Maplenmemiş Hata Adetleri (Son 12 Ay)", "full")));
+        s.add(images("charts-distribution", "{ay} {yil} Birim Bazlı Hata Dağılımı",
+                new Slot("month-tech-counts", "{ay} {yil} Teknik Hata Dağılımı (Birim Bazlı)", "half"),
+                new Slot("month-business-counts", "{ay} {yil} Business Hata Dağılımı (Birim Bazlı)", "half")));
+        s.add(images("charts-daily", "Gün Bazlı Hata ve İşlem Adetleri ({ay} {yil})",
+                new Slot("daily-tx", "Gün Bazlı Toplam İşlem Adetleri ({ay} {yil})", "half"),
+                new Slot("daily-failed", "Gün Bazlı Toplam Hata (Başarısız İşlem) Adetleri ({ay} {yil})", "half"),
+                new Slot("daily-errors", "Gün Bazlı Teknik Hata Adetleri ({ay} {yil})", "half"),
+                new Slot("daily-business", "Gün Bazlı Business Hata Adetleri ({ay} {yil})", "half"),
+                new Slot("month-unmapped-daily", "Gün Bazlı Maplenmemiş Hata Adetleri ({ay} {yil})", "half"),
+                new Slot("month-quota-counts", "Gün Bazlı Kota Hata Adetleri ({ay} {yil})", "half"),
+                new Slot("daily-tech-business", "Gün Bazlı Business ve Teknik Hata Adetleri ({ay} {yil})", "full"),
+                new Slot("tech-ratio", "Gün Bazlı Teknik Hataların Tüm Operasyonlara Oranı ({ay} {yil})", "full"),
+                new Slot("business-ratio", "Gün Bazlı Business Hataların Tüm Operasyonlara Oranı ({ay} {yil})", "full")));
         return new Template("tr", "{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}", List.copyOf(s));
     }
 
@@ -743,36 +751,43 @@ public final class TechErrorTemplate {
         s.add(metrics("quota", "Quota Error Count", List.of(
                 new Field("quota-count", "Quota errors", "number", null),
                 new Field("quota-note", "Notes", "textarea", null))));
-        s.add(table("sla-table", "SLA Availability Table", List.of(
-                new Column("functions", "Functions", "number"),
-                new Column("success-tx", "Successful transactions", "number"),
-                new Column("total-tx", "Total transactions", "number"),
-                new Column("failed-tx", "Technically failed transactions", "number"),
-                new Column("availability", "Availability (outage-free)", "percent"),
-                new Column("volume-share", "Share of total volume", "percent")), List.of(
-                new TableRow("total", "{channel} Channel Total", true),
-                new TableRow("sla-critical", "In SLA, critical", false),
-                new TableRow("sla-noncritical", "In SLA, non-critical", false),
-                new TableRow("out-of-sla", "Outside the SLA", false))));
+        s.add(new Section("sla-shots", "images", "SLA Availability Table", List.of(), List.of(
+                new Slot("sla-shot-1", "{channel} Channel SLA Availability Table", "full"),
+                new Slot("sla-shot-2", "{channel} Channel SLA Availability Table (second screenshot)", "full")),
+                null, null, null, null, null));
         s.add(new Section("trend-note", "text", "About the charts", List.of(), List.of(), null, null, null, null,
                 "The yearly trend and detail charts are shared below."));
-        s.add(new Section("charts", "images", "Charts", List.of(), List.of(
-                new Slot("monthly-tx", "{channel} Channel Monthly Total Transactions", "half"),
-                new Slot("tech-errors", "{channel} Channel Technical Errors", "half"),
-                new Slot("unmapped-monthly", "{channel} Channel Unmapped Errors (Monthly)", "half"),
-                new Slot("quota-monthly", "Quota Errors (Monthly)", "half"),
-                new Slot("daily-errors", "{channel} Channel Technical Errors (Daily)", "full"),
-                new Slot("summary-monthly", "{channel} Channel Summary (Monthly)", "full"),
-                new Slot("month-tech-counts", "{month} {year} Technical Error Counts", "full"),
-                new Slot("month-business-counts", "{month} {year} Business Error Counts", "full"),
-                new Slot("quota-unmapped-monthly", "Quota and Unmapped Error Counts (Monthly)", "full"),
-                new Slot("daily-tech-business", "Daily Technical and Business Error Counts", "full"),
-                new Slot("month-quota-counts", "{month} {year} Quota Error Counts", "full"),
-                new Slot("month-unmapped-daily", "{month} {year} Unmapped Error Counts (Daily)", "full"),
-                new Slot("tech-ratio", "{month} {year} Technical Errors as a Share of All Operations", "full"),
-                new Slot("business-ratio", "{month} {year} Business Errors as a Share of All Operations", "full")),
-                null, null, null, null, null));
+        s.add(images("charts", "12-Month Summaries",
+                new Slot("annual-summary", "Annual Operations and Error Distribution Summary (Last 12 Months)", "half"),
+                new Slot("annual-tech-rate", "Annual Technical Error Rate Trend (Last 12 Months)", "half"),
+                new Slot("annual-table", "Last 12 Months Operations and Error Summary Table", "full")));
+        s.add(images("charts-monthly", "Monthly Errors and Transactions (Last 12 Months)",
+                new Slot("monthly-tx", "Monthly Total Transactions (Last 12 Months)", "half"),
+                new Slot("monthly-failed", "Monthly Total Errors (Failed Transactions) (Last 12 Months)", "half"),
+                new Slot("tech-errors", "Monthly Technical Errors (Last 12 Months)", "half"),
+                new Slot("business-monthly", "Monthly Business Errors (Last 12 Months)", "half"),
+                new Slot("unmapped-monthly", "Monthly Unmapped Errors (Last 12 Months)", "half"),
+                new Slot("quota-monthly", "Monthly Quota Errors (Last 12 Months)", "half"),
+                new Slot("business-tech-monthly", "Monthly Business and Technical Errors (Last 12 Months)", "full"),
+                new Slot("quota-unmapped-monthly", "Monthly Quota and Unmapped Errors (Last 12 Months)", "full")));
+        s.add(images("charts-distribution", "{month} {year} Error Distribution by Unit",
+                new Slot("month-tech-counts", "{month} {year} Technical Error Distribution (by Unit)", "half"),
+                new Slot("month-business-counts", "{month} {year} Business Error Distribution (by Unit)", "half")));
+        s.add(images("charts-daily", "Daily Errors and Transactions ({month} {year})",
+                new Slot("daily-tx", "Daily Total Transactions ({month} {year})", "half"),
+                new Slot("daily-failed", "Daily Total Errors (Failed Transactions) ({month} {year})", "half"),
+                new Slot("daily-errors", "Daily Technical Errors ({month} {year})", "half"),
+                new Slot("daily-business", "Daily Business Errors ({month} {year})", "half"),
+                new Slot("month-unmapped-daily", "Daily Unmapped Errors ({month} {year})", "half"),
+                new Slot("month-quota-counts", "Daily Quota Errors ({month} {year})", "half"),
+                new Slot("daily-tech-business", "Daily Business and Technical Errors ({month} {year})", "full"),
+                new Slot("tech-ratio", "Daily Technical Errors as a Share of All Operations ({month} {year})", "full"),
+                new Slot("business-ratio", "Daily Business Errors as a Share of All Operations ({month} {year})", "full")));
         return new Template("en", "{channel} Channel Technical Error Messages - {month} {year}", List.copyOf(s));
+    }
+
+    private static Section images(String id, String title, Slot... slots) {
+        return new Section(id, "images", title, List.of(), List.of(slots), null, null, null, null, null);
     }
 
     private static Section metrics(String id, String title, List<Field> fields) {
@@ -781,10 +796,6 @@ public final class TechErrorTemplate {
 
     private static Section summary(String id, String title, List<String> lines) {
         return new Section(id, "summary", title, List.of(), List.of(), null, null, null, null, null, lines, List.of(), List.of());
-    }
-
-    private static Section table(String id, String title, List<Column> cols, List<TableRow> rows) {
-        return new Section(id, "table", title, List.of(), List.of(), null, null, null, null, null, List.of(), cols, rows);
     }
 
     // ── Metin yardımcıları ───────────────────────────────────────────────────────────────────────────

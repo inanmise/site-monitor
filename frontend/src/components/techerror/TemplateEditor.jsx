@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2,
-  Trash2, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2, Trash2, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -29,6 +28,7 @@ import {
   templateErrors, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
+import TemplateVersionsDialog from './TemplateVersions.jsx'
 
 const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn, summary: ScrollText, table: Table2 }
 // "Bölüm ekle" menüsünün sırası (raporun doğal akışı: özet → göstergeler → konular → tablo → metin → grafikler)
@@ -95,6 +95,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   // yenisine taşınmaz (inceleme 2026-10-14)
   const [gen, setGen] = useState(0)
   const replaceDraft = (tpl) => { setDraft(tpl); setGen((g) => g + 1) }
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const versionsBtnRef = useRef(null)
   const [base, setBase] = useState({ json: null, version: null })
   const [serverError, setServerError] = useState(null)
   const [conflict, setConflict] = useState(false)
@@ -214,6 +216,24 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     }
   }
 
+  /**
+   * Sürüm geçmişinden bir sürümü TASLAĞA yükler (2026-10-14): sunucuya bir şey yazılmaz; kaydedince yeni sürüm olur.
+   * Kaydedilmemiş değişiklik varsa onay sorulur. Pencerenin kapanması için true döner.
+   */
+  async function loadVersion(tpl, version) {
+    if (!tpl) return false
+    if (dirty) {
+      const ok = await showConfirm({ title: t('te.ver.loadDirtyTitle'), message: t('te.ver.loadDirtyBody', version),
+        variant: 'warning', confirmText: t('te.ver.loadConfirm'), cancelText: t('te.cancel') })
+      if (!ok) return false
+    }
+    replaceDraft(tpl)
+    setShowErrors(false)
+    setServerError(null)
+    toast.success(t('te.ver.loaded', version))
+    return true
+  }
+
   async function resetToDefault() {
     const ok = await showConfirm({ title: t('te.tpl.resetTitle'), message: t('te.tpl.resetBody'), variant: 'warning',
       confirmText: t('te.tpl.resetConfirm'), cancelText: t('te.cancel') })
@@ -287,6 +307,19 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
       )}
       {serverError && <AlertBanner tone="danger" title={t('te.tpl.serverInvalid')}>{serverError}</AlertBanner>}
       {showErrors && errors.sections && <AlertBanner tone="danger">{t(errors.sections)}</AlertBanner>}
+
+      {/* Sürüm geçmişi salt okunurda da açılır: düğme düzenleme alan kümesinin (fieldset disabled) DIŞINDA */}
+      <div className="flex flex-wrap items-center justify-between gap-2" data-slot="te-tpl-toolbar">
+        <p className="m-0 text-sm text-muted-foreground">
+          {t('te.ver.currentInfo', base.version ?? '—')}
+        </p>
+        <Button ref={versionsBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-versions-open"
+          onClick={() => setVersionsOpen(true)}>
+          <History aria-hidden="true" /> {t('te.ver.open')}
+        </Button>
+      </div>
+      <TemplateVersionsDialog channelId={channelId} channelName={channel?.name} period={previewPeriod} open={versionsOpen}
+        onClose={() => setVersionsOpen(false)} canEdit={canEdit && !saving} onLoad={loadVersion} returnFocusRef={versionsBtnRef} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <fieldset disabled={!canEdit || saving} className="flex min-w-0 flex-col gap-4">

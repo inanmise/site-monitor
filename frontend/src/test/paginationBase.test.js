@@ -58,6 +58,7 @@ const DISCLOSURES = {
   'components/incidents/ActionNoteDialog.jsx': 'onay penceresinde TEK alarm iletisinin kırpılmış metnini aç/kapa ("Tamamı") — liste değil',
   'components/certmodal/CertSanList.jsx': 'TEK sertifikanın SAN uzantısı (sertifika içeriği, CA tavanlı) — satır listesi değil ad bulutu; ilk 12 + "Tümünü göster / Daralt", arama ve tümünü kopyala',
   'components/admin/NocOperatorTeams.jsx': '7/24 takım seçiminin KAYIT ÖNCESİ önizlemesi: sunucu tavanlı (NocOperatorService.PREVIEW_USERS = 200, aşılırsa "kısaltıldı" notu) — ilk 12 + "Tümünü göster / Daralt"; sayfalanacak bir kayıt listesi değil',
+  'components/techerror/ReportHistory.jsx': 'TEK değer kaydının alan farkları (sunucu tavanlı: TechErrorChangeDiff.MAX_CHANGES 200, ayrıntı ≤ MAX_DETAIL_CHARS 64 000, fazlası "+N" sayısı) — ilk 8 + "Tümünü göster"; olay listesinin kendisi anahtar kümesiyle sayfalanır',
 }
 
 function walk(dir, out = []) {

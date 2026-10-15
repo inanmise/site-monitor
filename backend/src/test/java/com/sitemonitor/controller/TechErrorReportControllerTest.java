@@ -266,7 +266,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.report.version").value(4))
                 .andExpect(jsonPath("$.data.can_edit").value(true))
                 .andExpect(jsonPath("$.data.team_email_set").value(true))
-                .andExpect(jsonPath("$.data.template.sections.length()").value(8))
+                .andExpect(jsonPath("$.data.template.sections.length()").value(11))
                 .andExpect(jsonPath("$.data.template_update.differs").value(false));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(audit()))
                 .andExpect(jsonPath("$.data.can_edit").value(false))
@@ -321,5 +321,132 @@ class TechErrorReportControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"channel_id\":20,\"year\":2026,\"month\":9}"))
                 .andExpect(status().isNotFound());
         verify(service, never()).createReport(eq(channels.get(1)), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt(), any());
+    }
+    // ── Değişiklik ve sürüm geçmişi (2026-10-14, Faz B) ──────────────────────────────────────────────
+
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorHistoryService history;
+
+    private static com.sitemonitor.model.TechErrorReportEvent event(long id, String kind, Long actor, String actorName, String detail) {
+        var e = new com.sitemonitor.model.TechErrorReportEvent();
+        e.setId(id);
+        e.setReportId(100L);
+        e.setChannelId(10L);
+        e.setTeamId(A);
+        e.setKind(kind);
+        e.setActorId(actor);
+        e.setActorName(actorName);
+        e.setEventAt(Instant.parse("2026-10-13T08:00:00Z"));
+        e.setDetailJson(detail);
+        return e;
+    }
+
+    @Test
+    @DisplayName("rapor geçmişi: okuyan görür (ad, ayrıntı, sistem bayrağı; kullanıcı kimliği YOK); başka takım 404; bozuk sayfa 400")
+    void reportHistory() throws Exception {
+        report(100, 10, A, null);
+        when(history.reportHistory(eq(100L), any(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(
+                new com.sitemonitor.service.techerror.TechErrorHistoryService.HistoryPage(List.of(
+                        event(5, "SEND_RESULT", null, null, "{\"state\":\"SENT\"}"),
+                        event(4, "VALUES", 7L, "Ayşe Yılmaz", "{\"changes\":[{\"label\":\"Oran\",\"before\":\"%0,4\",\"after\":\"%0,5\",\"op\":\"change\"}]}")),
+                        true, Instant.parse("2026-10-01T08:00:00Z"), false));
+        mvc.perform(get("/api/tech-error-reports/reports/100/history?limit=2").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.events.length()").value(2))
+                .andExpect(jsonPath("$.data.events[0].system").value(true))
+                .andExpect(jsonPath("$.data.events[1].actor_name").value("Ayşe Yılmaz"))
+                .andExpect(jsonPath("$.data.events[1].actor_id").doesNotExist())
+                .andExpect(jsonPath("$.data.events[1].detail.changes[0].after").value("%0,5"))
+                .andExpect(jsonPath("$.data.has_more").value(true))
+                .andExpect(jsonPath("$.data.recorded_since").value("2026-10-01T08:00:00Z"))
+                .andExpect(jsonPath("$.data.capped").value(false))
+                .andExpect(jsonPath("$.data.max_events").value(500));
+        verify(history).reportHistory(100L, null, 2);
+        mvc.perform(get("/api/tech-error-reports/reports/100/history?before=4").session(audit())).andExpect(status().isOk());
+        verify(history).reportHistory(100L, 4L, 50);
+        mvc.perform(get("/api/tech-error-reports/reports/100/history").session(user("USER", B, List.of())))
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/api/tech-error-reports/reports/100/history?before=abc").session(user("USER", A, List.of())))
+                .andExpect(status().isBadRequest());
+    }
+
+    private static com.sitemonitor.repository.TechErrorTemplateVersionRepository.Meta meta(int v) {
+        return new com.sitemonitor.repository.TechErrorTemplateVersionRepository.Meta() {
+            public int getVersion() { return v; }
+            public Instant getSavedAt() { return Instant.parse("2026-10-0" + v + "T08:00:00Z"); }
+            public String getSavedByName() { return "Kişi " + v; }
+            public int getSectionCount() { return 5; }
+            public int getFieldCount() { return 10 + v; }
+            public int getSlotCount() { return 2; }
+        };
+    }
+
+    @Test
+    @DisplayName("şablon sürümleri: kayıtlı liste en yeni önce, o anki işaretli; geçmişi olmayan kanal o anki sürümü tek satır görür")
+    void templateVersions() throws Exception {
+        when(history.templateVersions(10L)).thenReturn(List.of(meta(3), meta(2)));
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.current_version").value(3))
+                .andExpect(jsonPath("$.data.versions.length()").value(2))
+                .andExpect(jsonPath("$.data.versions[0].current").value(true))
+                .andExpect(jsonPath("$.data.versions[0].recorded").value(true))
+                .andExpect(jsonPath("$.data.versions[1].field_count").value(12))
+                .andExpect(jsonPath("$.data.versions[1].saved_by_id").doesNotExist());
+        when(history.templateVersions(10L)).thenReturn(List.of());
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versions.length()").value(1))
+                .andExpect(jsonPath("$.data.versions[0].version").value(3))
+                .andExpect(jsonPath("$.data.versions[0].recorded").value(false))
+                .andExpect(jsonPath("$.data.versions[0].current").value(true));
+        mvc.perform(get("/api/tech-error-reports/channels/20/template/versions").session(user("USER", A, List.of())))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("tek sürüm: kayıtlı olan gövdesiyle; kayıtlı değilse o anki sürüm kanaldan; başka kayıtsız sürüm 404")
+    void templateVersionDetail() throws Exception {
+        var v2 = new com.sitemonitor.model.TechErrorTemplateVersion();
+        v2.setVersion(2);
+        v2.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("en")));
+        v2.setSavedByName("Kişi 2");
+        when(history.templateVersion(10L, 2)).thenReturn(Optional.of(v2));
+        when(history.templateVersion(10L, 3)).thenReturn(Optional.empty());
+        when(history.templateVersion(10L, 1)).thenReturn(Optional.empty());
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions/2").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template.lang").value("en"))
+                .andExpect(jsonPath("$.data.current").value(false));
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions/3").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template.lang").value("tr"))
+                .andExpect(jsonPath("$.data.current").value(true));
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions/1").session(user("USER", A, List.of())))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("rapor yanıtı komşu raporları taşır: önceki / sonraki EN YAKIN dönem (ara ay boş olabilir)")
+    void reportNeighbors() throws Exception {
+        TechErrorReport self = report(100, 10, A, null);
+        TechErrorReport older = report(101, 10, A, null);
+        older.setReportMonth(6);
+        TechErrorReport oldest = report(102, 10, A, null);
+        oldest.setReportYear(2025);
+        oldest.setReportMonth(12);
+        TechErrorReport newer = report(103, 10, A, null);
+        newer.setReportYear(2027);
+        newer.setReportMonth(1);
+        when(service.reportRows(10L)).thenReturn(List.of(TechErrorReportController.rowOf(newer), TechErrorReportController.rowOf(self),
+                TechErrorReportController.rowOf(older), TechErrorReportController.rowOf(oldest)));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.neighbors.prev.id").value(101))
+                .andExpect(jsonPath("$.data.neighbors.prev.month").value(6))
+                .andExpect(jsonPath("$.data.neighbors.next.id").value(103))
+                .andExpect(jsonPath("$.data.neighbors.next.year").value(2027));
+        mvc.perform(get("/api/tech-error-reports/reports/102").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.neighbors.prev").doesNotExist())
+                .andExpect(jsonPath("$.data.neighbors.next.id").value(101));
     }
 }

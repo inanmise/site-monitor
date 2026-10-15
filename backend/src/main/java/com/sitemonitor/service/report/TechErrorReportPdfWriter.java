@@ -364,12 +364,24 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private void images(TechErrorPdfInput in, Section s) throws IOException {
         List<Slot> present = new ArrayList<>();
         for (Slot sl : s.slots()) if (in.images().containsKey(sl.id())) present.add(sl);
-        sectionTitle(in.resolve(s.title()));
+        String title = in.resolve(s.title());
+        float colW = (CONTENT_W - GAP * 2) / 2;
+        if (!present.isEmpty()) {
+            // Başlık + ilk görsel satırı birlikte sığmazsa yeni sayfa: başlık sayfa sonunda yalnız kalmasın (tablodaki kural;
+            // varsayılan şablonda artık beş görsel bölümü var — inceleme 2026-10-15)
+            Slot a = present.get(0);
+            Slot b = present.size() > 1 ? present.get(1) : null;
+            boolean pair = "half".equals(a.width()) && b != null && "half".equals(b.width());
+            boolean half = "half".equals(a.width());
+            float firstH = rowHeight(in, pair ? List.of(a, b) : List.of(a), half ? colW : CONTENT_W, half ? HALF_MAX_H : FULL_MAX_H);
+            int titleLines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3).size();
+            c.ensureSpace(titleLines * 15 + 6 + firstH);
+        }
+        sectionTitle(title);
         if (present.isEmpty()) {
-            note(en ? "No chart was uploaded to this section." : "Bu bölüme grafik yüklenmedi.");
+            note(en ? "No image was uploaded to this section." : "Bu bölüme görsel yüklenmedi.");
             return;
         }
-        float colW = (CONTENT_W - GAP * 2) / 2;
         for (int i = 0; i < present.size(); ) {
             Slot a = present.get(i);
             Slot b = i + 1 < present.size() ? present.get(i + 1) : null;
@@ -384,6 +396,18 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                 i += 1;
             }
         }
+    }
+
+    /** {@link #imageRow}'un ayırdığı yükseklik (başlık + görsel + aralık) — çizmeden. */
+    private float rowHeight(TechErrorPdfInput in, List<Slot> slots, float cellW, float maxH) throws IOException {
+        float capH = 0, imgH = 0;
+        for (Slot sl : slots) {
+            capH = Math.max(capH, c.wrapCell(in.resolve(sl.label()), cellW, c.bold, 8.5f, 3).size() * 10.5f);
+            TechErrorPdfInput.Image img = in.images().get(sl.id());
+            float h = cellW * img.height() / Math.max(1f, img.width());
+            imgH = Math.max(imgH, Math.min(h, maxH));
+        }
+        return capH + Math.max(imgH, FAIL_BOX_H) + 20;
     }
 
     private void imageRow(TechErrorPdfInput in, List<Slot> slots, float cellW, float maxH) throws IOException {

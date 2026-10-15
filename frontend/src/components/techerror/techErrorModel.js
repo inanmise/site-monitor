@@ -993,3 +993,125 @@ export function preflightImage(file) {
   if (file.size === 0) return 'te.img.errEmpty'
   return null
 }
+
+// ── Geçmiş ve sürümler (2026-10-14, Faz B) ──────────────────────────────────────────────────────────
+
+/** Raporları yıla göre gruplar (en yeni yıl önce; yıl içinde en yeni ay önce). `[{ year, items }]`. */
+export function groupByYear(reports) {
+  const map = new Map()
+  for (const r of reports || []) {
+    // Number(null) = 0: yılı olmayan satır "0" yılına düşmesin
+    const y = r?.year == null ? NaN : Number(r.year)
+    if (!Number.isInteger(y) || y <= 0) continue
+    if (!map.has(y)) map.set(y, [])
+    map.get(y).push(r)
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([year, items]) => ({ year, items: items.slice().sort((a, b) => (Number(b.month) || 0) - (Number(a.month) || 0)) }))
+}
+
+/**
+ * İki şablon sürümü arasındaki fark (sürüm geçmişi penceresi). Bölümler, alanlar, grafik yuvaları, özet cümleleri, tablo
+ * sütun / satırları kimlikle eşleşir: eklenen, kaldırılan, yeniden adlandırılan, türü değişen. Sıra değişimi bölüm
+ * düzeyinde tek satır. Etiketler HAM (yer tutucular çözülmemiş) — gösterim çözer. Satır:
+ * `{ group, op, label, before, after, section }`; group: report | section | field | slot | summary | column | row | text.
+ */
+export function templateDiff(prev, cur) {
+  // Okunamayan sürüm "fark yok" değildir — bilinmiyor (inceleme 2026-10-14)
+  if (!prev || !cur) return null
+  const out = []
+  if ((prev.title || '') !== (cur.title || '')) out.push({ group: 'report', op: 'title', before: prev.title || '', after: cur.title || '' })
+  if ((prev.lang || 'tr') !== (cur.lang || 'tr')) out.push({ group: 'report', op: 'lang', before: prev.lang || 'tr', after: cur.lang || 'tr' })
+  const ps = new Map((prev.sections || []).map((s) => [s.id, s]))
+  const cs = new Map((cur.sections || []).map((s) => [s.id, s]))
+  // Alan / yuva kimlikleri şablon genelinde tekildir: bir bölümden çıkıp başka bölümde duran öğe TAŞINMIŞTIR (inceleme
+  // 2026-10-15 — "şablonu uygula" görselleri kimlikle taşır; sürüm farkı "kaldırıldı" diyordu)
+  const where = (tpl, kind, key, keep) => {
+    const m = new Map()
+    for (const s of tpl.sections || []) {
+      if (s.kind !== kind || !keep(s)) continue
+      for (const x of s[key] || []) m.set(x.id, { title: s.title || '', item: x })
+    }
+    return m
+  }
+  // "Taşındı" satırını kaynak bölümün farkı yazar: kaynak bölüm silindi ya da türü değiştiyse o fark hiç çalışmaz — öğe
+  // hedefte "eklendi" görünmeli (düzeltme incelemesi), bu yüzden önceki haritada yalnız aynı kimlik + türle süren bölümler
+  const survives = (s) => cs.get(s.id)?.kind === s.kind
+  const moves = {
+    field: { prev: where(prev, 'metrics', 'fields', survives), cur: where(cur, 'metrics', 'fields', () => true) },
+    slot: { prev: where(prev, 'images', 'slots', survives), cur: where(cur, 'images', 'slots', () => true) },
+  }
+  for (const s of prev.sections || []) if (!cs.has(s.id)) out.push({ group: 'section', op: 'remove', label: s.title || '', kind: s.kind })
+  for (const s of cur.sections || []) if (!ps.has(s.id)) out.push({ group: 'section', op: 'add', label: s.title || '', kind: s.kind })
+  const commonPrev = (prev.sections || []).filter((s) => cs.has(s.id)).map((s) => s.id)
+  const commonCur = (cur.sections || []).filter((s) => ps.has(s.id)).map((s) => s.id)
+  if (commonPrev.join('\u0000') !== commonCur.join('\u0000')) out.push({ group: 'section', op: 'reorder' })
+  for (const s of cur.sections || []) {
+    const p = ps.get(s.id)
+    if (!p) continue
+    const section = s.title || ''
+    if ((p.title || '') !== section) out.push({ group: 'section', op: 'rename', before: p.title || '', after: section })
+    if (p.kind !== s.kind) { out.push({ group: 'section', op: 'retype', label: section, before: p.kind, after: s.kind }); continue }
+    if (s.kind === 'metrics') itemsDiff(out, 'field', section, p.fields, s.fields, moves.field, (a, b) => {
+      const r = []
+      if ((a.type || '') !== (b.type || '')) r.push({ op: 'retype', before: a.type, after: b.type })
+      if ((a.skip_if_no || '') !== (b.skip_if_no || '')) r.push({ op: 'link' })
+      return r
+    })
+    if (s.kind === 'images') itemsDiff(out, 'slot', section, p.slots, s.slots, moves.slot, (a, b) =>
+      ((a.width || '') !== (b.width || '') ? [{ op: 'resize', before: a.width, after: b.width }] : []))
+    if (s.kind === 'table') {
+      itemsDiff(out, 'column', section, p.columns, s.columns, null, (a, b) =>
+        ((a.type || '') !== (b.type || '') ? [{ op: 'retype', before: a.type, after: b.type }] : []))
+      itemsDiff(out, 'row', section, p.rows, s.rows, null, (a, b) =>
+        (!!a.group !== !!b.group ? [{ op: b.group ? 'group-on' : 'group-off' }] : []))
+    }
+    if (s.kind === 'summary') {
+      const a = p.lines || []
+      const b = s.lines || []
+      if (a.join('\u0000') !== b.join('\u0000')) out.push({ group: 'summary', op: 'change', label: section, before: a.length, after: b.length })
+    }
+    if (s.kind === 'text' && (p.text || '') !== (s.text || '')) out.push({ group: 'text', op: 'change', label: section })
+    if (s.kind === 'issues') {
+      const keys = ['item_title', 'description_label', 'customers_label', 'errors_label']
+      if (keys.some((k) => (p[k] || '') !== (s[k] || ''))) out.push({ group: 'section', op: 'labels', label: section })
+    }
+  }
+  return out
+}
+
+function itemsDiff(out, group, section, prevList, curList, moved, extra) {
+  const pm = new Map((prevList || []).map((x) => [x.id, x]))
+  const cm = new Map((curList || []).map((x) => [x.id, x]))
+  for (const x of prevList || []) {
+    if (cm.has(x.id)) continue
+    const dest = moved?.cur.get(x.id)
+    if (!dest) { out.push({ group, op: 'remove', label: x.label || '', section }); continue }
+    out.push({ group, op: 'move', label: x.label || '', section, to: dest.title })
+    // Taşınan öğenin diğer değişiklikleri de (ad, tür, bağ / genişlik) — hedef bölümle; tür değişince değer taşınmaz
+    const y = dest.item
+    if ((x.label || '') !== (y.label || '')) out.push({ group, op: 'rename', before: x.label || '', after: y.label || '', section: dest.title })
+    for (const e of extra(x, y)) out.push({ group, label: y.label || '', section: dest.title, ...e })
+  }
+  // Bölüm içi sıra da PDF'i değiştirir (alan / yuva / sütun / satır) — ortak öğelerin sırası farklıysa tek satır
+  const commonPrev = (prevList || []).filter((x) => cm.has(x.id)).map((x) => x.id)
+  const commonCur = (curList || []).filter((x) => pm.has(x.id)).map((x) => x.id)
+  if (commonPrev.join('\u0000') !== commonCur.join('\u0000')) out.push({ group, op: 'reorder', section })
+  for (const x of curList || []) {
+    const p = pm.get(x.id)
+    if (!p) {
+      if (!moved?.prev.has(x.id)) out.push({ group, op: 'add', label: x.label || '', section })   // taşınan: "move" satırı yeter
+      continue
+    }
+    if ((p.label || '') !== (x.label || '')) out.push({ group, op: 'rename', before: p.label || '', after: x.label || '', section })
+    for (const e of extra(p, x)) out.push({ group, label: x.label || '', section, ...e })
+  }
+}
+
+/** Geçmiş olayının gün anahtarı (İstanbul takvim günü, `YYYY-MM-DD`) — liste gün başlıklarıyla gruplanır. */
+export function istanbulDay(iso) {
+  const ms = Date.parse(iso || '')
+  if (!Number.isFinite(ms)) return ''
+  return new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10)
+}

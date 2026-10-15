@@ -146,7 +146,7 @@ class TechErrorReportPostgresTest {
             // Talep bırakma satırın KENDİ son sonucundan (CASE + LIKE PostgreSQL'de)
             Instant t1 = Instant.now().minusSeconds(60);
             assertThat(reports.claimSend(r.getId(), t1, t1.minusSeconds(600))).isEqualTo(1);
-            assertThat(reports.releaseClaim(r.getId(), t1)).isEqualTo(1);
+            assertThat(reports.releaseClaim(r.getId(), t1, t0)).isEqualTo(1);
             assertThat(reports.findById(r.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
             assertThat(reports.touchContent(r.getId(), Instant.now())).isEqualTo(1);
             assertThat(reports.findById(r.getId()).orElseThrow().getContentRev()).isGreaterThan(0L);
@@ -155,6 +155,66 @@ class TechErrorReportPostgresTest {
             assertThat(reports.deleteIfAllowed(r.getId(), false, Instant.now().minusSeconds(600))).isEqualTo(1);
         } finally {
             reports.deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
+        }
+    }
+
+    @Test
+    @DisplayName("Faz B: aynı sürüme eşzamanlı şablon kaydı → biri kazanır, kalanlar 409, geçmişte tek yeni sürüm; geçmiş "
+            + "sayfası ve budama PostgreSQL'de doğru; kanal silme geçmişi de götürür")
+    void historyAndTemplateVersions() throws Exception {
+        var service = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        var history = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorHistoryService.class);
+        var versions = PostgresIt.app().bean(TechErrorTemplateVersionRepository.class);
+        var events = PostgresIt.app().bean(TechErrorReportEventRepository.class);
+        long team = 765_430L + (long) (Math.random() * 1000);
+        String tag = "ter-it-" + UUID.randomUUID().toString().substring(0, 8);
+        TechErrorChannel ch = service.createChannel(team, tag + " ATM", null, TechErrorTemplate.defaults("tr"), null);
+        try {
+            int n = 5;
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(n);
+            var start = new java.util.concurrent.CountDownLatch(1);
+            List<java.util.concurrent.Future<String>> out = new java.util.ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                out.add(pool.submit(() -> {
+                    start.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    try {
+                        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.defaults("en"), null);
+                        return "OK";
+                    } catch (org.springframework.dao.OptimisticLockingFailureException e) {
+                        return "409";
+                    } catch (RuntimeException e) {
+                        return "ERR:" + e.getClass().getSimpleName();
+                    }
+                }));
+            }
+            start.countDown();
+            List<String> results = new java.util.ArrayList<>();
+            for (var f : out) results.add(f.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            pool.shutdownNow();
+            assertThat(results).filteredOn("OK"::equals).hasSize(1);
+            assertThat(results).filteredOn(r -> !"OK".equals(r)).allMatch("409"::equals);
+            assertThat(history.templateVersions(ch.getId())).extracting(v -> v.getVersion()).containsExactly(2, 1);
+
+            TechErrorReport r = service.createReport(ch, 2025, 5, null);
+            Instant at = Instant.now();
+            int total = com.sitemonitor.service.techerror.TechErrorHistoryService.MAX_EVENTS_PER_REPORT
+                    + com.sitemonitor.service.techerror.TechErrorHistoryService.PRUNE_SLACK + 1;
+            for (int i = 1; i < total; i++) history.record(r, "SEND", null, null, java.util.Map.of("state", "SENT"), at);
+            assertThat(events.countByReportId(r.getId()))
+                    .isEqualTo(com.sitemonitor.service.techerror.TechErrorHistoryService.MAX_EVENTS_PER_REPORT);
+            var p1 = history.reportHistory(r.getId(), null, 30);
+            var p2 = history.reportHistory(r.getId(), p1.events().get(29).getId(), 30);
+            assertThat(p1.hasMore()).isTrue();
+            assertThat(p2.events().get(0).getId()).isLessThan(p1.events().get(29).getId());
+            assertThat(p1.recordedSince()).isNotNull();
+
+            service.deleteChannel(ch.getId());
+            assertThat(versions.countByChannelId(ch.getId())).isZero();
+            assertThat(events.countByReportId(r.getId())).isZero();
+        } finally {
+            versions.deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorReportRepository.class).deleteAllForChannel(ch.getId());
             PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
         }
     }

@@ -45,6 +45,12 @@ public class TechErrorReportSender {
 
     public static final String TRIGGER = "TECH_ERROR_REPORT";
     static final Duration STALE_CLAIM = Duration.ofMinutes(10);
+    /**
+     * Kuyruktaki (421) bir gönderimin sonucunun hâlâ gelebileceği süre: posta servisi 90 / 180 / 360 sn arayla yeniden dener
+     * (≈ 10,5 dk) ve yeniden deneme yalnız gönderen podun belleğindedir — pod yeniden başlarsa sonuç HİÇ gelmez. Bu süreden
+     * eski kuyruk, üzerine yapılan başarısız denemede korunmaz (rapor sonsuza dek "kuyrukta" kalmasın — inceleme 2026-10-15).
+     */
+    static final java.time.Duration QUEUED_RESULT_WINDOW = java.time.Duration.ofMinutes(20);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final Pattern DELIVERABLE = Pattern.compile("[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]{2,}");
 
@@ -98,6 +104,16 @@ public class TechErrorReportSender {
                             + "until then you can download the PDF and forward it yourself."));
         }
         Instant claimedAt = service.now();
+        // Kuyruktaki bir gönderimin üzerine yeniden gönderim (inceleme 2026-10-14): talep kuyruktaki gönderimi bitirir, ilk
+        // gönderimin sonucu artık hiç okunmaz — geçmişe "sonucu bilinmiyor" yazılır. Karar talepten SONRA verilir (finally):
+        // talep bırakılırsa (PDF sırası dolu) kuyruktaki gönderim yaşar; talepten önce sonuçlandıysa (başka sekme) yazılmaz.
+        // Önce kuyruğu sonuçlandır (düzeltme incelemesi 2026-10-15): posta servisi teslim ettiyse rapor hâlâ QUEUED görünebilir
+        // (gönderim yolu okuma ucu çağırmaz) — o zaman sonuç kendi SEND_RESULT'uyla yazılır, "bilinmiyor" denmez
+        if (report.getChannelId() != null) service.reconcileQueued(List.of(report.getChannelId()));
+        TechErrorReport before = reports.findById(report.getId()).orElse(null);
+        String stateBefore = before == null ? null : before.getSendState();
+        // Talep bırakılırsa önceki talep zamanı geri yüklenir: kuyruktaki gönderim sonuçlanınca "gönderim anı" odur
+        Instant prevClaimedAt = before == null ? null : before.getSendClaimedAt();
         if (reports.claimSend(report.getId(), claimedAt, claimedAt.minus(STALE_CLAIM)) == 0) {
             if (!reports.existsById(report.getId())) throw TechErrorReportService.reportNotFound();
             throw new CodedConflictException("SEND_IN_PROGRESS", Msg.t(
@@ -111,10 +127,16 @@ public class TechErrorReportSender {
         int pdfBytes = 0;
         Long sentRev = null;
         List<String> active = to;
+        Boolean queuedAtClaim = null;      // talepten sonraki okuma: kuyruktaki gönderim hâlâ sonuçlanmamış mıydı?
+        boolean mailAttempted = false;     // posta servisine bir şey verildi mi?
+        boolean mailReturned = false;      // posta servisi bir sonuç DÖNDÜ mü (istisna değil)?
         try {
             // Talepten SONRA taze oku (inceleme 2026-10-13): çağıranın elindeki satır talepten önce okunmuştu; arada
             // kaydedilen değerler PDF'e girmez ama "gönderildi" görünürdü.
             TechErrorReport fresh = service.report(report.getId());
+            // Talep son durumu değiştirmez; QUEUED_RETRY hâlâ duruyorsa kuyruktaki gönderim talep anında SONUÇLANMAMIŞTI
+            // (confirmQueued / failQueued son durumu yazar ve yalnız QUEUED iken çalışır)
+            queuedAtClaim = fresh.getLastSendStatus() != null && fresh.getLastSendStatus().startsWith("QUEUED_RETRY");
             // PDF bu okumanın içeriği: "gönderimden sonra değişti" bu sayaçla karşılaştırılır
             sentRev = fresh.getContentRev() == null ? 0L : fresh.getContentRev();
             TechErrorReportService.Rendered rendered;
@@ -135,17 +157,19 @@ public class TechErrorReportSender {
             if (pdf.length > max) {
                 finalStatus = "FAILED: PDF e-posta sınırını aşıyor (" + mb(pdf.length) + " MB > " + maxMailMb + " MB)";
                 throw new CodedConflictException("PDF_TOO_LARGE", Msg.t(
-                        "PDF " + mb(pdf.length) + " MB; e-posta sınırı " + maxMailMb + " MB. Büyük grafikleri küçültüp (JPEG) yeniden "
+                        "PDF " + mb(pdf.length) + " MB; e-posta sınırı " + maxMailMb + " MB. Büyük görselleri küçültüp (JPEG) yeniden "
                                 + "yükleyin ya da PDF'i indirip elle gönderin.",
-                        "The PDF is " + mb(pdf.length) + " MB; the e-mail limit is " + maxMailMb + " MB. Make the large charts smaller "
+                        "The PDF is " + mb(pdf.length) + " MB; the e-mail limit is " + maxMailMb + " MB. Make the large images smaller "
                                 + "(JPEG) and upload them again, or download the PDF and send it yourself."),
                         java.util.Map.of("max_mb", maxMailMb));
             }
             String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), fresh.getReportYear(), fresh.getReportMonth(),
                     in.template().lang());
             MailDoc.Mail mail = TechErrorReportMail.build(in, baseUrl(), fileName);
+            mailAttempted = true;
             String status = email.sendHtml(to.toArray(new String[0]), null, subject, mail.html(), mail.text(), null, false,
                     List.of(new EmailNotificationService.MailAttachment(fileName, pdf, "application/pdf")));
+            mailReturned = true;
             finalStatus = status == null ? "FAILED: sonuç yok" : status;
             finalState = classify(finalStatus);
             // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz
@@ -164,10 +188,22 @@ public class TechErrorReportSender {
             Instant at = service.now();
             // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar)
             Long logId = saveLog(team, active.isEmpty() ? to : active, subject != null ? subject : channel.getName(), finalStatus);
+            // Kuyruktaki bir gönderimin üzerine yapılan deneme HİÇBİR ŞEY teslim etmediyse ya da kuyruğa almadıysa (posta servisine
+            // ulaşmadı: PDF çok büyük / beklenmeyen hata; ya da servis SKIPPED / FAILED döndü) kuyruktaki gönderim yaşamaya devam
+            // eder: talep bırakılır (durum satırın kendi son sonucundan), "bitirildi" ve "sonucu bilinmiyor" yazılmaz — servisin
+            // yeniden denemesi sonucu ESKİ günlük satırına yazar ve okuma uçları onu sonuçlandırır (düzeltme incelemesi 2026-10-15).
+            // Servisin kendisi istisna attıysa teslim bilinmez → eski davranış (bitir + SUPERSEDED).
+            boolean nothingDelivered = !mailAttempted
+                    || (mailReturned && ("SKIPPED".equals(finalState) || "FAILED".equals(finalState)));
+            // Kuyruktaydı mı: talepten SONRAKİ okuma belirleyicidir (yarım kalmış bir talebin devralınmasında ön okuma SENDING
+            // der ama kuyruk sürüyor olabilir); okunamadıysa ön okuma
+            boolean wasQueued = queuedAtClaim != null ? queuedAtClaim : "QUEUED".equals(stateBefore);
+            boolean resultMayLand = prevClaimedAt != null && prevClaimedAt.isAfter(claimedAt.minus(QUEUED_RESULT_WINDOW));
+            boolean keepQueued = !released && nothingDelivered && wasQueued && resultMayLand;
             try {
                 int n;
-                if (released) {
-                    n = reports.releaseClaim(report.getId(), claimedAt);
+                if (released || keepQueued) {
+                    n = reports.releaseClaim(report.getId(), claimedAt, prevClaimedAt);
                 } else if ("SENT".equals(finalState)) {
                     n = reports.finishSent(report.getId(), claimedAt, clip(finalStatus, 255), at, by,
                             clip(String.join(", ", active), 500), sentRev);
@@ -183,6 +219,18 @@ public class TechErrorReportSender {
                 if (n == 0) log.warn("Teknik hata raporu gönderim sonucu yazılamadı (rapor {}): talep başka bir gönderime geçmiş", report.getId());
             } catch (RuntimeException ex) {
                 log.warn("Teknik hata raporu gönderim sonucu yazılamadı (rapor {}): {}", report.getId(), ex.toString());
+            }
+            // Rapor geçmişine: talepten sonraki HER deneme (PDF sırası dolu / PDF çok büyük / beklenmeyen hata dahil —
+            // inceleme 2026-10-14). recordSend kendi işleminde ve hatasını yutar: gönderim sonucu değişmez.
+            TechErrorHistoryService h = service.history();
+            if (h != null && !released && !keepQueued && wasQueued) {
+                h.recordSend(report, "SEND_RESULT", null, "SUPERSEDED", null, null, claimedAt);
+            }
+            if (h != null) {
+                String reason = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? null
+                        : TechErrorHistoryService.sendReason(finalStatus);
+                h.recordSend(report, "SEND", by, finalState, "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null,
+                        reason, at);
             }
         }
     }

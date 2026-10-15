@@ -516,6 +516,10 @@ export const api = {
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),
     defaultTemplate: (lang) => request(`/tech-error-reports/templates/default?lang=${encodeURIComponent(lang || 'tr')}`, { withStatus: true }),
+    // Değişiklik ve sürüm geçmişi (2026-10-14): geçmiş anahtar kümesi sayfalı (before = son görülen olayın kimliği)
+    reportHistory: (id, before = null, limit = 50) => request(`/tech-error-reports/reports/${id}/history?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`, { withStatus: true }),
+    templateVersions: (channelId) => request(`/tech-error-reports/channels/${channelId}/template/versions`, { withStatus: true }),
+    templateVersion: (channelId, version) => request(`/tech-error-reports/channels/${channelId}/template/versions/${encodeURIComponent(version)}`, { withStatus: true }),
     reports: (channelId) => request(`/tech-error-reports/channels/${channelId}/reports`, { withStatus: true }),
     createReport: (channelId, year, month) => request('/tech-error-reports/reports',
       { method: 'POST', body: JSON.stringify({ channel_id: channelId, year, month }), withStatus: true }),

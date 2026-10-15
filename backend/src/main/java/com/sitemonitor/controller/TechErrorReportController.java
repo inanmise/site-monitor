@@ -62,6 +62,10 @@ public class TechErrorReportController {
     private final PermissionService permissions;
     private final AuditService auditService;
 
+    /** Değişiklik / sürüm geçmişi (2026-10-14). Yoksa (dilim testleri) geçmiş yazılmaz, okuma uçları boş döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorHistoryService history;
+
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
         this.service = service;
@@ -332,6 +336,7 @@ public class TechErrorReportController {
         data.put("values", TechErrorValues.toMap(v));
         data.put("images", imgs);
         data.put("previous", previousDto(r, t));
+        data.put("neighbors", neighborsDto(r));
         data.put("can_edit", canEdit);
         data.put("can_delete", writer && canDeleteReport(session, r.getTeamId(), r.getLastSentAt(), r.getSendState()));
         data.put("team_email_set", team != null && !TechErrorReportSender.recipients(team).isEmpty());
@@ -395,6 +400,139 @@ public class TechErrorReportController {
         return ok(Map.of("deleted", true));
     }
 
+    // ── Değişiklik ve sürüm geçmişi (2026-10-14) ─────────────────────────────────────────────────────
+
+    /**
+     * Raporun değişiklik geçmişi (en yeni önce, anahtar kümesi sayfalı: {@code before} = son görülen olayın kimliği).
+     * Okuma kapısı raporla aynı. Kullanıcı kimliği verilmez — yalnız o anki ad. {@code recorded_since}: geçmişin ne
+     * zamandan beri tutulduğu (bu özellikten önce açılmış raporda ondan önceki değişiklikler yoktur).
+     */
+    @GetMapping("/reports/{id}/history")
+    public ResponseEntity<Map<String, Object>> reportHistory(@PathVariable Long id,
+                                                             @RequestParam(value = "before", required = false) String before,
+                                                             @RequestParam(value = "limit", required = false) Integer limit,
+                                                             HttpSession session) {
+        requireRead(session);
+        TechErrorReport r = readableReport(id, session);
+        Long beforeId = before == null || before.isBlank() ? null : parseId(before);
+        if (before != null && !before.isBlank() && beforeId == null) {
+            throw new FieldValidationException("before", Msg.t("Geçmiş sayfası okunamadı; listeyi yenileyin.",
+                    "The history page couldn't be read; reload the list."));
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        List<Map<String, Object>> list = new ArrayList<>();
+        boolean more = false;
+        boolean capped = false;
+        Instant since = null;
+        if (history != null) {
+            var page = history.reportHistory(r.getId(), beforeId, limit == null ? 50 : limit);
+            for (var e : page.events()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", e.getId());
+                m.put("at", iso(e.getEventAt()));
+                m.put("kind", e.getKind());
+                m.put("actor_name", e.getActorName());
+                m.put("system", e.getActorId() == null);
+                m.put("version", e.getReportVersion());
+                m.put("detail", com.sitemonitor.service.techerror.TechErrorHistoryService.detail(e));
+                list.add(m);
+            }
+            more = page.hasMore();
+            since = page.recordedSince();
+            capped = page.capped();
+        }
+        Map<Long, String> names = service.displayNames(Arrays.asList(r.getCreatedById(), r.getUpdatedById()));
+        Map<String, Object> rep = new LinkedHashMap<>();
+        rep.put("created_at", iso(r.getCreatedAt()));
+        rep.put("created_by_name", nameOf(names, r.getCreatedById()));
+        rep.put("updated_at", iso(r.getUpdatedAt()));
+        rep.put("updated_by_name", nameOf(names, r.getUpdatedById()));
+        data.put("events", list);
+        data.put("has_more", more);
+        data.put("recorded_since", iso(since));
+        data.put("capped", capped);
+        data.put("max_events", com.sitemonitor.service.techerror.TechErrorHistoryService.MAX_EVENTS_PER_REPORT);
+        data.put("report", rep);
+        return ok(data);
+    }
+
+    /**
+     * Kanal şablonunun sürümleri (en yeni önce; şablon gövdesi yok). Bu özellikten önce açılmış ve o günden beri hiç
+     * kaydedilmemiş kanalda geçmiş yoktur — o anki sürüm kanalın kendisinden tek satır olarak verilir ({@code
+     * recorded:false}).
+     */
+    @GetMapping("/channels/{id}/template/versions")
+    public ResponseEntity<Map<String, Object>> templateVersions(@PathVariable Long id, HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        List<Map<String, Object>> out = new ArrayList<>();
+        boolean currentRecorded = false;
+        if (history != null) {
+            for (var v : history.templateVersions(ch.getId())) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("version", v.getVersion());
+                m.put("saved_at", iso(v.getSavedAt()));
+                m.put("saved_by_name", v.getSavedByName());
+                m.put("section_count", v.getSectionCount());
+                m.put("field_count", v.getFieldCount());
+                m.put("slot_count", v.getSlotCount());
+                m.put("current", v.getVersion() == ch.getTemplateVersion());
+                m.put("recorded", true);
+                if (v.getVersion() == ch.getTemplateVersion()) currentRecorded = true;
+                out.add(m);
+            }
+        }
+        if (!currentRecorded) {
+            Template t = TechErrorTemplate.fromStored(ch.getTemplateJson());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("version", ch.getTemplateVersion());
+            m.put("saved_at", iso(ch.getTemplateUpdatedAt()));
+            m.put("saved_by_name", service.displayName(ch.getTemplateUpdatedById()));
+            m.put("section_count", t.sections().size());
+            m.put("field_count", t.allFields().size());
+            m.put("slot_count", t.allSlots().size());
+            m.put("current", true);
+            m.put("recorded", false);
+            out.add(0, m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("current_version", ch.getTemplateVersion());
+        data.put("versions", out);
+        data.put("max_versions", com.sitemonitor.service.techerror.TechErrorHistoryService.MAX_TEMPLATE_VERSIONS);
+        return ok(data);
+    }
+
+    /** Tek şablon sürümünün tam hâli (salt okuma). Kayıtlı değilse ve istenen o anki sürümse kanalın kendisinden. */
+    @GetMapping("/channels/{id}/template/versions/{version}")
+    public ResponseEntity<Map<String, Object>> templateVersion(@PathVariable Long id, @PathVariable int version,
+                                                               HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        Map<String, Object> data = new LinkedHashMap<>();
+        var stored = history == null ? Optional.<com.sitemonitor.model.TechErrorTemplateVersion>empty()
+                : history.templateVersion(ch.getId(), version);
+        if (stored.isPresent()) {
+            var v = stored.get();
+            data.put("version", v.getVersion());
+            data.put("saved_at", iso(v.getSavedAt()));
+            data.put("saved_by_name", v.getSavedByName());
+            data.put("template", TechErrorTemplate.toMap(TechErrorTemplate.fromStored(v.getTemplateJson())));
+        } else if (version == ch.getTemplateVersion()) {
+            data.put("version", ch.getTemplateVersion());
+            data.put("saved_at", iso(ch.getTemplateUpdatedAt()));
+            data.put("saved_by_name", service.displayName(ch.getTemplateUpdatedById()));
+            data.put("template", TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson())));
+        } else {
+            throw new NoSuchElementException(Msg.t(
+                    "Bu şablon sürümü kayıtlı değil; sürüm geçmişi bu özellikten sonra tutulmaya başladı ya da eski sürümler budandı.",
+                    "This template version isn't recorded; the version history started with this feature, or older versions were pruned."));
+        }
+        data.put("current", version == ch.getTemplateVersion());
+        return ok(data);
+    }
+
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/reports/{id}/images/{slot}")
@@ -431,7 +569,7 @@ public class TechErrorReportController {
                                                            HttpSession session, HttpServletRequest request) {
         requireWrite(session);
         TechErrorReport r = writableReport(id, session);
-        TechErrorReportImage img = service.deleteImage(r.getId(), imageId);
+        TechErrorReportImage img = service.deleteImage(r.getId(), imageId, userId(session));
         auditService.recordAction("TECH_ERROR_REPORT_UPDATE", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                 AuditDetail.of("image_removed", img.getSlotId()));
         return ok(Map.of("deleted", true));
@@ -708,6 +846,24 @@ public class TechErrorReportController {
         m.put("year", p.getReportYear());
         m.put("month", p.getReportMonth());
         m.put("fields", fields);
+        return m;
+    }
+
+    /**
+     * Aynı kanalın bu rapordan önceki ve sonraki EN YAKIN raporu (dönem sırası; ara ay boş olabilir) — rapor ekranında
+     * tek tıkla geçiş. Kanalın rapor listesi zaten sınırlı ({@code reportRows}, ≤ 600 hafif satır).
+     */
+    private Map<String, Object> neighborsDto(TechErrorReport r) {
+        int here = r.getReportYear() * 12 + r.getReportMonth();
+        TechErrorReportRepository.Row prev = null, next = null;
+        for (var row : service.reportRows(r.getChannelId())) {
+            int p = row.getReportYear() * 12 + row.getReportMonth();
+            if (p < here && (prev == null || p > prev.getReportYear() * 12 + prev.getReportMonth())) prev = row;
+            if (p > here && (next == null || p < next.getReportYear() * 12 + next.getReportMonth())) next = row;
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("prev", prev == null ? null : Map.of("id", prev.getId(), "year", prev.getReportYear(), "month", prev.getReportMonth()));
+        m.put("next", next == null ? null : Map.of("id", next.getId(), "year", next.getReportYear(), "month", next.getReportMonth()));
         return m;
     }
 

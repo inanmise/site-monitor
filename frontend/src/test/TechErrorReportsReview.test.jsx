@@ -88,7 +88,7 @@ describe('rapor düzenleyici — inceleme düzeltmeleri', () => {
     const first = await screen.findByRole('dialog', { name: 'Önce kaydedilsin mi?' })
     fireEvent.click(within(first).getByRole('button', { name: 'Kaydet ve devam et' }))
     const dlg = await screen.findByRole('dialog', { name: 'Şablonun son hâli uygulansın mı?' })
-    expect(within(dlg).getByText(/3 değer ve 2 grafik/)).toBeInTheDocument()
+    expect(within(dlg).getByText(/3 değer ve 2 görsel/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: 'Uygula' }))
     await waitFor(() => expect(te().refreshTemplate).toHaveBeenCalledWith('100', 5))
   })

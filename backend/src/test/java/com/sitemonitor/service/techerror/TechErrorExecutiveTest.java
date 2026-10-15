@@ -26,6 +26,12 @@ class TechErrorExecutiveTest {
 
     private static final Template TR = TechErrorTemplate.defaults("tr");
 
+    /**
+     * Varsayılan şablonda tablo yok (SLA tablosu 2026-10-15'ten beri ekran görüntüsü); tablo bölümü türü duruyor —
+     * tablo testleri eski SLA tablosunu şablona ekler.
+     */
+    static final Template TRT = TechErrorTemplate.normalize(withSlaTable());
+
     private static Section section(Template t, String kind) {
         return t.sections().stream().filter(s -> kind.equals(s.kind())).findFirst().orElseThrow();
     }
@@ -307,12 +313,12 @@ class TechErrorExecutiveTest {
     @Test
     @DisplayName("tablo değerleri: satır × sütun türüyle doğrulanır, boş hücre saklanmaz, alan anahtarı tables.<bölüm>.<satır>.<sütun>")
     void tableValues() {
-        Section sla = section(TR, "table");
+        Section sla = section(TRT, "table");
         Map<String, Object> rows = new LinkedHashMap<>();
         rows.put("total", Map.of("functions", 120, "availability", "99.5", "volume-share", -1.5));
         rows.put("sla-critical", Map.of("functions", "", "total-tx", 1000));
         rows.put("bilinmeyen-satir", Map.of("functions", 5));
-        Values v = TechErrorValues.normalize(Map.of("tables", Map.of(sla.id(), rows)), TR);
+        Values v = TechErrorValues.normalize(Map.of("tables", Map.of(sla.id(), rows)), TRT);
         assertThat(v.cell(sla.id(), "total", "functions")).isEqualTo(120L);
         assertThat(v.cell(sla.id(), "total", "availability")).isEqualTo(99.5);
         assertThat(v.cell(sla.id(), "total", "volume-share")).isEqualTo(-1.5);       // yüzde negatif olabilir
@@ -324,11 +330,11 @@ class TechErrorExecutiveTest {
                 .doesNotContain("tables");
 
         assertInvalidValue(Map.of("tables", Map.of(sla.id(), Map.of("total", Map.of("functions", -1)))),
-                "tables." + sla.id() + ".total.functions");
+                "tables." + sla.id() + ".total.functions", TRT);
         assertInvalidValue(Map.of("tables", Map.of(sla.id(), Map.of("total", Map.of("success-tx", "çok")))),
-                "tables." + sla.id() + ".total.success-tx");
+                "tables." + sla.id() + ".total.success-tx", TRT);
         // saklı okuma hoşgörülü: geçersiz hücre düşer
-        Values lenient = TechErrorValues.fromStored("{\"tables\":{\"" + sla.id() + "\":{\"total\":{\"functions\":-5,\"total-tx\":7}}}}", TR);
+        Values lenient = TechErrorValues.fromStored("{\"tables\":{\"" + sla.id() + "\":{\"total\":{\"functions\":-5,\"total-tx\":7}}}}", TRT);
         assertThat(lenient.tables().get(sla.id()).get("total")).containsOnlyKeys("total-tx");
     }
 
@@ -357,21 +363,21 @@ class TechErrorExecutiveTest {
     @Test
     @DisplayName("'Hayır ise sorma' bağı çözülürken özet cümleleri ve tablo kaybolmaz (gidiş-dönüş)")
     void skipResolutionKeepsNewComponents() {
-        Template t = TechErrorTemplate.normalize(TechErrorTemplate.toMap(TR));
-        assertThat(section(t, "summary").lines()).isEqualTo(section(TR, "summary").lines()).isNotEmpty();
-        assertThat(section(t, "table").columns()).isEqualTo(section(TR, "table").columns()).isNotEmpty();
-        assertThat(section(t, "table").rows()).isEqualTo(section(TR, "table").rows()).isNotEmpty();
+        Template t = TechErrorTemplate.normalize(TechErrorTemplate.toMap(TRT));
+        assertThat(section(t, "summary").lines()).isEqualTo(section(TRT, "summary").lines()).isNotEmpty();
+        assertThat(section(t, "table").columns()).isEqualTo(section(TRT, "table").columns()).isNotEmpty();
+        assertThat(section(t, "table").rows()).isEqualTo(section(TRT, "table").rows()).isNotEmpty();
     }
 
     @Test
     @DisplayName("şablon değişince: özet metni ve tablo hücreleri taşınır; sütun türü değişen ya da silinen hücre düşer")
     void carryKeepsSummaryAndTable() {
-        Section sla = section(TR, "table");
-        Section sum = section(TR, "summary");
+        Section sla = section(TRT, "table");
+        Section sum = section(TRT, "summary");
         Values before = TechErrorValues.normalize(Map.of(
                 "texts", Map.of(sum.id(), "Elle özet"),
-                "tables", Map.of(sla.id(), Map.of("total", Map.of("functions", 10, "availability", 99.1, "volume-share", 40)))), TR);
-        Map<String, Object> raw = TechErrorTemplate.toMap(TR);
+                "tables", Map.of(sla.id(), Map.of("total", Map.of("functions", 10, "availability", 99.1, "volume-share", 40)))), TRT);
+        Map<String, Object> raw = TechErrorTemplate.toMap(TRT);
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
         for (int i = 0; i < secs.size(); i++) {
             if (!"table".equals(secs.get(i).get("kind"))) continue;
@@ -387,7 +393,7 @@ class TechErrorExecutiveTest {
         }
         raw.put("sections", secs);
         Template next = TechErrorTemplate.normalize(raw);
-        Values after = TechErrorReportService.carry(before, TR, next);
+        Values after = TechErrorReportService.carry(before, TRT, next);
         assertThat(after.texts()).containsEntry(sum.id(), "Elle özet");
         assertThat(after.tables().get(sla.id()).get("total")).containsOnlyKeys("functions");
     }
@@ -431,8 +437,37 @@ class TechErrorExecutiveTest {
                 .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("template"));
     }
 
+    /** Eski varsayılan SLA tablosu (6 sütun, grup satırlı) — kimlikler 20.134.0'daki gibi. */
+    static Map<String, Object> withSlaTable() {
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TR));
+        List<Object> secs = new ArrayList<>((List<?>) raw.get("sections"));
+        Map<String, Object> tb = new LinkedHashMap<>();
+        tb.put("id", "sla-table");
+        tb.put("kind", "table");
+        tb.put("title", "SLA Erişilebilirlik Tablosu");
+        tb.put("columns", List.of(
+                Map.of("id", "functions", "label", "Fonksiyon adedi", "type", "number"),
+                Map.of("id", "success-tx", "label", "Başarılı işlem adedi", "type", "number"),
+                Map.of("id", "total-tx", "label", "Toplam işlem adedi", "type", "number"),
+                Map.of("id", "failed-tx", "label", "Teknik başarısız işlem adedi", "type", "number"),
+                Map.of("id", "availability", "label", "Erişilebilirlik (kesintisiz)", "type", "percent"),
+                Map.of("id", "volume-share", "label", "Toplam işlem hacmi payı", "type", "percent")));
+        tb.put("rows", List.of(
+                Map.of("id", "total", "label", "{kanal} Kanalı Toplam", "group", true),
+                Map.of("id", "sla-critical", "label", "SLA dahil ve kritik"),
+                Map.of("id", "sla-noncritical", "label", "SLA dahil ve kritik olmayan"),
+                Map.of("id", "out-of-sla", "label", "SLA kapsamında olmayan")));
+        secs.add(tb);
+        raw.put("sections", secs);
+        return raw;
+    }
+
     private static void assertInvalidValue(Map<String, Object> raw, String key) {
-        assertThatThrownBy(() -> TechErrorValues.normalize(raw, TR))
+        assertInvalidValue(raw, key, TR);
+    }
+
+    private static void assertInvalidValue(Map<String, Object> raw, String key, Template tpl) {
+        assertThatThrownBy(() -> TechErrorValues.normalize(raw, tpl))
                 .isInstanceOf(FieldValidationException.class)
                 .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey(key));
     }

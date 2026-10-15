@@ -420,6 +420,17 @@ public final class RetentionCatalog {
                 "report_id NOT IN (SELECT id FROM tech_error_reports)", DataClass.CONTENT,
                 "Teknik hata raporu grafik görselleri (2026-10-13; BYTEA, ≤ 5 MB/satır, rapor başına ≤ 40 MB). Raporuyla "
                 + "yaşar (rapor silme aynı işlemde siler); raporu silinmiş öksüz görsel burada temizlenir."),
+        orphan("tech-error-report-events-orphan", "tech_error_report_events",
+                "report_id NOT IN (SELECT id FROM tech_error_reports)", DataClass.PERSONAL,
+                "Teknik hata raporu değişiklik geçmişi (2026-10-14): kim, ne zaman, hangi alanı neyden neye değiştirdi; "
+                + "görsel, şablon uygulama ve gönderim olayları (değişikliği yapanın adı ve kullanıcı kimliği). Rapor başına "
+                + "en çok 500 satır (eskiler her eklemede budanır); rapor silinince aynı işlemde silinir, öksüz satır burada "
+                + "temizlenir."),
+        orphan("tech-error-template-versions-orphan", "tech_error_template_versions",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.PERSONAL,
+                "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "
+                + "kullanıcı kimliği. Kanal başına en çok 100 sürüm (eskiler budanır); kanal silinince aynı işlemde silinir, "
+                + "öksüz satır burada temizlenir."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),

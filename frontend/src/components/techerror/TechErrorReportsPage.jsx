@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import ChannelsView from './ChannelsView.jsx'
 import ChannelView from './ChannelView.jsx'
@@ -52,6 +52,8 @@ export default function TechErrorReportsPage() {
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
   }, [])
 
+  // Ay geçişiyle açılan raporda odak başlığa taşınır (ReportEditor yeniden kurulur)
+  const focusTitle = useRef(false)
   const openReport = useCallback((id, channelId) => {
     setNav((n) => ({ view: VIEW_REPORT, channel: channelId != null ? String(channelId) : n.channel, report: String(id) }))
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
@@ -63,7 +65,8 @@ export default function TechErrorReportsPage() {
     return (
       <ReportEditor key={nav.report} reportId={nav.report}
         onBack={(channelId) => (channelId || nav.channel ? openChannel(channelId || nav.channel) : toChannels())}
-        onOpenChannels={toChannels} onOpenTemplate={(channelId) => openChannel(channelId, TAB_TEMPLATE)} />
+        onOpenChannels={toChannels} onOpenTemplate={(channelId) => openChannel(channelId, TAB_TEMPLATE)}
+        onOpenReport={(id, channelId) => { focusTitle.current = true; openReport(id, channelId) }} focusTitleRef={focusTitle} />
     )
   }
   if (nav.view === VIEW_CHANNEL) {
