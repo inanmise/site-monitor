@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-15T10:25:17Z",
+  "generatedAt": "2026-10-16T00:03:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 752,
+  "count": 753,
   "releases": [
+    {
+      "version": "20.136.2",
+      "tag": "v20.136.2",
+      "releasedAt": "2026-10-16T00:03:02Z",
+      "commit": "2ec47b83d91b299550506e6de9c3d98859aab008",
+      "prevVersion": "20.136.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2ec47b83",
+          "subject": "erişim paylaşımında sentetik (k6) izleme de öteki türler gibi düzenlenir, silinir ve geri yüklenir"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.136.1",
       "tag": "v20.136.1",
