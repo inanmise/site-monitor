@@ -19,7 +19,7 @@ import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailu
 import CertCheckHistory from './certmodal/CertCheckHistory.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -153,8 +153,7 @@ export default function UptimePage() {
     }
     if (tagFilter !== 'all') list = list.filter(x => matchesTag(x, tagFilter))
     if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(x => x.domain.toLowerCase().includes(q) || matchesGroupOrTagText(x, q))   // grup/etiket metni de aranır
+      list = list.filter(x => matchesSearchText(search, [x.domain]) || matchesGroupOrTagText(x, search))   // grup/etiket metni de aranır
     }
     list.sort((a, b) => {
       if (sortKey === 'default') {

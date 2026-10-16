@@ -381,7 +381,7 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
     fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
     return () => container.querySelector('[data-tone="total"] [data-slot="stat-value"]')?.textContent
   }
-  const searchBox = () => screen.getByRole('textbox', { name: /^(host ara|search host)/i })
+  const searchBox = () => screen.getByRole('textbox', { name: /^(host veya ad ara|search host or name)/i })
 
   it('istatistik kartlari ARAMA ile daralir (kuresel sayida donup kalmaz)', async () => {
     threePorts()

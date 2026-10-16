@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { matchesTeamAndGroup, monitorUrlState, NO_ASSIGNMENT, matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, NO_ASSIGNMENT, matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText, foldSearchText, matchesSearchText } from '../utils/monitorFilters.js'
 
 /**
  * TAKIM/GRUP KAPSAMI — sekiz izleme sayfasında birebir kopyalanmış sekiz satırdı ve
@@ -128,6 +128,34 @@ describe('matchesTag / tagNamesOf / matchesGroupOrTagText', () => {
     expect(matchesGroupOrTagText(T('prod', 'Ödeme Sistemleri'), 'ödeme')).toBe(true)
     expect(matchesGroupOrTagText(T('prod', 'Ödeme'), 'xyz')).toBe(false)
     expect(matchesGroupOrTagText(T('prod', 'Ödeme'), '   ')).toBe(false)
+  })
+
+  it('2026-10-16: Türkçe harfler ve aksanlar katlanır — küçük harfle yazılan arama Türkçe adları bulur', () => {
+    expect(foldSearchText('İnternet Şubesi')).toBe('internet subesi')
+    expect(foldSearchText('KATILIM Bankası')).toBe('katilim bankasi')
+    expect(foldSearchText('Ödeme ĞÜÇ')).toBe('odeme guc')
+    expect(foldSearchText(null)).toBe('')
+    expect(matchesSearchText('internet', ['İnternet Şubesi'])).toBe(true)
+    expect(matchesSearchText('İNTERNET', ['internet şubesi'])).toBe(true)
+    expect(matchesSearchText('katılım', ['KATILIM'])).toBe(true)
+    expect(matchesSearchText('katilim', ['Katılım'])).toBe(true)
+    expect(matchesSearchText('odeme', ['Ödeme Ağ Geçidi'])).toBe(true)
+    expect(matchesSearchText('ödeme', ['odeme-gw'])).toBe(true)
+    expect(matchesSearchText('xyz', ['Ödeme'])).toBe(false)
+  })
+
+  it('matchesSearchText: boş / boşluk arama her şeyle eşleşir; boş / tanımsız değerler atlanır; arama kırpılır', () => {
+    expect(matchesSearchText('', ['a'])).toBe(true)
+    expect(matchesSearchText('   ', [])).toBe(true)
+    expect(matchesSearchText('gw', [null, undefined, '', 'Ana GW'])).toBe(true)
+    expect(matchesSearchText('gw', [null, undefined, ''])).toBe(false)
+    expect(matchesSearchText('  gw  ', ['ana-gw'])).toBe(true)
+    expect(matchesSearchText('gw', null)).toBe(false)
+  })
+
+  it('grup / etiket araması da Türkçe katlanır', () => {
+    expect(matchesGroupOrTagText(T('İç Sistemler', 'Ödeme'), 'ic sis')).toBe(true)
+    expect(matchesGroupOrTagText(T('prod', 'İnternet Bankacılığı'), 'internet banka')).toBe(true)
   })
 
   it('monitorUrlState: tag filtresi param üretir; all/eksik üretmez', () => {

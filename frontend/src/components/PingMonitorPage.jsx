@@ -37,7 +37,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import PingProtocol from './ui/PingProtocol.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -503,7 +503,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    return (m.host || '').toLowerCase().includes(search.trim().toLowerCase())
+    return matchesSearchText(search, [m.host, m.name])   // kartta görünen ad da aranır (2026-10-16)
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {

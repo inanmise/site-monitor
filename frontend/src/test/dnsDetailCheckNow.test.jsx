@@ -183,7 +183,7 @@ describe('DnsMonitorPage — detayda "Şimdi kontrol et" ve arama', () => {
     ] })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('beta.example.com')
-    fireEvent.change(screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i }),
+    fireEvent.change(screen.getByRole('textbox', { name: /^(domain, kayıt tipi veya ad ara|search domain, record type or name)/i }),
       { target: { value: '  alfa.example.com  ' } })
     await waitFor(() => expect(screen.queryByText('beta.example.com')).toBeNull())
     expect(screen.getByText('alfa.example.com')).toBeInTheDocument()

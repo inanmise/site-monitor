@@ -49,7 +49,7 @@ import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
@@ -540,9 +540,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
-    const q = search.trim().toLowerCase()
-    if (!q) return true
-    return (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q)
+    return matchesSearchText(search, [m.name, m.group_name])
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
