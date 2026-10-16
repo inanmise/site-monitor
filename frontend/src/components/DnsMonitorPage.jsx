@@ -42,7 +42,7 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
@@ -530,8 +530,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const s = search.trim().toLowerCase()
-    return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
+    return matchesSearchText(search, [m.domain, m.record_type, m.name])   // kartta görünen ad da aranır (2026-10-16)
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const dnsCounts = useMemo(() => ({

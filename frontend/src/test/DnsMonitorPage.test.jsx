@@ -246,7 +246,7 @@ describe('DnsMonitorPage', () => {
     ] })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('beta.example.com')
-    const box = screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i })
+    const box = screen.getByRole('textbox', { name: /^(domain, kayıt tipi veya ad ara|search domain, record type or name)/i })
     expect(screen.queryByRole('button', { name: /^(temizle|clear)$/i })).toBeNull()
     fireEvent.change(box, { target: { value: 'alfa' } })
     await waitFor(() => expect(screen.queryByText('beta.example.com')).toBeNull())
@@ -308,7 +308,7 @@ describe('DnsMonitorPage', () => {
 
     expect(totalText()).toBe('3')
 
-    fireEvent.change(screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i }), { target: { value: 'alfa' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^(domain, kayıt tipi veya ad ara|search domain, record type or name)/i }), { target: { value: 'alfa' } })
     await waitFor(() => expect(totalText()).toBe('1'))
 
     // Alarm sayaci da kapsamdan gelir: alarmli monitor arama disinda kaldi.
@@ -323,7 +323,7 @@ describe('DnsMonitorPage', () => {
     const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     const totalText = await openStats(container)
 
-    fireEvent.change(screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i }), { target: { value: 'hicbiryerde-yok' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^(domain, kayıt tipi veya ad ara|search domain, record type or name)/i }), { target: { value: 'hicbiryerde-yok' } })
 
     await waitFor(() => expect(totalText()).toBe('0'))
     expect(container.querySelector('[data-slot="stats-toggle"]')).not.toBeNull()

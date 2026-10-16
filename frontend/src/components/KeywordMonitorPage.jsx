@@ -36,7 +36,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText, matchesProxy } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
@@ -534,8 +534,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     if (!matchesProxy(m, proxyFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (m.url || '').toLowerCase().includes(q) || (m.keyword || '').toLowerCase().includes(q)
+    return matchesSearchText(search, [m.url, m.keyword, m.name])   // kartta görünen ad da aranır (2026-10-16)
   }), [monitors, teamFilter, groupFilter, tagFilter, proxyFilter, search])
 
   const counts = useMemo(() => {

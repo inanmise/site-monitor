@@ -12,7 +12,7 @@ import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe, grantWriteTeamsFromMe, grantLevelsFromMe, mergeWriteTeams, rowGrantAccess } from './hooks/useMonitorTeamPick.js'
-import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
+import { matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import InactivityCountdownText from './components/ui/InactivityCountdownText.jsx'
 import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
@@ -1514,8 +1514,7 @@ export default function App() {
     if (!matchesTag(c, tagFilter)) return false
     if (!search)                   return true
     if (matchesGroupOrTagText(c, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
-    const s = search.toLowerCase()
-    return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
+    return matchesSearchText(search, [c.domain, c.issuer, c.subject])
   // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
   // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
   }), [dashSource, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])

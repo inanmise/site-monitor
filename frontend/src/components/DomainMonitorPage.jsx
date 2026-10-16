@@ -41,7 +41,7 @@ import DomainExpiryTrend from './DomainExpiryTrend.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -609,8 +609,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     if (!(QUICK_PRED[quick] || QUICK_PRED.all)(m)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (m.domain || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.registrar || '').toLowerCase().includes(q)
+    return matchesSearchText(search, [m.domain, m.name, m.registrar])
   }), [monitors, teamFilter, groupFilter, tagFilter, quick, search])
 
   const counts = useMemo(() => {

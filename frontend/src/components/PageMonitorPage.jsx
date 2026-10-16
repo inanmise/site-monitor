@@ -39,7 +39,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText, matchesProxy } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -664,8 +664,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!matchesProxy(m, proxyFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (m.url || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
+    return matchesSearchText(search, [m.url, m.name])
   }), [monitors, teamFilter, groupFilter, tagFilter, proxyFilter, search])
 
   const counts = useMemo(() => {

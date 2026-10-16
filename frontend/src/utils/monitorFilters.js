@@ -110,11 +110,29 @@ export function tagNamesOf(monitors) {
 }
 
 /**
+ * Arama için metni katlar (2026-10-16): Türkçe büyük / küçük harfler (İ I ı i) ve aksanlı harfler (ş ç ğ ö ü) eşit
+ * sayılır — "internet" "İnternet Şubesi"ni, "katılım" "KATILIM"ı, "odeme" "Ödeme"yi bulur. Düz `toLowerCase()` "İ"yi
+ * "i + birleşik nokta" yapıyordu, küçük harfle yazılan arama Türkçe adları bulamıyordu.
+ */
+export function foldSearchText(value) {
+  return String(value ?? '').toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+/**
+ * Serbest metin araması: aranan metin (katlanmış, kırpılmış) değerlerden birinde geçiyor mu. Boş arama her şeyle
+ * eşleşir; boş / tanımsız değerler atlanır. İzleme sayfaları ve sertifika panosu bunu kullanır (2026-10-16).
+ */
+export function matchesSearchText(search, values) {
+  const q = foldSearchText(search).trim()
+  if (!q) return true
+  return (values || []).some((v) => v != null && v !== '' && foldSearchText(v).includes(q))
+}
+
+/**
  * Serbest metin araması grup adı ve etiketlerde de eşleşsin (sayfaya özgü alan aramasına EK).
  * Kullanıcı "kritik" yazınca URL'sinde geçmese de o etiketli izlemeler listelenir.
  */
 export function matchesGroupOrTagText(m, search) {
-  const q = String(search || '').trim().toLowerCase()
-  if (!q) return false
-  return (m?.group_name || '').toLowerCase().includes(q) || tagsOf(m).some((t) => t.toLowerCase().includes(q))
+  if (!foldSearchText(search).trim()) return false
+  return matchesSearchText(search, [m?.group_name, ...tagsOf(m)])
 }

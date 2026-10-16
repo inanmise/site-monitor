@@ -42,7 +42,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText, matchesProxy } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
@@ -531,8 +531,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!matchesProxy(m, proxyFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (m.url || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.tags || '').toLowerCase().includes(q)
+    return matchesSearchText(search, [m.url, m.name, m.tags])
   }), [monitors, teamFilter, groupFilter, tagFilter, proxyFilter, search])
 
   const counts = useMemo(() => {

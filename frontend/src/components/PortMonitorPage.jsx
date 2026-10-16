@@ -46,7 +46,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
 import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
@@ -505,7 +505,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
-    return m.host.toLowerCase().includes(search.trim().toLowerCase())
+    return matchesSearchText(search, [m.host, m.name])   // kartta görünen ad da aranır (2026-10-16)
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const portCounts = useMemo(() => ({
