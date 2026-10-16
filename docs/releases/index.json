@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-16T08:44:45Z",
+  "generatedAt": "2026-10-16T18:04:28Z",
   "repo": "inanmise/site-monitor",
-  "count": 755,
+  "count": 756,
   "releases": [
+    {
+      "version": "20.138.0",
+      "tag": "v20.138.0",
+      "releasedAt": "2026-10-16T18:04:22Z",
+      "commit": "b96bf5ec071bfad72b09fa251dee190ee6b7fe4c",
+      "prevVersion": "20.137.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b96bf5ec",
+          "subject": "teknik hata raporunda oranlar adetlerden otomatik hesaplanır; iki grafik bölümü ve tam çözünürlüklü görseller"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.137.0",
       "tag": "v20.137.0",
