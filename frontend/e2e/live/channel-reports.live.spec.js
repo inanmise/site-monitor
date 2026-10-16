@@ -76,6 +76,19 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
       const ch = await apiCall(request, 'POST', '/api/tech-error-reports/channels', { team_id: team.id, name: state.channelName, lang: 'tr' })
       expect(ch.status, `kanal açılamadı: ${JSON.stringify(ch.json)?.slice(0, 200)}`).toBe(200)
       state.channelId = ch.json.data.id
+      // Kanal şablonu (2026-10-16): varsayılanda trend bölümü YOK ve teknik hata oranı adetlerden hesaplanıyor. Bu koşu
+      // Faz C trend akışını sınadığından teknik hata oranı ELLE girilir ve trend bölümü eklenir; kalan oranlar
+      // (map yapılmamış / kota / değişim) hesaplı kalır — 6. adım onları sınar
+      const tg = await apiGet(request, `/api/tech-error-reports/channels/${state.channelId}/template`)
+      expect(tg.status, 'kanal şablonu okunamadı').toBe(200)
+      const tpl = JSON.parse(JSON.stringify(tg.json.data.template))
+      for (const s of tpl.sections) for (const f of s.fields || []) if (f.id === 'error-rate') delete f.calc
+      const at = tpl.sections.findIndex((s) => s.id === 'charts')
+      tpl.sections.splice(at, 0, { id: 'auto-trend', kind: 'trend', title: 'Otomatik Trendler (Son 12 Ay)',
+        series: ['error-rate', 'total-tx', 'error-count', 'unmapped-count', 'quota-count'] })
+      const tp = await apiCall(request, 'PUT', `/api/tech-error-reports/channels/${state.channelId}/template`,
+        { version: tg.json.data.version, template: tpl })
+      expect(tp.status, `kanal şablonu kaydedilemedi: ${JSON.stringify(tp.json)?.slice(0, 200)}`).toBe(200)
       // Raporun ayı (dönem) + önceki iki ay; önceki aylara rakam girilir
       const months = { cur: state.period, m1: monthMinus(state.period, 1), m2: monthMinus(state.period, 2) }
       for (const [k, m] of Object.entries(months)) {
@@ -143,7 +156,7 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     done()
   })
 
-  test('2 · görsel: 3000 × 1500 PNG tarayıcıda yuvaya göre küçülür, GERÇEK sunucu kabul eder; PDF yüklenmez @1280', async ({ page }) => {
+  test('2 · görsel: 3000 × 1500 PNG OLDUĞU GİBİ, 7200 × 1800 alan ortalamasıyla 6000 × 1500 PNG; GERÇEK sunucu kabul eder; PDF yüklenmez @1280', async ({ page }) => {
     const done = stopwatch('görsel yükleme')
     await page.setViewportSize({ width: 1280, height: 900 })
     await openApp(page, reportUrl())
@@ -155,15 +168,23 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     const res = await up
     expect(res.status(), 'sunucu doğrulayıcısı').toBe(200)
     const body = await res.json()
-    expect(body.data.width).toBeLessThanOrEqual(900)
-    expect(Math.abs(body.data.width / body.data.height - 2)).toBeLessThan(0.02)
-    expect(body.data.size_bytes).toBeLessThan(big.length)
-    await expect(slot.locator('[data-slot="te-image-note"]')).toContainText(`3000 × 1500 → ${body.data.width} × ${body.data.height}`)
+    // 2026-10-16: çözünürlük korunur — sınır içindeki görsel aynı dosya, aynı ölçü; not yok
+    expect({ w: body.data.width, h: body.data.height, bytes: body.data.size_bytes }).toEqual({ w: 3000, h: 1500, bytes: big.length })
     await expect(slot.locator('img')).toBeVisible()
-    // Saklanan görsel gerçekten küçültülmüş PNG
+    await expect(slot.locator('[data-slot="te-image-note"]')).toHaveCount(0)
     const img = await page.request.get(`/api/tech-error-reports/images/${body.data.id}`)
     expect(img.status()).toBe(200)
-    expect(pngSize(await img.body())).toEqual({ w: body.data.width, h: body.data.height })
+    expect(pngSize(await img.body())).toEqual({ w: 3000, h: 1500 })
+    // Sunucu sınırını (6000 px kenar) aşan görsel tarayıcıda alan ortalamasıyla sınıra iner, PNG kalır, sunucu kabul eder
+    const wide = page.locator('[data-slot-id="annual-table"]')
+    const huge = stripedPng(7200, 1800)
+    const up2 = page.waitForResponse((r) => r.request().method() === 'POST' && /\/images\/annual-table$/.test(new URL(r.url()).pathname))
+    await wide.locator('input[type="file"]').setInputFiles({ name: 'cok-genis.png', mimeType: 'image/png', buffer: huge })
+    const res2 = await up2
+    expect(res2.status(), 'sunucu doğrulayıcısı (sınıra inen)').toBe(200)
+    const body2 = await res2.json()
+    expect({ w: body2.data.width, h: body2.data.height, type: body2.data.content_type }).toEqual({ w: 6000, h: 1500, type: 'image/png' })
+    await expect(wide.locator('[data-slot="te-image-note"]')).toContainText('7200 × 1800 → 6000 × 1500')
     // PDF yuvaya yüklenmez — istek bile gitmez
     let posted = 0
     page.on('request', (r) => { if (r.method() === 'POST' && /\/images\/annual-tech-rate$/.test(new URL(r.url()).pathname)) posted++ })
@@ -274,5 +295,27 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     await expect(page.locator('[data-slot="te-report-title"]')).toContainText(`${TR_MONTHS[m1.month - 1]} ${m1.year}`)
     // Önceki ayın trendi: bir önceki ayın (m2) rakamıyla + kendi rakamı
     await expect(page.locator('[data-slot="te-trend"] [data-field="error-rate"]')).toHaveAttribute('data-points', '2', { timeout: 15_000 })
+  })
+
+  test('6 · otomatik oranlar (2026-10-16): SUNUCU adetlerden hesaplar (istemcinin oranı yok sayılır); geçen ayla değişim; ekranda adet altında yüzde @1280', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    // Geçen ay (m1) toplam işlem 125.430.112; bu ay 131.701.618 → %5 artış
+    await saveValues(page.request, state.reports.cur, { 'error-rate': 0.42, 'total-tx': 131_701_618, 'error-count': 3000,
+      'unmapped-count': 300, 'quota-count': 90, 'unmapped-rate': 99, 'tx-increase-pct': 1 })
+    const g = await apiGet(page.request, `/api/tech-error-reports/reports/${state.reports.cur}`)
+    const f = g.json.data.values.fields
+    expect(f['unmapped-rate'], 'map yapılmamış oran sunucuda hesaplanır (istemcinin 99\'u yok sayılır)').toBe(10)
+    expect(f['quota-rate']).toBe(3)
+    expect(f['tx-increase']).toBe(true)
+    expect(f['tx-increase-pct']).toBe(5)
+    expect(f['error-rate'], 'bu kanalda teknik hata oranı elle girilir').toBe(0.42)
+
+    await openApp(page, reportUrl())
+    const editor = page.locator('[data-slot="te-report"]')
+    await expect(editor.getByLabel('Map yapılmamış hataların teknik hatalara oranı', { exact: true })).toHaveText(/^(%10|10%)$/, { timeout: 30_000 })
+    await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-calc-derived"]')).toContainText(/%3|3%/)
+    await editor.getByLabel('Kota hatası adedi', { exact: true }).fill('150')
+    await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-calc-derived"]')).toContainText(/%5|5%/)
+    await expectFits(page, '[data-slot="te-report"]', 'oranlar 1280')
   })
 })

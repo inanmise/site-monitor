@@ -12,7 +12,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
-  LIMITS, MAX_RESOLVED_TEXT, changePercent, fieldExempt, formatNumber, formatPercent, formatValue, isIncompleteNumber,
+  CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
+  isIncompleteNumber,
   issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryLinePreview, summaryLineStatus,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
@@ -89,6 +90,42 @@ function SectionShell({ title, children, slot, sectionId, hint }) {
   )
 }
 
+/**
+ * Otomatik hesaplanan alanın ÇIKTISI (2026-10-16): kullanıcı girmez, adetlerden hesaplanır. `<output>` etikete bağlıdır
+ * (ekran okuyucu alan adını okur); sonuç yoksa "—" ve altında nedeni.
+ */
+function CalcOutput({ id, field, res, uiLang, describedBy, t }) {
+  const shown = res.status !== 'OK' ? '—'
+    : field.type === 'yesno' ? (res.value ? t('te.yes') : t('te.no')) : formatPercent(res.value, uiLang)
+  return (
+    <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 pointer-coarse:min-h-10"
+      data-slot="te-calc" data-status={res.status}>
+      <output id={id} aria-describedby={describedBy} className="text-base font-semibold tabular-nums">{shown}</output>
+      <Badge variant="secondary" className="rounded-md overflow-visible">{t('te.calc.auto')}</Badge>
+    </div>
+  )
+}
+
+/** Hesabın açıklaması (formül) ya da neden boş / elle olduğu — alan adları raporun şablon diliyle çözülür. */
+function calcNoteText(field, res, label, previous, t) {
+  const c = field.calc
+  const period = periodLabel(previous, t)
+  switch (res.status) {
+    case 'OK':
+      if (c.kind === 'ratio') {
+        return c.minus ? t('te.calc.formulaMinus', label(c.num), label(c.minus), label(c.den)) : t('te.calc.formula', label(c.num), label(c.den))
+      }
+      return t('te.calc.formulaChange', label(c.of), period)
+    case 'MISSING': return t('te.calc.missing', res.missing.map(label).join(', '))
+    case 'ZERO': return c.kind === 'ratio' ? t('te.calc.zero', label(c.den)) : t('te.calc.zeroPrev', label(c.of), period)
+    case 'NEGATIVE': return t('te.calc.negative', label(c.minus), label(c.num))
+    case 'EQUAL': return t('te.calc.equal', label(c.of))
+    case 'RANGE': return t('te.calc.range')
+    case 'MANUAL': return t('te.calc.manual', label(c.of))
+    default: return t('te.calc.badRef')
+  }
+}
+
 /** Önceki ayın değeri + değişim ipucu (gösterim — alanı doldurmaz). */
 function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
   if (prev == null) return null
@@ -109,8 +146,11 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
   )
 }
 
-export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields }) {
+export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
+  calc = null }) {
   const t = useT()
+  const byId = new Map((templateFields || section.fields || []).map((x) => [x.id, x]))
+  const labelOf = (fid) => resolve(byId.get(fid)?.label || fid)
   // Bağlı evet/hayır sorusu "Hayır" olan alan MUAF: sorulmaz (PDF'e de girmez)
   const fields = (section.fields || []).filter((f) => !fieldExempt(f, values.fields))
   const exemptCount = (f) => (f.type === 'yesno' && values.fields[f.id] === false
@@ -122,10 +162,17 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
     const err = errors[`values.${f.id}`]
     const hintId = f.hint ? `${id}-h` : undefined
     const errId = err ? `${id}-e` : undefined
-    const describedBy = [hintId, errId].filter(Boolean).join(' ') || undefined
-    const v = values.fields[f.id]
+    // Otomatik hesap (2026-10-16): formül kullanılabiliyorsa alan SORULMAZ, çıktısı gösterilir; kullanılamıyorsa (geçen
+    // ayın raporu yok, formüldeki alan yok) elle girilir — ikisinde de altında açıklama
+    const res = calc?.[f.id] || null
+    const computed = !!res && !CALC_MANUAL.has(res.status)
+    const noteId = res ? `${id}-c` : undefined
+    const describedBy = [hintId, noteId, errId].filter(Boolean).join(' ') || undefined
+    const v = computed ? (res.status === 'OK' ? res.value : null) : values.fields[f.id]
     let control
-    if (f.type === 'number' || f.type === 'percent') {
+    if (computed) {
+      control = <CalcOutput id={id} field={f} res={res} uiLang={uiLang} describedBy={describedBy} t={t} />
+    } else if (f.type === 'number' || f.type === 'percent') {
       control = (
         <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
           disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
@@ -156,12 +203,31 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
       <div key={f.id} className={cn('flex min-w-0 flex-col gap-1.5', f.type === 'textarea' && 'sm:col-span-2 lg:col-span-3')}
         data-field={`values.${f.id}`} data-slot="te-value">
         <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
-          <label htmlFor={f.type === 'yesno' ? undefined : id} id={`${id}-l`} className="inline text-sm font-semibold leading-snug">
+          <label htmlFor={f.type === 'yesno' && !computed ? undefined : id} id={`${id}-l`} className="inline text-sm font-semibold leading-snug">
             {resolve(f.label)}
           </label>
           <CopyTextButton text={resolve(f.label)} />
         </div>
         {control}
+        {res && (
+          <p id={noteId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-note" data-status={res.status}>
+            {calcNoteText(f, res, labelOf, previous, t)}
+          </p>
+        )}
+        {/* Bu adetten türeyen oranlar girişin hemen altında (2026-10-16, kullanıcı isteği: "kota / map yapılmamış hata adedi
+            girişinde yüzde de görünsün") — canlı, aşağıdaki oran bölümüyle aynı sonuç */}
+        {f.type === 'number' && derivedRates(templateFields || section.fields, f.id)
+          .filter((d) => !fieldExempt(d, values.fields) && calc?.[d.id] && !CALC_MANUAL.has(calc[d.id].status))
+          .map((d) => {
+            const r = calc[d.id]
+            return (
+              <p key={d.id} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-derived" data-rate={d.id}>
+                {resolve(d.label)}: <span className="font-semibold text-foreground tabular-nums">
+                  {r.status === 'OK' ? formatPercent(r.value, uiLang) : '—'}
+                </span>
+              </p>
+            )
+          })}
         {f.hint && <p id={hintId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(f.hint)}</p>}
         {exemptCount(f) > 0 && (
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-exempt-note" role="status">

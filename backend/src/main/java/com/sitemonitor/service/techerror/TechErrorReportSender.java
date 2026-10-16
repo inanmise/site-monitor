@@ -157,10 +157,12 @@ public class TechErrorReportSender {
             if (pdf.length > max) {
                 finalStatus = "FAILED: PDF e-posta sınırını aşıyor (" + mb(pdf.length) + " MB > " + maxMailMb + " MB)";
                 throw new CodedConflictException("PDF_TOO_LARGE", Msg.t(
-                        "PDF " + mb(pdf.length) + " MB; e-posta sınırı " + maxMailMb + " MB. Büyük görselleri küçültüp (JPEG) yeniden "
-                                + "yükleyin ya da PDF'i indirip elle gönderin.",
-                        "The PDF is " + mb(pdf.length) + " MB; the e-mail limit is " + maxMailMb + " MB. Make the large images smaller "
-                                + "(JPEG) and upload them again, or download the PDF and send it yourself."),
+                        "PDF " + mb(pdf.length) + " MB; e-posta sınırı " + maxMailMb + " MB — görseller en düşük baskı çözünürlüğünde "
+                                + "bile sığmıyor. Bazı görselleri daha az alan kaplayan ekran görüntüleriyle değiştirin ya da PDF'i "
+                                + "indirip elle gönderin.",
+                        "The PDF is " + mb(pdf.length) + " MB; the e-mail limit is " + maxMailMb + " MB — the images don't fit even at "
+                                + "the lowest print resolution. Replace some images with screenshots of a smaller area, or download "
+                                + "the PDF and send it yourself."),
                         java.util.Map.of("max_mb", maxMailMb));
             }
             String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), fresh.getReportYear(), fresh.getReportMonth(),

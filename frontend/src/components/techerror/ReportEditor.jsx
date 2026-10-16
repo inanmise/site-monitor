@@ -19,7 +19,7 @@ import ReportHistorySheet from './ReportHistory.jsx'
 import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import {
-  allFields, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
+  allFields, applyCalc, calcResults, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 
@@ -426,9 +426,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         return
       }
       const loss = upd.lost_values || upd.lost_images
+      // Girilmiş oranların yerini adetlerden hesaplanan değer alacaksa ayrıca söylenir (2026-10-16)
+      const recalc = upd.recalculated > 0 ? ` ${t('te.applyTemplateRecalc', upd.recalculated)}` : ''
       const ok = await showConfirm({
         title: t('te.applyTemplateTitle'),
-        message: loss ? t('te.applyTemplateLoss', upd.lost_values || 0, upd.lost_images || 0) : t('te.applyTemplateBody'),
+        message: (loss ? t('te.applyTemplateLoss', upd.lost_values || 0, upd.lost_images || 0) : t('te.applyTemplateBody')) + recalc,
         variant: loss ? 'danger' : 'warning',
         confirmText: t('te.applyTemplateConfirm'), cancelText: t('te.cancel'),
       })
@@ -493,6 +495,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const sections = useMemo(() => tpl?.sections || [], [tpl])
   // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
+  // Otomatik oranlar (2026-10-16): taslağın adetlerinden CANLI hesap — yalnız gösterim (alan çıktısı, özet önizlemesi,
+  // trendin bu ayı); taslağa yazılmaz, kaydedilen değeri sunucu hesaplar
+  const prevFields = data?.previous?.fields || null
+  const calc = useMemo(() => calcResults(tpl, draft?.fields, prevFields), [tpl, draft?.fields, prevFields])
+  const shownFields = useMemo(() => applyCalc(tpl, draft?.fields, prevFields, calc), [tpl, draft?.fields, prevFields, calc])
+  const shownValues = useMemo(() => (draft && shownFields !== draft.fields ? { ...draft, fields: shownFields } : draft),
+    [draft, shownFields])
 
   const back = (
     <Button type="button" variant="ghost" size="sm" data-slot="te-back"
@@ -625,14 +634,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         const key = `${s.id}:${gen}`
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
-            readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} />
+            readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
+            calc={calc} />
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
             errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError} />
         }
         if (s.kind === 'summary') {
-          return <SummaryBlock key={key} section={s} template={tpl} values={draft} channelName={channel?.name} year={report?.year}
+          return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
             month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText} />
         }
         if (s.kind === 'table') {
@@ -640,7 +650,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             errors={fieldErrors} onCell={setCell} onFieldError={setFieldError} />
         }
         if (s.kind === 'trend') {
-          return <TrendBlock key={key} section={s} template={tpl} trend={data.trend} draftFields={draft.fields} resolve={resolve}
+          return <TrendBlock key={key} section={s} template={tpl} trend={data.trend} draftFields={shownFields} resolve={resolve}
             tplLang={tpl?.lang} />
         }
         if (s.kind === 'images') {

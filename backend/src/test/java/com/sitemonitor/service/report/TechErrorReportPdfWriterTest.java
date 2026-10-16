@@ -67,6 +67,50 @@ class TechErrorReportPdfWriterTest {
         }
     }
 
+    /** Sayfalara çizilen görsellerin ölçüsü {genişlik, yükseklik} (çizim sırasıyla). */
+    static List<float[]> drawnImages(byte[] pdf) throws IOException {
+        List<float[]> out = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (PDPage p : doc.getPages()) {
+                class Recorder extends org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine {
+                    Recorder() { super(p); }
+                    @Override public void drawImage(org.apache.pdfbox.pdmodel.graphics.image.PDImage image) {
+                        var m = getGraphicsState().getCurrentTransformationMatrix();
+                        out.add(new float[]{ m.getScalingFactorX(), m.getScalingFactorY() });
+                    }
+                    @Override public void appendRectangle(java.awt.geom.Point2D a, java.awt.geom.Point2D b, java.awt.geom.Point2D c,
+                                                          java.awt.geom.Point2D d) { }
+                    @Override public void clip(int windingRule) { }
+                    @Override public void moveTo(float x, float y) { }
+                    @Override public void lineTo(float x, float y) { }
+                    @Override public void curveTo(float x1, float y1, float x2, float y2, float x3, float y3) { }
+                    @Override public java.awt.geom.Point2D getCurrentPoint() { return new java.awt.geom.Point2D.Float(); }
+                    @Override public void closePath() { }
+                    @Override public void endPath() { }
+                    @Override public void strokePath() { }
+                    @Override public void fillPath(int windingRule) { }
+                    @Override public void fillAndStrokePath(int windingRule) { }
+                    @Override public void shadingFill(org.apache.pdfbox.cos.COSName name) { }
+                }
+                new Recorder().processPage(p);
+            }
+        }
+        return out;
+    }
+
+    /** PDF'e gömülen görsellerin piksel ölçüleri {genişlik, yükseklik}. */
+    static List<int[]> embeddedSizes(byte[] pdf) throws IOException {
+        List<int[]> out = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (PDPage p : doc.getPages()) {
+                for (var name : p.getResources().getXObjectNames()) {
+                    if (p.getResources().getXObject(name) instanceof PDImageXObject img) out.add(new int[]{ img.getWidth(), img.getHeight() });
+                }
+            }
+        }
+        return out;
+    }
+
     static int imageCount(byte[] pdf) throws IOException {
         int n = 0;
         try (PDDocument doc = Loader.loadPDF(pdf)) {
@@ -89,7 +133,7 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("1. Kart Limiti Konusu ile yaşanan problem");
         assertThat(s).contains("Etkilenen müşteri sayısı: 1.200").contains("3.400");
         assertThat(s).contains("İlk satır").contains("İkinci satır");
-        assertThat(s).contains("Map Yapılmamış Hata Adedi").contains("Kota Hatası Adedi");
+        assertThat(s).contains("Map Yapılmamış Hatalar");
         assertThat(s).contains("Bu bölüme görsel yüklenmedi.");
         assertThat(s).contains("Sayfa 1 /");
         assertThat(s).contains("Hazırlayan: Ayşe Yılmaz");
@@ -100,16 +144,16 @@ class TechErrorReportPdfWriterTest {
     void images() throws IOException {
         Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
         imgs.put("monthly-tx", new TechErrorPdfInput.Image(chart(800, 400, Color.BLUE), 800, 400));
-        imgs.put("tech-errors", new TechErrorPdfInput.Image(chart(800, 400, Color.RED), 800, 400));
-        imgs.put("daily-errors", new TechErrorPdfInput.Image(chart(1600, 500, Color.GREEN), 1600, 500));
-        imgs.put("business-monthly", new TechErrorPdfInput.Image(new byte[]{ 1, 2, 3 }, 100, 100));   // bozuk
+        imgs.put("annual-summary", new TechErrorPdfInput.Image(chart(800, 400, Color.RED), 800, 400));
+        imgs.put("tech-ratio", new TechErrorPdfInput.Image(chart(1600, 500, Color.GREEN), 1600, 500));
+        imgs.put("channel-business-errors", new TechErrorPdfInput.Image(new byte[]{ 1, 2, 3 }, 100, 100));   // bozuk
         byte[] pdf = TechErrorReportPdfWriter.render(input("tr", imgs));
         String s = text(pdf);
         String flat = s.replaceAll("[\\s\\u00a0]+", " ");                          // yarım sütunda başlık iki satıra sarabilir
-        assertThat(flat).contains("Ay Bazlı Toplam İşlem Adetleri (Son 12 Ay)")
-                .contains("Ay Bazlı Teknik Hata Adetleri (Son 12 Ay)")
-                .contains("Gün Bazlı Teknik Hata Adetleri (Eylül 2026)");
-        assertThat(s).doesNotContain("Ay Bazlı Kota Hata Adetleri");          // yüklenmedi → yok
+        assertThat(flat).contains("Toplam Operasyon Adetleri (Son 12 Ay)")
+                .contains("Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)")
+                .contains("Eylül 2026 Teknik Hataların Tüm Operasyonlara Oranı (Günlük)");
+        assertThat(flat).doesNotContain("Kota & Maplenmemiş Hata Adetleri");   // yüklenmedi → yok
         assertThat(s).contains("Görsel çizilemedi");
         assertThat(imageCount(pdf)).isGreaterThanOrEqualTo(3 + 1);           // 3 grafik + marka logosu
     }
@@ -190,10 +234,81 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
+    @DisplayName("görsel yuvanın genişliğini doldurur (kullanıcı kararı 2026-10-16): küçük büyür, büyük küçülür, oran korunur; yalnız sayfaya sığmayan uzun görsel en çok IMAGE_MAX_H")
+    void imagesFillSlotWidth() throws IOException {
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("annual-summary", new TechErrorPdfInput.Image(chart(3000, 1400, Color.BLUE), 3000, 1400));   // yarım, büyük
+        imgs.put("monthly-tx", new TechErrorPdfInput.Image(chart(300, 180, Color.RED), 300, 180));            // yarım, küçük
+        imgs.put("annual-table", new TechErrorPdfInput.Image(chart(600, 2400, Color.GRAY), 600, 2400));       // tam, çok uzun
+        imgs.put("tech-ratio", new TechErrorPdfInput.Image(chart(400, 80, Color.GREEN), 400, 80));            // tam, küçük
+        byte[] pdf = TechErrorReportPdfWriter.render(input("tr", imgs));
+        List<float[]> d = drawnImages(pdf).stream().filter(x -> x[0] > 120).toList();      // marka logosu küçük
+        float full = PdfCanvas.CONTENT_W, half = (PdfCanvas.CONTENT_W - 16) / 2;
+        assertThat(d).hasSize(4);
+        assertThat(d.get(0)[0]).isCloseTo(half, org.assertj.core.data.Offset.offset(0.5f));
+        assertThat(d.get(0)[1]).isCloseTo(half * 1400 / 3000, org.assertj.core.data.Offset.offset(0.5f));
+        assertThat(d.get(1)[0]).isCloseTo(half, org.assertj.core.data.Offset.offset(0.5f));               // 300 px → yuva genişliği
+        assertThat(d.get(1)[1]).isCloseTo(half * 180 / 300, org.assertj.core.data.Offset.offset(0.5f));
+        assertThat(d.get(2)[1]).isCloseTo(TechErrorReportPdfWriter.IMAGE_MAX_H, org.assertj.core.data.Offset.offset(0.5f));
+        assertThat(d.get(2)[0]).isCloseTo(TechErrorReportPdfWriter.IMAGE_MAX_H * 600 / 2400, org.assertj.core.data.Offset.offset(0.5f));
+        assertThat(d.get(3)[0]).isCloseTo(full, org.assertj.core.data.Offset.offset(0.5f));                // 400 px → tam genişlik
+        assertThat(d.get(3)[1]).isCloseTo(full * 80 / 400, org.assertj.core.data.Offset.offset(0.5f));
+        // Bölüm başlığı (3 satır) + resim yazısı (3 satır) + en uzun görsel + aralıklar bir sayfaya sığar
+        float usable = PdfCanvas.PAGE.getHeight() - PdfCanvas.MARGIN - PdfCanvas.BOTTOM;
+        assertThat(3 * 15 + 6 + 3 * 10.5f + 2 + TechErrorReportPdfWriter.IMAGE_MAX_H + 20).isLessThanOrEqualTo(usable);
+        assertThat(TechErrorReportPdfWriter.fit(200, 100, 50, 640)).containsExactly(200f, 100f);
+        // Gömülen çözünürlük (2026-10-16): çizim ölçüsünün en çok 6 katı (≈ 432 dpi) — 3000 px'lik görsel yarım yuvada alan
+        // ortalamasıyla küçülür; sınır içindekiler (300 / 400 / 600 px) olduğu gibi gömülür
+        List<int[]> px = embeddedSizes(pdf);
+        int halfCap = (int) Math.ceil(half * PdfCanvas.EMBED_SCALE);
+        assertThat(px).anySatisfy(s -> assertThat(s[0]).isEqualTo(halfCap));
+        assertThat(px).anySatisfy(s -> assertThat(s).containsExactly(300, 180));
+        assertThat(px).anySatisfy(s -> assertThat(s).containsExactly(400, 80));
+        assertThat(px).anySatisfy(s -> assertThat(s).containsExactly(600, 2400));
+        assertThat(px).noneSatisfy(s -> assertThat(s[0]).isEqualTo(3000));
+        assertThat(TechErrorReportPdfWriter.fit(200, 1000, 500, 640)).containsExactly(200f, 100f);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-16: gri PNG PDF'te ekrandaki tonuyla basılır (küçültülse de küçültülmese de 128 → 128, 188 değil)")
+    void grayPngKeepsToneInPdf() throws IOException {
+        BufferedImage small = new BufferedImage(400, 100, BufferedImage.TYPE_BYTE_GRAY);
+        BufferedImage wide = new BufferedImage(3000, 400, BufferedImage.TYPE_BYTE_GRAY);
+        for (BufferedImage g : List.of(small, wide)) {
+            for (int y = 0; y < g.getHeight(); y++) for (int x = 0; x < g.getWidth(); x++) g.getRaster().setSample(x, y, 0, 128);
+        }
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("tech-ratio", new TechErrorPdfInput.Image(png(small), 400, 100));               // tam yuva, sığar
+        imgs.put("annual-summary", new TechErrorPdfInput.Image(png(wide), 3000, 400));            // yarım yuva, küçülür
+        byte[] pdf = TechErrorReportPdfWriter.render(input("tr", imgs));
+        int seen = 0;
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (PDPage p : doc.getPages()) {
+                for (var name : p.getResources().getXObjectNames()) {
+                    // marka logosu hariç: 400 × 100 (sığan) ve ≈ 1522 × 202 (küçülen)
+                    if (p.getResources().getXObject(name) instanceof PDImageXObject img
+                            && ((img.getWidth() == 400 && img.getHeight() == 100) || (img.getWidth() > 1400 && img.getHeight() < 300))) {
+                        BufferedImage b = img.getImage();
+                        assertThat(b.getRGB(b.getWidth() / 2, b.getHeight() / 2) & 0xff).as(name.getName()).isBetween(127, 129);
+                        seen++;
+                    }
+                }
+            }
+        }
+        assertThat(seen).isEqualTo(2);
+    }
+
+    static byte[] png(BufferedImage img) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(img, "png", out);
+        return out.toByteArray();
+    }
+
+    @Test
     @DisplayName("çok yassı ve çizilemeyen görsel: uyarı kutusu kendi satırına sığar (sonraki başlıkla çakışmaz)")
     void flatBrokenImageReservesBox() throws IOException {
         Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
-        imgs.put("daily-errors", new TechErrorPdfInput.Image(new byte[]{ 9, 9, 9 }, 6000, 16));   // bozuk + çok yassı
+        imgs.put("tech-ratio", new TechErrorPdfInput.Image(new byte[]{ 9, 9, 9 }, 6000, 16));   // bozuk + çok yassı
         byte[] pdf = TechErrorReportPdfWriter.render(input("tr", imgs));
         assertThat(text(pdf)).contains("Görsel çizilemedi");
     }
@@ -230,7 +345,7 @@ class TechErrorReportPdfWriterTest {
     @Test
     @DisplayName("otomatik trend: girilen rakamlardan son 12 ay çubuk grafik (kısaltılmış etiket, ay adları); iki aydan az veri → not")
     void trendCharts() throws IOException {
-        Template t = TechErrorTemplate.defaults("tr");
+        Template t = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("tr");
         TechErrorValues.Values cur = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42, "total-tx", 125_430_112)), t);
         com.sitemonitor.model.TechErrorReport aug = new com.sitemonitor.model.TechErrorReport();
         aug.setId(2L);
@@ -247,7 +362,7 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("Toplam işlem adedi (Son 12 Ay)").contains("Trend için en az iki ayın rakamı gerekir");
         assertThat(s).doesNotContain("125Mn");
         // EN
-        Template en = TechErrorTemplate.defaults("en");
+        Template en = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("en");
         TechErrorValues.Values ev = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1_250_000)), en);
         aug.setTemplateJson(TechErrorTemplate.toJson(en));
         aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 900_000)), en)));
@@ -262,7 +377,7 @@ class TechErrorReportPdfWriterTest {
     @DisplayName("trend: bu ay muaf alanın grafiği basılmaz; uzun adda zaman tabanı kalır; negatif değerler çizilir (inceleme 2026-10-15)")
     @SuppressWarnings("unchecked")
     void trendReviewRules() throws IOException {
-        Template base = TechErrorTemplate.defaults("tr");
+        Template base = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("tr");
         Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(base));
         List<Object> sections = new ArrayList<>();
         for (Object o : (List<Object>) raw.get("sections")) {
@@ -338,7 +453,7 @@ class TechErrorReportPdfWriterTest {
     @Test
     @DisplayName("trend: en derin negatif çubuğun etiketi ay adının ÜSTÜNDE kalır (alt etiket payı — inceleme 2026-10-15)")
     void trendNegativeLabelClearsMonthNames() throws IOException {
-        Template t = TechErrorTemplate.defaults("tr");
+        Template t = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("tr");
         com.sitemonitor.model.TechErrorReport aug = new com.sitemonitor.model.TechErrorReport();
         aug.setId(2L);
         aug.setReportYear(2026);
@@ -362,7 +477,7 @@ class TechErrorReportPdfWriterTest {
         Template t = TechErrorTemplate.defaults("tr");
         Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
         imgs.put("annual-summary", new TechErrorPdfInput.Image(chart(800, 600, Color.BLUE), 800, 600));
-        imgs.put("annual-tech-rate", new TechErrorPdfInput.Image(chart(800, 600, Color.RED), 800, 600));
+        imgs.put("monthly-tx", new TechErrorPdfInput.Image(chart(800, 600, Color.RED), 800, 600));
         // Konu sayısı bölümün sayfadaki yerini kaydırır: sınır durumlarını da tarar
         for (int n = 0; n < 28; n++) {
             List<Object> issues = new ArrayList<>();
@@ -539,6 +654,34 @@ class TechErrorReportPdfWriterTest {
         var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, "https://sm.example", "mobil.pdf");
         assertThat(m.html()).contains("Yönetici Özeti").contains("<strong>%0,42</strong>");
         assertThat(m.text()).contains("teknik hata oranı %0,42 olarak").doesNotContain("**");
-        assertThat(m.html().indexOf("Yönetici Özeti")).isLessThan(m.html().indexOf("Değerleri ekip girmiştir"));
+        assertThat(m.html().indexOf("Yönetici Özeti")).isLessThan(m.html().indexOf("ekip girmiştir"));
+    }
+
+    @Test
+    @DisplayName("2026-10-16: oranlar hesaplanıyorsa PDF ve e-posta notu bunu söyler; e-posta kutucuklarında girilen adetler + otomatik oranlar")
+    void computedRatesNoteAndMailStats() throws IOException {
+        Template ct = TechErrorTemplate.defaults("tr");
+        TechErrorValues.Values cv = com.sitemonitor.service.techerror.TechErrorCalc.apply(ct, TechErrorValues.normalize(
+                Map.of("fields", Map.of("total-tx", 1000, "error-count", 5, "quota-count", 1)), ct), null);
+        TechErrorPdfInput in = new TechErrorPdfInput(ct, cv, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        assertThat(text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " "))
+                .contains("oranlar bu adetlerden Site Monitor tarafından hesaplanmıştır").doesNotContain("sistem hesaplamaz");
+        var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "mobil.pdf");
+        assertThat(m.html()).contains("Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.")
+                .contains("Toplam işlem adedi").contains("Teknik hata oranı").contains("Kota hatalarının teknik hatalara oranı")
+                .doesNotContain("bu rakamları hesaplamaz");
+        // Şablonda oran formülü var ama bu ay hiçbiri hesaplanamadı (adet girilmemiş; oran elle) → eski not (inceleme 2026-10-16)
+        TechErrorPdfInput none = input("tr", Map.of());
+        assertThat(text(TechErrorReportPdfWriter.render(none))).contains("sistem hesaplamaz");
+        assertThat(com.sitemonitor.service.mail.TechErrorReportMail.build(none, null, "m.pdf").html())
+                .contains("Site Monitor bu rakamları hesaplamaz.");
+        // Hesaplanan alanı olmayan (eski) şablon: eski not
+        Template d = TechErrorTemplate.defaults("tr");
+        Template old = new Template(d.lang(), d.title(), d.sections().stream().filter(s -> !"rates".equals(s.id())).toList());
+        TechErrorPdfInput oldIn = new TechErrorPdfInput(old, TechErrorValues.normalize(Map.of(), old), "Mobil", "Takım", 2026, 9,
+                null, null, Map.of());
+        assertThat(text(TechErrorReportPdfWriter.render(oldIn))).contains("sistem hesaplamaz");
+        assertThat(com.sitemonitor.service.mail.TechErrorReportMail.build(oldIn, null, "m.pdf").html())
+                .contains("Değerleri ekip girmiştir; Site Monitor bu rakamları hesaplamaz.");
     }
 }

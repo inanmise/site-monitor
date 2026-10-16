@@ -49,18 +49,28 @@ public final class TechErrorFormat {
     }
 
     public static String number(double d, boolean en) {
+        return number(d, en, 4);
+    }
+
+    private static String number(double d, boolean en, int maxDecimals) {
         DecimalFormatSymbols sym = DecimalFormatSymbols.getInstance(en ? Locale.US : Locale.forLanguageTag("tr-TR"));
         if (!en) {
             sym.setGroupingSeparator('.');
             sym.setDecimalSeparator(',');
         }
-        DecimalFormat df = new DecimalFormat("#,##0.####", sym);
+        DecimalFormat df = new DecimalFormat("#,##0." + "#".repeat(maxDecimals), sym);
         df.setRoundingMode(RoundingMode.HALF_UP);
         return df.format(BigDecimal.valueOf(d));
     }
 
+    /**
+     * Yüzde: en çok 4 ondalık; sıfırdan büyük ama 0,01'in altındaki yüzde 2 anlamlı haneyle (en çok 6 ondalık) — %0,0028,
+     * %0,00004 (2026-10-16: 4 ondalık sınırı küçük oranı sahte "%0" gösteriyordu). İstemci aynası: techErrorModel.formatPercent.
+     */
     public static String percent(double d, boolean en) {
-        String n = number(d, en);
+        String n = d != 0 && Math.abs(d) < 0.01
+                ? number(d, en, TechErrorCalc.smallScale(BigDecimal.valueOf(d)))
+                : number(d, en);
         return en ? n + "%" : "%" + n;
     }
 

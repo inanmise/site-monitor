@@ -183,6 +183,65 @@ class PdfCanvas implements AutoCloseable {
         }
     }
 
+    /**
+     * Görsel PDF'e en çok çizim ölçüsünün bu katı pikselle gömülür (≈ 432 dpi — baskı ve yakınlaştırma için fazlasıyla
+     * yeterli). Teknik hata raporu görselleri tam çözünürlükte saklandığından (2026-10-16) daha büyüğü gömerken ALAN
+     * ORTALAMASIYLA ({@link ImageAreaAverage}) küçültülür — e-posta eki sınırı (15 MB) zorlanmasın. PNG kaynak kayıpsız
+     * kalır, JPEG kaynak JPEG 0,95; sınırın içindeki görsel olduğu gibi gömülür (JPEG yeniden kodlanmaz).
+     */
+    static final float EMBED_SCALE = 6f;
+
+    /**
+     * {@link #tryImage(byte[], String, float, float, float, float)} + gömülen çözünürlük sınırı: çizim ölçüsünün en çok
+     * {@code scale} katı piksel ({@link #EMBED_SCALE}; PDF e-posta sınırını aşarsa yazıcı daha düşük katla yeniden üretir).
+     */
+    boolean tryImage(byte[] bytes, int pxW, int pxH, String name, float x, float yy, float w, float h, float scale) {
+        if (bytes == null || bytes.length == 0) return false;
+        try {
+            cs.drawImage(embed(bytes, pxW, pxH, name, w, h, scale), x, yy, w, h);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** PNG imzası + IHDR renk türü 0 (gri) ya da 4 (gri + saydam). */
+    static boolean isGrayPng(byte[] b) {
+        return b != null && b.length > 25 && (b[0] & 0xff) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G' && (b[25] == 0 || b[25] == 4);
+    }
+
+    org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject embed(byte[] bytes, int pxW, int pxH, String name, float w, float h,
+                                                                  float scale) throws IOException {
+        int maxW = Math.max(1, (int) Math.ceil(w * scale));
+        int maxH = Math.max(1, (int) Math.ceil(h * scale));
+        // Gri PNG (renk türü 0 / 4): PDFBox griyi doğrusal sayıp 128'i 188 yapıyordu — sığsa da kendi yolumuzdan gömülür
+        boolean grayPng = isGrayPng(bytes);
+        if (!grayPng && pxW > 0 && pxH > 0 && pxW <= maxW && pxH <= maxH) {
+            return org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, name);
+        }
+        java.awt.image.BufferedImage src;
+        try {
+            // Bellekte okunur: salt-okunur kök dosya sisteminde geçici dosya açılmaz
+            src = javax.imageio.ImageIO.read(new javax.imageio.stream.MemoryCacheImageInputStream(new java.io.ByteArrayInputStream(bytes)));
+        } catch (Exception e) {
+            src = null;
+        }
+        if (src == null) return org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, name);
+        double f = Math.min((double) maxW / src.getWidth(), (double) maxH / src.getHeight());
+        if (f >= 1.0) {
+            if (!grayPng) return org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject.createFromByteArray(doc, bytes, name);
+            return org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(doc, ImageAreaAverage.toSrgb(src));
+        }
+        // +1e-9: kayan nokta 1522 / 3000 × 3000'i 1521,99… yapıp bir piksel kaybettirmesin
+        int tw = Math.max(1, (int) Math.floor(src.getWidth() * f + 1e-9));
+        int th = Math.max(1, (int) Math.floor(src.getHeight() * f + 1e-9));
+        java.awt.image.BufferedImage small = ImageAreaAverage.resize(src, tw, th);
+        boolean jpeg = bytes.length > 2 && (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8;
+        return jpeg
+                ? org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory.createFromImage(doc, small, 0.95f)
+                : org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(doc, small);
+    }
+
     /** İnce çerçeve (görsel / yer tutucu kutusu). */
     void strokeRect(float x, float yy, float w, float h, float[] color) throws IOException {
         cs.setStrokingColor(color[0], color[1], color[2]);

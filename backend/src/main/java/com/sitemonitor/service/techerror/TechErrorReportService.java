@@ -72,6 +72,10 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.repository.NotificationLogRepository notificationLogs;
 
+    /** E-posta eki sınırı (MB) — PDF bunu aşarsa görseller daha düşük katla gömülerek yeniden üretilir (gönderen de denetler). */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.tech-error-report.max-mail-mb:15}")
+    int maxMailMb = 15;
+
     /** Kuyruk sonucu ile geçmiş olayını aynı işlemde yazmak için (dilim testlerinde yok → işlemsiz). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     org.springframework.transaction.PlatformTransactionManager txManager;
@@ -248,6 +252,12 @@ public class TechErrorReportService {
      */
     @Transactional
     public int saveTemplate(Long channelId, int expectedVersion, Template template, Long by) {
+        return saveTemplate(channelId, expectedVersion, template, by, null);
+    }
+
+    /** {@code actorName}: sistem yazdıysa sürüm geçmişinde görünen ad (kişi değil). */
+    @Transactional
+    public int saveTemplate(Long channelId, int expectedVersion, Template template, Long by, String actorName) {
         TechErrorChannel before = channels.findById(channelId).orElseThrow(TechErrorReportService::channelNotFound);
         String prevJson = before.getTemplateJson();
         int prevVersion = before.getTemplateVersion();
@@ -263,7 +273,7 @@ public class TechErrorReportService {
         // Okunan hâl kilitli satırın değiştirilen sürümüyse taban olarak yazılır (sürüm tekdüze artar: UPDATE başarılıysa
         // okunan sürüm == beklenen sürüm olan JSON, o sürümün gerçek içeriğidir)
         if (prevVersion == expectedVersion) history.recordTemplateVersion(before, prevVersion, prevJson, prevAt, prevBy);
-        history.recordTemplateVersion(before, expectedVersion + 1, json, now, by);
+        history.recordTemplateVersion(before, expectedVersion + 1, json, now, by, actorName);
         return expectedVersion + 1;
     }
 
@@ -343,7 +353,9 @@ public class TechErrorReportService {
         TechErrorReport r = report(reportId);
         requireVersion(r, expectedVersion);
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
-        Values v = TechErrorValues.normalize(raw, t);
+        // Otomatik hesaplanan alanlar (2026-10-16) SUNUCUDA hesaplanır: istemcinin gönderdiği oran yok sayılır, girilen
+        // adetlerden (ve geçen ayın raporundan) yeniden bulunur
+        Values v = TechErrorCalc.apply(t, TechErrorValues.normalize(raw, t), previousFields(r, t));
         String json = TechErrorValues.toJson(v);
         if (json.equals(r.getValuesJson())) return r;      // değişiklik yok → sürüm artmaz, yazılmaz, olay yok
         Values before = TechErrorValues.fromStored(r.getValuesJson(), t);
@@ -372,8 +384,10 @@ public class TechErrorReportService {
         Template next = TechErrorTemplate.fromStored(ch.getTemplateJson());
         Template prev = TechErrorTemplate.fromStored(r.getTemplateJson());
         Values before = TechErrorValues.fromStored(r.getValuesJson(), prev);
-        Values after = carry(before, prev, next);
-        int removedValues = countValues(before) - countValues(after);
+        Values carried = carry(before, prev, next);
+        Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
+        // Kayıp yalnız şablon farkından sayılır: yeni hesaplanan oranlar kaybı gizlemesin (inceleme 2026-10-16)
+        int removedValues = countValues(before) - countValues(carried);
         Set<String> keep = new HashSet<>();
         for (var s : next.allSlots()) keep.add(s.id());
         int removedImages = keep.isEmpty() ? images.deleteAllForReport(r.getId()) : images.deleteSlotsNotIn(r.getId(), keep);
@@ -399,15 +413,24 @@ public class TechErrorReportService {
         Template next = TechErrorTemplate.fromStored(ch.getTemplateJson());
         Template prev = TechErrorTemplate.fromStored(r.getTemplateJson());
         Values before = TechErrorValues.fromStored(r.getValuesJson(), prev);
-        Values after = carry(before, prev, next);
+        Values carried = carry(before, prev, next);
+        Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
         Set<String> keep = new HashSet<>();
         for (var s : next.allSlots()) keep.add(s.id());
         int lostImages = 0;
         for (var m : images.findByReportIdOrderByIdAsc(r.getId())) if (!keep.contains(m.getSlotId())) lostImages++;
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("differs", !TechErrorTemplate.toJson(next).equals(TechErrorTemplate.toJson(prev)));
-        out.put("lost_values", Math.max(0, countValues(before) - countValues(after)));
+        out.put("lost_values", Math.max(0, countValues(before) - countValues(carried)));
         out.put("lost_images", lostImages);
+        // Girilmiş bir değerin yerine hesaplanan (ya da adet eksik olduğu için boşalan) oran sayısı — onayda ayrıca söylenir
+        int recalculated = 0;
+        for (var f : next.allFields()) {
+            if (f.calc() == null) continue;
+            Object was = carried.fields().get(f.id());
+            if (was != null && !java.util.Objects.equals(was, after.fields().get(f.id()))) recalculated++;
+        }
+        out.put("recalculated", recalculated);
         return out;
     }
 
@@ -503,6 +526,30 @@ public class TechErrorReportService {
     public Optional<TechErrorReport> previousReport(TechErrorReport r) {
         YearMonth prev = YearMonth.of(r.getReportYear(), r.getReportMonth()).minusMonths(1);
         return reports.findByChannelIdAndReportYearAndReportMonth(r.getChannelId(), prev.getYear(), prev.getMonthValue());
+    }
+
+    /**
+     * Geçen ayın raporunun, BU şablondaki alanlarla AYNI kimlik ve türdeki değerleri (metin alanları hariç); rapor yoksa
+     * null. "Geçen ay" ipuçları ve önceki aya göre değişim hesabı ({@link TechErrorCalc}) bunu okur — kimliği başka bir
+     * alana geçmiş ya da türü değişmiş bir alanın değeri kullanılmaz (inceleme 2026-10-13).
+     */
+    public Map<String, Object> previousFields(TechErrorReport r, Template current) {
+        return previousReport(r).map(p -> sameTypeFields(p, current)).orElse(null);
+    }
+
+    public static Map<String, Object> sameTypeFields(TechErrorReport prev, Template current) {
+        Template pt = TechErrorTemplate.fromStored(prev.getTemplateJson());
+        Values pv = TechErrorValues.fromStored(prev.getValuesJson(), pt);
+        Map<String, String> prevTypes = new HashMap<>();
+        for (var f : pt.allFields()) prevTypes.put(f.id(), f.type());
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (var f : current.allFields()) {
+            Object v = pv.fields().get(f.id());
+            if (v != null && !"textarea".equals(f.type()) && !"text".equals(f.type()) && f.type().equals(prevTypes.get(f.id()))) {
+                fields.put(f.id(), v);
+            }
+        }
+        return fields;
     }
 
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
@@ -612,7 +659,9 @@ public class TechErrorReportService {
 
     public TechErrorPdfInput pdfInput(TechErrorReport r, TechErrorChannel ch, String teamName) {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
-        Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+        // Hesaplanan alanlar PDF / e-posta anında CANLI: geçen ayın rakamı sonradan düzeltildiyse değişim oranı da güncel
+        // (ekranda görülenle aynı; saklı değer bir sonraki kayıtta tazelenir)
+        Values v = TechErrorCalc.apply(t, TechErrorValues.fromStored(r.getValuesJson(), t), previousFields(r, t));
         Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
         for (TechErrorReportImage i : images.findAllByReportIdOrderByIdAsc(r.getId())) {
             imgs.put(i.getSlotId(), new TechErrorPdfInput.Image(i.getData(), i.getWidth(), i.getHeight()));
@@ -676,7 +725,19 @@ public class TechErrorReportService {
         TechErrorPdfInput in = null;
         try {
             in = loader.get();
-            byte[] pdf = TechErrorReportPdfWriter.render(in);
+            // Görseller tam çözünürlükte saklanır (2026-10-16): PDF e-posta sınırını aşarsa aynı veriden daha düşük gömme
+            // katıyla yeniden üretilir — indirilen PDF ile e-posta eki aynı kalır; en düşük katta da sığmazsa gönderen söyler
+            long limit = Math.max(1, maxMailMb) * 1024L * 1024L;
+            byte[] pdf = null;
+            float used = 0;
+            for (float scale : TechErrorReportPdfWriter.EMBED_SCALES) {
+                pdf = TechErrorReportPdfWriter.render(in, scale);
+                used = scale;
+                if (pdf.length <= limit || in.images().isEmpty()) break;
+            }
+            if (used != TechErrorReportPdfWriter.EMBED_SCALES[0]) {
+                log.info("Teknik hata raporu PDF'i e-posta sınırı için görseller {}x gömüldü ({}; {} bayt)", used, in.channelName(), pdf.length);
+            }
             return new Rendered(in.withoutImages(), pdf);
         } catch (IOException e) {
             log.warn("Teknik hata raporu PDF'i üretilemedi ({}): {}", in == null ? "?" : in.channelName(), e.toString());
