@@ -172,7 +172,7 @@ describe('Teknik hata raporları — rapor düzenleyici', () => {
     render(<TechErrorReportsPage />)
     await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
     fireEvent.change(screen.getByLabelText('Toplam işlem adedi'), { target: { value: '12abc' } })
-    expect(await screen.findByText('Geçerli bir sayı yazın (ör. 1.250.000 ya da 0,42).')).toBeInTheDocument()
+    expect(await screen.findByText('Geçerli bir sayı yazın: 1.250.000, 0,42 ya da kısaltmayla 7,42G, 130,1M, 681,6k (k = bin, M = milyon, G ya da Mr = milyar).')).toBeInTheDocument()
   })
 
   it('409 CONCURRENT_MODIFICATION → çakışma uyarısı; "En son hâli yükle" taslağı yedeğe yazar ve yükler', async () => {

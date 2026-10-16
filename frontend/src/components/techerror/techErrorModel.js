@@ -32,6 +32,8 @@ export const LIMITS = Object.freeze({
   longText: 10000,
   channelName: 120,
   description: 500,
+  // En büyük sayı (TechErrorValues.MAX_NUMBER) — kısaltmayla 1000T'ye kadar
+  maxNumber: 1e15,
   imageBytes: 5 * 1024 * 1024,
   reportImageBytes: 40 * 1024 * 1024,
   imageSide: 6000,
@@ -118,17 +120,71 @@ export function issueDisplayTitle(issue, pattern) {
 // ── Sayılar ─────────────────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Sayı kısaltmaları (2026-10-16, kullanıcı kararı: raporlama aracı rakamları "7,42G · 130,1M · 681,6k" diye verir):
+ * Qlik sonekleri + Türkçe / İngilizce yazımlar → 10'un kuvveti. Tek başına "B" YOK — Türkçede bin, İngilizcede milyar
+ * demek; karışırsa rakam milyon kat kayar ({@link isAmbiguousB}). Büyük / küçük harf ve Türkçe İ / ı fark etmez.
+ */
+export const NUMBER_ABBREVIATIONS = Object.freeze([
+  Object.freeze({ exp: 3, words: Object.freeze(['k', 'bin', 'thousand']) }),
+  Object.freeze({ exp: 6, words: Object.freeze(['m', 'mn', 'mio', 'milyon', 'million']) }),
+  Object.freeze({ exp: 9, words: Object.freeze(['g', 'mr', 'mlr', 'milyar', 'bn', 'billion']) }),
+  Object.freeze({ exp: 12, words: Object.freeze(['t', 'tn', 'trilyon', 'trillion']) }),
+])
+
+const ABBREV_EXP = new Map(NUMBER_ABBREVIATIONS.flatMap((a) => a.words.map((w) => [w, a.exp])))
+const ABBREV_WORDS = [...ABBREV_EXP.keys()]
+const suffixKey = (s) => s.toLocaleLowerCase('tr-TR').replace(/ı/g, 'i')
+
+/** Rakam + sonek ayrımı: "7,42G" → { sign, mantissa: "7,42", suffix: "g" }; rakamla başlamıyorsa null. */
+function splitAbbrev(raw) {
+  const s = String(raw ?? '').trim().replace(/\s+/g, '').replace(/%/g, '')
+  const m = /^([+-]?)([0-9.,]*)(.*)$/.exec(s)
+  if (!m) return null
+  return { sign: m[1], mantissa: m[2], suffix: suffixKey(m[3]) }
+}
+
+/** Tek başına "B" soneki mi ("7,42B", "12 b")? Kabul edilmez; alanın altında ne yazılacağı söylenir. */
+export function isAmbiguousB(raw) {
+  const p = splitAbbrev(raw)
+  return !!p && /\d/.test(p.mantissa) && p.suffix === 'b'
+}
+
+/** Rakamın sonekli (kısaltmalı) yazılıp yazılmadığı — alanın altında tam sayı gösterilir. */
+export function hasAbbreviation(raw) {
+  const p = splitAbbrev(raw)
+  return !!p && /\d/.test(p.mantissa) && ABBREV_EXP.has(p.suffix)
+}
+
+/** Ondalık gösterimi 10^exp ile KAYDIRIR (kayan nokta çarpımı yok: 7,42 × 10⁹ = 7.420.000.000 tam). */
+function shiftDecimal(normalized, exp) {
+  const [ip, fp = ''] = normalized.split('.')
+  const frac = fp.padEnd(exp, '0')
+  const whole = `${ip}${frac.slice(0, exp)}`.replace(/^0+(?=\d)/, '') || '0'
+  const rest = frac.slice(exp)
+  return Number(rest ? `${whole}.${rest}` : whole)
+}
+
+/**
  * Kullanıcının yazdığı sayıyı çözer: "1.250.000", "1,250,000", "0,42", "0.42", "%3,5", "3.5%". Belirsiz TEK ayraç
  * ("1.250") arayüz dilinin alışkanlığına göre okunur (TR: binlik, EN: ondalık) — ama yalnız sıfırla başlamayan bir
  * binlik grubuysa: "0.125" her dilde 0,125'tir (inceleme 2026-10-13: 125 okunuyordu). Yüzde alanında tek ayraç her
  * zaman ondalıktır ("%3.500" = 3,5). Çok ayraçlı yazım geçerli binlik gruplaması olmalı ("1.25.0" geçersiz).
- * Boş → null; geçersiz → NaN.
+ * Sayı alanında (yüzde değil) KISALTMA ({@link NUMBER_ABBREVIATIONS}): "7,42G" = 7.420.000.000, "681,6k" = 681.600 —
+ * sonekli rakamda tek ayraç her zaman ondalıktır ("1.5M" = 1.500.000; kimse 1250 milyonu "1.250M" yazmaz).
+ * Boş → null; geçersiz (tek başına "B" dahil) → NaN.
  */
 export function parseNumber(raw, lang, { percent = false } = {}) {
   if (raw == null) return null
   let s = String(raw).trim().replace(/\s+/g, '').replace(/%/g, '')
   if (s === '') return null
   if (s.length > 40) return NaN
+  let exp = 0
+  const parts = splitAbbrev(s)
+  if (parts && parts.suffix) {
+    if (percent || !ABBREV_EXP.has(parts.suffix) || !/\d/.test(parts.mantissa)) return NaN
+    exp = ABBREV_EXP.get(parts.suffix)
+    s = parts.sign + parts.mantissa
+  }
   const neg = s.startsWith('-')
   if (neg || s.startsWith('+')) s = s.slice(1)
   if (!/^[0-9.,]+$/.test(s)) return NaN
@@ -153,13 +209,13 @@ export function parseNumber(raw, lang, { percent = false } = {}) {
       normalized = s.split(sep).join('')
     } else {
       const habit = sep === ',' ? lang === 'en' : lang !== 'en'
-      normalized = !percent && habit && thousands(s, sep) ? s.split(sep).join('') : s.replace(sep, '.')
+      normalized = !percent && !exp && habit && thousands(s, sep) ? s.split(sep).join('') : s.replace(sep, '.')
     }
   } else {
     normalized = s
   }
   if (!/^\d*\.?\d*$/.test(normalized) || normalized === '.' ) return NaN
-  const n = Number(normalized)
+  const n = exp ? shiftDecimal(normalized, exp) : Number(normalized)
   if (!Number.isFinite(n)) return NaN
   return neg ? -n : n
 }
@@ -172,6 +228,11 @@ export function isIncompleteNumber(raw) {
   const s = String(raw ?? '').trim().replace(/\s+/g, '').replace(/%/g, '')
   if (s === '' || s.length > 40) return false
   if (/^[+-]?[.,]?$/.test(s)) return true
+  // Yazılmakta olan kısaltma ("7,42mi" → milyon / milyar): rakam geçerli, sonek bir kısaltmanın başı ama henüz değil
+  const p = splitAbbrev(s)
+  if (p && p.suffix && /\d/.test(p.mantissa) && !ABBREV_EXP.has(p.suffix)) {
+    return ABBREV_WORDS.some((w) => w.startsWith(p.suffix)) && Number.isFinite(parseNumber(`${p.sign}${p.mantissa}`, 'en', { percent: true }))
+  }
   return /^[+-]?\d{1,3}([.,]\d{3})*[.,]\d{0,2}$/.test(s) && Number.isNaN(parseNumber(s, 'tr')) && Number.isNaN(parseNumber(s, 'en'))
 }
 

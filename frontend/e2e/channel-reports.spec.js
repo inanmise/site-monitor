@@ -453,7 +453,11 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (muaf)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (muaf)').toEqual([])
 
-      await editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true }).fill('1.250.000')
+      // Kısaltmalı giriş (2026-10-16): "1,25M" yazıldığı gibi kalır, altında anlaşılan tam sayı; kayda 1.250.000 gider
+      const totalInput = editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })
+      await totalInput.fill('1,25M')
+      await expect(totalInput).toHaveValue('1,25M')
+      await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-number-expanded"]')).toContainText(/= (1\.250\.000|1,250,000)/)
 
       // Yönetici özeti: girilen rakamla canlı yazılır, rakam kalın; bekleyen cümle neyi beklediğini söyler
       const summary = editor.locator('[data-slot="te-sum-text"]')
@@ -499,6 +503,27 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => uploads.length).toBe(1)
       expect(uploads[0]).toContain('multipart/form-data')
       await expect(editor.locator('[data-slot-id="monthly-tx"] img')).toBeVisible()
+      // Görsel büyütme (2026-10-16): tıklayınca pencere açılır, ekrana sığar, düğmeler dokunmatikte ≥ 40 px, × kapatır
+      await editor.locator('[data-slot-id="monthly-tx"] [data-slot="te-image-zoom"]').click()
+      const zoomBox = page.locator('[data-slot="te-image-lightbox"]')
+      await expect(zoomBox).toBeVisible()
+      await page.waitForTimeout(300)
+      const zb = await zoomBox.boundingBox()
+      expect(zb.x, 'pencere solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(zb.y, 'pencere üstte taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(zb.x + zb.width, 'pencere sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(zb.y + zb.height, 'pencere altta taşmaz').toBeLessThanOrEqual(vp.height + 1)
+      if (vp.width < 640) expect(zb.width, 'telefonda tam ekran (sağda boşluk yok)').toBeGreaterThanOrEqual(vp.width - 1)
+      // "Sığdır": görsel görünüm alanının içinde (uzun adda da altı taşmaz)
+      const viewBox = await zoomBox.locator('[data-slot="te-image-lightbox-view"]').boundingBox()
+      const imgBox = await zoomBox.locator('[data-slot="te-image-lightbox-img"]').boundingBox()
+      expect(imgBox.y + imgBox.height, 'görsel görünümün içinde').toBeLessThanOrEqual(viewBox.y + viewBox.height + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-image-lightbox"]'), 'kırpılan metin (büyütme)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-image-lightbox"]'), 'küçük hedef (büyütme)').toEqual([])
+      await zoomBox.locator('[data-slot="te-image-lightbox-zoom"] [role="radio"]').nth(2).click()
+      await expect(zoomBox.locator('[data-slot="te-image-lightbox-view"]')).toHaveAttribute('data-zoom', '200')
+      await zoomBox.locator('[data-slot="te-image-lightbox-close"]').click()
+      await expect(zoomBox).toHaveCount(0)
       // Görsel yuvanın genişliğini doldurur (kullanıcı kararı 2026-10-16): içeride / dışarıda farklı ölçü yok
       await expect.poll(async () => {
         const img = await editor.locator('[data-slot-id="monthly-tx"] [data-slot="te-image"]').boundingBox()

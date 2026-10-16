@@ -13,7 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
-  isIncompleteNumber,
+  hasAbbreviation, isAmbiguousB, isIncompleteNumber,
   issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryLinePreview, summaryLineStatus,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
@@ -34,10 +34,17 @@ function numberText(v, lang, percent = false) {
 /**
  * Sayı / yüzde girişi: kullanıcı yazarken metin olduğu gibi kalır; geçerliyse sayı üst duruma yazılır, geçersizse
  * alanın altında hata ("1.250.000", "0,42" ve "%3,5" kabul). Dış değer başka yerden değişirse (ör. sunucudan gelen
- * kayıt) metin yenilenir.
+ * kayıt) metin yenilenir. Sayı alanında KISALTMA (2026-10-16, kullanıcı kararı): "7,42G", "130,1M", "681,6k" yazıldığı
+ * gibi kalır, altında anlaşılan tam sayı ("= 7.420.000.000") — yanlış okunan kısaltma her an görülür; tek başına "B"
+ * reddedilir (bin mi milyar mı belli değil).
  */
 export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel, compact = false }) {
+  const t = useT()
   const [text, setText] = useState(() => numberText(value, lang, percent))
+  const notNumber = percent ? 'te.err.notNumber' : 'te.err.notNumberAbbrev'
+  const expanded = !percent && hasAbbreviation(text) ? parseNumber(text, lang) : null
+  const expandedId = id ? `${id}-expanded` : undefined
+  const showExpanded = Number.isFinite(expanded) && Math.abs(expanded) <= LIMITS.maxNumber
   useEffect(() => {
     if (isIncompleteNumber(text)) return     // yazılmakta olan metin (ör. "-") dış değerle ezilmez
     const parsed = parseNumber(text, lang, { percent })
@@ -49,13 +56,14 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
       {percent && lang !== 'en' && (
         <span aria-hidden="true" className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-sm text-muted-foreground', compact ? 'left-2' : 'left-3')}>%</span>
       )}
-      <Input id={id} inputMode="decimal" value={text} disabled={disabled} aria-describedby={describedBy} aria-invalid={invalid}
+      <Input id={id} inputMode={percent ? 'decimal' : 'text'} value={text} disabled={disabled} aria-invalid={invalid}
+        aria-describedby={[describedBy, showExpanded ? expandedId : null].filter(Boolean).join(' ') || undefined}
         aria-label={ariaLabel}
         // compact: tablo hücresi — dar sütunda rakama yer kalsın (inceleme 2026-10-14: "125.000.000" kırpılıyordu)
         className={cn(compact && 'px-1.5 text-[13px] md:text-[13px]', percent && lang !== 'en' && (compact ? 'pl-6' : 'pl-7'), percent && lang === 'en' && (compact ? 'pr-6' : 'pr-7'), 'tabular-nums pointer-coarse:h-10')}
         onBlur={() => {
           // Yarım kalan yazım alan bırakılınca hata olur (kayıt öncesi düğmeye basmak alanı bırakır)
-          if (isIncompleteNumber(text)) onError('te.err.notNumber')
+          if (isIncompleteNumber(text)) onError(!percent && isAmbiguousB(text) ? 'te.err.abbrevB' : notNumber)
         }}
         onChange={(e) => {
           const raw = e.target.value
@@ -63,13 +71,20 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
           const n = parseNumber(raw, lang, { percent })
           if (n == null) { onError(null); onChange(null); return }
           if (Number.isNaN(n) && isIncompleteNumber(raw)) { onError(null); return }
-          if (Number.isNaN(n)) { onError('te.err.notNumber'); return }
+          if (Number.isNaN(n)) { onError(!percent && isAmbiguousB(raw) ? 'te.err.abbrevB' : notNumber); return }
           if (!negative && n < 0) { onError('te.err.negative'); return }
+          if (!percent && Math.abs(n) > LIMITS.maxNumber) { onError('te.err.tooLarge'); return }
           onError(null)
           onChange(n)
         }} />
       {percent && lang === 'en' && (
         <span aria-hidden="true" className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-sm text-muted-foreground', compact ? 'right-2' : 'right-3')}>%</span>
+      )}
+      {showExpanded && (
+        <p id={expandedId} data-slot="te-number-expanded"
+          className={cn('mt-1 tabular-nums text-muted-foreground [overflow-wrap:anywhere]', compact ? 'text-[11px] leading-tight' : 'text-xs')}>
+          <span className="sr-only">{t('te.num.expanded')} </span><span aria-hidden="true">= </span>{numberText(expanded, lang)}
+        </p>
       )}
     </div>
   )

@@ -205,7 +205,7 @@ describe('tablo bölümü', () => {
     await screen.findByRole('heading', { name: TITLE })
     const cell = screen.getByLabelText('SLA dahil ve kritik — Fonksiyon adedi')
     fireEvent.change(cell, { target: { value: 'çok' } })
-    expect(await screen.findByText('Geçerli bir sayı yazın (ör. 1.250.000 ya da 0,42).')).toBeInTheDocument()
+    expect(await screen.findByText('Geçerli bir sayı yazın: 1.250.000, 0,42 ya da kısaltmayla 7,42G, 130,1M, 681,6k (k = bin, M = milyon, G ya da Mr = milyar).')).toBeInTheDocument()
     fireEvent.change(cell, { target: { value: '12' } })
     fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
     const err = await screen.findAllByText('SLA dahil ve kritik · Fonksiyon adedi negatif olamaz.')

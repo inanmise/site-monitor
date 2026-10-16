@@ -1,5 +1,5 @@
 import { memo, useRef, useState } from 'react'
-import { ImagePlus, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { ImagePlus, RefreshCw, Trash2, Upload, ZoomIn } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
 import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
 import { CopyTextButton } from './TechErrorParts.jsx'
+import { ImageLightbox } from './ImageLightbox.jsx'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
@@ -74,6 +75,8 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   const [phase, setPhase] = useState(null)        // 'prep' (tarayıcıda hazırlanıyor) | 'upload'
   const [error, setError] = useState(null)
   const [note, setNote] = useState(null)          // son yüklemenin küçültme / çevirme özeti
+  const [zoomed, setZoomed] = useState(false)     // büyük görünüm (2026-10-16)
+  const zoomRef = useRef(null)                    // kapanınca odak görsele döner
   const [drag, setDrag] = useState(false)
   const label = resolve(slot.label)
   /** Küçültme / çevirme / döndürme özeti (yuvanın altında ve başarı bildiriminde) */
@@ -150,6 +153,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
 
   const inputId = `te-img-${slot.id}`
   return (
+    <>
     <div className={cn('flex min-w-0 flex-col gap-2 rounded-xl border p-3', drag && 'border-primary bg-primary/5', className)}
       data-slot="te-image-slot" data-slot-id={slot.id} data-width={slot.width} data-has-image={image ? 'true' : 'false'}
       onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); setDrag(true) }}
@@ -172,10 +176,19 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
           {/* Yuvanın genişliğini doldurur, oran korunur (kullanıcı kararı 2026-10-16: "hepsi yüklendiği alanın boyutunu
               alsın") — eskiden 320 px'lik tavan görseli daraltıp yanlarda boşluk bırakıyordu. PDF ile aynı kural: yalnız
               sayfaya sığmayacak kadar uzun görsel daralır (displayWidthPct). width / height yer ayırır (yüklenince kayma yok) */}
-          <img src={api.techErrors.imageUrl(image.id)} alt={label} loading="lazy" data-slot="te-image"
-            width={image.width || undefined} height={image.height || undefined}
-            style={{ maxWidth: `${displayWidthPct(slot.width, image.width, image.height)}%` }}
-            className="mx-auto block h-auto w-full rounded-md border" />
+          {/* Tıklayınca büyük görünüm (2026-10-16, kullanıcı isteği: "görsele tıklanınca büyüteç gibi pop-up açılsın,
+              × ile kapansın") */}
+          <Button ref={zoomRef} type="button" variant="ghost" onClick={() => setZoomed(true)} aria-label={t('te.img.zoom', label)}
+            data-slot="te-image-zoom" style={{ maxWidth: `${displayWidthPct(slot.width, image.width, image.height)}%` }}
+            className="group relative mx-auto block h-auto w-full cursor-zoom-in rounded-md p-0 hover:bg-transparent">
+            <img src={api.techErrors.imageUrl(image.id)} alt={label} loading="lazy" data-slot="te-image"
+              width={image.width || undefined} height={image.height || undefined}
+              className="block h-auto w-full rounded-md border" />
+            <span aria-hidden="true"
+              className="pointer-events-none absolute right-2 top-2 rounded-md border bg-background/90 p-1.5 text-foreground opacity-80 shadow-sm transition-opacity group-hover:opacity-100">
+              <ZoomIn className="size-4" />
+            </span>
+          </Button>
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {[image.file_name, `${image.width} × ${image.height}`, formatBytes(image.size_bytes, uiLang)].filter(Boolean).join(' · ')}
           </p>
@@ -212,5 +225,12 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       )}
       {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-image-error">{error}</p>}
     </div>
+    {/* Büyük görünüm yuvanın bırakma alanının DIŞINDA: portal olayları React ağacında kabarcıklanır — içerideyken açık
+        pencereye bırakılan dosya bu yuvaya sessizce yükleniyordu (inceleme 2026-10-16) */}
+    {image && (
+      <ImageLightbox open={zoomed} onOpenChange={setZoomed} src={api.techErrors.imageUrl(image.id)} label={label}
+        width={image.width} height={image.height} returnFocusRef={zoomRef} />
+    )}
+    </>
   )
 }
