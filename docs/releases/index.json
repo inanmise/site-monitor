@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-16T00:03:08Z",
+  "generatedAt": "2026-10-16T07:40:40Z",
   "repo": "inanmise/site-monitor",
-  "count": 753,
+  "count": 754,
   "releases": [
+    {
+      "version": "20.136.3",
+      "tag": "v20.136.3",
+      "releasedAt": "2026-10-16T07:40:32Z",
+      "commit": "92baa6231004f06fdc6cce6cfe85a30278f93040",
+      "prevVersion": "20.136.2",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "92baa623",
+          "subject": "izleme sayfalarında arama kartta görünen adı da bulur, Türkçe harfler eşit sayılır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.136.2",
       "tag": "v20.136.2",
