@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-16T18:04:28Z",
+  "generatedAt": "2026-10-16T19:38:11Z",
   "repo": "inanmise/site-monitor",
-  "count": 756,
+  "count": 757,
   "releases": [
+    {
+      "version": "20.139.0",
+      "tag": "v20.139.0",
+      "releasedAt": "2026-10-16T19:38:03Z",
+      "commit": "724593b4f154dc812321a08a9ab7afd4ecf240e1",
+      "prevVersion": "20.138.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "724593b4",
+          "subject": "teknik hata raporunda kısaltmalı rakam girişi (7,42G · 130,1M · 681,6k) ve görsel büyütme penceresi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.138.0",
       "tag": "v20.138.0",
