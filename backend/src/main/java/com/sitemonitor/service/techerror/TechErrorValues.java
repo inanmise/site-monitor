@@ -15,7 +15,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Teknik hata raporunun DEĞERLERİ (2026-10-13): kullanıcının girdiği her şey — sistem hiçbir rakamı hesaplamaz.
+ * Teknik hata raporunun DEĞERLERİ (2026-10-13): kullanıcının girdiği her şey; 2026-10-16'dan beri otomatik hesaplanan
+ * oran alanları hariç ({@link TechErrorCalc} — kaydederken sunucu yazar).
  *
  * <pre>
  * { "fields": { "&lt;alan&gt;": 0.42 | 12000 | true | "metin" },

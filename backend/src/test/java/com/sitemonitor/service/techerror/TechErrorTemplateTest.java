@@ -18,57 +18,65 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon: özet → göstergeler → anomali → map yok → kota → SLA (ekran görüntüsü) → not → otomatik trend → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
+    @DisplayName("varsayılan şablon: özet → veriler (girilen) → oranlar (otomatik) → anomali → map yok → kota → SLA (ekran görüntüsü) → not → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("summary", "metrics", "issues", "metrics", "metrics", "images", "text", "trend", "images", "images", "images", "images");
+                .containsExactly("summary", "metrics", "metrics", "issues", "metrics", "metrics", "images", "text", "images",
+                        "images");
         assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
-        assertThat(t.sections().get(3).title()).isEqualTo("Map Yapılmamış Hata Adedi");
-        assertThat(t.sections().get(4).title()).isEqualTo("Kota Hatası Adedi");
+        // Kullanıcı kararı 2026-10-16: üstte girilen adetler, altta otomatik oranlar
+        assertThat(t.sections().get(1).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
+        assertThat(t.sections().get(1).fields()).allMatch(f -> f.calc() == null);
+        assertThat(t.sections().get(2).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
+        assertThat(t.sections().get(2).fields()).allMatch(f -> f.calc() != null);
+        assertThat(t.sections().get(4).title()).isEqualTo("Map Yapılmamış Hatalar");
+        assertThat(t.sections().get(5).title()).isEqualTo("Kota Hataları");
         // Kullanıcı kararı 2026-10-15: SLA tablosu elle girilmez — raporlama aracının tablosunun ekran görüntüsü, tam genişlik
         // (iki kolon); tek görüntü ya da iki ayrı görüntü
-        var sla = t.sections().get(5);
+        var sla = t.sections().get(6);
         assertThat(sla.title()).isEqualTo("SLA Erişilebilirlik Tablosu");
         assertThat(sla.columns()).isEmpty();
         assertThat(sla.slots()).extracting(Slot::width).containsExactly("full", "full");
         assertThat(t.sections()).noneMatch(s -> "table".equals(s.kind()));
 
-        // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
-        // dağılımı → gün bazlı; her bölüm kendi başlığıyla
-        assertThat(t.sections().get(7).title()).isEqualTo("Otomatik Trendler (Son 12 Ay)");      // girilen rakamlardan, Faz C
-        assertThat(t.sections().subList(8, 12)).extracting(s -> s.title()).containsExactly("12 Aylık Özetler",
-                "Ay Bazlı Hata ve İşlem Adetleri (Son 12 Ay)", "{ay} {yil} Birim Bazlı Hata Dağılımı",
-                "Gün Bazlı Hata ve İşlem Adetleri ({ay} {yil})");
-        List<Slot> summary = t.sections().get(8).slots(), monthly = t.sections().get(9).slots(),
-                dist = t.sections().get(10).slots(), daily = t.sections().get(11).slots();
-        assertThat(summary).extracting(Slot::label, Slot::width).containsExactly(
+        // Otomatik trend bölümü varsayılanda YOK (kullanıcı kararı 2026-10-16: grafikleri görsel olarak kendileri sağlıyor)
+        assertThat(t.sections()).noneMatch(s -> "trend".equals(s.kind()));
+        // "Grafikler hakkında" altında YALNIZ iki görsel bölümü (kullanıcı kararı 2026-10-16): son 12 ayın yıllık göstergeleri
+        // ve raporun ayının günlük göstergeleri — adlar, sıra ve genişlikler kullanıcının verdiği gibi
+        assertThat(t.sections().get(7).title()).isEqualTo("Grafikler hakkında");
+        assertThat(t.sections().subList(8, 10)).extracting(s -> s.title()).containsExactly(
+                "12 Aylık Özetler - Yıllık Göstergeler", "{ay} {yil} Özetler - Günlük Göstergeler");
+        assertThat(t.sections().get(8).slots()).extracting(Slot::label, Slot::width).containsExactly(
                 org.assertj.core.groups.Tuple.tuple("Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
-                org.assertj.core.groups.Tuple.tuple("Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
-                org.assertj.core.groups.Tuple.tuple("Son 12 Ay Operasyon ve Hata Özet Tablosu", "full"));
-        // Her kırılım iki tabanda: toplam işlem, toplam hata, teknik, business, maplenmemiş, kota
-        for (String k : List.of("Toplam İşlem", "Toplam Hata", "Teknik Hata", "Business Hata", "Maplenmemiş Hata", "Kota Hata")) {
-            assertThat(monthly).extracting(Slot::label).anyMatch(l -> l.startsWith("Ay Bazlı " + k));
-            assertThat(daily).extracting(Slot::label).anyMatch(l -> l.startsWith("Gün Bazlı " + k));
-        }
-        assertThat(monthly).extracting(Slot::label).allMatch(l -> l.startsWith("Ay Bazlı ") && l.endsWith("(Son 12 Ay)"));
-        assertThat(daily).extracting(Slot::label).allMatch(l -> l.startsWith("Gün Bazlı ") && l.endsWith("({ay} {yil})"));
-        assertThat(dist).extracting(Slot::label).allMatch(l -> l.startsWith("{ay} {yil} ") && l.endsWith("(Birim Bazlı)"));
-        // Yarımlar çift çift (PDF'te yan yana), tamlar bölüm sonunda
-        for (List<Slot> group : List.of(summary, monthly, dist, daily)) {
-            long halves = group.stream().filter(x -> "half".equals(x.width())).count();
-            assertThat(halves % 2).isZero();
-            assertThat(group.subList(0, (int) halves)).extracting(Slot::width).containsOnly("half");
-        }
-        List<Slot> slots = t.allSlots().subList(2, t.allSlots().size());
-        assertThat(slots).hasSize(22);
-        // Eski "(Aylık)" / "(Günlük)" / "Grafiği" adları kalmadı
-        assertThat(slots).extracting(Slot::label).noneMatch(l -> l.contains("(Aylık)") || l.contains("(Günlük)") || l.contains("Grafiği"));
-        // EN: aynı yapı
+                org.assertj.core.groups.Tuple.tuple("Toplam Operasyon Adetleri (Son 12 Ay)", "half"),
+                org.assertj.core.groups.Tuple.tuple("Teknik/Business Hata Oranı Trendi (Son 12 Ay)", "full"),
+                org.assertj.core.groups.Tuple.tuple("Kota & Maplenmemiş Hata Adetleri (Son 12 Ay)", "full"),
+                org.assertj.core.groups.Tuple.tuple("Teknik Hataların Tüm Operasyonlara Oranı (Son 12 Ay)", "full"),
+                org.assertj.core.groups.Tuple.tuple("Bölüm ve Müdürlük Bazlı Toplam Operasyon ve Hata Özet Tablosu (Son 12 Ay)", "full"),
+                org.assertj.core.groups.Tuple.tuple("Kanal Bazında Teknik Hata Adetleri (Son 12 Ay)", "half"),
+                org.assertj.core.groups.Tuple.tuple("Kanal Bazında Business Hata Adetleri (Son 12 Ay)", "half"));
+        assertThat(t.sections().get(9).slots()).extracting(Slot::label, Slot::width).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Operasyon ve Hata Dağılım Özeti", "half"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Toplam Operasyon Adetleri (Günlük)", "half"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Müdürlük Bazında Teknik Hata Adetleri", "half"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Müdürlük Bazında Business Hata Adetleri", "half"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Teknik/Business Hata Oranı Trendi (Günlük)", "full"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Kota & Maplenmemiş Hata Adetleri (Günlük)", "full"),
+                org.assertj.core.groups.Tuple.tuple("{ay} {yil} Teknik Hataların Tüm Operasyonlara Oranı (Günlük)", "full"));
+        // Grafik yuvaları yalnız bu iki bölümde: SLA ekran görüntüleri (2) + 8 + 7
+        assertThat(t.allSlots()).hasSize(17);
+        // Yıllık bölümün adı zaman tabanını söyler; günlük bölümün adı raporun ayıyla başlar
+        assertThat(t.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Son 12 Ay)"));
+        assertThat(t.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{ay} {yil} "));
+        // EN: aynı yapı ve aynı genişlikler
         Template en = TechErrorTemplate.defaults("en");
-        assertThat(en.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Monthly ") && l.endsWith("(Last 12 Months)"));
-        assertThat(en.sections().get(11).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("Daily ") && l.endsWith("({month} {year})"));
+        assertThat(en.sections().subList(8, 10)).extracting(s -> s.title()).containsExactly(
+                "12-Month Summaries - Yearly Indicators", "{month} {year} Summaries - Daily Indicators");
+        assertThat(en.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Last 12 Months)"));
+        assertThat(en.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{month} {year} "));
+        assertThat(en.allSlots()).extracting(Slot::width).isEqualTo(t.allSlots().stream().map(Slot::width).toList());
         assertThat(en.sections().get(8).slots().get(0).label())
                 .isEqualTo("Annual Operations and Error Distribution Summary (Last 12 Months)");
         assertThat(t.allFields()).extracting(f -> f.id()).contains("error-rate", "error-rate-excl", "total-tx",

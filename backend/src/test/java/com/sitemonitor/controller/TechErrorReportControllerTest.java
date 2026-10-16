@@ -257,9 +257,9 @@ class TechErrorReportControllerTest {
     @Test
     @DisplayName("rapor okuma: şablonda trend varsa son 12 ayın verisi; okunamazsa rapor yine açılır, trend 'okunamadı' der")
     void readReportTrend() throws Exception {
-        report(100, 10, A, null);
+        TechErrorTemplate.Template t = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("tr");
+        report(100, 10, A, null).setTemplateJson(TechErrorTemplate.toJson(t));
         when(service.imageMeta(100L)).thenReturn(List.of());
-        TechErrorTemplate.Template t = TechErrorTemplate.defaults("tr");
         var cur = com.sitemonitor.service.techerror.TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42)), t);
         when(service.trend(any(), any(), any(), any())).thenReturn(com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of()));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
@@ -287,7 +287,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.report.version").value(4))
                 .andExpect(jsonPath("$.data.can_edit").value(true))
                 .andExpect(jsonPath("$.data.team_email_set").value(true))
-                .andExpect(jsonPath("$.data.template.sections.length()").value(12))
+                .andExpect(jsonPath("$.data.template.sections.length()").value(10))
                 .andExpect(jsonPath("$.data.template_update.differs").value(false));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(audit()))
                 .andExpect(jsonPath("$.data.can_edit").value(false))

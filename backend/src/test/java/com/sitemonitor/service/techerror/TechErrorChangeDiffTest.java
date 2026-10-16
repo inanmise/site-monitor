@@ -41,7 +41,7 @@ class TechErrorChangeDiffTest {
         assertThat(rate.op()).isEqualTo("change");
         assertThat(rate.before()).isEqualTo("%0,42");
         assertThat(rate.after()).isEqualTo("%0,5");
-        assertThat(rate.section()).isEqualTo("Mobil Kanalı — Eylül 2026 Özeti");   // yer tutucular çözülmüş
+        assertThat(rate.section()).isEqualTo("Mobil Kanalı — Eylül 2026 Oranları (otomatik)");   // yer tutucular çözülmüş
         Change total = find(r, "Toplam işlem adedi");
         assertThat(total.op()).isEqualTo("clear");
         assertThat(total.before()).isEqualTo("1.250.000");

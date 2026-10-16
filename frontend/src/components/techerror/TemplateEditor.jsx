@@ -24,9 +24,10 @@ import {
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
-  COLUMN_TYPES, FIELD_TYPES, LIMITS, allFields, allSlots, canonicalTemplate, imageRows, insertToken, move, newId, newSection,
-  resolvePlaceholders, resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs,
-  templateErrors, pruneRemovedTrendRefs, trendRefs, trendSectionsUsing, trendableFields, withoutSkip,
+  allFields, allSlots, calcFieldsUsing, calcInput, calcRefIssues, canonicalTemplate, COLUMN_TYPES, FIELD_TYPES,
+  imageRows, insertToken, LIMITS, move, newId, newSection, pruneRemovedTrendRefs, resolvePlaceholders,
+  resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview, summaryLinesUsing,
+  summaryRefs, templateErrors, trendableFields, trendRefs, trendSectionsUsing, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
@@ -39,6 +40,16 @@ const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images', 't
  * Özet cümlesine eklenecek alan başvurusu. Evet/hayır alanı cevaba göre iki ifadeden birini yazar: ifadeler
  * kullanıcıdan iki ayrı kutuyla alınır (ör. "artış" / "azalış"); `|` ve `}` ifadede kullanılamaz (sözdizimini bozar).
  */
+
+/**
+ * Şablon listelerindeki öğe kartı — alan, görsel yuvası, özet cümlesi, tablo sütunu / satırı (kullanıcı isteği 2026-10-16:
+ * "1. görsel, 2. görsel gibi alanların birbirinden ayrı bölümler olduğu keskin hatlarla belli olsun"). Koyu çerçeve +
+ * gölge + kartın kenarına yaslanan başlık şeridi (numara ve taşıma / silme düğmeleri); öğeler arası boşluk 12 px.
+ */
+const TPL_ITEM = 'rounded-lg border border-foreground/25 bg-card p-3 shadow-sm'
+const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-lg border-b border-foreground/20 bg-muted px-3 py-1.5'
+const TPL_ITEM_TITLE = 'text-sm font-semibold text-foreground'
+
 function fieldToken(f, yes = null, no = null) {
   if (f.type === 'yesno' && yes != null) return `{f:${f.id}?${cleanChoice(yes)}|${cleanChoice(no)}}`
   return `{f:${f.id}}`
@@ -365,9 +376,14 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                 const used = new Set()
                 for (const f of s.fields || []) for (const l of summaryLinesUsing(draft, f.id)) used.add(l)
                 const charted = (s.fields || []).filter((f) => trendSectionsUsing(draft, f.id).length).length
+                // Bölümün alanlarını formülünde kullanan BAŞKA bölümlerdeki hesaplanan alanlar (raporda elle girilir)
+                const own = new Set((s.fields || []).map((f) => f.id))
+                const calcs = new Set()
+                for (const f of s.fields || []) for (const c of calcFieldsUsing(draft, f.id)) if (!own.has(c.id)) calcs.add(c.label || c.id)
                 const message = t('te.tpl.removeSectionBody', s.title || '')
                   + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
                   + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
+                  + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
                 const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                   variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                 if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
@@ -552,7 +568,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {s.kind === 'metrics' && <FieldsEditor section={s} errors={errors} draft={draft} onChange={onChange} />}
-        {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} onChange={onChange} />}
+        {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} resolve={resolve} onChange={onChange} />}
         {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
         {s.kind === 'summary' && <SummaryLinesEditor section={s} errors={errors} draft={draft} resolve={resolve} resolveLong={resolveLong} onChange={onChange} />}
         {s.kind === 'table' && <TableEditor section={s} errors={errors} draft={draft} resolve={resolve} onChange={onChange} />}
@@ -579,25 +595,31 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
   const removeField = async (f) => {
     const used = summaryLinesUsing(draft, f.id)
     const charts = trendSectionsUsing(draft, f.id)
-    if (used.length || charts.length) {
+    // Otomatik hesabın formülünde kullanılan alan (2026-10-16): silinirse o hesap kullanılamaz, alan raporda elle girilir
+    const calcs = calcFieldsUsing(draft, f.id)
+    if (used.length || charts.length || calcs.length) {
+      const calcPart = calcs.length ? t('te.tpl.removeFieldCalcPart', calcs.map((x) => x.label || t('te.tpl.field')).join(', ')) : ''
       const [title, message] = used.length && charts.length
         ? [t('te.tpl.removeFieldUsedAnyTitle'), t('te.tpl.removeFieldBothBody', f.label || '', used.length)]
         : used.length
           ? [t('te.tpl.removeFieldUsedTitle'), t('te.tpl.removeFieldUsedBody', f.label || '', used.length)]
-          : [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
-      const ok = await showConfirm({ title, message, variant: 'warning', confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
+          : charts.length
+            ? [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
+            : [t('te.tpl.removeFieldCalcTitle'), '']
+      const ok = await showConfirm({ title, message: [message, calcPart].filter(Boolean).join(' '), variant: 'warning',
+        confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
       if (!ok) return
     }
     onChange((x) => ({ ...x, fields: x.fields.filter((y) => y.id !== f.id) }))
   }
   return (
     <div className="flex flex-col gap-2">
-      <ol className="flex flex-col gap-2">
+      <ol className="flex flex-col gap-3">
         {fields.map((f, i) => (
-          <li key={f.id} className="rounded-lg border p-3" data-slot="te-tpl-field" data-field={`field:${f.id}`}>
+          <li key={f.id} className={TPL_ITEM} data-slot="te-tpl-field" data-field={`field:${f.id}`}>
             {/* Taşıma düğmeleri kendi satırında: telefonda alanların üstüne binmesin (2026-10-13 e2e) */}
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.fieldN', i + 1)}</span>
+            <div className={TPL_ITEM_HEAD}>
+              <span className={TPL_ITEM_TITLE}>{t('te.tpl.fieldN', i + 1)}</span>
               <MoveButtons index={i} count={fields.length} label={f.label || t('te.tpl.field')}
                 onMove={(d) => onChange((x) => ({ ...x, fields: move(x.fields, i, d) }))}
                 onRemove={fields.length > 1 ? () => removeField(f) : null}
@@ -614,7 +636,7 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
                 <div className="flex flex-col gap-1">
                   <label htmlFor={`te-ft-${f.id}`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.fieldType')}</label>
                   <NativeSelect id={`te-ft-${f.id}`} value={f.type} className="w-full pointer-coarse:h-10"
-                    onChange={(e) => onChange((x) => ({ ...x, fields: x.fields.map((y) => (y.id === f.id ? { ...y, type: e.target.value } : y)) }))}>
+                    onChange={(e) => onChange((x) => ({ ...x, fields: x.fields.map((y) => (y.id === f.id ? withType(y, e.target.value) : y)) }))}>
                     {FIELD_TYPES.map((ty) => <NativeSelectOption key={ty} value={ty}>{t(`te.type.${ty}`)}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
@@ -623,6 +645,12 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
                     if (y.id !== f.id) return y
                     if (!v) return withoutSkip(y)
                     return { ...y, skip_if_no: v }
+                  }) }))} />
+                <CalcEditor field={f} draft={draft} error={errors[`calc:${f.id}`]}
+                  onChange={(calc) => onChange((x) => ({ ...x, fields: x.fields.map((y) => {
+                    if (y.id !== f.id) return y
+                    if (!calc) return withoutCalc(y)
+                    return { ...y, calc }
                   }) }))} />
                 <div className="flex flex-col gap-1 md:col-span-2">
                   <label htmlFor={`te-fh-${f.id}`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.fieldHint')}</label>
@@ -644,13 +672,93 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
   )
 }
 
+/** Alanın hesap tanımı olmadan kopyası. */
+function withoutCalc(field) {
+  return Object.fromEntries(Object.entries(field || {}).filter(([k]) => k !== 'calc'))
+}
+
+/** Tür değişince yeni türle uyumsuz otomatik hesap düşer (oran / değişim yüzde, artış evet/hayır alanında). */
+function withType(field, type) {
+  const next = { ...field, type }
+  const k = field?.calc?.kind
+  if (k && (k === 'increase' ? type !== 'yesno' : type !== 'percent')) return withoutCalc(next)
+  return next
+}
+
+/**
+ * Otomatik hesap (2026-10-16, kullanıcı isteği: "yüzdeleri kullanıcı değil sistem hesaplasın"): yüzde alanında oran
+ * ((pay − düşülen) ÷ payda × 100) ya da önceki aya göre değişim; evet/hayır alanında önceki aya göre artış. Seçilen
+ * alan raporda sorulmaz, girilen adetlerden hesaplanır. Formüldeki alanlar şablonun hesaplanmayan SAYI alanları;
+ * şablonda olmayan / uygun olmayan başvuru kaydı engellemez (raporda alan elle girilir) — burada uyarılır.
+ */
+function CalcEditor({ field, draft, error, onChange }) {
+  const t = useT()
+  if (field.type !== 'percent' && field.type !== 'yesno') return null
+  const c = field.calc || {}
+  const kinds = field.type === 'yesno' ? ['increase'] : ['ratio', 'change']
+  const inputs = allFields(draft).filter((x) => calcInput(x) && x.id !== field.id)
+  const name = (x) => x.label || t('te.tpl.field')
+  const id = `te-fc-${field.id}`
+  const set = (patch) => onChange({ ...c, ...patch })
+  const picker = (key, label, optional = false) => {
+    const pid = `${id}-${key}`
+    const value = c[key] || ''
+    const known = !value || inputs.some((x) => x.id === value)
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <label htmlFor={pid} className="text-xs font-medium text-muted-foreground">{label}</label>
+        <NativeSelect id={pid} value={value} className="w-full pointer-coarse:h-10" data-slot="te-calc-pick" data-key={key}
+          onChange={(e) => set({ [key]: e.target.value || undefined })}>
+          <NativeSelectOption value="">{optional ? t('te.tpl.calcMinusNone') : t('te.tpl.calcPick')}</NativeSelectOption>
+          {!known && <NativeSelectOption value={value}>{value}</NativeSelectOption>}
+          {inputs.map((x) => <NativeSelectOption key={x.id} value={x.id}>{name(x)}</NativeSelectOption>)}
+        </NativeSelect>
+      </div>
+    )
+  }
+  const issues = calcRefIssues(draft, field)
+  return (
+    <div className="flex min-w-0 flex-col gap-2 rounded-md border border-dashed p-2.5 md:col-span-2" data-slot="te-tpl-calc"
+      data-field={`calc:${field.id}`}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <label htmlFor={id} className="text-xs font-medium text-muted-foreground">{t('te.tpl.calc')}</label>
+        <NativeSelect id={id} value={c.kind || ''} className="w-full pointer-coarse:h-10"
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => {
+            const kind = e.target.value
+            if (!kind) { onChange(null); return }
+            onChange(kind === 'ratio' ? { kind, num: c.num, minus: c.minus, den: c.den } : { kind, of: c.of })
+          }}>
+          <NativeSelectOption value="">{t('te.tpl.calcNone')}</NativeSelectOption>
+          {kinds.map((k) => <NativeSelectOption key={k} value={k}>{t(`te.tpl.calcKind.${k}`)}</NativeSelectOption>)}
+        </NativeSelect>
+      </div>
+      {c.kind === 'ratio' && (
+        <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+          {picker('num', t('te.tpl.calcNum'))}
+          {picker('minus', t('te.tpl.calcMinus'), true)}
+          {picker('den', t('te.tpl.calcDen'))}
+        </div>
+      )}
+      {(c.kind === 'change' || c.kind === 'increase') && picker('of', t('te.tpl.calcOf'))}
+      {c.kind && <p className="text-xs text-muted-foreground">{t('te.tpl.calcHint')}</p>}
+      {issues.map((x) => (
+        <p key={x.id} className="text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]" data-slot="te-tpl-calc-issue">
+          {t(`te.tpl.calcRef.${x.status}`, x.field?.label || x.id)}
+        </p>
+      ))}
+      {error && <p className="text-sm text-destructive" role="alert">{t(error)}</p>}
+    </div>
+  )
+}
+
 /**
  * "Bu soru Hayır ise alanı sorma": şablondaki evet/hayır sorularından biri (alanın kendisi ve kendisi bağlı sorular
  * hariç — sunucu zincire izin vermez). Seçilen soru "Hayır" işaretlenirse alan raporda muaf olur.
  */
 function SkipIfNoSelect({ field, draft, resolveLabel, onChange }) {
   const t = useT()
-  const options = allFields(draft).filter((q) => q.type === 'yesno' && q.id !== field.id && !q.skip_if_no)
+  const options = allFields(draft).filter((q) => q.type === 'yesno' && q.id !== field.id && !q.skip_if_no && !q.calc?.kind)
   // Başka alanların bağlandığı bir soru kendisi bağlanamaz (zincir) — seçenek gösterilmez
   const isTarget = allFields(draft).some((x) => x.skip_if_no === field.id)
   if (options.length === 0 || isTarget) return null
@@ -668,16 +776,16 @@ function SkipIfNoSelect({ field, draft, resolveLabel, onChange }) {
   )
 }
 
-function SlotsEditor({ section: s, errors, draft, slotCount, onChange }) {
+function SlotsEditor({ section: s, errors, draft, slotCount, resolve = (x) => x, onChange }) {
   const t = useT()
   const slots = s.slots || []
   return (
     <div className="flex flex-col gap-2">
-      <ol className="flex flex-col gap-2">
+      <ol className="flex flex-col gap-3">
         {slots.map((sl, i) => (
-          <li key={sl.id} className="rounded-lg border p-3" data-slot="te-tpl-slot" data-field={`slot:${sl.id}`}>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.slotN', i + 1)}</span>
+          <li key={sl.id} className={TPL_ITEM} data-slot="te-tpl-slot" data-field={`slot:${sl.id}`}>
+            <div className={TPL_ITEM_HEAD}>
+              <span className={TPL_ITEM_TITLE}>{t('te.tpl.slotN', i + 1)}</span>
               <MoveButtons index={i} count={slots.length} label={sl.label || t('te.tpl.slot')}
                 onMove={(d) => onChange((x) => ({ ...x, slots: move(x.slots, i, d) }))}
                 onRemove={slots.length > 1 ? () => onChange((x) => ({ ...x, slots: x.slots.filter((y) => y.id !== sl.id) })) : null}
@@ -688,8 +796,12 @@ function SlotsEditor({ section: s, errors, draft, slotCount, onChange }) {
                 <div className="flex flex-col gap-1">
                   <label htmlFor={`te-s-${sl.id}`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.slotLabel')}</label>
                   <Input id={`te-s-${sl.id}`} className="pointer-coarse:h-10" value={sl.label || ''} maxLength={LIMITS.label + 20}
-                    aria-invalid={errors[`slot:${sl.id}`] ? true : undefined}
+                    aria-invalid={errors[`slot:${sl.id}`] ? true : undefined} aria-describedby={`te-sp-${sl.id}`}
                     onChange={(e) => onChange((x) => ({ ...x, slots: x.slots.map((y) => (y.id === sl.id ? { ...y, label: e.target.value } : y)) }))} />
+                  {/* Değişkenler (kanal / ay / yıl) doldurulmuş hâli (2026-10-16, kullanıcı isteği) — raporda bu ad görünür */}
+                  <p id={`te-sp-${sl.id}`} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-slot-preview">
+                    {t('te.tpl.titlePreview')} <span className="font-medium text-foreground">{resolve(sl.label || '') || '—'}</span>
+                  </p>
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-xs font-medium text-muted-foreground" id={`te-sw-${sl.id}`}>{t('te.tpl.slotWidth')}</span>
@@ -869,9 +981,9 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
           const errId = err ? `${id}-e` : undefined
           const open = choice?.lineId === lineId
           return (
-            <li key={lineId} className="rounded-lg border p-3" data-slot="te-tpl-line" data-line-id={lineId} data-field={`line:${s.id}:${i}`}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <label htmlFor={id} className="text-xs font-medium text-muted-foreground">{t('te.tpl.lineN', i + 1)}</label>
+            <li key={lineId} className={TPL_ITEM} data-slot="te-tpl-line" data-line-id={lineId} data-field={`line:${s.id}:${i}`}>
+              <div className={TPL_ITEM_HEAD}>
+                <label htmlFor={id} className={TPL_ITEM_TITLE}>{t('te.tpl.lineN', i + 1)}</label>
                 <MoveButtons index={i} count={lines.length} label={t('te.tpl.lineN', i + 1)}
                   onMove={(d) => moveLine(lineId, d)}
                   onRemove={lines.length > 1 ? () => removeLine(lineId) : null}
@@ -1040,11 +1152,11 @@ function TableEditor({ section: s, errors, draft, resolve, onChange }) {
     <div className="grid gap-4 lg:grid-cols-2" data-slot="te-tpl-table">
       <div className="flex min-w-0 flex-col gap-2">
         <p className="text-sm font-semibold">{t('te.tpl.columns')} <span className="font-normal text-muted-foreground">{t('te.tpl.columnCount', cols.length, LIMITS.columns)}</span></p>
-        <ol className="flex flex-col gap-2">
+        <ol className="flex flex-col gap-3">
           {cols.map((c, i) => (
-            <li key={c.id} className="rounded-lg border p-3" data-slot="te-tpl-column" data-item={c.id} data-field={`col:${s.id}:${c.id}`}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.columnN', i + 1)}</span>
+            <li key={c.id} className={TPL_ITEM} data-slot="te-tpl-column" data-item={c.id} data-field={`col:${s.id}:${c.id}`}>
+              <div className={TPL_ITEM_HEAD}>
+                <span className={TPL_ITEM_TITLE}>{t('te.tpl.columnN', i + 1)}</span>
                 <MoveButtons index={i} count={cols.length} label={colName(c, i)}
                   onMove={(d) => {
                     onChange((x) => ({ ...x, columns: move(x.columns, i, d) }))
@@ -1085,11 +1197,11 @@ function TableEditor({ section: s, errors, draft, resolve, onChange }) {
       </div>
       <div className="flex min-w-0 flex-col gap-2">
         <p className="text-sm font-semibold">{t('te.tpl.rows')} <span className="font-normal text-muted-foreground">{t('te.tpl.rowCount', rows.length, LIMITS.rows)}</span></p>
-        <ol className="flex flex-col gap-2">
+        <ol className="flex flex-col gap-3">
           {rows.map((r, i) => (
-            <li key={r.id} className={cn('rounded-lg border p-3', r.group && 'bg-muted/40')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-muted-foreground">{t('te.tpl.rowN', i + 1)}</span>
+            <li key={r.id} className={cn(TPL_ITEM, r.group && 'bg-muted/40')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
+              <div className={TPL_ITEM_HEAD}>
+                <span className={TPL_ITEM_TITLE}>{t('te.tpl.rowN', i + 1)}</span>
                 <MoveButtons index={i} count={rows.length} label={rowName(r, i)}
                   onMove={(d) => {
                     onChange((x) => ({ ...x, rows: move(x.rows, i, d) }))

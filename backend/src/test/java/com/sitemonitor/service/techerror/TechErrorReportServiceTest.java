@@ -148,11 +148,11 @@ class TechErrorReportServiceTest {
     void saveValuesVersioned() {
         TechErrorReport r = service.createReport(channel(1, "Kurumsal"), 2026, 9, 7L);
         Long v0 = r.getVersion();
-        Map<String, Object> vals = Map.of("fields", Map.of("error-rate", 0.42));
+        Map<String, Object> vals = Map.of("fields", Map.of("sla-rate", 0.42));
         TechErrorReport s1 = service.saveValues(r.getId(), v0, vals, 8L);
         assertThat(s1.getVersion()).isGreaterThan(v0);
         assertThat(service.saveValues(r.getId(), s1.getVersion(), vals, 8L).getVersion()).isEqualTo(s1.getVersion());
-        assertThatThrownBy(() -> service.saveValues(r.getId(), v0, Map.of("fields", Map.of("error-rate", 1)), 9L))
+        assertThatThrownBy(() -> service.saveValues(r.getId(), v0, Map.of("fields", Map.of("sla-rate", 1)), 9L))
                 .isInstanceOf(OptimisticLockingFailureException.class);
         assertThatThrownBy(() -> service.saveValues(r.getId(), null, vals, 9L)).isInstanceOf(FieldValidationException.class);
         assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("0.42");
@@ -187,19 +187,19 @@ class TechErrorReportServiceTest {
         TechErrorChannel ch = channel(1, "Mobil");
         TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
         TechErrorReport s = service.saveValues(r.getId(), r.getVersion(),
-                Map.of("fields", Map.of("error-rate", 0.5, "quota-count", 12)), 7L);
+                Map.of("fields", Map.of("sla-rate", 0.5, "quota-note", "Kota notu")), 7L);
         service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
-        service.upload(r.getId(), "quota-monthly", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
+        service.upload(r.getId(), "quota-unmapped-monthly", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
 
         // Kanal şablonundan kota bölümü ve kota grafiği çıkar
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
         secs.removeIf(x -> "quota".equals(x.get("id")));
-        Map<String, Object> charts = new LinkedHashMap<>(secs.stream().filter(x -> "charts-monthly".equals(x.get("id"))).findFirst().orElseThrow());
+        Map<String, Object> charts = new LinkedHashMap<>(secs.stream().filter(x -> "charts".equals(x.get("id"))).findFirst().orElseThrow());
         @SuppressWarnings("unchecked") List<Map<String, Object>> slots = new ArrayList<>((List<Map<String, Object>>) charts.get("slots"));
-        slots.removeIf(x -> "quota-monthly".equals(x.get("id")));
+        slots.removeIf(x -> "quota-unmapped-monthly".equals(x.get("id")));
         charts.put("slots", slots);
-        secs.replaceAll(x -> "charts-monthly".equals(x.get("id")) ? charts : x);
+        secs.replaceAll(x -> "charts".equals(x.get("id")) ? charts : x);
         raw.put("sections", secs);
         service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
 
@@ -213,7 +213,7 @@ class TechErrorReportServiceTest {
         assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
                 .containsExactly("monthly-tx");
         TechErrorReport after = reports.findById(r.getId()).orElseThrow();
-        assertThat(after.getValuesJson()).contains("error-rate").doesNotContain("quota-count");
+        assertThat(after.getValuesJson()).contains("sla-rate").doesNotContain("quota-note");
         assertThat(service.refreshPreview(after, fresh)).containsEntry("differs", false);
     }
 
@@ -243,12 +243,12 @@ class TechErrorReportServiceTest {
     void contentRevisionDrivesChangedAfterSend() throws Exception {
         TechErrorReport r = service.createReport(channel(1, "POS"), 2026, 9, 7L);
         long rev0 = rev(r.getId());
-        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", Map.of("error-rate", 1.5)), 8L);
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", Map.of("sla-rate", 1.5)), 8L);
         assertThat(rev(r.getId())).isEqualTo(rev0 + 1);
         service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
         assertThat(rev(r.getId())).isEqualTo(rev0 + 2);
         // Değişmeyen kayıt sayacı artırmaz
-        service.saveValues(r.getId(), s1.getVersion(), Map.of("fields", Map.of("error-rate", 1.5)), 8L);
+        service.saveValues(r.getId(), s1.getVersion(), Map.of("fields", Map.of("sla-rate", 1.5)), 8L);
         assertThat(rev(r.getId())).isEqualTo(rev0 + 2);
 
         Instant claim = Instant.parse("2026-10-13T09:10:00Z");
@@ -522,26 +522,55 @@ class TechErrorReportServiceTest {
     @Test
     @DisplayName("otomatik trend (H2): aynı kanalın pencere içindeki raporları okunur; başka kanal ve gelecek ay karışmaz")
     void trendReadsChannelReports() {
-        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTestTemplates.withTrend("tr"), 7L);
         TechErrorChannel other = channel(1, "POS");
         TechErrorReport jul = service.createReport(ch, 2026, 7, 7L);
-        service.saveValues(jul.getId(), jul.getVersion(), Map.of("fields", Map.of("error-rate", 0.3)), 7L);
+        service.saveValues(jul.getId(), jul.getVersion(), Map.of("fields", Map.of("total-tx", 300)), 7L);
         TechErrorReport aug = service.createReport(ch, 2026, 8, 7L);
-        service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("error-rate", 0.5)), 7L);
+        service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("total-tx", 500)), 7L);
         TechErrorReport oct = service.createReport(ch, 2026, 9, 7L);           // raporun ayı
         TechErrorReport posAug = service.createReport(other, 2026, 8, 7L);
-        service.saveValues(posAug.getId(), posAug.getVersion(), Map.of("fields", Map.of("error-rate", 9.9)), 7L);
+        service.saveValues(posAug.getId(), posAug.getVersion(), Map.of("fields", Map.of("total-tx", 990)), 7L);
         TechErrorReport r = reports.findById(oct.getId()).orElseThrow();
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
-        var v = TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42)), t);
+        var v = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 42)), t);
         var trend = service.trend(r, t, v);
-        assertThat(trend.series("error-rate").subList(9, 12)).containsExactly(0.3, 0.5, 0.42);
-        assertThat(trend.series("error-rate")).doesNotContain(9.9);
-        assertThat(trend.points("error-rate")).isEqualTo(3);
+        assertThat(trend.series("total-tx").subList(9, 12)).containsExactly(300.0, 500.0, 42.0);
+        assertThat(trend.series("total-tx")).doesNotContain(990.0);
+        assertThat(trend.points("total-tx")).isEqualTo(3);
         // Haziran raporu için Temmuz / Ağustos "gelecek" — pencereye girmez
         TechErrorReport jun = service.createReport(ch, 2026, 6, 7L);
         var junTrend = service.trend(reports.findById(jun.getId()).orElseThrow(), t, TechErrorValues.normalize(Map.of(), t));
-        assertThat(junTrend.points("error-rate")).isZero();
+        assertThat(junTrend.points("total-tx")).isZero();
+    }
+
+    @Test
+    @DisplayName("2026-10-16: oranlar kayıtta adetlerden ve geçen ayın raporundan hesaplanır (istemcinin oranı yok sayılır); PDF anında canlı")
+    void calcOnSaveAndLivePdf() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport aug = service.createReport(ch, 2026, 8, 7L);
+        TechErrorReport a = service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("total-tx", 1000000)), 7L);
+        TechErrorReport sep = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = new HashMap<>();
+        f.put("total-tx", 1250000);
+        f.put("error-count", 5250);
+        f.put("error-rate", 9.9);
+        f.put("tx-increase-pct", 1.0);
+        TechErrorReport s = service.saveValues(sep.getId(), sep.getVersion(), Map.of("fields", f), 7L);
+        Map<String, Object> stored = TechErrorValues.fromStored(s.getValuesJson(), TechErrorTemplate.fromStored(s.getTemplateJson())).fields();
+        assertThat(stored).containsEntry("error-rate", 0.42).containsEntry("tx-increase", true).containsEntry("tx-increase-pct", 25L);
+        // Geçmiş: hesaplanan oran da değişiklik olarak yazılır
+        assertThat(String.valueOf(TechErrorHistoryService.detail(eventsOf(sep.getId()).get(0)))).contains("Teknik hata oranı");
+        // Geçen ayın rakamı sonradan düzeltilince PDF / e-posta CANLI hesaplar (ekranda görülenle aynı)
+        service.saveValues(aug.getId(), a.getVersion(), Map.of("fields", Map.of("total-tx", 1200000)), 7L);
+        var in = service.pdfInput(reports.findById(sep.getId()).orElseThrow(), ch, "Dijital");
+        assertThat(in.values().fields()).containsEntry("tx-increase-pct", 4.17).containsEntry("error-rate", 0.42);
+        // Geçen ayın raporu yoksa değişim ELLE (girilen değer saklanır)
+        TechErrorChannel pos = channel(1, "POS");
+        TechErrorReport p = service.createReport(pos, 2026, 9, 7L);
+        TechErrorReport ps = service.saveValues(p.getId(), p.getVersion(),
+                Map.of("fields", Map.of("total-tx", 10, "tx-increase", false, "tx-increase-pct", 3.5)), 7L);
+        assertThat(ps.getValuesJson()).contains("\"tx-increase-pct\":3.5").contains("\"tx-increase\":false");
     }
 
     // ── Değişiklik ve sürüm geçmişi (2026-10-14, Faz B) ──────────────────────────────────────────────
@@ -555,10 +584,10 @@ class TechErrorReportServiceTest {
     void reportEventsAreRecorded() throws Exception {
         TechErrorChannel ch = channel(1, "Mobil");
         TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
-        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", Map.of("error-rate", 0.42)), 7L);
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", Map.of("sla-rate", 0.42)), 7L);
         // aynı değerle kayıt: sürüm artmaz, OLAY YOK
-        service.saveValues(s1.getId(), s1.getVersion(), Map.of("fields", Map.of("error-rate", 0.42)), 7L);
-        TechErrorReport s2 = service.saveValues(s1.getId(), s1.getVersion(), Map.of("fields", Map.of("error-rate", 0.5)), 7L);
+        service.saveValues(s1.getId(), s1.getVersion(), Map.of("fields", Map.of("sla-rate", 0.42)), 7L);
+        TechErrorReport s2 = service.saveValues(s1.getId(), s1.getVersion(), Map.of("fields", Map.of("sla-rate", 0.5)), 7L);
         service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
         TechErrorReportImage b = service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(500, 250), "b.png", 7L);
         service.deleteImage(r.getId(), b.getId(), 7L);
@@ -571,13 +600,13 @@ class TechErrorReportServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> changes = (List<Map<String, Object>>) lastValues.get("changes");
         assertThat(changes).singleElement().satisfies(c -> {
-            assertThat(c.get("label")).isEqualTo("Teknik hata oranı");
+            assertThat(c.get("label")).isEqualTo("Kritik fonksiyonların SLA oranı");
             assertThat(c.get("before")).isEqualTo("%0,42");
             assertThat(c.get("after")).isEqualTo("%0,5");
             assertThat(c.get("op")).isEqualTo("change");
         });
         assertThat(list.get(4).getReportVersion()).isEqualTo(s2.getVersion());
-        assertThat(TechErrorHistoryService.detail(list.get(2))).containsEntry("slot", "Ay Bazlı Toplam İşlem Adetleri (Son 12 Ay)")
+        assertThat(TechErrorHistoryService.detail(list.get(2))).containsEntry("slot", "Toplam Operasyon Adetleri (Son 12 Ay)")
                 .containsEntry("file_name", "b.png");
         assertThat(TechErrorHistoryService.detail(list.get(6))).containsEntry("template_version", 1);
         assertThat(list).allSatisfy(e -> assertThat(e.getActorId()).isEqualTo(7L));
@@ -589,7 +618,7 @@ class TechErrorReportServiceTest {
         TechErrorChannel ch = channel(1, "Mobil");
         TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
         TechErrorReport cur = r;
-        for (int i = 1; i <= 5; i++) cur = service.saveValues(r.getId(), cur.getVersion(), Map.of("fields", Map.of("error-rate", i)), 7L);
+        for (int i = 1; i <= 5; i++) cur = service.saveValues(r.getId(), cur.getVersion(), Map.of("fields", Map.of("sla-rate", i)), 7L);
         var p1 = history.reportHistory(r.getId(), null, 4);
         assertThat(p1.events()).hasSize(4);
         assertThat(p1.hasMore()).isTrue();

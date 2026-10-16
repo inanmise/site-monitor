@@ -9,7 +9,7 @@ import { Input } from '@/components/shadcn/input'
 import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
-import { ImagePrepError, prepareImage } from './imagePrep.js'
+import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
 import { CopyTextButton } from './TechErrorParts.jsx'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
@@ -89,11 +89,11 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     setBusy(true)
     setPhase('prep')
     try {
-      // Tarayıcıda hazırla (2026-10-15, Faz C): PDF'teki yuva ölçüsüne küçült, gerekirse PNG / JPEG'e çevir; neyin yanlış
-      // olduğunu ve ne yapılacağını söyleyen hata
+      // Tarayıcıda hazırla (2026-10-16: çözünürlük korunur): yalnız sunucu sınırını aşan görsel alan ortalamasıyla
+      // küçülür, gerekirse PNG'ye çevrilir; neyin yanlış olduğunu ve ne yapılacağını söyleyen hata
       let prepared
       try {
-        prepared = await prepareImage(file, slot.width)
+        prepared = await prepareImage(file)
       } catch (e) {
         if (e instanceof ImagePrepError) {
           const params = BYTE_PARAMS.has(e.key) ? e.params.map((n) => formatBytes(n, uiLang)) : e.params
@@ -169,8 +169,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       </div>
       {image ? (
         <>
-          <img src={api.techErrors.imageUrl(image.id)} alt={label} loading="lazy"
-            className="h-auto max-h-80 w-full rounded-md border bg-muted/30 object-contain" />
+          {/* Yuvanın genişliğini doldurur, oran korunur (kullanıcı kararı 2026-10-16: "hepsi yüklendiği alanın boyutunu
+              alsın") — eskiden 320 px'lik tavan görseli daraltıp yanlarda boşluk bırakıyordu. PDF ile aynı kural: yalnız
+              sayfaya sığmayacak kadar uzun görsel daralır (displayWidthPct). width / height yer ayırır (yüklenince kayma yok) */}
+          <img src={api.techErrors.imageUrl(image.id)} alt={label} loading="lazy" data-slot="te-image"
+            width={image.width || undefined} height={image.height || undefined}
+            style={{ maxWidth: `${displayWidthPct(slot.width, image.width, image.height)}%` }}
+            className="mx-auto block h-auto w-full rounded-md border" />
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {[image.file_name, `${image.width} × ${image.height}`, formatBytes(image.size_bytes, uiLang)].filter(Boolean).join(' · ')}
           </p>

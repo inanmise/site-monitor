@@ -49,6 +49,8 @@ class TechErrorExecutiveTest {
         f.put("error-count", 52500);
         f.put("unmapped-count", 120);
         f.put("quota-count", 80);
+        f.put("unmapped-rate", 0.228571);
+        f.put("quota-rate", 0.152381);
         String text = TechErrorSummary.auto(section(TR, "summary"), TR, f, "Mobil", 2026, 9);
         assertThat(text).startsWith("Mobil Kanalı Eylül 2026 verilerine göre teknik hata oranı **%0,42** olarak gerçekleşmiştir.");
         assertThat(text).contains("toplam işlem adedi **1.250.000** olarak gerçekleşmiştir. "
@@ -59,12 +61,13 @@ class TechErrorExecutiveTest {
         assertThat(TechErrorSummary.auto(section(TR, "summary"), TR, first, "Mobil", 2026, 9))
                 .contains("toplam işlem adedi **1.250.000** olarak gerçekleşmiştir.").doesNotContain("artış");
         assertThat(text).contains("Ay içindeki teknik hata adedi **52.500** olarak gerçekleşmiştir. "
-                + "Map yapılmamış hata adedi **120** olarak kaydedilmiştir. Kota hatası adedi **80** olarak kaydedilmiştir.");
+                + "Map yapılmamış hata adedi **120** olup teknik hataların **%0,2286** kadarını oluşturmaktadır. "
+                + "Kota hatası adedi **80** olup teknik hataların **%0,1524** kadarını oluşturmaktadır.");
         // kesinti oranı ve SLA girilmedi → o cümleler yok, yarım cümle yok
         assertThat(text).doesNotContain("Kesintiler hariç").doesNotContain("SLA").doesNotContain("{f:");
         assertThat(text).doesNotContain("\n");                                   // tek paragraf
         // Trend cümlesi özette yok ("Grafikler hakkında" bölümünü tekrar ediyor, grafik yoksa da basılıyordu)
-        assertThat(text).doesNotContain("Yıllık trend").endsWith("Kota hatası adedi **80** olarak kaydedilmiştir.");
+        assertThat(text).doesNotContain("Yıllık trend").endsWith("Kota hatası adedi **80** olup teknik hataların **%0,1524** kadarını oluşturmaktadır.");
         // Kota boş kalsa da hata adedi ve map yapılmamış adet özette kalır (eskiden tek cümleydi, hepsi düşüyordu)
         f.remove("quota-count");
         assertThat(TechErrorSummary.auto(section(TR, "summary"), TR, f, "Mobil", 2026, 9))

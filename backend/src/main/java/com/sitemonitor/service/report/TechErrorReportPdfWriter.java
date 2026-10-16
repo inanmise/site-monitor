@@ -34,7 +34,8 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  * satırlı TABLO (başlık her sayfada tekrar, sayılar sağa yaslı) ve açıklamalarda madde / alt madde / kalın yazı
  * ({@link TechErrorRichText}).
  *
- * <p>Rakamların hepsi kullanıcının girdiğidir; yazıcı hesaplamaz. Dil şablondan gelir (TR / EN etiketleri, ay adları,
+ * <p>Yazıcı hesaplamaz: adetleri kullanıcı girer, otomatik oranları ({@code TechErrorCalc}) servis PDF girdisini kurarken
+ * hesaplar. Dil şablondan gelir (TR / EN etiketleri, ay adları,
  * sayı biçimi). Döngüler girdiyle sınırlıdır (bölüm ≤ 20, alan ≤ 30, başlık ≤ 30, yuva ≤ 40, metin ≤ 10 000 karakter).
  */
 public final class TechErrorReportPdfWriter implements AutoCloseable {
@@ -43,17 +44,34 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private static final float[] SUB = { 203 / 255f, 213 / 255f, 225 / 255f };
     private static final float CARD_H = 50f;
     private static final float GAP = 8f;
-    private static final float HALF_MAX_H = 250f;
-    private static final float FULL_MAX_H = 330f;
+    /**
+     * Görselin PDF'teki en büyük yüksekliği. Görsel yuvasının GENİŞLİĞİNİ doldurur, oran korunur (kullanıcı kararı 2026-10-16:
+     * "hepsi yüklendiği alanın boyutunu alsın; büyütme ve küçültme ona göre"); yalnız sayfaya sığmayacak kadar uzun (dikey)
+     * görsel bu yüksekliğe iner. Bölüm başlığı (3 satır) + resim yazısı (3 satır) + görsel bir sayfaya sığar.
+     */
+    static final float IMAGE_MAX_H = 640f;
     private static final int MAX_PARAGRAPH_LINES = 400;
     private static final float FAIL_BOX_H = 44f;
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(ZoneId.of("Europe/Istanbul"));
 
     private final PdfCanvas c = new PdfCanvas();
     private boolean en;
+    private float embedScale = PdfCanvas.EMBED_SCALE;
+
+    /**
+     * Görselleri gömme katları (çizim ölçüsünün katı piksel): önce ≈ 432 dpi; PDF e-posta sınırını aşarsa servis aynı
+     * veriden sırayla daha düşük katla yeniden üretir (≈ 288 / 216 / 144 dpi) — görseller tam çözünürlükte saklandığından
+     * (2026-10-16) retina ekran görüntüleriyle dolu rapor 15 MB'ı aşabiliyordu (inceleme 2026-10-16).
+     */
+    public static final float[] EMBED_SCALES = { PdfCanvas.EMBED_SCALE, 4f, 3f, 2f };
 
     public static byte[] render(TechErrorPdfInput in) throws IOException {
+        return render(in, PdfCanvas.EMBED_SCALE);
+    }
+
+    public static byte[] render(TechErrorPdfInput in, float embedScale) throws IOException {
         try (TechErrorReportPdfWriter w = new TechErrorReportPdfWriter()) {
+            w.embedScale = embedScale;
             return w.write(in);
         }
     }
@@ -374,7 +392,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             Slot b = present.size() > 1 ? present.get(1) : null;
             boolean pair = "half".equals(a.width()) && b != null && "half".equals(b.width());
             boolean half = "half".equals(a.width());
-            float firstH = rowHeight(in, pair ? List.of(a, b) : List.of(a), half ? colW : CONTENT_W, half ? HALF_MAX_H : FULL_MAX_H);
+            float firstH = rowHeight(in, pair ? List.of(a, b) : List.of(a), half ? colW : CONTENT_W, IMAGE_MAX_H);
             int titleLines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3).size();
             c.ensureSpace(titleLines * 15 + 6 + firstH);
         }
@@ -387,13 +405,13 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             Slot a = present.get(i);
             Slot b = i + 1 < present.size() ? present.get(i + 1) : null;
             if ("half".equals(a.width()) && b != null && "half".equals(b.width())) {
-                imageRow(in, List.of(a, b), colW, HALF_MAX_H);
+                imageRow(in, List.of(a, b), colW, IMAGE_MAX_H);
                 i += 2;
             } else if ("half".equals(a.width())) {
-                imageRow(in, List.of(a), colW, HALF_MAX_H);
+                imageRow(in, List.of(a), colW, IMAGE_MAX_H);
                 i += 1;
             } else {
-                imageRow(in, List.of(a), CONTENT_W, FULL_MAX_H);
+                imageRow(in, List.of(a), CONTENT_W, IMAGE_MAX_H);
                 i += 1;
             }
         }
@@ -541,14 +559,26 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         }
     }
 
+    /**
+     * Görselin çizim ölçüsü {genişlik, yükseklik}: yuvanın genişliği (küçük görsel büyür, büyük görsel küçülür), oran korunur;
+     * {@code maxH}'yi aşan uzun görsel o yüksekliğe iner (genişlik orantılı daralır, yuvada ortalanır).
+     */
+    static float[] fit(float cellW, int imgW, int imgH, float maxH) {
+        float w = cellW, h = cellW * imgH / Math.max(1f, imgW);
+        if (h > maxH) {
+            h = maxH;
+            w = maxH * imgW / Math.max(1f, imgH);
+        }
+        return new float[]{ w, h };
+    }
+
     /** {@link #imageRow}'un ayırdığı yükseklik (başlık + görsel + aralık) — çizmeden. */
     private float rowHeight(TechErrorPdfInput in, List<Slot> slots, float cellW, float maxH) throws IOException {
         float capH = 0, imgH = 0;
         for (Slot sl : slots) {
             capH = Math.max(capH, c.wrapCell(in.resolve(sl.label()), cellW, c.bold, 8.5f, 3).size() * 10.5f);
             TechErrorPdfInput.Image img = in.images().get(sl.id());
-            float h = cellW * img.height() / Math.max(1f, img.width());
-            imgH = Math.max(imgH, Math.min(h, maxH));
+            imgH = Math.max(imgH, fit(cellW, img.width(), img.height(), maxH)[1]);
         }
         return capH + Math.max(imgH, FAIL_BOX_H) + 20;
     }
@@ -562,13 +592,9 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             captions.add(cap);
             capH = Math.max(capH, cap.size() * 10.5f);
             TechErrorPdfInput.Image img = in.images().get(sl.id());
-            float w = cellW, h = cellW * img.height() / Math.max(1f, img.width());
-            if (h > maxH) {
-                h = maxH;
-                w = maxH * img.width() / Math.max(1f, img.height());
-            }
-            sizes.add(new float[]{ w, h });
-            imgH = Math.max(imgH, h);
+            float[] wh = fit(cellW, img.width(), img.height(), maxH);
+            sizes.add(wh);
+            imgH = Math.max(imgH, wh[1]);
         }
         // Çizilemeyen görselin kutusu da sığsın (çok yassı bir görselin yüksekliği birkaç punto olabilir)
         imgH = Math.max(imgH, FAIL_BOX_H);
@@ -586,7 +612,8 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             float ix = x + (cellW - wh[0]) / 2;
             float iy = imgTop - wh[1];
             TechErrorPdfInput.Image img = in.images().get(slots.get(k).id());
-            boolean ok = c.tryImage(img.data(), "chart-" + slots.get(k).id(), ix, iy, wh[0], wh[1]);
+            boolean ok = c.tryImage(img.data(), img.width(), img.height(), "chart-" + slots.get(k).id(), ix, iy, wh[0], wh[1],
+                    embedScale);
             if (ok) {
                 c.strokeRect(ix, iy, wh[0], wh[1], RULE);
             } else {
@@ -607,9 +634,16 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
 
     private void closing(TechErrorPdfInput in) throws IOException {
         c.y -= 4;
-        note(en
-                ? "Figures in this report were entered by the " + nz(in.teamName()) + " team in Site Monitor; the system does not calculate them."
-                : "Bu rapordaki değerler " + nz(in.teamName()) + " takımı tarafından Site Monitor'de girilmiştir; sistem hesaplamaz.");
+        if (com.sitemonitor.service.techerror.TechErrorCalc.anyRatioComputed(in.template(), in.values().fields())) {
+            // 2026-10-16: bu raporda oran adetlerden hesaplandı — "sistem hesaplamaz" demek yanıltırdı
+            note(en
+                    ? "Counts in this report were entered by the " + nz(in.teamName()) + " team in Site Monitor; the rates were calculated by Site Monitor from those counts."
+                    : "Bu rapordaki adetler " + nz(in.teamName()) + " takımı tarafından Site Monitor'de girilmiştir; oranlar bu adetlerden Site Monitor tarafından hesaplanmıştır.");
+        } else {
+            note(en
+                    ? "Figures in this report were entered by the " + nz(in.teamName()) + " team in Site Monitor; the system does not calculate them."
+                    : "Bu rapordaki değerler " + nz(in.teamName()) + " takımı tarafından Site Monitor'de girilmiştir; sistem hesaplamaz.");
+        }
     }
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────

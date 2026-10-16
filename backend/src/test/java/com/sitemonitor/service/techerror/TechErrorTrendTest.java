@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Otomatik trend (2026-10-15, Faz C): şablon kuralları, son 12 ayın verisi, çubuk etiketinin kısa biçimi. */
 class TechErrorTrendTest {
 
-    static final Template TR = TechErrorTemplate.defaults("tr");
+    static final Template TR = TechErrorTestTemplates.withTrend("tr");
 
     private static TechErrorReport report(long id, int year, int month, Template t, Map<String, Object> fields) {
         TechErrorReport r = new TechErrorReport();
@@ -47,8 +47,11 @@ class TechErrorTrendTest {
     }
 
     @Test
-    @DisplayName("varsayılan şablon: 12 aylık özetlerin başında otomatik trend; beş alan, hepsi sayı / yüzde; gidiş-dönüş korunur")
+    @DisplayName("trend bölümü (ekibin eklediği): beş alan, hepsi sayı / yüzde; gidiş-dönüş korunur. Varsayılanda trend YOK (2026-10-16)")
     void defaultHasTrend() {
+        // Kullanıcı kararı 2026-10-16: grafikleri görsel olarak kendileri sağlıyor — varsayılan şablonda trend bölümü yok
+        assertThat(TechErrorTemplate.defaults("tr").sections()).noneMatch(x -> "trend".equals(x.kind()));
+        assertThat(TechErrorTemplate.defaults("en").sections()).noneMatch(x -> "trend".equals(x.kind()));
         Section s = TR.sections().stream().filter(x -> "trend".equals(x.kind())).findFirst().orElseThrow();
         assertThat(s.title()).isEqualTo("Otomatik Trendler (Son 12 Ay)");
         assertThat(s.lines()).containsExactly("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count");
@@ -59,7 +62,7 @@ class TechErrorTrendTest {
         assertThat(TechErrorTemplate.toMap(TR).toString()).contains("series=[error-rate, total-tx");
         Template again = TechErrorTemplate.normalize(TechErrorTemplate.toMap(TR));
         assertThat(again).isEqualTo(TR);
-        Section en = TechErrorTemplate.defaults("en").sections().stream().filter(x -> "trend".equals(x.kind())).findFirst().orElseThrow();
+        Section en = TechErrorTestTemplates.withTrend("en").sections().stream().filter(x -> "trend".equals(x.kind())).findFirst().orElseThrow();
         assertThat(en.title()).isEqualTo("Automatic Trends (Last 12 Months)");
         assertThat(en.lines()).isEqualTo(s.lines());
     }

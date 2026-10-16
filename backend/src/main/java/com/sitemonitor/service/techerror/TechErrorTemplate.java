@@ -30,6 +30,8 @@ import java.util.regex.Pattern;
  *   <li>{@code table} — sütunları (sayı / yüzde / metin) ve satırları (grup başlığı ya da satır) şablonda tanımlı
  *       tablo; değerler raporda girilir. Varsayılan şablonda kullanılmaz (SLA tablosu ekran görüntüsüdür).</li>
  * </ul>
+ * Gösterge alanı OTOMATİK hesaplanabilir ({@link Calc}, 2026-10-16): oran = adet ÷ adet × 100, önceki aya göre değişim ve
+ * artış — kullanıcı adetleri girer, sistem oranı doldurur ({@link TechErrorCalc}).
  * Başlıklarda {@code {kanal}} / {@code {ay}} / {@code {yil}} (EN: {@code {channel}} / {@code {month}} / {@code {year}})
  * raporun kanalı ve dönemiyle dolar. Alan ve yuva kimlikleri KALICIDIR: ad değişse de geçmiş raporların değerleri kaybolmaz.
  *
@@ -69,6 +71,8 @@ public final class TechErrorTemplate {
     public static final List<String> COLUMN_TYPES = List.of("number", "percent", "text");
     public static final List<String> FIELD_TYPES = List.of("number", "percent", "yesno", "text", "textarea");
     public static final List<String> WIDTHS = List.of("half", "full");
+    /** Otomatik hesap türleri (2026-10-16): {@code ratio} / {@code change} yüzde alanında, {@code increase} evet/hayır alanında. */
+    public static final List<String> CALC_KINDS = List.of("ratio", "change", "increase");
     public static final List<String> LANGS = List.of("tr", "en");
 
     static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
@@ -80,9 +84,49 @@ public final class TechErrorTemplate {
      * değeri saklanmaz, PDF'e ve e-postaya girmez. Soru boşsa ya da "Evet" ise alan istenir. Zincir yok: bağlanılan
      * soru kendisi başka bir soruya bağlı olamaz.
      */
-    public record Field(String id, String label, String type, String hint, String skipIfNo) {
+    public record Field(String id, String label, String type, String hint, String skipIfNo, Calc calc) {
         public Field(String id, String label, String type, String hint) {
-            this(id, label, type, hint, null);
+            this(id, label, type, hint, null, null);
+        }
+
+        public Field(String id, String label, String type, String hint, String skipIfNo) {
+            this(id, label, type, hint, skipIfNo, null);
+        }
+
+        public Field withCalc(Calc c) {
+            return new Field(id, label, type, hint, skipIfNo, c);
+        }
+
+        public Field withHint(String h) {
+            return new Field(id, label, type, h, skipIfNo, calc);
+        }
+    }
+
+    /**
+     * Alanın OTOMATİK hesabı (2026-10-16, kullanıcı isteği: "yüzdeleri kullanıcı değil sistem hesaplasın; üstte adetler,
+     * altta oranlar"):
+     * <ul>
+     *   <li>{@code ratio} (yüzde alanı) — ({@code num} − {@code minus}) ÷ {@code den} × 100; {@code minus} isteğe bağlı;</li>
+     *   <li>{@code change} (yüzde alanı) — bu ayın {@code of} değerinin GEÇEN AYIN raporundaki değerine göre değişimi,
+     *       işaretsiz (yönü {@code increase} alanı söyler);</li>
+     *   <li>{@code increase} (evet/hayır alanı) — bu ayın {@code of} değeri geçen aydan büyük mü.</li>
+     * </ul>
+     * Başvurular ({@code num} / {@code minus} / {@code den} / {@code of}) aynı şablonun hesaplanmayan SAYI alanlarıdır.
+     * Kayıtta türüne göre REDDEDİLMEZ (alan silmek / türünü değiştirmek kilitlenmesin — özet ve trend ile aynı kural):
+     * formül kullanılamazsa alan elle girilir ve şablon düzenleyici uyarır. Hesap {@link TechErrorCalc}'tadır.
+     */
+    public record Calc(String kind, String num, String minus, String den, String of) {
+        public static Calc ratio(String num, String minus, String den) { return new Calc("ratio", num, minus, den, null); }
+
+        public static Calc change(String of) { return new Calc("change", null, null, null, of); }
+
+        public static Calc increase(String of) { return new Calc("increase", null, null, null, of); }
+
+        /** Formülün başvurduğu alan kimlikleri (sırayla, boşlar atlanır). */
+        public List<String> refs() {
+            List<String> out = new ArrayList<>(3);
+            for (String r : "ratio".equals(kind) ? new String[] {num, minus, den} : new String[] {of}) if (r != null) out.add(r);
+            return out;
         }
     }
 
@@ -177,6 +221,7 @@ public final class TechErrorTemplate {
                         fm.put("type", f.type());
                         if (f.hint() != null && !f.hint().isEmpty()) fm.put("hint", f.hint());
                         if (f.skipIfNo() != null) fm.put("skip_if_no", f.skipIfNo());
+                        if (f.calc() != null) fm.put("calc", calcMap(f.calc()));
                         fs.add(fm);
                     }
                     sm.put("fields", fs);
@@ -225,6 +270,16 @@ public final class TechErrorTemplate {
             secs.add(sm);
         }
         m.put("sections", secs);
+        return m;
+    }
+
+    static Map<String, Object> calcMap(Calc c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", c.kind());
+        if (c.num() != null) m.put("num", c.num());
+        if (c.minus() != null) m.put("minus", c.minus());
+        if (c.den() != null) m.put("den", c.den());
+        if (c.of() != null) m.put("of", c.of());
         return m;
     }
 
@@ -509,14 +564,19 @@ public final class TechErrorTemplate {
                 String ref = f.skipIfNo();
                 if (ref == null) { fs.add(f); continue; }
                 Field target = byId.get(ref);
-                boolean ok = target != null && !ref.equals(f.id()) && "yesno".equals(target.type()) && target.skipIfNo() == null;
+                // Otomatik hesaplanan soru (2026-10-16) bağ hedefi olamaz: muafiyet kaydedilen cevaptan önce kararlaştırılır,
+                // hesap cevabı değiştirince bağlı alan yanlış gizlenir / değeri düşerdi (inceleme)
+                boolean ok = target != null && !ref.equals(f.id()) && "yesno".equals(target.type()) && target.skipIfNo() == null
+                        && target.calc() == null;
                 if (!ok && strict) {
-                    throw invalid(Msg.t("“" + f.label() + "” alanı yalnız şablondaki bir evet/hayır sorusuna bağlanabilir "
-                                    + "(kendisine ya da başka bir soruya bağlı bir soruya değil). Bağı kaldırıp yeniden seçin.",
-                            "The “" + f.label() + "” field can only be tied to a yes/no question in the template "
-                                    + "(not to itself or to a question that is tied to another one). Remove the link and pick again."));
+                    throw invalid(Msg.t("“" + f.label() + "” alanı yalnız şablondaki elle cevaplanan bir evet/hayır sorusuna "
+                                    + "bağlanabilir (kendisine, otomatik hesaplanan bir soruya ya da başka bir soruya bağlı bir soruya "
+                                    + "değil). Bağı kaldırıp yeniden seçin.",
+                            "The “" + f.label() + "” field can only be tied to a yes/no question answered by hand in the template "
+                                    + "(not to itself, to an automatically calculated question or to a question that is tied to "
+                                    + "another one). Remove the link and pick again."));
                 }
-                fs.add(ok ? f : new Field(f.id(), f.label(), f.type(), f.hint(), null));
+                fs.add(ok ? f : new Field(f.id(), f.label(), f.type(), f.hint(), null, f.calc()));
             }
             out.add(new Section(s.id(), s.kind(), s.title(), List.copyOf(fs), s.slots(), s.itemTitle(), s.descriptionLabel(),
                     s.customersLabel(), s.errorsLabel(), s.text(), s.lines(), s.columns(), s.rows()));
@@ -560,9 +620,59 @@ public final class TechErrorTemplate {
                 if (strict && !skip.isBlank()) throw invalid(at + Msg.t("bağlı soru kimliği geçersiz.", "the linked question id is invalid."));
                 skip = null;
             }
-            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint, skip));
+            Calc calc = calc(fm.get("calc"), type, id, strict, at);
+            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint, skip, calc));
         }
         return out;
+    }
+
+    /**
+     * Hesap tanımı BİÇİMCE okunur (tür, zorunlu başvurular, kimlik biçimi, alanın kendisine başvurmama, alan türüyle
+     * uyum). Başvurulan alanın varlığı / türü denetlenmez (bkz. {@link Calc}). Boş {@code kind} = elle girilir.
+     */
+    private static Calc calc(Object raw, String type, String fieldId, boolean strict, String at) {
+        if (raw == null) return null;
+        if (!(raw instanceof Map<?, ?> m)) {
+            if (strict) throw invalid(at + Msg.t("otomatik hesap okunamadı.", "the automatic calculation couldn't be read."));
+            return null;
+        }
+        String kind = str(m.get("kind"));
+        if (kind == null || kind.isEmpty()) return null;
+        if (!CALC_KINDS.contains(kind)) {
+            if (strict) throw invalid(at + Msg.t("otomatik hesap türü tanınmadı.", "the automatic calculation type isn't recognised."));
+            return null;
+        }
+        boolean percentKind = !"increase".equals(kind);
+        if (percentKind ? !"percent".equals(type) : !"yesno".equals(type)) {
+            if (strict) throw invalid(at + (percentKind
+                    ? Msg.t("oran ve değişim hesabı yalnız yüzde alanında kullanılabilir.",
+                            "a ratio or change calculation can only be used on a percentage field.")
+                    : Msg.t("artış hesabı yalnız evet/hayır alanında kullanılabilir.",
+                            "an increase calculation can only be used on a yes/no field.")));
+            return null;
+        }
+        String[] keys = "ratio".equals(kind) ? new String[] {"num", "minus", "den"} : new String[] {"of"};
+        Map<String, String> refs = new LinkedHashMap<>();
+        for (String k : keys) {
+            String ref = str(m.get(k));
+            if (ref == null || ref.isEmpty()) {
+                if ("minus".equals(k)) continue;
+                if (strict) throw invalid(at + Msg.t("otomatik hesap için gereken alan seçilmedi.",
+                        "a field the automatic calculation needs hasn't been picked."));
+                return null;
+            }
+            if (!ID.matcher(ref).matches() || ref.equals(fieldId)) {
+                if (strict) throw invalid(at + (ref.equals(fieldId)
+                        ? Msg.t("bir alan kendi hesabında kullanılamaz.", "a field can't be used in its own calculation.")
+                        : Msg.t("otomatik hesapta okunamayan bir alan kimliği var.",
+                                "the automatic calculation has a field id that can't be read.")));
+                return null;
+            }
+            refs.put(k, ref);
+        }
+        return "ratio".equals(kind)
+                ? Calc.ratio(refs.get("num"), refs.get("minus"), refs.get("den"))
+                : new Calc(kind, null, null, null, refs.get("of"));
     }
 
     private static List<Slot> slots(Object raw, int si, Set<String> ids, boolean strict, int room) {
@@ -680,6 +790,12 @@ public final class TechErrorTemplate {
 
     // ── Varsayılan şablon (kullanıcının verdiği rapor düzeni) ────────────────────────────────────────
 
+    /** Önceki aya göre değişim / artış alanlarının ipucu (geçen ayın raporu yoksa elle girilir). Göç de bunları yazar. */
+    static final String DEFAULT_HINT_CHANGE_TR = "Geçen ayın raporu yoksa elle girin (işaretsiz, ör. 3,5); varsa otomatik hesaplanır";
+    static final String DEFAULT_HINT_CHANGE_EN = "Enter by hand when there is no report for last month (no sign, e.g. 3.5); otherwise it's calculated";
+    static final String DEFAULT_HINT_INCREASE_TR = "Geçen ayın raporu yoksa elle seçin; varsa otomatik belirlenir";
+    static final String DEFAULT_HINT_INCREASE_EN = "Pick by hand when there is no report for last month; otherwise it's set automatically";
+
     public static Template defaults(String lang) {
         return "en".equals(lang) ? defaultsEn() : defaultsTr();
     }
@@ -692,33 +808,43 @@ public final class TechErrorTemplate {
                 "{kanal} Kanalından yapılan toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.",
                 "Bir önceki aya göre işlem adedinde {f:tx-increase-pct} {f:tx-increase?artış|azalış} görülmüştür.",
                 "Ay içindeki teknik hata adedi {f:error-count} olarak gerçekleşmiştir.",
-                "Map yapılmamış hata adedi {f:unmapped-count} olarak kaydedilmiştir.",
-                "Kota hatası adedi {f:quota-count} olarak kaydedilmiştir.",
-                "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup toplam hataların {f:outage-share} kadarını oluşturmaktadır.",
+                "Map yapılmamış hata adedi {f:unmapped-count} olup teknik hataların {f:unmapped-rate} kadarını oluşturmaktadır.",
+                "Kota hatası adedi {f:quota-count} olup teknik hataların {f:quota-rate} kadarını oluşturmaktadır.",
+                "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup teknik hataların {f:outage-share} kadarını oluşturmaktadır.",
                 "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} ile {f:sla-above?hedefin üzerinde|hedefin altında} gerçekleşmiştir.")));
-        s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Özeti", List.of(
-                new Field("error-rate", "Teknik hata oranı", "percent", "İlgili ay/yıl verilerine göre"),
-                new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
-                        "“Hayır” işaretlenirse kesinti günleri hariç oran ve kesinti kaynaklı hatalar istenmez, PDF'e girmez"),
-                new Field("error-rate-excl", "Kesinti günleri hariç teknik hata oranı", "percent",
-                        "Kesintilerin olduğu günlerde alınan hatalar çıkarıldığında", "had-outage"),
+        // Üstte kullanıcının GİRDİĞİ veriler, altta OTOMATİK oranlar (kullanıcı kararı 2026-10-16: "kullanıcı adetleri
+        // girer, yüzdeleri sistem hesaplar"). Kimlikler önceki varsayılanla aynı: trend, özet ve geçmiş ay ipuçları sürer.
+        s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Verileri", List.of(
                 new Field("total-tx", "Toplam işlem adedi", "number", "{kanal} kanalından yapılan toplam işlem"),
-                new Field("tx-increase", "Önceki aya göre artış var mı?", "yesno", null),
-                new Field("tx-increase-pct", "Önceki aya göre değişim oranı", "percent",
-                        "Artış ya da azalış oranını işaretsiz yazın (ör. 3,5); yönü yukarıdaki soru belirler"),
-                new Field("sla-rate", "Kritik fonksiyonların SLA oranı", "percent", "SLA taahhüdü kapsamındaki kritik fonksiyonlar"),
-                new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", null),
                 new Field("error-count", "Ay içindeki teknik hata adedi", "number", null),
+                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
+                new Field("quota-count", "Kota hatası adedi", "number", null),
+                new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
+                        "“Hayır” işaretlenirse kesinti kaynaklı hata adedi ve kesinti günleri hariç oran istenmez, PDF'e girmez"),
                 new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null, "had-outage"),
-                new Field("outage-share", "Kesinti kaynaklı hataların toplam hataya oranı", "percent", null, "had-outage"))));
+                new Field("sla-rate", "Kritik fonksiyonların SLA oranı", "percent",
+                        "SLA taahhüdü kapsamındaki kritik fonksiyonlar (elle girilir)"),
+                new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", null))));
+        s.add(metrics("rates", "{kanal} Kanalı — {ay} {yil} Oranları (otomatik)", List.of(
+                new Field("error-rate", "Teknik hata oranı", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
+                new Field("error-rate-excl", "Kesinti günleri hariç teknik hata oranı", "percent", null, "had-outage",
+                        Calc.ratio("error-count", "outage-errors", "total-tx")),
+                new Field("unmapped-rate", "Map yapılmamış hataların teknik hatalara oranı", "percent", null, null,
+                        Calc.ratio("unmapped-count", null, "error-count")),
+                new Field("quota-rate", "Kota hatalarının teknik hatalara oranı", "percent", null, null,
+                        Calc.ratio("quota-count", null, "error-count")),
+                new Field("outage-share", "Kesinti kaynaklı hataların teknik hatalara oranı", "percent", null, "had-outage",
+                        Calc.ratio("outage-errors", null, "error-count")),
+                new Field("tx-increase", "Önceki aya göre artış var mı?", "yesno", DEFAULT_HINT_INCREASE_TR, null,
+                        Calc.increase("total-tx")),
+                new Field("tx-increase-pct", "Önceki aya göre değişim oranı", "percent", DEFAULT_HINT_CHANGE_TR, null,
+                        Calc.change("total-tx")))));
         s.add(new Section("issues", "issues", "Teknik hataların anomali olarak arttığı konular", List.of(), List.of(),
                 "{konu} Konusu ile yaşanan problem", "Ne zaman, nerede, nasıl gerçekleşti?", "Etkilenen müşteri sayısı",
                 "Bu sorundan kaynaklı teknik hata adedi", null));
-        s.add(metrics("unmapped", "Map Yapılmamış Hata Adedi", List.of(
-                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
+        s.add(metrics("unmapped", "Map Yapılmamış Hatalar", List.of(
                 new Field("unmapped-note", "Açıklama", "textarea", null))));
-        s.add(metrics("quota", "Kota Hatası Adedi", List.of(
-                new Field("quota-count", "Kota hatası adedi", "number", null),
+        s.add(metrics("quota", "Kota Hataları", List.of(
                 new Field("quota-note", "Açıklama", "textarea", null))));
         // SLA erişilebilirlik tablosu ELLE GİRİLMEZ (kullanıcı kararı 2026-10-15): raporlama aracındaki tablonun ekran
         // görüntüsü tam genişlikte (iki kolon) yüklenir — tek görüntü ya da iki ayrı görüntü (ör. iki alt kanal)
@@ -728,38 +854,9 @@ public final class TechErrorTemplate {
                 null, null, null, null, null));
         s.add(new Section("trend-note", "text", "Grafikler hakkında", List.of(), List.of(), null, null, null, null,
                 "Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır."));
-        // Grafik akışı (kullanıcı kararı 2026-10-15): 12 aylık özetler → ay bazlı (son 12 ay) → raporun ayının birim
-        // dağılımı → gün bazlı. Her kırılım (toplam işlem, toplam hata, teknik, business, maplenmemiş, kota) iki tabanda da
-        // var; adlar zaman tabanını açıkça söyler. Kimlikler eski varsayılanla aynı anlamda kaldıysa korunur.
-        // Otomatik trend (kullanıcı kararı 2026-10-15): girilen rakamlardan son 12 ay, 12 aylık özetlerin başında
-        s.add(trend("auto-trend", "Otomatik Trendler (Son 12 Ay)", "error-rate", "total-tx", "error-count", "unmapped-count",
-                "quota-count"));
-        s.add(images("charts", "12 Aylık Özetler",
-                new Slot("annual-summary", "Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
-                new Slot("annual-tech-rate", "Yıllık Teknik Hata Oranı Trendi (Son 12 Ay)", "half"),
-                new Slot("annual-table", "Son 12 Ay Operasyon ve Hata Özet Tablosu", "full")));
-        s.add(images("charts-monthly", "Ay Bazlı Hata ve İşlem Adetleri (Son 12 Ay)",
-                new Slot("monthly-tx", "Ay Bazlı Toplam İşlem Adetleri (Son 12 Ay)", "half"),
-                new Slot("monthly-failed", "Ay Bazlı Toplam Hata (Başarısız İşlem) Adetleri (Son 12 Ay)", "half"),
-                new Slot("tech-errors", "Ay Bazlı Teknik Hata Adetleri (Son 12 Ay)", "half"),
-                new Slot("business-monthly", "Ay Bazlı Business Hata Adetleri (Son 12 Ay)", "half"),
-                new Slot("unmapped-monthly", "Ay Bazlı Maplenmemiş Hata Adetleri (Son 12 Ay)", "half"),
-                new Slot("quota-monthly", "Ay Bazlı Kota Hata Adetleri (Son 12 Ay)", "half"),
-                new Slot("business-tech-monthly", "Ay Bazlı Business ve Teknik Hata Adetleri (Son 12 Ay)", "full"),
-                new Slot("quota-unmapped-monthly", "Ay Bazlı Kota ve Maplenmemiş Hata Adetleri (Son 12 Ay)", "full")));
-        s.add(images("charts-distribution", "{ay} {yil} Birim Bazlı Hata Dağılımı",
-                new Slot("month-tech-counts", "{ay} {yil} Teknik Hata Dağılımı (Birim Bazlı)", "half"),
-                new Slot("month-business-counts", "{ay} {yil} Business Hata Dağılımı (Birim Bazlı)", "half")));
-        s.add(images("charts-daily", "Gün Bazlı Hata ve İşlem Adetleri ({ay} {yil})",
-                new Slot("daily-tx", "Gün Bazlı Toplam İşlem Adetleri ({ay} {yil})", "half"),
-                new Slot("daily-failed", "Gün Bazlı Toplam Hata (Başarısız İşlem) Adetleri ({ay} {yil})", "half"),
-                new Slot("daily-errors", "Gün Bazlı Teknik Hata Adetleri ({ay} {yil})", "half"),
-                new Slot("daily-business", "Gün Bazlı Business Hata Adetleri ({ay} {yil})", "half"),
-                new Slot("month-unmapped-daily", "Gün Bazlı Maplenmemiş Hata Adetleri ({ay} {yil})", "half"),
-                new Slot("month-quota-counts", "Gün Bazlı Kota Hata Adetleri ({ay} {yil})", "half"),
-                new Slot("daily-tech-business", "Gün Bazlı Business ve Teknik Hata Adetleri ({ay} {yil})", "full"),
-                new Slot("tech-ratio", "Gün Bazlı Teknik Hataların Tüm Operasyonlara Oranı ({ay} {yil})", "full"),
-                new Slot("business-ratio", "Gün Bazlı Business Hataların Tüm Operasyonlara Oranı ({ay} {yil})", "full")));
+        // Otomatik trend bölümü VARSAYILANDA YOK (kullanıcı kararı 2026-10-16: "bu grafikleri görsel olarak ben sağlayacağım");
+        // isteyen ekip şablon düzenleyiciden ekleyebilir
+        s.addAll(defaultCharts(false));
         return new Template("tr", "{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}", List.copyOf(s));
     }
 
@@ -771,33 +868,41 @@ public final class TechErrorTemplate {
                 "Total transactions through {channel} were {f:total-tx}.",
                 "Compared with the previous month, transactions show a {f:tx-increase-pct} {f:tx-increase?increase|decrease}.",
                 "There were {f:error-count} technical errors in the month.",
-                "The number of unmapped errors was {f:unmapped-count}.",
-                "The number of quota errors was {f:quota-count}.",
-                "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of all errors.",
+                "There were {f:unmapped-count} unmapped errors, {f:unmapped-rate} of the technical errors.",
+                "There were {f:quota-count} quota errors, {f:quota-rate} of the technical errors.",
+                "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of the technical errors.",
                 "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate}, {f:sla-above?above|below} the target.")));
-        s.add(metrics("summary", "{channel} Channel — {month} {year} Summary", List.of(
-                new Field("error-rate", "Technical error rate", "percent", "Based on this month's figures"),
-                new Field("had-outage", "Was there an outage in the period?", "yesno",
-                        "If “No”, the rate excluding outage days and the outage-caused errors aren't asked or printed"),
-                new Field("error-rate-excl", "Technical error rate excluding outage days", "percent",
-                        "With errors from outage days left out", "had-outage"),
+        s.add(metrics("summary", "{channel} Channel — {month} {year} Figures", List.of(
                 new Field("total-tx", "Total transactions", "number", "All transactions made through {channel}"),
-                new Field("tx-increase", "Increase compared with the previous month?", "yesno", null),
-                new Field("tx-increase-pct", "Change compared with the previous month", "percent",
-                        "Enter the size of the increase or decrease without a sign (e.g. 3.5); the question above sets the direction"),
-                new Field("sla-rate", "SLA rate of critical functions", "percent", "Critical functions covered by the SLA commitment"),
-                new Field("sla-above", "Above the SLA target?", "yesno", null),
                 new Field("error-count", "Technical errors in the month", "number", null),
+                new Field("unmapped-count", "Unmapped errors", "number", null),
+                new Field("quota-count", "Quota errors", "number", null),
+                new Field("had-outage", "Was there an outage in the period?", "yesno",
+                        "If “No”, the outage-caused errors and the rate excluding outage days aren't asked or printed"),
                 new Field("outage-errors", "Technical errors caused by outages", "number", null, "had-outage"),
-                new Field("outage-share", "Share of outage-caused errors in all errors", "percent", null, "had-outage"))));
+                new Field("sla-rate", "SLA rate of critical functions", "percent",
+                        "Critical functions covered by the SLA commitment (entered by hand)"),
+                new Field("sla-above", "Above the SLA target?", "yesno", null))));
+        s.add(metrics("rates", "{channel} Channel — {month} {year} Rates (automatic)", List.of(
+                new Field("error-rate", "Technical error rate", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
+                new Field("error-rate-excl", "Technical error rate excluding outage days", "percent", null, "had-outage",
+                        Calc.ratio("error-count", "outage-errors", "total-tx")),
+                new Field("unmapped-rate", "Share of unmapped errors in technical errors", "percent", null, null,
+                        Calc.ratio("unmapped-count", null, "error-count")),
+                new Field("quota-rate", "Share of quota errors in technical errors", "percent", null, null,
+                        Calc.ratio("quota-count", null, "error-count")),
+                new Field("outage-share", "Share of outage-caused errors in technical errors", "percent", null, "had-outage",
+                        Calc.ratio("outage-errors", null, "error-count")),
+                new Field("tx-increase", "Increase compared with the previous month?", "yesno", DEFAULT_HINT_INCREASE_EN, null,
+                        Calc.increase("total-tx")),
+                new Field("tx-increase-pct", "Change compared with the previous month", "percent", DEFAULT_HINT_CHANGE_EN, null,
+                        Calc.change("total-tx")))));
         s.add(new Section("issues", "issues", "Topics where technical errors rose abnormally", List.of(), List.of(),
                 "{topic} issue", "When, where and how did it happen?", "Affected customers",
                 "Technical errors caused by this issue", null));
-        s.add(metrics("unmapped", "Unmapped Error Count", List.of(
-                new Field("unmapped-count", "Unmapped errors", "number", null),
+        s.add(metrics("unmapped", "Unmapped Errors", List.of(
                 new Field("unmapped-note", "Notes", "textarea", null))));
-        s.add(metrics("quota", "Quota Error Count", List.of(
-                new Field("quota-count", "Quota errors", "number", null),
+        s.add(metrics("quota", "Quota Errors", List.of(
                 new Field("quota-note", "Notes", "textarea", null))));
         s.add(new Section("sla-shots", "images", "SLA Availability Table", List.of(), List.of(
                 new Slot("sla-shot-1", "{channel} Channel SLA Availability Table", "full"),
@@ -805,40 +910,55 @@ public final class TechErrorTemplate {
                 null, null, null, null, null));
         s.add(new Section("trend-note", "text", "About the charts", List.of(), List.of(), null, null, null, null,
                 "The yearly trend and detail charts are shared below."));
-        s.add(trend("auto-trend", "Automatic Trends (Last 12 Months)", "error-rate", "total-tx", "error-count",
-                "unmapped-count", "quota-count"));
-        s.add(images("charts", "12-Month Summaries",
-                new Slot("annual-summary", "Annual Operations and Error Distribution Summary (Last 12 Months)", "half"),
-                new Slot("annual-tech-rate", "Annual Technical Error Rate Trend (Last 12 Months)", "half"),
-                new Slot("annual-table", "Last 12 Months Operations and Error Summary Table", "full")));
-        s.add(images("charts-monthly", "Monthly Errors and Transactions (Last 12 Months)",
-                new Slot("monthly-tx", "Monthly Total Transactions (Last 12 Months)", "half"),
-                new Slot("monthly-failed", "Monthly Total Errors (Failed Transactions) (Last 12 Months)", "half"),
-                new Slot("tech-errors", "Monthly Technical Errors (Last 12 Months)", "half"),
-                new Slot("business-monthly", "Monthly Business Errors (Last 12 Months)", "half"),
-                new Slot("unmapped-monthly", "Monthly Unmapped Errors (Last 12 Months)", "half"),
-                new Slot("quota-monthly", "Monthly Quota Errors (Last 12 Months)", "half"),
-                new Slot("business-tech-monthly", "Monthly Business and Technical Errors (Last 12 Months)", "full"),
-                new Slot("quota-unmapped-monthly", "Monthly Quota and Unmapped Errors (Last 12 Months)", "full")));
-        s.add(images("charts-distribution", "{month} {year} Error Distribution by Unit",
-                new Slot("month-tech-counts", "{month} {year} Technical Error Distribution (by Unit)", "half"),
-                new Slot("month-business-counts", "{month} {year} Business Error Distribution (by Unit)", "half")));
-        s.add(images("charts-daily", "Daily Errors and Transactions ({month} {year})",
-                new Slot("daily-tx", "Daily Total Transactions ({month} {year})", "half"),
-                new Slot("daily-failed", "Daily Total Errors (Failed Transactions) ({month} {year})", "half"),
-                new Slot("daily-errors", "Daily Technical Errors ({month} {year})", "half"),
-                new Slot("daily-business", "Daily Business Errors ({month} {year})", "half"),
-                new Slot("month-unmapped-daily", "Daily Unmapped Errors ({month} {year})", "half"),
-                new Slot("month-quota-counts", "Daily Quota Errors ({month} {year})", "half"),
-                new Slot("daily-tech-business", "Daily Business and Technical Errors ({month} {year})", "full"),
-                new Slot("tech-ratio", "Daily Technical Errors as a Share of All Operations ({month} {year})", "full"),
-                new Slot("business-ratio", "Daily Business Errors as a Share of All Operations ({month} {year})", "full")));
+        s.addAll(defaultCharts(true));
         return new Template("en", "{channel} Channel Technical Error Messages - {month} {year}", List.copyOf(s));
     }
 
-    private static Section trend(String id, String title, String... fieldIds) {
-        return new Section(id, "trend", title, List.of(), List.of(), null, null, null, null, null, List.of(fieldIds),
-                List.of(), List.of());
+    /**
+     * Varsayılan grafik bölümleri (kullanıcı kararı 2026-10-16: "Grafikler hakkında" altında YALNIZ iki görsel bölümü —
+     * son 12 ayın yıllık göstergeleri ve raporun ayının günlük göstergeleri; düzen ve genişlikler kullanıcının verdiği gibi).
+     * Kimlikler eski varsayılanda aynı anlamdaki yuvanınkiyle aynı (şablon yenilenirken görsel taşınır); anlamı değişen
+     * yuvanın kimliği yeni. Göç ({@link TechErrorCalcMigration}) eski varsayılan grafik bölümlerini bununla değiştirir.
+     */
+    static List<Section> defaultCharts(boolean en) {
+        if (en) {
+            return List.of(
+                    images("charts", "12-Month Summaries - Yearly Indicators",
+                            new Slot("annual-summary", "Annual Operations and Error Distribution Summary (Last 12 Months)", "half"),
+                            new Slot("monthly-tx", "Total Operations (Last 12 Months)", "half"),
+                            new Slot("annual-tech-rate", "Technical/Business Error Rate Trend (Last 12 Months)", "full"),
+                            new Slot("quota-unmapped-monthly", "Quota & Unmapped Errors (Last 12 Months)", "full"),
+                            new Slot("tech-ratio-monthly", "Technical Errors as a Share of All Operations (Last 12 Months)", "full"),
+                            new Slot("annual-table", "Operations and Error Summary Table by Department and Directorate (Last 12 Months)", "full"),
+                            new Slot("channel-tech-errors", "Technical Errors by Channel (Last 12 Months)", "half"),
+                            new Slot("channel-business-errors", "Business Errors by Channel (Last 12 Months)", "half")),
+                    images("charts-daily", "{month} {year} Summaries - Daily Indicators",
+                            new Slot("month-summary", "{month} {year} Operations and Error Distribution Summary", "half"),
+                            new Slot("daily-tx", "{month} {year} Total Operations (Daily)", "half"),
+                            new Slot("month-tech-counts", "{month} {year} Technical Errors by Directorate", "half"),
+                            new Slot("month-business-counts", "{month} {year} Business Errors by Directorate", "half"),
+                            new Slot("daily-rate-trend", "{month} {year} Technical/Business Error Rate Trend (Daily)", "full"),
+                            new Slot("daily-quota-unmapped", "{month} {year} Quota & Unmapped Errors (Daily)", "full"),
+                            new Slot("tech-ratio", "{month} {year} Technical Errors as a Share of All Operations (Daily)", "full")));
+        }
+        return List.of(
+                images("charts", "12 Aylık Özetler - Yıllık Göstergeler",
+                        new Slot("annual-summary", "Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
+                        new Slot("monthly-tx", "Toplam Operasyon Adetleri (Son 12 Ay)", "half"),
+                        new Slot("annual-tech-rate", "Teknik/Business Hata Oranı Trendi (Son 12 Ay)", "full"),
+                        new Slot("quota-unmapped-monthly", "Kota & Maplenmemiş Hata Adetleri (Son 12 Ay)", "full"),
+                        new Slot("tech-ratio-monthly", "Teknik Hataların Tüm Operasyonlara Oranı (Son 12 Ay)", "full"),
+                        new Slot("annual-table", "Bölüm ve Müdürlük Bazlı Toplam Operasyon ve Hata Özet Tablosu (Son 12 Ay)", "full"),
+                        new Slot("channel-tech-errors", "Kanal Bazında Teknik Hata Adetleri (Son 12 Ay)", "half"),
+                        new Slot("channel-business-errors", "Kanal Bazında Business Hata Adetleri (Son 12 Ay)", "half")),
+                images("charts-daily", "{ay} {yil} Özetler - Günlük Göstergeler",
+                        new Slot("month-summary", "{ay} {yil} Operasyon ve Hata Dağılım Özeti", "half"),
+                        new Slot("daily-tx", "{ay} {yil} Toplam Operasyon Adetleri (Günlük)", "half"),
+                        new Slot("month-tech-counts", "{ay} {yil} Müdürlük Bazında Teknik Hata Adetleri", "half"),
+                        new Slot("month-business-counts", "{ay} {yil} Müdürlük Bazında Business Hata Adetleri", "half"),
+                        new Slot("daily-rate-trend", "{ay} {yil} Teknik/Business Hata Oranı Trendi (Günlük)", "full"),
+                        new Slot("daily-quota-unmapped", "{ay} {yil} Kota & Maplenmemiş Hata Adetleri (Günlük)", "full"),
+                        new Slot("tech-ratio", "{ay} {yil} Teknik Hataların Tüm Operasyonlara Oranı (Günlük)", "full")));
     }
 
     private static Section images(String id, String title, Slot... slots) {

@@ -44,6 +44,54 @@ function stripedPng(w, h) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr),
     chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
+// Çok parçalı yükleme gövdesindeki PNG'yi çözer (8 bit RGB / RGBA, taramasız; beş satır süzgeci) — tarayıcının küçülttüğü
+// görselin PİKSELLERİ doğrulanır (2026-10-16: şerit / önbellek / alan ortalaması gerçek tuvalde)
+function decodePng(body) {
+  const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+  if (i < 0) return null
+  let o = i + 8
+  let w = 0, h = 0, ct = -1
+  const idat = []
+  for (let guard = 0; guard < 100000 && o + 8 <= body.length; guard++) {
+    const len = body.readUInt32BE(o)
+    const type = body.toString('ascii', o + 4, o + 8)
+    const data = body.subarray(o + 8, o + 8 + len)
+    if (type === 'IHDR') {
+      w = data.readUInt32BE(0); h = data.readUInt32BE(4); ct = data[9]
+      if (data[8] !== 8 || data[12] !== 0) return null
+    } else if (type === 'IDAT') idat.push(data)
+    else if (type === 'IEND') break
+    o += 12 + len
+  }
+  const bpp = ct === 6 ? 4 : ct === 2 ? 3 : 0
+  if (!bpp) return null
+  const raw = zlib.inflateSync(Buffer.concat(idat))
+  const stride = w * bpp
+  const out = Buffer.alloc(stride * h)
+  let prev = Buffer.alloc(stride)
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)]
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1))
+    const cur = out.subarray(y * stride, (y + 1) * stride)
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? cur[x - bpp] : 0
+      const b = prev[x]
+      const c = x >= bpp ? prev[x - bpp] : 0
+      let v = line[x]
+      if (f === 1) v += a
+      else if (f === 2) v += b
+      else if (f === 3) v += (a + b) >> 1
+      else if (f === 4) {
+        const p = a + b - c
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c)
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+      }
+      cur[x] = v & 0xff
+    }
+    prev = cur
+  }
+  return { w, h, px: (x, y) => Array.from(out.subarray((y * w + x) * bpp, (y * w + x) * bpp + 3)) }
+}
 // Çok parçalı yükleme gövdesindeki PNG'nin boyutu (IHDR)
 function pngSize(body) {
   const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
@@ -132,6 +180,34 @@ const REPORT = {
   },
 }
 
+// Otomatik oranlar (2026-10-16): kullanıcı adetleri girer, oranlar hesaplanır; adet girişinin altında türeyen oran
+const CALC_TEMPLATE = {
+  v: 1, lang: 'tr', title: '{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}',
+  sections: [
+    { id: 'summary', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Verileri', fields: [
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
+      { id: 'error-count', label: 'Ay içindeki teknik hata adedi', type: 'number' },
+      { id: 'unmapped-count', label: 'Map yapılmamış hata adedi', type: 'number' },
+      { id: 'quota-count', label: 'Kota hatası adedi', type: 'number' },
+    ] },
+    { id: 'rates', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Oranları (otomatik)', fields: [
+      { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent', calc: { kind: 'ratio', num: 'error-count', den: 'total-tx' } },
+      { id: 'unmapped-rate', label: 'Map yapılmamış hataların teknik hatalara oranı', type: 'percent',
+        calc: { kind: 'ratio', num: 'unmapped-count', den: 'error-count' } },
+      { id: 'quota-rate', label: 'Kota hatalarının teknik hatalara oranı', type: 'percent',
+        calc: { kind: 'ratio', num: 'quota-count', den: 'error-count' } },
+      { id: 'tx-increase', label: 'Önceki aya göre artış var mı?', type: 'yesno', calc: { kind: 'increase', of: 'total-tx' } },
+      { id: 'tx-increase-pct', label: 'Önceki aya göre değişim oranı', type: 'percent', calc: { kind: 'change', of: 'total-tx' } },
+    ] },
+  ],
+}
+const CALC_REPORT = {
+  ...REPORT, template: CALC_TEMPLATE, trend: undefined,
+  values: { fields: { 'total-tx': 125430112, 'error-count': 526806, 'unmapped-count': 3340, 'quota-count': 1250 }, issues: {}, texts: {} },
+  previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 124900000 } },
+}
+let reportOverride = null
+
 // Faz B (2026-10-14): değişiklik geçmişi ve şablon sürümleri — gerçek uzunlukta adlar / değerler
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Demirtaş (Dijital Kanallar / Uygulama Geliştirme Yöneticisi)'
 const HISTORY = {
@@ -164,9 +240,10 @@ let savedTemplate = null
 let savedReport = null
 let uploads = []
 let uploadSizes = []
+let uploadBodies = []
 let sends = 0
 async function mock(page) {
-  savedTemplate = null; savedReport = null; uploads = []; uploadSizes = []; sends = 0
+  savedTemplate = null; savedReport = null; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0; reportOverride = null
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -210,11 +287,14 @@ async function mock(page) {
       if (req.method() === 'PUT') {
         savedReport = JSON.parse(req.postData() || '{}')
         body = { success: true, data: { version: 5, changed: true, updated_at: '2026-10-13T09:00:00Z', values: savedReport.values } }
-      } else body = { success: true, data: REPORT }
-    } else if (p === '/api/tech-error-reports/reports/100/images/monthly-tx') {
+      } else body = { success: true, data: reportOverride || REPORT }
+    } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[a-z0-9-]+$/.test(p) && req.method() === 'POST') {
+      const slotId = p.split('/').pop()
       uploads.push(req.headers()['content-type'] || '')
       uploadSizes.push(pngSize(req.postDataBuffer() || Buffer.alloc(0)))
-      body = { success: true, data: { id: 501, slot_id: 'monthly-tx', content_type: 'image/png', file_name: 'aylik-islem.png', width: 1, height: 1, size_bytes: PNG.length } }
+      uploadBodies.push(req.postDataBuffer() || Buffer.alloc(0))
+      body = { success: true, data: { id: 500 + uploads.length, slot_id: slotId, content_type: 'image/png', file_name: `${slotId}.png`,
+        width: 1, height: 1, size_bytes: PNG.length } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
       sends++
       body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
@@ -314,6 +394,30 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
     })
 
+    test('otomatik oranlar (2026-10-16): oranlar adetlerden; adet girişinin altında yüzde; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      reportOverride = CALC_REPORT
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      await expect(editor.getByLabel('Teknik hata oranı', { exact: true })).toHaveText(/^(%0,42|0\.42%)$/, { timeout: 20_000 })
+      await expect(editor.getByLabel('Önceki aya göre artış var mı?', { exact: true })).toHaveText(/^(Evet|Yes)$/)
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-calc-derived"]'))
+        .toContainText(/Kota hatalarının teknik hatalara oranı: (%0,24|0\.24%)/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (oranlar)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (oranlar)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (oranlar)').toEqual([])
+      // Hesap kutusu kartın içinde (uzun ad sararsa bile taşmaz)
+      const box = await editor.locator('[data-field="values.unmapped-rate"] [data-slot="te-calc"]').boundingBox()
+      const card = await editor.locator('[data-slot="te-metrics"][data-section="rates"]').boundingBox()
+      expect(box.x + box.width).toBeLessThanOrEqual(card.x + card.width + 1)
+      // Adet değişince oran anında güncellenir
+      await editor.getByLabel('Kota hatası adedi', { exact: true }).fill('2500')
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-calc-derived"]')).toContainText(/%0,47|0\.47%/)
+      await expect(editor.getByLabel('Kota hatalarının teknik hatalara oranı', { exact: true })).toHaveText(/^(%0,47|0\.47%)$/)
+      await page.screenshot({ path: `test-results/channel-reports-calc-${vp.name}.png` })
+    })
+
     test('rapor: sayı çözülür ve sürümle kaydedilir; grafik ızgarası; görsel yükleme; gönderim onayı', async ({ page }) => {
       test.setTimeout(120_000)
       await mock(page)
@@ -395,6 +499,12 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => uploads.length).toBe(1)
       expect(uploads[0]).toContain('multipart/form-data')
       await expect(editor.locator('[data-slot-id="monthly-tx"] img')).toBeVisible()
+      // Görsel yuvanın genişliğini doldurur (kullanıcı kararı 2026-10-16): içeride / dışarıda farklı ölçü yok
+      await expect.poll(async () => {
+        const img = await editor.locator('[data-slot-id="monthly-tx"] [data-slot="te-image"]').boundingBox()
+        const head = await editor.locator('[data-slot-id="monthly-tx"] > div').first().boundingBox()
+        return img && head ? Math.abs(img.width - head.width) : 999
+      }).toBeLessThanOrEqual(1)
 
       await page.locator('[data-slot="te-send"]').click()
       const dlg = page.getByRole('dialog', { name: /Rapor takıma gönderilsin mi\?|Send the report to the team\?/ })
@@ -464,24 +574,42 @@ for (const vp of VIEWPORTS) {
       await editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true }).fill('126.000.000')
       await expect(block.locator('[data-field="total-tx"]')).toHaveAttribute('data-points', '12')
 
-      // Görsel: 3000 × 1500 PNG yarım yuvaya göre küçültülür, küçültülmüş dosya yüklenir, not yuvanın altında
+      // Görsel (2026-10-16: çözünürlük korunur): sınır içindeki 3000 × 1500 PNG OLDUĞU GİBİ yüklenir — küçültme / not yok
       const big = stripedPng(3000, 1500)
       const slot = editor.locator('[data-slot-id="monthly-tx"]')
       await slot.locator('input[type="file"]').setInputFiles({ name: 'buyuk-ekran-goruntusu.png', mimeType: 'image/png', buffer: big })
       await expect.poll(() => uploads.length, { timeout: 15_000 }).toBe(1)
-      const up = uploadSizes[0]
-      expect(up, 'yüklenen PNG').not.toBeNull()
-      expect(up.w, 'yarım yuva genişliği').toBeLessThanOrEqual(900)
-      expect(up.w).toBeGreaterThanOrEqual(600)
-      expect(Math.abs(up.w / up.h - 2), 'en-boy oranı korunur').toBeLessThan(0.02)
-      await expect(slot.locator('[data-slot="te-image-note"]')).toContainText(`3000 × 1500 → ${up.w} × ${up.h}`)
+      expect(uploadSizes[0], 'yüklenen PNG aynı ölçüde').toMatchObject({ w: 3000, h: 1500, bytes: expect.any(Number) })
+      await expect(slot.locator('[data-slot="te-image-note"]')).toHaveCount(0)
+      // Sunucu sınırını (6000 px kenar) aşan görsel GERÇEK tuvalde alan ortalamasıyla sınıra iner, KAYIPSIZ PNG kalır
+      const huge = stripedPng(7200, 1800)
+      const wide = editor.locator('[data-slot-id="daily-errors"]')
+      await wide.locator('input[type="file"]').setInputFiles({ name: 'cok-genis.png', mimeType: 'image/png', buffer: huge })
+      await expect.poll(() => uploads.length, { timeout: 30_000 }).toBe(2)
+      expect(uploadSizes[1], 'sınıra inen PNG (JPEG değil)').toMatchObject({ w: 6000, h: 1500 })
+      // Pikseller: 40 px'lik bloklar 6000 / 7200 = 5 / 6 ölçekte. Tek bloğun içindeki hedef piksel bloğun rengini AYNEN
+      // taşır (şerit sınırını aşan satırlar dahil — 64 satırlık şerit önbelleği); sınırdaki piksel alan ortalamasının tam
+      // değeri: x = 33 → kaynak [39,6; 40,8) = 0,4 "açık" + 0,8 "koyu" blok
+      const img = decodePng(uploadBodies[1])
+      expect(img, 'yüklenen PNG çözülür').not.toBeNull()
+      const ON = [20, 90, 200]
+      const OFF = [240, 240, 240]
+      expect(img.px(10, 10)).toEqual(ON)
+      expect(img.px(40, 10)).toEqual(OFF)
+      expect(img.px(10, 60)).toEqual(OFF)
+      expect(img.px(10, 1000)).toEqual(ON)
+      expect(img.px(5990, 1490)).toEqual(OFF)
+      const edge = img.px(33, 10)
+      const want = [167, 190, 227]
+      edge.forEach((v, k) => expect(Math.abs(v - want[k]), `sınır pikseli ${k}`).toBeLessThanOrEqual(1))
+      await expect(wide.locator('[data-slot="te-image-note"]')).toContainText('7200 × 1800 → 6000 × 1500')
 
       // PDF yuvaya yüklenmez; ne yapılacağı yuvanın altında
       const other = editor.locator('[data-slot-id="tech-errors"]')
       await other.locator('input[type="file"]').setInputFiles({ name: 'rapor.pdf', mimeType: 'application/pdf',
         buffer: Buffer.from('%PDF-1.7\n%rapor') })
       await expect(other.locator('[data-slot="te-image-error"]')).toContainText(/PDF dosyası görsel yuvasına yüklenemez|A PDF file can't go/)
-      expect(uploads.length).toBe(1)
+      expect(uploads.length).toBe(2)
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (görsel)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (trend/görsel)').toEqual([])
       expect(await page.evaluate(overflowX), 'yatay taşma (görsel)').toBeLessThanOrEqual(1)

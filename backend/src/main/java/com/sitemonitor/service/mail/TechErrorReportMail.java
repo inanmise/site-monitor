@@ -24,8 +24,11 @@ public final class TechErrorReportMail {
 
     private TechErrorReportMail() {}
 
-    /** En çok 8 gösterge kutusu (ilk gösterge bölümünden, sayı / yüzde / evet-hayır). */
-    static final int MAX_STATS = 8;
+    /**
+     * En çok bu kadar gösterge kutusu (sayı / yüzde / evet-hayır): ilk gösterge bölümü (girilen rakamlar) + hemen ardındaki
+     * yalnız otomatik oranlardan oluşan bölüm (varsayılanda 8 + 7).
+     */
+    static final int MAX_STATS = 16;
 
     public static String subject(TechErrorPdfInput in) {
         return in.title();
@@ -54,8 +57,13 @@ public final class TechErrorReportMail {
             break;   // yalnız ilk özet
         }
         List<Stat> stats = new ArrayList<>();
+        boolean first = true;
         for (Section s : in.template().sections()) {
             if (!"metrics".equals(s.kind())) continue;
+            // İlk gösterge bölümü (raporun özeti) + ardından gelen YALNIZ otomatik oranlardan oluşan bölüm(ler) — 2026-10-16:
+            // oranlar artık ayrı bölümde hesaplanıyor, teknik hata oranı e-postanın kutucuklarından düşmesin
+            if (!first && !allComputed(s)) break;
+            first = false;
             for (Field f : s.fields()) {
                 if (stats.size() >= MAX_STATS) break;
                 if (!"number".equals(f.type()) && !"percent".equals(f.type()) && !"yesno".equals(f.type())) continue;
@@ -65,11 +73,15 @@ public final class TechErrorReportMail {
                 if (Boolean.TRUE.equals(in.values().fields().get(f.id())) && controlsInSection(s, f)) continue;
                 stats.add(Stat.of(in.resolve(f.label()), TechErrorFormat.value(f, in.values().fields().get(f.id()), lang)));
             }
-            break;   // yalnız ilk gösterge bölümü (raporun özeti)
         }
         if (!stats.isEmpty()) d.stats(stats);
-        d.note(en ? "Figures were entered by the team; Site Monitor does not calculate them."
-                : "Değerleri ekip girmiştir; Site Monitor bu rakamları hesaplamaz.");
+        if (com.sitemonitor.service.techerror.TechErrorCalc.anyRatioComputed(in.template(), in.values().fields())) {
+            d.note(en ? "Counts were entered by the team; Site Monitor calculated the rates from those counts."
+                    : "Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.");
+        } else {
+            d.note(en ? "Figures were entered by the team; Site Monitor does not calculate them."
+                    : "Değerleri ekip girmiştir; Site Monitor bu rakamları hesaplamaz.");
+        }
         String base = appUrl == null ? "" : appUrl.replaceAll("/+$", "");
         if (!base.isBlank()) d.button(base + "/?tab=channelreports", en ? "Open technical error reports →" : "Teknik hata raporlarını aç →");
         String why = en
@@ -111,7 +123,14 @@ public final class TechErrorReportMail {
 
     private static String nz(String s) { return blank(s) ? "—" : s.trim(); }
 
-    /** Bu evet/hayır sorusuna AYNI bölümde bağlı alan var mı (özet yalnız ilk gösterge bölümünü okur)? */
+    /** Bölümün bütün alanları otomatik hesaplanıyor mu (varsayılanın "Oranları (otomatik)" bölümü). */
+    private static boolean allComputed(Section s) {
+        if (s.fields().isEmpty()) return false;
+        for (Field f : s.fields()) if (f.calc() == null) return false;
+        return true;
+    }
+
+    /** Bu evet/hayır sorusuna AYNI bölümde bağlı alan var mı? */
     private static boolean controlsInSection(Section s, Field q) {
         if (!"yesno".equals(q.type())) return false;
         for (Field f : s.fields()) if (q.id().equals(f.skipIfNo())) return true;

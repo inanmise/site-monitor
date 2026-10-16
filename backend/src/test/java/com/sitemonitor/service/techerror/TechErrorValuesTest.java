@@ -111,7 +111,7 @@ class TechErrorValuesTest {
     @Test
     @DisplayName("saklı değer hoşgörülü: şablondan çıkan alan düşer, bozuk JSON boş değer verir")
     void lenientStored() {
-        String json = TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 1.5, "quota-count", 7)), t));
+        String json = TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 1.5, "quota-note", "Not")), t));
         Map<String, Object> raw = TechErrorTemplate.toMap(t);
         @SuppressWarnings("unchecked") List<Object> secs = new ArrayList<>((List<Object>) raw.get("sections"));
         secs.removeIf(o -> "quota".equals(((Map<?, ?>) o).get("id")));   // kota bölümü çıkarıldı

@@ -204,6 +204,12 @@ public class TechErrorHistoryService {
     /** Sürümün kopyasını yazar (çağıranın işleminde). Aynı sürüm zaten varsa dokunmaz. */
     @Transactional
     public void recordTemplateVersion(TechErrorChannel ch, int version, String templateJson, Instant at, Long by) {
+        recordTemplateVersion(ch, version, templateJson, at, by, null);
+    }
+
+    /** {@code actorName}: kişi değil sistem yazdıysa görünen ad (ör. otomatik oran göçü); null → kaydedenin adı. */
+    @Transactional
+    public void recordTemplateVersion(TechErrorChannel ch, int version, String templateJson, Instant at, Long by, String actorName) {
         if (versions.existsByChannelIdAndVersion(ch.getId(), version)) return;
         Template t = TechErrorTemplate.fromStored(templateJson);
         TechErrorTemplateVersion v = new TechErrorTemplateVersion();
@@ -213,7 +219,7 @@ public class TechErrorHistoryService {
         v.setTemplateJson(templateJson);
         v.setSavedAt(at);
         v.setSavedById(by);
-        v.setSavedByName(nameOf(by));
+        v.setSavedByName(actorName != null ? actorName : nameOf(by));
         v.setSectionCount(t.sections().size());
         v.setFieldCount(t.allFields().size());
         v.setSlotCount(t.allSlots().size());

@@ -61,28 +61,28 @@ describe('görsel hazırlama', () => {
     const original = new File([new Uint8Array(10)], 'grafik.webp', { type: 'image/webp' })
     pick(input, original)
     expect(await within(slot).findByRole('button', { name: /Hazırlanıyor…/ })).toBeDisabled()
-    expect(prepareImage).toHaveBeenCalledWith(original, 'half')
+    expect(prepareImage).toHaveBeenCalledWith(original)
     expect(te().uploadImage).not.toHaveBeenCalled()
-    finish({ file: prepared, info: { resized: true, converted: true, fromKind: 'WebP', toKind: 'PNG', fromW: 3400, fromH: 1700,
-      toW: 850, toH: 425, fromBytes: 4 * MB, toBytes: 3000 } })
+    finish({ file: prepared, info: { resized: true, converted: true, fromKind: 'WebP', toKind: 'PNG', fromW: 7200, fromH: 1800,
+      toW: 6000, toH: 1500, fromBytes: 4 * MB, toBytes: 3000 } })
     await waitFor(() => expect(te().uploadImage).toHaveBeenCalledWith('100', 'monthly-tx', prepared))
     const note = await waitFor(() => {
       const n = slot.querySelector('[data-slot="te-image-note"]')
       expect(n).not.toBeNull()
       return n
     })
-    expect(note).toHaveTextContent("PDF'teki yuvaya göre küçültüldü: 3400 × 1700 → 850 × 425 piksel")
+    expect(note).toHaveTextContent('Sunucu sınırı için netliği koruyan alan ortalamasıyla küçültüldü: 7200 × 1800 → 6000 × 1500 piksel')
     expect(note).toHaveTextContent('WebP biçimi PNG olarak kaydedildi.')
     expect(note).not.toHaveAttribute('aria-live')
     expect(within(slot).getByRole('button', { name: /Değiştir|Görseli değiştir/ })).toBeEnabled()
   })
 
-  it('tam genişlik yuva "full" ile hazırlanır', async () => {
+  it('tam genişlik yuvada da yuvadan bağımsız hazırlanır (çözünürlük korunur); SVG reddi yuvanın altında', async () => {
     prepareImage.mockRejectedValue(new ImagePrepError('te.img.errSvg'))
     const { slot, input } = await openSlot('daily-errors')
     pick(input, new File(['<svg/>'], 'g.svg', { type: 'image/svg+xml' }))
     expect(await within(slot).findByRole('alert')).toHaveTextContent('SVG dosyası yüklenemez. Grafiği raporlama aracından PNG')
-    expect(prepareImage).toHaveBeenCalledWith(expect.any(File), 'full')
+    expect(prepareImage).toHaveBeenCalledWith(expect.any(File))
     expect(te().uploadImage).not.toHaveBeenCalled()
   })
 

@@ -841,19 +841,9 @@ public class TechErrorReportController {
         Optional<TechErrorReport> prev = service.previousReport(r);
         if (prev.isEmpty()) return null;
         TechErrorReport p = prev.get();
-        Template pt = TechErrorTemplate.fromStored(p.getTemplateJson());
-        TechErrorValues.Values pv = TechErrorValues.fromStored(p.getValuesJson(), pt);
-        Map<String, String> prevTypes = new HashMap<>();
-        for (var f : pt.allFields()) prevTypes.put(f.id(), f.type());
-        Map<String, Object> fields = new LinkedHashMap<>();
-        for (var f : current.allFields()) {
-            Object v = pv.fields().get(f.id());
-            // Yalnız AYNI türdeki alan (inceleme 2026-10-13): kimliği başka bir alana geçmiş ya da türü değişmiş bir
-            // alanın geçen ay değeri "geçen ay" ipucu olarak gösterilmez
-            if (v != null && !"textarea".equals(f.type()) && !"text".equals(f.type()) && f.type().equals(prevTypes.get(f.id()))) {
-                fields.put(f.id(), v);
-            }
-        }
+        // Yalnız AYNI türdeki alan (inceleme 2026-10-13): kimliği başka bir alana geçmiş ya da türü değişmiş bir alanın geçen
+        // ay değeri "geçen ay" ipucu olarak gösterilmez — sunucunun değişim hesabı da aynı süzgeci kullanır
+        Map<String, Object> fields = TechErrorReportService.sameTypeFields(p, current);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", p.getId());
         m.put("year", p.getReportYear());

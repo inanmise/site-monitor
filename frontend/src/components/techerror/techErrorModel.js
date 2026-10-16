@@ -45,6 +45,8 @@ export const LIMITS = Object.freeze({
   cellText: 200,
   // Otomatik trend (2026-10-15, Faz C; TechErrorTemplate.MAX_TREND_SERIES)
   trendSeries: 8,
+  // Saklanabilir en büyük yüzde (TechErrorValues.MAX_PERCENT) — üstündeki hesap boş kalır
+  maxPercent: 1000000,
 })
 
 /** Yer tutucu çözümünün üst sınırı (TechErrorTemplate.MAX_RESOLVED) — başlık / etiket bu uzunlukta "…" ile kesilir. */
@@ -181,7 +183,16 @@ export function formatNumber(n, lang) {
 
 export function formatPercent(n, lang) {
   if (n == null || !Number.isFinite(Number(n))) return '—'
-  const v = formatNumber(n, lang)
+  const x = Number(n)
+  let v
+  if (x !== 0 && Math.abs(x) < 0.01) {
+    // Küçük yüzde 2 anlamlı haneyle (en çok 6 ondalık) — sunucu TechErrorFormat.percent ile aynı; 4 ondalık sınırı
+    // %0,00004'ü sahte "%0" gösteriyordu (2026-10-16)
+    const s = smallScale(x)
+    v = new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR', { maximumFractionDigits: s }).format(roundHalfUp(x, s))
+  } else {
+    v = formatNumber(x, lang)
+  }
   return lang === 'en' ? `${v}%` : `%${v}`
 }
 
@@ -688,7 +699,8 @@ export function sanitizeSkipRefs(template) {
     const fields = s.fields.map((f) => {
       if (!f.skip_if_no) return f
       const target = byId.get(f.skip_if_no)
-      const ok = target && f.skip_if_no !== f.id && target.type === 'yesno' && !target.skip_if_no
+      // Otomatik hesaplanan soru hedef olamaz (sunucunun kuralı — muafiyet kayıtlı cevaptan önce kararlaştırılır)
+      const ok = target && f.skip_if_no !== f.id && target.type === 'yesno' && !target.skip_if_no && !target.calc?.kind
       if (ok) return f
       sChanged = true
       return withoutSkip(f)
@@ -780,7 +792,11 @@ export function templateErrors(template) {
     if (s.kind === 'metrics') {
       if (!(s.fields || []).length) errs[`section:${s.id}`] = 'te.err.noFields'
       if ((s.fields || []).length > LIMITS.fieldsPerSection) errs[`section:${s.id}`] = 'te.err.tooManyFields'
-      for (const f of s.fields || []) if (!(f.label || '').trim()) errs[`field:${f.id}`] = 'te.err.fieldLabelRequired'
+      for (const f of s.fields || []) {
+        if (!(f.label || '').trim()) errs[`field:${f.id}`] = 'te.err.fieldLabelRequired'
+        const ce = calcShapeError(f)
+        if (ce) errs[`calc:${f.id}`] = ce
+      }
     }
     if (s.kind === 'images') {
       if (!(s.slots || []).length) errs[`section:${s.id}`] = 'te.err.noSlots'
@@ -920,7 +936,14 @@ export function canonicalTemplate(tpl) {
     ...strip({ lang: tpl.lang, title: tpl.title }),
     sections: (tpl.sections || []).map((s) => {
       const out = strip({ ...s, fields: undefined, slots: undefined, columns: undefined, rows: undefined, lines: undefined })
-      if (Array.isArray(s.fields)) out.fields = s.fields.map(strip)
+      if (Array.isArray(s.fields)) {
+        out.fields = s.fields.map((f) => {
+          const o = strip({ ...f, calc: undefined })
+          const c = canonCalc(f.calc)
+          if (c) o.calc = c
+          return o
+        })
+      }
       if (Array.isArray(s.slots)) out.slots = s.slots.map(strip)
       if (Array.isArray(s.lines)) out.lines = s.lines.slice()
       if (Array.isArray(s.columns)) out.columns = s.columns.map(strip)
@@ -997,6 +1020,200 @@ export function formatBytes(n, lang) {
 // ── Otomatik trend (2026-10-15, Faz C) ──────────────────────────────────────────────────────────────
 
 /** Sunucuyla aynı (TechErrorTrend.MONTHS / MIN_POINTS). */
+// ── Otomatik hesap (TechErrorCalc aynası, 2026-10-16) ───────────────────────────────────────────────
+//
+// Kullanıcı isteği: "kullanıcı adetleri girer, yüzdeleri sistem hesaplar; üstte adetler, altta oranlar". Sunucu kaydederken
+// hesaplar ve saklar (istemcinin oranı yok sayılır); burada aynı kural YAZARKEN gösterilir — taslağa yazılmaz. Doğruluk
+// tablosu TechErrorCalcTest.TABLE (JS testi Java kaynağından okur).
+
+export const CALC_KINDS = ['ratio', 'change', 'increase']
+/** Formül kullanılamıyor — alan elle girilir (geçen ayın raporu / değeri yok; başvurulan alan uygun değil). */
+export const CALC_MANUAL = new Set(['MANUAL', 'BAD_REF'])
+
+/** Formül girdisi olabilecek alan: sayı türünde, kendisi hesaplanmayan (TechErrorCalc.input). */
+export function calcInput(field) {
+  return !!field && field.type === 'number' && !field.calc?.kind
+}
+
+/** Hesabın başvurduğu alan kimlikleri, sırayla (boşlar atlanır). */
+export function calcRefs(calc) {
+  if (!calc?.kind) return []
+  const list = calc.kind === 'ratio' ? [calc.num, calc.minus, calc.den] : [calc.of]
+  return list.filter((x) => typeof x === 'string' && x !== '')
+}
+
+/** Hesabın kanonik hâli (sunucunun yazdığı gibi: tür + dolu anahtarlar); türü boşsa undefined (= elle). */
+export function canonCalc(calc) {
+  if (!calc?.kind) return undefined
+  const out = { kind: calc.kind }
+  for (const k of calc.kind === 'ratio' ? ['num', 'minus', 'den'] : ['of']) {
+    if (typeof calc[k] === 'string' && calc[k] !== '') out[k] = calc[k]
+  }
+  return out
+}
+
+/** Hesap tanımının BİÇİM hatası (sunucunun katı kuralı) — i18n anahtarı; yoksa null. Başvuru varlığı uyarıdır, hata değil. */
+export function calcShapeError(field) {
+  const c = field?.calc
+  if (!c?.kind) return null
+  if (!CALC_KINDS.includes(c.kind)) return 'te.err.calcKind'
+  const percentKind = c.kind !== 'increase'
+  if (percentKind ? field.type !== 'percent' : field.type !== 'yesno') return 'te.err.calcType'
+  const need = c.kind === 'ratio' ? [c.num, c.den] : [c.of]
+  if (need.some((x) => !x)) return 'te.err.calcRequired'
+  if (calcRefs(c).includes(field.id)) return 'te.err.calcSelf'
+  return null
+}
+
+const calcNumber = (v) => {
+  if (v == null || v === '' || typeof v === 'boolean') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Sayının en kısa ondalık gösterimi (Java {@code Double.toString} / {@code BigDecimal.valueOf} ile aynı basamaklar):
+ * |x| = 0.all × 10^point, {@code all} baştaki sıfırlar atılmış basamaklar.
+ */
+function decimalParts(x) {
+  const [m, e = '0'] = Math.abs(x).toString().split('e')
+  const [ip, fp = ''] = m.split('.')
+  let all = ip + fp
+  let point = ip.length + Number(e)
+  while (all.length > 1 && all[0] === '0') { all = all.slice(1); point -= 1 }
+  return { all, point }
+}
+
+/**
+ * {@code scale} ondalığa yarım yukarı — BigDecimal.valueOf(x).setScale(scale, HALF_UP).doubleValue() ile AYNI: kısa ondalık
+ * gösterimin BASAMAKLARINDAN (sayı çarpılıp Math.round edilmez; 1,4749999999999999 × 100 = 147,5 olur, 1,48 verirdi).
+ */
+export function roundHalfUp(x, scale) {
+  if (!Number.isFinite(x) || x === 0) return x
+  const { all, point } = decimalParts(x)
+  const k = point + scale
+  let n = 0n
+  if (k >= 0) {
+    const kept = k === 0 ? '0' : all.slice(0, k).padEnd(k, '0')
+    n = BigInt(kept) + ((all[k] || '0') >= '5' ? 1n : 0n)
+  }
+  const r = Number(n) / 10 ** scale
+  return r === 0 ? 0 : (x < 0 ? -r : r)
+}
+
+/** 0,01'in altındaki sayının 2 anlamlı hanesi için ondalık sayısı (en çok 6) — TechErrorCalc.smallScale. */
+export function smallScale(x) {
+  return Math.min(6, 2 - decimalParts(x).point)
+}
+
+/**
+ * Hesaplanan oranın yuvarlaması — sunucuyla aynı (TechErrorCalc.roundRate, kullanıcı kararı 2026-10-16): virgülden sonra
+ * 2 hane, yarım yukarı; sıfırdan büyük ama 0,01'in altındaki oran 2 anlamlı haneyle (en çok 6 ondalık) — sahte %0 yok.
+ */
+export function roundCalc(x) {
+  if (!Number.isFinite(x) || x === 0) return x
+  return roundHalfUp(x, Math.abs(x) < 0.01 ? smallScale(x) : 2)
+}
+
+const calcOk = (p) => (!Number.isFinite(p) || Math.abs(p) > LIMITS.maxPercent
+  ? { status: 'RANGE', value: null, missing: [] }
+  : { status: 'OK', value: roundCalc(p), missing: [] })
+
+/**
+ * Tek alanın sonucu `{ status, value, missing }` (TechErrorCalc.result ile aynı): OK | MISSING | ZERO | NEGATIVE | EQUAL |
+ * RANGE (formül kullanılabilir, sonuç boş) | MANUAL | BAD_REF (formül kullanılamaz — elle). `previous` geçen ayın aynı
+ * kimlik / türdeki alanları; rapor yoksa null. Hesaplanmayan alan → null.
+ */
+export function calcResult(field, byId, fields, previous) {
+  const c = field?.calc
+  if (!c?.kind) return null
+  const res = (status, value = null, missing = []) => ({ status, value, missing })
+  if (c.kind === 'ratio') {
+    const refs = [c.num, c.minus, c.den]
+    const v = [null, null, null]
+    const missing = []
+    for (let i = 0; i < refs.length; i++) {
+      if (!refs[i]) continue
+      if (!calcInput(byId.get(refs[i]))) return res('BAD_REF')
+      v[i] = calcNumber(fields?.[refs[i]])
+      if (v[i] == null) missing.push(refs[i])
+    }
+    if (missing.length) return res('MISSING', null, missing)
+    if (v[2] === 0) return res('ZERO')
+    const numerator = v[0] - (v[1] == null ? 0 : v[1])
+    if (numerator < 0) return res('NEGATIVE')
+    return calcOk(numerator / v[2] * 100)
+  }
+  if (!calcInput(byId.get(c.of))) return res('BAD_REF')
+  const prev = previous == null ? null : calcNumber(previous[c.of])
+  if (prev == null) return res('MANUAL')
+  const cur = calcNumber(fields?.[c.of])
+  if (cur == null) return res('MISSING', null, [c.of])
+  if (c.kind === 'increase') return cur === prev ? res('EQUAL') : res('OK', cur > prev)
+  if (prev === 0) return res('ZERO')
+  return calcOk(Math.abs(cur - prev) / prev * 100)
+}
+
+/**
+ * Şablondaki tüm hesaplanan alanların sonuçları `{ [id]: result }`. Muaf alanların ("Hayır" cevabı) değeri girdi sayılmaz
+ * (sunucu onları saklamaz); muaf hesaplanan alan sonuç almaz.
+ */
+export function calcResults(template, fields, previous) {
+  const all = allFields(template)
+  const out = {}
+  if (!all.some((f) => f.calc?.kind)) return out
+  const byId = new Map(all.map((f) => [f.id, f]))
+  const inputs = { ...(fields || {}) }
+  for (const f of all) if (fieldExempt(f, fields)) delete inputs[f.id]
+  for (const f of all) {
+    if (!f.calc?.kind || fieldExempt(f, fields)) continue
+    out[f.id] = calcResult(f, byId, inputs, previous)
+  }
+  return out
+}
+
+/**
+ * Hesaplanan alanlar uygulanmış değerler — yalnız GÖSTERİM (özet önizlemesi, trend grafiğinin bu ayı); taslağa yazılmaz,
+ * kaydedilen değeri sunucu hesaplar. Formül kullanılamayan alanda girilen değer kalır. Hesap yoksa AYNI nesne.
+ */
+export function applyCalc(template, fields, previous, results = null) {
+  const r = results || calcResults(template, fields, previous)
+  const ids = Object.keys(r)
+  if (!ids.length) return fields
+  const out = { ...(fields || {}) }
+  for (const id of ids) {
+    const x = r[id]
+    if (x.status === 'OK') out[id] = x.value
+    else if (!CALC_MANUAL.has(x.status)) delete out[id]
+  }
+  return out
+}
+
+/**
+ * Bir adetten türeyen oranlar (2026-10-16, kullanıcı isteği: "kota / map yapılmamış hata adedi girişinde yüzde de
+ * görünsün"): adeti PAY olarak kullanan oran alanları, şablon sırasıyla. Girişin altında canlı değerleriyle gösterilir.
+ */
+export function derivedRates(fields, fieldId) {
+  return (fields || []).filter((f) => f.calc?.kind === 'ratio' && f.calc.num === fieldId)
+}
+
+/**
+ * Hesap başvurularının durumu (şablon düzenleyici uyarısı): `[{ id, field, status }]`, status ok | missing (şablonda yok)
+ * | notNumber (sayı değil) | computed (kendisi hesaplanıyor). Kayıtta reddedilmez — formül kullanılamazsa alan elle girilir.
+ */
+export function calcRefIssues(template, field) {
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  return calcRefs(field?.calc).map((id) => {
+    const f = byId.get(id) || null
+    return { id, field: f, status: !f ? 'missing' : f.type !== 'number' ? 'notNumber' : f.calc?.kind ? 'computed' : 'ok' }
+  }).filter((x) => x.status !== 'ok')
+}
+
+/** Alanı formülünde kullanan hesaplanan alanlar (alan silinirken uyarı için). */
+export function calcFieldsUsing(template, fieldId) {
+  return allFields(template).filter((f) => f.id !== fieldId && calcRefs(f.calc).includes(fieldId))
+}
+
 export const TREND_MONTHS = 12
 export const TREND_MIN_POINTS = 2
 /** Grafik başlığının eki, şablon dilinde (PDF yazıcısıyla aynı metin — test Java kaynağından okur). */
@@ -1229,6 +1446,7 @@ export function templateDiff(prev, cur) {
       const r = []
       if ((a.type || '') !== (b.type || '')) r.push({ op: 'retype', before: a.type, after: b.type })
       if ((a.skip_if_no || '') !== (b.skip_if_no || '')) r.push({ op: 'link' })
+      if (stableJson(canonCalc(a.calc) || null) !== stableJson(canonCalc(b.calc) || null)) r.push({ op: 'calc' })
       return r
     })
     if (s.kind === 'images') itemsDiff(out, 'slot', section, p.slots, s.slots, moves.slot, (a, b) =>

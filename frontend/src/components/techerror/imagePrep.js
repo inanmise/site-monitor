@@ -1,9 +1,12 @@
 /**
- * Görsel hazırlama (2026-10-15, Faz C). Yüklenen görsel, PDF'te çizileceği yuva boyutuna göre TARAYICIDA küçültülür ve
- * gerekirse PNG / JPEG'e çevrilir — sunucu yalnız PNG / JPEG, ≤ 5 MB, ≤ 6000 px, ≤ 12 MP kabul eder ve rapor başına toplam
- * 40 MB'tır; e-posta eki 15 MB'ı aşarsa rapor gönderilemez. Büyük ekran görüntüleri bu yüzden PDF'te görünen ölçünün
- * {@link PRINT_SCALE} katına indirilir (baskıda keskin, dosyada küçük). Küçültme gerekmeyen PNG / JPEG hiç yeniden
- * kodlanmaz (kalite kaybı yok) — EXIF yönü yan olan JPEG hariç: sunucu ve PDF yönü bilmez, görsel düz kaydedilir.
+ * Görsel hazırlama (2026-10-15, Faz C; 2026-10-16 kullanıcı isteği: "çözünürlüğe etki etmeyelim, rakamlar / yazılar
+ * okunur kalsın"). Görsel TAM ÇÖZÜNÜRLÜKTE saklanır: sunucu sınırları (PNG / JPEG, ≤ 5 MB, ≤ 6000 px kenar, ≤ 12 MP)
+ * içindeki PNG / JPEG hiç yeniden kodlanmaz (aynı dosya gider). Yalnız sınırı aşan görsel küçültülür — ALAN ORTALAMASIYLA
+ * ({@link areaResample}): her yeni piksel kapladığı kaynak alanın tam ağırlıklı ortalaması; metinde titreme / Lanczos
+ * halesi yok, tarayıcıdan bağımsız. Ekran görüntüsü ve grafik (PNG / GIF / BMP kaynak) HİÇBİR ZAMAN JPEG'e çevrilmez
+ * (JPEG yazının çevresini bozar); bayt sınırı aşılırsa ölçü küçültülür. JPEG kaynak (fotoğraf) JPEG kalır (kalite 0,95);
+ * EXIF yönü yan olan JPEG düz kaydedilir (sunucu ve PDF yönü bilmez). Eskiden görsel PDF yuvasının ölçüsüne (yarım
+ * yuvada 760 px) indiriliyordu — ekranda yuvayı dolduran görsel büyütülüp bulanıklaşıyordu.
  *
  * Saf hesaplar ({@link slotBox}, {@link targetSize}, {@link sniffKind}, {@link headerSize}, {@link jpegOrientation})
  * jsdom'da sınanır; çizim / kodlama tarayıcı API'leri (createImageBitmap, canvas.toBlob) {@link prepareImage}'ın `deps`
@@ -11,11 +14,11 @@
  */
 
 // PDF yerleşimi — TechErrorReportPdfWriter / PdfCanvas ile AYNI (imagePrep.test.js Java kaynağından okur)
-export const PDF_LAYOUT = Object.freeze({ pageW: 595.27563, margin: 36, gap: 8, halfMaxH: 250, fullMaxH: 330 })
-/** PDF'te görünen ölçünün kaç katı piksel tutulur (≈ 216 dpi). */
-export const PRINT_SCALE = 3
-/** Bu kadar büyük olmadıkça küçültülmez (gereksiz yeniden kodlama yok). */
-const RESIZE_SLACK = 1.1
+export const PDF_LAYOUT = Object.freeze({ pageW: 595.27563, margin: 36, gap: 8, imageMaxH: 640 })
+/** Yeniden kodlanan JPEG'in kalitesi (yalnız JPEG kaynak — fotoğraf; ekran görüntüsü PNG kalır). */
+export const JPEG_QUALITY = 0.95
+/** Bayt sınırı için ölçü küçültme denemesi en çok (her adım bir öncekinin sonucuna göre). */
+const MAX_SHRINK_STEPS = 5
 // Sunucu doğrulayıcısı — TechErrorImageValidator ile AYNI (test okur)
 export const SERVER_IMAGE = Object.freeze({ maxBytes: 5 * 1024 * 1024, maxSide: 6000, maxPixels: 12_000_000, minSide: 16 })
 /** Tarayıcıda açılmadan önceki dosya sınırı (çok büyük dosya belleği tüketmesin). */
@@ -25,47 +28,118 @@ export const MAX_INPUT_BYTES = 40 * 1024 * 1024
  * dev ölçülü (ör. 20000 × 20000) sıkıştırılmış bir PNG sekmeyi çökertmez.
  */
 export const MAX_DECODE = Object.freeze({ pixels: 60_000_000, side: 30_000 })
-/** PNG bu boyutu aşarsa (fotoğraf benzeri) JPEG denenir; daha küçükse JPEG alınır. */
-const PNG_TO_JPEG_BYTES = 1.5 * 1024 * 1024
 /** Tür + başlık ölçüsü + EXIF yönü için okunan baş (JPEG'de SOF büyük APP bölümlerinin ardında olabilir). */
 const HEAD_BYTES = 256 * 1024
 
-/** Yuvanın PDF'teki kutusu (pt): yarım = bir kolon, tam = iki kolon. */
-export function slotBox(width) {
-  const contentW = PDF_LAYOUT.pageW - PDF_LAYOUT.margin * 2
-  if (width === 'full') return { w: contentW, h: PDF_LAYOUT.fullMaxH }
-  return { w: (contentW - PDF_LAYOUT.gap * 2) / 2, h: PDF_LAYOUT.halfMaxH }
+/**
+ * Görselin yuvadaki genişliği (%) — PDF ile aynı kural (TechErrorReportPdfWriter.fit): yuvanın genişliği, oran korunur;
+ * yalnız {@code imageMaxH}'yi aşacak kadar uzun (dikey) görsel orantılı daralır ve ortalanır.
+ */
+export function displayWidthPct(width, w, h) {
+  if (!(w > 0) || !(h > 0)) return 100
+  const box = slotBox(width)
+  return Math.min(100, (box.h / box.w) * (w / h) * 100)
 }
 
 /**
- * Hedef piksel ölçüsü: görsel PDF'te kutuya en-boy oranı korunarak sığdırılır (imageRow ile aynı kural), görünen ölçünün
- * {@code scale} katı tutulur; sunucu sınırları (kenar / piksel) da aşılmaz. Hiçbir zaman büyütülmez. Kısa kenar sunucu
- * alt sınırının ({@code minSide}) altına inmez (inceleme 2026-10-15: 1920 × 40 şerit yarım yuvada 760 × 15 olup
- * reddediliyordu); bu sınır sunucu üst sınırıyla çelişirse (aşırı ince görsel) sonuç kısa kenarı küçük kalır — çağıran
- * bunu ayrıca söyler.
+ * Yuvanın PDF'teki kutusu (pt): yarım = bir kolon, tam = iki kolon. Görsel kutunun GENİŞLİĞİNİ doldurur (2026-10-16);
+ * yükseklik yalnız sayfaya sığmayan uzun görseli sınırlar.
+ */
+export function slotBox(width) {
+  const contentW = PDF_LAYOUT.pageW - PDF_LAYOUT.margin * 2
+  if (width === 'full') return { w: contentW, h: PDF_LAYOUT.imageMaxH }
+  return { w: (contentW - PDF_LAYOUT.gap * 2) / 2, h: PDF_LAYOUT.imageMaxH }
+}
+
+/**
+ * Hedef piksel ölçüsü (2026-10-16): görsel OLDUĞU GİBİ kalır; yalnız sunucu sınırı (6000 px kenar, 12 MP) aşılıyorsa
+ * en-boy oranı korunarak sınıra iner. Hiçbir zaman büyütülmez; yuvaya göre küçültme YOK (çözünürlük korunur). Sınıra
+ * inince kısa kenarı alt sınırın ({@code minSide}) altında kalan aşırı ince görseli çağıran ayrıca söyler.
  * @returns {{ width: number, height: number, resize: boolean }}
  */
-export function targetSize(natW, natH, width, scale = PRINT_SCALE) {
+export function targetSize(natW, natH) {
   const w0 = Math.max(1, Math.round(natW))
   const h0 = Math.max(1, Math.round(natH))
-  const box = slotBox(width)
-  let dw = box.w
-  let dh = box.w * h0 / w0
-  if (dh > box.h) { dh = box.h; dw = box.h * w0 / h0 }
-  // Görünen ölçü × ölçek; sunucu sınırları
-  let f = Math.min(1, (dw * scale) / w0, (dh * scale) / h0)
-  const capped = Math.min(1, SERVER_IMAGE.maxSide / w0, SERVER_IMAGE.maxSide / h0, Math.sqrt(SERVER_IMAGE.maxPixels / (w0 * h0)))
-  const mustShrink = capped < 1
-  // Yalnız gerçekten büyükse (ya da sunucu sınırı aşılıyorsa) küçült
-  if (!mustShrink && f > 1 / RESIZE_SLACK) return { width: w0, height: h0, resize: false }
-  f = Math.min(f, capped)
-  const minF = Math.min(1, SERVER_IMAGE.minSide / Math.min(w0, h0))
-  if (f < minF) f = Math.min(minF, capped)
-  // Taban ölçeği paya geri ittiyse (ör. 2000 × 17 şerit) yeniden örneklenmez — kaynak zaten sunucu sınırlarında
-  if (f >= 1 || (!mustShrink && f > 1 / RESIZE_SLACK)) return { width: w0, height: h0, resize: false }
-  // +1e-9: kayan nokta 16 / 37 × 37'yi 15,999… yapıp kısa kenarı alt sınırın bir piksel altına düşürmesin
+  const f = Math.min(1, SERVER_IMAGE.maxSide / w0, SERVER_IMAGE.maxSide / h0, Math.sqrt(SERVER_IMAGE.maxPixels / (w0 * h0)))
+  if (f >= 1) return { width: w0, height: h0, resize: false }
+  // +1e-9: kayan nokta 6000 / 7200 × 7200'ü 5999,99… yapıp bir piksel kaybettirmesin (taban yine sınırın içinde)
   const side = (n) => Math.max(1, Math.floor(n * f + 1e-9))
   return { width: side(w0), height: side(h0), resize: true }
+}
+
+/**
+ * ALAN ORTALAMASIYLA küçültme (kesirli kapsamalı kutu süzgeci): her hedef pikseli, kaynakta kapladığı dikdörtgendeki
+ * piksellerin kapsama oranıyla ağırlıklı ortalamasıdır. Küçültmede metin / grafik için en temiz yöntem: örtüşme
+ * (aliasing, titreyen ince çizgi) yok, Lanczos / bikübiğin harf çevresindeki açık-koyu halesi yok, tam katta (2:1, 3:1)
+ * birebir ortalama; tarayıcının çizim kalitesine bağlı değil. Ağırlıklar TAMSAYI (kaynak satır / sütun hedef ölçüsü
+ * biriminde): kaynak sütun c = [c·dstW, (c+1)·dstW), hedef sütun x = [x·srcW, (x+1)·srcW) — bir kaynak sütunu en çok iki
+ * hedef sütunu kapsar (srcW ≥ dstW). Ayrılabilir (önce yatay, sonra dikey) ve SATIR SATIR akar: bellek O(dstW); kaynak
+ * {@code readRow(y)} ile okunur (RGBA, srcW × 4; Promise de dönebilir — tarayıcı şerit okurken ana iş parçacığını
+ * bırakır, 48 MP fotoğrafta sayfa donmaz), sonuç {@code writeRow(y, row)} ile yazılır. Saydamlık ÖNÇARPIMLI ortalanır
+ * (saydam kenarda koyu saçak olmaz). Yalnız küçültür (dstW ≤ srcW, dstH ≤ srcH). Java eşi: {@code ImageAreaAverage}.
+ */
+export async function areaResample(srcW, srcH, dstW, dstH, readRow, writeRow) {
+  if (!(dstW >= 1 && dstH >= 1 && dstW <= srcW && dstH <= srcH)) throw new RangeError('areaResample yalnız küçültür')
+  // Yatay eşleme: kaynak sütunun hedefi ve ilk hedefe düşen ağırlığı (kalanı sonrakine)
+  const hd = new Int32Array(srcW)
+  const hw = new Float64Array(srcW)
+  for (let c = 0; c < srcW; c++) {
+    const start = c * dstW
+    const d = Math.floor(start / srcW)
+    hd[c] = d
+    hw[c] = Math.min(start + dstW, (d + 1) * srcW) - start
+  }
+  const norm = srcW * srcH
+  const rowH = new Float64Array(dstW * 4)
+  let acc = new Float64Array(dstW * 4)
+  let next = new Float64Array(dstW * 4)
+  const out = new Uint8ClampedArray(dstW * 4)
+  let dRow = 0
+  for (let r = 0; r < srcH; r++) {
+    let src = readRow(r)
+    if (src && typeof src.then === 'function') src = await src
+    rowH.fill(0)
+    for (let c = 0; c < srcW; c++) {
+      const o = c * 4
+      const a = src[o + 3]
+      const k = a / 255
+      const pr = src[o] * k
+      const pg = src[o + 1] * k
+      const pb = src[o + 2] * k
+      const w1 = hw[c]
+      const w2 = dstW - w1
+      const i = hd[c] * 4
+      rowH[i] += pr * w1; rowH[i + 1] += pg * w1; rowH[i + 2] += pb * w1; rowH[i + 3] += a * w1
+      if (w2 > 0) {
+        rowH[i + 4] += pr * w2; rowH[i + 5] += pg * w2; rowH[i + 6] += pb * w2; rowH[i + 7] += a * w2
+      }
+    }
+    const start = r * dstH
+    const bound = (dRow + 1) * srcH
+    const v1 = Math.min(start + dstH, bound) - start
+    const v2 = dstH - v1
+    for (let i = 0; i < rowH.length; i++) acc[i] += rowH[i] * v1
+    if (v2 > 0) for (let i = 0; i < rowH.length; i++) next[i] += rowH[i] * v2
+    if (start + dstH >= bound) {
+      for (let x = 0; x < dstW; x++) {
+        const i = x * 4
+        const a = acc[i + 3] / norm
+        if (a <= 0) {
+          out[i] = 0; out[i + 1] = 0; out[i + 2] = 0; out[i + 3] = 0
+        } else {
+          const un = 255 / a
+          out[i] = Math.round((acc[i] / norm) * un)
+          out[i + 1] = Math.round((acc[i + 1] / norm) * un)
+          out[i + 2] = Math.round((acc[i + 2] / norm) * un)
+          out[i + 3] = Math.round(a)
+        }
+      }
+      writeRow(dRow, out)
+      const t = acc; acc = next; next = t
+      next.fill(0)
+      dRow += 1
+    }
+  }
 }
 
 const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'])
@@ -208,13 +282,30 @@ export class ImagePrepError extends Error {
   }
 }
 
+/**
+ * Ana iş parçacığını kısa bırakır (sayfa çizilsin, "Hazırlanıyor…" dönsün). setTimeout DEĞİL MessageChannel: gizli sekmede
+ * tarayıcılar zamanlayıcıları saniyelere / dakikalara kısar, mesaj görevlerini kısmaz — kullanıcı bir sonraki ekran
+ * görüntüsü için raporlama aracının sekmesine geçince hazırlama durmasın (inceleme 2026-10-16).
+ */
+function yieldToUi() {
+  return new Promise((resolve) => {
+    if (typeof MessageChannel === 'function') {
+      const ch = new MessageChannel()
+      ch.port1.onmessage = () => { ch.port1.close(); resolve() }
+      ch.port2.postMessage(0)
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
+
 /** Kullanılan canvas belleğini hemen bırak (iOS Safari'de toplam canvas belleği sınırlı). */
 function release(canvas) {
   try { if (canvas) { canvas.width = 0; canvas.height = 0 } } catch { /* yok */ }
 }
 
-function context(canvas) {
-  const cx = canvas.getContext('2d')
+function context(canvas, options) {
+  const cx = options ? canvas.getContext('2d', options) : canvas.getContext('2d')
   // Bellek dolunca tarayıcı bağlam vermez: "dosya bozuk" değil, "bu tarayıcıda işlenemedi"
   if (!cx) throw new ImagePrepError('te.img.errBrowser')
   return cx
@@ -233,29 +324,54 @@ export const browserDeps = {
     }
   },
   async scale(bitmap, width, height) {
-    let src = bitmap
-    let sw = bitmap.width
-    let sh = bitmap.height
-    // Çok büyük küçültmede yarıya yarıya inilir (tek adımda kaba örnekleme metni bulanıklaştırır)
-    while (sw / 2 >= width && sh / 2 >= height) {
-      const c = document.createElement('canvas')
-      c.width = Math.max(1, Math.floor(sw / 2))
-      c.height = Math.max(1, Math.floor(sh / 2))
-      const cx = context(c)
-      cx.imageSmoothingQuality = 'high'
-      cx.drawImage(src, 0, 0, c.width, c.height)
-      if (src !== bitmap) release(src)
-      src = c
-      sw = c.width
-      sh = c.height
-    }
+    const sw = bitmap.width
+    const sh = bitmap.height
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
     const ctx = context(canvas)
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(src, 0, 0, width, height)
-    if (src !== bitmap) release(src)
+    if (width === sw && height === sh) {
+      // Ölçü aynı (biçim çevirme / yön düzeltme): piksel piksel kopya, yeniden örnekleme yok
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(bitmap, 0, 0)
+      return canvas
+    }
+    // Kaynak ŞERİT ŞERİT okunur (48 MP fotoğrafın tamamı ikinci kez belleğe alınmaz); her yeni şeritte ana iş parçacığı
+    // bırakılır (sayfa donmaz, "Hazırlanıyor…" döner); alan ortalaması satır satır yazar
+    const STRIP = 64
+    const strip = document.createElement('canvas')
+    strip.width = sw
+    strip.height = Math.min(STRIP, sh)
+    let cache = null
+    let cacheY = 0
+    let cacheN = 0
+    try {
+      const sx = context(strip, { willReadFrequently: true })
+      sx.imageSmoothingEnabled = false
+      const load = (r) => {
+        cacheY = r
+        cacheN = Math.min(STRIP, sh - r)
+        sx.clearRect(0, 0, sw, strip.height)
+        sx.drawImage(bitmap, 0, r, sw, cacheN, 0, 0, sw, cacheN)
+        cache = sx.getImageData(0, 0, sw, cacheN).data
+      }
+      const row = (r) => {
+        const o = (r - cacheY) * sw * 4
+        return cache.subarray(o, o + sw * 4)
+      }
+      const readRow = (r) => {
+        if (cache && r >= cacheY && r < cacheY + cacheN) return row(r)
+        return yieldToUi().then(() => { load(r); return row(r) })
+      }
+      const out = ctx.createImageData(width, height)
+      await areaResample(sw, sh, width, height, readRow, (y, r) => out.data.set(r, y * width * 4))
+      ctx.putImageData(out, 0, 0)
+    } catch (e) {
+      release(canvas)
+      throw e
+    } finally {
+      release(strip)
+    }
     return canvas
   },
   async encode(canvas, type, quality) {
@@ -286,12 +402,15 @@ function renamed(name, ext) {
   return `${base || 'gorsel'}.${ext}`
 }
 
+/** Kayıpsız kaynak (ekran görüntüsü, grafik): hiçbir zaman JPEG'e çevrilmez. */
+const LOSSLESS_KINDS = new Set(['png', 'gif', 'bmp'])
+
 /**
- * Görseli yuvası için hazırlar. Dönüş `{ file, info }`; `info` kullanıcıya gösterilecek özet:
- * `{ resized, converted, rotated, fromKind, toKind, fromW, fromH, toW, toH, fromBytes, toBytes }`.
+ * Görseli yükleme için hazırlar (yuvadan bağımsız — çözünürlük korunur). Dönüş `{ file, info }`; `info` kullanıcıya
+ * gösterilecek özet: `{ resized, converted, rotated, fromKind, toKind, fromW, fromH, toW, toH, fromBytes, toBytes }`.
  * Hata: {@link ImagePrepError} (i18n anahtarı + değerler).
  */
-export async function prepareImage(file, slotWidth, deps = browserDeps) {
+export async function prepareImage(file, deps = browserDeps) {
   if (!file || !file.size) throw new ImagePrepError('te.img.errEmpty')
   if (file.size > MAX_INPUT_BYTES) throw new ImagePrepError('te.img.errTooBig', [file.size, MAX_INPUT_BYTES])
   let head
@@ -314,7 +433,7 @@ export async function prepareImage(file, slotWidth, deps = browserDeps) {
   // ReferenceError / TypeError) olduğu gibi gider. Açabiliyorsa yine açılır: yarım inmiş / bozuk dosya burada yakalanır
   // (sunucu yalnız başlığı okur, piksel çözmez — inceleme 2026-10-15).
   const fitsAsIs = !!dims && (kind === 'png' || kind === 'jpeg') && orientation === 1 && file.size <= SERVER_IMAGE.maxBytes
-    && dims.width >= SERVER_IMAGE.minSide && dims.height >= SERVER_IMAGE.minSide && !targetSize(dims.width, dims.height, slotWidth).resize
+    && dims.width >= SERVER_IMAGE.minSide && dims.height >= SERVER_IMAGE.minSide && !targetSize(dims.width, dims.height).resize
   if (dims && (dims.width < SERVER_IMAGE.minSide || dims.height < SERVER_IMAGE.minSide)) {
     throw new ImagePrepError('te.img.errTooSmall', [`${dims.width} × ${dims.height}`])
   }
@@ -334,7 +453,7 @@ export async function prepareImage(file, slotWidth, deps = browserDeps) {
     const natH = bitmap.height
     if (!natW || !natH) throw new ImagePrepError('te.img.errDecode')
     if (natW < SERVER_IMAGE.minSide || natH < SERVER_IMAGE.minSide) throw new ImagePrepError('te.img.errTooSmall', [`${natW} × ${natH}`])
-    const target = targetSize(natW, natH, slotWidth)
+    const target = targetSize(natW, natH)
     // Aşırı ince görsel: sunucu üst sınırına inince kısa kenar alt sınırın altında kalıyor
     if (Math.min(target.width, target.height) < SERVER_IMAGE.minSide) {
       throw new ImagePrepError('te.img.errThin', [`${natW} × ${natH}`])
@@ -345,27 +464,40 @@ export async function prepareImage(file, slotWidth, deps = browserDeps) {
     if (keep) {
       return { file, info: { ...base, resized: false, converted: false, toKind: KIND_LABEL[kind], toW: natW, toH: natH, toBytes: file.size } }
     }
-    // Ölçekleme BİR kez; kodlama: JPEG kaynak JPEG kalır, diğerleri (ekran görüntüsü, grafik — keskin metin) PNG. Büyük
-    // PNG JPEG'e döner.
-    scaled = await deps.scale(bitmap, target.width, target.height)
+    // Kodlama: JPEG kaynak (fotoğraf) JPEG 0,95; diğerleri KAYIPSIZ PNG. WebP / AVIF fotoğrafın PNG'si bayt sınırını
+    // aşarsa JPEG denenir; ekran görüntüsü / grafik (PNG, GIF, BMP) hiçbir zaman JPEG olmaz — bayt sınırı aşılırsa ÖLÇÜ
+    // alan ortalamasıyla küçültülür (bir sonraki adım bir öncekinin bayt oranına göre; en çok MAX_SHRINK_STEPS).
+    let w = target.width
+    let h = target.height
+    let blob = null
     let type = kind === 'jpeg' ? 'image/jpeg' : 'image/png'
-    let blob = await deps.encode(scaled, type, 0.9)
-    if (type === 'image/png' && blob.size > PNG_TO_JPEG_BYTES) {
-      const jpeg = await deps.encode(scaled, 'image/jpeg', 0.9)
-      if (jpeg.size < blob.size * 0.7) { blob = jpeg; type = 'image/jpeg' }
+    for (let step = 0; ; step++) {
+      scaled = await deps.scale(bitmap, w, h)
+      type = kind === 'jpeg' ? 'image/jpeg' : 'image/png'
+      blob = await deps.encode(scaled, type, kind === 'jpeg' ? JPEG_QUALITY : undefined)
+      if (blob.size > SERVER_IMAGE.maxBytes && type === 'image/png' && !LOSSLESS_KINDS.has(kind)) {
+        const jpeg = await deps.encode(scaled, 'image/jpeg', JPEG_QUALITY)
+        if (jpeg.size < blob.size) { blob = jpeg; type = 'image/jpeg' }
+      }
+      if (blob.size <= SERVER_IMAGE.maxBytes) break
+      const f = Math.sqrt(SERVER_IMAGE.maxBytes / blob.size) * 0.95
+      const nw = Math.floor(w * f)
+      const nh = Math.floor(h * f)
+      if (step + 1 >= MAX_SHRINK_STEPS || Math.min(nw, nh) < SERVER_IMAGE.minSide) {
+        throw new ImagePrepError('te.img.errStillLarge', [blob.size, SERVER_IMAGE.maxBytes])
+      }
+      deps.release?.(scaled)
+      scaled = null
+      w = nw
+      h = nh
     }
-    if (blob.size > SERVER_IMAGE.maxBytes) {
-      const smaller = await deps.encode(scaled, 'image/jpeg', 0.8)
-      if (smaller.size < blob.size) { blob = smaller; type = 'image/jpeg' }
-    }
-    if (blob.size > SERVER_IMAGE.maxBytes) throw new ImagePrepError('te.img.errStillLarge', [blob.size, SERVER_IMAGE.maxBytes])
     const ext = type === 'image/jpeg' ? 'jpg' : 'png'
     const out = new File([blob], renamed(file.name, ext), { type })
     const toKind = type === 'image/jpeg' ? 'JPEG' : 'PNG'
     return {
       file: out,
-      info: { ...base, resized: target.resize, converted: toKind !== KIND_LABEL[kind], toKind,
-        toW: target.width, toH: target.height, toBytes: blob.size },
+      info: { ...base, resized: w !== natW || h !== natH, converted: toKind !== KIND_LABEL[kind], toKind,
+        toW: w, toH: h, toBytes: blob.size },
     }
   } finally {
     try { if (scaled) deps.release?.(scaled) } catch { /* yok */ }
