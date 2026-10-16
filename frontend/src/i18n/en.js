@@ -20279,6 +20279,8 @@ export const EN = {
   'te.issues.descriptionPlaceholder': "When it started, which transactions, where it was seen, how it was fixed…",
   'te.issues.add': "Add topic",
   'te.img.hint': "Upload an image to each slot (PNG, JPEG, WebP, GIF, BMP). Large images are resized in the browser to fit their slot in the PDF; you can drag and drop, and a new upload replaces the old one.",
+  'te.copy.label': "Copy: {0}",
+  'te.copy.done': "Copied",
   'te.img.total': "Total {0} / {1}",
   'te.img.uploaded': "The “{0}” image was uploaded.",
   'te.img.uploadError': "The image couldn't be uploaded. Check that it's a PNG or JPEG under 5 MB and try again.",

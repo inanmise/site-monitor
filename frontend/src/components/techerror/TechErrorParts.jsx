@@ -1,4 +1,5 @@
 import { Badge } from '@/components/shadcn/badge'
+import CopyButton from '../ui/CopyButton.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { cn } from '@/lib/utils'
 import { lastAttemptMeta, monthName, statusMeta } from './techErrorModel.js'
@@ -41,6 +42,28 @@ export function StatusBadge({ status, sendState = null, prefix = null, className
           {t(attempt.key)}
         </Badge>
       )}
+    </span>
+  )
+}
+
+/**
+ * Yazının HEMEN bitimine küçük kopyalama düğmesi (2026-10-16, kullanıcı isteği: rapor hazırlanırken bölüm başlıkları,
+ * alan ve görsel adları başka araçlara kolayca kopyalansın). Ekranda görünen metni (ay / yıl yer tutucuları çözülmüş)
+ * kopyalar. Başlığın / etiketin İÇİNE değil YANINA konur — başlığın, etiketin ve şeklin erişilebilir adı değişmez.
+ * Satır içi akar (uzun ad sararsa son kelimenin yanında durur); dokunmatikte 40 px. Boş metinde çizilmez. Metin + düğme
+ * kabı `data-slot="te-copy-row"` taşır (e2e kırpılma denetimi bu kabı ölçer — satır içi metnin kendi genişliği 0 okunur).
+ * İkon tam `muted-foreground` (opaklık yok): açık temada 3:1 arayüz kontrastı (inceleme 2026-10-16: %70 opaklık 2,7:1).
+ * Dokunmatikte negatif dikey pay YOK: 40 px'lik düğme alttaki alanın üst kenarını örtmesin.
+ */
+export function CopyTextButton({ text, className }) {
+  const t = useT()
+  const value = String(text ?? '').trim()
+  if (!value) return null
+  return (
+    <span data-slot="te-copy" className={cn('ml-1 inline-flex align-middle print:hidden', className)}>
+      <CopyButton value={value} variant="ghost" buttonSize="icon-xs" size={12}
+        label={t('te.copy.label', value)} copiedLabel={t('te.copy.done')}
+        className="-my-1 text-muted-foreground hover:text-foreground pointer-coarse:my-0 pointer-coarse:size-10" />
     </span>
   )
 }

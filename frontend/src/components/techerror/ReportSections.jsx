@@ -17,7 +17,7 @@ import {
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
 import { RichText, RichTextarea } from './RichText.jsx'
-import { periodLabel } from './TechErrorParts.jsx'
+import { periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 
 /**
  * Sayı alanının ekrandaki metni: kayıtlı sayı arayüz dilinin biçiminde (çözümleyici aynı biçimi geri okur). Yüzde
@@ -78,7 +78,10 @@ function SectionShell({ title, children, slot, sectionId, hint }) {
   return (
     <Card className="gap-3" data-slot={slot} data-section={sectionId}>
       <CardHeader>
-        <h3 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{title}</h3>
+        <div data-slot="te-copy-row" className="text-base leading-snug [overflow-wrap:anywhere]">
+          <h3 className="inline text-base font-semibold leading-snug">{title}</h3>
+          <CopyTextButton text={title} />
+        </div>
         {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
       </CardHeader>
       <CardContent className="flex flex-col gap-4">{children}</CardContent>
@@ -152,9 +155,12 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
     return (
       <div key={f.id} className={cn('flex min-w-0 flex-col gap-1.5', f.type === 'textarea' && 'sm:col-span-2 lg:col-span-3')}
         data-field={`values.${f.id}`} data-slot="te-value">
-        <label htmlFor={f.type === 'yesno' ? undefined : id} id={`${id}-l`} className="text-sm font-semibold leading-snug [overflow-wrap:anywhere]">
-          {resolve(f.label)}
-        </label>
+        <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
+          <label htmlFor={f.type === 'yesno' ? undefined : id} id={`${id}-l`} className="inline text-sm font-semibold leading-snug">
+            {resolve(f.label)}
+          </label>
+          <CopyTextButton text={resolve(f.label)} />
+        </div>
         {control}
         {f.hint && <p id={hintId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(f.hint)}</p>}
         {exemptCount(f) > 0 && (
@@ -253,7 +259,10 @@ export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors
                     onChange={(e) => patch(iss.id, { title: e.target.value, title_auto: false })} />
                 </div>
                 <div className="flex flex-col gap-1.5 md:col-span-2">
-                  <label htmlFor={`${base}-desc`} className="text-sm font-medium">{resolve(section.description_label)}</label>
+                  <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
+                    <label htmlFor={`${base}-desc`} className="inline text-sm font-medium">{resolve(section.description_label)}</label>
+                    <CopyTextButton text={resolve(section.description_label)} />
+                  </div>
                   <RichTextarea id={`${base}-desc`} rows={4} value={iss.description || ''} disabled={readOnly} maxLength={LIMITS.longText}
                     placeholder={t('te.issues.descriptionPlaceholder')} label={resolve(section.description_label)}
                     invalid={err ? true : undefined} describedBy={err ? `${base}-e` : undefined}
@@ -263,7 +272,10 @@ export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors
                   const fe = fieldErr(key)
                   return (
                     <div key={key} className="flex flex-col gap-1.5" data-field={issueErrorKey(section.id, iss.id, key)}>
-                      <label htmlFor={`${base}-${key}`} className="text-sm font-medium [overflow-wrap:anywhere]">{resolve(label)}</label>
+                      <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
+                        <label htmlFor={`${base}-${key}`} className="inline text-sm font-medium">{resolve(label)}</label>
+                        <CopyTextButton text={resolve(label)} />
+                      </div>
                       <NumberInput id={`${base}-${key}`} value={iss[key] ?? null} lang={uiLang} disabled={readOnly}
                         invalid={fe || err ? true : undefined} describedBy={fe ? `${base}-${key}-e` : err ? `${base}-e` : undefined}
                         onChange={(n) => patch(iss.id, { [key]: n })}

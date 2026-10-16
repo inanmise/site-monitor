@@ -239,10 +239,11 @@ function smallTargets(sel) {
 function clipped(sel) {
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
-  // Ekran okuyucuya özel metin (sr-only) kasıtlı olarak 1 px'tir — kırpılma sayılmaz
-  return [...root.querySelectorAll('span, p, li, h2, h3, label, button')].filter((n) => !n.closest('[role="combobox"]'))
+  // Ekran okuyucuya özel metin (sr-only) kasıtlı olarak 1 px'tir — kırpılma sayılmaz. Kopyalama düğmeli satırlar
+  // (te-copy-row, 2026-10-16) çocuklu olduğu ve içindeki metin satır içi olduğu için kabın kendisi ölçülür.
+  return [...root.querySelectorAll('span, p, li, h2, h3, label, button, [data-slot="te-copy-row"]')].filter((n) => !n.closest('[role="combobox"]'))
     .filter((n) => !n.closest('.sr-only'))
-    .filter((n) => n.childElementCount === 0 && n.textContent.trim().length > 20
+    .filter((n) => (n.childElementCount === 0 || n.dataset.slot === 'te-copy-row') && n.textContent.trim().length > 20
       && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis')).map((n) => n.textContent.slice(0, 30))
 }
 
@@ -338,11 +339,11 @@ for (const vp of VIEWPORTS) {
       }
 
       // 2026-10-14: "Dönemde kesinti oldu mu?" → "Hayır" kesinti alanlarını muaf eder (gizli + not), "Evet" geri getirir
-      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı')).toBeVisible()
-      const outage = editor.getByLabel('Dönemde kesinti oldu mu?')
+      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı', { exact: true })).toBeVisible()
+      const outage = editor.getByLabel('Dönemde kesinti oldu mu?', { exact: true })
       await outage.getByRole('radio', { name: /^(Hayır|No)$/ }).click()
-      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı')).toHaveCount(0)
-      await expect(editor.getByLabel('Kesinti kaynaklı teknik hata adedi')).toHaveCount(0)
+      await expect(editor.getByLabel('Kesinti günleri hariç teknik hata oranı', { exact: true })).toHaveCount(0)
+      await expect(editor.getByLabel('Kesinti kaynaklı teknik hata adedi', { exact: true })).toHaveCount(0)
       await expect(editor.locator('[data-slot="te-exempt-note"]')).toBeVisible()
       expect(await page.evaluate(overflowX), 'yatay taşma (muaf)').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (muaf)').toEqual([])
