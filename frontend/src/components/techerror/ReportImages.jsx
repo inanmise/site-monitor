@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
 import { ImagePrepError, prepareImage } from './imagePrep.js'
+import { CopyTextButton } from './TechErrorParts.jsx'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
@@ -35,7 +36,10 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
   return (
     <Card className="gap-3" data-slot="te-images" data-section={section.id}>
       <CardHeader className="gap-1">
-        <h3 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{resolve(section.title)}</h3>
+        <div data-slot="te-copy-row" className="text-base leading-snug [overflow-wrap:anywhere]">
+          <h3 className="inline text-base font-semibold leading-snug">{resolve(section.title)}</h3>
+          <CopyTextButton text={resolve(section.title)} />
+        </div>
         {showTotals && (
           <>
             <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
@@ -157,7 +161,10 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         if (f && !busy) upload(f)
       }}>
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <p className="min-w-0 text-sm font-semibold leading-snug [overflow-wrap:anywhere]" data-slot="te-image-label">{label}</p>
+        <p data-slot="te-copy-row" className="min-w-0 text-sm font-semibold leading-snug [overflow-wrap:anywhere]">
+          <span data-slot="te-image-label">{label}</span>
+          <CopyTextButton text={label} />
+        </p>
         <span className="shrink-0 text-xs text-muted-foreground">{slot.width === 'full' ? t('te.width.full') : t('te.width.half')}</span>
       </div>
       {image ? (

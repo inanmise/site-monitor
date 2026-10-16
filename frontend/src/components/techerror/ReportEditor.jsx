@@ -17,7 +17,7 @@ import { ImagesBlock } from './ReportImages.jsx'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
-import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
+import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import {
   allFields, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
 } from './techErrorModel.js'
@@ -532,10 +532,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     <div className="flex flex-col gap-4 pb-24" data-slot="te-report" data-report={reportId}>
       {back}
       <header className="flex flex-col gap-2">
-        <h2 ref={titleRef} tabIndex={-1} className="text-xl font-bold leading-tight outline-none [overflow-wrap:anywhere] sm:text-2xl"
-          data-slot="te-report-title">
-          {resolve(tpl.title)}
-        </h2>
+        <div data-slot="te-copy-row" className="text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">
+          <h2 ref={titleRef} tabIndex={-1} className="inline text-xl font-bold leading-tight outline-none sm:text-2xl"
+            data-slot="te-report-title">
+            {resolve(tpl.title)}
+          </h2>
+          <CopyTextButton text={resolve(tpl.title)} />
+        </div>
         {/* Ay geçişi + değişiklik geçmişi (2026-10-14, Faz B): aynı kanalın önceki / sonraki EN YAKIN raporu; geçiş
             kaydedilmemiş değişiklikte onay ister (leave) */}
         <div className="flex flex-wrap items-center justify-between gap-2" data-slot="te-report-nav">

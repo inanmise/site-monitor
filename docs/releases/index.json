@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-16T07:40:40Z",
+  "generatedAt": "2026-10-16T08:44:45Z",
   "repo": "inanmise/site-monitor",
-  "count": 754,
+  "count": 755,
   "releases": [
+    {
+      "version": "20.137.0",
+      "tag": "v20.137.0",
+      "releasedAt": "2026-10-16T08:44:39Z",
+      "commit": "8689f59ab9e6597d0876024cb405629dd6e7c8cf",
+      "prevVersion": "20.136.3",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8689f59a",
+          "subject": "kanal teknik hata raporunda başlık, alan ve görsel adlarının yanına kopyalama ikonu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.136.3",
       "tag": "v20.136.3",

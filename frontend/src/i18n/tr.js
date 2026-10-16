@@ -20313,6 +20313,8 @@ export const TR = {
   'te.issues.descriptionPlaceholder': "Ne zaman başladı, hangi işlemlerde, nerede görüldü, nasıl giderildi…",
   'te.issues.add': "Başlık ekle",
   'te.img.hint': "Her yuvaya bir görsel yükleyin (PNG, JPEG, WebP, GIF, BMP). Büyük görseller PDF'teki yuvaya göre tarayıcıda küçültülür; sürükleyip bırakabilirsiniz, yeni yükleme eskisinin yerini alır.",
+  'te.copy.label': "Kopyala: {0}",
+  'te.copy.done': "Kopyalandı",
   'te.img.total': "Toplam {0} / {1}",
   'te.img.uploaded': "“{0}” görseli yüklendi.",
   'te.img.uploadError': "Görsel yüklenemedi. Dosyanın PNG ya da JPEG olduğunu ve 5 MB'ı geçmediğini kontrol edip tekrar deneyin.",

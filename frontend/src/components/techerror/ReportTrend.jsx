@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useId, useState } from 'react'
 import { TrendingUp } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -8,6 +8,7 @@ import {
   TREND_MIN_POINTS, TREND_SUFFIX, compactNumber, fieldExempt, formatValue, monthName, trendLabelMode, trendPoints, trendRefs,
   trendTicks,
 } from './techErrorModel.js'
+import { CopyTextButton } from './TechErrorParts.jsx'
 
 // Çizim kenar boşlukları (px): sağda bu ayın etiketi son çubuğun dışına taşabilsin diye pay
 const MARGIN = { top: 18, right: 12, bottom: 0, left: 12 }
@@ -63,10 +64,13 @@ export function TrendBlock({ section, template, trend, draftFields: liveFields, 
   return (
     <Card className="gap-3" data-slot="te-trend" data-section={section.id}>
       <CardHeader className="gap-1">
-        <h3 className="flex items-start gap-2 text-base font-semibold leading-snug [overflow-wrap:anywhere]">
+        <div className="flex items-start gap-2 text-base leading-snug [overflow-wrap:anywhere]">
           <TrendingUp aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0">{resolve(section.title)}</span>
-        </h3>
+          <div data-slot="te-copy-row" className="min-w-0">
+            <h3 className="inline text-base font-semibold leading-snug">{resolve(section.title)}</h3>
+            <CopyTextButton text={resolve(section.title)} />
+          </div>
+        </div>
         <p className="text-sm text-muted-foreground">{t('te.trend.hint')}</p>
       </CardHeader>
       <CardContent>
@@ -119,6 +123,7 @@ const TrendChart = memo(function TrendChart({ field, points, resolve, tplLang })
   const [boxRef, boxWidth] = useElementWidth()
   const lang = tplLang === 'en' ? 'en' : 'tr'
   const title = `${resolve(field.label)}${TREND_SUFFIX[lang]}`
+  const captionId = useId()
   const withValue = points.filter((p) => p.value != null)
   const plotWidth = boxWidth ? boxWidth - MARGIN.left - MARGIN.right : 0
   // Ay adı + yıl (dar grafikte bir atlanarak; yıl değişen ilk görünen ayın altında)
@@ -139,8 +144,12 @@ const TrendChart = memo(function TrendChart({ field, points, resolve, tplLang })
   const labels = trendLabelMode(plotWidth, data.map((d) => d.text), measureLabel)
   return (
     <figure className="m-0 flex min-w-0 flex-col gap-1.5 rounded-xl border p-3" data-slot="te-trend-chart" data-field={field.id}
-      data-points={withValue.length} data-labels={labels}>
-      <figcaption className="text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{title}</figcaption>
+      data-points={withValue.length} data-labels={labels} aria-labelledby={captionId}>
+      {/* Şeklin adı yalnız başlık metni (kopyalama düğmesinin adı karışmasın) */}
+      <figcaption data-slot="te-copy-row" className="text-sm font-semibold leading-snug [overflow-wrap:anywhere]">
+        <span id={captionId}>{title}</span>
+        <CopyTextButton text={title} />
+      </figcaption>
       {withValue.length < TREND_MIN_POINTS ? (
         <p className="m-0 text-sm text-muted-foreground" data-slot="te-trend-note">{t('te.trend.notEnough', withValue.length)}</p>
       ) : (
