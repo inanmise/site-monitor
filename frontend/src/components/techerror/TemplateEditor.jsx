@@ -24,13 +24,17 @@ import {
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
-  allFields, allSlots, calcFieldsUsing, calcInput, calcRefIssues, canonicalTemplate, COLUMN_TYPES, FIELD_TYPES,
-  imageRows, insertToken, LIMITS, move, newId, newSection, pruneRemovedTrendRefs, resolvePlaceholders,
-  resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview, summaryLinesUsing,
-  summaryRefs, templateErrors, trendableFields, trendRefs, trendSectionsUsing, withoutSkip,
+  allFields, allSectionsOpen, allSlots, calcFieldsUsing, calcInput, calcRefIssues, canonicalTemplate, COLUMN_TYPES,
+  errorCountsBySection, FIELD_TYPES, imageRows, insertToken, LIMITS, move, newId, newSection, pruneRemovedTrendRefs,
+  resolvePlaceholders, resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview,
+  summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields, trendRefs, trendSectionsUsing,
+  withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
+import {
+  CollapsibleCard, ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
+} from './SectionCollapse.jsx'
 
 const KIND_ICON = { metrics: Gauge, issues: TriangleAlert, text: FileText, images: ChartColumn, summary: ScrollText, table: Table2, trend: TrendingUp }
 // "Bölüm ekle" menüsünün sırası (raporun doğal akışı: özet → göstergeler → konular → tablo → metin → grafikler)
@@ -164,6 +168,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
 
   const errors = useMemo(() => (draft ? templateErrors(draft) : {}), [draft])
   const canEdit = !!channel?.can_edit
+  // Alanlar salt okunurda ve kayıt sürerken kilitli (bölüm aç / kapat düğmeleri hariç — aşağıdaki fieldset notu)
+  const locked = !canEdit || saving
 
   // Yazarken yerel yedek (1 sn sonra) — uygulama içinde başka yere geçmek düzenlemeyi silmesin. Taslak yeniden
   // temizlenince bu sayfanın yazdığı yedek silinir; sayfadan çıkarken son saniye de yedeklenir.
@@ -190,6 +196,41 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   useEffect(() => () => flushBackup.current?.(), [])
   const shownErrors = showErrors ? errors : {}
 
+  // KATLANIR BÖLÜMLER (2026-10-16, kullanıcı kararı): bölümler kapalı başlar; açılanlar bu kanalın şablonu için bu
+  // tarayıcıda hatırlanır (`sm.te.open.t.<kanal>`). Kimlik listesi yalnız bölüm kümesi / sırası değişince yeni dizi
+  const sectionIdsKey = JSON.stringify((draft?.sections || []).map((s) => s.id))
+  const sectionIds = useMemo(() => JSON.parse(sectionIdsKey), [sectionIdsKey])
+  const openState = useSectionOpenState(sectionOpenKey('t', channelId), sectionIds)
+  const { openMany, setAll } = openState
+  // Bölüm başına hatalı alan sayısı (yalnız kayıt denemesinden sonra — shownErrors ile aynı kural). Map yalnız sayılar
+  // değişince yenilenir: her tuşta yeni nesne olsa bağlam tüketen her kart yeniden çizilirdi
+  const invalidKey = useMemo(() => {
+    if (!showErrors) return ''
+    return JSON.stringify([...errorCountsBySection(errors, (k) => templateErrorSection(k, draft))])
+  }, [showErrors, errors, draft])
+  const invalidCounts = useMemo(() => new Map(invalidKey ? JSON.parse(invalidKey) : []), [invalidKey])
+  const openValue = useSectionOpenValue(openState, invalidCounts)
+  // YENİ hata alan bölüm kendiliğinden açılır (önceden hatalı olup kullanıcının kapattığı bölüm, hata sürdükçe kapalı
+  // kalır — başlıkta sayı görünür; kaydet denemesi onu yine açar)
+  const erroredRef = useRef(new Set())
+  useEffect(() => {
+    const now = new Set(invalidCounts.keys())
+    const fresh = [...now].filter((id) => !erroredRef.current.has(id))
+    erroredRef.current = now
+    if (fresh.length) openMany(fresh)
+  }, [invalidCounts, openMany])
+  // Kullanıcının EKLEDİĞİ bölüm açık gelir; yükleme / vazgeç / kayıt yanıtı / varsayılana dönüş / yedekten ya da
+  // sürümden yükleme (hepsi gen'i artırır) ile gelen bölümler kapalı kalır
+  const seenSections = useRef({ gen: null, ids: [] })
+  useEffect(() => {
+    const prev = seenSections.current
+    seenSections.current = { gen, ids: sectionIds }
+    if (prev.gen !== gen) return
+    const added = sectionIds.filter((id) => !prev.ids.includes(id))
+    if (added.length) openMany(added)
+  }, [gen, sectionIds, openMany])
+  const allOpen = allSectionsOpen(openState.state, sectionIds)
+
   // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti); silinen
   // alan otomatik trend seçimlerinden de düşer (silme onayında söylenir)
   const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(pruneRemovedTrendRefs(d, fn(d))) : d))
@@ -199,6 +240,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     if (!draft || saving) return
     if (Object.keys(errors).length) {
       setShowErrors(true)
+      // Hatalı alanı olan her bölüm açılır — kullanıcı arada kapatmış olsa da (başlık kartı zaten hep açık)
+      openMany([...errorCountsBySection(errors, (k) => templateErrorSection(k, draft)).keys()])
       toast.error(t('te.tpl.fixErrors'))
       return
     }
@@ -321,80 +364,91 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
       {serverError && <AlertBanner tone="danger" title={t('te.tpl.serverInvalid')}>{serverError}</AlertBanner>}
       {showErrors && errors.sections && <AlertBanner tone="danger">{t(errors.sections)}</AlertBanner>}
 
-      {/* Sürüm geçmişi salt okunurda da açılır: düğme düzenleme alan kümesinin (fieldset disabled) DIŞINDA */}
+      {/* Sürüm geçmişi ve "tümünü aç / kapat" salt okunurda da çalışır: düğmeler düzenleme kilidinin (fieldset disabled) DIŞINDA */}
       <div className="flex flex-wrap items-center justify-between gap-2" data-slot="te-tpl-toolbar">
         <p className="m-0 text-sm text-muted-foreground">
           {t('te.ver.currentInfo', base.version ?? '—')}
         </p>
-        <Button ref={versionsBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-versions-open"
-          onClick={() => setVersionsOpen(true)}>
-          <History aria-hidden="true" /> {t('te.ver.open')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {sectionIds.length > 0 && <ExpandAllButton allOpen={allOpen} onToggle={setAll} />}
+          <Button ref={versionsBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-versions-open"
+            onClick={() => setVersionsOpen(true)}>
+            <History aria-hidden="true" /> {t('te.ver.open')}
+          </Button>
+        </div>
       </div>
       <TemplateVersionsDialog channelId={channelId} channelName={channel?.name} period={previewPeriod} open={versionsOpen}
         onClose={() => setVersionsOpen(false)} canEdit={canEdit && !saving} onLoad={loadVersion} returnFocusRef={versionsBtnRef} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <fieldset disabled={!canEdit || saving} className="flex min-w-0 flex-col gap-4">
-          <Card className="gap-3" data-slot="te-tpl-head">
-            <CardHeader>
-              <h3 className="text-base font-semibold">{t('te.tpl.headTitle')}</h3>
-              <p className="text-sm text-muted-foreground">{t('te.tpl.headHint')}</p>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5" data-field="title">
-                <label htmlFor="te-tpl-title" className="text-sm font-semibold">{t('te.tpl.reportTitle')}</label>
-                <Input id="te-tpl-title" className="pointer-coarse:h-10" value={draft.title || ''} maxLength={LIMITS.title + 20}
-                  aria-invalid={shownErrors.title ? true : undefined}
-                  onChange={(e) => update((d) => ({ ...d, title: e.target.value }))} />
-                <PlaceholderButtons lang={draft.lang}
-                  onInsert={(ph) => update((d) => ({ ...d, title: `${d.title || ''}${d.title?.endsWith(' ') || !d.title ? '' : ' '}${ph}` }))} />
-                {shownErrors.title && <p className="text-sm text-destructive" role="alert">{t(shownErrors.title)}</p>}
-                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-title-preview">
-                  {t('te.tpl.titlePreview')} <span className="font-medium text-foreground">{resolve(draft.title)}</span>
-                </p>
-              </div>
-              <div className="flex flex-col gap-1.5 sm:w-72">
-                <label htmlFor="te-tpl-lang" className="text-sm font-semibold">{t('te.tpl.lang')}</label>
-                <NativeSelect id="te-tpl-lang" className="pointer-coarse:h-10" value={draft.lang || 'tr'} onChange={(e) => update((d) => ({ ...d, lang: e.target.value }))}>
-                  <NativeSelectOption value="tr">{t('te.tpl.langTr')}</NativeSelectOption>
-                  <NativeSelectOption value="en">{t('te.tpl.langEn')}</NativeSelectOption>
-                </NativeSelect>
-                <p className="text-xs text-muted-foreground">{t('te.tpl.langHint')}</p>
-              </div>
-            </CardContent>
-          </Card>
+        {/* Düzenleme kilidi (salt okuma / kayıt sürüyor) tek bir dış fieldset değil, parça parça: disabled fieldset
+            içindeki HER düğmeyi kapatır — bölüm aç / kapat düğmeleri salt okunurda ve kayıt sırasında da çalışmalı
+            (2026-10-16). Başlık kartı ve bölüm içerikleri kendi fieldset'inde, bölüm başlığındaki taşı / sil düğmeleri
+            `disabled` ile, "Bölüm ekle" (yalnız yazabilene) kayıt sürerken kapalı — alanlar eskisi gibi kilitli. */}
+        <div className="flex min-w-0 flex-col gap-4" data-slot="te-tpl-form">
+          <fieldset disabled={locked} className="min-w-0">
+            <Card className="gap-3" data-slot="te-tpl-head">
+              <CardHeader>
+                <h3 className="text-base font-semibold">{t('te.tpl.headTitle')}</h3>
+                <p className="text-sm text-muted-foreground">{t('te.tpl.headHint')}</p>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1.5" data-field="title">
+                  <label htmlFor="te-tpl-title" className="text-sm font-semibold">{t('te.tpl.reportTitle')}</label>
+                  <Input id="te-tpl-title" className="pointer-coarse:h-10" value={draft.title || ''} maxLength={LIMITS.title + 20}
+                    aria-invalid={shownErrors.title ? true : undefined}
+                    onChange={(e) => update((d) => ({ ...d, title: e.target.value }))} />
+                  <PlaceholderButtons lang={draft.lang}
+                    onInsert={(ph) => update((d) => ({ ...d, title: `${d.title || ''}${d.title?.endsWith(' ') || !d.title ? '' : ' '}${ph}` }))} />
+                  {shownErrors.title && <p className="text-sm text-destructive" role="alert">{t(shownErrors.title)}</p>}
+                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-title-preview">
+                    {t('te.tpl.titlePreview')} <span className="font-medium text-foreground">{resolve(draft.title)}</span>
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5 sm:w-72">
+                  <label htmlFor="te-tpl-lang" className="text-sm font-semibold">{t('te.tpl.lang')}</label>
+                  <NativeSelect id="te-tpl-lang" className="pointer-coarse:h-10" value={draft.lang || 'tr'} onChange={(e) => update((d) => ({ ...d, lang: e.target.value }))}>
+                    <NativeSelectOption value="tr">{t('te.tpl.langTr')}</NativeSelectOption>
+                    <NativeSelectOption value="en">{t('te.tpl.langEn')}</NativeSelectOption>
+                  </NativeSelect>
+                  <p className="text-xs text-muted-foreground">{t('te.tpl.langHint')}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </fieldset>
 
-          {draft.sections.map((s, i) => (
-            <SectionCard key={`${s.id}:${gen}`} section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
-              draft={draft} resolve={resolve} resolveLong={resolveLong}
-              onChange={(fn) => updateSection(s.id, fn)}
-              onMove={(delta) => update((d) => ({ ...d, sections: move(d.sections, i, delta) }))}
-              onRemove={async () => {
-                // Bölümün alanları yönetici özetinde ya da otomatik trendde kullanılıyorsa söylenir (alan tek tek
-                // silinirken olduğu gibi; trend seçimi update içinde düşer)
-                const used = new Set()
-                for (const f of s.fields || []) for (const l of summaryLinesUsing(draft, f.id)) used.add(l)
-                const charted = (s.fields || []).filter((f) => trendSectionsUsing(draft, f.id).length).length
-                // Bölümün alanlarını formülünde kullanan BAŞKA bölümlerdeki hesaplanan alanlar (raporda elle girilir)
-                const own = new Set((s.fields || []).map((f) => f.id))
-                const calcs = new Set()
-                for (const f of s.fields || []) for (const c of calcFieldsUsing(draft, f.id)) if (!own.has(c.id)) calcs.add(c.label || c.id)
-                const message = t('te.tpl.removeSectionBody', s.title || '')
-                  + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
-                  + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
-                  + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
-                const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
-                  variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
-                if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
-              }} />
-          ))}
+          <SectionOpenContext.Provider value={openValue}>
+            {draft.sections.map((s, i) => (
+              <SectionCard key={`${s.id}:${gen}`} section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
+                draft={draft} resolve={resolve} resolveLong={resolveLong} locked={locked}
+                onChange={(fn) => updateSection(s.id, fn)}
+                onMove={(delta) => update((d) => ({ ...d, sections: move(d.sections, i, delta) }))}
+                onRemove={async () => {
+                  // Bölümün alanları yönetici özetinde ya da otomatik trendde kullanılıyorsa söylenir (alan tek tek
+                  // silinirken olduğu gibi; trend seçimi update içinde düşer)
+                  const used = new Set()
+                  for (const f of s.fields || []) for (const l of summaryLinesUsing(draft, f.id)) used.add(l)
+                  const charted = (s.fields || []).filter((f) => trendSectionsUsing(draft, f.id).length).length
+                  // Bölümün alanlarını formülünde kullanan BAŞKA bölümlerdeki hesaplanan alanlar (raporda elle girilir)
+                  const own = new Set((s.fields || []).map((f) => f.id))
+                  const calcs = new Set()
+                  for (const f of s.fields || []) for (const c of calcFieldsUsing(draft, f.id)) if (!own.has(c.id)) calcs.add(c.label || c.id)
+                  const message = t('te.tpl.removeSectionBody', s.title || '')
+                    + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
+                    + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
+                    + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
+                  const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
+                    variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
+                  if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
+                }} />
+            ))}
+          </SectionOpenContext.Provider>
 
           {canEdit && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button type="button" variant="outline" className="w-fit pointer-coarse:min-h-10"
-                  disabled={draft.sections.length >= LIMITS.sections} data-slot="te-tpl-add-section">
+                  disabled={saving || draft.sections.length >= LIMITS.sections} data-slot="te-tpl-add-section">
                   <ListPlus aria-hidden="true" /> {t('te.tpl.addSection')}
                 </Button>
               </DropdownMenuTrigger>
@@ -412,7 +466,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-        </fieldset>
+        </div>
 
         <aside className="flex min-w-0 flex-col gap-3 xl:sticky xl:top-4 xl:self-start" aria-label={t('te.tpl.previewTitle')}>
           <LayoutPreview draft={draft} resolve={resolve} />
@@ -527,37 +581,52 @@ function PlaceholderButtons({ lang, onInsert }) {
   )
 }
 
-function MoveButtons({ index, count, onMove, label, onRemove, removeLabel }) {
+/** `disabled`: kilit dışındaki yerde (bölüm başlığı — düzenleme fieldset'inin dışında) salt okuma / kayıt kilidi. */
+function MoveButtons({ index, count, onMove, label, onRemove, removeLabel, disabled = false }) {
   const t = useT()
   return (
     <div className="flex shrink-0 items-center gap-0.5">
       <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" aria-label={t('te.moveUp', label)}
-        disabled={index === 0} onClick={() => onMove(-1)} data-move="up"><ArrowUp aria-hidden="true" /></Button>
+        disabled={disabled || index === 0} onClick={() => onMove(-1)} data-move="up"><ArrowUp aria-hidden="true" /></Button>
       <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" aria-label={t('te.moveDown', label)}
-        disabled={index === count - 1} onClick={() => onMove(1)} data-move="down"><ArrowDown aria-hidden="true" /></Button>
+        disabled={disabled || index === count - 1} onClick={() => onMove(1)} data-move="down"><ArrowDown aria-hidden="true" /></Button>
       {onRemove && (
         <Button type="button" size="icon" variant="ghost" className="size-8 text-destructive pointer-coarse:size-10"
-          aria-label={removeLabel} onClick={onRemove}><Trash2 aria-hidden="true" /></Button>
+          aria-label={removeLabel} disabled={disabled} onClick={onRemove}><Trash2 aria-hidden="true" /></Button>
       )}
     </div>
   )
 }
 
-function SectionCard({ section: s, index, count, errors, slotCount, draft, resolve, resolveLong, onChange, onMove, onRemove }) {
+/**
+ * Şablon bölümü — katlanır kart (2026-10-16). Başlık satırı: aç / kapat düğmesi (bölümün çözümlenmiş başlığı + tür
+ * rozeti; başlık boşsa "Başlıksız bölüm") ve sağda taşı / sil — kapalı bölüm de sıralanır / silinir. Başlık kutusu,
+ * önizlemesi, bölüm hatası ve türe özgü düzenleyiciler içerikte (kapalıyken de kurulu kalır). İçerik kendi fieldset'iyle
+ * kilitlenir (`locked`); aç / kapat düğmesi kilidin dışında — salt okuyan da bölümleri açıp kapatabilir.
+ */
+function SectionCard({ section: s, index, count, errors, slotCount, draft, resolve, resolveLong, locked, onChange, onMove, onRemove }) {
   const t = useT()
   const Icon = KIND_ICON[s.kind] || FileText
   const err = errors[`section:${s.id}`]
   const titleId = `te-sec-${s.id}`
+  const kindName = t(`te.kind.${s.kind}`)
+  const heading = String(resolve(s.title || '') ?? '').trim() || t('te.tpl.untitledSection')
   return (
-    <Card className="gap-3" data-slot="te-tpl-section" data-kind={s.kind} data-section={s.id} data-field={`section:${s.id}`}>
-      <CardHeader className="gap-2">
-        <div className="flex items-start justify-between gap-2">
-          <Badge variant="secondary" className="rounded-md overflow-visible">
-            <Icon aria-hidden="true" /> {t(`te.kind.${s.kind}`)}
+    <CollapsibleCard sectionId={s.id} slot="te-tpl-section" title={heading} copyText=""
+      toggleLabel={(
+        <>
+          {heading}{' '}
+          <Badge variant="secondary" className="ms-1 rounded-md overflow-visible align-middle" data-slot="te-tpl-section-kind">
+            <Icon aria-hidden="true" className="size-3" /> {kindName}
           </Badge>
-          <MoveButtons index={index} count={count} onMove={onMove} label={s.title || t(`te.kind.${s.kind}`)}
-            onRemove={onRemove} removeLabel={t('te.tpl.removeSectionAria', s.title || t(`te.kind.${s.kind}`))} />
-        </div>
+        </>
+      )}
+      headerEnd={(
+        <MoveButtons index={index} count={count} onMove={onMove} label={s.title || kindName} disabled={locked}
+          onRemove={onRemove} removeLabel={t('te.tpl.removeSectionAria', s.title || kindName)} />
+      )}
+      cardProps={{ 'data-kind': s.kind, 'data-field': `section:${s.id}` }}>
+      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-col gap-1.5">
           <label htmlFor={titleId} className="text-sm font-semibold">{t('te.tpl.sectionTitle')}</label>
           <Input id={titleId} className="pointer-coarse:h-10" value={s.title || ''} maxLength={LIMITS.label + 20}
@@ -565,8 +634,6 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(s.title)}</p>
         </div>
         {err && <p className="text-sm text-destructive" role="alert">{t(err)}</p>}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
         {s.kind === 'metrics' && <FieldsEditor section={s} errors={errors} draft={draft} onChange={onChange} />}
         {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} resolve={resolve} onChange={onChange} />}
         {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
@@ -581,8 +648,8 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
             <p className="text-xs text-muted-foreground">{t('te.tpl.defaultTextHint')}</p>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </fieldset>
+    </CollapsibleCard>
   )
 }
 

@@ -276,6 +276,40 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("değer kaydı: otomatik kayıt geçmişte önceki olayla birleşince denetime YAZILMAZ; yeni olay açan otomatik kayıt"
+            + " 'auto' ile, elle kayıt her değişiklikte yazılır")
+    void saveReportAuditsOncePerAutoWindow() throws Exception {
+        report(100, 10, A, null);
+        TechErrorReport saved = new TechErrorReport();
+        saved.setId(100L);
+        saved.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        saved.setValuesJson(TechErrorValues.toJson(TechErrorValues.Values.empty()));
+        saved.setVersion(5L);
+        when(service.saveValues(eq(100L), eq(4L), any(), eq(50L), eq(true)))
+                .thenReturn(new TechErrorReportService.SaveOutcome(saved, true))
+                .thenReturn(new TechErrorReportService.SaveOutcome(saved, false));
+        when(service.saveValues(eq(100L), eq(4L), any(), eq(50L), eq(false)))
+                .thenReturn(new TechErrorReportService.SaveOutcome(saved, false));
+        String auto = "{\"version\":4,\"auto\":true,\"values\":{\"fields\":{}}}";
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content(auto))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(5));
+        verify(auditService, never()).recordAction(eq("TECH_ERROR_REPORT_UPDATE"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content(auto))
+                .andExpect(status().isOk());
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_UPDATE"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("100"),
+                org.mockito.ArgumentMatchers.contains("\"auto\":true"));
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4,\"values\":{\"fields\":{}}}"))
+                .andExpect(status().isOk());
+        verify(auditService, org.mockito.Mockito.times(2)).recordAction(eq("TECH_ERROR_REPORT_UPDATE"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("100"), any());
+    }
+
+    @Test
     @DisplayName("rapor okuma: şablon + değer + düzenleme bayrakları; AUDIT için can_edit false ve şablon güncelleme önizlemesi yok")
     void readReport() throws Exception {
         report(100, 10, A, null);

@@ -366,11 +366,16 @@ public class TechErrorReportController {
         TechErrorReport r = writableReport(id, session);
         Map<String, Object> b = body == null ? Map.of() : body;
         Long version = b.get("version") instanceof Number n ? Long.valueOf(n.longValue()) : null;
-        TechErrorReport saved = service.saveValues(r.getId(), version, b.get("values"), userId(session));
+        // Otomatik kayıt (2026-10-16): istemci 30 sn'de bir; geçmişte birleşir, denetime pencere başına bir kez yazılır
+        boolean auto = Boolean.TRUE.equals(b.get("auto"));
+        TechErrorReportService.SaveOutcome outcome = service.saveValues(r.getId(), version, b.get("values"), userId(session), auto);
+        TechErrorReport saved = outcome.report();
         boolean changed = !Objects.equals(saved.getVersion(), version);
-        if (changed) {
+        if (changed && !outcome.mergedHistory()) {
             auditService.recordAction("TECH_ERROR_REPORT_UPDATE", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
-                    AuditDetail.of("channel_id", r.getChannelId(), "year", r.getReportYear(), "month", r.getReportMonth(),
+                    auto ? AuditDetail.of("channel_id", r.getChannelId(), "year", r.getReportYear(), "month", r.getReportMonth(),
+                            "version", saved.getVersion(), "auto", true)
+                         : AuditDetail.of("channel_id", r.getChannelId(), "year", r.getReportYear(), "month", r.getReportMonth(),
                             "version", saved.getVersion()));
         }
         TechErrorTemplate.Template t = TechErrorTemplate.fromStored(saved.getTemplateJson());

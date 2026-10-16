@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Görsel hazırlama akışı (2026-10-15, Faz C): yuva dosyayı ÖNCE tarayıcıda hazırlar (imagePrep — küçültme / çevirme),
 // sonra yükler. Yüklenen dosya hazırlanan dosyadır; küçültme / çevirme notu yuvanın altında; hazırlama hatası neyin
@@ -34,6 +34,7 @@ const MB = 1024 * 1024
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],

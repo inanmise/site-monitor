@@ -524,8 +524,10 @@ export const api = {
     createReport: (channelId, year, month) => request('/tech-error-reports/reports',
       { method: 'POST', body: JSON.stringify({ channel_id: channelId, year, month }), withStatus: true }),
     report: (id) => request(`/tech-error-reports/reports/${id}`, { withStatus: true }),
-    saveReport: (id, values, version) => request(`/tech-error-reports/reports/${id}`,
-      { method: 'PUT', body: JSON.stringify({ values, version }), withStatus: true }),
+    // `auto`: 30 sn'lik otomatik kayıt — geçmişte aynı kişinin 15 dk içindeki otomatik kayıtları tek satırda birleşir
+    saveReport: (id, values, version, { auto = false, timeoutMs } = {}) => request(`/tech-error-reports/reports/${id}`,
+      { method: 'PUT', body: JSON.stringify(auto ? { values, version, auto: true } : { values, version }), withStatus: true,
+        ...(timeoutMs ? { timeoutMs } : {}) }),
     refreshTemplate: (id, version) => request(`/tech-error-reports/reports/${id}/refresh-template`,
       { method: 'POST', body: JSON.stringify({ version }), withStatus: true }),
     deleteReport: (id) => request(`/tech-error-reports/reports/${id}`, { method: 'DELETE', withStatus: true }),

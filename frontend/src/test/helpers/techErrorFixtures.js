@@ -66,3 +66,17 @@ export function reportResponse(extra = {}) {
     },
   }
 }
+
+/**
+ * Katlanır bölümler (2026-10-16) kapalı başlar; içerikle ilgilenen testler bölümleri kullanıcı "Tümünü aç" demiş gibi
+ * açık başlatır. Test verisinin rapor (90–120, 200–210) ve kanal (1–40) kimlikleri için yazılır; `localStorage.clear()`
+ * SONRASINDA çağrılır. Katlanmanın kendisini sınayan testler bunu çağırmaz.
+ */
+export function openAllSections() {
+  const all = JSON.stringify({ all: true })
+  try {
+    for (let id = 90; id <= 120; id++) localStorage.setItem(`sm.te.open.r.${id}`, all)
+    for (let id = 200; id <= 210; id++) localStorage.setItem(`sm.te.open.r.${id}`, all)
+    for (let id = 1; id <= 40; id++) localStorage.setItem(`sm.te.open.t.${id}`, all)
+  } catch { /* depolama yok */ }
+}

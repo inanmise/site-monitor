@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse, templateResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Otomatik trend (2026-10-15, Faz C): raporda seçilen alanların son 12 ay grafiği (kayıtlı aylar sunucudan, bu ay
 // taslaktan), okunamayan veri "okunamadı" der — "en az iki ay" değil; şablon düzenleyicide alan seçimi, sorunlu başvuru
@@ -44,6 +44,7 @@ const chart = (container, id) => container.querySelector(`[data-slot="te-trend-c
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],
     default_period: { year: 2026, month: 9 } } }))

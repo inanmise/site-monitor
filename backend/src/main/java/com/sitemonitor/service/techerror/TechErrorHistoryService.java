@@ -86,10 +86,35 @@ public class TechErrorHistoryService {
         return saved;
     }
 
+    /**
+     * Otomatik kayıtların birleştiği pencere (2026-10-16, kullanıcı kararı: aynı kişinin 15 dk içindeki otomatik kayıtları tek
+     * satır). Pencere İLK kayıttan sayılır (`first_at`): saatlerce süren yazım her 15 dk'da yeni satır + denetim kaydı açar.
+     */
+    public static final java.time.Duration AUTO_MERGE_WINDOW = java.time.Duration.ofMinutes(15);
+
+    private static final java.util.concurrent.atomic.AtomicLong LAST_MERGE_WARN = new java.util.concurrent.atomic.AtomicLong();
+
     /** Değer kaydının olayı: alan bazında fark. Fark hesaplanamazsa kayıt yine geçer, olay ayrıntısız yazılır. */
     @Transactional
     public void recordValues(TechErrorReport saved, Template t, Values before, Values after, String channelName,
                              Long by, Instant at) {
+        recordValues(saved, t, before, after, channelName, by, at, false);
+    }
+
+    /**
+     * {@link #recordValues} + OTOMATİK kayıt (2026-10-16): aynı kişinin İLK kaydından {@link #AUTO_MERGE_WINDOW} içindeki
+     * önceki otomatik değer olayı EN SON olaysa bu kayıt onunla BİRLEŞİR ({@link #mergeChanges}: kalıcı anahtar başına ilk
+     * eski + son yeni değer; ham değeri eski hâline dönen satır düşer). Hiç fark kalmazsa olay SİLİNMEZ, "geri alındı"
+     * olarak kalır (gönderimden sonra içerik sayacı arttı; boş geçmiş "değişti" durumunu açıklamasız bırakırdı). Dönüş:
+     * birleşti mi (denetim kaydı pencere başına bir kez yazılır).
+     *
+     * <p>Eşzamanlılık: aynı raporun iki kaydı raporun sürümü + satır kilidiyle sıralanır (ikincisi 409 alır), görsel /
+     * şablon / gönderim sonucu olayları da raporu kilitler. Gönderim olayı (kendi işleminde, kilitsiz) birkaç milisaniyelik
+     * bir pencerede birleştirilen olaydan sonra yazılabilir — kabul edildi.
+     */
+    @Transactional
+    public boolean recordValues(TechErrorReport saved, Template t, Values before, Values after, String channelName,
+                                Long by, Instant at, boolean auto) {
         Map<String, Object> detail = new LinkedHashMap<>();
         try {
             TechErrorChangeDiff.Result d = TechErrorChangeDiff.diff(t, before, after, channelName, saved.getReportYear(),
@@ -114,7 +139,164 @@ public class TechErrorHistoryService {
             detail.put("changes", List.of());
             detail.put("unavailable", true);
         }
+        if (auto) {
+            detail.put("auto", true);
+            if (mergeAuto(saved, detail, by, at)) return true;
+            detail.put("saves", 1);
+            detail.put("first_at", at.toString());
+        }
         record(saved, "VALUES", by, saved.getVersion(), detail, at);
+        return false;
+    }
+
+    /**
+     * Son olay aynı kişinin pencere içindeki otomatik değer olayıysa onunla birleştirir; birleştirdiyse true. Okuma / JSON
+     * hatası birleştirmeyi bırakır (yeni olay yazılır). Veritabanı hatası işlemi zaten geri alınacak işaretler — kaydın
+     * kendisi de düşer, olay yazımı hatasıyla aynı; burada yutulması bunu değiştirmez.
+     */
+    @SuppressWarnings("unchecked")
+    private boolean mergeAuto(TechErrorReport saved, Map<String, Object> detail, Long by, Instant at) {
+        if (by == null) return false;
+        try {
+            List<TechErrorReportEvent> last = events.findByReportIdOrderByIdDesc(saved.getId(), org.springframework.data.domain.PageRequest.of(0, 1));
+            if (last.isEmpty()) return false;
+            TechErrorReportEvent e = last.get(0);
+            if (!"VALUES".equals(e.getKind()) || !by.equals(e.getActorId()) || e.getEventAt() == null) return false;
+            Map<String, Object> old = JSON.readValue(e.getDetailJson() == null ? "{}" : e.getDetailJson(), Map.class);
+            if (!Boolean.TRUE.equals(old.get("auto"))) return false;
+            Instant first = firstAt(old, e.getEventAt());
+            if (first.isBefore(at.minus(AUTO_MERGE_WINDOW))) return false;     // pencere İLK kayıttan
+            List<Map<String, Object>> merged = mergeChanges((List<Map<String, Object>>) old.getOrDefault("changes", List.of()),
+                    (List<Map<String, Object>>) detail.getOrDefault("changes", List.of()));
+            // Taşan (sayılan) satırlar iki kayıtta aynı alana ait olabilir: toplam üst sınırdır, kesin sayı değil
+            int more = intOf(old.get("more")) + intOf(detail.get("more"));
+            List<Map<String, Object>> kept = new ArrayList<>();
+            int used = 0;
+            for (Map<String, Object> m : merged) {
+                int size = JSON.writeValueAsString(m).length() + 1;
+                if (kept.size() >= TechErrorChangeDiff.MAX_CHANGES || used + size > MAX_DETAIL_CHARS) { more++; continue; }
+                used += size;
+                kept.add(m);
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("changes", kept);
+            if (more > 0) out.put("more", more);
+            if (Boolean.TRUE.equals(old.get("unavailable")) || Boolean.TRUE.equals(detail.get("unavailable"))) {
+                out.put("unavailable", true);
+            }
+            if (kept.isEmpty() && more == 0 && !out.containsKey("unavailable")) out.put("reverted", true);
+            out.put("auto", true);
+            out.put("saves", intOf(old.get("saves")) + 1);
+            out.put("first_at", first.toString());
+            e.setDetailJson(json(out));
+            e.setEventAt(at);
+            e.setReportVersion(saved.getVersion());
+            events.save(e);
+            return true;
+        } catch (RuntimeException ex) {
+            long now = System.currentTimeMillis();
+            long prev = LAST_MERGE_WARN.get();
+            if (now - prev > 3_600_000L && LAST_MERGE_WARN.compareAndSet(prev, now)) {
+                log.warn("Teknik hata raporu #{} otomatik kayıt olayı birleştirilemedi (saatte bir yazılır): {}", saved.getId(), ex.toString());
+            }
+            return false;
+        }
+    }
+
+    private static Instant firstAt(Map<String, Object> detail, Instant fallback) {
+        Object v = detail.get("first_at");
+        if (v instanceof String s) {
+            try { return Instant.parse(s); } catch (java.time.format.DateTimeParseException ignore) { /* eski biçim */ }
+        }
+        return fallback;
+    }
+
+    private static int intOf(Object o) {
+        return o instanceof Number n ? n.intValue() : 0;
+    }
+
+    /**
+     * İki değişiklik listesini birleştirir (eski önce). Kalıcı ANAHTARI ({@code key}) olan satırlar anahtar başına tek satır
+     * olur — ilk görünüş sırasında: ilk eski değer (+ parmak izi, uzunluk) ile son yeni değer (+ parmak izi, uzunluk, en
+     * yeni ad); işlem son duruma göre yeniden yazılır (konu: ekle / çıkar, özet: elle / otomatik / değişti, diğerleri set /
+     * clear / change); iki parmak izi de varsa ve eşitse (ham değer eski hâline döndü) satır düşer. Sıralama satırı
+     * (reorder) anahtarıyla bir kez kalır. Anahtarsız satır (eski kayıt) olduğu gibi, sırasıyla eklenir — asla düşmez.
+     */
+    static List<Map<String, Object>> mergeChanges(List<Map<String, Object>> older, List<Map<String, Object>> newer) {
+        Map<Object, Map<String, Object>> rows = new LinkedHashMap<>();
+        int legacy = 0;
+        List<Map<String, Object>> all = new ArrayList<>(older);
+        all.addAll(newer);
+        for (Map<String, Object> c : all) {
+            Object key = c.get("key");
+            if (!(key instanceof String k) || k.isEmpty()) {
+                rows.put("legacy#" + (legacy++), new LinkedHashMap<>(c));
+                continue;
+            }
+            Map<String, Object> prev = rows.get(k);
+            if (prev == null) {
+                rows.put(k, new LinkedHashMap<>(c));
+                continue;
+            }
+            if ("reorder".equals(c.get("op"))) continue;
+            Map<String, Object> m = new LinkedHashMap<>(prev);
+            m.put("label", c.get("label"));
+            m.put("section", c.get("section"));
+            m.put("after", c.get("after"));
+            copyOrRemove(c, m, "after_length");
+            copyOrRemove(c, m, "ah");
+            m.put("op", opOf(k, m));
+            rows.put(k, m);
+        }
+        // Konunun en son adı (yeni satırlar sonra geldiği için sonuncusu kazanır): birleşmiş "eklendi" satırı onu gösterir
+        Map<String, Object> lastSubject = new java.util.HashMap<>();
+        for (Map<String, Object> c : all) {
+            if (c.get("key") instanceof String k && k.startsWith("i:") && c.get("subject") != null && k.lastIndexOf(':') > 1) {
+                lastSubject.put(k.substring(0, k.lastIndexOf(':') + 1), c.get("subject"));
+            }
+        }
+        // Pencerede eklenen ya da silinen konunun parça satırları (açıklama, adet …) düşer: tek kayıttaki fark da yeni konu
+        // için yalnız "eklendi" yazar
+        java.util.Set<String> wholeIssue = new java.util.HashSet<>();
+        for (Map.Entry<Object, Map<String, Object>> en : rows.entrySet()) {
+            if (en.getKey() instanceof String k && k.endsWith(":item")) {
+                Object bh = en.getValue().get("bh"), ah = en.getValue().get("ah");
+                if (bh != null && !bh.equals(ah)) wholeIssue.add(k.substring(0, k.length() - "item".length()));
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<Object, Map<String, Object>> en : rows.entrySet()) {
+            Map<String, Object> m = en.getValue();
+            if (!(en.getKey() instanceof String k) || k.startsWith("legacy#")) { out.add(m); continue; }
+            Object bh = m.get("bh"), ah = m.get("ah");
+            if (bh != null && bh.equals(ah)) continue;                                 // ham değer eski hâline döndü
+            if (!k.endsWith(":item") && k.startsWith("i:") && k.lastIndexOf(':') > 1
+                    && wholeIssue.contains(k.substring(0, k.lastIndexOf(':') + 1))) continue;
+            if (k.endsWith(":item") && "add".equals(m.get("op"))) {
+                Object name = lastSubject.get(k.substring(0, k.length() - "item".length()));
+                if (name != null) {
+                    m.put("label", name);
+                    m.put("after", name);
+                    m.put("subject", name);
+                }
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static void copyOrRemove(Map<String, Object> from, Map<String, Object> to, String key) {
+        if (from.containsKey(key)) to.put(key, from.get(key));
+        else to.remove(key);
+    }
+
+    /** Birleşmiş satırın işlemi: önceki / sonraki parmak izine ("0" = boş) ve satırın türüne göre. */
+    private static String opOf(String key, Map<String, Object> m) {
+        boolean wasEmpty = "0".equals(m.get("bh")) || (m.get("bh") == null && m.get("before") == null);
+        boolean nowEmpty = "0".equals(m.get("ah")) || (m.get("ah") == null && m.get("after") == null);
+        if (key.endsWith(":item")) return wasEmpty ? "add" : "remove";
+        if (key.startsWith("s:")) return wasEmpty ? "manual" : nowEmpty ? "auto" : "change";
+        return wasEmpty ? "set" : nowEmpty ? "clear" : "change";
     }
 
     /**

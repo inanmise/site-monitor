@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse, templateResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Kanal teknik hata raporları (2026-10-13): kanal listesi, "X kanalının şablonunu aç" X'i / "Y'ninkini aç" Y'yi açar,
 // kanal açma doğrulaması, şablon düzenleyici (sürüm + çakışma, salt okuma), rapor düzenleyici (sayı çözümleme, sürümlü
@@ -31,6 +31,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   window.history.replaceState({}, '', '/?tab=channelreports')
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => reportsResponse(channel(Number(id), Number(id) === 10 ? 'Mobil' : 'POS')))
   te().template.mockImplementation(async (id) => templateResponse(channel(Number(id), Number(id) === 10 ? 'Mobil' : 'POS')))
