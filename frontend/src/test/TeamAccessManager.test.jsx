@@ -44,6 +44,7 @@ const rowOf = (text) => rows().find((r) => r.textContent.includes(text))
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   window.history.replaceState({}, '', '/?tab=admin&g_tab=sharing')
   confirmMock.mockResolvedValue(true)
   api.teamAccess.list.mockResolvedValue({ success: true, data: { grants: GRANTS, manageable_teams: [{ id: 10, name: 'Ödeme' }] } })
@@ -181,7 +182,10 @@ describe('TeamAccessManager', () => {
     pick(opt)
     await waitFor(() => expect(teamPicker).toHaveTextContent(LONG_TEAM))
     expect(teamPicker.innerHTML).not.toContain('truncate')
+    // k6 uyarısı (2026-10-16): yalnız EDIT / DELETE seçiliyken — betik takımın şifreli ortam değerleriyle koşar
+    expect(document.querySelector('[data-slot="access-k6-warning"]')).toBeNull()
     fireEvent.click(within(form).getByRole('radio', { name: new RegExp(EN['access.level.EDIT']) }))
+    expect(document.querySelector('[data-slot="access-k6-warning"]')).toHaveTextContent(EN['access.k6Warn.title'])
     fireEvent.click(document.querySelector('[data-slot="access-submit"]'))
     await waitFor(() => expect(api.teamAccess.create).toHaveBeenCalledWith({ owner_team_id: 10, grantee_type: 'TEAM', level: 'EDIT', grantee_team_id: 20 }))
     expect(confirmMock).not.toHaveBeenCalled()
@@ -227,6 +231,19 @@ describe('TeamAccessManager', () => {
     await waitFor(() => expect(api.teamAccess.create).toHaveBeenCalled())
     const err = await waitFor(() => { const e = form.querySelector('[data-field="granteeTeamId"]'); expect(e?.textContent).toContain('Alıcı türü geçersiz'); return e })
     expect(err).toBeTruthy()
+  })
+
+  it('2026-10-16: k6 düzenlemesinden önce verilmiş EDIT / Tam paylaşım varsa sahibine bant; kapatılınca geri gelmez', async () => {
+    const first = render(<TeamAccessManager />)
+    const notice = await waitFor(() => { const n = document.querySelector('[data-slot="access-k6-notice"]'); expect(n).not.toBeNull(); return n })
+    // Satırlar: VIEW (sayılmaz), DELETE zamansız (sayılır), EDIT yönetilemez (sayılmaz) → 1
+    expect(notice).toHaveTextContent(EN['access.k6Notice.body'].replace('{0}', '1'))
+    fireEvent.click(within(notice).getByRole('button', { name: EN['access.k6Notice.dismiss'] }))
+    await waitFor(() => expect(document.querySelector('[data-slot="access-k6-notice"]')).toBeNull())
+    first.unmount()
+    render(<TeamAccessManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    expect(document.querySelector('[data-slot="access-k6-notice"]')).toBeNull()
   })
 
   it('"Tam" düzey ayrıca onay ister; vazgeçilirse kayıt yok', async () => {

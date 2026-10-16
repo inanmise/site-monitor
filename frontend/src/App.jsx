@@ -2137,8 +2137,8 @@ export default function App() {
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
-            {/* k6 paylaşımla oluşturulamaz / düzenlenemez (2026-10-12, sunucu requireOwnScopeForScripted): seçici yalnız üyelik takımları */}
-            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {/* k6 da öteki türler gibi paylaşımla yazılabilen takımları alır (2026-10-16, kullanıcı kararı: tam düzenleme) */}
+            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             {/* Markalı 404 (2026-10-08): tanınmayan ?tab= → "Sayfa bulunamadı"; rolüne kapalı sekme → "Erişim yok" (eskiden boş) */}
             {tab === NOT_FOUND_TAB && (

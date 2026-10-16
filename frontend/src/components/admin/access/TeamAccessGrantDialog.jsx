@@ -235,6 +235,12 @@ export default function TeamAccessGrantDialog({ open, onClose, onSaved, onGone, 
             })}
           </RadioGroup>
           {fe.errors.level && <p id={`${levelLabelId}-err`} role="alert" className="m-0 text-xs text-destructive">{fe.errors.level}</p>}
+          {/* 2026-10-16 (kullanıcı kararı: paylaşımda k6 da tam düzenlenir): betik takımın şifreli ortam değerleriyle koşar */}
+          {(form.level === 'EDIT' || form.level === 'DELETE') && (
+            <div data-slot="access-k6-warning">
+              <AlertBanner tone="warning" className="mb-0" title={t('access.k6Warn.title')}>{t('access.k6Warn.body')}</AlertBanner>
+            </div>
+          )}
         </div>
 
         <Field label={t('access.f.expires')} hint={t('access.f.expiresHint')} {...fe.fieldProps('expiresOn')}>

@@ -585,10 +585,9 @@ public class MonitoringController {
         Long liveTeam = liveTeamOf(resolved, entity);
         if (!SessionScope.canDeleteTeamResource(session, liveTeam))
             return forbidden("Bu izleme üzerinde yetkiniz yok");
-        // Takım erişim paylaşımı (inceleme 5): geri yükleme de bir güncellemedir — k6 paylaşımla düzenlenemez, bildirim
-        // YÖNLENDİRMESİ (e-posta / webhook, seviye, grup, 7/24) paylaşımla değiştirilemez. Bu alanlar paylaşımla geri
-        // yükleyende atlanır ve yanıtta söylenir (sessiz değil).
-        if (MonitorHistoryService.SCRIPTED.equals(resolved)) requireOwnScopeForScripted(session, liveTeam);
+        // Takım erişim paylaşımı (inceleme 5): geri yükleme de bir güncellemedir — bildirim YÖNLENDİRMESİ (e-posta /
+        // webhook, seviye, grup, 7/24) paylaşımla değiştirilemez. Bu alanlar paylaşımla geri yükleyende atlanır ve yanıtta
+        // söylenir (sessiz değil). k6 da öteki türler gibi geri yüklenir (2026-10-16).
         boolean routingLocked = !SessionScope.canOperateTeamOwn(session, liveTeam);
 
         String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS
@@ -638,10 +637,40 @@ public class MonitoringController {
             return badRequest("Geri yüklenecek bir fark yok — ayarlar zaten o andaki gibi");
         List<String> applied = MonitorHistoryService.changedFields(effective);
 
+        // Sentetik izlemede alarm ANAHTARI izleme ADIDIR (2026-10-16, inceleme): geri yükleme güncellemeyle aynı kuralları
+        // uygular — ad takım içinde tekil, ad değişirse açık alarm yeni ada taşınır, duraklatmaya dönülürse açık alarm kapanır.
+        // Aksi halde eski adla "hayalet" alarm kalıyordu (paylaşımla geri yükleme de bu yolu kullanır).
+        com.sitemonitor.model.ScriptedMonitor k6 = entity instanceof com.sitemonitor.model.ScriptedMonitor sm ? sm : null;
+        String k6OldName = k6 != null && before.get("name") != null ? before.get("name").toString() : null;
+        if (k6 != null && k6OldName != null && !k6OldName.equals(k6.getName())
+                && scriptedMonitorRepo.existsDuplicate(k6.getName(), k6.getTeamId(), k6.getId()))
+            return badRequest("Bu ad bu takımda zaten kullanılıyor; bu kayda geri dönülemez.");
+        // Duraklatılmış izleme geri yüklemeyle YENİDEN açılıyorsa anomali kapatmasının sebebi düşer (updateScripted ile
+        // aynı kural) — yoksa etkin izlemenin üstünde "anomali nedeniyle kapatıldı" bandı kalırdı
+        if (k6 != null && Boolean.FALSE.equals(before.get("active")) && Boolean.TRUE.equals(k6.getActive())
+                && k6.getDisabledReason() != null) {
+            k6.setDisabledReason(null);
+            k6.setDisabledAt(null);
+        }
+
         // Geri alma da bir GÜNCELLEMEDİR: kaydın "son değiştiren/son değişiklik" künyesi
         // güncellenmezse kart, geri almayı yapan kişiyi ve zamanı hiç göstermez.
         touchUpdated(entity, session);
         saveRestored(resolved, entity);
+        if (k6 != null) {
+            Map<String, Object> owner = ownerCtx(k6.getId(), k6.getTeamId(), null);
+            Set<String> k6Types = Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW);
+            if (k6OldName != null && !k6OldName.equals(k6.getName())) {
+                for (String t : k6Types) {
+                    for (com.sitemonitor.model.AlertEvent a : alertEventRepo.findOpenAlerts(k6OldName, t)) {
+                        if (!EscalationService.closableBy(a, owner)) continue;
+                        a.setDomain(k6.getName());
+                        alertEventRepo.save(a);
+                    }
+                }
+            }
+            closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k6.getActive(), k6.getName(), k6Types, owner);
+        }
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
                 row.getResourceName(), effective);
         monitorHistory.record(resolved, id, row.getResourceName(), row.getTeamId(),
@@ -1083,17 +1112,6 @@ public class MonitoringController {
         } catch (NumberFormatException e) {
             return s;
         }
-    }
-
-    /**
-     * k6 (betikli) izlemeyi oluşturmak / düzenlemek KENDİ kapsamı ister (2026-10-12): betik keyfi koddur ve takımın şifreli
-     * ortam değerleriyle koşar — paylaşım DÜZENLEME düzeyi bunu açmaz (çalıştırma ve silme paylaşımla kalır).
-     */
-    private static void requireOwnScopeForScripted(HttpSession session, Long teamId) {
-        if (SessionScope.canOperateTeamOwn(session, teamId)) return;
-        throw new SecurityException(com.sitemonitor.util.Msg.t(
-                "Betikli (k6) izlemeler takım erişim paylaşımıyla oluşturulamaz ve düzenlenemez; bunu izlemenin takımı yapabilir.",
-                "Scripted (k6) monitors can't be created or edited through team access sharing; the monitor's team can do this."));
     }
 
     /**
@@ -4917,13 +4935,9 @@ public class MonitoringController {
                     return item;
                 }).toList();
         Map<String, Object> out = new LinkedHashMap<>();
-        // k6 düzenleme paylaşımla açılmaz (2026-10-12): satırın can_edit'i KENDİ kapsamı (çalıştırma / silme paylaşımla kalır)
-        List<Map<String, Object>> scriptedRows = withCheckFlag(session, result);
-        for (Map<String, Object> row : scriptedRows) {
-            Long team = row.get("team_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
-            row.put("can_edit", SessionScope.canOperateTeamOwn(session, team));
-        }
-        out.put("monitors", scriptedRows);
+        // Satır bayrakları öteki sekiz türle AYNI (2026-10-16, kullanıcı kararı: paylaşımda k6 da tam düzenlenir —
+        // "yetki verdiği kişi aynı o ekipteki gibi"; 2026-10-12'deki "k6 paylaşımla düzenlenmez" istisnası kaldırıldı)
+        out.put("monitors", withCheckFlag(session, result));
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
@@ -4944,7 +4958,8 @@ public class MonitoringController {
         if (blank(body.get("name"))) return badRequest("ad zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
-        requireOwnScopeForScripted(session, teamId);
+        // Paylaşımla yazılabilen takımda yeni kayıt bildirim yönlendirmesini varsayılanda bırakır (öteki türlerle aynı)
+        guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.ScriptedMonitor());
         if (blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur; izleme oluşturulamıyor.");
         String name = body.get("name").toString().trim();
         if (scriptedMonitorRepo.existsDuplicate(name, teamId, null))
@@ -5010,7 +5025,6 @@ public class MonitoringController {
         if (diag.blocked()) return badRequest(diag.blocking());
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
-            requireOwnScopeForScripted(session, m.getTeamId());
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
             // Env doğrulaması (2026-10-08) — ad değişikliği/alarm taşıma gibi yan etkilerden ÖNCE. Monitörde ZATEN kayıtlı
@@ -5313,8 +5327,18 @@ public class MonitoringController {
         if (mon == null) return notFound("Sentetik izleme bulunamadı");
         var src = new CheckHistoryService.Source<com.sitemonitor.model.ScriptedCheck>() {
             public org.springframework.data.domain.Page<com.sitemonitor.model.ScriptedCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
-                return fail ? scriptedCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
-                            : scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+                var rows = fail ? scriptedCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                                : scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+                // checks_json bu yanıtla izlemeyi GÖREN herkese gider (paylaşımla görenler dahil): maskelemeden önceki
+                // koşumlar da gizli değerleri göstermesin (inceleme 2026-10-16). Satırlar depo çağrısından KOPUK döner
+                // (salt-okunur işlem kapandı) — alanı değiştirmek veritabanına yazılmaz.
+                List<String> secrets = rows.getContent().stream().anyMatch(c -> c.getChecksJson() != null && !c.getChecksJson().isBlank())
+                        ? scriptedChecker.secretValues(mon) : List.of();
+                if (!secrets.isEmpty()) {
+                    for (com.sitemonitor.model.ScriptedCheck c : rows.getContent())
+                        c.setChecksJson(com.sitemonitor.service.SecretMask.maskValues(c.getChecksJson(), secrets));
+                }
+                return rows;
             }
             public long total(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
@@ -5474,26 +5498,38 @@ public class MonitoringController {
             return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
 
         List<String> candidates = scriptedChecker.targetUrls(m);
+        // Gizli env DEĞERLERİ (çözülmüş) adres yoluna / ana makineye de yerleşebilir (`https://x/${__ENV.TOKEN}`):
+        // yanıttaki adres, adaylar, hata iletileri ve bacak metinleri bu değerlerle maskelenir (2026-10-16 — maskUrlQuery
+        // yalnız sorguyu maskeliyordu; paylaşımla EXECUTE alan kişi de teşhis koşturabilir)
+        List<String> secrets = scriptedChecker.secretValues(m);
+        java.util.function.UnaryOperator<String> mask = s -> com.sitemonitor.service.SecretMask.maskValues(
+                com.sitemonitor.service.SecretMask.maskUrlQuery(s), secrets);
         String url = body != null && body.get("url") != null ? body.get("url").toString().trim() : null;
+        // Arayüz ilk yanıttaki MASKELİ adresi kutuya koyar; aynı adres geri gelirse ham adaya dönülür — yoksa ikinci
+        // koşum gerçek adres yerine "*******" içeren adresi yoklardı (inceleme 2026-10-16)
+        if (url != null && !url.isBlank()) {
+            for (String c : candidates) {
+                if (c != null && url.equals(mask.apply(c))) { url = c; break; }
+            }
+        }
         if (url == null || url.isBlank()) url = candidates.isEmpty() ? null : candidates.get(0);
         if (url == null || url.isBlank())
             return badRequest("Hedef adres script'ten çıkarılamadı — teşhis edilecek URL'i elle girin.");
         // Kullanıcı serbest URL verebiliyor ⇒ SSRF yüzeyi: koşum yolundaki AYNI guard'dan geçir.
         try {
             java.net.URI u = java.net.URI.create(url);
-            if (u.getHost() == null) return badRequest("Geçersiz URL: " + url);
+            if (u.getHost() == null) return badRequest("Geçersiz URL: " + mask.apply(url));
             ssrfGuard.validate(u.getHost());
         } catch (com.sitemonitor.service.SsrfGuard.BlockedException be) {
-            return badRequest("Hedef adres teşhis edilemez: " + be.getMessage());
+            return badRequest("Hedef adres teşhis edilemez: "
+                    + com.sitemonitor.service.SecretMask.maskValues(be.getMessage(), secrets));
         } catch (IllegalArgumentException iae) {
-            return badRequest("Geçersiz URL: " + url);
+            return badRequest("Geçersiz URL: " + mask.apply(url));
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("url", url);
-        // Aday adresler secret env DEĞERLERİ içerebilir (BASE_URL bir secret olabilir) — maskele.
-        out.put("candidates", candidates.stream()
-                .map(com.sitemonitor.service.SecretMask::maskUrlQuery).toList());
+        out.put("url", mask.apply(url));
+        out.put("candidates", candidates.stream().map(mask).toList());
         out.put("proxy_configured", proxySettings.enabled());
         out.put("no_proxy", proxySettings.noProxyList());
         out.put("k6_version", scriptedChecker.version());
@@ -5502,10 +5538,25 @@ public class MonitoringController {
         if (proxySettings.enabled())
             legs.add(diagLeg("k6-proxy-ca", "k6 · vekil · kurumsal CA", url, true, true));
         legs.add(diagLeg("k6-direct-noca", "k6 · doğrudan · CA'sız", url, false, false));
+        for (Map<String, Object> leg : legs) {
+            for (String k : List.of("error", "output_tail")) {
+                if (leg.get(k) instanceof String str) leg.put(k, com.sitemonitor.service.SecretMask.maskValues(str, secrets));
+            }
+        }
         out.put("legs", legs);
         auditService.recordAction("MONITOR_DIAGNOSE", session, "SCRIPTED_MONITOR",
                 String.valueOf(m.getId()), m.getName(), null);
         return ok(out);
+    }
+
+    /**
+     * Saklanmış k6 çıktısını (checks_json) izlemenin GÜNCEL gizli env değerleriyle maskeler (2026-10-16): koşum anında
+     * maskeleme bu sürümle geldi; önceki koşumların satırları okurken maskelenir. Boş metinde çözme yapılmaz.
+     */
+    private String maskScriptedSecrets(String text, com.sitemonitor.model.ScriptedMonitor m) {
+        if (text == null || text.isBlank() || m == null) return text;
+        List<String> secrets = scriptedChecker.secretValues(m);
+        return secrets.isEmpty() ? text : com.sitemonitor.service.SecretMask.maskValues(text, secrets);
     }
 
     /** Tek teşhis bacağı → {key, label, status, error, faz kırılımı}. */
@@ -5884,7 +5935,7 @@ public class MonitoringController {
             item.put("checks_passed", latest.getChecksPassed());
             item.put("checks_failed", latest.getChecksFailed());
             item.put("http_req_avg_ms", latest.getHttpReqAvgMs());
-            item.put("checks_json", latest.getChecksJson());
+            item.put("checks_json", maskScriptedSecrets(latest.getChecksJson(), m));
             item.put("output_tail", latest.getOutputTail());
             item.put("error", latest.getError());
             item.put("via_proxy", latest.getViaProxy());

@@ -756,6 +756,184 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.alert_level").value("CRITICAL"));
     }
 
+    /** Takım 9 üyesi (USER); takım 5'e verilen kümülatif paylaşım düzeyleri. */
+    private MockHttpSession k6GranteeOf5(String... levels) {
+        MockHttpSession u = session("USER");
+        u.setAttribute("teamId", 9L);
+        u.setAttribute("viewTeamIds", List.of(9L));
+        u.setAttribute("memberTeamIds", List.of(9L));
+        u.setAttribute("manageTeamIds", List.of());
+        for (String a : levels) u.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+        return u;
+    }
+
+    private static com.sitemonitor.model.ScriptedMonitor k6Monitor(long id, long team) {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(id); m.setName("k6-" + id); m.setTeamId(team); m.setActive(true);
+        m.setScript("import http from 'k6/http';\nexport default function () { http.get('https://example.com/'); }\n");
+        return m;
+    }
+
+    @Test
+    @DisplayName("2026-10-16: EDIT paylaşımı k6 izlemeyi TAM düzenler (betik dahil, kullanıcı kararı) — bildirim yönlendirmesi yine "
+            + "403, EXECUTE paylaşımı düzenleyemez")
+    void scripted_editGrant_editsFully_routingStillGuarded() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = k6Monitor(41L, 5L);
+        when(scriptedMonitorRepo.findById(41L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(41L)).thenReturn(Optional.empty());
+        MockHttpSession edit = k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT);
+        String newScript = "import http from 'k6/http';\\nexport default function () { http.get('https://example.com/x'); }\\n";
+        mvc.perform(put("/api/monitoring/scripted/41").session(edit)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"script\":\"" + newScript + "\",\"intervalSeconds\":600,\"active\":false}"))
+                .andExpect(status().isOk());
+        assertThat(m.getScript()).contains("example.com/x");
+        assertThat(m.getIntervalSeconds()).isEqualTo(600);
+        assertThat(m.getActive()).isFalse();
+        // Bildirim yönlendirmesi paylaşılmaz (öteki türlerle aynı)
+        mvc.perform(put("/api/monitoring/scripted/41").session(edit)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"alertLevel\":\"CRITICAL\"}"))
+                .andExpect(status().isForbidden());
+        // EXECUTE düzeyi düzenleyemez
+        mvc.perform(put("/api/monitoring/scripted/41").session(k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"intervalSeconds\":900}"))
+                .andExpect(status().isForbidden());
+        assertThat(m.getIntervalSeconds()).isEqualTo(600);
+    }
+
+    @Test
+    @DisplayName("2026-10-16: k6 liste bayrakları öteki türlerle aynı — EDIT paylaşımında can_edit + routing_locked, EXECUTE'ta yalnız "
+            + "can_check, kendi takımında kilit yok")
+    void scripted_list_grantFlagsMatchOtherTypes() throws Exception {
+        when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(k6Monitor(1L, 5L), k6Monitor(2L, 9L)));
+        when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        mvc.perform(get("/api/monitoring/scripted").session(
+                        k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_edit").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].routing_locked").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_delete").value(false))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 2)].can_edit").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 2)].routing_locked").isEmpty());
+        mvc.perform(get("/api/monitoring/scripted").session(k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_check").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_edit").value(false));
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-16: liste, maskelemeden ÖNCE yazılmış koşumun checks_json'unu da gizli değerlerle maskeler")
+    void scripted_list_masksSecretsInStoredChecksJson() throws Exception {
+        when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(k6Monitor(1L, 5L)));
+        com.sitemonitor.model.ScriptedCheck old = new com.sitemonitor.model.ScriptedCheck();
+        old.setMonitorId(1L);
+        old.setStatus("PASS"); old.setOk(true);
+        old.setChecksJson("[{\"name\":\"anahtar S3cretTokenValue\",\"passed\":true}]");
+        when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of(old));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.secretValues(any())).thenReturn(List.of("S3cretTokenValue"));
+        String body = mvc.perform(get("/api/monitoring/scripted").session(
+                        k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("S3cretTokenValue").contains("anahtar");
+    }
+
+    @Test
+    @DisplayName("2026-10-16: EDIT paylaşımıyla paylaşan takıma YENİ k6 izleme — varsayılan yönlendirmeyle kabul, 7/24 / seviye seçimi 403")
+    void createScripted_inGrantTeam_routingStaysDefault() throws Exception {
+        when(scriptedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(scriptedMonitorRepo.save(any(com.sitemonitor.model.ScriptedMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.ScriptedMonitor p = a.getArgument(0); p.setId(77L); return p; });
+        MockHttpSession u = k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT);
+        String base = "\"name\":\"k6-yeni\",\"groupName\":\"Grup A\",\"tags\":\"t1\",\"script\":\"export default function () {}\",\"teamId\":5";
+        mvc.perform(post("/api/monitoring/scripted").session(u)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + ",\"notifyEmail\":true,\"notifyWebhook\":true,\"nocNotify\":false,\"alertLevel\":\"WARNING\"}"))
+                .andExpect(status().isOk());
+        for (String extra : List.of("\"nocNotify\":true", "\"alertLevel\":\"CRITICAL\"", "\"notifyEmail\":false")) {
+            mvc.perform(post("/api/monitoring/scripted").session(u)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{" + base + "," + extra + "}"))
+                    .andExpect(status().isForbidden());
+        }
+        // VIEW + EXECUTE paylaşımı oluşturamaz
+        mvc.perform(post("/api/monitoring/scripted").session(k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{" + base + "}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("2026-10-16: k6 teşhis yanıtı izlemenin GİZLİ değerlerini maskeler — adres yolunda / ana makinede ve bacak metninde")
+    void scriptedDiagnose_masksSecretValuesInUrlAndLegs() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = k6Monitor(31L, 5L);
+        when(scriptedMonitorRepo.findById(31L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.secretValues(any())).thenReturn(List.of("S3cretTokenValue"));
+        when(scriptedChecker.targetUrls(any())).thenReturn(List.of("https://hedef.example/api/S3cretTokenValue/x"));
+        when(scriptedChecker.probe(anyString(), anyBoolean(), anyBoolean())).thenReturn(
+                new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult(
+                        "FAIL", false, 12L, 0, null, null, null, null, null, null,
+                        "tail S3cretTokenValue", "GET https://hedef.example/api/S3cretTokenValue/x: timeout", false,
+                        com.sitemonitor.service.ScriptedCheckerService.Phases.EMPTY));
+        String body = mvc.perform(post("/api/monitoring/scripted/31/diagnose").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("S3cretTokenValue");
+        assertThat(body).contains("hedef.example");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-16: yanıttaki MASKELİ adres geri gönderilince teşhis ham adresi yoklar (ikinci koşum bozulmaz)")
+    void scriptedDiagnose_maskedUrlRoundTripsToRawCandidate() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = k6Monitor(31L, 5L);
+        when(scriptedMonitorRepo.findById(31L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.secretValues(any())).thenReturn(List.of("S3cretTokenValue"));
+        when(scriptedChecker.targetUrls(any())).thenReturn(List.of("https://hedef.example/api/S3cretTokenValue/x?token=abc123"));
+        when(scriptedChecker.probe(anyString(), anyBoolean(), anyBoolean())).thenReturn(
+                new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult(
+                        "PASS", true, 12L, 0, null, null, null, null, null, null, "", null, false,
+                        com.sitemonitor.service.ScriptedCheckerService.Phases.EMPTY));
+        String first = mvc.perform(post("/api/monitoring/scripted/31/diagnose").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String masked = com.jayway.jsonpath.JsonPath.read(first, "$.data.url");
+        assertThat(masked).doesNotContain("S3cretTokenValue").doesNotContain("abc123");
+        org.mockito.Mockito.clearInvocations(scriptedChecker);
+
+        mvc.perform(post("/api/monitoring/scripted/31/diagnose").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(java.util.Map.of("url", masked))))
+                .andExpect(status().isOk());
+        verify(scriptedChecker, org.mockito.Mockito.atLeastOnce())
+                .probe(eq("https://hedef.example/api/S3cretTokenValue/x?token=abc123"), anyBoolean(), anyBoolean());
+        verify(scriptedChecker, never()).probe(eq(masked), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-16: geçersiz hedef adresin 400 iletisi de gizli değeri maskeler")
+    void scriptedDiagnose_invalidUrlMessageIsMasked() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = k6Monitor(31L, 5L);
+        when(scriptedMonitorRepo.findById(31L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.secretValues(any())).thenReturn(List.of("p%ss^w0rdGizli"));
+        when(scriptedChecker.targetUrls(any())).thenReturn(List.of("https://hedef.example/x?pw=p%ss^w0rdGizli"));
+        String body = mvc.perform(post("/api/monitoring/scripted/31/diagnose").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("w0rdGizli");
+        verify(scriptedChecker, never()).probe(anyString(), anyBoolean(), anyBoolean());
+    }
+
     @Test
     @DisplayName("inceleme 5: liste satırında routing_locked = yalnız paylaşımla düzenleyebilen; kendi takımında ve VIEW/EXECUTE'ta yok")
     void teamAccessGrant_routingLockedFlag() throws Exception {
@@ -3408,17 +3586,63 @@ class MonitoringControllerTest {
         }
 
         @Test
-        @DisplayName("inceleme 5: k6 (betikli) izleme paylaşımla geri YÜKLENEMEZ — DELETE paylaşımı bile olsa 403")
-        void restore_scripted_byGrantee_is403() throws Exception {
+        @DisplayName("2026-10-16: k6 (betikli) izleme de paylaşımla geri yüklenir (öteki türler gibi; 2026-10-12 istisnası kaldırıldı)")
+        void restore_scripted_byGrantee_restores() throws Exception {
             com.sitemonitor.model.ScriptedMonitor live = new com.sitemonitor.model.ScriptedMonitor();
             live.setId(4L); live.setName("canli"); live.setTeamId(5L);
             when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+            when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+            com.sitemonitor.model.MonitorChangeLog r = snapRow(5L, "{\"name\":\"eski\"}");
+            r.setResourceKind("SCRIPTED"); r.setResourceId(4L); r.setSeq(1);
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("SCRIPTED", 4L, 1)).thenReturn(Optional.of(r));
+
+            com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
+            open.setDomain("canli"); open.setAlertType(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL);
+            open.setTeamId(5L);
+            open.setContextJson("{\"monitor_id\":4}");   // bu izlemenin açtığı alarm (sahiplik süzgecinden geçer)
+            when(alertEventRepo.findOpenAlerts(eq("canli"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                    .thenReturn(List.of(open));
+
+            mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isOk());
+            assertThat(live.getName()).isEqualTo("eski");
+            // Alarm anahtarı ad: açık alarm yeni (geri yüklenen) ada taşınır — "hayalet" alarm kalmaz (inceleme 2026-10-16)
+            verify(alertEventRepo).save(org.mockito.ArgumentMatchers.argThat(
+                    (com.sitemonitor.model.AlertEvent a) -> "eski".equals(a.getDomain())));
+        }
+
+        @Test
+        @DisplayName("inceleme 2026-10-16: duraklatılmış k6 geri yüklemeyle açılırsa anomali kapatma sebebi düşer (güncellemeyle aynı)")
+        void restore_scripted_reactivation_clearsAnomalyReason() throws Exception {
+            com.sitemonitor.model.ScriptedMonitor live = new com.sitemonitor.model.ScriptedMonitor();
+            live.setId(4L); live.setName("canli"); live.setTeamId(5L); live.setActive(false);
+            live.setDisabledReason("Anomali: art arda zaman aşımı"); live.setDisabledAt("2026-10-15T10:00:00");
+            when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+            when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+            com.sitemonitor.model.MonitorChangeLog r = snapRow(5L, "{\"active\":true}");
+            r.setResourceKind("SCRIPTED"); r.setResourceId(4L); r.setSeq(1);
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("SCRIPTED", 4L, 1)).thenReturn(Optional.of(r));
+
+            mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(deleteGranteeOf5()))
+                    .andExpect(status().isOk());
+            assertThat(live.getActive()).isTrue();
+            assertThat(live.getDisabledReason()).isNull();
+            assertThat(live.getDisabledAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("2026-10-16: k6 geri yüklemesi takımdaki başka izlemenin adını alamaz (güncellemeyle aynı tekillik kuralı)")
+        void restore_scripted_duplicateName_isRejected() throws Exception {
+            com.sitemonitor.model.ScriptedMonitor live = new com.sitemonitor.model.ScriptedMonitor();
+            live.setId(4L); live.setName("canli"); live.setTeamId(5L);
+            when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+            when(scriptedMonitorRepo.existsDuplicate("eski", 5L, 4L)).thenReturn(true);
             com.sitemonitor.model.MonitorChangeLog r = snapRow(5L, "{\"name\":\"eski\"}");
             r.setResourceKind("SCRIPTED"); r.setResourceId(4L); r.setSeq(1);
             when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("SCRIPTED", 4L, 1)).thenReturn(Optional.of(r));
 
             mvc.perform(post("/api/monitoring/changes/scripted/4/1/restore").session(deleteGranteeOf5()))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isBadRequest());
             verify(scriptedMonitorRepo, never()).save(any());
         }
 

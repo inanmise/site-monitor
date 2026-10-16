@@ -55,6 +55,17 @@ export function normalizeGrant(raw) {
   }
 }
 
+/**
+ * 2026-10-16 (kullanıcı kararı): EDIT / Tam paylaşımları sentetik (k6) betiğini de düzenletir — önceki açıklama "k6 takımınızda
+ * kalır" diyordu. Süresi dolmamış, yönetilebilen EDIT / Tam paylaşımlarının HEPSİ sahibe bir kez söylenir (bant kapatılana
+ * kadar). Tarihe göre ayırmak yanılıyordu (inceleme 2026-10-16): eski sürümde, değişiklik yayına çıkmadan verilen paylaşımlar
+ * da eski metni görmüştü; sunucu zamanı bölgesiz UTC geldiği için tarayıcı onu yerel saat sanıyordu.
+ */
+export function k6EditGrants(grants) {
+  return (Array.isArray(grants) ? grants : []).filter((g) =>
+    !!g?.canEdit && !g.expired && (g.level === 'EDIT' || g.level === 'DELETE'))
+}
+
 /** Bitişe kalan gün (bitiş anı UTC ISO; yoksa null = süresiz). */
 export function daysLeft(grant, now = Date.now()) {
   if (!grant?.expiresAt) return null
