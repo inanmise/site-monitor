@@ -90,6 +90,7 @@ class TechErrorReportSenderTest {
         assertThat(p.role()).isEqualTo("TEAM");
         assertThat(p.to()).isEqualTo(TechErrorReportSender.recipients(team));
         assertThat(p.cc()).isEmpty();
+        assertThat(p.toDropped()).isZero();                           // A3: sınır dışında alıcı yok
         assertThat(p.problem()).isNull();
         assertThat(p.fileName()).endsWith(".pdf");
         assertThat(p.embeddedImages()).isEqualTo(1);
@@ -164,6 +165,17 @@ class TechErrorReportSenderTest {
     @DisplayName("alıcılar: ; ve , ayraçlı, biçimsiz atılır, tekrar tekilleşir; adres yoksa 409 ve HİÇBİR şey yazılmaz")
     void recipients() {
         assertThat(TechErrorReportSender.recipients(team)).containsExactly("dijital@example.com", "ikinci@example.com");
+        assertThat(TechErrorReportSender.parseAddressesDetailed(team.getEmail()).dropped()).isZero();
+        // A3: 21 teslim edilebilir adres → 20 + 1 düşen; tekrar (büyük harfli) ve biçimsiz düşen SAYILMAZ; parseAddresses aynı liste
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 21; i++) many.append("u").append(i).append("@example.com; ");
+        many.append("U1@example.com, bozuk adres");
+        TechErrorReportSender.Addresses d = TechErrorReportSender.parseAddressesDetailed(many.toString());
+        assertThat(d.addresses()).hasSize(TechErrorReportSender.MAX_RECIPIENTS).startsWith("u1@example.com").endsWith("u20@example.com");
+        assertThat(d.dropped()).isEqualTo(1);
+        assertThat(TechErrorReportSender.parseAddresses(many.toString())).isEqualTo(d.addresses());
+        assertThat(TechErrorReportSender.parseAddressesDetailed(null).dropped()).isZero();
+        assertThat(TechErrorReportSender.parseAddressesDetailed(" ; , ").addresses()).isEmpty();
         team.setEmail("  ");
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("TEAM_EMAIL_MISSING");
@@ -192,6 +204,30 @@ class TechErrorReportSenderTest {
         assertThat(log.getValue().getAlertEventId()).isZero();
         verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
                 eq(List.of("dijital@example.com", "ikinci@example.com")), org.mockito.ArgumentMatchers.isNull(), eq(now));
+    }
+
+    @Test
+    @DisplayName("A3 (inceleme 2026-10-17): takım adresinde 21+ alıcı — önizleme toDropped sayar (Kime 20), EXECUTIVE yolunda Kime kaynağı yönetici listesi; gönderim WARN + geçmiş olayına dropped_recipients (8 argümanlı kayıt); düşen yoksa eski 7 argümanlı kayıt")
+    void droppedRecipientsAreCountedAndRecorded() {
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 22; i++) many.append("u").append(i).append("@example.com, ");
+        team.setEmail(many.toString());
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.to()).hasSize(20);
+        assertThat(p.toDropped()).isEqualTo(2);
+        channel.setExecutiveEmails("ceo@example.com");
+        TechErrorReportSender.Preview ex = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(ex.to()).containsExactly("ceo@example.com");
+        assertThat(ex.toDropped()).isZero();                          // takımın fazlası Kime'yi değil bilgiyi ilgilendirir
+        assertThat(ex.cc()).hasSize(20);
+        mailReturns("SENT");
+        var res = sender.send(report, channel, team, 7L);
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
+                org.mockito.ArgumentMatchers.<java.util.Collection<String>>argThat(l -> l != null && l.size() == 20),
+                org.mockito.ArgumentMatchers.isNull(), eq(now), eq(Map.of("dropped_recipients", 2)));
+        verify(history, never()).recordSend(any(), anyString(), any(), anyString(), any(), any(), any());
     }
 
     private static byte[] samplePng(int w, int h) throws java.io.IOException {

@@ -16,6 +16,7 @@ import com.sitemonitor.repository.TechErrorReportEventRepository;
 import com.sitemonitor.repository.TechErrorReportRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.EmailNotificationService;
+import com.sitemonitor.service.PermissionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,8 @@ class TechErrorApprovalServiceTest {
     @MockitoBean TechErrorReportSender sender;
     @MockitoBean EmailNotificationService email;
     @MockitoBean AppSettingsService appSettings;
+    /** A1: yetki matrisi — varsayılan stub izni AÇIK (üretimdeki seed gibi); ilgili test kapatır. */
+    @MockitoBean PermissionService permissions;
 
     private static final Pattern LINK = Pattern.compile("approve-link\\?token=([A-Za-z0-9_-]+)");
 
@@ -93,6 +96,7 @@ class TechErrorApprovalServiceTest {
         when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("https://sm.example/");
         when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
         when(sender.maxMailBytes()).thenReturn(15L * 1024 * 1024);
+        when(permissions.allows(org.mockito.ArgumentMatchers.nullable(String.class), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute"))).thenReturn(true);
         team = new Team();
         team.setId(1L);
         team.setName("Dijital");
@@ -216,11 +220,15 @@ class TechErrorApprovalServiceTest {
         assertThat(events.findAll()).extracting(e -> e.getKind()).contains("APPROVAL_REQUEST");
         assertThatThrownBy(() -> approvals.request(service.report(r.getId()), ch, team, tech.getId()))
                 .isInstanceOf(CodedConflictException.class).extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("APPROVAL_PENDING");
-        // İçerik değişti → yeni istek: eski belirteçler ölür
+        // İçerik değişti → yeni istek: eski belirteçler SİLİNMEZ, "yerine geçti" olur (A2) — eski bağlantı sebebini söyler
         reports.touchContent(r.getId(), service.now());
         approvals.request(service.report(r.getId()), ch, team, tech.getId());
-        for (String raw : raws) assertThat(approvals.status(raw).reason()).isEqualTo("not_found");
-        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(2);
+        for (String raw : raws) assertThat(approvals.status(raw).reason()).isEqualTo("superseded");
+        List<TechErrorApprovalToken> all = tokens.findByReportIdOrderByIdAsc(r.getId());
+        assertThat(all).hasSize(4);
+        assertThat(all.stream().filter(t -> t.getSupersededAt() == null)).hasSize(2);
+        assertThat(all.stream().filter(t -> t.getSupersededAt() != null)).hasSize(2)
+                .allSatisfy(t -> assertThat(t.getSupersededAt()).isEqualTo(service.now()));
     }
 
     @Test
@@ -328,9 +336,13 @@ class TechErrorApprovalServiceTest {
         reports.touchContent(r.getId(), service.now());
         assertThat(approvals.status(rawPo1).valid()).isTrue();
         assertThat(approvals.status(rawPo1).stale()).isTrue();
-        // Yeni istek → eski bağlantı silinir
+        // Yeni istek → eski bağlantı "yerine geçti" (A2): silinmez, sebebini söyler, raporu / onaylayıcısı hâlâ okunur
         approvals.request(service.report(r.getId()), ch, team, tech.getId());
-        assertThat(approvals.status(rawPo1).reason()).isEqualTo("not_found");
+        TechErrorApprovalService.TokenStatus old = approvals.status(rawPo1);
+        assertThat(old.valid()).isFalse();
+        assertThat(old.reason()).isEqualTo("superseded");
+        assertThat(old.report().getId()).isEqualTo(r.getId());
+        assertThat(old.user().getId()).isEqualTo(po1.getId());
         ArgumentCaptor<String> html2 = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String[]> to2 = ArgumentCaptor.forClass(String[].class);
         verify(email, times(4)).sendHtml(to2.capture(), any(), anyString(), html2.capture(), any(), any(), eq(false), any());
@@ -359,6 +371,102 @@ class TechErrorApprovalServiceTest {
         Matcher m = LINK.matcher(html3.getAllValues().get(6));
         assertThat(m.find()).isTrue();
         assertThat(approvals.status(m.group(1)).reason()).isEqualTo("expired");
+    }
+
+    /** Son postaların arasından verilen alıcıya giden EN SON bağlantının ham belirteci (istek postaları onaylayıcı başına). */
+    private String rawTokenOf(String recipientPrefix) {
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, org.mockito.Mockito.atLeastOnce()).sendHtml(to.capture(), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        String found = null;
+        for (int i = 0; i < to.getAllValues().size(); i++) {
+            if (!to.getAllValues().get(i)[0].startsWith(recipientPrefix)) continue;
+            Matcher m = LINK.matcher(html.getAllValues().get(i));
+            if (m.find()) found = m.group(1);
+        }
+        assertThat(found).as("bağlantı: " + recipientPrefix).isNotNull();
+        return found;
+    }
+
+    @Test
+    @DisplayName("A1 (inceleme 2026-10-17): yetki matrisi — rolü için tech_error_reports.approve KAPALI PO bağlantıdan da onaylayamaz: status no_permission, decideViaToken no_permission, belirteç tüketilmez, rapor PENDING kalır, onay olayı yok; izin açılınca aynı bağlantı çalışır; fasulye yoksa izin var")
+    void approvePermissionGate() {
+        po1.setSystemRole("USER");
+        users.save(po1);
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());
+        String raw = rawTokenOf("po1");
+        assertThat(approvals.status(raw).valid()).isTrue();
+        // Rolün izni kapatıldı (matris): bağlantı sayfası sebebini söyler, karar yazılmaz, belirteç durur
+        when(permissions.allows(eq("USER"), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute"))).thenReturn(false);
+        TechErrorApprovalService.TokenStatus st = approvals.status(raw);
+        assertThat(st.valid()).isFalse();
+        assertThat(st.reason()).isEqualTo("no_permission");
+        assertThat(st.report().getId()).isEqualTo(r.getId());
+        assertThat(st.user().getId()).isEqualTo(po1.getId());
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, false, "Eksik")).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+        assertThat(tokens.findByTokenHash(TechErrorApprovalService.hash(raw)).orElseThrow().getUsedAt()).isNull();
+        assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+        assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+        verify(sender, never()).send(any(), any(), any(), any(), any());
+        verify(permissions, org.mockito.Mockito.atLeastOnce()).allows(eq("USER"), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute"));
+        // İzin açıldı → aynı bağlantı karar verir
+        when(permissions.allows(eq("USER"), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute"))).thenReturn(true);
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+        assertThat(approvals.decideViaToken(raw, team, true, null).state()).isEqualTo("APPROVED");
+        // Dikiş: fasulye yoksa (dilim testleri) izin var sayılır; kullanıcı yoksa yok
+        TechErrorApprovalService bare = new TechErrorApprovalService(service, reports, tokens, users, sender, email, logs, appSettings);
+        assertThat(bare.hasApprovePermission(po1)).isTrue();
+        assertThat(bare.hasApprovePermission(null)).isFalse();
+        assertThat(approvals.hasApprovePermission(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("A2 (inceleme 2026-10-17): yeniden istek eski bağlantıları silmez — status 'superseded' (rapor / onaylayıcı okunur), yerine geçilmiş belirteç onay da red de veremez (tüketilmez, karar yok), yeni bağlantı çalışır; karar eski satırı da kapatır; süresi de dolmuş yerine geçilmişler istekte budanır")
+    void resendSupersedesOldLinks() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());
+        String old = rawTokenOf("po1");
+        reports.touchContent(r.getId(), service.now());
+        approvals.request(service.report(r.getId()), ch, team, tech.getId());
+        String fresh = rawTokenOf("po1");
+        assertThat(fresh).isNotEqualTo(old);
+        TechErrorApprovalService.TokenStatus st = approvals.status(old);
+        assertThat(st.valid()).isFalse();
+        assertThat(st.reason()).isEqualTo("superseded");
+        assertThat(st.report().getId()).isEqualTo(r.getId());
+        assertThat(st.channel()).isNotNull();
+        assertThat(st.user().getId()).isEqualTo(po1.getId());
+        assertThatThrownBy(() -> approvals.decideViaToken(old, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("superseded");
+        assertThatThrownBy(() -> approvals.decideViaToken(old, team, false, "Eksik")).isInstanceOf(IllegalStateException.class).hasMessage("superseded");
+        TechErrorApprovalToken oldRow = tokens.findByTokenHash(TechErrorApprovalService.hash(old)).orElseThrow();
+        assertThat(oldRow.getUsedAt()).isNull();
+        assertThat(oldRow.getSupersededAt()).isEqualTo(service.now());
+        assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+        assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+        // Süresi dolmamış yerine geçilmişler budanmaz (sayfa sebebini söylemeye devam eder)
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(4);
+        // Yeni bağlantı karar verir; karar raporun BÜTÜN açık satırlarını kapatır → eski artık "used"
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+        assertThat(approvals.decideViaToken(fresh, team, true, null).state()).isEqualTo("APPROVED");
+        assertThat(approvals.status(old).reason()).isEqualTo("used");
+        assertThat(approvals.status(fresh).reason()).isEqualTo("used");
+        // Budama: 14 gün geçmiş istek yeniden gönderilince eskiler yerine geçer VE süresi dolduğu için silinir
+        TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
+        approvals.request(r2, ch, team, tech.getId());
+        List<Long> firstIds = tokens.findByReportIdOrderByIdAsc(r2.getId()).stream().map(TechErrorApprovalToken::getId).toList();
+        assertThat(firstIds).hasSize(2);
+        service.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z").plus(TechErrorApprovalService.TOKEN_TTL).plusSeconds(3600), ZoneOffset.UTC));
+        approvals.request(service.report(r2.getId()), ch, team, tech.getId());
+        List<TechErrorApprovalToken> after = tokens.findByReportIdOrderByIdAsc(r2.getId());
+        assertThat(after).hasSize(2).allSatisfy(t -> assertThat(t.getSupersededAt()).isNull());
+        assertThat(after).extracting(TechErrorApprovalToken::getId).doesNotContainAnyElementsOf(firstIds);
+        assertThat(tokens.findAllById(firstIds)).isEmpty();
     }
 
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -391,9 +499,12 @@ class TechErrorApprovalServiceTest {
         service.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z").plus(TechErrorApprovalService.RESEND_AFTER).plusSeconds(1), ZoneOffset.UTC));
         TechErrorApprovalService.RequestResult res = approvals.request(service.report(r.getId()), ch, team, tech.getId());
         assertThat(res.mailed()).isEqualTo(2);
-        List<TechErrorApprovalToken> second = tokens.findByReportIdOrderByIdAsc(r.getId());
+        // A2: eskiler durur ama "yerine geçti"; yalnız yeni ikisi geçerli
+        List<TechErrorApprovalToken> second = tokens.findByReportIdOrderByIdAsc(r.getId()).stream().filter(t -> t.getSupersededAt() == null).toList();
         assertThat(second).hasSize(2);
         assertThat(second).extracting(TechErrorApprovalToken::getId).doesNotContainAnyElementsOf(first.stream().map(TechErrorApprovalToken::getId).toList());
+        assertThat(tokens.findAllById(first.stream().map(TechErrorApprovalToken::getId).toList()))
+                .hasSize(2).allSatisfy(t -> assertThat(t.getSupersededAt()).isNotNull());
         assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
         verify(email, times(4)).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), eq(false), any());
     }

@@ -798,6 +798,23 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (rapor)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (rapor)').toEqual([])
 
+      // A4 (2026-10-17): yapışkan eylem çubuğu (telefonda 2–3 satıra sarılır) son bölüm kartını ÖRTMEZ — kabın alt boşluğu
+      // çubuğun GERÇEK yüksekliğini izler (useElementHeight); sayfanın en altında kart çubuğun üstünde biter
+      const actionBar = page.locator('[data-slot="te-report-actions"]')
+      await actionBar.evaluate((el) => el.scrollIntoView({ block: 'end' }))
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await page.waitForTimeout(300)
+      const lastSection = editor.locator(':scope > [data-slot^="te-"]:has([data-slot="te-section-toggle"])').last()
+      const lastBox = await lastSection.boundingBox()
+      const barBox = await actionBar.boundingBox()
+      expect(lastBox, 'son bölüm kartı ölçülür').not.toBeNull()
+      expect(barBox.height, 'eylem çubuğu ölçülür').toBeGreaterThan(0)
+      expect(lastBox.y + lastBox.height, 'son bölüm kartı eylem çubuğunun üstünde biter (örtülmez)').toBeLessThanOrEqual(barBox.y + 1)
+      const padBottom = await editor.evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom))
+      expect(padBottom, 'alt boşluk = çubuk yüksekliği + 16 (sabit pb-24 değil)').toBeGreaterThanOrEqual(barBox.height + 15)
+      expect(padBottom).toBeLessThanOrEqual(barBox.height + 17)
+      await page.evaluate(() => window.scrollTo(0, 0))
+
       // Grafik ızgarası: 768+ yarımlar yan yana, tam iki kolon; telefonda alt alta
       const a = await editor.locator('[data-slot-id="monthly-tx"]').boundingBox()
       const b = await editor.locator('[data-slot-id="tech-errors"]').boundingBox()

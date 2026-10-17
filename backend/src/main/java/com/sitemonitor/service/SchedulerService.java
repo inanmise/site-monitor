@@ -1804,6 +1804,9 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_otp_user_failed ON login_otp_challenges(username, last_failed_at)");
         // Bilinmeyen kullanıcı adının ilerleyici kilidi (2026-10-09) — LoginUnknownLockout / UnknownUserLockoutService.
         patch("CREATE TABLE IF NOT EXISTS login_unknown_lockouts(username_key VARCHAR(100) PRIMARY KEY, lockout_level INTEGER, lockout_until VARCHAR(30), last_lockout_at VARCHAR(30), created_at VARCHAR(30), updated_at VARCHAR(30))");
+        // Kanal teknik hata raporu PO onayı bağlantı belirteçleri (2026-10-17, inceleme A2): yeni istek eskileri silmez,
+        // "yerine geçti" damgalar — TechErrorApprovalToken.supersededAt (Instant → TIMESTAMP WITH TIME ZONE; NULL = geçerli istek).
+        patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN superseded_at TIMESTAMP WITH TIME ZONE");
 
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim

@@ -712,7 +712,7 @@ class TechErrorReportControllerTest {
                 new TechErrorReportSender.Preview("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026", List.of("takim1@example.com"), List.of(),
                         "TEAM", "<html><img src=\"data:image/png;base64,AAAA\"></html>", "metin", "mobil-2026-09.pdf", 1, 0, null,
                         new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ali Veli",
-                                Instant.parse("2026-09-05T06:12:00Z"), null, null, null), 123_456L, 15));
+                                Instant.parse("2026-09-05T06:12:00Z"), null, null, null), 123_456L, 15, 0));
         mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(audit()))      // salt okuyan da önizler
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.subject").value("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026"))
@@ -724,6 +724,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.delivery").value("TEAM"))
                 .andExpect(jsonPath("$.data.to[0]").value("takim1@example.com"))
                 .andExpect(jsonPath("$.data.to_count").value(1))
+                .andExpect(jsonPath("$.data.to_dropped").value(0))             // A3: sınır dışında alıcı yok
                 .andExpect(jsonPath("$.data.recipients_hidden").value(false))
                 .andExpect(jsonPath("$.data.file_name").value("mobil-2026-09.pdf"))
                 .andExpect(jsonPath("$.data.images_embedded").value(1))
@@ -737,7 +738,7 @@ class TechErrorReportControllerTest {
                 new TechErrorReportSender.Preview("Konu", List.of("ceo@example.com", "cfo@example.com"), List.of("takim1@example.com"),
                         "EXECUTIVE", "<html></html>", "metin", "m.pdf", 0, 0, null,
                         new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ayşe Yılmaz",
-                                Instant.parse("2026-09-03T11:05:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z")), 999L, 15));
+                                Instant.parse("2026-09-03T11:05:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z")), 999L, 15, 3));
         mvc.perform(get("/api/tech-error-reports/reports/130/mail-preview").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.delivery").value("EXECUTIVE"))
@@ -745,6 +746,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.provenance.approved_by").value("Mehmet PO"))
                 .andExpect(jsonPath("$.data.provenance.approved_at").value("2026-09-06T07:00:00Z"))
                 .andExpect(jsonPath("$.data.to.length()").value(2))
+                .andExpect(jsonPath("$.data.to_dropped").value(3))             // A3: sunucunun saydığı fazla alıcı aynen döner
                 .andExpect(jsonPath("$.data.cc[0]").value("takim1@example.com"));
         // Paylaşımla okuyan: adresler gizli, sayılar var
         MockHttpSession g = grantee(B, A, false);

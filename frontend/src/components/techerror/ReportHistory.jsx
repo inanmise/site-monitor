@@ -297,6 +297,12 @@ function EventBody({ kind, detail: d, uiLang }) {
             {t('te.hist.recipients', to.join(', '))}{extra > 0 ? ` ${t('te.hist.recipientsMore', extra)}` : ''}
           </p>
         )}
+        {/* A3 (2026-10-17): alıcı kaynağında sınırın (20) dışında kalan adresler posta ALMADI — gönderim bunu geçmişe yazar */}
+        {Number(d.dropped_recipients) > 0 && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-history-send-dropped">
+            {t('te.hist.recipientsDropped', formatNumber(Number(d.dropped_recipients), uiLang))}
+          </p>
+        )}
         {/* Kuyruk sonucunun zamanı sonucun OKUNDUĞU an — teslim anı bilinmez */}
         {kind === 'SEND_RESULT' && state !== 'SUPERSEDED' && (
           <p className="m-0 text-xs text-muted-foreground">{t('te.hist.resultTimeNote')}</p>

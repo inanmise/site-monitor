@@ -45,4 +45,19 @@ public interface TechErrorApprovalTokenRepository extends JpaRepository<TechErro
     @Transactional
     @Query("DELETE FROM TechErrorApprovalToken t WHERE t.expiresAt < :before")
     int deleteExpiredBefore(@Param("before") Instant before);
+
+    /**
+     * Yeni istek (A2, 2026-10-17): raporun önceki isteğinin belirteçleri silinmez, "yerine geçti" damgalanır — eski postadaki
+     * bağlantı "geçersiz" yerine "daha yeni bir istek var" der ve asla karar vermez. Zaten damgalı satır dokunulmaz.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorApprovalToken t SET t.supersededAt = :at WHERE t.reportId = :reportId AND t.supersededAt IS NULL")
+    int supersedeByReportId(@Param("reportId") Long reportId, @Param("at") Instant at);
+
+    /** Budama (A2): yerine geçilmiş VE süresi dolmuş satırlar — raporun kendi satırları, her yeni istekte. */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM TechErrorApprovalToken t WHERE t.reportId = :reportId AND t.supersededAt IS NOT NULL AND t.expiresAt < :before")
+    int deleteSupersededExpired(@Param("reportId") Long reportId, @Param("before") Instant before);
 }

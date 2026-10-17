@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, fireEvent, waitFor } from './test-utils.jsx'
 import { reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
@@ -17,6 +17,9 @@ vi.mock('../api/client', () => ({
     },
   }),
 }))
+// A4: eylem çubuğunun ölçüsü (jsdom ölçmez) — test ayarlar: 0 = pb-24 tabanı, > 0 = çubuk yüksekliği + 16 px alt boşluk
+const barHeight = vi.hoisted(() => ({ value: 0 }))
+vi.mock('../hooks/useElementHeight.js', () => ({ useElementHeight: () => [() => {}, barHeight.value] }))
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
@@ -197,6 +200,53 @@ describe('e-posta önizlemesi — pencere', () => {
     te().mailPreview.mockResolvedValueOnce({ success: false, error: 'Rapor bulunamadı.' })
     const dlg2 = await openPreview()
     expect(await within(dlg2).findByText('Rapor bulunamadı.')).toBeInTheDocument()
+  })
+
+  it('A3 (2026-10-17): takım adresinde 20’den fazla alıcı — to_dropped > 0 ise uyarı şeridi (sayı, Admin → Takımlar yönlendirmesi), posta yine gider (Gönder açık); 0 / eksik ise şerit yok', async () => {
+    await openEditor()
+    te().mailPreview.mockResolvedValueOnce(preview({ to_dropped: 3, to_count: 20 }))
+    let dlg = await openPreview()
+    const strip = dlg.querySelector('[data-slot="te-mail-dropped"]')
+    expect(strip).not.toBeNull()
+    expect(strip.getAttribute('data-count')).toBe('3')
+    expect(strip).toHaveTextContent('Alıcı sınırı aşıldı — 3 adres bu postayı almaz')
+    expect(strip).toHaveTextContent(/Takım adresinde 3 alıcı daha var; bir rapor postası en çok 20 adrese gider/)
+    expect(strip).toHaveTextContent(/Admin → Takımlar/)
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).not.toBeNull()          // posta 20 adrese yine gider — engel değil
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockResolvedValueOnce(preview({ to_dropped: 0 }))
+    dlg = await openPreview()
+    expect(dlg.querySelector('[data-slot="te-mail-dropped"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    // Eski sunucu (alan yok) → şerit yok, ham anahtar yok
+    te().mailPreview.mockResolvedValueOnce(preview())
+    dlg = await openPreview()
+    expect(dlg.querySelector('[data-slot="te-mail-dropped"]')).toBeNull()
+    expect(dlg.textContent).not.toMatch(/te\.mail\./)
+  })
+})
+
+describe('A4 (2026-10-17): eylem çubuğunun yüksekliği kabın alt boşluğunu sürer', () => {
+  afterEach(() => { barHeight.value = 0 })
+
+  it('ölçüm yokken (jsdom / ilk boyama) pb-24 tabanı, satır içi alt boşluk yok; çubuk ve önizleme düğmesi yerinde', async () => {
+    barHeight.value = 0
+    await openEditor()
+    const editor = document.querySelector('[data-slot="te-report"]')
+    expect(editor.className).toContain('pb-24')
+    expect(editor.style.paddingBottom).toBe('')
+    expect(document.querySelector('[data-slot="te-report-actions"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="te-mail-preview-btn"]')).not.toBeNull()   // e2e seçicisi her biçimde var
+  })
+
+  it('ölçüm varsa (çubuk 3 satıra sarıldı, 172 px) satır içi alt boşluk = yükseklik + 16, pb-24 yok', async () => {
+    barHeight.value = 172
+    await openEditor()
+    const editor = document.querySelector('[data-slot="te-report"]')
+    expect(editor.className).not.toContain('pb-24')
+    expect(editor.style.paddingBottom).toBe('188px')
   })
 })
 

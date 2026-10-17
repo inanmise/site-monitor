@@ -1082,4 +1082,24 @@ class TechErrorReportServiceTest {
         assertThat(service.pdfInput(r, ch, "Takım").provenance()).isNotNull();
         assertThat(service.pdfInput(r, ch, "Takım").provenance().approvalState()).isEqualTo("approved");
     }
+
+    @Test
+    @DisplayName("A3 (inceleme 2026-10-17): gönderim olayı ek ayrıntıyla — dropped_recipients satırın ayrıntısına eklenir, eski alanlar aynen; extra null → eski ayrıntı byte-identical")
+    void sendEventCarriesDroppedRecipients() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant at = Instant.parse("2026-10-13T10:00:00Z");
+        history.recordSend(r, "SEND", 7L, "SENT", java.util.List.of("a@example.com", "b@example.com"), null, at,
+                java.util.Map.of("dropped_recipients", 3));
+        history.recordSend(r, "SEND", 7L, "SENT", java.util.List.of("a@example.com"), null, at.plusSeconds(1), null);
+        history.recordSend(r, "SEND", 7L, "SKIPPED", null, "MAIL_OFF", at.plusSeconds(2));
+        java.util.List<com.sitemonitor.model.TechErrorReportEvent> sends = events.findAll().stream()
+                .filter(e -> "SEND".equals(e.getKind())).sorted(java.util.Comparator.comparing(com.sitemonitor.model.TechErrorReportEvent::getEventAt)).toList();
+        assertThat(sends).hasSize(3);
+        assertThat(sends.get(0).getDetailJson()).contains("\"dropped_recipients\":3").contains("\"recipient_count\":2").contains("\"state\":\"SENT\"");
+        assertThat(sends.get(1).getDetailJson()).doesNotContain("dropped_recipients").contains("\"recipient_count\":1");
+        // 7 argümanlı eski çağrı = extra null: ayrıntı eskisiyle aynı (yalnız state + reason)
+        assertThat(sends.get(2).getDetailJson()).contains("\"state\":\"SKIPPED\"").contains("\"reason\":\"MAIL_OFF\"")
+                .doesNotContain("dropped_recipients").doesNotContain("recipient_count");
+    }
 }

@@ -182,6 +182,14 @@ public class TechErrorApprovalLinkController {
             case "approver_inactive" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
                     "Hesabınız pasif ya da artık bu takımın PO rolündeki bir üyesi değilsiniz; bu bağlantı kullanılamaz.",
                     "Your account is inactive or you are no longer a PO member of this team, so this link can't be used."); }
+            // A1 (inceleme 2026-10-17): yetki matrisi — uygulama içi uçla aynı izin; belirteç tüketilmez, karar yazılmaz
+            case "no_permission" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
+                    "Bu rapor için onay yetkiniz yok: hesabınızın rolü için 'Teknik hata raporu onayı' izni kapatılmış. Yöneticinize başvurun; raporu uygulama içinden de onaylayamazsınız.",
+                    "You can't approve this report: the 'Technical error report approval' permission is switched off for your account's role. Contact your administrator; you can't approve the report from inside the application either."); }
+            // A2: yeni istek eski bağlantının yerine geçti — "geçersiz" değil, "en son postayı kullanın"
+            case "superseded" -> { title = Msg.t("Daha yeni bir istek var", "A newer request exists"); msg = Msg.t(
+                    "Bu rapor için daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın.",
+                    "A newer approval request was sent for this report; please use the link in the latest e-mail."); }
             default -> { title = Msg.t("Bağlantı geçersiz", "Invalid link"); msg = Msg.t(
                     "Bu onay bağlantısı geçersiz. Postadaki bağlantının tamamını kopyaladığınızdan emin olun ya da raporu Site Monitor'de açın.",
                     "This approval link is invalid. Make sure you copied the whole link from the e-mail, or open the report in Site Monitor."); }

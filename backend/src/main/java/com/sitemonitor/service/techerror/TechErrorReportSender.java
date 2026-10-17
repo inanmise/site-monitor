@@ -101,18 +101,34 @@ public class TechErrorReportSender {
      */
     public enum Delivery { TEAM, EXECUTIVE }
 
+    /** Bir rapor postasının en çok kaç adrese gideceği (takım / yönetici listesi); fazlası {@link Addresses#dropped()}. */
+    public static final int MAX_RECIPIENTS = 20;
+
     /** Adres listesi (virgül / noktalı virgül ayraçlı): biçimsizler atılır, tekrarlar tekilleşir, en çok 20. */
     public static List<String> parseAddresses(String raw) {
-        if (raw == null || raw.isBlank()) return new ArrayList<>();
+        return parseAddressesDetailed(raw).addresses();
+    }
+
+    /**
+     * Çözülen adresler + sınırın DIŞINDA kalan teslim edilebilir adres sayısı (A3, inceleme 2026-10-17: takım adresindeki
+     * 21. ve sonraki alıcılar sessizce düşüyordu — önizleme uyarır, gönderim WARN + geçmişe yazar). Admin → Takımlar'daki
+     * adres doğrulaması değişmez (aynı alanı başka postalar da kullanır); {@link #parseAddresses} byte-identical.
+     */
+    public record Addresses(List<String> addresses, int dropped) { }
+
+    public static Addresses parseAddressesDetailed(String raw) {
+        if (raw == null || raw.isBlank()) return new Addresses(new ArrayList<>(), 0);
         Set<String> seen = new LinkedHashSet<>();
         List<String> out = new ArrayList<>();
-        String[] parts = raw.split("[,;]");
-        for (int i = 0; i < parts.length && out.size() < 20; i++) {
-            String e = parts[i].trim();
+        int dropped = 0;
+        for (String part : raw.split("[,;]")) {
+            String e = part.trim();
             if (e.isEmpty() || e.length() > 254 || !DELIVERABLE.matcher(e).matches()) continue;
-            if (seen.add(e.toLowerCase(Locale.ROOT))) out.add(e);
+            if (!seen.add(e.toLowerCase(Locale.ROOT))) continue;
+            if (out.size() < MAX_RECIPIENTS) out.add(e);
+            else dropped++;
         }
-        return out;
+        return new Addresses(out, dropped);
     }
 
     /** Tek adres teslim edilebilir biçimde mi (boşluk / ayraç yok, ≤ 254)? */
@@ -145,7 +161,7 @@ public class TechErrorReportSender {
      */
     public record Preview(String subject, List<String> to, List<String> cc, String role, String html, String text, String fileName,
                           int embeddedImages, int skippedImages, String problem, TechErrorPdfInput.Provenance provenance,
-                          long pdfBytes, int maxMailMb) {}
+                          long pdfBytes, int maxMailMb, int toDropped) {}
 
     public Preview preview(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery) {
         Rendering r = render(report, channel, team, delivery, null);
@@ -153,7 +169,7 @@ public class TechErrorReportSender {
         String problem = r.recipientProblem() != null ? r.recipientProblem() : r.pdfTooLarge() ? "PDF_TOO_LARGE" : null;
         TechErrorReportMail.Built built = r.mail();
         return new Preview(TechErrorReportMail.subject(r.in()), r.to(), r.cc(), r.role(), inlineBrandLogo(inlineCids(built.mail().html(), built.inline())),
-                built.mail().text(), r.fileName(), built.embeddedImages(), built.skippedImages(), problem, r.in().provenance(), r.pdf().length, maxMailMb);
+                built.mail().text(), r.fileName(), built.embeddedImages(), built.skippedImages(), problem, r.in().provenance(), r.pdf().length, maxMailMb, r.toDropped());
     }
 
     /**
@@ -163,13 +179,17 @@ public class TechErrorReportSender {
      * sonraki ek blok, null = yok). Talep / günlük / içerik sayacı yok — çağıran karar verir.
      */
     record Rendering(TechErrorPdfInput in, byte[] pdf, TechErrorReportMail.Built mail, String fileName, List<String> to, List<String> cc,
-                     String role, String recipientProblem, boolean pdfTooLarge) { }
+                     String role, String recipientProblem, boolean pdfTooLarge, int toDropped) { }
 
     private Rendering render(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery, TechErrorReportMail.Intro intro) {
         List<String> to;
         List<String> cc = List.of();
         String role;
         String problem = null;
+        // A3: Kime listesinin kaynağında sınırın (20) dışında kalan teslim edilebilir adres sayısı — pencere uyarır
+        Addresses toSource = delivery == Delivery.EXECUTIVE
+                ? parseAddressesDetailed(channel == null ? null : channel.getExecutiveEmails())
+                : parseAddressesDetailed(team == null ? null : team.getEmail());
         if (delivery == Delivery.EXECUTIVE) {
             to = executiveRecipients(channel);
             if (to.isEmpty()) problem = "EXEC_RECIPIENTS_MISSING";
@@ -209,7 +229,7 @@ public class TechErrorReportSender {
         String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
                 in.template().lang());
         TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, intro, audienceOf(delivery));
-        return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge);
+        return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge, toSource.dropped());
     }
 
     /** Test gönderiminin konu öneki (dilden bağımsız) ve günlük tetikleyicisi. */
@@ -323,6 +343,14 @@ public class TechErrorReportSender {
         List<String> to;
         String[] cc = null;
         String role;
+        // A3: Kime kaynağında sınırın (20) dışında kalan adresler sessiz düşmez — WARN + geçmiş olayına `dropped_recipients`
+        final int droppedRecipients = (delivery == Delivery.EXECUTIVE
+                ? parseAddressesDetailed(channel == null ? null : channel.getExecutiveEmails())
+                : parseAddressesDetailed(team == null ? null : team.getEmail())).dropped();
+        if (droppedRecipients > 0) {
+            log.warn("Teknik hata raporu #{} ({}): alıcı kaynağında {} adres sınırın (en çok {}) dışında kaldı, bu adreslere posta GİTMEZ",
+                    report.getId(), delivery, droppedRecipients, MAX_RECIPIENTS);
+        }
         if (delivery == Delivery.EXECUTIVE) {
             to = executiveRecipients(channel);
             if (to.isEmpty()) {
@@ -505,8 +533,14 @@ public class TechErrorReportSender {
             if (h != null) {
                 String reason = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? null
                         : TechErrorHistoryService.sendReason(finalStatus);
-                h.recordSend(report, "SEND", by, finalState, "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null,
-                        reason, at);
+                List<String> recorded = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null;
+                // A3: sınır dışında kalan alıcı sayısı geçmişte görünür (yalnız varsa — olay ayrıntısı aksi hâlde eskisiyle aynı)
+                if (droppedRecipients > 0) {
+                    h.recordSend(report, "SEND", by, finalState, recorded, reason, at,
+                            java.util.Map.of("dropped_recipients", droppedRecipients));
+                } else {
+                    h.recordSend(report, "SEND", by, finalState, recorded, reason, at);
+                }
             }
         }
     }

@@ -14,6 +14,8 @@ import com.sitemonitor.repository.TechErrorApprovalTokenRepository;
 import com.sitemonitor.repository.TechErrorReportRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.EmailNotificationService;
+import com.sitemonitor.service.PermissionCatalog;
+import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.mail.MailDoc;
 import com.sitemonitor.service.mail.TechErrorApprovalMail;
 import com.sitemonitor.service.mail.TechErrorMailImages;
@@ -21,6 +23,7 @@ import com.sitemonitor.service.mail.TechErrorReportMail;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
 import com.sitemonitor.util.Msg;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -69,8 +72,22 @@ public class TechErrorApprovalService {
     public static final int MAX_NOTE = 1000;
     public static final String KIND_REQUEST = "APPROVAL_REQUEST";
     public static final String KIND_DECISION = "APPROVAL";
+    /**
+     * Yetki matrisindeki onay izni (A1, inceleme 2026-10-17): uygulama içi karar {@code tech_error_reports.approve/execute}
+     * ister; e-posta bağlantısı da AYNI izni ister — rolü için izin kapatılan PO bağlantıdan da onaylayamaz (sayfa sebebini
+     * söyler, belirteç tüketilmez). {@code TechErrorReportController.APPROVE} ile aynı anahtar.
+     */
+    public static final String APPROVE_PERMISSION = "tech_error_reports.approve";
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * Rol izni (A1). Oturumsuz değerlendirme: kullanıcının {@code systemRole} satırı ({@link PermissionService#allows(String,
+     * String, String)}); 7/24 dinamik izinleri yazma iznine zaten uygulanmaz. Fasulye yoksa (dilim / H2 testleri) izin VAR
+     * sayılır — üretimde fasulye her zaman vardır.
+     */
+    @Autowired(required = false)
+    PermissionService permissions;
 
     private final TechErrorReportService service;
     private final TechErrorReportRepository reports;
@@ -129,6 +146,21 @@ public class TechErrorApprovalService {
         return false;
     }
 
+    /**
+     * Kullanıcının rolü onay iznine sahip mi (A1)? Uygulama içi uç oturumdan sorar; bağlantı yolu oturumsuzdur, kullanıcının
+     * {@code systemRole} satırına bakar. Fail-closed: rolü boş kullanıcı onaylayamaz; fasulye yoksa (test dilimi) izin var.
+     */
+    public boolean hasApprovePermission(AppUser u) {
+        if (u == null) return false;
+        if (permissions == null) return true;
+        try {
+            return permissions.allows(u.getSystemRole(), APPROVE_PERMISSION, PermissionCatalog.EXECUTE);
+        } catch (RuntimeException e) {
+            log.warn("Onay izni okunamadı (kullanıcı {}): {}", u.getId(), e.toString());
+            return false;
+        }
+    }
+
     private static String displayName(AppUser u) {
         String n = u.getDisplayName();
         return n == null || n.isBlank() ? u.getUsername() : n;
@@ -173,8 +205,15 @@ public class TechErrorApprovalService {
                     "Rapor siz onaya gönderirken değişti. Sayfayı yenileyip içeriği gördükten sonra yeniden onaya gönderin.",
                     "The report changed while you were submitting it. Reload the page, check the content and submit it again."));
         }
-        // Eski bağlantılar ölür; onaylayıcı başına yeni belirteç (ham değer yalnız postada)
-        tokens.deleteByReportId(fresh.getId());
+        // Eski bağlantılar "yerine geçti" olur (A2: silinse eski posta "geçersiz bağlantı" derdi — şimdi "daha yeni istek
+        // var, en son postayı kullanın"; yerine geçilmiş belirteç asla karar vermez). Süresi de dolmuş eskiler budanır.
+        // Onaylayıcı başına yeni belirteç (ham değer yalnız postada).
+        tokens.supersedeByReportId(fresh.getId(), now);
+        try {
+            tokens.deleteSupersededExpired(fresh.getId(), now);
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} eski onay belirteçleri budanamadı: {}", fresh.getId(), e.toString());
+        }
         Map<Long, String> rawTokens = new LinkedHashMap<>();
         for (Approver a : apps) {
             if (a.email() == null) continue;
@@ -390,8 +429,10 @@ public class TechErrorApprovalService {
     // ── Bağlantı belirteci ───────────────────────────────────────────────────────────────────────────
 
     /**
-     * Bağlantı durumu: {@code valid} ise {@code reason} null; değilse not_found | used | expired | not_pending | stale |
-     * approver_inactive. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
+     * Bağlantı durumu: {@code valid} ise {@code reason} null; değilse not_found | used | superseded | expired | not_pending |
+     * stale | approver_inactive | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
+     * Sıra: kullanılmış → yerine geçilmiş (A2: yeni istek gönderildi — süresi de dolmuş olsa "en son postayı kullanın" demek
+     * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → onaylayıcı değil → rolün onay izni yok (A1).
      */
     public record TokenStatus(boolean valid, String reason, TechErrorApprovalToken token, TechErrorReport report,
                               TechErrorChannel channel, AppUser user, boolean stale) {
@@ -417,6 +458,7 @@ public class TechErrorApprovalService {
         }
         AppUser u = users.findById(t.getUserId()).orElse(null);
         if (t.getUsedAt() != null) return new TokenStatus(false, "used", t, r, ch, u);
+        if (t.getSupersededAt() != null) return new TokenStatus(false, "superseded", t, r, ch, u);
         if (t.getExpiresAt() != null && t.getExpiresAt().isBefore(now)) return new TokenStatus(false, "expired", t, r, ch, u);
         if (r == null || ch == null) return new TokenStatus(false, "not_found", t, r, ch, u);
         if (!"PENDING".equals(r.getApprovalState()) || !Objects.equals(r.getApprovalRev(), t.getApprovalRev())) {
@@ -425,6 +467,8 @@ public class TechErrorApprovalService {
         if (u == null || Boolean.FALSE.equals(u.getActive()) || !isApprover(u.getId(), r.getTeamId())) {
             return new TokenStatus(false, "approver_inactive", t, r, ch, u);
         }
+        // A1: uygulama içi uçla aynı yetki matrisi kapısı — rolü için onay izni kapatılan PO bağlantıdan da karar veremez
+        if (!hasApprovePermission(u)) return new TokenStatus(false, "no_permission", t, r, ch, u);
         // İstekten sonra değişen içerik: bağlantı geçerli ama ONAYLANAMAZ (reddedilebilir) — sayfa bunu söyler
         long content = r.getContentRev() == null ? 0L : r.getContentRev();
         boolean stale = r.getApprovalRev() == null || content != r.getApprovalRev();
@@ -439,6 +483,9 @@ public class TechErrorApprovalService {
     public Decision decideViaToken(String raw, Team team, boolean approve, String note) {
         TokenStatus st = status(raw);
         if (!st.valid()) throw new IllegalStateException(st.reason());
+        // Derinlikli savunma (A1 / A2): status() bunları zaten eler; sırası değişse de belirteç tüketilmeden durur
+        if (st.token().getSupersededAt() != null) throw new IllegalStateException("superseded");
+        if (!hasApprovePermission(st.user())) throw new IllegalStateException("no_permission");
         if (approve && st.stale()) throw new IllegalStateException("stale");
         validateNote(approve, note);
         Instant at = service.now();

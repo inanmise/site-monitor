@@ -671,6 +671,7 @@ public class TechErrorReportController {
         m.put("cc", hidden ? List.of() : p.cc());
         m.put("to_count", p.to().size());
         m.put("cc_count", p.cc().size());
+        m.put("to_dropped", p.toDropped());      // A3: Kime kaynağında sınırın (20) dışında kalan adres sayısı — pencere uyarır
         m.put("recipients_hidden", hidden);
         m.put("problem", p.problem());
         m.put("file_name", p.fileName());

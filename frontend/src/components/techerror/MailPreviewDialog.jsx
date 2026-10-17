@@ -160,6 +160,14 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
                 </>
               )}
             </dl>
+            {/* A3 (2026-10-17): takım adresinde 20'den fazla alıcı — fazlası sessizce düşüyordu; posta yine 20 adrese gider, pencere söyler */}
+            {d.to_dropped > 0 && (
+              <div data-slot="te-mail-dropped" data-count={d.to_dropped}>
+                <AlertBanner tone="warning" title={t('te.mail.droppedTitle', d.to_dropped)}>
+                  {t('te.mail.dropped', d.to_dropped)}
+                </AlertBanner>
+              </div>
+            )}
             {d.problem && (
               <AlertBanner tone="warning" title={d.problem === 'PDF_TOO_LARGE' ? t('te.mail.pdfTooLargeTitle') : t('te.mail.noRecipientsTitle')}>
                 {d.problem === 'PDF_TOO_LARGE' ? t('te.mail.pdfTooLarge', fmtMb(d.pdf_bytes, uiLang), d.max_mail_mb ?? '—')
