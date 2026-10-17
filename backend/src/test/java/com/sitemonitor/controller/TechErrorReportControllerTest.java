@@ -699,4 +699,141 @@ class TechErrorReportControllerTest {
             com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
         }
     }
+
+    // ── Takım erişim paylaşımı (9. sürüm, 2026-10-17) ──────────────────────────────────────────────
+
+    private static MockHttpSession grantee(long ownTeam, long sharedTeam, boolean edit) {
+        MockHttpSession s = user("USER", ownTeam, List.of());
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(sharedTeam)));
+        if (edit) s.setAttribute(SessionScope.ATTR_GRANT_EDIT, new ArrayList<>(List.of(sharedTeam)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("erişim paylaşımı VIEW: paylaşan takımın kanalı listede (shared_access, can_report / can_edit yok), rapor ve şablon okunur, yazma 403, rapor açma 403")
+    void teamAccessGrant_viewReadsOnly() throws Exception {
+        report(100, 10, A, null);
+        MockHttpSession g = grantee(B, A, false);
+        mvc.perform(get("/api/tech-error-reports/overview").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].shared_access").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_report").value(false))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit").value(false))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 20)].shared_access").value(false))
+                .andExpect(jsonPath("$.data.teams[?(@.id == 1)].can_edit").value(false));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_edit").value(false))
+                .andExpect(jsonPath("$.data.can_send").value(false))
+                .andExpect(jsonPath("$.data.shared_access").value(true));
+        mvc.perform(get("/api/tech-error-reports/channels/10/template").session(g)).andExpect(status().isOk());
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4,\"values\":{\"fields\":{}}}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/tech-error-reports/reports").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"channel_id\":10,\"year\":2026,\"month\":8}"))
+                .andExpect(status().isForbidden());
+        // Paylaşımsız bir takımın kanalı yine görünmez
+        MockHttpSession none = user("USER", B, List.of());
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(none)).andExpect(status().isNotFound());
+        // Kişi verisi paylaşımla görünmez (inceleme 2026-10-17): gönderim alıcıları, yönetici alıcıları, onaylayıcı adları
+        TechErrorChannel ec = execChannel(30, A);
+        TechErrorReport sent = report(130, 30, A, Instant.parse("2026-10-05T08:00:00Z"));
+        sent.setLastSentTo("ceo@example.com, cfo@example.com");
+        when(service.periodRows(any(), any())).thenReturn(Map.of(30L, TechErrorReportController.rowOf(sent)));
+        mvc.perform(get("/api/tech-error-reports/overview").session(g))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 30)].executive_emails").value(org.hamcrest.Matchers.contains(org.hamcrest.Matchers.nullValue())))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 30)].executive_count").value(2))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 30)].period_report.last_sent_to").value(org.hamcrest.Matchers.contains(org.hamcrest.Matchers.nullValue())))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 30)].period_report.last_sent_count").value(2));
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.report.last_sent_to").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.report.last_sent_count").value(2))
+                .andExpect(jsonPath("$.data.approval_detail.executive_emails").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.approval_detail.approvers[*].name").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.nullValue())))
+                .andExpect(jsonPath("$.data.approval_detail.approver_count").isNumber());
+        // Takımın kendi üyesi aynı verileri görür
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.report.last_sent_to").value("ceo@example.com, cfo@example.com"))
+                .andExpect(jsonPath("$.data.approval_detail.executive_emails.length()").value(2));
+        // Üye + paylaşım: shared_access değil (kendi kapsamı önde)
+        MockHttpSession memberToo = user("USER", A, List.of());
+        memberToo.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(A)));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(memberToo))
+                .andExpect(jsonPath("$.data.shared_access").value(false))
+                .andExpect(jsonPath("$.data.can_send").value(true));
+        // DELETE düzeyi bile silmez: silme takımın kendi kapsamı
+        MockHttpSession del = grantee(B, A, true);
+        del.setAttribute(SessionScope.ATTR_GRANT_DELETE, new ArrayList<>(List.of(A)));
+        mvc.perform(delete("/api/tech-error-reports/reports/100").session(del)).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/tech-error-reports/channels/10").session(del)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("erişim paylaşımı EDIT: rapor içeriği yazılır (can_report / can_edit), ama gönderim, onay isteği, silme, kanal, şablon ve yönetici alıcıları 403 (can_send false)")
+    void teamAccessGrant_editWritesContentNeverSends() throws Exception {
+        report(100, 10, A, null);
+        MockHttpSession g = grantee(B, A, true);
+        mvc.perform(get("/api/tech-error-reports/overview").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_report").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit").value(false))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].shared_access").value(true));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_edit").value(true))
+                .andExpect(jsonPath("$.data.can_send").value(false))
+                .andExpect(jsonPath("$.data.can_delete").value(false));
+        TechErrorReport saved = reports.stream().filter(x -> x.getId() == 100L).findFirst().orElseThrow();
+        saved.setVersion(5L);
+        when(service.saveValues(eq(100L), eq(4L), any(), eq(50L), eq(false)))
+                .thenReturn(new TechErrorReportService.SaveOutcome(saved, false));
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4,\"values\":{\"fields\":{}}}"))
+                .andExpect(status().isOk());
+        // Rapor açma içerik yazmadır: EDIT paylaşımı açar (inceleme 2026-10-17 — writableChannel kanal kapsamıydı)
+        TechErrorReport created = report(300, 10, A, null);
+        when(service.createReport(any(), eq(2026), eq(8), any())).thenReturn(created);
+        mvc.perform(post("/api/tech-error-reports/reports").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"channel_id\":10,\"year\":2026,\"month\":8}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(300));
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(g)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/tech-error-reports/reports/100/approval/request").session(g)).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/tech-error-reports/reports/100").session(g)).andExpect(status().isForbidden());
+        mvc.perform(put("/api/tech-error-reports/channels/10").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"description\":\"x\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/tech-error-reports/channels/10/template").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":3,\"template\":" + TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")) + "}"))
+                .andExpect(status().isForbidden());
+        // Kanal açma: takım alanı altında hata (mevcut sözleşme — 400 team_id), paylaşım takım için kanal açtırmaz
+        mvc.perform(post("/api/tech-error-reports/channels").session(g)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"Yeni\",\"lang\":\"tr\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("team_id"));
+        verify(sender, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("erişim paylaşımı: modül görünürlüğü (S6) paylaşılan takıma da uygulanır — kapalı takımın kanalı paylaşımla da görünmez")
+    void teamAccessGrant_moduleVisibilityApplies() throws Exception {
+        report(100, 10, A, null);
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            MockHttpSession g = grantee(B, A, true);
+            mvc.perform(get("/api/tech-error-reports/overview").session(g))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.channels[?(@.id == 10)]").isEmpty());
+            mvc.perform(get("/api/tech-error-reports/reports/100").session(g)).andExpect(status().isNotFound());
+            mvc.perform(put("/api/tech-error-reports/reports/100").session(g)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4,\"values\":{\"fields\":{}}}"))
+                    .andExpect(status().isNotFound());
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
+    }
 }

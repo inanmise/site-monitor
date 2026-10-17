@@ -22,6 +22,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadc
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import TemplateEditor from './TemplateEditor.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
+import { canReport } from './ChannelsView.jsx'
 import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 import {
   REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
@@ -162,6 +163,11 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="m-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl" data-slot="te-channel-title">{ch?.name}</h2>
           {ch && !ch.active && <Badge variant="outline">{t('te.inactive')}</Badge>}
+          {ch?.shared_access && (
+            <Badge variant="outline" className="rounded-md overflow-visible whitespace-normal" data-slot="te-shared" title={t('te.sharedAccessHint')}>
+              {t('te.sharedAccess')}
+            </Badge>
+          )}
           {ch?.approval_required && (
             <Badge variant="secondary" className="rounded-md overflow-visible whitespace-normal" data-slot="te-channel-approval">
               {t('te.approvalChip', ch.executive_count || 0)}
@@ -198,7 +204,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
         <TabsContent value={TAB_REPORTS} className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="m-0 text-sm text-muted-foreground">{t('te.reportsHint')}</p>
-            {ch?.can_edit && ch?.active && (
+            {canReport(ch) && ch?.active && (
               <Button type="button" onClick={() => setNewOpen(true)} data-slot="te-new-report" className="pointer-coarse:min-h-10">
                 <Plus aria-hidden="true" /> {t('te.newReport')}
               </Button>
@@ -246,7 +252,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
           <div ref={listRef} className="flex flex-col gap-3" data-slot="te-report-list">
             {reports.length === 0 ? (
               <StatusBlock tone="neutral" icon={FileText} title={t('te.noReportsTitle')}
-                description={ch?.can_edit ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
+                description={canReport(ch) ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
             ) : filtered.length === 0 ? (
               <StatusBlock tone="neutral" icon={Search} title={t('te.rnoMatchTitle')} description={t('te.rnoMatchBody')}
                 actions={<Button type="button" variant="outline" onClick={clearFilters}><X aria-hidden="true" /> {t('te.filters.clear')}</Button>} />
