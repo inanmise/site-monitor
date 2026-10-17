@@ -65,6 +65,23 @@ class TechErrorCalcTest {
             { "increase:a", "a=number", "a=100", "-", "MANUAL", "" },
             { "increase:a", "a=number", "", "a=100", "MISSING", "" },
             { "increase:a", "a=number", "a=5", "a=0", "OK", "true" },
+            // 2026-10-17 (4b) hedef karşılaştırması: alan "tür@hedef@daha-iyi"; yüksek iyi → ≥, düşük iyi → ≤; eşitlik tutturuldu
+            { "compare:a", "a=percent@99.95@higher", "a=99.99", "-", "OK", "true" },
+            { "compare:a", "a=percent@99.95@higher", "a=99.95", "-", "OK", "true" },
+            { "compare:a", "a=percent@99.95@higher", "a=99.9", "-", "OK", "false" },
+            { "compare:a", "a=percent@1@lower", "a=0.42", "-", "OK", "true" },
+            { "compare:a", "a=percent@1@lower", "a=1", "-", "OK", "true" },
+            { "compare:a", "a=percent@1@lower", "a=1.5", "-", "OK", "false" },
+            // yön yazılmamış yüzde: varsayılan düşük-iyi (hata oranı)
+            { "compare:a", "a=percent@1", "a=0.5", "-", "OK", "true" },
+            { "compare:a", "a=percent@99.95@higher", "", "-", "MISSING", "" },
+            { "compare:a", "a=percent@99.95@higher", "", "a=99.9", "MISSING", "" },
+            // hedefsiz yüzde, sayı alanı, olmayan alan → formül kullanılamaz (elle)
+            { "compare:a", "a=percent", "a=99.9", "-", "BAD_REF", "" },
+            // yönsüz ("none") alan hedefle karşılaştırılamaz (inceleme 2026-10-17: "yüksek" sayılıp rengi ters çeviriyordu)
+            { "compare:a", "a=percent@1@none", "a=0.5", "-", "BAD_REF", "" },
+            { "compare:a", "a=number", "a=5", "-", "BAD_REF", "" },
+            { "compare:a", "b=percent@99.95@higher", "b=99.9", "-", "BAD_REF", "" },
     };
 
     static Calc calcOf(String spec) {
@@ -95,9 +112,12 @@ class TechErrorCalcTest {
             Map<String, Field> byId = new HashMap<>();
             for (String kv : row[1].split(",")) {
                 String[] p = kv.split("=", 2);
-                byId.put(p[0], new Field(p[0], p[0], p[1], null));
+                String[] tv = p[1].split("@", 3);     // tür[@hedef[@daha-iyi]] (4b)
+                byId.put(p[0], new Field(p[0], p[0], tv[0], null, null, null, tv.length > 1 ? Double.valueOf(tv[1]) : null,
+                        tv.length > 2 ? tv[2] : null));
             }
-            Field f = new Field("x", "x", "increase".equals(c.kind()) ? "yesno" : "percent", null, null, c);
+            boolean yesNo = "increase".equals(c.kind()) || "compare".equals(c.kind());
+            Field f = new Field("x", "x", yesNo ? "yesno" : "percent", null, null, c);
             byId.put("x", f);
             Result r = TechErrorCalc.result(f, byId, numbers(row[2]), numbers(row[3]));
             assertThat(r.status()).as(String.join(" | ", row)).isEqualTo(Status.valueOf(row[4]));
@@ -230,6 +250,36 @@ class TechErrorCalcTest {
     }
 
     @Test
+    @DisplayName("2026-10-17 (4b): raporun o aya özel hedefi şablonun hedefini ezer; karşılaştırma hesaplanmış yüzdeyi görür (iki geçiş)")
+    void compareUsesReportTargetAndComputedPercent() {
+        Template t = tpl();
+        Map<String, Object> f = new HashMap<>();
+        f.put("sla-rate", 99.9);
+        // Şablon hedefi %99,95 → altında; raporun hedefi %99,8 → tutturuldu
+        Values base = TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", f), t), null);
+        assertThat(base.fields()).containsEntry("sla-above", false);
+        Values own = TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", f, "targets", Map.of("sla-rate", 99.8)), t), null);
+        assertThat(own.fields()).containsEntry("sla-above", true);
+        assertThat(own.targets()).containsEntry("sla-rate", 99.8);
+        // Hesaplanan yüzdeye karşılaştırma: hata oranı (5 / 1000 = %0,5) hedef %1'in altında → "iyi" sorusu Evet
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        raw.put("sections", List.of(Map.of("id", "m", "kind", "metrics", "title", "G", "fields", List.of(
+                Map.of("id", "a", "label", "Hata", "type", "number"),
+                Map.of("id", "b", "label", "İşlem", "type", "number"),
+                Map.of("id", "r", "label", "Oran", "type", "percent", "target", 1, "better", "lower",
+                        "calc", Map.of("kind", "ratio", "num", "a", "den", "b")),
+                Map.of("id", "ok", "label", "Hedefte mi?", "type", "yesno", "calc", Map.of("kind", "compare", "of", "r"))))));
+        Template ct = TechErrorTemplate.normalize(raw);
+        Values cv = TechErrorCalc.apply(ct, TechErrorValues.normalize(Map.of("fields", Map.of("a", 5, "b", 1000, "ok", false)), ct), null);
+        assertThat(cv.fields()).containsEntry("r", 0.5).containsEntry("ok", true);
+        // Oran hesaplanamadıysa (bölen yok) karşılaştırma da boş — eski / girilen değer kalmaz
+        Values miss = TechErrorCalc.apply(ct, TechErrorValues.normalize(Map.of("fields", Map.of("a", 5, "ok", true)), ct), null);
+        assertThat(miss.fields()).doesNotContainKeys("r", "ok");
+    }
+
+    @Test
     @DisplayName("inceleme 2026-10-16: otomatik hesaplanan evet/hayır sorusu 'Hayır ise sorma' hedefi olamaz (katı 400, saklıda bağ düşer)")
     void computedQuestionIsNotASkipTarget() {
         Map<String, Object> raw = new LinkedHashMap<>();
@@ -253,9 +303,17 @@ class TechErrorCalcTest {
             Map<String, Field> byId = new HashMap<>();
             for (Field f : t.allFields()) byId.put(f.id(), f);
             List<Field> calcs = t.allFields().stream().filter(f -> f.calc() != null).toList();
-            assertThat(calcs).extracting(Field::id).containsExactly("error-rate", "error-rate-excl", "unmapped-rate", "quota-rate",
-                    "outage-share", "tx-increase", "tx-increase-pct");
+            // 2026-10-17 (4b): "SLA hedefin üstünde mi?" hedef karşılaştırmasıyla otomatik (Verileri bölümünde, oranlardan önce)
+            assertThat(calcs).extracting(Field::id).containsExactly("sla-above", "error-rate", "error-rate-excl", "unmapped-rate",
+                    "quota-rate", "outage-share", "tx-increase", "tx-increase-pct");
             for (Field f : calcs) {
+                if ("compare".equals(f.calc().kind())) {
+                    // Karşılaştırma hedefi olan bir yüzde alanına başvurur (hesaplanan olabilir) — "girdi" kuralı ona uygulanmaz
+                    Field of = byId.get(f.calc().of());
+                    assertThat(of.type()).as(lang + " " + f.id()).isEqualTo("percent");
+                    assertThat(TechErrorTemplate.effectiveTarget(of, Map.of())).as(lang + " " + f.id()).isNotNull();
+                    continue;
+                }
                 assertThat(f.calc().refs()).as(lang + " " + f.id()).allMatch(r -> TechErrorCalc.input(byId.get(r)));
             }
             // Özet cümleleri yeni oranlara bağlı

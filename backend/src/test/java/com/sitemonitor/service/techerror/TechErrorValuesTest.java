@@ -123,6 +123,36 @@ class TechErrorValuesTest {
     }
 
     @Test
+    @DisplayName("2026-10-17 (4b): raporun o aya özel hedefi yalnız şablonda hedefi olan yüzde alanında ve %0–100; hedefsiz alan sessiz düşer; sayı değilse / aralık dışıysa 400 (targets.<id>); boş yazılmaz; saklıda hoşgörülü")
+    void targets() {
+        var t = TechErrorTemplate.defaults("tr");
+        var v = TechErrorValues.normalize(Map.of("fields", Map.of("sla-rate", 99.9),
+                "targets", Map.of("sla-rate", 99.8, "error-rate", 1, "total-tx", 5, "yok", 3)), t);
+        assertThat(v.targets()).containsOnlyKeys("sla-rate");
+        assertThat(TechErrorValues.number(v.targets().get("sla-rate"))).isEqualTo(99.8);
+        assertThat(TechErrorValues.toMap(v)).containsKey("targets");
+        // Hedefsiz rapor: anahtar hiç yazılmaz (4b öncesi belgeyle aynı); boş metin = yok; sayısal metin kabul
+        assertThat(TechErrorValues.toMap(TechErrorValues.normalize(Map.of("fields", Map.of("sla-rate", 99.9)), t))).doesNotContainKey("targets");
+        assertThat(TechErrorValues.normalize(Map.of("targets", Map.of("sla-rate", " ")), t).targets()).isEmpty();
+        assertThat(TechErrorValues.number(TechErrorValues.normalize(Map.of("targets", Map.of("sla-rate", "99.8")), t).targets().get("sla-rate")))
+                .isEqualTo(99.8);
+        // Şablon hedefine eşit değer de saklanır: o ay için sabitlenir (şablon sonradan değişse de geçmişte görünür)
+        assertThat(TechErrorValues.normalize(Map.of("targets", Map.of("sla-rate", 99.95)), t).targets()).containsOnlyKeys("sla-rate");
+        for (Object bad : List.of(101, -0.5, "yüksek")) {
+            assertThatThrownBy(() -> TechErrorValues.normalize(Map.of("targets", Map.of("sla-rate", bad)), t))
+                    .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class)
+                    .satisfies(e -> assertThat(((com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException) e).getFields())
+                            .containsKey("targets.sla-rate"));
+        }
+        // Saklı: bozuk hedef düşer, kayıt okunur; eski belge (anahtar yok) boş hedef
+        var stored = TechErrorValues.fromStored("{\"fields\":{\"sla-rate\":99.9},\"targets\":{\"sla-rate\":\"x\",\"error-rate\":1}}", t);
+        assertThat(TechErrorValues.number(stored.fields().get("sla-rate"))).isEqualTo(99.9);
+        assertThat(stored.targets()).isEmpty();
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"sla-rate\":99.9}}", t).targets()).isEmpty();
+        assertThat(TechErrorValues.Values.empty().targets()).isEmpty();
+    }
+
+    @Test
     @DisplayName("biçim: TR %0,42 ve 1.250.000; EN 0.42% ve 1,250,000; Evet/Hayır; boş —")
     void format() {
         var rate = t.allFields().stream().filter(f -> f.id().equals("error-rate")).findFirst().orElseThrow();

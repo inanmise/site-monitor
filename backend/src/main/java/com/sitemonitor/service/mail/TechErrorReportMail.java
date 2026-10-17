@@ -47,14 +47,16 @@ public final class TechErrorReportMail {
                         + " channel. The full report, with its topics and charts, is in the attached PDF (" + fileName + ")."
                 : nz(in.teamName()) + " takımı " + nz(in.channelName()) + " kanalının aylık raporunu hazırladı. Başlıklar ve "
                         + "grafiklerle tam rapor ekteki PDF'tedir (" + fileName + ").");
+        boolean tilesShown = false;
         for (Section s : in.template().sections()) {
             if (!"summary".equals(s.kind())) continue;
-            summary(d, in, s);
+            tilesShown = summary(d, in, s);
             break;   // yalnız ilk özet
         }
         List<Stat> stats = new ArrayList<>();
         boolean first = true;
-        for (Section s : in.template().sections()) {
+        // Özette renkli kutucuk şeridi varsa (2026-10-17, 4b) düz gösterge kutuları yinelenmez — şerit yoksa eski zincir
+        for (Section s : tilesShown ? List.<Section>of() : in.template().sections()) {
             if (!"metrics".equals(s.kind())) continue;
             // Özete gömülü bölüm (2026-10-17) kutucuk zincirine girmez: rakamı özet cümlesinde, açıklaması cümlenin altında
             if (TechErrorTemplate.hostOf(in.template(), s) != null) continue;
@@ -95,10 +97,12 @@ public final class TechErrorReportMail {
      * açıklamaları ilgili cümlenin altında — küçük kalın başlık = alanın adı (ad boşsa "Açıklama") + girintili metin (sol
      * şerit yok). Hiç metin ve not yoksa başlık da basılmaz.
      */
-    private static void summary(MailDoc d, TechErrorPdfInput in, Section s) {
+    private static boolean summary(MailDoc d, TechErrorPdfInput in, Section s) {
         boolean en = in.template().en();
-        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.channelName(),
-                in.year(), in.month());
+        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
+                in.channelName(), in.year(), in.month());
+        List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles = com.sitemonitor.service.techerror.TechErrorTiles.build(
+                in.template(), s, in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
         StringBuilder html = new StringBuilder();
         StringBuilder plain = new StringBuilder();
         for (TechErrorSummary.Block b : blocks) {
@@ -117,9 +121,82 @@ public final class TechErrorReportMail {
                 plain.append(TechErrorRichText.plain(b.text()));
             }
         }
-        if (html.isEmpty()) return;
+        if (html.isEmpty() && tiles.isEmpty()) return false;
         d.heading(in.resolve(s.title()));
-        d.raw(html.toString(), plain.toString());
+        if (!tiles.isEmpty()) d.raw(tilesHtml(tiles, en), tilesPlain(tiles, en));
+        if (!html.isEmpty()) d.raw(html.toString(), plain.toString());
+        return !tiles.isEmpty();
+    }
+
+    /** Ton → {zemin, yazı} (PDF ile aynı palet: iyi yeşil, kötü kırmızı, nötr mavi, bilinmeyen gri). */
+    static String[] tileColors(String tone) {
+        return switch (tone) {
+            case "good" -> new String[] { "#dcfce7", "#166534" };
+            case "bad" -> new String[] { "#fee2e2", "#991b1b" };
+            case "neutral" -> new String[] { "#dbeafe", "#1e3a8a" };
+            default -> new String[] { "#f4f4f5", "#52525b" };
+        };
+    }
+
+    /** Kutucuğun alt satırı: ok + fark, varsa "· hedef %99,95"; ikisi de yoksa null. */
+    static String tileSub(com.sitemonitor.service.techerror.TechErrorTiles.Tile tile, boolean en) {
+        StringBuilder sub = new StringBuilder();
+        if (tile.delta() != null) {
+            if ("up".equals(tile.dir())) sub.append("▲ ");
+            else if ("down".equals(tile.dir())) sub.append("▼ ");
+            sub.append(tile.delta());
+        }
+        if (tile.target() != null) {
+            if (!sub.isEmpty()) sub.append(" · ");
+            sub.append(en ? "target " : "hedef ").append(tile.target());
+        }
+        return sub.isEmpty() ? null : sub.toString();
+    }
+
+    /**
+     * Renkli kutucuk şeridi (2026-10-17, 4b): satırda 3 (Outlook'ta mso tablo hücreleri, diğerlerinde satır içi bloklar —
+     * {@code MailKit.stats} düzeni), zemin ve yazı rengi tondan; dar ekranda {@code tile3} sınıfı alt alta diziyor.
+     */
+    static String tilesHtml(List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles, boolean en) {
+        int n = tiles.size();
+        int perRow = Math.min(3, n);
+        String pct = perRow == 3 ? "33.33%" : (100 / perRow) + "%";
+        // Dar ekran sınıfı satırdaki kutucuk sayısına göre (MailKit.stats ile aynı): tek kutucuk sınıfsız, iki → tile, üç → tile3
+        String cls = perRow == 3 ? " class=\"tile3\"" : perRow == 2 ? " class=\"tile\"" : "";
+        StringBuilder sb = new StringBuilder("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" data-slot=\"te-tiles\"><tr><td style=\"font-size:0;line-height:0\">");
+        sb.append("<!--[if mso]><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><![endif]-->");
+        for (int i = 0; i < n; i++) {
+            var tile = tiles.get(i);
+            if (i > 0 && i % perRow == 0) sb.append("<!--[if mso]></tr><tr><![endif]-->");
+            String[] col = tileColors(tile.tone());
+            sb.append("<!--[if mso]><td width=\"").append(pct).append("\" valign=\"top\"><![endif]-->")
+              .append("<div").append(cls).append(" style=\"display:inline-block;vertical-align:top;width:100%;min-width:160px;max-width:").append(pct).append("\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding:0 8px 8px 0\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\"><tr>")
+              .append("<td bgcolor=\"").append(col[0]).append("\" data-tone=\"").append(tile.tone()).append("\" style=\"background-color:").append(col[0])
+              .append(";border-radius:8px;padding:12px 14px;font-family:").append(MailTokens.FONT).append("\">")
+              .append("<p style=\"margin:0;font-size:12px;line-height:16px;font-weight:500;color:").append(col[1]).append("\">").append(MailKit.esc(tile.label())).append("</p>")
+              .append("<p style=\"margin:4px 0 0;font-size:22px;line-height:28px;font-weight:700;color:").append(col[1])
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(tile.value())).append("</p>");
+            String sub = tileSub(tile, en);
+            if (sub != null) {
+                sb.append("<p style=\"margin:2px 0 0;font-size:12px;line-height:16px;color:").append(col[1]).append("\">").append(MailKit.esc(sub)).append("</p>");
+            }
+            sb.append("</td></tr></table></td></tr></table></div><!--[if mso]></td><![endif]-->");
+        }
+        sb.append("<!--[if mso]></tr></table><![endif]--></td></tr></table>");
+        return sb.toString();
+    }
+
+    static String tilesPlain(List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles, boolean en) {
+        StringBuilder t = new StringBuilder();
+        for (var tile : tiles) {
+            t.append(tile.label()).append(": ").append(tile.value());
+            String sub = tileSub(tile, en);
+            if (sub != null) t.append(" (").append(sub).append(')');
+            t.append('\n');
+        }
+        return t.toString();
     }
 
     /**

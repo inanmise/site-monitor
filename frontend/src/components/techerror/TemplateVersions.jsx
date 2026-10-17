@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
-import { allFields, allSlots, hostOf, resolvePlaceholders, templateDiff } from './techErrorModel.js'
+import { allFields, allSlots, formatPercent, hostOf, resolvePlaceholders, templateDiff } from './techErrorModel.js'
 
 /**
  * ŞABLON SÜRÜM GEÇMİŞİ (2026-10-14, Faz B). Her şablon kaydı bir sürüm; seçilen sürümün kaydı (kim / ne zaman), önceki
@@ -230,7 +230,7 @@ function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, can
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0" data-slot="te-version-diff">
             {diff.map((d, i) => (
               <li key={i} className="rounded-md bg-muted/40 px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]" data-group={d.group} data-op={d.op}>
-                {diffText(d, t, resolve)}
+                {diffText(d, t, resolve, uiLang)}
               </li>
             ))}
           </ul>
@@ -267,10 +267,16 @@ function outlineCount(s, t) {
 const langName = (l, t) => (l === 'en' ? t('te.tpl.langEn') : t('te.tpl.langTr'))
 
 /** Fark satırının okunur metni (etiketler bu sürümün diliyle çözülür). */
-export function diffText(d, t, resolve) {
+export function diffText(d, t, resolve, lang = 'tr') {
   const r = (s) => resolve(s || '')
   const typeName = (x) => (x ? t(`te.type.${x}`) : '—')
+  const pct = (x) => (x == null ? '—' : formatPercent(x, lang))
+  const betterName = (x) => (x ? t(`te.tpl.better.${x}`) : t('te.tpl.betterDefault'))
   switch (`${d.group}.${d.op}`) {
+    // Hedef, "daha iyi" yönü ve renkli kutucuklar (2026-10-17, 4b)
+    case 'field.target': return t('te.ver.d.field.target', r(d.label), pct(d.before), pct(d.after), r(d.section))
+    case 'field.better': return t('te.ver.d.field.better', r(d.label), betterName(d.before), betterName(d.after), r(d.section))
+    case 'summary.tiles': return t('te.ver.d.summary.tiles', r(d.label), d.before, d.after)
     case 'report.title': return t('te.ver.d.report.title', r(d.before), r(d.after))
     case 'report.lang': return t('te.ver.d.report.lang', langName(d.before, t), langName(d.after, t))
     case 'section.add': return t('te.ver.d.section.add', r(d.label), t(`te.kind.${d.kind}`))

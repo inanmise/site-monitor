@@ -47,6 +47,8 @@ export const LIMITS = Object.freeze({
   cellText: 200,
   // Otomatik trend (2026-10-15, Faz C; TechErrorTemplate.MAX_TREND_SERIES)
   trendSeries: 8,
+  // Yönetici özetinin renkli kutucukları (2026-10-17, 4b; TechErrorTemplate.MAX_TILES)
+  tiles: 6,
   // Saklanabilir en büyük yüzde (TechErrorValues.MAX_PERCENT) — üstündeki hesap boş kalır
   maxPercent: 1000000,
 })
@@ -237,9 +239,9 @@ export function isIncompleteNumber(raw) {
 }
 
 /** Sunucudaki TechErrorFormat ile aynı biçim: TR 1.250.000 / %0,42; EN 1,250,000 / 0.42%; en çok 4 ondalık. */
-export function formatNumber(n, lang) {
+export function formatNumber(n, lang, maxFraction = 4) {
   if (n == null || !Number.isFinite(Number(n))) return '—'
-  return new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR', { maximumFractionDigits: 4 }).format(Number(n))
+  return new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR', { maximumFractionDigits: maxFraction }).format(Number(n))
 }
 
 export function formatPercent(n, lang) {
@@ -439,21 +441,32 @@ export function richPlain(text) {
 const MAX_REFS = 100
 
 /** `{f:id}` ya da `{f:id?evet|hayır}` başvuruları (doğrusal tarama; kapanmayan başvuru düz metin). */
+/**
+ * Başvuru türleri (2026-10-17, 4b; TechErrorSummary.KINDS): `f` değer (`{f:id}` / `{f:id?evet|hayır}`), `d` önceki aya göre
+ * fark (`{d:id}`), `t` alanın etkin hedefi (`{t:id}`), `dt` değerin hedefe uzaklığı (`{dt:id}`). Yalnız `f` seçim alır.
+ */
+export const REF_KINDS = ['f', 'd', 't', 'dt']
+const refKindAt = (str, i) => REF_KINDS.find((k) => str.startsWith(`{${k}:`, i)) || null
+
+/** Cümledeki başvurular `{ kind, id, yes, no, start, end }` (sunucudaki TechErrorSummary.refs ile aynı tarama). */
 export function summaryRefs(line) {
   const out = []
   if (line == null) return out
   const str = String(line)
-  let i = str.indexOf('{f:')
+  let i = str.indexOf('{')
   while (i >= 0 && out.length < MAX_REFS) {
-    const close = str.indexOf('}', i + 3)
+    const kind = refKindAt(str, i)
+    if (!kind) { i = str.indexOf('{', i + 1); continue }
+    const bodyStart = i + kind.length + 2
+    const close = str.indexOf('}', bodyStart)
     if (close < 0) break
-    const body = str.slice(i + 3, close)
+    const body = str.slice(bodyStart, close)
     // İç içe süslü parantez okunamaz (ilk "}"de biterdi, bozuk basılırdı): başvuru sayılmaz → summaryMalformed (sunucu)
     if (body.includes('{')) {
-      i = str.indexOf('{f:', close + 1)
+      i = str.indexOf('{', close + 1)
       continue
     }
-    const q = body.indexOf('?')
+    const q = kind === 'f' ? body.indexOf('?') : -1
     const id = richStrip(q < 0 ? body : body.slice(0, q))
     let yes = null
     let no = null
@@ -464,19 +477,63 @@ export function summaryRefs(line) {
       yes = bar < 0 ? choice : choice.slice(0, bar)
       no = bar < 0 ? '' : choice.slice(bar + 1)
     }
-    if (ID_RE.test(id)) out.push({ id, yes, no, start: i, end: close + 1 })
-    i = str.indexOf('{f:', close + 1)
+    if (ID_RE.test(id)) out.push({ kind, id, yes, no, start: i, end: close + 1 })
+    i = str.indexOf('{', close + 1)
   }
   return out
 }
 
-/** Kalıpta çözülemeyen bir `{f:` var mı (kapanmamış / geçersiz kimlik)? Sunucu kaydı reddeder. */
+/** Kalıpta çözülemeyen bir başvuru öneki var mı (kapanmamış / iç içe / geçersiz kimlik)? Sunucu kaydı reddeder. */
 export function summaryMalformed(line) {
   if (line == null) return false
   const str = String(line)
   let count = 0
-  for (let i = str.indexOf('{f:'); i >= 0; i = str.indexOf('{f:', i + 3)) count++
+  for (let i = str.indexOf('{'); i >= 0; i = str.indexOf('{', i + 1)) if (refKindAt(str, i)) count++
   return count !== summaryRefs(str).length
+}
+
+/** Alanın etkin hedefi: raporun o aya özel hedefi, yoksa şablondaki; yüzde değilse ya da hedef yoksa null (TechErrorTemplate.effectiveTarget). */
+export function effectiveTarget(field, targets) {
+  // Rapor hedefi yalnız ŞABLONDA hedefi olan alanda geçer (sunucunun saklama kuralı; inceleme 2026-10-17: yedekten dönen
+  // bayat bir rapor hedefi ekranda PDF'te olmayan bir hedef gösteriyordu)
+  if (!field || field.type !== 'percent') return null
+  const tpl = calcNumber(field.target)
+  if (tpl == null) return null
+  const o = calcNumber(targets?.[field.id])
+  return o != null ? o : tpl
+}
+
+/** Etkin "daha iyi" yönü: açıkça yazılmışsa o; yoksa yüzde → lower (hata oranı), sayı → none (TechErrorTemplate.effectiveBetter). */
+export function effectiveBetter(field) {
+  if (!field) return 'none'
+  if (field.better) return field.better
+  return field.type === 'percent' ? 'lower' : 'none'
+}
+
+/** Puan farkı (TechErrorFormat.points): "+0,04 puan" / "−0,02 puan" / "0 puan" (EN "pts"); 2 hane, küçük fark 2 anlamlı hane. */
+export function pointsOf(diff, lang) {
+  const r = roundCalc(Math.abs(diff))
+  const unit = lang === 'en' ? ' pts' : ' puan'
+  if (r === 0) return { text: `0${unit}`, dir: 'flat' }
+  return { text: `${diff > 0 ? '+' : '−'}${formatNumber(r, lang, 6)}${unit}`, dir: diff > 0 ? 'up' : 'down' }
+}
+
+/**
+ * Önceki aya göre fark (TechErrorFormat.delta; kullanıcı kararı 2026-10-16: adetlerde fark adet + yüzde, oranlarda puan):
+ * sayı → "+1.250 (+%3,2)" (önceki 0 ise yalnız adet; değişim yoksa "değişim yok"), yüzde → puan; `dir` up / down / flat;
+ * biri yoksa null (cümle düşer, kutucukta fark satırı yok).
+ */
+export function deltaOf(field, prev, cur, lang) {
+  const p = calcNumber(prev)
+  const c = calcNumber(cur)
+  if (p == null || c == null) return null
+  if (field.type === 'percent') return pointsOf(c - p, lang)
+  const diff = c - p
+  if (diff === 0) return { text: lang === 'en' ? 'no change' : 'değişim yok', dir: 'flat' }
+  const sign = diff > 0 ? '+' : '−'
+  let text = sign + formatNumber(Math.abs(diff), lang)
+  if (p !== 0) text += ` (${sign}${formatPercent(roundCalc(Math.abs(diff) / Math.abs(p) * 100), lang)})`
+  return { text, dir: diff > 0 ? 'up' : 'down' }
 }
 
 function summaryYesNo(lang) {
@@ -523,7 +580,7 @@ function summaryValue(f, v) {
  * metin değerindeki yıldız dizisi tek yıldıza iner (işaretleme bozulmasın). Uzun açıklama (`textarea`) alanına
  * başvuran cümle düşer (sunucudaki TechErrorSummary.line ile aynı; inceleme 2026-10-14).
  */
-export function summaryLine(pattern, byId, fields, lang, resolveLiteral) {
+export function summaryLine(pattern, byId, fields, lang, resolveLiteral, previous = null, targets = null) {
   if (pattern == null || richBlank(pattern)) return null
   const str = String(pattern)
   let out = ''
@@ -532,6 +589,28 @@ export function summaryLine(pattern, byId, fields, lang, resolveLiteral) {
     out += resolveLiteral(str.slice(pos, r.start))
     const f = byId.get(r.id)
     if (!f || f.type === 'textarea' || fieldExempt(f, fields)) return null
+    if (r.kind !== 'f') {
+      // 2026-10-17 (4b): fark / hedef / hedefe uzaklık — geçen ay ya da hedef yoksa cümle düşer (sunucudaki TechErrorSummary.line)
+      const numeric = f.type === 'number' || f.type === 'percent'
+      if (r.kind === 'd') {
+        if (!numeric) return null
+        const d = deltaOf(f, previous?.[f.id], fields?.[f.id], lang)
+        if (!d) return null
+        const plain = d.dir === 'flat' && f.type !== 'percent'
+        out += plain ? d.text : `**${d.text}**`
+      } else {
+        const target = effectiveTarget(f, targets)
+        if (target == null) return null
+        if (r.kind === 't') out += `**${formatPercent(target, lang)}**`
+        else {
+          const cur = calcNumber(fields?.[f.id])
+          if (cur == null) return null
+          out += `**${pointsOf(cur - target, lang).text}**`
+        }
+      }
+      pos = r.end
+      continue
+    }
     const v = summaryValue(f, fields?.[f.id])
     if (v == null) return null
     if (r.yes != null) {
@@ -567,7 +646,7 @@ function isItemLine(pattern) {
  * Kalıplardan üretilen özet (sunucudaki TechErrorSummary.auto): düz cümleler tek paragrafta akar, madde satırı ayrı
  * satır, maddeden sonraki düz cümle yeni paragraf. `fields` = raporun değerleri.
  */
-export function summaryAutoText(section, template, fields, channel, year, month) {
+export function summaryAutoText(section, template, fields, channel, year, month, previous = null, targets = null) {
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
   const lang = template?.lang
   const lit = (x) => resolveTextPlaceholders(x, channel, year, month, lang)
@@ -576,7 +655,7 @@ export function summaryAutoText(section, template, fields, channel, year, month)
   for (const line of section?.lines || []) {
     // Sınır aşıldıysa sonraki cümleler üretilmez — sonuç zaten sınırda kesilir (sunucu ile aynı)
     if (out.length > MAX_RESOLVED_TEXT) break
-    let r = summaryLine(line, byId, fields, lang, lit)
+    let r = summaryLine(line, byId, fields, lang, lit, previous, targets)
     if (!r || richBlank(r)) continue
     const item = isItemLine(line)
     // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (sunucu ile aynı)
@@ -603,10 +682,10 @@ export function summaryAutoText(section, template, fields, channel, year, month)
  * metin "otomatik" sayılır (inceleme 2026-10-14: boş bir özetle "Metni elle düzenle"ye basmak özeti kalıcı olarak
  * boş bırakıyordu; sonradan girilen rakamlar onu hiç doldurmuyordu). Sunucu aynı kuralı uygular.
  */
-export function summaryEffective(section, template, values, channel, year, month) {
+export function summaryEffective(section, template, values, channel, year, month, previous = null) {
   const override = values?.texts?.[section?.id]
   if (override != null && !richBlank(override)) return resolveTextPlaceholders(override, channel, year, month, template?.lang)
-  return summaryAutoText(section, template, values?.fields || {}, channel, year, month)
+  return summaryAutoText(section, template, values?.fields || {}, channel, year, month, previous, values?.targets || null)
 }
 
 /**
@@ -688,7 +767,7 @@ function embeddedBlocks(e, template, fields, told, channel, year, month) {
  * </ul>
  * Gömülü bölüm yoksa tek metin bloğu = {@link summaryAutoText} (davranış değişmez).
  */
-export function summaryBlocks(template, section, fields, texts, channel, year, month) {
+export function summaryBlocks(template, section, fields, texts, channel, year, month, previous = null, targets = null) {
   if (!section) return []
   const lang = template?.lang
   const embedded = embeddedSections(template, section.id)
@@ -714,11 +793,12 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
   let par = false
   for (const line of lines) {
     if (len > MAX_RESOLVED_TEXT) { kept.push(null); continue }
-    const r = summaryLine(line, byId, fields, lang, lit)
+    const r = summaryLine(line, byId, fields, lang, lit, previous, targets)
     const ok = r != null && !richBlank(r) && (!isItemLine(line) || isItemLine(r))
     kept.push(ok ? r : null)
     if (!ok) continue
-    for (const ref of summaryRefs(line)) told.add(ref.id)
+    // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
+    for (const ref of summaryRefs(line)) if (ref.kind === 'f') told.add(ref.id)
     const item = isItemLine(line)
     len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length
     par = !item
@@ -814,26 +894,33 @@ export function capTextBlocks(blocks, max) {
  * alan bir kez), `exempt` = "Hayır" cevabıyla muaf rakama dayanıyor, `broken` = kullanılamayan alana bağlı; `reason`:
  * `removed` (şablonda yok), `notYesNo` (seçim evet/hayır olmayan alanda), `textarea` (uzun açıklama alanı).
  */
-export function summaryLineStatus(section, template, fields) {
+export function summaryLineStatus(section, template, fields, previous = null, targets = null) {
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
   return (section?.lines || []).map((line, index) => {
     const missing = []
     const seen = new Set()
     let exempt = false
     let reason = null
+    let needsPrevious = false
     for (const r of summaryRefs(line)) {
       const f = byId.get(r.id)
       if (!f) { reason = reason || 'removed'; continue }
       if (r.yes != null && f.type !== 'yesno') { reason = reason || 'notYesNo'; continue }
       if (f.type === 'textarea') { reason = reason || 'textarea'; continue }
+      // 2026-10-17 (4b): fark yalnız sayı / yüzde alanında; hedef ve hedefe uzaklık yalnız hedefi olan alanda
+      if (r.kind === 'd' && f.type !== 'number' && f.type !== 'percent') { reason = reason || 'notNumeric'; continue }
+      if ((r.kind === 't' || r.kind === 'dt') && effectiveTarget(f, targets) == null) { reason = reason || 'noTarget'; continue }
       if (fieldExempt(f, fields)) { exempt = true; continue }
+      if (r.kind === 't') continue                      // hedef şablondan gelir: bu ayın değeri gerekmez
       if (summaryValue(f, fields?.[f.id]) == null && !seen.has(f.id)) {
         seen.add(f.id)
         missing.push(f)
       }
+      // Fark geçen ayın raporunu bekler: rapor yoksa cümle düşer (kullanıcı kararı) — listede "geçen ayın raporu yok" denir
+      if (r.kind === 'd' && calcNumber(previous?.[f.id]) == null) needsPrevious = true
     }
-    const state = reason ? 'broken' : exempt ? 'exempt' : missing.length ? 'missing' : 'ok'
-    return { index, line, state, missing, reason }
+    const state = reason ? 'broken' : exempt ? 'exempt' : (missing.length || needsPrevious) ? 'missing' : 'ok'
+    return { index, line, state, missing, reason, needsPrevious }
   })
 }
 
@@ -856,6 +943,9 @@ export function summaryLineIssues(line, template) {
     if (!f) push({ kind: 'missing', id: r.id })
     else if (r.yes != null && f.type !== 'yesno') push({ kind: 'notYesNo', id: r.id, label: f.label })
     else if (f.type === 'textarea') push({ kind: 'textarea', id: r.id, label: f.label })
+    // 2026-10-17 (4b): fark yalnız sayı / yüzde; hedef ve hedefe uzaklık yalnız şablonda hedefi olan yüzde alanında
+    else if (r.kind === 'd' && f.type !== 'number' && f.type !== 'percent') push({ kind: 'notNumeric', id: r.id, label: f.label })
+    else if ((r.kind === 't' || r.kind === 'dt') && effectiveTarget(f, null) == null) push({ kind: 'noTarget', id: r.id, label: f.label })
   }
   return out
 }
@@ -865,7 +955,8 @@ export function summaryLineIssues(line, template) {
  * olmayan alan `removedLabel` ile gösterilir (kimlik kullanıcıya gösterilmez; verilmezse kimlik). Alan adları `resolve`
  * ile, satırın tamamı `resolveLine` ile çözülür — başlık sınırlı (300) çözücü 500 karakterlik cümleyi "…" ile kesiyordu.
  */
-export function summaryLinePreview(line, template, resolve = (x) => x, removedLabel = null, resolveLine = resolve) {
+export function summaryLinePreview(line, template, resolve = (x) => x, removedLabel = null, resolveLine = resolve,
+  decorate = (kind, label) => `${label} · ${kind}`) {
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
   const str = String(line || '')
   let out = ''
@@ -873,8 +964,9 @@ export function summaryLinePreview(line, template, resolve = (x) => x, removedLa
   for (const r of summaryRefs(str)) {
     out += str.slice(pos, r.start)
     const f = byId.get(r.id)
+    const base = f ? resolve(f.label) : (removedLabel ?? r.id)
     if (r.yes != null) out += `[${r.yes} / ${r.no}]`
-    else out += `[${f ? resolve(f.label) : (removedLabel ?? r.id)}]`
+    else out += `[${r.kind === 'f' ? base : decorate(r.kind, base)}]`   // fark / hedef / hedefe uzaklık türü de okunur
     pos = r.end
   }
   return resolveLine(out + str.slice(pos))
@@ -1107,6 +1199,15 @@ export function templateErrors(template) {
         if (!(f.label || '').trim()) errs[`field:${f.id}`] = 'te.err.fieldLabelRequired'
         const ce = calcShapeError(f)
         if (ce) errs[`calc:${f.id}`] = ce
+        // Hedef (2026-10-17, 4b): yalnız yüzde alanı, 0–100, yönü seçilmiş; yön yalnız sayı / yüzde alanında
+        if (f.target != null && f.target !== '') {
+          const tv = calcNumber(f.target)
+          if (f.type !== 'percent') errs[`target:${f.id}`] = 'te.err.targetType'
+          else if (tv == null || tv < 0 || tv > 100) errs[`target:${f.id}`] = 'te.err.targetRange'
+          // "yön yok" da yönsüzdür (inceleme 2026-10-17: "yüksek" sayılıp rengi ters çeviriyordu)
+          else if (!f.better || f.better === 'none') errs[`target:${f.id}`] = 'te.err.targetBetter'
+        }
+        if (f.better && (!BETTER.includes(f.better) || (f.type !== 'number' && f.type !== 'percent'))) errs[`target:${f.id}`] = 'te.err.betterKind'
       }
       // Gösterildiği özet bölümü şablonda yok (sunucu katı kayıtta reddeder)
       if (s.host != null && s.host !== '' && !hostOf(template, s) && !errs[`section:${s.id}`]) errs[`section:${s.id}`] = 'te.err.hostMissing'
@@ -1119,6 +1220,7 @@ export function templateErrors(template) {
       const lines = (s.lines || []).filter((l) => String(l || '').trim())
       if (!lines.length) errs[`section:${s.id}`] = 'te.err.noLines'
       if ((s.lines || []).length > LIMITS.summaryLines) errs[`section:${s.id}`] = 'te.err.tooManyLines'
+      if ((s.tiles || []).length > LIMITS.tiles) errs[`section:${s.id}`] = 'te.err.tooManyTiles'
       ;(s.lines || []).forEach((l, i) => {
         // Sunucu gibi ölçülür (TechErrorTemplate.line: çift boşluk teke iner) — sunucunun kabul ettiği cümle reddedilmez
         if (shortTextValue(l).length > LIMITS.summaryLine) errs[`line:${s.id}:${i}`] = 'te.err.lineTooLong'
@@ -1165,6 +1267,8 @@ export function normalizeValues(values) {
     texts: { ...(values?.texts || {}) },
     tables: Object.fromEntries(Object.entries(values?.tables || {}).map(([sid, rows]) => [sid,
       Object.fromEntries(Object.entries(rows || {}).map(([rid, cells]) => [rid, { ...(cells || {}) }]))])),
+    // Raporun o aya özel hedefleri (2026-10-17, 4b)
+    targets: { ...(values?.targets || {}) },
   }
 }
 
@@ -1243,8 +1347,17 @@ export function canonicalValues(v, template = null) {
       if (s.kind === 'summary' && typeof texts[s.id] === 'string' && richBlank(texts[s.id])) delete texts[s.id]
     }
   }
+  // Raporun o aya özel hedefleri (2026-10-17, 4b): yalnız şablonda hedefi olan yüzde alanları; boş → yok (sunucu da
+  // anahtarı yalnız doluyken yazar — hedefsiz raporun belgesi öncekiyle aynı kalır)
+  const targets = {}
+  for (const [k, x] of Object.entries(v?.targets || {})) {
+    if (x == null || (typeof x === 'string' && x.trim() === '')) continue
+    if (template && !allFields(template).some((f) => f.id === k && f.type === 'percent' && f.target != null && f.target !== '')) continue
+    targets[k] = x
+  }
   const out = { fields, issues, texts }
   if (Object.keys(tables).length) out.tables = tables
+  if (Object.keys(targets).length) out.targets = targets
   return out
 }
 
@@ -1255,17 +1368,23 @@ export function canonicalTemplate(tpl) {
   return {
     ...strip({ lang: tpl.lang, title: tpl.title }),
     sections: (tpl.sections || []).map((s) => {
-      const out = strip({ ...s, fields: undefined, slots: undefined, columns: undefined, rows: undefined, lines: undefined })
+      const out = strip({ ...s, fields: undefined, slots: undefined, columns: undefined, rows: undefined, lines: undefined, tiles: undefined })
       if (Array.isArray(s.fields)) {
         out.fields = s.fields.map((f) => {
           const o = strip({ ...f, calc: undefined })
           const c = canonCalc(f.calc)
           if (c) o.calc = c
+          // Hedef sayı olarak yazılır (sunucu Double): "99,95" metni ile 99.95 aynı sayılır
+          const tv = calcNumber(f.target)
+          if (tv != null) o.target = tv
+          else delete o.target
           return o
         })
       }
       if (Array.isArray(s.slots)) out.slots = s.slots.map(strip)
       if (Array.isArray(s.lines)) out.lines = s.lines.slice()
+      // Sunucu kutucukları yalnız doluyken yazar: boş liste ile yokluk aynı sayılır
+      if (Array.isArray(s.tiles) && s.tiles.length) out.tiles = s.tiles.slice()
       if (Array.isArray(s.columns)) out.columns = s.columns.map(strip)
       // Sunucu grup bayrağını yalnız "true" iken yazar: false ile yokluk aynı sayılır
       if (Array.isArray(s.rows)) out.rows = s.rows.map((r) => strip({ ...r, group: r.group ? true : undefined }))
@@ -1346,7 +1465,9 @@ export function formatBytes(n, lang) {
 // hesaplar ve saklar (istemcinin oranı yok sayılır); burada aynı kural YAZARKEN gösterilir — taslağa yazılmaz. Doğruluk
 // tablosu TechErrorCalcTest.TABLE (JS testi Java kaynağından okur).
 
-export const CALC_KINDS = ['ratio', 'change', 'increase']
+export const CALC_KINDS = ['ratio', 'change', 'increase', 'compare']
+/** "Daha iyi" yönü (2026-10-17, 4b; TechErrorTemplate.BETTER). */
+export const BETTER = ['lower', 'higher', 'none']
 /** Formül kullanılamıyor — alan elle girilir (geçen ayın raporu / değeri yok; başvurulan alan uygun değil). */
 export const CALC_MANUAL = new Set(['MANUAL', 'BAD_REF'])
 
@@ -1377,7 +1498,7 @@ export function calcShapeError(field) {
   const c = field?.calc
   if (!c?.kind) return null
   if (!CALC_KINDS.includes(c.kind)) return 'te.err.calcKind'
-  const percentKind = c.kind !== 'increase'
+  const percentKind = c.kind !== 'increase' && c.kind !== 'compare'
   if (percentKind ? field.type !== 'percent' : field.type !== 'yesno') return 'te.err.calcType'
   const need = c.kind === 'ratio' ? [c.num, c.den] : [c.of]
   if (need.some((x) => !x)) return 'te.err.calcRequired'
@@ -1385,7 +1506,7 @@ export function calcShapeError(field) {
   return null
 }
 
-const calcNumber = (v) => {
+export const calcNumber = (v) => {
   if (v == null || v === '' || typeof v === 'boolean') return null
   const n = Number(v)
   return Number.isFinite(n) ? n : null
@@ -1444,10 +1565,23 @@ const calcOk = (p) => (!Number.isFinite(p) || Math.abs(p) > LIMITS.maxPercent
  * RANGE (formül kullanılabilir, sonuç boş) | MANUAL | BAD_REF (formül kullanılamaz — elle). `previous` geçen ayın aynı
  * kimlik / türdeki alanları; rapor yoksa null. Hesaplanmayan alan → null.
  */
-export function calcResult(field, byId, fields, previous) {
+export function calcResult(field, byId, fields, previous, targets = null) {
   const c = field?.calc
   if (!c?.kind) return null
   const res = (status, value = null, missing = []) => ({ status, value, missing })
+  if (c.kind === 'compare') {
+    // Hedef karşılaştırması (2026-10-17, 4b): hedefi olan yüzde alanı (hesaplanan da olabilir — `fields` 1. geçişin sonucu);
+    // yön alanın "daha iyi"si: yüksek iyi → ≥, düşük iyi → ≤ (eşitlik tutturuldu)
+    const of = byId.get(c.of)
+    if (!of || of.type !== 'percent') return res('BAD_REF')
+    const target = effectiveTarget(of, targets)
+    if (target == null) return res('BAD_REF')
+    const better = effectiveBetter(of)
+    if (better === 'none') return res('BAD_REF')          // yönsüz alan hedefle karşılaştırılamaz (sunucu ile aynı)
+    const cur = calcNumber(fields?.[of.id])
+    if (cur == null) return res('MISSING', null, [of.id])
+    return res('OK', better === 'lower' ? cur <= target : cur >= target)
+  }
   if (c.kind === 'ratio') {
     const refs = [c.num, c.minus, c.den]
     const v = [null, null, null]
@@ -1478,16 +1612,26 @@ export function calcResult(field, byId, fields, previous) {
  * Şablondaki tüm hesaplanan alanların sonuçları `{ [id]: result }`. Muaf alanların ("Hayır" cevabı) değeri girdi sayılmaz
  * (sunucu onları saklamaz); muaf hesaplanan alan sonuç almaz.
  */
-export function calcResults(template, fields, previous) {
+export function calcResults(template, fields, previous, targets = null) {
   const all = allFields(template)
   const out = {}
   if (!all.some((f) => f.calc?.kind)) return out
   const byId = new Map(all.map((f) => [f.id, f]))
   const inputs = { ...(fields || {}) }
   for (const f of all) if (fieldExempt(f, fields)) delete inputs[f.id]
+  // 1. geçiş: oran / değişim / artış; 2. geçiş: hedef karşılaştırması — hesaplanmış yüzdeyi de görür (sunucu ile aynı sıra)
   for (const f of all) {
-    if (!f.calc?.kind || fieldExempt(f, fields)) continue
-    out[f.id] = calcResult(f, byId, inputs, previous)
+    if (!f.calc?.kind || f.calc.kind === 'compare' || fieldExempt(f, fields)) continue
+    out[f.id] = calcResult(f, byId, inputs, previous, targets)
+  }
+  const applied = { ...inputs }
+  for (const [id, x] of Object.entries(out)) {
+    if (x.status === 'OK') applied[id] = x.value
+    else if (!CALC_MANUAL.has(x.status)) delete applied[id]
+  }
+  for (const f of all) {
+    if (f.calc?.kind !== 'compare' || fieldExempt(f, fields)) continue
+    out[f.id] = calcResult(f, byId, applied, previous, targets)
   }
   return out
 }
@@ -1496,8 +1640,8 @@ export function calcResults(template, fields, previous) {
  * Hesaplanan alanlar uygulanmış değerler — yalnız GÖSTERİM (özet önizlemesi, trend grafiğinin bu ayı); taslağa yazılmaz,
  * kaydedilen değeri sunucu hesaplar. Formül kullanılamayan alanda girilen değer kalır. Hesap yoksa AYNI nesne.
  */
-export function applyCalc(template, fields, previous, results = null) {
-  const r = results || calcResults(template, fields, previous)
+export function applyCalc(template, fields, previous, results = null, targets = null) {
+  const r = results || calcResults(template, fields, previous, targets)
   const ids = Object.keys(r)
   if (!ids.length) return fields
   const out = { ...(fields || {}) }
@@ -1523,10 +1667,54 @@ export function derivedRates(fields, fieldId) {
  */
 export function calcRefIssues(template, field) {
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const compare = field?.calc?.kind === 'compare'
   return calcRefs(field?.calc).map((id) => {
     const f = byId.get(id) || null
+    // Hedef karşılaştırması (4b): şablonda HEDEFİ olan bir yüzde alanı (hesaplanan olabilir)
+    if (compare) return { id, field: f, status: !f ? 'missing' : f.type !== 'percent' ? 'notPercent' : effectiveTarget(f, null) == null ? 'noTarget' : 'ok' }
     return { id, field: f, status: !f ? 'missing' : f.type !== 'number' ? 'notNumber' : f.calc?.kind ? 'computed' : 'ok' }
   }).filter((x) => x.status !== 'ok')
+}
+
+/**
+ * Yönetici özetinin başındaki RENKLİ KUTUCUKLAR (2026-10-17, 4b; sunucudaki TechErrorTiles.build, ortak doğruluk tablosu
+ * TechErrorTilesTest.TILES_TABLE): `{ id, label, value, delta, dir, tone, target, met }` — şablonda olmayan / sayı-yüzde
+ * olmayan / muaf alan çizilmez; değeri boş alan "—" ve `unknown`; ton: hedefli alan hedefi tutturdu mu (good / bad),
+ * hedefsiz alan "daha iyi" yönüne göre önceki aya karşı (iyileşme good, kötüleşme bad; yön yok / geçen ay yok / değişim yok
+ * neutral). `fields` hesaplar uygulanmış değerler olmalı.
+ */
+export function summaryTiles(template, section, fields, targets, previous, channel, year, month) {
+  const out = []
+  if (!template || !section || !(section.tiles || []).length) return out
+  const lang = template.lang
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  for (const id of section.tiles) {
+    if (out.length >= LIMITS.tiles) break
+    const f = byId.get(id)
+    if (!f || (f.type !== 'number' && f.type !== 'percent')) continue
+    if (fieldExempt(f, fields)) continue
+    const cur = fields?.[id]
+    const c = calcNumber(cur)
+    const label = resolvePlaceholders(f.label || '', channel, year, month, lang)
+    const value = c == null ? '—' : formatValue(f, c, lang, summaryYesNo(lang))
+    const d = deltaOf(f, previous?.[id], cur, lang)
+    const target = effectiveTarget(f, targets)
+    const better = effectiveBetter(f)
+    let met = null
+    let tone
+    if (c == null) tone = 'unknown'
+    else if (target != null && better !== 'none') {
+      // Hedefli alan: tutturdu mu (eşitlik tutturuldu); yönsüz hedef karşılaştırılamaz → nötr yol (sunucu ile aynı)
+      met = better === 'lower' ? c <= target : c >= target
+      tone = met ? 'good' : 'bad'
+    } else {
+      if (better === 'none' || !d || d.dir === 'flat') tone = 'neutral'
+      else tone = (d.dir === 'up') === (better === 'higher') ? 'good' : 'bad'
+    }
+    out.push({ id, label, value, delta: d ? d.text : null, dir: d ? d.dir : null, tone,
+      target: target == null ? null : formatPercent(target, lang), met })
+  }
+  return out
 }
 
 /** Alanı formülünde kullanan hesaplanan alanlar (alan silinirken uyarı için). */
@@ -1586,6 +1774,35 @@ export function pruneRemovedTrendRefs(prev, next) {
     if (keep.length === (s.series || []).length || keep.length === 0) return s
     changed = true
     return { ...s, series: keep }
+  })
+  return changed ? { ...next, sections } : next
+}
+
+/** Alanı renkli kutucuk olarak gösteren özet bölümleri (silme onayında söylenir; 2026-10-17, 4b). */
+export function tileSectionsUsing(template, fieldId) {
+  return (template?.sections || []).filter((s) => s.kind === 'summary' && (s.tiles || []).includes(fieldId))
+}
+
+/**
+ * Bu değişiklikle şablondan ÇIKAN alanları özet kutucuklarından da düşürür (alan / bölüm silindi — kullanıcı onayladı;
+ * inceleme 2026-10-17: ham kimlik listede kalıyordu). Trend budamasının aksine boş kutucuk listesi geçerlidir (anahtar
+ * silinir). Önceden sarkan kimliklere dokunmaz (düzenleyici onları "silinmiş alan" diye gösterir). Değişiklik yoksa AYNI nesne.
+ */
+export function pruneRemovedTiles(prev, next) {
+  if (!prev || !next || prev === next) return next
+  const after = new Set(allFields(next).map((f) => f.id))
+  const gone = new Set(allFields(prev).map((f) => f.id).filter((id) => !after.has(id)))
+  if (!gone.size) return next
+  let changed = false
+  const sections = (next.sections || []).map((s) => {
+    if (s.kind !== 'summary' || !(s.tiles || []).length) return s
+    const keep = s.tiles.filter((id) => !gone.has(id))
+    if (keep.length === s.tiles.length) return s
+    changed = true
+    const out = { ...s }
+    if (keep.length) out.tiles = keep
+    else delete out.tiles
+    return out
   })
   return changed ? { ...next, sections } : next
 }
@@ -1772,6 +1989,9 @@ export function templateDiff(prev, cur) {
       if ((a.type || '') !== (b.type || '')) r.push({ op: 'retype', before: a.type, after: b.type })
       if ((a.skip_if_no || '') !== (b.skip_if_no || '')) r.push({ op: 'link' })
       if (stableJson(canonCalc(a.calc) || null) !== stableJson(canonCalc(b.calc) || null)) r.push({ op: 'calc' })
+      // Hedef ve "daha iyi" yönü (2026-10-17, 4b)
+      if ((calcNumber(a.target) ?? null) !== (calcNumber(b.target) ?? null)) r.push({ op: 'target', before: calcNumber(a.target), after: calcNumber(b.target) })
+      if ((a.better || '') !== (b.better || '')) r.push({ op: 'better', before: a.better || null, after: b.better || null })
       return r
     })
     if (s.kind === 'images') itemsDiff(out, 'slot', section, p.slots, s.slots, moves.slot, (a, b) =>
@@ -1786,6 +2006,10 @@ export function templateDiff(prev, cur) {
       const a = p.lines || []
       const b = s.lines || []
       if (a.join('\u0000') !== b.join('\u0000')) out.push({ group: 'summary', op: 'change', label: section, before: a.length, after: b.length })
+      // Kutucuklar (2026-10-17, 4b)
+      const ta = p.tiles || []
+      const tb = s.tiles || []
+      if (ta.join('\u0000') !== tb.join('\u0000')) out.push({ group: 'summary', op: 'tiles', label: section, before: ta.length, after: tb.length })
     }
     if (s.kind === 'text' && (p.text || '') !== (s.text || '')) out.push({ group: 'text', op: 'change', label: section })
     if (s.kind === 'trend') {
@@ -1845,8 +2069,8 @@ export function istanbulDay(iso) {
  */
 export function reportErrorSection(key, template) {
   const k = String(key || '')
-  if (k.startsWith('values.')) {
-    const fid = k.slice(7)
+  if (k.startsWith('values.') || k.startsWith('targets.')) {
+    const fid = k.slice(k.indexOf('.') + 1)
     const sec = (template?.sections || []).find((s) => s.kind === 'metrics' && (s.fields || []).some((f) => f.id === fid))
     // Özet kartına gömülü bölümün alanı kartın içindedir: hata o özetin (kapalı kartta sayı, kayıtta açılır)
     return sec ? (hostOf(template, sec)?.id ?? sec.id) : null
@@ -1880,7 +2104,7 @@ export function templateErrorSection(key, template) {
     return (end < 0 ? rest : rest.slice(0, end)) || null
   }
   const sections = template?.sections || []
-  if (kind === 'field' || kind === 'calc') return sections.find((s) => (s.fields || []).some((f) => f.id === rest))?.id ?? null
+  if (kind === 'field' || kind === 'calc' || kind === 'target') return sections.find((s) => (s.fields || []).some((f) => f.id === rest))?.id ?? null
   if (kind === 'slot') return sections.find((s) => (s.slots || []).some((x) => x.id === rest))?.id ?? null
   return null
 }
@@ -1921,6 +2145,13 @@ export function revertInvalidValues(values, base, errorKeys) {
       const o = own()
       o.fields = o.fields || {}
       put(o.fields, fid, base?.fields?.[fid] ?? null)
+    } else if (k.startsWith('targets.')) {
+      // Raporun o aya özel hedefi (2026-10-17, 4b): geçersiz yazım kayıtlı hedefte kalır
+      const fid = k.slice(8)
+      if ((values.targets?.[fid] ?? null) === (base?.targets?.[fid] ?? null)) continue
+      const o = own()
+      o.targets = o.targets || {}
+      put(o.targets, fid, base?.targets?.[fid] ?? null)
     } else if (k.startsWith('issue:')) {
       const parts = k.split(':')
       if (parts.length !== 4) continue

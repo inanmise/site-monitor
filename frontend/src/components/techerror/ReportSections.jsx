@@ -14,6 +14,7 @@ import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
   hasAbbreviation, isAmbiguousB, isIncompleteNumber,
   issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
+  summaryTiles, effectiveTarget, effectiveBetter, calcNumber,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
 import { RichText, RichTextarea } from './RichText.jsx'
@@ -133,13 +134,17 @@ function CalcOutput({ id, field, res, uiLang, describedBy, t }) {
 }
 
 /** Hesabın açıklaması (formül) ya da neden boş / elle olduğu — alan adları raporun şablon diliyle çözülür. */
-function calcNoteText(field, res, label, previous, t) {
+function calcNoteText(field, res, label, previous, t, compare = null) {
   const c = field.calc
   const period = periodLabel(previous, t)
   switch (res.status) {
     case 'OK':
       if (c.kind === 'ratio') {
         return c.minus ? t('te.calc.formulaMinus', label(c.num), label(c.minus), label(c.den)) : t('te.calc.formula', label(c.num), label(c.den))
+      }
+      // Hedef karşılaştırması (2026-10-17, 4b): hedef ve yön — hedefe eşit tutturuldu sayılır (kullanıcı kararı)
+      if (c.kind === 'compare') {
+        return t('te.calc.formulaCompare', label(c.of), compare?.target ?? '—', t(compare?.lower ? 'te.calc.compareLower' : 'te.calc.compareHigher'))
       }
       return t('te.calc.formulaChange', label(c.of), period)
     case 'MISSING': return t('te.calc.missing', res.missing.map(label).join(', '))
@@ -148,7 +153,7 @@ function calcNoteText(field, res, label, previous, t) {
     case 'EQUAL': return t('te.calc.equal', label(c.of))
     case 'RANGE': return t('te.calc.range')
     case 'MANUAL': return t('te.calc.manual', label(c.of))
-    default: return t('te.calc.badRef')
+    default: return c.kind === 'compare' ? t('te.calc.noTarget', label(c.of)) : t('te.calc.badRef')
   }
 }
 
@@ -179,7 +184,7 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
  * `templateFields`: şablonun bütün alanları (formül adları, türeyen oranlar, bağlı alan sayısı).
  */
 export function MetricField({ field: f, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
-  calc = null }) {
+  calc = null, onTarget = null }) {
   const t = useT()
   const all = templateFields || []
   const labelOf = (fid) => resolve(all.find((x) => x.id === fid)?.label || fid)
@@ -195,6 +200,13 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
   const noteId = res ? `${id}-c` : undefined
   const describedBy = [hintId, noteId, errId].filter(Boolean).join(' ') || undefined
   const v = computed ? (res.status === 'OK' ? res.value : null) : values.fields[f.id]
+  // Hedef karşılaştırması (2026-10-17, 4b): notta hedef ve yön; raporun o aya özel hedefi yalnız şablonda hedefi olan
+  // yüzde alanında sorulur (boş = şablon hedefi; yazılan hedef geçmişte görünür)
+  const cmpOf = f.calc?.kind === 'compare' ? all.find((x) => x.id === f.calc.of) || null : null
+  const cmpTarget = cmpOf ? effectiveTarget(cmpOf, values.targets) : null
+  const compareInfo = cmpOf ? { target: cmpTarget == null ? '—' : formatPercent(cmpTarget, uiLang), lower: effectiveBetter(cmpOf) === 'lower' } : null
+  const hasTarget = f.type === 'percent' && calcNumber(f.target) != null
+  const targetErr = errors[`targets.${f.id}`]
   let control
   if (computed) {
     control = <CalcOutput id={id} field={f} res={res} uiLang={uiLang} describedBy={describedBy} t={t} />
@@ -237,8 +249,25 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
       {control}
       {res && (
         <p id={noteId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-note" data-status={res.status}>
-          {calcNoteText(f, res, labelOf, previous, t)}
+          {calcNoteText(f, res, labelOf, previous, t, compareInfo)}
         </p>
+      )}
+      {hasTarget && (
+        <div className="flex min-w-0 flex-col gap-1 rounded-md border border-dashed p-2" data-slot="te-target" data-field={`targets.${f.id}`}>
+          <label htmlFor={`${id}-t`} className="text-xs font-medium text-muted-foreground">{t('te.target.month')}</label>
+          <NumberInput id={`${id}-t`} value={values.targets?.[f.id] ?? null} lang={uiLang} percent disabled={readOnly || !onTarget}
+            describedBy={[`${id}-th`, targetErr ? `${id}-te` : null].filter(Boolean).join(' ')} invalid={targetErr ? true : undefined}
+            pendingKey={`targets.${f.id}`}
+            onChange={(n) => {
+              // Sunucu kuralı alanın altında (inceleme 2026-10-17): %0–100 dışı hedef taslağa yazılmaz, hata hemen görünür
+              if (n != null && n > 100) { onFieldError(`targets.${f.id}`, t('te.err.targetRange')); return }
+              onFieldError(`targets.${f.id}`, null)
+              onTarget?.(f.id, n)
+            }}
+            onError={(k) => onFieldError(`targets.${f.id}`, k ? t(k) : null)} />
+          <p id={`${id}-th`} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.target.hint', formatPercent(f.target, uiLang))}</p>
+          {targetErr && <p id={`${id}-te`} className="text-sm text-destructive" role="alert">{targetErr}</p>}
+        </div>
       )}
       {/* Bu adetten türeyen oranlar girişin hemen altında (2026-10-16, kullanıcı isteği: "kota / map yapılmamış hata adedi
           girişinde yüzde de görünsün") — canlı, oran bölümüyle aynı sonuç */}
@@ -293,11 +322,11 @@ export function MetricFieldsGrid({ section, values, templateFields, columns = 3,
 }
 
 export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
-  calc = null }) {
+  calc = null, onTarget = null }) {
   return (
     <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
       <MetricFieldsGrid section={section} values={values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
-        errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} />
+        errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} onTarget={onTarget} />
     </SectionShell>
   )
 }
@@ -462,20 +491,25 @@ function focusValueField(fieldId) {
  * kopyayı siler (onayla). Boş bırakılan elle metin kayıtta otomatiğe döner (özet kilitlenmez).
  */
 export function SummaryBlock({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText,
-  embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null }) {
+  embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null, onTarget = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const override = values.texts[section.id]
   const manual = override != null
-  const auto = summaryAutoText(section, template, values.fields, channelName, year, month)
+  // Geçen ayın değerleri ve raporun o aya özel hedefleri (2026-10-17, 4b): fark / hedef cümleleri ve renkli kutucuklar
+  const prevFields = previous?.fields || null
+  const targets = values.targets || null
+  const auto = summaryAutoText(section, template, values.fields, channelName, year, month, prevFields, targets)
   // Önizleme PDF'teki gibi bloklardan: gömülü bölümlerin açıklamaları ilgili cümlenin altında (2026-10-17)
-  const blocks = manual ? null : summaryBlocks(template, section, values.fields, values.texts, channelName, year, month)
-  const status = summaryLineStatus(section, template, values.fields)
+  const blocks = manual ? null : summaryBlocks(template, section, values.fields, values.texts, channelName, year, month, prevFields, targets)
+  const status = summaryLineStatus(section, template, values.fields, prevFields, targets)
+  const tiles = summaryTiles(template, section, values.fields, targets, prevFields, channelName, year, month)
   const pending = status.filter((x) => x.state === 'missing')
   const broken = status.filter((x) => x.state === 'broken')
   const err = errors[`text.${section.id}`]
   const id = `te-sum-${section.id}`
   const resolveLine = (x) => resolveTextPlaceholders(x, channelName, year, month, template?.lang)
+  const decorateRef = (kind, label) => t(`te.tpl.refKind.${kind}`, label)
   const editBtn = useRef(null)
   const [focusEdit, setFocusEdit] = useState(false)
   // Metin kutusu YALNIZ "Elle düzenle" tıklanınca odak alır — elle düzenlenmiş özeti olan rapor açılınca, taslak geri
@@ -513,6 +547,7 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
           </Button>
         ))}
       </div>
+      <SummaryTiles tiles={tiles} t={t} />
       {manual ? (
         <div className="flex flex-col gap-1.5" data-field={`text.${section.id}`}>
           <label htmlFor={id} className="sr-only">{resolve(section.title)}</label>
@@ -558,7 +593,7 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
               <li key={p.index} className="flex gap-2 text-sm text-muted-foreground">
                 <CircleDashed aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
                 <span className="min-w-0 [overflow-wrap:anywhere]">
-                  {summaryLinePreview(p.line, template, resolve, t('te.sum.removedField'), resolveLine)}{' '}
+                  {summaryLinePreview(p.line, template, resolve, t('te.sum.removedField'), resolveLine, decorateRef)}{' '}
                   <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs">
                     {/* Boşluk düğümleri flex düzeninde görünmez; kopyalanan / okunan metin "Beklenen: A, B" olur */}
                     <span>{t('te.sum.needsLabel')}</span>{' '}
@@ -577,6 +612,12 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
                       {k < p.missing.length - 1 ? ' ' : null}
                       </Fragment>
                     ))}
+                    {/* Fark cümlesi geçen ayın raporunu bekler (4b): rapor yoksa cümle düşer — ne beklendiği söylenir */}
+                    {p.needsPrevious && (
+                      <span className="inline-flex min-w-0 max-w-full items-center" data-slot="te-sum-needs-previous">
+                        {p.missing.length ? <span aria-hidden="true" className="me-1">,</span> : null}{t('te.sum.needsPrevious')}
+                      </span>
+                    )}
                   </span>
                 </span>
               </li>
@@ -589,7 +630,7 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
           {broken.map((b) => (
             <p key={b.index} className="m-0 flex gap-2 text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]">
               <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              <span>{t(`te.sum.broken.${b.reason || 'removed'}`, summaryLinePreview(b.line, template, resolve, t('te.sum.removedField'), resolveLine))}</span>
+              <span>{t(`te.sum.broken.${b.reason || 'removed'}`, summaryLinePreview(b.line, template, resolve, t('te.sum.removedField'), resolveLine, decorateRef))}</span>
             </p>
           ))}
         </div>
@@ -606,12 +647,55 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
                 <CopyTextButton text={resolve(e.title)} />
               </div>
               <MetricFieldsGrid section={e} values={fieldValues || values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
-                errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} columns={2} />
+                errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} columns={2}
+                onTarget={onTarget} />
             </div>
           ))}
         </div>
       )}
     </SectionShell>
+  )
+}
+
+/** Kutucuk tonu → zemin / yazı (PDF ve e-posta ile aynı palet: iyi yeşil, kötü kırmızı, nötr mavi, bilinmeyen gri). */
+const TILE_TONE = {
+  good: 'border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-50',
+  bad: 'border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/60 dark:text-red-50',
+  neutral: 'border-blue-300 bg-blue-50 text-blue-950 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-50',
+  unknown: 'border-border bg-muted/40 text-muted-foreground',
+}
+
+/**
+ * Yönetici özetinin RENKLİ KUTUCUKLARI (2026-10-17, 4b; kullanıcı kararı "hedef + yön"): şablonun seçtiği en çok 6 gösterge
+ * — değer, önceki aya göre fark (ok + metin) ve varsa hedef. Ton `summaryTiles`tan gelir (PDF / e-posta ile aynı kural);
+ * renk tek başına anlam taşımaz: ton adı ekran okuyucuya ayrıca söylenir. Telefonda tek, 640+ iki, 1024+ üç kolon.
+ */
+function SummaryTiles({ tiles, t }) {
+  if (!tiles.length) return null
+  return (
+    <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2 lg:grid-cols-3" data-slot="te-tiles" aria-label={t('te.tile.title')}>
+      {tiles.map((x) => (
+        <li key={x.id} className={cn('flex min-w-0 flex-col gap-0.5 rounded-lg border px-3 py-2', TILE_TONE[x.tone] || TILE_TONE.unknown)}
+          data-slot="te-tile" data-tile={x.id} data-tone={x.tone}>
+          <span className="text-xs font-medium leading-snug [overflow-wrap:anywhere]">{x.label}</span>
+          <span className="text-xl font-bold leading-tight tabular-nums [overflow-wrap:anywhere]" data-slot="te-tile-value">{x.value}</span>
+          {(x.delta || x.target) && (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs [overflow-wrap:anywhere]" data-slot="te-tile-sub">
+              {x.delta && (
+                <span className="inline-flex items-center gap-0.5">
+                  {x.dir === 'up' && <ArrowUp aria-hidden="true" className="size-3.5 shrink-0" />}
+                  {x.dir === 'down' && <ArrowDown aria-hidden="true" className="size-3.5 shrink-0" />}
+                  <span className="sr-only">{t('te.tile.prev')} </span>
+                  {x.delta}
+                </span>
+              )}
+              {x.target && <span>{x.delta ? '· ' : ''}{t('te.tile.target', x.target)}</span>}
+            </span>
+          )}
+          <span className="sr-only">{t(`te.tile.tone.${x.tone}`)}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 

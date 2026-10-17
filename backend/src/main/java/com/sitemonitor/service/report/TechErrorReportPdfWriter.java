@@ -240,12 +240,21 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
      * not sonraki cümleleri kısaltmaz.
      */
     private void summary(TechErrorPdfInput in, Section s) throws IOException {
-        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.channelName(),
-                in.year(), in.month());
-        boolean any = false;
+        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
+                in.channelName(), in.year(), in.month());
+        List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles = com.sitemonitor.service.techerror.TechErrorTiles.build(
+                in.template(), s, in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
+        boolean any = !tiles.isEmpty();
         for (TechErrorSummary.Block b : blocks) any |= b.note() || !TechErrorRichText.blank(b.text());
         if (!any) return;
-        sectionTitle(in.resolve(s.title()));
+        String title = in.resolve(s.title());
+        if (!tiles.isEmpty()) {
+            // Başlık ilk kutucuk satırıyla aynı sayfada kalır (görsel bölümleriyle aynı kural; inceleme 2026-10-17)
+            int titleLines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3).size();
+            c.ensureSpace(titleLines * 15 + 6 + TILE_H + GAP);
+        }
+        sectionTitle(title);
+        if (!tiles.isEmpty()) tiles(tiles);
         boolean first = true;
         for (TechErrorSummary.Block b : blocks) {
             if (b.note()) {
@@ -267,6 +276,67 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             first = false;
         }
         c.y -= 10;
+    }
+
+    // ── Kutucuk şeridi (2026-10-17, 4b) ─────────────────────────────────────────────────────────────
+    private static final float TILE_H = 58f;
+    private static final float[] GOOD_BG = { 220 / 255f, 252 / 255f, 231 / 255f };
+    private static final float[] GOOD_FG = { 22 / 255f, 101 / 255f, 52 / 255f };
+    private static final float[] BAD_BG = { 254 / 255f, 226 / 255f, 226 / 255f };
+    private static final float[] BAD_FG = { 153 / 255f, 27 / 255f, 27 / 255f };
+    private static final float[] NEUTRAL_BG = { 219 / 255f, 234 / 255f, 254 / 255f };
+    private static final float[] NEUTRAL_FG = { 30 / 255f, 58 / 255f, 138 / 255f };
+
+    /** Ton → {zemin, yazı}: iyi yeşil, kötü kırmızı, nötr mavi, bilinmeyen gri (kullanıcı kararı 2026-10-16 renk paleti). */
+    static float[][] tileColors(String tone) {
+        return switch (tone) {
+            case "good" -> new float[][] { GOOD_BG, GOOD_FG };
+            case "bad" -> new float[][] { BAD_BG, BAD_FG };
+            case "neutral" -> new float[][] { NEUTRAL_BG, NEUTRAL_FG };
+            default -> new float[][] { ZEBRA, MUTED };
+        };
+    }
+
+    /**
+     * Yönetici özetinin başındaki renkli kutucuklar: satırda 3 (1–2 kutucukta o kadar), her kutuda etiket (en çok 2 satır),
+     * kalın değer, altta önceki aya göre fark (üçgen + metin) ve varsa hedef. Zemin ve yazı rengi tondan; renk tek bilgi
+     * taşıyıcısı değildir — ok üçgeni ve metin aynı şeyi söyler.
+     */
+    private void tiles(List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles) throws IOException {
+        int perRow = Math.min(3, tiles.size());
+        float w = (CONTENT_W - GAP * (perRow - 1)) / perRow;
+        for (int i = 0; i < tiles.size(); i += perRow) {
+            c.ensureSpace(TILE_H + GAP);
+            // Başlığın altındaki boşluğa 8 pt sokulur; yeni sayfada üst kenar boşluğuna taşmaz (inceleme 2026-10-17)
+            float top = Math.min(c.y + 8, c.pageTop());
+            for (int j = 0; j < perRow && i + j < tiles.size(); j++) {
+                var tile = tiles.get(i + j);
+                float[][] col = tileColors(tile.tone());
+                float x = MARGIN + j * (w + GAP);
+                c.rect(x, top - TILE_H, w, TILE_H, col[0]);
+                List<String> label = c.wrapCell(tile.label(), w - 14, c.regular, 7.5f, 2);
+                float ly = top - 11;
+                for (String l : label) {
+                    c.text(c.regular, 7.5f, x + 7, ly, l, col[1]);
+                    ly -= 9;
+                }
+                c.text(c.bold, 13f, x + 7, top - TILE_H + 20, c.clip(tile.value(), w - 14, c.bold, 13f), col[1]);
+                StringBuilder sub = new StringBuilder();
+                float sx = x + 7;
+                if (tile.dir() != null && !"flat".equals(tile.dir())) {
+                    c.triangle(sx, top - TILE_H + 8.5f, 5f, "up".equals(tile.dir()), col[1]);
+                    sx += 7.5f;
+                }
+                if (tile.delta() != null) sub.append(tile.delta());
+                if (tile.target() != null) {
+                    if (!sub.isEmpty()) sub.append(" · ");
+                    sub.append(en ? "target " : "hedef ").append(tile.target());
+                }
+                if (!sub.isEmpty()) c.text(c.regular, 7.5f, sx, top - TILE_H + 8, c.clip(sub.toString(), w - 14 - (sx - x - 7), c.regular, 7.5f), col[1]);
+            }
+            c.y -= TILE_H + GAP;
+        }
+        c.y -= 4;
     }
 
     private static final float TABLE_PAD = 5f;

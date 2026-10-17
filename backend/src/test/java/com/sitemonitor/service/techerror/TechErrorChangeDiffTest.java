@@ -53,6 +53,36 @@ class TechErrorChangeDiffTest {
     }
 
     @Test
+    @DisplayName("2026-10-17 (4b): raporun o aya özel hedefi ayrı satır — '<alan> — bu ayın hedefi', anahtar g:<alan>, yüzde biçimi; şablon hedefine dönüş 'clear'; aynı hedef değişiklik değil; EN etiketi")
+    void targets() {
+        Values b = values(Map.of("fields", Map.of("sla-rate", 99.9)), TR);
+        Values a = values(Map.of("fields", Map.of("sla-rate", 99.9), "targets", Map.of("sla-rate", 99.5)), TR);
+        TechErrorChangeDiff.Result r = TechErrorChangeDiff.diff(TR, b, a, "Mobil", 2026, 9);
+        Change g = find(r, "bu ayın hedefi");
+        assertThat(g.label()).isEqualTo("Kritik fonksiyonların SLA oranı — bu ayın hedefi");
+        assertThat(g.section()).isEqualTo("Mobil Kanalı — Eylül 2026 Verileri");
+        assertThat(g.type()).isEqualTo("percent");
+        assertThat(g.op()).isEqualTo("set");
+        assertThat(g.before()).isNull();
+        assertThat(g.after()).isEqualTo("%99,5");
+        assertThat(g.key()).isEqualTo("g:sla-rate");
+        assertThat(r.changes()).hasSize(1);
+        assertThat(find(TechErrorChangeDiff.diff(TR, a, b, "Mobil", 2026, 9), "bu ayın hedefi").op()).isEqualTo("clear");
+        Values a2 = values(Map.of("fields", Map.of("sla-rate", 99.9), "targets", Map.of("sla-rate", 99.5)), TR);
+        assertThat(TechErrorChangeDiff.diff(TR, a, a2, "Mobil", 2026, 9).changes()).isEmpty();
+        Values a3 = values(Map.of("fields", Map.of("sla-rate", 99.9), "targets", Map.of("sla-rate", 99.7)), TR);
+        Change ch = find(TechErrorChangeDiff.diff(TR, a, a3, "Mobil", 2026, 9), "bu ayın hedefi");
+        assertThat(ch.op()).isEqualTo("change");
+        assertThat(ch.before()).isEqualTo("%99,5");
+        assertThat(ch.after()).isEqualTo("%99,7");
+        Values eb = values(Map.of(), EN);
+        Values ea = values(Map.of("targets", Map.of("sla-rate", 99.5)), EN);
+        Change eg = find(TechErrorChangeDiff.diff(EN, eb, ea, "Mobile", 2026, 9), "this month's target");
+        assertThat(eg.label()).isEqualTo("SLA rate of critical functions — this month's target");
+        assertThat(eg.after()).isEqualTo("99.5%");
+    }
+
+    @Test
     @DisplayName("EN şablon: sayı / yüzde / evet-hayır İngilizce biçimde")
     void english() {
         Values b = values(Map.of("fields", Map.of("total-tx", 1000)), EN);

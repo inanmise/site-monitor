@@ -58,8 +58,16 @@ describe('otomatik hesap (TechErrorCalc aynası)', () => {
     expect(rows.length).toBeGreaterThanOrEqual(20)
     for (const [spec, types, fields, prev, status, value] of rows) {
       const calc = calcOf(spec)
-      const byId = new Map(types.split(',').map((kv) => { const [id, type] = kv.split('='); return [id, { id, type }] }))
-      const field = { id: 'x', type: calc.kind === 'increase' ? 'yesno' : 'percent', calc }
+      // Alan "kimlik=tür[@hedef[@daha-iyi]]" (4b: hedef karşılaştırması)
+      const byId = new Map(types.split(',').map((kv) => {
+        const [id, spec] = kv.split('=')
+        const [type, target, better] = spec.split('@')
+        const f = { id, type }
+        if (target != null) f.target = Number(target)
+        if (better) f.better = better
+        return [id, f]
+      }))
+      const field = { id: 'x', type: calc.kind === 'increase' || calc.kind === 'compare' ? 'yesno' : 'percent', calc }
       byId.set('x', field)
       const r = calcResult(field, byId, numbers(fields), numbers(prev))
       const label = [spec, types, fields, prev].join(' | ')

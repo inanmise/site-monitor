@@ -53,12 +53,21 @@ public final class TechErrorValues {
 
     /** Okunmuş, şablona göre süzülmüş değerler. */
     public record Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
-                         Map<String, Map<String, Map<String, Object>>> tables) {
+                         Map<String, Map<String, Map<String, Object>>> tables, Map<String, Object> targets) {
         public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts) {
-            this(fields, issues, texts, Map.of());
+            this(fields, issues, texts, Map.of(), Map.of());
         }
 
-        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of(), Map.of()); }
+        /** Hedefsiz (2026-10-17 öncesi imza): {@code targets} boş. */
+        public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
+                      Map<String, Map<String, Map<String, Object>>> tables) {
+            this(fields, issues, texts, tables, Map.of());
+        }
+
+        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of(), Map.of(), Map.of()); }
+
+        /** Aynı değerler, başka alan haritasıyla ({@code targets} ve diğerleri korunur). */
+        public Values withFields(Map<String, Object> f) { return new Values(f, issues, texts, tables, targets); }
 
         /** Tablo hücresi (yoksa null). */
         public Object cell(String section, String row, String col) {
@@ -119,6 +128,8 @@ public final class TechErrorValues {
             }
             m.put("tables", tb);
         }
+        // Raporun o aya özel hedefleri (2026-10-17, 4b) — yoksa anahtar hiç yazılmaz (eski belgelerle bayt bayt aynı)
+        if (!v.targets().isEmpty()) m.put("targets", new LinkedHashMap<>(v.targets()));
         return m;
     }
 
@@ -145,6 +156,27 @@ public final class TechErrorValues {
         }
         // Bağlı olduğu soru "Hayır" olan alan MUAF: değeri saklanmaz (gizlenmiş eski değer PDF'e sızmasın)
         for (Field f : t.allFields()) if (TechErrorTemplate.exempt(f, fields)) fields.remove(f.id());
+        // O aya özel hedefler (2026-10-17, 4b): yalnız şablonda hedefi olan yüzde alanları, %0–100; aynı değer (şablonun
+        // hedefi) de saklanır — rapor hedefi o ay için sabitler, şablon sonradan değişse de geçmişte görünür
+        Map<?, ?> rtg = root.get("targets") instanceof Map<?, ?> m ? m : Map.of();
+        Map<String, Object> targets = new LinkedHashMap<>();
+        for (Field f : t.allFields()) {
+            if (f.target() == null || !"percent".equals(f.type())) continue;
+            Object v = rtg.get(f.id());
+            if (v == null || (v instanceof String s && s.isBlank())) continue;
+            String key = "targets." + f.id();
+            Double d = number(v);
+            if (d == null) {
+                if (strict) throw bad(key, Msg.t("“" + f.label() + "” hedefi bir sayı olmalı.", "The “" + f.label() + "” target must be a number."));
+                continue;
+            }
+            if (d < 0 || d > 100) {
+                if (strict) throw bad(key, Msg.t("“" + f.label() + "” hedefi %0 ile %100 arasında olmalı.",
+                        "The “" + f.label() + "” target must be between 0% and 100%."));
+                continue;
+            }
+            targets.put(f.id(), compact(d));
+        }
         Map<String, List<Issue>> issues = new LinkedHashMap<>();
         Map<String, String> texts = new LinkedHashMap<>();
         Map<String, Map<String, Map<String, Object>>> tables = new LinkedHashMap<>();
@@ -174,7 +206,7 @@ public final class TechErrorValues {
                 }
             }
         }
-        Values out = new Values(fields, issues, texts, tables);
+        Values out = new Values(fields, issues, texts, tables, targets);
         if (strict && toJson(out).length() > MAX_JSON_CHARS) {
             throw bad("values", Msg.t("Rapor içeriği çok büyük (en çok 256 KB). Uzun açıklamaları kısaltın.",
                     "The report content is too large (at most 256 KB). Shorten the long descriptions."));

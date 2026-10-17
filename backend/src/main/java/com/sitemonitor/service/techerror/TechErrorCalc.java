@@ -46,8 +46,32 @@ public final class TechErrorCalc {
      * AYNI kimlik ve türdeki alanları (rapor yoksa null). Hesaplanmayan alan → null.
      */
     public static Result result(Field f, Map<String, Field> byId, Map<String, Object> fields, Map<String, Object> previous) {
+        return result(f, byId, fields, previous, Map.of());
+    }
+
+    /**
+     * {@link #result(Field, Map, Map, Map)} + raporun o aya özel hedefleri ({@code targets}; 2026-10-17, 4b — hedef
+     * karşılaştırması okur). {@code fields} karşılaştırmada HESAPLANMIŞ yüzdeyi de içerebilir ({@link #apply} ikinci geçiş).
+     */
+    public static Result result(Field f, Map<String, Field> byId, Map<String, Object> fields, Map<String, Object> previous,
+                                Map<String, Object> targets) {
         Calc c = f == null ? null : f.calc();
         if (c == null) return null;
+        if ("compare".equals(c.kind())) {
+            // Hedef karşılaştırması: başvurulan yüzde alanının etkin hedefi (raporun o aya özel hedefi, yoksa şablonun);
+            // yön alanın "daha iyi"si — yüksek iyi → ≥, düşük iyi → ≤ (eşitlik hedef tutturuldu, kullanıcı kararı)
+            Field of = byId.get(c.of());
+            if (of == null || !"percent".equals(of.type())) return Result.of(Status.BAD_REF);
+            Double target = TechErrorTemplate.effectiveTarget(of, targets);
+            if (target == null) return Result.of(Status.BAD_REF);
+            // Yönsüz ("none") alan hedefle karşılaştırılamaz (kayıt reddeder, saklı okuma hedefi düşürür — saf yol için de)
+            String better = TechErrorTemplate.effectiveBetter(of);
+            if ("none".equals(better)) return Result.of(Status.BAD_REF);
+            Double cur = TechErrorValues.number(fields.get(of.id()));
+            if (cur == null) return new Result(Status.MISSING, null, List.of(of.id()));
+            boolean lower = "lower".equals(better);
+            return new Result(Status.OK, lower ? cur <= target : cur >= target, List.of());
+        }
         if ("ratio".equals(c.kind())) {
             List<String> missing = new ArrayList<>(3);
             Double[] v = new Double[3];
@@ -137,19 +161,23 @@ public final class TechErrorCalc {
         if (!any) return v;
         Map<String, Object> fields = new LinkedHashMap<>(v.fields());
         Map<String, Object> inputs = v.fields();
-        for (Field f : t.allFields()) {
-            if (f.calc() == null) continue;
-            if (TechErrorTemplate.exempt(f, inputs)) {
-                fields.remove(f.id());
-                continue;
-            }
-            Result r = result(f, byId, inputs, previous);
-            switch (r.status()) {
-                case OK -> fields.put(f.id(), r.value() instanceof Double d ? TechErrorValues.compact(d) : r.value());
-                case MANUAL, BAD_REF -> { /* elle girilen değer kalır */ }
-                default -> fields.remove(f.id());
+        // 1. geçiş: oran / değişim / artış (girdileri yalnız girilen adetler); 2. geçiş: hedef karşılaştırması — hesaplanmış
+        // yüzdeyi de görür (2026-10-17, 4b: "teknik hata oranı hedefin altında mı" gibi bir karşılaştırma oranı okur)
+        for (int pass = 0; pass < 2; pass++) {
+            for (Field f : t.allFields()) {
+                if (f.calc() == null || "compare".equals(f.calc().kind()) != (pass == 1)) continue;
+                if (TechErrorTemplate.exempt(f, inputs)) {
+                    fields.remove(f.id());
+                    continue;
+                }
+                Result r = result(f, byId, pass == 0 ? inputs : fields, previous, v.targets());
+                switch (r.status()) {
+                    case OK -> fields.put(f.id(), r.value() instanceof Double d ? TechErrorValues.compact(d) : r.value());
+                    case MANUAL, BAD_REF -> { /* elle girilen değer kalır */ }
+                    default -> fields.remove(f.id());
+                }
             }
         }
-        return new Values(fields, v.issues(), v.texts(), v.tables());
+        return v.withFields(fields);
     }
 }

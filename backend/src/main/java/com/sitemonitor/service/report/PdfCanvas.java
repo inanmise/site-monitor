@@ -94,6 +94,9 @@ class PdfCanvas implements AutoCloseable {
         if (y - needed < BOTTOM) newPage();
     }
 
+    /** Sayfanın çizilebilir üst kenarı (yeni sayfada {@code y} buradan başlar). */
+    float pageTop() { return PAGE.getHeight() - MARGIN; }
+
     void setPageHeaderHook(Runnable hook) { this.pageHeaderHook = hook; }
 
     void setPageLabel(String label) { if (label != null && !label.isBlank()) this.pageLabel = label; }
@@ -152,6 +155,26 @@ class PdfCanvas implements AutoCloseable {
         cs.moveTo(x1, yy);
         cs.lineTo(x2, yy);
         cs.stroke();
+    }
+
+    /**
+     * Dolu üçgen (2026-10-17, kutucuk şeridinin ok işareti — yazı tipine bağlı ▲▼ karakteri yerine çizim): {@code (x, yy)}
+     * sol alt köşe, {@code size} taban; {@code up} true → tepe üstte (artış), false → tepe altta (azalış).
+     */
+    void triangle(float x, float yy, float size, boolean up, float[] color) throws IOException {
+        cs.setNonStrokingColor(color[0], color[1], color[2]);
+        float h = size * 0.85f;
+        if (up) {
+            cs.moveTo(x, yy);
+            cs.lineTo(x + size, yy);
+            cs.lineTo(x + size / 2, yy + h);
+        } else {
+            cs.moveTo(x, yy + h);
+            cs.lineTo(x + size, yy + h);
+            cs.lineTo(x + size / 2, yy);
+        }
+        cs.closePath();
+        cs.fill();
     }
 
     /**

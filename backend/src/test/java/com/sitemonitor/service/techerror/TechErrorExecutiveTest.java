@@ -86,16 +86,19 @@ class TechErrorExecutiveTest {
         f.put("sla-above", false);
         String no = TechErrorSummary.auto(section(TR, "summary"), TR, f, "ATM", 2026, 9);
         assertThat(no).doesNotContain("Kesintiler hariç").doesNotContain("kesinti kaynaklı");
-        assertThat(no).contains("kritik fonksiyonların SLA oranı **%99,2** ile hedefin altında gerçekleşmiştir.");
+        // 2026-10-17 (4b): SLA cümlesi hedefi ({t:}) ve hedefe uzaklığı ({dt:}, puan) söyler
+        assertThat(no).contains("kritik fonksiyonların SLA oranı **%99,2** (hedef **%99,95**, fark **−0,75 puan**) ile hedefin altında kalmıştır.");
+        // Önceki aya göre fark cümlesi ({d:}) geçen ayın raporu olmadan düşer
+        assertThat(no).doesNotContain("Önceki aya göre teknik hata adedi");
         f.put("had-outage", true);
         f.put("sla-above", true);
         String yes = TechErrorSummary.auto(section(TR, "summary"), TR, f, "ATM", 2026, 9);
         assertThat(yes).contains("Kesintiler hariç teknik hata oranı **%0,3**").contains("**12** adedi kesinti kaynaklı")
-                .contains("hedefin üzerinde");
+                .contains("hedef başarıyla tutturulmuştur");
         // EN şablon: EN biçim ve seçenek
         Template en = TechErrorTemplate.defaults("en");
         String e = TechErrorSummary.auto(section(en, "summary"), en, Map.of("sla-rate", 99.2, "sla-above", true), "ATM", 2026, 9);
-        assertThat(e).contains("SLA rate was **99.2%**, above the target.");
+        assertThat(e).contains("SLA rate was **99.2%** (target **99.95%**, difference **−0.75 pts**), so the target was met.");
     }
 
     @Test

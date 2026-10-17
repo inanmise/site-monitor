@@ -44,6 +44,40 @@ public final class TechErrorFormat {
         return en ? (b ? "Yes" : "No") : (b ? "Evet" : "Hayır");
     }
 
+    /**
+     * Önceki aya göre fark (2026-10-17, 4b — kullanıcı kararı: adetlerde fark adet + yüzde "▲ 1.250 · +%3,2", oranlarda puan
+     * "▼ 0,05 puan"): {@code text} işaretli metin, {@code dir} {@code up} / {@code down} / {@code flat}. Ok işaretini çizen
+     * (PDF üçgeni, e-posta ▲▼, ekran simgesi) yön alanından okur; metin yalnız işaret + rakam taşır. İstemci aynası:
+     * {@code techErrorModel.deltaOf}.
+     */
+    public record Delta(String text, String dir) { }
+
+    /**
+     * Sayı alanı: fark adet (+ önceki 0 değilse yüzde); yüzde alanı: puan farkı. Değişim yoksa "değişim yok" / "no change"
+     * (yüzdede "0 puan"). İkisinden biri yoksa {@code null} (cümle düşer, kutucukta fark satırı yoktur).
+     */
+    public static Delta delta(Field f, Object prev, Object cur, String lang) {
+        Double p = TechErrorValues.number(prev);
+        Double c = TechErrorValues.number(cur);
+        if (p == null || c == null) return null;
+        boolean en = "en".equals(lang);
+        if ("percent".equals(f.type())) return points(c - p, en);
+        double diff = c - p;
+        if (diff == 0) return new Delta(en ? "no change" : "değişim yok", "flat");
+        String sign = diff > 0 ? "+" : "−";
+        String text = sign + number(Math.abs(diff), en);
+        if (p != 0) text += " (" + sign + percent(TechErrorCalc.roundRate(Math.abs(diff) / Math.abs(p) * 100), en) + ")";
+        return new Delta(text, diff > 0 ? "up" : "down");
+    }
+
+    /** Puan farkı (yüzde alanının değişimi ya da hedefe uzaklık): "+0,04 puan" / "−0,02 puan" / "0 puan" (EN "pts"); 2 hane, küçük fark 2 anlamlı hane. */
+    public static Delta points(double diff, boolean en) {
+        double r = TechErrorCalc.roundRate(Math.abs(diff));
+        String unit = en ? " pts" : " puan";
+        if (r == 0) return new Delta("0" + unit, "flat");
+        return new Delta((diff > 0 ? "+" : "−") + number(r, en, 6) + unit, diff > 0 ? "up" : "down");
+    }
+
     public static String count(Number n, String lang) {
         return n == null ? EMPTY : number(n.doubleValue(), "en".equals(lang));
     }
