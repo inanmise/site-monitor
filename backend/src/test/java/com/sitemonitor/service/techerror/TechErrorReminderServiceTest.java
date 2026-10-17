@@ -569,6 +569,11 @@ class TechErrorReminderServiceTest {
         assertThat(html.getAllValues().get(1 - po1Mail)).contains("süresi doldu ya da size gönderilmedi");
         assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(3);   // yeni bağlantı üretilmedi
         assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2).allMatch(n -> "PO".equals(n.getRecipientRole()) && "SENT".equals(n.getEmailStatus()));
+        // Kanal gönderim günlüğü (E22, tür "reminder"): onay hatırlatması satırı rapora ve kanalına bağlıdır
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).allSatisfy(n -> {
+            assertThat(n.getTechErrorReportId()).isEqualTo(r.getId());
+            assertThat(n.getTechErrorChannelId()).isEqualTo(r.getChannelId());
+        });
         job.run();
         at(OCT5.plus(Duration.ofDays(3)));
         job.run();

@@ -512,7 +512,7 @@ public class TechErrorApprovalService {
             } catch (RuntimeException e) {
                 status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
             }
-            saveLog(a.name(), a.email(), ROLE_APPROVER_INFO, subject, status, team.getName());
+            saveLog(a.name(), a.email(), ROLE_APPROVER_INFO, subject, status, team.getName(), r, ch);
         }
     }
 
