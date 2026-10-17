@@ -571,6 +571,28 @@ final class EmailSamples {
                     "bireysel-internet-subesi-teknik-hata-2026-09.pdf");
             add("report-tech-error-" + lang, "report", com.sitemonitor.service.mail.TechErrorReportMail.subject(in), m.html(), m.text(), "ok");
         }
+        // PO onayı (2026-10-17, S6): istek postası (onay kartı + tam gövde, 1000 px) ve isteyene karar postaları (600 px)
+        {
+            var t = com.sitemonitor.service.techerror.TechErrorTemplate.defaults("tr");
+            var v = com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields",
+                    java.util.Map.of("total-tx", 12500000, "error-count", 52500, "sla-rate", 99.97)), t);
+            var in = new com.sitemonitor.service.techerror.TechErrorPdfInput(t, v, "Mobil", "Dijital Kanallar", 2026, 9, "Ayşe Yılmaz",
+                    java.time.Instant.parse("2026-10-02T06:30:00Z"), java.util.Map.of());
+            var req = com.sitemonitor.service.mail.TechErrorApprovalMail.request(in, com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(),
+                    BASE, "mobil-teknik-hata-2026-09.pdf", 100L, 10L, "Ayşe Yılmaz", "Mehmet Kaya", 2,
+                    BASE + "/api/tech-error-reports/approve-link?token=ornek-belirtec", 14);
+            add("report-tech-error-approval-tr", "report", com.sitemonitor.service.mail.TechErrorApprovalMail.requestSubject(in),
+                    req.mail().html(), req.mail().text(), "ok");
+            String title = "Mobil Kanalı Teknik Hata Mesajları - Eylül 2026";
+            var ok = com.sitemonitor.service.mail.TechErrorApprovalMail.decision(title, false, true, "Uygun, teşekkürler.", "Mehmet Kaya", "SENT",
+                    java.util.List.of("ceo@example.com", "cto@example.com"), BASE, 100L, 10L);
+            add("report-tech-approval-approved-tr", "report", com.sitemonitor.service.mail.TechErrorApprovalMail.decisionSubject(title, false, true),
+                    ok.html(), ok.text(), "ok");
+            var rej = com.sitemonitor.service.mail.TechErrorApprovalMail.decision(title, false, false,
+                    "Kota hatalarının açıklaması eksik; grafikler güncellenmeli.", "Mehmet Kaya", null, java.util.List.of(), BASE, 100L, 10L);
+            add("report-tech-approval-rejected-tr", "report", com.sitemonitor.service.mail.TechErrorApprovalMail.decisionSubject(title, false, false),
+                    rej.html(), rej.text(), "warn");
+        }
     }
 
     /** Düz renkli PNG (örnek rapor görseli). */

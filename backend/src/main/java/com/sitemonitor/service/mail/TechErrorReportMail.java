@@ -62,6 +62,12 @@ public final class TechErrorReportMail {
     /** Üretilen posta + gövdeye gömülecek görseller (Content-ID) + sayılar (günlük / test). */
     public record Built(MailDoc.Mail mail, List<InlineImage> inline, int embeddedImages, int skippedImages) {}
 
+    /** Kapak bandından hemen sonra gelen ek blok (onay kartı — {@code TechErrorApprovalMail}); MailDoc API'siyle yazar. */
+    @FunctionalInterface
+    public interface Intro {
+        void apply(MailDoc d);
+    }
+
     public static String subject(TechErrorPdfInput in) {
         return in.title();
     }
@@ -77,6 +83,12 @@ public final class TechErrorReportMail {
      * ekinde" kutusuyla; ikisinde de olmayan yuva "yüklenmedi"). {@code in} görselsiz olabilir ({@code withoutImages}).
      */
     public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName) {
+        return buildFull(in, prepared, appUrl, fileName, null);
+    }
+
+    /** {@link #buildFull(TechErrorPdfInput, TechErrorMailImages.Result, String, String)} + banddan sonra ek blok (null = yok). */
+    public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName,
+                                  Intro intro) {
         TechErrorMailImages.Result imgs = prepared == null ? TechErrorMailImages.Result.empty() : prepared;
         boolean en = in.template().en();
         String lang = in.template().lang();
@@ -85,9 +97,17 @@ public final class TechErrorReportMail {
                 .preheader((en ? "PDF report attached · " : "PDF rapor ektedir · ") + period)
                 .kicker(en ? "Technical error report" : "Teknik hata raporu");
         d.raw(bandHtml(in, period, en), bandPlain(in, period, en));
-        d.paragraph(en
-                ? "The full report, with every image at full resolution, is in the attached PDF (" + fileName + ")."
-                : "Tam rapor — görseller tam çözünürlükte — ekteki PDF'tedir (" + fileName + ").");
+        if (intro != null) intro.apply(d);
+        if (fileName == null) {
+            // PDF posta sınırına sığmadı (onay isteği): gövde yine tam, ek yok — bunu söyle (inceleme 2026-10-17)
+            d.paragraph(en
+                    ? "The PDF did not fit this e-mail's size limit, so it is not attached; the full report and its images are in Site Monitor."
+                    : "PDF bu postanın boyut sınırına sığmadığından eklenmedi; tam rapor ve görseller Site Monitor'de.");
+        } else {
+            d.paragraph(en
+                    ? "The full report, with every image at full resolution, is in the attached PDF (" + fileName + ")."
+                    : "Tam rapor — görseller tam çözünürlükte — ekteki PDF'tedir (" + fileName + ").");
+        }
 
         for (Section s : in.template().sections()) {
             switch (s.kind()) {

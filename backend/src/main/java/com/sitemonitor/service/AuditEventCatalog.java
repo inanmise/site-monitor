@@ -296,6 +296,11 @@ public final class AuditEventCatalog {
             "TECH_ERROR_REPORT_SEND",     // PDF takımın e-posta adresine gönderildi (sonuç detayda)
             "TECH_ERROR_REPORT_UPDATE",   // değer kaydı, görsel ekle/kaldır, şablonun son hâlini uygula
             "TECH_ERROR_TEMPLATE_SAVE",   // kanal şablonu kaydedildi
+            "TECH_ERROR_REPORT_APPROVAL_REQUEST", // PO onayına gönderildi (2026-10-17, S6)
+            "TECH_ERROR_REPORT_APPROVE",  // PO onayladı → yöneticilere gönderim (via=app | email_token)
+            "TECH_ERROR_REPORT_REJECT",   // PO reddetti (not)
+            "TECH_ERROR_APPROVAL_LINK_DENIED", // onay bağlantısı geçersiz / süresi dolmuş / bakım
+            "TECH_ERROR_SETTINGS_SAVE",   // modül görünürlüğü (takım listesi) kaydedildi
             "TEMPLATE_CREATE",
             "TEMPLATE_DELETE",
             "TEMPLATE_DEMOTE",

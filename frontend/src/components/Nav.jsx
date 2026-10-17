@@ -18,6 +18,7 @@ import {
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useTour } from './tour/TourProvider.jsx'
 import NavBrand from './nav/NavBrand.jsx'
 import NavMain, { NavLeafItem } from './nav/NavMain.jsx'
@@ -46,6 +47,8 @@ function writeOpenSection(key) {
 }
 
 export default function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
+  // Kanal teknik hata raporu modülü görünürlüğü (2026-10-17, S6): sunucu kapsam bloğu kapalı derse sekme çizilmez; eski sunucu (null) → görünür
+  const { scope: permScope } = usePermissions()
   const t = useT()
   const tour = useTour()   // ürün turu: kullanıcı menüsünden yeniden başlat + sm:nav-reveal (2026-09-13)
   // Açık/daraltılmış durum SidebarProvider'da (App.jsx; localStorage 'sidebar-open' ile kalıcı).
@@ -125,7 +128,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         // Aylık Yönetici Özeti (2026-10-10): kurum geneli rapor — yalnız global yönetici + AUDIT (uç ayrıca izin ister)
         { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: systemRole === 'ADMIN' || systemRole === 'AUDIT' },
         // Kanal teknik hata raporları (2026-10-13): takımın kanalları, şablonları ve aylık PDF raporu — herkes (kapsam sunucuda)
-        { id: 'channelreports',   Icon: FileWarning,     labelKey: 'nav.channelReports',  show: true },
+        { id: 'channelreports',   Icon: FileWarning,     labelKey: 'nav.channelReports',  show: permScope?.channel_reports !== false },
       ],
     },
     {

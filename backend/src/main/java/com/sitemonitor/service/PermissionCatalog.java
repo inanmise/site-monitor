@@ -131,6 +131,9 @@ public final class PermissionCatalog {
         // gönderilmiş rapor silmesi yönetim kapsamı ister. Varsayılan: TEAM_ADMIN ve USER okur + yazar, AUDIT okur, ADMIN hepsi.
         r("tech_error_reports.read", "reports", VIEW),
         r("tech_error_reports.crud", "reports", EDIT),
+        // PO onayı (2026-10-17, S6): izin GEREKLİ ama YETMEZ — uç ayrıca takımın aktif PO (kurum rolü) üyesi olmayı
+        // ister. Varsayılan TEAM_ADMIN + USER + ADMIN; AUDIT asla (yazma).
+        r("tech_error_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
 
         // ── Olay & Hata Geçmişi (SRE incident ledger) — kendi grubu (reports'tan ayrı) ──
         r("incidents.view",   "incidents", VIEW),
@@ -260,6 +263,7 @@ public final class PermissionCatalog {
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
             "tech_error_reports.read", "tech_error_reports.crud",   // kanal teknik hata raporu (2026-10-13)
+            "tech_error_reports.approve",                              // PO onayı (2026-10-17; uç PO rolünü ayrıca doğrular)
             "incidents.view", "incidents.manage", "incidents.delete",
             "maintenance.view", "maintenance.manage", "maintenance.delete",
             "diagnostics.history",
@@ -335,6 +339,7 @@ public final class PermissionCatalog {
             // Kanal teknik hata raporu (2026-10-13): takım üyesi kendi takımının kanal şablonunu ve aylık raporunu
             // hazırlar ve takım adresine gönderir (uç ÜYELİK doğrular); kanal silmesi yönetici kapsamında kalır.
             "tech_error_reports.read", "tech_error_reports.crud",
+            "tech_error_reports.approve",                              // PO onayı (2026-10-17; uç PO rolünü ayrıca doğrular)
             // Olay geçmişi: USER kendi takımı için olay girer/düzenler (incidents.manage);
             // silme yetkisi (incidents.delete) yalnız TEAM_ADMIN/ADMIN'de
             "incidents.view", "incidents.manage",

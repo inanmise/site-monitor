@@ -74,6 +74,11 @@ public class TechErrorReportSender {
      */
     @Value("${site.monitor.tech-error-report.mail-inline-mb:6}")
     int mailInlineMb = 6;
+    /** E-posta eki üst sınırı (bayt) — onay isteği postası da aynı sınırı uygular. */
+    public long maxMailBytes() {
+        return Math.max(1, maxMailMb) * 1024L * 1024L;
+    }
+
     /** Görsel hazırlayıcı (test dikişi: hazırlama hatası postayı durdurmamalı). */
     java.util.function.BiFunction<TechErrorPdfInput, Long, TechErrorMailImages.Result> mailImagePreparer = TechErrorMailImages::prepare;
 
@@ -89,12 +94,18 @@ public class TechErrorReportSender {
     /** Gönderim sonucu: {@code state} SENT | QUEUED | SKIPPED | FAILED; {@code to} gerçek alıcılar. */
     public record Result(String state, String status, List<String> to, int pdfBytes, String subject) { }
 
-    /** Takım adresinden gönderilebilir adresler (virgül / noktalı virgül ayraçlı; biçimsizler atılır, tekrarlar tekilleşir). */
-    public static List<String> recipients(Team team) {
-        if (team == null || team.getEmail() == null) return List.of();
+    /**
+     * Kime gider (2026-10-17, S6): TEAM = takımın adresi (eski akış, byte-identical); EXECUTIVE = kanalın yönetici
+     * alıcıları, takım adresi BİLGİDE (cc) — PO onayından sonra ya da onaylı raporun yeniden gönderiminde.
+     */
+    public enum Delivery { TEAM, EXECUTIVE }
+
+    /** Adres listesi (virgül / noktalı virgül ayraçlı): biçimsizler atılır, tekrarlar tekilleşir, en çok 20. */
+    public static List<String> parseAddresses(String raw) {
+        if (raw == null || raw.isBlank()) return new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         List<String> out = new ArrayList<>();
-        String[] parts = team.getEmail().split("[,;]");
+        String[] parts = raw.split("[,;]");
         for (int i = 0; i < parts.length && out.size() < 20; i++) {
             String e = parts[i].trim();
             if (e.isEmpty() || e.length() > 254 || !DELIVERABLE.matcher(e).matches()) continue;
@@ -103,8 +114,49 @@ public class TechErrorReportSender {
         return out;
     }
 
+    /** Tek adres teslim edilebilir biçimde mi (boşluk / ayraç yok, ≤ 254)? */
+    public static boolean isDeliverable(String e) {
+        if (e == null) return false;
+        String t = e.trim();
+        return !t.isEmpty() && t.length() <= 254 && DELIVERABLE.matcher(t).matches();
+    }
+
+    /** Takım adresinden gönderilebilir adresler. */
+    public static List<String> recipients(Team team) {
+        return parseAddresses(team == null ? null : team.getEmail());
+    }
+
+    /** Kanalın yönetici (executive) alıcıları (S6). */
+    public static List<String> executiveRecipients(TechErrorChannel channel) {
+        return parseAddresses(channel == null ? null : channel.getExecutiveEmails());
+    }
+
     public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by) {
-        List<String> to = recipients(team);
+        return send(report, channel, team, by, Delivery.TEAM);
+    }
+
+    public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery) {
+        List<String> to;
+        String[] cc = null;
+        String role;
+        if (delivery == Delivery.EXECUTIVE) {
+            to = executiveRecipients(channel);
+            if (to.isEmpty()) {
+                throw new CodedConflictException("EXEC_RECIPIENTS_MISSING", Msg.t(
+                        "Bu kanalın yönetici (executive) alıcısı tanımlı değil; rapor gönderilmedi. Takım yöneticisi kanal ayarlarından alıcı eklesin.",
+                        "This channel has no executive recipients, so the report wasn't sent. A team manager can add them in the channel settings."));
+            }
+            // Takım adresi bilgide; yönetici listesinde zaten olan adres iki kez gitmez
+            Set<String> lower = new java.util.HashSet<>();
+            for (String e : to) lower.add(e.toLowerCase(Locale.ROOT));
+            List<String> ccList = new ArrayList<>();
+            for (String e : recipients(team)) if (lower.add(e.toLowerCase(Locale.ROOT))) ccList.add(e);
+            cc = ccList.isEmpty() ? null : ccList.toArray(new String[0]);
+            role = "EXECUTIVE";
+        } else {
+            to = recipients(team);
+            role = "TEAM";
+        }
         if (to.isEmpty()) {
             throw new CodedConflictException("TEAM_EMAIL_MISSING", Msg.t(
                     "Takımın kayıtlı bir e-posta adresi yok. Yöneticiniz Admin → Takımlar'da adres ekledikten sonra tekrar gönderin; "
@@ -148,6 +200,17 @@ public class TechErrorReportSender {
             queuedAtClaim = fresh.getLastSendStatus() != null && fresh.getLastSendStatus().startsWith("QUEUED_RETRY");
             // PDF bu okumanın içeriği: "gönderimden sonra değişti" bu sayaçla karşılaştırılır
             sentRev = fresh.getContentRev() == null ? 0L : fresh.getContentRev();
+            // Yöneticilere gönderim yalnız onaylı ve onaydan beri DEĞİŞMEMİŞ içerikle (inceleme 2026-10-17): onay ile
+            // talep arasına giren otomatik kayıt PO'nun görmediği içeriği gönderemez — talep bırakılır, iz "atlandı"
+            if (delivery == Delivery.EXECUTIVE && (!"APPROVED".equals(fresh.getApprovalState()) || fresh.getApprovalRev() == null
+                    || fresh.getApprovalRev().longValue() != sentRev)) {
+                finalState = "SKIPPED";
+                finalStatus = "SKIPPED: onay eskidi, içerik onaydan sonra değişti — yeniden onay gerekir";
+                released = true;
+                throw new CodedConflictException("APPROVAL_STALE", Msg.t(
+                        "Rapor onaydan sonra değişti; bu hâliyle yöneticilere gönderilemez. Raporu yeniden onaya gönderin.",
+                        "The report changed after the approval, so this version can't be sent to the executives. Submit it for approval again."));
+            }
             TechErrorReportService.Rendered rendered;
             // Görseller gövdede de (2026-10-17, S5): ≤ 1000 px kopyaları PDF İZNİNİN İÇİNDE, görseller bellekteyken
             // hazırlanır (ikinci okuma yok; baytlar izin dışında tutulmaz). Hazırlama hatası postayı durdurmaz: görseli
@@ -203,7 +266,7 @@ public class TechErrorReportSender {
             TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName);
             MailDoc.Mail mail = built.mail();
             mailAttempted = true;
-            String status = email.sendHtml(to.toArray(new String[0]), null, subject, mail.html(), mail.text(), built.inline(), false,
+            String status = email.sendHtml(to.toArray(new String[0]), cc, subject, mail.html(), mail.text(), built.inline(), false,
                     List.of(new EmailNotificationService.MailAttachment(fileName, pdf, "application/pdf")));
             mailReturned = true;
             finalStatus = status == null ? "FAILED: sonuç yok" : status;
@@ -223,7 +286,7 @@ public class TechErrorReportSender {
         } finally {
             Instant at = service.now();
             // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar)
-            Long logId = saveLog(team, active.isEmpty() ? to : active, subject != null ? subject : channel.getName(), finalStatus);
+            Long logId = saveLog(team, active.isEmpty() ? to : active, cc, role, subject != null ? subject : channel.getName(), finalStatus);
             // Kuyruktaki bir gönderimin üzerine yapılan deneme HİÇBİR ŞEY teslim etmediyse ya da kuyruğa almadıysa (posta servisine
             // ulaşmadı: PDF çok büyük / beklenmeyen hata; ya da servis SKIPPED / FAILED döndü) kuyruktaki gönderim yaşamaya devam
             // eder: talep bırakılır (durum satırın kendi son sonucundan), "bitirildi" ve "sonucu bilinmiyor" yazılmaz — servisin
@@ -293,14 +356,15 @@ public class TechErrorReportSender {
     }
 
     /** Gönderim kararının günlük satırı; kimliği döner (yazılamazsa null — karar yine de sonlanır). */
-    private Long saveLog(Team team, List<String> to, String subject, String status) {
+    private Long saveLog(Team team, List<String> to, String[] cc, String role, String subject, String status) {
         try {
             NotificationLog n = new NotificationLog();
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientName(clip(team.getName() == null ? "" : team.getName(), 255));
             n.setRecipientEmail(String.join(", ", to));     // varlık kolona sığdırır (NotificationLog.fitColumns)
-            n.setRecipientRole("TEAM");
+            if (cc != null && cc.length > 0) n.setCc(String.join(", ", cc));
+            n.setRecipientRole(role);
             n.setSubject(clip(subject, 500));
             n.setEmailStatus(clip(status, 250));
             n.setWebhookStatus("SKIPPED");

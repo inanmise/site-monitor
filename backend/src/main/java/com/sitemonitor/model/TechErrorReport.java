@@ -147,6 +147,34 @@ public class TechErrorReport {
     @Column(name = "send_count", nullable = false, updatable = false)
     private int sendCount = 0;
 
+    // ── PO onayı (2026-10-17, S6) — yalnız koşullu JPQL yazar; bir varlık kaydı arada verilen kararı ezmez ──
+
+    /** null | PENDING | APPROVED | REJECTED. */
+    @Column(name = "approval_state", length = 16, updatable = false)
+    private String approvalState;
+
+    /** İsteğin / kararın bağlı olduğu içerik sayacı: {@code content_rev} bunu geçerse onay eskimiştir (yeniden onay). */
+    @Column(name = "approval_rev", updatable = false)
+    private Long approvalRev;
+
+    @Column(name = "approval_requested_at", updatable = false)
+    private Instant approvalRequestedAt;
+
+    @JsonIgnore
+    @Column(name = "approval_requested_by_id", updatable = false)
+    private Long approvalRequestedById;
+
+    @Column(name = "approval_decided_at", updatable = false)
+    private Instant approvalDecidedAt;
+
+    @JsonIgnore
+    @Column(name = "approval_decided_by_id", updatable = false)
+    private Long approvalDecidedById;
+
+    /** Karar notu (red gerekçesi ya da onay notu), ≤ 1000. */
+    @Column(name = "approval_note", length = 1000, updatable = false)
+    private String approvalNote;
+
     @Version
     private Long version;
 }

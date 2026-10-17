@@ -1392,7 +1392,8 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope.monitoring_all").value(false))
                 .andExpect(jsonPath("$.scope.noc_operator").value(false))
-                .andExpect(jsonPath("$.scope.noc_console").value(false));
+                .andExpect(jsonPath("$.scope.noc_console").value(false))
+                .andExpect(jsonPath("$.scope.channel_reports").value(true));   // görünürlük bean'i yok → herkes (S6)
 
         MockHttpSession operator = new MockHttpSession();
         operator.setAttribute("authenticated", Boolean.TRUE);

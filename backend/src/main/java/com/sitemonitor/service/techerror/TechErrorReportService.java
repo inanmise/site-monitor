@@ -80,6 +80,10 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     org.springframework.transaction.PlatformTransactionManager txManager;
 
+    /** PO onayı bağlantı belirteçleri (2026-10-17, S6): rapor / kanal silinince aynı işlemde silinir (yoksa — dilim testleri — atlanır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.repository.TechErrorApprovalTokenRepository approvalTokens;
+
     public TechErrorReportService(TechErrorChannelRepository channels, TechErrorReportRepository reports,
                                   TechErrorReportImageRepository images, AppUserRepository users,
                                   TechErrorHistoryService history) {
@@ -196,6 +200,30 @@ public class TechErrorReportService {
                 changed = true;
             }
         }
+        if (body.containsKey("executive_emails")) {
+            // Yönetici alıcıları (S6): boş = onay akışı yok; doluysa her parça teslim edilebilir bir adres olmalı (≤ 20)
+            Object raw = body.get("executive_emails");
+            String text = raw == null ? "" : String.valueOf(raw).trim();
+            String normalized = null;
+            if (!text.isEmpty()) {
+                int given = 0;
+                for (String p : text.split("[,;]")) {
+                    if (p.isBlank()) continue;
+                    given++;
+                    if (!TechErrorReportSender.isDeliverable(p)) throw new FieldValidationException("executive_emails", Msg.t(
+                            "Yönetici alıcı listesinde geçersiz bir adres var: \"" + p.trim() + "\". Adresleri virgülle ayırın (ör. ad.soyad@kurum.com).",
+                            "The executive recipient list has an invalid address: \"" + p.trim() + "\". Separate addresses with commas (e.g. name@company.com)."));
+                }
+                List<String> parsed = TechErrorReportSender.parseAddresses(text);   // tekrarlar tekilleşir
+                if (given > 20 || parsed.size() > 20) throw new FieldValidationException("executive_emails", Msg.t(
+                        "En çok 20 yönetici alıcısı tanımlanabilir.", "At most 20 executive recipients can be set."));
+                normalized = parsed.isEmpty() ? null : String.join(", ", parsed);
+            }
+            if (!Objects.equals(normalized, ch.getExecutiveEmails())) {
+                ch.setExecutiveEmails(normalized);
+                changed = true;
+            }
+        }
         if (body.containsKey("sort_order")) {
             Object so = body.get("sort_order");
             Integer v = so == null ? null : so instanceof Number n ? Integer.valueOf(n.intValue()) : null;
@@ -231,6 +259,7 @@ public class TechErrorReportService {
         if (!ids.isEmpty()) {
             for (int i = 0; i < ids.size(); i += 500) images.deleteAllForReports(ids.subList(i, Math.min(ids.size(), i + 500)));
             history.deleteForReports(ids);
+            if (approvalTokens != null) for (Long rid : ids) approvalTokens.deleteByReportId(rid);
         }
         history.deleteForChannel(ch.getId());
         // Karar silme anında: arada bir gönderim talebi alındıysa (ya da yeni rapor açıldıysa) sayılar tutmaz → geri al
@@ -458,6 +487,7 @@ public class TechErrorReportService {
         boolean wasSent = r.getLastSentAt() != null;
         images.deleteAllForReport(r.getId());
         history.deleteForReport(r.getId());
+        if (approvalTokens != null) approvalTokens.deleteByReportId(r.getId());
         int n = reports.deleteIfAllowed(r.getId(), onlyUnsent, now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n == 0) {
             // İşlem geri alınır (görseller de) — sebep: gönderildi ya da gönderiliyor

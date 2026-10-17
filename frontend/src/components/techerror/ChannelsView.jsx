@@ -285,6 +285,11 @@ function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, o
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {!ch.active && <Badge variant="outline">{t('te.inactive')}</Badge>}
+          {ch.approval_required && (
+            <Badge variant="secondary" className="rounded-md overflow-visible whitespace-normal" data-slot="te-channel-approval">
+              {t('te.approvalChip', ch.executive_count || 0)}
+            </Badge>
+          )}
           <StatusBadge status={pr?.status || null} sendState={pr?.last_send_status} prefix={periodLabel(period, t)} />
         </div>
       </CardHeader>

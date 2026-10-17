@@ -13,8 +13,10 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
+import com.sitemonitor.service.techerror.TechErrorApprovalService;
 import com.sitemonitor.service.techerror.TechErrorReportSender;
 import com.sitemonitor.service.techerror.TechErrorReportService;
+import com.sitemonitor.service.techerror.TechErrorVisibilityService;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Template;
 import com.sitemonitor.service.techerror.TechErrorValues;
@@ -57,6 +59,8 @@ public class TechErrorReportController {
 
     static final String READ = "tech_error_reports.read";
     static final String CRUD = "tech_error_reports.crud";
+    /** PO onayı / reddi (2026-10-17, S6): izin GEREKLİ ama yetmez — uç ayrıca takımın aktif PO üyesi olmayı ister. */
+    static final String APPROVE = "tech_error_reports.approve";
 
     private final TechErrorReportService service;
     private final TechErrorReportSender sender;
@@ -67,6 +71,10 @@ public class TechErrorReportController {
     /** Değişiklik / sürüm geçmişi (2026-10-14). Yoksa (dilim testleri) geçmiş yazılmaz, okuma uçları boş döner. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.service.techerror.TechErrorHistoryService history;
+
+    /** PO onayı (2026-10-17, S6). Yoksa (dilim testleri) onay uçları 409 {@code APPROVAL_UNAVAILABLE} döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorApprovalService approvals;
 
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
@@ -92,6 +100,7 @@ public class TechErrorReportController {
         List<TechErrorChannel> shown = new ArrayList<>();
         for (TechErrorChannel ch : chs) {
             if (!teamMap.containsKey(ch.getTeamId())) continue;      // takımı silinmiş (yetim temizliğini bekliyor)
+            if (!canRead(session, ch.getTeamId())) continue;         // kapsam dışı / modülü kapalı takım (S6)
             if (teamFilter != null && !teamFilter.equals(ch.getTeamId())) continue;
             shown.add(ch);
         }
@@ -177,6 +186,11 @@ public class TechErrorReportController {
         TechErrorChannel before = writableChannel(id, session);
         String oldName = before.getName();
         boolean oldActive = before.isActive();
+        if (body != null && body.containsKey("executive_emails") && !SessionScope.canManage(session, before.getTeamId())) {
+            throw new SecurityException(Msg.t(
+                    "Yönetici (executive) alıcılarını yalnız takımı yönetenler değiştirebilir.",
+                    "Only the team's managers can change the executive recipients."));
+        }
         TechErrorChannel ch = service.updateChannel(id, body == null ? Map.of() : body, userId(session));
         auditService.recordAction("TECH_ERROR_CHANNEL_UPDATE", session, request, "TECH_ERROR_CHANNEL", String.valueOf(id),
                 AuditDetail.of("name_before", oldName, "name", ch.getName(), "active_before", oldActive, "active", ch.isActive(),
@@ -353,6 +367,7 @@ public class TechErrorReportController {
         data.put("can_edit", canEdit);
         data.put("can_delete", writer && canDeleteReport(session, r.getTeamId(), r.getLastSentAt(), r.getSendState()));
         data.put("team_email_set", team != null && !TechErrorReportSender.recipients(team).isEmpty());
+        data.put("approval_detail", approvalDetail(r, ch, team, session, writer));
         data.put("template_update", canEdit ? service.refreshPreview(r, ch) : null);
         data.put("limits", Map.of("image_max_bytes", com.sitemonitor.service.techerror.TechErrorImageValidator.MAX_BYTES,
                 "report_image_max_bytes", TechErrorReportService.MAX_REPORT_IMAGE_BYTES));
@@ -633,9 +648,19 @@ public class TechErrorReportController {
         TechErrorReport r = writableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
+        // Yönetici alıcısı tanımlı kanal (S6): gönderim yalnız onaylı ve onaydan beri değişmemiş raporda, yöneticilere
+        boolean required = TechErrorApprovalService.approvalRequired(ch);
+        if (required && (!"APPROVED".equals(r.getApprovalState()) || r.getApprovalRev() == null
+                || !Objects.equals(r.getApprovalRev(), r.getContentRev() == null ? 0L : r.getContentRev()))) {
+            return error(409, "APPROVAL_REQUIRED", Msg.t(
+                    "Bu kanalın raporları PO onayıyla gönderilir: önce \"Onaya gönder\" ile isteyin; PO onaylayınca rapor yöneticilere kendiliğinden gider. Onaydan sonra değişen rapor yeniden onay ister.",
+                    "Reports of this channel are sent after PO approval: submit it with \"Send for approval\" first; once the PO approves, the report goes to the executives automatically. A report changed after approval needs approval again."),
+                    Map.of("approval", approvalDto(rowOf(r))));
+        }
         TechErrorReportSender.Result res;
         try {
-            res = sender.send(r, ch, team, userId(session));
+            res = required ? sender.send(r, ch, team, userId(session), TechErrorReportSender.Delivery.EXECUTIVE)
+                    : sender.send(r, ch, team, userId(session));
         } catch (RuntimeException e) {
             auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",
@@ -665,9 +690,146 @@ public class TechErrorReportController {
         }
     }
 
+    // ── PO onayı (2026-10-17, S6) ─────────────────────────────────────────────────────────────────────
+
+    @GetMapping("/reports/{id}/approval")
+    public ResponseEntity<Map<String, Object>> approval(@PathVariable Long id, HttpSession session) {
+        requireRead(session);
+        TechErrorReport r = readableReport(id, session);
+        TechErrorChannel ch = service.channel(r.getChannelId());
+        Team team = teams.findById(r.getTeamId()).orElse(null);
+        boolean writer = permissions.allows(session, CRUD, "edit");
+        return ok(approvalDetail(r, ch, team, session, writer));
+    }
+
+    @PostMapping("/reports/{id}/approval/request")
+    public ResponseEntity<Map<String, Object>> requestApproval(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireWrite(session);
+        TechErrorApprovalService a = requireApprovals();
+        TechErrorReport r = writableReport(id, session);
+        TechErrorChannel ch = service.channel(r.getChannelId());
+        Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
+        TechErrorApprovalService.RequestResult res;
+        try {
+            res = a.request(r, ch, team, userId(session));
+        } catch (RuntimeException e) {
+            auditService.recordAction("TECH_ERROR_REPORT_APPROVAL_REQUEST", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                    AuditDetail.of("outcome", "FAILED", "reason", e instanceof CodedConflictException c ? c.getCode() : e.getClass().getSimpleName()));
+            throw e;
+        }
+        auditService.recordAction("TECH_ERROR_REPORT_APPROVAL_REQUEST", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                AuditDetail.of("outcome", "PENDING", "approvers", res.approvers().size(), "mailed", res.mailed(), "failed", res.failed(),
+                        "mail_problem", res.mailProblem(), "channel", ch.getName(), "year", r.getReportYear(), "month", r.getReportMonth()));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("state", "pending");
+        data.put("approvers", approverRows(res.approvers()));
+        data.put("mailed", res.mailed());
+        data.put("failed", res.failed());
+        data.put("mail_problem", res.mailProblem());
+        data.put("approval", approvalDto(rowOf(service.report(id))));
+        return ok(data);
+    }
+
+    @PostMapping("/reports/{id}/approval/decide")
+    public ResponseEntity<Map<String, Object>> decideApproval(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                              HttpSession session, HttpServletRequest request) {
+        requireRead(session);
+        if (!permissions.allows(session, APPROVE, "execute")) throw new SecurityException(APPROVE + " yetkisi gerekli");
+        TechErrorApprovalService a = requireApprovals();
+        TechErrorReport r = readableReport(id, session);
+        TechErrorChannel ch = service.channel(r.getChannelId());
+        Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
+        Map<String, Object> b = body == null ? Map.of() : body;
+        String decision = b.get("decision") == null ? "" : String.valueOf(b.get("decision")).trim().toLowerCase(Locale.ROOT);
+        if (!"approve".equals(decision) && !"reject".equals(decision)) {
+            throw new FieldValidationException("decision", Msg.t("Karar 'approve' ya da 'reject' olmalı.", "The decision must be 'approve' or 'reject'."));
+        }
+        boolean approve = "approve".equals(decision);
+        String note = b.get("note") == null ? null : String.valueOf(b.get("note"));
+        String event = approve ? "TECH_ERROR_REPORT_APPROVE" : "TECH_ERROR_REPORT_REJECT";
+        TechErrorApprovalService.Decision d;
+        try {
+            d = a.decide(r, ch, team, userId(session), approve, note, "app");
+        } catch (RuntimeException e) {
+            auditService.recordAction(event, session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                    AuditDetail.of("outcome", "FAILED", "reason", e instanceof CodedConflictException c ? c.getCode() : e.getClass().getSimpleName()));
+            throw e;
+        }
+        auditService.recordAction(event, session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                AuditDetail.of("via", "app", "channel", ch.getName(), "send_state", d.send() == null ? d.sendError() : d.send().state(),
+                        "recipients", d.send() == null ? 0 : d.send().to().size()));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("state", d.state().toLowerCase(Locale.ROOT));
+        data.put("send_state", d.send() == null ? null : d.send().state());
+        data.put("send_error", d.sendError());
+        data.put("sent_to", d.send() == null ? List.of() : d.send().to());
+        data.put("approval", approvalDto(rowOf(service.report(id))));
+        return ok(data);
+    }
+
+    private TechErrorApprovalService requireApprovals() {
+        if (approvals == null) {
+            throw new CodedConflictException("APPROVAL_UNAVAILABLE", Msg.t("Onay akışı bu sunucuda kullanılamıyor.",
+                    "The approval flow is not available on this server."));
+        }
+        return approvals;
+    }
+
+    /**
+     * Onay bloğunun ayrıntısı: akış var mı (kanalda yönetici alıcısı), alıcı sayısı, onaylayıcılar (ad; e-postası
+     * olmayan uygulama içinden onaylar), isteyen / karar veren adı, bu oturum isteyebilir / karar verebilir mi.
+     */
+    private Map<String, Object> approvalDetail(TechErrorReport r, TechErrorChannel ch, Team team, HttpSession session, boolean writer) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        boolean required = TechErrorApprovalService.approvalRequired(ch);
+        List<String> execs = TechErrorReportSender.executiveRecipients(ch);
+        m.put("required", required);
+        m.put("executive_count", execs.size());
+        m.put("executive_emails", execs);
+        List<TechErrorApprovalService.Approver> apps = approvals == null || team == null ? List.of() : approvals.approvers(team.getId());
+        m.put("approvers", approverRows(apps));
+        Map<Long, String> names = service.displayNames(Arrays.asList(r.getApprovalRequestedById(), r.getApprovalDecidedById()));
+        m.put("requested_by_name", nameOf(names, r.getApprovalRequestedById()));
+        m.put("decided_by_name", nameOf(names, r.getApprovalDecidedById()));
+        Map<String, Object> a = approvalDto(rowOf(r));
+        m.put("approval", a);
+        String state = String.valueOf(a.get("state"));
+        boolean canWrite = writer && canWrite(session, r.getTeamId());
+        // İstenebilir: akış var, onaylayıcı var ve istek yok / reddedildi / eskidi; bekleyen istek sessiz süreden eskiyse
+        // yeniden gönderilebilir (hatırlatma); ONAYLI ve değişmemiş rapor yeniden istenmez (onay boşa gitmesin — inceleme 2026-10-17)
+        Instant now = service.now();
+        boolean resend = "pending".equals(state) && r.getApprovalRequestedAt() != null
+                && r.getApprovalRequestedAt().isBefore(now.minus(TechErrorApprovalService.RESEND_AFTER));
+        boolean requestable = required && !apps.isEmpty()
+                && ("none".equals(state) || "rejected".equals(state) || "stale".equals(state) || resend);
+        m.put("can_request", canWrite && requestable && approvals != null);
+        m.put("resend", canWrite && resend && approvals != null);
+        Long uid = userId(session);
+        boolean approver = uid != null && apps.stream().anyMatch(ap -> uid.equals(ap.id()));
+        m.put("is_approver", approver);
+        m.put("can_decide", approver && "pending".equals(state) && permissions.allows(session, APPROVE, "execute"));
+        // Onaylı ve onaydan beri değişmemiş rapor: yazabilen yöneticilere (yeniden) gönderebilir
+        m.put("can_send_executive", canWrite && required && "approved".equals(state));
+        return m;
+    }
+
+    private static List<Map<String, Object>> approverRows(List<TechErrorApprovalService.Approver> apps) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (TechErrorApprovalService.Approver a : apps) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", a.name());
+            row.put("has_email", a.email() != null);
+            out.add(row);
+        }
+        return out;
+    }
+
     // ── Kapsam ───────────────────────────────────────────────────────────────────────────────────────
 
-    /** Görünür takımlar: null = hepsi (kurum geneli görüntüleyici). */
+    /**
+     * Görünür takımlar: null = hepsi (kurum geneli görüntüleyici). Modül görünürlüğü (S6) takım bazlıysa kapsamdaki
+     * takımlardan yalnız açık olanlar kalır — kurum geneli görüntüleyici her takımı görür (ayarı o yönetir).
+     */
     static Set<Long> visibleTeamIds(HttpSession session) {
         if (SessionScope.isGlobalViewer(session)) return null;
         Set<Long> out = new LinkedHashSet<>();
@@ -677,6 +839,7 @@ public class TechErrorReportController {
         if (m != null) out.addAll(m);
         out.addAll(SessionScope.memberTeamIds(session));
         out.remove(null);
+        out.removeIf(t -> !TechErrorVisibilityService.visible(t));
         return out;
     }
 
@@ -689,7 +852,9 @@ public class TechErrorReportController {
 
     static boolean canWrite(HttpSession session, Long teamId) {
         if (teamId == null) return false;
-        return SessionScope.isGlobalAdmin(session) || SessionScope.canManage(session, teamId) || SessionScope.isMemberOf(session, teamId);
+        if (SessionScope.isGlobalAdmin(session)) return true;
+        if (!TechErrorVisibilityService.visible(teamId)) return false;      // modül bu takıma kapalı (S6)
+        return SessionScope.canManage(session, teamId) || SessionScope.isMemberOf(session, teamId);
     }
 
     /** Hiç gönderilmemiş taslak: yazabilen siler; gönderilmiş rapor: yalnız yönetim kapsamı. */
@@ -742,10 +907,22 @@ public class TechErrorReportController {
 
     private void requireRead(HttpSession session) {
         if (!permissions.allows(session, READ, "view")) throw new SecurityException(READ + " yetkisi gerekli");
+        requireModuleVisible(session);
+    }
+
+    /** Modül görünürlüğü (S6): takım bazlıysa kapsamında açık bir takım olmayan kullanıcı 403 alır (arayüz menüyü de gizler). */
+    private static void requireModuleVisible(HttpSession session) {
+        TechErrorVisibilityService v = TechErrorVisibilityService.current();
+        if (v != null && !v.sessionSees(session)) {
+            throw new SecurityException(Msg.t(
+                    "Kanal teknik hata raporu modülü takımınız için açık değil. Gerekiyorsa sistem yöneticisi Ayarlar → Teknik hata raporu'ndan açar.",
+                    "The channel technical error report module is not enabled for your team. A system administrator can enable it under Settings → Technical error report."));
+        }
     }
 
     private void requireWrite(HttpSession session) {
         if (!permissions.allows(session, CRUD, "edit")) throw new SecurityException(CRUD + " yetkisi gerekli");
+        requireModuleVisible(session);
     }
 
     // ── DTO ──────────────────────────────────────────────────────────────────────────────────────────
@@ -768,6 +945,12 @@ public class TechErrorReportController {
         m.put("slot_count", t.allSlots().size());
         m.put("can_edit", writer && canWrite(session, ch.getTeamId()));
         m.put("can_delete", writer && SessionScope.canManage(session, ch.getTeamId()));
+        m.put("can_manage", writer && SessionScope.canManage(session, ch.getTeamId()));
+        // PO onayı (S6): yönetici alıcıları (takımı yönetenler değiştirir) — doluysa gönderim onaya bağlı
+        List<String> execs = TechErrorReportSender.executiveRecipients(ch);
+        m.put("executive_emails", ch.getExecutiveEmails());
+        m.put("executive_count", execs.size());
+        m.put("approval_required", !execs.isEmpty());
         return m;
     }
 
@@ -790,7 +973,26 @@ public class TechErrorReportController {
         m.put("last_attempt_at", iso(r.getLastAttemptAt()));
         m.put("last_sent_to", r.getLastSentTo());
         m.put("send_count", r.getSendCount());
+        m.put("approval", approvalDto(r));
         return m;
+    }
+
+    /**
+     * Onay bloğu (2026-10-17, S6): {@code state} none | pending | approved | rejected | stale (istek ya da onay, içerik
+     * değiştiği için eskidi — yeniden onay gerekir). Kişi adları çağıranın eklediği ad haritasından (opak kimlik kuralı).
+     */
+    static Map<String, Object> approvalDto(TechErrorReportRepository.Row r) {
+        Map<String, Object> a = new LinkedHashMap<>();
+        String st = r.getApprovalState();
+        long content = r.getContentRev() == null ? 0L : r.getContentRev();
+        boolean stale = st != null && !"REJECTED".equals(st) && r.getApprovalRev() != null && content > r.getApprovalRev();
+        a.put("state", st == null ? "none" : stale ? "stale" : st.toLowerCase(Locale.ROOT));
+        a.put("raw_state", st);
+        a.put("stale", stale);
+        a.put("requested_at", iso(r.getApprovalRequestedAt()));
+        a.put("decided_at", iso(r.getApprovalDecidedAt()));
+        a.put("note", r.getApprovalNote());
+        return a;
     }
 
     /** Varlıktan liste satırı görünümü (tek rapor okumasında ikinci sorgu olmasın). */
@@ -817,6 +1019,13 @@ public class TechErrorReportController {
             public Instant getLastAttemptAt() { return r.getLastAttemptAt(); }
             public String getLastSendStatus() { return r.getLastSendStatus(); }
             public int getSendCount() { return r.getSendCount(); }
+            public String getApprovalState() { return r.getApprovalState(); }
+            public Long getApprovalRev() { return r.getApprovalRev(); }
+            public Instant getApprovalRequestedAt() { return r.getApprovalRequestedAt(); }
+            public Long getApprovalRequestedById() { return r.getApprovalRequestedById(); }
+            public Instant getApprovalDecidedAt() { return r.getApprovalDecidedAt(); }
+            public Long getApprovalDecidedById() { return r.getApprovalDecidedById(); }
+            public String getApprovalNote() { return r.getApprovalNote(); }
         };
     }
 

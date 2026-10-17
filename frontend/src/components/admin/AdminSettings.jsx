@@ -1,8 +1,6 @@
 import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
-  Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText,
-  CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn,
-  SwatchBook,
+  Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText, CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn, SwatchBook, FileWarning,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -31,6 +29,7 @@ import BrandingSettings from './BrandingSettings'
 import RetentionSettings from './RetentionSettings'
 import UserPushSettings from './UserPushSettings'
 import NocSettings from './NocSettings.jsx'   // 7/24 İzleme Ekibi (2026-09-27)
+import TechErrorReportSettings from './TechErrorReportSettings.jsx'   // Teknik hata raporu modülü (2026-10-17, S6)
 import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sistem Bakım Modu (2026-10-02)
 import LoginMethodsSettings from './LoginMethodsSettings.jsx'   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
 import ThemeSettings from './ThemeSettings.jsx'   // Görünüm → Temalar (2026-10-05)
@@ -57,6 +56,8 @@ const GROUPS = [
     { id: 'platforms', labelKey: 'settings.navPlatforms', icon: Layers },
     // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): SiteMonitor'ün kendisini bakıma alma — YALNIZ global yönetici
     { id: 'sysmaint', labelKey: 'settings.navSysMaint', icon: ServerCog },
+    // Kanal teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı — kapsamlı müdür salt okunur
+    { id: 'techerror', labelKey: 'settings.navChannelReports', icon: FileWarning },
   ] },
   // Görünüm → Temalar (2026-10-05, kullanıcı isteği): açık temalar + varsayılan; kapsamlı müdür SALT OKUNUR görür
   // (anahtarlar GLOBAL_ONLY, sunucu read_only döner) — kilitli bölüm değil, önizleme herkese açık.
@@ -285,6 +286,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'monitorgroups' && <MonitorGroups />}
           {active === 'platforms' && <PlatformSettings />}
           {active === 'sysmaint' && <SystemMaintenanceSettings />}
+          {active === 'techerror' && <TechErrorReportSettings readOnly={!globalAdmin} />}
           {active === 'themes' && <ThemeSettings />}
           {active === 'smtp' && <SmtpSettings />}
           {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}

@@ -310,8 +310,11 @@ let uploads = []
 let uploadSizes = []
 let uploadBodies = []
 let sends = 0
+let approvalRequests = 0        // PO onayı (2026-10-17, S6)
+let decisions = []
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
+  approvalRequests = 0; decisions = []
   reportOverride = null
   templateOverride = null
   await page.addInitScript(() => {
@@ -373,6 +376,13 @@ async function mock(page, { openSections = true } = {}) {
     } else if (p === '/api/tech-error-reports/reports/100/send') {
       sends++
       body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
+    } else if (p === '/api/tech-error-reports/reports/100/approval/request') {
+      approvalRequests++
+      body = { success: true, data: { state: 'pending', approvers: [{ name: 'Mehmet Kaya', has_email: true }], mailed: 1, failed: 0,
+        mail_problem: null, approval: { state: 'pending' } } }
+    } else if (p === '/api/tech-error-reports/reports/100/approval/decide') {
+      decisions.push(JSON.parse(req.postData() || '{}'))
+      body = { success: true, data: { state: 'approved', send_state: 'SENT', sent_to: ['ceo@example.com'], approval: { state: 'approved' } } }
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
@@ -916,6 +926,53 @@ for (const vp of VIEWPORTS) {
       await expect(dlg).toHaveCount(0)
       await expect(page.locator('[data-slot="te-versions-open"]')).toBeFocused()
       await expect(page.getByLabel(/Report title|Rapor başlığı/)).toHaveValue(/^Eski rapor başlığı/)
+    })
+
+    test('PO onayı (2026-10-17, S6): onay akışlı kanalda "Onaya gönder" + onay kartı; PO onaylar; sığar, kesilmez', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      const execChannel = { ...REPORT.channel, approval_required: true, executive_count: 2, executive_emails: 'ceo@example.com, cto@example.com' }
+      const detail = { required: true, executive_count: 2, executive_emails: ['ceo@example.com', 'cto@example.com'],
+        approvers: [{ name: LONG_PERSON, has_email: true }], requested_by_name: null, decided_by_name: null,
+        can_request: true, is_approver: false, can_decide: false, can_send_executive: false }
+      reportOverride = { ...REPORT, channel: execChannel, report: { ...REPORT.report, approval: { state: 'none', raw_state: null, stale: false } }, approval_detail: detail }
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      await expect(editor).toBeVisible()
+      const card = page.locator('[data-slot="te-approval"]')
+      await expect(card).toHaveAttribute('data-state', 'none')
+      await expect(page.locator('[data-slot="te-send"]')).toHaveCount(0)
+      expect(await page.evaluate(overflowX), 'yatay taşma (onaysız)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-approval"]'), 'kırpılan metin (onay kartı)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-approval"]'), 'küçük hedef (onay kartı)').toEqual([])
+      await page.locator('[data-slot="te-report-actions"] [data-slot="te-approval-request-bar"]').click()
+      const confirm = page.getByRole('dialog', { name: /Onaya gönder|Send for approval/ })
+      await expect(confirm).toBeVisible()
+      await confirm.getByRole('button', { name: /Onaya gönder|Send for approval/ }).click()
+      await expect.poll(() => approvalRequests).toBe(1)
+      expect(sends, 'onay isteği gönderim değildir').toBe(0)
+
+      // PO görünümü: bekleyen istek, Onayla / Reddet; onay gerekçesiz, karar ucuna gider
+      reportOverride = { ...reportOverride,
+        report: { ...REPORT.report, approval: { state: 'pending', raw_state: 'PENDING', stale: false, requested_at: '2026-10-13T09:00:00Z' } },
+        approval_detail: { ...detail, requested_by_name: LONG_PERSON, can_request: false, is_approver: true, can_decide: true } }
+      await page.reload()
+      await expect(card).toHaveAttribute('data-state', 'pending')
+      expect(await page.evaluate(clipped, '[data-slot="te-approval"]'), 'kırpılan metin (bekleyen)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma (bekleyen)').toBeLessThanOrEqual(1)
+      await card.locator('[data-slot="te-approval-approve"]').click()
+      const dlg = page.locator('[data-slot="te-approval-dialog"]')
+      await expect(dlg).toBeVisible()
+      const db = await dlg.boundingBox()
+      expect(db.x + db.width, 'onay penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      await dlg.locator('textarea').fill('Uygun')
+      await dlg.locator('[data-slot="te-approval-confirm"]').click()
+      await expect.poll(() => decisions.length).toBe(1)
+      expect(decisions[0]).toEqual({ decision: 'approve', note: 'Uygun' })
+      // Pencere kapanıp bildirim yerleşince (kayma animasyonu geçici taşma sayılmasın) sayfa yine taşmaz
+      await expect(dlg).toBeHidden()
+      await page.waitForTimeout(800)
+      expect(await page.evaluate(overflowX), 'yatay taşma (karar sonrası)').toBeLessThanOrEqual(1)
     })
 
     test('katlanır bölümler + otomatik kayıt', async ({ page }) => {

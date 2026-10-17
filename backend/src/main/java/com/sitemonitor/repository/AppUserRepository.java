@@ -237,6 +237,14 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findByTeamIdAndOrgRoleAndActiveTrue(Long teamId, String orgRole);
 
     /**
+     * Takımın AKTİF üyeleri (birincil ya da ek üyelik) verilen kurum rolüyle — teknik hata raporu PO onaylayıcıları
+     * (2026-10-17, S6). {@link #findByTeamIdAndOrgRoleAndActiveTrue} yalnız birincil takıma bakar.
+     */
+    @Query("SELECT DISTINCT u FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.active = true AND u.orgRole = :role "
+            + "AND (u.teamId = :teamId OR tid = :teamId) ORDER BY u.username ASC")
+    List<AppUser> findActiveByOrgRoleInTeam(@Param("teamId") Long teamId, @Param("role") String role);
+
+    /**
      * Admin Users ekranı için filtreli + sayfalı arama. q (lowercased "%..%")
      * username/displayName/email/employeeId üzerinde OR arar; systemRole/orgRole/teamId
      * eşitlik filtresi. null parametreler ilgili koşulu atlar (AuditLog.findFiltered deseni).

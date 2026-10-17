@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send, Trash2,
-  Undo2,
-} from 'lucide-react'
+  Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -21,6 +20,7 @@ import {
 } from './SectionCollapse.jsx'
 import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
+import ApprovalCard from './ApprovalCard.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
   reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
@@ -508,11 +508,43 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     }
   }
 
+  // PO onayı (2026-10-17, S6): yönetici alıcısı tanımlı kanalda gönderim onaya bağlı — "Onaya gönder" / "Yöneticilere gönder"
+  const approvalDetail = data?.approval_detail || null
+  const approvalRequired = !!approvalDetail?.required
+
+  async function requestApproval() {
+    if (!(await ensureSaved())) return
+    const names = (approvalDetail?.approvers || []).map((a) => a?.name).filter(Boolean)
+    const ok = await showConfirm({
+      title: t('te.appr.requestTitle'),
+      message: t('te.appr.requestBody', names.length, names.join(', ') || '—', approvalDetail?.executive_count || 0),
+      variant: 'info', confirmText: t('te.appr.requestConfirm'), cancelText: t('te.cancel'),
+    })
+    if (!ok) return
+    setBusy('approval')
+    try {
+      const res = await api.techErrors.requestApproval(reportId)
+      if (res?.success && res.data) {
+        if ((res.data.mailed || 0) > 0) toast.success(t('te.appr.requested', res.data.mailed))
+        else toast.info(t('te.appr.requestedNoMail', res.data.mail_problem || '—'))
+      } else {
+        toast.error(res?.error || t('te.appr.requestError'), { details: res?.errorInfo })
+      }
+    } catch (e) {
+      toast.error(e?.message || t('te.appr.requestError'))
+    } finally {
+      setBusy(null)
+      load({ keepDraft: true })
+    }
+  }
+
   async function send() {
     if (!(await ensureSaved())) return
     const ok = await showConfirm({
-      title: t('te.sendTitle'),
-      message: t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title)),
+      title: approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle'),
+      message: approvalRequired
+        ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
+        : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title)),
       variant: 'info', confirmText: t('te.sendConfirm'), cancelText: t('te.cancel'),
     })
     if (!ok) return
@@ -792,6 +824,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         </div>
       </header>
 
+      <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}
+        onBusy={setBusy} onRequest={requestApproval} onChanged={() => load({ keepDraft: true })}
+        sentAt={report.last_sent_at} sentTo={report.last_sent_to} />
+
       {state.error && (
         <AlertBanner tone="danger" title={t('te.reloadFailed')}
           actions={<Button type="button" size="sm" variant="outline" onClick={() => load({ keepDraft: true })}>{t('te.retry')}</Button>}>
@@ -917,11 +953,26 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             {busy === 'pdf' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden="true" />}
             {t('te.downloadPdf')}
           </Button>
-          {!readOnly && (
+          {!readOnly && !approvalRequired && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send"
               disabled={busy != null || data.team_email_set === false || report.status === 'sending'} onClick={send}>
               {busy === 'send' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
               {report.last_sent_at ? t('te.resend') : t('te.send')}
+            </Button>
+          )}
+          {/* Onay akışlı kanal (S6): onaylı rapor yöneticilere; onaysız / değişmiş rapor onaya */}
+          {!readOnly && approvalRequired && approvalDetail?.can_send_executive && (
+            <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send-exec"
+              disabled={busy != null || report.status === 'sending'} onClick={send}>
+              {busy === 'send' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
+              {t('te.appr.sendExec')}
+            </Button>
+          )}
+          {!readOnly && approvalRequired && approvalDetail?.can_request && (
+            <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-approval-request-bar"
+              disabled={busy != null} onClick={requestApproval}>
+              {busy === 'approval' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck aria-hidden="true" />}
+              {approvalDetail?.resend ? t('te.appr.resend') : t('te.appr.request')}
             </Button>
           )}
           {!readOnly && (

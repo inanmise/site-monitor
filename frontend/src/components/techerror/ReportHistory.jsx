@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, LayoutTemplate, MailCheck, PenLine, RefreshCw, Send, Timer,
-} from 'lucide-react'
+  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, LayoutTemplate, MailCheck, PenLine, RefreshCw, Send, Timer, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
@@ -16,6 +15,13 @@ import { formatBytes, formatNumber, istanbulDay } from './techErrorModel.js'
 const KIND_ICON = {
   CREATE: FilePlus2, VALUES: PenLine, IMAGE_ADD: ImagePlus, IMAGE_REPLACE: ImageIcon, IMAGE_DELETE: ImageOff,
   TEMPLATE_REFRESH: LayoutTemplate, SEND: Send, SEND_RESULT: MailCheck,
+  // PO onayı (2026-10-17, S6)
+  APPROVAL_REQUEST: ShieldCheck, APPROVAL: ShieldCheck,
+}
+const APPR_TONE = {
+  PENDING: 'bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
+  APPROVED: 'bg-green-600/10 text-green-800 dark:bg-green-500/15 dark:text-green-300',
+  REJECTED: 'bg-destructive/10 text-destructive',
 }
 const SEND_TONE = {
   SENT: 'bg-green-600/10 text-green-800 dark:bg-green-500/15 dark:text-green-300',
@@ -25,7 +31,7 @@ const SEND_TONE = {
   SUPERSEDED: 'bg-muted text-muted-foreground',
 }
 /** Sunucunun gönderilmeme sebebi kodları (TechErrorHistoryService.sendReason) — bilinmeyen kod gösterilmez. */
-const SEND_REASONS = new Set(['MAIL_OFF', 'INACTIVE_RECIPIENTS', 'PDF_BUSY', 'PDF_TOO_LARGE', 'NO_RECIPIENT'])
+const SEND_REASONS = new Set(['MAIL_OFF', 'INACTIVE_RECIPIENTS', 'PDF_BUSY', 'PDF_TOO_LARGE', 'NO_RECIPIENT', 'APPROVAL_STALE'])
 const FOLD_AT = 8
 
 /** İstanbul saatiyle "HH:mm". */
@@ -294,6 +300,23 @@ function EventBody({ kind, detail: d, uiLang }) {
         {/* Kuyruk sonucunun zamanı sonucun OKUNDUĞU an — teslim anı bilinmez */}
         {kind === 'SEND_RESULT' && state !== 'SUPERSEDED' && (
           <p className="m-0 text-xs text-muted-foreground">{t('te.hist.resultTimeNote')}</p>
+        )}
+      </div>
+    )
+  }
+  if (kind === 'APPROVAL_REQUEST' || kind === 'APPROVAL') {
+    const raw = String(d.state || '').toUpperCase()
+    const state = APPR_TONE[raw] ? raw : 'UNKNOWN'
+    const to = Array.isArray(d.recipients) ? d.recipients : []
+    const via = d.via === 'email_token' ? 'email_token' : d.via ? 'app' : null
+    return (
+      <div className="flex flex-col gap-1 text-sm">
+        <Badge className={cn('w-fit rounded-md overflow-visible whitespace-normal', APPR_TONE[state] || 'bg-muted text-muted-foreground')}
+          data-slot="te-history-approval-state" data-state={state}>{t(`te.hist.appr.${state}`)}</Badge>
+        {via && <p className="m-0 text-xs text-muted-foreground">{t(`te.hist.appr.via.${via}`)}</p>}
+        {d.note && <p className="m-0 text-xs [overflow-wrap:anywhere]" data-slot="te-history-approval-note">{t('te.appr.note')}: {d.note}</p>}
+        {to.length > 0 && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.hist.recipients', to.join(', '))}</p>
         )}
       </div>
     )

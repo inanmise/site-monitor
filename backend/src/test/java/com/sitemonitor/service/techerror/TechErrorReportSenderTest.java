@@ -163,6 +163,41 @@ class TechErrorReportSenderTest {
     }
 
     @Test
+    @DisplayName("yöneticilere gönderim (S6): talepten sonraki okumada onay yoksa ya da içerik onaydan sonra değiştiyse 409 APPROVAL_STALE — talep bırakılır, posta gitmez, SKIPPED izi + geçmiş sebebi; onaylı ve değişmemiş rapor yöneticilere (To) + takım adresi (CC) gider")
+    void executiveDeliveryGuard() {
+        channel.setExecutiveEmails("ceo@example.com, Dijital@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(4L);                    // onaydan sonra değişti (talepten sonraki okuma bu satır)
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE))
+                .isInstanceOf(CodedConflictException.class).extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("APPROVAL_STALE");
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+        verify(reports).releaseClaim(eq(5L), eq(now), any());
+        verify(reports, never()).finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: onay eskidi");
+        assertThat(log.getValue().getRecipientRole()).isEqualTo("EXECUTIVE");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SKIPPED"), org.mockito.ArgumentMatchers.isNull(), eq("APPROVAL_STALE"), any());
+
+        org.mockito.Mockito.reset(email, logs, history);
+        mailReturns("SENT");
+        report.setContentRev(3L);
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).containsExactly("ceo@example.com", "Dijital@example.com");
+        ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(eq(new String[]{ "ceo@example.com", "Dijital@example.com" }), cc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        // Takım adresindeki dijital@example.com yönetici listesinde zaten var (büyük-küçük harf): CC'de yalnız ikinci adres
+        assertThat(cc.getValue()).containsExactly("ikinci@example.com");
+        ArgumentCaptor<NotificationLog> sentLog = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(sentLog.capture());
+        assertThat(sentLog.getValue().getRecipientRole()).isEqualTo("EXECUTIVE");
+        assertThat(sentLog.getValue().getCc()).isEqualTo("ikinci@example.com");
+        assertThat(sender.maxMailBytes()).isEqualTo(15L * 1024 * 1024);
+    }
+
+    @Test
     @DisplayName("posta sınırı PDF + gömülü görsellerin toplamı (inceleme 2026-10-17): sınıra yakın PDF'in yanında görseller gövdeye girmez, yuvalar 'PDF ekinde' der, posta yine SENT")
     void inlineImagesDroppedWhenPdfIsNearTheCap() throws java.io.IOException {
         mailReturns("SENT");
