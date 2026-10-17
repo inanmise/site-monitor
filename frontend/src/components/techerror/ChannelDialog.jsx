@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from 'react'
-import { Copy, FileText, Languages } from 'lucide-react'
+import { Copy, Globe, LayoutTemplate } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -156,8 +156,8 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
               <RadioGroup value={source} onValueChange={(v) => { setSource(v); setErrors((x) => ({ ...x, copy_from: undefined })) }}
                 aria-labelledby={sourceLabelId} className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-slot="te-source-options">
                 {[
-                  { value: 'tr', Icon: Languages, title: t('te.source.tr'), hint: t('te.source.trHint') },
-                  { value: 'en', Icon: FileText, title: t('te.source.en'), hint: t('te.source.enHint') },
+                  { value: 'tr', Icon: LayoutTemplate, title: t('te.source.tr'), hint: t('te.source.trHint') },
+                  { value: 'en', Icon: Globe, title: t('te.source.en'), hint: t('te.source.enHint') },
                   ...(copyOptions.length ? [{ value: 'copy', Icon: Copy, title: t('te.source.copy'), hint: t('te.source.copyHint') }] : []),
                 ].map((o) => {
                   const rid = `${sourceLabelId}-${o.value}`

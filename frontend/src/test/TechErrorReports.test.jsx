@@ -86,6 +86,9 @@ describe('Teknik hata raporları — kanallar', () => {
     // Şablon kaynağı: shadcn seçim kartları (8. sürüm) — üç seçenek, varsayılan Türkçe; "kopyala" kanal seçiciyi açar
     expect(within(dialog).getAllByRole('radio')).toHaveLength(3)
     expect(within(dialog).getByRole('radio', { name: /Varsayılan şablon \(Türkçe\)/ })).toBeChecked()
+    // Kullanıcı bildirimi (2026-10-17): lucide "Languages" ikonu "文A" çizer ve Japonca karakter gibi görünür — seçim
+    // kartlarında dil / çeviri ikonu kullanılmaz
+    expect(dialog.querySelector('svg.lucide-languages')).toBeNull()
     expect(dialog.querySelector('[data-slot="te-source-copy"]')).toBeNull()
     fireEvent.click(within(dialog).getByRole('radio', { name: /Başka bir kanalın şablonunu kopyala/ }))
     expect(dialog.querySelector('[data-slot="te-source-copy"]')).not.toBeNull()
