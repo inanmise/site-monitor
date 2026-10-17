@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T21:00:34Z",
+  "generatedAt": "2026-10-17T21:15:58Z",
   "repo": "inanmise/site-monitor",
-  "count": 768,
+  "count": 769,
   "releases": [
+    {
+      "version": "20.151.0",
+      "tag": "v20.151.0",
+      "releasedAt": "2026-10-17T21:15:53Z",
+      "commit": "2f469f7cc3dd188ab51bc65ef460954e372be427",
+      "prevVersion": "20.150.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f469f7c",
+          "subject": "Metrikler pod sırası (canlı önde, en yeni süreç en başta) — CLAUDE.md ve kılavuz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "e48a4bd4",
+          "subject": "Sistem Sağlığı → Metrikler'de canlı pod önde, en yeni pod en başta"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.150.0",
       "tag": "v20.150.0",
