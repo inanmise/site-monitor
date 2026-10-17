@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T18:56:13Z",
+  "generatedAt": "2026-10-17T19:54:50Z",
   "repo": "inanmise/site-monitor",
-  "count": 766,
+  "count": 767,
   "releases": [
+    {
+      "version": "20.149.0",
+      "tag": "v20.149.0",
+      "releasedAt": "2026-10-17T19:54:42Z",
+      "commit": "da4eb33098001ea035132ea10f9c034a4f1704a0",
+      "prevVersion": "20.148.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "da4eb330",
+          "subject": "11. sürüm inceleme turu — bölüm başlığı satırı tam genişlik, şablon ögeleri belirgin kalır, Ayarlar'da Yenile taslağı korur ve görünürlük rozetleri kaydı izler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1ff71ed3",
+          "subject": "yeni kanal penceresinde şablon kaynağı kartında Japonca karakter gibi görünen dil ikonu — şablon / küre ikonu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9559fda6",
+          "subject": "Ayarlar → Teknik hata raporu sayfası shadcn ile yeniden tasarlandı — dönem KPI süzgeçleri, arama / takım / durum / sıralama, kap genişliğine göre tablo ya da kart, sayfalama, kanala geçiş; telefon ve…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6c3ac8a4",
+          "subject": "şablon düzenleyicisinde açılan bölümün çevresindeki köşeli çizgi — düzenleme kilidi fieldset'leri çerçevesiz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ebc8f510",
+          "subject": "teknik hata raporu bölüm kartları yeniden tasarlandı — tek sakin çerçeve, tam satır aç / kapat, yumuşak öge kartları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.148.0",
       "tag": "v20.148.0",

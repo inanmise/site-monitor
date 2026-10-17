@@ -52,8 +52,11 @@ const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images', 't
  * "1. görsel, 2. görsel gibi alanların birbirinden ayrı bölümler olduğu keskin hatlarla belli olsun"). Koyu çerçeve +
  * gölge + kartın kenarına yaslanan başlık şeridi (numara ve taşıma / silme düğmeleri); öğeler arası boşluk 12 px.
  */
+// 2026-10-17: "açılan bölümün çevresindeki çizgi" şikâyetinin kaynağı düzenleme kilidi fieldset'lerinin tarayıcı
+// çerçevesiydi (artık `border-0`); öge kartları kullanıcının 2026-10-16 kararıyla belirgin kalır. Şeridin iç yarıçapı dış
+// yarıçaptan kenar kalınlığı kadar küçük → köşeler örtüşür.
 const TPL_ITEM = 'rounded-lg border border-foreground/25 bg-card p-3 shadow-sm'
-const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-lg border-b border-foreground/20 bg-muted px-3 py-1.5'
+const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-foreground/20 bg-muted px-3 py-1.5'
 const TPL_ITEM_TITLE = 'text-sm font-semibold text-foreground'
 
 function fieldToken(f, yes = null, no = null) {
@@ -408,7 +411,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
             (2026-10-16). Başlık kartı ve bölüm içerikleri kendi fieldset'inde, bölüm başlığındaki taşı / sil düğmeleri
             `disabled` ile, "Bölüm ekle" (yalnız yazabilene) kayıt sürerken kapalı — alanlar eskisi gibi kilitli. */}
         <div className="flex min-w-0 flex-col gap-4" data-slot="te-tpl-form">
-          <fieldset disabled={locked} className="min-w-0">
+          <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
             <Card className="gap-3" data-slot="te-tpl-head">
               <CardHeader>
                 <h3 className="text-base font-semibold">{t('te.tpl.headTitle')}</h3>
@@ -662,7 +665,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           onRemove={onRemove} removeLabel={t('te.tpl.removeSectionAria', s.title || kindName)} />
       )}
       cardProps={{ 'data-kind': s.kind, 'data-field': `section:${s.id}` }}>
-      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-3">
+      <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
         <div className="flex flex-col gap-1.5">
           <label htmlFor={titleId} className="text-sm font-semibold">{t('te.tpl.sectionTitle')}</label>
           <Input id={titleId} className="pointer-coarse:h-10" value={s.title || ''} maxLength={LIMITS.label + 20}
@@ -1143,7 +1146,7 @@ function TilesEditor({ section: s, draft, resolve, onChange }) {
   })
   const headId = `te-tiles-${s.id}`
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-dashed p-2.5" data-slot="te-tpl-tiles">
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 p-2.5" data-slot="te-tpl-tiles">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p id={headId} className="m-0 text-xs font-medium text-muted-foreground">{t('te.tpl.tiles')}</p>
         <span className="text-xs text-muted-foreground" data-slot="te-tpl-tiles-count">{t('te.tpl.tilesCount', tiles.length, LIMITS.tiles)}</span>
@@ -1159,7 +1162,7 @@ function TilesEditor({ section: s, draft, resolve, onChange }) {
             const name = f ? resolve(f.label) : t('te.sum.removedField')
             const usable = !!f && (f.type === 'number' || f.type === 'percent')
             return (
-              <li key={tid} className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background px-2 py-1"
+              <li key={tid} className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1"
                 data-slot="te-tpl-tile" data-tile={tid}>
                 <span className="min-w-0 text-sm [overflow-wrap:anywhere]">
                   <span className="me-1 text-xs text-muted-foreground">{i + 1}.</span>{name}
@@ -1520,7 +1523,7 @@ function TableEditor({ section: s, errors, draft, resolve, onChange }) {
         <p className="text-sm font-semibold">{t('te.tpl.rows')} <span className="font-normal text-muted-foreground">{t('te.tpl.rowCount', rows.length, LIMITS.rows)}</span></p>
         <ol className="flex flex-col gap-3">
           {rows.map((r, i) => (
-            <li key={r.id} className={cn(TPL_ITEM, r.group && 'bg-muted/40')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
+            <li key={r.id} className={cn(TPL_ITEM, r.group && 'bg-muted/60')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
               <div className={TPL_ITEM_HEAD}>
                 <span className={TPL_ITEM_TITLE}>{t('te.tpl.rowN', i + 1)}</span>
                 <MoveButtons index={i} count={rows.length} label={rowName(r, i)}

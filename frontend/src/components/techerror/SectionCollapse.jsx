@@ -84,14 +84,37 @@ function supportsUntilFound() {
   return untilFound
 }
 
-const TOGGLE = 'inline h-auto min-h-0 gap-0 whitespace-normal rounded-sm p-0 text-left align-baseline text-base font-semibold'
-  + ' leading-snug text-foreground has-[>svg]:px-0 hover:bg-transparent hover:text-foreground hover:underline'
-  + ' dark:hover:bg-transparent pointer-coarse:py-2.5'
+/*
+ * GÖRÜNÜM (2026-10-17, kullanıcı geri bildirimi: "açılan bölümün etrafını çevreleyen çizgi kötü görüntü veriyor"):
+ * bölüm başına TEK sakin çerçeve — `rounded-xl border-border bg-card`, gölge yok. Başlık satırı baştan sona aç / kapat
+ * hedefidir (düğme h3'ün İÇİNDE kalır — WAI akordeon deseni; ok önde, metin sarar), vurgu ve odak halkası metin kutusunu
+ * değil satırı çevreler; kopyalama ikonu ile taşı / sil düğmeleri satırın sağında, düğmenin DIŞINDA. Açık bölümde başlık
+ * ile gövde arasında yalnız bir ayraç çizgisi (`border-t` gövdede); gövde kartın yüzeyinde durur. Kapalı bölüm başlık +
+ * rozet satırı olarak okunur, boş kutu değil. Yalnız jeton renkleri (sekiz tema, `dark:` yok).
+ */
+const CARD = 'gap-0 border-border py-0 shadow-none'
+// `items-stretch`: shadcn CardHeader taşıdığı `items-start` flex-col'da satırı İÇERİĞE büzüyordu (inceleme 2026-10-17:
+// kısa başlıkta düğme, vurgu ve taşı / sil düğmeleri metnin yanında kalıyordu) — satır kartın tam genişliği
+const HEADER = 'flex flex-col items-stretch gap-0 px-0'
+const CONTENT = 'border-t px-4 pb-4 pt-4'
+/** Başlık satırının iç boşluğu (6 px): düğmenin vurgu dikdörtgeni ve odak halkası kartın kenarından içeride kalır. */
+const ROW = 'flex items-start gap-1 p-1.5'
+/** Aç / kapat düğmesi: satırın tamamı; `px-2.5` + satır boşluğu = 16 px → ok gövdenin sol kenarıyla (`px-4`) hizalı. */
+const TOGGLE = 'h-auto min-h-0 w-full items-start justify-start gap-2 whitespace-normal rounded-lg px-2.5 py-2.5 text-left'
+  + ' text-base font-semibold leading-snug text-foreground has-[>svg]:px-2.5 pointer-coarse:min-h-10'
+/**
+ * Tek satırlı başlığın yüksekliği: `py-2.5` × 2 + `leading-snug` satırı (16 × 1,375 = 22 px) = 42 px. Sağdaki kopyala /
+ * taşı / sil düğmeleri bu kutuda ortalanır → çok satıra saran başlıkta İLK satırla hizalı kalırlar (dokunmatikte de).
+ */
+const SIDE = 'flex min-h-[2.625rem] shrink-0 items-center'
+/** Başlığın altındaki rozet / ipucu: ok (16 px) + aralık (8 px) kadar içeride → başlık METNİYLE hizalı (`ps-10`). */
+const SUB = 'flex flex-col gap-1.5 pb-3 pe-4'
 
 /**
- * Bölüm kartı. Başlık bir `h3` içindeki aç / kapat düğmesidir (WAI akordeon deseni); kopyalama ikonu başlığın hemen
- * ardında kalır. `hint`: yalnız açıkken. `icon`: başlığın solunda (dekoratif). `headerEnd`: başlık satırının sağı
- * (ör. taşı / sil düğmeleri — kapalıyken de kullanılır). `toggleLabel`: düğmede başlık yerine gösterilecek içerik.
+ * Bölüm kartı. Başlık bir `h3` içindeki aç / kapat düğmesidir (WAI akordeon deseni); kopyalama ikonu başlığın kardeşi,
+ * satırın sağında. `hint`: yalnız açıkken. `icon`: başlığın solunda (dekoratif, okun ardında). `headerEnd`: başlık
+ * satırının sağı (ör. taşı / sil düğmeleri — kapalıyken de kullanılır). `toggleLabel`: düğmede başlık yerine gösterilecek
+ * içerik.
  */
 export function CollapsibleCard({
   sectionId, slot, title, copyText, toggleLabel, icon = null, hint = null, headerEnd = null, headerClassName,
@@ -121,54 +144,66 @@ export function CollapsibleCard({
     return () => el.removeEventListener('beforematch', onMatch)
   }, [open, setOpen, sectionId])
 
-  const titleRow = (toggle) => (
-    <div className="flex items-start justify-between gap-2">
-      <div className="flex min-w-0 items-start gap-2">
-        {icon}
-        <div data-slot="te-copy-row" className="min-w-0 text-base leading-snug [overflow-wrap:anywhere]">
-          <h3 className="inline text-base font-semibold leading-snug">{toggle}</h3>
-          <CopyTextButton text={copy} />
-        </div>
+  // Başlık satırı: h3 (satırın kalanı) + kopyalama ikonu aynı `te-copy-row` kabında (ikon başlığın KARDEŞİ — başlığın
+  // erişilebilir adı temiz kalır), sağda `headerEnd`. Kopyala ve taşı / sil düğmeleri ilk satır yüksekliğinde ortalanır.
+  const titleRow = (heading) => (
+    <div className={ROW}>
+      <div data-slot="te-copy-row" className="flex min-w-0 flex-1 items-start">
+        {heading}
+        <CopyTextButton text={copy} className={SIDE} />
       </div>
-      {headerEnd}
+      {headerEnd && <div className={SIDE}>{headerEnd}</div>}
     </div>
   )
 
   if (!ctx) {
     return (
-      <Card className="gap-3" {...slotAttr} data-section={sectionId} {...cardProps}>
-        <CardHeader className={cn('gap-1', headerClassName)}>
-          {titleRow(toggleLabel ?? title)}
-          {hint}
+      <Card className={CARD} {...slotAttr} data-section={sectionId} {...cardProps}>
+        <CardHeader className={cn(HEADER, headerClassName)}>
+          {titleRow(
+            <h3 className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-2.5 text-base font-semibold leading-snug">
+              {icon}
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
+            </h3>,
+          )}
+          {hint && <div className={cn(SUB, 'ps-4')}>{hint}</div>}
         </CardHeader>
-        <CardContent className={contentClassName}>{children}</CardContent>
+        <CardContent className={cn(CONTENT, contentClassName)}>{children}</CardContent>
       </Card>
     )
   }
 
   return (
     <Collapsible open={open} onOpenChange={(o) => setOpen(sectionId, o)} asChild>
-      <Card className="gap-3" {...slotAttr} data-section={sectionId} data-open={open ? 'true' : 'false'} {...cardProps}>
-        <CardHeader className={cn('gap-1', headerClassName)}>
+      <Card className={CARD} {...slotAttr} data-section={sectionId} data-open={open ? 'true' : 'false'} {...cardProps}>
+        <CardHeader className={cn(HEADER, headerClassName)}>
           {titleRow(
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="ghost" className={TOGGLE} data-slot="te-section-toggle">
-                <ChevronRight aria-hidden="true"
-                  className={cn('mr-1 inline size-4 align-[-3px] transition-transform motion-reduce:transition-none', open && 'rotate-90')} />
-                {toggleLabel ?? title}
-              </Button>
-            </CollapsibleTrigger>,
+            <h3 className="min-w-0 flex-1 text-base font-semibold leading-snug">
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" className={TOGGLE} data-slot="te-section-toggle">
+                  <ChevronRight aria-hidden="true"
+                    className={cn('mt-[3px] size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
+                      open && 'rotate-90')} />
+                  {icon}
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
+                </Button>
+              </CollapsibleTrigger>
+            </h3>,
           )}
-          {invalid > 0 && (
-            <Badge variant="destructive" className="w-fit rounded-md overflow-visible whitespace-normal" data-slot="te-section-invalid">
-              {t('te.sec.invalid', invalid)}
-            </Badge>
+          {(invalid > 0 || (open && hint)) && (
+            <div className={cn(SUB, 'ps-10')}>
+              {invalid > 0 && (
+                <Badge variant="destructive" className="w-fit rounded-md overflow-visible whitespace-normal" data-slot="te-section-invalid">
+                  {t('te.sec.invalid', invalid)}
+                </Badge>
+              )}
+              {open && hint}
+            </div>
           )}
-          {open && hint}
         </CardHeader>
         <CollapsibleContent forceMount ref={contentRef} data-slot="te-section-content"
           className={supportsUntilFound() ? undefined : 'data-[state=closed]:hidden'}>
-          <CardContent className={contentClassName}>{children}</CardContent>
+          <CardContent className={cn(CONTENT, contentClassName)}>{children}</CardContent>
         </CollapsibleContent>
       </Card>
     </Collapsible>
