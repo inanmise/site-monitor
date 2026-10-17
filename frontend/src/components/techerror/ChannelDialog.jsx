@@ -12,6 +12,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { LIMITS } from './techErrorModel.js'
 
+/** Sunucuyla aynı teslim edilebilirlik kuralı (TechErrorReportSender.DELIVERABLE). */
+const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/
+
 /**
  * Kanal aç / düzenle. Açarken şablon üç yoldan gelir: varsayılan (Türkçe), varsayılan (İngilizce) ya da görülebilen
  * başka bir kanalın şablonunun KOPYASI. Düzenleme yalnız değişen alanları gönderir (ad / açıklama).
@@ -27,12 +30,15 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
   })
   const [name, setName] = useState(channel?.name || '')
   const [description, setDescription] = useState(channel?.description || '')
+  // Yönetici (executive) alıcıları (2026-10-17, S6): yalnız takımı yönetenler yazar; doluysa gönderim PO onayına bağlı
+  const [execEmails, setExecEmails] = useState(channel?.executive_emails || '')
   const [source, setSource] = useState('tr')
   const [copyFrom, setCopyFrom] = useState('')
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
 
   const teamOptions = useMemo(() => editable.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` })), [editable])
+  const canManage = mode === 'edit' ? !!channel?.can_manage : !!editable.find((tm) => String(tm.id) === String(teamId))?.can_manage
   const copyOptions = useMemo(() => channels.map((c) => ({
     value: String(c.id), label: c.team_name ? `${c.name} — ${c.team_name}` : c.name,
   })), [channels])
@@ -44,6 +50,12 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
     else if (name.trim().length > LIMITS.channelName) e.name = t('te.err.nameTooLong')
     if (description.trim().length > LIMITS.description) e.description = t('te.err.descriptionTooLong')
     if (mode === 'create' && source === 'copy' && !copyFrom) e.copy_from = t('te.err.copyRequired')
+    if (canManage && execEmails.trim()) {
+      const parts = execEmails.split(/[,;]/).map((p) => p.trim()).filter(Boolean)
+      const bad = parts.find((p) => !EMAIL_RE.test(p))
+      if (bad) e.executive_emails = t('te.err.execEmailInvalid', bad)
+      else if (parts.length > 20) e.executive_emails = t('te.err.execEmailsTooMany')
+    }
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -58,11 +70,13 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
         const body = { team_id: Number(teamId), name: name.trim(), description: description.trim() || null }
         if (source === 'copy') body.copy_from = Number(copyFrom)
         else body.lang = source
+        if (canManage && execEmails.trim()) body.executive_emails = execEmails.trim()
         res = await api.techErrors.createChannel(body)
       } else {
         const body = {}
         if (name.trim() !== (channel?.name || '')) body.name = name.trim()
         if ((description.trim() || '') !== (channel?.description || '')) body.description = description.trim() || null
+        if (canManage && execEmails.trim() !== (channel?.executive_emails || '')) body.executive_emails = execEmails.trim() || null
         if (Object.keys(body).length === 0) { onClose(); return }
         res = await api.techErrors.updateChannel(channel.id, body)
       }
@@ -72,7 +86,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
         return
       }
       if (res?.code === 'CHANNEL_EXISTS') setErrors({ name: res.error })
-      else if (res?.field && ['name', 'description', 'team_id', 'copy_from'].includes(res.field)) setErrors({ [res.field]: res.error })
+      else if (res?.field && ['name', 'description', 'team_id', 'copy_from', 'executive_emails'].includes(res.field)) setErrors({ [res.field]: res.error })
       else toast.error(res?.error || t('te.saveError'), { details: res?.errorInfo })
     } catch (e) {
       toast.error(e?.message || t('te.saveError'))
@@ -116,6 +130,20 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
                 onChange={(e) => { setDescription(e.target.value); setErrors((x) => ({ ...x, description: undefined })) }} />
             )}
           </Field>
+
+          {canManage ? (
+            <Field label={t('te.ch.execEmails')} hint={t('te.ch.execEmailsHint')} error={errors.executive_emails} name="executive_emails">
+              {({ id, describedBy, invalid }) => (
+                <Textarea id={id} value={execEmails} rows={2} aria-describedby={describedBy} aria-invalid={invalid}
+                  placeholder="ad.soyad@kurum.com, ad.soyad@kurum.com"
+                  onChange={(e) => { setExecEmails(e.target.value); setErrors((x) => ({ ...x, executive_emails: undefined })) }} />
+              )}
+            </Field>
+          ) : mode === 'edit' && channel?.executive_emails ? (
+            <p className="mb-3 text-sm text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-exec-locked">
+              {t('te.ch.execEmails')}: <span className="font-medium text-foreground">{channel.executive_emails}</span> · {t('te.ch.execEmailsLocked')}
+            </p>
+          ) : null}
 
           {mode === 'create' && (
             <fieldset className="mb-3 flex flex-col gap-2" data-field="copy_from">

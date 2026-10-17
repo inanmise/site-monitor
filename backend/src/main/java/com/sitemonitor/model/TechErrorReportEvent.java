@@ -48,7 +48,7 @@ public class TechErrorReportEvent {
     @Column(name = "actor_name", length = 200)
     private String actorName;
 
-    /** CREATE | VALUES | IMAGE_ADD | IMAGE_REPLACE | IMAGE_DELETE | TEMPLATE_REFRESH | SEND | SEND_RESULT */
+    /** CREATE | VALUES | IMAGE_ADD | IMAGE_REPLACE | IMAGE_DELETE | TEMPLATE_REFRESH | SEND | SEND_RESULT | APPROVAL_REQUEST | APPROVAL */
     @Column(nullable = false, length = 30)
     private String kind;
 

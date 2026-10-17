@@ -147,7 +147,8 @@ export default function GeneralSettings({ focusKey = null }) {
   // sifreli blob'lari duz metin kutusunda bozulmaya acar ve etiketsiz ham anahtar dizer.
   // login-methods (2026-10-02): Ayarlar → Güvenlik → Giriş Yöntemleri kendi sayfasında (onay penceresi + önizleme).
   // appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında (tema kartları + canlı önizleme).
-  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary'])
+  // tech-error-report (2026-10-17): Ayarlar → Platform → Teknik hata raporu kendi sayfasında (takım seçici + kanal özeti).
+  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report'])
   const order = []
   const byGroup = {}
   for (const it of items) {

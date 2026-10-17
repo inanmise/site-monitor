@@ -121,6 +121,10 @@ public class AuthController {
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLogService;
 
+    /** Teknik hata raporu modülü görünürlüğü (2026-10-17, S6) — menü gizleme için kapsam bloğuna yazılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorVisibilityService techErrorVisibility;
+
     @Autowired(required = false)
     private com.sitemonitor.service.otp.LoginMethodsService loginMethods;
 
@@ -1063,6 +1067,8 @@ public class AuthController {
         scope.put("noc_operator", nocOperator);
         scope.put("noc_console", nocCallLogService != null ? nocCallLogService.seesAllAlerts(session)
                 : SessionScope.isGlobalViewer(session) || nocOperator);
+        // Kanal teknik hata raporu modülü (2026-10-17, S6): takım bazlı görünürlük — kapalıysa menüde görünmez
+        scope.put("channel_reports", techErrorVisibility == null || techErrorVisibility.sessionSees(session));
         return ResponseEntity.ok(Map.of("success", true, "data", snapshot, "scope", scope));
     }
 

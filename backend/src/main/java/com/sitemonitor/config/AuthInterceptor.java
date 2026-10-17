@@ -29,6 +29,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/weekly-reports/approve-link",
             "/api/weekly-reports/approve-link/confirm",
             "/api/weekly-reports/approve-link/reject",
+            // Teknik hata raporu PO onayı — e-posta bağlantısı (2026-10-17, S6): belirteç = yetki, aynı desen.
+            "/api/tech-error-reports/approve-link",
+            "/api/tech-error-reports/approve-link/confirm",
+            "/api/tech-error-reports/approve-link/reject",
             // Branding (beyaz etiket) — login sayfası auth ÖNCESİ logo/başlık/renk okur; hassas veri yok.
             "/api/branding",
             // Giriş sayfası istatistikleri — yalnız kuruluş geneli TOPLAM sayılar (izleme, 24 sa koşum/alarm, takım,

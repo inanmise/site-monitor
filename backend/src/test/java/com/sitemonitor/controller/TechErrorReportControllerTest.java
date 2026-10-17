@@ -70,6 +70,7 @@ class TechErrorReportControllerTest {
     @MockitoBean TeamRepository teams;
     @MockitoBean PermissionService permissions;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorApprovalService approvals;
 
     private final List<TechErrorChannel> channels = new ArrayList<>();
     private final List<TechErrorReport> reports = new ArrayList<>();
@@ -503,5 +504,199 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/reports/102").session(user("USER", A, List.of())))
                 .andExpect(jsonPath("$.data.neighbors.prev").doesNotExist())
                 .andExpect(jsonPath("$.data.neighbors.next.id").value(101));
+    }
+    // ── PO onayı (2026-10-17, S6) ────────────────────────────────────────────────────────────────────
+
+    private TechErrorChannel execChannel(long id, long team) {
+        TechErrorChannel c = channel(id, team);
+        c.setExecutiveEmails("ceo@example.com, cto@example.com");
+        return c;
+    }
+
+    private static MockHttpSession globalAdmin() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "admin");
+        s.setAttribute("userId", 1L);
+        s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+
+    @Test
+    @DisplayName("onay isteği: yazabilen üye 200 (onaylayıcılar, posta sayıları, onay bloğu) + denetim; servisin 409'u aynen; AUDIT 403")
+    void approvalRequest() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        report(130, 30, A, null);
+        when(approvals.request(any(), any(), any(), any())).thenReturn(new com.sitemonitor.service.techerror.TechErrorApprovalService.RequestResult(
+                List.of(new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(7L, "PO Bir", "po1@example.com")), 1, 0, null, Instant.now()));
+        mvc.perform(post("/api/tech-error-reports/reports/130/approval/request").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("pending"))
+                .andExpect(jsonPath("$.data.approvers[0].name").value("PO Bir"))
+                .andExpect(jsonPath("$.data.approvers[0].has_email").value(true))
+                .andExpect(jsonPath("$.data.mailed").value(1))
+                .andExpect(jsonPath("$.data.approval.state").value("none"));
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_APPROVAL_REQUEST"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("130"), anyString());
+        when(approvals.request(any(), any(), any(), any())).thenThrow(
+                new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("EXEC_RECIPIENTS_MISSING", "alıcı yok"));
+        mvc.perform(post("/api/tech-error-reports/reports/130/approval/request").session(user("USER", A, List.of())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("EXEC_RECIPIENTS_MISSING"));
+        mvc.perform(post("/api/tech-error-reports/reports/130/approval/request").session(audit()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("karar: approve izni + PO üyeliği (servis doğrular) → 200 send_state + denetim; PO olmayan 403; geçersiz karar 400; izin yoksa 403")
+    void approvalDecide() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        report(130, 30, A, null);
+        when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(true);
+        when(approvals.decide(any(), any(), any(), any(), eq(true), any(), eq("app"))).thenReturn(
+                new com.sitemonitor.service.techerror.TechErrorApprovalService.Decision("APPROVED",
+                        new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 10, "Konu"), null, Instant.now()));
+        String url = "/api/tech-error-reports/reports/130/approval/decide";
+        mvc.perform(post(url).session(user("USER", A, List.of())).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approve\",\"note\":\"ok\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("approved"))
+                .andExpect(jsonPath("$.data.send_state").value("SENT"))
+                .andExpect(jsonPath("$.data.sent_to[0]").value("ceo@example.com"));
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_APPROVE"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("130"), anyString());
+        when(approvals.decide(any(), any(), any(), any(), eq(false), any(), eq("app"))).thenThrow(new SecurityException("PO değil"));
+        mvc.perform(post(url).session(user("USER", A, List.of())).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"reject\",\"note\":\"x\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(url).session(user("USER", A, List.of())).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"maybe\"}"))
+                .andExpect(status().isBadRequest());
+        when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(false);
+        mvc.perform(post(url).session(user("USER", A, List.of())).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approve\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("gönderim onaya bağlı kanal: onaysız 409 APPROVAL_REQUIRED; onaylı ve değişmemiş → EXECUTIVE gönderim; onaydan sonra değişen 409 (stale); alıcısız kanal eski 4 argümanlı yol")
+    void sendRequiresApproval() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        TechErrorReport r = report(130, 30, A, null);
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(post("/api/tech-error-reports/reports/130/send").session(s))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("APPROVAL_REQUIRED"));
+        verify(sender, never()).send(any(), any(), any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any());
+        r.setApprovalState("APPROVED");
+        r.setApprovalRev(3L);
+        r.setContentRev(3L);
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE))).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 1234, "Konu"));
+        mvc.perform(post("/api/tech-error-reports/reports/130/send").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.to[0]").value("ceo@example.com"));
+        r.setContentRev(4L);
+        mvc.perform(post("/api/tech-error-reports/reports/130/send").session(s))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("APPROVAL_REQUIRED"));
+        verify(sender, never()).send(any(), any(), any(), any());
+        // Alıcısız kanal: eski yol
+        channel(31, A);
+        report(131, 31, A, null);
+        when(sender.send(any(), any(), any(), any())).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("takim1@example.com"), 1234, "Konu"));
+        mvc.perform(post("/api/tech-error-reports/reports/131/send").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.to[0]").value("takim1@example.com"));
+    }
+
+    @Test
+    @DisplayName("kanal yönetici alıcıları: üye 403, takımı yöneten 200 (servise iletilir); DTO executive_count / approval_required / can_manage; ad değişikliği üyeye açık")
+    void channelExecutiveEmails() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        org.assertj.core.api.Assertions.assertThat(ec.getExecutiveEmails()).isEqualTo("ceo@example.com, cto@example.com");
+        org.assertj.core.api.Assertions.assertThat(TechErrorReportSender.executiveRecipients(ec)).containsExactly("ceo@example.com", "cto@example.com");
+        when(service.updateChannel(anyLong(), any(), any())).thenAnswer(inv -> ec);
+        String url = "/api/tech-error-reports/channels/30";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url).session(user("USER", A, List.of()))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"executive_emails\":\"x@example.com\"}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).updateChannel(anyLong(), any(), any());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url).session(user("USER", A, List.of(A)))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"executive_emails\":\"x@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.executive_count").value(2))
+                .andExpect(jsonPath("$.data.approval_required").value(true))
+                .andExpect(jsonPath("$.data.can_manage").value(true));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url).session(user("USER", A, List.of()))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"name\":\"Yeni\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_manage").value(false));
+    }
+
+    @Test
+    @DisplayName("rapor okuma: approval_detail — akış, alıcı sayısı, onaylayıcılar, can_request / is_approver / can_decide; bekleyen istekte karar açılır, istek kapanır")
+    void reportApprovalDetail() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        TechErrorReport r = report(130, 30, A, null);
+        when(approvals.approvers(A)).thenReturn(List.of(new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(50L, "Ben PO", "me@example.com")));
+        when(approvals.isApprover(50L, A)).thenReturn(true);
+        when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(true);
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.approval_detail.required").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.executive_count").value(2))
+                .andExpect(jsonPath("$.data.approval_detail.approvers[0].name").value("Ben PO"))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.is_approver").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.can_decide").value(false))
+                .andExpect(jsonPath("$.data.approval_detail.can_send_executive").value(false))
+                .andExpect(jsonPath("$.data.report.approval.state").value("none"));
+        r.setApprovalState("PENDING");
+        r.setApprovalRev(0L);
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.approval_detail.can_decide").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(false))
+                .andExpect(jsonPath("$.data.report.approval.state").value("pending"));
+        r.setContentRev(2L);   // istekten sonra değişti → eskidi: yeniden istenebilir, karar verilemez
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.report.approval.state").value("stale"))
+                .andExpect(jsonPath("$.data.approval_detail.can_decide").value(false))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(true));
+        r.setApprovalState("APPROVED");
+        r.setApprovalRev(2L);
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.report.approval.state").value("approved"))
+                .andExpect(jsonPath("$.data.approval_detail.can_send_executive").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(false));   // onay boşa gitmesin
+        // Bekleyen istek sessiz süreden eski → yeniden gönderilebilir (hatırlatma / yarıda kalan istek)
+        r.setApprovalState("PENDING");
+        r.setApprovalRev(2L);
+        r.setApprovalRequestedAt(Instant.now().minus(com.sitemonitor.service.techerror.TechErrorApprovalService.RESEND_AFTER).minusSeconds(60));
+        when(service.now()).thenReturn(Instant.now());
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.report.approval.state").value("pending"))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(true))
+                .andExpect(jsonPath("$.data.approval_detail.resend").value(true));
+    }
+
+    @Test
+    @DisplayName("modül görünürlüğü (S6): listede olmayan takımın üyesi overview'da 403, raporu 404; listedeki takım görür (kapalı takımın kanalı listelenmez); global yönetici her şeyi görür")
+    void moduleVisibility() throws Exception {
+        TechErrorChannel ec = execChannel(30, A);
+        report(130, 30, A, null);
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of()))).andExpect(status().isForbidden());
+            mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", B, List.of()))).andExpect(status().isNotFound());
+            mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", B, List.of())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.channels[?(@.team_id == 1)]").isEmpty());
+            mvc.perform(get("/api/tech-error-reports/reports/130").session(globalAdmin())).andExpect(status().isOk());
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
     }
 }

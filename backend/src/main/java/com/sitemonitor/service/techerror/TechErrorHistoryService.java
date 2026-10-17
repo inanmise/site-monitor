@@ -337,6 +337,7 @@ public class TechErrorHistoryService {
         if (status.startsWith("SKIPPED") && status.contains("PDF")) return "PDF_BUSY";
         if (status.startsWith("SKIPPED_NO_RECIPIENT") || status.startsWith("SKIPPED: alıcı yok")) return "NO_RECIPIENT";
         if (status.startsWith("FAILED") && status.contains("PDF e-posta sınırını")) return "PDF_TOO_LARGE";
+        if (status.startsWith("SKIPPED") && status.contains("onay eskidi")) return "APPROVAL_STALE";
         return null;
     }
 

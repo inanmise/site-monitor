@@ -312,6 +312,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.cert-inventory-report.cron",       "monitoring", Type.STRING),
         // TLS yapılandırma notu düşüş bildirimi (2026-10-11) — Ayarlar → Genel → TLS notu. Varsayılan AÇIK, eşik A
         // (A+ dışındaki her düşüş); kapatılınca bekleyen düşüşler "SKIPPED: bildirim kapalı" olur.
+        // Kanal teknik hata raporu (2026-10-17, S6) — Ayarlar → Teknik hata raporu: modülü gören takımlar (boş = herkes).
+        new Setting("site.monitor.tech-error-report.team-ids",      "tech-error-report", Type.CSV),
         new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
         // Kendi kendini izleme (2026-10-11) — Ayarlar → Genel → Kendi kendini izleme. Aralıklar WatchdogSettings.validate;
@@ -619,7 +621,9 @@ public final class AppSettingsCatalog {
         "site.monitor.executive-summary.recipients",
         "site.monitor.executive-summary.include-global-admins",
         "site.monitor.executive-summary.availability-target",
-        "site.monitor.executive-summary.renewal-target-days"
+        "site.monitor.executive-summary.renewal-target-days",
+        // 2026-10-17: kanal teknik hata raporu modülünün takım bazlı görünürlüğü — kurum geneli karar.
+        "site.monitor.tech-error-report.team-ids"
     ));
 
     /**

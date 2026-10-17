@@ -302,6 +302,10 @@ public class AppSettingsService {
         if (com.sitemonitor.service.report.executive.ExecutiveSummarySettings.isKey(s.key())) {
             com.sitemonitor.service.report.executive.ExecutiveSummarySettings.validate(s.key(), val);
         }
+        // Kanal teknik hata raporu görünürlüğü (2026-10-17): takım kimlikleri CSV.
+        if (com.sitemonitor.service.techerror.TechErrorReportSettings.isKey(s.key())) {
+            com.sitemonitor.service.techerror.TechErrorReportSettings.validate(s.key(), val);
+        }
         // Kendi kendini izleme (2026-10-11): aralıklar ve alıcı biçimleri — hangi uçtan yazılırsa yazılsın aynı kural.
         if (com.sitemonitor.service.watchdog.WatchdogSettings.isKey(s.key())) {
             com.sitemonitor.service.watchdog.WatchdogSettings.validate(s.key(), val);

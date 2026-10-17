@@ -52,7 +52,10 @@ public class OriginCheckFilter extends OncePerRequestFilter {
     private static final Set<String> EXEMPT_PATHS = Set.of(
             "/api/weekly-reports/approve-link",
             "/api/weekly-reports/approve-link/confirm",
-            "/api/weekly-reports/approve-link/reject");
+            "/api/weekly-reports/approve-link/reject",
+            "/api/tech-error-reports/approve-link",
+            "/api/tech-error-reports/approve-link/confirm",
+            "/api/tech-error-reports/approve-link/reject");
 
     private final ObjectProvider<AppSettingsService> settings;
     private final boolean enabled;

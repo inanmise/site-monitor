@@ -51,6 +51,14 @@ public class TechErrorChannel {
     @Column(name = "sort_order")
     private Integer sortOrder;
 
+    /**
+     * Yönetici (executive) alıcıları (2026-10-17, S6): virgül / noktalı virgül ayraçlı adres listesi, ≤ 20 adres.
+     * Doluysa raporun gönderimi PO ONAYINA bağlıdır: onaylanınca rapor bu adreslere (takım adresi bilgide) gider.
+     * Boşsa eski akış (takım adresine elle gönderim) değişmez. Yalnız takımı yönetenler değiştirir.
+     */
+    @Column(name = "executive_emails", length = 2000)
+    private String executiveEmails;
+
     @JsonIgnore
     @Column(name = "template_json", columnDefinition = "TEXT", nullable = false, updatable = false)
     private String templateJson;

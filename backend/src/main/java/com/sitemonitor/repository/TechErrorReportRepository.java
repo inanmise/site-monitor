@@ -44,6 +44,13 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
         Instant getLastAttemptAt();
         String getLastSendStatus();
         int getSendCount();
+        String getApprovalState();
+        Long getApprovalRev();
+        Instant getApprovalRequestedAt();
+        Long getApprovalRequestedById();
+        Instant getApprovalDecidedAt();
+        Long getApprovalDecidedById();
+        String getApprovalNote();
     }
 
     Optional<TechErrorReport> findByChannelIdAndReportYearAndReportMonth(Long channelId, Integer year, Integer month);
@@ -173,4 +180,39 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Transactional
     @Query("DELETE FROM TechErrorReport r WHERE r.channelId = :channelId")
     int deleteAllForChannel(@Param("channelId") Long channelId);
+
+    // ── PO onayı (2026-10-17, S6) ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Onay İSTEĞİ: raporun içeriği okunduğu sayaçta ({@code rev}) duruyorsa PENDING yapılır; aynı içerik için zaten bekleyen
+     * bir istek varsa 0 (çağıran 409) — ancak istek {@code resendBefore}'dan eskiyse yeniden istenebilir (hatırlatma; yarıda
+     * kalmış bir istek — pod öldü, belirteç / posta yazılamadı — böyle kurtarılır). İçerik arada değiştiyse 0 — çağıran taze
+     * okuyup yeniden dener. {@code content_rev} sayaçtan önceki satırlarda NULL olabilir: COALESCE (inceleme 2026-10-17).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.approvalState = 'PENDING', r.approvalRev = :rev, r.approvalRequestedAt = :at, "
+            + "r.approvalRequestedById = :by, r.approvalDecidedAt = NULL, r.approvalDecidedById = NULL, r.approvalNote = NULL "
+            + "WHERE r.id = :id AND COALESCE(r.contentRev, 0) = :rev "
+            + "AND (r.approvalState IS NULL OR r.approvalState <> 'PENDING' OR r.approvalRev IS NULL OR r.approvalRev <> :rev "
+            + "OR r.approvalRequestedAt IS NULL OR r.approvalRequestedAt < :resendBefore)")
+    int requestApproval(@Param("id") Long id, @Param("rev") Long rev, @Param("at") Instant at, @Param("by") Long by,
+                        @Param("resendBefore") Instant resendBefore);
+
+    /**
+     * ONAY: yalnız bekleyen istek VE içerik hâlâ istekteki sayaçta ise (arada değişen içerik onaylanmaz — eskimiş istek 0
+     * döner, çağıran 409 {@code APPROVAL_STALE}).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.approvalState = 'APPROVED', r.approvalDecidedAt = :at, r.approvalDecidedById = :by, "
+            + "r.approvalNote = :note WHERE r.id = :id AND r.approvalState = 'PENDING' AND r.approvalRev = :rev AND COALESCE(r.contentRev, 0) = :rev")
+    int approve(@Param("id") Long id, @Param("rev") Long rev, @Param("at") Instant at, @Param("by") Long by, @Param("note") String note);
+
+    /** RED: bekleyen istek (içerik değişmiş olsa da) reddedilir; not zorunlu, rapor taslağa döner. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.approvalState = 'REJECTED', r.approvalDecidedAt = :at, r.approvalDecidedById = :by, "
+            + "r.approvalNote = :note WHERE r.id = :id AND r.approvalState = 'PENDING' AND r.approvalRev = :rev")
+    int reject(@Param("id") Long id, @Param("rev") Long rev, @Param("at") Instant at, @Param("by") Long by, @Param("note") String note);
 }

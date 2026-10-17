@@ -539,6 +539,11 @@ export const api = {
     deleteImage: (id, imageId) => request(`/tech-error-reports/reports/${id}/images/${imageId}`, { method: 'DELETE', withStatus: true }),
     imageUrl: (imageId) => `${BASE}/tech-error-reports/images/${imageId}`,
     send: (id) => request(`/tech-error-reports/reports/${id}/send`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    // PO onayı (2026-10-17, S6): istek PDF üretip onaylayıcılara posta atar, karar yöneticilere gönderir — uzun sürebilir
+    approval: (id) => request(`/tech-error-reports/reports/${id}/approval`, { withStatus: true }),
+    requestApproval: (id) => request(`/tech-error-reports/reports/${id}/approval/request`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    decideApproval: (id, body) => request(`/tech-error-reports/reports/${id}/approval/decide`,
+      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 0 }),
     /** PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. */
     downloadPdf: async (id) => {
       try {
@@ -1254,6 +1259,9 @@ export const api = {
     // Genel Ayarlar — küratörlü runtime config (admin-only Settings page)
     getGeneralSettings: () => request('/admin/general/settings'),
     saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
+    // Teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı özeti
+    techErrorSettings: () => request('/admin/tech-error-reports/settings', { withStatus: true }),
+    saveTechErrorSettings: (body) => request('/admin/tech-error-reports/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
 
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
     // Veri Saklama (retention) — politika matrisi, dry-run, elle temizlik, çalışma geçmişi.
