@@ -3,6 +3,8 @@
 // çizilir, büyük görsel GERÇEK tarayıcı canvas'ında küçültülüp GERÇEK sunucu doğrulayıcısından geçer, PDF üretilir,
 // şablonda trend seçimi kaydedilir. Hiçbir şey gönderilmez (e-posta yok). Sonda kanal (raporları, görselleri, geçmişi
 // ile) KALICI silinir — yalnız `e2e-live-` önekli kanal.
+// 2026-10-16: bölümler katlanır (kapalı başlar) — içeriğe dokunan adımlar önce "Tümünü aç"ar (`expandAllSections`); rapor
+// otomatik kaydedilir (30 sn / sekme gizlenince), elle Kaydet zaten kapalıysa o PUT beklenir.
 import zlib from 'node:zlib'
 import {
   test, expect, liveGate, liveRequest, openApp, apiCall, apiGet, expectCleanText, expectFits, stopwatch, LIVE_PREFIX,
@@ -49,6 +51,19 @@ const monthMinus = ({ year, month }, n) => {
 }
 const TR_MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 const reportUrl = () => `/?tab=channelreports&te_view=report&te_ch=${state.channelId}&te_rep=${state.reports.cur}`
+
+/**
+ * Katlanır bölümler (2026-10-16): rapor ve şablon bölümleri kapalı başlar (açılanlar yalnız bu tarayıcı bağlamında
+ * hatırlanır — her test yeni bağlam). Bölüm içeriğine dokunan / onu ölçen adım önce kullanıcı gibi "Tümünü aç"a basar;
+ * düğme zaten "Tümünü kapat" ise dokunulmaz. `root`: `[data-slot="te-report"]` ya da `[data-slot="te-template-editor"]`.
+ */
+async function expandAllSections(page, root) {
+  const btn = page.locator(`${root} [data-slot="te-sections-all"]`)
+  await expect(btn).toBeVisible({ timeout: 30_000 })
+  if (/Tümünü aç/.test(await btn.innerText())) await btn.click()
+  await expect(btn).toContainText('Tümünü kapat')
+  await expect(page.locator(`${root} [data-section][data-open="false"]`)).toHaveCount(0)
+}
 
 async function saveValues(request, id, fields) {
   const g = await apiGet(request, `/api/tech-error-reports/reports/${id}`)
@@ -135,6 +150,7 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     await openApp(page, reportUrl())
     const block = page.locator('[data-slot="te-trend"]')
     await expect(block).toBeVisible({ timeout: 30_000 })
+    await expandAllSections(page, '[data-slot="te-report"]')
     await expect(block.locator('[data-slot="te-trend-chart"]')).toHaveCount(5)
     const rate = block.locator('[data-field="error-rate"]')
     await expect(rate).toHaveAttribute('data-points', '2')
@@ -148,10 +164,13 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     await editor.getByLabel('Teknik hata oranı', { exact: true }).fill('0,42')
     await expect(rate).toHaveAttribute('data-points', '3')
     const saved = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === `/api/tech-error-reports/reports/${state.reports.cur}`)
-    await page.locator('[data-slot="te-save"]').click()
+    // Otomatik kayıt (30 sn'de bir, 2026-10-16) araya girdiyse Kaydet zaten kapalıdır — o da aynı PUT'tur
+    const saveBtn = page.locator('[data-slot="te-save"]')
+    if (await saveBtn.isEnabled()) await saveBtn.click()
     expect((await saved).status()).toBe(200)
     await page.reload()
     await expect(page.locator('[data-slot="te-trend"] [data-field="error-rate"]')).toHaveAttribute('data-points', '3', { timeout: 30_000 })
+    await expandAllSections(page, '[data-slot="te-report"]')
     await expectFits(page, '[data-slot="te-report"]', 'rapor 1280')
     done()
   })
@@ -160,6 +179,7 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     const done = stopwatch('görsel yükleme')
     await page.setViewportSize({ width: 1280, height: 900 })
     await openApp(page, reportUrl())
+    await expandAllSections(page, '[data-slot="te-report"]')
     const slot = page.locator('[data-slot-id="annual-summary"]')
     await expect(slot).toBeVisible({ timeout: 30_000 })
     const big = stripedPng(3000, 1500)
@@ -223,6 +243,7 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     await openApp(page, `/?tab=channelreports&te_view=channel&te_ch=${state.channelId}&te_tab=template`)
     const sec = page.locator('[data-slot="te-tpl-section"][data-kind="trend"]')
     await expect(sec).toBeVisible({ timeout: 30_000 })
+    await expandAllSections(page, '[data-slot="te-template-editor"]')
     const quota = sec.getByRole('checkbox', { name: /Kota hatası adedi/ })
     await expect(quota).toBeChecked()
     await quota.click()
@@ -247,6 +268,8 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     await openApp(page, reportUrl())
     const block = page.locator('[data-slot="te-trend"]')
     await expect(block).toBeVisible({ timeout: 30_000 })
+    // Ölçüm bölümler AÇIKKEN (grafikler çizili) — gerileme bekçisi katlanır bölümlerden önceki koşullarda kalsın
+    await expandAllSections(page, '[data-slot="te-report"]')
     await expect(block.locator('[data-field="total-tx"]')).toHaveAttribute('data-labels', 'current')
     await expectFits(page, '[data-slot="te-report"]', 'rapor 390')
     // Yazarken ana iş parçacığı: 5 grafik her tuşta yeniden çiziliyor mu?
@@ -263,7 +286,8 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
     // Gerileme bekçisi (2026-10-15): grafikler her tuşta çizilirken 10 tuşta 10 uzun görev (100–145 ms) vardı; artık
     // yazarken grafik çizilmez, yazma durunca bir kez
     expect(lt.length, 'yazarken uzun görev sayısı').toBeLessThanOrEqual(2)
-    // Kaydedilmedi: sonraki koşuları etkilemez (kanal zaten silinecek)
+    // Elle kaydedilmedi; otomatik kayıt (30 sn / sayfa kapanırken sekme gizlenince) kaydetmiş olabilir — sonraki adımları
+    // etkilemez: otomatik oran adımı değerleri API ile baştan yazar, kanal zaten silinecek
   })
 
   test('6 · değişiklik geçmişi, aylar arası geçiş, SLA ekran görüntüsü yuvaları (Faz B + şablon kararları) @1280', async ({ page }) => {
@@ -312,6 +336,7 @@ test.describe('kanal teknik hata raporu — canlı uçtan uca (otomatik trend + 
 
     await openApp(page, reportUrl())
     const editor = page.locator('[data-slot="te-report"]')
+    await expandAllSections(page, '[data-slot="te-report"]')
     await expect(editor.getByLabel('Map yapılmamış hataların teknik hatalara oranı', { exact: true })).toHaveText(/^(%10|10%)$/, { timeout: 30_000 })
     await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-calc-derived"]')).toContainText(/%3|3%/)
     await editor.getByLabel('Kota hatası adedi', { exact: true }).fill('150')

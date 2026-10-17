@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import { channel, overview, reportResponse } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Kısaltmalı rakam girişi rapor ekranında (2026-10-16, kullanıcı kararı): "7,42G" alanda yazıldığı gibi kalır, altında
 // anlaşılan tam sayı ("= 7.420.000.000"); kayda tam sayı gider; tek başına "B" ve sınır üstü açık mesajla reddedilir.
@@ -50,6 +50,7 @@ const expanded = (id) => document.querySelector(`[data-field="values.${id}"] [da
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],

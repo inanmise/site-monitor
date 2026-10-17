@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse, templateResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Faz B (2026-10-14): rapor değişiklik geçmişi paneli, ay geçişi, şablon sürüm geçmişi ve yıllara göre rapor listesi.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -31,6 +31,7 @@ function ev(id, kind, at, extra = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],
     default_period: { year: 2026, month: 9 } } }))
@@ -154,6 +155,59 @@ describe('rapor değişiklik geçmişi', () => {
     expect(sheet.querySelector('[data-kind="TEMPLATE_REFRESH"]')).toHaveTextContent('kaldırılan değer ve görsel sayısı bilinmiyor')
     expect(sheet.querySelector('[data-kind="TEMPLATE_REFRESH"]')).not.toHaveTextContent('0 değer')
     expect(sheet.querySelector('[data-op="reorder"]')).toHaveTextContent('Konuların sırası değişti')
+  })
+
+  it('otomatik kayıt (2026-10-16): birleşmiş VALUES olayında "Otomatik kayıt" rozeti + kayıt sayısı; elle kayıtta ikisi de yok', async () => {
+    const change = { section: 'Mobil Kanalı — Eylül 2026 Özeti', label: 'Toplam işlem adedi', type: 'number', op: 'change', before: '10', after: '12' }
+    te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
+      ev(12, 'VALUES', '2026-10-13T11:00:00Z', { detail: { auto: true, saves: 3, changes: [change] } }),
+      ev(11, 'VALUES', '2026-10-13T10:30:00Z', { detail: { auto: true, saves: 1, changes: [change] } }),
+      ev(10, 'VALUES', '2026-10-13T10:00:00Z', { detail: { changes: [change] } }),
+      ev(9, 'SEND', '2026-10-13T09:00:00Z', { detail: { state: 'SENT', auto: true, saves: 4 } }),
+    ] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Değişiklik geçmişi' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Değişiklik geçmişi' })
+    await waitFor(() => expect(sheet.querySelectorAll('[data-kind="VALUES"]')).toHaveLength(3))
+    const [merged, single, manual] = sheet.querySelectorAll('[data-kind="VALUES"]')
+    // birleşmiş otomatik kayıt: rozet + "3 otomatik kayıt tek satırda"
+    expect(within(merged).getByText('Otomatik kayıt')).toBeInTheDocument()
+    expect(merged.querySelector('[data-slot="te-history-auto"]')).toHaveTextContent('Otomatik kayıt')
+    expect(merged.querySelector('[data-slot="te-history-auto"]').className).not.toMatch(/\btruncate\b/)
+    expect(merged).toHaveTextContent('3 otomatik kayıt tek satırda')
+    expect(merged).toHaveAttribute('data-auto', 'true')
+    expect(merged).toHaveTextContent('Toplam işlem adedi')                       // değişiklik satırları yine görünür
+    // tek otomatik kayıt: rozet var, sayı satırı yok
+    expect(within(single).getByText('Otomatik kayıt')).toBeInTheDocument()
+    expect(single.querySelector('[data-slot="te-history-auto-saves"]')).toBeNull()
+    expect(single).not.toHaveTextContent('otomatik kayıt tek satırda')
+    // elle kayıt: ikisi de yok
+    expect(manual).not.toHaveAttribute('data-auto')
+    expect(within(manual).queryByText('Otomatik kayıt')).toBeNull()
+    expect(manual).not.toHaveTextContent('otomatik kayıt tek satırda')
+    // VALUES dışındaki olay `auto` taşısa da işaretlenmez
+    const send = sheet.querySelector('[data-kind="SEND"]')
+    expect(within(send).queryByText('Otomatik kayıt')).toBeNull()
+    expect(send).not.toHaveTextContent('otomatik kayıt tek satırda')
+    expect(sheet.querySelectorAll('[data-slot="te-history-auto"]')).toHaveLength(2)
+  })
+
+  it('otomatik kayıt: yazılanların hepsi geri alındıysa satır "geri alındı" der; satırı taşmış (yalnız sayılmış) olay "ayrıntı yok" demez', async () => {
+    te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
+      ev(14, 'VALUES', '2026-10-13T11:00:00Z', { detail: { auto: true, saves: 2, changes: [], reverted: true } }),
+      ev(13, 'VALUES', '2026-10-13T10:30:00Z', { detail: { auto: true, saves: 4, changes: [], more: 3 } }),
+    ] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Değişiklik geçmişi' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Değişiklik geçmişi' })
+    await waitFor(() => expect(sheet.querySelectorAll('[data-kind="VALUES"]')).toHaveLength(2))
+    const [reverted, overflow] = sheet.querySelectorAll('[data-kind="VALUES"]')
+    expect(reverted.querySelector('[data-slot="te-history-reverted"]'))
+      .toHaveTextContent('Bu otomatik kayıtlarda yapılan değişiklikler geri alındı')
+    expect(overflow).not.toHaveTextContent('Alan ayrıntısı yok.')
+    expect(overflow).toHaveTextContent('3')
   })
 
   it('olay sınırına ulaşılan raporda sonda "en eskiler silindi" notu (başlangıç notu değil)', async () => {

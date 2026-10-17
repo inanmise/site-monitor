@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, LayoutTemplate, MailCheck, PenLine, RefreshCw, Send,
+  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, LayoutTemplate, MailCheck, PenLine, RefreshCw, Send, Timer,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -186,18 +186,36 @@ function EventItem({ event: e, uiLang }) {
   const Icon = KIND_ICON[e.kind] || PenLine
   const d = e.detail || {}
   const who = e.system ? t('te.hist.system') : (e.actor_name || t('te.hist.unknownUser'))
+  // Otomatik kayıt (2026-10-16): aynı kişinin 15 dk içindeki otomatik kayıtları TEK satırda birleşir (sunucu
+  // `detail.auto` + `saves`); her değişikliğin ilk "önce"si ve son "sonra"sı görünür. Elle kayıt hiç birleşmez.
+  const auto = e.kind === 'VALUES' && d.auto === true
+  const saves = auto && Number.isFinite(Number(d.saves)) ? Number(d.saves) : 0
   return (
-    <li className="flex gap-3 rounded-lg border p-3" data-slot="te-history-event" data-kind={e.kind}>
+    <li className="flex gap-3 rounded-lg border p-3" data-slot="te-history-event" data-kind={e.kind}
+      data-auto={auto ? 'true' : undefined}>
       <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground" aria-hidden="true">
         <Icon className="size-4" />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-          {/* Bilinmeyen tür (daha yeni bir sürümün yazdığı) ham anahtar göstermez */}
-          <p className="m-0 text-sm font-semibold [overflow-wrap:anywhere]">{t(`te.hist.kind.${KIND_ICON[e.kind] ? e.kind : 'OTHER'}`)}</p>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            {/* Bilinmeyen tür (daha yeni bir sürümün yazdığı) ham anahtar göstermez */}
+            <p className="m-0 text-sm font-semibold [overflow-wrap:anywhere]">{t(`te.hist.kind.${KIND_ICON[e.kind] ? e.kind : 'OTHER'}`)}</p>
+            {auto && (
+              <Badge variant="secondary" className="rounded-md overflow-visible whitespace-normal [overflow-wrap:anywhere]"
+                data-slot="te-history-auto">
+                <Timer aria-hidden="true" />{t('te.hist.auto')}
+              </Badge>
+            )}
+          </div>
           <time className="text-xs text-muted-foreground tabular-nums" dateTime={e.at}>{fmtTime(e.at, uiLang)}</time>
         </div>
         <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{who}</p>
+        {saves > 1 && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-history-auto-saves">
+            {t('te.hist.autoSaves', formatNumber(saves, uiLang))}
+          </p>
+        )}
         <EventBody kind={e.kind} detail={d} uiLang={uiLang} />
       </div>
     </li>
@@ -208,12 +226,21 @@ function EventBody({ kind, detail: d, uiLang }) {
   const t = useT()
   const [all, setAll] = useState(false)
   if (kind === 'VALUES') {
-    if (d.unavailable) return <p className="m-0 text-sm text-muted-foreground">{t('te.hist.unavailable')}</p>
     const changes = Array.isArray(d.changes) ? d.changes : []
+    // Birleşmiş otomatik kayıtta bir kaydın farkı hesaplanamadıysa diğerlerinin satırları yine görünür (2. tur)
+    if (d.unavailable && !changes.length) return <p className="m-0 text-sm text-muted-foreground">{t('te.hist.unavailable')}</p>
+    // Otomatik kayıtlarda yazılanların hepsi geri alındı (2026-10-16): satır kalır, ne olduğunu söyler
+    if (!changes.length && d.reverted) {
+      return <p className="m-0 text-sm text-muted-foreground" data-slot="te-history-reverted">{t('te.hist.autoReverted')}</p>
+    }
+    if (!changes.length && d.more > 0) {
+      return <p className="m-0 text-xs text-muted-foreground">{t('te.hist.moreChanges', formatNumber(d.more, uiLang))}</p>
+    }
     if (!changes.length) return <p className="m-0 text-sm text-muted-foreground">{t('te.hist.noDetail')}</p>
     const shown = all ? changes : changes.slice(0, FOLD_AT)
     return (
       <div className="flex flex-col gap-1.5">
+        {d.unavailable && <p className="m-0 text-xs text-muted-foreground">{t('te.hist.unavailable')}</p>}
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0" data-slot="te-history-changes">
           {shown.map((c, i) => <ChangeRow key={i} change={c} uiLang={uiLang} />)}
         </ul>

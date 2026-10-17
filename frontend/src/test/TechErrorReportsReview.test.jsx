@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse, templateResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Kanal teknik hata raporu — inceleme (2026-10-13) düzeltmelerinin kapıları: kayıt sürerken yazılan korunur, şablon
 // uygulama kayıttan SONRAKİ sürümü kullanır, sunucu alan hatası alan düzenlenince kalkar, anomali sayı hataları ayrı,
@@ -36,6 +36,7 @@ function deferred() {
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],
     default_period: { year: 2026, month: 9 } } }))

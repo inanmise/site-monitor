@@ -6,6 +6,9 @@
 // taşma yok), açıklamada madde / kalın araç çubuğu ve önizleme; şablonda özet cümlesi ve tablo düzenleme.
 // 2026-10-15 (Faz C): otomatik trend grafikleri sığar, çubuk etiketleri üst üste binmez, ilk ay / Ocak altında yıl;
 // büyük görsel tarayıcıda yuva ölçüsüne küçültülüp yüklenir (gerçek canvas), PDF yüklenmez.
+// 2026-10-16: bölümler katlanır (kapalı başlar, açılan hatırlanır, "Tümünü aç"); rapor 30 sn'de bir ve sekme gizlenince
+// otomatik kaydedilir (`auto: true`, sessiz; hatalı alan saklı değerinde gider). Akordeonla ilgisi olmayan testler
+// bölümleri açık tohumlar (`seedOpenSections`).
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 
@@ -236,17 +239,40 @@ const TEMPLATE_V2 = { ...TEMPLATE, title: 'Eski rapor başlığı: {kanal} Kanal
   sections: TEMPLATE.sections.map((x, i) => (i === TEMPLATE.sections.findIndex((y) => y.kind === 'metrics')
     ? { ...x, fields: [...x.fields, { id: 'eski-alan', label: 'Kaldırılan uzun alan adı: kota ve map yapılmamış hataların toplam içindeki payı', type: 'percent' }] } : x)) }
 
+// Oturum sahibi (/api/me) — kişisel kayıtlar (açık bölümler, taslak yedekleri) bu ada bağlı
+const ME_USER = 'demo'
+
+/**
+ * Katlanır bölümler (2026-10-16): rapor ve şablon bölümleri KAPALI başlar, açılanlar kişisel kayıtta hatırlanır
+ * (`sm.te.open.r.<rapor>` / `sm.te.open.t.<kanal>`). Akordeonla ilgisi olmayan testler bölümleri daha önce açmış bir
+ * kullanıcıyı taklit eder: bu spec'in raporu ve iki kanal şablonu "hepsi açık". Kayıt sahibi de yazılır — yoksa uygulama
+ * girişte sahibi bilinmeyen kişisel kayıtları siler (`claimPersonalStorage`) ve tohum kaybolur. Her gezinmede yeniden
+ * yazılır (yeniden yüklemede de hepsi açık).
+ */
+async function seedOpenSections(page, { reports = [100], channels = [10, 20] } = {}) {
+  await page.addInitScript(({ owner, reports: r, channels: c }) => {
+    try {
+      localStorage.setItem('sm.storage.owner', owner)
+      for (const id of r) localStorage.setItem(`sm.te.open.r.${id}`, JSON.stringify({ all: true }))
+      for (const id of c) localStorage.setItem(`sm.te.open.t.${id}`, JSON.stringify({ all: true }))
+    } catch { /* yoksay */ }
+  }, { owner: ME_USER, reports, channels })
+}
+
 let savedTemplate = null
-let savedReport = null
+let savedReport = null          // son ELLE kayıt (Kaydet) — `autoBefore`: ondan önce kaç otomatik kayıt gitti
+let autoSaves = []              // otomatik kayıtlar (gövdede `auto: true`, 2026-10-16)
 let uploads = []
 let uploadSizes = []
 let uploadBodies = []
 let sends = 0
-async function mock(page) {
-  savedTemplate = null; savedReport = null; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0; reportOverride = null
+async function mock(page, { openSections = true } = {}) {
+  savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
+  reportOverride = null
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
+  if (openSections) await seedOpenSections(page)
   await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
     const req = route.request()
     const p = new URL(req.url()).pathname
@@ -255,7 +281,7 @@ async function mock(page) {
       return
     }
     let body = { success: true, data: [] }
-    if (p === '/api/me') body = { success: true, username: 'demo', system_role: 'USER', global_admin: false, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
+    if (p === '/api/me') body = { success: true, username: ME_USER, system_role: 'USER', global_admin: false, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
     else if (p === '/api/me/permissions') body = { success: true, data: { 'tech_error_reports.read': { view: true }, 'tech_error_reports.crud': { edit: true } } }
     else if (p === '/api/tech-error-reports/overview') {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
@@ -285,8 +311,12 @@ async function mock(page) {
           last_sent_at: '2026-01-05T08:00:00Z' }] } }
     } else if (p === '/api/tech-error-reports/reports/100') {
       if (req.method() === 'PUT') {
-        savedReport = JSON.parse(req.postData() || '{}')
-        body = { success: true, data: { version: 5, changed: true, updated_at: '2026-10-13T09:00:00Z', values: savedReport.values } }
+        // Otomatik kayıt 30 sn'de bir de gider (yavaş makinede elle kayıttan önce araya girebilir): ayrı tutulur, her
+        // kayıt okunan sürümü bir artırır — elle kaydın sürümü araya giren otomatik kayıtların sürümünü taşır
+        const put = JSON.parse(req.postData() || '{}')
+        if (put.auto) autoSaves.push(put)
+        else savedReport = { ...put, autoBefore: autoSaves.length }
+        body = { success: true, data: { version: (put.version ?? 4) + 1, changed: true, updated_at: '2026-10-13T09:00:00Z', values: put.values } }
       } else body = { success: true, data: reportOverride || REPORT }
     } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[a-z0-9-]+$/.test(p) && req.method() === 'POST') {
       const slotId = p.split('/').pop()
@@ -490,7 +520,9 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (özet/tablo)').toEqual([])
 
       await page.locator('[data-slot="te-save"]').click()
-      await expect.poll(() => savedReport?.version).toBe(4)
+      // Okunan sürümle (araya otomatik kayıt girdiyse onun döndürdüğü sürümle) gider; elle kayıtta `auto` yok
+      await expect.poll(() => savedReport && savedReport.version - savedReport.autoBefore).toBe(4)
+      expect(savedReport).not.toHaveProperty('auto')
       expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000, 'had-outage': false,
         'unmapped-note': '- Limit sorgusu yavaşladı' })
       expect(savedReport.values.fields).not.toHaveProperty('error-rate-excl')
@@ -643,9 +675,11 @@ for (const vp of VIEWPORTS) {
     })
 
     test('Faz B: geçmiş paneli ve şablon sürümleri sığar, uzun adlar kesilmez; yıllara göre liste; ay geçişi', async ({ page }) => {
+      // İlk yükleme kardeş testlerle aynı süreyi alır (yüklü makinede dev sunucusu modülleri yavaş verir)
+      test.setTimeout(120_000)
       await mock(page)
       await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
-      await expect(page.locator('[data-slot="te-report-title"]')).toBeVisible()
+      await expect(page.locator('[data-slot="te-report-title"]')).toBeVisible({ timeout: 20_000 })
       await expect(page.locator('[data-slot="te-nav-prev"]')).toContainText(/August 2026|Ağustos 2026/)
       await page.locator('[data-slot="te-history-open"]').click()
       const sheet = page.locator('[data-slot="te-history"]')
@@ -711,5 +745,203 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="te-versions-open"]')).toBeFocused()
       await expect(page.getByLabel(/Report title|Rapor başlığı/)).toHaveValue(/^Eski rapor başlığı/)
     })
+
+    test('katlanır bölümler + otomatik kayıt', async ({ page }) => {
+      test.setTimeout(120_000)
+      // Tohum YOK: kullanıcı raporu ilk kez açıyor
+      await mock(page, { openSections: false })
+      const url = '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100'
+      await page.goto(url)
+      const editor = page.locator('[data-slot="te-report"]')
+      await expect(editor.locator('[data-slot="te-report-title"]')).toBeVisible({ timeout: 20_000 })
+      const cards = editor.locator('[data-section][data-open]')
+      const sectionCount = TEMPLATE.sections.length
+
+      // (1) Her bölüm kapalı başlar; içerik gizli (alanlara yazılamaz)
+      await expect(cards).toHaveCount(sectionCount)
+      await expect(editor.locator('[data-section][data-open="true"]')).toHaveCount(0)
+      const contents = editor.locator('[data-slot="te-section-content"]')
+      await expect(contents).toHaveCount(sectionCount)
+      for (const c of await contents.all()) await expect(c).toBeHidden()
+      const total = editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })
+      await expect(total).toBeHidden()
+
+      // (2) Başlıklar: tam ad (uzun ad sarar, kesilmez), dokunmatikte ≥ 40 px hedef, kartın içinde; yatay taşma yok
+      const summaryTitle = `${LONG_CHANNEL} Kanalı — Eylül 2026 Özeti`
+      const summaryToggle = editor.getByRole('button', { name: summaryTitle, exact: true })
+      await expect(summaryToggle).toHaveText(summaryTitle)
+      await expect(summaryToggle).toHaveAttribute('aria-expanded', 'false')
+      await page.waitForTimeout(200)
+      const headerProblems = ({ root, touch }) => {
+        const out = []
+        for (const card of document.querySelectorAll(`${root} [data-section][data-open]`)) {
+          const id = card.dataset.section
+          const t = card.querySelector('[data-slot="te-section-toggle"]')
+          if (!t) { out.push(`${id}: aç / kapat düğmesi yok`); continue }
+          const row = t.closest('[data-slot="te-copy-row"]')
+          const cr = card.getBoundingClientRect()
+          const r = t.getBoundingClientRect()
+          if (touch && r.height < 39.5) out.push(`${id}: dokunma hedefi ${Math.round(r.height)} px`)
+          if (row && row.scrollWidth > row.clientWidth + 1) out.push(`${id}: başlık satırı taşıyor`)
+          if (card.scrollWidth > card.clientWidth + 1) out.push(`${id}: kart taşıyor`)
+          for (const rr of t.getClientRects()) {
+            if (rr.left < cr.left - 1 || rr.right > cr.right + 1) out.push(`${id}: başlık kartın dışında`)
+          }
+          if (getComputedStyle(t).textOverflow === 'ellipsis') out.push(`${id}: başlık kesiliyor`)
+        }
+        return out
+      }
+      expect(await page.evaluate(headerProblems, { root: '[data-slot="te-report"]', touch: vp.touch }),
+        'bölüm başlıkları (kapalı)').toEqual([])
+      if (vp.width < 768) {
+        // Telefonda uzun kanal adlı başlık birden çok satıra SARAR (tek satıra sığıp kesilmez). Düğme satır içi yazılsa da
+        // tarayıcı onu inline-block çizer: satır sayısı = (yükseklik − dikey dolgu) ÷ satır yüksekliği
+        const lines = await summaryToggle.evaluate((n) => {
+          const cs = getComputedStyle(n)
+          const h = n.getBoundingClientRect().height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+          return Math.round(h / parseFloat(cs.lineHeight))
+        })
+        expect(lines, 'uzun başlık sarar').toBeGreaterThan(1)
+      }
+      expect(await page.evaluate(overflowX), 'yatay taşma (kapalı bölümler)').toBeLessThanOrEqual(1)
+
+      // (3) Bir bölüm açılır, yeniden yüklemede açık kalır (yalnız o)
+      await summaryToggle.click()
+      await expect(editor.locator('[data-section="summary"]')).toHaveAttribute('data-open', 'true')
+      await expect(summaryToggle).toHaveAttribute('aria-expanded', 'true')
+      await expect(total).toBeVisible()
+      await expect(editor.locator('[data-section][data-open="true"]')).toHaveCount(1)
+      expect(JSON.parse(await page.evaluate(() => localStorage.getItem('sm.te.open.r.100')))).toEqual({ ids: ['summary'] })
+      await page.reload()
+      await expect(editor.locator('[data-slot="te-report-title"]')).toBeVisible({ timeout: 20_000 })
+      await expect(editor.locator('[data-section="summary"]')).toHaveAttribute('data-open', 'true')
+      await expect(editor.locator('[data-section][data-open="true"]')).toHaveCount(1)
+      await expect(total).toBeVisible()
+      await expect(editor.locator('[data-section="exec"]')).toHaveAttribute('data-open', 'false')
+
+      // "Tümünü aç" (rapor gezinme satırında) hepsini açar; düğme "Tümünü kapat" olur; taşma / kırpılma / küçük hedef yok
+      const all = editor.locator('[data-slot="te-report-nav"] [data-slot="te-sections-all"]')
+      await expect(all).toHaveText(/Tümünü aç|Expand all/)
+      await all.click()
+      await expect(editor.locator('[data-section][data-open="true"]')).toHaveCount(sectionCount)
+      await expect(all).toHaveText(/Tümünü kapat|Collapse all/)
+      for (const c of await contents.all()) await expect(c).toBeVisible()
+      expect(JSON.parse(await page.evaluate(() => localStorage.getItem('sm.te.open.r.100')))).toEqual({ all: true })
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (hepsi açık)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (hepsi açık)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (hepsi açık)').toEqual([])
+
+      // (4) Otomatik kayıt: sekme gizlenince (visibilitychange → hidden) kaydedilmemiş değişiklik sessizce kaydedilir
+      const status = page.locator('[data-slot="te-save-status"]')
+      const hideTab = () => page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+        delete document.visibilityState                     // yeniden görünür (prototipin değeri)
+      })
+      await expect(status).toHaveText(/^(Tüm değişiklikler kaydedildi|All changes saved)$/)
+      await total.fill('1250000')
+      await expect(status).toHaveText(/Kaydedilmemiş değişiklikler var · 30 saniye içinde otomatik kaydedilir|There are unsaved changes · saved automatically within 30 seconds/)
+      expect(autoSaves, 'yazarken kayıt yok').toHaveLength(0)
+      await hideTab()
+      await expect.poll(() => autoSaves.length).toBe(1)
+      expect(autoSaves[0]).toMatchObject({ auto: true, version: 4, values: { fields: { 'error-rate': 0.42, 'total-tx': 1250000 } } })
+      await expect(status).toHaveText(/(Tüm değişiklikler kaydedildi · otomatik kayıt|All changes saved · saved automatically at) \d/)
+      await expect(status).toHaveAttribute('data-auto', 'ok')
+      expect(savedReport, 'elle kayıt yok').toBeNull()
+      // Sessiz: "Rapor kaydedildi." bildirimi çıkmaz
+      await page.waitForTimeout(300)
+      await expect(page.getByText(/^(Rapor kaydedildi\.|Report saved\.)$/)).toHaveCount(0)
+
+      // Hatalı alan otomatik kaydı DURDURMAZ: diğer alanlar kaydedilir, hatalı alan saklı (eski) değeriyle gider
+      const outage = editor.locator('[data-section="summary"]').getByLabel('Kesinti kaynaklı teknik hata adedi', { exact: true })
+      await outage.fill('412')
+      await outage.fill('412x')
+      await expect(outage).toHaveAttribute('aria-invalid', 'true')
+      await editor.locator('[data-section="unmapped"]').getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('3340')
+      await expect(status).toContainText(/hatalı alanlar dışındakiler otomatik kaydedilir|everything except the invalid fields is saved automatically/)
+      // Hatalı alanlı bölüm kapatılınca başlığında kaç alanın düzeltilmesi gerektiği görünür
+      await summaryToggle.click()
+      await expect(editor.locator('[data-section="summary"]')).toHaveAttribute('data-open', 'false')
+      await expect(editor.locator('[data-section="summary"] [data-slot="te-section-invalid"]')).toHaveText(/^(1 alan düzeltilmeli|1 field\(s\) need fixing)$/)
+      expect(await page.evaluate(overflowX), 'yatay taşma (hatalı bölüm kapalı)').toBeLessThanOrEqual(1)
+      await hideTab()
+      await expect.poll(() => autoSaves.length).toBe(2)
+      expect(autoSaves[1]).toMatchObject({ auto: true, version: 5, values: { fields: { 'total-tx': 1250000, 'unmapped-count': 3340 } } })
+      expect(autoSaves[1].values.fields, 'hatalı alan saklı değerinde (kayıtlı değil)').not.toHaveProperty('outage-errors')
+      await expect(status).toHaveAttribute('data-auto', 'ok')
+      await expect(status).toContainText(/hatalı alanlar dışındakiler|everything except the invalid fields/)
+
+      // Düzeltilen alan bir sonraki otomatik kayıtla gider
+      await summaryToggle.click()
+      await expect(editor.locator('[data-section="summary"] [data-slot="te-section-invalid"]')).toHaveCount(0)
+      await outage.fill('412')
+      await expect(outage).not.toHaveAttribute('aria-invalid', 'true')
+      await hideTab()
+      await expect.poll(() => autoSaves.length).toBe(3)
+      expect(autoSaves[2]).toMatchObject({ auto: true, version: 6, values: { fields: { 'outage-errors': 412, 'unmapped-count': 3340 } } })
+      await expect(status).toHaveText(/(Tüm değişiklikler kaydedildi · otomatik kayıt|All changes saved · saved automatically at) \d/)
+
+      // Elle "Kaydet": gövdede `auto` yok, son otomatik kaydın sürümüyle gider, bildirim çıkar
+      await editor.locator('[data-section="unmapped"]').getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('3341')
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.version).toBe(7)
+      expect(savedReport).not.toHaveProperty('auto')
+      expect(savedReport.values.fields).toMatchObject({ 'unmapped-count': 3341, 'outage-errors': 412 })
+      await expect(page.getByText(/^(Rapor kaydedildi\.|Report saved\.)$/).first()).toBeVisible()
+      await expect(status).toHaveText(/^(Tüm değişiklikler kaydedildi|All changes saved)$/)
+      expect(autoSaves).toHaveLength(3)
+
+      // (5) Şablon düzenleyicisi: bölümler kapalı başlar, araç çubuğundaki "Tümünü aç" hepsini açar
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      const tplEditor = page.locator('[data-slot="te-template-editor"]')
+      const tplCards = tplEditor.locator('[data-slot="te-tpl-section"]')
+      await expect(tplCards).toHaveCount(sectionCount, { timeout: 20_000 })
+      await expect(tplEditor.locator('[data-slot="te-tpl-section"][data-open="true"]')).toHaveCount(0)
+      const sumLine = tplEditor.locator('[data-slot="te-tpl-section"][data-kind="summary"] textarea').first()
+      await expect(sumLine).toBeHidden()
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(headerProblems, { root: '[data-slot="te-template-editor"]', touch: vp.touch }),
+        'şablon bölüm başlıkları (kapalı)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon, kapalı)').toBeLessThanOrEqual(1)
+      const tplAll = tplEditor.locator('[data-slot="te-tpl-toolbar"] [data-slot="te-sections-all"]')
+      await expect(tplAll).toHaveText(/Tümünü aç|Expand all/)
+      await tplAll.click()
+      await expect(tplEditor.locator('[data-slot="te-tpl-section"][data-open="true"]')).toHaveCount(sectionCount)
+      await expect(tplAll).toHaveText(/Tümünü kapat|Collapse all/)
+      await expect(sumLine).toBeVisible()
+      expect(JSON.parse(await page.evaluate(() => localStorage.getItem('sm.te.open.t.10')))).toEqual({ all: true })
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon, hepsi açık)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon, hepsi açık)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon, hepsi açık)').toEqual([])
+      // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
+      await page.screenshot({ path: `test-results/channel-reports-sections-${vp.name}.png`, fullPage: true })
+    })
+
+    if (!vp.touch) {
+      // 30 saniyelik aralık (sahte saat): sekme görünürken de kaydedilmemiş değişiklik kendiliğinden kaydedilir
+      test('otomatik kayıt 30 saniyede bir (sahte saat)', async ({ page }) => {
+        await mock(page)
+        await page.clock.install()
+        await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+        const editor = page.locator('[data-slot="te-report"]')
+        const total = editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })
+        await expect(total).toBeVisible({ timeout: 20_000 })
+        await total.fill('1250000')
+        const status = page.locator('[data-slot="te-save-status"]')
+        await expect(status).toContainText(/30 saniye içinde otomatik kaydedilir|saved automatically within 30 seconds/)
+        expect(autoSaves).toHaveLength(0)
+        await page.clock.runFor(31_000)
+        await expect.poll(() => autoSaves.length).toBe(1)
+        expect(autoSaves[0]).toMatchObject({ auto: true, version: 4, values: { fields: { 'total-tx': 1250000 } } })
+        await expect(status).toHaveText(/(Tüm değişiklikler kaydedildi · otomatik kayıt|All changes saved · saved automatically at) \d/)
+        expect(savedReport).toBeNull()
+        // Değişiklik yokken aralık bir şey göndermez
+        await page.clock.runFor(31_000)
+        await page.waitForTimeout(300)
+        expect(autoSaves).toHaveLength(1)
+      })
+    }
 })
 }

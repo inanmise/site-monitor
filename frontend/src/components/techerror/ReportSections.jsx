@@ -1,11 +1,10 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, CircleDashed, PenLine, Plus, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
-import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
 import { Input } from '@/components/shadcn/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -19,6 +18,7 @@ import {
 } from './techErrorModel.js'
 import { RichText, RichTextarea } from './RichText.jsx'
 import { periodLabel, CopyTextButton } from './TechErrorParts.jsx'
+import { CollapsibleCard } from './SectionCollapse.jsx'
 
 /**
  * Sayı alanının ekrandaki metni: kayıtlı sayı arayüz dilinin biçiminde (çözümleyici aynı biçimi geri okur). Yüzde
@@ -38,9 +38,24 @@ function numberText(v, lang, percent = false) {
  * gibi kalır, altında anlaşılan tam sayı ("= 7.420.000.000") — yanlış okunan kısaltma her an görülür; tek başına "B"
  * reddedilir (bin mi milyar mı belli değil).
  */
-export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel, compact = false }) {
+/**
+ * Yarım yazım bildirimi (2026-10-16, otomatik kayıt incelemesi): "7,42mi", "1.250.0", "-" gibi tamamlanmamış metin taslağa
+ * girmez (son geçerli değer kalır). Düzenleyici bunu bilmezse otomatik kayıt eski ara değeri kaydedip "tümü kaydedildi"
+ * derdi. `pendingKey` verilen giriş durumunu buraya söyler; söküldüğünde (yeniden kurulum, satır silme) temizler.
+ */
+export const PendingInputContext = createContext(null)
+
+export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel, compact = false, pendingKey }) {
   const t = useT()
   const [text, setText] = useState(() => numberText(value, lang, percent))
+  const reportPending = useContext(PendingInputContext)
+  const pendingRef = useRef({ report: reportPending, key: pendingKey })
+  pendingRef.current = { report: reportPending, key: pendingKey }
+  const setPending = (p) => { if (pendingKey) reportPending?.(pendingKey, p) }
+  useEffect(() => () => {
+    const { report, key } = pendingRef.current
+    if (key) report?.(key, false)
+  }, [])
   const notNumber = percent ? 'te.err.notNumber' : 'te.err.notNumberAbbrev'
   const expanded = !percent && hasAbbreviation(text) ? parseNumber(text, lang) : null
   const expandedId = id ? `${id}-expanded` : undefined
@@ -68,6 +83,7 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
         onChange={(e) => {
           const raw = e.target.value
           setText(raw)
+          setPending(isIncompleteNumber(raw))
           const n = parseNumber(raw, lang, { percent })
           if (n == null) { onError(null); onChange(null); return }
           if (Number.isNaN(n) && isIncompleteNumber(raw)) { onError(null); return }
@@ -90,18 +106,13 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
   )
 }
 
+/** Bölüm kartı — katlanır (2026-10-16): düzenleyici `SectionOpenContext` verir; ipucu yalnız açıkken. */
 function SectionShell({ title, children, slot, sectionId, hint }) {
   return (
-    <Card className="gap-3" data-slot={slot} data-section={sectionId}>
-      <CardHeader>
-        <div data-slot="te-copy-row" className="text-base leading-snug [overflow-wrap:anywhere]">
-          <h3 className="inline text-base font-semibold leading-snug">{title}</h3>
-          <CopyTextButton text={title} />
-        </div>
-        {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">{children}</CardContent>
-    </Card>
+    <CollapsibleCard sectionId={sectionId} slot={slot} title={title} contentClassName="flex flex-col gap-4"
+      hint={hint ? <p className="text-sm text-muted-foreground">{hint}</p> : null}>
+      {children}
+    </CollapsibleCard>
   )
 }
 
@@ -191,7 +202,7 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
       control = (
         <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
           disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
-          onChange={(n) => onField(f.id, n)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} />
+          onChange={(n) => onField(f.id, n)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
       )
     } else if (f.type === 'yesno') {
       control = (
@@ -359,7 +370,7 @@ export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors
                       </div>
                       <NumberInput id={`${base}-${key}`} value={iss[key] ?? null} lang={uiLang} disabled={readOnly}
                         invalid={fe || err ? true : undefined} describedBy={fe ? `${base}-${key}-e` : err ? `${base}-e` : undefined}
-                        onChange={(n) => patch(iss.id, { [key]: n })}
+                        onChange={(n) => patch(iss.id, { [key]: n })} pendingKey={issueErrorKey(section.id, iss.id, key)}
                         onError={(k) => onFieldError(issueErrorKey(section.id, iss.id, key), k ? t(k) : null)} />
                       {fe && <p id={`${base}-${key}-e`} className="text-sm text-destructive" role="alert">{fe}</p>}
                     </div>
@@ -575,8 +586,9 @@ export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly
   const fit = minWidth + 2
   const layoutRef = useRef(null)
   let cards = layoutRef.current === 'cards'
+  // Genişlik 0 = ölçülemedi (kapalı bölüm, ilk çizim): son görünüm korunur — bölümü kapatıp açmak hücreleri yeniden
+  // kurup yarım yazımı silmesin (2026-10-16)
   if (width > 0) cards = layoutRef.current === 'cards' ? width < fit + 24 : width < fit
-  else cards = false
   const layout = cards ? 'cards' : 'table'
   const focusedCell = useRef(null)
   useEffect(() => {
@@ -635,7 +647,7 @@ export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly
       <NumberInput id={id} value={v ?? null} lang={uiLang} percent={c.type === 'percent'} negative={c.type === 'percent'}
         disabled={readOnly} ariaLabel={label} invalid={err ? true : undefined} compact={!cards}
         describedBy={err ? `${id}-e` : undefined}
-        onChange={(n) => onCell(section.id, r.id, c.id, n)} onError={(k) => onFieldError(key, k ? t(k) : null)} />
+        onChange={(n) => onCell(section.id, r.id, c.id, n)} onError={(k) => onFieldError(key, k ? t(k) : null)} pendingKey={key} />
     )
     return { id, key, err, control }
   }

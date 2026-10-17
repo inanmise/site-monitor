@@ -350,6 +350,20 @@ public class TechErrorReportService {
     /** Değerleri kaydeder; {@code expectedVersion} okunan sürüm — farklıysa 409. */
     @Transactional
     public TechErrorReport saveValues(Long reportId, Long expectedVersion, Object raw, Long by) {
+        return saveValues(reportId, expectedVersion, raw, by, false).report();
+    }
+
+    /** Kayıt sonucu: kaydedilen rapor + otomatik kaydın geçmişte önceki otomatik olayla birleşip birleşmediği. */
+    public record SaveOutcome(TechErrorReport report, boolean mergedHistory) { }
+
+    /**
+     * Değerleri kaydeder. {@code auto} (2026-10-16, otomatik kayıt — istemci 30 sn'de bir): geçmişte aynı kişinin 15 dk
+     * içindeki otomatik kayıtları tek olayda birleşir ({@link TechErrorHistoryService#recordValues(TechErrorReport,
+     * Template, Values, Values, String, Long, Instant, boolean)}); sürüm denetimi, hesaplanan oranlar ve içerik sayacı
+     * elle kayıtla aynıdır.
+     */
+    @Transactional
+    public SaveOutcome saveValues(Long reportId, Long expectedVersion, Object raw, Long by, boolean auto) {
         TechErrorReport r = report(reportId);
         requireVersion(r, expectedVersion);
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
@@ -357,7 +371,7 @@ public class TechErrorReportService {
         // adetlerden (ve geçen ayın raporundan) yeniden bulunur
         Values v = TechErrorCalc.apply(t, TechErrorValues.normalize(raw, t), previousFields(r, t));
         String json = TechErrorValues.toJson(v);
-        if (json.equals(r.getValuesJson())) return r;      // değişiklik yok → sürüm artmaz, yazılmaz, olay yok
+        if (json.equals(r.getValuesJson())) return new SaveOutcome(r, false);   // değişiklik yok → sürüm artmaz, yazılmaz, olay yok
         Values before = TechErrorValues.fromStored(r.getValuesJson(), t);
         Instant now = now();
         r.setValuesJson(json);
@@ -366,8 +380,8 @@ public class TechErrorReportService {
         r.setContentChangedAt(now);
         TechErrorReport saved = reports.saveAndFlush(r);
         reports.touchContent(saved.getId(), now);      // içerik sayacı (atomik, aynı işlem)
-        history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now);
-        return saved;
+        boolean merged = history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now, auto);
+        return new SaveOutcome(saved, merged);
     }
 
     public record RefreshResult(TechErrorReport report, int removedValues, int removedImages) { }

@@ -2,7 +2,7 @@ import { memo, useEffect, useId, useState } from 'react'
 import { TrendingUp } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
-import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
+import { CollapsibleCard } from './SectionCollapse.jsx'
 import { ChartContainer, ChartTooltip, BarChart, Bar, XAxis, Cell, LabelList } from '@/components/shadcn/chart'
 import {
   TREND_MIN_POINTS, TREND_SUFFIX, compactNumber, fieldExempt, formatValue, monthName, trendLabelMode, trendPoints, trendRefs,
@@ -62,18 +62,9 @@ export function TrendBlock({ section, template, trend, draftFields: liveFields, 
   if (!refs.length) return null                     // çizilecek alan yok (şablon düzenleyici uyarır)
   const unavailable = !trend || trend.unavailable === true
   return (
-    <Card className="gap-3" data-slot="te-trend" data-section={section.id}>
-      <CardHeader className="gap-1">
-        <div className="flex items-start gap-2 text-base leading-snug [overflow-wrap:anywhere]">
-          <TrendingUp aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div data-slot="te-copy-row" className="min-w-0">
-            <h3 className="inline text-base font-semibold leading-snug">{resolve(section.title)}</h3>
-            <CopyTextButton text={resolve(section.title)} />
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">{t('te.trend.hint')}</p>
-      </CardHeader>
-      <CardContent>
+    <CollapsibleCard sectionId={section.id} slot="te-trend" title={resolve(section.title)}
+      icon={<TrendingUp aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+      hint={<p className="text-sm text-muted-foreground">{t('te.trend.hint')}</p>}>
         {unavailable ? (
           <p className="m-0 text-sm text-destructive" role="alert" data-slot="te-trend-unavailable">{t('te.trend.unavailable')}</p>
         ) : (
@@ -87,8 +78,7 @@ export function TrendBlock({ section, template, trend, draftFields: liveFields, 
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
+    </CollapsibleCard>
   )
 }
 

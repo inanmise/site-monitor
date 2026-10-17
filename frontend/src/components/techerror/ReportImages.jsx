@@ -6,7 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
-import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
+import { CollapsibleCard } from './SectionCollapse.jsx'
 import { cn } from '@/lib/utils'
 import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
 import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
@@ -35,22 +35,16 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
     .reduce((a, i) => a + (i.slot_id === slotId ? 0 : (i.size_bytes || 0)), 0)
   const rows = imageRows(section.slots || [])
   return (
-    <Card className="gap-3" data-slot="te-images" data-section={section.id}>
-      <CardHeader className="gap-1">
-        <div data-slot="te-copy-row" className="text-base leading-snug [overflow-wrap:anywhere]">
-          <h3 className="inline text-base font-semibold leading-snug">{resolve(section.title)}</h3>
-          <CopyTextButton text={resolve(section.title)} />
-        </div>
-        {showTotals && (
-          <>
-            <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
-            <p className="text-xs text-muted-foreground" data-slot="te-img-total">
-              {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
-            </p>
-          </>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    // Katlanır kart (2026-10-16): ipucu ve rapor toplamı yalnız açıkken
+    <CollapsibleCard sectionId={section.id} slot="te-images" title={resolve(section.title)} contentClassName="flex flex-col gap-3"
+      hint={showTotals ? (
+        <>
+          <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
+          <p className="text-xs text-muted-foreground" data-slot="te-img-total">
+            {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
+          </p>
+        </>
+      ) : null}>
         {rows.map((row) => (
           <div key={row.map((r) => r.id).join('|')} className="grid gap-3 md:grid-cols-2">
             {row.map((slot) => (
@@ -61,8 +55,7 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
             ))}
           </div>
         ))}
-      </CardContent>
-    </Card>
+    </CollapsibleCard>
   )
 })
 

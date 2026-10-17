@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Görsel büyütme (2026-10-16, kullanıcı isteği: "görsele tıklanınca büyüteç gibi pop-up açılsın, × ile kapansın").
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -24,6 +24,7 @@ const LABEL = 'Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri'
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],

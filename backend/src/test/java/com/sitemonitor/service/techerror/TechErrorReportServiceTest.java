@@ -631,6 +631,214 @@ class TechErrorReportServiceTest {
         assertThat(p2.capped()).isFalse();                                                    // sınıra ulaşılmadı
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> changesOf(com.sitemonitor.model.TechErrorReportEvent e) {
+        return (List<Map<String, Object>>) TechErrorHistoryService.detail(e).get("changes");
+    }
+
+    private void at(Instant t) {
+        service.useClock(Clock.fixed(t, ZoneOffset.UTC));
+    }
+
+    @Test
+    @DisplayName("otomatik kayıt: aynı kişinin İLK kaydından 15 dk içindeki otomatik kayıtları TEK olayda birleşir (ilk eski →"
+            + " son yeni); geri alınan değişiklik 'geri alındı' olarak kalır; elle kayıt, başka kişi ya da pencere aşımı yeni olay")
+    void autoSavesMergeInHistory() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant t0 = Instant.parse("2026-10-13T09:00:00Z");
+        at(t0);
+        var o1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", Map.of("sla-rate", 0.42)), 7L, true);
+        assertThat(o1.mergedHistory()).isFalse();
+        at(t0.plusSeconds(300));
+        var o2 = service.saveValues(r.getId(), o1.report().getVersion(),
+                Map.of("fields", Map.of("sla-rate", 0.5, "total-tx", 1000)), 7L, true);
+        assertThat(o2.mergedHistory()).isTrue();
+        assertThat(o2.report().getVersion()).isGreaterThan(o1.report().getVersion());     // rapor her seferinde kaydedilir
+        var list = eventsOf(r.getId());
+        assertThat(list).extracting(com.sitemonitor.model.TechErrorReportEvent::getKind).containsExactly("VALUES", "CREATE");
+        assertThat(TechErrorHistoryService.detail(list.get(0))).containsEntry("auto", true).containsEntry("saves", 2)
+                .containsEntry("first_at", t0.toString());
+        assertThat(list.get(0).getEventAt()).isEqualTo(t0.plusSeconds(300));
+        assertThat(list.get(0).getReportVersion()).isEqualTo(o2.report().getVersion());
+        assertThat(changesOf(list.get(0))).extracting(c -> c.get("key") + " " + c.get("op") + " " + c.get("before") + " → " + c.get("after"))
+                .containsExactly("f:sla-rate set null → %0,5", "f:total-tx set null → 1.000");
+
+        // İkisi de geri alındı → satır kalmaz ama olay SİLİNMEZ: "geri alındı" (gönderildiyse "değişti" durumu açıklanır)
+        at(t0.plusSeconds(600));
+        var o3 = service.saveValues(r.getId(), o2.report().getVersion(), Map.of("fields", Map.of()), 7L, true);
+        assertThat(o3.mergedHistory()).isTrue();
+        list = eventsOf(r.getId());
+        assertThat(list).extracting(com.sitemonitor.model.TechErrorReportEvent::getKind).containsExactly("VALUES", "CREATE");
+        assertThat(TechErrorHistoryService.detail(list.get(0))).containsEntry("reverted", true).containsEntry("saves", 3);
+        assertThat(changesOf(list.get(0))).isEmpty();
+
+        // İlk kayıttan 14 dk sonra hâlâ aynı satır; 16 dk sonra (son kayıttan 2 dk sonra olsa da) YENİ satır
+        at(t0.plusSeconds(14 * 60));
+        var o4 = service.saveValues(r.getId(), o3.report().getVersion(), Map.of("fields", Map.of("sla-rate", 0.6)), 7L, true);
+        assertThat(o4.mergedHistory()).isTrue();
+        assertThat(TechErrorHistoryService.detail(eventsOf(r.getId()).get(0))).doesNotContainKey("reverted");
+        at(t0.plusSeconds(16 * 60));
+        var o5 = service.saveValues(r.getId(), o4.report().getVersion(), Map.of("fields", Map.of("sla-rate", 0.7)), 7L, true);
+        assertThat(o5.mergedHistory()).isFalse();
+        // Elle kayıt hiç birleşmez ve sonraki otomatik kaydı da ayırır; başka kişinin otomatik kaydı ayrı olay
+        at(t0.plusSeconds(17 * 60));
+        var o6 = service.saveValues(r.getId(), o5.report().getVersion(), Map.of("fields", Map.of("sla-rate", 0.8)), 7L, false);
+        assertThat(o6.mergedHistory()).isFalse();
+        var o7 = service.saveValues(r.getId(), o6.report().getVersion(), Map.of("fields", Map.of("sla-rate", 0.9)), 7L, true);
+        assertThat(o7.mergedHistory()).isFalse();
+        var o8 = service.saveValues(r.getId(), o7.report().getVersion(), Map.of("fields", Map.of("sla-rate", 1.0)), 8L, true);
+        assertThat(o8.mergedHistory()).isFalse();
+        list = eventsOf(r.getId());
+        assertThat(list).extracting(com.sitemonitor.model.TechErrorReportEvent::getKind)
+                .containsExactly("VALUES", "VALUES", "VALUES", "VALUES", "VALUES", "CREATE");
+        assertThat(TechErrorHistoryService.detail(list.get(2))).doesNotContainKey("auto").doesNotContainKey("saves");
+        assertThat(list.get(0).getActorId()).isEqualTo(8L);
+        // Aynı değerle otomatik kayıt: sürüm artmaz, olay yazılmaz, birleşme de yok
+        var o9 = service.saveValues(r.getId(), o8.report().getVersion(), Map.of("fields", Map.of("sla-rate", 1.0)), 8L, true);
+        assertThat(o9.mergedHistory()).isFalse();
+        assertThat(o9.report().getVersion()).isEqualTo(o8.report().getVersion());
+        assertThat(eventsOf(r.getId())).hasSize(6);
+    }
+
+    private static Map<String, Object> issue(String id, String description, Integer errors) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", id);
+        m.put("topic", "");
+        m.put("title_auto", true);
+        if (description != null) m.put("description", description);
+        if (errors != null) m.put("errors", errors);
+        return m;
+    }
+
+    @Test
+    @DisplayName("otomatik kayıt birleştirme (inceleme 2026-10-16): iki BAŞLIKSIZ konu ayrı tutulur (ad değil kimlik); 5→7 ve"
+            + " başka konuda 7→5 'değişmedi' sayılmaz; eklenip silinen konu iz bırakmaz, ikinci yeni konu görünür")
+    void autoMergeKeysByIdentityNotLabel() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant t0 = Instant.parse("2026-10-13T09:00:00Z");
+        at(t0);
+        var o1 = service.saveValues(r.getId(), r.getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1", 5)))), 7L, true);
+        at(t0.plusSeconds(30));
+        var o2 = service.saveValues(r.getId(), o1.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1", 7), issue("b", "d2", 7)))), 7L, true);
+        at(t0.plusSeconds(60));
+        var o3 = service.saveValues(r.getId(), o2.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1", 7), issue("b", "d2", 5)))), 7L, true);
+        assertThat(o3.mergedHistory()).isTrue();
+        var rows = changesOf(eventsOf(r.getId()).get(0));
+        assertThat(rows).extracting(c -> (String) c.get("key")).containsExactly(
+                "i:issues:a:item", "i:issues:b:item");
+        assertThat(rows).extracting(c -> c.get("op")).containsExactly("add", "add");
+        // Konu a: eklendiği pencerede açıklama ve adet değişti → "eklendi" satırı tek başına yeterli (ilk kayıt boştan)
+        // Şimdi ikinci pencere: iki başlıksız konunun açıklaması ayrı ayrı değişir, adetler çapraz değişir
+        at(t0.plusSeconds(20 * 60));
+        var o4 = service.saveValues(r.getId(), o3.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1x", 5), issue("b", "d2", 5)))), 7L, true);
+        assertThat(o4.mergedHistory()).isFalse();
+        at(t0.plusSeconds(20 * 60 + 30));
+        var o5 = service.saveValues(r.getId(), o4.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1x", 5), issue("b", "d2y", 7)))), 7L, true);
+        assertThat(o5.mergedHistory()).isTrue();
+        rows = changesOf(eventsOf(r.getId()).get(0));
+        assertThat(rows).extracting(c -> c.get("key") + " " + c.get("before") + " → " + c.get("after")).containsExactly(
+                "i:issues:a:desc d1 → d1x", "i:issues:a:errors 7 → 5", "i:issues:b:desc d2 → d2y", "i:issues:b:errors 5 → 7");
+        // Ad tabanlı birleştirme iki "Başlıksız konu · Hata adedi" satırını 7 → 5 → 7 diye "değişmedi" sayıp düşürürdü
+        // add → remove (aynı pencere) iz bırakmaz; sonraki yeni konu "eklendi"
+        at(t0.plusSeconds(40 * 60));
+        var o6 = service.saveValues(r.getId(), o5.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1x", 5), issue("b", "d2y", 7), issue("c", null, null)))), 7L, true);
+        at(t0.plusSeconds(40 * 60 + 30));
+        var o7 = service.saveValues(r.getId(), o6.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1x", 5), issue("b", "d2y", 7)))), 7L, true);
+        at(t0.plusSeconds(41 * 60));
+        service.saveValues(r.getId(), o7.report().getVersion(),
+                Map.of("issues", Map.of("issues", List.of(issue("a", "d1x", 5), issue("b", "d2y", 7), issue("d", null, null)))), 7L, true);
+        rows = changesOf(eventsOf(r.getId()).get(0));
+        assertThat(rows).extracting(c -> c.get("key") + " " + c.get("op")).containsExactly("i:issues:d:item add");
+
+        // İnceleme 2026-10-16 (2. tur): boşken eklenip sonra konusu yazılan konu birleşmiş satırda SON adıyla görünür
+        at(t0.plusSeconds(60 * 60));
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        List<Map<String, Object>> base = List.of(issue("a", "d1x", 5), issue("b", "d2y", 7), issue("d", null, null));
+        List<Map<String, Object>> withBlank = new java.util.ArrayList<>(base);
+        withBlank.add(issue("e", null, null));
+        var o8 = service.saveValues(r.getId(), cur.getVersion(), Map.of("issues", Map.of("issues", withBlank)), 7L, true);
+        Map<String, Object> named = issue("e", null, null);
+        named.put("topic", "Ödeme Servisi");
+        List<Map<String, Object>> withNamed = new java.util.ArrayList<>(base);
+        withNamed.add(named);
+        at(t0.plusSeconds(60 * 60 + 30));
+        service.saveValues(r.getId(), o8.report().getVersion(), Map.of("issues", Map.of("issues", withNamed)), 7L, true);
+        rows = changesOf(eventsOf(r.getId()).get(0));
+        assertThat(rows).singleElement().satisfies(c -> {
+            assertThat(c.get("op")).isEqualTo("add");
+            assertThat((String) c.get("label")).startsWith("Ödeme Servisi");
+            assertThat(c.get("after")).isEqualTo(c.get("label"));
+        });
+    }
+
+    @Test
+    @DisplayName("otomatik kayıt birleştirme: anahtar başına ilk eski + son yeni; ham değer parmak izi eşitse düşer (önizleme"
+            + " değil — yalnız kalın eklenen metin kalır); özet elle → otomatik → elle 'elle' biter; anahtarsız eski satır dokunulmaz")
+    void mergeChangesRules() {
+        List<Map<String, Object>> older = List.of(
+                row("f:a", "Veriler", "A", "number", "set", null, "1", null, "0", "h1"),
+                row("f:b", "Veriler", "B", "text", "change", "x", "y", 900, "hx", "hy"),
+                row("i:s:c:item", "Konular", "Başlıksız konu", "issue", "add", null, "Başlıksız konu", null, "0", "1"),
+                Map.of("section", "Eski", "label", "Anahtarsız", "op", "add"));
+        List<Map<String, Object>> newer = List.of(
+                row("f:a", "Veriler", "A", "number", "change", "1", "2", null, "h1", "h2"),
+                row("f:b", "Veriler", "B", "text", "change", "y", "x", null, "hy", "hx"),
+                row("f:z", "Diğer", "A", "number", "set", null, "5", null, "0", "h5"),
+                row("i:s:c:item", "Konular", "Başlıksız konu", "issue", "remove", "Başlıksız konu", null, null, "1", "0"),
+                row("i:s:e:item", "Konular", "Başlıksız konu", "issue", "add", null, "Başlıksız konu", null, "0", "1"),
+                Map.of("section", "Eski", "label", "Anahtarsız", "op", "add"));
+        var out = TechErrorHistoryService.mergeChanges(older, newer);
+        assertThat(out).extracting(c -> c.get("key") + " " + c.get("op") + " " + c.get("before") + " → " + c.get("after"))
+                .containsExactly("f:a set null → 2", "null add null → null", "f:z set null → 5", "i:s:e:item add null → Başlıksız konu",
+                        "null add null → null");
+        // Silinen son değer: ilk eski değer kalır, işlem "clear"; uzunluk son satırdan
+        var cleared = TechErrorHistoryService.mergeChanges(List.of(row("f:t", "V", "T", "textarea", "change", "eski", "yeni", null, "he", "hy")),
+                List.of(row("f:t", "V", "T", "textarea", "clear", "yeni", null, null, "hy", "0")));
+        assertThat(cleared).singleElement().satisfies(c -> {
+            assertThat(c.get("op")).isEqualTo("clear");
+            assertThat(c.get("before")).isEqualTo("eski");
+            assertThat(c).doesNotContainKey("after_length");
+        });
+        // Önizlemesi aynı ama ham değeri farklı (yalnız kalın / satır sonu eklendi) → kalır
+        var bold = TechErrorHistoryService.mergeChanges(List.of(row("x:n", "N", "N", "text", "change", "kök neden", "kök neden", null, "h0", "h1")),
+                List.of(row("x:n", "N", "N", "text", "change", "kök neden", "kök neden", null, "h1", "h2")));
+        assertThat(bold).singleElement().satisfies(c -> assertThat(c.get("bh")).isEqualTo("h0"));
+        // Özet elle → otomatik → elle (aynı metin): son durum elle yazılmış
+        var summary = TechErrorHistoryService.mergeChanges(
+                List.of(row("s:o", "Ö", "Ö", "summary", "manual", null, "A", null, "0", "hA"),
+                        row("s:o", "Ö", "Ö", "summary", "auto", "A", null, null, "hA", "0")),
+                List.of(row("s:o", "Ö", "Ö", "summary", "manual", null, "A", null, "0", "hA")));
+        assertThat(summary).singleElement().satisfies(c -> assertThat(c.get("op")).isEqualTo("manual"));
+        // Sıralama satırı parmak izi taşımaz: tek başına da birleşince de kalır
+        Map<String, Object> reorder = new java.util.LinkedHashMap<>(Map.of("key", "i:s:order", "section", "K", "label", "K", "op", "reorder"));
+        assertThat(TechErrorHistoryService.mergeChanges(List.of(reorder), List.of(reorder))).hasSize(1);
+    }
+
+    private static Map<String, Object> row(String key, String section, String label, String type, String op, String before,
+                                           String after, Integer afterLength, String bh, String ah) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("section", section);
+        m.put("label", label);
+        m.put("type", type);
+        m.put("op", op);
+        m.put("before", before);
+        m.put("after", after);
+        if (afterLength != null) m.put("after_length", afterLength);
+        m.put("key", key);
+        m.put("bh", bh);
+        m.put("ah", ah);
+        return m;
+    }
+
     @Test
     @DisplayName("budama: rapor başına sınır + pay aşılınca en yeni 500 olay kalır")
     void historyIsPruned() {

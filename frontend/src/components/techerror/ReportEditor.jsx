@@ -16,12 +16,17 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
-import { IssuesBlock, MetricsBlock, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
+import {
+  ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
+} from './SectionCollapse.jsx'
+import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import {
-  allFields, applyCalc, calcResults, canonicalValues, normalizeValues, resolvePlaceholders, resolveTextPlaceholders, stableJson,
+  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, errorCountsBySection, normalizeValues, reportErrorSection,
+  fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
+import { errorInfoOf } from '../../utils/errorMessages.js'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const BACKUP_PREFIX = 'sm.te.draft.'
@@ -47,6 +52,19 @@ function dropBackup(id) {
 
 const hasAny = (o) => Object.values(o).some(Boolean)
 
+/** Otomatik kayıt aralığı (2026-10-16, kullanıcı kararı: "30 saniyede bir"). */
+export const AUTOSAVE_MS = 30_000
+/** Otomatik kayıt isteğinin zaman aşımı: asılı bir istek geri / kaydet / PDF'i sonsuza dek bekletmesin. */
+export const AUTOSAVE_TIMEOUT_MS = 30_000
+/** Ağ / sunucu hatasından sonra bekleme: 30 sn'den başlar, her hatada iki katı, en çok 5 dk. */
+export const AUTOSAVE_BACKOFF_MAX_MS = 5 * 60_000
+
+function clockTime(ms, lang) {
+  return new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'tr-TR', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul',
+  }).format(new Date(ms))
+}
+
 /** Sürüklenen bir DOSYA mı (metin / bağlantı sürüklemesine dokunulmaz)? */
 function isFileDrag(e) {
   const types = e?.dataTransfer?.types
@@ -68,6 +86,14 @@ function isFileDrag(e) {
  * sürüm bir ref'te tutulur (kaydı izleyen "şablonu uygula" eski sürümle 409 almaz), sunucunun alan hataları alan
  * düzenlenince kalkar ve kaydı kilitlemez, yeniden yükleme hatası görünür, sayfaya bırakılan dosya tarayıcıyı
  * rapordan uzaklaştırmaz.
+ *
+ * <p>2026-10-16 (kullanıcı kararları): bölümler KATLANIR (kapalı başlar, açılanlar bu rapor için tarayıcıda hatırlanır,
+ * hatası olan bölüm kendiliğinden açılır) ve rapor değişiklik varken 30 sn'de bir — sekme gizlenirken de — OTOMATİK
+ * kaydedilir. Geçersiz alan otomatik kaydı durdurmaz: diğer alanlar kaydedilir, geçersiz alan kayıtlı (eski) değerinde
+ * kalır. Otomatik kayıt sessizdir (bildirim yok; durum alt çubukta), çakışmada durur (uyarı), aynı içeriği reddeden bir
+ * doğrulama hatasını içerik değişene kadar yinelemez. Elle kayıt, PDF, gönderim, şablon uygulama ve ayrılma süren bir
+ * kaydı bekler (iki kayıt aynı sürümle yarışmaz). Sunucu aynı kişinin 15 dk içindeki otomatik kayıtlarını geçmişte tek
+ * satırda birleştirir.
  */
 export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef }) {
   const t = useT()
@@ -85,6 +111,20 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [conflict, setConflict] = useState(false)
   const [backup, setBackup] = useState(null)
   const [busy, setBusy] = useState(null)   // 'save' | 'pdf' | 'send' | 'refresh' | 'delete'
+  const [autoSaving, setAutoSaving] = useState(false)
+  const [autoInfo, setAutoInfo] = useState(null)        // son otomatik kayıt: { at, ok }
+  const autoBlocked = useRef(null)                      // doğrulamayla reddedilen içerik — değişene kadar yinelenmez
+  const autoBackoff = useRef({ until: 0, n: 0 })        // ağ / sunucu hatasından sonra bekleme
+  // Sunucunun kabul ettiği son otomatik gönderim ({sent, base}): taban buyken taslak bunu veriyorsa KAYITLIDIR. Otomatik
+  // kayıt yanıtı taslağın yerine geçmez (yazarken sondaki boşluk / "- " silinip imleç kaymasın — inceleme 2026-10-16);
+  // sunucunun kırptığı boşluk "kaydedilmemiş" sayılmaz, aynı içerik yeniden gönderilmez
+  const accepted = useRef(null)
+  // ESKİ sürümlü yedek geri yüklendiyse otomatik kayıt DURUR (inceleme 2026-10-16, 2. tur): yoksa 30 sn içinde o eski taslak
+  // başkasının yeni kaydının üstüne yazılırdı. Elle Kaydet, Vazgeç ya da tam yükleme kaldırır
+  const [autoHold, setAutoHold] = useState(false)
+  const leaving = useRef(false)                         // ayrılma sürüyor (çift tıklama iki kez sormasın / gitmesin)
+  const [pending, setPendingMap] = useState({})         // yarım yazılmış sayı alanları (taslağa girmemiş)
+  const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
   const historyBtnRef = useRef(null)
   const titleRef = useRef(null)
@@ -105,6 +145,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const skipFlush = useRef(false)
 
   const applyBase = useCallback((b) => { baseRef.current = b; setBase(b) }, [])
+  /** Bu kanonik içerik sunucuda kayıtlı mı (taban ya da tabanı değişmemiş son kabul edilen otomatik gönderim)? */
+  const isSavedJson = useCallback((json) => json === baseRef.current.json
+    || (accepted.current != null && accepted.current.base === baseRef.current.json && accepted.current.sent === json), [])
+  /** Süren kaydı bekler (hata yutulur — kaydın kendisi raporlar). Otomatik kaydın zaman aşımı beklemeyi sınırlar. */
+  const settleSave = useCallback(async () => {
+    const p = savePromise.current
+    if (p) { try { await p } catch { /* kayıt kendi hatasını gösterir */ } }
+  }, [])
 
   /** Sunucudan okunan raporu uygular. `keepDraft`: kaydedilmemiş taslak korunur (gönderim sonrası / yeniden dene). */
   const applyLoaded = useCallback((resData, keepDraft) => {
@@ -116,7 +164,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     const values = normalizeValues(resData.values)
     const json = canonWith(values, nextTpl)
     const cur = draftRef.current
-    const wasClean = cur == null || canonWith(cur, prevTpl) === baseRef.current.json
+    const wasClean = cur == null || isSavedJson(canonWith(cur, prevTpl))
     const versionMoved = baseRef.current.version != null && resData.report.version !== baseRef.current.version
     setData(resData)
     setImages(resData.images || [])
@@ -142,6 +190,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       setServerErrors({})
     }
     if (!keepDraft) {
+      setAutoHold(false)
       const b = readBackup(reportId)
       const same = b && canonWith(normalizeValues(b.values), nextTpl) === json
       setBackup(b && !same ? b : null)
@@ -149,9 +198,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     }
     // Kaydedilmemiş taslak korunurken eldeki çakışma uyarısı kaldırılmaz
     if (!keepDraft || wasClean) setConflict(false)
-  }, [reportId, applyBase])
+  }, [reportId, applyBase, isSavedJson])
 
   const load = useCallback(async ({ keepDraft = false } = {}) => {
+    // Süren otomatik kayıt önce biter: kayıttan ÖNCE okunmuş bir yanıt tabanı geri sarmasın (sahte çakışma)
+    await settleSave()
     const my = ++seq.current
     loadInFlight.current = true
     inFlightKeepDraft.current = keepDraft
@@ -171,7 +222,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     } finally {
       if (my === seq.current) loadInFlight.current = false
     }
-  }, [reportId, applyLoaded])
+  }, [reportId, applyLoaded, settleSave])
   useEffect(() => { load() }, [load])
   // Ay geçişiyle açıldıysa odak yeni raporun başlığına (tıklanan düğme yeniden kurulumda kaybolur — inceleme 2026-10-14)
   const hasData = !!data && !!draft
@@ -181,9 +232,23 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     titleRef.current?.focus()
   }, [hasData, focusTitleRef])
 
-  const dirty = draft != null && base.json != null && canonJson(draft) !== base.json
+  const dirty = draft != null && base.json != null && !isSavedJson(canonJson(draft))
   const readOnly = !data?.can_edit
   const hasClientErrors = hasAny(clientErrors)
+  const clientErrorsRef = useRef(clientErrors)
+  clientErrorsRef.current = clientErrors
+  const hasPending = hasAny(pending)
+  const pendingRef = useRef(pending)
+  pendingRef.current = pending
+  // Yarım yazılmış sayı da kaydedilmemiş sayılır (ayrılırken sorulur, sekme kapanırken uyarılır)
+  const unsaved = dirty || hasPending
+  const setFieldPending = useCallback((key, p) => setPendingMap((m) => {
+    if (!!m[key] === !!p) return m
+    const out = { ...m }
+    if (p) out[key] = true
+    else delete out[key]
+    return out
+  }), [])
   const fieldErrors = useMemo(() => ({ ...serverErrors, ...clientErrors }), [serverErrors, clientErrors])
 
   // Yazarken yerel yedek (1 sn sonra) — sekme kapanır / ağ düşerse emek kaybolmasın. Taslak yeniden temizlenince bu
@@ -212,11 +277,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   useEffect(() => () => flushBackup.current?.(), [])
 
   useEffect(() => {
-    if (!dirty) return undefined
+    if (!unsaved) return undefined
     const h = (e) => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', h)
     return () => window.removeEventListener('beforeunload', h)
-  }, [dirty])
+  }, [unsaved])
 
   // Grafik yuvasının DIŞINA bırakılan dosya tarayıcıyı görsele götürmesin (kaydedilmemiş taslak kaybolurdu)
   useEffect(() => {
@@ -298,64 +363,122 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return out
   }), [])
 
-  /** Kaydeder; başarıyla (ya da değişiklik yoksa) true döner. */
-  async function save({ quiet = false } = {}) {
+  /**
+   * Kaydeder; başarıyla (ya da değişiklik yoksa) true döner. Süren bir kayıt varsa önce onu bekler (aynı sürümle iki
+   * istek gitmez). `auto`: otomatik kayıt — sessiz, geçersiz alanlar kayıtlı değerinde gönderilir.
+   */
+  function save(opts = {}) {
+    const run = (async () => {
+      await settleSave()
+      return doSave(opts)
+    })()
+    savePromise.current = run
+    const clear = () => { if (savePromise.current === run) savePromise.current = null }
+    run.then(clear, clear)
+    return run
+  }
+
+  async function doSave({ quiet = false, auto = false } = {}) {
     if (!draftRef.current || readOnly) return false
-    if (hasClientErrors) { toast.error(t('te.fixFieldErrors')); return false }
-    const sent = canonicalValues(draftRef.current, canonTpl.current)
+    const invalidKeys = Object.keys(clientErrorsRef.current).filter((k) => clientErrorsRef.current[k])
+    if (!auto && invalidKeys.length) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
+    // Otomatik kayıtta yarım yazılmış sayı da geçersiz gibi kayıtlı değerinde gider
+    if (auto) for (const k of Object.keys(pendingRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
+    // Otomatik kayıtta geçersiz alan sunucudaki (eski) değerinde kalır; diğer alanlar kaydedilir
+    const source = auto && invalidKeys.length
+      ? revertInvalidValues(draftRef.current, baseRef.current.json ? JSON.parse(baseRef.current.json) : null, invalidKeys)
+      : draftRef.current
+    const sent = canonicalValues(source, canonTpl.current)
     const sentJson = stableJson(sent)
-    if (sentJson === baseRef.current.json) return true
+    if (isSavedJson(sentJson)) {
+      // Süren otomatik kaydı bekleyen elle kayıt da geri bildirim alır (Kaydet'e basıldı, iş zaten yapılmıştı)
+      if (!auto && !quiet) toast.success(t('te.saved'))
+      return true
+    }
+    if (auto && sentJson === autoBlocked.current) return false
     // Uçuştaki bir yükleme (ör. gönderim sonrası) bu kaydın sürümünü eskisiyle ezmesin: düşürülür ve kayıttan SONRA
     // yeniden yapılır (gönderim durumu / "yeniden gönder" düğmesi eski kalmasın)
     const droppedLoad = loadInFlight.current
     const droppedKeepDraft = inFlightKeepDraft.current
     seq.current++
     loadInFlight.current = false
-    setBusy('save')
+    if (auto) setAutoSaving(true)
+    else setBusy('save')
     try {
-      const res = await api.techErrors.saveReport(reportId, sent, baseRef.current.version)
+      const res = await api.techErrors.saveReport(reportId, sent, baseRef.current.version,
+        ...(auto ? [{ auto: true, timeoutMs: AUTOSAVE_TIMEOUT_MS }] : []))
       if (res?.success && res.data) {
         const values = normalizeValues(res.data.values)
-        applyBase({ json: canonJson(values), version: res.data.version })
-        // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır
+        const baseJson = canonJson(values)
+        applyBase({ json: baseJson, version: res.data.version })
+        accepted.current = auto ? { sent: sentJson, base: baseJson } : null
+        // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır. Otomatik kayıt taslağa
+        // HİÇ dokunmaz (kullanıcı yazıyor olabilir); yedek yine silinir — içerik sunucuda
         const untouched = canonJson(draftRef.current) === sentJson
-        if (untouched) {
+        if (untouched && !auto) {
+          // Otomatik kayıt "bulunan taslak" uyarısını kaldırmaz (2. tur): kullanıcı ona henüz cevap vermemiş olabilir —
+          // eski taslağın son kopyası o uyarıdadır
           setDraft(values)
           dropBackup(reportId)
           setBackup(null)
         }
+        if (!auto) setAutoHold(false)
         setServerErrors({})
         setState((s) => (s.loading ? { ...s, loading: false } : s))
         setData((d) => (d ? { ...d, report: { ...d.report, version: res.data.version, updated_at: res.data.updated_at,
           updated_by_name: res.data.updated_by_name ?? d.report.updated_by_name,
           status: d.report.status === 'sent' && res.data.changed ? 'changed' : d.report.status } } : d))
-        if (!quiet) toast.success(t('te.saved'))
+        autoBlocked.current = null
+        autoBackoff.current = { until: 0, n: 0 }
+        setAutoInfo(auto ? { at: Date.now(), ok: true } : null)
+        if (!quiet && !auto) toast.success(t('te.saved'))
         return true
       }
       if (res?.code === 'CONCURRENT_MODIFICATION') {
-        setConflict(true)
+        setConflict(true)                          // uyarı görünür; otomatik kayıt çakışma çözülene kadar durur
       } else if (res?.code === 'VALIDATION_FAILED' && res?.field) {
         setServerErrors((e) => ({ ...e, [res.field]: res.error }))
-        toast.error(res.error)
+        if (auto) { autoBlocked.current = sentJson; setAutoInfo({ at: Date.now(), ok: false, blocked: true }) }
+        else toast.error(res.error)
+      } else if (auto) {
+        // İstemci kaynaklı ret (4xx) aynı içerikle yinelenmez; sunucu / ağ hatası / zaman aşımı artan aralıkla denenir
+        const status = errorInfoOf(res)?.status
+        if (status >= 400 && status < 500) {
+          autoBlocked.current = sentJson
+          // Alan hatası değil (403 / 404 / 413 …): sunucunun söylediği gösterilir — "işaretli alan" yoktur
+          setAutoInfo({ at: Date.now(), ok: false, blocked: true, message: res?.error || null })
+        } else {
+          backOff()
+          setAutoInfo({ at: Date.now(), ok: false })
+        }
       } else {
         toast.error(res?.error || t('te.saveError'), { details: res?.errorInfo })
       }
       return false
     } catch (e) {
-      toast.error(e?.message || t('te.saveError'))
+      if (auto) { backOff(); setAutoInfo({ at: Date.now(), ok: false }) }
+      else toast.error(e?.message || t('te.saveError'))
       return false
     } finally {
-      setBusy(null)
+      if (auto) setAutoSaving(false)
+      else setBusy(null)
       // Düşürülen yükleme AYNI kiple yeniden: "En son hâli yükle" tam yüklemeydi (taslak yerine sunucu + yedek önerisi)
       if (droppedLoad) load({ keepDraft: droppedKeepDraft })
     }
   }
 
   /** PDF / gönderim / şablon uygulama öncesi: geçersiz alan varsa durur; kaydedilmemiş değişiklik varsa kaydetmeyi önerir. */
+  /** Ağ / sunucu hatasından sonra bir sonraki otomatik denemeyi öteler (30 sn → 60 → … ≤ 5 dk). */
+  function backOff() {
+    const n = autoBackoff.current.n + 1
+    autoBackoff.current = { n, until: Date.now() + Math.min(AUTOSAVE_MS * 2 ** (n - 1), AUTOSAVE_BACKOFF_MAX_MS) }
+  }
+
   async function ensureSaved() {
     if (readOnly) return true
-    if (hasClientErrors) { toast.error(t('te.fixFieldErrors')); return false }
-    if (canonJson(draftRef.current) === baseRef.current.json) return true
+    await settleSave()
+    if (hasAny(clientErrorsRef.current)) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
+    if (isSavedJson(canonJson(draftRef.current))) return true
     const ok = await showConfirm({ title: t('te.saveFirstTitle'), message: t('te.saveFirstBody'), variant: 'warning',
       confirmText: t('te.saveAndContinue'), cancelText: t('te.cancel') })
     if (!ok) return false
@@ -416,7 +539,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         toast.error(fresh?.error || t('te.loadError'), { details: fresh?.errorInfo })
         return
       }
-      const clean = canonJson(draftRef.current) === baseRef.current.json
+      const clean = isSavedJson(canonJson(draftRef.current))
       if (fresh.data.report.version !== baseRef.current.version && !clean) { setConflict(true); return }
       // Temiz taslak: başkasının kaydı sorun değil — taze hâl alınır (sahte çakışma uyarısı yok)
       applyLoaded(fresh.data, true)
@@ -436,7 +559,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       })
       if (!ok) return
       // Onay sırasında yazılan değişiklik şablon uygulamasıyla kaybolmasın
-      if (canonJson(draftRef.current) !== baseRef.current.json) { toast.error(t('te.fixUnsavedFirst')); return }
+      if (!isSavedJson(canonJson(draftRef.current))) { toast.error(t('te.fixUnsavedFirst')); return }
       const res = await api.techErrors.refreshTemplate(reportId, baseRef.current.version)
       if (res?.success) { toast.success(t('te.applyTemplateDone')); dropBackup(reportId); await load() }
       else if (res?.code === 'CONCURRENT_MODIFICATION') setConflict(true)
@@ -476,8 +599,21 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }
 
   async function leave(next) {
-    // Alanda yazılı ama geçersiz (taslağa girmemiş) metin de kaybolmadan sorulur (inceleme 2026-10-14)
-    if ((dirty || hasClientErrors) && !readOnly) {
+    if (leaving.current) return
+    leaving.current = true
+    try {
+      await leaveNow(next)
+    } finally {
+      leaving.current = false
+    }
+  }
+
+  async function leaveNow(next) {
+    // Süren (otomatik) kayıt önce biter; sonra GÜNCEL taslağa bakılır
+    await settleSave()
+    const notSaved = draftRef.current != null && !isSavedJson(canonJson(draftRef.current))
+    // Alanda yazılı ama geçersiz ya da yarım (taslağa girmemiş) metin de kaybolmadan sorulur (inceleme 2026-10-14)
+    if ((notSaved || hasAny(clientErrorsRef.current) || hasAny(pendingRef.current)) && !readOnly) {
       const ok = await showConfirm({ title: t('te.leaveTitle'), message: t('te.leaveBody'), variant: 'warning',
         confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
       if (!ok) return
@@ -490,6 +626,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setGen((g) => g + 1)
     setClientErrors({})
     setServerErrors({})
+    setPendingMap({})
   }
 
   const sections = useMemo(() => tpl?.sections || [], [tpl])
@@ -502,6 +639,55 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const shownFields = useMemo(() => applyCalc(tpl, draft?.fields, prevFields, calc), [tpl, draft?.fields, prevFields, calc])
   const shownValues = useMemo(() => (draft && shownFields !== draft.fields ? { ...draft, fields: shownFields } : draft),
     [draft, shownFields])
+
+  // Katlanır bölümler (2026-10-16): açılanlar bu rapor için hatırlanır; hatalı alan sayısı yalnız hata KÜMESİ değişince
+  // yeni Map olur (her tuşta değil — görsel bölümleri yazarken yeniden çizilmesin)
+  // Hiçbir şey çizmeyen bölüm (grafiğe dökülecek alanı olmayan trend) "tümü açık" hesabına girmez
+  const draftFields = draft?.fields
+  const sectionIds = useMemo(() => sections
+    .filter((s) => s.kind !== 'trend'
+      || trendRefs(tpl, s).some((r) => r.status === 'ok' && !fieldExempt(r.field, draftFields)))
+    .map((s) => s.id), [sections, tpl, draftFields])
+  const openState = useSectionOpenState(sectionOpenKey('r', reportId), sectionIds)
+  const countsKey = useMemo(() => [...errorCountsBySection(fieldErrors, (k) => reportErrorSection(k, tpl))]
+    .map(([id, n]) => `${id}:${n}`).join('|'), [fieldErrors, tpl])
+  const invalidCounts = useMemo(() => new Map(countsKey ? countsKey.split('|').map((p) => {
+    const i = p.lastIndexOf(':')
+    return [p.slice(0, i), Number(p.slice(i + 1))]
+  }) : []), [countsKey])
+  const sectionCtx = useSectionOpenValue(openState, invalidCounts)
+  // Hata YENİ gelen bölüm kendiliğinden açılır (sunucunun alan hatası, kapalı bölümdeki bağlı alan)
+  const errSections = useRef(new Set())
+  const { openMany } = openState
+  useEffect(() => {
+    const now = new Set(invalidCounts.keys())
+    const fresh = [...now].filter((id) => !errSections.current.has(id))
+    errSections.current = now
+    if (fresh.length) openMany(fresh)
+  }, [invalidCounts, openMany])
+  /** Kaydı / PDF'i durduran hatalı alanların bölümlerini açar (kullanıcı kapatmış olabilir). */
+  function revealErrors() {
+    if (invalidCounts.size) openMany([...invalidCounts.keys()])
+  }
+
+  // Otomatik kayıt: 30 sn'de bir ve sekme gizlenirken; değişiklik yoksa, salt okunurda, çakışmada, başka bir işlem ya da
+  // kayıt / yükleme sürerken atlanır
+  const autoRef = useRef(null)
+  autoRef.current = () => {
+    if (readOnly || conflict || autoHold || busy != null || savePromise.current || loadInFlight.current || !dirty) return
+    if (Date.now() < autoBackoff.current.until) return
+    save({ quiet: true, auto: true })
+  }
+  useEffect(() => {
+    if (readOnly) return undefined
+    const h = setInterval(() => autoRef.current?.(), AUTOSAVE_MS)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') autoRef.current?.() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(h)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [readOnly])
 
   const back = (
     <Button type="button" variant="ghost" size="sm" data-slot="te-back"
@@ -571,10 +757,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
               )}
             </nav>
           ) : <span />}
-          <Button ref={historyBtnRef} type="button" variant="ghost" size="sm" className="pointer-coarse:min-h-10" data-slot="te-history-open"
-            onClick={() => setHistoryOpen(true)}>
-            <History aria-hidden="true" /> {t('te.hist.open')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {sectionIds.length > 0 && (
+              <ExpandAllButton allOpen={allSectionsOpen(openState.state, sectionIds)} onToggle={openState.setAll} />
+            )}
+            <Button ref={historyBtnRef} type="button" variant="ghost" size="sm" className="pointer-coarse:min-h-10" data-slot="te-history-open"
+              onClick={() => setHistoryOpen(true)}>
+              <History aria-hidden="true" /> {t('te.hist.open')}
+            </Button>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <StatusBadge status={report.status} sendState={report.last_send_status} />
@@ -610,7 +801,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         <AlertBanner tone="info" icon={History} title={t('te.backupTitle')}
           actions={(
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" onClick={() => { replaceDraft(normalizeValues(backup.values)); setBackup(null) }}>{t('te.backupRestore')}</Button>
+              <Button type="button" size="sm" onClick={() => {
+                // Eski sürümün yedeği: otomatik kayıt durur, karşılaştırıp Kaydet ile kullanıcı karar verir
+                if (backup.version !== base.version) setAutoHold(true)
+                replaceDraft(normalizeValues(backup.values))
+                setBackup(null)
+              }}>{t('te.backupRestore')}</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => { dropBackup(reportId); setBackup(null) }}>{t('te.backupDiscard')}</Button>
             </div>
           )}>
@@ -630,6 +826,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         </AlertBanner>
       )}
 
+      <SectionOpenContext.Provider value={sectionCtx}>
+      <PendingInputContext.Provider value={setFieldPending}>
       {sections.map((s) => {
         const key = `${s.id}:${gen}`
         if (s.kind === 'metrics') {
@@ -660,21 +858,39 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         return <TextBlock key={key} section={s} values={draft} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
           errors={fieldErrors} onText={setText} />
       })}
+      </PendingInputContext.Provider>
+      </SectionOpenContext.Provider>
 
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 
       <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">
-        <p className="text-sm text-muted-foreground" aria-live="polite">
-          {readOnly ? t('te.readOnlyShort') : dirty ? t('te.unsaved') : t('te.allSaved')}
+        <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-save-status"
+          data-auto={autoInfo ? (autoInfo.ok ? 'ok' : 'failed') : undefined}>
+          {readOnly ? t('te.readOnlyShort') : autoSaving ? t('te.autoSaving') : (
+            <>
+              <span>{unsaved ? t('te.unsaved') : t('te.allSaved')}</span>
+              {/* Otomatik kayıt notu ayrı parça: durum metni aynı kalır, not onu açıklar; vaat edilmeyen kayıt yazılmaz */}
+              {unsaved ? (
+                <span data-slot="te-save-auto"> · {conflict ? t('te.autoPausedConflict')
+                  : autoHold ? t('te.autoHeldRestore')
+                    : autoInfo?.ok === false && autoInfo.blocked && autoInfo.message ? t('te.autoBlockedReason', autoInfo.message)
+                  : autoInfo?.ok === false && autoInfo.blocked ? t('te.autoBlocked')
+                    : autoInfo?.ok === false ? t('te.autoFailed', clockTime(autoInfo.at, uiLang))
+                      : hasClientErrors || hasPending ? t('te.unsavedInvalid') : t('te.unsavedAuto')}</span>
+              ) : autoInfo?.ok ? (
+                <span data-slot="te-save-auto"> · {t('te.autoSaved', clockTime(autoInfo.at, uiLang))}</span>
+              ) : null}
+            </>
+          )}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {/* İkincil işlemler menüde: telefonda çubuk tek-iki satırda kalsın, içerik örtülmesin (2026-10-13 e2e) */}
           <KebabMenu variant="labeled" label={t('te.moreActions')} rowLabel={resolve(tpl.title)} items={[
             { label: t('te.openTemplate'), icon: <LayoutTemplate aria-hidden="true" />, onClick: () => leave(() => onOpenTemplate(channel?.id)), hidden: readOnly },
-            { label: t('te.discard'), icon: <Undo2 aria-hidden="true" />, hidden: readOnly || !dirty || busy != null,
-              onClick: () => { clearTimeout(backupTimer.current); replaceDraft(normalizeValues(JSON.parse(base.json))); dropBackup(reportId) } },
+            { label: t('te.discard'), icon: <Undo2 aria-hidden="true" />, hidden: readOnly || !dirty || busy != null || autoSaving,
+              onClick: () => { clearTimeout(backupTimer.current); replaceDraft(normalizeValues(JSON.parse(base.json))); dropBackup(reportId); setAutoHold(false) } },
             { label: t('te.delete'), icon: <Trash2 aria-hidden="true" />, danger: true, hidden: !data.can_delete || busy != null, onClick: remove },
           ]} />
           <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy != null} onClick={downloadPdf}

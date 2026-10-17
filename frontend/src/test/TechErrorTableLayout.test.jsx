@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import { channel, overview, reportResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Tablo bölümü tablo ↔ kart geçişi (inceleme 2026-10-14): kap genişliği eşiği geçince hücreler yeniden kurulur — yarım
 // kalmış geçersiz yazımın istemci hatası kalkar (kaydı engellemez), odaklı hücreye odak döner, eşikte 24 px tampon
@@ -64,6 +64,7 @@ beforeEach(() => {
   widthCtl.value = 0
   widthCtl.listeners.clear()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   te().overview.mockResolvedValue(overview())
   te().reports.mockImplementation(async (id) => ({ success: true, data: { channel: channel(Number(id), 'Mobil'), reports: [],
     default_period: { year: 2026, month: 9 } } }))

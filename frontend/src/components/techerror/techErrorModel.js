@@ -934,11 +934,18 @@ export function tableCellKey(sectionId, rowId, colId) {
   return `tables.${sectionId}.${rowId}.${colId}`
 }
 
+/**
+ * Yeni anomali konusu. Kimlik bu rapor için TEKRAR KULLANILMAZ (2026-10-16, otomatik kayıt incelemesi): `i-<n>` silinen bir
+ * konunun kimliğini yeni konuya veriyordu — geçmiş birleştirmesi "silindi + eklendi"yi aynı konu sanıp değişimi düşürürdü.
+ */
 export function newIssue(list) {
   const used = new Set((list || []).map((i) => i.id))
-  let n = (list || []).length + 1
-  while (used.has(`i-${n}`)) n++
-  return { id: `i-${n}`, topic: '', title: '', title_auto: true, description: '', customers: null, errors: null }
+  let id
+  for (let guard = 0; guard < 20; guard++) {
+    id = `i-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    if (!used.has(id)) break
+  }
+  return { id, topic: '', title: '', title_auto: true, description: '', customers: null, errors: null }
 }
 
 /**
@@ -1571,3 +1578,148 @@ export function istanbulDay(iso) {
   if (!Number.isFinite(ms)) return ''
   return new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10)
 }
+
+// ── Katlanır bölümler + otomatik kayıt (2026-10-16, kullanıcı kararı) ─────────────────────────────────────────────
+
+/**
+ * Rapor ekranındaki bir hata anahtarının bölümü (yoksa null). İstemci: `values.<alan>`, `issue:<bölüm>:<konu>:<alan>`,
+ * `tables.<bölüm>.<satır>.<sütun>`; sunucu: `values.<alan>`, `issues.<bölüm>.<n>`, `text.<bölüm>`, `tables.<bölüm>…`.
+ * Belge geneli `values` hiçbir bölüme ait değil.
+ */
+export function reportErrorSection(key, template) {
+  const k = String(key || '')
+  if (k.startsWith('values.')) {
+    const fid = k.slice(7)
+    return (template?.sections || []).find((s) => s.kind === 'metrics' && (s.fields || []).some((f) => f.id === fid))?.id ?? null
+  }
+  if (k.startsWith('issue:')) {
+    const end = k.indexOf(':', 6)
+    return end > 6 ? k.slice(6, end) : null
+  }
+  for (const p of ['issues.', 'tables.', 'text.', 'texts.']) {
+    if (k.startsWith(p)) {
+      const rest = k.slice(p.length)
+      const end = rest.indexOf('.')
+      return (end < 0 ? rest : rest.slice(0, end)) || null
+    }
+  }
+  return null
+}
+
+/**
+ * Şablon düzenleyicisindeki bir hata anahtarının bölümü (yoksa null): `section:<b>`, `line:<b>:<i>`, `col:<b>:<s>`,
+ * `row:<b>:<s>` doğrudan; `field:<alan>` / `calc:<alan>` alanın, `slot:<yuva>` yuvanın bölümü.
+ */
+export function templateErrorSection(key, template) {
+  const k = String(key || '')
+  const colon = k.indexOf(':')
+  if (colon < 0) return null
+  const kind = k.slice(0, colon)
+  const rest = k.slice(colon + 1)
+  if (['section', 'line', 'col', 'row'].includes(kind)) {
+    const end = rest.indexOf(':')
+    return (end < 0 ? rest : rest.slice(0, end)) || null
+  }
+  const sections = template?.sections || []
+  if (kind === 'field' || kind === 'calc') return sections.find((s) => (s.fields || []).some((f) => f.id === rest))?.id ?? null
+  if (kind === 'slot') return sections.find((s) => (s.slots || []).some((x) => x.id === rest))?.id ?? null
+  return null
+}
+
+/** Hata anahtarlarını bölümlere sayar: Map(bölüm → hatalı alan sayısı). Değeri boş anahtar sayılmaz. */
+export function errorCountsBySection(errors, sectionOf) {
+  const out = new Map()
+  for (const [k, v] of Object.entries(errors || {})) {
+    if (!v) continue
+    const sid = sectionOf(k)
+    if (sid) out.set(sid, (out.get(sid) || 0) + 1)
+  }
+  return out
+}
+
+/**
+ * OTOMATİK kayıtta geçersiz alanlar ESKİ (kayıtlı) değerinde kalır (kullanıcı kararı: "diğerlerini kaydetsin"):
+ * istemcinin hata anahtarı taşıyan her değeri `base`'deki (sunucudaki) değerle değiştirilir — alanda yazılı geçersiz
+ * metin taslağa hiç girmez, ama taslakta o alanın arada yazılmış son GEÇERLİ değeri olabilir; o da gönderilmez.
+ * Değiştirilecek bir şey yoksa aynı nesne döner.
+ */
+export function revertInvalidValues(values, base, errorKeys) {
+  if (!values) return values
+  let out = values
+  const own = () => {
+    if (out === values) out = JSON.parse(JSON.stringify(values))
+    return out
+  }
+  const put = (obj, key, v) => {
+    if (v == null) delete obj[key]
+    else obj[key] = v
+  }
+  for (const key of errorKeys || []) {
+    const k = String(key || '')
+    if (k.startsWith('values.')) {
+      const fid = k.slice(7)
+      if ((values.fields?.[fid] ?? null) === (base?.fields?.[fid] ?? null)) continue
+      const o = own()
+      o.fields = o.fields || {}
+      put(o.fields, fid, base?.fields?.[fid] ?? null)
+    } else if (k.startsWith('issue:')) {
+      const parts = k.split(':')
+      if (parts.length !== 4) continue
+      const [, sid, iid, f] = parts
+      const idx = (values.issues?.[sid] || []).findIndex((i) => i?.id === iid)
+      if (idx < 0) continue
+      const was = (base?.issues?.[sid] || []).find((i) => i?.id === iid)?.[f] ?? null
+      if ((values.issues[sid][idx]?.[f] ?? null) === was) continue
+      put(own().issues[sid][idx], f, was)
+    } else if (k.startsWith('tables.')) {
+      const parts = k.split('.')
+      if (parts.length !== 4) continue
+      const [, sid, rid, cid] = parts
+      const cur = values.tables?.[sid]?.[rid]?.[cid] ?? null
+      const was = base?.tables?.[sid]?.[rid]?.[cid] ?? null
+      if (cur === was) continue
+      const o = own()
+      o.tables = o.tables || {}
+      o.tables[sid] = o.tables[sid] || {}
+      o.tables[sid][rid] = o.tables[sid][rid] || {}
+      put(o.tables[sid][rid], cid, was)
+    }
+  }
+  return out
+}
+
+/** Hatırlanan açık bölümler: `{all: true}` (hepsi — sonradan eklenen bölüm dahil) ya da `{all: false, ids}`. */
+export const OPEN_STATE_MAX_IDS = 64
+
+export function parseOpenState(raw) {
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (v && v.all === true) return { all: true, ids: [] }
+    const ids = Array.isArray(v?.ids)
+      ? [...new Set(v.ids.filter((x) => typeof x === 'string' && x && x.length <= 120))].slice(0, OPEN_STATE_MAX_IDS)
+      : []
+    return { all: false, ids }
+  } catch {
+    return { all: false, ids: [] }
+  }
+}
+
+export const isSectionOpen = (state, id) => !!state && (state.all || state.ids.includes(id))
+
+/** Bir bölümü açar / kapatır. "Hepsi açık"ken kapatılan bölüm, o anki bölüm listesinden çıkarılır. */
+export function withSectionOpen(state, id, open, allIds) {
+  const want = !!open
+  if (state.all) return want ? state : { all: false, ids: (allIds || []).filter((x) => x !== id) }
+  const has = state.ids.includes(id)
+  if (want === has) return state
+  return { all: false, ids: want ? [...state.ids, id].slice(-OPEN_STATE_MAX_IDS) : state.ids.filter((x) => x !== id) }
+}
+
+/** Verilen bölümleri açar (hata gelen bölümler); değişiklik yoksa aynı nesne. */
+export function withSectionsOpened(state, ids) {
+  let s = state
+  for (const id of ids || []) s = withSectionOpen(s, id, true, [])
+  return s
+}
+
+export const allSectionsOpen = (state, ids) => !!state && (state.all || (ids || []).every((id) => state.ids.includes(id)))

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
-import { channel, overview, reportResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
+import { channel, overview, reportResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Kopyalama düğmeleri (2026-10-16, kullanıcı isteği: "Yıllık Operasyon ve Hata Dağılımı (Son 12 Ay)" gibi görsel adları,
 // bölüm başlıkları, alan adları rapor yazılırken kolayca kopyalansın — yazının hemen bitimine küçük ikon). Ekranda
@@ -36,6 +36,7 @@ let writeText
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+  openAllSections()
   writeText = vi.fn(() => Promise.resolve())
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   te().overview.mockResolvedValue(overview())
@@ -95,8 +96,13 @@ describe('rapor düzenleyicide kopyalama düğmeleri', () => {
     expect(screen.getByRole('figure', { name: 'Teknik hata oranı (Son 12 Ay)' })).toBeInTheDocument()
     expect(container.querySelector('[data-slot-id="monthly-tx"] [data-slot="te-image-label"]').textContent)
       .toBe('Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri')
-    // Başlıkların içinde düğme yok
+    // Başlıkların içinde KOPYALAMA düğmesi yok; bölüm başlığındaki tek düğme aç / kapat (2026-10-16, WAI akordeon deseni:
+    // düğme başlığın içinde, adı başlığın kendisi)
     for (const h of container.querySelectorAll('[data-slot="te-report"] h2, [data-slot="te-report"] h3, [data-slot="te-report"] label, figcaption > span[id]'))
-      expect(h.querySelector('button, [role="button"]') ? `${h.tagName} ${h.className} | ${h.textContent}` : null).toBeNull()
+      expect(h.querySelector('button:not([data-slot="te-section-toggle"]), [role="button"]') ? `${h.tagName} ${h.className} | ${h.textContent}` : null).toBeNull()
+    for (const toggle of container.querySelectorAll('[data-slot="te-section-toggle"]')) {
+      expect(toggle.closest('h3')).not.toBeNull()
+      expect(toggle.textContent).not.toMatch(/Kopyala/)
+    }
   })
 })
