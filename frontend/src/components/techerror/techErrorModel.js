@@ -610,6 +610,206 @@ export function summaryEffective(section, template, values, channel, year, month
 }
 
 /**
+ * Not alanının özetteki değeri (2026-10-17): uzun açıklama, dolu ve muaf değil → saklanan değer olduğu gibi; değilse null.
+ * Sunucudaki TechErrorSummary.notes ile aynı kural (kısa metin alanı not değil, söylenmemiş DEĞER satırıdır).
+ */
+function noteValue(f, fields) {
+  if (f.type !== 'textarea') return null
+  if (fieldExempt(f, fields)) return null
+  const raw = fields?.[f.id]
+  if (typeof raw !== 'string' || richBlank(raw)) return null
+  return raw
+}
+
+/**
+ * Gömülü bölümün SÖYLENMEMİŞ değerleri (sunucudaki TechErrorSummary.facts): sayı / yüzde / evet-hayır / kısa metin alanı,
+ * dolu, muaf değil ve tutulan hiçbir cümle ona başvurmuyor → her biri kendi satırında "Ad: **değer**" (sayı / yüzde kalın;
+ * evet / hayır ve kısa metin düz — kısa metnin yıldız dizisi teke iner; soru işaretiyle biten ad iki nokta almaz), tek
+ * metin; yoksa null. Cümlesi (eksik başka bir rakam yüzünden) düşen bir adet önizlemeden ve PDF'ten sessizce kaybolmaz
+ * (inceleme 2026-10-17).
+ */
+function summaryFacts(e, template, fields, told, channel, year, month) {
+  const lang = template?.lang
+  const parts = []
+  for (const f of e.fields || []) {
+    const yesno = f.type === 'yesno'
+    const text = f.type === 'text'
+    if (!yesno && !text && f.type !== 'number' && f.type !== 'percent') continue
+    if (told.has(f.id) || fieldExempt(f, fields)) continue
+    const v = fields?.[f.id]
+    if (v == null || (yesno && typeof v !== 'boolean')) continue
+    let value
+    if (text) {
+      const s = typeof v === 'string' ? shortTextValue(v) : ''
+      if (richBlank(s)) continue
+      value = neutralValue(s)
+    } else {
+      value = formatValue(f, v, lang, summaryYesNo(lang))
+    }
+    const label = String(resolvePlaceholders(f.label || '', channel, year, month, lang) ?? '')
+    const bold = !yesno && !text
+    const shown = bold ? `**${value}**` : value
+    const fact = label.endsWith('?') ? `${label} ${shown}` : `${label}: ${shown}`
+    parts.push(keepParagraph(fact))
+  }
+  return parts.length ? parts.join('\n') : null
+}
+
+/** Gömülü bölümün yerleşince ekleyeceği bloklar: önce söylenmemiş değerleri (tek metin bloğu), sonra notları. */
+function embeddedBlocks(e, template, fields, told, channel, year, month) {
+  const lang = template?.lang
+  const out = []
+  const facts = summaryFacts(e, template, fields, told, channel, year, month)
+  if (facts != null) out.push({ kind: 'text', text: facts })
+  for (const f of e.fields || []) {
+    const v = noteValue(f, fields)
+    if (v != null) out.push({ kind: 'note', section: e.id, field: f.id, label: resolvePlaceholders(f.label, channel, year, month, lang), text: v })
+  }
+  return out
+}
+
+/**
+ * Yönetici özetinin BLOKLARI (2026-10-17, kullanıcı kararı: "map yapılmamış / kota hataları yönetici özeti kartında
+ * girilsin; PDF ve e-postada açıklama ilgili özet cümlesinin hemen altına yazılsın") — sunucudaki
+ * TechErrorSummary.blocks ile AYNI algoritma (doğruluk tablosu TechErrorSummaryBlocksTest.BLOCKS_TABLE, JS testi Java
+ * kaynağından okur). Çıktı sıralı bloklar: `{ kind: 'text', text }` | `{ kind: 'note', section, field, label, text }`
+ * (`label` = notun başlığı, alanın çözülmüş adı).
+ *
+ * <ul>
+ *   <li>Not = özet kartına gömülü bir gösterge bölümünün dolu, muaf olmayan uzun açıklama alanı.</li>
+ *   <li>Söylenmemiş değer ({@link summaryFacts}) = gömülü bölümün dolu sayı / yüzde / evet-hayır / kısa metin alanı, TUTULAN
+ *     hiçbir cümle ona başvurmuyorsa — "Ad: **değer**" satırı (tek metin bloğu, notlardan önce).</li>
+ *   <li>ELLE metin: tek metin bloğu + gömülü bölümlerin bütün notları sonda (şablon sırasıyla); söylenmemiş değer eklenmez.</li>
+ *   <li>OTOMATİK: cümleler {@link summaryAutoText} ile aynı kuralla dizilir; gömülü bölümün HERHANGİ bir alanına başvuran
+ *     cümle özete girince bölüm oraya yerleşir: eklenecek değer ya da not VARSA o ana kadarki metin blok olur, bölümün
+ *     blokları ardına gelir ve sonraki cümle yeni paragraf başlatır; eklenecek bir şey yoksa paragraf bölünmez (notsuz
+ *     varsayılan rapor tek paragraf kalır). Hiçbir cümlesi girmeyen bölüm sonda.</li>
+ *   <li>Metin sınırı yalnız METNE: sınırdan sonraki cümle üretilmez ve alanları söylenmiş sayılmaz (değerleri satır olur).</li>
+ * </ul>
+ * Gömülü bölüm yoksa tek metin bloğu = {@link summaryAutoText} (davranış değişmez).
+ */
+export function summaryBlocks(template, section, fields, texts, channel, year, month) {
+  if (!section) return []
+  const lang = template?.lang
+  const embedded = embeddedSections(template, section.id)
+  const override = texts?.[section.id]
+  if (override != null && !richBlank(override)) {
+    const out = [{ kind: 'text', text: resolveTextPlaceholders(override, channel, year, month, lang) }]
+    for (const e of embedded) {
+      for (const f of e.fields || []) {
+        const v = noteValue(f, fields)
+        if (v != null) out.push({ kind: 'note', section: e.id, field: f.id, label: resolvePlaceholders(f.label, channel, year, month, lang), text: v })
+      }
+    }
+    return out
+  }
+  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const lit = (x) => resolveTextPlaceholders(x, channel, year, month, lang)
+  const lines = section.lines || []
+  // 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar; metin sınırı summaryAutoText ile
+  // aynı ölçüyle burada da işler (sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz)
+  const kept = []
+  const told = new Set()
+  let len = 0
+  let par = false
+  for (const line of lines) {
+    if (len > MAX_RESOLVED_TEXT) { kept.push(null); continue }
+    const r = summaryLine(line, byId, fields, lang, lit)
+    const ok = r != null && !richBlank(r) && (!isItemLine(line) || isItemLine(r))
+    kept.push(ok ? r : null)
+    if (!ok) continue
+    for (const ref of summaryRefs(line)) told.add(ref.id)
+    const item = isItemLine(line)
+    len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length
+    par = !item
+  }
+  // 2. geçiş: paragraf akışı summaryAutoText ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir
+  const out = []
+  let buf = ''
+  let flushed = 0                        // blok olmuş metnin birleşik uzunluğu ("\n\n" ayraçlar dahil)
+  const joined = () => flushed + (flushed > 0 && buf ? 2 : 0) + buf.length
+  const flush = () => {
+    if (!buf) return
+    flushed = joined()
+    out.push({ kind: 'text', text: buf })
+    buf = ''
+  }
+  const append = (add) => {
+    for (const b of add) {
+      if (b.kind === 'text') flushed += (flushed > 0 ? 2 : 0) + b.text.length
+      out.push(b)
+    }
+  }
+  const placed = new Set()
+  let inParagraph = false
+  for (let i = 0; i < kept.length; i++) {
+    if (joined() > MAX_RESOLVED_TEXT) break
+    let r = kept[i]
+    if (r == null) continue
+    const line = lines[i]
+    const item = isItemLine(line)
+    if (!item && !inParagraph) r = keepParagraph(r)
+    if (item) {
+      if (buf) buf += '\n'
+      buf += r
+      inParagraph = false
+    } else if (inParagraph) {
+      buf += ` ${r}`
+    } else {
+      if (buf) buf += '\n\n'
+      buf += r
+      inParagraph = true
+    }
+    if (!embedded.length) continue
+    const ids = new Set(summaryRefs(line).map((x) => x.id))
+    for (const e of embedded) {
+      if (placed.has(e.id) || !(e.fields || []).some((f) => ids.has(f.id))) continue
+      placed.add(e.id)
+      const add = embeddedBlocks(e, template, fields, told, channel, year, month)
+      if (!add.length) continue                 // eklenecek bir şey yok: paragraf bölünmez
+      flush()
+      append(add)
+      inParagraph = false
+    }
+  }
+  flush()
+  for (const e of embedded) if (!placed.has(e.id)) append(embeddedBlocks(e, template, fields, told, channel, year, month))
+  return capTextBlocks(out, MAX_RESOLVED_TEXT)
+}
+
+/**
+ * Metin sınırı, {@link summaryAutoText} ile aynı ölçüyle (sunucudaki TechErrorSummary.capText): metin blokları "\n\n" ile
+ * birleşik sayılır; birleşik metin sınırı aşarsa kesim noktası capResolved ile aynı (`max − 1`, vekil çiftinin ilk
+ * yarısında bir eksik). Kesim noktasında ya da sonrasında başlayan metin blokları düşer; kalan son metin bloğu kesim
+ * noktasına kadar kalır + "…". Notlar sınıra girmez, hiç düşmez.
+ */
+export function capTextBlocks(blocks, max) {
+  const joined = blocks.filter((b) => b.kind === 'text').map((b) => b.text).join('\n\n')
+  if (joined.length <= max) return blocks
+  let end = max - 1
+  const code = joined.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end--
+  const out = []
+  let start = 0
+  let last = -1
+  let lastStart = 0
+  for (const b of blocks) {
+    if (b.kind !== 'text') { out.push(b); continue }
+    if (start < end) {
+      out.push(b)
+      last = out.length - 1
+      lastStart = start
+    }
+    start += b.text.length + 2
+  }
+  if (last >= 0) {
+    const txt = out[last].text
+    out[last] = { kind: 'text', text: `${txt.slice(0, Math.min(txt.length, end - lastStart))}…` }
+  }
+  return out
+}
+
+/**
  * Özet cümlelerinden hangileri ŞU AN özete girmiyor ve neden: `missing` = dayandığı rakam girilmemiş (alan adları, her
  * alan bir kez), `exempt` = "Hayır" cevabıyla muaf rakama dayanıyor, `broken` = kullanılamayan alana bağlı; `reason`:
  * `removed` (şablonda yok), `notYesNo` (seçim evet/hayır olmayan alanda), `textarea` (uzun açıklama alanı).
@@ -729,6 +929,56 @@ export function imageRows(slots, present = null) {
 
 export function allFields(template) {
   return (template?.sections || []).filter((s) => s.kind === 'metrics').flatMap((s) => s.fields || [])
+}
+
+// ── Özet kartına gömülü bölümler (2026-10-17, kullanıcı kararı) ──────────────────────────────────────────────────────
+//
+// Gösterge bölümünün `host` niteliği aynı şablondaki bir `summary` bölümünün kimliğidir: bölümün alanları raporda o
+// özetin KARTINDA doldurulur, PDF'te ayrı bölüm olarak basılmaz; açıklama alanları ilgili özet cümlesinin altına yazılır.
+// Alanlar yine bir gösterge bölümündedir — değer, hesap, muafiyet, trend, geçmiş hepsi değişmeden çalışır. Sunucudaki
+// TechErrorTemplate.hostOf / embeddedSections ile aynı kural.
+
+/** Bölümün gösterildiği özet bölümü (yalnız gösterge bölümünde ve `host` aynı şablonda bir özet bölümüyse); yoksa null. */
+export function hostOf(template, section) {
+  if (!section || section.kind !== 'metrics' || typeof section.host !== 'string' || !ID_RE.test(section.host)) return null
+  const h = (template?.sections || []).find((s) => s.id === section.host)
+  return h && h.kind === 'summary' ? h : null
+}
+
+/** Bir özet bölümünün kartında gösterilen gösterge bölümleri, şablon sırasıyla. */
+export function embeddedSections(template, summaryId) {
+  if (!summaryId) return []
+  return (template?.sections || []).filter((s) => s.kind === 'metrics' && s.host === summaryId && hostOf(template, s))
+}
+
+/** `host` niteliği olmadan kopya ("ayrı bölüm olarak"). Anahtar hiç yazılmaz — sunucu boş kimliği reddeder. */
+export function withoutHost(section) {
+  return Object.fromEntries(Object.entries(section || {}).filter(([k]) => k !== 'host'))
+}
+
+/**
+ * Bu değişiklikle KALDIRILAN (ya da artık özet olmayan) bir özet bölümünü gösteren `host` bağlarını kaldırır: o bölümler
+ * ayrı bölüm olur (silme onayında söylenir). `prev` verilmezse şablonda özet bölümüne çıkmayan HER bağ kalkar. Önceden
+ * kalan geçersiz bağa (`prev`'de de geçersiz) dokunulmaz — düzenleyici "gösterim yerini seçin" der. Değişiklik yoksa
+ * AYNI nesne döner.
+ */
+export function sanitizeHosts(next, prev = null) {
+  if (!next?.sections) return next
+  const summaries = (tpl) => new Set((tpl?.sections || []).filter((s) => s.kind === 'summary').map((s) => s.id))
+  const now = summaries(next)
+  const before = prev ? summaries(prev) : null
+  let changed = false
+  const sections = next.sections.map((s) => {
+    if (s.host == null || s.host === '') {
+      if ('host' in s) { changed = true; return withoutHost(s) }
+      return s
+    }
+    if (s.kind === 'metrics' && now.has(s.host)) return s
+    if (before && !before.has(s.host)) return s
+    changed = true
+    return withoutHost(s)
+  })
+  return changed ? { ...next, sections } : next
 }
 
 /**
@@ -858,6 +1108,8 @@ export function templateErrors(template) {
         const ce = calcShapeError(f)
         if (ce) errs[`calc:${f.id}`] = ce
       }
+      // Gösterildiği özet bölümü şablonda yok (sunucu katı kayıtta reddeder)
+      if (s.host != null && s.host !== '' && !hostOf(template, s) && !errs[`section:${s.id}`]) errs[`section:${s.id}`] = 'te.err.hostMissing'
     }
     if (s.kind === 'images') {
       if (!(s.slots || []).length) errs[`section:${s.id}`] = 'te.err.noSlots'
@@ -1510,6 +1762,11 @@ export function templateDiff(prev, cur) {
     const section = s.title || ''
     if ((p.title || '') !== section) out.push({ group: 'section', op: 'rename', before: p.title || '', after: section })
     if (p.kind !== s.kind) { out.push({ group: 'section', op: 'retype', label: section, before: p.kind, after: s.kind }); continue }
+    // Gösterim yeri (özet kartı ↔ ayrı bölüm, 2026-10-17): önce / sonra gösterildiği özetin başlığı, ayrı bölümse null
+    if (s.kind === 'metrics' && (p.host || '') !== (s.host || '')) {
+      const hostTitle = (tpl, x) => (x.host ? (hostOf(tpl, x)?.title ?? '') : null)
+      out.push({ group: 'section', op: 'host', label: section, before: hostTitle(prev, p), after: hostTitle(cur, s) })
+    }
     if (s.kind === 'metrics') itemsDiff(out, 'field', section, p.fields, s.fields, moves.field, (a, b) => {
       const r = []
       if ((a.type || '') !== (b.type || '')) r.push({ op: 'retype', before: a.type, after: b.type })
@@ -1590,7 +1847,9 @@ export function reportErrorSection(key, template) {
   const k = String(key || '')
   if (k.startsWith('values.')) {
     const fid = k.slice(7)
-    return (template?.sections || []).find((s) => s.kind === 'metrics' && (s.fields || []).some((f) => f.id === fid))?.id ?? null
+    const sec = (template?.sections || []).find((s) => s.kind === 'metrics' && (s.fields || []).some((f) => f.id === fid))
+    // Özet kartına gömülü bölümün alanı kartın içindedir: hata o özetin (kapalı kartta sayı, kayıtta açılır)
+    return sec ? (hostOf(template, sec)?.id ?? sec.id) : null
   }
   if (k.startsWith('issue:')) {
     const end = k.indexOf(':', 6)

@@ -78,7 +78,7 @@ class TechErrorChangeDiffTest {
         String longNote = "- **Kritik** satır\n" + "x".repeat(400);
         Values b = values(Map.of("fields", Map.of("unmapped-note", "kısa")), TR);
         Values a = values(Map.of("fields", Map.of("unmapped-note", longNote)), TR);
-        Change c = find(TechErrorChangeDiff.diff(TR, b, a, "K", 2026, 9), "Açıklama");
+        Change c = find(TechErrorChangeDiff.diff(TR, b, a, "K", 2026, 9), "hakkında açıklama");
         assertThat(c.type()).isEqualTo("textarea");
         assertThat(c.after()).startsWith("- Kritik satır x").endsWith("…").doesNotContain("**").doesNotContain("\n");
         assertThat(c.after().length()).isEqualTo(TechErrorChangeDiff.PREVIEW + 1);
@@ -129,9 +129,9 @@ class TechErrorChangeDiffTest {
         assertThat(find(r, "Silinecek").op()).isEqualTo("remove");
         assertThat(find(r, "Yeni Konu").op()).isEqualTo("add");
         Change cust = find(r, "Etkilenen müşteri sayısı");
-        assertThat(cust.label()).startsWith("Kart Limiti Konusu ile yaşanan problem · ");
+        assertThat(cust.label()).startsWith("Kart Limiti: Hata Artışı · ");
         assertThat(cust).extracting(Change::before, Change::after).containsExactly("1.200", "1.500");
-        assertThat(find(r, "Ne zaman, nerede").after()).isEqualTo("Güncel açıklama");
+        assertThat(find(r, "Ne oldu?").after()).isEqualTo("Güncel açıklama");
     }
 
     @Test

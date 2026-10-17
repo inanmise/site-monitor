@@ -90,7 +90,9 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         cover(in);
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
-                case "metrics" -> metrics(in, s);
+                // Yönetici özetine gömülü bölüm (2026-10-17) kendi bölümü olarak basılmaz: rakamları özet cümlelerinde,
+                // açıklamaları cümlenin altında (summary)
+                case "metrics" -> { if (TechErrorTemplate.hostOf(in.template(), s) == null) metrics(in, s); }
                 case "issues" -> issues(in, s);
                 case "images" -> images(in, s);
                 case "summary" -> summary(in, s);
@@ -226,12 +228,44 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         c.y -= 8;
     }
 
-    /** Yönetici özeti: kalıplardan üretilen (ya da elle düzenlenen) metin; hiç cümle kalmadıysa bölüm basılmaz. */
+    /** Not etiketiyle notun ilk satırı arasındaki ve not metninin girintisi. */
+    private static final float NOTE_INDENT = 10f;
+    private static final float NOTE_SIZE = 9.5f;
+
+    /**
+     * Yönetici özeti: kalıplardan üretilen (ya da elle düzenlenen) metin; hiç cümle ve not kalmadıysa bölüm basılmaz.
+     * 2026-10-17: özete gömülü bölümlerin açıklamaları ilgili cümlenin hemen altına düşer ({@link TechErrorSummary#blocks}):
+     * küçük kalın başlık = alanın adı (inceleme 2026-10-17: sabit "Açıklama" iki notu ayırt ettirmezdi; ad boşsa "Açıklama",
+     * en çok iki satır) + girintili zengin metin (renkli sol şerit yok). Her blok kendi {@code rich()} çağrısıdır: uzun bir
+     * not sonraki cümleleri kısaltmaz.
+     */
     private void summary(TechErrorPdfInput in, Section s) throws IOException {
-        String text = TechErrorSummary.effective(s, in.template(), in.values(), in.channelName(), in.year(), in.month());
-        if (text == null || text.isBlank()) return;
+        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.channelName(),
+                in.year(), in.month());
+        boolean any = false;
+        for (TechErrorSummary.Block b : blocks) any |= b.note() || !TechErrorRichText.blank(b.text());
+        if (!any) return;
         sectionTitle(in.resolve(s.title()));
-        rich(text, 10f, MARGIN, CONTENT_W, INK);
+        boolean first = true;
+        for (TechErrorSummary.Block b : blocks) {
+            if (b.note()) {
+                if (!first) c.y -= 2;
+                String label = b.label() == null || b.label().isBlank() ? (en ? "Note" : "Açıklama") : b.label();
+                List<String> labelLines = c.wrap(label, CONTENT_W - NOTE_INDENT, c.bold, 8f, 2);
+                c.ensureSpace(11f * labelLines.size() + NOTE_SIZE + 3.5f);   // başlık notun ilk satırıyla aynı sayfada
+                for (String l : labelLines) {
+                    c.text(c.bold, 8f, MARGIN + NOTE_INDENT, c.y, l, LABEL);
+                    c.y -= 11;
+                }
+                rich(b.text(), NOTE_SIZE, MARGIN + NOTE_INDENT, CONTENT_W - NOTE_INDENT, INK);
+                c.y -= 4;
+            } else {
+                if (TechErrorRichText.blank(b.text())) continue;
+                if (!first) c.y -= 4;
+                rich(b.text(), 10f, MARGIN, CONTENT_W, INK);
+            }
+            first = false;
+        }
         c.y -= 10;
     }
 

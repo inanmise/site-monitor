@@ -22,8 +22,8 @@ import {
 import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import {
-  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, errorCountsBySection, normalizeValues, reportErrorSection,
-  fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
+  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
+  reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
@@ -644,7 +644,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // yeni Map olur (her tuşta değil — görsel bölümleri yazarken yeniden çizilmesin)
   // Hiçbir şey çizmeyen bölüm (grafiğe dökülecek alanı olmayan trend) "tümü açık" hesabına girmez
   const draftFields = draft?.fields
+  // Özet kartına gömülü bölüm (2026-10-17) kendi kartı olmadığı için listede yok — özetin kartıyla açılır / kapanır
   const sectionIds = useMemo(() => sections
+    .filter((s) => !hostOf(tpl, s))
     .filter((s) => s.kind !== 'trend'
       || trendRefs(tpl, s).some((r) => r.status === 'ok' && !fieldExempt(r.field, draftFields)))
     .map((s) => s.id), [sections, tpl, draftFields])
@@ -830,6 +832,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       <PendingInputContext.Provider value={setFieldPending}>
       {sections.map((s) => {
         const key = `${s.id}:${gen}`
+        // Özet kartına gömülü bölüm o kartın içinde çizilir (aşağıda SummaryBlock)
+        if (hostOf(tpl, s)) return null
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
             readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
@@ -841,7 +845,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
-            month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText} />
+            month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText}
+            embedded={embeddedSections(tpl, s.id)} fieldValues={draft} uiLang={uiLang} previous={data.previous}
+            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} />
         }
         if (s.kind === 'table') {
           return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}

@@ -210,6 +210,28 @@ const CALC_REPORT = {
   previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 124900000 } },
 }
 let reportOverride = null
+let templateOverride = null
+
+// Özet kartına gömülü bölüm (2026-10-17): map yapılmamış hata adedi + açıklama yönetici özeti kartında girilir; açıklama
+// ilgili cümlenin altında, hiçbir cümlenin başvurmadığı evet/hayır kendi satırında
+const EMBED_TEMPLATE = {
+  ...TEMPLATE,
+  sections: [
+    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: [
+      '{kanal} Kanalı {ay} {yil} verilerine göre teknik hata oranı {f:error-rate} olarak gerçekleşmiştir.',
+      'Map yapılmamış hata adedi {f:unmapped-count} olarak kaydedilmiştir.',
+      'Kapanış cümlesi.',
+    ] },
+    { id: 'unmapped', kind: 'metrics', title: 'Map Yapılmamış Hatalar', host: 'exec', fields: [
+      { id: 'unmapped-count', label: 'Map yapılmamış hata adedi', type: 'number' },
+      { id: 'unmapped-new', label: 'Yeni hata kodu var mı?', type: 'yesno' },
+      { id: 'unmapped-note', label: 'Map yapılmamış hatalar hakkında açıklama', type: 'textarea' },
+    ] },
+    TEMPLATE.sections[1],
+    TEMPLATE.sections[2],
+  ],
+}
+const EMBED_REPORT = { ...REPORT, template: EMBED_TEMPLATE, trend: undefined, values: { fields: { 'error-rate': 0.42 }, issues: {}, texts: {} } }
 
 // Faz B (2026-10-14): değişiklik geçmişi ve şablon sürümleri — gerçek uzunlukta adlar / değerler
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Demirtaş (Dijital Kanallar / Uygulama Geliştirme Yöneticisi)'
@@ -269,6 +291,7 @@ let sends = 0
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
   reportOverride = null
+  templateOverride = null
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -300,7 +323,7 @@ async function mock(page, { openSections = true } = {}) {
       if (req.method() === 'PUT') {
         savedTemplate = { id, ...JSON.parse(req.postData() || '{}') }
         body = { success: true, data: { template: savedTemplate.template, version: 4 } }
-      } else body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), template: TEMPLATE, version: 3 } }
+      } else body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), template: templateOverride || TEMPLATE, version: 3 } }
     } else if (/^\/api\/tech-error-reports\/channels\/(10|20)\/reports$/.test(p)) {
       const id = Number(p.split('/')[4])
       body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), default_period: { year: 2026, month: 9 },
@@ -422,6 +445,62 @@ for (const vp of VIEWPORTS) {
       expect(savedTemplate.template.sections.find((s) => s.id === 'auto-trend').series)
         .toEqual(['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'])
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
+    })
+
+    test('özet kartına gömülü bölümler (2026-10-17): adet ve açıklama özet kartında, açıklama cümlenin altında; şablonda gösterim yeri', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      reportOverride = EMBED_REPORT
+      templateOverride = EMBED_TEMPLATE
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const card = editor.locator('[data-slot="te-summary"]')
+      const emb = card.locator('[data-slot="te-sum-embedded"][data-section="unmapped"]')
+      await expect(emb).toBeVisible({ timeout: 20_000 })
+      await expect(editor.locator('[data-slot="te-metrics"][data-section="unmapped"]')).toHaveCount(0)
+      // Gömülü kart özet kartının içinde
+      const cb = await card.boundingBox()
+      const eb = await emb.boundingBox()
+      expect(eb.x, 'gömülü kart solda içeride').toBeGreaterThanOrEqual(cb.x - 1)
+      expect(eb.x + eb.width, 'gömülü kart sağda içeride').toBeLessThanOrEqual(cb.x + cb.width + 1)
+      // Arayüz dili e2e'de EN (varsayılan): "1.250" EN'de 1,25 okunur — belirsiz olmayan yazım; özet şablon dilinde (TR) biçimler
+      await emb.getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('1250')
+      await expect(card.locator('[data-slot="te-sum-text"]')).toContainText('Map yapılmamış hata adedi 1.250 olarak kaydedilmiştir.')
+      await emb.getByLabel('Map yapılmamış hatalar hakkında açıklama', { exact: true }).fill('Yeni **kodlar** eşlenmedi')
+      await expect(card.locator('[data-slot="te-sum-note"][data-note-field="unmapped-note"]')).toContainText('Yeni kodlar eşlenmedi')
+      // Açıklama cümlenin altında, kapanış cümlesinden önce
+      const parts = card.locator('[data-slot="te-sum-text"] > *')
+      await expect(parts).toHaveCount(3)
+      expect(await parts.evaluateAll((els) => els.map((e) => e.dataset.slot))).toEqual(['te-sum-part', 'te-sum-note', 'te-sum-part'])
+      // Hiçbir cümlenin başvurmadığı evet/hayır kendi satırında (kalın değil)
+      await emb.getByLabel('Yeni hata kodu var mı?', { exact: true }).getByRole('radio', { name: /^(Evet|Yes)$/ }).click()
+      await expect(card.locator('[data-slot="te-sum-text"]')).toContainText('Yeni hata kodu var mı? Evet')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (gömülü)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (gömülü)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (gömülü)').toEqual([])
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.fields?.['unmapped-count']).toBe(1250)
+      expect(savedReport.values.fields).toMatchObject({ 'unmapped-new': true, 'unmapped-note': 'Yeni **kodlar** eşlenmedi' })
+
+      // Şablon düzenleyici: "Gösterim yeri" seçici, rozet, önizlemede özetin altında; "Ayrı bölüm olarak" → host kayda gitmez
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      const tplCard = page.locator('[data-slot="te-tpl-section"][data-section="unmapped"]')
+      await expect(tplCard.locator('[data-slot="te-tpl-section-hosted"]')).toBeVisible({ timeout: 20_000 })
+      const sel = tplCard.locator('[data-slot="te-tpl-host"] select')
+      await expect(sel).toHaveValue('exec')
+      await expect(page.locator('[data-slot="te-tpl-preview-embedded"][data-section="unmapped"]')).toBeVisible()
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon gömülü)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon gömülü)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon gömülü)').toEqual([])
+      await sel.selectOption('')
+      await expect(tplCard.locator('[data-slot="te-tpl-section-hosted"]')).toHaveCount(0)
+      await expect(page.locator('[data-slot="te-tpl-preview-section"][data-section="unmapped"]')).toBeVisible()
+      await page.locator('[data-slot="te-tpl-save"]').click()
+      await expect.poll(() => savedTemplate?.version).toBe(3)
+      expect(savedTemplate.template.sections.find((s) => s.id === 'unmapped')).not.toHaveProperty('host')
+      await page.screenshot({ path: `test-results/channel-reports-embed-${vp.name}.png` })
     })
 
     test('otomatik oranlar (2026-10-16): oranlar adetlerden; adet girişinin altında yüzde; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {

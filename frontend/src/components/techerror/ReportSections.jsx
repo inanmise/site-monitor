@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
   hasAbbreviation, isAmbiguousB, isIncompleteNumber,
-  issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryLinePreview, summaryLineStatus,
+  issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
 import { RichText, RichTextarea } from './RichText.jsx'
@@ -172,111 +172,132 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
   )
 }
 
-export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
+/**
+ * Gösterge ALANI (2026-10-17: MetricsBlock'tan ayrıldı — özet kartına gömülü bölümler de aynı alanı çizer): etiket +
+ * kopyalama, giriş (sayı / yüzde kısaltmalı, evet/hayır, kısa metin, biçimli uzun açıklama) ya da otomatik hesabın
+ * çıktısı, hesap notu, bu adetten türeyen oranlar, ipucu, muafiyet notu, geçen ayın değeri ve alan hatası.
+ * `templateFields`: şablonun bütün alanları (formül adları, türeyen oranlar, bağlı alan sayısı).
+ */
+export function MetricField({ field: f, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
   calc = null }) {
   const t = useT()
-  const byId = new Map((templateFields || section.fields || []).map((x) => [x.id, x]))
-  const labelOf = (fid) => resolve(byId.get(fid)?.label || fid)
-  // Bağlı evet/hayır sorusu "Hayır" olan alan MUAF: sorulmaz (PDF'e de girmez)
-  const fields = (section.fields || []).filter((f) => !fieldExempt(f, values.fields))
-  const exemptCount = (f) => (f.type === 'yesno' && values.fields[f.id] === false
-    ? (templateFields || section.fields || []).filter((x) => x.skip_if_no === f.id).length : 0)
-  const compact = fields.filter((f) => f.type !== 'textarea')
-  const long = fields.filter((f) => f.type === 'textarea')
-  const renderField = (f) => {
-    const id = `te-v-${f.id}`
-    const err = errors[`values.${f.id}`]
-    const hintId = f.hint ? `${id}-h` : undefined
-    const errId = err ? `${id}-e` : undefined
-    // Otomatik hesap (2026-10-16): formül kullanılabiliyorsa alan SORULMAZ, çıktısı gösterilir; kullanılamıyorsa (geçen
-    // ayın raporu yok, formüldeki alan yok) elle girilir — ikisinde de altında açıklama
-    const res = calc?.[f.id] || null
-    const computed = !!res && !CALC_MANUAL.has(res.status)
-    const noteId = res ? `${id}-c` : undefined
-    const describedBy = [hintId, noteId, errId].filter(Boolean).join(' ') || undefined
-    const v = computed ? (res.status === 'OK' ? res.value : null) : values.fields[f.id]
-    let control
-    if (computed) {
-      control = <CalcOutput id={id} field={f} res={res} uiLang={uiLang} describedBy={describedBy} t={t} />
-    } else if (f.type === 'number' || f.type === 'percent') {
-      control = (
-        <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
-          disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
-          onChange={(n) => onField(f.id, n)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
-      )
-    } else if (f.type === 'yesno') {
-      control = (
-        <ToggleGroup id={id} type="single" variant="outline" disabled={readOnly} value={v === true ? 'yes' : v === false ? 'no' : ''}
-          aria-describedby={describedBy} aria-label={resolve(f.label)}
-          onValueChange={(x) => onField(f.id, x === 'yes' ? true : x === 'no' ? false : null)}>
-          <ToggleGroupItem value="yes" className="px-4 pointer-coarse:min-h-10">{t('te.yes')}</ToggleGroupItem>
-          <ToggleGroupItem value="no" className="px-4 pointer-coarse:min-h-10">{t('te.no')}</ToggleGroupItem>
-        </ToggleGroup>
-      )
-    } else if (f.type === 'text') {
-      control = (
-        <Input id={id} className="pointer-coarse:h-10" value={v ?? ''} disabled={readOnly} maxLength={LIMITS.shortText} aria-describedby={describedBy}
-          aria-invalid={err ? true : undefined}
-          onChange={(e) => onField(f.id, e.target.value === '' ? null : e.target.value)} />
-      )
-    } else {
-      control = (
-        <RichTextarea id={id} value={v ?? ''} disabled={readOnly} rows={3} maxLength={LIMITS.longText} describedBy={describedBy}
-          invalid={err ? true : undefined} label={resolve(f.label)} onChange={(x) => onField(f.id, x === '' ? null : x)} />
-      )
-    }
-    return (
-      <div key={f.id} className={cn('flex min-w-0 flex-col gap-1.5', f.type === 'textarea' && 'sm:col-span-2 lg:col-span-3')}
-        data-field={`values.${f.id}`} data-slot="te-value">
-        <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
-          <label htmlFor={f.type === 'yesno' && !computed ? undefined : id} id={`${id}-l`} className="inline text-sm font-semibold leading-snug">
-            {resolve(f.label)}
-          </label>
-          <CopyTextButton text={resolve(f.label)} />
-        </div>
-        {control}
-        {res && (
-          <p id={noteId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-note" data-status={res.status}>
-            {calcNoteText(f, res, labelOf, previous, t)}
-          </p>
-        )}
-        {/* Bu adetten türeyen oranlar girişin hemen altında (2026-10-16, kullanıcı isteği: "kota / map yapılmamış hata adedi
-            girişinde yüzde de görünsün") — canlı, aşağıdaki oran bölümüyle aynı sonuç */}
-        {f.type === 'number' && derivedRates(templateFields || section.fields, f.id)
-          .filter((d) => !fieldExempt(d, values.fields) && calc?.[d.id] && !CALC_MANUAL.has(calc[d.id].status))
-          .map((d) => {
-            const r = calc[d.id]
-            return (
-              <p key={d.id} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-derived" data-rate={d.id}>
-                {resolve(d.label)}: <span className="font-semibold text-foreground tabular-nums">
-                  {r.status === 'OK' ? formatPercent(r.value, uiLang) : '—'}
-                </span>
-              </p>
-            )
-          })}
-        {f.hint && <p id={hintId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(f.hint)}</p>}
-        {exemptCount(f) > 0 && (
-          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-exempt-note" role="status">
-            {t('te.exemptNote', exemptCount(f))}
-          </p>
-        )}
-        <PreviousHint field={f} prev={previous?.fields?.[f.id]} cur={v} previous={previous} uiLang={uiLang} t={t} />
-        {err && <p id={errId} className="text-sm text-destructive" role="alert">{err}</p>}
-      </div>
+  const all = templateFields || []
+  const labelOf = (fid) => resolve(all.find((x) => x.id === fid)?.label || fid)
+  const exemptCount = f.type === 'yesno' && values.fields[f.id] === false ? all.filter((x) => x.skip_if_no === f.id).length : 0
+  const id = `te-v-${f.id}`
+  const err = errors[`values.${f.id}`]
+  const hintId = f.hint ? `${id}-h` : undefined
+  const errId = err ? `${id}-e` : undefined
+  // Otomatik hesap (2026-10-16): formül kullanılabiliyorsa alan SORULMAZ, çıktısı gösterilir; kullanılamıyorsa (geçen
+  // ayın raporu yok, formüldeki alan yok) elle girilir — ikisinde de altında açıklama
+  const res = calc?.[f.id] || null
+  const computed = !!res && !CALC_MANUAL.has(res.status)
+  const noteId = res ? `${id}-c` : undefined
+  const describedBy = [hintId, noteId, errId].filter(Boolean).join(' ') || undefined
+  const v = computed ? (res.status === 'OK' ? res.value : null) : values.fields[f.id]
+  let control
+  if (computed) {
+    control = <CalcOutput id={id} field={f} res={res} uiLang={uiLang} describedBy={describedBy} t={t} />
+  } else if (f.type === 'number' || f.type === 'percent') {
+    control = (
+      <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
+        disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
+        onChange={(n) => onField(f.id, n)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
     )
-  }
-  if (fields.length === 0) {
-    // Bölümün tüm alanları "Hayır" cevabıyla muaf: boş kart yerine kısa not (PDF'te bölüm hiç basılmaz)
-    return (
-      <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
-        <p className="text-sm text-muted-foreground" data-slot="te-section-exempt">{t('te.sectionExempt')}</p>
-      </SectionShell>
+  } else if (f.type === 'yesno') {
+    control = (
+      <ToggleGroup id={id} type="single" variant="outline" disabled={readOnly} value={v === true ? 'yes' : v === false ? 'no' : ''}
+        aria-describedby={describedBy} aria-label={resolve(f.label)}
+        onValueChange={(x) => onField(f.id, x === 'yes' ? true : x === 'no' ? false : null)}>
+        <ToggleGroupItem value="yes" className="px-4 pointer-coarse:min-h-10">{t('te.yes')}</ToggleGroupItem>
+        <ToggleGroupItem value="no" className="px-4 pointer-coarse:min-h-10">{t('te.no')}</ToggleGroupItem>
+      </ToggleGroup>
+    )
+  } else if (f.type === 'text') {
+    control = (
+      <Input id={id} className="pointer-coarse:h-10" value={v ?? ''} disabled={readOnly} maxLength={LIMITS.shortText} aria-describedby={describedBy}
+        aria-invalid={err ? true : undefined}
+        onChange={(e) => onField(f.id, e.target.value === '' ? null : e.target.value)} />
+    )
+  } else {
+    control = (
+      <RichTextarea id={id} value={v ?? ''} disabled={readOnly} rows={3} maxLength={LIMITS.longText} describedBy={describedBy}
+        invalid={err ? true : undefined} label={resolve(f.label)} onChange={(x) => onField(f.id, x === '' ? null : x)} />
     )
   }
   return (
+    <div className={cn('flex min-w-0 flex-col gap-1.5', f.type === 'textarea' && 'sm:col-span-2 lg:col-span-3')}
+      data-field={`values.${f.id}`} data-slot="te-value">
+      <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
+        <label htmlFor={f.type === 'yesno' && !computed ? undefined : id} id={`${id}-l`} className="inline text-sm font-semibold leading-snug">
+          {resolve(f.label)}
+        </label>
+        <CopyTextButton text={resolve(f.label)} />
+      </div>
+      {control}
+      {res && (
+        <p id={noteId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-note" data-status={res.status}>
+          {calcNoteText(f, res, labelOf, previous, t)}
+        </p>
+      )}
+      {/* Bu adetten türeyen oranlar girişin hemen altında (2026-10-16, kullanıcı isteği: "kota / map yapılmamış hata adedi
+          girişinde yüzde de görünsün") — canlı, oran bölümüyle aynı sonuç */}
+      {f.type === 'number' && derivedRates(all, f.id)
+        .filter((d) => !fieldExempt(d, values.fields) && calc?.[d.id] && !CALC_MANUAL.has(calc[d.id].status))
+        .map((d) => {
+          const r = calc[d.id]
+          return (
+            <p key={d.id} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-derived" data-rate={d.id}>
+              {resolve(d.label)}: <span className="font-semibold text-foreground tabular-nums">
+                {r.status === 'OK' ? formatPercent(r.value, uiLang) : '—'}
+              </span>
+            </p>
+          )
+        })}
+      {f.hint && <p id={hintId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(f.hint)}</p>}
+      {exemptCount > 0 && (
+        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-exempt-note" role="status">
+          {t('te.exemptNote', exemptCount)}
+        </p>
+      )}
+      <PreviousHint field={f} prev={previous?.fields?.[f.id]} cur={v} previous={previous} uiLang={uiLang} t={t} />
+      {err && <p id={errId} className="text-sm text-destructive" role="alert">{err}</p>}
+    </div>
+  )
+}
+
+/**
+ * Bir gösterge bölümünün alanları: kısa alanlar ızgarada (telefonda tek, 640+ iki, 1024+ üç kolon), uzun açıklamalar tam
+ * satır. "Hayır" cevabıyla muaf alanlar çizilmez; bölümün bütün alanları muafsa `te.sectionExempt` notu (PDF'te bölüm
+ * hiç basılmaz). `columns`: kısa alan ızgarasının en çok kolonu (özet kartının içinde 2 — kart dar kalabilir).
+ */
+export function MetricFieldsGrid({ section, values, templateFields, columns = 3, ...rest }) {
+  const t = useT()
+  // Bağlı evet/hayır sorusu "Hayır" olan alan MUAF: sorulmaz (PDF'e de girmez)
+  const fields = (section.fields || []).filter((f) => !fieldExempt(f, values.fields))
+  if (fields.length === 0) {
+    return <p className="m-0 text-sm text-muted-foreground" data-slot="te-section-exempt">{t('te.sectionExempt')}</p>
+  }
+  const all = templateFields || section.fields || []
+  const compact = fields.filter((f) => f.type !== 'textarea')
+  const long = fields.filter((f) => f.type === 'textarea')
+  const one = (f) => <MetricField key={f.id} field={f} values={values} templateFields={all} {...rest} />
+  return (
+    <>
+      {compact.length > 0 && (
+        <div className={cn('grid gap-4 sm:grid-cols-2', columns > 2 && 'lg:grid-cols-3')}>{compact.map(one)}</div>
+      )}
+      {long.length > 0 && <div className="grid gap-4">{long.map(one)}</div>}
+    </>
+  )
+}
+
+export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
+  calc = null }) {
+  return (
     <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
-      {compact.length > 0 && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{compact.map(renderField)}</div>}
-      {long.length > 0 && <div className="grid gap-4">{long.map(renderField)}</div>}
+      <MetricFieldsGrid section={section} values={values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
+        errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} />
     </SectionShell>
   )
 }
@@ -440,12 +461,15 @@ function focusValueField(fieldId) {
  * çevirir; elle düzenlenirken güncel otomatik metin açılır kutuda görülür (farklıysa söylenir); "Otomatik metne dön"
  * kopyayı siler (onayla). Boş bırakılan elle metin kayıtta otomatiğe döner (özet kilitlenmez).
  */
-export function SummaryBlock({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText }) {
+export function SummaryBlock({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText,
+  embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const override = values.texts[section.id]
   const manual = override != null
   const auto = summaryAutoText(section, template, values.fields, channelName, year, month)
+  // Önizleme PDF'teki gibi bloklardan: gömülü bölümlerin açıklamaları ilgili cümlenin altında (2026-10-17)
+  const blocks = manual ? null : summaryBlocks(template, section, values.fields, values.texts, channelName, year, month)
   const status = summaryLineStatus(section, template, values.fields)
   const pending = status.filter((x) => x.state === 'missing')
   const broken = status.filter((x) => x.state === 'broken')
@@ -493,6 +517,10 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
         <div className="flex flex-col gap-1.5" data-field={`text.${section.id}`}>
           <label htmlFor={id} className="sr-only">{resolve(section.title)}</label>
           {!readOnly && <p className="m-0 text-sm text-muted-foreground" data-slot="te-sum-manual-note">{t('te.sum.manualNote')}</p>}
+          {/* Gömülü bölüm varken (2026-10-17): elle metne söylenmemiş değer eklenmez, notlar yine altına gelir — kullanıcı bilsin */}
+          {!readOnly && embedded.length > 0 && (
+            <p className="m-0 text-sm text-muted-foreground" data-slot="te-sum-manual-embedded">{t('te.sum.manualEmbedded')}</p>
+          )}
           <RichTextarea id={id} rows={6} value={override} disabled={readOnly} maxLength={MAX_RESOLVED_TEXT} autoFocus={justEdited}
             label={resolve(section.title)} invalid={err ? true : undefined} describedBy={errId} onChange={(x) => onText(section.id, x)} />
           {!readOnly && richBlank(override) && <p className="m-0 text-sm text-muted-foreground" role="status">{t('te.sum.blankNote')}</p>}
@@ -515,8 +543,10 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
             </Collapsible>
           )}
         </div>
-      ) : auto ? (
-        <RichText text={auto} className="rounded-lg border bg-muted/30 p-3 text-base sm:p-4" slot="te-sum-text" />
+      ) : blocks.length === 1 && blocks[0].kind === 'text' ? (
+        <RichText text={blocks[0].text} className="rounded-lg border bg-muted/30 p-3 text-base sm:p-4" slot="te-sum-text" />
+      ) : blocks.length > 0 ? (
+        <SummaryPreview blocks={blocks} t={t} />
       ) : (
         <p className="m-0 rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-slot="te-sum-empty">{t('te.sum.empty')}</p>
       )}
@@ -564,7 +594,45 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
           ))}
         </div>
       )}
+      {embedded.length > 0 && (
+        // Özet kartına gömülü gösterge bölümleri (2026-10-17, kullanıcı kararı): map yapılmamış / kota hataları gibi
+        // adet + açıklama burada girilir; alanlar ayrı bölümdeki gibi çalışır (kısaltma, hesap, geçen ay, hata)
+        <div className="flex min-w-0 flex-col gap-3 border-t pt-4" data-slot="te-sum-embedded-list" role="group" aria-labelledby={`${id}-emb`}>
+          <p id={`${id}-emb`} className="m-0 text-sm font-medium text-muted-foreground">{t('te.sum.embeddedTitle')}</p>
+          {embedded.map((e) => (
+            <div key={e.id} className="flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:p-4" data-slot="te-sum-embedded" data-section={e.id}>
+              <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
+                <h4 className="inline text-sm font-semibold leading-snug" data-slot="te-sum-embedded-title">{resolve(e.title)}</h4>
+                <CopyTextButton text={resolve(e.title)} />
+              </div>
+              <MetricFieldsGrid section={e} values={fieldValues || values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
+                errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} columns={2} />
+            </div>
+          ))}
+        </div>
+      )}
     </SectionShell>
+  )
+}
+
+/**
+ * Özetin önizlemesi, PDF'teki sırayla: metin parçaları ve gömülü bölümlerin açıklamaları (küçük kalın "Açıklama"
+ * etiketi + biçimli metin, hafif içeriden — renkli şerit yok). Tek metin bloğu (gömülü bölüm yok) bu bileşeni kullanmaz.
+ */
+function SummaryPreview({ blocks, t }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 p-3 text-base sm:p-4" data-slot="te-sum-text">
+      {blocks.map((b, i) => (b.kind === 'text' ? (
+        <RichText key={i} text={b.text} slot="te-sum-part" />
+      ) : (
+        <div key={i} className="flex min-w-0 flex-col gap-0.5 ps-3 text-[0.95rem]" data-slot="te-sum-note" data-note-field={b.field}>
+          {/* Notun başlığı alanın adıdır (inceleme 2026-10-17: ekip herhangi bir bölümü gömebilir — sabit "Açıklama" iki
+              notu ayırt ettirmiyordu); ad boşsa "Açıklama" */}
+          <span className="text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">{b.label || t('te.sum.note')}</span>
+          <RichText text={b.text} />
+        </div>
+      )))}
+    </div>
   )
 }
 
