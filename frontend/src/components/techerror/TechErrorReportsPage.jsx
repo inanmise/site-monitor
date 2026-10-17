@@ -7,8 +7,14 @@ import {
   TAB_REPORTS, TAB_TEMPLATE, TE_CHANNEL, TE_REPORT, TE_TAB, TE_TEAM, TE_VIEW, VIEW_CHANNEL, VIEW_CHANNELS, VIEW_REPORT,
 } from './techErrorModel.js'
 import { REPORT_LIST_KEYS } from './channelListModel.js'
+import { SENDLOG_KEYS, TAB_SENDLOG } from './sendModel.js'
 
 const ID_RE = /^[1-9][0-9]{0,17}$/
+
+/** Kanal sekmesi: şablon, gönderim günlüğü (R18 / E22) ya da raporlar (bilinmeyen değer = raporlar). */
+function tabOf(v) {
+  return v === TAB_TEMPLATE || v === TAB_SENDLOG ? v : TAB_REPORTS
+}
 
 function readId(key) {
   const v = readUrlParam(key, '')
@@ -33,31 +39,34 @@ function readInitial() {
  *
  * <p><b>URL:</b> `te_view` (channel | report), `te_ch` kanal, `te_tab=template` şablon sekmesi, `te_rep` rapor,
  * `te_team` liste süzgeci; kanal listesi `te_q` / `te_st` / `te_sort` / `te_page` / `te_ps`, kanalın rapor listesi
- * `te_rq` / `te_rst` / `te_ry` / `te_rpage` / `te_rps` (8. sürüm, 2026-10-17) — her görünüm bağlantıyla paylaşılabilir.
+ * `te_rq` / `te_rst` / `te_ry` / `te_rpage` / `te_rps` (8. sürüm, 2026-10-17), gönderim günlüğü `te_tab=sendlog` +
+ * `te_slp` / `te_slps` / `te_slk` / `te_sls` (R18, 2026-10-18) — her görünüm bağlantıyla paylaşılabilir.
  * Kapsamı sunucu belirler.
  */
 export default function TechErrorReportsPage() {
   const [nav, setNav] = useState(readInitial)
-  const [tab, setTab] = useState(() => (readUrlParam(TE_TAB, '') === TAB_TEMPLATE ? TAB_TEMPLATE : TAB_REPORTS))
+  const [tab, setTab] = useState(() => tabOf(readUrlParam(TE_TAB, '')))
   const [team, setTeam] = useState(() => readId(TE_TEAM))
 
   useUrlQuerySync({
     [TE_VIEW]: nav.view === VIEW_CHANNELS ? null : nav.view,
     [TE_CHANNEL]: nav.view === VIEW_CHANNELS ? null : nav.channel,
     [TE_REPORT]: nav.view === VIEW_REPORT ? nav.report : null,
-    [TE_TAB]: nav.view === VIEW_CHANNEL && tab === TAB_TEMPLATE ? TAB_TEMPLATE : null,
+    [TE_TAB]: nav.view === VIEW_CHANNEL && tab !== TAB_REPORTS ? tab : null,
     [TE_TEAM]: nav.view === VIEW_CHANNELS && team ? team : null,
     // Kanal görünümünden ÇIKINCA (kanallar listesi) rapor listesi süzgeçleri silinir — başka bir kanala eski arama / yıl
     // taşınmasın; rapora inip kanala dönünce korunur (8. sürüm). Kanal listesinin süzgeçleri (te_q / te_st / te_sort /
     // te_page / te_ps) silinmez: kanaldan dönünce liste aynı kalır.
     ...(nav.view === VIEW_CHANNELS ? Object.fromEntries(REPORT_LIST_KEYS.map((k) => [k, null])) : {}),
+    // Gönderim günlüğünün sayfa / süzgeç anahtarları (R18 / E22) yalnız o sekme açıkken yaşar (günlük kendisi yazar)
+    ...(nav.view === VIEW_CHANNEL && tab === TAB_SENDLOG ? {} : Object.fromEntries(SENDLOG_KEYS.map((k) => [k, null]))),
   })
 
   // Görünüm değişmeden önce bekleyen (300 ms gecikmeli) adres yazımları uygulanır: aramayı yazıp hemen kanala giren kullanıcı
   // dönüşte aynı listeyi bulur; eski görünümün kapanması yazımı düşürüyordu (e2e, 8. sürüm)
   const openChannel = useCallback((id, which = TAB_REPORTS) => {
     flushUrlQuerySync()
-    setTab(which === TAB_TEMPLATE ? TAB_TEMPLATE : TAB_REPORTS)
+    setTab(tabOf(which))
     setNav({ view: VIEW_CHANNEL, channel: String(id), report: null })
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
   }, [])

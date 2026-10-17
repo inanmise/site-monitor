@@ -297,6 +297,23 @@ function EventBody({ kind, detail: d, uiLang }) {
             {t('te.hist.recipients', to.join(', '))}{extra > 0 ? ` ${t('te.hist.recipientsMore', extra)}` : ''}
           </p>
         )}
+        {/* R18: yalnız paylaşımla okuyan adresleri değil sayıyı görür (sunucu `recipients`'i vermez) */}
+        {to.length === 0 && Number(d.recipient_count) > 0 && (
+          <p className="m-0 text-xs text-muted-foreground" data-slot="te-history-send-count">
+            {t('te.hist.recipientCount', formatNumber(Number(d.recipient_count), uiLang))}
+          </p>
+        )}
+        {/* R18 / C13: bu gönderime eklenen ek Bilgi (CC) — adresler ya da (paylaşımla okuyana) yalnız sayı */}
+        {Array.isArray(d.extra_cc) && d.extra_cc.length > 0 && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-history-send-extra-cc">
+            {t('te.hist.extraCc', d.extra_cc.join(', '))}
+          </p>
+        )}
+        {!Array.isArray(d.extra_cc) && Number(d.extra_cc_count) > 0 && (
+          <p className="m-0 text-xs text-muted-foreground" data-slot="te-history-send-extra-cc">
+            {t('te.hist.extraCcCount', formatNumber(Number(d.extra_cc_count), uiLang))}
+          </p>
+        )}
         {/* A3 (2026-10-17): alıcı kaynağında sınırın (20) dışında kalan adresler posta ALMADI — gönderim bunu geçmişe yazar */}
         {Number(d.dropped_recipients) > 0 && (
           <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-history-send-dropped">
@@ -327,6 +344,11 @@ function EventBody({ kind, detail: d, uiLang }) {
           data-slot="te-history-approval-state" data-state={state}>{t(`te.hist.appr.${state}`)}</Badge>
         {via && <p className="m-0 text-xs text-muted-foreground">{t(`te.hist.appr.via.${via}`)}</p>}
         {d.note && <p className="m-0 text-xs [overflow-wrap:anywhere]" data-slot="te-history-approval-note">{t('te.appr.note')}: {d.note}</p>}
+        {to.length === 0 && Number(d.recipient_count) > 0 && (
+          <p className="m-0 text-xs text-muted-foreground" data-slot="te-history-approval-count">
+            {t('te.hist.recipientCount', formatNumber(Number(d.recipient_count), uiLang))}
+          </p>
+        )}
         {to.length > 0 && (
           <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.hist.recipients', to.join(', '))}</p>
         )}

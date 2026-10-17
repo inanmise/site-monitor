@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Search, Trash2, X } from 'lucide-react'
+import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, MailCheck, Plus, Search, Trash2, Users, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -21,6 +21,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import TemplateEditor from './TemplateEditor.jsx'
+import SendLogView from './SendLogView.jsx'
+import { TAB_SENDLOG } from './sendModel.js'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
 import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
@@ -211,12 +213,16 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
       )}
 
       <Tabs value={tab} onValueChange={(v) => guardLeave(() => onTabChange(v))} className="gap-4">
-        <TabsList className="w-full sm:w-fit">
+        <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto sm:w-fit">
           <TabsTrigger value={TAB_REPORTS} className="pointer-coarse:min-h-10" data-slot="te-tab-reports">
             <FileText aria-hidden="true" /> {t('te.tab.reports')}
           </TabsTrigger>
           <TabsTrigger value={TAB_TEMPLATE} className="pointer-coarse:min-h-10" data-slot="te-tab-template">
             <LayoutTemplate aria-hidden="true" /> {t('te.tab.template')}
+          </TabsTrigger>
+          {/* Gönderim günlüğü (R18 / E22): kanalın rapor / test / onay / hatırlatma postaları — her okuyana */}
+          <TabsTrigger value={TAB_SENDLOG} className="pointer-coarse:min-h-10" data-slot="te-tab-sendlog">
+            <MailCheck aria-hidden="true" /> {t('te.tab.sendlog')}
           </TabsTrigger>
         </TabsList>
 
@@ -370,6 +376,10 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
           {tab === TAB_TEMPLATE && (
             <TemplateEditor channelId={channelId} onDirtyChange={setTemplateDirty} onSaved={load} />
           )}
+        </TabsContent>
+
+        <TabsContent value={TAB_SENDLOG}>
+          {tab === TAB_SENDLOG && <SendLogView channelId={channelId} />}
         </TabsContent>
       </Tabs>
 

@@ -107,4 +107,40 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
             FROM NotificationLog n WHERE n.alertEventId = :alertEventId ORDER BY n.sentAt DESC, n.id DESC
             """)
     List<Object[]> findChainRows(@Param("alertEventId") Long alertEventId);
+
+    /**
+     * Kanal teknik hata raporu gönderim günlüğü (2026-10-18, R18 / E22): kanalın bağlı satırları ({@code techErrorChannelId}),
+     * verilen tetikleyicilerle, durum sınıfı süzgeciyle (all | sent | queued | skipped | failed —
+     * {@code TechErrorReportSender.classify} ile aynı kural), en yeni önce. Gövdesiz. Sıra: id, sentAt, trigger,
+     * recipientRole, emailStatus, recipientEmail, cc, techErrorReportId. Tetikleyici süzgeci {@code idx_nl_trigger_sent}
+     * ile daralır (teknik hata satırları tablonun küçük bir parçası).
+     */
+    @Query("""
+            SELECT n.id, n.sentAt, n.trigger, n.recipientRole, n.emailStatus, n.recipientEmail, n.cc, n.techErrorReportId
+            FROM NotificationLog n
+            WHERE n.techErrorChannelId = :channelId AND n.trigger IN :triggers
+              AND (:cls = 'all'
+                OR (:cls = 'sent' AND n.emailStatus = 'SENT')
+                OR (:cls = 'queued' AND n.emailStatus LIKE 'QUEUED_RETRY%')
+                OR (:cls = 'skipped' AND n.emailStatus LIKE 'SKIPPED%')
+                OR (:cls = 'failed' AND (n.emailStatus IS NULL OR (n.emailStatus <> 'SENT'
+                    AND n.emailStatus NOT LIKE 'QUEUED_RETRY%' AND n.emailStatus NOT LIKE 'SKIPPED%'))))
+            ORDER BY n.id DESC
+            """)
+    List<Object[]> findTechErrorSendLog(@Param("channelId") Long channelId, @Param("triggers") Collection<String> triggers,
+                                        @Param("cls") String cls, Pageable pageable);
+
+    /** {@link #findTechErrorSendLog} ile aynı süzgecin toplamı (sayfalama). */
+    @Query("""
+            SELECT COUNT(n) FROM NotificationLog n
+            WHERE n.techErrorChannelId = :channelId AND n.trigger IN :triggers
+              AND (:cls = 'all'
+                OR (:cls = 'sent' AND n.emailStatus = 'SENT')
+                OR (:cls = 'queued' AND n.emailStatus LIKE 'QUEUED_RETRY%')
+                OR (:cls = 'skipped' AND n.emailStatus LIKE 'SKIPPED%')
+                OR (:cls = 'failed' AND (n.emailStatus IS NULL OR (n.emailStatus <> 'SENT'
+                    AND n.emailStatus NOT LIKE 'QUEUED_RETRY%' AND n.emailStatus NOT LIKE 'SKIPPED%'))))
+            """)
+    long countTechErrorSendLog(@Param("channelId") Long channelId, @Param("triggers") Collection<String> triggers,
+                               @Param("cls") String cls);
 }

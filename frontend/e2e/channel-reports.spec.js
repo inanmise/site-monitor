@@ -322,9 +322,23 @@ let testMails = 0               // "Bana test gönder" (R13): rapor gönderimi D
 let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
 let previewBodies = []          // şablon önizleme PDF'i (R19): gönderilen taslaklar
+let sendBodies = []             // R18 / C13: gönderim gövdeleri (ek Bilgi yoksa gövde yok → null)
+let sendLogCalls = []           // R18 / E22: gönderim günlüğü istekleri (sorgu dizgeleri)
+// Uzun alıcı listesi (sararak TAM yazılmalı): gerçek uzunlukta kurumsal adresler
+const SENDLOG_LONG_TO = Array.from({ length: 9 }, (_, i) => `dijital.kanallar.uygulama.gelistirme.${i}@ornek-kurum-bilgi-teknolojileri.example.com`)
+const SENDLOG_ROWS = [
+  { id: 3, at: '2026-10-13T08:00:00Z', kind: 'report', trigger: 'TECH_ERROR_REPORT', role: 'TEAM', status: 'sent', status_text: 'SENT',
+    report_id: 100, year: 2026, month: 9, to: SENDLOG_LONG_TO, cc: ['ek.bilgi.adresi@ornek-kurum-bilgi-teknolojileri.example.com'], to_count: 9, cc_count: 1 },
+  { id: 2, at: '2026-10-12T08:00:00Z', kind: 'test', trigger: 'TECH_ERROR_REPORT_TEST', role: 'SELF', status: 'failed',
+    status_text: 'FAILED: 550 5.1.1 alıcı posta kutusu bulunamadı — kurumsal ağ geçidi iletiyi reddetti', report_id: 100, year: 2026, month: 9,
+    to: ['ayse.yilmaz@example.com'], cc: [], to_count: 1, cc_count: 0 },
+  { id: 1, at: '2026-10-11T08:00:00Z', kind: 'approval', trigger: 'TECH_ERROR_APPROVAL', role: 'APPROVER', status: 'queued',
+    status_text: 'QUEUED_RETRY: 421', report_id: null, year: null, month: null, to: ['mehmet.kaya@example.com'], cc: [], to_count: 1, cc_count: 0 },
+]
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []
+  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
+  sendLogCalls = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -419,8 +433,22 @@ async function mock(page, { openSections = true } = {}) {
       testMails++
       body = { success: true, data: { sent_to: 'ayse.yilmaz@example.com', status: 'SENT' } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
+      const sent = req.postData() ? JSON.parse(req.postData()) : null
+      sendBodies.push(sent)
+      // R18 / C13: sunucunun ek Bilgi alan hatası (Bilgi toplamı 20'yi aşıyor) — `reddet@` adresiyle tetiklenir
+      if (sent?.extra_cc && sent.extra_cc.includes('reddet@')) {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'VALIDATION_FAILED',
+          field: 'extra_cc', fields: { extra_cc: 'x' },
+          error: 'Bilgi (CC) listesi en çok 20 adres olabilir: takımın Bilgi listesinde 19 adres var, 2 ek adresle 21 oluyor. Ek adresleri 1 adrese indirin.' }) })
+        return
+      }
       sends++
-      body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
+      body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], cc: sent?.extra_cc ? sent.extra_cc.split(', ') : [],
+        subject: 'x', pdf_bytes: 1000 } }
+    } else if (p === '/api/tech-error-reports/channels/10/send-log') {
+      sendLogCalls.push(new URL(req.url()).search)
+      body = { success: true, data: { rows: SENDLOG_ROWS, total: SENDLOG_ROWS.length, page: 0, size: 25, total_pages: 1, kind: 'all',
+        status: 'all', recipients_hidden: false } }
     } else if (p === '/api/tech-error-reports/reports/100/approval/request') {
       approvalRequests++
       body = { success: true, data: { state: 'pending', approvers: [{ name: 'Mehmet Kaya', has_email: true }], mailed: 1, failed: 0,
@@ -1424,6 +1452,88 @@ for (const vp of VIEWPORTS) {
       await expect(confirm).toBeVisible()
       await confirm.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
       await expect.poll(() => sends).toBe(1)
+    })
+
+    test('R18: gönderim penceresinde ek Bilgi (CC) — istemci ve sunucu alan hatası alanın altında, gövdede yalnız extra_cc; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-send"]').click()
+      const dlg = page.locator('[data-slot="te-send-dialog"]')
+      await expect(dlg).toBeVisible()
+      await expect(dlg.getByRole('heading', { name: /Rapor takıma gönderilsin mi\?|Send the report to the team\?/ })).toBeVisible()
+      const cc = dlg.locator('[data-slot="te-send-extra-cc"]')
+      await expect(cc).toBeVisible()
+      await expect(dlg).toContainText(/en çok 10 adres|at most 10 addresses/)
+      const box = await dlg.boundingBox()
+      expect(box.x, 'pencere solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, 'pencere ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      // İstemci denetimi: geçersiz adres alanın altında, istek gitmez
+      await cc.fill('ek@example.com, bozuk-adres')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect(dlg).toContainText(/bozuk-adres/)
+      await expect(cc).toHaveAttribute('aria-invalid', 'true')
+      expect(sendBodies, 'geçersiz giriş gönderilmez').toHaveLength(0)
+      // Sunucunun alan hatası (Bilgi toplamı 20'yi aşıyor): pencere açık, metin alanın altında, yazılan korunur
+      await cc.fill('reddet@example.com, iki@example.com')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect(dlg).toContainText('Bilgi (CC) listesi en çok 20 adres olabilir')
+      await expect(dlg).toBeVisible()
+      await expect(cc).toHaveValue('reddet@example.com, iki@example.com')
+      expect(sends).toBe(0)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, '[data-slot="te-send-dialog"]'), 'kırpılan metin (gönderim penceresi)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-send-dialog"]'), 'küçük hedef (gönderim penceresi)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-send-dialog-${vp.name}.png`, fullPage: false })
+      // Geçerli adresler: gövdede yalnız tekilleşmiş extra_cc
+      await cc.fill('ek@example.com; iki@example.com EK@example.com')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect.poll(() => sends).toBe(1)
+      expect(sendBodies[sendBodies.length - 1]).toEqual({ extra_cc: 'ek@example.com, iki@example.com' })
+      await expect(dlg).toHaveCount(0)
+      await expect(page.getByText(/Bilgi \(CC\): ek@example\.com, iki@example\.com|CC: ek@example\.com, iki@example\.com/)).toBeVisible()
+      expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+    })
+
+    test('R18: kanal gönderim günlüğü — sekme, tablo (1280) / kart (390), uzun alıcı listesi sararak tam, durum metni; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
+      const tab = page.locator('[data-slot="te-tab-sendlog"]')
+      await expect(tab).toBeVisible({ timeout: 20_000 })
+      await tab.click()
+      const log = page.locator('[data-slot="te-sendlog"]')
+      await expect(log).toBeVisible()
+      await expect(log.locator('[data-slot="te-sendlog-row"]')).toHaveCount(3)
+      await expect.poll(() => page.evaluate(() => window.location.search)).toContain('te_tab=sendlog')
+      expect(sendLogCalls[0]).toContain('page=0')
+      expect(sendLogCalls[0]).toContain('size=25')
+      if (vp.width >= 1280) await expect(log).toHaveAttribute('data-layout', 'table')
+      if (vp.width < 640) await expect(log).toHaveAttribute('data-layout', 'cards')
+      // Uzun alıcı listesi kırpılmadan TAM ve sarılır; tablo kabı yatayda kaymaz
+      const first = log.locator('[data-slot="te-sendlog-row"]').first()
+      await expect(first.locator('[data-slot="te-sendlog-recipients"]')).toContainText(SENDLOG_LONG_TO[SENDLOG_LONG_TO.length - 1])
+      await expect(first.locator('[data-slot="te-sendlog-cc"]')).toContainText('ek.bilgi.adresi@')
+      await expect(log.locator('[data-slot="te-sendlog-status-text"]').first()).toContainText('550')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(clipped, '[data-slot="te-sendlog"]'), 'kırpılan metin (gönderim günlüğü)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+      const table = log.locator('[data-slot="te-sendlog-table"]')
+      if (await table.count()) {
+        expect(await table.evaluate((n) => n.scrollWidth - n.clientWidth), 'tablo kabı yatayda kaymaz').toBeLessThanOrEqual(1)
+      }
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-sendlog"]'), 'küçük hedef (gönderim günlüğü)').toEqual([])
+        const tabBox = await tab.boundingBox()
+        expect(tabBox.height, 'sekme dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+      }
+      // Kanal sekmeleri sığar (üç sekme, telefonda sarılır)
+      const tabsList = page.locator('[data-slot="tabs-list"]').first()
+      const tl = await tabsList.boundingBox()
+      expect(tl.x + tl.width, 'sekme listesi ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      // Süzgeç: tür değişince istek kind ile gider
+      await log.locator('[data-slot="te-slog-kind"]').selectOption('test')
+      await expect.poll(() => sendLogCalls[sendLogCalls.length - 1]).toContain('kind=test')
+      await page.screenshot({ path: `test-results/channel-reports-send-log-${vp.name}.png`, fullPage: false })
     })
 
     test('katlanır bölümler + otomatik kayıt', async ({ page }) => {

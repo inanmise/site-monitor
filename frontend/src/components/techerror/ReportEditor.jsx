@@ -22,6 +22,7 @@ import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBloc
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
+import SendDialog from './SendDialog.jsx'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
@@ -131,6 +132,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
+  const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
@@ -548,22 +550,31 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     }
   }
 
+  /**
+   * Gönderim: önce kayıt (ensureSaved), sonra gönderim penceresi (R18 / C13 — eski onay sorusunun metni + isteğe bağlı ek
+   * Bilgi (CC) alanı). Onay penceresi açık kalırken istek gider; sunucu ek Bilgi'yi reddederse (alan `extra_cc`) hata alanın
+   * altında, pencere açık — diğer her sonuçta pencere kapanır, bildirim gösterilir ve rapor yenilenir.
+   */
   async function send() {
     if (!(await ensureSaved())) return
-    const ok = await showConfirm({
-      title: approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle'),
-      message: approvalRequired
-        ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
-        : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title)),
-      variant: 'info', confirmText: t('te.sendConfirm'), cancelText: t('te.cancel'),
-    })
-    if (!ok) return
+    setSendDialog({ error: null })
+  }
+
+  async function confirmSend(extraCc) {
+    if (busy != null) return
     setBusy('send')
+    let keepOpen = false
     try {
-      const res = await api.techErrors.send(reportId)
+      // Ek Bilgi yoksa gövdesiz (eski çağrı aynen); varsa yalnız `extra_cc`
+      const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
       if (res?.success && res.data) {
+        const cc = (res.data.cc || []).join(', ')
         if (res.data.state === 'QUEUED') toast.info(t('te.sendQueued'))
+        else if (extraCc && cc) toast.success(t('te.sendDoneCc', (res.data.to || []).join(', '), cc))
         else toast.success(t('te.sendDone', (res.data.to || []).join(', ')))
+      } else if (res?.field === 'extra_cc') {
+        keepOpen = true
+        setSendDialog({ error: res.error || t('te.send.ccRejected') })
       } else {
         toast.error(res?.error || t('te.sendError'), { details: res?.errorInfo })
       }
@@ -571,7 +582,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       toast.error(e?.message || t('te.sendError'))
     } finally {
       setBusy(null)
-      load({ keepDraft: true })
+      if (!keepOpen) {
+        setSendDialog(null)
+        load({ keepDraft: true })
+      }
     }
   }
 
@@ -941,6 +955,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
           sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
       )}
+      {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
+      <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}
+        title={approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle')}
+        message={approvalRequired
+          ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
+          : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title))}
+        onConfirm={confirmSend} onCancel={() => { if (busy !== 'send') setSendDialog(null) }}
+        onEdit={() => { if (sendDialog?.error) setSendDialog({ error: null }) }} />
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 

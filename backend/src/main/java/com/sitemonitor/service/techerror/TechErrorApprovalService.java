@@ -334,7 +334,7 @@ public class TechErrorApprovalService {
                     } catch (RuntimeException e) {
                         status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
                     }
-                    saveLog(a.name(), a.email(), "PO", subject, status, team.getName());
+                    saveLog(a.name(), a.email(), "PO", subject, status, team.getName(), fresh, channel);
                     if ("SENT".equals(status) || status.startsWith("QUEUED")) {
                         mailed++;
                         mailedTo.add(a.email());
@@ -346,7 +346,7 @@ public class TechErrorApprovalService {
                 problem = "PDF_BUSY";
                 failed = mails.size();
                 for (Approver a : apps) if (a.email() != null) saveLog(a.name(), a.email(), "PO", channel.getName(),
-                        "SKIPPED: PDF sırası dolu, onay postası gönderilmedi", team.getName());
+                        "SKIPPED: PDF sırası dolu, onay postası gönderilmedi", team.getName(), fresh, channel);
             } catch (RuntimeException e) {
                 log.warn("Teknik hata raporu #{} onay postası hazırlanamadı: {}", fresh.getId(), e.toString());
                 problem = "MAIL_FAILED";
@@ -536,7 +536,7 @@ public class TechErrorApprovalService {
             } catch (RuntimeException e) {
                 status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
             }
-            saveLog(displayName(u), u.getEmail().trim(), "REQUESTER", subject, status, team.getName());
+            saveLog(displayName(u), u.getEmail().trim(), "REQUESTER", subject, status, team.getName(), r, ch);
         } catch (RuntimeException e) {
             log.warn("Teknik hata raporu #{} karar postası gönderilemedi: {}", r.getId(), e.toString());
         }
@@ -706,9 +706,13 @@ public class TechErrorApprovalService {
         }
     }
 
-    private void saveLog(String name, String to, String role, String subject, String status, String teamName) {
+    /** Onay postasının günlük satırı; raporun kanalına / raporuna bağlanır (R18 / E22 — kanalın gönderim günlüğü). */
+    private void saveLog(String name, String to, String role, String subject, String status, String teamName,
+                         TechErrorReport report, TechErrorChannel channel) {
         try {
             NotificationLog n = new NotificationLog();
+            Long channelId = channel != null && channel.getId() != null ? channel.getId() : report == null ? null : report.getChannelId();
+            TechErrorSendLogService.link(n, channelId, report == null ? null : report.getId());
             n.setAlertEventId(0L);
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientName(clip((name == null ? "" : name) + (teamName == null ? "" : " · " + teamName), 255));

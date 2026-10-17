@@ -94,6 +94,10 @@ public class TechErrorReportController {
         summaryMemo.clear();
     }
 
+    /** Kanal başına gönderim günlüğü (R18 / E22). Yoksa (dilim testleri) uç 409 {@code SEND_LOG_UNAVAILABLE} döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorSendLogService sendLogs;
+
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
         this.service = service;
@@ -679,6 +683,7 @@ public class TechErrorReportController {
         boolean more = false;
         boolean capped = false;
         Instant since = null;
+        boolean peopleHidden = SessionScope.viewableOnlyByGrant(session, r.getTeamId());   // kişi verisi paylaşımla görünmez (R18)
         if (history != null) {
             var page = history.reportHistory(r.getId(), beforeId, limit == null ? 50 : limit);
             for (var e : page.events()) {
@@ -689,7 +694,8 @@ public class TechErrorReportController {
                 m.put("actor_name", e.getActorName());
                 m.put("system", e.getActorId() == null);
                 m.put("version", e.getReportVersion());
-                m.put("detail", com.sitemonitor.service.techerror.TechErrorHistoryService.detail(e));
+                Map<String, Object> detail = com.sitemonitor.service.techerror.TechErrorHistoryService.detail(e);
+                m.put("detail", peopleHidden ? maskHistoryPeople(detail) : detail);
                 list.add(m);
             }
             more = page.hasMore();
@@ -786,6 +792,78 @@ public class TechErrorReportController {
         }
         data.put("current", version == ch.getTemplateVersion());
         return ok(data);
+    }
+
+    // ── Kanal gönderim günlüğü (R18 / E22, 2026-10-18) ───────────────────────────────────────────────
+
+    /**
+     * Kanalın gönderim günlüğü: rapor gönderimi, kendine test, onay ve hatırlatma postalarının {@code notification_logs}
+     * satırları (en yeni önce, sunucu sayfalı — {@code page} 0 tabanlı, {@code size} ≤ 100; {@code kind} all | report | test |
+     * approval | reminder, {@code status} all | sent | queued | skipped | failed). Kapı kanalın okuma kapsamı (başka takım →
+     * 404). Kişi verisi paylaşımla görünmez: yalnız paylaşımla okuyan alıcı adreslerini ve posta sunucusunun durum metnini
+     * görmez — yalnız sayılar ({@code to_count} / {@code cc_count}) ve durum sınıfı.
+     */
+    @GetMapping("/channels/{id}/send-log")
+    public ResponseEntity<Map<String, Object>> sendLog(@PathVariable Long id,
+                                                       @RequestParam(value = "page", required = false) Integer page,
+                                                       @RequestParam(value = "size", required = false) Integer size,
+                                                       @RequestParam(value = "kind", required = false) String kind,
+                                                       @RequestParam(value = "status", required = false) String status,
+                                                       HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        if (sendLogs == null) {
+            throw new CodedConflictException("SEND_LOG_UNAVAILABLE", Msg.t(
+                    "Gönderim günlüğü bu sunucuda kullanılamıyor. Birkaç dakika sonra sayfayı yenileyin.",
+                    "The send log is not available on this server. Reload the page in a few minutes."));
+        }
+        boolean hidden = SessionScope.viewableOnlyByGrant(session, ch.getTeamId());
+        var p = sendLogs.page(ch.getId(), kind, status, page, size);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (var row : p.rows()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", row.id());
+            m.put("at", row.at());
+            m.put("kind", row.kind());
+            m.put("trigger", row.trigger());
+            m.put("role", row.role());
+            m.put("status", row.status());
+            // Posta sunucusunun durum metni alıcı adresi taşıyabilir ("550 … <ad@kurum>") — paylaşımla okuyana yalnız sınıf
+            m.put("status_text", hidden ? null : row.statusText());
+            m.put("report_id", row.reportId());
+            m.put("year", row.year());
+            m.put("month", row.month());
+            m.put("to", hidden ? null : row.to());
+            m.put("cc", hidden ? null : row.cc());
+            m.put("to_count", row.toCount());
+            m.put("cc_count", row.ccCount());
+            rows.add(m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("rows", rows);
+        data.put("total", p.total());
+        data.put("page", p.page());
+        data.put("size", p.size());
+        data.put("total_pages", p.size() <= 0 ? 0 : (int) Math.ceil(p.total() / (double) p.size()));
+        data.put("kind", p.kind());
+        data.put("status", p.status());
+        data.put("recipients_hidden", hidden);
+        return ok(data);
+    }
+
+    /**
+     * Geçmiş olayı ayrıntısında kişi verisi (R18): yalnız paylaşımla okuyan alıcı / ek Bilgi ADRESLERİNİ görmez — sayıları kalır
+     * ({@code recipient_count}, {@code extra_cc_count}). Diğer okuyanlara ayrıntı aynen.
+     */
+    static Map<String, Object> maskHistoryPeople(Map<String, Object> detail) {
+        if (detail == null || (!detail.containsKey("recipients") && !detail.containsKey("extra_cc"))) return detail;
+        Map<String, Object> out = new LinkedHashMap<>(detail);
+        Object to = out.remove("recipients");
+        if (to instanceof Collection<?> c && !out.containsKey("recipient_count")) out.put("recipient_count", c.size());
+        Object extra = out.remove("extra_cc");
+        if (extra instanceof Collection<?> c) out.put("extra_cc_count", c.size());
+        return out;
     }
 
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
@@ -1023,9 +1101,17 @@ public class TechErrorReportController {
         }
     }
 
+    /**
+     * Gönderim. İsteğe bağlı gövde {@code {extra_cc: "a@x.com, b@y.com"}} (R18 / C13, 2026-10-18 — kullanıcı onayı): yalnız
+     * BU gönderime ek Bilgi (CC) adresleri — kanalda saklanmaz; takıma ve yöneticilere gönderimde (onay sonrası otomatik
+     * gönderimde değil). Kural {@link TechErrorReportSender#extraCc}: geçersiz adres / 10'dan fazla / Bilgi toplamı 20'yi aşıyor
+     * → 400 {@code VALIDATION_FAILED} alan {@code extra_cc}, hiçbir şey yazılmaz. Dizi de kabul edilir (öğeler birleştirilir).
+     */
     @PostMapping("/reports/{id}/send")
-    public ResponseEntity<Map<String, Object>> send(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> send(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                                    HttpSession session, HttpServletRequest request) {
         requireWrite(session);
+        String extraCc = extraCcOf(body);
         TechErrorReport r = ownWritableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
@@ -1039,21 +1125,34 @@ public class TechErrorReportController {
                     Map.of("approval", approvalDto(rowOf(r))));
         }
         TechErrorReportSender.Result res;
+        boolean extra = extraCc != null;
         try {
-            res = required ? sender.send(r, ch, team, userId(session), TechErrorReportSender.Delivery.EXECUTIVE)
-                    : sender.send(r, ch, team, userId(session));
+            // Ek Bilgi yoksa eski çağrılar (byte-identical yol); varsa teslim yolu açıkça verilir
+            if (extra) {
+                res = sender.send(r, ch, team, userId(session),
+                        required ? TechErrorReportSender.Delivery.EXECUTIVE : TechErrorReportSender.Delivery.TEAM, extraCc);
+            } else {
+                res = required ? sender.send(r, ch, team, userId(session), TechErrorReportSender.Delivery.EXECUTIVE)
+                        : sender.send(r, ch, team, userId(session));
+            }
+        } catch (FieldValidationException e) {
+            throw e;            // giriş hatası (ek Bilgi): gönderim denenmedi, denetime yazılmaz
         } catch (RuntimeException e) {
             auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",
                             "reason", failureReason(e)));
             throw e;
         }
+        List<String> resCc = res.cc() == null ? List.of() : res.cc();
         auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
-                AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
+                extra ? AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
+                        "channel", ch.getName(), "year", r.getReportYear(), "month", r.getReportMonth(), "cc", resCc.size(), "extra_cc", true)
+                        : AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
                         "channel", ch.getName(), "year", r.getReportYear(), "month", r.getReportMonth()));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("state", res.state());
         data.put("to", res.to());
+        data.put("cc", resCc);
         data.put("subject", res.subject());
         data.put("pdf_bytes", res.pdfBytes());
         switch (res.state()) {
@@ -1590,6 +1689,41 @@ public class TechErrorReportController {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /**
+     * Gönderim gövdesinin {@code extra_cc}'si (R18 / C13): yok / boş → null (ek Bilgi yok); metin aynen; dizi → öğeler virgülle
+     * birleşir; başka tür → 400 {@code extra_cc}. Uzunluk / adres kuralı {@link TechErrorReportSender#extraCc}'te.
+     */
+    static String extraCcOf(Map<String, Object> body) {
+        if (body == null) return null;
+        Object v = body.get("extra_cc");
+        if (v == null) return null;
+        String raw;
+        if (v instanceof String s) {
+            raw = s;
+        } else if (v instanceof Collection<?> c) {
+            if (c.size() > TechErrorReportSender.MAX_EXTRA_CC_INPUT) raw = "x".repeat(TechErrorReportSender.MAX_EXTRA_CC_INPUT + 1);
+            else {
+                StringBuilder sb = new StringBuilder();
+                for (Object o : c) {
+                    if (!(o instanceof String s)) throw extraCcType();
+                    if (sb.length() > 0) sb.append(", ");
+                    sb.append(s);
+                    if (sb.length() > TechErrorReportSender.MAX_EXTRA_CC_INPUT) break;
+                }
+                raw = sb.toString();
+            }
+        } else {
+            throw extraCcType();
+        }
+        return raw.isBlank() ? null : raw;
+    }
+
+    private static FieldValidationException extraCcType() {
+        return new FieldValidationException("extra_cc", Msg.t(
+                "Ek Bilgi (CC) adresleri metin olarak gönderilmeli (virgülle ayrılmış). Sayfayı yenileyip tekrar deneyin.",
+                "The extra CC addresses must be sent as text (separated by commas). Reload the page and try again."));
     }
 
     private static NoSuchElementException notFoundChannel() {
