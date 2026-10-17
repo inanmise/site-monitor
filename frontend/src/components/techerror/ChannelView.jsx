@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import TemplateEditor from './TemplateEditor.jsx'
 import SendLogView from './SendLogView.jsx'
 import { TAB_SENDLOG } from './sendModel.js'
+import ChannelXlsxButton from './ChannelXlsxButton.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
 import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
@@ -268,6 +269,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                       <X aria-hidden="true" /> {t('te.filters.clear')}
                     </Button>
                   )}
+                  <ChannelXlsxButton channel={ch} year={ryear} />
                 </div>
                 <YearArchiveStatus run={archive.run} onCancel={archive.cancel} />
                 <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">

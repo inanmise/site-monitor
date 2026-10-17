@@ -59,6 +59,9 @@ describe('auditFormat.eventLabel', () => {
     expect(eventLabel('TECH_ERROR_CHANNEL_REORDER', tr)).toBe('Teknik hata raporu kanal sırası değiştirildi')
     expect(eventLabel('TECH_ERROR_CHANNEL_UPDATE', tr)).toBe('Teknik hata raporu kanalı değiştirildi')
     expect(eventLabel('TECH_ERROR_TEMPLATE_SAVE', tr)).toBe('Teknik hata raporu şablonu kaydedildi')
+    // Değer dışa aktarımı (E23, 2026-10-18) — dışa aktarım sınıfında
+    expect(eventLabel('TECH_ERROR_REPORT_EXPORT', tr)).toBe('Teknik hata raporu değerleri dışa aktarıldı')
+    expect(eventClass('TECH_ERROR_REPORT_EXPORT')).toBe('ev-export')
   })
 
   it('EN UZUN önek kazanır (USER_PUSH_SETTINGS ≠ Kullanıcı)', () => {

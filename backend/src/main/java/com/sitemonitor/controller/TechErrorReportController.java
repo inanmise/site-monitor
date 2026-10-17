@@ -1634,7 +1634,7 @@ public class TechErrorReportController {
     }
 
     /** Modül görünürlüğü (S6): takım bazlıysa kapsamında açık bir takım olmayan kullanıcı 403 alır (arayüz menüyü de gizler). */
-    private static void requireModuleVisible(HttpSession session) {
+    static void requireModuleVisible(HttpSession session) {
         TechErrorVisibilityService v = TechErrorVisibilityService.current();
         if (v != null && !v.sessionSees(session)) {
             throw new SecurityException(Msg.t(

@@ -95,6 +95,15 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(staticImports(read('components/techerror/analytics/analyticsModel.js')).some((s) => /chart|recharts/.test(s))).toBe(false)
   })
 
+  it('Kanal raporları Excel dışa aktarımı (C14, 2026-10-18): Excel yazıcısı yalnız "Excel\'e aktar" basılınca yüklenir', () => {
+    const btn = 'components/techerror/ChannelXlsxButton.jsx'
+    expect(hasStatic(btn, /channelExport(\.js)?$|xlsxWriter/)).toBe(false)
+    expect(hasDynamic(btn, /\/channelExport\.js$/)).toBe(true)
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /\/channelExport(\.js)?$/.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    expect(hasStatic('components/techerror/ChannelView.jsx', /xlsxWriter|channelExport(\.js)?$/)).toBe(false)
+  })
+
   it('Sistem Sağlığı → Metrikler görünümü (grafikler) yalnız açılınca yüklenir (2026-10-13)', () => {
     const page = 'components/admin/SystemHealth.jsx'
     expect(hasStatic(page, /metrics\/MetricsView(\.jsx)?$/)).toBe(false)
