@@ -25,6 +25,26 @@ export const OLDEST_SEVERE_RED_MIN = 30
 /** Sayaçtan ton: 0 → yeşil, aksi verilen sorun tonu. */
 const countTone = (count, problemTone) => (count > 0 ? problemTone : 'success')
 
+const isCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+
+/**
+ * Kanal raporu sayıları (R14 inceleme 2026-10-17): dönem özeti `GET /tech-error-reports/period-summary` →
+ * `{period, active, sent, open, missing, inactive}` (sunucu sayar — channelCounts'la aynı anlam: active = AKTİF kanal);
+ * eski pod bu uca sahip değilse genel bakışın `channels` listesi gelir ve burada `channelCounts` ile sayılır. İkisi de yoksa
+ * ya da sayı bozuksa null (veri yok — asla yeşil değil).
+ */
+export function channelReportCounts(data) {
+  if (!data || typeof data !== 'object') return null
+  if (Array.isArray(data.channels)) {
+    const c = channelCounts(data.channels)
+    return { active: c.channels, sent: c.sent, missing: c.missing }
+  }
+  if (isCount(data.active) && isCount(data.sent) && isCount(data.missing)) {
+    return { active: data.active, sent: data.sent, missing: data.missing }
+  }
+  return null
+}
+
 /** Bir kutunun okuması. `data` = kaynağın yanıtı (`useWidgetData().data`); `nowMs` yaş hesabı için. */
 export function statReading(type, data, nowMs = Date.now()) {
   if (data == null) return NONE('nodata')
@@ -125,13 +145,12 @@ export function statReading(type, data, nowMs = Date.now()) {
     }
     case 'stat_channel_reports_missing': {
       // Kanal teknik hata raporu (R14): dönem raporu başlanmamış AKTİF kanal — kanal listesinin "Raporu başlanmamış" sayımıyla
-      // aynı kural (channelPeriodStatus → missing). 403 → yetki yok (gri); kanal listesi okunamadı / yok → veri yok (gri).
+      // aynı kural (channelPeriodStatus → missing). 403 → yetki yok (gri); sayılar okunamadı / yok → veri yok (gri).
       // Eksik aylık rapor bir görevdir, kesinti değil → turuncu; 0 → yeşil. Bağlantı listeyi aynı süzgeçle açar.
       if (data.visible === false) return NONE('noaccess')
-      if (!Array.isArray(data.channels)) return NONE('nodata')
-      const c = channelCounts(data.channels)
-      if (c.channels === 0) return NONE('nodata')
-      return { value: c.missing, tone: countTone(c.missing, 'warning'), sub: ['mydash.st.channelsSent', c.channels, c.sent],
+      const c = channelReportCounts(data)
+      if (!c || c.active === 0) return NONE('nodata')
+      return { value: c.missing, tone: countTone(c.missing, 'warning'), sub: ['mydash.st.channelsSent', c.active, c.sent],
         link: ['channelreports', { te_st: 'missing' }] }
     }
     default:

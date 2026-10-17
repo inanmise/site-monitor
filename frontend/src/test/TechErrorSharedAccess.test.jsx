@@ -69,6 +69,55 @@ describe('erişim paylaşımı — kanal listesi', () => {
     pressMenuTrigger(within(own).getByRole('button', { name: 'POS — İşlemler' }))
     await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Kanalı düzenle' })).toBeInTheDocument())
   })
+
+  it('kişi kuralı (inceleme 2026-10-17): yalnız paylaşımla görülen satırda takım rozeti DÜZ metin (üye penceresi açılmaz); kendi takımının satırında düğme', async () => {
+    te().overview.mockResolvedValue(overview([
+      channel(10, 'Mobil', { team_id: 9, team_name: 'Paylaşan Takım', can_edit: false, can_report: true, shared_access: true }),
+      channel(20, 'POS'),
+    ]))
+    render(<TechErrorReportsPage />)
+    await screen.findByText('Paylaşımla erişim')
+    const sharedBadge = document.querySelector('[data-channel="10"] [data-slot="team-badge"]')
+    expect(sharedBadge).toHaveTextContent('Paylaşan Takım')
+    expect(sharedBadge.tagName).toBe('SPAN')
+    expect(sharedBadge.closest('button')).toBeNull()
+    expect(within(document.querySelector('[data-channel="10"]')).queryByRole('button', { name: /takımının üyelerini göster$/ })).toBeNull()
+    expect(within(document.querySelector('[data-channel="20"]')).getByRole('button', { name: /takımının üyelerini göster$/ }))
+      .toHaveAttribute('data-slot', 'team-badge')
+  })
+})
+
+describe('erişim paylaşımı — kanal ve rapor başlığında takım rozeti', () => {
+  it('paylaşımla görülen kanalın başlığında rozet düz metin; kendi kanalında düğme', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10')
+    te().reports.mockResolvedValue({ success: true, data: {
+      channel: channel(10, 'Mobil', { team_id: 9, team_name: 'Paylaşan Takım', can_edit: false, can_report: false, shared_access: true }),
+      reports: [], default_period: { year: 2026, month: 9 } } })
+    const { unmount } = render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil' })
+    const badge = document.querySelector('[data-slot="te-channel-header"] [data-slot="team-badge"]')
+    expect(badge.tagName).toBe('SPAN')
+    expect(screen.queryByRole('button', { name: /takımının üyelerini göster$/ })).toBeNull()
+    unmount()
+    te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil'), reports: [], default_period: { year: 2026, month: 9 } } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil' })
+    expect(document.querySelector('[data-slot="te-channel-header"] [data-slot="team-badge"]').tagName).toBe('BUTTON')
+  })
+
+  it('paylaşımla okunan raporda rozet düz metin; takımın kendi raporunda düğme', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+    te().report.mockResolvedValue(reportResponse({ can_edit: true, can_send: false, shared_access: true }))
+    const { unmount } = render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
+    expect(screen.queryByRole('button', { name: /takımının üyelerini göster$/ })).toBeNull()
+    expect(document.querySelector('[data-slot="team-badge"]').tagName).toBe('SPAN')
+    unmount()
+    te().report.mockResolvedValue(reportResponse({ can_edit: true }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
+    expect(screen.getByRole('button', { name: /takımının üyelerini göster$/ })).toHaveAttribute('data-slot', 'team-badge')
+  })
 })
 
 describe('erişim paylaşımı — rapor düzenleyici', () => {

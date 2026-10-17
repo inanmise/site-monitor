@@ -55,6 +55,12 @@ describe('auditFormat.eventLabel', () => {
     expect(eventLabel('GUIDE_LINK_CREATE', tr)).toBe('Kılavuz bağlantısı oluşturuldu')
   })
 
+  it('kanal teknik hata raporu olayları sözlükten (R14 inceleme: "TECH_ERROR" nesne kuralında yok — ham Title Case basılıyordu); kanal sırası dahil', () => {
+    expect(eventLabel('TECH_ERROR_CHANNEL_REORDER', tr)).toBe('Teknik hata raporu kanal sırası değiştirildi')
+    expect(eventLabel('TECH_ERROR_CHANNEL_UPDATE', tr)).toBe('Teknik hata raporu kanalı değiştirildi')
+    expect(eventLabel('TECH_ERROR_TEMPLATE_SAVE', tr)).toBe('Teknik hata raporu şablonu kaydedildi')
+  })
+
   it('EN UZUN önek kazanır (USER_PUSH_SETTINGS ≠ Kullanıcı)', () => {
     expect(eventLabel('USER_PUSH_SETTINGS', tr)).toBe('Kişi bildirimi kaydedildi')
     expect(eventLabel('CERT_INVENTORY_REPORT_RUN', tr)).toBe('Sertifika envanter raporu çalıştırıldı')

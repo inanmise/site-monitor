@@ -25,9 +25,11 @@ export const STAT_DEFS = Object.freeze([
   { type: 'stat_certs_month',       source: 'stats',    perm: null,              tab: 'all' },
   { type: 'stat_cert_errors',     source: 'stats',    perm: null,              tab: 'all' },
   // Kanal teknik hata raporu (R14, 2026-10-17): bu dönem raporu başlanmamış AKTİF kanal — bir görevdir, kesinti değil
-  // (varsa turuncu). Kaynak mevcut `GET /tech-error-reports/overview` (403 → yetki yok, gri). `preset: false`: "Renkli
-  // panel duvarı" hazır düzeni DEĞİŞMEZ (kullanıcı kararı — mevcut duvarlar aynı kalır); "Kutu ekle"den eklenir.
-  { type: 'stat_channel_reports_missing', source: 'channels', perm: 'tech_error_reports.read', tab: 'channelreports',
+  // (varsa turuncu). Kaynak `GET /tech-error-reports/period-summary` (yalnız sayılar, sunucuda 30 sn önbellek; eski pod →
+  // genel bakış), 403 → yetki yok, gri. `@channel_reports` sahte izni: modül kullanıcının takımlarına kapalıysa (menü de
+  // gizli — `/api/me/permissions` scope.channel_reports === false) panel sunulmaz. `preset: false`: "Renkli panel duvarı"
+  // hazır düzeni DEĞİŞMEZ (kullanıcı kararı — mevcut duvarlar aynı kalır); "Kutu ekle"den eklenir.
+  { type: 'stat_channel_reports_missing', source: 'channels', perm: ['tech_error_reports.read', '@channel_reports'], tab: 'channelreports',
     tabParams: { te_st: 'missing' }, preset: false },
 ])
 

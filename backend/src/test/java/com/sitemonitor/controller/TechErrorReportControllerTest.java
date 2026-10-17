@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -1070,6 +1071,120 @@ class TechErrorReportControllerTest {
                     .andExpect(status().isNotFound());
         } finally {
             com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
+    }
+
+    // ── Kanal sırası toplu ucu + dönem özeti (R14 inceleme, 2026-10-17) ─────────────────────────────
+
+    @Autowired TechErrorReportController controller;
+
+    @Test
+    @DisplayName("toplu kanal sırası: üye 200 (yeni sıra 1…n) + TEK denetim (önceki / yeni dizilim kimliklerle); değişiklik yoksa"
+            + " denetim yok; gövde liste değilse ya da kimlik bozuksa 400 ids (servise gitmez); servisin 400'ü aynen")
+    void channelOrder() throws Exception {
+        channel(11, A);
+        when(service.reorderChannels(eq(A), eq(List.of(11L, 10L)), eq(50L)))
+                .thenReturn(new TechErrorReportService.ReorderResult(List.of(10L, 11L), List.of(11L, 10L), 2));
+        mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[11,10]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(1))
+                .andExpect(jsonPath("$.data.changed").value(2))
+                .andExpect(jsonPath("$.data.channels[0].id").value(11))
+                .andExpect(jsonPath("$.data.channels[0].sort_order").value(1))
+                .andExpect(jsonPath("$.data.channels[1].id").value(10))
+                .andExpect(jsonPath("$.data.channels[1].sort_order").value(2));
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService, org.mockito.Mockito.times(1)).recordAction(eq("TECH_ERROR_CHANNEL_REORDER"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("1"), detail.capture());
+        assertThat(detail.getValue()).contains("\"before\":\"10,11\"").contains("\"after\":\"11,10\"").contains("\"team_id\":1");
+        // Değişiklik yok → denetim yazılmaz
+        when(service.reorderChannels(eq(A), eq(List.of(10L, 11L)), eq(50L)))
+                .thenReturn(new TechErrorReportService.ReorderResult(List.of(10L, 11L), List.of(10L, 11L), 0));
+        mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[\"10\",\"11\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changed").value(0));
+        verify(auditService, org.mockito.Mockito.times(1)).recordAction(eq("TECH_ERROR_CHANNEL_REORDER"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+        // Bozuk gövde: servis çağrılmaz
+        for (String bad : List.of("{}", "{\"ids\":\"10,11\"}", "{\"ids\":[10,\"x\"]}", "{\"ids\":[10,-3]}")) {
+            mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(user("USER", A, List.of()))
+                            .contentType(MediaType.APPLICATION_JSON).content(bad))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("ids"));
+        }
+        // Eksik / fazla / başka takımın kimliği: servis reddeder → 400 ids
+        when(service.reorderChannels(eq(A), eq(List.of(10L, 20L)), eq(50L)))
+                .thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("ids", "Kanal listesi siz sıralarken değişti."));
+        mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[10,20]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("ids"));
+        verify(service, org.mockito.Mockito.times(3)).reorderChannels(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("toplu kanal sırası kapısı: başka takım 404 TEAM_NOT_FOUND; yalnız paylaşımla (EDIT) yazabilen 403; AUDIT 403;"
+            + " global yönetici her takım")
+    void channelOrderScope() throws Exception {
+        String body = "{\"ids\":[10]}";
+        mvc.perform(put("/api/tech-error-reports/teams/2/channel-order").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TEAM_NOT_FOUND"));
+        mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(grantee(B, A, true))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/tech-error-reports/teams/1/channel-order").session(audit())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        verify(service, never()).reorderChannels(any(), any(), any());
+        when(service.reorderChannels(eq(B), eq(List.of(20L)), eq(1L)))
+                .thenReturn(new TechErrorReportService.ReorderResult(List.of(20L), List.of(20L), 1));
+        mvc.perform(put("/api/tech-error-reports/teams/2/channel-order").session(globalAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[20]}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("dönem özeti: okuma kapsamının takımları sayılır (üye kendi takımı, AUDIT hepsi); kapsam başına önbellek (aynı"
+            + " kapsamın ikinci okuması servise gitmez); modül kapalı takımın üyesi 403 (genel bakışla aynı)")
+    void periodSummary() throws Exception {
+        controller.resetSummaryCache();
+        when(service.periodSummary(any(), eq(YearMonth.of(2026, 9))))
+                .thenReturn(new TechErrorReportService.PeriodSummary(4, 1, 2, 1, 3));
+        mvc.perform(get("/api/tech-error-reports/period-summary").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.period.year").value(2026))
+                .andExpect(jsonPath("$.data.period.month").value(9))
+                .andExpect(jsonPath("$.data.active").value(4))
+                .andExpect(jsonPath("$.data.sent").value(1))
+                .andExpect(jsonPath("$.data.open").value(2))
+                .andExpect(jsonPath("$.data.missing").value(1))
+                .andExpect(jsonPath("$.data.inactive").value(3))
+                .andExpect(jsonPath("$.data.channels").doesNotExist());
+        verify(service).periodSummary(eq(new java.util.LinkedHashSet<>(List.of(A))), eq(YearMonth.of(2026, 9)));
+        // Aynı kapsam: önbellekten (servis ikinci kez çağrılmaz, kuyruk sonuçlandırılmaz)
+        mvc.perform(get("/api/tech-error-reports/period-summary").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.missing").value(1));
+        verify(service, org.mockito.Mockito.times(1)).periodSummary(any(), any());
+        verify(service, never()).reconcileQueued(any());
+        // Kurum geneli görüntüleyici: ayrı kapsam anahtarı, tüm takımlar
+        mvc.perform(get("/api/tech-error-reports/period-summary").session(audit())).andExpect(status().isOk());
+        verify(service).periodSummary(eq(new java.util.LinkedHashSet<>(List.of(A, B))), eq(YearMonth.of(2026, 9)));
+        // Modül görünürlüğü (S6): takımı kapalı üye 403
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/period-summary").session(user("USER", A, List.of()))).andExpect(status().isForbidden());
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+            controller.resetSummaryCache();
         }
     }
 }

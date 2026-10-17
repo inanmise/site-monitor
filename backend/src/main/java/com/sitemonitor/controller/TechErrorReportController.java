@@ -77,6 +77,23 @@ public class TechErrorReportController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     TechErrorApprovalService approvals;
 
+    /**
+     * Dönem özeti önbelleği (R14 inceleme 2026-10-17): Kişisel Panom paneli her açık sekmede / TV'de 60 sn'de bir sorar;
+     * anahtar = dönem + kapsam (kurum geneli "*" ya da sıralı görünür takım kimlikleri). 0 = önbellek yok.
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.tech-error-report.summary-cache-ms:30000}")
+    long summaryCacheMs = 30_000;
+    /** Önbellek tavanı: aşılırsa boşaltılır (kapsam anahtarı kullanıcıdan gelir — sınırsız büyümesin). */
+    static final int SUMMARY_MEMO_MAX = 500;
+    private final java.util.concurrent.ConcurrentHashMap<String, SummaryMemo> summaryMemo = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record SummaryMemo(long at, Map<String, Object> data) { }
+
+    /** Testler için: dönem özeti önbelleğini boşaltır (denetleyici örneği test sınıfının yöntemleri arasında paylaşılır). */
+    void resetSummaryCache() {
+        summaryMemo.clear();
+    }
+
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
         this.service = service;
@@ -142,6 +159,41 @@ public class TechErrorReportController {
         return ok(data);
     }
 
+    /**
+     * Dönem özeti (R14 inceleme 2026-10-17): Kişisel Panom'un "Dönem raporu eksik kanal" paneli için yalnız SAYILAR —
+     * {@code {period:{year,month}, active, sent, open, missing, inactive}}. Okuma kapsamı ve modül görünürlüğü genel bakışla
+     * AYNI (aynı 403), sayım anlamı genel bakış listesinin {@code channelCounts}'u ile aynı
+     * ({@link TechErrorReportService#periodSummary}). Genel bakıştan farkı: şablon ayrıştırılmaz, kuyruk sonuçlandırılmaz,
+     * kapsam başına {@code summaryCacheMs} (30 sn) önbellek.
+     */
+    @GetMapping("/period-summary")
+    public ResponseEntity<Map<String, Object>> periodSummary(HttpSession session) {
+        requireRead(session);
+        Set<Long> visible = visibleTeamIds(session);          // null = hepsi (kurum geneli görüntüleyici)
+        YearMonth period = service.defaultPeriod();
+        String key = period + "|" + (visible == null ? "*"
+                : visible.stream().sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")));
+        long nowMs = System.currentTimeMillis();
+        SummaryMemo memo = summaryCacheMs > 0 ? summaryMemo.get(key) : null;
+        if (memo != null && nowMs - memo.at() >= 0 && nowMs - memo.at() < summaryCacheMs) return ok(memo.data());
+        Set<Long> teamIds = new LinkedHashSet<>();
+        for (Team t : visible == null ? teams.findAll() : teams.findAllById(visible)) teamIds.add(t.getId());
+        TechErrorReportService.PeriodSummary s = service.periodSummary(teamIds, period);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("period", Map.of("year", period.getYear(), "month", period.getMonthValue()));
+        data.put("active", s.active());
+        data.put("sent", s.sent());
+        data.put("open", s.open());
+        data.put("missing", s.missing());
+        data.put("inactive", s.inactive());
+        Map<String, Object> frozen = Collections.unmodifiableMap(data);
+        if (summaryCacheMs > 0) {
+            if (summaryMemo.size() >= SUMMARY_MEMO_MAX) summaryMemo.clear();
+            summaryMemo.put(key, new SummaryMemo(nowMs, frozen));
+        }
+        return ok(frozen);
+    }
+
     // ── Kanallar ─────────────────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/channels")
@@ -197,6 +249,81 @@ public class TechErrorReportController {
                 AuditDetail.of("name_before", oldName, "name", ch.getName(), "active_before", oldActive, "active", ch.isActive(),
                         "fields", body == null ? List.of() : new ArrayList<>(body.keySet())));
         return ok(channelDto(ch, teams.findById(ch.getTeamId()).orElse(null), session, true));
+    }
+
+    /**
+     * Takımın kanal sırasını TEK istekte yazar (R14 inceleme 2026-10-17): gövde {@code {ids:[…]}} = takımın TÜM kanallarının
+     * istenen dizilimi. Kapı kanal PUT'uyla aynı: yazma izni + takımın KENDİ yazma kapsamı (üye / yönetici / global
+     * yönetici — erişim paylaşımı sıra değiştirmez → 403); görülemeyen ya da olmayan takım 404 {@code TEAM_NOT_FOUND}
+     * (istemci bu kodla "eski pod — uç yok" 404'ünü ayırır). Eksik / fazla / başka takımın kimliği 400 {@code ids}. Bir şey
+     * değiştiyse TEK denetim satırı {@code TECH_ERROR_CHANNEL_REORDER} (önceki ve yeni dizilim, kimlikler); değişiklik yoksa
+     * yazılmaz. Yanıt: takımın kanalları yeni sırasıyla {@code {id, sort_order}}.
+     */
+    @PutMapping("/teams/{teamId}/channel-order")
+    public ResponseEntity<Map<String, Object>> reorderChannels(@PathVariable Long teamId,
+                                                               @RequestBody(required = false) Map<String, Object> body,
+                                                               HttpSession session, HttpServletRequest request) {
+        requireWrite(session);
+        Team team = teamId == null ? null : teams.findById(teamId).orElse(null);
+        if (team == null || !canRead(session, teamId)) {
+            return error(404, "TEAM_NOT_FOUND", Msg.t(
+                    "Takım bulunamadı; silinmiş olabilir ya da görme yetkiniz yok. Listeyi yenileyin.",
+                    "The team wasn't found; it may have been deleted or you can't see it. Refresh the list."), null);
+        }
+        if (!canWriteOwn(session, teamId)) {
+            throw new SecurityException(Msg.t(
+                    "Kanal sırasını yalnız takımın üyeleri ve yöneticileri değiştirebilir; erişim paylaşımı sırayı değiştirmez.",
+                    "Only the team's members and managers can change the channel order; an access share doesn't change it."));
+        }
+        List<Long> ids = idList(body == null ? null : body.get("ids"));
+        TechErrorReportService.ReorderResult r = service.reorderChannels(teamId, ids, userId(session));
+        if (r.changed() > 0) {
+            // Kimlik listeleri virgüllü metin: denetim ayrıntısında diziler 20 ögede "+N daha" ile kısalır (takımda 50 kanal olabilir)
+            auditService.recordAction("TECH_ERROR_CHANNEL_REORDER", session, request, "TEAM", String.valueOf(teamId),
+                    AuditDetail.of("team_id", teamId, "before", joinIds(r.before()), "after", joinIds(r.after()),
+                            "changed", r.changed()));
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < r.after().size(); i++) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.after().get(i));
+            m.put("sort_order", i + 1);
+            rows.add(m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("team_id", teamId);
+        data.put("changed", r.changed());
+        data.put("channels", rows);
+        return ok(data);
+    }
+
+    /** {@code ids} gövdesi → kimlik listesi; liste değilse, tavanı aşıyorsa ya da bir öge kimlik değilse 400 {@code ids}. */
+    private static List<Long> idList(Object raw) {
+        if (!(raw instanceof List<?> list) || list.size() > 2 * TechErrorReportService.MAX_CHANNELS_PER_TEAM) {
+            throw new FieldValidationException("ids", Msg.t(
+                    "Kanal sırası, takımın kanal kimliklerinin listesi olarak gönderilmeli (takım başına en çok 50 kanal). Sayfayı yenileyip tekrar deneyin.",
+                    "The channel order must be sent as a list of the team's channel ids (at most 50 channels per team). Reload the page and try again."));
+        }
+        List<Long> out = new ArrayList<>(list.size());
+        for (Object o : list) {
+            Long v = o instanceof Number n ? Long.valueOf(n.longValue()) : o instanceof String s ? parseId(s) : null;
+            if (v == null || v <= 0) {
+                throw new FieldValidationException("ids", Msg.t(
+                        "Kanal sırasında geçersiz bir kanal kimliği var. Sayfayı yenileyip tekrar deneyin.",
+                        "The channel order contains an invalid channel id. Reload the page and try again."));
+            }
+            out.add(v);
+        }
+        return out;
+    }
+
+    private static String joinIds(List<Long> ids) {
+        StringBuilder sb = new StringBuilder();
+        for (Long id : ids) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(id);
+        }
+        return sb.toString();
     }
 
     @DeleteMapping("/channels/{id}")
@@ -1268,17 +1395,9 @@ public class TechErrorReportController {
         };
     }
 
+    /** Tek kaynak servistedir ({@link TechErrorReportService#reportStatus}) — dönem özeti de aynı kuralı okur. */
     static String status(TechErrorReportRepository.Row r, Instant now) {
-        if ("SENDING".equals(r.getSendState()) && r.getSendClaimedAt() != null
-                && r.getSendClaimedAt().isAfter(now.minus(java.time.Duration.ofMinutes(10)))) return "sending";
-        if (r.getLastSentAt() == null) return "QUEUED".equals(r.getSendState()) ? "queued" : "draft";
-        if (r.getSentRev() != null) {
-            long content = r.getContentRev() == null ? 0L : r.getContentRev();
-            return content > r.getSentRev() ? "changed" : "sent";
-        }
-        // Sayaçtan önceki gönderim: zaman damgası
-        if (r.getContentChangedAt() != null && r.getContentChangedAt().isAfter(r.getLastSentAt())) return "changed";
-        return "sent";
+        return TechErrorReportService.reportStatus(r, now);
     }
 
     /** Son denemenin sonucu (ham SMTP iletisi değil — yalnız sınıf). */

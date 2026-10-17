@@ -109,6 +109,111 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("kanal sırası (R14 inceleme): yeni kanal takımın en büyük sırası + 1 alır; takımda sırasız kanal varsa sırasız"
+            + " kalır (1 vermek onu sırasızların önüne alırdı); mevcut satırlara dokunulmaz")
+    void newChannelGetsMaxPlusOne() {
+        TechErrorChannel a = channel(1, "A");
+        TechErrorChannel b = channel(1, "B");
+        assertThat(a.getSortOrder()).isEqualTo(1);
+        assertThat(b.getSortOrder()).isEqualTo(2);
+        Map<String, Object> high = new HashMap<>();
+        high.put("sort_order", 40);
+        service.updateChannel(b.getId(), high, 8L);
+        assertThat(channel(1, "C").getSortOrder()).isEqualTo(41);
+        assertThat(channel(2, "Başka").getSortOrder()).isEqualTo(1);          // takım yalıtımı
+        Map<String, Object> unset = new HashMap<>();
+        unset.put("sort_order", null);
+        service.updateChannel(a.getId(), unset, 8L);
+        assertThat(channel(1, "D").getSortOrder()).isNull();
+        assertThat(channels.findById(b.getId()).orElseThrow().getSortOrder()).isEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("toplu kanal sırası (R14 inceleme): 1…n yazılır, YALNIZ değeri değişen satır güncellenir (diğerinin damgası"
+            + " aynı), ad / açıklama / aktiflik / yönetici alıcıları / şablon sürümü korunur; eksik / fazla / başka takımın /"
+            + " tekrar eden kimlik 400 ids")
+    void reorderChannelsWritesOnlyChangedRows() {
+        TechErrorChannel a = channel(1, "Mobil");
+        TechErrorChannel b = channel(1, "POS");
+        TechErrorChannel c = channel(1, "ATM");
+        TechErrorChannel other = channel(2, "Kurumsal");
+        Map<String, Object> edit = new HashMap<>();
+        edit.put("description", "Mobil uygulama");
+        edit.put("executive_emails", "ceo@example.com");
+        edit.put("active", false);
+        service.updateChannel(a.getId(), edit, 8L);
+        Instant cStamp = channels.findById(c.getId()).orElseThrow().getUpdatedAt();
+        service.useClock(Clock.fixed(Instant.parse("2026-10-13T11:00:00Z"), ZoneOffset.UTC));
+
+        // (1, 2, 3) → B, A, C: B 2→1, A 1→2, C 3 aynı → 2 satır
+        TechErrorReportService.ReorderResult r = service.reorderChannels(1L, List.of(b.getId(), a.getId(), c.getId()), 9L);
+        assertThat(r.changed()).isEqualTo(2);
+        assertThat(r.before()).containsExactly(a.getId(), b.getId(), c.getId());
+        assertThat(r.after()).containsExactly(b.getId(), a.getId(), c.getId());
+        TechErrorChannel a2 = channels.findById(a.getId()).orElseThrow();
+        TechErrorChannel b2 = channels.findById(b.getId()).orElseThrow();
+        TechErrorChannel c2 = channels.findById(c.getId()).orElseThrow();
+        assertThat(b2.getSortOrder()).isEqualTo(1);
+        assertThat(a2.getSortOrder()).isEqualTo(2);
+        assertThat(c2.getSortOrder()).isEqualTo(3);
+        assertThat(c2.getUpdatedAt()).isEqualTo(cStamp);                        // değişmeyen satıra UPDATE gitmedi
+        assertThat(b2.getUpdatedAt()).isEqualTo(Instant.parse("2026-10-13T11:00:00Z"));
+        assertThat(b2.getUpdatedById()).isEqualTo(9L);
+        assertThat(a2.getName()).isEqualTo("Mobil");
+        assertThat(a2.getDescription()).isEqualTo("Mobil uygulama");
+        assertThat(a2.getExecutiveEmails()).isEqualTo("ceo@example.com");
+        assertThat(a2.isActive()).isFalse();
+        assertThat(a2.getTemplateVersion()).isEqualTo(1);
+        assertThat(channels.findById(other.getId()).orElseThrow().getSortOrder()).isEqualTo(1);   // başka takım aynı
+        // Aynı dizilim: hiçbir satır yazılmaz
+        assertThat(service.reorderChannels(1L, List.of(b.getId(), a.getId(), c.getId()), 9L).changed()).isZero();
+
+        for (List<Long> bad : List.of(
+                List.of(b.getId(), a.getId()),                                    // eksik
+                List.of(b.getId(), a.getId(), c.getId(), other.getId()),          // fazla (başka takım)
+                List.of(b.getId(), a.getId(), other.getId()),                     // başka takımın kanalı
+                List.of(b.getId(), b.getId(), c.getId()),                         // tekrar
+                List.of(b.getId(), a.getId(), 999_999L))) {                       // olmayan
+            assertThatThrownBy(() -> service.reorderChannels(1L, bad, 9L))
+                    .isInstanceOf(FieldValidationException.class)
+                    .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("ids"));
+        }
+        assertThat(channels.findById(b.getId()).orElseThrow().getSortOrder()).isEqualTo(1);   // reddedilen istek yazmadı
+    }
+
+    @Test
+    @DisplayName("dönem özeti (R14 inceleme): sayılar istemcinin channelCounts'uyla AYNI anlamda — pasif → inactive; dönem"
+            + " raporu 'sent' → sent; taslak / gönderimden sonra değişti → open; rapor yok → missing; active = sent + open +"
+            + " missing; yalnız verilen takımlar; başka ay sayılmaz")
+    void periodSummaryMatchesChannelCounts() {
+        TechErrorChannel mobil = channel(1, "Mobil");
+        TechErrorChannel pos = channel(1, "POS");
+        TechErrorChannel atm = channel(1, "ATM");
+        TechErrorChannel changedCh = channel(1, "Kurumsal İnternet");
+        TechErrorChannel sube = channel(1, "Şube");
+        channel(2, "Başka takım");                                               // verilmeyen takım
+        Map<String, Object> off = new HashMap<>();
+        off.put("active", false);
+        service.updateChannel(sube.getId(), off, 8L);
+        Instant claim = Instant.parse("2026-10-13T09:10:00Z");
+        TechErrorReport sent = service.createReport(mobil, 2026, 9, 7L);
+        reports.claimSend(sent.getId(), claim, claim.minusSeconds(600));
+        reports.finishSent(sent.getId(), claim, "SENT", claim, 7L, "a@b.com", rev(sent.getId()));
+        service.createReport(pos, 2026, 9, 7L);                                  // taslak
+        service.createReport(atm, 2026, 8, 7L);                                  // başka ay → bu dönem başlanmamış
+        TechErrorReport changed = service.createReport(changedCh, 2026, 9, 7L);
+        reports.claimSend(changed.getId(), claim, claim.minusSeconds(600));
+        reports.finishSent(changed.getId(), claim, "SENT", claim, 7L, "a@b.com", rev(changed.getId()));
+        reports.touchContent(changed.getId(), claim.plusSeconds(60));            // gönderimden sonra değişti
+
+        TechErrorReportService.PeriodSummary s = service.periodSummary(List.of(1L), java.time.YearMonth.of(2026, 9));
+        // channelCounts karşılığı: { channels: 4, sent: 1, open: 2, missing: 1, inactive: 1 } (channels = active)
+        assertThat(s).isEqualTo(new TechErrorReportService.PeriodSummary(4, 1, 2, 1, 1));
+        assertThat(service.periodSummary(List.of(1L, 2L), java.time.YearMonth.of(2026, 9)).missing()).isEqualTo(2);
+        assertThat(service.periodSummary(List.of(), java.time.YearMonth.of(2026, 9))).isEqualTo(new TechErrorReportService.PeriodSummary(0, 0, 0, 0, 0));
+    }
+
+    @Test
     @DisplayName("şablon kaydı koşullu: eski sürümle ikinci kayıt 409, hiçbir şey ezilmez; silinmiş kanal 404")
     void templateOptimisticLock() {
         TechErrorChannel ch = channel(1, "POS");

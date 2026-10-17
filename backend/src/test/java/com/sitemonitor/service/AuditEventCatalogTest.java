@@ -98,6 +98,13 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("kanal sırası (R14, 2026-10-17): TECH_ERROR_CHANNEL_REORDER katalogda ve rapor kategorisinde")
+    void techErrorChannelReorderIsReport() {
+        assertThat(AuditEventCatalog.contains("TECH_ERROR_CHANNEL_REORDER")).isTrue();
+        assertThat(AuditEventCatalog.categoryOf("TECH_ERROR_CHANNEL_REORDER")).isEqualTo(AuditEventCatalog.REPORT);
+    }
+
+    @Test
     @DisplayName("katalogdaki hiçbir tür OTHER'da kalmamalı (kural her türü tanımalı)")
     void everyCatalogTypeHasRealCategory() {
         List<String> uncategorised = AuditEventCatalog.TYPES.stream()
