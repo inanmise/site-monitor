@@ -39,6 +39,12 @@ public interface TechErrorApprovalTokenRepository extends JpaRepository<TechErro
     @Query("UPDATE TechErrorApprovalToken t SET t.usedAt = NULL WHERE t.id = :id AND t.usedAt = :at")
     int restoreUnused(@Param("id") Long id, @Param("at") Instant at);
 
+    /** Bağlantılı onay postası bu belirtecin sahibine ulaştı (SENT / QUEUED) — onay hatırlatması bağlantıyı ancak o zaman anar. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorApprovalToken t SET t.mailedAt = :at WHERE t.id = :id AND t.mailedAt IS NULL")
+    int markMailed(@Param("id") Long id, @Param("at") Instant at);
+
     /** Karar verilince raporun diğer bağlantıları da kapanır (kullanılmamış olanlar damgalanır). */
     @Modifying
     @Transactional

@@ -603,7 +603,8 @@ final class EmailSamples {
                 var rem = com.sitemonitor.service.mail.TechErrorReminderMail.team("Dijital Kanallar Uygulama Geliştirme", 3L, 2026, 9, items, en,
                         BASE, 5, 3);
                 add("report-tech-reminder-" + (en ? "en" : "tr"), "report",
-                        com.sitemonitor.service.mail.TechErrorReminderMail.teamSubject(2026, 9, en), rem.html(), rem.text(), "warn");
+                        com.sitemonitor.service.mail.TechErrorReminderMail.teamSubject(2026, 9, en, "Dijital Kanallar Uygulama Geliştirme"),
+                        rem.html(), rem.text(), "warn");
             }
             var apr = com.sitemonitor.service.mail.TechErrorReminderMail.approval(title, false, "Mehmet Kaya", "Ayşe Yılmaz",
                     java.time.Instant.parse("2026-10-02T06:30:00Z"), 3, java.time.Instant.parse("2026-10-16T06:30:00Z"),

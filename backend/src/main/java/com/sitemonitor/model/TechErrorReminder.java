@@ -14,7 +14,12 @@ import lombok.NoArgsConstructor;
  *
  * <p>{@code ref_key}: APPROVAL için onay isteğinin zamanı (epoch ms) — yeni bir istek bekleme süresini sıfırlar.
  * {@code last_sent_on}: son hatırlatmanın İstanbul günü ({@code yyyy-MM-dd}); null = talep bırakıldı. Kişisel veri yok.
- * İş her koşuda 6 aydan eski dönemlerin satırlarını siler; kanalı silinen satırı saklama kuralı temizler.
+ *
+ * <p>Kapı satırları (inceleme 2026-10-18): {@code SKIP:<sebep>} (dönem) / {@code ASKIP:<sebep>} (onay) — modül takıma
+ * kapalı, pasif takım, onay akışı kaldırıldı. Kapı TALEPTEN ÖNCE değerlendirilir; reddinde yalnız bu satır yazılır (sebebin
+ * SKIPPED günlük satırı kanal × dönem × sebep başına bir kez) ve {@code PERIOD} / {@code APPROVAL} talebi BOŞ kalır — kapı
+ * sonradan açılınca hatırlatma normal gider. İş her koşuda 6 aydır GÜNCELLENMEMİŞ satırları siler (satır yaşı; dönem yaşı
+ * değil); kanalı silinen satırı saklama kuralı temizler.
  */
 @Entity
 @Table(name = "tech_error_reminders",

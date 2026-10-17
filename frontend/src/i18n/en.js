@@ -20552,6 +20552,12 @@ export const EN = {
   'te.rem.saved': "Reminder and e-mail settings saved.",
   'te.rem.v.whole': "Enter a whole number between {0} and {1}.",
   'te.rem.v.inline': "The body budget ({0} MB) must be smaller than the size limit ({1} MB): lower the budget or raise the limit.",
+  'te.rem.unsupportedTitle': "The server doesn't support these settings yet",
+  'te.rem.unsupported': "This server version doesn't know the reminder and e-mail limit settings yet (an update may be in progress); no change was saved. Press Refresh in a few minutes and try again.",
+  'te.rem.staleTitle': "Reminder settings couldn't be refreshed",
+  'te.rem.stale': "The last values read are shown; use Try again to read them again.",
+  'te.rem.unreadable': "Reminder settings couldn't be read",
+  'te.rem.unreadableBody': "The server couldn't be reached or the answer couldn't be read. Wait a moment and press Try again.",
   'te.set.channelsLoading': "Loading the channel overview…",
   // Exporting the channel overview (2026-10-17, E22)
   'te.set.export.open': "Export",

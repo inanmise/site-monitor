@@ -37,7 +37,10 @@ function settingsBody(extra = {}) {
   return { success: true, data: { team_ids: [], read_only: false, period: { year: 2026, month: 9 }, channels: CHANNELS, ...extra } }
 }
 
-/** 12. sürüm (2026-10-17): hatırlatma + posta sınırı bloğu (sunucu `reminders`). */
+/**
+ * 12. sürüm (2026-10-17): hatırlatma + posta sınırı bloğu — AYRI uç `/settings/reminders` (inceleme 2026-10-18). Verilmezse
+ * uç 404 döner (eski pod) ve kart "henüz desteklemiyor" notunu gösterir.
+ */
 const REMINDERS = {
   team_ids: [1], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
   reminder_push: true,
@@ -53,16 +56,32 @@ async function routes(page, { readOnly = false, fail = () => false, reminders = 
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   await page.route((u) => new URL(u).pathname === '/api/teams/directory', json({ success: true, data: TEAMS }))
+  // `saves`: görünürlük PUT'ları (`/settings`, 11. sürüm sözleşmesi); `saves.reminders`: hatırlatma PUT'ları (ayrı uç)
   const saves = []
+  saves.reminders = []
   await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings', (route) => {
     if (route.request().method() === 'PUT') {
       const body = JSON.parse(route.request().postData() || '{}')
       saves.push(body)
-      const rem = reminders ? { ...reminders, ...pickReminders(body) } : undefined
-      return json({ success: true, data: { team_ids: body.team_ids || [], ...(rem ? { reminders: rem } : {}) } })(route)
+      return json({ success: true, data: { team_ids: body.team_ids || [] } })(route)
     }
     if (fail()) return json({ success: false, code: 'DB_UNAVAILABLE', error: 'Veritabanına şu an ulaşılamıyor. Biraz bekleyip yeniden deneyin.' }, 503)(route)
-    return json(settingsBody({ read_only: readOnly, ...(reminders ? { reminders } : {}) }))(route)
+    return json(settingsBody({ read_only: readOnly }))(route)
+  })
+  let current = reminders ? { ...reminders } : null
+  await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings/reminders', (route) => {
+    if (!current) {
+      const method = route.request().method()
+      return json({ success: false, code: method === 'GET' ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED', error: 'Kaynak bulunamadı' },
+        method === 'GET' ? 404 : 405)(route)
+    }
+    if (route.request().method() === 'PUT') {
+      const body = JSON.parse(route.request().postData() || '{}')
+      saves.reminders.push(body)
+      current = { ...current, ...pickReminders(body) }
+      return json({ success: true, data: { ...current, read_only: false } })(route)
+    }
+    return json({ success: true, data: { ...current, read_only: readOnly } })(route)
   })
   return saves
 }
@@ -274,6 +293,8 @@ test.describe('Ayarlar → Teknik hata raporu — tablet 768 (dokunmatik)', () =
   const root = page.locator(ROOT)
   await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
   await expect(root.locator('[data-slot="tes-readonly"]')).toContainText('yalnız global yöneticiler')
+  // Hatırlatma ucu yok (eski pod, 404): kart "henüz desteklemiyor" der, alan / kayıt çubuğu yok (inceleme 2026-10-18)
+  await expect(root.locator('[data-slot="tes-rem-unsupported"]')).toContainText('hiçbir değişiklik kaydedilmedi')
   await expect(root.getByRole('combobox', { name: 'Modülü gören takımlar' })).toBeDisabled()
   await expect(root.locator('[data-slot="settings-save-bar"]')).toHaveCount(0)
   expect(saves).toEqual([])
@@ -376,6 +397,7 @@ for (const vp of VIEWPORTS) {
       await expect(bar).toHaveAttribute('data-dirty', 'true')
       await bar.getByRole('button', { name: /Kaydet/ }).click()
       await expect(card.locator('[data-field="reminder_day"]')).toContainText('Bir tam sayı girin: 1 ile 28 arasında olmalı.')
+      expect(saves.reminders).toEqual([])
       expect(saves).toEqual([])
       await page.waitForTimeout(200)
       expect(await page.evaluate(clipped, REM_ROOT), `@${vp.name}: kırpılan metin (hata iletisi)`).toEqual([])
@@ -385,8 +407,9 @@ for (const vp of VIEWPORTS) {
       await day.fill('7')
       await expect(card.locator('[data-field="reminder_day"]')).not.toContainText('Bir tam sayı girin')
       await bar.getByRole('button', { name: /Kaydet/ }).click()
-      await expect.poll(() => saves.length).toBe(1)
-      expect(saves[0]).toEqual({ reminder_day: 7 })
+      await expect.poll(() => saves.reminders.length).toBe(1)
+      expect(saves.reminders[0]).toEqual({ reminder_day: 7 })
+      expect(saves, 'görünürlük PUT\'u gitmez (eski pod onu eksik team_ids ile boş okurdu)').toEqual([])
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(day).toHaveValue('7')
       if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi (kayıt sonrası)`).toEqual([])

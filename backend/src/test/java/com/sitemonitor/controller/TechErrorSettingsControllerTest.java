@@ -44,9 +44,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Ayarlar → Teknik hata raporu uçları (12. sürüm, 2026-10-17 — hatırlatmalar + posta sınırları): GET etkin değerleri ve
- * aralıkları döner; PUT YALNIZ gönderilen alanları yazar, aralık / alanlar-arası hata 400 + alan adı, boş gövde hiçbir şey
- * yazmaz ve denetlenmez; denetim kaydı değişen anahtarları taşır; kapsamlı müdür okur (salt okunur), yazamaz (403).
+ * Ayarlar → Teknik hata raporu uçları. {@code /settings} 11. sürümle BİREBİR (yalnız görünürlük; gövdede {@code team_ids}
+ * yoksa boş = herkes; GET'te hatırlatma bloğu YOK). Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta
+ * ({@code /settings/reminders}, inceleme 2026-10-18 — yuvarlanan dağıtımda eski pod bu yolu tanımaz, 404 / 405 döner ve
+ * görünürlüğe dokunmaz): GET etkin değerleri ve aralıkları döner; PUT YALNIZ gönderilen alanları yazar (görünürlük
+ * anahtarı bu uçta yok sayılır), aralık / alanlar-arası hata 400 + alan adı, boş gövde hiçbir şey yazmaz ve denetlenmez;
+ * denetim kaydı değişen anahtarları taşır; kapsamlı müdür okur (salt okunur), yazamaz (403).
  */
 @WebMvcTest(TechErrorSettingsController.class)
 class TechErrorSettingsControllerTest {
@@ -126,41 +129,102 @@ class TechErrorSettingsControllerTest {
         return (Map<String, Object>) body.getValue().get("values");
     }
 
+    private static final String MAIN = "/api/admin/tech-error-reports/settings";
+    private static final String REM = "/api/admin/tech-error-reports/settings/reminders";
+
+    // ── /settings: 11. sürüm sözleşmesi ─────────────────────────────────────────────────────────────
+
     @Test
-    @DisplayName("GET: hatırlatma bloğu etkin değerler (varsayılanlar: gün 5, tekrar 3, onay 3, posta 15 / 6 MB, push açık, takım yok) + aralıklar; kapsamlı müdür read_only")
-    void getReturnsReminderBlock() throws Exception {
-        mvc.perform(get("/api/admin/tech-error-reports/settings").session(globalAdmin()))
+    @DisplayName("GET /settings 11. sürümle aynı: görünürlük + kanal özeti, hatırlatma bloğu YOK; kapsamlı müdür read_only")
+    void mainGetHasNoReminderBlock() throws Exception {
+        mvc.perform(get(MAIN).session(globalAdmin()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.read_only").value(false))
-                .andExpect(jsonPath("$.data.reminders.team_ids.length()").value(0))
-                .andExpect(jsonPath("$.data.reminders.reminder_day").value(5))
-                .andExpect(jsonPath("$.data.reminders.reminder_repeat_days").value(3))
-                .andExpect(jsonPath("$.data.reminders.approval_reminder_days").value(3))
-                .andExpect(jsonPath("$.data.reminders.max_mail_mb").value(15))
-                .andExpect(jsonPath("$.data.reminders.mail_inline_mb").value(6))
-                .andExpect(jsonPath("$.data.reminders.reminder_push").value(true))
-                .andExpect(jsonPath("$.data.reminders.limits.reminder_day.min").value(1))
-                .andExpect(jsonPath("$.data.reminders.limits.reminder_day.max").value(28))
-                .andExpect(jsonPath("$.data.reminders.limits.max_mail_mb.max").value(50));
-        stored.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, "2,1");
-        stored.put(TechErrorReportSettings.KEY_REMINDER_DAY, "10");
-        stored.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
-        mvc.perform(get("/api/admin/tech-error-reports/settings").session(scopedAdmin()))
+                .andExpect(jsonPath("$.data.team_ids.length()").value(0))
+                .andExpect(jsonPath("$.data.period.month").value(9))
+                .andExpect(jsonPath("$.data.reminders").doesNotExist());
+        mvc.perform(get(MAIN).session(scopedAdmin()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.read_only").value(true))
-                .andExpect(jsonPath("$.data.reminders.team_ids[0]").value(2))
-                .andExpect(jsonPath("$.data.reminders.team_ids[1]").value(1))
-                .andExpect(jsonPath("$.data.reminders.reminder_day").value(10))
-                .andExpect(jsonPath("$.data.reminders.reminder_push").value(false));
+                .andExpect(jsonPath("$.data.read_only").value(true));
     }
 
     @Test
-    @DisplayName("PUT yalnız gönderilen alanları yazar (görünürlük dokunulmaz); denetim değişen anahtarları taşır; yanıt yeni değerler")
-    void putWritesOnlySentKeys() throws Exception {
-        mvc.perform(put("/api/admin/tech-error-reports/settings").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reminder_team_ids\":[1],\"reminder_day\":7,\"reminder_push\":false}"))
+    @DisplayName("PUT /settings 11. sürümle aynı: yalnız görünürlük yazılır; gövdede team_ids yoksa boş liste (= herkes) — hatırlatma anahtarları bu uçta YAZILMAZ")
+    void mainPutIsTheRelease11Contract() throws Exception {
+        mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2]}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.data.team_ids[0]").value(2))
+                .andExpect(jsonPath("$.data.reminders").doesNotExist());
+        assertThat(savedValues()).containsOnlyKeys(TechErrorReportSettings.KEY_TEAM_IDS).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "2");
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("TECH_ERROR_SETTINGS_SAVE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("tech-error-report"), detail.capture());
+        assertThat(detail.getValue()).contains("team_ids").contains("everyone");
+    }
+
+    @Test
+    @DisplayName("PUT /settings hatırlatma gövdesi: 11. sürüm gibi davranır (eksik team_ids = boş) — yeni kart bu uca hatırlatma GÖNDERMEZ; hatırlatma anahtarı yazılmaz")
+    void mainPutIgnoresReminderKeys() throws Exception {
+        mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"reminder_day\":7}"))
+                .andExpect(status().isOk());
+        assertThat(savedValues()).containsOnlyKeys(TechErrorReportSettings.KEY_TEAM_IDS).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "");
+    }
+
+    @Test
+    @DisplayName("PUT /settings: geçersiz / bilinmeyen takım 400 + team_ids; kapsamlı müdür 403")
+    void mainPutValidation() throws Exception {
+        for (String body : List.of("{\"team_ids\":[999]}", "{\"team_ids\":\"1\"}", "{\"team_ids\":[0]}")) {
+            mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("team_ids"));
+        }
+        mvc.perform(put(MAIN).session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[1]}"))
+                .andExpect(status().isForbidden());
+        verify(settings, never()).save(any(), anyString());
+    }
+
+    // ── /settings/reminders ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /settings/reminders: etkin değerler (varsayılanlar: gün 5, tekrar 3, onay 3, posta 15 / 6 MB, push açık, takım yok) + aralıklar; kapsamlı müdür read_only; yönetici olmayan 403")
+    void getReminders() throws Exception {
+        mvc.perform(get(REM).session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.read_only").value(false))
+                .andExpect(jsonPath("$.data.team_ids.length()").value(0))
+                .andExpect(jsonPath("$.data.reminder_day").value(5))
+                .andExpect(jsonPath("$.data.reminder_repeat_days").value(3))
+                .andExpect(jsonPath("$.data.approval_reminder_days").value(3))
+                .andExpect(jsonPath("$.data.max_mail_mb").value(15))
+                .andExpect(jsonPath("$.data.mail_inline_mb").value(6))
+                .andExpect(jsonPath("$.data.reminder_push").value(true))
+                .andExpect(jsonPath("$.data.limits.reminder_day.min").value(1))
+                .andExpect(jsonPath("$.data.limits.reminder_day.max").value(28))
+                .andExpect(jsonPath("$.data.limits.max_mail_mb.max").value(50));
+        stored.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, "2,1");
+        stored.put(TechErrorReportSettings.KEY_REMINDER_DAY, "10");
+        stored.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        mvc.perform(get(REM).session(scopedAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.read_only").value(true))
+                .andExpect(jsonPath("$.data.team_ids[0]").value(2))
+                .andExpect(jsonPath("$.data.team_ids[1]").value(1))
+                .andExpect(jsonPath("$.data.reminder_day").value(10))
+                .andExpect(jsonPath("$.data.reminder_push").value(false));
+        MockHttpSession user = globalAdmin();
+        user.setAttribute("systemRole", "USER");
+        mvc.perform(get(REM).session(user)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /settings/reminders yalnız gönderilen alanları yazar; görünürlük (team_ids) bu uçta YOK SAYILIR; denetim değişen anahtarları taşır; yanıt yeni değerler")
+    void putWritesOnlySentKeys() throws Exception {
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reminder_team_ids\":[1],\"reminder_day\":7,\"reminder_push\":false,\"team_ids\":[2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.read_only").value(false))
+                .andExpect(jsonPath("$.data.limits.reminder_day.max").value(28));
         Map<String, Object> values = savedValues();
         assertThat(values).containsOnlyKeys(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, TechErrorReportSettings.KEY_REMINDER_DAY,
                 TechErrorReportSettings.KEY_REMINDER_PUSH);
@@ -170,20 +234,12 @@ class TechErrorSettingsControllerTest {
         ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
         verify(auditService).recordAction(eq("TECH_ERROR_SETTINGS_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("tech-error-report"), detail.capture());
-        assertThat(detail.getValue()).contains("reminder_day").contains(TechErrorReportSettings.KEY_REMINDER_PUSH).doesNotContain("\"team_ids\"");
+        assertThat(detail.getValue()).contains("reminder_day").contains(TechErrorReportSettings.KEY_REMINDER_PUSH)
+                .doesNotContain("\"team_ids\"").doesNotContain(TechErrorReportSettings.KEY_TEAM_IDS);
     }
 
     @Test
-    @DisplayName("eski istemci gövdesi { team_ids } aynen çalışır (yalnız görünürlük yazılır)")
-    void legacyVisibilityBody() throws Exception {
-        mvc.perform(put("/api/admin/tech-error-reports/settings").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"team_ids\":[2]}"))
-                .andExpect(status().isOk());
-        assertThat(savedValues()).containsOnlyKeys(TechErrorReportSettings.KEY_TEAM_IDS).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "2");
-    }
-
-    @Test
-    @DisplayName("alan hataları 400 VALIDATION_FAILED + field: aralık dışı gün, kesirli sayı, bilinmeyen takım, push metni; alanlar-arası gövde ≥ posta sınırı (etkin değerle)")
+    @DisplayName("PUT /settings/reminders alan hataları 400 VALIDATION_FAILED + field: aralık dışı gün, kesirli sayı, bilinmeyen takım, push metni; alanlar-arası gövde ≥ posta sınırı (etkin değerle)")
     void validation() throws Exception {
         String[][] cases = {
                 {"{\"reminder_day\":29}", "reminder_day"},
@@ -198,25 +254,29 @@ class TechErrorSettingsControllerTest {
                 {"{\"max_mail_mb\":10,\"mail_inline_mb\":12}", "mail_inline_mb"},
         };
         for (String[] c : cases) {
-            mvc.perform(put("/api/admin/tech-error-reports/settings").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content(c[0]))
+            mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content(c[0]))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                     .andExpect(jsonPath("$.field").value(c[1]));
         }
         verify(settings, never()).save(any(), anyString());
         // İkisi birlikte uyumlu: kabul
-        mvc.perform(put("/api/admin/tech-error-reports/settings").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"max_mail_mb\":25,\"mail_inline_mb\":12}"))
                 .andExpect(status().isOk());
         assertThat(savedValues()).containsEntry(TechErrorReportSettings.KEY_MAX_MAIL_MB, "25").containsEntry(TechErrorReportSettings.KEY_MAIL_INLINE_MB, "12");
     }
 
     @Test
-    @DisplayName("boş gövde: hiçbir şey yazılmaz, denetim yok, 200 (değişiklik yok)")
+    @DisplayName("PUT /settings/reminders boş gövde (ve gövdesiz, ve yalnız team_ids): hiçbir şey yazılmaz, denetim yok, 200")
     void emptyBodyIsNoOp() throws Exception {
-        mvc.perform(put("/api/admin/tech-error-reports/settings").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reminders.reminder_day").value(5));
+                .andExpect(jsonPath("$.data.reminder_day").value(5));
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[1]}"))
+                .andExpect(status().isOk());
         verify(settings, never()).save(any(), anyString());
         verify(auditService, never()).recordAction(anyString(), any(jakarta.servlet.http.HttpSession.class),
                 any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
@@ -225,8 +285,8 @@ class TechErrorSettingsControllerTest {
     @Test
     @DisplayName("kapsamlı müdür hatırlatma / posta sınırı anahtarlarını yazamaz (403), hiçbir şey yazılmaz")
     void scopedAdminCannotWrite() throws Exception {
-        for (String body : List.of("{\"reminder_day\":7}", "{\"max_mail_mb\":20}", "{\"reminder_team_ids\":[1]}")) {
-            mvc.perform(put("/api/admin/tech-error-reports/settings").session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON).content(body))
+        for (String body : List.of("{\"reminder_day\":7}", "{\"max_mail_mb\":20}", "{\"reminder_team_ids\":[1]}", "{}")) {
+            mvc.perform(put(REM).session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isForbidden());
         }
         verify(settings, never()).save(any(), anyString());

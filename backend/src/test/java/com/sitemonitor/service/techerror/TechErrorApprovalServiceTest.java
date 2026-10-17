@@ -70,6 +70,7 @@ class TechErrorApprovalServiceTest {
     @Autowired com.sitemonitor.repository.TechErrorReportImageRepository images;
     @Autowired com.sitemonitor.repository.TechErrorTemplateVersionRepository versions;
     @Autowired TechErrorHistoryService history;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     @MockitoBean TechErrorReportSender sender;
     @MockitoBean EmailNotificationService email;
@@ -196,6 +197,7 @@ class TechErrorApprovalServiceTest {
             assertThat(t.getTokenHash()).hasSize(64);
             assertThat(t.getUsedAt()).isNull();
             assertThat(t.getExpiresAt()).isEqualTo(service.now().plus(TechErrorApprovalService.TOKEN_TTL));
+            assertThat(t.getMailedAt()).as("bağlantılı posta ulaştı (SENT)").isEqualTo(service.now());
         });
         // Postalar: PO başına bir posta, kendi bağlantısıyla, PDF ekli, "[Onay bekliyor]" konu; ham belirteç DB'de yok
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
@@ -670,6 +672,78 @@ class TechErrorApprovalServiceTest {
         assertThat(logs.findAll()).hasSize(2).allMatch(n -> n.getEmailStatus().startsWith("SKIPPED"));
         var ev = events.findAll().stream().filter(e -> "APPROVAL_REQUEST".equals(e.getKind())).findFirst().orElseThrow();
         assertThat(ev.getDetailJson()).contains("PDF_BUSY").doesNotContain("po1@example.com");   // kimseye gitmedi
+        // Bağlantı kimseye ulaşmadı: hatırlatma "özgün bağlantınız geçerli" demesin (inceleme 2026-10-18)
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(2).allSatisfy(t -> assertThat(t.getMailedAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: bağlantı postası damgası (mailed_at) yalnız posta SENT / QUEUED döndüğünde VE posta bağlantıyı taşıdığında: FAILED / SKIPPED ya da boş uygulama adresi → NULL")
+    void tokenMailedAtOnlyWhenTheLinkReachedThePo() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        when(email.sendHtml(eq(new String[] { "po1@example.com" }), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenReturn("QUEUED_RETRY: 421");
+        when(email.sendHtml(eq(new String[] { "po2@example.com" }), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenReturn("FAILED: 550");
+        approvals.request(r, ch, team, tech.getId());
+        Map<Long, Instant> mailed = new java.util.HashMap<>();
+        for (TechErrorApprovalToken t : tokens.findByReportIdOrderByIdAsc(r.getId())) mailed.put(t.getUserId(), t.getMailedAt());
+        assertThat(mailed.get(po1.getId())).as("QUEUED: posta servisi aldı").isEqualTo(service.now());
+        assertThat(mailed).containsEntry(po2.getId(), null);
+
+        // Uygulama adresi boş: posta SENT ama bağlantı taşımıyordu → damga yok
+        when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
+        TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
+        approvals.request(r2, ch, team, tech.getId());
+        assertThat(tokens.findByReportIdOrderByIdAsc(r2.getId())).hasSize(2).allSatisfy(t -> assertThat(t.getMailedAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: diğer PO'lara bilgi postası İSTEKTE değil arka planda, karar yazıldıktan SONRA (işlem varsa commit'ten sonra; geri alınırsa hiç); her posta yine bir günlük satırı")
+    void otherApproversInformedInBackgroundAfterCommit() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+        List<Runnable> queue = new java.util.ArrayList<>();
+        approvals.setMailExecutor(queue::add);
+        try {
+            TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+            approvals.request(r, ch, team, tech.getId());
+            TechErrorApprovalService.Decision d = approvals.decide(service.report(r.getId()), ch, team, po1.getId(), true, null, "app");
+            assertThat(d.state()).isEqualTo("APPROVED");
+            assertThat(queue).hasSize(1);
+            assertThat(logs.findAll()).noneMatch(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()));
+            queue.remove(0).run();
+            assertThat(logs.findAll()).filteredOn(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()))
+                    .singleElement().satisfies(n -> {
+                        assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com");
+                        assertThat(n.getEmailStatus()).isEqualTo("SENT");
+                    });
+
+            // Etkin işlem içinde: iş commit'ten SONRA kuyruğa girer; geri alınan işlemde hiç girmez
+            org.springframework.transaction.support.TransactionTemplate tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+            List<Integer> seenInside = new java.util.ArrayList<>();
+            tx.executeWithoutResult(s -> {
+                approvals.afterDecision(1L, () -> { });
+                seenInside.add(queue.size());
+            });
+            assertThat(seenInside).containsExactly(0);
+            assertThat(queue).hasSize(1);
+            queue.clear();
+            tx.executeWithoutResult(s -> {
+                approvals.afterDecision(1L, () -> { });
+                s.setRollbackOnly();
+            });
+            assertThat(queue).isEmpty();
+            // Havuz işi reddederse aynı iş parçacığında çalışır (bilgi kaybolmaz)
+            approvals.setMailExecutor(task -> { throw new java.util.concurrent.RejectedExecutionException("dolu"); });
+            boolean[] ran = { false };
+            approvals.afterDecision(1L, () -> ran[0] = true);
+            assertThat(ran[0]).isTrue();
+        } finally {
+            approvals.setMailExecutor(null);
+        }
     }
 
     @Test

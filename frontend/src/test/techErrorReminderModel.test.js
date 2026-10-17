@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, normalizeReminders, parseWhole, toForm, validateForm,
+  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeReminders, parseWhole, reminderState,
+  toForm, validateForm,
 } from '../components/admin/techErrorReminderModel.js'
 
 // Ayarlar → Teknik hata raporu → hatırlatmalar ve posta sınırları (12. sürüm, 2026-10-17): saf model — sunucu aralıklarıyla
@@ -68,5 +69,29 @@ describe('techErrorReminderModel', () => {
     expect(isFormDirty(saved, half)).toBe(true)
     expect(isFormDirty(saved, { ...form, mail_inline_mb: '06' })).toBe(false)   // aynı değer, farklı yazım
     expect(isFormDirty(saved, { ...form, reminder_day: '1.5' })).toBe(true)
+  })
+
+  it('inceleme 2026-10-18 — reminderState: eski pod (GET 404 / PUT 405) "desteklenmiyor"; başarısız okuma önceki değerleri korur, değer uydurmaz; beklenmeyen biçim → kart yok', () => {
+    expect(isUnsupportedResponse({ success: false, status: 404, code: 'NOT_FOUND' })).toBe(true)
+    expect(isUnsupportedResponse({ success: false, status: 405, code: 'METHOD_NOT_ALLOWED' })).toBe(true)
+    expect(isUnsupportedResponse({ success: false, status: 403 })).toBe(false)
+    expect(isUnsupportedResponse({ success: true, status: 404 })).toBe(false)
+    expect(isUnsupportedResponse(null)).toBe(false)
+
+    const ok = reminderState({ success: true, data: { ...SERVER, read_only: true } })
+    expect(ok.status).toBe('ok')
+    expect(ok.data.read_only).toBe(true)
+    expect(ok.data.team_ids).toEqual([3, 1])
+    expect(reminderState({ success: true, data: SERVER }).data.read_only).toBe(false)
+
+    expect(reminderState({ success: false, status: 404 })).toEqual({ status: 'unsupported', data: null, error: null })
+    expect(reminderState({ success: false, status: 405 }, ok)).toEqual({ status: 'unsupported', data: ok.data, error: null })
+    expect(reminderState({ success: false, status: 503, error: 'Veritabanı yok' }))
+      .toEqual({ status: 'failed', data: null, error: 'Veritabanı yok' })
+    expect(reminderState({ success: false, status: 503, error: 'x' }, ok).data).toBe(ok.data)
+    expect(reminderState(null, ok)).toEqual({ status: 'failed', data: ok.data, error: null })
+    // Başarılı ama blok yok / dizi: önceki yoksa kart çizilmez, varsa korunur (hata olarak)
+    expect(reminderState({ success: true, data: [] })).toBeNull()
+    expect(reminderState({ success: true, data: [] }, ok)).toEqual({ status: 'failed', data: ok.data, error: null })
   })
 })

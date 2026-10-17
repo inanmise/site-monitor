@@ -1321,6 +1321,10 @@ export const api = {
     // Teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı özeti
     techErrorSettings: () => request('/admin/tech-error-reports/settings', { withStatus: true }),
     saveTechErrorSettings: (body) => request('/admin/tech-error-reports/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta: eski pod bu yolu tanımaz (404 / 405) ve görünürlüğe dokunmaz
+    techErrorReminderSettings: () => request('/admin/tech-error-reports/settings/reminders', { withStatus: true }),
+    saveTechErrorReminderSettings: (body) => request('/admin/tech-error-reports/settings/reminders',
+      { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
 
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
     // Veri Saklama (retention) — politika matrisi, dry-run, elle temizlik, çalışma geçmişi.

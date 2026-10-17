@@ -20586,6 +20586,12 @@ export const TR = {
   'te.rem.saved': "Hatırlatma ve posta ayarları kaydedildi.",
   'te.rem.v.whole': "Bir tam sayı girin: {0} ile {1} arasında olmalı.",
   'te.rem.v.inline': "Gövde bütçesi ({0} MB) boyut sınırından ({1} MB) küçük olmalı: bütçeyi düşürün ya da sınırı yükseltin.",
+  'te.rem.unsupportedTitle': "Sunucu bu ayarları henüz desteklemiyor",
+  'te.rem.unsupported': "Bu sunucu sürümü hatırlatma ve posta sınırı ayarlarını henüz tanımıyor (güncelleme sürüyor olabilir); hiçbir değişiklik kaydedilmedi. Birkaç dakika sonra Yenile'ye basıp yeniden deneyin.",
+  'te.rem.staleTitle': "Hatırlatma ayarları yenilenemedi",
+  'te.rem.stale': "Son okunan değerler gösteriliyor; Tekrar dene ile yeniden okuyun.",
+  'te.rem.unreadable': "Hatırlatma ayarları okunamadı",
+  'te.rem.unreadableBody': "Sunucuya ulaşılamadı ya da yanıt okunamadı. Biraz bekleyip Tekrar dene'ye basın.",
   'te.set.channelsLoading': "Kanal özeti yükleniyor…",
   // Kanal özetini dışa aktarma (2026-10-17, E22)
   'te.set.export.open': "Dışa aktar",

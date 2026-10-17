@@ -37,7 +37,7 @@ public final class TechErrorReminderMail {
      * Kanalın dönem durumu (hatırlatmada): rapor yok / taslak / PO onayı bekliyor / reddedildi / onaylandı ama yöneticilere
      * gönderilmedi / onaydan sonra değişti. {@code approvalFlow}: kanalın yönetici alıcısı var (taslak cümlesi "onaya gönderin").
      */
-    public enum State { MISSING, DRAFT, PENDING, REJECTED, APPROVED_UNSENT, STALE }
+    public enum State { MISSING, DRAFT, PENDING, REJECTED, APPROVED_UNSENT, STALE, QUEUED_UNKNOWN }
 
     public record Item(String channelName, State state, boolean approvalFlow) { }
 
@@ -46,8 +46,28 @@ public final class TechErrorReminderMail {
     }
 
     public static String teamSubject(int year, int month, boolean en) {
-        return en ? "[Site Monitor] Technical error report reminder — " + period(year, month, true)
-                : "[Site Monitor] Teknik hata raporu hatırlatması — " + period(year, month, false);
+        return teamSubject(year, month, en, null);
+    }
+
+    /**
+     * Takım hatırlatmasının konusu: dönem + TAKIM ADI (inceleme 2026-10-18) — posta servisi 421 yeniden denemesinin sonucunu
+     * günlük satırına KONUYLA bulur; aynı koşuda her takıma aynı konu giderse sonuç başka takımın satırına yazılabilirdi.
+     */
+    public static String teamSubject(int year, int month, boolean en, String teamName) {
+        String suffix = teamName == null || teamName.isBlank() ? "" : " · " + teamName.trim();
+        return en ? "[Site Monitor] Technical error report reminder — " + period(year, month, true) + suffix
+                : "[Site Monitor] Teknik hata raporu hatırlatması — " + period(year, month, false) + suffix;
+    }
+
+    /**
+     * Konuyu rapora özgü kılar: özel bir başlık kalıbı kanalı ya da dönemi taşımıyorsa onlar eklenir (yeniden deneme sonucu
+     * konuyla eşlenir — iki raporun aynı konusu olmasın). Varsayılan başlık ("{kanal} Kanalı … {ay} {yil}") olduğu gibi kalır.
+     */
+    public static String uniqueTitle(String title, String channelName, String periodLabel) {
+        String t = nz(title);
+        if (channelName != null && !channelName.isBlank() && !t.contains(channelName.trim())) t += " · " + channelName.trim();
+        if (periodLabel != null && !periodLabel.isBlank() && !t.contains(periodLabel.trim())) t += " · " + periodLabel.trim();
+        return t;
     }
 
     public static String stateText(Item i, boolean en) {
@@ -59,12 +79,14 @@ public final class TechErrorReminderMail {
             case REJECTED -> en ? "Rejected — fix it and submit it again" : "Reddedildi — düzeltip yeniden onaya gönderin";
             case APPROVED_UNSENT -> en ? "Approved — not sent to the executives yet" : "Onaylandı — yöneticilere henüz gönderilmedi";
             case STALE -> en ? "Changed during approval — submit it again" : "Onay sürecinde değişti — yeniden onaya gönderin";
+            case QUEUED_UNKNOWN -> en ? "The send result never arrived — send the report again"
+                    : "Gönderim sonucu alınamadı — raporu yeniden gönderin";
         };
     }
 
     private static Tone stateTone(State s) {
         return switch (s) {
-            case MISSING, REJECTED -> Tone.DESTRUCTIVE;
+            case MISSING, REJECTED, QUEUED_UNKNOWN -> Tone.DESTRUCTIVE;
             case PENDING -> Tone.INFO;
             default -> Tone.WARNING;
         };
@@ -87,7 +109,7 @@ public final class TechErrorReminderMail {
         List<Item> all = items == null ? List.of() : items;
         String p = period(year, month, en);
         long pending = all.stream().filter(i -> i.state() == State.PENDING).count();
-        MailDoc d = MailDoc.create(teamSubject(year, month, en)).wide()
+        MailDoc d = MailDoc.create(teamSubject(year, month, en, teamName)).wide()
                 .preheader(en ? p + ": " + all.size() + " channel report(s) still to send" : p + " dönemi: " + all.size() + " kanalın raporu bekliyor")
                 .kicker(en ? "Technical error report · reminder" : "Teknik hata raporu · hatırlatma");
         d.badges(Badge.tint(en ? all.size() + " CHANNEL(S)" : all.size() + " KANAL", Tone.WARNING), Badge.outline("Site Monitor"));

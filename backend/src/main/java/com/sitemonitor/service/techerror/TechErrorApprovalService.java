@@ -114,6 +114,19 @@ public class TechErrorApprovalService {
     @Value("${site.monitor.tech-error-report.mail-inline-mb:6}")
     int mailInlineMb = 6;
 
+    /**
+     * Karar sonrası bilgi postalarının havuzu (inceleme 2026-10-18): projenin küçük posta havuzu (2–4 iş parçacığı, kuyruk
+     * 100, dolunca çağıran çalıştırır, günlük bağlamı taşır). Yoksa (dilim testleri) iş aynı iş parçacığında çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.beans.factory.annotation.Qualifier("loginIssueMailExecutor")
+    java.util.concurrent.Executor mailExecutor;
+
+    /** Test dikişi: arka plan havuzu (null = aynı iş parçacığı). */
+    void setMailExecutor(java.util.concurrent.Executor executor) {
+        this.mailExecutor = executor;
+    }
+
     public TechErrorApprovalService(TechErrorReportService service, TechErrorReportRepository reports,
                                     TechErrorApprovalTokenRepository tokens, AppUserRepository users,
                                     TechErrorReportSender sender, EmailNotificationService email,
@@ -255,6 +268,7 @@ public class TechErrorApprovalService {
             log.warn("Teknik hata raporu #{} eski onay belirteçleri budanamadı: {}", fresh.getId(), e.toString());
         }
         Map<Long, String> rawTokens = new LinkedHashMap<>();
+        Map<Long, Long> tokenIds = new LinkedHashMap<>();
         for (Approver a : apps) {
             if (a.email() == null) continue;
             String raw = newToken();
@@ -265,8 +279,9 @@ public class TechErrorApprovalService {
             t.setApprovalRev(rev);
             t.setCreatedAt(now);
             t.setExpiresAt(now.plus(TOKEN_TTL));
-            tokens.save(t);
+            TechErrorApprovalToken saved = tokens.save(t);
             rawTokens.put(a.id(), raw);
+            if (saved != null && saved.getId() != null) tokenIds.put(a.id(), saved.getId());
         }
         fresh = service.report(fresh.getId());
         List<String> mails = new ArrayList<>();
@@ -320,8 +335,12 @@ public class TechErrorApprovalService {
                         status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
                     }
                     saveLog(a.name(), a.email(), "PO", subject, status, team.getName());
-                    if ("SENT".equals(status) || status.startsWith("QUEUED")) { mailed++; mailedTo.add(a.email()); }
-                    else failed++;
+                    if ("SENT".equals(status) || status.startsWith("QUEUED")) {
+                        mailed++;
+                        mailedTo.add(a.email());
+                        // Bağlantı bu PO'ya gerçekten gitti (posta ulaştı VE bağlantıyı taşıyordu): hatırlatma ancak o zaman anar
+                        if (decideUrl != null) markMailed(tokenIds.get(a.id()), now);
+                    } else failed++;
                 }
             } catch (TechErrorReportService.PdfBusyException busy) {
                 problem = "PDF_BUSY";
@@ -409,13 +428,50 @@ public class TechErrorApprovalService {
             }
         }
         notifyRequester(fresh, channel, team, by, approve, note, send, sendError, now);
-        // Kararı vermeyen diğer onaylayıcılara bilgi (12. sürüm, C10): başarısızlık kararı ASLA değiştirmez
-        try {
-            informOtherApprovers(fresh, channel, team, by, approve, note, now);
-        } catch (RuntimeException e) {
-            log.warn("Teknik hata raporu #{} diğer onaylayıcılara bilgi verilemedi: {}", fresh.getId(), e.toString());
-        }
+        // Kararı vermeyen diğer onaylayıcılara bilgi (12. sürüm, C10): başarısızlık kararı ASLA değiştirmez. Arka planda
+        // (inceleme 2026-10-18): N onaylayıcıya SMTP gönderimi isteği bekletmesin; karar yazıldıktan (commit) SONRA
+        TechErrorReport decided = fresh;
+        afterDecision(fresh.getId(), () -> informOtherApprovers(decided, channel, team, by, approve, note, now));
         return new Decision(state, send, sendError, now);
+    }
+
+    /**
+     * Posta işini karar KALICILAŞTIKTAN sonra arka plan havuzunda çalıştırır: etkin bir işlem varsa commit'ten sonra (geri
+     * alınan kararın bilgisi gitmez), yoksa hemen — karar güncellemeleri kendi işlemlerinde zaten yazıldı. Havuz yoksa
+     * (dilim testleri) ya da işi reddederse aynı iş parçacığında çalışır; hata yutulur ve günlüğe düşer (her posta kararı
+     * {@code informOtherApprovers} içinde bir {@code notification_logs} satırı bırakır).
+     */
+    void afterDecision(Long reportId, Runnable task) {
+        Runnable safe = () -> {
+            try {
+                task.run();
+            } catch (RuntimeException e) {
+                log.warn("Teknik hata raporu #{} diğer onaylayıcılara bilgi verilemedi: {}", reportId, e.toString());
+            }
+        };
+        Runnable submit = () -> {
+            java.util.concurrent.Executor ex = mailExecutor;
+            if (ex == null) {
+                safe.run();
+                return;
+            }
+            try {
+                ex.execute(safe);
+            } catch (RuntimeException rejected) {
+                safe.run();
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            submit.run();
+                        }
+                    });
+        } else {
+            submit.run();
+        }
     }
 
     /** Diğer onaylayıcılara bilgi postasının rolü ({@code notification_logs.recipient_role}). */
@@ -611,6 +667,16 @@ public class TechErrorApprovalService {
         } catch (RuntimeException e) {
             log.warn("Onay bağlantısı yeniden okunamadı (belirteç {}): {}", tokenId, e.toString());
             return "used";
+        }
+    }
+
+    /** Belirtecin postası ulaştı damgası; hata isteği bozmaz (yalnız hatırlatma bağlantıyı anmaz). */
+    private void markMailed(Long tokenId, Instant at) {
+        if (tokenId == null) return;
+        try {
+            tokens.markMailed(tokenId, at);
+        } catch (RuntimeException e) {
+            log.warn("Onay bağlantısı postası damgalanamadı (belirteç {}): {}", tokenId, e.toString());
         }
     }
 

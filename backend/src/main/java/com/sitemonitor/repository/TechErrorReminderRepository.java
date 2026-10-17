@@ -21,6 +21,10 @@ public interface TechErrorReminderRepository extends JpaRepository<TechErrorRemi
     List<TechErrorReminder> findByKindAndReportYearAndReportMonthAndChannelIdIn(String kind, Integer year, Integer month,
                                                                                 Collection<Long> channelIds);
 
+    /** Dönemin talep + kapı ("SKIP:…") satırları — dönem hatırlatması tek sorguda okur. */
+    List<TechErrorReminder> findByKindInAndReportYearAndReportMonthAndChannelIdIn(Collection<String> kinds, Integer year,
+                                                                                  Integer month, Collection<Long> channelIds);
+
     Optional<TechErrorReminder> findByChannelIdAndReportYearAndReportMonthAndKind(Long channelId, Integer year, Integer month,
                                                                                   String kind);
 
@@ -43,11 +47,16 @@ public interface TechErrorReminderRepository extends JpaRepository<TechErrorRemi
     int release(@Param("id") Long id, @Param("rev") int rev, @Param("prevDay") String prevDay, @Param("prevRef") String prevRef,
                 @Param("now") String now);
 
-    /** 6 aydan eski dönemlerin satırları (yıl × 12 + ay kesimi) — iş her koşuda budar. */
+    /**
+     * SATIR YAŞINA göre budama (inceleme 2026-10-18): {@code updated_at} (ISO, UTC — sözlük sırası = zaman sırası) kesimden
+     * eski satırlar. DÖNEME göre budamak, hâlâ bekleyen eski bir onayın talep satırını her koşuda silip ertesi talebi
+     * "taze" yapıyordu → altı aydan eski dönemin onay hatırlatması HER GÜN gidiyordu. Etkin bir talep her hatırlatmada
+     * güncellendiğinden silinmez.
+     */
     @Modifying
     @Transactional
-    @Query("DELETE FROM TechErrorReminder r WHERE (r.reportYear * 12 + r.reportMonth) < :cutoff")
-    int deleteOlderThan(@Param("cutoff") int cutoff);
+    @Query("DELETE FROM TechErrorReminder r WHERE r.updatedAt < :cutoff")
+    int deleteNotUpdatedSince(@Param("cutoff") String cutoff);
 
     @Modifying
     @Transactional

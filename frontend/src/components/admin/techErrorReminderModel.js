@@ -2,13 +2,15 @@ import { isDirty, normalizeIds } from './noc/operatorTeamsModel.js'
 
 /**
  * Ayarlar → Teknik hata raporu → "Hatırlatmalar ve posta sınırları" kartının SAF modeli (12. sürüm, 2026-10-17 — kullanıcı
- * onayı C9 / C10 / E21). Sunucu sözleşmesi (`GET /api/admin/tech-error-reports/settings` → `reminders`):
- * `{ team_ids, reminder_day, reminder_repeat_days, approval_reminder_days, max_mail_mb, mail_inline_mb, reminder_push,
- * limits: { <alan>: { min, max, default } } }`; PUT gövdesi YALNIZ değişen alanlar (aynı adlarla). Alan hataları sunucudan
- * `field` = bu adlardan biri olarak döner.
+ * onayı C9 / C10 / E21). Sunucu sözleşmesi AYRI uç (inceleme 2026-10-18: yuvarlanan dağıtımda eski pod `PUT /settings`
+ * gövdesindeki eksik `team_ids`'i boş okuyup modül görünürlük kısıtını siliyordu): `GET /api/admin/tech-error-reports/settings/reminders`
+ * → `{ team_ids, reminder_day, reminder_repeat_days, approval_reminder_days, max_mail_mb, mail_inline_mb, reminder_push,
+ * limits: { <alan>: { min, max, default } }, read_only }`; `PUT` aynı yola, gövde YALNIZ değişen alanlar (aynı adlarla).
+ * Alan hataları sunucudan `field` = bu adlardan biri olarak döner. Eski pod bu yolu tanımaz: GET 404, PUT 405 / 404 → kart
+ * "henüz desteklenmiyor" der ve salt okunur olur (`reminderState`, `isUnsupportedResponse`).
  *
  * Form sayı alanlarını METİN tutar (yarım yazılmış değer kaybolmasın); kayıtta tam sayıya çevrilir. Bilinmeyen ≠ varsayılan:
- * blok yoksa (eski sunucu) `normalizeReminders` null döner ve kart çizilmez.
+ * okunamayan blok için değer uydurulmaz (`normalizeReminders` null döner).
  */
 export const REM_INT_FIELDS = Object.freeze(['reminder_day', 'reminder_repeat_days', 'approval_reminder_days', 'max_mail_mb', 'mail_inline_mb'])
 
@@ -35,9 +37,31 @@ export function normalizeReminders(r) {
     const d = REM_DEFAULT_LIMITS[k]
     limits[k] = { min: intOr(l?.min, d.min), max: intOr(l?.max, d.max), default: intOr(l?.default, d.default) }
   }
-  const out = { team_ids: normalizeIds(r.team_ids), reminder_push: r.reminder_push !== false, limits }
+  const out = { team_ids: normalizeIds(r.team_ids), reminder_push: r.reminder_push !== false, limits, read_only: r.read_only === true }
   for (const k of REM_INT_FIELDS) out[k] = intOr(r[k], limits[k].default)
   return out
+}
+
+/** Bu uç sunucuda yok (eski pod: GET 404, PUT 405 / 404) — hiçbir şey yazılmadı, "henüz desteklenmiyor". */
+export function isUnsupportedResponse(res) {
+  return !!res && typeof res === 'object' && res.success === false && (res.status === 404 || res.status === 405)
+}
+
+/**
+ * Sayfanın hatırlatma kartı durumu (saf): `{ status: 'ok' | 'unsupported' | 'failed', data, error }`; beklenmeyen biçimde
+ * başarılı yanıt ve önceki değer yoksa null (kart çizilmez). Başarısız / desteklenmeyen okuma ÖNCEKİ kayıtlı değerleri
+ * korur — değer uydurulmaz (bilinmeyen ≠ varsayılan).
+ */
+export function reminderState(res, prev = null) {
+  const prevData = prev?.data || null
+  if (isUnsupportedResponse(res)) return { status: 'unsupported', data: prevData, error: null }
+  if (res == null || (typeof res === 'object' && res.success === false)) {
+    return { status: 'failed', data: prevData, error: res?.error || res?.message || null }
+  }
+  const raw = typeof res === 'object' && !Array.isArray(res) && 'success' in res ? res.data : res
+  const data = normalizeReminders(raw)
+  if (!data) return prevData ? { status: 'failed', data: prevData, error: null } : null
+  return { status: 'ok', data, error: null }
 }
 
 /** Kayıtlı görüntü → düzenleme formu (sayılar metin). */

@@ -29,16 +29,20 @@ import java.util.*;
  * yönetici yazar, kapsamlı müdür salt okunur görür (kendi kapsamındaki takımların kanallarıyla). Yönetici alıcıları
  * kanalın kendi ayarındadır ({@code PUT /api/tech-error-reports/channels/{id}}, takımı yönetenler).
  *
- * <p>12. sürüm (2026-10-17, C9 / C10 / E21): {@code reminders} bloğu — hatırlatma takımları (boş = KAPALI), günü, tekrar
- * aralığı, push, onay hatırlatması ve e-posta boyut sınırları. PUT YALNIZ gönderilen alanları yazar (gönderilmeyen alana
- * dokunulmaz; boş gövde hiçbir şey yazmaz ve denetlenmez); alan hataları 400 {@code VALIDATION_FAILED} + {@code field}
- * (gövdedeki anahtar adıyla). Hepsi GLOBAL_ONLY: kapsamlı müdür 403.
+ * <p>{@code GET/PUT /settings} 11. sürümle BİREBİR aynıdır (yalnız görünürlük; gövdede {@code team_ids} yoksa liste boş =
+ * herkes — 11. sürüm sözleşmesi). Hatırlatma ve posta sınırı ayarları (12. sürüm, C9 / C10 / E21) AYRI uçtadır:
+ * {@code GET/PUT /settings/reminders} (inceleme 2026-10-18: yuvarlanan dağıtımda yeni kart eski pod'a
+ * {@code PUT /settings {reminder_day}} gönderince eski pod eksik {@code team_ids}'i boş okuyup modül görünürlük kısıtını
+ * SİLİYORDU; ayrı yol eski pod'da 404 / 405 alır ve hiçbir şey yazmaz). Hatırlatma PUT'u YALNIZ gönderilen alanları yazar
+ * (gönderilmeyen alana dokunulmaz; {@code team_ids} bu uçta yok sayılır; boş gövde hiçbir şey yazmaz ve denetlenmez); alan
+ * hataları 400 {@code VALIDATION_FAILED} + {@code field} (gövdedeki anahtar adıyla). Hepsi GLOBAL_ONLY: kapsamlı müdür
+ * okur (salt okunur), yazamaz (403).
  */
 @RestController
 @RequestMapping("/api/admin/tech-error-reports")
 public class TechErrorSettingsController {
 
-    /** PUT gövdesindeki tam sayı alanları → ayar aralığı (sıra ön yüzle aynı). */
+    /** Hatırlatma PUT gövdesindeki tam sayı alanları → ayar aralığı (sıra ön yüzle aynı). */
     static final Map<String, IntRange> INT_FIELDS = new LinkedHashMap<>();
     static {
         INT_FIELDS.put("reminder_day", TechErrorReportSettings.REMINDER_DAY);
@@ -101,45 +105,45 @@ public class TechErrorSettingsController {
         data.put("team_ids", enabled == null ? List.of() : new ArrayList<>(enabled));
         data.put("read_only", !global);
         data.put("period", Map.of("year", period.getYear(), "month", period.getMonthValue()));
-        data.put("reminders", reminders());
         data.put("channels", rows);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
-    /** Hatırlatma ve posta sınırı ayarlarının ETKİN değerleri + aralıkları (ön yüz alan sınırlarını buradan alır). */
-    Map<String, Object> reminders() {
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("team_ids", new ArrayList<>(TechErrorReportSettings.reminderTeamIds(settings)));
-        for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
-            r.put(e.getKey(), TechErrorReportSettings.effectiveInt(settings, e.getValue()));
-        }
-        r.put("reminder_push", TechErrorReportSettings.reminderPush(settings));
-        Map<String, Object> limits = new LinkedHashMap<>();
-        for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
-            limits.put(e.getKey(), Map.of("min", e.getValue().min(), "max", e.getValue().max(), "default", e.getValue().def()));
-        }
-        r.put("limits", limits);
-        return r;
-    }
-
+    /** 11. sürüm sözleşmesi BİREBİR: yalnız {@code team_ids}; gövdede yoksa boş liste (= herkes) yazılır. */
     @PutMapping("/settings")
-    public ResponseEntity<Map<String, Object>> save(@RequestBody(required = false) Map<String, Object> body, HttpSession session,
+    public ResponseEntity<Map<String, Object>> save(@RequestBody Map<String, Object> body, HttpSession session,
                                                     HttpServletRequest request) {
         requireAdmin(session);
-        if (!SessionScope.isGlobalAdmin(session)) {
-            throw new SecurityException(Msg.t("Bu ayarı yalnız global yöneticiler değiştirebilir.",
-                    "Only global administrators can change this setting."));
-        }
+        requireGlobalWriter(session);
+        Object raw = body == null ? null : body.get("team_ids");
+        List<Long> ids = teamIds(raw, "team_ids", true);
+        String csv = csv(ids);
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put(TechErrorReportSettings.KEY_TEAM_IDS, csv);
+        settings.save(Map.of("values", values), actor(session));
+        auditService.recordAction("TECH_ERROR_SETTINGS_SAVE", session, request, "SETTINGS", "tech-error-report",
+                AuditDetail.of("team_ids", new ArrayList<>(ids), "everyone", ids.isEmpty()));
+        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("team_ids", new ArrayList<>(ids))));
+    }
+
+    // ── Hatırlatmalar ve posta sınırları (12. sürüm) ─────────────────────────────────────────────────────
+
+    @GetMapping("/settings/reminders")
+    public ResponseEntity<Map<String, Object>> getReminders(HttpSession session) {
+        requireAdmin(session);
+        Map<String, Object> data = reminders();
+        data.put("read_only", !SessionScope.isGlobalAdmin(session));
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    @PutMapping("/settings/reminders")
+    public ResponseEntity<Map<String, Object>> saveReminders(@RequestBody(required = false) Map<String, Object> body,
+                                                             HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        requireGlobalWriter(session);
         Map<String, Object> in = body == null ? Map.of() : body;
         Map<String, Object> values = new LinkedHashMap<>();
         Map<String, Object> audit = new LinkedHashMap<>();
-        List<Long> visibilityIds = null;
-        if (in.containsKey("team_ids")) {
-            visibilityIds = teamIds(in.get("team_ids"), "team_ids", true);
-            values.put(TechErrorReportSettings.KEY_TEAM_IDS, csv(visibilityIds));
-            audit.put("team_ids", visibilityIds);
-            audit.put("everyone", visibilityIds.isEmpty());
-        }
         if (in.containsKey("reminder_team_ids")) {
             List<Long> ids = teamIds(in.get("reminder_team_ids"), "reminder_team_ids", true);
             values.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, csv(ids));
@@ -172,23 +176,40 @@ public class TechErrorSettingsController {
             }
         }
         if (values.isEmpty()) {
-            // Değişiklik yok: hiçbir şey yazılmaz, denetlenmez (boş PUT)
-            return ResponseEntity.ok(Map.of("success", true, "data", responseData()));
+            // Değişiklik yok: hiçbir şey yazılmaz, denetlenmez (boş PUT; bu uçta görünürlük anahtarı yok sayılır)
+            return ResponseEntity.ok(Map.of("success", true, "data", remindersResponse()));
         }
         settings.save(Map.of("values", values), actor(session));
         audit.put("keys", new ArrayList<>(values.keySet()));
         auditService.recordAction("TECH_ERROR_SETTINGS_SAVE", session, request, "SETTINGS", "tech-error-report",
                 AuditDetail.ofMap(audit));
-        return ResponseEntity.ok(Map.of("success", true, "data", responseData()));
+        return ResponseEntity.ok(Map.of("success", true, "data", remindersResponse()));
     }
 
-    private Map<String, Object> responseData() {
-        Map<String, Object> data = new LinkedHashMap<>();
-        Set<Long> enabled = visibility.enabledTeamIds();
-        data.put("team_ids", enabled == null ? List.of() : new ArrayList<>(enabled));
-        data.put("reminders", reminders());
+    /** Hatırlatma ve posta sınırı ayarlarının ETKİN değerleri + aralıkları (ön yüz alan sınırlarını buradan alır). */
+    Map<String, Object> reminders() {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("team_ids", new ArrayList<>(TechErrorReportSettings.reminderTeamIds(settings)));
+        for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
+            r.put(e.getKey(), TechErrorReportSettings.effectiveInt(settings, e.getValue()));
+        }
+        r.put("reminder_push", TechErrorReportSettings.reminderPush(settings));
+        Map<String, Object> limits = new LinkedHashMap<>();
+        for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
+            limits.put(e.getKey(), Map.of("min", e.getValue().min(), "max", e.getValue().max(), "default", e.getValue().def()));
+        }
+        r.put("limits", limits);
+        return r;
+    }
+
+    /** Kayıt yanıtı: yazan her zaman global yönetici → salt okunur değil. */
+    private Map<String, Object> remindersResponse() {
+        Map<String, Object> data = reminders();
+        data.put("read_only", false);
         return data;
     }
+
+    // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────
 
     /** Takım kimlik dizisi: sayı ya da sayı metni, pozitif, ≤ {@value TechErrorReportSettings#MAX_TEAMS}, hepsi var olmalı. */
     private List<Long> teamIds(Object raw, String field, boolean checkExists) {
@@ -198,7 +219,7 @@ public class TechErrorSettingsController {
         Set<Long> ids = new LinkedHashSet<>();
         if (raw instanceof Collection<?> col) {
             for (Object o : col) {
-                Long id = o instanceof Number n ? Long.valueOf(n.longValue()) : o == null ? null : parseOrNull(String.valueOf(o));
+                Long id = o instanceof Number n ? Long.valueOf(n.longValue()) : parseOrNull(String.valueOf(o));
                 if (id == null || id <= 0) {
                     throw new FieldValidationException(field, Msg.t("Takım kimliği geçersiz.", "A team id is invalid."));
                 }
@@ -241,6 +262,13 @@ public class TechErrorSettingsController {
     private static void requireAdmin(HttpSession session) {
         if (!SessionScope.isGlobalAdmin(session) && !SessionScope.isScopedAdmin(session)) {
             throw new SecurityException(Msg.t("Bu sayfa yöneticilere açıktır.", "This page is for administrators."));
+        }
+    }
+
+    private static void requireGlobalWriter(HttpSession session) {
+        if (!SessionScope.isGlobalAdmin(session)) {
+            throw new SecurityException(Msg.t("Bu ayarı yalnız global yöneticiler değiştirebilir.",
+                    "Only global administrators can change this setting."));
         }
     }
 

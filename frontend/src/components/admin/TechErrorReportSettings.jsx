@@ -22,7 +22,7 @@ import { navigateTo } from '../../utils/navigate.js'
 import { unwrap } from '../noc/nocModel.js'
 import { SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import TechErrorReminderSettings from './TechErrorReminderSettings.jsx'
-import { normalizeReminders } from './techErrorReminderModel.js'
+import { reminderState } from './techErrorReminderModel.js'
 import { isDirty, normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
@@ -62,6 +62,10 @@ const TOUCH = 'pointer-coarse:min-h-10'
  * iskeletle, okuma hatası tehlike bloğu + Tekrar dene (boş "kanal yok" durumu YALNIZ başarılı yanıtta). Saf mantık
  * `techErrorSettingsModel.js`. Test kancaları `tes-*`.
  *
+ * Hatırlatmalar ve posta sınırları kartı (12. sürüm) AYRI uçtan okunur / yazılır (`GET/PUT …/settings/reminders`, aynı
+ * okuma dalgasında): eski pod'da 404 / 405 → kart "henüz desteklenmiyor" der; görünürlük kaydı (`PUT …/settings`) 11.
+ * sürümle aynı kalır. Kart kayıt sürerken Yenile kapalıdır ve kayıt başında okuma sırası ilerler (geç gelen eski okuma düşer).
+ *
  * Dışa aktarma (2026-10-17, E22): araç çubuğundaki "Dışa aktar" süzülmüş + sıralanmış listenin TÜMÜNÜ (bütün sayfalar) CSV ya
  * da Excel (.xlsx) olarak indirir; değerler ekrandaki metinler, bilinmeyen "Bilinmiyor" (`exportTable`).
  */
@@ -79,6 +83,9 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [filter, setFilter] = useState(ALL)
   const [sort, setSort] = useState('name')
   const [remDirty, setRemDirty] = useState(false)
+  // Hatırlatma kartı (12. sürüm): AYRI uçtan okunur (`reminderState`: ok / unsupported / failed; null = kart yok)
+  const [rem, setRem] = useState(null)
+  const [remSaving, setRemSaving] = useState(false)
   const [listRef, listWidth] = useElementWidth()
   const alive = useRef(true)
   const loadSeq = useRef(0)
@@ -92,11 +99,16 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setLoadError(null)
     setLoading(true)
     try {
-      const [cfg, dir] = await Promise.all([
+      const [cfg, dir, remRes] = await Promise.all([
         api.admin.techErrorSettings(),
         Promise.resolve(api.teams?.directory ? api.teams.directory() : null).catch(() => null),
+        // Ağ hatası "okunamadı"dır (eski pod'un 404 / 405'i değil): değer uydurulmaz, son okunan korunur
+        api.admin.techErrorReminderSettings
+          ? Promise.resolve(api.admin.techErrorReminderSettings()).catch((e) => ({ success: false, error: e?.message || null }))
+          : Promise.resolve(undefined),
       ])
       if (!alive.current || id !== loadSeq.current) return
+      if (remRes !== undefined) setRem((prev) => reminderState(remRes, prev))
       const r = unwrap(cfg)
       if (!r.ok) { setLoadError(r.error || t('te.set.loadError')); return }
       const data = r.data || {}
@@ -121,10 +133,26 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   // Takım dizini okunamazsa adlar kanal satırlarından gelir ("#12" yerine takım adı)
   const teamList = useMemo(() => (directory.length ? directory : teamsFromChannels(settings?.channels)), [directory, settings])
   const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam')), [teamList, draft, t])
-  // Hatırlatma bloğu (12. sürüm): eski sunucu yanıtında yok → kart çizilmez
-  const hasReminders = !!normalizeReminders(settings?.reminders)
   const dirty = !!settings && isDirty(settings.ids, draft)
   const locked = !!settings?.readOnly
+
+  // Hatırlatma kartının kaydı (inceleme 2026-10-18): görünürlük kaydıyla AYNI kural — kayıt sürerken Yenile kapalı, kayıt
+  // başında okuma sırası ilerler (kayıttan ÖNCE başlamış bir okuma kayıttan SONRA gelirse eski değerleri "kayıtlı"
+  // göstermesin ve temiz formu ezmesin)
+  const onRemSaving = useCallback((on) => {
+    if (!alive.current) return
+    if (on) {
+      loadSeq.current += 1
+      setLoading(false)
+    }
+    setRemSaving(!!on)
+  }, [])
+  const onRemSaved = useCallback((next) => {
+    if (alive.current) setRem({ status: 'ok', data: next, error: null })
+  }, [])
+  const onRemUnsupported = useCallback(() => {
+    if (alive.current) setRem((prev) => ({ status: 'unsupported', data: prev?.data || null, error: null }))
+  }, [])
 
   async function save() {
     if (!settings || saving || locked) return
@@ -214,7 +242,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   ]
 
   const refreshButton = settings && (
-    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
+    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving || remSaving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
       <RefreshCw aria-hidden="true" className={cn(loading && 'animate-spin motion-reduce:animate-none')} /> {t('te.refresh')}
     </Button>
   )
@@ -271,8 +299,9 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       </SettingsSection>
 
       {/* 2 — Hatırlatmalar ve posta sınırları (12. sürüm) */}
-      {settings && hasReminders && (
-        <TechErrorReminderSettings reminders={settings.reminders} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty} />
+      {settings && rem && (
+        <TechErrorReminderSettings state={rem} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty}
+          onSaving={onRemSaving} onSaved={onRemSaved} onUnsupported={onRemUnsupported} onRetry={load} />
       )}
 
       {/* 3 — Kanallar ve onay akışı (özet) */}
