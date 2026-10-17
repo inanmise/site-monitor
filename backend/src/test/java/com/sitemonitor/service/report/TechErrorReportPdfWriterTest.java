@@ -222,12 +222,14 @@ class TechErrorReportPdfWriterTest {
         TechErrorPdfInput yes = new TechErrorPdfInput(t, TechErrorValues.normalize(Map.of("fields", f), t), "ATM", "Takım", 2026, 9,
                 null, null, Map.of());
         assertThat(text(TechErrorReportPdfWriter.render(yes))).contains("Kesinti Ayrıntıları");
-        // e-posta: "Dönemde kesinti oldu mu?" 8 göstergelik özetin yerini almaz → hata adedi özette kalır
+        // e-posta (S5 yeniden tasarım 2026-10-17): gösterge bölümleri PDF'teki gibi gövdede — soru ve rakamlar birlikte
         String html = com.sitemonitor.service.mail.TechErrorReportMail.build(yes, null, "atm.pdf").html();
-        assertThat(html).doesNotContain("Dönemde kesinti oldu mu?").contains("Ay içindeki teknik hata adedi");
-        // "Hayır": rakamlar muaf, soru e-postada görünür (PDF ile aynı bilgi)
+        assertThat(html).contains("Dönemde kesinti oldu mu?").contains("Ay içindeki teknik hata adedi").contains("Kesinti Ayrıntıları");
+        // "Hayır": bağlı rakamlar muaf → e-postada da yok, soru görünür; tüm alanları muaf bölüm PDF'teki gibi HİÇ basılmaz
+        // (inceleme 2026-10-17: başlık + "muaf" notu PDF ile çelişiyordu)
         String noHtml = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "atm.pdf").html();
-        assertThat(noHtml).contains("Dönemde kesinti oldu mu?").doesNotContain("Kesinti günleri hariç");
+        assertThat(noHtml).contains("Dönemde kesinti oldu mu?").doesNotContain("Kesinti günleri hariç").doesNotContain("Kesinti gün sayısı")
+                .doesNotContain("Kesinti Ayrıntıları").doesNotContain("bu ay muaf");
     }
 
     @Test
@@ -677,12 +679,11 @@ class TechErrorReportPdfWriterTest {
         assertThat(text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " "))
                 .contains("oranlar bu adetlerden Site Monitor tarafından hesaplanmıştır").doesNotContain("sistem hesaplamaz");
         var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "mobil.pdf");
-        // 2026-10-17 (4b): özetin renkli kutucukları varken 16'lık gösterge zinciri basılmaz (aynı rakamlar iki kez görünmesin;
-        // tam liste PDF ekinde) — kutucuklar şablonun seçtiği 6 alan
+        // S5 (2026-10-17): kutucuklar özetin başında, gösterge bölümleri PDF'teki gibi gövdede (oranlar bölümü dahil)
         assertThat(m.html()).contains("Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.")
                 .contains("data-slot=\"te-tiles\"").contains("Toplam işlem adedi").contains("Teknik hata oranı").contains("Kota hatası adedi")
-                .doesNotContain("Kota hatalarının teknik hatalara oranı").doesNotContain("bu rakamları hesaplamaz");
-        // Kutucuksuz özet (takım listeyi boşalttı): eski gösterge zinciri geri gelir
+                .contains("Kota hatalarının teknik hatalara oranı").contains("data-slot=\"te-values\"").doesNotContain("bu rakamları hesaplamaz");
+        // Kutucuksuz özet (takım listeyi boşalttı): şerit yok, bölümler yine gövdede
         Template noTiles = new Template(ct.lang(), ct.title(), ct.sections().stream()
                 .map(s -> "exec-summary".equals(s.id()) ? s.withTiles(List.of()) : s).toList());
         var nt = com.sitemonitor.service.mail.TechErrorReportMail.build(new TechErrorPdfInput(noTiles, cv, "Mobil", "Takım", 2026, 9,
@@ -846,7 +847,7 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
-    @DisplayName("inceleme 2026-10-17: e-posta kutucuk şeridinin dar ekran sınıfı satırdaki sayıya göre (1 → yok, 2 → tile, 3+ → tile3)")
+    @DisplayName("S5 2026-10-17: e-posta kutucukları telefonda tek sütun (.stack); Outlook hücresi ile satır içi genişlik satırdaki sayıya göre aynı")
     void mailTileClassFollowsPerRow() {
         Template d = TechErrorTemplate.defaults("tr");
         Map<String, Object> f = new HashMap<>();
@@ -862,15 +863,14 @@ class TechErrorReportPdfWriterTest {
             TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", f), t), null);
             String html = com.sitemonitor.service.mail.TechErrorReportMail.build(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9,
                     null, null, Map.of()), null, "m.pdf").html();
-            int tile3 = html.split("class=\"tile3\"", -1).length - 1;
-            int tile = html.split("class=\"tile\"", -1).length - 1;
-            // Satırda en çok 3: tek kutucuk sınıfsız, iki → "tile", üç ve üstü (3'lü satırlar) → "tile3"
-            if (n == 1) assertThat(tile3 + tile).as("tek kutucuk sınıfsız").isZero();
-            else if (n == 2) { assertThat(tile).as("%d kutucuk", n).isEqualTo(n); assertThat(tile3).isZero(); }
-            else { assertThat(tile3).as("%d kutucuk", n).isEqualTo(n); assertThat(tile).isZero(); }
+            String strip = html.substring(html.indexOf("data-slot=\"te-tiles\""));
+            strip = strip.substring(0, strip.indexOf("</td></tr></table>", strip.indexOf("<!--[if mso]></tr></table><![endif]-->")));
+            // Telefonda tek sütun: her kutucuk .stack (kullanıcı kararı S5); masaüstünde satırda en çok 3
+            assertThat(strip.split("class=\"stack\"", -1).length - 1).as("%d kutucuk", n).isEqualTo(n);
+            assertThat(strip).doesNotContain("class=\"tile3\"").doesNotContain("class=\"tile\"");
             // Outlook hücresi ile satır içi genişlik aynı
             String pct = n == 1 ? "100%" : n == 2 ? "50%" : "33.33%";
-            assertThat(html).contains("<td width=\"" + pct + "\"").contains("max-width:" + pct);
+            assertThat(strip).contains("<td width=\"" + pct + "\"").contains("max-width:" + pct);
         }
     }
 

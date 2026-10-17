@@ -137,7 +137,11 @@ class EmailResponsiveContractTest {
     void cardIsFluidWithMsoGhost() {
         for (EmailSamples.Sample s : samples) {
             boolean wide = s.html().contains("max-width:" + MailTokens.WIDTH_WIDE + "px;background-color");
-            int w = wide ? MailTokens.WIDTH_WIDE : MailTokens.WIDTH;
+            // Teknik hata raporu PDF içeriğini gövdede taşır: 1000 px kart (2026-10-17, S5); başka aile kullanamaz
+            boolean xwide = s.html().contains("max-width:" + MailTokens.WIDTH_XWIDE + "px;background-color");
+            if (xwide) assertThat(s.slug()).as("1000 px yalnız teknik hata raporu").startsWith("report-tech-error");
+            if (s.slug().startsWith("report-tech-error")) { assertThat(xwide).as(s.slug()).isTrue(); wide = true; }
+            int w = xwide ? MailTokens.WIDTH_XWIDE : wide ? MailTokens.WIDTH_WIDE : MailTokens.WIDTH;
             assertThat(s.html()).as(s.slug()).contains("class=\"card\" align=\"center\" width=\"100%\"")
                     .contains("<!--[if mso]><table role=\"presentation\" align=\"center\" width=\"" + w + "\"");
             if (s.family().equals("report") || s.slug().startsWith("weekly-report-p") || s.slug().startsWith("weekly-report-m")

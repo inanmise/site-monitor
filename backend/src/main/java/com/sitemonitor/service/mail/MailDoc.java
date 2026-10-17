@@ -66,6 +66,12 @@ public final class MailDoc {
         return touch();
     }
 
+    /** PDF içeriğini gövdede taşıyan rapor için 1000px kart (telefonda tek sütun — {@code .stack}). */
+    public MailDoc extraWide() {
+        this.width = MailTokens.WIDTH_XWIDE;
+        return touch();
+    }
+
     /** Veri-yoğun raporlar için 640px kart (varsayılan 600). */
     public MailDoc wide() {
         this.width = MailTokens.WIDTH_WIDE;

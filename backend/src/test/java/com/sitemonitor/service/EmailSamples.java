@@ -560,12 +560,37 @@ final class EmailSamples {
             var v = "tr".equals(lang)
                     ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", tf), t)
                     : com.sitemonitor.service.techerror.TechErrorValues.Values.empty();
+            // 2026-10-17 (S5): görseller gövdede de — bir yarım ve bir tam yuva (sözleşme: cid görsel, MSO dışı sabit genişlik yok)
+            java.util.Map<String, com.sitemonitor.service.techerror.TechErrorPdfInput.Image> timgs = "tr".equals(lang)
+                    ? java.util.Map.of("annual-summary", samplePng(1400, 700, 0x2563eb), "annual-tech-rate", samplePng(1600, 500, 0x16a34a))
+                    : java.util.Map.of();
             var in = new com.sitemonitor.service.techerror.TechErrorPdfInput(t, v, "Bireysel İnternet Şubesi",
                     "Dijital Kanallar Uygulama Geliştirme (Bireysel / Mobil)", 2026, 9, "Ayşe Yılmaz",
-                    java.time.Instant.parse("2026-10-02T06:30:00Z"), java.util.Map.of());
+                    java.time.Instant.parse("2026-10-02T06:30:00Z"), timgs);
             com.sitemonitor.service.mail.MailDoc.Mail m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, BASE,
                     "bireysel-internet-subesi-teknik-hata-2026-09.pdf");
             add("report-tech-error-" + lang, "report", com.sitemonitor.service.mail.TechErrorReportMail.subject(in), m.html(), m.text(), "ok");
+        }
+    }
+
+    /** Düz renkli PNG (örnek rapor görseli). */
+    static com.sitemonitor.service.techerror.TechErrorPdfInput.Image samplePng(int w, int h, int rgb) {
+        java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = bi.createGraphics();
+        try {
+            g.setColor(new java.awt.Color(rgb));
+            g.fillRect(0, 0, w, h);
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(w / 10, h / 4, w / 3, h / 2);
+        } finally {
+            g.dispose();
+        }
+        try {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(bi, "png", bo);
+            return new com.sitemonitor.service.techerror.TechErrorPdfInput.Image(bo.toByteArray(), w, h);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
         }
     }
 }
