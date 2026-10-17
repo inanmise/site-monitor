@@ -541,6 +541,17 @@ class TechErrorReminderServiceTest {
         t2.setCreatedAt(OCT5.minus(Duration.ofDays(2)));
         t2.setExpiresAt(OCT5.plus(Duration.ofDays(12)));
         tokens.save(t2);
+        // po2'nin ÖNCEKİ (yeniden gönderilen, aynı rev) isteğinin belirteci: postası ulaşmıştı ama yerine geçildi → canlı değil
+        TechErrorApprovalToken t3 = new TechErrorApprovalToken();
+        t3.setReportId(r.getId());
+        t3.setUserId(po2.getId());
+        t3.setTokenHash("c".repeat(64));
+        t3.setApprovalRev(0L);
+        t3.setCreatedAt(OCT5.minus(Duration.ofDays(3)));
+        t3.setExpiresAt(OCT5.plus(Duration.ofDays(11)));
+        t3.setMailedAt(OCT5.minus(Duration.ofDays(3)));
+        t3.setSupersededAt(OCT5.minus(Duration.ofDays(2)));
+        tokens.save(t3);
         job.run();
         verifyMails(0);                                                   // 2 gün: henüz erken
         at(OCT5.plus(Duration.ofDays(1)));
@@ -556,7 +567,7 @@ class TechErrorReminderServiceTest {
         assertThat(html.getAllValues().get(po1Mail)).contains("kişisel bağlantı").contains("Teknik Kişi").contains("3 gündür")
                 .doesNotContain("approve-link");
         assertThat(html.getAllValues().get(1 - po1Mail)).contains("süresi doldu ya da size gönderilmedi");
-        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(2);   // yeni bağlantı üretilmedi
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(3);   // yeni bağlantı üretilmedi
         assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2).allMatch(n -> "PO".equals(n.getRecipientRole()) && "SENT".equals(n.getEmailStatus()));
         job.run();
         at(OCT5.plus(Duration.ofDays(3)));
