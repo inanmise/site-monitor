@@ -182,14 +182,16 @@ public class TechErrorApprovalLinkController {
             case "approver_inactive" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
                     "Hesabınız pasif ya da artık bu takımın PO rolündeki bir üyesi değilsiniz; bu bağlantı kullanılamaz.",
                     "Your account is inactive or you are no longer a PO member of this team, so this link can't be used."); }
-            // A1 (inceleme 2026-10-17): yetki matrisi — uygulama içi uçla aynı izin; belirteç tüketilmez, karar yazılmaz
+            // A1 (inceleme 2026-10-17): uygulama içi uçla aynı kapılar (okuma + onay izni, modül görünürlüğü); belirteç
+            // tüketilmez, karar yazılmaz — metin üç durumda da doğru
             case "no_permission" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
-                    "Bu rapor için onay yetkiniz yok: hesabınızın rolü için 'Teknik hata raporu onayı' izni kapatılmış. Yöneticinize başvurun; raporu uygulama içinden de onaylayamazsınız.",
-                    "You can't approve this report: the 'Technical error report approval' permission is switched off for your account's role. Contact your administrator; you can't approve the report from inside the application either."); }
-            // A2: yeni istek eski bağlantının yerine geçti — "geçersiz" değil, "en son postayı kullanın"
+                    "Bu rapor için onay yetkiniz yok: hesabınızın rolü için teknik hata raporu okuma ya da onay izni kapalı, ya da modül takımınıza kapatılmış. Yöneticinize başvurun.",
+                    "You can't approve this report: the technical error report read or approval permission is switched off for your account's role, or the module is turned off for your team. Contact your administrator."); }
+            // A2: yeni istek eski bağlantının yerine geçti — "geçersiz" değil, "en son postayı kullanın"; yeni isteğin postası
+            // ulaşmamış olabilir (inceleme 2026-10-17) → uygulama içi yol da söylenir
             case "superseded" -> { title = Msg.t("Daha yeni bir istek var", "A newer request exists"); msg = Msg.t(
-                    "Bu rapor için daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın.",
-                    "A newer approval request was sent for this report; please use the link in the latest e-mail."); }
+                    "Bu rapor için daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın. Postayı bulamıyorsanız raporu Site Monitor'de açıp kararınızı oradan verebilirsiniz.",
+                    "A newer approval request was sent for this report; please use the link in the latest e-mail. If you can't find that e-mail, open the report in Site Monitor and make your decision there."); }
             default -> { title = Msg.t("Bağlantı geçersiz", "Invalid link"); msg = Msg.t(
                     "Bu onay bağlantısı geçersiz. Postadaki bağlantının tamamını kopyaladığınızdan emin olun ya da raporu Site Monitor'de açın.",
                     "This approval link is invalid. Make sure you copied the whole link from the e-mail, or open the report in Site Monitor."); }

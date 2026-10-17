@@ -837,7 +837,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           )}
         </div>
         {/* Alıcı özeti (R13 / B6): takım adresi sayısı, onay akışında yönetici alıcı sayısı + onay durumu — yalnız sayılar */}
-        <RecipientsSummary teamEmailCount={data.team_email_count} approvalDetail={approvalDetail} approval={report.approval} />
+        <RecipientsSummary teamEmailCount={data.team_email_count} teamEmailDropped={data.team_email_dropped} approvalDetail={approvalDetail}
+          approval={report.approval} />
       </header>
 
       <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}

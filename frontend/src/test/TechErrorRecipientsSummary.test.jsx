@@ -81,7 +81,7 @@ describe('rapor başlığı — alıcı özeti', () => {
     expect(box.textContent).not.toMatch(/te\.(rcp|appr)\./)
   })
 
-  it('bilinmeyen onay durumu "Onaya gönderilmedi" sayılır; onay gerekli ama alıcı sayısı eksikse 0 yazılır (ham anahtar yok)', async () => {
+  it('bilinmeyen onay durumu "Onaya gönderilmedi" sayılır; onay gerekli ama yönetici alıcı sayısı eksikse yönetici çipi YOK — bilinmeyen 0 yazılmaz (ham anahtar yok)', async () => {
     const box = await openEditor({
       team_email_count: 1,
       report: { ...reportResponse().data.report, approval: { state: 'weird' } },
@@ -89,7 +89,36 @@ describe('rapor başlığı — alıcı özeti', () => {
     })
     expect(box.querySelector('[data-slot="te-rcp-approval"]')).toHaveTextContent('Onay: Onaya gönderilmedi')
     expect(box.querySelector('[data-slot="te-rcp-approval"]')).toHaveAttribute('data-state', 'none')
+    expect(box.querySelector('[data-slot="te-rcp-exec"]')).toBeNull()
+    expect(box.textContent).not.toMatch(/Yönetici alıcı: 0/)
+    expect(box.textContent).not.toMatch(/te\.(rcp|appr)\./)
+  })
+
+  it('onay gerekli ve yönetici sayısı gerçekten 0 → "Yönetici alıcı: 0" (bilinen sıfır yazılır)', async () => {
+    const box = await openEditor({ team_email_count: 1, approval_detail: { required: true, executive_count: 0, approval: { state: 'none' } } })
     expect(box.querySelector('[data-slot="te-rcp-exec"]')).toHaveTextContent('Yönetici alıcı: 0')
+    expect(box.querySelector('[data-slot="te-rcp-exec"]')).toHaveAttribute('data-count', '0')
+  })
+
+  it('takım adresinde 20’den fazla adres: çip "Takım adresi: 20 (+5 gitmez)" ve uyarı tonu (posta en çok 20 adrese gider); fazla yoksa / eski sunucu → düz sayı', async () => {
+    const box = await openEditor({ team_email_count: 20, team_email_dropped: 5 })
+    const team = box.querySelector('[data-slot="te-rcp-team"]')
+    expect(team).toHaveTextContent('Takım adresi: 20 (+5 gitmez)')
+    expect(team).toHaveAttribute('data-count', '20')
+    expect(team).toHaveAttribute('data-dropped', '5')
+    expect(team.className).toMatch(/bg-amber/)
+    expect(team.className).not.toMatch(/(^|\s)bg-secondary(\s|$)/)           // zemin uyarı tonu (yalnız bağlantı hover sınıfı kalır)
+    expect(team.className).not.toMatch(/bg-destructive/)
+    expect(team.className).toMatch(/overflow-visible/)
+  })
+
+  it('fazlası 0 ya da alan yok (eski sunucu) → "Takım adresi: 20", uyarı tonu yok', async () => {
+    const box = await openEditor({ team_email_count: 20, team_email_dropped: 0 })
+    const team = box.querySelector('[data-slot="te-rcp-team"]')
+    expect(team).toHaveTextContent('Takım adresi: 20')
+    expect(team).not.toHaveTextContent('gitmez')
+    expect(team).not.toHaveAttribute('data-dropped')
+    expect(team.className).toMatch(/bg-secondary/)
   })
 
   it('eski sunucu: team_email_count ve onay bloğu yok → özet hiç çizilmez (bilinmeyen ≠ yok)', async () => {

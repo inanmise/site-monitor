@@ -303,6 +303,12 @@ function EventBody({ kind, detail: d, uiLang }) {
             {t('te.hist.recipientsDropped', formatNumber(Number(d.dropped_recipients), uiLang))}
           </p>
         )}
+        {/* Yöneticilere gönderimde Bilgi (takım adresi) sınırın dışında kalanlar (inceleme 2026-10-17) */}
+        {Number(d.dropped_cc) > 0 && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-history-send-cc-dropped">
+            {t('te.hist.ccDropped', formatNumber(Number(d.dropped_cc), uiLang))}
+          </p>
+        )}
         {/* Kuyruk sonucunun zamanı sonucun OKUNDUĞU an — teslim anı bilinmez */}
         {kind === 'SEND_RESULT' && state !== 'SUPERSEDED' && (
           <p className="m-0 text-xs text-muted-foreground">{t('te.hist.resultTimeNote')}</p>

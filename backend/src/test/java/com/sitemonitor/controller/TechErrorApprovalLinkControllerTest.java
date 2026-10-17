@@ -105,10 +105,12 @@ class TechErrorApprovalLinkControllerTest {
         String[][] cases = {
                 { "used", "Bağlantı kullanıldı" }, { "expired", "süresi doldu" }, { "stale", "Rapor değişti" },
                 { "not_pending", "Bekleyen istek yok" }, { "approver_inactive", "Onay yetkiniz yok" },
-                // A1: yetki matrisi — sayfa sebebi söyler, onay / red formu yok, belirteç tüketilmez (servis status() ile eler)
-                { "no_permission", "hesabınızın rolü için &#39;Teknik hata raporu onayı&#39; izni kapatılmış" },
-                // A2: yeniden istek — eski bağlantı "geçersiz" değil, "en son e-postadaki bağlantıyı kullanın"
-                { "superseded", "daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın" },
+                // A1: uygulama içi kapılar (okuma + onay izni, modül görünürlüğü) — sayfa sebebi söyler (üç durumda da doğru
+                // metin), onay / red formu yok, belirteç tüketilmez (servis status() ile eler)
+                { "no_permission", "hesabınızın rolü için teknik hata raporu okuma ya da onay izni kapalı, ya da modül takımınıza kapatılmış" },
+                // A2: yeniden istek — eski bağlantı "geçersiz" değil, "en son e-postadaki bağlantıyı kullanın"; yeni postanın
+                // ulaşmamış olabileceği için uygulama içi yol da söylenir (inceleme 2026-10-17)
+                { "superseded", "daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın. Postayı bulamıyorsanız raporu Site Monitor&#39;de açıp kararınızı oradan verebilirsiniz." },
                 { "not_found", "Bağlantı geçersiz" } };
         for (int i = 0; i < cases.length; i++) {
             String[] c = cases[i];

@@ -31,6 +31,20 @@ export function fmtMb(bytes, lang) {
   return new Intl.NumberFormat(lang === 'en' ? 'en-GB' : 'tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n / 1048576)
 }
 
+/**
+ * PDF posta sınırını aşıyor mu (inceleme 2026-10-17): sunucu ayrı `pdf_too_large` bayrağını yollar — `problem` alıcı sorununu
+ * önde söyler, PDF'i gizleyebilir. Eski sunucu (bayrak yok): `problem` ya da PDF boyutu > sınır; boyut ya da sınır
+ * bilinmiyorsa yalnız sunucunun `problem`'ine güvenilir.
+ */
+export function pdfTooLargeOf(d) {
+  if (!d) return false
+  if (typeof d.pdf_too_large === 'boolean') return d.pdf_too_large
+  if (d.problem === 'PDF_TOO_LARGE') return true
+  const bytes = Number(d.pdf_bytes)
+  const max = Number(d.max_mail_mb)
+  return d.pdf_bytes != null && d.max_mail_mb != null && Number.isFinite(bytes) && Number.isFinite(max) && bytes > max * 1048576
+}
+
 /** Onay durumu → i18n anahtarı (bilinmeyen durum "henüz onaya gönderilmedi" sayılır — ham anahtar asla görünmez). */
 const APPROVAL_TEXT_KEYS = Object.freeze({ pending: 'te.mail.appr.pending', none: 'te.mail.appr.none', rejected: 'te.mail.appr.rejected', stale: 'te.mail.appr.stale' })
 
@@ -84,7 +98,10 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
   }, [open, load])
 
   const d = state.data
-  const recipients = (list, count) => (d?.recipients_hidden ? t('te.mail.hiddenCount', count) : (list || []).join(', ') || '—')
+  // Alıcı sorunu ile PDF sınırı ayrı şeritler (ikisi birden olabilir); test düğmesi yalnız PDF sınırına bakar
+  const pdfTooLarge = pdfTooLargeOf(d)
+  const recipientProblem = d?.problem && d.problem !== 'PDF_TOO_LARGE' ? d.problem : null
+  const recipients =(list, count) => (d?.recipients_hidden ? t('te.mail.hiddenCount', count) : (list || []).join(', ') || '—')
   // Kimlik (10. sürüm): oluşturan / son düzenleyen / onaylayan — gönderilen postanın bandında da aynı satırlar yazar
   const pv = d?.provenance || null
   const who = (name, at) => [name || '—', at ? fmtDateTime(at, uiLang) : null].filter(Boolean).join(' · ')
@@ -168,11 +185,27 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
                 </AlertBanner>
               </div>
             )}
-            {d.problem && (
-              <AlertBanner tone="warning" title={d.problem === 'PDF_TOO_LARGE' ? t('te.mail.pdfTooLargeTitle') : t('te.mail.noRecipientsTitle')}>
-                {d.problem === 'PDF_TOO_LARGE' ? t('te.mail.pdfTooLarge', fmtMb(d.pdf_bytes, uiLang), d.max_mail_mb ?? '—')
-                  : d.problem === 'EXEC_RECIPIENTS_MISSING' ? t('te.mail.noExecRecipients') : t('te.mail.noTeamEmail')}
-              </AlertBanner>
+            {/* Yöneticilere gönderimde Bilgi (takım adresi) de en çok 20 — fazlası sessizce düşüyordu (inceleme 2026-10-17) */}
+            {d.cc_dropped > 0 && (
+              <div data-slot="te-mail-cc-dropped" data-count={d.cc_dropped}>
+                <AlertBanner tone="warning" title={t('te.mail.ccDroppedTitle', d.cc_dropped)}>
+                  {t('te.mail.ccDropped', d.cc_dropped)}
+                </AlertBanner>
+              </div>
+            )}
+            {recipientProblem && (
+              <div data-slot="te-mail-problem" data-problem={recipientProblem}>
+                <AlertBanner tone="warning" title={t('te.mail.noRecipientsTitle')}>
+                  {recipientProblem === 'EXEC_RECIPIENTS_MISSING' ? t('te.mail.noExecRecipients') : t('te.mail.noTeamEmail')}
+                </AlertBanner>
+              </div>
+            )}
+            {pdfTooLarge && (
+              <div data-slot="te-mail-pdf-too-large">
+                <AlertBanner tone="warning" title={t('te.mail.pdfTooLargeTitle')}>
+                  {t('te.mail.pdfTooLarge', fmtMb(d.pdf_bytes, uiLang), d.max_mail_mb ?? '—')}
+                </AlertBanner>
+              </div>
             )}
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
               <SegmentedControl value={width} onChange={setWidth} ariaLabel={t('te.mail.width')}
@@ -192,15 +225,16 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
         <DialogFooter className="shrink-0 flex-col-reverse gap-2 sm:flex-row">
           <Button type="button" variant="outline" className="pointer-coarse:min-h-10" onClick={onClose}>{t('te.close')}</Button>
           {/* Yalnız kendine test (R13): her okuyana (paylaşımla okuyan da — posta yalnız kendine); PDF sınırı aşıyorsa
-              gönderim gibi test de gidemez → düğme yok. Alıcı eksikliği (takım / yönetici) testi engellemez. */}
-          {d && d.problem !== 'PDF_TOO_LARGE' && (
+              gönderim gibi test de gidemez → düğme yok (ayrı bayrak: alıcı sorunu da varken `problem` PDF'i söylemez).
+              Alıcı eksikliği (takım / yönetici) testi engellemez. */}
+          {d && !pdfTooLarge && (
             <Button type="button" variant="secondary" className="pointer-coarse:min-h-10" data-slot="te-mail-test" disabled={testing}
               aria-busy={testing || undefined} onClick={sendTest}>
               {testing ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <MailCheck aria-hidden="true" />}
               {testing ? t('te.mail.testSending') : t('te.mail.test')}
             </Button>
           )}
-          {onSend && d && !d.problem && (
+          {onSend && d && !d.problem && !pdfTooLarge && (
             <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-send" disabled={testing} onClick={() => { onClose(); onSend() }}>
               <Send aria-hidden="true" /> {sendLabel || t('te.send')}
             </Button>

@@ -117,18 +117,41 @@ public class TechErrorReportSender {
     public record Addresses(List<String> addresses, int dropped) { }
 
     public static Addresses parseAddressesDetailed(String raw) {
-        if (raw == null || raw.isBlank()) return new Addresses(new ArrayList<>(), 0);
-        Set<String> seen = new LinkedHashSet<>();
+        List<String> all = allAddresses(raw);
+        if (all.size() <= MAX_RECIPIENTS) return new Addresses(all, 0);
+        return new Addresses(new ArrayList<>(all.subList(0, MAX_RECIPIENTS)), all.size() - MAX_RECIPIENTS);
+    }
+
+    /** Teslim edilebilir, tekilleşmiş adreslerin TAMAMI (sınırsız — sınır çağıranda; liste takım / kanal alanından, sınırlı). */
+    private static List<String> allAddresses(String raw) {
         List<String> out = new ArrayList<>();
-        int dropped = 0;
+        if (raw == null || raw.isBlank()) return out;
+        Set<String> seen = new LinkedHashSet<>();
         for (String part : raw.split("[,;]")) {
             String e = part.trim();
             if (e.isEmpty() || e.length() > 254 || !DELIVERABLE.matcher(e).matches()) continue;
-            if (!seen.add(e.toLowerCase(Locale.ROOT))) continue;
-            if (out.size() < MAX_RECIPIENTS) out.add(e);
+            if (seen.add(e.toLowerCase(Locale.ROOT))) out.add(e);
+        }
+        return out;
+    }
+
+    /**
+     * Yöneticilere gönderimin BİLGİ (CC) listesi (inceleme 2026-10-17): takım adresi eksi Kime'deki yönetici adresleri (aynı
+     * kutu iki kez gitmez), en çok {@link #MAX_RECIPIENTS}; {@link Addresses#dropped()} = sınırın gerçekten düşürdüğü takım
+     * adresi sayısı (Kime'de zaten olan adres düşmüş sayılmaz). Önceden fazlalık sessizce düşüyordu — önizleme uyarır
+     * ({@code cc_dropped}), gönderim WARN + geçmiş olayına {@code dropped_cc} yazar.
+     */
+    public static Addresses ccAddresses(Team team, List<String> to) {
+        Set<String> skip = new java.util.HashSet<>();
+        for (String e : to) skip.add(e.toLowerCase(Locale.ROOT));
+        List<String> cc = new ArrayList<>();
+        int dropped = 0;
+        for (String e : allAddresses(team == null ? null : team.getEmail())) {
+            if (!skip.add(e.toLowerCase(Locale.ROOT))) continue;
+            if (cc.size() < MAX_RECIPIENTS) cc.add(e);
             else dropped++;
         }
-        return new Addresses(out, dropped);
+        return new Addresses(cc, dropped);
     }
 
     /** Tek adres teslim edilebilir biçimde mi (boşluk / ayraç yok, ≤ 254)? */
@@ -159,9 +182,14 @@ public class TechErrorReportSender {
      * (TEAM_EMAIL_MISSING / EXEC_RECIPIENTS_MISSING) — gövde yine görülebilir. Gömülü görseller tarayıcıda görünsün diye
      * {@code cid:} başvuruları yalnız önizlemede data: URI'ye çevrilir. Görseller PDF izni altında yüklenir ({@code withPdfPermit}).
      */
+    /**
+     * {@code problem}: alıcı sorunu önde (gönderim de önce onu söyler), yoksa PDF_TOO_LARGE. {@code pdfTooLarge} AYRI bayrak
+     * (inceleme 2026-10-17): alıcı sorunu da varken {@code problem} PDF'i söylemez — test postası düğmesi bu bayrağa bakar.
+     * {@code toDropped} / {@code ccDropped}: Kime / Bilgi kaynağında sınırın (20) dışında kalan, postayı ALMAYAN adres sayısı.
+     */
     public record Preview(String subject, List<String> to, List<String> cc, String role, String html, String text, String fileName,
                           int embeddedImages, int skippedImages, String problem, TechErrorPdfInput.Provenance provenance,
-                          long pdfBytes, int maxMailMb, int toDropped) {}
+                          long pdfBytes, int maxMailMb, int toDropped, int ccDropped, boolean pdfTooLarge) {}
 
     public Preview preview(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery) {
         Rendering r = render(report, channel, team, delivery, null);
@@ -169,7 +197,8 @@ public class TechErrorReportSender {
         String problem = r.recipientProblem() != null ? r.recipientProblem() : r.pdfTooLarge() ? "PDF_TOO_LARGE" : null;
         TechErrorReportMail.Built built = r.mail();
         return new Preview(TechErrorReportMail.subject(r.in()), r.to(), r.cc(), r.role(), inlineBrandLogo(inlineCids(built.mail().html(), built.inline())),
-                built.mail().text(), r.fileName(), built.embeddedImages(), built.skippedImages(), problem, r.in().provenance(), r.pdf().length, maxMailMb, r.toDropped());
+                built.mail().text(), r.fileName(), built.embeddedImages(), built.skippedImages(), problem, r.in().provenance(), r.pdf().length, maxMailMb,
+                r.toDropped(), r.ccDropped(), r.pdfTooLarge());
     }
 
     /**
@@ -179,13 +208,14 @@ public class TechErrorReportSender {
      * sonraki ek blok, null = yok). Talep / günlük / içerik sayacı yok — çağıran karar verir.
      */
     record Rendering(TechErrorPdfInput in, byte[] pdf, TechErrorReportMail.Built mail, String fileName, List<String> to, List<String> cc,
-                     String role, String recipientProblem, boolean pdfTooLarge, int toDropped) { }
+                     String role, String recipientProblem, boolean pdfTooLarge, int toDropped, int ccDropped) { }
 
     private Rendering render(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery, TechErrorReportMail.Intro intro) {
         List<String> to;
         List<String> cc = List.of();
         String role;
         String problem = null;
+        int ccDropped = 0;
         // A3: Kime listesinin kaynağında sınırın (20) dışında kalan teslim edilebilir adres sayısı — pencere uyarır
         Addresses toSource = delivery == Delivery.EXECUTIVE
                 ? parseAddressesDetailed(channel == null ? null : channel.getExecutiveEmails())
@@ -193,11 +223,10 @@ public class TechErrorReportSender {
         if (delivery == Delivery.EXECUTIVE) {
             to = executiveRecipients(channel);
             if (to.isEmpty()) problem = "EXEC_RECIPIENTS_MISSING";
-            Set<String> lower = new java.util.HashSet<>();
-            for (String e : to) lower.add(e.toLowerCase(Locale.ROOT));
-            List<String> ccList = new ArrayList<>();
-            for (String e : recipients(team)) if (lower.add(e.toLowerCase(Locale.ROOT))) ccList.add(e);
-            cc = List.copyOf(ccList);
+            // Bilgi = takım adresi eksi yöneticiler, en çok 20; fazlası sayılır (inceleme 2026-10-17 — sessiz düşüyordu)
+            Addresses ccSource = ccAddresses(team, to);
+            cc = List.copyOf(ccSource.addresses());
+            ccDropped = ccSource.dropped();
             role = "EXECUTIVE";
         } else {
             to = recipients(team);
@@ -229,7 +258,7 @@ public class TechErrorReportSender {
         String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
                 in.template().lang());
         TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, intro, audienceOf(delivery));
-        return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge, toSource.dropped());
+        return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge, toSource.dropped(), ccDropped);
     }
 
     /** Test gönderiminin konu öneki (dilden bağımsız) ve günlük tetikleyicisi. */
@@ -351,6 +380,7 @@ public class TechErrorReportSender {
             log.warn("Teknik hata raporu #{} ({}): alıcı kaynağında {} adres sınırın (en çok {}) dışında kaldı, bu adreslere posta GİTMEZ",
                     report.getId(), delivery, droppedRecipients, MAX_RECIPIENTS);
         }
+        int ccDroppedCount = 0;
         if (delivery == Delivery.EXECUTIVE) {
             to = executiveRecipients(channel);
             if (to.isEmpty()) {
@@ -358,12 +388,15 @@ public class TechErrorReportSender {
                         "Bu kanalın yönetici (executive) alıcısı tanımlı değil; rapor gönderilmedi. Takım yöneticisi kanal ayarlarından alıcı eklesin.",
                         "This channel has no executive recipients, so the report wasn't sent. A team manager can add them in the channel settings."));
             }
-            // Takım adresi bilgide; yönetici listesinde zaten olan adres iki kez gitmez
-            Set<String> lower = new java.util.HashSet<>();
-            for (String e : to) lower.add(e.toLowerCase(Locale.ROOT));
-            List<String> ccList = new ArrayList<>();
-            for (String e : recipients(team)) if (lower.add(e.toLowerCase(Locale.ROOT))) ccList.add(e);
-            cc = ccList.isEmpty() ? null : ccList.toArray(new String[0]);
+            // Takım adresi bilgide; yönetici listesinde zaten olan adres iki kez gitmez; Bilgi de en çok 20 — fazlası sessiz
+            // düşmez (inceleme 2026-10-17): WARN + geçmiş olayına `dropped_cc`
+            Addresses ccSource = ccAddresses(team, to);
+            cc = ccSource.addresses().isEmpty() ? null : ccSource.addresses().toArray(new String[0]);
+            ccDroppedCount = ccSource.dropped();
+            if (ccDroppedCount > 0) {
+                log.warn("Teknik hata raporu #{} (EXECUTIVE): takım adresinde (Bilgi) {} adres sınırın (en çok {}) dışında kaldı, bu adreslere posta GİTMEZ",
+                        report.getId(), ccDroppedCount, MAX_RECIPIENTS);
+            }
             role = "EXECUTIVE";
         } else {
             to = recipients(team);
@@ -376,6 +409,7 @@ public class TechErrorReportSender {
                     "The team has no e-mail address on record. Send again after an administrator adds one under Admin → Teams; "
                             + "until then you can download the PDF and forward it yourself."));
         }
+        final int droppedCc = ccDroppedCount;
         Instant claimedAt = service.now();
         // Kuyruktaki bir gönderimin üzerine yeniden gönderim (inceleme 2026-10-14): talep kuyruktaki gönderimi bitirir, ilk
         // gönderimin sonucu artık hiç okunmaz — geçmişe "sonucu bilinmiyor" yazılır. Karar talepten SONRA verilir (finally):
@@ -534,10 +568,13 @@ public class TechErrorReportSender {
                 String reason = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? null
                         : TechErrorHistoryService.sendReason(finalStatus);
                 List<String> recorded = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null;
-                // A3: sınır dışında kalan alıcı sayısı geçmişte görünür (yalnız varsa — olay ayrıntısı aksi hâlde eskisiyle aynı)
-                if (droppedRecipients > 0) {
-                    h.recordSend(report, "SEND", by, finalState, recorded, reason, at,
-                            java.util.Map.of("dropped_recipients", droppedRecipients));
+                // A3: sınır dışında kalan alıcı sayısı geçmişte görünür (yalnız varsa — olay ayrıntısı aksi hâlde eskisiyle aynı);
+                // Kime ve Bilgi ayrı anahtarlarla (`dropped_recipients` / `dropped_cc`)
+                if (droppedRecipients > 0 || droppedCc > 0) {
+                    java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
+                    if (droppedRecipients > 0) extra.put("dropped_recipients", droppedRecipients);
+                    if (droppedCc > 0) extra.put("dropped_cc", droppedCc);
+                    h.recordSend(report, "SEND", by, finalState, recorded, reason, at, extra);
                 } else {
                     h.recordSend(report, "SEND", by, finalState, recorded, reason, at);
                 }

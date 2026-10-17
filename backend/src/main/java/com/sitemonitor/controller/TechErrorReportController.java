@@ -370,10 +370,12 @@ public class TechErrorReportController {
         // Gönderim / onay isteği takımın kendi kapsamı — paylaşımla düzenleyen gönderemez (9. sürüm); satır paylaşımla mı okunuyor
         data.put("can_send", writer && canWriteOwn(session, r.getTeamId()));
         data.put("shared_access", SessionScope.viewableOnlyByGrant(session, r.getTeamId()));
-        List<String> teamAddresses = TechErrorReportSender.recipients(team);
-        data.put("team_email_set", team != null && !teamAddresses.isEmpty());
-        // Alıcı özeti (R13 / B6): yalnız SAYI — paylaşımla okuyan da görebilir (adres yok)
-        data.put("team_email_count", teamAddresses.size());
+        TechErrorReportSender.Addresses teamAddresses = TechErrorReportSender.parseAddressesDetailed(team == null ? null : team.getEmail());
+        data.put("team_email_set", team != null && !teamAddresses.addresses().isEmpty());
+        // Alıcı özeti (R13 / B6): yalnız SAYI — paylaşımla okuyan da görebilir (adres yok). Sayı postanın gittiği (≤ 20)
+        // adres sayısı; sınırın dışında kalan teslim edilebilir adresler ayrıca (inceleme 2026-10-17 — "20" fazlalığı gizliyordu)
+        data.put("team_email_count", teamAddresses.addresses().size());
+        data.put("team_email_dropped", teamAddresses.dropped());
         data.put("approval_detail", approvalDetail(r, ch, team, session, writer));
         data.put("template_update", canEdit ? service.refreshPreview(r, ch) : null);
         data.put("limits", Map.of("image_max_bytes", com.sitemonitor.service.techerror.TechErrorImageValidator.MAX_BYTES,
@@ -672,8 +674,11 @@ public class TechErrorReportController {
         m.put("to_count", p.to().size());
         m.put("cc_count", p.cc().size());
         m.put("to_dropped", p.toDropped());      // A3: Kime kaynağında sınırın (20) dışında kalan adres sayısı — pencere uyarır
+        m.put("cc_dropped", p.ccDropped());      // Bilgi (takım adresi, yöneticilere gönderimde) sınırın dışında kalan adres sayısı
         m.put("recipients_hidden", hidden);
         m.put("problem", p.problem());
+        // Ayrı bayrak (inceleme 2026-10-17): alıcı sorunu da varken `problem` PDF'i söylemez — test düğmesi buna bakar
+        m.put("pdf_too_large", p.pdfTooLarge());
         m.put("file_name", p.fileName());
         m.put("images_embedded", p.embeddedImages());
         m.put("images_skipped", p.skippedImages());
@@ -717,6 +722,26 @@ public class TechErrorReportController {
     }
 
     /**
+     * Ayrılan denemeyi geri verir (inceleme 2026-10-17): posta denenmeden biten deneme — PDF sırası dolu (429) ya da PDF
+     * posta sınırını aşıyor (409 {@code PDF_TOO_LARGE}) — kullanıcının dakikalık hakkını harcamaz. Posta servisine bir şey
+     * verildiyse (SENT / QUEUED / SKIPPED / FAILED) hak harcanmış sayılır.
+     */
+    void releaseTestMail(String key, Instant reservedAt) {
+        Deque<Instant> q = testMails.get(key);
+        if (q == null) return;
+        synchronized (q) {
+            q.removeLastOccurrence(reservedAt);
+        }
+    }
+
+    /** Hata koduyla denetim sebebi: kodlu çakışmada kod (PDF_TOO_LARGE, …), PDF sırası PDF_BUSY, diğerlerinde sınıf adı. */
+    static String failureReason(RuntimeException e) {
+        if (e instanceof CodedConflictException c && c.getCode() != null) return c.getCode();
+        if (e instanceof TechErrorReportService.PdfBusyException) return "PDF_BUSY";
+        return e.getClass().getSimpleName();
+    }
+
+    /**
      * Önizlenen postayı YALNIZ oturum kullanıcısına gönderir (R13 / B5, 2026-10-17 — "bana test gönder"). Kapı önizlemeyle
      * aynı (okuma kapsamı; paylaşımla okuyan da — posta yalnız kendine gider, PDF'i zaten indirebilir). Hesapta teslim
      * edilebilir adres yoksa 409 {@code NO_EMAIL}; dakikada 3 → 429 {@code RATE_LIMITED}. Talep / geçmiş / içerik sayacı /
@@ -734,7 +759,8 @@ public class TechErrorReportController {
         if (!TechErrorReportSender.isDeliverable(to)) throw TechErrorReportSender.noEmail();
         // Sınır adres denetiminden SONRA: adresi olmayan kullanıcıya üç tıkta 429 değil, hep aynı 409 söylenir
         String key = uid != null ? "u:" + uid : "n:" + session.getAttribute("username");
-        Long retryAfter = reserveTestMail(key, service.now());
+        Instant reservedAt = service.now();
+        Long retryAfter = reserveTestMail(key, reservedAt);
         if (retryAfter != null) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("success", false);
@@ -752,9 +778,14 @@ public class TechErrorReportController {
         try {
             res = sender.sendTest(r, ch, team, delivery, to.trim(), Msg.lang());
         } catch (RuntimeException e) {
+            // Posta denenmediyse hak geri verilir: PDF sırası dolu / PDF sınırı aşıyor (inceleme 2026-10-17)
+            if (e instanceof TechErrorReportService.PdfBusyException
+                    || (e instanceof CodedConflictException c && "PDF_TOO_LARGE".equals(c.getCode()))) {
+                releaseTestMail(key, reservedAt);
+            }
             auditService.recordAction("TECH_ERROR_REPORT_TEST_MAIL", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",
-                            "reason", e.getClass().getSimpleName(), "delivery", delivery.name()));
+                            "reason", failureReason(e), "delivery", delivery.name()));
             throw e;
         }
         // Adres denetime yazılmaz: alıcı oturumun kendisidir (aktör), kişi verisi kuralı
@@ -801,7 +832,7 @@ public class TechErrorReportController {
         } catch (RuntimeException e) {
             auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",
-                            "reason", e.getClass().getSimpleName()));
+                            "reason", failureReason(e)));
             throw e;
         }
         auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),

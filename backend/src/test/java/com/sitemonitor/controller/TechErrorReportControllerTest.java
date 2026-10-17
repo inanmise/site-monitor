@@ -712,7 +712,7 @@ class TechErrorReportControllerTest {
                 new TechErrorReportSender.Preview("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026", List.of("takim1@example.com"), List.of(),
                         "TEAM", "<html><img src=\"data:image/png;base64,AAAA\"></html>", "metin", "mobil-2026-09.pdf", 1, 0, null,
                         new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ali Veli",
-                                Instant.parse("2026-09-05T06:12:00Z"), null, null, null), 123_456L, 15, 0));
+                                Instant.parse("2026-09-05T06:12:00Z"), null, null, null), 123_456L, 15, 0, 0, false));
         mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(audit()))      // salt okuyan da önizler
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.subject").value("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026"))
@@ -725,6 +725,8 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.to[0]").value("takim1@example.com"))
                 .andExpect(jsonPath("$.data.to_count").value(1))
                 .andExpect(jsonPath("$.data.to_dropped").value(0))             // A3: sınır dışında alıcı yok
+                .andExpect(jsonPath("$.data.cc_dropped").value(0))
+                .andExpect(jsonPath("$.data.pdf_too_large").value(false))
                 .andExpect(jsonPath("$.data.recipients_hidden").value(false))
                 .andExpect(jsonPath("$.data.file_name").value("mobil-2026-09.pdf"))
                 .andExpect(jsonPath("$.data.images_embedded").value(1))
@@ -736,9 +738,9 @@ class TechErrorReportControllerTest {
         report(130, 30, A, null);
         when(sender.preview(any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE))).thenReturn(
                 new TechErrorReportSender.Preview("Konu", List.of("ceo@example.com", "cfo@example.com"), List.of("takim1@example.com"),
-                        "EXECUTIVE", "<html></html>", "metin", "m.pdf", 0, 0, null,
+                        "EXECUTIVE", "<html></html>", "metin", "m.pdf", 0, 0, "EXEC_RECIPIENTS_MISSING",
                         new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ayşe Yılmaz",
-                                Instant.parse("2026-09-03T11:05:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z")), 999L, 15, 3));
+                                Instant.parse("2026-09-03T11:05:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z")), 999L, 15, 3, 4, true));
         mvc.perform(get("/api/tech-error-reports/reports/130/mail-preview").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.delivery").value("EXECUTIVE"))
@@ -747,6 +749,10 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.provenance.approved_at").value("2026-09-06T07:00:00Z"))
                 .andExpect(jsonPath("$.data.to.length()").value(2))
                 .andExpect(jsonPath("$.data.to_dropped").value(3))             // A3: sunucunun saydığı fazla alıcı aynen döner
+                .andExpect(jsonPath("$.data.cc_dropped").value(4))             // Bilgi (takım adresi) fazlası da ayrıca
+                // Alıcı sorunu `problem`'i alır; PDF sınırı ayrı bayrakta kaybolmaz (inceleme 2026-10-17)
+                .andExpect(jsonPath("$.data.problem").value("EXEC_RECIPIENTS_MISSING"))
+                .andExpect(jsonPath("$.data.pdf_too_large").value(true))
                 .andExpect(jsonPath("$.data.cc[0]").value("takim1@example.com"));
         // Paylaşımla okuyan: adresler gizli, sayılar var
         MockHttpSession g = grantee(B, A, false);
@@ -951,6 +957,47 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("bana test gönder (inceleme 2026-10-17): posta denenmeden biten deneme hakkı harcamaz — 3× PDF sırası dolu (429) + PDF sınırı (409) sonrası 5. çağrı yine gider; posta denenen deneme harcar (3 gönderimden sonra 429 RATE_LIMITED); denetim sebebi kod (PDF_BUSY / PDF_TOO_LARGE), sınıf adı değil")
+    void mailPreviewTest_failedAttemptsRefundQuota() throws Exception {
+        report(100, 10, A, null);
+        when(service.userEmail(52L)).thenReturn("w@example.com");
+        when(sender.sendTest(any(), any(), any(), any(), eq("w@example.com"), anyString()))
+                .thenThrow(new TechErrorReportService.PdfBusyException("meşgul"))
+                .thenThrow(new TechErrorReportService.PdfBusyException("meşgul"))
+                .thenThrow(new TechErrorReportService.PdfBusyException("meşgul"))
+                .thenThrow(new CodedConflictException("PDF_TOO_LARGE", "büyük"))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("w@example.com"), 1234, "[TEST] Konu"));
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(post("/api/tech-error-reports/reports/100/mail-preview/test").session(withUid(user("USER", A, List.of()), 52L)))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not("RATE_LIMITED")));
+        }
+        mvc.perform(post("/api/tech-error-reports/reports/100/mail-preview/test").session(withUid(user("USER", A, List.of()), 52L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PDF_TOO_LARGE"));
+        // Dört başarısız deneme hak harcamadı: sıradaki üç gönderim gider, dördüncüsü sınıra takılır
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(post("/api/tech-error-reports/reports/100/mail-preview/test").session(withUid(user("USER", A, List.of()), 52L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.status").value("SENT"));
+        }
+        mvc.perform(post("/api/tech-error-reports/reports/100/mail-preview/test").session(withUid(user("USER", A, List.of()), 52L)))
+                .andExpect(status().is(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        verify(sender, org.mockito.Mockito.times(7)).sendTest(any(), any(), any(), any(), eq("w@example.com"), anyString());
+        // Denetim sebebi kod (decideApproval gibi): PDF_BUSY ×3, PDF_TOO_LARGE ×1 — sınıf adı yazılmaz
+        verify(auditService, org.mockito.Mockito.times(3)).recordAction(eq("TECH_ERROR_REPORT_TEST_MAIL"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("100"),
+                org.mockito.ArgumentMatchers.<String>argThat(s -> s != null && s.contains("PDF_BUSY")));
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_TEST_MAIL"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("100"),
+                org.mockito.ArgumentMatchers.<String>argThat(s -> s != null && s.contains("PDF_TOO_LARGE")));
+        verify(auditService, never()).recordAction(eq("TECH_ERROR_REPORT_TEST_MAIL"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.<String>argThat(s -> s != null && (s.contains("CodedConflictException") || s.contains("PdfBusyException"))));
+    }
+
+    @Test
     @DisplayName("alıcı özeti (B6): rapor ayrıntısı team_email_count (teslim edilebilir adres sayısı; yok → 0 ve team_email_set false) ve approval_detail.required / executive_count taşır — paylaşımla okuyan da sayıları görür")
     void reportDetailRecipientCounts() throws Exception {
         report(100, 10, A, null);
@@ -963,8 +1010,26 @@ class TechErrorReportControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.team_email_set").value(true))
                 .andExpect(jsonPath("$.data.team_email_count").value(2))
+                .andExpect(jsonPath("$.data.team_email_dropped").value(0))
                 .andExpect(jsonPath("$.data.approval_detail.required").value(false))
                 .andExpect(jsonPath("$.data.approval_detail.executive_count").value(0));
+        // 20'den fazla teslim edilebilir adres: sayı postanın gittiği 20, fazlası ayrı (inceleme 2026-10-17 — "20" fazlalığı gizliyordu)
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 23; i++) many.append("u").append(i).append("@example.com; ");
+        when(teams.findById(eq(A))).thenAnswer(inv -> {
+            Team t = team(A);
+            t.setEmail(many.toString());
+            return Optional.of(t);
+        });
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_email_count").value(20))
+                .andExpect(jsonPath("$.data.team_email_dropped").value(3));
+        when(teams.findById(eq(A))).thenAnswer(inv -> {
+            Team t = team(A);
+            t.setEmail("takim1@example.com; ikinci@example.com, bozuk-adres");
+            return Optional.of(t);
+        });
         // Paylaşımla okuyan: sayı var, adres yok
         mvc.perform(get("/api/tech-error-reports/reports/100").session(grantee(B, A, false)))
                 .andExpect(status().isOk())

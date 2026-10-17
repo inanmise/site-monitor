@@ -119,12 +119,21 @@ class TechErrorReportSenderTest {
         pdfReturns(new byte[2 * 1024 * 1024]);
         TechErrorReportSender.Preview big = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(big.problem()).isEqualTo("PDF_TOO_LARGE");
+        assertThat(big.pdfTooLarge()).isTrue();
         assertThat(big.pdfBytes()).isEqualTo(2 * 1024 * 1024);
         assertThat(big.html()).isNotBlank();
+        // Alıcı sorunu da varsa `problem` onu söyler, PDF sınırı ayrı bayrakta KALIR (inceleme 2026-10-17: test düğmesi görünüyordu)
+        String keptEmail = team.getEmail();
+        team.setEmail("");
+        TechErrorReportSender.Preview bigNoMail = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(bigNoMail.problem()).isEqualTo("TEAM_EMAIL_MISSING");
+        assertThat(bigNoMail.pdfTooLarge()).isTrue();
+        team.setEmail(keptEmail);
         // PDF + gömülü görsel toplamı sınırı aşıyor: görseller yalnız PDF'te (gönderimdeki kuralın aynısı), problem yok
         pdfReturns(new byte[1024 * 1024 - 64]);
         TechErrorReportSender.Preview sum = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(sum.problem()).isNull();
+        assertThat(sum.pdfTooLarge()).isFalse();
         assertThat(sum.embeddedImages()).isZero();
         assertThat(sum.skippedImages()).isEqualTo(1);
         assertThat(sum.html()).contains("te-image-pdf");           // yuva "PDF ekinde" kutusu; logo yine data: URI
@@ -207,7 +216,7 @@ class TechErrorReportSenderTest {
     }
 
     @Test
-    @DisplayName("A3 (inceleme 2026-10-17): takım adresinde 21+ alıcı — önizleme toDropped sayar (Kime 20), EXECUTIVE yolunda Kime kaynağı yönetici listesi; gönderim WARN + geçmiş olayına dropped_recipients (8 argümanlı kayıt); düşen yoksa eski 7 argümanlı kayıt")
+    @DisplayName("A3 (inceleme 2026-10-17): takım adresinde 21+ alıcı — önizleme toDropped sayar (Kime 20); EXECUTIVE yolunda Kime kaynağı yönetici listesi ve Bilgi (takım eksi yöneticiler) de en çok 20: fazlası ccDropped; gönderim WARN + geçmiş olayına dropped_recipients / dropped_cc (8 argümanlı kayıt); düşen yoksa eski 7 argümanlı kayıt")
     void droppedRecipientsAreCountedAndRecorded() {
         StringBuilder many = new StringBuilder();
         for (int i = 1; i <= 22; i++) many.append("u").append(i).append("@example.com, ");
@@ -215,11 +224,20 @@ class TechErrorReportSenderTest {
         TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(p.to()).hasSize(20);
         assertThat(p.toDropped()).isEqualTo(2);
+        assertThat(p.ccDropped()).isZero();                           // takıma gönderimde Bilgi yok
         channel.setExecutiveEmails("ceo@example.com");
         TechErrorReportSender.Preview ex = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
         assertThat(ex.to()).containsExactly("ceo@example.com");
-        assertThat(ex.toDropped()).isZero();                          // takımın fazlası Kime'yi değil bilgiyi ilgilendirir
-        assertThat(ex.cc()).hasSize(20);
+        assertThat(ex.toDropped()).isZero();                          // yönetici listesi sınır içinde
+        // Takımın fazlası Bilgi'yi ilgilendirir: 22 takım adresinden 20'si Bilgi'de, 2'si düşer — sessiz değil
+        assertThat(ex.cc()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        assertThat(ex.ccDropped()).isEqualTo(2);
+        // Yönetici listesinde zaten olan takım adresi düşmüş sayılmaz ve Bilgi'de yer kaplamaz: 22 − 2 = 20 → hepsi gider
+        channel.setExecutiveEmails("U5@example.com, u21@example.com");
+        TechErrorReportSender.Preview overlap = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(overlap.cc()).hasSize(20).contains("u22@example.com").doesNotContain("u5@example.com", "u21@example.com");
+        assertThat(overlap.ccDropped()).isZero();
+        channel.setExecutiveEmails("ceo@example.com");
         mailReturns("SENT");
         var res = sender.send(report, channel, team, 7L);
         assertThat(res.state()).isEqualTo("SENT");
@@ -228,6 +246,25 @@ class TechErrorReportSenderTest {
                 org.mockito.ArgumentMatchers.<java.util.Collection<String>>argThat(l -> l != null && l.size() == 20),
                 org.mockito.ArgumentMatchers.isNull(), eq(now), eq(Map.of("dropped_recipients", 2)));
         verify(history, never()).recordSend(any(), anyString(), any(), anyString(), any(), any(), any());
+        // Yöneticilere gönderim: Bilgi 20 adrese gider, fazlası geçmiş olayına `dropped_cc` (Kime fazlası yok → anahtar yok)
+        org.mockito.Mockito.reset(email, history);
+        when(service.history()).thenReturn(history);
+        mailReturns("SENT");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var exRes = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(exRes.state()).isEqualTo("SENT");
+        ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(eq(new String[]{ "ceo@example.com" }), cc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        assertThat(cc.getValue()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
+                org.mockito.ArgumentMatchers.<java.util.Collection<String>>argThat(l -> l != null && l.size() == 1),
+                org.mockito.ArgumentMatchers.isNull(), eq(now), eq(Map.of("dropped_cc", 2)));
+        verify(history, never()).recordSend(any(), anyString(), any(), anyString(), any(), any(), any());
+        // Adres yardımcısı: takım yoksa boş, yönetici yoksa takımın ilk 20'si
+        assertThat(TechErrorReportSender.ccAddresses(null, List.of("a@example.com")).addresses()).isEmpty();
+        assertThat(TechErrorReportSender.ccAddresses(team, List.of()).dropped()).isEqualTo(2);
     }
 
     private static byte[] samplePng(int w, int h) throws java.io.IOException {

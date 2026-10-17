@@ -97,6 +97,9 @@ class TechErrorApprovalServiceTest {
         when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
         when(sender.maxMailBytes()).thenReturn(15L * 1024 * 1024);
         when(permissions.allows(org.mockito.ArgumentMatchers.nullable(String.class), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute"))).thenReturn(true);
+        // Bağlantı uygulama içi kararla aynı kapılardan geçer: okuma izni de açık (seed gibi); ilgili test kapatır
+        when(permissions.allows(org.mockito.ArgumentMatchers.nullable(String.class), eq(TechErrorApprovalService.READ_PERMISSION), eq("view"))).thenReturn(true);
+        approvals.visibility = null;
         team = new Team();
         team.setId(1L);
         team.setName("Dijital");
@@ -467,6 +470,92 @@ class TechErrorApprovalServiceTest {
         assertThat(after).hasSize(2).allSatisfy(t -> assertThat(t.getSupersededAt()).isNull());
         assertThat(after).extracting(TechErrorApprovalToken::getId).doesNotContainAnyElementsOf(firstIds);
         assertThat(tokens.findAllById(firstIds)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("yarış (inceleme 2026-10-17): durum okuması ile tek kullanım damgası arasında yeni bir istek eski bağlantıyı yerine geçirirse markUsed tutmaz (supersededAt IS NULL) — onay da red de yazılmaz, belirteç tüketilmez, sebep satır yeniden okunarak 'superseded'; yerine geçilmiş satır doğrudan da damgalanmaz")
+    void supersededBetweenStatusAndMarkUsed() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());
+        String raw = rawTokenOf("po1");
+        Long tokenId = tokens.findByTokenHash(TechErrorApprovalService.hash(raw)).orElseThrow().getId();
+        assertThat(approvals.status(raw).valid()).isTrue();
+        // status() satırı okuduktan SONRA (izin denetimi sırasında) yeni istek satırı yerine geçirir — gerçek yarışın sırası
+        java.util.concurrent.atomic.AtomicBoolean armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(permissions.allows(org.mockito.ArgumentMatchers.nullable(String.class), eq(TechErrorApprovalService.APPROVE_PERMISSION), eq("execute")))
+                .thenAnswer(inv -> {
+                    if (armed.getAndSet(false)) tokens.supersedeByReportId(r.getId(), service.now());
+                    return true;
+                });
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null))
+                .isInstanceOf(IllegalStateException.class).hasMessage("superseded");
+        TechErrorApprovalToken row = tokens.findById(tokenId).orElseThrow();
+        assertThat(row.getUsedAt()).isNull();
+        assertThat(row.getSupersededAt()).isNotNull();
+        assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+        assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+        verify(sender, never()).send(any(), any(), any(), any(), any());
+        // Damga yerine geçilmiş satıra doğrudan da düşmez
+        assertThat(tokens.markUsed(tokenId, service.now())).isZero();
+        assertThat(tokens.findById(tokenId).orElseThrow().getUsedAt()).isNull();
+        // Red yolu da aynı: ikinci PO'nun bağlantısı aynı yarışta yerine geçer → karar yok
+        String raw2 = rawTokenOf("po2");
+        jdbc.update("UPDATE tech_error_approval_tokens SET superseded_at = NULL WHERE report_id = ?", r.getId());
+        armed.set(true);
+        assertThatThrownBy(() -> approvals.decideViaToken(raw2, team, false, "Eksik"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("superseded");
+        assertThat(tokens.findByTokenHash(TechErrorApprovalService.hash(raw2)).orElseThrow().getUsedAt()).isNull();
+        assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+        assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+    }
+
+    @Test
+    @DisplayName("bağlantı ↔ uygulama içi kapı eşliği (inceleme 2026-10-17): rolün OKUMA izni kapalıysa ya da modül raporun takımına kapalıysa status no_permission, decideViaToken onay / red no_permission — belirteç tüketilmez, karar yok; kapılar açılınca aynı bağlantı karar verir")
+    void linkNeedsReadPermissionAndModuleVisibility() {
+        po1.setSystemRole("USER");
+        users.save(po1);
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());
+        String raw = rawTokenOf("po1");
+        assertThat(approvals.status(raw).valid()).isTrue();
+        // 1) Okuma izni kapalı (onay izni açık): uygulama içinde raporu açamayan bağlantıdan da karar veremez
+        when(permissions.allows(eq("USER"), eq(TechErrorApprovalService.READ_PERMISSION), eq("view"))).thenReturn(false);
+        TechErrorApprovalService.TokenStatus st = approvals.status(raw);
+        assertThat(st.valid()).isFalse();
+        assertThat(st.reason()).isEqualTo("no_permission");
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, false, "Eksik")).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+        assertThat(tokens.findByTokenHash(TechErrorApprovalService.hash(raw)).orElseThrow().getUsedAt()).isNull();
+        when(permissions.allows(eq("USER"), eq(TechErrorApprovalService.READ_PERMISSION), eq("view"))).thenReturn(true);
+        assertThat(approvals.status(raw).valid()).isTrue();
+        // 2) Modül raporun takımına kapalı (S6): aynı sebep
+        TechErrorVisibilityService vis = org.mockito.Mockito.mock(TechErrorVisibilityService.class);
+        when(vis.teamVisible(1L)).thenReturn(false);
+        approvals.visibility = vis;
+        try {
+            TechErrorApprovalService.TokenStatus hidden = approvals.status(raw);
+            assertThat(hidden.valid()).isFalse();
+            assertThat(hidden.reason()).isEqualTo("no_permission");
+            assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+            assertThatThrownBy(() -> approvals.decideViaToken(raw, team, false, "Eksik")).isInstanceOf(IllegalStateException.class).hasMessage("no_permission");
+            assertThat(tokens.findByTokenHash(TechErrorApprovalService.hash(raw)).orElseThrow().getUsedAt()).isNull();
+            assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+            assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+            verify(sender, never()).send(any(), any(), any(), any(), any());
+            // Görünürlük okunamıyor → kapalı say (fail-closed)
+            when(vis.teamVisible(1L)).thenThrow(new IllegalStateException("ayar okunamadı"));
+            assertThat(approvals.status(raw).reason()).isEqualTo("no_permission");
+            // Takım açıldı → aynı bağlantı karar verir
+            org.mockito.Mockito.reset(vis);
+            when(vis.teamVisible(1L)).thenReturn(true);
+            when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                    .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+            assertThat(approvals.decideViaToken(raw, team, true, null).state()).isEqualTo("APPROVED");
+        } finally {
+            approvals.visibility = null;
+        }
     }
 
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
