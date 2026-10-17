@@ -369,7 +369,7 @@ function ChannelName({ ch, onOpen }) {
         <span data-slot="tes-channel-name" className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{ch.name}</span>
       )}
       <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-        <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
+        <TeamBadge teamId={ch.team_id} teamName={ch.team_name} wrap className="pointer-coarse:after:-inset-y-3" />
         {!ch.active && <Badge variant="outline" className={CHIP}>{t('te.inactive')}</Badge>}
       </div>
     </div>
