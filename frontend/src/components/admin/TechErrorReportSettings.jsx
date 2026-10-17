@@ -217,7 +217,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setExporting(true)
     try {
       const { header, rows } = exportTable(visible, t)
-      const { buildXlsx, XLSX_MIME } = await import('../../utils/xlsxWriter.js')
+      const { buildXlsx, XLSX_MIME } = await loadXlsxWriter()
       const bytes = buildXlsx([{ name: t('te.set.export.sheet'), rows: [header, ...rows], freezeHeader: true, autoFilter: true,
         widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
       downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
@@ -366,7 +366,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                         <X aria-hidden="true" /> {t('te.filters.clear')}
                       </Button>
                     )}
-                    <ExportMenu disabled={visible.length === 0 || exporting} onCsv={exportCsv} onXlsx={exportXlsx} />
+                    <ExportMenu disabled={visible.length === 0 || exporting} onCsv={exportCsv} onXlsx={exportXlsx} onOpen={preloadXlsxWriter} />
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                     <span data-slot="tes-count">{t('te.filters.count', visible.length, channels.length)}</span>
@@ -419,10 +419,26 @@ export default function TechErrorReportSettings({ readOnly = false }) {
 }
 
 /** "Dışa aktar" menüsü: CSV ve Excel (.xlsx) — araç çubuğunun sonunda (geniş ekranda sağa yaslı). */
-function ExportMenu({ disabled, onCsv, onXlsx }) {
+/**
+ * Excel yazıcısı (fflate) TEMBEL yüklenir; menü AÇILIRKEN önceden istenir (2026-10-18, CI bulgusu): parça tıklamadan sonra
+ * yüklenirse indirme kullanıcı eyleminden (Chrome ~5 sn) kopar ve aynı sayfadaki İKİNCİ indirmeyi Chrome sessizce engeller
+ * (yavaş ağda gerçek kullanıcı da yaşar). Söz paylaşılır; başarısız yükleme saklanmaz (bir sonraki tıklama yeniden dener).
+ */
+let xlsxWriterPromise = null
+function loadXlsxWriter() {
+  if (!xlsxWriterPromise) {
+    xlsxWriterPromise = import('../../utils/xlsxWriter.js').catch((e) => { xlsxWriterPromise = null; throw e })
+  }
+  return xlsxWriterPromise
+}
+function preloadXlsxWriter() {
+  loadXlsxWriter().catch(() => { /* tıklamada yeniden denenir ve hata orada söylenir */ })
+}
+
+function ExportMenu({ disabled, onCsv, onXlsx, onOpen }) {
   const t = useT()
   return (
-    <DropdownMenu modal={false}>
+    <DropdownMenu modal={false} onOpenChange={(open) => { if (open) onOpen?.() }}>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="outline" disabled={disabled} data-slot="tes-export" className={cn('sm:ms-auto', TOUCH)}>
           <Download aria-hidden="true" /> {t('te.set.export.open')} <ChevronDown aria-hidden="true" />

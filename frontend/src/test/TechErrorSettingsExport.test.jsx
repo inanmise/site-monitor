@@ -10,8 +10,9 @@ vi.mock('../utils/csvExport.js', async (orig) => ({
   downloadCsv: (name, csv) => { dl.csv.push({ name, csv }) },
   downloadBlob: (name, blob) => { dl.blob.push({ name, blob }) },
 }))
-const xl = vi.hoisted(() => ({ sheets: [], throwWith: null }))
+const xl = vi.hoisted(() => ({ sheets: [], throwWith: null, loaded: 0 }))
 vi.mock('../utils/xlsxWriter.js', async (orig) => {
+  xl.loaded += 1   // modül yüklendi (dosya başına bir kez — önceden yükleme testi bunu sayar)
   const real = await orig()
   return { ...real, buildXlsx: (sheets) => { if (xl.throwWith) throw xl.throwWith; xl.sheets.push(sheets); return real.buildXlsx(sheets) } }
 })
@@ -63,6 +64,17 @@ beforeEach(() => {
 })
 
 describe('Ayarlar → Teknik hata raporu — dışa aktarma', () => {
+  // DOSYANIN İLK TESTİ kalmalı: yazıcı modülü dosya başına bir kez yüklenir (ön koşul aşağıda açıkça denetlenir)
+  it('menü açılınca Excel yazıcısı ÖNCEDEN yüklenir: tıklamadan sonra yüklenseydi indirme kullanıcı eyleminden kopar, Chrome ikinci indirmeyi engellerdi', async () => {
+    expect(xl.loaded, 'ön koşul: yazıcı henüz yüklenmedi (bu dosyanın ilk testi)').toBe(0)
+    render(<TechErrorReportSettings />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="tes-channel"]')).toHaveLength(25))
+    expect(xl.loaded).toBe(0)
+    await openExport()
+    await waitFor(() => expect(xl.loaded).toBe(1))
+    expect(dl.blob).toEqual([])   // yalnız yüklendi; indirme Excel öğesine basılınca
+  })
+
   it('CSV: başlık + süzülmüş/sıralanmış listenin TÜMÜ (sayfa değil), ekrandaki metinler, bilinmeyen "Bilinmiyor"', async () => {
     render(<TechErrorReportSettings />)
     await waitFor(() => expect(document.querySelectorAll('[data-slot="tes-channel"]')).toHaveLength(25))   // sayfada 25
