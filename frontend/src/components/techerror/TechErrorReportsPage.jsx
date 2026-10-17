@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
-import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
+import { flushUrlQuerySync, readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import ChannelsView from './ChannelsView.jsx'
 import ChannelView from './ChannelView.jsx'
 import ReportEditor from './ReportEditor.jsx'
 import {
   TAB_REPORTS, TAB_TEMPLATE, TE_CHANNEL, TE_REPORT, TE_TAB, TE_TEAM, TE_VIEW, VIEW_CHANNEL, VIEW_CHANNELS, VIEW_REPORT,
 } from './techErrorModel.js'
+import { REPORT_LIST_KEYS } from './channelListModel.js'
 
 const ID_RE = /^[1-9][0-9]{0,17}$/
 
@@ -31,7 +32,9 @@ function readInitial() {
  * başlıkları, 2 kolonlu grafik yuvaları, PDF, takım e-postasına gönderim).
  *
  * <p><b>URL:</b> `te_view` (channel | report), `te_ch` kanal, `te_tab=template` şablon sekmesi, `te_rep` rapor,
- * `te_team` liste süzgeci — her görünüm bağlantıyla paylaşılabilir. Kapsamı sunucu belirler.
+ * `te_team` liste süzgeci; kanal listesi `te_q` / `te_st` / `te_sort` / `te_page` / `te_ps`, kanalın rapor listesi
+ * `te_rq` / `te_rst` / `te_ry` / `te_rpage` / `te_rps` (8. sürüm, 2026-10-17) — her görünüm bağlantıyla paylaşılabilir.
+ * Kapsamı sunucu belirler.
  */
 export default function TechErrorReportsPage() {
   const [nav, setNav] = useState(readInitial)
@@ -44,9 +47,16 @@ export default function TechErrorReportsPage() {
     [TE_REPORT]: nav.view === VIEW_REPORT ? nav.report : null,
     [TE_TAB]: nav.view === VIEW_CHANNEL && tab === TAB_TEMPLATE ? TAB_TEMPLATE : null,
     [TE_TEAM]: nav.view === VIEW_CHANNELS && team ? team : null,
+    // Kanal görünümünden ÇIKINCA (kanallar listesi) rapor listesi süzgeçleri silinir — başka bir kanala eski arama / yıl
+    // taşınmasın; rapora inip kanala dönünce korunur (8. sürüm). Kanal listesinin süzgeçleri (te_q / te_st / te_sort /
+    // te_page / te_ps) silinmez: kanaldan dönünce liste aynı kalır.
+    ...(nav.view === VIEW_CHANNELS ? Object.fromEntries(REPORT_LIST_KEYS.map((k) => [k, null])) : {}),
   })
 
+  // Görünüm değişmeden önce bekleyen (300 ms gecikmeli) adres yazımları uygulanır: aramayı yazıp hemen kanala giren kullanıcı
+  // dönüşte aynı listeyi bulur; eski görünümün kapanması yazımı düşürüyordu (e2e, 8. sürüm)
   const openChannel = useCallback((id, which = TAB_REPORTS) => {
+    flushUrlQuerySync()
     setTab(which === TAB_TEMPLATE ? TAB_TEMPLATE : TAB_REPORTS)
     setNav({ view: VIEW_CHANNEL, channel: String(id), report: null })
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
@@ -55,11 +65,12 @@ export default function TechErrorReportsPage() {
   // Ay geçişiyle açılan raporda odak başlığa taşınır (ReportEditor yeniden kurulur)
   const focusTitle = useRef(false)
   const openReport = useCallback((id, channelId) => {
+    flushUrlQuerySync()
     setNav((n) => ({ view: VIEW_REPORT, channel: channelId != null ? String(channelId) : n.channel, report: String(id) }))
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
   }, [])
 
-  const toChannels = useCallback(() => setNav({ view: VIEW_CHANNELS, channel: null, report: null }), [])
+  const toChannels = useCallback(() => { flushUrlQuerySync(); setNav({ view: VIEW_CHANNELS, channel: null, report: null }) }, [])
 
   if (nav.view === VIEW_REPORT) {
     return (

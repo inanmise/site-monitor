@@ -213,6 +213,8 @@ konsolda "Function components cannot be given refs".
 
 ### 3.2 Dosyada yapılmış bilinçli sapmalar (üstüne yazma!)
 
+- **`dialog.jsx` kapatma düğmesi (2026-10-17):** shadcn varsayılanı 16 px ikon kadar bir hedefti; `sheet.jsx` ile aynı `inline-flex size-8 … pointer-coarse:size-10` (dokunmatikte 40 px, RESPONSIVE.md §4), konum `top-3 right-3`. Bir `npx shadcn add dialog` yeniden yazarsa bu satırı geri getir.
+
 | Dosya | Sapma |
 |---|---|
 | `button.jsx` | `data-variant` / `data-size` öznitelikleri; proje varyantları `success` (`bg-success`), `warning` (`bg-amber-600`) |
