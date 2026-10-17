@@ -112,7 +112,11 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         float textX = MARGIN + 46;
         float textW = CONTENT_W - 46;
         List<String> titleLines = c.wrapCell(in.title(), textW, c.bold, 15f, 2);
-        float bandH = titleLines.size() > 1 ? 112 : 94;
+        // Kimlik satırları (2026-10-17, 10. sürüm): oluşturan / son düzenleyen / onay + üretim — band onlara göre uzar
+        List<String> metaLines = in.provenance() == null
+                ? List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + "  ·  " + generatedLine(in))
+                : withGenerated(com.sitemonitor.service.mail.TechErrorReportMail.provenanceLines(in.provenance(), en), in);
+        float bandH = (titleLines.size() > 1 ? 112 : 94) + (metaLines.size() - 1) * 10f;
         c.rect(0, top - bandH, PAGE.getWidth(), bandH, DARK);
         c.image(BrandMailAssets.logoBytes("ok"), MARGIN, top - 66, 34, 34);
         float y = top - 40;
@@ -122,11 +126,23 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         }
         String period = TechErrorTemplate.monthName(in.month(), in.template().lang()) + " " + in.year();
         c.text(c.regular, 9.5f, textX, y - 2, c.clip(join(in.teamName(), in.channelName(), period), textW, c.regular, 9.5f), SUB);
-        String meta = (en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + "  ·  "
-                + (en ? "Generated: " : "Üretim: ") + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt())
-                + (en ? " (Turkey time)" : " (Türkiye saati)");
-        c.text(c.regular, 7.5f, textX, y - 16, c.clip(meta, textW, c.regular, 7.5f), MUTED);
+        float my = y - 16;
+        for (String meta : metaLines) {
+            c.text(c.regular, 7.5f, textX, my, c.clip(meta, textW, c.regular, 7.5f), MUTED);
+            my -= 10;
+        }
         c.y = top - bandH - 22;
+    }
+
+    private String generatedLine(TechErrorPdfInput in) {
+        return (en ? "Generated: " : "Üretim: ") + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt())
+                + (en ? " (Turkey time)" : " (Türkiye saati)");
+    }
+
+    private List<String> withGenerated(List<String> lines, TechErrorPdfInput in) {
+        List<String> out = new ArrayList<>(lines);
+        out.add(generatedLine(in));
+        return out;
     }
 
     // ── Bölümler ─────────────────────────────────────────────────────────────────────────────────────

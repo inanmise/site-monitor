@@ -8,6 +8,7 @@ import com.sitemonitor.model.TechErrorReport;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.repository.TechErrorReportRepository;
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.BrandMailAssets;
 import com.sitemonitor.service.EmailNotificationService;
 import com.sitemonitor.service.mail.MailDoc;
 import com.sitemonitor.service.mail.TechErrorMailImages;
@@ -133,6 +134,96 @@ public class TechErrorReportSender {
 
     public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by) {
         return send(report, channel, team, by, Delivery.TEAM);
+    }
+
+    /**
+     * E-posta ÖNİZLEMESİ (10. sürüm, 2026-10-17 — kullanıcı isteği: "mail göndermeden önce overview edebilmeliyiz").
+     * Gönderimle AYNI gövde (aynı girdi, aynı görsel hazırlama, aynı dosya adı), ama talep yok, posta yok, günlük yok,
+     * içerik sayacı değişmez. Alıcılar gönderimdeki gibi hesaplanır; boşsa fırlatılmaz, {@code problem} kodu döner
+     * (TEAM_EMAIL_MISSING / EXEC_RECIPIENTS_MISSING) — gövde yine görülebilir. Gömülü görseller tarayıcıda görünsün diye
+     * {@code cid:} başvuruları yalnız önizlemede data: URI'ye çevrilir. Görseller PDF izni altında yüklenir ({@code withPdfPermit}).
+     */
+    public record Preview(String subject, List<String> to, List<String> cc, String role, String html, String text, String fileName,
+                          int embeddedImages, int skippedImages, String problem, TechErrorPdfInput.Provenance provenance,
+                          long pdfBytes, int maxMailMb) {}
+
+    public Preview preview(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery) {
+        List<String> to;
+        List<String> cc = List.of();
+        String role;
+        String problem = null;
+        if (delivery == Delivery.EXECUTIVE) {
+            to = executiveRecipients(channel);
+            if (to.isEmpty()) problem = "EXEC_RECIPIENTS_MISSING";
+            Set<String> lower = new java.util.HashSet<>();
+            for (String e : to) lower.add(e.toLowerCase(Locale.ROOT));
+            List<String> ccList = new ArrayList<>();
+            for (String e : recipients(team)) if (lower.add(e.toLowerCase(Locale.ROOT))) ccList.add(e);
+            cc = List.copyOf(ccList);
+            role = "EXECUTIVE";
+        } else {
+            to = recipients(team);
+            if (to.isEmpty()) problem = "TEAM_EMAIL_MISSING";
+            role = "TEAM";
+        }
+        long inlineBudget = Math.max(0, mailInlineMb) * 1024L * 1024L;
+        // Gönderimle AYNI yol (inceleme 2026-10-17): PDF de üretilir (aynı merdiven, aynı izin — 429 PdfBusyException), görseller
+        // izin içinde hazırlanır; posta sınırı PDF + gömülü görsellerin TOPLAMI: sığmazsa görseller yalnız PDF'te ("PDF ekinde"
+        // kutuları), PDF tek başına sığmazsa problem PDF_TOO_LARGE (gövde yine görülür; gönderim 409 ile durur)
+        TechErrorMailImages.Result[] mailImages = { TechErrorMailImages.Result.empty() };
+        TechErrorMailImages.Result[] mailFallback = { TechErrorMailImages.Result.empty() };
+        TechErrorReportService.Rendered rendered = service.renderPdf(() -> {
+            TechErrorPdfInput loaded = service.pdfInput(report, channel, team.getName());
+            mailFallback[0] = TechErrorMailImages.allSkipped(loaded);
+            try {
+                mailImages[0] = mailImagePreparer.apply(loaded, inlineBudget);
+            } catch (RuntimeException e) {
+                log.warn("Teknik hata raporu görselleri önizleme için hazırlanamadı (rapor {}): {}", report.getId(), e.toString());
+                mailImages[0] = mailFallback[0];
+            }
+            return loaded;
+        });
+        TechErrorPdfInput in = rendered.meta();
+        byte[] pdf = rendered.pdf();
+        long max = Math.max(1, maxMailMb) * 1024L * 1024L;
+        if (pdf.length > max && problem == null) problem = "PDF_TOO_LARGE";
+        if (mailImages[0].bytes() > 0 && pdf.length + mailImages[0].bytes() > max) mailImages[0] = mailFallback[0];
+        String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
+                in.template().lang());
+        TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, null, audienceOf(delivery));
+        return new Preview(TechErrorReportMail.subject(in), List.copyOf(to), cc, role, inlineBrandLogo(inlineCids(built.mail().html(), built.inline())),
+                built.mail().text(), fileName, built.embeddedImages(), built.skippedImages(), problem, in.provenance(), pdf.length, maxMailMb);
+    }
+
+    /** Dipnotun "neden aldınız" cümlesi teslim yoluna göre (inceleme 2026-10-17: yöneticiler "takım adresi olduğunuz için" okuyordu). */
+    static TechErrorReportMail.Audience audienceOf(Delivery delivery) {
+        return delivery == Delivery.EXECUTIVE ? TechErrorReportMail.Audience.EXECUTIVE : TechErrorReportMail.Audience.TEAM;
+    }
+
+    /**
+     * Başlıktaki marka logosu gönderimde CID eki olarak eklenir ({@code EmailNotificationService} → {@code BrandMailAssets.addInline},
+     * varyant {@code ok}); önizlemede (duman testi 2026-10-17: iframe'de kırık görsel) aynı baytlar data: URI olur.
+     */
+    static String inlineBrandLogo(String html) {
+        if (html == null || !html.contains("cid:" + BrandMailAssets.CID)) return html;
+        byte[] bytes = BrandMailAssets.logoBytes("ok");
+        if (bytes == null) return html;
+        return html.replace("cid:" + BrandMailAssets.CID + "\"", "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(bytes) + "\"");
+    }
+
+    /** Önizleme için {@code cid:} görsel başvuruları data: URI olur (posta istemcisi değil tarayıcı çizer). */
+    static String inlineCids(String html, List<EmailNotificationService.InlineImage> inline) {
+        if (html == null || inline == null || inline.isEmpty()) return html;
+        String out = html;
+        for (EmailNotificationService.InlineImage img : inline) {
+            if (img == null || img.cid() == null || img.data() == null) continue;
+            String uri = "data:" + (img.contentType() == null ? "image/png" : img.contentType()) + ";base64,"
+                    + java.util.Base64.getEncoder().encodeToString(img.data());
+            // Kapanış tırnağıyla değiştir (inceleme 2026-10-17): "te-img-tech-ratio" "te-img-tech-ratio-monthly"nin ÖNEKİ —
+            // ayraçsız değişim ikinci görselin src'ini bozuyordu
+            out = out.replace("cid:" + img.cid() + "\"", uri + "\"");
+        }
+        return out;
     }
 
     public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery) {
@@ -263,7 +354,7 @@ public class TechErrorReportSender {
                         report.getId(), mb(pdf.length), mb(mailImages[0].bytes()), maxMailMb);
                 mailImages[0] = mailFallback[0];
             }
-            TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName);
+            TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, null, audienceOf(delivery));
             MailDoc.Mail mail = built.mail();
             mailAttempted = true;
             String status = email.sendHtml(to.toArray(new String[0]), cc, subject, mail.html(), mail.text(), built.inline(), false,

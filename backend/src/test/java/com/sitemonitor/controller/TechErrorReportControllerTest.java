@@ -10,6 +10,7 @@ import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
+import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorReportSender;
 import com.sitemonitor.service.techerror.TechErrorReportService;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
@@ -698,6 +699,64 @@ class TechErrorReportControllerTest {
         } finally {
             com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
         }
+    }
+
+    // ── E-posta önizlemesi (10. sürüm, 2026-10-17) ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("e-posta önizlemesi: okuma kapsamı yeter (gönderim yok); konu / alıcılar / gövde / ek; yönetici alıcılı kanalda EXECUTIVE; paylaşımla okuyan adres görmez; başka takım 404")
+    void mailPreview() throws Exception {
+        report(100, 10, A, null);
+        when(sender.preview(any(), any(), any(), eq(TechErrorReportSender.Delivery.TEAM))).thenReturn(
+                new TechErrorReportSender.Preview("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026", List.of("takim1@example.com"), List.of(),
+                        "TEAM", "<html><img src=\"data:image/png;base64,AAAA\"></html>", "metin", "mobil-2026-09.pdf", 1, 0, null,
+                        new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ali Veli",
+                                Instant.parse("2026-09-05T06:12:00Z"), null, null, null), 123_456L, 15));
+        mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(audit()))      // salt okuyan da önizler
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.subject").value("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026"))
+                .andExpect(jsonPath("$.data.provenance.created_by").value("Ayşe Yılmaz"))
+                .andExpect(jsonPath("$.data.provenance.updated_by").value("Ali Veli"))
+                .andExpect(jsonPath("$.data.provenance.approval_state").doesNotExist())
+                .andExpect(jsonPath("$.data.pdf_bytes").value(123456))
+                .andExpect(jsonPath("$.data.max_mail_mb").value(15))
+                .andExpect(jsonPath("$.data.delivery").value("TEAM"))
+                .andExpect(jsonPath("$.data.to[0]").value("takim1@example.com"))
+                .andExpect(jsonPath("$.data.to_count").value(1))
+                .andExpect(jsonPath("$.data.recipients_hidden").value(false))
+                .andExpect(jsonPath("$.data.file_name").value("mobil-2026-09.pdf"))
+                .andExpect(jsonPath("$.data.images_embedded").value(1))
+                .andExpect(jsonPath("$.data.html").value(org.hamcrest.Matchers.containsString("data:image/png")));
+        verify(sender, never()).send(any(), any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any(), any());
+        // Yönetici alıcılı kanal → EXECUTIVE teslim yolu
+        execChannel(30, A);
+        report(130, 30, A, null);
+        when(sender.preview(any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE))).thenReturn(
+                new TechErrorReportSender.Preview("Konu", List.of("ceo@example.com", "cfo@example.com"), List.of("takim1@example.com"),
+                        "EXECUTIVE", "<html></html>", "metin", "m.pdf", 0, 0, null,
+                        new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), "Ayşe Yılmaz",
+                                Instant.parse("2026-09-03T11:05:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z")), 999L, 15));
+        mvc.perform(get("/api/tech-error-reports/reports/130/mail-preview").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.delivery").value("EXECUTIVE"))
+                .andExpect(jsonPath("$.data.provenance.approval_state").value("approved"))
+                .andExpect(jsonPath("$.data.provenance.approved_by").value("Mehmet PO"))
+                .andExpect(jsonPath("$.data.provenance.approved_at").value("2026-09-06T07:00:00Z"))
+                .andExpect(jsonPath("$.data.to.length()").value(2))
+                .andExpect(jsonPath("$.data.cc[0]").value("takim1@example.com"));
+        // Paylaşımla okuyan: adresler gizli, sayılar var
+        MockHttpSession g = grantee(B, A, false);
+        mvc.perform(get("/api/tech-error-reports/reports/130/mail-preview").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.to").isEmpty())
+                .andExpect(jsonPath("$.data.cc").isEmpty())
+                .andExpect(jsonPath("$.data.to_count").value(2))
+                .andExpect(jsonPath("$.data.cc_count").value(1))
+                .andExpect(jsonPath("$.data.recipients_hidden").value(true))
+                .andExpect(jsonPath("$.data.provenance.approved_by").value("Mehmet PO"));   // belgenin kimliği gövdede de yazar — gizlenmez
+        // Başka takım
+        mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(user("USER", B, List.of()))).andExpect(status().isNotFound());
     }
 
     // ── Takım erişim paylaşımı (9. sürüm, 2026-10-17) ──────────────────────────────────────────────

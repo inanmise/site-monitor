@@ -76,6 +76,7 @@ class TechErrorReportMailTest {
         assertThat(band).isPositive();
         assertThat(html).contains("TEKNİK HATA RAPORU · EYLÜL 2026").contains("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026")
                 .contains("Dijital Kanallar · Mobil · Eylül 2026").contains("Hazırlayan: Ayşe Yılmaz").contains("bgcolor=\"#0f172a\"");
+        assertThat(html).doesNotContain("Oluşturan:");                  // kimlik verilmedi → eski tek satır
         assertThat(html).contains("ekteki PDF&#39;tedir (mobil.pdf)");
         assertThat(b.mail().text()).contains("ekteki PDF'tedir (mobil.pdf)");
         // Sıra: band → özet (kutucuk şeridi + metin) → Verileri → Oranları → anomaliler → SLA görselleri → metin → grafikler
@@ -212,5 +213,77 @@ class TechErrorReportMailTest {
         assertThat(b.mail().html()).contains("TECHNICAL ERROR REPORT · SEPTEMBER 2026").contains("Prepared by: Ayşe Yılmaz").contains("(Turkey time)")
                 .contains("is in the attached PDF (m.pdf)").contains("Open technical error reports");
         assertThat(b.mail().text()).contains("[Image] ").contains("Total transactions: 1,000");
+    }
+
+    // ── Kimlik satırları (2026-10-17, 10. sürüm) ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("band kimlik satırları: Oluşturan · tarih, farklıysa Son düzenleyen, onay akışlı kanalda Onaylayan ya da onay durumu, sonra Üretim; EN karşılıkları; düz metin aynı")
+    void provenanceLines() {
+        TechErrorPdfInput base = input("tr", Map.of());
+        TechErrorPdfInput.Provenance p = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                "Ali Veli", Instant.parse("2026-09-05T06:12:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
+        TechErrorReportMail.Built b = TechErrorReportMail.buildFull(base.withProvenance(p), TechErrorMailImages.allSkipped(base), "https://sm.example", "m.pdf");
+        String html = b.mail().html();
+        assertThat(html).contains("Oluşturan: Ayşe Yılmaz · 03.09.2026 14:05").contains("Son düzenleyen: Ali Veli · 05.09.2026 09:12")
+                .contains("Onaylayan: Mehmet PO · 06.09.2026 10:00").contains("Üretim: ").doesNotContain("Hazırlayan:");
+        assertThat(html.indexOf("Oluşturan:")).isLessThan(html.indexOf("Son düzenleyen:"));
+        assertThat(html.indexOf("Son düzenleyen:")).isLessThan(html.indexOf("Onaylayan:"));
+        assertThat(html.indexOf("Onaylayan:")).isLessThan(html.indexOf("Üretim:"));
+        assertThat(html.split("data-slot=\"te-mail-provenance\"").length - 1).isEqualTo(4);
+        assertThat(b.mail().text()).contains("Oluşturan: Ayşe Yılmaz · 03.09.2026 14:05\nSon düzenleyen: Ali Veli · 05.09.2026 09:12\nOnaylayan: Mehmet PO · 06.09.2026 10:00\nÜretim: ");
+        // Aynı kişi, aynı an: tek satır; onay akışı yok (state null): onay satırı yok
+        TechErrorPdfInput.Provenance same = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                "Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), null, null, null);
+        String h2 = TechErrorReportMail.buildFull(base.withProvenance(same), TechErrorMailImages.allSkipped(base), "https://sm.example", "m.pdf").mail().html();
+        assertThat(h2).contains("Oluşturan: Ayşe Yılmaz").doesNotContain("Son düzenleyen:").doesNotContain("Onay");
+        // Onay akışlı ama henüz onaylanmamış: durum satırı, onaylayan adı yok; eski (stale) onay da ad basmaz
+        for (String[] c : new String[][] { { "pending", "Onay: PO onayı bekleniyor" }, { "none", "Onay: henüz onaya gönderilmedi" },
+                { "rejected", "Onay: reddedildi — taslağa döndü" }, { "stale", "Onay: içerik onaydan sonra değişti — yeniden onay gerekir" } }) {
+            TechErrorPdfInput.Provenance st = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                    null, null, c[0], "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
+            String h = TechErrorReportMail.buildFull(base.withProvenance(st), TechErrorMailImages.allSkipped(base), "https://sm.example", "m.pdf").mail().html();
+            assertThat(h).as(c[0]).contains(c[1]).doesNotContain("Onaylayan:").doesNotContain("Mehmet PO");
+        }
+        // EN
+        TechErrorPdfInput en = input("en", Map.of());
+        String hEn = TechErrorReportMail.buildFull(en.withProvenance(p), TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf").mail().html();
+        assertThat(hEn).contains("Created by: Ayşe Yılmaz · 03.09.2026 14:05").contains("Last edited by: Ali Veli").contains("Approved by: Mehmet PO")
+                .contains("Generated: ").doesNotContain("Prepared by:");
+        assertThat(TechErrorReportMail.approvalText("pending", true)).isEqualTo("awaiting PO approval");
+        // Silinmiş kullanıcı: ad yok → "—", satır yine basılır
+        TechErrorPdfInput.Provenance gone = new TechErrorPdfInput.Provenance(null, Instant.parse("2026-09-03T11:05:00Z"), null, null, null, null, null);
+        assertThat(TechErrorReportMail.buildFull(base.withProvenance(gone), TechErrorMailImages.allSkipped(base), "https://sm.example", "m.pdf").mail().html())
+                .contains("Oluşturan: — · 03.09.2026 14:05");
+    }
+
+    // ── Dipnot "neden aldınız" kitleye göre (inceleme 2026-10-17) ───────────────────────────────────
+
+    @Test
+    @DisplayName("dipnot: TEAM eski metin (bayt bayt), EXECUTIVE yönetici alıcısı + onaylayan PO, APPROVER onaylayıcı; EN karşılıkları")
+    void footerWhyByAudience() {
+        TechErrorPdfInput base = input("tr", Map.of());
+        TechErrorMailImages.Result none = TechErrorMailImages.allSkipped(base);
+        String team = TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf").mail().html();
+        assertThat(team).contains("Dijital Kanallar takımının adresi olduğu ve bir takım üyesi raporu Site Monitor&#39;den gönderdiği için geldi")
+                .doesNotContain("yönetici (executive)");
+        assertThat(TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.TEAM).mail().html()).isEqualTo(team);
+        TechErrorPdfInput.Provenance approved = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                null, null, "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
+        String exec = TechErrorReportMail.buildFull(base.withProvenance(approved), none, "https://sm.example", "m.pdf", null,
+                TechErrorReportMail.Audience.EXECUTIVE).mail().html();
+        assertThat(exec).contains("Mobil kanalının yönetici (executive) alıcısı olarak tanımlı olduğunuz için geldi; Dijital Kanallar takımının adresi bilgidedir.")
+                .contains("Raporu Mehmet PO 06.09.2026 10:00 tarihinde onayladı.").doesNotContain("takımının adresi olduğu");
+        // Kimlik yok (eski imza) → onaylayan cümlesi yok
+        assertThat(TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.EXECUTIVE).mail().html())
+                .contains("yönetici (executive) alıcısı").doesNotContain("onayladı.");
+        String approver = TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.APPROVER).mail().html();
+        assertThat(approver).contains("Dijital Kanallar takımının PO onaylayıcısı olduğunuz için geldi; rapor yöneticilere gönderilmeden önce onayınızı bekliyor.");
+        TechErrorPdfInput en = input("en", Map.of());
+        assertThat(TechErrorReportMail.buildFull(en.withProvenance(approved), TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf", null,
+                TechErrorReportMail.Audience.EXECUTIVE).mail().html())
+                .contains("registered executive recipient of the Mobil channel").contains("approved by Mehmet PO on 06.09.2026 10:00.");
+        assertThat(TechErrorReportMail.buildFull(en, TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf", null,
+                TechErrorReportMail.Audience.APPROVER).mail().html()).contains("PO approver of Dijital Kanallar");
     }
 }

@@ -14,6 +14,7 @@ import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
 import com.sitemonitor.service.techerror.TechErrorApprovalService;
+import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorReportSender;
 import com.sitemonitor.service.techerror.TechErrorReportService;
 import com.sitemonitor.service.techerror.TechErrorVisibilityService;
@@ -643,6 +644,53 @@ public class TechErrorReportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
                         .filename(name, StandardCharsets.UTF_8).build().toString())
                 .body(pdf);
+    }
+
+    /**
+     * E-posta önizlemesi (10. sürüm): gönderilecek postanın gövdesi, konusu, alıcıları ve eki — okuma kapsamı yeter (PDF gibi);
+     * yalnız paylaşımla okuyan adresleri değil sayıları görür (kişi verisi kuralı). Gönderim yok, iz yok. Teslim yolu kanalın
+     * onay akışına göre: yönetici alıcısı tanımlıysa EXECUTIVE (yöneticilere, takım bilgide), yoksa TEAM.
+     */
+    @GetMapping("/reports/{id}/mail-preview")
+    public ResponseEntity<Map<String, Object>> mailPreview(@PathVariable Long id, HttpSession session) {
+        requireRead(session);
+        TechErrorReport r = readableReport(id, session);
+        TechErrorChannel ch = service.channel(r.getChannelId());
+        Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
+        TechErrorReportSender.Delivery delivery = TechErrorApprovalService.approvalRequired(ch)
+                ? TechErrorReportSender.Delivery.EXECUTIVE : TechErrorReportSender.Delivery.TEAM;
+        TechErrorReportSender.Preview p = sender.preview(r, ch, team, delivery);
+        boolean hidden = SessionScope.viewableOnlyByGrant(session, r.getTeamId());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("subject", p.subject());
+        m.put("delivery", p.role());
+        m.put("to", hidden ? List.of() : p.to());
+        m.put("cc", hidden ? List.of() : p.cc());
+        m.put("to_count", p.to().size());
+        m.put("cc_count", p.cc().size());
+        m.put("recipients_hidden", hidden);
+        m.put("problem", p.problem());
+        m.put("file_name", p.fileName());
+        m.put("images_embedded", p.embeddedImages());
+        m.put("images_skipped", p.skippedImages());
+        m.put("pdf_bytes", p.pdfBytes());
+        m.put("max_mail_mb", p.maxMailMb());
+        m.put("html", p.html());
+        m.put("text", p.text());
+        // Kimlik (2026-10-17): oluşturan / son düzenleyen / onay — belgenin kendi bilgisi, gövdede de yazar; her okuyan görür
+        TechErrorPdfInput.Provenance pv = p.provenance();
+        if (pv != null) {
+            Map<String, Object> who = new LinkedHashMap<>();
+            who.put("created_by", pv.createdBy());
+            who.put("created_at", iso(pv.createdAt()));
+            who.put("updated_by", pv.updatedBy());
+            who.put("updated_at", iso(pv.updatedAt()));
+            who.put("approval_state", pv.approvalState());
+            who.put("approved_by", pv.approvedBy());
+            who.put("approved_at", iso(pv.approvedAt()));
+            m.put("provenance", who);
+        }
+        return ok(m);
     }
 
     @PostMapping("/reports/{id}/send")

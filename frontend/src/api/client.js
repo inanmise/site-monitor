@@ -539,6 +539,8 @@ export const api = {
     deleteImage: (id, imageId) => request(`/tech-error-reports/reports/${id}/images/${imageId}`, { method: 'DELETE', withStatus: true }),
     imageUrl: (imageId) => `${BASE}/tech-error-reports/images/${imageId}`,
     send: (id) => request(`/tech-error-reports/reports/${id}/send`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir
+    mailPreview: (id) => request(`/tech-error-reports/reports/${id}/mail-preview`, { withStatus: true, timeoutMs: 0 }),
     // PO onayı (2026-10-17, S6): istek PDF üretip onaylayıcılara posta atar, karar yöneticilere gönderir — uzun sürebilir
     approval: (id) => request(`/tech-error-reports/reports/${id}/approval`, { withStatus: true }),
     requestApproval: (id) => request(`/tech-error-reports/reports/${id}/approval/request`, { method: 'POST', withStatus: true, timeoutMs: 0 }),

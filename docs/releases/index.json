@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T18:00:39Z",
+  "generatedAt": "2026-10-17T18:56:13Z",
   "repo": "inanmise/site-monitor",
-  "count": 765,
+  "count": 766,
   "releases": [
+    {
+      "version": "20.148.0",
+      "tag": "v20.148.0",
+      "releasedAt": "2026-10-17T18:56:07Z",
+      "commit": "2574c0782382f02bb29a7a2e9c3998732c2cef68",
+      "prevVersion": "20.147.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2574c078",
+          "subject": "e-posta önizlemesi iframe gövdesi mailPreviewSrcDoc ile hazırlanır — kaynak kapısı (logo cid çözümü + base target)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "560040b6",
+          "subject": "teknik hata raporunda gönderim öncesi e-posta önizlemesi — gövde, alıcılar, ek; oluşturan / son düzenleyen / onaylayan posta bandında, PDF kapağında ve önizlemede"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.147.0",
       "tag": "v20.147.0",

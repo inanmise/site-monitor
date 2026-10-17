@@ -379,6 +379,14 @@ async function mock(page, { openSections = true } = {}) {
       uploadBodies.push(req.postDataBuffer() || Buffer.alloc(0))
       body = { success: true, data: { id: 500 + uploads.length, slot_id: slotId, content_type: 'image/png', file_name: `${slotId}.png`,
         width: 1, height: 1, size_bytes: PNG.length } }
+    } else if (p === '/api/tech-error-reports/reports/100/mail-preview') {
+      body = { success: true, data: { subject: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Eylül 2026`, delivery: 'TEAM',
+        to: ['dijital-kanallar@example.com'], cc: [], to_count: 1, cc_count: 0, recipients_hidden: false, problem: null,
+        file_name: 'mobil-teknik-hata-2026-09.pdf', images_embedded: 1, images_skipped: 0,
+        provenance: { created_by: 'Ayşe Yılmaz', created_at: '2026-09-03T11:05:00Z', updated_by: 'Ali Veli', updated_at: '2026-09-05T06:12:00Z',
+          approval_state: null, approved_by: null, approved_at: null },
+        html: '<!doctype html><html><body style="margin:0;font-family:Arial"><div data-slot="te-mail-band" style="background:#0f172a;color:#fff;padding:24px">TEKNİK HATA RAPORU · EYLÜL 2026</div><p style="padding:16px">Yönetici Özeti — önizleme gövdesi</p></body></html>',
+        text: 'metin' } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
       sends++
       body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
@@ -1099,6 +1107,40 @@ for (const vp of VIEWPORTS) {
       await expect(dlg).toBeHidden()
       await page.waitForTimeout(800)
       expect(await page.evaluate(overflowX), 'yatay taşma (karar sonrası)').toBeLessThanOrEqual(1)
+    })
+
+    test('e-posta önizlemesi (2026-10-17, 10. sürüm): konu / alıcı / ek, gövde kumsandıkta, masaüstü ve telefon genişliği, pencereden gönder; sığar, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-mail-preview-btn"]').click()
+      const dlg = page.locator('[data-slot="te-mail-preview"]')
+      await expect(dlg).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-subject"]')).toContainText('Eylül 2026')
+      await expect(dlg.locator('[data-slot="te-mail-to"]')).toContainText('dijital-kanallar@example.com')
+      await expect(dlg.locator('[data-slot="te-mail-created"]')).toContainText('Ayşe Yılmaz')
+      await expect(dlg.locator('[data-slot="te-mail-updated"]')).toContainText('Ali Veli')
+      const frame = dlg.locator('[data-slot="te-mail-frame"]')
+      await expect(frame).toBeVisible()
+      await expect(frame.contentFrame().locator('[data-slot="te-mail-band"]')).toContainText('TEKNİK HATA RAPORU')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(clipped, '[data-slot="te-mail-preview"]'), 'kırpılan metin (önizleme)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-mail-preview"]'), 'küçük hedef (önizleme)').toEqual([])
+      const box = await dlg.boundingBox()
+      expect(box.width, 'pencere ekrana sığar').toBeLessThanOrEqual(vp.width)
+      // Telefon genişliği: iframe 400 px (ekrandan dar değilse)
+      await dlg.getByRole('button', { name: /^(Telefon|Phone)$/ }).click()
+      await expect(frame).toHaveAttribute('data-width', 'phone')
+      const fw = (await frame.boundingBox()).width
+      expect(fw).toBeLessThanOrEqual(401)
+      await page.screenshot({ path: `test-results/channel-reports-mail-preview-${vp.name}.png`, fullPage: false })
+      // Pencereden gönder: pencere kapanır, mevcut onay sorusu açılır, onaylanınca gönderim gider
+      await dlg.locator('[data-slot="te-mail-send"]').click()
+      await expect(dlg).toHaveCount(0)
+      const confirm = page.getByRole('dialog', { name: /Rapor takıma gönderilsin mi|Send the report to the team/ })
+      await expect(confirm).toBeVisible()
+      await confirm.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect.poll(() => sends).toBe(1)
     })
 
     test('katlanır bölümler + otomatik kayıt', async ({ page }) => {

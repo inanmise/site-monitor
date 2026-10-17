@@ -1046,4 +1046,40 @@ class TechErrorReportServiceTest {
         for (int i = 0; i < secs.size(); i++) if ("summary".equals(secs.get(i).get("id"))) return i;
         throw new AssertionError("gösterge özeti bölümü yok");
     }
+
+    // ── Kimlik (2026-10-17, 10. sürüm) ───────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("provenance: oluşturan + son düzenleyen adları; onay akışı yoksa state null; onaylı ve içerik değişmemişse approved + onaylayan; içerik sonra değişmişse stale (ad yok); bekleyen pending; eski satır (content_rev null) 0 sayılır")
+    void provenanceFromRow() {
+        TechErrorChannel ch = channel(1, "Kimlik");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 1L);
+        TechErrorPdfInput.Provenance p = service.provenance(r, ch);
+        assertThat(p.createdAt()).isNotNull();
+        assertThat(p.approvalState()).isNull();
+        assertThat(p.approved()).isFalse();
+        // Onay akışlı kanal (yönetici alıcısı var)
+        ch.setExecutiveEmails("ceo@example.com");
+        assertThat(service.provenance(r, ch).approvalState()).isEqualTo("none");
+        r.setApprovalState("PENDING");
+        r.setApprovalRev(r.getContentRev() == null ? 0L : r.getContentRev());
+        assertThat(service.provenance(r, ch).approvalState()).isEqualTo("pending");
+        r.setApprovalState("APPROVED");
+        r.setApprovalDecidedById(1L);
+        r.setApprovalDecidedAt(Instant.parse("2026-09-06T07:00:00Z"));
+        TechErrorPdfInput.Provenance ok = service.provenance(r, ch);
+        assertThat(ok.approvalState()).isEqualTo("approved");
+        assertThat(ok.approved()).isTrue();
+        assertThat(ok.approvedAt()).isEqualTo(Instant.parse("2026-09-06T07:00:00Z"));
+        // İçerik onaydan sonra değişti → stale, onaylayan basılmaz
+        r.setContentRev((r.getApprovalRev() == null ? 0L : r.getApprovalRev()) + 1);
+        TechErrorPdfInput.Provenance stale = service.provenance(r, ch);
+        assertThat(stale.approvalState()).isEqualTo("stale");
+        assertThat(stale.approvedBy()).isNull();
+        assertThat(stale.approvedAt()).isNull();
+        // pdfInput kimliği taşır
+        r.setContentRev(r.getApprovalRev());
+        assertThat(service.pdfInput(r, ch, "Takım").provenance()).isNotNull();
+        assertThat(service.pdfInput(r, ch, "Takım").provenance().approvalState()).isEqualTo("approved");
+    }
 }
