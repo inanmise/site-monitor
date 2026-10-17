@@ -314,6 +314,15 @@ public final class AppSettingsCatalog {
         // (A+ dışındaki her düşüş); kapatılınca bekleyen düşüşler "SKIPPED: bildirim kapalı" olur.
         // Kanal teknik hata raporu (2026-10-17, S6) — Ayarlar → Teknik hata raporu: modülü gören takımlar (boş = herkes).
         new Setting("site.monitor.tech-error-report.team-ids",      "tech-error-report", Type.CSV),
+        // 12. surum (2026-10-17, C9 / C10 / E21): donem hatirlatmasi (takim basina opt-in; bos = KAPALI), onay bekleyen
+        // rapor hatirlatmasi, e-posta boyut sinirlari — Ayarlar > Teknik hata raporu; araliklar TechErrorReportSettings.validate.
+        new Setting("site.monitor.tech-error-report.reminder-team-ids",      "tech-error-report", Type.CSV),
+        new Setting("site.monitor.tech-error-report.reminder-day",           "tech-error-report", Type.INT),
+        new Setting("site.monitor.tech-error-report.reminder-repeat-days",   "tech-error-report", Type.INT),
+        new Setting("site.monitor.tech-error-report.reminder-push",          "tech-error-report", Type.BOOL),
+        new Setting("site.monitor.tech-error-report.approval-reminder-days", "tech-error-report", Type.INT),
+        new Setting("site.monitor.tech-error-report.max-mail-mb",            "tech-error-report", Type.INT),
+        new Setting("site.monitor.tech-error-report.mail-inline-mb",         "tech-error-report", Type.INT),
         new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
         // Kendi kendini izleme (2026-10-11) — Ayarlar → Genel → Kendi kendini izleme. Aralıklar WatchdogSettings.validate;
@@ -623,7 +632,15 @@ public final class AppSettingsCatalog {
         "site.monitor.executive-summary.availability-target",
         "site.monitor.executive-summary.renewal-target-days",
         // 2026-10-17: kanal teknik hata raporu modülünün takım bazlı görünürlüğü — kurum geneli karar.
-        "site.monitor.tech-error-report.team-ids"
+        "site.monitor.tech-error-report.team-ids",
+        // 2026-10-17 (12. surum): hatirlatma takimlari / takvimi ve posta boyut sinirlari — kurum geneli karar.
+        "site.monitor.tech-error-report.reminder-team-ids",
+        "site.monitor.tech-error-report.reminder-day",
+        "site.monitor.tech-error-report.reminder-repeat-days",
+        "site.monitor.tech-error-report.reminder-push",
+        "site.monitor.tech-error-report.approval-reminder-days",
+        "site.monitor.tech-error-report.max-mail-mb",
+        "site.monitor.tech-error-report.mail-inline-mb"
     ));
 
     /**

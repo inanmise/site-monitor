@@ -110,6 +110,7 @@ public class TechErrorApprovalService {
     private final NotificationLogRepository logs;
     private final AppSettingsService appSettings;
 
+    /** Önyükleme değeri; Ayarlar'dan kaydedilen değer (12. sürüm, E21) yeniden başlatmadan onu ezer. */
     @Value("${site.monitor.tech-error-report.mail-inline-mb:6}")
     int mailInlineMb = 6;
 
@@ -277,7 +278,7 @@ public class TechErrorApprovalService {
         List<String> mailedTo = new ArrayList<>();
         if (!mails.isEmpty()) {
             try {
-                long budget = Math.max(0, mailInlineMb) * 1024L * 1024L;
+                long budget = Math.max(0, TechErrorReportSettings.liveInt(appSettings, TechErrorReportSettings.MAIL_INLINE_MB, mailInlineMb)) * 1024L * 1024L;
                 TechErrorMailImages.Result[] prepared = { TechErrorMailImages.Result.empty() };
                 TechErrorReport pdfRow = fresh;
                 TechErrorReportService.Rendered rendered = service.renderPdf(() -> {
@@ -408,7 +409,55 @@ public class TechErrorApprovalService {
             }
         }
         notifyRequester(fresh, channel, team, by, approve, note, send, sendError, now);
+        // Kararı vermeyen diğer onaylayıcılara bilgi (12. sürüm, C10): başarısızlık kararı ASLA değiştirmez
+        try {
+            informOtherApprovers(fresh, channel, team, by, approve, note, now);
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} diğer onaylayıcılara bilgi verilemedi: {}", fresh.getId(), e.toString());
+        }
         return new Decision(state, send, sendError, now);
+    }
+
+    /** Diğer onaylayıcılara bilgi postasının rolü ({@code notification_logs.recipient_role}). */
+    public static final String ROLE_APPROVER_INFO = "APPROVER_INFO";
+
+    /**
+     * Kararı VERMEYEN onaylayıcılara kısa bilgi (2026-10-17, 12. sürüm — kullanıcı onayı C10): "rapor X tarafından onaylandı /
+     * reddedildi; işlem gerekmez". Yalnız aktif, e-postası olan onaylayıcılar (onaylayıcı listesi zaten aktif üyeler); karar
+     * vereni, isteyeni (o karar postasını aldı) ve aynı kutuyu paylaşanı içermez — kimse iki posta almaz. Her posta bir
+     * {@code notification_logs} satırı (rol {@link #ROLE_APPROVER_INFO}); posta hatası kararı değiştirmez.
+     */
+    void informOtherApprovers(TechErrorReport r, TechErrorChannel ch, Team team, Long deciderId, boolean approved, String note,
+                              Instant now) {
+        List<Approver> others = new ArrayList<>();
+        Set<String> skipMail = new java.util.HashSet<>();
+        for (Long uid : new Long[] { deciderId, r.getApprovalRequestedById() }) {
+            if (uid == null) continue;
+            AppUser u = users.findById(uid).orElse(null);
+            if (u != null && u.getEmail() != null && !u.getEmail().isBlank()) skipMail.add(u.getEmail().trim().toLowerCase(Locale.ROOT));
+        }
+        for (Approver a : approvers(team.getId())) {
+            if (a.email() == null || Objects.equals(a.id(), deciderId) || Objects.equals(a.id(), r.getApprovalRequestedById())) continue;
+            if (!skipMail.add(a.email().toLowerCase(Locale.ROOT))) continue;
+            others.add(a);
+        }
+        if (others.isEmpty()) return;
+        TechErrorTemplate.Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+        String title = TechErrorTemplate.resolve(t.title(), ch.getName(), r.getReportYear(), r.getReportMonth(), t.lang());
+        String decider = service.displayName(deciderId);
+        String url = TechErrorApprovalMail.reportUrl(baseUrl(), ch.getId(), r.getId());
+        MailDoc.Mail mail = com.sitemonitor.service.mail.TechErrorReminderMail.approverInfo(title, t.en(), approved, decider, now, note, url);
+        String subject = com.sitemonitor.service.mail.TechErrorReminderMail.infoSubject(title, t.en(), approved);
+        for (Approver a : others) {
+            String status;
+            try {
+                status = email.sendHtml(new String[] { a.email() }, null, subject, mail.html(), mail.text(), null, false, null);
+                if (status == null) status = "FAILED: sonuç yok";
+            } catch (RuntimeException e) {
+                status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
+            }
+            saveLog(a.name(), a.email(), ROLE_APPROVER_INFO, subject, status, team.getName());
+        }
     }
 
     private void notifyRequester(TechErrorReport r, TechErrorChannel ch, Team team, Long deciderId, boolean approved, String note,

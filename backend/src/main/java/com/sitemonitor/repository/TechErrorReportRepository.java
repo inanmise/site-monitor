@@ -61,6 +61,9 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
 
     List<Row> findByChannelIdInAndReportYearAndReportMonth(Collection<Long> channelIds, Integer year, Integer month);
 
+    /** Onay hatırlatması adayları (12. sürüm, C10): bekleyen ve en geç {@code before}'da istenmiş onaylar (eskime çağıranda). */
+    List<Row> findByApprovalStateAndApprovalRequestedAtLessThanEqual(String approvalState, Instant before);
+
     @Query("SELECT r.channelId, COUNT(r) FROM TechErrorReport r WHERE r.channelId IN :ids GROUP BY r.channelId")
     List<Object[]> countByChannel(@Param("ids") Collection<Long> channelIds);
 

@@ -35,8 +35,19 @@ function settingsBody(extra = {}) {
   return { success: true, data: { team_ids: [], read_only: false, period: { year: 2026, month: 9 }, channels: CHANNELS, ...extra } }
 }
 
+/** 12. sürüm (2026-10-17): hatırlatma + posta sınırı bloğu (sunucu `reminders`). */
+const REMINDERS = {
+  team_ids: [1], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
+  reminder_push: true,
+  limits: {
+    reminder_day: { min: 1, max: 28, default: 5 }, reminder_repeat_days: { min: 0, max: 14, default: 3 },
+    approval_reminder_days: { min: 1, max: 14, default: 3 }, max_mail_mb: { min: 5, max: 50, default: 15 },
+    mail_inline_mb: { min: 0, max: 20, default: 6 },
+  },
+}
+
 /** mockApi'den SONRA kaydedilen yollar önceliklidir. Arayüz dili TR (varsayılan EN — metin iddiaları Türkçe). */
-async function routes(page, { readOnly = false, fail = () => false } = {}) {
+async function routes(page, { readOnly = false, fail = () => false, reminders = null } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   await page.route((u) => new URL(u).pathname === '/api/teams/directory', json({ success: true, data: TEAMS }))
@@ -45,12 +56,23 @@ async function routes(page, { readOnly = false, fail = () => false } = {}) {
     if (route.request().method() === 'PUT') {
       const body = JSON.parse(route.request().postData() || '{}')
       saves.push(body)
-      return json({ success: true, data: { team_ids: body.team_ids || [] } })(route)
+      const rem = reminders ? { ...reminders, ...pickReminders(body) } : undefined
+      return json({ success: true, data: { team_ids: body.team_ids || [], ...(rem ? { reminders: rem } : {}) } })(route)
     }
     if (fail()) return json({ success: false, code: 'DB_UNAVAILABLE', error: 'Veritabanına şu an ulaşılamıyor. Biraz bekleyip yeniden deneyin.' }, 503)(route)
-    return json(settingsBody({ read_only: readOnly }))(route)
+    return json(settingsBody({ read_only: readOnly, ...(reminders ? { reminders } : {}) }))(route)
   })
   return saves
+}
+
+/** PUT gövdesindeki hatırlatma alanları → yanıt bloğu (sunucu gibi: gönderilmeyen alan aynı kalır). */
+function pickReminders(body) {
+  const out = {}
+  for (const k of ['reminder_day', 'reminder_repeat_days', 'approval_reminder_days', 'max_mail_mb', 'mail_inline_mb', 'reminder_push']) {
+    if (k in body) out[k] = body[k]
+  }
+  if ('reminder_team_ids' in body) out.team_ids = body.reminder_team_ids
+  return out
 }
 
 function smallTargets(sel) {
@@ -254,3 +276,69 @@ test.describe('Ayarlar → Teknik hata raporu — telefon 390 (dokunmatik)', () 
   await page.screenshot({ path: 'test-results/settings-techerror-phone-saved.png', fullPage: false })
   })
 })
+
+// 12. sürüm (2026-10-17, C9 / C10 / E21): "Hatırlatmalar ve posta sınırları" kartı telefon (390, dokunmatik), tablet (768,
+// dokunmatik) ve dizüstünde (1280): sığar, kırpılmaz, dokunmatikte hedefler ≥ 40 px; yerleşim KABA göre (container query):
+// dizüstünde gün + tekrar yan yana, telefonda / tablette (Ayarlar içerik sütunu ≈ 350 px) alt alta; aralık dışı değer alanın
+// altında hata verir ve istek gitmez; düzeltip Kaydet YALNIZ değişen alanı gönderir.
+const REM_ROOT = '[data-slot="tes-reminders"]'
+for (const vp of VIEWPORTS) {
+  test.describe(`Ayarlar → Teknik hata raporu — hatırlatmalar ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('kart sığar ve kırpılmaz; alan hatası alanın altında; Kaydet yalnız değişen alanı gönderir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const saves = await routes(page, { reminders: REMINDERS })
+      await page.goto('/?tab=settings&sec=techerror')
+      const card = page.locator(REM_ROOT)
+      await expect(card).toBeVisible({ timeout: 20_000 })
+      const day = card.getByLabel('Hatırlatma günü (ayın kaçıncı günü)')
+      await expect(day).toHaveValue('5')
+      await expect(card.getByLabel('E-posta boyut sınırı (MB)')).toHaveValue('15')
+      await expect(card.getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toBeChecked()
+      await card.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(300)
+
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, REM_ROOT), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, REM_ROOT), `@${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
+      const picker = card.getByRole('combobox', { name: 'Hatırlatma alan takımlar' })
+      if (vp.touch) expect((await picker.boundingBox()).height, `@${vp.name}: seçici dokunma hedefi`).toBeGreaterThanOrEqual(40)
+
+      // Yerleşim: dizüstünde iki sütun (aynı satır), dar kapta tek sütun
+      const dayBox = await card.locator('[data-field="reminder_day"]').boundingBox()
+      const repBox = await card.locator('[data-field="reminder_repeat_days"]').boundingBox()
+      if (vp.name === 'laptop') {
+        expect(Math.abs(dayBox.y - repBox.y), '@laptop: gün ve tekrar aynı satırda').toBeLessThan(4)
+      } else {
+        expect(repBox.y, `@${vp.name}: tek sütun`).toBeGreaterThan(dayBox.y + 20)
+      }
+      // Alanlar kartın içinde kalır (kapsayıcının sağından taşmaz)
+      const cardBox = await card.boundingBox()
+      expect(repBox.x + repBox.width, `@${vp.name}: alan kart içinde`).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+
+      // Aralık dışı değer: alanın altında ileti, istek gitmez
+      const bar = card.locator('[data-slot="tes-rem-save"] [data-slot="settings-save-bar"]')
+      await day.fill('29')
+      await expect(bar).toHaveAttribute('data-dirty', 'true')
+      await bar.getByRole('button', { name: /Kaydet/ }).click()
+      await expect(card.locator('[data-field="reminder_day"]')).toContainText('Bir tam sayı girin: 1 ile 28 arasında olmalı.')
+      expect(saves).toEqual([])
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, REM_ROOT), `@${vp.name}: kırpılan metin (hata iletisi)`).toEqual([])
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (hata iletisi)`).toBeLessThanOrEqual(1)
+
+      // Düzelt → Kaydet: yalnız değişen alan
+      await day.fill('7')
+      await expect(card.locator('[data-field="reminder_day"]')).not.toContainText('Bir tam sayı girin')
+      await bar.getByRole('button', { name: /Kaydet/ }).click()
+      await expect.poll(() => saves.length).toBe(1)
+      expect(saves[0]).toEqual({ reminder_day: 7 })
+      await expect(bar).not.toHaveAttribute('data-dirty', 'true')
+      await expect(day).toHaveValue('7')
+      if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi (kayıt sonrası)`).toEqual([])
+      await page.screenshot({ path: `test-results/settings-techerror-reminders-${vp.name}.png`, fullPage: false })
+    })
+  })
+}

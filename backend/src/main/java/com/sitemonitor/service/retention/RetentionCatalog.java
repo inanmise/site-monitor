@@ -432,6 +432,12 @@ public final class RetentionCatalog {
                 + "SHA-256 özeti ve kullanıcı kimliği; 14 gün geçerli, tek kullanımlık; yeni istek eskileri 'yerine geçti' "
                 + "damgalar (eski bağlantı sebebini söyler), süresi de dolmuş yerine geçilmiş satırlar bir sonraki istekte "
                 + "budanır. Rapor silinince aynı işlemde silinir; öksüz satır burada temizlenir."),
+        orphan("tech-error-reminders-orphan", "tech_error_reminders",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.OPERATIONAL,
+                "Teknik hata raporu hatırlatma talepleri (2026-10-17): kanal × dönem × tür (dönem / onay) başına TEK satır — son "
+                + "hatırlatma günü ve sayacı (iki pod aynı hatırlatmayı iki kez göndermesin). Kişisel veri yok. Hatırlatma işi her "
+                + "koşuda 6 aydan eski dönemlerin satırlarını siler; kanal silinince aynı işlemde silinir, öksüz satır burada "
+                + "temizlenir."),
         orphan("tech-error-template-versions-orphan", "tech_error_template_versions",
                 "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.PERSONAL,
                 "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "

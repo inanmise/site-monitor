@@ -286,3 +286,115 @@ describe('TechErrorReportSettings', () => {
     expect(screen.getByText('Kanal 30')).toBeInTheDocument()
   })
 })
+
+// 12. sürüm (2026-10-17, C9 / C10 / E21): "Hatırlatmalar ve posta sınırları" kartı — değerler sunucudan, alan hataları alanın
+// altında, PUT YALNIZ değişen alanlar, kapsamlı müdür salt okunur, eski sunucu yanıtında kart yok.
+const REM = {
+  team_ids: [], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
+  reminder_push: true,
+  limits: {
+    reminder_day: { min: 1, max: 28, default: 5 }, reminder_repeat_days: { min: 0, max: 14, default: 3 },
+    approval_reminder_days: { min: 1, max: 14, default: 3 }, max_mail_mb: { min: 5, max: 50, default: 15 },
+    mail_inline_mb: { min: 0, max: 20, default: 6 },
+  },
+}
+const remCard = () => document.querySelector('[data-slot="tes-reminders"]')
+const remBar = () => document.querySelector('[data-slot="tes-rem-save"] [data-slot="settings-save-bar"]')
+
+describe('TechErrorReportSettings — hatırlatmalar ve posta sınırları', () => {
+  it('kart değerleri sunucudan; "seçim yok — kapalı" notu; aralık ipucunda; eski sunucu yanıtında kart çizilmez', async () => {
+    api.admin.techErrorSettings.mockResolvedValueOnce(settings({ reminders: REM }))
+    const { unmount } = render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = remCard()
+    expect(card).not.toBeNull()
+    expect(within(card).getByText('Hatırlatmalar ve posta sınırları')).toBeInTheDocument()
+    expect(within(card).getByText('Seçim yok — dönem hatırlatması kapalı.')).toBeInTheDocument()
+    expect(within(card).getByLabelText('Hatırlatma günü (ayın kaçıncı günü)')).toHaveValue(5)
+    expect(within(card).getByLabelText('Tekrar aralığı (gün)')).toHaveValue(3)
+    expect(within(card).getByLabelText('Onay hatırlatması (gün)')).toHaveValue(3)
+    expect(within(card).getByLabelText('E-posta boyut sınırı (MB)')).toHaveValue(15)
+    expect(within(card).getByLabelText('Gövdedeki görsellerin bütçesi (MB)')).toHaveValue(6)
+    expect(within(card).getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toBeChecked()
+    expect(within(card).getByText(/denetlenir \(1–28\)/)).toBeInTheDocument()
+    expect(remBar()).not.toHaveAttribute('data-dirty')
+    unmount()
+
+    api.admin.techErrorSettings.mockResolvedValueOnce(settings())   // eski sunucu: blok yok
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    expect(remCard()).toBeNull()
+  })
+
+  it('kaydet: YALNIZ değişen alanlar gider (görünürlük gönderilmez); yanıt değerleri kayıtlı sayılır, çubuk temizlenir', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ reminders: REM }))
+    api.admin.saveTechErrorSettings.mockResolvedValue({ success: true, data: { team_ids: [], reminders: { ...REM, team_ids: [2], reminder_day: 7, reminder_push: false } } })
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = remCard()
+    fireEvent.mouseDown(within(card).getByRole('combobox', { name: 'Hatırlatma alan takımlar' }))
+    const opt = (await screen.findAllByText('Ödeme Sistemleri')).map((el) => el.closest('[role="option"]')).find(Boolean)
+    fireEvent.mouseDown(opt)
+    fireEvent.change(within(card).getByLabelText('Hatırlatma günü (ayın kaçıncı günü)'), { target: { value: '7' } })
+    fireEvent.click(within(card).getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' }))
+    await waitFor(() => expect(remBar()).toHaveAttribute('data-dirty', 'true'))
+    expect(document.querySelector('[data-slot="settings-save-bar"]')).not.toHaveAttribute('data-dirty')   // görünürlük çubuğu temiz
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+    await waitFor(() => expect(api.admin.saveTechErrorSettings).toHaveBeenCalledWith({ reminder_team_ids: [2], reminder_day: 7, reminder_push: false }))
+    await waitFor(() => expect(remBar()).not.toHaveAttribute('data-dirty'))
+    expect(await screen.findByText('Hatırlatma ve posta ayarları kaydedildi.')).toBeInTheDocument()
+    expect(within(card).queryByText('Seçim yok — dönem hatırlatması kapalı.')).toBeNull()
+  })
+
+  it('doğrulama alanın altında: aralık dışı gün, gövde ≥ sınır; istek gitmez; düzeltince hata kalkar; sunucu alan hatası da alanın altına düşer', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ reminders: REM }))
+    api.admin.saveTechErrorSettings.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'approval_reminder_days',
+      error: 'Onay hatırlatması 1 ile 14 gün arasında olmalı.' })
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = remCard()
+    const day = within(card).getByLabelText('Hatırlatma günü (ayın kaçıncı günü)')
+    fireEvent.change(day, { target: { value: '29' } })
+    fireEvent.change(within(card).getByLabelText('Gövdedeki görsellerin bütçesi (MB)'), { target: { value: '15' } })
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+    expect(await within(card).findByText('Bir tam sayı girin: 1 ile 28 arasında olmalı.')).toBeInTheDocument()
+    expect(within(card).getByText(/Gövde bütçesi \(15 MB\) boyut sınırından \(15 MB\) küçük olmalı/)).toBeInTheDocument()
+    expect(day).toHaveAttribute('aria-invalid', 'true')
+    expect(day.closest('[data-field]')).toHaveAttribute('data-field', 'reminder_day')
+    expect(api.admin.saveTechErrorSettings).not.toHaveBeenCalled()
+    fireEvent.change(day, { target: { value: '10' } })
+    expect(within(card).queryByText('Bir tam sayı girin: 1 ile 28 arasında olmalı.')).toBeNull()
+    fireEvent.change(within(card).getByLabelText('Gövdedeki görsellerin bütçesi (MB)'), { target: { value: '8' } })
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+    await waitFor(() => expect(api.admin.saveTechErrorSettings).toHaveBeenCalledWith({ reminder_day: 10, mail_inline_mb: 8 }))
+    expect(await within(card).findByText('Onay hatırlatması 1 ile 14 gün arasında olmalı.')).toBeInTheDocument()
+    expect(remBar()).toHaveAttribute('data-dirty', 'true')
+  })
+
+  it('kapsamlı müdür (read_only): kart alanları kilitli, kartın kayıt çubuğu yok', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ read_only: true, reminders: { ...REM, team_ids: [1] } }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = remCard()
+    expect(within(card).getByLabelText('Hatırlatma günü (ayın kaçıncı günü)')).toBeDisabled()
+    expect(within(card).getByLabelText('E-posta boyut sınırı (MB)')).toBeDisabled()
+    expect(within(card).getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toBeDisabled()
+    expect(within(card).getByRole('combobox', { name: 'Hatırlatma alan takımlar' })).toBeDisabled()
+    expect(remBar()).toBeNull()
+    expect(document.querySelector('[data-slot="settings-save-bar"]')).toBeNull()
+  })
+
+  it('değişiklik yokken Kaydet pasif; Vazgeç taslağı kayıtlı değerlere döndürür', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ reminders: REM }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = remCard()
+    expect(within(remBar()).getByRole('button', { name: /Kaydet/ })).toBeDisabled()
+    fireEvent.change(within(card).getByLabelText('Tekrar aralığı (gün)'), { target: { value: '0' } })
+    await waitFor(() => expect(remBar()).toHaveAttribute('data-dirty', 'true'))
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Vazgeç/ }))
+    expect(within(card).getByLabelText('Tekrar aralığı (gün)')).toHaveValue(3)
+    expect(remBar()).not.toHaveAttribute('data-dirty')
+    expect(api.admin.saveTechErrorSettings).not.toHaveBeenCalled()
+  })
+})

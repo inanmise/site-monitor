@@ -7,7 +7,9 @@ export const STATUSES = ['SENT', 'FAILED', 'PENDING', 'BLOCKED', 'SKIPPED']
 /** Push tetikleyici sözlüğü (UserPushService): mevcut `userpush.trigger.*` etiketleri; bilinmeyen ham gösterilir. */
 export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'TEST', 'WEAK_ALGO', 'WEEKLY_REPORT',
   // 2026-10-04: fırtına / takım bildirimleri + saat tavanı özeti + eskalasyon adımı push'u
-  'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP']
+  'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
+  // 2026-10-17 (12. sürüm): kanal teknik hata raporu dönem hatırlatması (takım push'u)
+  'TECH_ERROR_REMINDER']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */

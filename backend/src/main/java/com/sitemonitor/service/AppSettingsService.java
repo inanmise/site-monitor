@@ -222,6 +222,15 @@ public class AppSettingsService {
         if (normalized.containsKey(ThemeCatalog.KEY_ENABLED) || normalized.containsKey(ThemeCatalog.KEY_DEFAULT)) {
             validateThemes(next);
         }
+        // Teknik hata raporu posta sınırları (2026-10-17, E21): gövde görsel bütçesi < posta sınırı — YALNIZ bu anahtarlara
+        // dokunan kayıtta (yeni override → Environment); depoda kalmış eski bir değer ilgisiz ayarların kaydını kilitlemesin.
+        if (normalized.containsKey(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_MAX_MAIL_MB)
+                || normalized.containsKey(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_MAIL_INLINE_MB)) {
+            String problem = com.sitemonitor.service.techerror.TechErrorReportSettings.mailLimitsProblem(
+                    effectiveInt(next, com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_MAX_MAIL_MB),
+                    effectiveInt(next, com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_MAIL_INLINE_MB));
+            if (problem != null) throw new IllegalArgumentException(problem);
+        }
 
         for (Map.Entry<String, String> e : normalized.entrySet()) {
             String key = e.getKey();

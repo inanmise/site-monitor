@@ -20,6 +20,8 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { unwrap } from '../noc/nocModel.js'
 import { SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
+import TechErrorReminderSettings from './TechErrorReminderSettings.jsx'
+import { normalizeReminders } from './techErrorReminderModel.js'
 import { isDirty, normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
@@ -66,6 +68,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [team, setTeam] = useState(ALL)
   const [filter, setFilter] = useState(ALL)
   const [sort, setSort] = useState('name')
+  const [remDirty, setRemDirty] = useState(false)
   const [listRef, listWidth] = useElementWidth()
   const alive = useRef(true)
   const loadSeq = useRef(0)
@@ -106,8 +109,10 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Takım dizini okunamazsa adlar kanal satırlarından gelir ("#12" yerine takım adı)
-  const options = useMemo(() => teamOptions(directory.length ? directory : teamsFromChannels(settings?.channels), draft,
-    t('noc.ot.inactiveTeam')), [directory, settings, draft, t])
+  const teamList = useMemo(() => (directory.length ? directory : teamsFromChannels(settings?.channels)), [directory, settings])
+  const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam')), [teamList, draft, t])
+  // Hatırlatma bloğu (12. sürüm): eski sunucu yanıtında yok → kart çizilmez
+  const hasReminders = !!normalizeReminders(settings?.reminders)
   const dirty = !!settings && isDirty(settings.ids, draft)
   const locked = !!settings?.readOnly
 
@@ -153,8 +158,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }
 
   async function openChannel(ch) {
-    if (dirty) {
-      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t('te.set.leaveBody'), variant: 'warning',
+    if (dirty || remDirty) {
+      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t(remDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'), variant: 'warning',
         confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -230,7 +235,12 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         )}
       </SettingsSection>
 
-      {/* 2 — Kanallar ve onay akışı (özet) */}
+      {/* 2 — Hatırlatmalar ve posta sınırları (12. sürüm) */}
+      {settings && hasReminders && (
+        <TechErrorReminderSettings reminders={settings.reminders} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty} />
+      )}
+
+      {/* 3 — Kanallar ve onay akışı (özet) */}
       {settings && (
         <Card data-slot="tes-channels">
           <CardContent className="flex flex-col gap-4 px-4 sm:px-6">
