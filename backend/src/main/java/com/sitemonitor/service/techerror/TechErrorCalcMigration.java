@@ -125,6 +125,8 @@ public class TechErrorCalcMigration {
                     service.saveTemplate(cur.getId(), cur.getTemplateVersion(), next.get(), null, ACTOR);
                     changed++;
                     break;
+                } catch (java.util.NoSuchElementException e) {
+                    break;                                                // okuma ile kayıt arasında silindi (inceleme 2026-10-17)
                 } catch (OptimisticLockingFailureException e) {
                     if (attempt >= 3) throw e;                            // ekip o anda kaydediyor: sonraki turda yeniden
                 }
@@ -255,8 +257,7 @@ public class TechErrorCalcMigration {
                     for (Field f : fs) if (f.calc() != null) ordered.add(f);
                     fs = ordered;
                 }
-                sections.add(new Section(s.id(), s.kind(), s.title(), List.copyOf(fs), s.slots(), s.itemTitle(),
-                        s.descriptionLabel(), s.customersLabel(), s.errorsLabel(), s.text(), s.lines(), s.columns(), s.rows()));
+                sections.add(s.withFields(List.copyOf(fs)));     // gömülü bölümün özet bağı (host) korunur
             } else if ("summary".equals(s.kind())) {
                 List<String> lines = new ArrayList<>(s.lines().size());
                 for (String line : s.lines()) {
@@ -268,8 +269,7 @@ public class TechErrorCalcMigration {
                     }
                     lines.add(out);
                 }
-                sections.add(new Section(s.id(), s.kind(), s.title(), s.fields(), s.slots(), s.itemTitle(), s.descriptionLabel(),
-                        s.customersLabel(), s.errorsLabel(), s.text(), List.copyOf(lines), s.columns(), s.rows()));
+                sections.add(s.withLines(List.copyOf(lines)));
             } else if ("trend".equals(s.kind()) && DEFAULT_TREND_ID.equals(s.id())) {
                 // varsayılan otomatik trend bölümü düşer (yalnız tek bölüm değilse — şablon boş kalmasın)
                 if (t.sections().size() == 1) sections.add(s);

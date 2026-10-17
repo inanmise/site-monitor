@@ -7,8 +7,10 @@ import com.sitemonitor.service.techerror.TechErrorValues.Values;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * YÖNETİCİ ÖZETİ (2026-10-14, kullanıcı isteği: "raporun başında o kanalın teknik hata oranı, map yapılmamış ve kota
@@ -117,6 +119,255 @@ public final class TechErrorSummary {
             }
         }
         return TechErrorTemplate.capResolved(out.toString(), TechErrorTemplate.MAX_RESOLVED_TEXT);
+    }
+
+    // ── Özet blokları (2026-10-17): gömülü bölümlerin değer ve açıklamaları ilgili cümlenin altında ─────────────────
+
+    /**
+     * Özetin çizim parçası: {@code text} (zengin metin paragrafı / maddeleri) ya da {@code note} — özete GÖMÜLÜ bir gösterge
+     * bölümünün dolu uzun açıklama alanı ({@code section} / {@code field} kimlikleri, {@code label} alanın çözülmüş adı —
+     * çizimde notun başlığı —, {@code text} saklı değerin kendisi). Metin bloğunda kimlik ve ad {@code null}.
+     */
+    public record Block(String kind, String text, String section, String field, String label) {
+        public static Block text(String t) { return new Block("text", t, null, null, null); }
+
+        public static Block note(String section, String field, String label, String text) {
+            return new Block("note", text, section, field, label);
+        }
+
+        public boolean note() { return "note".equals(kind); }
+    }
+
+    /** {@link #blocks(Section, Template, Map, Map, String, int, int)} saklı değerlerle (hesaplar uygulanmış olmalı). */
+    public static List<Block> blocks(Section s, Template t, Values v, String channel, int year, int month) {
+        return blocks(s, t, v.fields(), v.texts(), channel, year, month);
+    }
+
+    /**
+     * Özetin BLOKLARI (2026-10-17, kullanıcı kararı: "map yapılmamış / kota açıklaması ilgili cümlenin hemen altında
+     * görünsün"). PDF, e-posta ve rapor düzenleyicisinin önizlemesi bunu çizer; istemcide aynı algoritma
+     * {@code techErrorModel.summaryBlocks} (ortak doğruluk tablosu {@code TechErrorSummaryBlocksTest.BLOCKS_TABLE}).
+     * <ul>
+     *   <li>Not: özete gömülü bir gösterge bölümünün ({@link TechErrorTemplate#embeddedSections}) dolu, muaf olmayan
+     *       {@code textarea} alanı; başlığı alanın adıdır.</li>
+     *   <li>Söylenmemiş değer ({@link #facts}): gömülü bölümün dolu, muaf olmayan sayı / yüzde / evet-hayır / kısa metin
+     *       alanı, TUTULAN hiçbir cümle ona başvurmuyorsa — "Ad: **değer**" satırı (sayı / yüzde kalın). Cümlesi (eksik başka
+     *       bir rakam yüzünden) düşen bir adet PDF'ten sessizce kaybolmaz (inceleme 2026-10-17).</li>
+     *   <li>Elle metin varsa (boş olmayan {@code texts[s.id]}): [çözülmüş elle metin] + bütün notlar (şablon sırasıyla) en
+     *       sonda — söylenmemiş değer eklenmez ("elle düzenle" yalnız {@link #auto} metnini kopyalar; adetleri metne yazan
+     *       kullanıcıdır).</li>
+     *   <li>Otomatik: cümleler {@link #auto} ile AYNI kurallarla işlenir. Tutulan bir cümle gömülü bir bölümün HERHANGİ bir
+     *       alanına başvuruyorsa (henüz yerleşmemiş bölümler, şablon sırasıyla) bölüm oraya yerleşir: eklenecek değer ya da
+     *       not VARSA o ana kadarki metin bir blok olur, bölümün söylenmemiş değerleri (tek metin bloğu) ve notları ardına
+     *       eklenir ve SONRAKİ cümle yeni paragraf başlatır; eklenecek bir şey yoksa paragraf bölünmez (inceleme 2026-10-17:
+     *       bütün adetleri girilmiş notsuz varsayılan rapor tek paragraf kalır, 20.139 ile aynı). Sonda yerleşmemiş bölümler
+     *       aynı biçimde en alta eklenir.</li>
+     *   <li>Hiç gömülü bölüm yoksa tek metin bloğu = {@link #auto}. Metin sınırı ({@link TechErrorTemplate#MAX_RESOLVED_TEXT})
+     *       yalnız METNE uygulanır ve {@link #auto} ile aynı ölçülür: metin blokları aralarına "\n\n" konarak birleşik sayılır;
+     *       sınır aşılırsa kesim noktasından sonra başlayan metin blokları düşer, kalan son metin bloğu kesim noktasında
+     *       "…" ile biter. Notlar sınıra girmez ve hiç düşmez. Sınırdan sonraki cümleler üretilmez ve "söylenmiş" sayılmaz
+     *       (değerleri satır olarak basılır — kaybolmaz).</li>
+     * </ul>
+     */
+    public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
+                                     String channel, int year, int month) {
+        Map<String, Object> vals = fields == null ? Map.of() : fields;
+        List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
+        List<Block> out = new ArrayList<>();
+        String override = texts == null ? null : texts.get(s.id());
+        if (override != null && !TechErrorRichText.blank(override)) {
+            out.add(Block.text(TechErrorTemplate.resolveText(override, channel, year, month, t.lang())));
+            for (Section e : embedded) out.addAll(notes(e, t, vals, channel, year, month));
+            return out;
+        }
+        Map<String, Field> byId = new HashMap<>();
+        for (Field f : t.allFields()) byId.put(f.id(), f);
+        // 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar ("söylenenler"). Metin sınırı
+        // auto ile aynı ölçüyle burada da işler: sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz.
+        List<String> kept = new ArrayList<>(s.lines().size());
+        Set<String> told = new HashSet<>();
+        int len = 0;
+        boolean par = false;
+        for (String line : s.lines()) {
+            if (len > TechErrorTemplate.MAX_RESOLVED_TEXT) {
+                kept.add(null);
+                continue;
+            }
+            String r = line(line, byId, vals, t.lang(), channel, year, month);
+            // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (auto ile aynı)
+            boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
+            kept.add(ok ? r : null);
+            if (!ok) continue;
+            for (Ref ref : refs(line)) told.add(ref.id());
+            boolean item = isItem(line);
+            len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length();
+            par = !item;
+        }
+        // 2. geçiş: paragraf akışı auto ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir
+        boolean[] placed = new boolean[embedded.size()];
+        StringBuilder buf = new StringBuilder();
+        int flushed = 0;               // blok olmuş metnin birleşik uzunluğu ("\n\n" ayraçlar dahil)
+        boolean inParagraph = false;
+        for (int i = 0; i < kept.size(); i++) {
+            if (joined(flushed, buf) > TechErrorTemplate.MAX_RESOLVED_TEXT) break;
+            String r = kept.get(i);
+            if (r == null) continue;
+            String line = s.lines().get(i);
+            boolean item = isItem(line);
+            if (!item && !inParagraph) r = keepParagraph(r);
+            if (item) {
+                if (!buf.isEmpty()) buf.append('\n');
+                buf.append(r);
+                inParagraph = false;
+            } else if (inParagraph) {
+                buf.append(' ').append(r);
+            } else {
+                if (!buf.isEmpty()) buf.append("\n\n");
+                buf.append(r);
+                inParagraph = true;
+            }
+            if (embedded.isEmpty()) continue;
+            Set<String> ids = new HashSet<>();
+            for (Ref ref : refs(line)) ids.add(ref.id());
+            for (int k = 0; k < embedded.size(); k++) {
+                if (placed[k] || !referencesAny(embedded.get(k), ids)) continue;
+                placed[k] = true;
+                List<Block> add = embeddedBlocks(embedded.get(k), t, vals, told, channel, year, month);
+                if (add.isEmpty()) continue;                      // eklenecek bir şey yok: paragraf bölünmez
+                flushed = flush(out, buf, flushed);
+                flushed = append(out, add, flushed);
+                inParagraph = false;
+            }
+        }
+        flushed = flush(out, buf, flushed);
+        for (int k = 0; k < embedded.size(); k++) {
+            if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, channel, year, month), flushed);
+        }
+        return capText(out);
+    }
+
+    /** Birleşik metnin uzunluğu: blok olmuş kısım + (ikisi de doluysa ayraç) + tampon. */
+    private static int joined(int flushed, StringBuilder buf) {
+        return flushed + (flushed > 0 && !buf.isEmpty() ? 2 : 0) + buf.length();
+    }
+
+    /** Tampondaki metni (doluysa) blok yapar; dönüş: birleşik metnin yeni uzunluğu. */
+    private static int flush(List<Block> out, StringBuilder buf, int flushed) {
+        if (buf.isEmpty()) return flushed;
+        int len = joined(flushed, buf);
+        out.add(Block.text(buf.toString()));
+        buf.setLength(0);
+        return len;
+    }
+
+    /** Blokları ekler; metin blokları birleşik uzunluğa sayılır. Dönüş: yeni birleşik uzunluk. */
+    private static int append(List<Block> out, List<Block> add, int flushed) {
+        for (Block b : add) {
+            if (!b.note()) flushed += (flushed > 0 ? 2 : 0) + b.text().length();
+            out.add(b);
+        }
+        return flushed;
+    }
+
+    /** Gömülü bölümün yerleşince ekleyeceği bloklar: önce söylenmemiş değerleri (tek metin bloğu), sonra notları. */
+    private static List<Block> embeddedBlocks(Section e, Template t, Map<String, Object> vals, Set<String> told, String channel,
+                                              int year, int month) {
+        List<Block> out = new ArrayList<>();
+        String facts = facts(e, t, vals, told, channel, year, month);
+        if (facts != null) out.add(Block.text(facts));
+        out.addAll(notes(e, t, vals, channel, year, month));
+        return out;
+    }
+
+    private static boolean referencesAny(Section e, Set<String> ids) {
+        for (Field f : e.fields()) if (ids.contains(f.id())) return true;
+        return false;
+    }
+
+    /**
+     * Gömülü bölümün SÖYLENMEMİŞ değerleri: sayı / yüzde / evet-hayır / kısa metin alanı, dolu, muaf değil ve tutulan hiçbir
+     * cümle ona başvurmuyor → her biri kendi satırında "Ad: **değer**" (sayı / yüzde kalın; evet / hayır ve kısa metin düz —
+     * kısa metnin yıldız dizisi {@link #neutral} ile teke iner; soru işaretiyle biten ad iki nokta almaz: "Kota aşımı oldu mu?
+     * Evet"), tek metin bloğu; satır başı maddeye benzerse {@link #keepParagraph}. Yoksa null. İstemcide aynı kural:
+     * {@code techErrorModel.summaryFacts}.
+     */
+    static String facts(Section e, Template t, Map<String, Object> vals, Set<String> told, String channel, int year, int month) {
+        StringBuilder b = new StringBuilder();
+        for (Field f : e.fields()) {
+            boolean yesno = "yesno".equals(f.type());
+            boolean text = "text".equals(f.type());
+            if (!yesno && !text && !"number".equals(f.type()) && !"percent".equals(f.type())) continue;
+            if (told.contains(f.id()) || TechErrorTemplate.exempt(f, vals)) continue;
+            Object v = vals.get(f.id());
+            if (v == null || (yesno && !(v instanceof Boolean))) continue;
+            String value;
+            if (text) {
+                if (!(v instanceof String sv) || TechErrorRichText.blank(sv)) continue;
+                value = neutral(sv);
+            } else {
+                value = TechErrorFormat.value(f, v, t.lang());
+            }
+            String label = TechErrorTemplate.resolve(f.label() == null ? "" : f.label(), channel, year, month, t.lang());
+            if (label == null) label = "";
+            boolean bold = !yesno && !text;
+            String shown = bold ? "**" + value + "**" : value;
+            String fact = label.endsWith("?") ? label + " " + shown : label + ": " + shown;
+            if (!b.isEmpty()) b.append('\n');
+            b.append(keepParagraph(fact));
+        }
+        return b.isEmpty() ? null : b.toString();
+    }
+
+    /** Gömülü bölümün notları: dolu, muaf olmayan uzun açıklama alanları (alan sırasıyla); başlık = alanın çözülmüş adı. */
+    private static List<Block> notes(Section e, Template t, Map<String, Object> vals, String channel, int year, int month) {
+        List<Block> out = new ArrayList<>();
+        for (Field f : e.fields()) {
+            if (!"textarea".equals(f.type())) continue;
+            if (TechErrorTemplate.exempt(f, vals)) continue;
+            if (!(vals.get(f.id()) instanceof String v) || TechErrorRichText.blank(v)) continue;
+            out.add(Block.note(e.id(), f.id(), TechErrorTemplate.resolve(f.label(), channel, year, month, t.lang()), v));
+        }
+        return out;
+    }
+
+    /**
+     * Metin sınırı, {@link #auto} ile aynı ölçüyle: metin blokları "\n\n" ile birleşik sayılır; birleşik metin sınırı
+     * aşarsa kesim noktası {@code capResolved} ile aynı ({@code MAX − 1}, vekil çiftinin ilk yarısında bir eksik). Kesim
+     * noktasında ya da sonrasında başlayan metin blokları düşer; kalan son metin bloğu kesim noktasına kadar kalır + "…".
+     * Notlar sınıra girmez, hiç düşmez. İstemcide aynı kural: {@code techErrorModel.capTextBlocks}.
+     */
+    static List<Block> capText(List<Block> blocks) {
+        StringBuilder joined = new StringBuilder();
+        for (Block b : blocks) {
+            if (b.note()) continue;
+            if (!joined.isEmpty()) joined.append("\n\n");
+            joined.append(b.text());
+        }
+        int max = TechErrorTemplate.MAX_RESOLVED_TEXT;
+        if (joined.length() <= max) return blocks;
+        int end = max - 1;
+        if (Character.isHighSurrogate(joined.charAt(end - 1))) end--;
+        List<Block> out = new ArrayList<>(blocks.size());
+        int start = 0;
+        int last = -1;
+        int lastStart = 0;
+        for (Block b : blocks) {
+            if (b.note()) {
+                out.add(b);
+                continue;
+            }
+            if (start < end) {
+                out.add(b);
+                last = out.size() - 1;
+                lastStart = start;
+            }
+            start += b.text().length() + 2;
+        }
+        if (last >= 0) {
+            String txt = out.get(last).text();
+            out.set(last, Block.text(txt.substring(0, Math.min(txt.length(), end - lastStart)) + "…"));
+        }
+        return out;
     }
 
     /**

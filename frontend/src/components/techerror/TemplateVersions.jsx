@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
-import { allFields, allSlots, resolvePlaceholders, templateDiff } from './techErrorModel.js'
+import { allFields, allSlots, hostOf, resolvePlaceholders, templateDiff } from './techErrorModel.js'
 
 /**
  * ŞABLON SÜRÜM GEÇMİŞİ (2026-10-14, Faz B). Her şablon kaydı bir sürüm; seçilen sürümün kaydı (kim / ne zaman), önceki
@@ -243,7 +243,7 @@ function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, can
           {(tpl?.sections || []).map((s) => (
             <li key={s.id} className="[overflow-wrap:anywhere]">
               <span className="font-medium">{resolve(s.title)}</span>{' '}
-              <span className="text-muted-foreground">· {t(`te.kind.${s.kind}`)}{outlineCount(s, t)}</span>
+              <span className="text-muted-foreground">· {t(`te.kind.${s.kind}`)}{outlineCount(s, t)}{hostOf(tpl, s) ? ` · ${t('te.tpl.hostBadge')}` : ''}</span>
             </li>
           ))}
         </ol>
@@ -279,6 +279,11 @@ export function diffText(d, t, resolve) {
     case 'section.reorder': return t('te.ver.d.section.reorder')
     case 'section.retype': return t('te.ver.d.section.retype', r(d.label), t(`te.kind.${d.before}`), t(`te.kind.${d.after}`))
     case 'section.labels': return t('te.ver.d.section.labels', r(d.label))
+    case 'section.host': {
+      // Gösterim yeri (2026-10-17): ayrı bölüm (null) ↔ özet kartı (özetin başlığı; okunamıyorsa "—")
+      const where = (x) => (x == null ? t('te.tpl.hostSeparate') : t('te.tpl.hostIn', r(x) || '—'))
+      return `${r(d.label)} — ${t('te.ver.host')}: ${where(d.before)} → ${where(d.after)}`
+    }
     case 'summary.change': return t('te.ver.d.summary.change', r(d.label), d.before, d.after)
     case 'text.change': return t('te.ver.d.text.change', r(d.label))
     case 'trend.change': return t('te.ver.d.trend.change', r(d.label), d.before, d.after)

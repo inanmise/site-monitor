@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T00:02:53Z",
+  "generatedAt": "2026-10-17T03:31:27Z",
   "repo": "inanmise/site-monitor",
-  "count": 758,
+  "count": 759,
   "releases": [
+    {
+      "version": "20.141.0",
+      "tag": "v20.141.0",
+      "releasedAt": "2026-10-17T03:31:20Z",
+      "commit": "74d053aa4cf2fdf78eeaf98cd5eb99766d900052",
+      "prevVersion": "20.140.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "74d053aa",
+          "subject": "teknik hata raporunda map yapılmamış ve kota hataları yönetici özeti kartında; anomali adları yenilendi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.140.0",
       "tag": "v20.140.0",

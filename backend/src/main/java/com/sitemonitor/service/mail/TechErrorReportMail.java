@@ -49,17 +49,15 @@ public final class TechErrorReportMail {
                         + "grafiklerle tam rapor ekteki PDF'tedir (" + fileName + ").");
         for (Section s : in.template().sections()) {
             if (!"summary".equals(s.kind())) continue;
-            String text = TechErrorSummary.effective(s, in.template(), in.values(), in.channelName(), in.year(), in.month());
-            if (text != null && !text.isBlank()) {
-                d.heading(in.resolve(s.title()));
-                d.raw(richHtml(text), TechErrorRichText.plain(text));
-            }
+            summary(d, in, s);
             break;   // yalnız ilk özet
         }
         List<Stat> stats = new ArrayList<>();
         boolean first = true;
         for (Section s : in.template().sections()) {
             if (!"metrics".equals(s.kind())) continue;
+            // Özete gömülü bölüm (2026-10-17) kutucuk zincirine girmez: rakamı özet cümlesinde, açıklaması cümlenin altında
+            if (TechErrorTemplate.hostOf(in.template(), s) != null) continue;
             // İlk gösterge bölümü (raporun özeti) + ardından gelen YALNIZ otomatik oranlardan oluşan bölüm(ler) — 2026-10-16:
             // oranlar artık ayrı bölümde hesaplanıyor, teknik hata oranı e-postanın kutucuklarından düşmesin
             if (!first && !allComputed(s)) break;
@@ -93,10 +91,47 @@ public final class TechErrorReportMail {
     }
 
     /**
+     * Yönetici özeti PDF'teki bloklarla (2026-10-17, {@link TechErrorSummary#blocks}): metin paragrafları, gömülü bölümlerin
+     * açıklamaları ilgili cümlenin altında — küçük kalın başlık = alanın adı (ad boşsa "Açıklama") + girintili metin (sol
+     * şerit yok). Hiç metin ve not yoksa başlık da basılmaz.
+     */
+    private static void summary(MailDoc d, TechErrorPdfInput in, Section s) {
+        boolean en = in.template().en();
+        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.channelName(),
+                in.year(), in.month());
+        StringBuilder html = new StringBuilder();
+        StringBuilder plain = new StringBuilder();
+        for (TechErrorSummary.Block b : blocks) {
+            if (!b.note() && TechErrorRichText.blank(b.text())) continue;
+            if (!plain.isEmpty()) plain.append("\n\n");
+            if (b.note()) {
+                String label = b.label() == null || b.label().isBlank() ? (en ? "Note" : "Açıklama") : b.label();
+                html.append("<div style=\"padding-left:16px;margin:2px 0 10px\">")
+                    .append("<p style=\"margin:0 0 2px;font-family:").append(MailTokens.FONT)
+                    .append(";font-size:13px;line-height:18px;font-weight:bold;color:").append(MailTokens.MUTED).append("\">")
+                    .append(MailKit.esc(label)).append("</p>")
+                    .append(richHtml(b.text(), 14, 22)).append("</div>");
+                plain.append(label).append(":\n").append(TechErrorRichText.plain(b.text()));
+            } else {
+                html.append(html.isEmpty() ? "<div>" : "<div style=\"margin-top:8px\">").append(richHtml(b.text())).append("</div>");
+                plain.append(TechErrorRichText.plain(b.text()));
+            }
+        }
+        if (html.isEmpty()) return;
+        d.heading(in.resolve(s.title()));
+        d.raw(html.toString(), plain.toString());
+    }
+
+    /**
      * Zengin metnin e-posta HTML'i: paragraf satırları {@code <p>}, maddeler asılı girintili satır (liste etiketi yok —
      * Outlook {@code <ul>} girintisini bozar), kalın {@code <strong>}. Her metin kaçırılır.
      */
     static String richHtml(String text) {
+        return richHtml(text, 15, 24);
+    }
+
+    /** {@link #richHtml(String)} verilen yazı boyutu / satır yüksekliğiyle (özet notu bir punto küçük). */
+    static String richHtml(String text, int fontPx, int lineHeightPx) {
         StringBuilder b = new StringBuilder("<div>");
         for (TechErrorRichText.Block bl : TechErrorRichText.parse(text)) {
             if (bl.gap()) {
@@ -112,7 +147,8 @@ public final class TechErrorReportMail {
             String marker = bl.item() ? (bl.marker() != null ? MailKit.esc(bl.marker()) : bl.level() == 0 ? "&#8226;" : bl.level() == 1 ? "&#8211;" : "&#183;") + "&nbsp;" : "";
             b.append("<p style=\"margin:0 0 ").append(bl.item() ? 4 : 2).append("px;padding-left:").append(pad)
              .append("px;").append(bl.item() ? "text-indent:-16px;" : "")
-             .append("font-family:").append(MailTokens.FONT).append(";font-size:15px;line-height:24px;color:").append(MailTokens.FG)
+             .append("font-family:").append(MailTokens.FONT).append(";font-size:").append(fontPx).append("px;line-height:")
+             .append(lineHeightPx).append("px;color:").append(MailTokens.FG)
              .append(";word-break:break-word;overflow-wrap:anywhere\">")
              .append(marker).append(inner).append("</p>");
         }

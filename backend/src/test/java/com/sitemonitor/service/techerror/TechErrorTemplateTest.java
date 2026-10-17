@@ -18,21 +18,37 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon: özet → veriler (girilen) → oranlar (otomatik) → anomali → map yok → kota → SLA (ekran görüntüsü) → not → 12 aylık özetler → ay bazlı → birim dağılımı → gün bazlı")
+    @DisplayName("varsayılan şablon: özet → map yok + kota (özet kartında) → veriler (girilen) → oranlar (otomatik) → anomali → SLA (ekran görüntüsü) → not → yıllık → günlük göstergeler")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("summary", "metrics", "metrics", "issues", "metrics", "metrics", "images", "text", "images",
+                .containsExactly("summary", "metrics", "metrics", "metrics", "metrics", "issues", "images", "text", "images",
                         "images");
         assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
+        // Kullanıcı kararı 2026-10-17: map yapılmamış ve kota hataları (adet + açıklama) yönetici özeti kartında girilir —
+        // bölümler özetin hemen ardında, host = özet; adetler "Verileri" bölümünden çıktı
+        assertThat(t.sections().get(1).title()).isEqualTo("Map Yapılmamış Hatalar");
+        assertThat(t.sections().get(1).host()).isEqualTo("exec-summary");
+        assertThat(t.sections().get(1).fields()).extracting(f -> f.id()).containsExactly("unmapped-count", "unmapped-note");
+        assertThat(t.sections().get(2).title()).isEqualTo("Kota Hataları");
+        assertThat(t.sections().get(2).host()).isEqualTo("exec-summary");
+        assertThat(t.sections().get(2).fields()).extracting(f -> f.id()).containsExactly("quota-count", "quota-note");
+        assertThat(TechErrorTemplate.embeddedSections(t, "exec-summary")).extracting(s -> s.id()).containsExactly("unmapped", "quota");
         // Kullanıcı kararı 2026-10-16: üstte girilen adetler, altta otomatik oranlar
-        assertThat(t.sections().get(1).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
-        assertThat(t.sections().get(1).fields()).allMatch(f -> f.calc() == null);
-        assertThat(t.sections().get(2).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
-        assertThat(t.sections().get(2).fields()).allMatch(f -> f.calc() != null);
-        assertThat(t.sections().get(4).title()).isEqualTo("Map Yapılmamış Hatalar");
-        assertThat(t.sections().get(5).title()).isEqualTo("Kota Hataları");
+        assertThat(t.sections().get(3).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
+        assertThat(t.sections().get(3).host()).isNull();
+        assertThat(t.sections().get(3).fields()).allMatch(f -> f.calc() == null);
+        assertThat(t.sections().get(3).fields()).extracting(f -> f.id()).doesNotContain("unmapped-count", "quota-count");
+        assertThat(t.sections().get(4).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
+        assertThat(t.sections().get(4).fields()).allMatch(f -> f.calc() != null);
+        // Kullanıcı kararı 2026-10-17: anomali adları
+        var issues = t.sections().get(5);
+        assertThat(issues.title()).isEqualTo("Anormal Artış Gösteren Hatalar");
+        assertThat(issues.itemTitle()).isEqualTo("{konu}: Hata Artışı");
+        assertThat(issues.descriptionLabel()).isEqualTo("Ne oldu? (zaman, yer, etki)");
+        assertThat(issues.customersLabel()).isEqualTo("Etkilenen müşteri sayısı");
+        assertThat(issues.errorsLabel()).isEqualTo("Bu konudan kaynaklı teknik hata adedi");
         // Kullanıcı kararı 2026-10-15: SLA tablosu elle girilmez — raporlama aracının tablosunun ekran görüntüsü, tam genişlik
         // (iki kolon); tek görüntü ya da iki ayrı görüntü
         var sla = t.sections().get(6);
@@ -110,6 +126,89 @@ class TechErrorTemplateTest {
         assertThat(TechErrorTemplate.resolveIssueTitle("{konu} Konusu ile yaşanan problem", "Kart limiti"))
                 .isEqualTo("Kart limiti Konusu ile yaşanan problem");
         assertThat(TechErrorTemplate.resolveIssueTitle("{konu} Konusu ile yaşanan problem", " ")).isEqualTo("Konusu ile yaşanan problem");
+        // 2026-10-17 varsayılan kalıp
+        assertThat(TechErrorTemplate.resolveIssueTitle("{konu}: Hata Artışı", "Kart Limiti Sorgulama"))
+                .isEqualTo("Kart Limiti Sorgulama: Hata Artışı");
+        assertThat(TechErrorTemplate.resolveIssueTitle("{topic}: Error Increase", "Card limit")).isEqualTo("Card limit: Error Increase");
+    }
+
+    @Test
+    @DisplayName("gösterim yeri (host, 2026-10-17): yalnız gösterge bölümünde ve aynı şablondaki bir yönetici özetine; katı reddeder, saklı düşürür; JSON'da korunur")
+    void hostStrictAndLenient() {
+        Template d = TechErrorTemplate.defaults("tr");
+        assertThat(TechErrorTemplate.hostOf(d, d.sections().get(1)).id()).isEqualTo("exec-summary");
+        assertThat(TechErrorTemplate.hostOf(d, d.sections().get(3))).isNull();                 // Verileri: ayrı bölüm
+        assertThat(TechErrorTemplate.hostOf(d, d.sections().get(0))).isNull();                 // özet bölümünün kendisi
+        assertThat(TechErrorTemplate.embeddedSections(d, "summary")).isEmpty();                 // gösterge bölümü ev sahibi olamaz
+        assertThat(TechErrorTemplate.embeddedSections(d, null)).isEmpty();
+        Map<String, Object> raw = TechErrorTemplate.toMap(d);
+        assertThat(sectionMap(raw, "unmapped")).containsEntry("host", "exec-summary");
+        assertThat(sectionMap(raw, "summary")).doesNotContainKey("host");
+        assertThat(sectionMap(raw, "exec-summary")).doesNotContainKey("host");
+        // Katı: özet olmayan hedef, şablonda olmayan hedef, gösterge olmayan bölümde host, okunamayan kimlik → 400
+        assertInvalid(withHost(raw, "unmapped", "summary"));
+        assertInvalid(withHost(raw, "unmapped", "yok-boyle-bolum"));
+        assertInvalid(withHost(raw, "trend-note", "exec-summary"));
+        assertInvalid(withHost(raw, "unmapped", "Büyük Harf!"));
+        // Boş host = ayrı bölüm (anahtar yazılmaz)
+        Template separate = TechErrorTemplate.normalize(withHost(raw, "unmapped", "  "));
+        assertThat(separate.sections().get(1).host()).isNull();
+        assertThat(sectionMap(TechErrorTemplate.toMap(separate), "unmapped")).doesNotContainKey("host");
+        assertThat(TechErrorTemplate.embeddedSections(separate, "exec-summary")).extracting(s -> s.id()).containsExactly("quota");
+        // Saklı (hoşgörülü): geçersiz bağ düşer, bölüm ve alanları kalır (eski sürümün yazdığı ya da bozulmuş kayıt yine açılır)
+        for (String[] bad : List.of(new String[]{"unmapped", "summary"}, new String[]{"unmapped", "yok-boyle-bolum"},
+                new String[]{"trend-note", "exec-summary"}, new String[]{"unmapped", "Büyük Harf!"})) {
+            Template lenient = TechErrorTemplate.fromStored(TechErrorTemplate.JSON.writeValueAsString(withHost(raw, bad[0], bad[1])));
+            var s = lenient.sections().stream().filter(x -> x.id().equals(bad[0])).findFirst().orElseThrow();
+            assertThat(s.host()).as(bad[0] + " → " + bad[1]).isNull();
+            assertThat(lenient.allFields()).extracting(f -> f.id()).contains("unmapped-count", "unmapped-note", "quota-count");
+        }
+    }
+
+    @Test
+    @DisplayName("anomali etiketleri boş gelirse: istemci (katı) kaydı 2026-10-17 adlarını, saklı (hoşgörülü) okuma eski adları koyar")
+    @SuppressWarnings("unchecked")
+    void issueLabelFallbacks() {
+        for (String lang : List.of("tr", "en")) {
+            Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults(lang)));
+            List<Map<String, Object>> secs = new ArrayList<>();
+            for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+                Map<String, Object> sc = new LinkedHashMap<>(s);
+                if ("issues".equals(s.get("kind"))) {
+                    for (String k : List.of("item_title", "description_label", "customers_label", "errors_label")) sc.remove(k);
+                }
+                secs.add(sc);
+            }
+            raw.put("sections", secs);
+            var strict = TechErrorTemplate.normalize(raw).sections().stream().filter(s -> "issues".equals(s.kind())).findFirst().orElseThrow();
+            var today = TechErrorTemplate.defaults(lang).sections().stream().filter(s -> "issues".equals(s.kind())).findFirst().orElseThrow();
+            assertThat(strict).as(lang).isEqualTo(today);
+            var lenient = TechErrorTemplate.fromStored(TechErrorTemplate.JSON.writeValueAsString(raw)).sections().stream()
+                    .filter(s -> "issues".equals(s.kind())).findFirst().orElseThrow();
+            assertThat(lenient.itemTitle()).isEqualTo("en".equals(lang) ? "{topic} issue" : "{konu} Konusu ile yaşanan problem");
+            assertThat(lenient.descriptionLabel()).isEqualTo("en".equals(lang) ? "When, where and how did it happen?" : "Ne zaman, nerede, nasıl gerçekleşti?");
+            assertThat(lenient.errorsLabel()).isEqualTo("en".equals(lang) ? "Technical errors caused by this issue" : "Bu sorundan kaynaklı teknik hata adedi");
+            assertThat(lenient.customersLabel()).isEqualTo(today.customersLabel());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> sectionMap(Map<String, Object> raw, String id) {
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) if (id.equals(s.get("id"))) return s;
+        throw new AssertionError("bölüm yok: " + id);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withHost(Map<String, Object> raw, String sectionId, String host) {
+        Map<String, Object> copy = new LinkedHashMap<>(raw);
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(s);
+            if (sectionId.equals(s.get("id"))) sc.put("host", host);
+            secs.add(sc);
+        }
+        copy.put("sections", secs);
+        return copy;
     }
 
     @Test

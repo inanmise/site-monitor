@@ -19,9 +19,10 @@ import java.util.regex.Pattern;
  * kendisi oluşturabilmeli; X kanalı şablonunu aç dediğinde onu açmalı"). Şablon kanal başınadır ve sıralı BÖLÜMLERDEN
  * oluşur:
  * <ul>
- *   <li>{@code metrics} — gösterge alanları (sayı, yüzde, evet-hayır, kısa metin, uzun metin);</li>
- *   <li>{@code issues} — tekrarlanan anomali başlıkları ("{konu} Konusu ile yaşanan problem", açıklama, etkilenen
- *       müşteri, hata adedi);</li>
+ *   <li>{@code metrics} — gösterge alanları (sayı, yüzde, evet-hayır, kısa metin, uzun metin); {@code host} ile bir
+ *       yönetici özetinin kartına GÖMÜLEBİLİR (2026-10-17, {@link Section});</li>
+ *   <li>{@code issues} — tekrarlanan anomali başlıkları ("{konu}: Hata Artışı", açıklama, etkilenen müşteri, hata
+ *       adedi);</li>
  *   <li>{@code text} — serbest metin (varsayılan metin şablonda, düzenlemesi raporda);</li>
  *   <li>{@code images} — grafik yuvaları; {@code half} iki kolonlu ızgarada bir kolon, {@code full} iki kolon genişliği;</li>
  *   <li>{@code summary} — YÖNETİCİ ÖZETİ (2026-10-14): cümle kalıpları; {@code {f:<alan>}} girilen değerle dolar,
@@ -143,14 +144,71 @@ public final class TechErrorTemplate {
     /** Tablo satırı: {@code group} = kalın grup başlığı satırı (kendi değerleri olabilir, ör. ara toplam). */
     public record TableRow(String id, String label, boolean group) { }
 
+    /**
+     * Şablon bölümü. {@code host} (2026-10-17, kullanıcı kararı: "map yapılmamış ve kota hataları yönetici özeti kartında
+     * girilsin; açıklama ilgili cümlenin hemen altında görünsün"): yalnız GÖSTERGE bölümünde, aynı şablondaki bir
+     * YÖNETİCİ ÖZETİ bölümünün kimliği. Böyle bir bölüm "gömülüdür": rapor düzenleyicide özet kartının içinde gösterilir,
+     * PDF'e kendi bölümü olarak basılmaz; metin alanları özet cümlelerinin altına not olarak düşer
+     * ({@link TechErrorSummary#blocks}). Alanları yine gösterge alanıdır (değer, hesap, muafiyet, trend, geçmiş aynen).
+     */
     public record Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                           String descriptionLabel, String customersLabel, String errorsLabel, String text,
-                          List<String> lines, List<Column> columns, List<TableRow> rows) {
+                          List<String> lines, List<Column> columns, List<TableRow> rows, String host) {
+        public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
+                       String descriptionLabel, String customersLabel, String errorsLabel, String text,
+                       List<String> lines, List<Column> columns, List<TableRow> rows) {
+            this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, null);
+        }
+
         public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                        String descriptionLabel, String customersLabel, String errorsLabel, String text) {
             this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), null);
         }
+
+        /** Aynı bölüm, başka alanlarla ({@code host} dahil diğer her şey korunur). */
+        public Section withFields(List<Field> f) {
+            return new Section(id, kind, title, f, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host);
+        }
+
+        /** Aynı bölüm, başka cümlelerle (özet) / serilerle (trend). */
+        public Section withLines(List<String> l) {
+            return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    l, columns, rows, host);
+        }
+
+        public Section withHost(String h) {
+            return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, h);
+        }
+
+        public Section withTitle(String t) {
+            return new Section(id, kind, t, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host);
+        }
+    }
+
+    /**
+     * Gösterge bölümünün gömülü olduğu yönetici özeti bölümü; bölüm gömülü değilse (ya da başvurusu geçersizse) {@code null}.
+     * İstemcide aynı kural: {@code techErrorModel.hostOf}.
+     */
+    public static Section hostOf(Template t, Section s) {
+        if (t == null || s == null || !"metrics".equals(s.kind()) || s.host() == null) return null;
+        for (Section x : t.sections()) if ("summary".equals(x.kind()) && x.id().equals(s.host())) return x;
+        return null;
+    }
+
+    /** Yönetici özeti bölümüne gömülü gösterge bölümleri, şablon sırasıyla (bölüm özet değilse boş). */
+    public static List<Section> embeddedSections(Template t, String summaryId) {
+        List<Section> out = new ArrayList<>();
+        if (t == null || summaryId == null) return out;
+        boolean summary = false;
+        for (Section x : t.sections()) if ("summary".equals(x.kind()) && x.id().equals(summaryId)) summary = true;
+        if (!summary) return out;
+        for (Section x : t.sections()) if ("metrics".equals(x.kind()) && summaryId.equals(x.host())) out.add(x);
+        return out;
     }
 
     public record Template(String lang, String title, List<Section> sections) {
@@ -213,6 +271,7 @@ public final class TechErrorTemplate {
             sm.put("title", s.title());
             switch (s.kind()) {
                 case "metrics" -> {
+                    if (s.host() != null) sm.put("host", s.host());
                     List<Map<String, Object>> fs = new ArrayList<>();
                     for (Field f : s.fields()) {
                         Map<String, Object> fm = new LinkedHashMap<>();
@@ -343,6 +402,7 @@ public final class TechErrorTemplate {
             }
             stitle = cut(stitle, MAX_LABEL, strict, where(si) + Msg.t("bölüm başlığı en çok 200 karakter olabilir.",
                     "the section title can be at most 200 characters."));
+            String host = host(sm.get("host"), kind, si, strict);
             switch (kind) {
                 case "metrics" -> {
                     List<Field> fields = fields(sm.get("fields"), si, fieldIds, strict);
@@ -351,7 +411,8 @@ public final class TechErrorTemplate {
                                 "a figures section needs at least one field."));
                         continue;
                     }
-                    sections.add(new Section(id, kind, stitle, fields, List.of(), null, null, null, null, null));
+                    sections.add(new Section(id, kind, stitle, fields, List.of(), null, null, null, null, null,
+                            List.of(), List.of(), List.of(), host));
                 }
                 case "images" -> {
                     List<Slot> slots = slots(sm.get("slots"), si, slotIds, strict, MAX_SLOTS - slotCount);
@@ -365,14 +426,19 @@ public final class TechErrorTemplate {
                 }
                 case "issues" -> {
                     boolean en = "en".equals(lang);
-                    String item = labelOr(sm.get("item_title"), en ? "{topic} issue" : "{konu} Konusu ile yaşanan problem",
-                            MAX_LABEL, strict, si);
-                    String d = labelOr(sm.get("description_label"), en ? "When, where and how did it happen?"
-                            : "Ne zaman, nerede, nasıl gerçekleşti?", MAX_ISSUE_LABEL, strict, si);
+                    // Boş etiketin yerine konan ad: istemci kaydında (katı) bugünkü varsayılan (2026-10-17 adları); SAKLI
+                    // okumada (hoşgörülü) eski varsayılan — etiketi hiç yazılmamış eski kayıt o gün gördüğü adı korur
+                    String item = labelOr(sm.get("item_title"), en ? (strict ? "{topic}: Error Increase" : "{topic} issue")
+                            : (strict ? "{konu}: Hata Artışı" : "{konu} Konusu ile yaşanan problem"), MAX_LABEL, strict, si);
+                    String d = labelOr(sm.get("description_label"), en
+                            ? (strict ? "What happened? (when, where, impact)" : "When, where and how did it happen?")
+                            : (strict ? "Ne oldu? (zaman, yer, etki)" : "Ne zaman, nerede, nasıl gerçekleşti?"), MAX_ISSUE_LABEL, strict, si);
                     String c = labelOr(sm.get("customers_label"), en ? "Affected customers" : "Etkilenen müşteri sayısı",
                             MAX_ISSUE_LABEL, strict, si);
-                    String e = labelOr(sm.get("errors_label"), en ? "Technical errors caused by this issue"
-                            : "Bu sorundan kaynaklı teknik hata adedi", MAX_ISSUE_LABEL, strict, si);
+                    String e = labelOr(sm.get("errors_label"), en
+                            ? (strict ? "Technical errors caused by this topic" : "Technical errors caused by this issue")
+                            : (strict ? "Bu konudan kaynaklı teknik hata adedi" : "Bu sorundan kaynaklı teknik hata adedi"),
+                            MAX_ISSUE_LABEL, strict, si);
                     sections.add(new Section(id, kind, stitle, List.of(), List.of(), item, d, c, e, null));
                 }
                 case "summary" -> {
@@ -417,9 +483,56 @@ public final class TechErrorTemplate {
             }
         }
         if (sections.isEmpty()) return new Template(lang, title, defaults(lang).sections());
-        List<Section> resolved = resolveSkipRefs(sections, strict);
+        List<Section> resolved = resolveHosts(resolveSkipRefs(sections, strict), strict);
         if (strict) validateSummaryRefs(resolved);
         return new Template(lang, title, resolved);
+    }
+
+    /**
+     * Bölümün {@code host} değeri BİÇİMCE (2026-10-17): yoksa / boşsa {@code null}; yalnız gösterge bölümünde ve kimlik
+     * biçiminde bir metin olabilir. Katı: hata; hoşgörülü: düşer (eski sürümün yazdığı ya da bozulmuş kayıt yine açılır).
+     * Hedefin aynı şablonda bir yönetici özeti olması bütün bölümler okununca denetlenir ({@link #resolveHosts}).
+     */
+    private static String host(Object raw, String kind, int si, boolean strict) {
+        if (raw == null || raw instanceof String hs && hs.isBlank()) return null;
+        if (!"metrics".equals(kind)) {
+            if (strict) throw invalid(where(si) + Msg.t("yalnız gösterge bölümleri yönetici özeti kartında gösterilebilir. "
+                            + "Bu bölümün gösterim yerini kaldırıp yeniden kaydedin.",
+                    "only figures sections can be shown inside an executive summary card. Remove where this section is shown and save again."));
+            return null;
+        }
+        String v = raw instanceof String hs ? hs.trim() : null;
+        if (v == null || !ID.matcher(v).matches()) {
+            if (strict) throw invalid(where(si) + Msg.t("gösterim yeri okunamadı. Bölümün gösterim yerini yeniden seçip kaydedin.",
+                    "where to show the section couldn't be read. Pick where to show it again and save."));
+            return null;
+        }
+        return v;
+    }
+
+    /**
+     * Gömülü gösterge bölümlerinin hedefi aynı şablondaki bir YÖNETİCİ ÖZETİ bölümü olmalı. Katı: değilse 400; hoşgörülü:
+     * bağ düşer, bölüm ayrı bölüm olarak gösterilir (değer kaybolmaz).
+     */
+    private static List<Section> resolveHosts(List<Section> sections, boolean strict) {
+        Set<String> summaries = new HashSet<>();
+        for (Section s : sections) if ("summary".equals(s.kind())) summaries.add(s.id());
+        List<Section> out = new ArrayList<>(sections.size());
+        for (Section s : sections) {
+            if (s.host() == null || summaries.contains(s.host())) {
+                out.add(s);
+                continue;
+            }
+            if (strict) {
+                throw invalid(Msg.t("“" + s.title() + "” bölümü bir yönetici özeti kartında gösterilecek şekilde ayarlanmış ama o özet "
+                                + "bölümü şablonda yok. Gösterim yerini “Ayrı bölüm olarak” seçin ya da şablondaki bir yönetici özetini seçin.",
+                        "The “" + s.title() + "” section is set to show inside an executive summary card, but that summary section "
+                                + "isn't in the template. Set where to show it to “As a separate section” or pick an executive summary "
+                                + "of the template."));
+            }
+            out.add(s.withHost(null));
+        }
+        return List.copyOf(out);
     }
 
     /**
@@ -578,8 +691,7 @@ public final class TechErrorTemplate {
                 }
                 fs.add(ok ? f : new Field(f.id(), f.label(), f.type(), f.hint(), null, f.calc()));
             }
-            out.add(new Section(s.id(), s.kind(), s.title(), List.copyOf(fs), s.slots(), s.itemTitle(), s.descriptionLabel(),
-                    s.customersLabel(), s.errorsLabel(), s.text(), s.lines(), s.columns(), s.rows()));
+            out.add(s.withFields(List.copyOf(fs)));
         }
         return List.copyOf(out);
     }
@@ -812,13 +924,19 @@ public final class TechErrorTemplate {
                 "Kota hatası adedi {f:quota-count} olup teknik hataların {f:quota-rate} kadarını oluşturmaktadır.",
                 "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup teknik hataların {f:outage-share} kadarını oluşturmaktadır.",
                 "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} ile {f:sla-above?hedefin üzerinde|hedefin altında} gerçekleşmiştir.")));
+        // Map yapılmamış ve kota hataları yönetici özeti kartında girilir (kullanıcı kararı 2026-10-17): adet + açıklama;
+        // açıklama PDF'te / e-postada ilgili özet cümlesinin hemen altına düşer
+        s.add(metrics("unmapped", "Map Yapılmamış Hatalar", List.of(
+                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
+                new Field("unmapped-note", "Map yapılmamış hatalar hakkında açıklama", "textarea", null))).withHost("exec-summary"));
+        s.add(metrics("quota", "Kota Hataları", List.of(
+                new Field("quota-count", "Kota hatası adedi", "number", null),
+                new Field("quota-note", "Kota hataları hakkında açıklama", "textarea", null))).withHost("exec-summary"));
         // Üstte kullanıcının GİRDİĞİ veriler, altta OTOMATİK oranlar (kullanıcı kararı 2026-10-16: "kullanıcı adetleri
         // girer, yüzdeleri sistem hesaplar"). Kimlikler önceki varsayılanla aynı: trend, özet ve geçmiş ay ipuçları sürer.
         s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Verileri", List.of(
                 new Field("total-tx", "Toplam işlem adedi", "number", "{kanal} kanalından yapılan toplam işlem"),
                 new Field("error-count", "Ay içindeki teknik hata adedi", "number", null),
-                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
-                new Field("quota-count", "Kota hatası adedi", "number", null),
                 new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
                         "“Hayır” işaretlenirse kesinti kaynaklı hata adedi ve kesinti günleri hariç oran istenmez, PDF'e girmez"),
                 new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null, "had-outage"),
@@ -839,13 +957,10 @@ public final class TechErrorTemplate {
                         Calc.increase("total-tx")),
                 new Field("tx-increase-pct", "Önceki aya göre değişim oranı", "percent", DEFAULT_HINT_CHANGE_TR, null,
                         Calc.change("total-tx")))));
-        s.add(new Section("issues", "issues", "Teknik hataların anomali olarak arttığı konular", List.of(), List.of(),
-                "{konu} Konusu ile yaşanan problem", "Ne zaman, nerede, nasıl gerçekleşti?", "Etkilenen müşteri sayısı",
-                "Bu sorundan kaynaklı teknik hata adedi", null));
-        s.add(metrics("unmapped", "Map Yapılmamış Hatalar", List.of(
-                new Field("unmapped-note", "Açıklama", "textarea", null))));
-        s.add(metrics("quota", "Kota Hataları", List.of(
-                new Field("quota-note", "Açıklama", "textarea", null))));
+        // Anomali başlıkları (kullanıcı kararı 2026-10-17: "Anormal Artış Gösteren Hatalar", "{konu}: Hata Artışı")
+        s.add(new Section("issues", "issues", "Anormal Artış Gösteren Hatalar", List.of(), List.of(),
+                "{konu}: Hata Artışı", "Ne oldu? (zaman, yer, etki)", "Etkilenen müşteri sayısı",
+                "Bu konudan kaynaklı teknik hata adedi", null));
         // SLA erişilebilirlik tablosu ELLE GİRİLMEZ (kullanıcı kararı 2026-10-15): raporlama aracındaki tablonun ekran
         // görüntüsü tam genişlikte (iki kolon) yüklenir — tek görüntü ya da iki ayrı görüntü (ör. iki alt kanal)
         s.add(new Section("sla-shots", "images", "SLA Erişilebilirlik Tablosu", List.of(), List.of(
@@ -872,11 +987,15 @@ public final class TechErrorTemplate {
                 "There were {f:quota-count} quota errors, {f:quota-rate} of the technical errors.",
                 "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of the technical errors.",
                 "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate}, {f:sla-above?above|below} the target.")));
+        s.add(metrics("unmapped", "Unmapped Errors", List.of(
+                new Field("unmapped-count", "Unmapped errors", "number", null),
+                new Field("unmapped-note", "About the unmapped errors", "textarea", null))).withHost("exec-summary"));
+        s.add(metrics("quota", "Quota Errors", List.of(
+                new Field("quota-count", "Quota errors", "number", null),
+                new Field("quota-note", "About the quota errors", "textarea", null))).withHost("exec-summary"));
         s.add(metrics("summary", "{channel} Channel — {month} {year} Figures", List.of(
                 new Field("total-tx", "Total transactions", "number", "All transactions made through {channel}"),
                 new Field("error-count", "Technical errors in the month", "number", null),
-                new Field("unmapped-count", "Unmapped errors", "number", null),
-                new Field("quota-count", "Quota errors", "number", null),
                 new Field("had-outage", "Was there an outage in the period?", "yesno",
                         "If “No”, the outage-caused errors and the rate excluding outage days aren't asked or printed"),
                 new Field("outage-errors", "Technical errors caused by outages", "number", null, "had-outage"),
@@ -897,13 +1016,9 @@ public final class TechErrorTemplate {
                         Calc.increase("total-tx")),
                 new Field("tx-increase-pct", "Change compared with the previous month", "percent", DEFAULT_HINT_CHANGE_EN, null,
                         Calc.change("total-tx")))));
-        s.add(new Section("issues", "issues", "Topics where technical errors rose abnormally", List.of(), List.of(),
-                "{topic} issue", "When, where and how did it happen?", "Affected customers",
-                "Technical errors caused by this issue", null));
-        s.add(metrics("unmapped", "Unmapped Errors", List.of(
-                new Field("unmapped-note", "Notes", "textarea", null))));
-        s.add(metrics("quota", "Quota Errors", List.of(
-                new Field("quota-note", "Notes", "textarea", null))));
+        s.add(new Section("issues", "issues", "Errors With an Abnormal Increase", List.of(), List.of(),
+                "{topic}: Error Increase", "What happened? (when, where, impact)", "Affected customers",
+                "Technical errors caused by this topic", null));
         s.add(new Section("sla-shots", "images", "SLA Availability Table", List.of(), List.of(
                 new Slot("sla-shot-1", "{channel} Channel SLA Availability Table", "full"),
                 new Slot("sla-shot-2", "{channel} Channel SLA Availability Table (second screenshot)", "full")),

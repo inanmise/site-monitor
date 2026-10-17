@@ -25,10 +25,10 @@ import {
 import { cn } from '@/lib/utils'
 import {
   allFields, allSectionsOpen, allSlots, calcFieldsUsing, calcInput, calcRefIssues, canonicalTemplate, COLUMN_TYPES,
-  errorCountsBySection, FIELD_TYPES, imageRows, insertToken, LIMITS, move, newId, newSection, pruneRemovedTrendRefs,
-  resolvePlaceholders, resolveTextPlaceholders, sanitizeSkipRefs, stableJson, summaryLineIssues, summaryLinePreview,
-  summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields, trendRefs, trendSectionsUsing,
-  withoutSkip,
+  embeddedSections, errorCountsBySection, FIELD_TYPES, hostOf, imageRows, insertToken, LIMITS, move, newId, newSection,
+  pruneRemovedTrendRefs, resolvePlaceholders, resolveTextPlaceholders, sanitizeHosts, sanitizeSkipRefs, stableJson,
+  summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields,
+  trendRefs, trendSectionsUsing, withoutHost, withoutSkip,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
@@ -232,8 +232,9 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const allOpen = allSectionsOpen(openState.state, sectionIds)
 
   // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti); silinen
-  // alan otomatik trend seçimlerinden de düşer (silme onayında söylenir)
-  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(pruneRemovedTrendRefs(d, fn(d))) : d))
+  // alan otomatik trend seçimlerinden de düşer (silme onayında söylenir); silinen özetin kartında gösterilen bölümler
+  // ayrı bölüm olur (2026-10-17, silme onayında söylenir)
+  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(sanitizeHosts(pruneRemovedTrendRefs(d, fn(d)), d)) : d))
   const updateSection = (id, fn) => update((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? fn(s) : s)) }))
 
   async function save() {
@@ -433,7 +434,10 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                   const own = new Set((s.fields || []).map((f) => f.id))
                   const calcs = new Set()
                   for (const f of s.fields || []) for (const c of calcFieldsUsing(draft, f.id)) if (!own.has(c.id)) calcs.add(c.label || c.id)
+                  // Bu özetin kartında gösterilen bölümler ayrı bölüm olur (2026-10-17)
+                  const hosted = s.kind === 'summary' ? embeddedSections(draft, s.id).length : 0
                   const message = t('te.tpl.removeSectionBody', s.title || '')
+                    + (hosted ? `\n\n${t('te.tpl.removeSectionHosted', hosted)}` : '')
                     + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
                     + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
                     + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
@@ -611,6 +615,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
   const titleId = `te-sec-${s.id}`
   const kindName = t(`te.kind.${s.kind}`)
   const heading = String(resolve(s.title || '') ?? '').trim() || t('te.tpl.untitledSection')
+  const host = hostOf(draft, s)
   return (
     <CollapsibleCard sectionId={s.id} slot="te-tpl-section" title={heading} copyText=""
       toggleLabel={(
@@ -619,6 +624,11 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           <Badge variant="secondary" className="ms-1 rounded-md overflow-visible align-middle" data-slot="te-tpl-section-kind">
             <Icon aria-hidden="true" className="size-3" /> {kindName}
           </Badge>
+          {host && (
+            <Badge variant="outline" className="ms-1 rounded-md overflow-visible align-middle" data-slot="te-tpl-section-hosted">
+              <ScrollText aria-hidden="true" className="size-3" /> {t('te.tpl.hostBadge')}
+            </Badge>
+          )}
         </>
       )}
       headerEnd={(
@@ -634,6 +644,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(s.title)}</p>
         </div>
         {err && <p className="text-sm text-destructive" role="alert">{t(err)}</p>}
+        {s.kind === 'metrics' && <HostSelect section={s} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'metrics' && <FieldsEditor section={s} errors={errors} draft={draft} onChange={onChange} />}
         {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} resolve={resolve} onChange={onChange} />}
         {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
@@ -650,6 +661,37 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
         )}
       </fieldset>
     </CollapsibleCard>
+  )
+}
+
+/**
+ * "Gösterim yeri" (2026-10-17, kullanıcı kararı): gösterge bölümü ayrı bölüm olarak mı, yoksa bir yönetici özetinin
+ * kartında mı gösterilir. Özet kartında gösterilen bölümün alanları raporda o kartın içinde doldurulur; PDF / e-postada
+ * ayrı bölüm basılmaz, açıklaması ilgili özet cümlesinin altına yazılır. Şablonda özet bölümü yoksa seçici gizlenir
+ * (bağ geçersiz kaldıysa düzeltilebilsin diye görünür kalır).
+ */
+function HostSelect({ section: s, draft, resolve, onChange }) {
+  const t = useT()
+  const summaries = (draft.sections || []).filter((x) => x.kind === 'summary')
+  const value = typeof s.host === 'string' ? s.host : ''
+  const dangling = value !== '' && !summaries.some((x) => x.id === value)
+  if (summaries.length === 0 && !dangling) return null
+  const id = `te-host-${s.id}`
+  const name = (x) => String(resolve(x.title || '') ?? '').trim() || t('te.tpl.untitledSection')
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5" data-slot="te-tpl-host">
+      <label htmlFor={id} className="text-sm font-semibold">{t('te.tpl.hostLabel')}</label>
+      <NativeSelect id={id} value={value} className="w-full pointer-coarse:h-10" aria-describedby={`${id}-h`}
+        onChange={(e) => {
+          const v = e.target.value
+          onChange((x) => (v ? { ...x, host: v } : withoutHost(x)))
+        }}>
+        <NativeSelectOption value="">{t('te.tpl.hostSeparate')}</NativeSelectOption>
+        {dangling && <NativeSelectOption value={value}>{t('te.tpl.hostIn', '—')}</NativeSelectOption>}
+        {summaries.map((x) => <NativeSelectOption key={x.id} value={x.id}>{t('te.tpl.hostIn', name(x))}</NativeSelectOption>)}
+      </NativeSelect>
+      <p id={`${id}-h`} className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.tpl.hostHint')}</p>
+    </div>
   )
 }
 
@@ -928,9 +970,16 @@ function LayoutPreview({ draft, resolve }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-xs">
         <p className="rounded-md bg-muted px-2 py-1.5 font-semibold [overflow-wrap:anywhere]">{resolve(draft.title)}</p>
-        {draft.sections.map((s) => (
-          <div key={s.id} className="flex flex-col gap-1">
+        {/* Özet kartına gömülü bölüm kendi yerinde değil, özetinin altında (raporda kartın içinde, PDF'te açıklaması
+            cümlenin altında — 2026-10-17) */}
+        {draft.sections.filter((s) => !hostOf(draft, s)).map((s) => (
+          <div key={s.id} className="flex flex-col gap-1" data-slot="te-tpl-preview-section" data-section={s.id}>
             <p className="font-medium [overflow-wrap:anywhere]">{resolve(s.title) || '—'}</p>
+            {s.kind === 'summary' && embeddedSections(draft, s.id).map((e) => (
+              <p key={e.id} className="m-0 ps-3 text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-preview-embedded" data-section={e.id}>
+                <span className="font-medium text-foreground">{resolve(e.title) || '—'}</span> · {t('te.tpl.hostBadge')}
+              </p>
+            ))}
             {s.kind === 'images' ? (
               <div className="flex flex-col gap-1">
                 {imageRows(s.slots).map((row) => (

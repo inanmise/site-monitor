@@ -550,10 +550,15 @@ final class EmailSamples {
         // Kanal teknik hata raporu (2026-10-13): TR (dolu) ve EN (boş değerler) — gövde kısa, asıl içerik PDF ekinde.
         for (String lang : java.util.List.of("tr", "en")) {
             var t = com.sitemonitor.service.techerror.TechErrorTemplate.defaults(lang);
+            java.util.Map<String, Object> tf = new java.util.LinkedHashMap<>(java.util.Map.of(
+                    "error-rate", 0.42, "error-rate-excl", 0.31, "total-tx", 12500000, "tx-increase", true,
+                    "tx-increase-pct", 3.2, "sla-rate", 99.6, "sla-above", true, "error-count", 52500));
+            // 2026-10-17: map yapılmamış hatalar özet kartında; açıklaması ilgili cümlenin altına düşer
+            tf.put("unmapped-count", 1250);
+            tf.put("unmapped-rate", 2.38);
+            tf.put("unmapped-note", "Yeni hata kodları eşlenmedi.\n- **E-1042** kart limiti\n- E-2210 zaman aşımı");
             var v = "tr".equals(lang)
-                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", java.util.Map.of(
-                            "error-rate", 0.42, "error-rate-excl", 0.31, "total-tx", 12500000, "tx-increase", true,
-                            "tx-increase-pct", 3.2, "sla-rate", 99.6, "sla-above", true, "error-count", 52500)), t)
+                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", tf), t)
                     : com.sitemonitor.service.techerror.TechErrorValues.Values.empty();
             var in = new com.sitemonitor.service.techerror.TechErrorPdfInput(t, v, "Bireysel İnternet Şubesi",
                     "Dijital Kanallar Uygulama Geliştirme (Bireysel / Mobil)", 2026, 9, "Ayşe Yılmaz",

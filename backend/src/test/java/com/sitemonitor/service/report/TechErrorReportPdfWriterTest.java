@@ -130,10 +130,11 @@ class TechErrorReportPdfWriterTest {
         String s = text(pdf);
         assertThat(s).contains("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026");
         assertThat(s).contains("%0,42").contains("1.250.000").contains("Evet");
-        assertThat(s).contains("1. Kart Limiti Konusu ile yaşanan problem");
+        assertThat(s).contains("1. Kart Limiti: Hata Artışı");
         assertThat(s).contains("Etkilenen müşteri sayısı: 1.200").contains("3.400");
-        assertThat(s).contains("İlk satır").contains("İkinci satır");
-        assertThat(s).contains("Map Yapılmamış Hatalar");
+        // Map yapılmamış hatalar özet kartında (2026-10-17): açıklama özetin notu olarak basılır, bölüm başlığı basılmaz
+        assertThat(s).contains("İlk satır").contains("İkinci satır").contains("Map yapılmamış hatalar hakkında açıklama");
+        assertThat(s).doesNotContain("Map Yapılmamış Hatalar");
         assertThat(s).contains("Bu bölüme görsel yüklenmedi.");
         assertThat(s).contains("Sayfa 1 /");
         assertThat(s).contains("Hazırlayan: Ayşe Yılmaz");
@@ -199,7 +200,9 @@ class TechErrorReportPdfWriterTest {
         extra.put("kind", "metrics");
         extra.put("title", "Kesinti Ayrıntıları");
         extra.put("fields", List.of(Map.of("id", "outage-days", "label", "Kesinti gün sayısı", "type", "number", "skip_if_no", "had-outage")));
-        secs.add(2, extra);   // gösterge özetinin (1) ardına; 0 = yönetici özeti
+        int afterSummary = 0;     // "Verileri" bölümünün ardına (2026-10-17: önünde özet kartına gömülü map / kota bölümleri var)
+        for (int i = 0; i < secs.size(); i++) if ("summary".equals(secs.get(i).get("id"))) afterSummary = i + 1;
+        secs.add(afterSummary, extra);
         raw.put("sections", secs);
         Template t = TechErrorTemplate.normalize(raw);
         Map<String, Object> f = new HashMap<>();
@@ -336,7 +339,7 @@ class TechErrorReportPdfWriterTest {
         TechErrorValues.Values v = TechErrorValues.normalize(Map.of("issues", Map.of("issues", issues)), t);
         byte[] pdf = TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "ATM", "Takım", 2026, 1, null, null, Map.of()));
         String s = text(pdf);
-        assertThat(s).contains("30. Konu 29 Konusu ile yaşanan problem");
+        assertThat(s).contains("30. Konu 29: Hata Artışı");
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             assertThat(doc.getNumberOfPages()).isGreaterThan(2);
         }
@@ -683,5 +686,41 @@ class TechErrorReportPdfWriterTest {
         assertThat(text(TechErrorReportPdfWriter.render(oldIn))).contains("sistem hesaplamaz");
         assertThat(com.sitemonitor.service.mail.TechErrorReportMail.build(oldIn, null, "m.pdf").html())
                 .contains("Değerleri ekip girmiştir; Site Monitor bu rakamları hesaplamaz.");
+    }
+
+    @Test
+    @DisplayName("2026-10-17: özete gömülü map / kota bölümleri PDF'te ayrı bölüm değil; açıklama ilgili cümlenin altında, cümlesi düşen adet kendi satırında; e-posta aynı; kutucuklara girmez")
+    void summaryEmbeddedNotesAndFacts() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", Map.of(
+                "total-tx", 1000, "error-count", 5, "unmapped-count", 2, "unmapped-note", "Yeni **kodlar** eşlenmedi", "quota-count", 1)), t), null);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        String s = text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " ");
+        int unmapped = s.indexOf("Map yapılmamış hata adedi 2 olup");
+        // Notun başlığı alanın adı (inceleme 2026-10-17): sabit "Açıklama" iki notu ayırt ettirmezdi
+        int note = s.indexOf("Map yapılmamış hatalar hakkında açıklama Yeni kodlar eşlenmedi");
+        int quota = s.indexOf("Kota hatası adedi 1 olup");
+        assertThat(unmapped).as("map cümlesi").isPositive();
+        assertThat(note).as("açıklama map cümlesinin altında").isGreaterThan(unmapped);
+        assertThat(quota).as("kota cümlesi açıklamadan sonra").isGreaterThan(note);
+        assertThat(s).doesNotContain("Map Yapılmamış Hatalar").doesNotContain("Kota Hataları");   // gömülü bölüm başlığı basılmaz
+        var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "m.pdf");
+        assertThat(m.html()).contains("Map yapılmamış hatalar hakkında açıklama").contains("<strong>kodlar</strong>")
+                .doesNotContain("Map Yapılmamış Hatalar");
+        assertThat(m.text()).contains("Map yapılmamış hatalar hakkında açıklama:\nYeni kodlar eşlenmedi");
+        assertThat(m.html().indexOf("Yeni")).isLessThan(m.html().indexOf("Kota hatası adedi"));
+        // Cümlesi düşen adet (teknik hata adedi yok → oran yok): PDF'te kendi satırında, sessizce kaybolmaz
+        TechErrorValues.Values v2 = TechErrorValues.normalize(Map.of("fields", Map.of("unmapped-count", 2, "unmapped-note", "Not")), t);
+        String s2 = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v2, "Mobil", "Takım", 2026, 9, null, null, Map.of())))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s2).contains("Map yapılmamış hata adedi: 2").doesNotContain("olup teknik hataların");
+        assertThat(s2.indexOf("Map yapılmamış hata adedi: 2")).isLessThan(s2.indexOf("hakkında açıklama Not"));
+        // Bütün adetler girilmiş, not yok: özet TEK paragraf (gömülü bölüm bir şey eklemiyorsa paragraf bölünmez)
+        TechErrorValues.Values v3 = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields",
+                Map.of("total-tx", 1000, "error-count", 5, "unmapped-count", 2, "quota-count", 1)), t), null);
+        List<com.sitemonitor.service.techerror.TechErrorSummary.Block> blocks = com.sitemonitor.service.techerror.TechErrorSummary.blocks(
+                t.sections().get(0), t, v3, "Mobil", 2026, 9);
+        assertThat(blocks).hasSize(1);
+        assertThat(blocks.get(0).text()).contains("Map yapılmamış hata adedi **2** olup").contains("Kota hatası adedi **1** olup");
     }
 }
