@@ -9,10 +9,20 @@ import java.util.Map;
 /**
  * PDF yazıcısının girdisi (2026-10-13): raporun kopyalanmış şablonu, değerleri, yuva → görsel ve kapak bilgileri.
  * Yazıcı ({@code service.report.TechErrorReportPdfWriter}) veritabanına dokunmaz; testler doğrudan kurar.
+ *
+ * <p>{@code sample} (2026-10-17, R19): şablon önizlemesi — değerler {@link TechErrorSampleValues} ile uydurulmuştur; yazıcı
+ * ilk sayfaya "ÖRNEK ÖNİZLEME" şeridini basar. Gerçek raporlarda her zaman {@code false} (çıktı aynı kalır).
  */
 public record TechErrorPdfInput(Template template, Values values, String channelName, String teamName, int year,
                                 int month, String preparedBy, Instant generatedAt, Map<String, Image> images,
-                                TechErrorTrend trend, Map<String, Object> previous, Provenance provenance) {
+                                TechErrorTrend trend, Map<String, Object> previous, Provenance provenance, boolean sample) {
+
+    /** Gerçek rapor (örnek değil) — 2026-10-17 öncesi tam imza. */
+    public TechErrorPdfInput(Template template, Values values, String channelName, String teamName, int year, int month,
+                             String preparedBy, Instant generatedAt, Map<String, Image> images, TechErrorTrend trend,
+                             Map<String, Object> previous, Provenance provenance) {
+        this(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, trend, previous, provenance, false);
+    }
 
     /** Kimlik satırları olmadan (2026-10-17 öncesi imza): band / kapak eski "Hazırlayan · Üretim" satırını basar. */
     public TechErrorPdfInput(Template template, Values values, String channelName, String teamName, int year, int month,
@@ -58,13 +68,14 @@ public record TechErrorPdfInput(Template template, Values values, String channel
     }
 
     public TechErrorPdfInput withProvenance(Provenance p) {
-        return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, trend, previous, p);
+        return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, trend, previous, p,
+                sample);
     }
 
     /** Aynı girdi, görsel baytları olmadan (PDF üretildikten sonra posta gövdesi için). */
     public TechErrorPdfInput withoutImages() {
         return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, Map.of(), trend, previous,
-                provenance);
+                provenance, sample);
     }
 
     /**
@@ -73,7 +84,13 @@ public record TechErrorPdfInput(Template template, Values values, String channel
      */
     public TechErrorPdfInput withPrevious(Map<String, Object> prev) {
         return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, trend,
-                prev == null ? Map.of() : prev, provenance);
+                prev == null ? Map.of() : prev, provenance, sample);
+    }
+
+    /** Aynı girdi, şablon önizlemesi işaretiyle (R19). */
+    public TechErrorPdfInput withSample(boolean s) {
+        return new TechErrorPdfInput(template, values, channelName, teamName, year, month, preparedBy, generatedAt, images, trend, previous,
+                provenance, s);
     }
 
     /** Geçen ayın değerleri ya da {@code null} (rapor yok) — fark hesapları "yok" ile "boş" arasında ayrım yapmaz. */

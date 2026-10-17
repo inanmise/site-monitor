@@ -506,6 +506,7 @@ class TechErrorReportPdfWriterTest {
                     st.setStartPage(pg);
                     st.setEndPage(pg);
                     String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (tocPage(txt)) continue;      // R19: ≥ 4 sayfada 2. sayfa içindekiler — başlıkları listeler
                     if (titlePage < 0 && txt.contains("12 Aylık Özetler")) titlePage = pg;
                     if (captionPage < 0 && txt.contains("Yıllık Operasyon ve Hata")) captionPage = pg;
                 }
@@ -641,6 +642,7 @@ class TechErrorReportPdfWriterTest {
                     st.setStartPage(p);
                     st.setEndPage(p);
                     String page = st.getText(doc);
+                    if (tocPage(page)) continue;     // R19: içindekiler başlıkları listeler (bu fikstür 4 sayfaya varmaz)
                     if (page.contains("Erişilebilirlik Tablosu")) {
                         assertThat(page).as("dolgu %d satır, sayfa %d", lines, p).contains("Benzersizbaşlık").contains("Satır");
                     }
@@ -874,6 +876,7 @@ class TechErrorReportPdfWriterTest {
                     st.setStartPage(pg);
                     st.setEndPage(pg);
                     String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (tocPage(txt)) continue;      // R19: ≥ 4 sayfada 2. sayfa içindekiler — başlıkları listeler
                     if (titlePage < 0 && txt.contains("Yönetici Özeti")) titlePage = pg;
                     // Yalnız kutucukta geçen metin: SLA kutucuğunun hedef alt satırı (özet cümlesi kutucuklardan SONRA gelir)
                     if (tilePage < 0 && txt.contains("hedef %99,95")) tilePage = pg;
@@ -940,5 +943,189 @@ class TechErrorReportPdfWriterTest {
         assertThat(text(new TechErrorReportPdfWriter().write(base.withProvenance(pending)))).contains("Onay: PO onayı bekleniyor").doesNotContain("Onaylayan:");
         // Eski imza: tek satır
         assertThat(text(new TechErrorReportPdfWriter().write(base))).contains("Hazırlayan: Ayşe Yılmaz").doesNotContain("Oluşturan:");
+    }
+
+    // ── R19 (2026-10-17): üst bilgi, içindekiler, yer imleri, örnek önizleme ────────────────────────────────
+
+    /** İçindekiler sayfası mı (≥ 4 içerik sayfasında 2. sayfa): başlıkları listelediği için "başlık hangi sayfada" taramaları atlar. */
+    static boolean tocPage(String pageText) {
+        String flat = pageText.replaceAll("[\\s\\u00a0]+", " ");
+        return flat.contains("İçindekiler") || flat.contains(" Contents ");
+    }
+
+    /** Sayfanın metni, KONUMA göre (üst bilgi ve sayfa numarası en sonda basılır — akış sırasıyla sonda çıkarlardı). */
+    private static String pageText(PDDocument doc, int page) throws IOException {
+        PDFTextStripper st = new PDFTextStripper();
+        st.setSortByPosition(true);
+        st.setStartPage(page);
+        st.setEndPage(page);
+        return st.getText(doc);
+    }
+
+    private static String flat(String s) {
+        return s.replaceAll("[\\s\\u00a0]+", " ").trim();
+    }
+
+    /** Şablonun bölüm başlıkları, yer tutucular çözülmüş (raporda basılanlar bunlardan süzülür). */
+    private static List<String> titles(Template t, String channel) {
+        List<String> out = new ArrayList<>();
+        for (var s : t.sections()) out.add(TechErrorTemplate.resolve(s.title(), channel, 2026, 9, t.lang()));
+        return out;
+    }
+
+    /** Yer imleri: başlık → hedef sayfa (1 tabanlı), sırasıyla. */
+    private static List<Map.Entry<String, Integer>> bookmarks(PDDocument doc) throws IOException {
+        List<Map.Entry<String, Integer>> out = new ArrayList<>();
+        var outline = doc.getDocumentCatalog().getDocumentOutline();
+        if (outline == null) return out;
+        for (var item : outline.children()) {
+            var dest = (org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination) item.getDestination();
+            out.add(Map.entry(item.getTitle(), dest.retrievePageNumber() + 1));
+        }
+        return out;
+    }
+
+    /** İçindekiler satırları (konum sırasıyla okunmuş sayfadan): başlık → sayfa numarası; üst bilgi ve sayfa numarası atlanır. */
+    private static List<Map.Entry<String, Integer>> tocEntries(String tocText) {
+        List<Map.Entry<String, Integer>> out = new ArrayList<>();
+        java.util.regex.Pattern line = java.util.regex.Pattern.compile("^(.*?)[\\s.]+(\\d+)$");
+        boolean started = false;
+        for (String raw : tocText.split("\\R")) {
+            String l = flat(raw);
+            if (!started) {                                  // üst bilgi satırı başlıktan önce
+                started = l.startsWith("İçindekiler") || l.startsWith("Contents");
+                continue;
+            }
+            if (l.startsWith("Sayfa ") || l.startsWith("Page ")) break;
+            java.util.regex.Matcher m = line.matcher(l);
+            if (m.matches() && !m.group(1).isBlank()) out.add(Map.entry(m.group(1).trim(), Integer.parseInt(m.group(2))));
+        }
+        return out;
+    }
+
+    private static TechErrorPdfInput longReport(String lang, Map<String, Object> texts) {
+        Template t = TechErrorTemplate.defaults(lang);
+        List<Object> issues = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            issues.add(Map.of("id", "i" + i, "topic", "Konu " + i, "title_auto", true,
+                    "description", ("Uzun açıklama satırı " + i + " ").repeat(40)));
+        }
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("issues", Map.of("issues", issues), "texts", texts), t);
+        return new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+    }
+
+    @Test
+    @DisplayName("R19 üst bilgi: kapak dışındaki her sayfada kanal · dönem + rapor başlığı; ilk sayfada yok; bandın içine içerik çizilmez; kısa raporun sayfa sayısı aynı (2)")
+    void runningHeaderOnContinuationPages() throws IOException {
+        for (String lang : List.of("tr", "en")) {
+            byte[] pdf = TechErrorReportPdfWriter.render(input(lang, Map.of()));
+            List<Word> ws = words(pdf);
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                assertThat(doc.getNumberOfPages()).as("R19 öncesiyle aynı sayfa sayısı (%s)", lang).isEqualTo(2);
+            }
+            // Üst bilgi taban çizgisi sayfanın üstünden 24 pt; içerik 36 + 10 pt'ten başlar
+            assertThat(ws.stream().filter(w -> w.page() == 1 && w.baseline() < 32).toList()).as("kapakta üst bilgi yok").isEmpty();
+            String head = ws.stream().filter(w -> w.page() == 2 && w.baseline() < 32).map(Word::text)
+                    .collect(java.util.stream.Collectors.joining(" "));
+            if ("tr".equals(lang)) {
+                assertThat(flat(head)).startsWith("Mobil · Eylül 2026").contains("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026");
+            } else {
+                assertThat(flat(head)).startsWith("Mobil · September 2026").contains("Mobil Channel Technical Error Messages - September 2026");
+            }
+            assertThat(ws.stream().filter(w -> w.page() == 2 && w.baseline() >= 32 && w.baseline() < 800).toList())
+                    .as("içerik üst bilgi bandının altında (%s)", lang)
+                    .allMatch(w -> w.baseline() >= 36 + PdfCanvas.HEADER_BAND - 1);
+        }
+    }
+
+    @Test
+    @DisplayName("R19 içindekiler: ≥ 4 sayfada ilk sayfanın arkasında; yalnız BASILAN bölümler (boşaltılmış metin bölümü yok), numaralar doğru; yer imleri her bölüme bir tane, doğru sayfaya; satırlar iç bağlantı")
+    void tableOfContentsAndBookmarks() throws IOException {
+        TechErrorPdfInput in = longReport("tr", Map.of("trend-note", ""));      // metin bölümü bilerek boşaltıldı → basılmaz
+        List<String> expected = new ArrayList<>(titles(in.template(), "Mobil"));
+        expected.remove("Grafikler hakkında");
+        byte[] pdf = TechErrorReportPdfWriter.render(in);
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            int pages = doc.getNumberOfPages();
+            assertThat(pages).isGreaterThanOrEqualTo(TechErrorReportPdfWriter.TOC_MIN_PAGES + 1);
+            assertThat(flat(pageText(doc, 1))).doesNotContain("İçindekiler");
+            String toc = pageText(doc, 2);
+            assertThat(tocPage(toc)).isTrue();
+            List<Map.Entry<String, Integer>> entries = tocEntries(toc);
+            assertThat(entries.stream().map(Map.Entry::getKey).toList()).isEqualTo(expected);
+            // Her girdinin numarası, başlığın (içindekiler dışında) İLK göründüğü sayfa
+            for (var e : entries) {
+                int first = -1;
+                for (int p = 1; p <= pages && first < 0; p++) {
+                    if (p == 2) continue;
+                    if (flat(pageText(doc, p)).contains(e.getKey())) first = p;
+                }
+                assertThat(first).as(e.getKey()).isEqualTo(e.getValue());
+            }
+            // Yer imleri: bölüm başına bir tane, aynı sıra ve sayfa
+            assertThat(bookmarks(doc)).isEqualTo(entries);
+            // İçindekiler satırları tıklanır (görünmez iç bağlantı)
+            assertThat(doc.getPage(1).getAnnotations()).hasSize(entries.size());
+            // Üst bilgi içindekiler sayfasında da var; sayfa numarası toplamı içindekiler dahil
+            assertThat(flat(toc)).startsWith("Mobil · Eylül 2026").contains("Sayfa 2 / " + pages);
+        }
+        // Boyut merdiveni (EMBED_SCALES) PDF'i birkaç kez üretir: her geçişte aynı içindekiler
+        byte[] low = TechErrorReportPdfWriter.render(in, TechErrorReportPdfWriter.EMBED_SCALES[TechErrorReportPdfWriter.EMBED_SCALES.length - 1]);
+        try (PDDocument a = Loader.loadPDF(pdf); PDDocument b = Loader.loadPDF(low)) {
+            assertThat(b.getNumberOfPages()).isEqualTo(a.getNumberOfPages());
+            assertThat(pageText(b, 2)).isEqualTo(pageText(a, 2));
+        }
+    }
+
+    @Test
+    @DisplayName("R19: 4 sayfadan kısa raporda içindekiler YOK (sayfa takımı aynı), yer imleri yine var — basılan her bölüme bir tane")
+    void shortReportHasBookmarksButNoToc() throws IOException {
+        TechErrorPdfInput in = input("tr", Map.of());
+        byte[] pdf = TechErrorReportPdfWriter.render(in);
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isEqualTo(2);
+            assertThat(text(pdf)).doesNotContain("İçindekiler");
+            List<Map.Entry<String, Integer>> marks = bookmarks(doc);
+            assertThat(marks.stream().map(Map.Entry::getKey).toList()).isEqualTo(titles(in.template(), "Mobil"));
+            for (var m : marks) assertThat(flat(pageText(doc, m.getValue()))).as(m.getKey()).contains(m.getKey());
+            assertThat(doc.getPage(0).getAnnotations()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("R19 EN: içindekiler başlığı \"Contents\", üst bilgi İngilizce dönem")
+    void tableOfContentsEnglish() throws IOException {
+        byte[] pdf = TechErrorReportPdfWriter.render(longReport("en", Map.of()));
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            String toc = flat(pageText(doc, 2));
+            assertThat(toc).startsWith("Mobil · September 2026").contains("Contents").contains("Executive Summary").contains("Page 2 / ");
+            assertThat(toc).doesNotContain("İçindekiler");
+            assertThat(bookmarks(doc)).isEqualTo(tocEntries(pageText(doc, 2)));
+        }
+    }
+
+    @Test
+    @DisplayName("R19 şablon önizlemesi: ilk sayfada \"ÖRNEK ÖNİZLEME\" şeridi + örnek rakamlar; diğer sayfalarda şerit yok; gerçek raporda (sample=false) hiç yok")
+    void sampleBannerOnFirstPage() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        TechErrorPdfInput in = com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(t, "Mobil", "Dijital Kanallar",
+                "Ayşe Yılmaz", 2026, 9, Instant.parse("2026-10-17T09:00:00Z"));
+        assertThat(in.sample()).isTrue();
+        byte[] pdf = TechErrorReportPdfWriter.render(in);
+        String total = com.sitemonitor.service.techerror.TechErrorFormat.count((Number) in.values().fields().get("total-tx"), "tr");
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            String first = flat(pageText(doc, 1));
+            assertThat(first).contains("ÖRNEK ÖNİZLEME — örnek değerlerle üretildi, gönderilmez").contains(total)
+                    .contains("Hazırlayan: Ayşe Yılmaz");
+            assertThat(first.indexOf("ÖRNEK ÖNİZLEME")).as("şerit kapak bandının altında, ilk bölümden önce").isLessThan(first.indexOf("Yönetici Özeti"));
+            for (int p = 2; p <= doc.getNumberOfPages(); p++) assertThat(pageText(doc, p)).doesNotContain("ÖRNEK ÖNİZLEME");
+        }
+        assertThat(text(TechErrorReportPdfWriter.render(in.withSample(false)))).doesNotContain("ÖRNEK ÖNİZLEME");
+        Template e = TechErrorTemplate.defaults("en");
+        String en = text(TechErrorReportPdfWriter.render(com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(e, "Mobile",
+                "Digital", "Jane Doe", 2026, 9, Instant.parse("2026-10-17T09:00:00Z"))));
+        assertThat(flat(en)).contains("SAMPLE PREVIEW — generated with sample values, never sent");
+        assertThat(TechErrorReportPdfWriter.previewFileName("Bireysel İnternet Şubesi", "tr")).isEqualTo("bireysel-internet-subesi-sablon-onizleme.pdf");
+        assertThat(TechErrorReportPdfWriter.previewFileName("POS", "en")).isEqualTo("pos-template-preview.pdf");
     }
 }

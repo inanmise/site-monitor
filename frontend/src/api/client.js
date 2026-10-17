@@ -580,6 +580,35 @@ export const api = {
         return { success: false, status: 0, error: e?.message || 'NETWORK' }
       }
     },
+    /**
+     * Şablon önizleme PDF'i (R19): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir) örnek değerlerle; hiçbir şey
+     * yazılmaz. Blob döner — açma / indirme çağıranda (yeni sekme). PDF üretimi uzun sürebilir: süre sınırı yok.
+     * Hata: sunucu metni + kod + alan (400 VALIDATION_FAILED → `field: 'template'`); ağ hatasında metin yok (çağıran söyler).
+     */
+    templatePreviewPdf: async (channelId, template) => {
+      try {
+        const res = await fetch(`${BASE}/tech-error-reports/channels/${channelId}/template/preview-pdf`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
+          body: JSON.stringify({ template }),
+        })
+        if (!res.ok) {
+          let body = null
+          try { body = await res.json() } catch { body = null }
+          return { success: false, status: res.status, error: body?.error || null, code: body?.code || null, field: body?.field || null }
+        }
+        const blob = await res.blob()
+        const disp = res.headers.get('Content-Disposition') || ''
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+        const plain = /filename="?([^";]+)"?/.exec(disp)
+        let name = 'sablon-onizleme.pdf'
+        try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : name) } catch { /* ham ad */ }
+        return { success: true, blob, name }
+      } catch {
+        return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      }
+    },
   },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
