@@ -124,6 +124,84 @@ class TechErrorReportSenderTest {
                 eq(List.of("dijital@example.com", "ikinci@example.com")), org.mockito.ArgumentMatchers.isNull(), eq(now));
     }
 
+    private static byte[] samplePng(int w, int h) throws java.io.IOException {
+        java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = bi.createGraphics();
+        g.setColor(java.awt.Color.BLUE);
+        g.fillRect(0, 0, w, h);
+        g.dispose();
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(bi, "png", bo);
+        return bo.toByteArray();
+    }
+
+    @Test
+    @DisplayName("görseller gövdede (S5): yükleyici PDF izninin içinde ≤ 1000 px kopyaları hazırlar, sendHtml CID görsellerini alır; bütçe 0 → gömme yok, 'PDF ekinde' kutusu")
+    void inlineImagesTravelWithTheMail() throws java.io.IOException {
+        mailReturns("SENT");
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(1600, 400), 1600, 400)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        sender.send(report, channel, team, 7L);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), inline.capture(), eq(false), any());
+        assertThat(inline.getValue()).hasSize(1);
+        assertThat(inline.getValue().get(0).cid()).isEqualTo("te-img-annual-summary");
+        assertThat(inline.getValue().get(0).contentType()).isEqualTo("image/png");
+        assertThat(javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(inline.getValue().get(0).data())).getWidth()).isEqualTo(1000);
+        assertThat(html.getValue()).contains("cid:te-img-annual-summary").contains("max-width:" + com.sitemonitor.service.mail.MailTokens.WIDTH_XWIDE + "px");
+        // Bütçe 0: hiçbir görsel gömülmez, yuva "PDF ekinde" kutusuyla; gönderim yine SENT
+        org.mockito.Mockito.reset(email);
+        mailReturns("SENT");
+        sender.mailInlineMb = 0;
+        var res = sender.send(report, channel, team, 7L);
+        assertThat(res.state()).isEqualTo("SENT");
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), inline.capture(), eq(false), any());
+        assertThat(inline.getValue()).isEmpty();
+        assertThat(html.getValue()).doesNotContain("cid:te-img-").contains("data-slot=\"te-image-pdf\"");
+    }
+
+    @Test
+    @DisplayName("posta sınırı PDF + gömülü görsellerin toplamı (inceleme 2026-10-17): sınıra yakın PDF'in yanında görseller gövdeye girmez, yuvalar 'PDF ekinde' der, posta yine SENT")
+    void inlineImagesDroppedWhenPdfIsNearTheCap() throws java.io.IOException {
+        mailReturns("SENT");
+        sender.maxMailMb = 1;
+        pdfReturns(new byte[1024 * 1024 - 100]);                 // 1 MB sınırının 100 bayt altında
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(900, 300), 900, 300)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        var res = sender.send(report, channel, team, 7L);
+        assertThat(res.state()).isEqualTo("SENT");
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), inline.capture(), eq(false), any());
+        assertThat(inline.getValue()).isEmpty();
+        // görseli olan yuva "PDF ekinde" kutusu alır (asla "yüklenmedi"); görselsiz bölümler yine "yüklenmedi" der
+        assertThat(html.getValue()).doesNotContain("cid:te-img-").contains("data-slot=\"te-image-pdf\"");
+        String section = html.getValue().substring(html.getValue().indexOf("12 Aylık Özetler - Yıllık Göstergeler"),
+                html.getValue().indexOf("Eylül 2026 Özetler - Günlük Göstergeler"));
+        assertThat(section).contains("data-slot=\"te-image-pdf\"").doesNotContain("Bu bölüme görsel yüklenmedi.");
+    }
+
+    @Test
+    @DisplayName("görsel hazırlayıcı patlarsa posta durmaz: görseli olan yuvalar 'PDF ekinde' kutusu alır, PDF gider, SENT")
+    void preparerFailureFallsBackToPdfBoxes() throws java.io.IOException {
+        mailReturns("SENT");
+        sender.mailImagePreparer = (in, budget) -> { throw new IllegalStateException("ImageIO yok"); };
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(900, 300), 900, 300)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        var res = sender.send(report, channel, team, 7L);
+        assertThat(res.state()).isEqualTo("SENT");
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), inline.capture(), eq(false), any());
+        assertThat(inline.getValue()).isEmpty();
+        assertThat(html.getValue()).contains("data-slot=\"te-image-pdf\"").doesNotContain("cid:te-img-");
+        verify(reports).finishSent(eq(5L), eq(now), eq("SENT"), eq(now), eq(7L), anyString(), anyLong());
+    }
+
     @Test
     @DisplayName("geçmiş (inceleme 2026-10-14): istisnayla biten deneme de 'gönderim denendi' olarak sebebiyle yazılır")
     void exceptionalAttemptsAreInHistory() {

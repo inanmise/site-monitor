@@ -270,10 +270,14 @@ class HttpMetricsServiceTest {
         service.rotate();
 
         ArgumentCaptor<List<HttpMetricMinute>> cap = ArgumentCaptor.forClass(List.class);
-        verify(repo).saveAll(cap.capture());
-        List<HttpMetricMinute> rows = cap.getValue();
+        // Dakika sınırı 5000 kaydın ortasına denk gelirse record() kendisi döndürür ve İKİ bekleyen dakika oluşur
+        // (CI 2026-10-17 11:43:00.03: iki saveAll). Kurallar her dakika için ayrı, toplam için birlikte geçerli.
+        verify(repo, org.mockito.Mockito.atLeastOnce()).saveAll(cap.capture());
+        List<List<HttpMetricMinute>> calls = cap.getAllValues();
+        assertThat(calls).hasSizeBetween(1, 2);
+        for (List<HttpMetricMinute> minute : calls) assertThat(minute).hasSizeLessThanOrEqualTo(501);   // 500 ayrı + 1 taşma
+        List<HttpMetricMinute> rows = calls.stream().flatMap(List::stream).toList();
 
-        assertThat(rows).hasSizeLessThanOrEqualTo(501);          // 500 ayrı + 1 taşma kovası
         assertThat(rows).extracting(HttpMetricMinute::getEndpoint).contains("(overflow)");
         // Taşma kovası kaybolan istekleri YUTMAZ: toplam req_count korunur.
         assertThat(rows.stream().mapToLong(HttpMetricMinute::getReqCount).sum()).isEqualTo(5000L);

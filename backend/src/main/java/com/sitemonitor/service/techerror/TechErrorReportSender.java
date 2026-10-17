@@ -10,6 +10,7 @@ import com.sitemonitor.repository.TechErrorReportRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.EmailNotificationService;
 import com.sitemonitor.service.mail.MailDoc;
+import com.sitemonitor.service.mail.TechErrorMailImages;
 import com.sitemonitor.service.mail.TechErrorReportMail;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
 import com.sitemonitor.util.Msg;
@@ -67,6 +68,14 @@ public class TechErrorReportSender {
     /** E-postaya eklenecek PDF'in üst sınırı (kurumsal posta sınırı; aşarsa PDF indirilip elle gönderilir). */
     @Value("${site.monitor.tech-error-report.max-mail-mb:15}")
     int maxMailMb = 15;
+    /**
+     * Gövdeye gömülen görsellerin toplam bütçesi (MB) — 2026-10-17, S5. PDF eki + gömülü görseller BİRLİKTE
+     * {@link #maxMailMb}'ı aşamaz: aşarsa görseller gövdeye girmez (yuvalar "PDF ekinde" kutusu alır), posta yine gider.
+     */
+    @Value("${site.monitor.tech-error-report.mail-inline-mb:6}")
+    int mailInlineMb = 6;
+    /** Görsel hazırlayıcı (test dikişi: hazırlama hatası postayı durdurmamalı). */
+    java.util.function.BiFunction<TechErrorPdfInput, Long, TechErrorMailImages.Result> mailImagePreparer = TechErrorMailImages::prepare;
 
     public TechErrorReportSender(TechErrorReportService service, TechErrorReportRepository reports,
                                  EmailNotificationService email, NotificationLogRepository logs, AppSettingsService appSettings) {
@@ -140,8 +149,25 @@ public class TechErrorReportSender {
             // PDF bu okumanın içeriği: "gönderimden sonra değişti" bu sayaçla karşılaştırılır
             sentRev = fresh.getContentRev() == null ? 0L : fresh.getContentRev();
             TechErrorReportService.Rendered rendered;
+            // Görseller gövdede de (2026-10-17, S5): ≤ 1000 px kopyaları PDF İZNİNİN İÇİNDE, görseller bellekteyken
+            // hazırlanır (ikinci okuma yok; baytlar izin dışında tutulmaz). Hazırlama hatası postayı durdurmaz: görseli
+            // olan her yuva "PDF ekinde" kutusu alır
+            long inlineBudget = Math.max(0, mailInlineMb) * 1024L * 1024L;
+            TechErrorMailImages.Result[] mailImages = { TechErrorMailImages.Result.empty() };
+            // "Hepsi PDF ekinde" yedeği de izin içinde alınır: renderPdf görselsiz girdi döndürür, sonradan türetilemez
+            TechErrorMailImages.Result[] mailFallback = { TechErrorMailImages.Result.empty() };
             try {
-                rendered = service.renderPdf(() -> service.pdfInput(fresh, channel, team.getName()));
+                rendered = service.renderPdf(() -> {
+                    TechErrorPdfInput loaded = service.pdfInput(fresh, channel, team.getName());
+                    mailFallback[0] = TechErrorMailImages.allSkipped(loaded);
+                    try {
+                        mailImages[0] = mailImagePreparer.apply(loaded, inlineBudget);
+                    } catch (RuntimeException e) {
+                        log.warn("Teknik hata raporu görselleri posta için hazırlanamadı (rapor {}): {}", report.getId(), e.toString());
+                        mailImages[0] = mailFallback[0];
+                    }
+                    return loaded;
+                });
             } catch (TechErrorReportService.PdfBusyException busy) {
                 // Hiçbir şey denenmedi: talep bırakılır, FAILED yazılmaz; iz "atlandı" olarak kalır
                 finalState = "SKIPPED";
@@ -167,9 +193,17 @@ public class TechErrorReportSender {
             }
             String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), fresh.getReportYear(), fresh.getReportMonth(),
                     in.template().lang());
-            MailDoc.Mail mail = TechErrorReportMail.build(in, baseUrl(), fileName);
+            // Posta sınırı PDF + gömülü görsellerin TOPLAMI için (inceleme 2026-10-17): sınıra yakın bir PDF'in yanında
+            // 6 MB görsel kurumsal ağ geçidinden dönerdi — görseller düşer, PDF gider, yuvalar "PDF ekinde" der
+            if (mailImages[0].bytes() > 0 && pdf.length + mailImages[0].bytes() > max) {
+                log.info("Teknik hata raporu {}: PDF {} MB + gömülü görseller {} MB posta sınırını ({} MB) aşıyor; görseller yalnız PDF'te",
+                        report.getId(), mb(pdf.length), mb(mailImages[0].bytes()), maxMailMb);
+                mailImages[0] = mailFallback[0];
+            }
+            TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName);
+            MailDoc.Mail mail = built.mail();
             mailAttempted = true;
-            String status = email.sendHtml(to.toArray(new String[0]), null, subject, mail.html(), mail.text(), null, false,
+            String status = email.sendHtml(to.toArray(new String[0]), null, subject, mail.html(), mail.text(), built.inline(), false,
                     List.of(new EmailNotificationService.MailAttachment(fileName, pdf, "application/pdf")));
             mailReturned = true;
             finalStatus = status == null ? "FAILED: sonuç yok" : status;

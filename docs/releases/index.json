@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T09:35:18Z",
+  "generatedAt": "2026-10-17T12:11:09Z",
   "repo": "inanmise/site-monitor",
-  "count": 760,
+  "count": 761,
   "releases": [
+    {
+      "version": "20.143.0",
+      "tag": "v20.143.0",
+      "releasedAt": "2026-10-17T12:11:01Z",
+      "commit": "2471bc30d2eeb6e19e814d904f6b18e12a5db281",
+      "prevVersion": "20.142.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2471bc30",
+          "subject": "HttpMetricsServiceTest dakika sınırında kendiliğinden dönen kovaya dayanıklı (CI 11:43:00 iki saveAll)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "cad2657f",
+          "subject": "teknik hata raporu e-postası yeniden tasarlandı — 1000 px gövde, PDF içeriği ve görseller e-postada"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.142.0",
       "tag": "v20.142.0",

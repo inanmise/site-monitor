@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIfSystemProperty(named = "email.gallery.dir", matches = ".+")
 class EmailGalleryTest {
 
-    private static final Pattern OTHER_CID = Pattern.compile("src=\"cid:(shot\\d+|img\\d+|incimg\\d+)\"");
+    private static final Pattern OTHER_CID = Pattern.compile("src=\"cid:(shot\\d+|img\\d+|incimg\\d+|te-img-[a-z0-9_-]+)\"");
 
     @Test
     void writeGallery() throws Exception {

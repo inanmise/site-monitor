@@ -56,6 +56,8 @@ public final class MailTokens {
     /** Kart azami genişliği: bildirimler 600, veri-yoğun raporlar 640 (eski 850 ailesi kalktı). */
     public static final int WIDTH = 600;
     public static final int WIDTH_WIDE = 640;
+    /** Yönetici sunumu gibi geniş rapor gövdesi (teknik hata raporu e-postası; kullanıcı kararı 2026-10-17: Outlook'ta çok dardı). */
+    public static final int WIDTH_XWIDE = 1000;
     /** Kartın yatay iç boşluğu (masaüstü) — içerik genişliği = kart − 2×GUTTER. */
     public static final int GUTTER = 24;
 
