@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Search, Trash2, Users, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -7,7 +7,10 @@ import { useDialog } from '../ui/Dialog.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import PaginationBar from '../ui/PaginationBar.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
+import { usePagination } from '../../hooks/usePagination.js'
+import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent } from '@/components/shadcn/card'
@@ -15,16 +18,23 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import TemplateEditor from './TemplateEditor.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
+import {
+  REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
+  reportCounts, reportYears,
+} from './channelListModel.js'
 
 const TABLE_MIN_PX = 760
 
 /**
  * Tek kanal: raporları ve ŞABLONU. "Şablonu aç" bu görünümü Şablon sekmesinde açar (`te_tab=template`); şablon
- * yalnız BU kanalındır. Rapor listesi kap genişliğine göre tablo ya da kart.
+ * yalnız BU kanalındır. Rapor listesi (8. sürüm, 2026-10-17): arama (başlık / dönem, Türkçe katlama), durum ve yıl
+ * süzgeçleri (URL `te_rq` / `te_rst` / `te_ry`), sayfalama (`te_rpage` / `te_rps`; `panel` ön ayarı), sayfadaki satırlar
+ * yıllara göre başlıklı; kap genişliğine göre tablo ya da kart. Başlıkta rapor sayımı (toplam · gönderildi).
  */
 export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpenReport }) {
   const t = useT()
@@ -34,6 +44,9 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   const [state, setState] = useState({ loading: true, error: null, status: null, data: null })
   const [newOpen, setNewOpen] = useState(false)
   const [templateDirty, setTemplateDirty] = useState(false)
+  const [rq, setRq] = useState(() => readUrlParam(TE_RQ, ''))
+  const [rstatus, setRstatus] = useState(() => normalizeReportStatus(readUrlParam(TE_RSTATUS, 'all')))
+  const [ryearRaw, setRyear] = useState(() => readUrlParam(TE_RYEAR, 'all'))
   const [listRef, listWidth] = useElementWidth()
   const seq = useRef(0)
 
@@ -53,8 +66,30 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   useEffect(() => { load() }, [load])
 
   const ch = state.data?.channel
-  const reports = state.data?.reports || []
+  const reports = useMemo(() => state.data?.reports || [], [state.data])
+  const years = useMemo(() => reportYears(reports), [reports])
+  // Listede olmayan yıl (bağlantı eski ya da başka kanal) "tüm yıllar" sayılır — veri gelmeden URL'deki yıl korunur
+  const ryear = reports.length ? normalizeReportYear(ryearRaw, years) : (ryearRaw || 'all')
+  const counts = useMemo(() => reportCounts(reports), [reports])
+  const labelOf = useCallback((r) => periodLabel(r, t), [t])
+  const filtered = useMemo(() => filterReports(reports, { q: rq, status: rstatus, year: ryear }, labelOf), [reports, rq, rstatus, ryear, labelOf])
+  const pager = usePagination(filtered, {
+    listKey: 'te-reports', preset: 'panel', resetDeps: [rq, rstatus, ryear, channelId], url: { pageKey: TE_RPAGE, sizeKey: TE_RPS },
+  })
   const narrow = listWidth > 0 && listWidth < TABLE_MIN_PX
+  const filtersActive = Boolean(rq.trim()) || rstatus !== 'all' || ryear !== 'all'
+
+  useUrlQuerySync({
+    [TE_RQ]: rq.trim() ? rq : null,
+    [TE_RSTATUS]: rstatus === 'all' ? null : rstatus,
+    [TE_RYEAR]: ryear === 'all' ? null : ryear,
+  })
+
+  function clearFilters() {
+    setRq('')
+    setRstatus('all')
+    setRyear('all')
+  }
 
   async function guardLeave(next) {
     if (!templateDirty) { next(); return }
@@ -112,19 +147,35 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
     )
   }
 
+  const groups = groupByYear(pager.pageItems)
+  // Yıl başlığındaki sayı o yılın SÜZÜLMÜŞ listedeki tüm raporları — sayfadaki dilim değil (inceleme 2026-10-17)
+  const yearTotals = new Map()
+  for (const r of filtered) {
+    const y = Number(r?.year)
+    if (Number.isInteger(y) && y > 0) yearTotals.set(y, (yearTotals.get(y) || 0) + 1)
+  }
+
   return (
     <div className="flex flex-col gap-4" data-slot="te-channel" data-channel={ch?.id}>
       {back}
-      <header className="flex flex-col gap-2">
+      <header className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-xs" data-slot="te-channel-header">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl" data-slot="te-channel-title">{ch?.name}</h2>
+          <h2 className="m-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl" data-slot="te-channel-title">{ch?.name}</h2>
           {ch && !ch.active && <Badge variant="outline">{t('te.inactive')}</Badge>}
+          {ch?.approval_required && (
+            <Badge variant="secondary" className="rounded-md overflow-visible whitespace-normal" data-slot="te-channel-approval">
+              {t('te.approvalChip', ch.executive_count || 0)}
+            </Badge>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-          <Users aria-hidden="true" className="size-4 shrink-0" />
-          <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} static wrap />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Users aria-hidden="true" className="size-4 shrink-0" />
+            <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} static wrap />
+          </span>
+          <span data-slot="te-channel-stats">{t('te.hdr.reports', counts.total, counts.sent)}</span>
         </div>
-        {ch?.description && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{ch.description}</p>}
+        {ch?.description && <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{ch.description}</p>}
       </header>
 
       {state.error && (
@@ -146,26 +197,68 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
 
         <TabsContent value={TAB_REPORTS} className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-muted-foreground">{t('te.reportsHint')}</p>
+            <p className="m-0 text-sm text-muted-foreground">{t('te.reportsHint')}</p>
             {ch?.can_edit && ch?.active && (
-              <Button type="button" onClick={() => setNewOpen(true)} data-slot="te-new-report">
+              <Button type="button" onClick={() => setNewOpen(true)} data-slot="te-new-report" className="pointer-coarse:min-h-10">
                 <Plus aria-hidden="true" /> {t('te.newReport')}
               </Button>
             )}
           </div>
-          <div ref={listRef}>
+          {reports.length > 0 && (
+            <Card data-slot="te-report-toolbar" className="py-3">
+              <CardContent className="flex flex-col gap-3 px-3 sm:px-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <InputGroup className="w-full sm:w-64 pointer-coarse:h-10">
+                    <InputGroupInput type="search" value={rq} onChange={(e) => setRq(e.target.value)} data-page-search=""
+                      placeholder={t('te.search.reports')} aria-label={t('te.search.reports')} data-slot="te-rsearch"
+                      className="pointer-coarse:h-10" />
+                    <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+                  </InputGroup>
+                  <div className="flex min-w-0 flex-col gap-1.5">
+                    <label htmlFor="te-rstatus" className="text-xs font-medium text-muted-foreground">{t('te.rfilter.status')}</label>
+                    <NativeSelect id="te-rstatus" value={rstatus} onChange={(e) => setRstatus(normalizeReportStatus(e.target.value))}
+                      className="pointer-coarse:h-10" data-slot="te-rstatus">
+                      {REPORT_STATUSES.map((s) => <NativeSelectOption key={s} value={s}>{t(`te.rst.${s}`)}</NativeSelectOption>)}
+                    </NativeSelect>
+                  </div>
+                  {years.length > 1 && (
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <label htmlFor="te-ryear" className="text-xs font-medium text-muted-foreground">{t('te.rfilter.year')}</label>
+                      <NativeSelect id="te-ryear" value={ryear} onChange={(e) => setRyear(e.target.value)} className="pointer-coarse:h-10"
+                        data-slot="te-ryear">
+                        <NativeSelectOption value="all">{t('te.rfilter.allYears')}</NativeSelectOption>
+                        {years.map((y) => <NativeSelectOption key={y} value={String(y)}>{y}</NativeSelectOption>)}
+                      </NativeSelect>
+                    </div>
+                  )}
+                  {filtersActive && (
+                    <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-rclear">
+                      <X aria-hidden="true" /> {t('te.filters.clear')}
+                    </Button>
+                  )}
+                </div>
+                <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">
+                  {t('te.rcount', filtered.length, reports.length)}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          <div ref={listRef} className="flex flex-col gap-3" data-slot="te-report-list">
             {reports.length === 0 ? (
               <StatusBlock tone="neutral" icon={FileText} title={t('te.noReportsTitle')}
                 description={ch?.can_edit ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
+            ) : filtered.length === 0 ? (
+              <StatusBlock tone="neutral" icon={Search} title={t('te.rnoMatchTitle')} description={t('te.rnoMatchBody')}
+                actions={<Button type="button" variant="outline" onClick={clearFilters}><X aria-hidden="true" /> {t('te.filters.clear')}</Button>} />
             ) : (
-              // Yıllara göre (2026-10-14, Faz B): en yeni yıl önce, her yılın başlığı ve rapor sayısı
+              // Yıllara göre (2026-10-14, Faz B): en yeni yıl önce, her yılın başlığı ve SAYFADAKİ rapor sayısı
               <div className="flex flex-col gap-5" data-slot="te-report-years">
-                {groupByYear(reports).map((g) => (
+                {groups.map((g) => (
                   // Yıl grubu başlıkla ayrılır, yer imi (region) değildir
                   <div key={g.year} className="flex flex-col gap-2" data-slot="te-report-year" data-year={g.year}>
                     <h3 className="m-0 flex flex-wrap items-baseline gap-2 text-base font-semibold">
                       {g.year}
-                      <span className="text-sm font-normal text-muted-foreground">{t('te.yearCount', g.items.length)}</span>
+                      <span className="text-sm font-normal text-muted-foreground">{t('te.yearCount', yearTotals.get(g.year) ?? g.items.length)}</span>
                     </h3>
                     {narrow ? (
                       <ul className="flex flex-col gap-2" data-slot="te-report-cards">
@@ -177,8 +270,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                                   <span className="font-semibold">{periodLabel(r, t)}</span>
                                   <StatusBadge status={r.status} sendState={r.last_send_status} />
                                 </div>
-                                <p className="text-sm [overflow-wrap:anywhere]">{r.title}</p>
-                                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                                <p className="m-0 text-sm [overflow-wrap:anywhere]">{r.title}</p>
+                                <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                                   {t('te.updatedBy', fmtDateTime(r.updated_at, lang), r.updated_by_name || '—')}
                                   {r.last_sent_at ? ` · ${t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}` : ''}
                                 </p>
@@ -242,6 +335,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                 ))}
               </div>
             )}
+            {filtered.length > 0 && (pager.totalPages > 1 || filtered.length > pager.pageSize) && <PaginationBar {...pager} />}
           </div>
         </TabsContent>
 

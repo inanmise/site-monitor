@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
+import { Copy, FileText, Languages } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -7,8 +8,9 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
-import { Label } from '@/components/shadcn/label'
 import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
+import { FieldContent, FieldDescription, FieldLabel, FieldTitle, Field as ShField } from '@/components/shadcn/field'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { LIMITS } from './techErrorModel.js'
 
@@ -17,7 +19,9 @@ const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/
 
 /**
  * Kanal aç / düzenle. Açarken şablon üç yoldan gelir: varsayılan (Türkçe), varsayılan (İngilizce) ya da görülebilen
- * başka bir kanalın şablonunun KOPYASI. Düzenleme yalnız değişen alanları gönderir (ad / açıklama).
+ * başka bir kanalın şablonunun KOPYASI — seçim, erişim paylaşımı penceresiyle aynı shadcn "seçim kartları" (RadioGroup +
+ * Field; ikon, başlık, açıklama; 2026-10-17, kullanıcı isteği: düz radyo düğmeleri proje geneline uymuyordu). Düzenleme
+ * yalnız değişen alanları gönderir (ad / açıklama).
  */
 export default function ChannelDialog({ mode, channel = null, teams = [], channels = [], defaultTeam = null, onClose, onSaved }) {
   const t = useT()
@@ -34,6 +38,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
   const [execEmails, setExecEmails] = useState(channel?.executive_emails || '')
   const [source, setSource] = useState('tr')
   const [copyFrom, setCopyFrom] = useState('')
+  const sourceLabelId = useId()
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
 
@@ -146,32 +151,45 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
           ) : null}
 
           {mode === 'create' && (
-            <fieldset className="mb-3 flex flex-col gap-2" data-field="copy_from">
-              <legend className="mb-2 text-sm font-semibold">{t('te.field.templateSource')}</legend>
+            <div className="mb-3 flex min-w-0 flex-col gap-2" data-field="copy_from" data-slot="te-source">
+              <p id={sourceLabelId} className="m-0 text-sm font-semibold">{t('te.field.templateSource')}</p>
               <RadioGroup value={source} onValueChange={(v) => { setSource(v); setErrors((x) => ({ ...x, copy_from: undefined })) }}
-                className="gap-2">
-                {[['tr', t('te.source.tr')], ['en', t('te.source.en')], ...(copyOptions.length ? [['copy', t('te.source.copy')]] : [])]
-                  .map(([v, label]) => (
-                    <div key={v} className="flex items-center gap-2">
-                      <RadioGroupItem value={v} id={`te-src-${v}`} />
-                      <Label htmlFor={`te-src-${v}`} className="font-normal pointer-coarse:min-h-10">{label}</Label>
-                    </div>
-                  ))}
+                aria-labelledby={sourceLabelId} className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-slot="te-source-options">
+                {[
+                  { value: 'tr', Icon: Languages, title: t('te.source.tr'), hint: t('te.source.trHint') },
+                  { value: 'en', Icon: FileText, title: t('te.source.en'), hint: t('te.source.enHint') },
+                  ...(copyOptions.length ? [{ value: 'copy', Icon: Copy, title: t('te.source.copy'), hint: t('te.source.copyHint') }] : []),
+                ].map((o) => {
+                  const rid = `${sourceLabelId}-${o.value}`
+                  return (
+                    <FieldLabel key={o.value} htmlFor={rid} className={cn('w-full cursor-pointer', o.value === 'copy' && 'sm:col-span-2')}>
+                      <ShField orientation="horizontal" data-source={o.value} className="min-h-10 items-start gap-2 px-3! py-2!">
+                        <RadioGroupItem value={o.value} id={rid} className="mt-0.5" />
+                        <FieldContent className="gap-0.5">
+                          <FieldTitle className="flex items-center gap-1.5 text-sm">
+                            <o.Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />{o.title}
+                          </FieldTitle>
+                          <FieldDescription className="m-0 text-xs leading-snug">{o.hint}</FieldDescription>
+                        </FieldContent>
+                      </ShField>
+                    </FieldLabel>
+                  )
+                })}
               </RadioGroup>
               {source === 'copy' && (
-                <div className="mt-1 flex flex-col gap-1.5">
+                <div className="mt-1 flex flex-col gap-1.5" data-slot="te-source-copy">
                   <SearchableSelect value={copyFrom} options={copyOptions} wrapLabels ariaLabel={t('te.field.copyFrom')}
                     placeholder={t('te.field.copyFromPlaceholder')}
                     onChange={(v) => { setCopyFrom(String(v)); setErrors((x) => ({ ...x, copy_from: undefined })) }} />
-                  {errors.copy_from && <p className="text-sm text-destructive" role="alert">{errors.copy_from}</p>}
+                  {errors.copy_from && <p className="m-0 text-sm text-destructive" role="alert">{errors.copy_from}</p>}
                 </div>
               )}
-            </fieldset>
+            </div>
           )}
 
           <DialogFooter className="mt-2 flex-col-reverse gap-2 sm:flex-row">
-            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>{t('te.cancel')}</Button>
-            <Button type="submit" disabled={busy} data-slot="te-channel-save">
+            <Button type="button" variant="outline" onClick={onClose} disabled={busy} className="pointer-coarse:min-h-10">{t('te.cancel')}</Button>
+            <Button type="submit" disabled={busy} data-slot="te-channel-save" className="pointer-coarse:min-h-10">
               {mode === 'create' ? t('te.createChannel') : t('te.save')}
             </Button>
           </DialogFooter>

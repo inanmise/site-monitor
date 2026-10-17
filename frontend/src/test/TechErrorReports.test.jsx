@@ -83,6 +83,13 @@ describe('Teknik hata raporları — kanallar', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Kanalı aç' }))
     expect(await within(dialog).findByText('Kanal adı boş olamaz; rapor başlığında kullanılır.')).toBeInTheDocument()
     expect(te().createChannel).not.toHaveBeenCalled()
+    // Şablon kaynağı: shadcn seçim kartları (8. sürüm) — üç seçenek, varsayılan Türkçe; "kopyala" kanal seçiciyi açar
+    expect(within(dialog).getAllByRole('radio')).toHaveLength(3)
+    expect(within(dialog).getByRole('radio', { name: /Varsayılan şablon \(Türkçe\)/ })).toBeChecked()
+    expect(dialog.querySelector('[data-slot="te-source-copy"]')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Başka bir kanalın şablonunu kopyala/ }))
+    expect(dialog.querySelector('[data-slot="te-source-copy"]')).not.toBeNull()
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Varsayılan şablon \(Türkçe\)/ }))
     fireEvent.change(within(dialog).getByLabelText(/Kanal adı/), { target: { value: '  ATM ' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Kanalı aç' }))
     await waitFor(() => expect(te().createChannel).toHaveBeenCalledWith({ team_id: 1, name: 'ATM', description: null, lang: 'tr' }))
