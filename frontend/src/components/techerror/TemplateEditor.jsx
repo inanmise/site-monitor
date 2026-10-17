@@ -76,6 +76,8 @@ function removeRef(line, ref) {
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const TPL_BACKUP_PREFIX = 'sm.te.tpl.'
 const tplJson = (tpl) => stableJson(canonicalTemplate(tpl))
+/** Örnek PDF'in nesne adresi bu kadar sonra bırakılır (R19 inceleme: açık sekme yeniden yükleyebilsin / indirebilsin). */
+export const PREVIEW_URL_TTL_MS = 10 * 60_000
 
 function readTplBackup(id) {
   try {
@@ -131,6 +133,18 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const [saving, setSaving] = useState(false)
   // Örnek PDF (R19) hazırlanıyor — düğme kilitli, adı "hazırlanıyor"
   const [previewing, setPreviewing] = useState(false)
+  // Açılan önizleme PDF'lerinin nesne adresleri → bırakma zamanlayıcısı; düzenleyici kapanınca hepsi bırakılır (sızıntı yok)
+  const previewUrls = useRef(new Map())
+  useEffect(() => {
+    const urls = previewUrls.current
+    return () => {
+      for (const [url, h] of urls) {
+        clearTimeout(h)
+        try { URL.revokeObjectURL(url) } catch { /* bırakılmış */ }
+      }
+      urls.clear()
+    }
+  }, [])
   const [showErrors, setShowErrors] = useState(false)
   const [backup, setBackup] = useState(null)
   const seq = useRef(0)
@@ -302,12 +316,14 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   /**
    * ÖRNEK PDF (2026-10-17, R19 — kullanıcı onayı): düzenleyicideki GÜNCEL taslak (kaydedilmemiş değişiklikler dahil) sunucuda
    * örnek değerlerle PDF'e basılır ve yeni sekmede açılır; hiçbir şey kaydedilmez ya da gönderilmez. Salt okuyan da önizler.
-   * Kayıtla aynı kapı: işaretli (hatalı) alan varsa istek gitmez, alanlar gösterilir. Sekme TIKLAMA ANINDA açılır (PDF birkaç
-   * saniye sürer; istek bittikten sonra açılan pencereyi tarayıcı engeller); tarayıcı yine engellerse PDF indirilir.
+   * Kayıtla aynı kapı: işaretli (hatalı) alan varsa istek gitmez, alanlar gösterilir — yalnız DÜZENLEYEN için: salt okuyan
+   * düzeltemeyeceği alanlar yüzünden durdurulmaz (R19 inceleme), istek gider; sunucu katı doğrular, reddederse metni
+   * gösterilir. Sekme TIKLAMA ANINDA açılır (PDF birkaç saniye sürer; istek bittikten sonra açılan pencereyi tarayıcı
+   * engeller); tarayıcı yine engellerse PDF indirilir.
    */
   async function previewPdf() {
     if (!draft || previewing || saving) return
-    if (Object.keys(errors).length) {
+    if (canEdit && Object.keys(errors).length) {
       setShowErrors(true)
       openMany([...errorCountsBySection(errors, (k) => templateErrorSection(k, draft)).keys()])
       toast.error(t('te.tpl.previewFixErrors'))
@@ -342,8 +358,13 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
         a.click()
         toast.info(t('te.tpl.previewPdfDownloaded'))
       }
-      // Sekme PDF'i okuduktan sonra adres bırakılır (hemen bırakılırsa sekme boş kalabilir)
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      // Adres 10 dk sonra bırakılır (hemen bırakılırsa sekme boş kalır; 60 sn sonra bırakılınca açık sekmede yeniden
+      // yükleme / indirme bozuluyordu — R19 inceleme). Düzenleyici kapanırsa bekleyen adresler o anda bırakılır.
+      const h = setTimeout(() => {
+        previewUrls.current.delete(url)
+        try { URL.revokeObjectURL(url) } catch { /* bırakılmış */ }
+      }, PREVIEW_URL_TTL_MS)
+      previewUrls.current.set(url, h)
     } catch (e) {
       try { win?.close() } catch { /* kapanmış */ }
       toast.error(e?.message || t('te.tpl.previewPdfError'))

@@ -35,9 +35,11 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  * ({@link TechErrorRichText}).
  *
  * <p>2026-10-17 (R19): kapak dışındaki sayfalarda ÜST BİLGİ (kanal · dönem, sığarsa rapor başlığı — sayfa numarasıyla
- * birlikte en sonda basılır, devam sayfalarının içeriği bandın altından başlar); en az {@link #TOC_MIN_PAGES} içerik
- * sayfasında ilk sayfanın arkasına İÇİNDEKİLER (yalnız basılan bölümler, sayfa numarası + iç bağlantı); her uzunlukta
- * PDF YER İMLERİ. {@code in.sample()} (şablon önizlemesi) ilk sayfaya "ÖRNEK ÖNİZLEME" şeridini ekler.
+ * birlikte en sonda basılır, devam sayfalarının içeriği bandın altından başlar); doğal yerleşimi en az
+ * {@link #TOC_MIN_PAGES} sayfa olan raporda 1. sayfada kapak bandının altında İÇİNDEKİLER (yalnız basılan bölümler,
+ * sayfa numarası + iç bağlantı) ve içerik 2. sayfadan — iki geçişle ({@link #write}); her uzunlukta PDF YER İMLERİ ve
+ * belge başlığı. {@code in.sample()} (şablon önizlemesi) ilk sayfaya "ÖRNEK ÖNİZLEME" şeridini, her üst bilgiye ve kapaktaki
+ * hazırlayan satırına örnek işaretini ekler.
  *
  * <p>Yazıcı hesaplamaz: adetleri kullanıcı girer, otomatik oranları ({@code TechErrorCalc}) servis PDF girdisini kurarken
  * hesaplar. Dil şablondan gelir (TR / EN etiketleri, ay adları,
@@ -64,13 +66,21 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private float embedScale = PdfCanvas.EMBED_SCALE;
 
     /**
-     * İçindekiler sayfası en az bu kadar İÇERİK sayfasında eklenir (2026-10-17, R19 — kullanıcı onayı); daha kısa raporun
-     * sayfa takımı aynı kalır. Yer imleri her uzunlukta eklenir.
+     * İçindekiler en az bu kadar İÇERİK sayfasında eklenir (2026-10-17, R19 — kullanıcı onayı); ölçü, içindekiler OLMADAN
+     * çizilen doğal yerleşimin sayfa sayısıdır (ilk geçiş). Daha kısa raporun sayfa takımı aynı kalır. Yer imleri her
+     * uzunlukta eklenir.
      */
     static final int TOC_MIN_PAGES = 4;
 
     /** Basılan bölüm başlıkları (çizim sırasıyla): içindekiler ve yer imleri bunlardan kurulur. */
     private final List<PdfCanvas.Mark> marks = new ArrayList<>();
+
+    /**
+     * Yalnız yerleşim (ilk geçiş, R19 inceleme): görseller gömülmez (en pahalı adım) — yerleşim görselin baytına değil,
+     * ölçüsüne bağlıdır ({@link #imageRow} satır yüksekliği çizilemeyen görselin kutusunu da kapsar), sayfa sayısı ve basılan
+     * bölümler gerçek çizimle birebir aynıdır. Çıktısı atılır.
+     */
+    private boolean layoutOnly;
 
     /**
      * Görselleri gömme katları (çizim ölçüsünün katı piksel): önce ≈ 432 dpi; PDF e-posta sınırını aşarsa servis aynı
@@ -103,15 +113,46 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         return (slug.isEmpty() ? "" : slug + "-") + ("en".equals(lang) ? "template-preview" : "sablon-onizleme") + ".pdf";
     }
 
+    /**
+     * İKİ GEÇİŞ (R19 inceleme 2026-10-17): içindekiler sayfa numaraları SON sayfalamaya göre olmalı ve hiçbir bölüm
+     * içindekiler yüzünden bölünmemeli. İlk geçiş yalnız yerleşimdir ({@link #layoutOnly}, görsel gömülmez): doğal
+     * yerleşimin sayfa sayısı ≥ {@link #TOC_MIN_PAGES} ise basılan bölüm başlıkları alınır. İkinci (asıl) geçiş içindekileri
+     * 1. sayfada kapak bandının altına AYIRIR ve içeriği yeni sayfada (2. sayfa) başlatır — içindekiler içeriğin önünde
+     * kalır, hiçbir bölümün ortasına girmez; numaralar içerik çizildikten sonra ikinci geçişin kendi sayfalarından yazılır.
+     * Boyut merdiveninin ({@link #EMBED_SCALES}) her adımı iki geçişi de yapar; yerleşim gömme katına bağlı değildir.
+     */
     byte[] write(TechErrorPdfInput in) throws IOException {
+        List<String> toc = tocPlan(in);
+        draw(in, toc);
+        return c.finish();
+    }
+
+    /** İlk geçiş: içindekiler gerekiyorsa basılan bölüm başlıkları (çizim sırasıyla), gerekmiyorsa {@code null}. */
+    private static List<String> tocPlan(TechErrorPdfInput in) throws IOException {
+        try (TechErrorReportPdfWriter probe = new TechErrorReportPdfWriter()) {
+            probe.layoutOnly = true;
+            probe.draw(in, null);
+            if (probe.c.pageCount() < TOC_MIN_PAGES || probe.marks.isEmpty()) return null;
+            List<String> titles = new ArrayList<>();
+            for (PdfCanvas.Mark m : probe.marks) titles.add(m.title());
+            return titles;
+        }
+    }
+
+    private void draw(TechErrorPdfInput in, List<String> tocTitles) throws IOException {
         en = in.template().en();
         c.setPageLabel(en ? "Page" : "Sayfa");
-        // Üst bilgi (R19): kapak dışındaki her sayfada kanal · dönem (şablon dili) ve sığarsa rapor başlığı
+        // Üst bilgi (R19): kapak dışındaki her sayfada kanal · dönem (şablon dili) ve sığarsa rapor başlığı; şablon
+        // önizlemesinde her sayfa "ÖRNEK ÖNİZLEME" ile başlar (yalnız 1. sayfadaki şerit yetmez — sayfa tek başına basılabilir)
         String period = TechErrorTemplate.monthName(in.month(), in.template().lang()) + " " + in.year();
-        c.setRunningHeader(join(in.channelName(), period), in.title());
+        String left = in.sample() ? join(en ? "SAMPLE PREVIEW" : "ÖRNEK ÖNİZLEME", in.channelName(), period)
+                : join(in.channelName(), period);
+        c.setRunningHeader(left, in.title());
+        c.setDocumentTitle(in.sample() ? in.title() + (en ? " — sample preview" : " — örnek önizleme") : in.title());
         c.newPage();
         cover(in);
         if (in.sample()) sampleBanner();
+        List<TocRow> tocRows = tocTitles == null || tocTitles.isEmpty() ? null : reserveToc(tocTitles);
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
                 // Yönetici özetine gömülü bölüm (2026-10-17) kendi bölümü olarak basılmaz: rakamları özet cümlelerinde,
@@ -126,11 +167,9 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             }
         }
         closing(in);
-        // İçindekiler (R19): bütün içerik çizildikten sonra — sayfa numaraları ancak şimdi bellidir; ilk sayfanın arkasına
-        // eklenir, sonraki sayfaların numarası bir kayar (Mark sayfa nesnesini tuttuğundan numara son sıradan okunur)
-        if (c.pageCount() >= TOC_MIN_PAGES && !marks.isEmpty()) toc();
+        // Sayfa numaraları ancak şimdi bellidir: ayrılan içindekiler satırlarına yazılır (sayfa eklenmez, sıra değişmez)
+        if (tocRows != null) fillToc(tocRows);
         c.outline(marks);
-        return c.finish();
     }
 
     // ── İçindekiler (2026-10-17, R19) ───────────────────────────────────────────────────────────────
@@ -140,43 +179,68 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private static final float TOC_GAP = 5f;
     private static final float TOC_NUM_W = 28f;
 
+    /** Ayrılmış içindekiler satırı: başlık, sayfası, ilk satırın üstü, son satırın taban çizgisi ve genişliği. */
+    private record TocRow(String title, org.apache.pdfbox.pdmodel.PDPage page, float top, float lastY, float lastLineW) { }
+
     /**
-     * İçindekiler sayfası: BASILAN her bölüm başlığı (muaf / boş olup hiç basılmayan bölüm burada da yok) ve sayfa numarası;
-     * uzun başlık en çok iki satır, sonra "…"; numara sağa yaslı, başlıkla arası noktalı. Satır görünmez bir iç bağlantıdır
-     * (tıklanınca bölüme gider). Bölüm sayısı ≤ 20 (şablon sınırı): 20 × (2 satır + aralık) tek sayfaya sığar; sayfa sonu
-     * koruması yine de var (sayfanın dışına çizilmez).
+     * İçindekiler (ikinci geçiş, içerikten ÖNCE): kapak bandının (ve önizleme şeridinin) altında başlık + BASILAN her bölümün
+     * adı (muaf / boş olup hiç basılmayan bölüm burada da yok); uzun ad en çok iki satır, sonra "…". Bölüm sayısı ≤ 20
+     * (şablon sınırı): normalde 1. sayfaya sığar; sığmayan satırlar 2. sayfanın başından sürer (sonsuz döngü yok — satır
+     * sayısı başlık sayısıyla sınırlı). Ardından içerik YENİ sayfada başlar. Numara, noktalı ayraç ve iç bağlantı içerik
+     * çizildikten sonra {@link #fillToc} ile eklenir.
      */
-    private void toc() throws IOException {
-        c.insertPageAfter(0);
-        String heading = en ? "Contents" : "İçindekiler";
-        c.text(c.bold, 14f, MARGIN, c.y, heading, INK);
+    private List<TocRow> reserveToc(List<String> titles) throws IOException {
+        float textW = CONTENT_W - TOC_NUM_W - 12;
+        List<String> first = c.wrapCell(titles.get(0), textW, c.regular, TOC_FONT, 2);
+        c.ensureSpace(26 + Math.max(1, first.size()) * TOC_LINE);           // başlık ilk satırla birlikte
+        c.text(c.bold, 14f, MARGIN, c.y, en ? "Contents" : "İçindekiler", INK);
         c.y -= 8;
         c.line(MARGIN, c.y, MARGIN + CONTENT_W, RULE);
         c.y -= 18;
-        float textW = CONTENT_W - TOC_NUM_W - 12;
-        for (PdfCanvas.Mark m : marks) {
-            List<String> lines = c.wrapCell(m.title(), textW, c.regular, TOC_FONT, 2);
+        List<TocRow> rows = new ArrayList<>();
+        for (String title : titles) {
+            List<String> lines = c.wrapCell(title, textW, c.regular, TOC_FONT, 2);
             if (lines.isEmpty()) continue;
-            float h = lines.size() * TOC_LINE;
-            if (c.y - h < BOTTOM) break;
+            c.ensureSpace(lines.size() * TOC_LINE);
             float top = c.y;
             for (String l : lines) {
                 c.text(c.regular, TOC_FONT, MARGIN, c.y, l, INK);
                 c.y -= TOC_LINE;
             }
             float lastY = c.y + TOC_LINE;
+            rows.add(new TocRow(title, c.currentPage(), top, lastY, c.width(lines.get(lines.size() - 1), c.regular, TOC_FONT)));
+            c.y -= TOC_GAP;
+        }
+        c.newPage();                                         // içerik içindekilerden sonra, yeni sayfada
+        return rows;
+    }
+
+    /**
+     * Ayrılan satırlara sayfa numarası (sağa yaslı), noktalı ayraç ve görünmez iç bağlantı. Numara ikinci geçişin aynı
+     * başlıklı bölümünden okunur (sırayla eşlenir — iki geçiş aynı girdiden aynı bölümleri basar); eşleşmeyen satıra yanlış
+     * numara yazılmaz.
+     */
+    private void fillToc(List<TocRow> rows) throws IOException {
+        int mi = 0;
+        for (TocRow r : rows) {
+            PdfCanvas.Mark m = null;
+            while (m == null && mi < marks.size()) {
+                PdfCanvas.Mark x = marks.get(mi++);
+                if (x.title().equals(r.title())) m = x;
+            }
+            if (m == null) break;
+            c.drawOn(r.page());
             String num = String.valueOf(c.pageNumber(m.page()));
             float numW = c.width(num, c.bold, TOC_FONT);
             float numX = MARGIN + CONTENT_W - numW;
-            c.text(c.bold, TOC_FONT, numX, lastY, num, INK);
+            c.text(c.bold, TOC_FONT, numX, r.lastY(), num, INK);
             // Noktalı ayraç: son satırın bitiminden numaraya kadar (döngü yok — tek dizgi, uzunluğu genişlikle sınırlı)
-            float from = MARGIN + c.width(lines.get(lines.size() - 1), c.regular, TOC_FONT) + 6;
+            float from = MARGIN + r.lastLineW() + 6;
             float to = numX - 6;
             float dot = c.width(" .", c.regular, TOC_FONT);
             int n = dot <= 0 ? 0 : (int) Math.min(200, Math.floor((to - from) / dot));
-            if (n >= 2) c.text(c.regular, TOC_FONT, to - n * dot, lastY, " .".repeat(n), MUTED);
-            c.link(MARGIN, lastY - 3, CONTENT_W, top - lastY + TOC_FONT + 3, m);
-            c.y -= TOC_GAP;
+            if (n >= 2) c.text(c.regular, TOC_FONT, to - n * dot, r.lastY(), " .".repeat(n), MUTED);
+            c.link(MARGIN, r.lastY() - 3, CONTENT_W, r.top() - r.lastY() + TOC_FONT + 3, m);
         }
     }
 
@@ -188,12 +252,14 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         float textW = CONTENT_W - 46;
         List<String> titleLines = c.wrapCell(in.title(), textW, c.bold, 15f, 2);
         // Kimlik satırları (2026-10-17, 10. sürüm): oluşturan / son düzenleyen / onay + üretim — band onlara göre uzar
+        // Şablon önizlemesi (R19 inceleme): hazırlayanın yanında "(örnek önizleme)" — kapak tek başına okunsa da örnek olduğu belli
+        String sampleTag = in.sample() ? (en ? " (sample preview)" : " (örnek önizleme)") : "";
         List<String> metaLines = in.provenance() == null
-                ? List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + "  ·  " + generatedLine(in))
+                ? List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + sampleTag + "  ·  " + generatedLine(in))
                 : withGenerated(com.sitemonitor.service.mail.TechErrorReportMail.provenanceLines(in.provenance(), en), in);
         float bandH = (titleLines.size() > 1 ? 112 : 94) + (metaLines.size() - 1) * 10f;
         c.rect(0, top - bandH, PAGE.getWidth(), bandH, DARK);
-        c.image(BrandMailAssets.logoBytes("ok"), MARGIN, top - 66, 34, 34);
+        if (!layoutOnly) c.image(BrandMailAssets.logoBytes("ok"), MARGIN, top - 66, 34, 34);
         float y = top - 40;
         for (String l : titleLines) {
             c.text(c.bold, 15f, textX, y, l, WHITE);
@@ -840,8 +906,10 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             float ix = x + (cellW - wh[0]) / 2;
             float iy = imgTop - wh[1];
             TechErrorPdfInput.Image img = in.images().get(slots.get(k).id());
-            boolean ok = c.tryImage(img.data(), img.width(), img.height(), "chart-" + slots.get(k).id(), ix, iy, wh[0], wh[1],
-                    embedScale);
+            // Yalnız yerleşim geçişi görseli gömmez: satır yüksekliği yukarıda ölçüden hesaplandı, çizilemeyen görselin kutusu da
+            // aynı yüksekliğe sığar — sayfa sonları gerçek çizimle aynı
+            boolean ok = layoutOnly || c.tryImage(img.data(), img.width(), img.height(), "chart-" + slots.get(k).id(), ix, iy,
+                    wh[0], wh[1], embedScale);
             if (ok) {
                 c.strokeRect(ix, iy, wh[0], wh[1], RULE);
             } else {

@@ -27,7 +27,8 @@ import java.util.Map;
  *       {@link #MAX_PASSES} geçiş, değerler yalnız azalır.</li>
  *   <li><b>Yüzde</b>: formülü olan alan {@link TechErrorCalc#apply} ile örnek adetlerden HESAPLANIR; formülsüz alan hedefe göre
  *       (yüksek iyi → hedef ile %100'ün ortası, düşük iyi → hedefin yarısı — hedef tutturulmuş görünür), hedefsizse
- *       %0,10–0,99.</li>
+ *       %0,10–0,99. Formülü sonuç vermeyen (bozuk / eksik başvurulu) hesaplı alan da formülsüz gibi doldurulur — önizlemede
+ *       hiçbir alan "—" kalmaz.</li>
  *   <li><b>Evet / hayır</b>: hepsi "Evet" — "Hayır cevabında sorma" bağlı alanlar da önizlemede görünsün diye (hiçbir alan
  *       muaf kalmaz); artış / hedef karşılaştırması gibi hesaplanan evet / hayır alanı hesaplanır.</li>
  *   <li><b>Metin</b>: "Örnek metin"; <b>uzun açıklama</b>: iki maddelik zengin metin; her <b>anomali</b> bölümüne bir örnek
@@ -149,9 +150,29 @@ public final class TechErrorSampleValues {
 
         // Hoşgörülü okuma: şablonla eşleşmeyen / sınırı aşan her şey düşer (önizleme 400 ile reddedilmez)
         Values parsed = TechErrorValues.fromStored(TechErrorTemplate.JSON.writeValueAsString(raw), t);
-        Map<String, Object> previous = TechErrorCalc.apply(t, new Values(prev, Map.of(), Map.of()), null).fields();
+        Map<String, Object> previous = new LinkedHashMap<>(TechErrorCalc.apply(t, new Values(prev, Map.of(), Map.of()), null).fields());
         Values computed = TechErrorCalc.apply(t, parsed, previous);
-        return new Sample(computed, new LinkedHashMap<>(previous));
+        // 3. Hesabı sonuç vermeyen alan (formülü bozuk / eksik başvurulu ya da "elle" kalan oran, sonucu çıkmayan karşılaştırma)
+        //    önizlemede "—" basılmasın: yüzde formülsüz alan gibi örnek değer, evet / hayır "Evet" alır (R19 inceleme). Geçen ay
+        //    da doldurulur ({d:} cümleleri / kutucuk farkı); muaf alan ("Hayır" cevabı) doldurulmaz.
+        Map<String, Object> filled = new LinkedHashMap<>(computed.fields());
+        for (Field f : all) {
+            if (filled.get(f.id()) != null || TechErrorTemplate.exempt(f, filled)) continue;
+            double lower = 0.92 + (hash(f.id()) % 7) / 100.0;
+            switch (f.type()) {
+                case "percent" -> {
+                    double v = samplePercent(f);
+                    filled.put(f.id(), v);
+                    previous.putIfAbsent(f.id(), round2(v * lower));
+                }
+                case "yesno" -> {
+                    filled.put(f.id(), Boolean.TRUE);
+                    previous.putIfAbsent(f.id(), Boolean.TRUE);
+                }
+                default -> { /* sayı / metin alanları yukarıda doldu */ }
+            }
+        }
+        return new Sample(computed.withFields(filled), previous);
     }
 
     /**

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import { channel, templateResponse } from './helpers/techErrorFixtures.js'
+import { channel, templateResponse, TEMPLATE } from './helpers/techErrorFixtures.js'
 
 // Şablon düzenleyicisinde "Örnek PDF" (2026-10-17, R19): düzenleyicideki GÜNCEL taslak (kaydedilmemiş değişiklik dahil)
 // sunucuya gider, PDF tıklama anında açılan sekmede gösterilir; hazırlanırken düğme kilitli; işaretli alan varsa istek
@@ -18,6 +18,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
+import { PREVIEW_URL_TTL_MS } from '../components/techerror/TemplateEditor.jsx'
 
 const te = () => api.techErrors
 const previewBtn = () => document.querySelector('[data-slot="te-tpl-preview-pdf"]')
@@ -139,5 +140,42 @@ describe('şablon düzenleyici — örnek PDF', () => {
     expect(previewBtn()).not.toBeDisabled()
     fireEvent.click(previewBtn())
     await waitFor(() => expect(te().templatePreviewPdf).toHaveBeenCalledTimes(1))
+  })
+
+  it('salt okuyan, saklı şablonda istemci uyarısı olsa da durdurulmaz: istek gider; sunucu reddederse onun metni gösterilir', async () => {
+    // Saklı şablonun başlığı boş: düzenleyen için işaretli alan olurdu; salt okuyan düzeltemez — engellenmemeli (R19 inceleme)
+    te().template.mockImplementation(async (id) => templateResponse(channel(Number(id), 'Mobil', { can_edit: false }), 3,
+      { template: { ...TEMPLATE, title: '   ' } }))
+    const win = fakeWindow()
+    openSpy.mockReturnValue(win)
+    te().templatePreviewPdf.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'template',
+      error: 'Rapor başlığı boş olamaz.' })
+    await openEditor()
+    fireEvent.click(previewBtn())
+    await waitFor(() => expect(te().templatePreviewPdf).toHaveBeenCalledTimes(1))
+    expect(te().templatePreviewPdf.mock.calls[0][1].title).toBe('   ')
+    expect(await screen.findByText('Rapor başlığı boş olamaz.')).toBeInTheDocument()
+    expect(screen.queryByText('Örnek PDF için önce şablondaki işaretli alanları düzeltin; hatalı bir şablon önizlenemez.')).toBeNull()
+    expect(win.close).toHaveBeenCalled()
+  })
+
+  it('PDF adresi 10 dk sonra bırakılır (60 sn değil); düzenleyici kapanınca bekleyen adres hemen bırakılır, zamanlayıcı silinir', async () => {
+    openSpy.mockReturnValue(fakeWindow())
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const st = vi.spyOn(globalThis, 'setTimeout')
+    const ct = vi.spyOn(globalThis, 'clearTimeout')
+    te().templatePreviewPdf.mockResolvedValue({ success: true, blob: new Blob(['%PDF-1.7']), name: 'x.pdf' })
+    const { unmount } = render(<TechErrorReportsPage />)
+    await screen.findByText('Rapor başlığı ve dili')
+    await waitFor(() => expect(previewBtn()).not.toBeNull())
+    fireEvent.click(previewBtn())
+    await waitFor(() => expect(st.mock.calls.some(([, ms]) => ms === PREVIEW_URL_TTL_MS)).toBe(true))
+    expect(PREVIEW_URL_TTL_MS).toBe(10 * 60 * 1000)
+    const idx = st.mock.calls.findIndex(([, ms]) => ms === PREVIEW_URL_TTL_MS)
+    const handle = st.mock.results[idx].value
+    expect(revoke).not.toHaveBeenCalled()
+    unmount()
+    expect(revoke).toHaveBeenCalledWith('blob:preview')
+    expect(ct).toHaveBeenCalledWith(handle)
   })
 })

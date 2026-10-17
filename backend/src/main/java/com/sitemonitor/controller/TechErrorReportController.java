@@ -389,14 +389,25 @@ public class TechErrorReportController {
      * sayfada "ÖRNEK ÖNİZLEME" şeridi. Kapı şablonu OKUMAKLA aynı (paylaşımla okuyan salt okunur şablonu da önizler);
      * taslak kayıttaki gibi KATI doğrulanır (400 {@code VALIDATION_FAILED}, alan {@code template}). Hiçbir şey yazılmaz
      * (rapor, geçmiş, denetim yok — okuma). Üretim rapor PDF'iyle aynı izin ve boyut merdiveninden geçer (429 meşgul).
+     * Pod'un iki PDF iznini rapor indirme / gönderimiyle paylaştığından kullanıcı başına dakikada en çok
+     * {@link #PREVIEW_PER_MINUTE} önizleme (R19 inceleme): aşan istek 429 {@code RATE_LIMITED} + {@code Retry-After} alır.
      */
     @PostMapping("/channels/{id}/template/preview-pdf")
-    public ResponseEntity<byte[]> templatePreviewPdf(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
-                                                     HttpSession session) {
+    public ResponseEntity<?> templatePreviewPdf(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                                HttpSession session) {
         requireRead(session);
         TechErrorChannel ch = readableChannel(id, session);
         if (ch == null) throw notFoundChannel();
         Template t = TechErrorTemplate.normalize(body == null ? null : body.get("template"));
+        // Sınır doğrulamadan SONRA: geçersiz taslak (400) PDF üretmez, hakkı yemez
+        Long retryAfter = reservePreview(previewKey(session));
+        if (retryAfter != null) {
+            ResponseEntity<Map<String, Object>> e = error(429, "RATE_LIMITED", Msg.t(
+                    "Örnek PDF sınırına ulaşıldı: kişi başına dakikada en çok " + PREVIEW_PER_MINUTE + " önizleme hazırlanır, çünkü PDF'ler rapor indirme ve gönderimiyle aynı sırayı paylaşır. " + retryAfter + " saniye sonra yeniden deneyin.",
+                    "Sample PDF limit reached: at most " + PREVIEW_PER_MINUTE + " previews per person per minute, because PDFs share one queue with report downloads and sending. Try again in " + retryAfter + " seconds."),
+                    Map.of("retry_after_seconds", retryAfter));
+            return ResponseEntity.status(429).header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter)).body(e.getBody());
+        }
         Team team = teams.findById(ch.getTeamId()).orElse(null);
         String teamName = team == null ? null : team.getName();
         YearMonth period = service.defaultPeriod();
@@ -411,6 +422,43 @@ public class TechErrorReportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
                         .filename(name, StandardCharsets.UTF_8).build().toString())
                 .body(out.pdf());
+    }
+
+    /** Şablon önizleme PDF'i: kullanıcı başına dakikadaki en çok istek (R19 inceleme). */
+    static final int PREVIEW_PER_MINUTE = 6;
+    private static final long PREVIEW_WINDOW_MS = 60_000L;
+    /** Kullanıcı → son istek zamanları (ms); pod başına, sınırlı (1 000 anahtarda süresi geçenler atılır, 10 000'de sıfırlanır). */
+    private final Map<String, Deque<Long>> previewCalls = new HashMap<>();
+    /** Saat (testlerde ileri sarılır). */
+    java.util.function.LongSupplier previewClock = System::currentTimeMillis;
+
+    /** Sınır içindeyse isteği kaydeder ve {@code null} döner; doluysa en eski isteğin pencereden düşmesine kalan saniye (≥ 1). */
+    Long reservePreview(String key) {
+        long now = previewClock.getAsLong();
+        synchronized (previewCalls) {
+            if (previewCalls.size() > 1_000) {
+                previewCalls.values().removeIf(q -> {
+                    while (!q.isEmpty() && now - q.peekFirst() >= PREVIEW_WINDOW_MS) q.pollFirst();
+                    return q.isEmpty();
+                });
+                if (previewCalls.size() > 10_000) previewCalls.clear();
+            }
+            Deque<Long> q = previewCalls.computeIfAbsent(key, k -> new ArrayDeque<>());
+            while (!q.isEmpty() && now - q.peekFirst() >= PREVIEW_WINDOW_MS) q.pollFirst();
+            if (q.size() >= PREVIEW_PER_MINUTE) {
+                long ms = q.peekFirst() + PREVIEW_WINDOW_MS - now;
+                return Math.max(1L, (ms + 999) / 1000);
+            }
+            q.addLast(now);
+            return null;
+        }
+    }
+
+    private static String previewKey(HttpSession session) {
+        Long uid = userId(session);
+        if (uid != null) return "u:" + uid;
+        Object u = session.getAttribute("username");
+        return u != null ? "n:" + u : "s:" + session.getId();
     }
 
     /** Oturumdaki görünen ad (giriş anında yazılır); yoksa kullanıcı adı. */
