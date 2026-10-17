@@ -31,19 +31,28 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     // İstisna (2026-10-08): `utils/xlsxWriter.js` fflate ile .xlsx paketler. O da açılış paketine GİRMEZ — aşağıdaki
     // kapı yalnız tembel yüklenen dışa aktarma modülünün onu içe aktardığını denetler. node-forge için istisna YOK.
     const XLSX_WRITER = 'utils/xlsxWriter.js'
+    // İkinci istisna (2026-10-17, C12): kanalın yıl arşivi (`techerror/yearArchive.js`) akışlı ZIP'i fflate ile yazar —
+    // YALNIZ dinamik `import('fflate')` ile (arşiv düğmesine basılınca); statik içe aktarma açılış paketine sokardı.
+    const YEAR_ARCHIVE = 'components/techerror/yearArchive.js'
     const offenders = FILES.filter(({ f, rel: r, src }) => !f.startsWith(EXTRACT)
-      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || (s === 'fflate' && r !== XLSX_WRITER)))
+      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || (s === 'fflate' && r !== XLSX_WRITER && r !== YEAR_ARCHIVE)))
       .map((x) => x.rel)
     expect(offenders).toEqual([])
+    const archive = FILES.find((x) => x.rel === YEAR_ARCHIVE)
+    expect(staticImports(archive.src).filter((s) => s === 'fflate'), 'yıl arşivi fflate\'i statik içe aktarmaz').toEqual([])
     const users = FILES.filter(({ src }) => anyImports(src).some((s) => s.startsWith('node-forge') || s === 'fflate')).map((x) => x.rel).sort()
     // 2026-10-09: ZIP açma core.js'ten extract/zip.js'e taşındı (akışlı Inflate + kayıt sınırı) — yine extract/ altında.
-    expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', XLSX_WRITER])
+    expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', YEAR_ARCHIVE, XLSX_WRITER].sort())
   })
 
   it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modüllerinden gelir; onlar her yerde import() ile yüklenir', () => {
     const writerUsers = FILES.filter(({ src }) => anyImports(src).some((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s))).map((x) => x.rel).sort()
     // 2026-10-10: kripto envanteri dışa aktarımı ikinci tembel kullanıcı (Excel / PDF / CSV).
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js'])
+    // 2026-10-17 (E22): Ayarlar → Teknik hata raporu kanal özeti Excel'i yazıcıyı YALNIZ tıklamada import() ile alır.
+    const SETTINGS_EXPORT = 'components/admin/TechErrorReportSettings.jsx'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT].sort())
+    const settings = FILES.find((x) => x.rel === SETTINGS_EXPORT)
+    expect(staticImports(settings.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Ayarlar Excel yazıcısını statik içe aktarmaz').toEqual([])
     const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(sharedCertExport|cryptoInventoryExport)(\.js)?$/.test(s))).map((x) => x.rel)
     expect(staticExportUsers).toEqual([])
     const lazyExportUsers = FILES.filter(({ src }) => /import\(\s*'\.\/sharedcert\/sharedCertExport\.js'\s*\)/.test(src)).map((x) => x.rel)

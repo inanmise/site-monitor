@@ -271,8 +271,16 @@ for (const vp of VIEWPORTS) {
       // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal)
       await root.locator('[data-slot="tes-search"]').fill('odeme')
       await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(2)
+      // CSV adımıyla AYNI sıra (CI 2026-10-18: 2 vCPU makinede menü açılırken tıklanan öğe indirme başlatmadı): menü
+      // görünür, açılış animasyonu biter, öğe menünün İÇİNDEN tıklanır. İndirme gelmezse ekrandaki tost metni hataya yazılır.
       await trigger.click()
-      const [xl] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="tes-export-xlsx"]').click()])
+      await expect(menu).toBeVisible()
+      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+      const xlDownload = page.waitForEvent('download', { timeout: 45_000 }).catch(async (e) => {
+        const toasts = await page.locator('[data-sonner-toast], [role="status"], [role="alert"]').allInnerTexts().catch(() => [])
+        throw new Error(`Excel indirmesi başlamadı; ekrandaki iletiler: ${JSON.stringify(toasts)} (${e.message})`)
+      })
+      const [xl] = await Promise.all([xlDownload, menu.locator('[data-slot="tes-export-xlsx"]').click()])
       expect(xl.suggestedFilename()).toBe('teknik-hata-raporu-kanallar-2026-09.xlsx')
       const files = unzipSync(new Uint8Array(readFileSync(await xl.path())))
       const sheet = strFromU8(files['xl/worksheets/sheet1.xml'])
