@@ -1077,19 +1077,17 @@ public final class TechErrorTemplate {
                 "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup teknik hataların {f:outage-share} kadarını oluşturmaktadır.",
                 "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} (hedef {t:sla-rate}, fark {dt:sla-rate}) ile "
                         + "{f:sla-above?hedef başarıyla tutturulmuştur|hedefin altında kalmıştır}.")).withTiles(DEFAULT_TILES));
-        // Map yapılmamış ve kota hataları yönetici özeti kartında girilir (kullanıcı kararı 2026-10-17): adet + açıklama;
-        // açıklama PDF'te / e-postada ilgili özet cümlesinin hemen altına düşer
-        s.add(metrics("unmapped", "Map Yapılmamış Hatalar", List.of(
-                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
-                new Field("unmapped-note", "Map yapılmamış hatalar hakkında açıklama", "textarea", null))).withHost("exec-summary"));
-        s.add(metrics("quota", "Kota Hataları", List.of(
-                new Field("quota-count", "Kota hatası adedi", "number", null),
-                new Field("quota-note", "Kota hataları hakkında açıklama", "textarea", null))).withHost("exec-summary"));
         // Üstte kullanıcının GİRDİĞİ veriler, altta OTOMATİK oranlar (kullanıcı kararı 2026-10-16: "kullanıcı adetleri
         // girer, yüzdeleri sistem hesaplar"). Kimlikler önceki varsayılanla aynı: trend, özet ve geçmiş ay ipuçları sürer.
+        // Map yapılmamış ve kota hataları (adet + açıklama) teknik hata adedinin hemen ardında girilir (kullanıcı kararı
+        // 2026-10-17, 7. sürüm: özet kartındaki gömülü bloklar kaldırıldı — gömme özelliği şablon düzenleyicide duruyor)
         s.add(metrics("summary", "{kanal} Kanalı — {ay} {yil} Verileri", List.of(
                 new Field("total-tx", "Toplam işlem adedi", "number", "{kanal} kanalından yapılan toplam işlem"),
                 new Field("error-count", "Ay içindeki teknik hata adedi", "number", null),
+                new Field("unmapped-count", "Map yapılmamış hata adedi", "number", null),
+                new Field("unmapped-note", "Map yapılmamış hatalar hakkında açıklama", "textarea", null),
+                new Field("quota-count", "Kota hatası adedi", "number", null),
+                new Field("quota-note", "Kota hataları hakkında açıklama", "textarea", null),
                 new Field("had-outage", "Dönemde kesinti oldu mu?", "yesno",
                         "“Hayır” işaretlenirse kesinti kaynaklı hata adedi ve kesinti günleri hariç oran istenmez, PDF'e girmez"),
                 new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null, "had-outage"),
@@ -1142,15 +1140,13 @@ public final class TechErrorTemplate {
                 "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of the technical errors.",
                 "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate} (target {t:sla-rate}, difference {dt:sla-rate}), "
                         + "so {f:sla-above?the target was met|the target was missed}.")).withTiles(DEFAULT_TILES));
-        s.add(metrics("unmapped", "Unmapped Errors", List.of(
-                new Field("unmapped-count", "Unmapped errors", "number", null),
-                new Field("unmapped-note", "About the unmapped errors", "textarea", null))).withHost("exec-summary"));
-        s.add(metrics("quota", "Quota Errors", List.of(
-                new Field("quota-count", "Quota errors", "number", null),
-                new Field("quota-note", "About the quota errors", "textarea", null))).withHost("exec-summary"));
         s.add(metrics("summary", "{channel} Channel — {month} {year} Figures", List.of(
                 new Field("total-tx", "Total transactions", "number", "All transactions made through {channel}"),
                 new Field("error-count", "Technical errors in the month", "number", null),
+                new Field("unmapped-count", "Unmapped errors", "number", null),
+                new Field("unmapped-note", "About the unmapped errors", "textarea", null),
+                new Field("quota-count", "Quota errors", "number", null),
+                new Field("quota-note", "About the quota errors", "textarea", null),
                 new Field("had-outage", "Was there an outage in the period?", "yesno",
                         "If “No”, the outage-caused errors and the rate excluding outage days aren't asked or printed"),
                 new Field("outage-errors", "Technical errors caused by outages", "number", null, "had-outage"),

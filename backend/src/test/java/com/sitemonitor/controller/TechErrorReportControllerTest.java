@@ -322,7 +322,7 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.report.version").value(4))
                 .andExpect(jsonPath("$.data.can_edit").value(true))
                 .andExpect(jsonPath("$.data.team_email_set").value(true))
-                .andExpect(jsonPath("$.data.template.sections.length()").value(10))
+                .andExpect(jsonPath("$.data.template.sections.length()").value(8))
                 .andExpect(jsonPath("$.data.template_update.differs").value(false));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(audit()))
                 .andExpect(jsonPath("$.data.can_edit").value(false))

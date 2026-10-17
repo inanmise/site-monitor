@@ -93,7 +93,7 @@ class TechErrorReportMailTest {
         assertThat(rates).isLessThan(issues);
         assertThat(issues).isLessThan(charts);
         assertThat(charts).isLessThan(note);
-        // Gömülü map / kota bölümleri ayrı başlık değil; açıklaması özette
+        // Map / kota açıklaması "Verileri" bölümünün alanı (7. sürüm): ayrı bölüm başlığı yok, alanın adıyla basılır
         assertThat(html).doesNotContain("Map Yapılmamış Hatalar").contains("Map yapılmamış hatalar hakkında açıklama").contains("<strong>kodlar</strong>");
         // Düz metin eşi: band + kutucuklar + değerler + görsel satırları
         String text = b.mail().text();

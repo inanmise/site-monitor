@@ -48,10 +48,10 @@ class TechErrorSlaTilesMigrationTest {
         return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(secs))));
     }
 
-    /** 4b öncesi varsayılan: SLA oranı hedefsiz, SLA sorusu elle, özet eski cümlelerle ve kutucuksuz. */
+    /** 4b öncesi varsayılan (4a düzeni: map / kota özet kartına gömülü): SLA oranı hedefsiz, SLA sorusu elle, özet eski cümlelerle ve kutucuksuz. */
     static Template before4b(String lang) {
         boolean en = "en".equals(lang);
-        Template d = TechErrorTemplate.defaults(lang);
+        Template d = TechErrorTestTemplates.hostedDefaults(lang);
         List<Section> out = new ArrayList<>();
         for (Section s : d.sections()) {
             if ("exec-summary".equals(s.id())) {
@@ -78,7 +78,7 @@ class TechErrorSlaTilesMigrationTest {
     }
 
     @Test
-    @DisplayName("4b öncesi varsayılan (TR / EN) bugünkü varsayılanın aynısına döner: hedef + yön, hedef karşılaştırması, fark cümlesi, kutucuklar; tekrar uygulanmaz")
+    @DisplayName("4b öncesi varsayılan (TR / EN) 4b düzeninin aynısına döner: hedef + yön, hedef karşılaştırması, fark cümlesi, kutucuklar; tekrar uygulanmaz; 7. sürüm göçü bugünkü varsayılanı verir")
     void before4bBecomesToday() {
         for (String lang : List.of("tr", "en")) {
             Template old = before4b(lang);
@@ -86,9 +86,11 @@ class TechErrorSlaTilesMigrationTest {
             assertThat(field(old, "sla-above").calc()).isNull();
             assertThat(section(old, "exec-summary").tiles()).isEmpty();
             Template m = TechErrorSlaTilesMigration.migrate(old).orElseThrow();
-            assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+            assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults(lang)));
             TechErrorTemplate.normalize(TechErrorTemplate.toMap(m));
             assertThat(TechErrorSlaTilesMigration.migrate(m)).isEmpty();
+            assertThat(TechErrorTemplate.toJson(TechErrorCountsInFiguresMigration.migrate(m).orElseThrow())).as(lang + " zincir")
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
         }
         assertThat(TechErrorSlaTilesMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();
     }
@@ -189,7 +191,7 @@ class TechErrorSlaTilesMigrationTest {
         }
 
         @Test
-        @DisplayName("iş: eski kanal güncellenir (sürüm +1, 'SiteMonitor'), bugünkü varsayılan dokunulmaz, açılmış rapor aynen; nişan sonrası koşmaz")
+        @DisplayName("iş: eski kanal 4b düzenine güncellenir (sürüm +1, 'SiteMonitor'), bugünkü varsayılan dokunulmaz, açılmış rapor aynen; nişan sonrası koşmaz")
         void migratesOnce() {
             TechErrorChannel old = service.createChannel(1L, "Mobil", null, before4b("tr"), 7L);
             TechErrorChannel fresh = service.createChannel(1L, "POS", null, TechErrorTemplate.defaults("en"), 7L);
@@ -198,7 +200,7 @@ class TechErrorSlaTilesMigrationTest {
             assertThat(migration.migrateLocked()).isEqualTo(1);
             TechErrorChannel after = channels.findById(old.getId()).orElseThrow();
             assertThat(after.getTemplateVersion()).isEqualTo(2);
-            assertThat(after.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+            assertThat(after.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults("tr")));
             assertThat(channels.findById(fresh.getId()).orElseThrow().getTemplateVersion()).isEqualTo(1);
             assertThat(versions.findAll()).anySatisfy(v -> {
                 assertThat(v.getChannelId()).isEqualTo(old.getId());

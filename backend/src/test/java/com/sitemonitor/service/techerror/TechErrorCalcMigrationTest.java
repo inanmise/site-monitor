@@ -267,12 +267,14 @@ class TechErrorCalcMigrationTest {
             Template d = TechErrorTemplate.defaults(lang);
             List<Section> secs = new ArrayList<>();
             for (Section s : d.sections()) if (!s.id().startsWith("charts")) secs.add(s);
-            secs.add(6, TechErrorCalcMigration.oldDefaultCharts(1, "en".equals(lang)).get(0));   // SLA bölümünden önce
+            int slaAt = -1;
+            for (int i = 0; i < secs.size(); i++) if ("sla-shots".equals(secs.get(i).id())) slaAt = i;
+            secs.add(slaAt, TechErrorCalcMigration.oldDefaultCharts(1, "en".equals(lang)).get(0));   // SLA bölümünden önce
             Template old = TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(secs))));
             Template m = TechErrorCalcMigration.migrate(old).orElseThrow();
-            assertThat(m.sections()).extracting(Section::id).containsSubsequence("quota", "charts", "charts-daily", "sla-shots", "trend-note");
-            assertThat(section(m, "charts").slots()).isEqualTo(TechErrorTemplate.defaults(lang).sections().get(8).slots());
-            assertThat(section(m, "charts-daily").slots()).isEqualTo(TechErrorTemplate.defaults(lang).sections().get(9).slots());
+            assertThat(m.sections()).extracting(Section::id).containsSubsequence("rates", "charts", "charts-daily", "sla-shots", "trend-note");
+            assertThat(section(m, "charts").slots()).isEqualTo(section(TechErrorTemplate.defaults(lang), "charts").slots());
+            assertThat(section(m, "charts-daily").slots()).isEqualTo(section(TechErrorTemplate.defaults(lang), "charts-daily").slots());
             assertThat(TechErrorCalcMigration.migrate(m)).isEmpty();
         }
     }

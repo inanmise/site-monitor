@@ -280,8 +280,13 @@ public final class TechErrorReportMail {
     private static void metrics(MailDoc d, TechErrorPdfInput in, Section s, boolean en, String lang) {
         Map<String, Object> vals = in.values().fields();
         List<Field> shown = new ArrayList<>();
-        for (Field f : s.fields()) if (!TechErrorTemplate.exempt(f, vals)) shown.add(f);
-        if (shown.isEmpty()) return;      // bölümün tüm alanları muaf → PDF'teki gibi başlık da basılmaz
+        for (Field f : s.fields()) {
+            if (TechErrorTemplate.exempt(f, vals)) continue;
+            // Boş uzun açıklama basılmaz (PDF ile aynı, 7. sürüm): isteğe bağlı not — "—" satırı yönetici postasını kirletirdi
+            if ("textarea".equals(f.type()) && com.sitemonitor.service.report.TechErrorReportPdfWriter.blankText(vals.get(f.id()))) continue;
+            shown.add(f);
+        }
+        if (shown.isEmpty()) return;      // bölümün tüm alanları muaf ya da boş not → PDF'teki gibi başlık da basılmaz
         d.heading(in.resolve(s.title()));
         List<Field> compact = new ArrayList<>();
         List<Field> longs = new ArrayList<>();
@@ -302,8 +307,7 @@ public final class TechErrorReportMail {
         }
         for (Field f : longs) {
             Object v = vals.get(f.id());
-            // PDF ile aynı: boş uzun açıklama "—" olarak basılır (alan vardı, doldurulmadı)
-            String text = v == null || String.valueOf(v).isBlank() ? "—" : String.valueOf(v);
+            String text = String.valueOf(v);                     // boş not yukarıda düştü
             String label = in.resolve(f.label());
             String html = "<div style=\"padding-left:16px;margin:2px 0 10px\">"
                     + "<p style=\"margin:0 0 2px;font-family:" + MailTokens.FONT + ";font-size:13px;line-height:18px;font-weight:bold;color:" + MailTokens.MUTED + "\">"

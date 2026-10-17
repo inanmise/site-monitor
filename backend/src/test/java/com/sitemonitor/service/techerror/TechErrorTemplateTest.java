@@ -18,43 +18,43 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TechErrorTemplateTest {
 
     @Test
-    @DisplayName("varsayılan şablon: özet → map yok + kota (özet kartında) → veriler (girilen) → oranlar (otomatik) → anomali → SLA (ekran görüntüsü) → not → yıllık → günlük göstergeler")
+    @DisplayName("varsayılan şablon: özet → veriler (girilen; map yok + kota adet ve açıklaması teknik hata adedinin ardında) → oranlar (otomatik) → anomali → SLA (ekran görüntüsü) → not → yıllık → günlük göstergeler")
     void defaultLayoutMatchesTheRequest() {
         Template t = TechErrorTemplate.defaults("tr");
         assertThat(t.title()).isEqualTo("{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}");
         assertThat(t.sections()).extracting(s -> s.kind())
-                .containsExactly("summary", "metrics", "metrics", "metrics", "metrics", "issues", "images", "text", "images",
-                        "images");
+                .containsExactly("summary", "metrics", "metrics", "issues", "images", "text", "images", "images");
         assertThat(t.sections().get(0).title()).isEqualTo("Yönetici Özeti");
-        // Kullanıcı kararı 2026-10-17: map yapılmamış ve kota hataları (adet + açıklama) yönetici özeti kartında girilir —
-        // bölümler özetin hemen ardında, host = özet; adetler "Verileri" bölümünden çıktı
-        assertThat(t.sections().get(1).title()).isEqualTo("Map Yapılmamış Hatalar");
-        assertThat(t.sections().get(1).host()).isEqualTo("exec-summary");
-        assertThat(t.sections().get(1).fields()).extracting(f -> f.id()).containsExactly("unmapped-count", "unmapped-note");
-        assertThat(t.sections().get(2).title()).isEqualTo("Kota Hataları");
-        assertThat(t.sections().get(2).host()).isEqualTo("exec-summary");
-        assertThat(t.sections().get(2).fields()).extracting(f -> f.id()).containsExactly("quota-count", "quota-note");
-        assertThat(TechErrorTemplate.embeddedSections(t, "exec-summary")).extracting(s -> s.id()).containsExactly("unmapped", "quota");
+        // Kullanıcı kararı 2026-10-17 (7. sürüm): map yapılmamış ve kota hataları (adet + açıklama) "Verileri" bölümünde,
+        // teknik hata adedinin hemen ardında girilir; özet kartına gömülü bölüm YOK (gömme özelliği şablonda duruyor)
+        assertThat(t.sections()).allMatch(s -> s.host() == null);
+        assertThat(TechErrorTemplate.embeddedSections(t, "exec-summary")).isEmpty();
+        assertThat(t.sections()).extracting(s -> s.id()).doesNotContain("unmapped", "quota");
         // Kullanıcı kararı 2026-10-16: üstte girilen adetler, altta otomatik oranlar
-        assertThat(t.sections().get(3).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
-        assertThat(t.sections().get(3).host()).isNull();
+        assertThat(t.sections().get(1).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
+        assertThat(t.sections().get(1).fields()).extracting(f -> f.id()).containsExactly("total-tx", "error-count",
+                "unmapped-count", "unmapped-note", "quota-count", "quota-note", "had-outage", "outage-errors", "sla-rate", "sla-above");
+        assertThat(t.sections().get(1).fields()).extracting(f -> f.id(), f -> f.type(), f -> f.label()).contains(
+                org.assertj.core.groups.Tuple.tuple("unmapped-count", "number", "Map yapılmamış hata adedi"),
+                org.assertj.core.groups.Tuple.tuple("unmapped-note", "textarea", "Map yapılmamış hatalar hakkında açıklama"),
+                org.assertj.core.groups.Tuple.tuple("quota-count", "number", "Kota hatası adedi"),
+                org.assertj.core.groups.Tuple.tuple("quota-note", "textarea", "Kota hataları hakkında açıklama"));
         // 2026-10-17 (4b): "SLA hedefin üstünde mi?" hedefle otomatik (kullanıcı kararı: alanda hedef + otomatik hesap); diğerleri elle
-        assertThat(t.sections().get(3).fields()).filteredOn(f -> !"sla-above".equals(f.id())).allMatch(f -> f.calc() == null);
-        assertThat(t.sections().get(3).fields()).extracting(f -> f.id()).doesNotContain("unmapped-count", "quota-count");
-        var slaRate = t.sections().get(3).fields().stream().filter(f -> "sla-rate".equals(f.id())).findFirst().orElseThrow();
+        assertThat(t.sections().get(1).fields()).filteredOn(f -> !"sla-above".equals(f.id())).allMatch(f -> f.calc() == null);
+        var slaRate = t.sections().get(1).fields().stream().filter(f -> "sla-rate".equals(f.id())).findFirst().orElseThrow();
         assertThat(slaRate.target()).isEqualTo(99.95);
         assertThat(slaRate.better()).isEqualTo("higher");
-        var slaAbove = t.sections().get(3).fields().stream().filter(f -> "sla-above".equals(f.id())).findFirst().orElseThrow();
+        var slaAbove = t.sections().get(1).fields().stream().filter(f -> "sla-above".equals(f.id())).findFirst().orElseThrow();
         assertThat(slaAbove.calc().kind()).isEqualTo("compare");
         assertThat(slaAbove.calc().of()).isEqualTo("sla-rate");
         // Renkli kutucuklar (kullanıcı kararı: 6 karışık) ve karşılaştırma cümleleri ({d:} fark, {t:} hedef, {dt:} hedefe uzaklık)
         assertThat(t.sections().get(0).tiles()).containsExactly("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
         assertThat(t.sections().get(0).lines()).anyMatch(l -> l.contains("{d:error-count}") && l.contains("{d:error-rate}"))
                 .anyMatch(l -> l.contains("{t:sla-rate}") && l.contains("{dt:sla-rate}"));
-        assertThat(t.sections().get(4).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
-        assertThat(t.sections().get(4).fields()).allMatch(f -> f.calc() != null);
+        assertThat(t.sections().get(2).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
+        assertThat(t.sections().get(2).fields()).allMatch(f -> f.calc() != null);
         // Kullanıcı kararı 2026-10-17: anomali adları
-        var issues = t.sections().get(5);
+        var issues = t.sections().get(3);
         assertThat(issues.title()).isEqualTo("Anormal Artış Gösteren Hatalar");
         assertThat(issues.itemTitle()).isEqualTo("{konu}: Hata Artışı");
         assertThat(issues.descriptionLabel()).isEqualTo("Ne oldu? (zaman, yer, etki)");
@@ -62,7 +62,7 @@ class TechErrorTemplateTest {
         assertThat(issues.errorsLabel()).isEqualTo("Bu konudan kaynaklı teknik hata adedi");
         // Kullanıcı kararı 2026-10-15: SLA tablosu elle girilmez — raporlama aracının tablosunun ekran görüntüsü, tam genişlik
         // (iki kolon); tek görüntü ya da iki ayrı görüntü
-        var sla = t.sections().get(6);
+        var sla = t.sections().get(4);
         assertThat(sla.title()).isEqualTo("SLA Erişilebilirlik Tablosu");
         assertThat(sla.columns()).isEmpty();
         assertThat(sla.slots()).extracting(Slot::width).containsExactly("full", "full");
@@ -72,10 +72,10 @@ class TechErrorTemplateTest {
         assertThat(t.sections()).noneMatch(s -> "trend".equals(s.kind()));
         // "Grafikler hakkında" altında YALNIZ iki görsel bölümü (kullanıcı kararı 2026-10-16): son 12 ayın yıllık göstergeleri
         // ve raporun ayının günlük göstergeleri — adlar, sıra ve genişlikler kullanıcının verdiği gibi
-        assertThat(t.sections().get(7).title()).isEqualTo("Grafikler hakkında");
-        assertThat(t.sections().subList(8, 10)).extracting(s -> s.title()).containsExactly(
+        assertThat(t.sections().get(5).title()).isEqualTo("Grafikler hakkında");
+        assertThat(t.sections().subList(6, 8)).extracting(s -> s.title()).containsExactly(
                 "12 Aylık Özetler - Yıllık Göstergeler", "{ay} {yil} Özetler - Günlük Göstergeler");
-        assertThat(t.sections().get(8).slots()).extracting(Slot::label, Slot::width).containsExactly(
+        assertThat(t.sections().get(6).slots()).extracting(Slot::label, Slot::width).containsExactly(
                 org.assertj.core.groups.Tuple.tuple("Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)", "half"),
                 org.assertj.core.groups.Tuple.tuple("Toplam Operasyon Adetleri (Son 12 Ay)", "half"),
                 org.assertj.core.groups.Tuple.tuple("Teknik/Business Hata Oranı Trendi (Son 12 Ay)", "full"),
@@ -84,7 +84,7 @@ class TechErrorTemplateTest {
                 org.assertj.core.groups.Tuple.tuple("Bölüm ve Müdürlük Bazlı Toplam Operasyon ve Hata Özet Tablosu (Son 12 Ay)", "full"),
                 org.assertj.core.groups.Tuple.tuple("Kanal Bazında Teknik Hata Adetleri (Son 12 Ay)", "half"),
                 org.assertj.core.groups.Tuple.tuple("Kanal Bazında Business Hata Adetleri (Son 12 Ay)", "half"));
-        assertThat(t.sections().get(9).slots()).extracting(Slot::label, Slot::width).containsExactly(
+        assertThat(t.sections().get(7).slots()).extracting(Slot::label, Slot::width).containsExactly(
                 org.assertj.core.groups.Tuple.tuple("{ay} {yil} Operasyon ve Hata Dağılım Özeti", "half"),
                 org.assertj.core.groups.Tuple.tuple("{ay} {yil} Toplam Operasyon Adetleri (Günlük)", "half"),
                 org.assertj.core.groups.Tuple.tuple("{ay} {yil} Müdürlük Bazında Teknik Hata Adetleri", "half"),
@@ -95,16 +95,17 @@ class TechErrorTemplateTest {
         // Grafik yuvaları yalnız bu iki bölümde: SLA ekran görüntüleri (2) + 8 + 7
         assertThat(t.allSlots()).hasSize(17);
         // Yıllık bölümün adı zaman tabanını söyler; günlük bölümün adı raporun ayıyla başlar
-        assertThat(t.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Son 12 Ay)"));
-        assertThat(t.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{ay} {yil} "));
+        assertThat(t.sections().get(6).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Son 12 Ay)"));
+        assertThat(t.sections().get(7).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{ay} {yil} "));
         // EN: aynı yapı ve aynı genişlikler
         Template en = TechErrorTemplate.defaults("en");
-        assertThat(en.sections().subList(8, 10)).extracting(s -> s.title()).containsExactly(
+        assertThat(en.sections().subList(6, 8)).extracting(s -> s.title()).containsExactly(
                 "12-Month Summaries - Yearly Indicators", "{month} {year} Summaries - Daily Indicators");
-        assertThat(en.sections().get(8).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Last 12 Months)"));
-        assertThat(en.sections().get(9).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{month} {year} "));
+        assertThat(en.sections().get(6).slots()).extracting(Slot::label).allMatch(l -> l.endsWith("(Last 12 Months)"));
+        assertThat(en.sections().get(7).slots()).extracting(Slot::label).allMatch(l -> l.startsWith("{month} {year} "));
         assertThat(en.allSlots()).extracting(Slot::width).isEqualTo(t.allSlots().stream().map(Slot::width).toList());
-        assertThat(en.sections().get(8).slots().get(0).label())
+        assertThat(en.sections().get(1).fields()).extracting(f -> f.id()).isEqualTo(t.sections().get(1).fields().stream().map(f -> f.id()).toList());
+        assertThat(en.sections().get(6).slots().get(0).label())
                 .isEqualTo("Annual Operations and Error Distribution Summary (Last 12 Months)");
         assertThat(t.allFields()).extracting(f -> f.id()).contains("error-rate", "error-rate-excl", "total-tx",
                 "tx-increase", "tx-increase-pct", "sla-rate", "sla-above", "error-count", "outage-errors", "outage-share",
@@ -144,9 +145,9 @@ class TechErrorTemplateTest {
     }
 
     @Test
-    @DisplayName("gösterim yeri (host, 2026-10-17): yalnız gösterge bölümünde ve aynı şablondaki bir yönetici özetine; katı reddeder, saklı düşürür; JSON'da korunur")
+    @DisplayName("gösterim yeri (host, 2026-10-17): yalnız gösterge bölümünde ve aynı şablondaki bir yönetici özetine; katı reddeder, saklı düşürür; JSON'da korunur (4a düzeni — varsayılanda gömülü bölüm yok, özellik duruyor)")
     void hostStrictAndLenient() {
-        Template d = TechErrorTemplate.defaults("tr");
+        Template d = TechErrorTestTemplates.hostedDefaults("tr");
         assertThat(TechErrorTemplate.hostOf(d, d.sections().get(1)).id()).isEqualTo("exec-summary");
         assertThat(TechErrorTemplate.hostOf(d, d.sections().get(3))).isNull();                 // Verileri: ayrı bölüm
         assertThat(TechErrorTemplate.hostOf(d, d.sections().get(0))).isNull();                 // özet bölümünün kendisi

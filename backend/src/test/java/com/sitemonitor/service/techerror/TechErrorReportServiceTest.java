@@ -191,10 +191,17 @@ class TechErrorReportServiceTest {
         service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
         service.upload(r.getId(), "quota-unmapped-monthly", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
 
-        // Kanal şablonundan kota bölümü ve kota grafiği çıkar
+        // Kanal şablonundan kota açıklaması alanı (7. sürüm: "Verileri" bölümünde) ve kota grafiği çıkar
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
-        secs.removeIf(x -> "quota".equals(x.get("id")));
+        secs.replaceAll(x -> {
+            if (!(x.get("fields") instanceof List<?> fl)) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            List<Object> fields = new ArrayList<>(fl);
+            fields.removeIf(f -> "quota-note".equals(((Map<?, ?>) f).get("id")));
+            copy.put("fields", fields);
+            return copy;
+        });
         Map<String, Object> charts = new LinkedHashMap<>(secs.stream().filter(x -> "charts".equals(x.get("id"))).findFirst().orElseThrow());
         @SuppressWarnings("unchecked") List<Map<String, Object>> slots = new ArrayList<>((List<Map<String, Object>>) charts.get("slots"));
         slots.removeIf(x -> "quota-unmapped-monthly".equals(x.get("id")));
