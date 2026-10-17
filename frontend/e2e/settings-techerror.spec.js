@@ -268,16 +268,16 @@ for (const vp of VIEWPORTS) {
       expect(lines[0]).toBe('Kanal,Takım,Aktif,Modül takıma açık,Takım e-postası,Yönetici alıcı sayısı,PO onaylayıcı sayısı,Dönem raporu durumu,Onay durumu')
       expect(lines.some((l) => l.includes(LONG_CHANNEL))).toBe(true)
 
-      // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal)
+      // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal). Sayfa YENİLENİR ve Excel, CSV adımıyla AYNI
+      // akışla (menünün ilk açılışı) alınır — CI'da (Linux, 2026-10-18) aynı menünün ikinci açılışında Excel öğesi indirme
+      // başlatmadı, tost da yoktu (yerelde 6× işlemci kısıtıyla bile yeniden üretilemedi). Süzülmüş liste yine sınanır;
+      // indirme gelmezse ekrandaki iletiler hataya yazılır.
+      await page.reload()
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
       await root.locator('[data-slot="tes-search"]').fill('odeme')
       await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(2)
-      // CSV adımıyla AYNI sıra: menü görünür, açılış animasyonu biter, öğe menünün İÇİNDEN tıklanır. CI (Linux, 2026-10-18):
-      // CSV seçiminden sonra menü bazen açık kalıyordu ve ikinci tetik tıklaması onu KAPATIYORDU (öğe / menü bulunamadı) —
-      // menü görünmüyorsa açılır, açıksa olduğu gibi kullanılır. İndirme gelmezse ekrandaki tost metni hataya yazılır.
-      await expect(async () => {
-        if (!(await menu.isVisible())) await trigger.click()
-        await expect(menu).toBeVisible({ timeout: 2_000 })
-      }).toPass({ timeout: 30_000 })
+      await trigger.click()
+      await expect(menu).toBeVisible()
       await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
       const xlDownload = page.waitForEvent('download', { timeout: 45_000 }).catch(async (e) => {
         const toasts = await page.locator('[data-sonner-toast], [role="status"], [role="alert"]').allInnerTexts().catch(() => [])
