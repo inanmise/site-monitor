@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CircleAlert, Mail, Monitor, Paperclip, RefreshCw, Send, Smartphone } from 'lucide-react'
+import { CircleAlert, Mail, MailCheck, Monitor, Paperclip, RefreshCw, Send, Smartphone } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
@@ -35,9 +36,32 @@ const APPROVAL_TEXT_KEYS = Object.freeze({ pending: 'te.mail.appr.pending', none
 
 export default function MailPreviewDialog({ reportId, open, onClose, onSend, sendLabel, uiLang }) {
   const t = useT()
+  const toast = useToast()
   const [state, setState] = useState({ loading: true, failed: false, error: null, data: null })
   const [width, setWidth] = useState('desktop')
+  const [testing, setTesting] = useState(false)
   const seq = useRef(0)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+
+  // "Bana test gönder" (R13): önizlenen posta YALNIZ bana — sunucu gönderimle aynı gövdeyi üretir; rapor "gönderildi" olmaz.
+  // Pencere kapanırsa cevap yine toast olarak gelir (toast penceresiz yaşar); durum yalnız pencere açıkken yazılır.
+  const sendTest = useCallback(async () => {
+    setTesting(true)
+    try {
+      const res = await api.techErrors.mailPreviewTest(reportId)
+      if (res?.success && res.data) {
+        if (res.data.status === 'QUEUED') toast.info(t('te.mail.testQueued', res.data.sent_to || '—'))
+        else toast.success(t('te.mail.testDone', res.data.sent_to || '—'))
+      } else {
+        toast.error(res?.error || t('te.mail.testNotSent'), { details: res?.errorInfo })
+      }
+    } catch (e) {
+      toast.error(e?.message || t('te.mail.testNotSent'))
+    } finally {
+      if (alive.current) setTesting(false)
+    }
+  }, [reportId, toast, t])
 
   // Bir açılışta bir okuma (sunucu PDF'i de üretir — dil değişimi yeniden üretmez); geç cevap düşer (sıra)
   const load = useCallback(() => {
@@ -159,8 +183,17 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
 
         <DialogFooter className="shrink-0 flex-col-reverse gap-2 sm:flex-row">
           <Button type="button" variant="outline" className="pointer-coarse:min-h-10" onClick={onClose}>{t('te.close')}</Button>
+          {/* Yalnız kendine test (R13): her okuyana (paylaşımla okuyan da — posta yalnız kendine); PDF sınırı aşıyorsa
+              gönderim gibi test de gidemez → düğme yok. Alıcı eksikliği (takım / yönetici) testi engellemez. */}
+          {d && d.problem !== 'PDF_TOO_LARGE' && (
+            <Button type="button" variant="secondary" className="pointer-coarse:min-h-10" data-slot="te-mail-test" disabled={testing}
+              aria-busy={testing || undefined} onClick={sendTest}>
+              {testing ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <MailCheck aria-hidden="true" />}
+              {testing ? t('te.mail.testSending') : t('te.mail.test')}
+            </Button>
+          )}
           {onSend && d && !d.problem && (
-            <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-send" onClick={() => { onClose(); onSend() }}>
+            <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-send" disabled={testing} onClick={() => { onClose(); onSend() }}>
               <Send aria-hidden="true" /> {sendLabel || t('te.send')}
             </Button>
           )}

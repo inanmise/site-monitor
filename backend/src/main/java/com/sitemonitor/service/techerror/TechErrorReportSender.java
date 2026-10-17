@@ -148,6 +148,24 @@ public class TechErrorReportSender {
                           long pdfBytes, int maxMailMb) {}
 
     public Preview preview(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery) {
+        Rendering r = render(report, channel, team, delivery, null);
+        // Alıcı sorunu önde (gönderim de önce onu söyler), yoksa PDF sınırı
+        String problem = r.recipientProblem() != null ? r.recipientProblem() : r.pdfTooLarge() ? "PDF_TOO_LARGE" : null;
+        TechErrorReportMail.Built built = r.mail();
+        return new Preview(TechErrorReportMail.subject(r.in()), r.to(), r.cc(), r.role(), inlineBrandLogo(inlineCids(built.mail().html(), built.inline())),
+                built.mail().text(), r.fileName(), built.embeddedImages(), built.skippedImages(), problem, r.in().provenance(), r.pdf().length, maxMailMb);
+    }
+
+    /**
+     * Önizleme ve test gönderiminin ortak üretimi: alıcılar teslim yoluna göre, PDF (gönderimle aynı merdiven ve izin —
+     * 429 {@link TechErrorReportService.PdfBusyException}), görseller izin içinde, posta sınırı PDF + gömülü görsellerin
+     * TOPLAMI (sığmazsa görseller yalnız PDF'te), gövde {@link TechErrorReportMail#buildFull} ile ({@code intro} = banddan
+     * sonraki ek blok, null = yok). Talep / günlük / içerik sayacı yok — çağıran karar verir.
+     */
+    record Rendering(TechErrorPdfInput in, byte[] pdf, TechErrorReportMail.Built mail, String fileName, List<String> to, List<String> cc,
+                     String role, String recipientProblem, boolean pdfTooLarge) { }
+
+    private Rendering render(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery, TechErrorReportMail.Intro intro) {
         List<String> to;
         List<String> cc = List.of();
         String role;
@@ -169,7 +187,7 @@ public class TechErrorReportSender {
         long inlineBudget = Math.max(0, mailInlineMb) * 1024L * 1024L;
         // Gönderimle AYNI yol (inceleme 2026-10-17): PDF de üretilir (aynı merdiven, aynı izin — 429 PdfBusyException), görseller
         // izin içinde hazırlanır; posta sınırı PDF + gömülü görsellerin TOPLAMI: sığmazsa görseller yalnız PDF'te ("PDF ekinde"
-        // kutuları), PDF tek başına sığmazsa problem PDF_TOO_LARGE (gövde yine görülür; gönderim 409 ile durur)
+        // kutuları), PDF tek başına sığmazsa pdfTooLarge (önizlemede gövde yine görülür; gönderim / test 409 ile durur)
         TechErrorMailImages.Result[] mailImages = { TechErrorMailImages.Result.empty() };
         TechErrorMailImages.Result[] mailFallback = { TechErrorMailImages.Result.empty() };
         TechErrorReportService.Rendered rendered = service.renderPdf(() -> {
@@ -186,13 +204,88 @@ public class TechErrorReportSender {
         TechErrorPdfInput in = rendered.meta();
         byte[] pdf = rendered.pdf();
         long max = Math.max(1, maxMailMb) * 1024L * 1024L;
-        if (pdf.length > max && problem == null) problem = "PDF_TOO_LARGE";
+        boolean pdfTooLarge = pdf.length > max;
         if (mailImages[0].bytes() > 0 && pdf.length + mailImages[0].bytes() > max) mailImages[0] = mailFallback[0];
         String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
                 in.template().lang());
-        TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, null, audienceOf(delivery));
-        return new Preview(TechErrorReportMail.subject(in), List.copyOf(to), cc, role, inlineBrandLogo(inlineCids(built.mail().html(), built.inline())),
-                built.mail().text(), fileName, built.embeddedImages(), built.skippedImages(), problem, in.provenance(), pdf.length, maxMailMb);
+        TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, intro, audienceOf(delivery));
+        return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge);
+    }
+
+    /** Test gönderiminin konu öneki (dilden bağımsız) ve günlük tetikleyicisi. */
+    public static final String TEST_SUBJECT_PREFIX = "[TEST] ";
+    public static final String TEST_TRIGGER = "TECH_ERROR_REPORT_TEST";
+
+    /**
+     * Önizlenen postayı YALNIZ çağıranın kendisine gönderir (R13 / B5, 2026-10-17 — kullanıcı isteği: "bana test gönder").
+     * Gövde gönderimle aynı ({@link #render}: aynı girdi, aynı görseller, aynı dosya adı, aynı dipnot kitlesi), konu
+     * {@value #TEST_SUBJECT_PREFIX} önekli, banddan hemen sonra "bu bir TEST gönderimidir" kutusu ({@code lang} = okuyanın
+     * arayüz dili; gövdenin kalanı şablon dilinde). Talep, içerik sayacı, geçmiş olayı, {@code last_sent_*} ve onay denetimi
+     * YOK — rapor "gönderildi" olmaz. Her deneme için BİR {@code notification_logs} satırı (tetikleyici {@value #TEST_TRIGGER},
+     * rol {@code SELF}, alıcı = kullanıcının adresi): posta servisinin cevabı (SENT / FAILED / SKIPPED / QUEUED_RETRY… —
+     * kuyruk yalnız kaydedilir, sonuçlandırma yok), PDF sırası dolu → SKIPPED, PDF sınırı aşıyor → FAILED + 409
+     * {@code PDF_TOO_LARGE} (gönderimle aynı metin), beklenmeyen hata → FAILED sınıf adıyla.
+     */
+    public Result sendTest(TechErrorReport report, TechErrorChannel channel, Team team, Delivery delivery, String toEmail, String lang) {
+        if (!isDeliverable(toEmail)) throw noEmail();
+        String to = toEmail.trim();
+        String subject = null;
+        String status = "FAILED: gönderim tamamlanamadı";
+        try {
+            Rendering r;
+            try {
+                r = render(report, channel, team, delivery, testIntro(lang));
+            } catch (TechErrorReportService.PdfBusyException busy) {
+                status = "SKIPPED: PDF sırası dolu, gönderilmedi";
+                throw busy;
+            }
+            subject = TEST_SUBJECT_PREFIX + TechErrorReportMail.subject(r.in());
+            if (r.pdfTooLarge()) {
+                status = "FAILED: PDF e-posta sınırını aşıyor (" + mb(r.pdf().length) + " MB > " + maxMailMb + " MB)";
+                throw pdfTooLarge(r.pdf().length);
+            }
+            MailDoc.Mail mail = r.mail().mail();
+            String answer = email.sendHtml(new String[]{ to }, null, subject, mail.html(), mail.text(), r.mail().inline(), false,
+                    List.of(new EmailNotificationService.MailAttachment(r.fileName(), r.pdf(), "application/pdf")));
+            status = answer == null ? "FAILED: sonuç yok" : answer;
+            return new Result(classify(status), status, List.of(to), r.pdf().length, subject);
+        } catch (RuntimeException e) {
+            if (!(e instanceof CodedConflictException) && !(e instanceof TechErrorReportService.PdfBusyException)) {
+                log.warn("Teknik hata raporu test postası gönderilemedi (rapor {}): {}", report.getId(), e.toString());
+                if (status.startsWith("FAILED: gönderim tamamlanamadı")) status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
+            }
+            throw e;
+        } finally {
+            saveLog(TEST_TRIGGER, team, List.of(to), null, "SELF", subject != null ? subject : TEST_SUBJECT_PREFIX + channel.getName(), status);
+        }
+    }
+
+    /** Oturum kullanıcısının hesabında teslim edilebilir adres yok — test postası gidemez (409 {@code NO_EMAIL}). */
+    public static CodedConflictException noEmail() {
+        return new CodedConflictException("NO_EMAIL", Msg.t(
+                "Hesabınızda e-posta adresi yok; test postası gönderilemez. Yöneticinizden adres eklemesini isteyin.",
+                "Your account has no e-mail address, so the test mail can't be sent. Ask your administrator to add one."));
+    }
+
+    /** Banddan sonraki test kutusu: okuyanın dilinde (postanın kalanı şablon dilinde kalır). */
+    static TechErrorReportMail.Intro testIntro(String lang) {
+        boolean en = "en".equalsIgnoreCase(lang);
+        return d -> d.alert(com.sitemonitor.service.mail.MailTokens.Tone.WARNING,
+                en ? "Test send" : "Test gönderimi",
+                en ? "This is a TEST send — it went only to you; it was not sent to the team / executives."
+                        : "Bu bir TEST gönderimidir — yalnız size gitti; takıma / yöneticilere gönderilmedi.");
+    }
+
+    /** PDF tek başına posta sınırını aşıyor (gönderim ve test gönderimi aynı metinle). */
+    private CodedConflictException pdfTooLarge(long pdfBytes) {
+        return new CodedConflictException("PDF_TOO_LARGE", Msg.t(
+                "PDF " + mb(pdfBytes) + " MB; e-posta sınırı " + maxMailMb + " MB — görseller en düşük baskı çözünürlüğünde "
+                        + "bile sığmıyor. Bazı görselleri daha az alan kaplayan ekran görüntüleriyle değiştirin ya da PDF'i "
+                        + "indirip elle gönderin.",
+                "The PDF is " + mb(pdfBytes) + " MB; the e-mail limit is " + maxMailMb + " MB — the images don't fit even at "
+                        + "the lowest print resolution. Replace some images with screenshots of a smaller area, or download "
+                        + "the PDF and send it yourself."),
+                java.util.Map.of("max_mb", maxMailMb));
     }
 
     /** Dipnotun "neden aldınız" cümlesi teslim yoluna göre (inceleme 2026-10-17: yöneticiler "takım adresi olduğunuz için" okuyordu). */
@@ -336,14 +429,7 @@ public class TechErrorReportSender {
             long max = Math.max(1, maxMailMb) * 1024L * 1024L;
             if (pdf.length > max) {
                 finalStatus = "FAILED: PDF e-posta sınırını aşıyor (" + mb(pdf.length) + " MB > " + maxMailMb + " MB)";
-                throw new CodedConflictException("PDF_TOO_LARGE", Msg.t(
-                        "PDF " + mb(pdf.length) + " MB; e-posta sınırı " + maxMailMb + " MB — görseller en düşük baskı çözünürlüğünde "
-                                + "bile sığmıyor. Bazı görselleri daha az alan kaplayan ekran görüntüleriyle değiştirin ya da PDF'i "
-                                + "indirip elle gönderin.",
-                        "The PDF is " + mb(pdf.length) + " MB; the e-mail limit is " + maxMailMb + " MB — the images don't fit even at "
-                                + "the lowest print resolution. Replace some images with screenshots of a smaller area, or download "
-                                + "the PDF and send it yourself."),
-                        java.util.Map.of("max_mb", maxMailMb));
+                throw pdfTooLarge(pdf.length);
             }
             String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), fresh.getReportYear(), fresh.getReportMonth(),
                     in.template().lang());
@@ -448,6 +534,11 @@ public class TechErrorReportSender {
 
     /** Gönderim kararının günlük satırı; kimliği döner (yazılamazsa null — karar yine de sonlanır). */
     private Long saveLog(Team team, List<String> to, String[] cc, String role, String subject, String status) {
+        return saveLog(TRIGGER, team, to, cc, role, subject, status);
+    }
+
+    /** Aynı satır şekli, verilen tetikleyiciyle ({@link #TRIGGER} gönderim, {@link #TEST_TRIGGER} kendine test). */
+    private Long saveLog(String trigger, Team team, List<String> to, String[] cc, String role, String subject, String status) {
         try {
             NotificationLog n = new NotificationLog();
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
@@ -459,7 +550,7 @@ public class TechErrorReportSender {
             n.setSubject(clip(subject, 500));
             n.setEmailStatus(clip(status, 250));
             n.setWebhookStatus("SKIPPED");
-            n.setTrigger(TRIGGER);
+            n.setTrigger(trigger);
             n.setEmailFrom(email.fromAddress());
             NotificationLog saved = logs.save(n);
             return saved == null ? null : saved.getId();

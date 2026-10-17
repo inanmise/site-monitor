@@ -822,6 +822,12 @@ public class TechErrorReportService {
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────
 
+    /** Kullanıcı kimliği → hesabın e-posta adresi (test postası, R13); yoksa / bulunamazsa null. Teslim edilebilirliği çağıran denetler. */
+    public String userEmail(Long userId) {
+        if (userId == null) return null;
+        return users.findById(userId).map(AppUser::getEmail).orElse(null);
+    }
+
     /** Kullanıcı kimliği → görünen ad (yoksa kullanıcı adı); bulunamazsa null. */
     public String displayName(Long userId) {
         if (userId == null) return null;

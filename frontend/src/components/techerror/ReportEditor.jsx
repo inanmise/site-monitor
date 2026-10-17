@@ -22,6 +22,7 @@ import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBloc
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
+import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
   reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
@@ -829,6 +830,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             <span className="[overflow-wrap:anywhere]">· {t('te.lastSent', fmtDateTime(report.last_sent_at, uiLang), report.last_sent_to || '—')}</span>
           )}
         </div>
+        {/* Alıcı özeti (R13 / B6): takım adresi sayısı, onay akışında yönetici alıcı sayısı + onay durumu — yalnız sayılar */}
+        <RecipientsSummary teamEmailCount={data.team_email_count} approvalDetail={approvalDetail} approval={report.approval} />
       </header>
 
       <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}

@@ -11,19 +11,25 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
 
-/** Onay durumu → ton (rozet / kart kenarı). Bilinmeyen durum nötr; "stale" uyarı (yeniden onay gerekir). */
-const TONE = {
+/** Onay durumu → ton (rozet / kart kenarı). Bilinmeyen durum nötr; "stale" uyarı (yeniden onay gerekir). Alıcı özeti de kullanır (R13). */
+export const APPROVAL_TONE = Object.freeze({
   none: 'bg-muted text-muted-foreground',
   pending: 'bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
   approved: 'bg-green-600/10 text-green-800 dark:bg-green-500/15 dark:text-green-300',
   rejected: 'bg-destructive/10 text-destructive',
   stale: 'bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
-}
+})
+const TONE = APPROVAL_TONE
 const ICON = { none: ShieldCheck, pending: Clock, approved: CheckCircle2, rejected: XCircle, stale: RefreshCw }
 
 export function approvalStateOf(approval) {
   const s = approval?.state
   return TONE[s] ? s : 'none'
+}
+
+/** Onay durumunun etiket anahtarı — kart rozeti ve rapor başlığındaki alıcı özeti aynı metni kullanır (tek kaynak). */
+export function approvalStateLabelKey(approval) {
+  return `te.appr.state.${approvalStateOf(approval)}`
 }
 
 /**

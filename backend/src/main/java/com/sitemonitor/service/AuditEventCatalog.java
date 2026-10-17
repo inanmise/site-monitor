@@ -294,6 +294,7 @@ public final class AuditEventCatalog {
             "TECH_ERROR_REPORT_CREATE",   // ay raporu açıldı
             "TECH_ERROR_REPORT_DELETE",
             "TECH_ERROR_REPORT_SEND",     // PDF takımın e-posta adresine gönderildi (sonuç detayda)
+            "TECH_ERROR_REPORT_TEST_MAIL", // önizlenen posta yalnız çağıranın kendisine (test, R13 — 2026-10-17); rapor gönderilmiş olmaz
             "TECH_ERROR_REPORT_UPDATE",   // değer kaydı, görsel ekle/kaldır, şablonun son hâlini uygula
             "TECH_ERROR_TEMPLATE_SAVE",   // kanal şablonu kaydedildi
             "TECH_ERROR_REPORT_APPROVAL_REQUEST", // PO onayına gönderildi (2026-10-17, S6)
