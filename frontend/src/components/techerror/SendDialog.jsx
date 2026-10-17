@@ -12,7 +12,9 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  * (takıma ya da yöneticilere), artı isteğe bağlı "Bu gönderime ek bilgi (CC)" alanı — virgülle ayrılmış en çok 10 adres;
  * kanalda saklanmaz, yalnız bu gönderim içindir. İstemci biçim + sayı denetimi (`parseExtraCc`) alanın altında; sunucunun
  * alan hatası (`extra_cc` — ör. Bilgi toplamı 20'yi aşıyor) `serverError` ile aynı yerde. Gönderim sürerken pencere açık
- * kalır (alan hatası gelirse düzeltilsin), kapatılamaz.
+ * kalır (alan hatası gelirse düzeltilsin), kapatılamaz. Alan çok satırlı (yapıştırılan satır satır liste ayrışır — tek satırlı
+ * girdi satır sonlarını SİLER ve adresleri birleştirirdi); Enter formu gönderir (birincil eylem), Shift+Enter yeni satır,
+ * IME birleştirmesi sürerken Enter dokunulmaz (inceleme 2026-10-18).
  *
  * `onConfirm(extraCc)`: `extraCc` boşsa `''` — çağıran gövdesiz eski isteği atar.
  */
@@ -47,6 +49,12 @@ export default function SendDialog({ open, title, message, busy, serverError, on
 
   const error = clientError || serverError || null
 
+  function onKeyDown(e) {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.nativeEvent?.isComposing || e.keyCode === 229) return
+    e.preventDefault()
+    submit()
+  }
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onCancel() }}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-lg" data-slot="te-send-dialog"
@@ -61,6 +69,7 @@ export default function SendDialog({ open, title, message, busy, serverError, on
               <Textarea ref={inputRef} id={id} rows={2} maxLength={MAX_EXTRA_CC_INPUT} value={value} disabled={busy}
                 aria-describedby={describedBy} aria-invalid={invalid} autoComplete="off" spellCheck={false}
                 placeholder={t('te.send.ccPlaceholder')} data-slot="te-send-extra-cc" className="min-h-16 [overflow-wrap:anywhere]"
+                onKeyDown={onKeyDown}
                 onChange={(e) => { setValue(e.target.value); setClientError(null); onEdit?.() }} />
             )}
           </Field>

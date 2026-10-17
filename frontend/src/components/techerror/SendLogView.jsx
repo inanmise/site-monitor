@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 import { fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import {
   SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_SIZE_OPTIONS, SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_STATUS_TONE, TE_SLK, TE_SLP, TE_SLPS,
-  TE_SLS, normalizeSendLogKind, normalizeSendLogStatus, sendLogKindOf, sendLogRoleKey, sendLogStatusOf,
+  TE_SLS, normalizeSendLogKind, normalizeSendLogStatus, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf,
 } from './sendModel.js'
 
 /** Tablo ↔ kart eşiği: LİSTE KABININ genişliği (görünüm alanı değil; jsdom 0 → tablo). */
@@ -27,9 +27,14 @@ export const SENDLOG_TABLE_MIN_PX = 760
 /**
  * Kanalın GÖNDERİM GÜNLÜĞÜ (R18 / E22, 2026-10-18 — kullanıcı onayı): `te_tab=sendlog`. Rapor gönderimi, kendine test,
  * onay ve hatırlatma postalarının `notification_logs` satırları — en yeni önce, sunucu sayfalı (`te_slp` / `te_slps`),
- * tür (`te_slk`) ve durum sınıfı (`te_sls`) süzgeçli. Kap ≥ 760 px tablo, altında kart; alıcılar sararak TAM yazılır
- * (kırpılmaz). Yalnız paylaşımla okuyan adresleri değil sayıları görür (sunucu `to` / `cc` / `status_text` vermez). Okuma
- * hatası "kayıt yok" değildir: tehlike kutusu + yeniden dene; elde önceki sayfa varsa üstte uyarı, satırlar kalır.
+ * tür (`te_slk`) ve durum sınıfı (`te_sls`) süzgeçli. Kap ≥ 760 px tablo, altında kart; alıcılar sararak yazılır
+ * (kırpılmaz). Günlük kolonu (255 karakter) sığmayan adresleri " … +N" olarak saklar: sunucu eki ayırır, burada
+ * "+N adres daha" yazılır — "tam liste" denmez. Ham durum metni (posta sunucusunun iletisi) gelmez; yalnız sebep kodu
+ * (`reason`) dilinde yazılır. Yalnız paylaşımla okuyan adresleri değil sayıları görür (sunucu `to` / `cc` vermez). Okuma
+ * hatası "kayıt yok" değildir: tehlike kutusu + yeniden dene; elde önceki sayfa varsa üstte uyarı, satırlar kalır — ama
+ * SÜZGEÇ (tür / durum / kanal) değişince önceki süzgecin satırları ve hatası hemen kalkar (inceleme 2026-10-18): yeni
+ * süzgeç yüklenirken eski satırlar onun sonucu gibi görünmez, okunamazsa yalnız hata görünür. Sunucu son sayfadan büyük bir
+ * sayfayı son sayfaya sıkıştırır; yanıttaki sayfaya bağlanılır.
  */
 export default function SendLogView({ channelId }) {
   const t = useT()
@@ -44,6 +49,12 @@ export default function SendLogView({ channelId }) {
   })
   const seq = useRef(0)
   const { bind } = sp
+  // Son yüklenen süzgeç: değişince eski satırlar / hata hemen kalkar (sayfa değişimi ve Yenile satırları korur)
+  const filterKey = `${channelId}|${kind}|${status}`
+  const loadedFilter = useRef(null)
+  // Sunucunun sıkıştırdığı sayfaya bağlanmak için (setPage her çizimde yeni — yükleme geri çağrısına bağımlılık olmasın)
+  const setPageRef = useRef(sp.setPage)
+  useEffect(() => { setPageRef.current = sp.setPage })
 
   useUrlQuerySync({
     [TE_SLK]: kind === 'all' ? null : kind,
@@ -52,12 +63,18 @@ export default function SendLogView({ channelId }) {
 
   const load = useCallback(() => {
     const my = ++seq.current
-    setState((s) => ({ ...s, loading: true }))
-    api.techErrors.sendLog(channelId, { page: sp.apiPage, size: sp.pageSize, kind, status }).then((res) => {
+    const requested = sp.apiPage
+    const freshFilter = loadedFilter.current !== filterKey
+    loadedFilter.current = filterKey
+    setState((s) => (freshFilter ? { loading: true, failed: false, error: null, data: null } : { ...s, loading: true }))
+    api.techErrors.sendLog(channelId, { page: requested, size: sp.pageSize, kind, status }).then((res) => {
       if (my !== seq.current) return
       if (res?.success && res.data) {
         bind(res)
         setState({ loading: false, failed: false, error: null, data: res.data })
+        // Sunucu sayfayı sıkıştırdıysa (son sayfadan büyük derin bağlantı) çubuk ve adres gerçek sayfaya geçer
+        const served = Number(res.data.page)
+        if (Number.isInteger(served) && served >= 0 && served !== requested) setPageRef.current(served + 1)
       } else {
         // Son bilinen toplam kalsın (bind çağrılmaz) — çubuk kaybolmasın
         setState((s) => ({ ...s, loading: false, failed: true, error: res?.error || null }))
@@ -66,7 +83,7 @@ export default function SendLogView({ channelId }) {
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, failed: true, error: e?.message || null }))
     })
-  }, [channelId, sp.apiPage, sp.pageSize, kind, status, bind])
+  }, [channelId, sp.apiPage, sp.pageSize, kind, status, bind, filterKey])
 
   useEffect(() => {
     load()
@@ -148,7 +165,7 @@ export default function SendLogView({ channelId }) {
                 </div>
                 <KindLine row={r} t={t} />
                 <Recipients row={r} hidden={hidden} t={t} />
-                {!hidden && r.status_text && r.status_text !== 'SENT' && <StatusText text={r.status_text} t={t} />}
+                <ReasonText row={r} t={t} />
               </CardContent>
             </Card>
           </li>
@@ -176,7 +193,7 @@ export default function SendLogView({ channelId }) {
                 <TableCell className="align-top whitespace-normal">
                   <div className="flex flex-col gap-1">
                     <StatusPill row={r} t={t} />
-                    {!hidden && r.status_text && r.status_text !== 'SENT' && <StatusText text={r.status_text} t={t} />}
+                    <ReasonText row={r} t={t} />
                   </div>
                 </TableCell>
               </TableRow>
@@ -234,7 +251,10 @@ function KindLine({ row, t }) {
   )
 }
 
-/** Alıcılar: Kime + Bilgi TAM ve sararak (kırpılmaz); paylaşımla okuyana yalnız sayılar. */
+/**
+ * Alıcılar: Kime + Bilgi sararak (kırpılmaz); günlük kolonuna sığmayanlar "+N adres daha" (rapor gönderimi teslim edildiyse
+ * tam liste raporun geçmişinde — geçmiş olayı Kime'yi tam yazar); paylaşımla okuyana yalnız sayılar.
+ */
 function Recipients({ row, hidden, t }) {
   if (hidden || !Array.isArray(row?.to)) {
     return (
@@ -245,21 +265,39 @@ function Recipients({ row, hidden, t }) {
   }
   const to = row.to || []
   const cc = Array.isArray(row.cc) ? row.cc : []
+  const toMore = sendLogMore(row, 'to')
+  const ccMore = sendLogMore(row, 'cc')
+  const st = sendLogStatusOf(row)
+  // Geçmiş olayı Kime'yi tam yazar yalnız teslim edilen RAPOR gönderiminde (test / onay postası tek alıcı; gönderilmeyende alıcı yok)
+  const historyHasList = sendLogKindOf(row) === 'report' && (st === 'sent' || st === 'queued')
   return (
     <div className="flex flex-col gap-1 text-sm" data-slot="te-sendlog-recipients">
       <p className="m-0 [overflow-wrap:anywhere]"><span className="text-muted-foreground">{t('te.slog.to')}: </span>{to.join(', ') || '—'}</p>
-      {cc.length > 0 && (
-        <p className="m-0 [overflow-wrap:anywhere]" data-slot="te-sendlog-cc"><span className="text-muted-foreground">{t('te.slog.cc')}: </span>{cc.join(', ')}</p>
+      {toMore > 0 && (
+        <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-sendlog-to-more">
+          {historyHasList ? t('te.slog.moreTo', toMore) : t('te.slog.more', toMore)}
+        </p>
+      )}
+      {(cc.length > 0 || ccMore > 0) && (
+        <p className="m-0 [overflow-wrap:anywhere]" data-slot="te-sendlog-cc"><span className="text-muted-foreground">{t('te.slog.cc')}: </span>{cc.join(', ') || '—'}</p>
+      )}
+      {ccMore > 0 && (
+        <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-sendlog-cc-more">{t('te.slog.more', ccMore)}</p>
       )}
     </div>
   )
 }
 
-/** Kayıtlı durum metni (posta sunucusunun yanıtı / atlama sebebi) — teknik ayrıntı, küçük ve sararak. */
-function StatusText({ text, t }) {
+/**
+ * Sebep (inceleme 2026-10-18): sunucunun SABİT kodu, arayüz dilinde — ham posta sunucusu iletisi değil. Gönderilen satırda
+ * kod yok (null); bilinmeyen kod yazılmaz (ham anahtar gösterilmez). Kişi verisi taşımaz: paylaşımla okuyana da görünür.
+ */
+function ReasonText({ row, t }) {
+  const key = sendLogReasonKey(row)
+  if (!key) return null
   return (
-    <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-sendlog-status-text">
-      {t('te.slog.statusText', text)}
+    <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-sendlog-reason" data-reason={row.reason}>
+      {t(key)}
     </p>
   )
 }

@@ -1813,7 +1813,7 @@ public class SchedulerService {
 
         // Kanal başına gönderim günlüğü (2026-10-18, R18 / E22): teknik hata raporu satırlarının kanal / rapor bağı —
         // NotificationLog.techErrorChannelId / techErrorReportId (NULL = bağsız; eski satırlar günlükte görünmez). Varsayılansız
-        // nullable kolon PostgreSQL'de anlık (tablo yeniden yazılmaz); sorgu tetikleyici indeksiyle (idx_nl_trigger_sent) daralır.
+        // nullable kolon PostgreSQL'de anlık (tablo yeniden yazılmaz); sorgu DeferredIndexBuilder kataloğundaki kısmi kanal indeksiyle daralır (adı burada geçmez — kapı).
         patch("ALTER TABLE notification_logs ADD COLUMN tech_error_channel_id BIGINT");
         patch("ALTER TABLE notification_logs ADD COLUMN tech_error_report_id BIGINT");
 

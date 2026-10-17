@@ -572,6 +572,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (res.data.state === 'QUEUED') toast.info(t('te.sendQueued'))
         else if (extraCc && cc) toast.success(t('te.sendDoneCc', (res.data.to || []).join(', '), cc))
         else toast.success(t('te.sendDone', (res.data.to || []).join(', ')))
+        // Dönüşümlü dağıtım (inceleme 2026-10-18): ek Bilgi'yi bilmeyen eski bir pod gövdeyi yok sayıp gönderir ve yanıtta
+        // `cc` olmaz — ek adreslere posta gitmemiş olabilir; sessiz "gönderildi" yerine kullanıcıya söylenir
+        if (extraCc && !Array.isArray(res.data.cc)) toast.info(t('te.sendCcNotConfirmed'), 12000)
       } else if (res?.field === 'extra_cc') {
         keepOpen = true
         setSendDialog({ error: res.error || t('te.send.ccRejected') })

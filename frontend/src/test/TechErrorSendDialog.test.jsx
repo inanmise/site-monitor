@@ -101,6 +101,46 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
+  it('Enter formu gönderir (birincil eylem); Shift+Enter yeni satır (gönderim yok); geçersiz girişte Enter alan hatası verir', async () => {
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+    const dlg = await openSendDialog()
+    const input = ccInput(dlg)
+    fireEvent.change(input, { target: { value: 'bozuk' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    expect(await within(dlg).findByText(/«bozuk» geçerli bir e-posta adresi değil/)).toBeInTheDocument()
+    expect(te().send).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: 'ek@example.com' } })
+    // Shift+Enter: tarayıcının yeni satırı (varsayılan engellenmez), gönderim yok
+    const shift = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(shift).toBe(true)
+    // IME birleştirmesi sürerken Enter gönderim yapmaz
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 229 })
+    expect(te().send).not.toHaveBeenCalled()
+    const plain = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    expect(plain).toBe(false)                                   // varsayılan (yeni satır) engellendi
+    await waitFor(() => expect(te().send).toHaveBeenCalledWith('100', { extra_cc: 'ek@example.com' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+  })
+
+  it('dönüşümlü dağıtım: ek Bilgi yazıldı ama yanıtta cc yok (eski sunucu) → ek adreslerin onaylanmadığı söylenir; ek Bilgi yoksa uyarı yok', async () => {
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: ['dijital@example.com'] } })   // eski pod: cc alanı yok
+    let dlg = await openSendDialog()
+    fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    await waitFor(() => expect(te().send).toHaveBeenCalledWith('100', { extra_cc: 'ek@example.com' }))
+    expect(await screen.findByText('Rapor gönderildi: dijital@example.com')).toBeInTheDocument()
+    expect(await screen.findByText(/sunucu ek Bilgi \(CC\) adreslerini onaylamadı/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    // Ek Bilgi'siz gönderimde (yanıtta cc olmasa da) uyarı yok
+    te().send.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Takıma gönder|Yeniden gönder/ }))
+    dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    await waitFor(() => expect(te().send).toHaveBeenCalledWith('100'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    expect(screen.getAllByText(/sunucu ek Bilgi \(CC\) adreslerini onaylamadı/)).toHaveLength(1)   // yalnız ilk gönderimden
+  })
+
   it('başka hata (ör. 502): pencere kapanır, bildirim; vazgeç istek atmaz ve bir sonraki açılış boş başlar', async () => {
     te().send.mockResolvedValue({ success: false, status: 502, code: 'MAIL_FAILED', error: 'E-posta sunucusu raporu kabul etmedi. Birkaç dakika sonra tekrar deneyin.' })
     let dlg = await openSendDialog()

@@ -65,7 +65,7 @@ class DeferredIndexFallbackH2Test {
     /** DDL'deki "ON tablo(…)" sonrası kolon adları (lower(…), INCLUDE, WHERE dâhil; anahtar sözcükler hariç). */
     private static List<String> referencedColumns(Spec s) {
         String tail = s.postgresDdl().substring(s.postgresDdl().indexOf(" ON " + s.table() + "(") + (" ON " + s.table() + "(").length());
-        Set<String> keywords = Set.of("lower", "upper", "include", "where", "true", "false");   // işlev adları kolon değil
+        Set<String> keywords = Set.of("lower", "upper", "include", "where", "true", "false", "is", "not", "null");   // işlev / anahtar sözcük — kolon değil
         List<String> out = new ArrayList<>();
         Matcher m = Pattern.compile("[a-z_]+").matcher(tail.toLowerCase(Locale.ROOT));
         while (m.find()) if (!keywords.contains(m.group())) out.add(m.group());
@@ -96,7 +96,7 @@ class DeferredIndexFallbackH2Test {
             portable++;
             assertThat(indexColumns(s.name())).as("%s kolonları", s.name()).containsExactlyElementsOf(keyColumns(s.fallbackDdl()));
         }
-        assertThat(portable).isEqualTo(10);
+        assertThat(portable).isEqualTo(11);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz)
         assertThat(builder.startInBackground()).as("H2'de arka plan kurulumu yok").isNull();
     }
 

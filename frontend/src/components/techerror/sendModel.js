@@ -109,3 +109,33 @@ export function sendLogKindOf(row) {
 export function sendLogRoleKey(row) {
   return SENDLOG_ROLE_KEYS[row?.role] || SENDLOG_ROLE_KEYS.OTHER
 }
+
+/**
+ * Sebep kodu → metin anahtarı (inceleme 2026-10-18): sunucu ham durum metnini (posta sunucusunun iletisi — sunucu adı, port,
+ * Türkçe iç metin) DÖNMEZ; yalnız `reason` kodu. Sıra ve küme `TechErrorSendLogService.REASON_CODES` ile aynı (test Java
+ * kaynağını okur). Bilinmeyen / boş kod → satır yok (ham anahtar gösterilmez).
+ */
+export const SENDLOG_REASON_KEYS = Object.freeze({
+  QUEUED: 'te.slog.reason.QUEUED',
+  MAIL_OFF: 'te.slog.reason.MAIL_OFF',
+  INACTIVE_RECIPIENTS: 'te.slog.reason.INACTIVE_RECIPIENTS',
+  NO_RECIPIENT: 'te.slog.reason.NO_RECIPIENT',
+  PDF_BUSY: 'te.slog.reason.PDF_BUSY',
+  PDF_TOO_LARGE: 'te.slog.reason.PDF_TOO_LARGE',
+  APPROVAL_STALE: 'te.slog.reason.APPROVAL_STALE',
+  SMTP_FAILED: 'te.slog.reason.SMTP_FAILED',
+  INTERNAL_ERROR: 'te.slog.reason.INTERNAL_ERROR',
+  SKIPPED_OTHER: 'te.slog.reason.SKIPPED_OTHER',
+  UNKNOWN: 'te.slog.reason.UNKNOWN',
+})
+
+export function sendLogReasonKey(row) {
+  const code = row?.reason
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(SENDLOG_REASON_KEYS, code) ? SENDLOG_REASON_KEYS[code] : null
+}
+
+/** Sığmayan adres sayısı (`to_more` / `cc_more`; sunucu sığdırma ekini ayırır) — sayı değilse 0. */
+export function sendLogMore(row, which) {
+  const n = Number(row?.[which === 'cc' ? 'cc_more' : 'to_more'])
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}

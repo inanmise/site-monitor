@@ -324,16 +324,32 @@ let decisions = []
 let previewBodies = []          // şablon önizleme PDF'i (R19): gönderilen taslaklar
 let sendBodies = []             // R18 / C13: gönderim gövdeleri (ek Bilgi yoksa gövde yok → null)
 let sendLogCalls = []           // R18 / E22: gönderim günlüğü istekleri (sorgu dizgeleri)
-// Uzun alıcı listesi (sararak TAM yazılmalı): gerçek uzunlukta kurumsal adresler
+// Uzun alıcı listesi: gerçek uzunlukta kurumsal adresler. notification_logs.recipient_email VARCHAR(255) — sunucu listeyi
+// NotificationLog.fitList ile " … +N" ekiyle saklar, TechErrorSendLogService.splitFitted eki ayırır: yanıt yalnız kolona
+// sığan TAM adresler + `to_more` (inceleme 2026-10-18: mock sunucunun GERÇEK şeklini taşır — 9 adresin hepsi değil)
 const SENDLOG_LONG_TO = Array.from({ length: 9 }, (_, i) => `dijital.kanallar.uygulama.gelistirme.${i}@ornek-kurum-bilgi-teknolojileri.example.com`)
+function serverFitted(list, max = 255) {
+  const items = []
+  let len = 0
+  for (let i = 0; i < list.length; i++) {
+    const suffix = i + 1 < list.length ? ` … +${list.length - i - 1}` : ''
+    const next = len + (len === 0 ? 0 : 2) + list[i].length + suffix.length
+    if (next > max) break
+    len += (len === 0 ? 0 : 2) + list[i].length
+    items.push(list[i])
+  }
+  return { items, more: list.length - items.length }
+}
+const SENDLOG_FITTED_TO = serverFitted(SENDLOG_LONG_TO)
 const SENDLOG_ROWS = [
-  { id: 3, at: '2026-10-13T08:00:00Z', kind: 'report', trigger: 'TECH_ERROR_REPORT', role: 'TEAM', status: 'sent', status_text: 'SENT',
-    report_id: 100, year: 2026, month: 9, to: SENDLOG_LONG_TO, cc: ['ek.bilgi.adresi@ornek-kurum-bilgi-teknolojileri.example.com'], to_count: 9, cc_count: 1 },
-  { id: 2, at: '2026-10-12T08:00:00Z', kind: 'test', trigger: 'TECH_ERROR_REPORT_TEST', role: 'SELF', status: 'failed',
-    status_text: 'FAILED: 550 5.1.1 alıcı posta kutusu bulunamadı — kurumsal ağ geçidi iletiyi reddetti', report_id: 100, year: 2026, month: 9,
-    to: ['ayse.yilmaz@example.com'], cc: [], to_count: 1, cc_count: 0 },
-  { id: 1, at: '2026-10-11T08:00:00Z', kind: 'approval', trigger: 'TECH_ERROR_APPROVAL', role: 'APPROVER', status: 'queued',
-    status_text: 'QUEUED_RETRY: 421', report_id: null, year: null, month: null, to: ['mehmet.kaya@example.com'], cc: [], to_count: 1, cc_count: 0 },
+  { id: 3, at: '2026-10-13T08:00:00Z', kind: 'report', trigger: 'TECH_ERROR_REPORT', role: 'TEAM', status: 'sent', reason: null,
+    report_id: 100, year: 2026, month: 9, to: SENDLOG_FITTED_TO.items, to_more: SENDLOG_FITTED_TO.more,
+    cc: ['ek.bilgi.adresi@ornek-kurum-bilgi-teknolojileri.example.com'], cc_more: 0, to_count: 9, cc_count: 1 },
+  // Ham durum metni (posta sunucusunun iletisi) yanıtta YOK — yalnız sebep kodu
+  { id: 2, at: '2026-10-12T08:00:00Z', kind: 'test', trigger: 'TECH_ERROR_REPORT_TEST', role: 'SELF', status: 'failed', reason: 'SMTP_FAILED',
+    report_id: 100, year: 2026, month: 9, to: ['ayse.yilmaz@example.com'], to_more: 0, cc: [], cc_more: 0, to_count: 1, cc_count: 0 },
+  { id: 1, at: '2026-10-11T08:00:00Z', kind: 'approval', trigger: 'TECH_ERROR_APPROVAL', role: 'APPROVER', status: 'queued', reason: 'QUEUED',
+    report_id: null, year: null, month: null, to: ['mehmet.kaya@example.com'], to_more: 0, cc: [], cc_more: 0, to_count: 1, cc_count: 0 },
 ]
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
@@ -1372,7 +1388,7 @@ for (const vp of VIEWPORTS) {
       reportOverride = { ...REPORT, channel: execChannel, report: { ...REPORT.report, approval: { state: 'none', raw_state: null, stale: false } }, approval_detail: detail }
       await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
       const editor = page.locator('[data-slot="te-report"]')
-      await expect(editor).toBeVisible()
+      await expect(editor).toBeVisible({ timeout: 20_000 })      // soğuk açılış (ilk test, tembel parçalar) — diğer testler gibi
       const card = page.locator('[data-slot="te-approval"]')
       await expect(card).toHaveAttribute('data-state', 'none')
       await expect(page.locator('[data-slot="te-send"]')).toHaveCount(0)
@@ -1509,11 +1525,19 @@ for (const vp of VIEWPORTS) {
       expect(sendLogCalls[0]).toContain('size=25')
       if (vp.width >= 1280) await expect(log).toHaveAttribute('data-layout', 'table')
       if (vp.width < 640) await expect(log).toHaveAttribute('data-layout', 'cards')
-      // Uzun alıcı listesi kırpılmadan TAM ve sarılır; tablo kabı yatayda kaymaz
+      // Kolona sığan adresler kırpılmadan sarılır, sığmayanlar sayıyla ("+N adres daha" — "tam yazıldı" denmez); tablo kabı kaymaz
+      expect(SENDLOG_FITTED_TO.items.length, 'gerçek sığdırma: liste kısalır').toBeLessThan(SENDLOG_LONG_TO.length)
+      expect(SENDLOG_FITTED_TO.more).toBeGreaterThan(0)
       const first = log.locator('[data-slot="te-sendlog-row"]').first()
-      await expect(first.locator('[data-slot="te-sendlog-recipients"]')).toContainText(SENDLOG_LONG_TO[SENDLOG_LONG_TO.length - 1])
+      const recipients = first.locator('[data-slot="te-sendlog-recipients"]')
+      await expect(recipients).toContainText(SENDLOG_FITTED_TO.items[SENDLOG_FITTED_TO.items.length - 1])
+      await expect(recipients).not.toContainText(SENDLOG_LONG_TO[SENDLOG_LONG_TO.length - 1])
+      await expect(first.locator('[data-slot="te-sendlog-to-more"]')).toContainText(new RegExp(`\\+${SENDLOG_FITTED_TO.more} (adres daha|more address)`))
       await expect(first.locator('[data-slot="te-sendlog-cc"]')).toContainText('ek.bilgi.adresi@')
-      await expect(log.locator('[data-slot="te-sendlog-status-text"]').first()).toContainText('550')
+      // Sebep dilinde yazılır; ham posta sunucusu iletisi (550 / FAILED / QUEUED_RETRY) hiçbir yerde yok
+      await expect(log.locator('[data-slot="te-sendlog-reason"][data-reason="SMTP_FAILED"]')).toBeVisible()
+      await expect(log.locator('[data-slot="te-sendlog-reason"][data-reason="QUEUED"]')).toBeVisible()
+      await expect(log).not.toContainText(/550|FAILED|QUEUED_RETRY|Kayıtlı durum|Recorded status/)
       await page.waitForTimeout(300)
       expect(await page.evaluate(clipped, '[data-slot="te-sendlog"]'), 'kırpılan metin (gönderim günlüğü)').toEqual([])
       expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)

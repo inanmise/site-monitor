@@ -112,8 +112,9 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
      * Kanal teknik hata raporu gönderim günlüğü (2026-10-18, R18 / E22): kanalın bağlı satırları ({@code techErrorChannelId}),
      * verilen tetikleyicilerle, durum sınıfı süzgeciyle (all | sent | queued | skipped | failed —
      * {@code TechErrorReportSender.classify} ile aynı kural), en yeni önce. Gövdesiz. Sıra: id, sentAt, trigger,
-     * recipientRole, emailStatus, recipientEmail, cc, techErrorReportId. Tetikleyici süzgeci {@code idx_nl_trigger_sent}
-     * ile daralır (teknik hata satırları tablonun küçük bir parçası).
+     * recipientRole, emailStatus, recipientEmail, cc, techErrorReportId. Kısmi indeks {@code idx_nl_te_channel}
+     * ({@code (tech_error_channel_id, id) WHERE tech_error_channel_id IS NOT NULL}, {@code DeferredIndexBuilder.CATALOG}) kanal
+     * eşitliğini ve {@code ORDER BY id DESC}'i (geriye tarama) birlikte karşılar; teknik hata satırları tablonun küçük bir parçası.
      */
     @Query("""
             SELECT n.id, n.sentAt, n.trigger, n.recipientRole, n.emailStatus, n.recipientEmail, n.cc, n.techErrorReportId

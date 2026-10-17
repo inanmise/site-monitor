@@ -3,7 +3,8 @@ import { render, waitFor, within } from './test-utils.jsx'
 import { channel } from './helpers/techErrorFixtures.js'
 
 // R18 / E22: gönderim günlüğü dar kapta (telefon / tablet, < 760 px) KART düzeninde — tablo yok; kartta zaman, durum,
-// tür / rol / dönem, alıcılar tam (sarılır) ve kayıtlı durum metni; paylaşımla okuyana sayılar. Genişlik kancası 400 px.
+// tür / rol / dönem, alıcılar (sarılır; sığmayanlar "+N adres daha") ve sebep metni (ham durum metni yok); paylaşımla okuyana
+// sayılar. Genişlik kancası 400 px.
 vi.mock('../hooks/useElementWidth.js', () => ({ useElementWidth: () => [() => {}, 400], useElementWidthState: () => [400, () => {}] }))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -27,10 +28,11 @@ beforeEach(() => {
 })
 
 describe('gönderim günlüğü — dar kap (kartlar)', () => {
-  it('kartlar çizilir, tablo yok; uzun alıcı listesi tam ve sarılır; kayıtlı durum metni', async () => {
+  it('kartlar çizilir, tablo yok; uzun alıcı listesi sarılır, sığmayanlar sayıyla; sebep metni', async () => {
     te().sendLog.mockResolvedValue({ success: true, data: {
       rows: [{ id: 1, at: '2026-10-13T08:00:00Z', kind: 'report', trigger: 'TECH_ERROR_REPORT', role: 'EXECUTIVE', status: 'failed',
-        status_text: 'FAILED: 554 reddedildi', report_id: 100, year: 2026, month: 9, to: LONG, cc: ['takim@example.com'], to_count: 8, cc_count: 1 }],
+        reason: 'SMTP_FAILED', report_id: 100, year: 2026, month: 9, to: LONG.slice(0, 3), to_more: 5, cc: ['takim@example.com'], cc_more: 0,
+        to_count: 8, cc_count: 1 }],
       total: 1, page: 0, size: 25, total_pages: 1, recipients_hidden: false } })
     render(<TechErrorReportsPage />)
     const log = await waitFor(() => { const el = document.querySelector('[data-slot="te-sendlog"]'); if (!el) throw new Error('log'); return el })
@@ -42,15 +44,17 @@ describe('gönderim günlüğü — dar kap (kartlar)', () => {
     expect(within(card).getByText('Gönderilemedi')).toBeInTheDocument()
     expect(within(card).getByText(/Yöneticiler \(executive\) · Eylül 2026/)).toBeInTheDocument()
     const to = card.querySelector('[data-slot="te-sendlog-recipients"] p')
-    expect(to.textContent).toContain(LONG.join(', '))
+    expect(to.textContent).toContain(LONG.slice(0, 3).join(', '))
     expect(to.className).toContain('[overflow-wrap:anywhere]')
+    expect(card.querySelector('[data-slot="te-sendlog-to-more"]')).toHaveTextContent('+5 adres daha')
     expect(card.querySelector('[data-slot="te-sendlog-cc"]')).toHaveTextContent('takim@example.com')
-    expect(within(card).getByText('Kayıtlı durum: FAILED: 554 reddedildi')).toBeInTheDocument()
+    expect(card.querySelector('[data-slot="te-sendlog-reason"]')).toHaveTextContent('Posta sunucusu iletiyi kabul etmedi')
+    expect(card.textContent).not.toMatch(/554|FAILED/)
   })
 
   it('paylaşımla okuyan: kartta yalnız sayılar', async () => {
     te().sendLog.mockResolvedValue({ success: true, data: {
-      rows: [{ id: 1, at: '2026-10-13T08:00:00Z', kind: 'approval', role: 'APPROVER', status: 'sent', status_text: null,
+      rows: [{ id: 1, at: '2026-10-13T08:00:00Z', kind: 'approval', role: 'APPROVER', status: 'sent', reason: null,
         to: null, cc: null, to_count: 2, cc_count: 0 }],
       total: 1, page: 0, size: 25, total_pages: 1, recipients_hidden: true } })
     render(<TechErrorReportsPage />)

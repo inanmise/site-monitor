@@ -61,6 +61,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_nl_trigger_sent", "notification_logs(trigger, sent_at)");
         EXPECTED.put("idx_psr_reason_checked", "pagespeed_resources(keep_reason, checked_at)");
         EXPECTED.put("idx_app_users_upper_username", "app_users(UPPER(username))");   // oturum kapısı + ping (2026-10-09)
+        // Kanal gönderim günlüğü (2026-10-18, R18 / E22): kısmi indeks PG'de, H2'de sade (tech_error_channel_id, id)
+        EXPECTED.put("idx_nl_te_channel", "notification_logs(tech_error_channel_id, id) WHERE tech_error_channel_id IS NOT NULL");
     }
     /** Fonksiyonel / kısmi — H2 karşılığı yok. */
     private static final Set<String> POSTGRES_ONLY =

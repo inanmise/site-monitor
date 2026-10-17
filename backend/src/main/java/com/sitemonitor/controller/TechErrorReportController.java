@@ -799,9 +799,13 @@ public class TechErrorReportController {
     /**
      * Kanalın gönderim günlüğü: rapor gönderimi, kendine test, onay ve hatırlatma postalarının {@code notification_logs}
      * satırları (en yeni önce, sunucu sayfalı — {@code page} 0 tabanlı, {@code size} ≤ 100; {@code kind} all | report | test |
-     * approval | reminder, {@code status} all | sent | queued | skipped | failed). Kapı kanalın okuma kapsamı (başka takım →
-     * 404). Kişi verisi paylaşımla görünmez: yalnız paylaşımla okuyan alıcı adreslerini ve posta sunucusunun durum metnini
-     * görmez — yalnız sayılar ({@code to_count} / {@code cc_count}) ve durum sınıfı.
+     * approval | reminder, {@code status} all | sent | queued | skipped | failed; son sayfadan büyük {@code page} → son sayfa,
+     * yanıttaki {@code page} gerçek sayfa). Kapı kanalın okuma kapsamı (başka takım → 404). Ham durum metni (posta sunucusunun
+     * iletisi: sunucu adı, port) HİÇ KİMSEYE dönmez — yalnız durum sınıfı ({@code status}) ve sabit sebep kodu
+     * ({@code reason}, {@link com.sitemonitor.service.techerror.TechErrorSendLogService#reasonOf}). Sığdırılmış alıcı
+     * listesinin eki ayrılır: {@code to} / {@code cc} yalnız tam adresler, {@code to_more} / {@code cc_more} sığmayan sayısı.
+     * Kişi verisi paylaşımla görünmez: yalnız paylaşımla okuyan adresleri görmez — yalnız sayılar ({@code to_count} /
+     * {@code cc_count}).
      */
     @GetMapping("/channels/{id}/send-log")
     public ResponseEntity<Map<String, Object>> sendLog(@PathVariable Long id,
@@ -829,13 +833,15 @@ public class TechErrorReportController {
             m.put("trigger", row.trigger());
             m.put("role", row.role());
             m.put("status", row.status());
-            // Posta sunucusunun durum metni alıcı adresi taşıyabilir ("550 … <ad@kurum>") — paylaşımla okuyana yalnız sınıf
-            m.put("status_text", hidden ? null : row.statusText());
+            // Sabit kod (ham durum metni dönmez — inceleme 2026-10-18); kişi verisi taşımaz, paylaşımla okuyana da gider
+            m.put("reason", row.reason());
             m.put("report_id", row.reportId());
             m.put("year", row.year());
             m.put("month", row.month());
             m.put("to", hidden ? null : row.to());
             m.put("cc", hidden ? null : row.cc());
+            m.put("to_more", hidden ? 0 : row.toMore());
+            m.put("cc_more", hidden ? 0 : row.ccMore());
             m.put("to_count", row.toCount());
             m.put("cc_count", row.ccCount());
             rows.add(m);

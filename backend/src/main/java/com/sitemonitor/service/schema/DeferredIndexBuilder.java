@@ -159,7 +159,14 @@ public final class DeferredIndexBuilder {
             Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_reason_checked ON pagespeed_resources(keep_reason, checked_at)"),
             // 2026-10-09 (performans): oturum kapısı (pasif + süpersede), ping (lastSeen) ve giriş UPPER(username) = UPPER(?)
             // ile arar; düz username indeksi bu ifadeye yaramaz → her istekte tam tablo taraması. İfade indeksi PG'ye özgü.
-            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_app_users_upper_username ON app_users(UPPER(username))"));
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_app_users_upper_username ON app_users(UPPER(username))"),
+            // 2026-10-18 (R18 / E22 inceleme): kanal teknik hata raporu gönderim günlüğü — tech_error_channel_id = ? AND
+            // trigger IN (…) ORDER BY id DESC (NotificationLogRepository.findTechErrorSendLog / countTechErrorSendLog). Kısmi
+            // indeks yalnız kanala bağlı satırları taşır (tablonun küçük bir parçası); id DESC = indeksin geriye taranması.
+            // H2'de sade hâli (kısmi indeks yok).
+            Spec.withFallback(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_nl_te_channel ON notification_logs(tech_error_channel_id, id) WHERE tech_error_channel_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_nl_te_channel ON notification_logs(tech_error_channel_id, id)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

@@ -1366,12 +1366,12 @@ class TechErrorReportControllerTest {
     }
 
     @Test
-    @DisplayName("E22 kanal gönderim günlüğü: takımın okuyanı alıcıları ve durum metnini görür; yalnız paylaşımla okuyan yalnız sayıları (to / cc / status_text null); AUDIT okur; başka takım 404 (servis çağrılmaz); sayfa / boyut / süzgeç servise geçer")
+    @DisplayName("E22 kanal gönderim günlüğü: takımın okuyanı alıcıları görür; ham durum metni HİÇ KİMSEYE dönmez (yalnız sebep kodu — inceleme 2026-10-18); sığmayan adres sayısı to_more; yalnız paylaşımla okuyan yalnız sayıları (to / cc null); AUDIT okur; başka takım 404 (servis çağrılmaz); sayfa / boyut / süzgeç servise geçer")
     void sendLog() throws Exception {
         report(100, 10, A, null);
         var row = new com.sitemonitor.service.techerror.TechErrorSendLogService.Row(77L, "2026-10-13T08:00:00Z", "TECH_ERROR_REPORT", "report",
-                "TEAM", "failed", "FAILED: 550 <takim1@example.com> reddedildi", 100L, 2026, 9,
-                List.of("takim1@example.com"), List.of("ek@example.com"), 1, 1);
+                "TEAM", "failed", "SMTP_FAILED", 100L, 2026, 9,
+                List.of("takim1@example.com"), List.of("ek@example.com"), 4, 1, 3, 0);
         when(sendLogs.page(eq(10L), any(), any(), any(), any())).thenReturn(
                 new com.sitemonitor.service.techerror.TechErrorSendLogService.Page(List.of(row), 31, 1, 25, "report", "failed"));
         mvc.perform(get("/api/tech-error-reports/channels/10/send-log?page=1&size=25&kind=report&status=failed").session(user("USER", A, List.of())))
@@ -1385,12 +1385,17 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].kind").value("report"))
                 .andExpect(jsonPath("$.data.rows[0].role").value("TEAM"))
                 .andExpect(jsonPath("$.data.rows[0].status").value("failed"))
-                .andExpect(jsonPath("$.data.rows[0].status_text").value(org.hamcrest.Matchers.containsString("550")))
+                .andExpect(jsonPath("$.data.rows[0].reason").value("SMTP_FAILED"))
+                .andExpect(jsonPath("$.data.rows[0].status_text").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("550"))))
                 .andExpect(jsonPath("$.data.rows[0].year").value(2026))
                 .andExpect(jsonPath("$.data.rows[0].month").value(9))
                 .andExpect(jsonPath("$.data.rows[0].to[0]").value("takim1@example.com"))
+                .andExpect(jsonPath("$.data.rows[0].to.length()").value(1))
+                .andExpect(jsonPath("$.data.rows[0].to_more").value(3))
+                .andExpect(jsonPath("$.data.rows[0].cc_more").value(0))
                 .andExpect(jsonPath("$.data.rows[0].cc[0]").value("ek@example.com"))
-                .andExpect(jsonPath("$.data.rows[0].to_count").value(1));
+                .andExpect(jsonPath("$.data.rows[0].to_count").value(4));
         verify(sendLogs).page(10L, "report", "failed", 1, 25);
         // Yalnız paylaşımla okuyan: kişi verisi yok, sayılar ve sınıf kalır
         mvc.perform(get("/api/tech-error-reports/channels/10/send-log").session(grantee(B, A, false)))
@@ -1398,8 +1403,10 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.recipients_hidden").value(true))
                 .andExpect(jsonPath("$.data.rows[0].to").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.rows[0].cc").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.data.rows[0].status_text").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.data.rows[0].to_count").value(1))
+                .andExpect(jsonPath("$.data.rows[0].status_text").doesNotExist())
+                .andExpect(jsonPath("$.data.rows[0].reason").value("SMTP_FAILED"))      // kod kişi verisi taşımaz
+                .andExpect(jsonPath("$.data.rows[0].to_more").value(0))
+                .andExpect(jsonPath("$.data.rows[0].to_count").value(4))
                 .andExpect(jsonPath("$.data.rows[0].cc_count").value(1))
                 .andExpect(jsonPath("$.data.rows[0].status").value("failed"));
         // AUDIT okur (adresleri görür — paylaşım değil, kurum geneli görüntüleyici)

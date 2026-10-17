@@ -510,7 +510,17 @@ public class TechErrorReportSender {
         }
         // R18 / C13: bu gönderime ek Bilgi — doğrulama talepten ÖNCE (geçersiz giriş hiçbir şey yazmaz); Kime / Bilgi'deki
         // adres tekrar eklenmez, toplam Bilgi ≤ 20 (aşarsa 400, sessiz düşmez)
-        final List<String> extras = extraCc(extraCcRaw, to, cc == null ? List.of() : List.of(cc));
+        final List<String> requestedExtras = extraCc(extraCcRaw, to, cc == null ? List.of() : List.of(cc));
+        // İnceleme (2026-10-18): ek Bilgi TEK BAŞINA bir raporu "gönderildi" yapmaz. Kime ve mevcut Bilgi'de etkin (pasif
+        // olmayan) alıcı kalmadıysa ek adresler postaya EKLENMEZ — gönderim ek Bilgi hiç yazılmamış gibi sonuçlanır (takım
+        // adresinin hepsi pasif → posta hunisi "SKIPPED: pasif kullanıcı" → 409 MAIL_DISABLED). Geçmiş olayı istenen ek
+        // adresleri (gönderilmedi) taşır.
+        final boolean extrasApplied = !requestedExtras.isEmpty() && baseReachable(to, cc);
+        final List<String> extras = extrasApplied ? requestedExtras : List.of();
+        if (!requestedExtras.isEmpty() && !extrasApplied) {
+            log.warn("Teknik hata raporu #{} ({}): Kime / Bilgi'de etkin alıcı yok — {} ek Bilgi adresi eklenmedi (ek Bilgi tek başına gönderim yapmaz)",
+                    report.getId(), delivery, requestedExtras.size());
+        }
         if (!extras.isEmpty()) {
             List<String> merged = new ArrayList<>(cc == null ? List.of() : List.of(cc));
             merged.addAll(extras);
@@ -541,6 +551,7 @@ public class TechErrorReportSender {
         int pdfBytes = 0;
         Long sentRev = null;
         List<String> active = to;
+        List<String> activeCc = null;      // posta servisi döndükten sonra: Bilgi'nin pasif hesaplar düşülmüş hâli (önce: bilinmiyor)
         Boolean queuedAtClaim = null;      // talepten sonraki okuma: kuyruktaki gönderim hâlâ sonuçlanmamış mıydı?
         boolean mailAttempted = false;     // posta servisine bir şey verildi mi?
         boolean mailReturned = false;      // posta servisi bir sonuç DÖNDÜ mü (istisna değil)?
@@ -619,10 +630,11 @@ public class TechErrorReportSender {
             mailReturned = true;
             finalStatus = status == null ? "FAILED: sonuç yok" : status;
             finalState = classify(finalStatus);
-            // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz
+            // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz (Kime VE
+            // Bilgi; günlük satırı, yanıt ve geçmiş aynı listeyi yazar — inceleme 2026-10-18)
             active = activeRecipients(to);
-            return new Result(finalState, finalStatus, active, pdfBytes, subject,
-                    cc == null ? List.of() : activeRecipients(List.of(cc)));
+            activeCc = cc == null ? List.of() : activeRecipients(List.of(cc));
+            return new Result(finalState, finalStatus, active, pdfBytes, subject, activeCc);
         } catch (RuntimeException e) {
             if (!released && !(e instanceof CodedConflictException)) {
                 log.warn("Teknik hata raporu gönderilemedi (rapor {}): {}", report.getId(), e.toString());
@@ -634,9 +646,11 @@ public class TechErrorReportSender {
             throw e;
         } finally {
             Instant at = service.now();
-            // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar)
-            Long logId = saveLog(TRIGGER, team, active.isEmpty() ? to : active, cc, role, subject != null ? subject : channel.getName(),
-                    finalStatus, report);
+            // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar). Kime ve
+            // Bilgi aynı kuralla: posta servisi döndüyse pasif hesaplarınkiler düşülür; hepsi pasifse (gönderim atlandı) istenen
+            // liste "neden gitmedi"yi gösterir; servise ulaşmadıysa istenen liste
+            Long logId = saveLog(TRIGGER, team, active.isEmpty() ? to : active, loggedCc(cc, activeCc, active), role,
+                    subject != null ? subject : channel.getName(), finalStatus, report);
             // Kuyruktaki bir gönderimin üzerine yapılan deneme HİÇBİR ŞEY teslim etmediyse ya da kuyruğa almadıysa (posta servisine
             // ulaşmadı: PDF çok büyük / beklenmeyen hata; ya da servis SKIPPED / FAILED döndü) kuyruktaki gönderim yaşamaya devam
             // eder: talep bırakılır (durum satırın kendi son sonucundan), "bitirildi" ve "sonucu bilinmiyor" yazılmaz — servisin
@@ -681,13 +695,16 @@ public class TechErrorReportSender {
                 List<String> recorded = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null;
                 // A3: sınır dışında kalan alıcı sayısı geçmişte görünür (yalnız varsa — olay ayrıntısı aksi hâlde eskisiyle aynı);
                 // Kime ve Bilgi ayrı anahtarlarla (`dropped_recipients` / `dropped_cc`). R18 / C13: bu gönderimin ek Bilgi
-                // adresleri `extra_cc` (gönderildiyse pasif hesaplarınkiler hariç; gönderilmediyse istenen liste)
-                if (droppedRecipients > 0 || droppedCc > 0 || !extras.isEmpty()) {
+                // adresleri `extra_cc` (gönderildiyse pasif hesaplarınkiler hariç; gönderilmediyse istenen liste — eklenmemiş
+                // olsa da: etkin alıcı yoktu). Gönderildi ama ek adresler eklenmediyse (süzgeç anlık görüntüsü arada değişti)
+                // `extra_cc` yazılmaz — o adreslere posta gitmedi
+                if (droppedRecipients > 0 || droppedCc > 0 || !requestedExtras.isEmpty()) {
                     java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
                     if (droppedRecipients > 0) extra.put("dropped_recipients", droppedRecipients);
                     if (droppedCc > 0) extra.put("dropped_cc", droppedCc);
-                    if (!extras.isEmpty()) {
-                        List<String> extraRecorded = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? activeRecipients(extras) : extras;
+                    if (!requestedExtras.isEmpty()) {
+                        boolean delivered = "SENT".equals(finalState) || "QUEUED".equals(finalState);
+                        List<String> extraRecorded = !delivered ? requestedExtras : extrasApplied ? activeRecipients(extras) : List.of();
                         if (!extraRecorded.isEmpty()) extra.put("extra_cc", List.copyOf(extraRecorded));
                     }
                     h.recordSend(report, "SEND", by, finalState, recorded, reason, at, extra);
@@ -696,6 +713,27 @@ public class TechErrorReportSender {
                 }
             }
         }
+    }
+
+    /**
+     * Ek Bilgi olmadan da etkin bir alıcı var mı (inceleme 2026-10-18): Kime'de ya da mevcut Bilgi'de (yöneticilere gönderimde
+     * takım adresi) pasif olmayan bir adres. Yoksa ek Bilgi postaya eklenmez — tek başına raporu "gönderildi" yapmasın.
+     */
+    private boolean baseReachable(List<String> to, String[] cc) {
+        if (!activeRecipients(to).isEmpty()) return true;
+        return cc != null && cc.length > 0 && !activeRecipients(List.of(cc)).isEmpty();
+    }
+
+    /**
+     * Günlük satırının Bilgi listesi — Kime ile AYNI kural (inceleme 2026-10-18; Kime pasifleri düşürüp Bilgi düşürmüyordu):
+     * posta servisine ulaşmadıysa ({@code activeCc == null}) istenen liste; ulaştıysa pasif hesaplarınkiler düşülmüş liste;
+     * Bilgi'nin hepsi pasifse yalnız Kime de tümüyle pasifken (gönderim atlandı) istenen liste, aksi hâlde Bilgi yok.
+     */
+    static String[] loggedCc(String[] cc, List<String> activeCc, List<String> activeTo) {
+        if (cc == null || cc.length == 0) return null;
+        if (activeCc == null) return cc;
+        if (!activeCc.isEmpty()) return activeCc.toArray(new String[0]);
+        return activeTo == null || activeTo.isEmpty() ? cc : null;
     }
 
     /** Yalnız pasif kullanıcılara ait adresler çıkarılmış alıcılar (koruma yoksa liste aynen). */
