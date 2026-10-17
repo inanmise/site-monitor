@@ -47,7 +47,8 @@ import static org.mockito.Mockito.when;
  */
 @DataJpaTest
 @Import(TechErrorExportService.class)
-@TestPropertySource(properties = "spring.jpa.hibernate.ddl-auto=create-drop")
+@TestPropertySource(properties = {"spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.jpa.properties.hibernate.generate_statistics=true"})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TechErrorExportServiceTest {
 
@@ -67,6 +68,7 @@ class TechErrorExportServiceTest {
     @Autowired TechErrorExportService exporter;
     @Autowired TechErrorChannelRepository channels;
     @Autowired TechErrorReportRepository reports;
+    @Autowired jakarta.persistence.EntityManagerFactory emf;
 
     @BeforeEach
     void clean() {
@@ -176,7 +178,7 @@ class TechErrorExportServiceTest {
     }
 
     @Test
-    @DisplayName("muaf alan (bağlı soru Hayır): değer boş + exempt (saklı eski değer sızmaz); hesaplanan oran computed + saklı değer; boş değer null")
+    @DisplayName("muaf alan (bağlı soru Hayır): değer boş + exempt (saklı eski değer sızmaz); hesaplanan oran PDF gibi CANLI hesaplanır (saklı 1,475 değil 59 / 4000 → 1,47) + computed; boş değer null")
     void exemptAndComputedFlags() {
         TechErrorChannel ch = channel(1, "POS", null);
         TechErrorReport r = report(ch, 2026, 9, template(DEFAULT_FIELDS),
@@ -189,7 +191,7 @@ class TechErrorExportServiceTest {
         List<Object> rate = field(rows, "error-rate");
         assertThat(rate.get(COL_COMPUTED)).isEqualTo(true);
         assertThat(rate.get(COL_EXEMPT)).isEqualTo(false);
-        assertThat(rate.get(COL_VALUE)).isEqualTo(new BigDecimal("1.475"));
+        assertThat(rate.get(COL_VALUE)).isEqualTo(new BigDecimal("1.47"));           // canlı, 2 hane (PDF ile aynı)
         assertThat(field(rows, "total-tx").get(COL_COMPUTED)).isEqualTo(false);
         assertThat(field(rows, "comment").get(COL_VALUE)).isNull();
         assertThat(field(rows, "comment").get(COL_EXEMPT)).isEqualTo(false);
@@ -300,28 +302,198 @@ class TechErrorExportServiceTest {
     }
 
     @Test
-    @DisplayName("tek sorgu + tavan: rapor deposu bir kez, tavanın bir fazlasıyla çağrılır; fazlası TooLargeException; kanal yoksa sorgu yok")
-    void singleQueryAndCap() {
+    @DisplayName("sabit iki sorgu + tavan: önce SAYIM (JSON okunmaz) — tavanı aşan süzgeç yükleme yapmadan TooLargeException; sayım 0 ise yükleme yok;"
+            + " yükleme bir ay geriden (dönem = yıl × 12 + ay) ve en çok iki kat; sayım ile yükleme arasında aşan tavan da reddedilir; kanal yoksa sorgu yok")
+    void countFirstThenSingleLoad() {
         TechErrorReportExportRepository repo = mock(TechErrorReportExportRepository.class);
         TechErrorExportService svc = new TechErrorExportService(repo);
         assertThat(svc.export(List.of(), Map.of(), new TechErrorExportService.Filter(2026, null, true), NOW).rows()).isEmpty();
-        verify(repo, never()).findForExport(any(), anyInt(), anyInt(), anyInt(), anyInt(), anyBoolean(), any());
+        verify(repo, never()).countForExport(any(), anyInt(), anyInt(), anyBoolean());
+        verify(repo, never()).findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any());
 
         TechErrorChannel ch = new TechErrorChannel();
         ch.setId(10L);
         ch.setTeamId(1L);
         ch.setName("Mobil");
-        List<TechErrorReportExportRepository.ExportRow> many = new ArrayList<>();
-        for (int i = 0; i <= TechErrorExportService.MAX_REPORTS; i++) many.add(mock(TechErrorReportExportRepository.ExportRow.class));
-        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(many);
+        int sep2026 = 2026 * 12 + 9;
+        // Tavanı aşan sayım → yükleme YOK
+        when(repo.countForExport(any(), anyInt(), anyInt(), anyBoolean())).thenReturn((long) TechErrorExportService.MAX_REPORTS + 1);
         assertThatThrownBy(() -> svc.export(List.of(ch), Map.of(1L, "Takım A"), new TechErrorExportService.Filter(2026, 9, false), NOW))
                 .isInstanceOf(TechErrorExportService.TooLargeException.class);
-        verify(repo, times(1)).findForExport(eq(java.util.Set.of(10L)), eq(2026), eq(2026), eq(9), eq(9), eq(false),
-                eq(Limit.of(TechErrorExportService.MAX_REPORTS + 1)));
-        // Yıl / ay yok → geniş aralık (boş-olabilir parametre yok)
-        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
+        verify(repo).countForExport(eq(java.util.Set.of(10L)), eq(sep2026), eq(sep2026), eq(false));
+        verify(repo, never()).findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any());
+        // Sayım 0 → yükleme yok
+        when(repo.countForExport(any(), anyInt(), anyInt(), anyBoolean())).thenReturn(0L);
+        assertThat(svc.export(List.of(ch), Map.of(), new TechErrorExportService.Filter(2026, 9, true), NOW).reports()).isEmpty();
+        verify(repo, never()).findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any());
+        // Yükleme güvenlik tavanı (2 × MAX) aşılırsa reddedilir
+        when(repo.countForExport(any(), anyInt(), anyInt(), anyBoolean())).thenReturn(3L);
+        List<TechErrorReportExportRepository.ExportRow> many = new ArrayList<>();
+        for (int i = 0; i <= 2 * TechErrorExportService.MAX_REPORTS; i++) many.add(mock(TechErrorReportExportRepository.ExportRow.class));
+        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(many);
+        assertThatThrownBy(() -> svc.export(List.of(ch), Map.of(1L, "Takım A"), new TechErrorExportService.Filter(2026, 9, false), NOW))
+                .isInstanceOf(TechErrorExportService.TooLargeException.class);
+        verify(repo, times(1)).findForExport(eq(java.util.Set.of(10L)), eq(sep2026 - 1), eq(sep2026), eq(sep2026), eq(false),
+                eq(Limit.of(2 * TechErrorExportService.MAX_REPORTS + 1)));
+        // Sayımdan sonra açılan raporlar dışa aktarılanları tavanın üstüne çıkarırsa da reddedilir
+        List<TechErrorReportExportRepository.ExportRow> grown = new ArrayList<>();
+        for (int i = 0; i <= TechErrorExportService.MAX_REPORTS; i++) {
+            TechErrorReportExportRepository.ExportRow r = mock(TechErrorReportExportRepository.ExportRow.class);
+            when(r.getId()).thenReturn((long) i + 1);
+            when(r.getChannelId()).thenReturn(10L);
+            when(r.getReportYear()).thenReturn(2026);
+            when(r.getReportMonth()).thenReturn(9);
+            grown.add(r);
+        }
+        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(grown);
+        assertThatThrownBy(() -> svc.export(List.of(ch), Map.of(1L, "Takım A"), new TechErrorExportService.Filter(2026, 9, false), NOW))
+                .isInstanceOf(TechErrorExportService.TooLargeException.class);
+        // Yıl / ay yok → geniş aralık (boş-olabilir parametre yok); yılın Ocak'ı önceki yılın Aralık'ından bir sonra
+        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
         svc.export(List.of(ch), Map.of(), new TechErrorExportService.Filter(null, null, true), NOW);
-        verify(repo).findForExport(any(), eq(0), eq(9999), eq(1), eq(12), eq(true), any());
+        verify(repo).countForExport(any(), eq(1), eq(9999 * 12 + 12), eq(true));
+        verify(repo).findForExport(any(), eq(0), eq(1), eq(9999 * 12 + 12), eq(true), any());
+        svc.export(List.of(ch), Map.of(), new TechErrorExportService.Filter(2026, null, true), NOW);
+        verify(repo).findForExport(any(), eq(2025 * 12 + 12), eq(2026 * 12 + 1), eq(2026 * 12 + 12), eq(true), any());
+    }
+
+    @Test
+    @DisplayName("sabit sorgu sayısı (H2, Hibernate istatistiği): kanal ve rapor sayısından bağımsız İKİ deyim (sayım + yükleme) — önceki ay okuması ayrı sorgu değil")
+    void fixedStatementCount() {
+        List<TechErrorChannel> chs = new ArrayList<>();
+        for (int c = 0; c < 3; c++) {
+            TechErrorChannel ch = channel(1, "Kanal " + c, c == 0 ? "ceo@example.com" : null);
+            chs.add(ch);
+            for (int m = 6; m <= 9; m++) report(ch, 2026, m, template(CHANGE_FIELDS), values("total-tx", 1000 + m * 10, "error-count", m));
+        }
+        org.hibernate.stat.Statistics stats = emf.unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        stats.clear();
+        TechErrorExportService.Result res = exporter.export(chs, Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, null, false), NOW);
+        assertThat(res.reports()).hasSize(12);
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(2);
+        stats.clear();
+        exporter.export(chs.subList(0, 1), Map.of(1L, "Takım A"), new TechErrorExportService.Filter(2026, 9, true), NOW);
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(1);              // sayım 0 (gönderilmiş yok) → yükleme yok
+    }
+
+    /** Önceki aya göre değişim / artış: yüzde ve evet/hayır alanları geçen ayın "total-tx"ine göre. */
+    private static final List<Field> CHANGE_FIELDS = List.of(
+            new Field("total-tx", "Toplam işlem", "number", null),
+            new Field("error-count", "Teknik hata adedi", "number", null),
+            new Field("error-rate", "Teknik hata oranı", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
+            new Field("tx-increase-pct", "İşlem değişimi", "percent", null, null, Calc.change("total-tx")),
+            new Field("tx-increase", "İşlem arttı mı?", "yesno", null, null, Calc.increase("total-tx")));
+
+    @Test
+    @DisplayName("canlı hesap PDF gibi: kanalın İLK raporunda değişim / artış formülü kullanılamaz (MANUAL) → girilen değer kalır, computed = false;"
+            + " ertesi ay geçen ayın adedinden hesaplanır (computed = true, saklı değer değil)")
+    void firstReportKeepsTypedChangeAndNextMonthComputes() {
+        TechErrorChannel ch = channel(1, "Mobil", null);
+        TechErrorReport aug = report(ch, 2026, 8, template(CHANGE_FIELDS),
+                values("total-tx", 1000, "error-count", 10, "tx-increase-pct", 5.5, "tx-increase", false));
+        TechErrorReport sep = report(ch, 2026, 9, template(CHANGE_FIELDS),
+                values("total-tx", 1200, "error-count", 12, "tx-increase-pct", 99, "tx-increase", false, "error-rate", 7));
+
+        TechErrorExportService.Result res = exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, null, false), NOW);
+        List<List<Object>> a = rowsOf(res, aug.getId());
+        assertThat(field(a, "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("5.5"));
+        assertThat(field(a, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(a, "tx-increase").get(COL_VALUE)).isEqualTo(false);
+        assertThat(field(a, "tx-increase").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(a, "error-rate").get(COL_VALUE)).isEqualTo(new BigDecimal("1"));
+        assertThat(field(a, "error-rate").get(COL_COMPUTED)).isEqualTo(true);
+        List<List<Object>> s = rowsOf(res, sep.getId());
+        assertThat(field(s, "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("20"));   // |1200 − 1000| / 1000
+        assertThat(field(s, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(true);
+        assertThat(field(s, "tx-increase").get(COL_VALUE)).isEqualTo(true);
+        assertThat(field(s, "tx-increase").get(COL_COMPUTED)).isEqualTo(true);
+        assertThat(field(s, "error-rate").get(COL_VALUE)).isEqualTo(new BigDecimal("1"));         // saklı 7 değil
+    }
+
+    @Test
+    @DisplayName("geçen ay sonradan DÜZELTİLİRSE dışa aktarılan değişim oranı da değişir (PDF gibi canlı); önceki ay taslak olsa da"
+            + " ve süzgeç dışında kalsa da (yalnız gönderilmiş / tek ay / yıl sınırı) okunur ama satır üretmez")
+    void correctedPreviousMonthChangesTheRate() {
+        TechErrorChannel ch = channel(1, "Mobil", null);
+        TechErrorReport dec = report(ch, 2025, 12, template(CHANGE_FIELDS), values("total-tx", 400));
+        TechErrorReport jan = report(ch, 2026, 1, template(CHANGE_FIELDS), values("total-tx", 500));
+        TechErrorReport aug = report(ch, 2026, 8, template(CHANGE_FIELDS), values("total-tx", 1000));
+        TechErrorReport sep = report(ch, 2026, 9, template(CHANGE_FIELDS), values("total-tx", 1200));
+        Instant at = Instant.parse("2026-10-02T08:00:00Z");
+        markSent(sep, at, "takim@example.com");
+        markSent(jan, at, "takim@example.com");
+
+        TechErrorExportService.Result one = exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, 9, true), NOW);
+        assertThat(one.reports()).extracting(TechErrorExportService.ReportMeta::reportId).containsExactly(sep.getId());
+        assertThat(field(one.rows(), "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("20"));
+
+        // Ağustos (taslak) düzeltildi: 1000 → 800 → Eylül'ün değişimi |1200 − 800| / 800 = %50 (Eylül yeniden kaydedilmeden)
+        TechErrorReport fix = reports.findById(aug.getId()).orElseThrow();
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("fields", values("total-tx", 800));
+        fix.setValuesJson(TechErrorTemplate.JSON.writeValueAsString(raw));
+        reports.save(fix);
+        TechErrorExportService.Result two = exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, 9, true), NOW);
+        assertThat(field(two.rows(), "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("50"));
+        assertThat(field(two.rows(), "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(true);
+
+        // Yıl sınırı: 2026 yılı süzgecinde Ocak, 2025 Aralık'ına göre (|500 − 400| / 400 = %25); Aralık satır üretmez
+        TechErrorExportService.Result year = exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, null, true), NOW);
+        assertThat(year.reports()).extracting(TechErrorExportService.ReportMeta::reportId).containsExactly(jan.getId(), sep.getId());
+        assertThat(field(rowsOf(year, jan.getId()), "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("25"));
+        assertThat(rowsOf(year, dec.getId())).isEmpty();
+        assertThat(rowsOf(year, aug.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("formül var ama sonuç yok (girdi boş): saklı eski oran dışa aktarılmaz (PDF'teki gibi boş), computed = false;"
+            + " geçen ayın aynı kimlikli alanı başka türdeyse kullanılmaz (sameTypeFields) → değişim elle girilen değer")
+    void missingInputDropsStoredRateAndTypeMismatchIsManual() {
+        TechErrorChannel ch = channel(1, "POS", null);
+        Template augT = template(List.of(new Field("total-tx", "Toplam işlem (metin)", "text", null)));
+        report(ch, 2026, 8, augT, values("total-tx", "1000"));
+        TechErrorReport sep = report(ch, 2026, 9, template(CHANGE_FIELDS),
+                values("total-tx", 1200, "error-rate", 3.3, "tx-increase-pct", 12));
+        List<List<Object>> rows = rowsOf(exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, 9, false), NOW), sep.getId());
+        assertThat(field(rows, "error-rate").get(COL_VALUE)).isNull();                  // hata adedi boş → oran yok
+        assertThat(field(rows, "error-rate").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(rows, "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("12"));
+        assertThat(field(rows, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("changed_after_send durumdan BAĞIMSIZ: gönderilmiş + sonra değişmiş rapor taze bir gönderim talebi sürerken (durum 'sending')"
+            + " de changed_after_send = true; değişmemiş olan false; hiç gönderilmemiş taslak false")
+    void changedAfterSendWhileSending() {
+        TechErrorChannel ch = channel(1, "Mobil", null);
+        TechErrorReport changed = report(ch, 2026, 8, template(DEFAULT_FIELDS), values("total-tx", 1));
+        TechErrorReport same = report(ch, 2026, 9, template(DEFAULT_FIELDS), values("total-tx", 2));
+        TechErrorReport draft = report(ch, 2026, 7, template(DEFAULT_FIELDS), values("total-tx", 3));
+        Instant at = Instant.parse("2026-10-02T08:00:00Z");
+        markSent(changed, at, "takim@example.com");
+        markSent(same, at, "takim@example.com");
+        reports.touchContent(changed.getId(), at.plusSeconds(60));
+        Instant claim = NOW.minusSeconds(60);
+        assertThat(reports.claimSend(changed.getId(), claim, claim.minusSeconds(600))).isEqualTo(1);
+        assertThat(reports.claimSend(same.getId(), claim, claim.minusSeconds(600))).isEqualTo(1);
+        assertThat(reports.claimSend(draft.getId(), claim, claim.minusSeconds(600))).isEqualTo(1);
+
+        TechErrorExportService.Result res = exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, null, false), NOW);
+        Map<Long, TechErrorExportService.ReportMeta> by = new LinkedHashMap<>();
+        for (TechErrorExportService.ReportMeta m : res.reports()) by.put(m.reportId(), m);
+        assertThat(by.get(changed.getId()).status()).isEqualTo("sending");
+        assertThat(by.get(changed.getId()).changedAfterSend()).isTrue();
+        assertThat(field(rowsOf(res, changed.getId()), "total-tx").get(COL_CHANGED)).isEqualTo(true);
+        assertThat(by.get(same.getId()).status()).isEqualTo("sending");
+        assertThat(by.get(same.getId()).changedAfterSend()).isFalse();
+        assertThat(by.get(draft.getId()).changedAfterSend()).isFalse();
     }
 
     @Test

@@ -218,4 +218,66 @@ class TechErrorReportPostgresTest {
             PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
         }
     }
+
+    @Test
+    @DisplayName("değer dışa aktarımı (E23) PostgreSQL'de: dönem aritmetiği (yıl × 12 + ay, yıl sınırı), boolean süzgeç, EXISTS ile"
+            + " önceki ay yüklemesi (taslak da), sayım = dışa aktarılan; servis canlı değişim oranını önceki aydan hesaplar")
+    void exportQueries() {
+        TechErrorChannelRepository channels = PostgresIt.app().bean(TechErrorChannelRepository.class);
+        TechErrorReportRepository reports = PostgresIt.app().bean(TechErrorReportRepository.class);
+        TechErrorReportExportRepository export = PostgresIt.app().bean(TechErrorReportExportRepository.class);
+        String tag = "ter-exp-" + UUID.randomUUID().toString().substring(0, 8);
+        long team = 765_430L + (long) (Math.random() * 1000);
+        TechErrorChannel ch = new TechErrorChannel();
+        ch.setTeamId(team);
+        ch.setName(tag + " Mobil");
+        ch.setNameKey((tag + " mobil").toLowerCase());
+        ch.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        ch = channels.saveAndFlush(ch);
+        try {
+            Long[] ids = new Long[4];
+            int[][] periods = {{2025, 12}, {2026, 1}, {2026, 8}, {2026, 9}};
+            int[] totals = {400, 500, 1000, 1200};
+            for (int i = 0; i < 4; i++) {
+                TechErrorReport r = new TechErrorReport();
+                r.setChannelId(ch.getId());
+                r.setTeamId(team);
+                r.setReportYear(periods[i][0]);
+                r.setReportMonth(periods[i][1]);
+                r.setTemplateJson(ch.getTemplateJson());
+                r.setValuesJson("{\"fields\":{\"total-tx\":" + totals[i] + "}}");
+                ids[i] = reports.saveAndFlush(r).getId();
+            }
+            Instant at = Instant.parse("2026-10-02T08:00:00.250Z");
+            for (int i : new int[] {1, 3}) {
+                assertThat(reports.claimSend(ids[i], at, at.minusSeconds(600))).isEqualTo(1);
+                assertThat(reports.finishSent(ids[i], at, "SENT", at, 7L, "takim@example.com", 0L)).isEqualTo(1);
+            }
+            int from = 2026 * 12 + 1, to = 2026 * 12 + 12;
+            assertThat(export.countForExport(List.of(ch.getId()), from, to, true)).isEqualTo(2L);
+            assertThat(export.countForExport(List.of(ch.getId()), from, to, false)).isEqualTo(3L);
+            var rows = export.findForExport(List.of(ch.getId()), from - 1, from, to, true, org.springframework.data.domain.Limit.of(10));
+            assertThat(rows).extracting(TechErrorReportExportRepository.ExportRow::getId).containsExactly(ids[0], ids[1], ids[2], ids[3]);
+            var sep = export.findForExport(List.of(ch.getId()), 2026 * 12 + 8, 2026 * 12 + 9, 2026 * 12 + 9, true,
+                    org.springframework.data.domain.Limit.of(10));
+            assertThat(sep).extracting(TechErrorReportExportRepository.ExportRow::getId).containsExactly(ids[2], ids[3]);
+
+            var svc = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorExportService.class);
+            var res = svc.export(List.of(ch), java.util.Map.of(team, "Takım"),
+                    new com.sitemonitor.service.techerror.TechErrorExportService.Filter(2026, null, true), Instant.parse("2026-10-18T09:00:00Z"));
+            assertThat(res.reports()).extracting(m -> m.reportId()).containsExactly(ids[1], ids[3]);
+            int fid = com.sitemonitor.service.techerror.TechErrorExportService.COLUMNS.indexOf("field_id");
+            int rid = com.sitemonitor.service.techerror.TechErrorExportService.COLUMNS.indexOf("report_id");
+            int val = com.sitemonitor.service.techerror.TechErrorExportService.COLUMNS.indexOf("value");
+            int comp = com.sitemonitor.service.techerror.TechErrorExportService.COLUMNS.indexOf("computed");
+            // Varsayılan şablonun değişim oranı (2026-10-16): Eylül, Ağustos TASLAĞINA göre |1200 − 1000| / 1000 = %20
+            var sepPct = res.rows().stream().filter(r -> ids[3].equals(r.get(rid)) && "tx-increase-pct".equals(r.get(fid)))
+                    .findFirst().orElseThrow();
+            assertThat(sepPct.get(val)).isEqualTo(new java.math.BigDecimal("20"));
+            assertThat(sepPct.get(comp)).isEqualTo(true);
+        } finally {
+            reports.deleteAllForChannel(ch.getId());
+            channels.deleteById(ch.getId());
+        }
+    }
 }

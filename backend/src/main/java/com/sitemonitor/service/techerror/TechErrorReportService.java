@@ -404,13 +404,23 @@ public class TechErrorReportService {
         if ("SENDING".equals(r.getSendState()) && r.getSendClaimedAt() != null
                 && r.getSendClaimedAt().isAfter(now.minus(java.time.Duration.ofMinutes(10)))) return "sending";
         if (r.getLastSentAt() == null) return "QUEUED".equals(r.getSendState()) ? "queued" : "draft";
+        return changedAfterSend(r) ? "changed" : "sent";
+    }
+
+    /**
+     * "Gönderimden sonra değişti" kuralının tek kaynağı ({@link #reportStatus} de okur): en az bir kez gönderilmiş ve içerik
+     * sayacı gönderilen revizyonu geçmiş ({@code content_rev > sent_rev}); sayaçtan önceki gönderimde ({@code sent_rev} boş)
+     * zaman damgası ({@code content_changed_at > last_sent_at}). Taze bir gönderim talebi (durum "sending") sürerken de
+     * doğrudur — durum o an "sending" der ama rapor yine gönderilen PDF'ten farklıdır (değer dışa aktarımı ayrı okur).
+     */
+    public static boolean changedAfterSend(TechErrorReportRepository.Row r) {
+        if (r == null || r.getLastSentAt() == null) return false;
         if (r.getSentRev() != null) {
             long content = r.getContentRev() == null ? 0L : r.getContentRev();
-            return content > r.getSentRev() ? "changed" : "sent";
+            return content > r.getSentRev();
         }
         // Sayaçtan önceki gönderim: zaman damgası
-        if (r.getContentChangedAt() != null && r.getContentChangedAt().isAfter(r.getLastSentAt())) return "changed";
-        return "sent";
+        return r.getContentChangedAt() != null && r.getContentChangedAt().isAfter(r.getLastSentAt());
     }
 
     /** Kanalı, raporlarını ve görsellerini KALICI siler (tek işlem). Silinen rapor sayısını döner. */
@@ -757,7 +767,15 @@ public class TechErrorReportService {
 
     public static Map<String, Object> sameTypeFields(TechErrorReport prev, Template current) {
         Template pt = TechErrorTemplate.fromStored(prev.getTemplateJson());
-        Values pv = TechErrorValues.fromStored(prev.getValuesJson(), pt);
+        return sameTypeFields(pt, TechErrorValues.fromStored(prev.getValuesJson(), pt), current);
+    }
+
+    /**
+     * {@link #sameTypeFields(TechErrorReport, Template)}'in ayrıştırılmış hâli: geçen ayın KENDİ şablonu ({@code pt}) ve saklı
+     * değerleri ({@code pv}). Değer dışa aktarımı ({@link TechErrorExportService}) şablonları bir kez ayrıştırıp bunu çağırır —
+     * kural tek yerde kalır.
+     */
+    public static Map<String, Object> sameTypeFields(Template pt, Values pv, Template current) {
         Map<String, String> prevTypes = new HashMap<>();
         for (var f : pt.allFields()) prevTypes.put(f.id(), f.type());
         Map<String, Object> fields = new LinkedHashMap<>();

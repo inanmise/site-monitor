@@ -18,7 +18,14 @@ vi.mock('../api/client', () => ({
 const writer = vi.hoisted(() => ({ buildXlsx: vi.fn(() => new Uint8Array([80, 75, 3, 4])), download: vi.fn() }))
 vi.mock('../utils/xlsxWriter.js', () => ({ buildXlsx: writer.buildXlsx, XLSX_MIME: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
 vi.mock('../utils/exportInventory.js', () => ({ triggerDownload: writer.download }))
+// Tembel modülün kendisi: gerçek uygulamaya devreder; bir testte tarayıcı hatası (ör. yüklenemeyen parça) taklit edilir
+const chunk = vi.hoisted(() => ({ fail: null }))
+vi.mock('../components/techerror/channelExport.js', async () => {
+  const actual = await vi.importActual('../components/techerror/channelExport.js')
+  return { ...actual, exportChannelXlsx: (...a) => { if (chunk.fail) throw chunk.fail; return actual.exportChannelXlsx(...a) } }
+})
 import { api } from '../api/client'
+import { ApiError } from '../utils/errorMessages.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
 
@@ -57,6 +64,7 @@ const xlsxButton = () => screen.findByRole('button', { name: "Excel'e aktar" })
 
 beforeEach(() => {
   vi.clearAllMocks()
+  chunk.fail = null
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10')
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil'), reports: reportsList(), default_period: { year: 2026, month: 9 } } })
@@ -105,6 +113,54 @@ describe("kanal görünümü — Excel'e aktar", () => {
     expect(await screen.findByText(/Excel dosyası hazırlanamadı: raporların değerleri okunamadı/)).toBeInTheDocument()
     expect(writer.buildXlsx).not.toHaveBeenCalled()
     expect(writer.download).not.toHaveBeenCalled()
+  })
+
+  it('istemci hatası ham metinle görünmez: ApiError kendi açıklayıcı iletisiyle, başka bir tarayıcı hatası (TypeError) çevrilmiş yedek metinle', async () => {
+    te().exportValues.mockRejectedValueOnce(new ApiError('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.', { status: 0, code: 'NETWORK_ERROR' }))
+    render(<TechErrorReportsPage />)
+    fireEvent.click(await xlsxButton())
+    expect(await screen.findByText('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.')).toBeInTheDocument()
+    te().exportValues.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent.click(await xlsxButton())
+    expect(await screen.findByText(/Excel dosyası hazırlanamadı: raporların değerleri okunamadı/)).toBeInTheDocument()
+    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument()
+    expect(writer.buildXlsx).not.toHaveBeenCalled()
+  })
+
+  it('dosya tarayıcıda kurulamazsa (yazıcı hatası / yüklenemeyen parça) çevrilmiş metin; tarayıcı metni yalnız Teknik ayrıntı künyesinde; "değerler okunamadı" denmez', async () => {
+    chunk.fail = new TypeError('Failed to fetch dynamically imported module: /assets/channelExport-abc.js')
+    render(<TechErrorReportsPage />)
+    fireEvent.click(await xlsxButton())
+    expect(await screen.findByText(/Excel dosyası tarayıcınızda oluşturulamadı \(değerler okundu, dosya kurulamadı\)/)).toBeInTheDocument()
+    expect(screen.queryByText(/değerleri okunamadı/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/dynamically imported module/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Teknik ayrıntı/ }))
+    expect(await screen.findByText(/XLSX_BUILD_FAILED \(TypeError: Failed to fetch dynamically imported module/)).toBeInTheDocument()
+    expect(writer.download).not.toHaveBeenCalled()
+
+    chunk.fail = null
+    writer.buildXlsx.mockImplementationOnce(() => { throw new RangeError('Invalid array length') })
+    fireEvent.click(await xlsxButton())
+    await waitFor(() => expect(writer.buildXlsx).toHaveBeenCalledTimes(1))
+    // Aynı ileti tek toastta birleşir (×2); açık künye yeni hatanın kodunu gösterir — tarayıcı metni YALNIZ künyede
+    await waitFor(() => expect(screen.getByText(/XLSX_BUILD_FAILED \(RangeError: Invalid array length\)/)).toBeInTheDocument())
+    for (const el of screen.queryAllByText(/Invalid array length/)) expect(el.closest('[data-slot="error-details"]')).not.toBeNull()
+    expect(writer.download).not.toHaveBeenCalled()
+    // Düğme yeniden kullanılabilir (meşgul bayrağı bırakıldı)
+    expect(await xlsxButton()).not.toBeDisabled()
+  })
+
+  it('açıklama: liste süzgeçleri uygulanmaz — tüm yıllarda "bütün yıllardaki bütün raporları", yıl seçiliyse "<yıl> yılının bütün raporları"; durum / arama süzgeci isteğe girmez', async () => {
+    render(<TechErrorReportsPage />)
+    const btn = await xlsxButton()
+    expect(btn).toHaveAccessibleDescription(/bütün yıllardaki bütün raporları — liste süzgeçleri \(durum, arama\) uygulanmaz/)
+    fireEvent.change(screen.getByLabelText('Yıl'), { target: { value: '2025' } })
+    fireEvent.change(screen.getByLabelText('Durum'), { target: { value: 'draft' } })
+    const again = await xlsxButton()
+    expect(again).toHaveAccessibleDescription(/^2025 yılının bütün raporları — liste süzgeçleri \(durum, arama\) uygulanmaz/)
+    fireEvent.click(again)
+    await waitFor(() => expect(te().exportValues).toHaveBeenCalledTimes(1))
+    expect(te().exportValues).toHaveBeenCalledWith({ channel: 10, team: 1, status: 'all', format: 'json', year: 2025 })
   })
 
   it('dışa aktarılacak değer yoksa bilgi tostu; dosya üretilmez', async () => {

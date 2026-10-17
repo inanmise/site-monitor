@@ -302,6 +302,14 @@ class TechErrorReportExportControllerTest {
         assertThat(TechErrorReportExportController.csvValue(new BigDecimal("0.000001"))).isEqualTo("0.000001");
         assertThat(TechErrorReportExportController.csvValue("@SUM(A1)")).isEqualTo("'@SUM(A1)");
         assertThat(TechErrorReportExportController.csvValue(null)).isEmpty();
+        // Akıtılan gövde, bellekteki biçimle bayt bayt aynı
+        List<List<Object>> sample = List.of(Arrays.asList(1L, "Takım, A", 10L, "=X", 2026, 9, 5L, "sent", null, false, null,
+                "f", "Etiket", "percent", new BigDecimal("-1.5"), false, true));
+        java.io.StringWriter sw = new java.io.StringWriter();
+        TechErrorReportExportController.writeCsv(sw, sample);
+        assertThat(sw.toString()).isEqualTo(TechErrorReportExportController.csv(sample));
+        assertThat(sw.toString()).startsWith("\uFEFFteam_id,").contains(",-1.5,").contains("'=X");
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
     }
 
     @Test
@@ -351,6 +359,65 @@ class TechErrorReportExportControllerTest {
                 .andExpect(jsonPath("$.data.notes[0]").value(org.hamcrest.Matchers.containsString("CURRENT")))
                 .andExpect(jsonPath("$.data.notes[1]").value(org.hamcrest.Matchers.containsString("status=all")))
                 .andExpect(jsonPath("$.data.notes[2]").value(org.hamcrest.Matchers.containsString("field_type")))
-                .andExpect(jsonPath("$.data.notes[5]").value(org.hamcrest.Matchers.containsString("No personal data")));
+                .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("LIVE")))
+                .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("computed = false")))
+                .andExpect(jsonPath("$.data.notes[5]").value(org.hamcrest.Matchers.containsString("CURRENT executive recipient list")))
+                .andExpect(jsonPath("$.data.notes[6]").value(org.hamcrest.Matchers.containsString("No personal data")));
+    }
+
+    @Test
+    @DisplayName("kuyruk: okumadan ÖNCE kapsamdaki kanalların kuyruktaki gönderimleri sonuçlandırılır (tek çağrı, diğer okuma uçları gibi);"
+            + " doğrulama / kapsam / hız reddinde çağrılmaz")
+    void reconcilesQueuedBeforeReading() throws Exception {
+        MockHttpSession admin = new MockHttpSession();
+        admin.setAttribute("authenticated", Boolean.TRUE);
+        admin.setAttribute("username", "admin");
+        admin.setAttribute("userId", 1L);
+        admin.setAttribute("systemRole", "ADMIN");
+        mvc.perform(get(URL).param("year", "2026").session(admin)).andExpect(status().isOk());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(service, exporter);
+        order.verify(service).reconcileQueued(List.of(10L, 20L));
+        order.verify(exporter).export(any(), any(), any(), any());
+        clearInvocations(service, exporter);
+        mvc.perform(get(URL).param("channel", "10").session(user(A))).andExpect(status().isOk());
+        verify(service).reconcileQueued(List.of(10L));
+        clearInvocations(service);
+        mvc.perform(get(URL).param("year", "2019").session(user(A))).andExpect(status().isBadRequest());
+        mvc.perform(get(URL).param("channel", "20").session(user(A))).andExpect(status().isNotFound());
+        verify(service, never()).reconcileQueued(any());
+    }
+
+    @Test
+    @DisplayName("eşzamanlılık: pod genelinde en çok 2 dışa aktarım; dolu → 429 EXPORT_BUSY + Retry-After, dışa aktarım ve kuyruk"
+            + " sonuçlandırma çağrılmaz, kişinin dakikalık hakkı YENMEZ; izin her yanıtta (hata dahil) geri verilir")
+    void concurrencyLimitDoesNotEatTheQuota() throws Exception {
+        MockHttpSession me = user(A);
+        long savedWait = controller.exportWaitMs;
+        controller.exportWaitMs = 0;
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        controller.exportSlots.acquire(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        try {
+            for (int i = 0; i < TechErrorReportExportController.EXPORT_PER_MINUTE + 2; i++) {
+                mvc.perform(get(URL).param("year", "2026").session(me))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("EXPORT_BUSY"))
+                        .andExpect(jsonPath("$.retry_after_seconds").value(10))
+                        .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("2")))
+                        .andExpect(header().string("Retry-After", "10"));
+            }
+            verify(exporter, never()).export(any(), any(), any(), any());
+            verify(service, never()).reconcileQueued(any());
+        } finally {
+            controller.exportSlots.release(TechErrorReportExportController.EXPORT_CONCURRENCY);
+            controller.exportWaitMs = savedWait;
+        }
+        // Meşgul denemeler hakkı yemedi: 6 istek geçer
+        for (int i = 0; i < TechErrorReportExportController.EXPORT_PER_MINUTE; i++) {
+            mvc.perform(get(URL).param("year", "2026").session(me)).andExpect(status().isOk());
+        }
+        // Tavan aşımı (400) ve CSV yolu izni geri verir
+        org.mockito.Mockito.doThrow(new TechErrorExportService.TooLargeException()).when(exporter).export(any(), any(), any(), any());
+        mvc.perform(get(URL).param("year", "2026").session(user(B))).andExpect(status().isBadRequest());
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
     }
 }

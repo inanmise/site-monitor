@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * işlemsiz çağıran; {@code @Modifying} sorgularının kendi işlemi yoksa burada kırılır.
  */
 @DataJpaTest
-@Import({TechErrorReportService.class, TechErrorHistoryService.class})
+@Import({TechErrorReportService.class, TechErrorHistoryService.class, TechErrorExportService.class})
 @TestPropertySource(properties = "spring.jpa.hibernate.ddl-auto=create-drop")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TechErrorReportServiceTest {
@@ -491,6 +491,38 @@ class TechErrorReportServiceTest {
         assertThat(failed.getLastSentAt()).isNull();
         assertThat(failed.getSendCount()).isZero();
         assertThat(TechErrorHistoryService.detail(eventsOf(r2.getId()).get(0))).containsEntry("state", "FAILED");
+    }
+
+    @Autowired TechErrorExportService exporter;
+
+    @Test
+    @DisplayName("değer dışa aktarımı kuyruğu sonuçlandırır (denetleyicinin sırası: reconcileQueued → export): posta servisi SENT"
+            + " yazdıysa kuyruktaki rapor status=sent süzgecine girer ve report_status = sent; sonuçlandırılmadan 'queued' ve dışarıda")
+    void exportSeesReconciledQueuedSendAsSent() {
+        TechErrorChannel ch = channel(1, "POS");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+        reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+        Long logId = logRow("QUEUED_RETRY: 421");
+        assertThat(reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 0L)).isEqualTo(1);
+        setLogStatus(logId, "SENT");
+        Instant now = Instant.parse("2026-10-13T09:00:00Z");
+        TechErrorExportService.Filter sentOnly = new TechErrorExportService.Filter(2026, 9, true);
+        TechErrorExportService.Filter all = new TechErrorExportService.Filter(2026, 9, false);
+
+        // Sonuçlandırma olmadan (eski davranış): kuyrukta görünür, gönderilmişler süzgecinde YOK
+        assertThat(exporter.export(List.of(ch), Map.of(1L, "Takım A"), sentOnly, now).reports()).isEmpty();
+        assertThat(exporter.export(List.of(ch), Map.of(1L, "Takım A"), all, now).reports())
+                .extracting(TechErrorExportService.ReportMeta::status).containsExactly("queued");
+
+        assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+        TechErrorExportService.Result res = exporter.export(List.of(ch), Map.of(1L, "Takım A"), sentOnly, now);
+        assertThat(res.reports()).extracting(TechErrorExportService.ReportMeta::reportId).containsExactly(r.getId());
+        assertThat(res.reports()).extracting(TechErrorExportService.ReportMeta::status).containsExactly("sent");
+        assertThat(res.reports().get(0).sentAt()).isEqualTo(claim);
+        assertThat(res.reports().get(0).changedAfterSend()).isFalse();
+        int col = TechErrorExportService.COLUMNS.indexOf("report_status");
+        assertThat(res.rows()).isNotEmpty().allSatisfy(row -> assertThat(row.get(col)).isEqualTo("sent"));
     }
 
     @Test

@@ -12,6 +12,7 @@ import com.sitemonitor.service.techerror.TechErrorReportService;
 import com.sitemonitor.util.Csv;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.MDC;
 import org.springframework.http.ContentDisposition;
@@ -50,8 +51,11 @@ import java.util.regex.Pattern;
  *
  * <p>{@code year} 2020…bu yıl (İstanbul), tek kanal ({@code channel}) dışında zorunlu; {@code month} yıl ister. Tavan
  * {@link TechErrorExportService#MAX_REPORTS} rapor → 400 {@code EXPORT_TOO_LARGE}. Kullanıcı başına dakikada
- * {@link #EXPORT_PER_MINUTE} istek (429 {@code RATE_LIMITED} + {@code Retry-After}). Her başarılı dışa aktarım
- * {@code TECH_ERROR_REPORT_EXPORT} denetim satırı yazar (süzgeç + rapor / satır sayısı).
+ * {@link #EXPORT_PER_MINUTE} istek (429 {@code RATE_LIMITED} + {@code Retry-After}); pod genelinde aynı anda en çok
+ * {@link #EXPORT_CONCURRENCY} dışa aktarım (dolu → 429 {@code EXPORT_BUSY} + {@code Retry-After}, kişinin hakkını yemez).
+ * Okumadan önce kuyruktaki gönderimler sonuçlandırılır ({@code reconcileQueued} — diğer okuma uçları gibi). Her başarılı
+ * dışa aktarım {@code TECH_ERROR_REPORT_EXPORT} denetim satırı yazar (süzgeç + rapor / satır sayısı). CSV doğrudan yanıt
+ * akışına yazılır.
  *
  * <p>Ayrı denetleyici (aynı taban yol): rapor uçlarının büyük denetleyicisine yalnız bir kapsam yardımcısı açıldı.
  */
@@ -64,6 +68,12 @@ public class TechErrorReportExportController {
     /** Kullanıcı başına dakikadaki en çok dışa aktarım (şablon önizleme PDF'inin sınırıyla aynı desen). */
     static final int EXPORT_PER_MINUTE = 6;
     private static final long EXPORT_WINDOW_MS = 60_000L;
+    /** Pod genelinde aynı anda en çok bu kadar dışa aktarım (her biri en çok 2 × MAX_REPORTS raporun JSON'unu okur). */
+    static final int EXPORT_CONCURRENCY = 2;
+    /** İzin için kısa bekleyiş (PDF izni deseni; dışa aktarım PDF'ten ucuz — daha kısa). */
+    static final long EXPORT_WAIT_MS = 5_000L;
+    /** Dolu yanıtında önerilen bekleme ({@code Retry-After}). */
+    static final long EXPORT_BUSY_RETRY_SECONDS = 10L;
 
     private final TechErrorReportService service;
     private final TechErrorExportService exporter;
@@ -75,6 +85,10 @@ public class TechErrorReportExportController {
     private final Map<String, Deque<Long>> exportCalls = new HashMap<>();
     /** Saat (testlerde ileri sarılır). */
     java.util.function.LongSupplier exportClock = System::currentTimeMillis;
+    /** Eşzamanlılık izinleri (adil; testler doldurur). */
+    final java.util.concurrent.Semaphore exportSlots = new java.util.concurrent.Semaphore(EXPORT_CONCURRENCY, true);
+    /** İzin bekleme süresi (ms; testlerde kısaltılır). */
+    long exportWaitMs = EXPORT_WAIT_MS;
 
     public TechErrorReportExportController(TechErrorReportService service, TechErrorExportService exporter,
                                            TeamRepository teams, PermissionService permissions, AuditService auditService) {
@@ -92,7 +106,8 @@ public class TechErrorReportExportController {
                                     @RequestParam(value = "month", required = false) String month,
                                     @RequestParam(value = "status", required = false) String status,
                                     @RequestParam(value = "format", required = false) String format,
-                                    HttpSession session, HttpServletRequest request) {
+                                    HttpSession session, HttpServletRequest request,
+                                    HttpServletResponse response) throws java.io.IOException {
         if (!permissions.allows(session, TechErrorReportController.READ, "view")) {
             throw new SecurityException(TechErrorReportController.READ + " yetkisi gerekli");
         }
@@ -166,7 +181,8 @@ public class TechErrorReportExportController {
             for (TechErrorChannel ch : all) if (teamNames.containsKey(ch.getTeamId())) chs.add(ch);
         }
 
-        Long retryAfter = reserveExport(rateKey(session));
+        String rateKey = rateKey(session);
+        Long retryAfter = reserveExport(rateKey);
         if (retryAfter != null) {
             Map<String, Object> body = errorBody("RATE_LIMITED", Msg.t(
                     "Dışa aktarım sınırına ulaşıldı: kişi başına dakikada en çok " + EXPORT_PER_MINUTE + " dışa aktarım. " + retryAfter + " saniye sonra yeniden deneyin.",
@@ -174,58 +190,96 @@ public class TechErrorReportExportController {
             body.put("retry_after_seconds", retryAfter);
             return ResponseEntity.status(429).header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter)).body(body);
         }
-
-        TechErrorExportService.Result res;
+        // Pod genelinde en çok EXPORT_CONCURRENCY dışa aktarım aynı anda (bellek: her biri en çok 2 × MAX_REPORTS rapor
+        // okur). Dolu → 429 EXPORT_BUSY; reddedilen istek kişinin dakikalık hakkını YEMEZ (ayrılan hak geri verilir).
+        if (!acquireExportSlot()) {
+            cancelReservation(rateKey);
+            long wait = Math.max(1L, EXPORT_BUSY_RETRY_SECONDS);
+            Map<String, Object> body = errorBody("EXPORT_BUSY", Msg.t(
+                    "Şu anda başka dışa aktarımlar hazırlanıyor (aynı anda en çok " + EXPORT_CONCURRENCY + "). " + wait + " saniye sonra yeniden deneyin; bu deneme dakikalık hakkınızdan düşülmedi.",
+                    "Other exports are being prepared right now (at most " + EXPORT_CONCURRENCY + " at a time). Try again in " + wait + " seconds; this attempt did not count against your per-minute limit."));
+            body.put("retry_after_seconds", wait);
+            return ResponseEntity.status(429).header(HttpHeaders.RETRY_AFTER, String.valueOf(wait)).body(body);
+        }
         try {
-            res = exporter.export(chs, teamNames, new TechErrorExportService.Filter(y, m, "sent".equals(st)), service.now());
-        } catch (TechErrorExportService.TooLargeException e) {
-            Map<String, Object> body = errorBody("EXPORT_TOO_LARGE", Msg.t(
-                    "Seçilen süzgeçle " + TechErrorExportService.MAX_REPORTS + " rapordan fazlası çıkıyor. Bir ay, bir takım ya da tek bir kanal seçerek daraltıp yeniden deneyin.",
-                    "This filter matches more than " + TechErrorExportService.MAX_REPORTS + " reports. Narrow it to one month, one team or a single channel and try again."));
-            body.put("max_reports", TechErrorExportService.MAX_REPORTS);
-            return ResponseEntity.status(400).body(body);
-        }
+            // Kuyruğa alınmış gönderimler sonuçlandıysa durum güncel (diğer okuma uçları gibi: genel bakış, liste, rapor)
+            List<Long> channelIds = chs.stream().map(TechErrorChannel::getId).toList();
+            if (!channelIds.isEmpty()) service.reconcileQueued(channelIds);
 
-        auditService.recordAction("TECH_ERROR_REPORT_EXPORT", session, request,
-                channelId != null ? "TECH_ERROR_CHANNEL" : "TEAM",
-                channelId != null ? String.valueOf(channelId) : teamId != null ? String.valueOf(teamId) : "all",
-                AuditDetail.of("team", teamId != null ? teamId : (channelId != null ? null : "all"), "channel_id", channelId,
-                        "year", y, "month", m, "status", st, "format", fmt,
-                        "reports", res.reports().size(), "rows", res.rows().size()));
+            TechErrorExportService.Result res;
+            try {
+                res = exporter.export(chs, teamNames, new TechErrorExportService.Filter(y, m, "sent".equals(st)), service.now());
+            } catch (TechErrorExportService.TooLargeException e) {
+                Map<String, Object> body = errorBody("EXPORT_TOO_LARGE", Msg.t(
+                        "Seçilen süzgeçle " + TechErrorExportService.MAX_REPORTS + " rapordan fazlası çıkıyor. Bir ay, bir takım ya da tek bir kanal seçerek daraltıp yeniden deneyin.",
+                        "This filter matches more than " + TechErrorExportService.MAX_REPORTS + " reports. Narrow it to one month, one team or a single channel and try again."));
+                body.put("max_reports", TechErrorExportService.MAX_REPORTS);
+                return ResponseEntity.status(400).body(body);
+            }
 
-        if ("csv".equals(fmt)) {
-            byte[] body = csv(res.rows()).getBytes(StandardCharsets.UTF_8);
-            return ResponseEntity.ok()
-                    .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
-                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-                            .filename(fileName(y, m)).build().toString())
-                    .body(body);
+            auditService.recordAction("TECH_ERROR_REPORT_EXPORT", session, request,
+                    channelId != null ? "TECH_ERROR_CHANNEL" : "TEAM",
+                    channelId != null ? String.valueOf(channelId) : teamId != null ? String.valueOf(teamId) : "all",
+                    AuditDetail.of("team", teamId != null ? teamId : (channelId != null ? null : "all"), "channel_id", channelId,
+                            "year", y, "month", m, "status", st, "format", fmt,
+                            "reports", res.reports().size(), "rows", res.rows().size()));
+
+            if ("csv".equals(fmt)) {
+                // Doğrudan servlet çıkışına akıtılır (AdminController.exportAlerts ile aynı gerekçe): tüm CSV bellekte bir
+                // metin + bayt dizisi olarak ikinci kez kurulmaz. Akış başladıktan sonra hata gövdesi yazılamaz — veri o an
+                // hazırdır, yalnız yazma (istemci kopması) kalır; izin finally'de bırakılır.
+                response.setStatus(200);
+                response.setContentType("text/csv;charset=UTF-8");
+                response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+                response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(fileName(y, m)).build().toString());
+                java.io.Writer w = new java.io.BufferedWriter(new java.io.OutputStreamWriter(response.getOutputStream(),
+                        StandardCharsets.UTF_8), 16 * 1024);
+                writeCsv(w, res.rows());
+                w.flush();
+                return null;
+            }
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("columns", TechErrorExportService.COLUMNS);
+            data.put("rows", res.rows());
+            data.put("notes", notes("sent".equals(st)));
+            data.put("reports", reportRows(res.reports()));
+            data.put("report_count", res.reports().size());
+            data.put("row_count", res.rows().size());
+            data.put("max_reports", TechErrorExportService.MAX_REPORTS);
+            Map<String, Object> filter = new LinkedHashMap<>();
+            filter.put("team", teamId != null ? teamId : (channelId != null ? null : "all"));
+            filter.put("channel", channelId);
+            filter.put("year", y);
+            filter.put("month", m);
+            filter.put("status", st);
+            data.put("filter", filter);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", true);
+            body.put("data", data);
+            return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(body);
+        } finally {
+            exportSlots.release();
         }
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("columns", TechErrorExportService.COLUMNS);
-        data.put("rows", res.rows());
-        data.put("notes", notes("sent".equals(st)));
-        data.put("reports", reportRows(res.reports()));
-        data.put("report_count", res.reports().size());
-        data.put("row_count", res.rows().size());
-        data.put("max_reports", TechErrorExportService.MAX_REPORTS);
-        Map<String, Object> filter = new LinkedHashMap<>();
-        filter.put("team", teamId != null ? teamId : (channelId != null ? null : "all"));
-        filter.put("channel", channelId);
-        filter.put("year", y);
-        filter.put("month", m);
-        filter.put("status", st);
-        data.put("filter", filter);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("success", true);
-        body.put("data", data);
-        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(body);
+    }
+
+    /** Eşzamanlılık izni: kısa bekleyişle (PDF izni deseni); kesilirse izin alınmamış sayılır. */
+    private boolean acquireExportSlot() {
+        try {
+            return exportSlots.tryAcquire(exportWaitMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     // ── CSV ──────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Düz ondalık sayı (ör. {@code -1.25}, {@code 12000}) — Excel bunu SAYI okur; formül değildir. */
+    /**
+     * Düz ondalık sayı (ör. {@code -1.25}, {@code 12000}) — BI araçları (Power BI, Qlik, pandas) bunu sayı olarak okur; formül
+     * olamaz. Virgülle ayrılmış, nokta ondalıklı bu CSV BI içindir; Excel kullanıcıları kanal görünümündeki "Excel'e aktar"
+     * düğmesini (.xlsx, gerçek sayı hücreleri) kullanır — Türkçe bölge ayarlı Excel bu CSV'yi tek sütun açabilir.
+     */
     private static final Pattern PLAIN_NUMBER = Pattern.compile("-?[0-9]{1,20}(\\.[0-9]{1,6})?");
 
     /**
@@ -235,16 +289,29 @@ public class TechErrorReportExportController {
      * sayı kalmalı, {@code '-1.5} metnine dönmemeli — bu desende formül olamaz. Mantıksal değer {@code true} / {@code false}.
      */
     static String csv(List<List<Object>> rows) {
-        StringBuilder sb = new StringBuilder("﻿");
-        sb.append(Csv.row(TechErrorExportService.COLUMNS.toArray()));
+        java.io.StringWriter sw = new java.io.StringWriter();
+        try {
+            writeCsv(sw, rows);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);       // StringWriter yazmada hata vermez
+        }
+        return sw.toString();
+    }
+
+    /** {@link #csv} ile aynı biçim, doğrudan bir yazıcıya (satırlar üretildikçe; tüm dosya bellekte kurulmaz). */
+    static void writeCsv(java.io.Writer w, List<List<Object>> rows) throws java.io.IOException {
+        w.write(0xFEFF);                                   // UTF-8 BOM (mevcut CSV dışa aktarımlarıyla aynı)
+        w.write(Csv.row(TechErrorExportService.COLUMNS.toArray()));
+        StringBuilder sb = new StringBuilder(256);
         for (List<Object> r : rows) {
+            sb.setLength(0);
             for (int i = 0; i < r.size(); i++) {
                 if (i > 0) sb.append(',');
                 sb.append(csvValue(r.get(i)));
             }
             sb.append("\r\n");
+            w.write(sb.toString());
         }
-        return sb.toString();
     }
 
     static String csvValue(Object v) {
@@ -302,14 +369,17 @@ public class TechErrorReportExportController {
                 "Her rapor kendi kopyalanmış şablonuyla okunur: alan adı ve türü o aya aittir. Aylar arasında karşılaştırırken field_id ile field_type'ı birlikte kullanın.",
                 "Each report is read with its own copied template: the field label and type belong to that month. When comparing months, use field_id together with field_type."));
         out.add(Msg.t(
-                "computed = true olan oranlar raporun son kaydında hesaplanıp saklanan değerdir; geçen ayın raporu sonradan düzeltildiyse önceki aya göre değişim, rapor yeniden kaydedilene kadar PDF'tekinden farklı olabilir.",
-                "Rates with computed = true are the values calculated and stored at the report's last save; if last month's report was corrected later, the change versus last month may differ from the PDF until the report is saved again."));
+                "Hesaplanan oranlar PDF'teki gibi bu dışa aktarım anında CANLI hesaplanır (raporun girilen adetlerinden; önceki aya göre değişim aynı kanalın bir önceki takvim ayının raporundan) ve computed = true taşır. computed = false olan bir yüzde ya da evet/hayır alanı elle girilmiştir: formül kullanılamadığında (ör. kanalın ilk raporu, geçen ayın değeri yok) girilen değer kalır.",
+                "Calculated rates are computed LIVE at export time, like the PDF (from the counts entered in the report; the change versus last month from the same channel's report for the previous calendar month) and carry computed = true. A percent or yes/no field with computed = false was entered by hand: when the formula can't be used (e.g. the channel's first report, no value for last month) the entered value is kept."));
         out.add(Msg.t(
                 "exempt = true: alan o ay muaftır (bağlı evet/hayır sorusu Hayır yanıtlandı) — değer boştur, sıfır değildir.",
                 "exempt = true: the field is exempt that month (its yes/no question was answered No) — the value is empty, not zero."));
         out.add(Msg.t(
-                "approval_state yalnız onay akışı olan (yönetici alıcısı tanımlı) kanallarda doludur. Kişi bilgisi (alıcılar, gönderen, onaylayan, düzenleyen) bu dışa aktarımda yer almaz.",
-                "approval_state is filled only for channels with an approval flow (executive recipients set). No personal data (recipients, sender, approver, editor) is included in this export."));
+                "approval_state yalnız onay akışı olan kanallarda doludur ve kanalın BUGÜNKÜ yönetici alıcısı listesine bakar (ekrandaki gibi): liste sonradan boşaltılan kanalın eski raporlarında da boştur, sonradan eklenen kanalın eski raporları none görünür.",
+                "approval_state is filled only for channels with an approval flow and follows the channel's CURRENT executive recipient list (as on screen): it is empty for older reports of a channel whose list was cleared later, and older reports of a channel that got a list later show none."));
+        out.add(Msg.t(
+                "Kişi bilgisi (alıcılar, gönderen, onaylayan, düzenleyen) bu dışa aktarımda yer almaz.",
+                "No personal data (recipients, sender, approver, editor) is included in this export."));
         return out;
     }
 
@@ -334,6 +404,17 @@ public class TechErrorReportExportController {
             }
             q.addLast(now);
             return null;
+        }
+    }
+
+    /**
+     * Az önce ayrılan hakkı geri verir (dolu → 429 EXPORT_BUSY: deneme sayılmaz). Kuyruğun EN YENİ kaydı silinir — aynı
+     * kişinin eşzamanlı başka bir isteği araya girdiyse onunki silinir; sayı aynı kalır (ikisi de pencerede).
+     */
+    void cancelReservation(String key) {
+        synchronized (exportCalls) {
+            Deque<Long> q = exportCalls.get(key);
+            if (q != null && !q.isEmpty()) q.pollLast();
         }
     }
 

@@ -29,15 +29,20 @@ import java.util.Set;
  * için; kapsam + kişi maskesi kuralları"). Rapor × alan başına bir satır: her rapor KENDİ kopyalanmış şablonuyla okunur
  * (alan kimliği + türü o aya aittir — kanalın bugünkü şablonu değil); yalnız sayı / yüzde / evet-hayır / kısa metin
  * alanları (uzun metin, görsel, tablo, anomali konuları yok). Muaf alanın ({@code skip_if_no} "Hayır") değeri boş,
- * {@code exempt} işaretli; hesaplanan oran ({@code calc}) raporun SON KAYDINDAKİ saklı değeridir, {@code computed}
- * işaretli.
+ * {@code exempt} işaretli. Hesaplanan alanlar ({@code calc}) PDF / e-posta gibi CANLI hesaplanır
+ * ({@code TechErrorReportService.pdfInput} ile aynı: {@link TechErrorCalc#apply} + aynı kanalın bir önceki takvim ayının
+ * raporu, {@link TechErrorReportService#sameTypeFields} kuralıyla); {@code computed} yalnız sonuç {@code OK} iken doğrudur —
+ * formül kullanılamadığında (MANUAL / BAD_REF: ör. kanalın ilk raporunda değişim oranı) girilen değer kalır,
+ * {@code computed = false}.
  *
  * <p><b>Kişi verisi yok.</b> İzdüşüm alıcı / gönderen / onaylayan / düzenleyen kimliklerini ve onay notunu okumaz bile;
  * satırda yalnız gönderim ZAMANI ({@code sent_at}) ve onay DURUMU ({@code approval_state}, yalnız onay akışlı kanalda).
  *
- * <p><b>Sabit sorgu sayısı.</b> Raporlar TEK sorguda ({@link TechErrorReportExportRepository#findForExport}) okunur;
- * kanallar ve takım adları çağırandan gelir. Tavan {@link #MAX_REPORTS} rapor: sorgu bir fazlasını ister, aşılırsa
- * {@link TooLargeException} (çağıran 400 {@code EXPORT_TOO_LARGE} döner — süzgeci daraltın).
+ * <p><b>Sabit sorgu sayısı (iki).</b> Önce ucuz bir SAYIM ({@link TechErrorReportExportRepository#countForExport}, JSON
+ * okunmaz): {@link #MAX_REPORTS} raporu aşan süzgeç hiçbir şey yüklenmeden {@link TooLargeException} (çağıran 400
+ * {@code EXPORT_TOO_LARGE} döner — süzgeci daraltın). Sonra TEK yükleme sorgusu
+ * ({@link TechErrorReportExportRepository#findForExport}): dışa aktarılanlar + her birinin önceki ayı (en çok iki kat).
+ * Kanallar ve takım adları çağırandan gelir.
  */
 @Service
 public class TechErrorExportService {
@@ -98,14 +103,29 @@ public class TechErrorExportService {
             order.putIfAbsent(ch.getId(), order.size());
         }
         if (byId.isEmpty()) return new Result(List.of(), List.of());
-        int y1 = f.year() == null ? 0 : f.year();
-        int y2 = f.year() == null ? 9999 : f.year();
-        int m1 = f.month() == null ? 1 : f.month();
-        int m2 = f.month() == null ? 12 : f.month();
-        List<ExportRow> found = repo.findForExport(byId.keySet(), y1, y2, m1, m2, f.sentOnly(), Limit.of(MAX_REPORTS + 1));
-        if (found.size() > MAX_REPORTS) throw new TooLargeException();
+        // Ay yalnız yılla anlamlıdır (denetleyici yılsız ayı 400 ile reddeder); yıl yok = tüm yıllar
+        int pFrom = f.year() == null ? period(0, 1) : period(f.year(), f.month() == null ? 1 : f.month());
+        int pTo = f.year() == null ? period(9999, 12) : period(f.year(), f.month() == null ? 12 : f.month());
 
-        List<ExportRow> sorted = new ArrayList<>(found);
+        // 1) Ucuz sayım (JSON okunmaz): tavanı aşan istek belleğe hiçbir şey yüklemeden reddedilir
+        long count = repo.countForExport(byId.keySet(), pFrom, pTo, f.sentOnly());
+        if (count > MAX_REPORTS) throw new TooLargeException();
+        if (count == 0) return new Result(List.of(), List.of());
+        // 2) Tek yükleme: dışa aktarılanlar + her birinin önceki takvim ayı (canlı hesap için) — en çok iki kat
+        List<ExportRow> found = repo.findForExport(byId.keySet(), pFrom - 1, pFrom, pTo, f.sentOnly(),
+                Limit.of(2 * MAX_REPORTS + 1));
+        if (found.size() > 2 * MAX_REPORTS) throw new TooLargeException();
+        Map<String, ExportRow> byPeriod = new HashMap<>();
+        List<ExportRow> sorted = new ArrayList<>();
+        for (ExportRow r : found) {
+            if (r.getChannelId() == null || r.getReportYear() == null || r.getReportMonth() == null) continue;
+            byPeriod.put(r.getChannelId() + ":" + period(r.getReportYear(), r.getReportMonth()), r);
+            int p = period(r.getReportYear(), r.getReportMonth());
+            if (p >= pFrom && p <= pTo && (!f.sentOnly() || r.getLastSentAt() != null)) sorted.add(r);
+        }
+        // Sayım ile yükleme arasında açılan raporlar tavanı aşırdıysa yine reddedilir
+        if (sorted.size() > MAX_REPORTS) throw new TooLargeException();
+
         java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
         col.setStrength(java.text.Collator.SECONDARY);
         Map<Long, String> names = teamNames == null ? Map.of() : teamNames;
@@ -123,32 +143,52 @@ public class TechErrorExportService {
         for (ExportRow r : sorted) {
             TechErrorChannel ch = byId.get(r.getChannelId());
             if (ch == null) continue;
-            String tj = r.getTemplateJson() == null ? "" : r.getTemplateJson();
-            Template t = templates.computeIfAbsent(tj, TechErrorTemplate::fromStored);
-            Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+            Template t = template(templates, r.getTemplateJson());
+            Values stored = TechErrorValues.fromStored(r.getValuesJson(), t);
+            // Hesaplanan alanlar PDF gibi CANLI (TechErrorReportService.pdfInput): aynı kanalın bir önceki takvim ayının
+            // raporu, bu şablondaki alanlarla AYNI kimlik ve türdeki değerleri (sameTypeFields — tek kural)
+            ExportRow prev = byPeriod.get(r.getChannelId() + ":" + (period(r.getReportYear(), r.getReportMonth()) - 1));
+            Map<String, Object> previous = null;
+            if (prev != null) {
+                Template pt = template(templates, prev.getTemplateJson());
+                previous = TechErrorReportService.sameTypeFields(pt, TechErrorValues.fromStored(prev.getValuesJson(), pt), t);
+            }
+            TechErrorCalc.Applied applied = TechErrorCalc.applyDetailed(t, stored, previous);
+            Map<String, Object> live = applied.values().fields();
             String status = TechErrorReportService.reportStatus(asRow(r), now);
-            boolean changed = "changed".equals(status);
+            // Durumdan BAĞIMSIZ: taze bir gönderim talebi ("sending") sürerken de gönderilenden farklı olabilir
+            boolean changed = TechErrorReportService.changedAfterSend(asRow(r));
             String approval = TechErrorApprovalService.approvalRequired(ch)
                     ? approvalState(r.getApprovalState(), r.getApprovalRev(), r.getContentRev()) : null;
             String teamName = names.get(r.getTeamId());
-            int year = r.getReportYear() == null ? 0 : r.getReportYear();
-            int month = r.getReportMonth() == null ? 0 : r.getReportMonth();
+            int year = r.getReportYear();
+            int month = r.getReportMonth();
             String sentAt = r.getLastSentAt() == null ? null : r.getLastSentAt().toString();
             int fieldCount = 0;
             for (Field fd : t.allFields()) {
                 if (!FIELD_TYPES.contains(fd.type())) continue;
-                boolean exempt = TechErrorTemplate.exempt(fd, v.fields());
-                Object value = exempt ? null : exportValue(fd, v.fields().get(fd.id()));
+                boolean exempt = TechErrorTemplate.exempt(fd, stored.fields());
+                Object value = exempt ? null : exportValue(fd, live.get(fd.id()));
+                boolean computed = !exempt && applied.status(fd.id()) == TechErrorCalc.Status.OK;
                 String label = TechErrorTemplate.resolve(fd.label(), ch.getName(), year, month, t.lang());
                 rows.add(Collections.unmodifiableList(Arrays.asList(r.getTeamId(), teamName, ch.getId(), ch.getName(),
                         year, month, r.getId(), status, sentAt, changed, approval, fd.id(), label, fd.type(), value,
-                        exempt, fd.calc() != null)));
+                        exempt, computed)));
                 fieldCount++;
             }
             metas.add(new ReportMeta(r.getTeamId(), teamName, ch.getId(), ch.getName(), year, month, r.getId(), status,
                     r.getLastSentAt(), changed, approval, fieldCount));
         }
         return new Result(metas, rows);
+    }
+
+    /** Dönem numarası: {@code yıl × 12 + ay} — ardışık aylar ardışık sayılar (Ocak'ın öncesi önceki yılın Aralık'ı). */
+    static int period(int year, int month) {
+        return year * 12 + month;
+    }
+
+    private static Template template(Map<String, Template> cache, String json) {
+        return cache.computeIfAbsent(json == null ? "" : json, TechErrorTemplate::fromStored);
     }
 
     /**

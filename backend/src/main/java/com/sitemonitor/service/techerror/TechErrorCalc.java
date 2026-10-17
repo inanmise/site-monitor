@@ -151,14 +151,30 @@ public final class TechErrorCalc {
      * hesaplanan alan hesaplanmaz (değeri zaten saklanmaz). Sorgu yapmaz; geçen ay {@code previous} ile gelir.
      */
     public static Values apply(Template t, Values v, Map<String, Object> previous) {
-        if (t == null || v == null) return v;
+        return applyDetailed(t, v, previous).values();
+    }
+
+    /**
+     * {@link #apply} + alan başına SONUÇ durumu (değer dışa aktarımı okur: {@code computed} = durum {@link Status#OK} — MANUAL /
+     * BAD_REF'te girilen değer kalır ve "hesaplandı" denmez). Muaf hesaplanan alanın durumu yoktur. Hesaplanan alan yoksa
+     * değerler AYNI nesnedir ve durum haritası boştur.
+     */
+    public record Applied(Values values, Map<String, Status> statuses) {
+        public Status status(String fieldId) {
+            return statuses.get(fieldId);
+        }
+    }
+
+    public static Applied applyDetailed(Template t, Values v, Map<String, Object> previous) {
+        if (t == null || v == null) return new Applied(v, Map.of());
         Map<String, Field> byId = new HashMap<>();
         boolean any = false;
         for (Field f : t.allFields()) {
             byId.put(f.id(), f);
             any |= f.calc() != null;
         }
-        if (!any) return v;
+        if (!any) return new Applied(v, Map.of());
+        Map<String, Status> statuses = new HashMap<>();
         Map<String, Object> fields = new LinkedHashMap<>(v.fields());
         Map<String, Object> inputs = v.fields();
         // 1. geçiş: oran / değişim / artış (girdileri yalnız girilen adetler); 2. geçiş: hedef karşılaştırması — hesaplanmış
@@ -171,6 +187,7 @@ public final class TechErrorCalc {
                     continue;
                 }
                 Result r = result(f, byId, pass == 0 ? inputs : fields, previous, v.targets());
+                statuses.put(f.id(), r.status());
                 switch (r.status()) {
                     case OK -> fields.put(f.id(), r.value() instanceof Double d ? TechErrorValues.compact(d) : r.value());
                     case MANUAL, BAD_REF -> { /* elle girilen değer kalır */ }
@@ -178,6 +195,6 @@ public final class TechErrorCalc {
                 }
             }
         }
-        return v.withFields(fields);
+        return new Applied(v.withFields(fields), statuses);
     }
 }
