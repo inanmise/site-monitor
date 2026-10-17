@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown, ArrowUp, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus,
-  Radio, RefreshCw, Search, Users, X,
+  Radio, RefreshCw, Search, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -457,8 +457,7 @@ function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, ...actions
             {ch.name}
           </Button>
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <Users aria-hidden="true" className="size-3.5 shrink-0" />
-            <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
+            <TeamBadge teamId={ch.team_id} teamName={ch.team_name} wrap />
           </div>
           {ch.description && <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{ch.description}</p>}
           <ChannelChips ch={ch} />
@@ -502,8 +501,7 @@ function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, ...action
               {ch.name}
             </Button>
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <Users aria-hidden="true" className="size-3.5 shrink-0" />
-              <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
+              <TeamBadge teamId={ch.team_id} teamName={ch.team_name} wrap />
             </div>
           </div>
           {items.length > 0 && <KebabMenu items={items} label={t('te.channelActions')} rowLabel={ch.name} placement="right" />}

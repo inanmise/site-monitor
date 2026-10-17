@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Search, Trash2, Users, X } from 'lucide-react'
+import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, Plus, Search, Trash2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -176,8 +176,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
-            <Users aria-hidden="true" className="size-4 shrink-0" />
-            <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} static wrap />
+            <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} wrap />
           </span>
           <span data-slot="te-channel-stats">{t('te.hdr.reports', counts.total, counts.sent)}</span>
         </div>

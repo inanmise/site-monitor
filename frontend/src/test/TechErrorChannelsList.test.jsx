@@ -131,6 +131,11 @@ describe('kanal listesi — tablo, süzgeçler, sayfalama', () => {
     const first = rows()[0]
     expect(within(first).getByRole('button', { name: 'Şablonu aç' })).toBeInTheDocument()
     expect(within(first).getByRole('button', { name: 'Eylül 2026 raporunu aç' })).toBeInTheDocument()
+    // Kullanıcı bildirimi (2026-10-17): takım bilgisinin yanında İKİ ikon vardı ve takım tıklanmıyordu — rozet tek ikonlu
+    // ve diğer sayfalardaki gibi takımın üye penceresini açan düğme
+    const teamBtn = within(first).getByRole('button', { name: /takımının üyelerini göster$/ })
+    expect(teamBtn).toHaveAttribute('data-slot', 'team-badge')
+    expect(teamBtn.parentElement.querySelectorAll('svg.lucide-users')).toHaveLength(1)
     pressMenuTrigger(within(first).getByRole('button', { name: 'Kanal 01 — İşlemler' }))
     expect(await screen.findByRole('menuitem', { name: 'Tüm raporlar' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Kanalı düzenle' })).toBeInTheDocument()

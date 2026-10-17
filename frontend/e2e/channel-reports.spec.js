@@ -428,6 +428,12 @@ function smallTargets(sel) {
     // Radyo (seçim kartı): vuruş alanı kartın tamamı — kapsayan label ölçülür (team-access e2e ile aynı kural)
     let h = r.height
     if (b.getAttribute('role') === 'radio' || b.type === 'radio') h = Math.max(h, b.closest('label')?.getBoundingClientRect().height ?? 0)
+    // Takım rozeti gibi küçük görünen hedefler dokunmatikte ::after ile dikeyde büyür (TEAM_BADGE_TOUCH, ~42 px) — o alan sayılır
+    const af = getComputedStyle(b, '::after')
+    if (af.position === 'absolute' && af.content !== 'none') {
+      const top = parseFloat(af.top) || 0, bottom = parseFloat(af.bottom) || 0
+      h = Math.max(h, r.height - Math.min(0, top) - Math.min(0, bottom))
+    }
     if (h < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(h)}`)
   }
   return out

@@ -62,7 +62,14 @@ function smallTargets(sel) {
     if (r.width === 0 || r.height === 0 || b.disabled || b.getAttribute('role') === 'checkbox') continue
     const cs = getComputedStyle(b)
     if (cs.visibility === 'hidden' || cs.display === 'none' || b.getAttribute('aria-hidden') === 'true') continue
-    if (r.height < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(r.height)}`)
+    let h = r.height
+    // Takım rozeti gibi küçük görünen hedefler dokunmatikte ::after ile dikeyde büyür (TEAM_BADGE_TOUCH, ~42 px) — o alan sayılır
+    const af = getComputedStyle(b, '::after')
+    if (af.position === 'absolute' && af.content !== 'none') {
+      const top = parseFloat(af.top) || 0, bottom = parseFloat(af.bottom) || 0
+      h = Math.max(h, r.height - Math.min(0, top) - Math.min(0, bottom))
+    }
+    if (h < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(h)}`)
   }
   return out
 }
