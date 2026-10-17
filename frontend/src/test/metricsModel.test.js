@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   bucketMinutes, bucketStarts, clusterRows, fmtRate, httpRows, isNotWriting, podShare, latestValue, logCacheRows, normalizeRange, overviewKpis, perPodRows, podSeries, podState,
-  seriesPods, toneOf, uptimeText, utcMs,
+  seriesPods, sortPods, toneOf, uptimeText, utcMs,
 } from '../components/admin/metrics/metricsModel.js'
 
 /**
@@ -38,15 +38,49 @@ describe('metricsModel', () => {
     expect(bucketStarts({ bucket: '1m', from: '2000-01-01T00:00:00', to: '2031-01-01T00:00:00' })).toHaveLength(2000)
   })
 
-  it('podlar: ada göre sıralı, güvenli anahtar (nokta / iki nokta CSS adına girmez), tek pod süzgeci', () => {
+  it('podlar: SUNUCU sırası korunur (ada göre yeniden dizilmez), güvenli anahtar (nokta / iki nokta CSS adına girmez), tek pod süzgeci', () => {
     const pods = seriesPods(series)
-    expect(pods.map((p) => p.name)).toEqual(['pod-a', 'pod-b'])
+    expect(pods.map((p) => p.name), 'sunucu canlı pod-b\'yi önde verdi').toEqual(['pod-b', 'pod-a'])
     const ps = podSeries(pods)
     expect(ps.map((s) => s.key)).toEqual(['p0', 'p1'])
-    expect(ps.map((s) => s.podId)).toEqual(['a.host:1', 'b.host:1'])
+    expect(ps.map((s) => s.podId), 'renk / anahtar listenin sırasını izler: p0 ilk pod').toEqual(['b.host:1', 'a.host:1'])
     expect(seriesPods({ ...series, instance: 'b.host:1' }).map((p) => p.id)).toEqual(['b.host:1'])
     expect(seriesPods({ ...series, instance: 'yok' })).toEqual([])
     expect(seriesPods({ pods: [], points: [{ pod: 'eski', t: '2031-04-02T12:01:00' }] })[0]).toMatchObject({ id: 'eski', live: false })
+    // Yalnız noktada görünen podlar listenin SONUNA, ada göre; bir kez
+    const extra = seriesPods({ pods: [{ id: 'z', name: 'z-pod', live: true }],
+      points: [{ pod: 'y' }, { pod: 'x' }, { pod: 'y' }, { pod: 'z' }] })
+    expect(extra.map((p) => p.id)).toEqual(['z', 'x', 'y'])
+    expect(seriesPods({ ...series, pods: [], instance: 'b.host:1' }).map((p) => p.id), 'tek pod süzgeci yalnız noktadaki podu da bulur').toEqual(['b.host:1'])
+  })
+
+  it('sortPods: canlı → sessiz → durdu; aynı durumda en yeni süreç (first_seen) önce, bilinmeyen sonda; eski sunucuda canlı önde', () => {
+    const list = [
+      { id: 'stop', name: 'pod-stop', state: 'stopped', first_seen: '2031-04-02T11:58:00', last_seen: '2031-04-02T11:59:00' },
+      { id: 'old', name: 'pod-old', state: 'live', first_seen: '2031-03-30T08:00:00', last_seen: '2031-04-02T11:59:00' },
+      { id: 's1', name: 'pod-silent', state: 'silent', first_seen: '2031-04-02T11:30:00', last_seen: '2031-04-02T11:40:00' },
+      { id: 'nofirst', name: 'pod-a', state: 'live', last_seen: '2031-04-02T11:59:00' },
+      { id: 'new', name: 'pod-new', state: 'live', first_seen: '2031-04-02T11:20:00', last_seen: '2031-04-02T11:59:00' },
+      { id: 's2', name: 'pod-silent-old', state: 'silent', first_seen: '2031-04-01T12:30:00', last_seen: '2031-04-02T11:50:00' },
+    ]
+    const before = list.map((p) => p.id)
+    expect(sortPods(list).map((p) => p.id)).toEqual(['new', 'old', 'nofirst', 's1', 's2', 'stop'])
+    expect(list.map((p) => p.id), 'girdi değişmez').toEqual(before)
+    // Eski sunucu: first_seen yok, `state` yok (yalnız `live`) → canlılar önde, sonra son örnek, sonra ad
+    const legacy = [
+      { id: 'b', name: 'pod-b', live: false, last_seen: '2031-04-02T10:00:00' },
+      { id: 'c', name: 'pod-c', live: true, last_seen: '2031-04-02T11:59:00' },
+      { id: 'a', name: 'pod-a', live: true, last_seen: '2031-04-02T11:59:00' },
+    ]
+    expect(sortPods(legacy).map((p) => p.id)).toEqual(['a', 'c', 'b'])
+    // Eşit ilk örnek: son örneği yeni önce; o da eşitse ad, sonra kimlik
+    expect(sortPods([
+      { id: 'y', name: 'a', state: 'live', first_seen: '2031-04-02T11:00:00', last_seen: '2031-04-02T11:58:00' },
+      { id: 'x', name: 'b', state: 'live', first_seen: '2031-04-02T11:00:00', last_seen: '2031-04-02T11:59:00' },
+      { id: 'z', name: 'a', state: 'live', first_seen: '2031-04-02T11:00:00', last_seen: '2031-04-02T11:59:00' },
+    ]).map((p) => p.id)).toEqual(['z', 'x', 'y'])
+    expect(sortPods(null)).toEqual([])
+    expect(sortPods(undefined)).toEqual([])
   })
 
   it('pod satırları: örneksiz kova null (boşluk), değer güvenli anahtarda', () => {

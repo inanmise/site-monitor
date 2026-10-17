@@ -44,18 +44,47 @@ export function utcMs(s) {
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
-/** Seri yanıtındaki pod listesi; noktası olup listede olmayan pod da eklenir (24 saatten eski olabilir). */
+/** UTF-16 kod birimi karşılaştırması — Java `String.compareTo` ile aynı (sunucu sırası istemcide bozulmasın). */
+const cmpText = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+const STATE_RANK = { live: 0, silent: 1, stopped: 2 }
+const timeText = (v) => (typeof v === 'string' && v ? v : null)
+/** Azalan (yeni önce), bilinmeyen sonda. Zamanlar sunucunun aynı biçimli UTC metni — sözlük sırası zaman sırasıdır. */
+const newestFirst = (a, b) => (a === b ? 0 : a == null ? 1 : b == null ? -1 : cmpText(b, a))
+
+/**
+ * Pod sırası (2026-10-17, kullanıcı isteği: "canlı olan pod en önde, en yeni pod en başta") — sunucunun
+ * `SystemMetricsQueryService.POD_ORDER` kuralının aynısı: durum (canlı → sessiz → durdu), aynı durumda ilk örneği en yeni
+ * (en son açılan süreç; `first_seen` yoksa sonda), sonra son örneği en yeni, sonra ad, en son kimlik. Eski sunucu
+ * (`first_seen` yok) yanıtında da canlılar önde kalır. Girdiyi değiştirmez.
+ */
+export function sortPods(list) {
+  if (!Array.isArray(list)) return []
+  return [...list].sort((a, b) =>
+    STATE_RANK[podState(a)] - STATE_RANK[podState(b)]
+    || newestFirst(timeText(a?.first_seen), timeText(b?.first_seen))
+    || newestFirst(timeText(a?.last_seen), timeText(b?.last_seen))
+    || cmpText(String(a?.name ?? a?.id ?? ''), String(b?.name ?? b?.id ?? ''))
+    || cmpText(String(a?.id ?? ''), String(b?.id ?? '')))
+}
+
+/**
+ * Seri yanıtındaki pod listesi, SUNUCUNUN sırasıyla (canlı önce, en yeni süreç önce — grafik renkleri de bu sırayı izler:
+ * `p0` ilk pod); noktası olup listede olmayan pod (24 saatten eski olabilir) sona, ada göre eklenir.
+ */
 export function seriesPods(data) {
   const out = new Map()
   for (const p of data?.pods || []) if (p?.id != null) out.set(String(p.id), { id: String(p.id), name: String(p.name ?? p.id), live: p.live === true })
+  const extra = new Map()
   for (const pt of data?.points || []) {
-    if (pt?.pod != null && !out.has(String(pt.pod))) out.set(String(pt.pod), { id: String(pt.pod), name: String(pt.pod), live: false })
+    const id = pt?.pod == null ? null : String(pt.pod)
+    if (id != null && !out.has(id) && !extra.has(id)) extra.set(id, { id, name: id, live: false })
   }
+  const all = [...out.values(), ...[...extra.values()].sort((a, b) => cmpText(a.name, b.name))]
   if (data?.instance) {
-    const only = out.get(String(data.instance))
+    const only = all.find((p) => p.id === String(data.instance))
     return only ? [only] : []
   }
-  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name, 'tr'))
+  return all
 }
 
 /** Aralığın kova başlangıçları (ms). Tavanlı: 7 gün saatlik = 169 satır. */

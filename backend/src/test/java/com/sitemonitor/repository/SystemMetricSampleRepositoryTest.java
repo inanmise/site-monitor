@@ -83,12 +83,21 @@ class SystemMetricSampleRepositoryTest {
         repo.save(marker);
         Map<String, Object> pods = new HashMap<>();
         Map<String, Integer> markers = new HashMap<>();
+        Map<String, Object> firstSeen = new HashMap<>();
         for (Object[] r : repo.podsSince("2031-01-05T08:00:00")) {
+            assertThat(r).as("ilk örnek SONA eklendi: [kimlik, ad, son, işaret, ilk]").hasSize(5);
             pods.put(String.valueOf(r[0]), r[2]);
             markers.put(String.valueOf(r[0]), ((Number) r[3]).intValue());
+            firstSeen.put(String.valueOf(r[0]), r[4]);
         }
         assertThat(pods).containsEntry("pod-a", "2031-01-05T09:01:00").containsEntry("pod-b", "2031-01-05T08:12:00");
         assertThat(markers).as("kapanış işareti").containsEntry("pod-a", 0).containsEntry("pod-b", 1);
+        assertThat(firstSeen).as("ilk örnek = penceredeki en eski örnek zamanı")
+                .containsEntry("pod-a", "2031-01-05T08:11:00").containsEntry("pod-b", "2031-01-05T08:11:00");
+        Map<String, Object> laterWindow = new HashMap<>();
+        for (Object[] r : repo.podsSince("2031-01-05T08:20:00")) laterWindow.put(String.valueOf(r[0]), r[4]);
+        assertThat(laterWindow).as("pencerenin içinden: daha önceki örnek sayılmaz; pencerede örneği olmayan pod yok")
+                .containsOnlyKeys("pod-a").containsEntry("pod-a", "2031-01-05T08:25:00");
         assertThat(repo.findBySampledAtGreaterThanEqualAndShutdownMarkerIsNullOrderBySampledAtDesc("2031-01-05T08:12:00")).as("işaret satırı son örnek sayılmaz")
                 .extracting(SystemMetricSample::getInstanceId).doesNotContain("pod-b");
         assertThat(repo.aggregate("2031-01-05T08:00:00", "2031-01-05T08:59:59", "pod-b", 16))

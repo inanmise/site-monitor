@@ -15,7 +15,7 @@ import MetricChart from './MetricChart.jsx'
 import PodList from './PodList.jsx'
 import {
   CPU_PCT, HEAP_CHART_PCT, HTTP_ERR_PCT, HTTP_MS, MEMORY_PCT, METRIC_RANGES, QUEUE_PCT, fmtNum, fmtPct, fmtRate, httpRows, latestValue, logCacheRows,
-  normalizeRange, overviewKpis, perPodRows, podSeries, seriesPods, utcMs,
+  normalizeRange, overviewKpis, perPodRows, podSeries, seriesPods, sortPods, utcMs,
 } from './metricsModel.js'
 
 /**
@@ -123,7 +123,8 @@ export default function MetricsView({ onBack, initial }) {
   const bucket = series?.bucket || ({ '1h': '1m', '7d': '1h' }[range] || '10m')
   const per = t(`mx.per.${bucket}`)
   const podOptions = useMemo(() => {
-    const list = (overview?.pods || []).map((p) => ({ value: String(p.id), label: String(p.name ?? p.id) }))
+    // Seçici de pod listesiyle aynı sırada: canlı önce, en yeni süreç önce
+    const list = sortPods(overview?.pods).map((p) => ({ value: String(p.id), label: String(p.name ?? p.id) }))
     if (pod && !list.some((o) => o.value === pod)) list.push({ value: pod, label: pod })
     return [{ value: '', label: t('mx.pod.all') }, ...list]
   }, [overview, pod, t])
