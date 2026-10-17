@@ -306,8 +306,19 @@ public class TechErrorHistoryService {
      */
     public void recordSend(TechErrorReport r, String kind, Long by, String state, Collection<String> recipients,
                            String reason, Instant at) {
+        recordSend(r, kind, by, state, recipients, reason, at, null);
+    }
+
+    /**
+     * Ek ayrıntıyla gönderim olayı (A3, 2026-10-17): {@code extra} satırın ayrıntısına eklenir — ör. {@code dropped_recipients}
+     * = alıcı kaynağında sınırın (20) dışında kaldığı için posta ALMAYAN adres sayısı. {@code null} = eski ayrıntı aynen.
+     */
+    public void recordSend(TechErrorReport r, String kind, Long by, String state, Collection<String> recipients,
+                           String reason, Instant at, Map<String, Object> extra) {
         try {
-            insert(r, kind, by, null, sendDetail(state, recipients, reason), at);
+            Map<String, Object> detail = sendDetail(state, recipients, reason);
+            if (extra != null) detail.putAll(extra);
+            insert(r, kind, by, null, detail, at);
         } catch (RuntimeException e) {
             log.warn("Teknik hata raporu #{} gönderim olayı yazılamadı: {}", r.getId(), e.toString());
         }

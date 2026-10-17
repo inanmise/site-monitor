@@ -157,6 +157,24 @@ describe('rapor değişiklik geçmişi', () => {
     expect(sheet.querySelector('[data-op="reorder"]')).toHaveTextContent('Konuların sırası değişti')
   })
 
+  it('gönderim olayı (inceleme 2026-10-17): sınırın dışında kalan Kime (dropped_recipients) ve Bilgi (dropped_cc) adresleri ayrı notlarla; yoksa not yok', async () => {
+    te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
+      ev(3, 'SEND', '2026-10-13T11:00:00Z', { detail: { state: 'SENT', recipient_count: 1, recipients: ['ceo@example.com'], dropped_recipients: 2, dropped_cc: 3 } }),
+      ev(2, 'SEND', '2026-10-13T10:00:00Z', { detail: { state: 'SENT', recipient_count: 1, recipients: ['ceo@example.com'] } }),
+    ] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Değişiklik geçmişi' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Değişiklik geçmişi' })
+    await waitFor(() => expect(sheet.querySelectorAll('[data-kind="SEND"]')).toHaveLength(2))
+    const [withDrops, plain] = sheet.querySelectorAll('[data-kind="SEND"]')
+    expect(withDrops.querySelector('[data-slot="te-history-send-dropped"]')).toHaveTextContent('2 adres alıcı sınırının (20) dışında kaldı ve bu postayı almadı.')
+    expect(withDrops.querySelector('[data-slot="te-history-send-cc-dropped"]')).toHaveTextContent('Takım adresinde (Bilgi / CC) 3 adres sınırın (20) dışında kaldı ve bu postayı almadı.')
+    expect(plain.querySelector('[data-slot="te-history-send-dropped"]')).toBeNull()
+    expect(plain.querySelector('[data-slot="te-history-send-cc-dropped"]')).toBeNull()
+    expect(sheet.textContent).not.toMatch(/te\.hist\./)
+  })
+
   it('otomatik kayıt (2026-10-16): birleşmiş VALUES olayında "Otomatik kayıt" rozeti + kayıt sayısı; elle kayıtta ikisi de yok', async () => {
     const change = { section: 'Mobil Kanalı — Eylül 2026 Özeti', label: 'Toplam işlem adedi', type: 'number', op: 'change', before: '10', after: '12' }
     te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [

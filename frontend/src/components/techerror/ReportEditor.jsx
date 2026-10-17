@@ -22,12 +22,15 @@ import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBloc
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
+import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
   reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
+import { useElementHeight } from '../../hooks/useElementHeight.js'
+import { cn } from '@/lib/utils'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const BACKUP_PREFIX = 'sm.te.draft.'
@@ -128,6 +131,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
+  // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
+  // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
+  const [actionsRef, actionsHeight] = useElementHeight()
   const historyBtnRef = useRef(null)
   const titleRef = useRef(null)
   const seq = useRef(0)
@@ -775,7 +781,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
   const upd = data.template_update
   return (
-    <div className="flex flex-col gap-4 pb-24" data-slot="te-report" data-report={reportId}>
+    <div className={cn('flex flex-col gap-4', actionsHeight > 0 ? '' : 'pb-24')}
+      style={actionsHeight > 0 ? { paddingBottom: actionsHeight + 16 } : undefined} data-slot="te-report" data-report={reportId}>
       {back}
       <header className="flex flex-col gap-2">
         <div data-slot="te-copy-row" className="text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">
@@ -829,6 +836,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             <span className="[overflow-wrap:anywhere]">· {t('te.lastSent', fmtDateTime(report.last_sent_at, uiLang), report.last_sent_to || '—')}</span>
           )}
         </div>
+        {/* Alıcı özeti (R13 / B6): takım adresi sayısı, onay akışında yönetici alıcı sayısı + onay durumu — yalnız sayılar */}
+        <RecipientsSummary teamEmailCount={data.team_email_count} teamEmailDropped={data.team_email_dropped} approvalDetail={approvalDetail}
+          approval={report.approval} />
       </header>
 
       <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}
@@ -932,7 +942,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 
-      <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
+      <div ref={actionsRef}
+        className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">
         <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-save-status"
           data-auto={autoInfo ? (autoInfo.ok ? 'ok' : 'failed') : undefined}>

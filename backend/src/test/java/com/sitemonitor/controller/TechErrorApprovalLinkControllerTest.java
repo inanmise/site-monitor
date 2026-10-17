@@ -100,23 +100,45 @@ class TechErrorApprovalLinkControllerTest {
     }
 
     @Test
-    @DisplayName("geçersiz bağlantı: sebebe göre sayfa (kullanıldı / süresi doldu / eskidi / bekleyen yok / onaylayıcı pasif / geçersiz) + güvenlik olayı; karar yazılmaz")
+    @DisplayName("geçersiz bağlantı: sebebe göre sayfa (kullanıldı / süresi doldu / eskidi / bekleyen yok / onaylayıcı pasif / izin kapalı (A1) / yerine geçti (A2) / geçersiz) + güvenlik olayı; karar yazılmaz")
     void deniedReasons() throws Exception {
         String[][] cases = {
                 { "used", "Bağlantı kullanıldı" }, { "expired", "süresi doldu" }, { "stale", "Rapor değişti" },
-                { "not_pending", "Bekleyen istek yok" }, { "approver_inactive", "Onay yetkiniz yok" }, { "not_found", "Bağlantı geçersiz" } };
-        for (String[] c : cases) {
+                { "not_pending", "Bekleyen istek yok" }, { "approver_inactive", "Onay yetkiniz yok" },
+                // A1: uygulama içi kapılar (okuma + onay izni, modül görünürlüğü) — sayfa sebebi söyler (üç durumda da doğru
+                // metin), onay / red formu yok, belirteç tüketilmez (servis status() ile eler)
+                { "no_permission", "hesabınızın rolü için teknik hata raporu okuma ya da onay izni kapalı, ya da modül takımınıza kapatılmış" },
+                // A2: yeniden istek — eski bağlantı "geçersiz" değil, "en son e-postadaki bağlantıyı kullanın"; yeni postanın
+                // ulaşmamış olabileceği için uygulama içi yol da söylenir (inceleme 2026-10-17)
+                { "superseded", "daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın. Postayı bulamıyorsanız raporu Site Monitor&#39;de açıp kararınızı oradan verebilirsiniz." },
+                { "not_found", "Bağlantı geçersiz" } };
+        for (int i = 0; i < cases.length; i++) {
+            String[] c = cases[i];
+            // Her sebep kendi istemci IP'sinden: 8 × 3 istek, denetleyicinin IP başına dakikalık sınırı (30) aynı fasulyede
+            // sınıfın diğer testleriyle paylaşılır — sınır üretim davranışı, test onu tetiklemez
+            String ip = "10.9.0." + (i + 1);
             when(approvals.status("t-" + c[0])).thenReturn(new TokenStatus(false, c[0], null, null, null, null));
-            mvc.perform(get("/api/tech-error-reports/approve-link").param("token", "t-" + c[0]))
+            mvc.perform(get("/api/tech-error-reports/approve-link").param("token", "t-" + c[0]).with(r -> { r.setRemoteAddr(ip); return r; }))
                     .andExpect(status().isOk())
                     .andExpect(content().string(containsString(c[1])))
-                    .andExpect(content().string(not(containsString("action='/api/tech-error-reports/approve-link/confirm'"))));
-            mvc.perform(post("/api/tech-error-reports/approve-link/confirm").param("token", "t-" + c[0]))
+                    .andExpect(content().string(not(containsString("action='/api/tech-error-reports/approve-link/confirm'"))))
+                    .andExpect(content().string(not(containsString("action='/api/tech-error-reports/approve-link/reject'"))));
+            mvc.perform(post("/api/tech-error-reports/approve-link/confirm").param("token", "t-" + c[0]).with(r -> { r.setRemoteAddr(ip); return r; }))
+                    .andExpect(status().isOk())
+                    .andExpect(content().string(containsString(c[1])));
+            // Red de aynı sebeple durur (not verilmiş olsa bile)
+            mvc.perform(post("/api/tech-error-reports/approve-link/reject").param("token", "t-" + c[0]).param("note", "Eksik")
+                            .with(r -> { r.setRemoteAddr(ip); return r; }))
                     .andExpect(status().isOk())
                     .andExpect(content().string(containsString(c[1])));
         }
-        verify(auditService, org.mockito.Mockito.times(12)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
+        // 8 sebep × (sayfa + onay + red) = 24 güvenlik olayı; sebep ayrıntıda ("no_permission (approve)" gibi)
+        verify(auditService, org.mockito.Mockito.times(24)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
                 eq("TECH_ERROR_REPORT"), anyString(), anyString());
+        verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
+                anyString(), eq("no_permission (approve)"));
+        verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
+                anyString(), eq("superseded (reject)"));
         verify(approvals, never()).decideViaToken(anyString(), any(), anyBoolean(), any());
     }
 

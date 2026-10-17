@@ -23,10 +23,14 @@ public interface TechErrorApprovalTokenRepository extends JpaRepository<TechErro
     @Query("DELETE FROM TechErrorApprovalToken t WHERE t.reportId = :reportId")
     int deleteByReportId(@Param("reportId") Long reportId);
 
-    /** Tek kullanım (at-most-once): yalnız kullanılmamış satır damgalanır; 0 = başka bir istek önce kullandı. */
+    /**
+     * Tek kullanım (at-most-once): yalnız kullanılmamış VE yerine geçilmemiş satır damgalanır (inceleme 2026-10-17: durum
+     * okuması ile damga arasında yeni bir istek eski bağlantıyı "yerine geçti" yaparsa eski bağlantı karar VERMEZ);
+     * 0 = başka bir istek önce kullandı ya da satır yerine geçildi — çağıran satırı yeniden okuyup hangisi olduğunu söyler.
+     */
     @Modifying
     @Transactional
-    @Query("UPDATE TechErrorApprovalToken t SET t.usedAt = :at WHERE t.id = :id AND t.usedAt IS NULL")
+    @Query("UPDATE TechErrorApprovalToken t SET t.usedAt = :at WHERE t.id = :id AND t.usedAt IS NULL AND t.supersededAt IS NULL")
     int markUsed(@Param("id") Long id, @Param("at") Instant at);
 
     /** Karar yazılamadıysa (beklenmeyen hata) damga geri alınır: bağlantı kullanılabilir kalır (inceleme 2026-10-17). */
@@ -45,4 +49,19 @@ public interface TechErrorApprovalTokenRepository extends JpaRepository<TechErro
     @Transactional
     @Query("DELETE FROM TechErrorApprovalToken t WHERE t.expiresAt < :before")
     int deleteExpiredBefore(@Param("before") Instant before);
+
+    /**
+     * Yeni istek (A2, 2026-10-17): raporun önceki isteğinin belirteçleri silinmez, "yerine geçti" damgalanır — eski postadaki
+     * bağlantı "geçersiz" yerine "daha yeni bir istek var" der ve asla karar vermez. Zaten damgalı satır dokunulmaz.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorApprovalToken t SET t.supersededAt = :at WHERE t.reportId = :reportId AND t.supersededAt IS NULL")
+    int supersedeByReportId(@Param("reportId") Long reportId, @Param("at") Instant at);
+
+    /** Budama (A2): yerine geçilmiş VE süresi dolmuş satırlar — raporun kendi satırları, her yeni istekte. */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM TechErrorApprovalToken t WHERE t.reportId = :reportId AND t.supersededAt IS NOT NULL AND t.expiresAt < :before")
+    int deleteSupersededExpired(@Param("reportId") Long reportId, @Param("before") Instant before);
 }

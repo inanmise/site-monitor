@@ -90,6 +90,7 @@ class TechErrorReportSenderTest {
         assertThat(p.role()).isEqualTo("TEAM");
         assertThat(p.to()).isEqualTo(TechErrorReportSender.recipients(team));
         assertThat(p.cc()).isEmpty();
+        assertThat(p.toDropped()).isZero();                           // A3: sınır dışında alıcı yok
         assertThat(p.problem()).isNull();
         assertThat(p.fileName()).endsWith(".pdf");
         assertThat(p.embeddedImages()).isEqualTo(1);
@@ -118,12 +119,21 @@ class TechErrorReportSenderTest {
         pdfReturns(new byte[2 * 1024 * 1024]);
         TechErrorReportSender.Preview big = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(big.problem()).isEqualTo("PDF_TOO_LARGE");
+        assertThat(big.pdfTooLarge()).isTrue();
         assertThat(big.pdfBytes()).isEqualTo(2 * 1024 * 1024);
         assertThat(big.html()).isNotBlank();
+        // Alıcı sorunu da varsa `problem` onu söyler, PDF sınırı ayrı bayrakta KALIR (inceleme 2026-10-17: test düğmesi görünüyordu)
+        String keptEmail = team.getEmail();
+        team.setEmail("");
+        TechErrorReportSender.Preview bigNoMail = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(bigNoMail.problem()).isEqualTo("TEAM_EMAIL_MISSING");
+        assertThat(bigNoMail.pdfTooLarge()).isTrue();
+        team.setEmail(keptEmail);
         // PDF + gömülü görsel toplamı sınırı aşıyor: görseller yalnız PDF'te (gönderimdeki kuralın aynısı), problem yok
         pdfReturns(new byte[1024 * 1024 - 64]);
         TechErrorReportSender.Preview sum = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(sum.problem()).isNull();
+        assertThat(sum.pdfTooLarge()).isFalse();
         assertThat(sum.embeddedImages()).isZero();
         assertThat(sum.skippedImages()).isEqualTo(1);
         assertThat(sum.html()).contains("te-image-pdf");           // yuva "PDF ekinde" kutusu; logo yine data: URI
@@ -164,6 +174,17 @@ class TechErrorReportSenderTest {
     @DisplayName("alıcılar: ; ve , ayraçlı, biçimsiz atılır, tekrar tekilleşir; adres yoksa 409 ve HİÇBİR şey yazılmaz")
     void recipients() {
         assertThat(TechErrorReportSender.recipients(team)).containsExactly("dijital@example.com", "ikinci@example.com");
+        assertThat(TechErrorReportSender.parseAddressesDetailed(team.getEmail()).dropped()).isZero();
+        // A3: 21 teslim edilebilir adres → 20 + 1 düşen; tekrar (büyük harfli) ve biçimsiz düşen SAYILMAZ; parseAddresses aynı liste
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 21; i++) many.append("u").append(i).append("@example.com; ");
+        many.append("U1@example.com, bozuk adres");
+        TechErrorReportSender.Addresses d = TechErrorReportSender.parseAddressesDetailed(many.toString());
+        assertThat(d.addresses()).hasSize(TechErrorReportSender.MAX_RECIPIENTS).startsWith("u1@example.com").endsWith("u20@example.com");
+        assertThat(d.dropped()).isEqualTo(1);
+        assertThat(TechErrorReportSender.parseAddresses(many.toString())).isEqualTo(d.addresses());
+        assertThat(TechErrorReportSender.parseAddressesDetailed(null).dropped()).isZero();
+        assertThat(TechErrorReportSender.parseAddressesDetailed(" ; , ").addresses()).isEmpty();
         team.setEmail("  ");
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("TEAM_EMAIL_MISSING");
@@ -192,6 +213,58 @@ class TechErrorReportSenderTest {
         assertThat(log.getValue().getAlertEventId()).isZero();
         verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
                 eq(List.of("dijital@example.com", "ikinci@example.com")), org.mockito.ArgumentMatchers.isNull(), eq(now));
+    }
+
+    @Test
+    @DisplayName("A3 (inceleme 2026-10-17): takım adresinde 21+ alıcı — önizleme toDropped sayar (Kime 20); EXECUTIVE yolunda Kime kaynağı yönetici listesi ve Bilgi (takım eksi yöneticiler) de en çok 20: fazlası ccDropped; gönderim WARN + geçmiş olayına dropped_recipients / dropped_cc (8 argümanlı kayıt); düşen yoksa eski 7 argümanlı kayıt")
+    void droppedRecipientsAreCountedAndRecorded() {
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 22; i++) many.append("u").append(i).append("@example.com, ");
+        team.setEmail(many.toString());
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.to()).hasSize(20);
+        assertThat(p.toDropped()).isEqualTo(2);
+        assertThat(p.ccDropped()).isZero();                           // takıma gönderimde Bilgi yok
+        channel.setExecutiveEmails("ceo@example.com");
+        TechErrorReportSender.Preview ex = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(ex.to()).containsExactly("ceo@example.com");
+        assertThat(ex.toDropped()).isZero();                          // yönetici listesi sınır içinde
+        // Takımın fazlası Bilgi'yi ilgilendirir: 22 takım adresinden 20'si Bilgi'de, 2'si düşer — sessiz değil
+        assertThat(ex.cc()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        assertThat(ex.ccDropped()).isEqualTo(2);
+        // Yönetici listesinde zaten olan takım adresi düşmüş sayılmaz ve Bilgi'de yer kaplamaz: 22 − 2 = 20 → hepsi gider
+        channel.setExecutiveEmails("U5@example.com, u21@example.com");
+        TechErrorReportSender.Preview overlap = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(overlap.cc()).hasSize(20).contains("u22@example.com").doesNotContain("u5@example.com", "u21@example.com");
+        assertThat(overlap.ccDropped()).isZero();
+        channel.setExecutiveEmails("ceo@example.com");
+        mailReturns("SENT");
+        var res = sender.send(report, channel, team, 7L);
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
+                org.mockito.ArgumentMatchers.<java.util.Collection<String>>argThat(l -> l != null && l.size() == 20),
+                org.mockito.ArgumentMatchers.isNull(), eq(now), eq(Map.of("dropped_recipients", 2)));
+        verify(history, never()).recordSend(any(), anyString(), any(), anyString(), any(), any(), any());
+        // Yöneticilere gönderim: Bilgi 20 adrese gider, fazlası geçmiş olayına `dropped_cc` (Kime fazlası yok → anahtar yok)
+        org.mockito.Mockito.reset(email, history);
+        when(service.history()).thenReturn(history);
+        mailReturns("SENT");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var exRes = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(exRes.state()).isEqualTo("SENT");
+        ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(eq(new String[]{ "ceo@example.com" }), cc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        assertThat(cc.getValue()).hasSize(20).doesNotContain("u21@example.com", "u22@example.com");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"),
+                org.mockito.ArgumentMatchers.<java.util.Collection<String>>argThat(l -> l != null && l.size() == 1),
+                org.mockito.ArgumentMatchers.isNull(), eq(now), eq(Map.of("dropped_cc", 2)));
+        verify(history, never()).recordSend(any(), anyString(), any(), anyString(), any(), any(), any());
+        // Adres yardımcısı: takım yoksa boş, yönetici yoksa takımın ilk 20'si
+        assertThat(TechErrorReportSender.ccAddresses(null, List.of("a@example.com")).addresses()).isEmpty();
+        assertThat(TechErrorReportSender.ccAddresses(team, List.of()).dropped()).isEqualTo(2);
     }
 
     private static byte[] samplePng(int w, int h) throws java.io.IOException {
@@ -581,5 +654,152 @@ class TechErrorReportSenderTest {
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(IllegalStateException.class);
         verify(reports).finishNotSent(eq(5L), eq(now), eq("FAILED"), eq("FAILED: IllegalStateException"), eq(now));
         verify(logs).save(any());
+    }
+
+    // ── Kendine test postası (R13 / B5, 2026-10-17) ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("kendine test: konu [TEST] önekli, banddan sonra test kutusu (okuyanın dilinde), dipnot teslim yolununki; YALNIZ verilen adrese, CC yok, PDF eki; talep / geçmiş / finishSent yok; günlük satırı TECH_ERROR_REPORT_TEST rol SELF")
+    void sendTest_sendsOnlyToSelf() throws Exception {
+        mailReturns("SENT");
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(1600, 400), 1600, 400)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        var res = sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "  ayse@example.com ", "tr");
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).containsExactly("ayse@example.com");
+        assertThat(res.subject()).isEqualTo("[TEST] " + TechErrorReportMail.subject(withImage));
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.MailAttachment>> att = ArgumentCaptor.forClass(List.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        verify(email).sendHtml(eq(new String[]{ "ayse@example.com" }), org.mockito.ArgumentMatchers.isNull(), eq(res.subject()),
+                html.capture(), anyString(), inline.capture(), eq(false), att.capture());
+        assertThat(html.getValue()).contains("Bu bir TEST gönderimidir").contains("takıma / yöneticilere gönderilmedi");
+        assertThat(html.getValue()).contains("takımının adresi olduğu");                 // TEAM dipnotu — gerçek posta gibi okunur
+        assertThat(html.getValue()).contains("TEKNİK HATA RAPORU").contains("cid:te-img-annual-summary");  // gövde gönderimle aynı, görsel gömülü
+        assertThat(inline.getValue()).hasSize(1);
+        assertThat(att.getValue()).hasSize(1);
+        assertThat(att.getValue().get(0).fileName()).isEqualTo("mobil-teknik-hata-2026-09.pdf");
+        assertThat(att.getValue().get(0).contentType()).isEqualTo("application/pdf");
+        // Rapor "gönderildi" OLMAZ: talep, sonuç yazımı, geçmiş yok
+        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any());
+        verify(reports, never()).finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any());
+        verify(reports, never()).finishNotSent(anyLong(), any(), anyString(), anyString(), any());
+        verify(reports, never()).releaseClaim(anyLong(), any(), any());
+        verifyNoInteractions(history);
+        // Günlük satırı: ayrı tetikleyici, rol SELF, alıcı = kullanıcının adresi, takım adı, alarm kimliği 0
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getTrigger()).isEqualTo("TECH_ERROR_REPORT_TEST");
+        assertThat(log.getValue().getRecipientRole()).isEqualTo("SELF");
+        assertThat(log.getValue().getRecipientEmail()).isEqualTo("ayse@example.com");
+        assertThat(log.getValue().getRecipientName()).isEqualTo("Dijital");
+        assertThat(log.getValue().getSubject()).isEqualTo(res.subject());
+        assertThat(log.getValue().getEmailStatus()).isEqualTo("SENT");
+        assertThat(log.getValue().getAlertEventId()).isZero();
+        assertThat(log.getValue().getCc()).isNull();
+        // EXECUTIVE yolu: dipnot yönetici cümlesi, test kutusu İngilizce (okuyanın dili), alıcı yine yalnız kendisi
+        org.mockito.Mockito.reset(email);
+        mailReturns("SENT");
+        channel.setExecutiveEmails("ceo@example.com");
+        var ex = sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE, "ayse@example.com", "en");
+        assertThat(ex.to()).containsExactly("ayse@example.com");
+        verify(email).sendHtml(eq(new String[]{ "ayse@example.com" }), org.mockito.ArgumentMatchers.isNull(), anyString(),
+                html.capture(), anyString(), any(), eq(false), any());
+        assertThat(html.getValue()).contains("This is a TEST send").contains("yönetici (executive) alıcısı").doesNotContain("ceo@example.com");
+        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    @DisplayName("kendine test: posta servisinin cevabı aynen kaydedilir — QUEUED_RETRY yalnız yazılır (finishQueued / sonuçlandırma yok), SKIPPED / FAILED da bir satır")
+    void sendTest_recordsMailAnswer() {
+        mailReturns("QUEUED_RETRY 421 2/3");
+        var q = sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr");
+        assertThat(q.state()).isEqualTo("QUEUED");
+        assertThat(q.status()).isEqualTo("QUEUED_RETRY 421 2/3");
+        mailReturns("SKIPPED_DISABLED");
+        assertThat(sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr").state()).isEqualTo("SKIPPED");
+        mailReturns("FAILED: 554");
+        assertThat(sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr").state()).isEqualTo("FAILED");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs, org.mockito.Mockito.times(3)).save(log.capture());
+        assertThat(log.getAllValues()).extracting(NotificationLog::getEmailStatus).containsExactly("QUEUED_RETRY 421 2/3", "SKIPPED_DISABLED", "FAILED: 554");
+        assertThat(log.getAllValues()).extracting(NotificationLog::getTrigger).containsOnly("TECH_ERROR_REPORT_TEST");
+        verify(reports, never()).finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any());
+        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    @DisplayName("kendine test: PDF tek başına sınırı aşıyor → 409 PDF_TOO_LARGE (gönderimle aynı metin), posta yok, günlük FAILED satırı; PDF + görseller sınırı aşıyor → görseller yalnız PDF'te, posta gider")
+    void sendTest_pdfTooLargeAndSumRule() throws Exception {
+        sender.maxMailMb = 1;
+        pdfReturns(new byte[2 * 1024 * 1024]);
+        assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr"))
+                .isInstanceOf(CodedConflictException.class)
+                .satisfies(e -> {
+                    assertThat(((CodedConflictException) e).getCode()).isEqualTo("PDF_TOO_LARGE");
+                    assertThat(e.getMessage()).contains("2.0 MB").contains("1 MB");
+                    assertThat(((CodedConflictException) e).getExtra()).containsEntry("max_mb", 1);
+                });
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getTrigger()).isEqualTo("TECH_ERROR_REPORT_TEST");
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: PDF e-posta sınırını aşıyor (2.0 MB > 1 MB)");
+        assertThat(log.getValue().getSubject()).startsWith("[TEST] ");
+        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verifyNoInteractions(history);
+        // Gönderimdeki metinle aynı (tek kaynak): send de aynı kodu ve metni verir
+        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
+                .satisfies(e -> assertThat(e.getMessage()).contains("2.0 MB").contains("1 MB"));
+        // Toplam kuralı: PDF sınıra yakın + gömülü görsel → görseller düşer ("PDF ekinde"), test postası yine gider
+        org.mockito.Mockito.reset(logs, email);
+        mailReturns("SENT");
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(1600, 400), 1600, 400)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        pdfReturns(new byte[1024 * 1024 - 64]);
+        var res = sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr");
+        assertThat(res.state()).isEqualTo("SENT");
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), inline.capture(), eq(false), any());
+        assertThat(inline.getValue()).isEmpty();
+        assertThat(html.getValue()).contains("te-image-pdf").doesNotContain("cid:te-img-");
+    }
+
+    @Test
+    @DisplayName("kendine test: PDF sırası dolu → PdfBusyException aynen, günlük SKIPPED satırı; beklenmeyen hata → FAILED sınıf adıyla; adres teslim edilemezse NO_EMAIL ve HİÇBİR şey yazılmaz")
+    void sendTest_busyUnexpectedAndNoEmail() {
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr"))
+                .isInstanceOf(TechErrorReportService.PdfBusyException.class);
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).isEqualTo("SKIPPED: PDF sırası dolu, gönderilmedi");
+        assertThat(log.getValue().getSubject()).isEqualTo("[TEST] Mobil");              // konu henüz yok → kanal adı
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+
+        org.mockito.Mockito.reset(logs);
+        pdfReturns(new byte[]{ '%', 'P', 'D', 'F' });
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenThrow(new IllegalStateException("smtp"));
+        assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("smtp");
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).isEqualTo("FAILED: IllegalStateException");
+
+        org.mockito.Mockito.reset(logs, email);
+        for (String bad : new String[]{ null, "", "  ", "yanlis adres", "a@b" }) {
+            assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, bad, "tr"))
+                    .isInstanceOf(CodedConflictException.class)
+                    .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("NO_EMAIL");
+        }
+        verifyNoInteractions(logs, email, history);
+        verify(reports, never()).claimSend(anyLong(), any(), any());
     }
 }

@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T19:54:50Z",
+  "generatedAt": "2026-10-17T21:00:34Z",
   "repo": "inanmise/site-monitor",
-  "count": 767,
+  "count": 768,
   "releases": [
+    {
+      "version": "20.150.0",
+      "tag": "v20.150.0",
+      "releasedAt": "2026-10-17T21:00:28Z",
+      "commit": "f8302c9314c6ac661cb617ea4eeec9a22b44dfaa",
+      "prevVersion": "20.149.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "f8302c93",
+          "subject": "test postası, alıcı özeti ve inceleme düzeltmeleri için CLAUDE.md ve kılavuz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "dac8a149",
+          "subject": "teknik hata raporu inceleme düzeltmeleri — Bilgi (CC) fazlası sayılır, yerine geçilmiş bağlantı yarışta karar vermez, PDF sınırı ayrı bayrak, test hakkı başarısız denemede iade, bilinmeyen sayı 0 yaz…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5cd24b5b",
+          "subject": "teknik hata raporu inceleme düzeltmeleri — onay bağlantısında yetki matrisi, yeniden istekte eski bağlantının sebebi, 20+ alıcı uyarısı, telefonda eylem çubuğu alt boşluğu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ec3ef764",
+          "subject": "teknik hata raporunda \"bana test gönder\" ve rapor başlığında alıcı özeti (R13)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.149.0",
       "tag": "v20.149.0",

@@ -429,8 +429,9 @@ public final class RetentionCatalog {
         orphan("tech-error-approval-tokens-orphan", "tech_error_approval_tokens",
                 "report_id NOT IN (SELECT id FROM tech_error_reports)", DataClass.PERSONAL,
                 "Teknik hata raporu PO onayı e-posta bağlantı belirteçleri (2026-10-17): onaylayıcı başına bir satır, yalnız "
-                + "SHA-256 özeti ve kullanıcı kimliği; 14 gün geçerli, tek kullanımlık, yeni istek eskileri siler. Rapor "
-                + "silinince aynı işlemde silinir; öksüz satır burada temizlenir."),
+                + "SHA-256 özeti ve kullanıcı kimliği; 14 gün geçerli, tek kullanımlık; yeni istek eskileri 'yerine geçti' "
+                + "damgalar (eski bağlantı sebebini söyler), süresi de dolmuş yerine geçilmiş satırlar bir sonraki istekte "
+                + "budanır. Rapor silinince aynı işlemde silinir; öksüz satır burada temizlenir."),
         orphan("tech-error-template-versions-orphan", "tech_error_template_versions",
                 "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.PERSONAL,
                 "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "

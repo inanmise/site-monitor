@@ -314,11 +314,12 @@ let uploads = []
 let uploadSizes = []
 let uploadBodies = []
 let sends = 0
+let testMails = 0               // "Bana test gönder" (R13): rapor gönderimi DEĞİL — ayrı sayılır
 let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  approvalRequests = 0; decisions = []
+  testMails = 0; approvalRequests = 0; decisions = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -387,6 +388,9 @@ async function mock(page, { openSections = true } = {}) {
           approval_state: null, approved_by: null, approved_at: null },
         html: '<!doctype html><html><body style="margin:0;font-family:Arial"><div data-slot="te-mail-band" style="background:#0f172a;color:#fff;padding:24px">TEKNİK HATA RAPORU · EYLÜL 2026</div><p style="padding:16px">Yönetici Özeti — önizleme gövdesi</p></body></html>',
         text: 'metin' } }
+    } else if (p === '/api/tech-error-reports/reports/100/mail-preview/test' && req.method() === 'POST') {
+      testMails++
+      body = { success: true, data: { sent_to: 'ayse.yilmaz@example.com', status: 'SENT' } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
       sends++
       body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
@@ -794,6 +798,23 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (rapor)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (rapor)').toEqual([])
 
+      // A4 (2026-10-17): yapışkan eylem çubuğu (telefonda 2–3 satıra sarılır) son bölüm kartını ÖRTMEZ — kabın alt boşluğu
+      // çubuğun GERÇEK yüksekliğini izler (useElementHeight); sayfanın en altında kart çubuğun üstünde biter
+      const actionBar = page.locator('[data-slot="te-report-actions"]')
+      await actionBar.evaluate((el) => el.scrollIntoView({ block: 'end' }))
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await page.waitForTimeout(300)
+      const lastSection = editor.locator(':scope > [data-slot^="te-"]:has([data-slot="te-section-toggle"])').last()
+      const lastBox = await lastSection.boundingBox()
+      const barBox = await actionBar.boundingBox()
+      expect(lastBox, 'son bölüm kartı ölçülür').not.toBeNull()
+      expect(barBox.height, 'eylem çubuğu ölçülür').toBeGreaterThan(0)
+      expect(lastBox.y + lastBox.height, 'son bölüm kartı eylem çubuğunun üstünde biter (örtülmez)').toBeLessThanOrEqual(barBox.y + 1)
+      const padBottom = await editor.evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom))
+      expect(padBottom, 'alt boşluk = çubuk yüksekliği + 16 (sabit pb-24 değil)').toBeGreaterThanOrEqual(barBox.height + 15)
+      expect(padBottom).toBeLessThanOrEqual(barBox.height + 17)
+      await page.evaluate(() => window.scrollTo(0, 0))
+
       // Grafik ızgarası: 768+ yarımlar yan yana, tam iki kolon; telefonda alt alta
       const a = await editor.locator('[data-slot-id="monthly-tx"]').boundingBox()
       const b = await editor.locator('[data-slot-id="tech-errors"]').boundingBox()
@@ -1164,6 +1185,17 @@ for (const vp of VIEWPORTS) {
       const fw = (await frame.boundingBox()).width
       expect(fw).toBeLessThanOrEqual(401)
       await page.screenshot({ path: `test-results/channel-reports-mail-preview-${vp.name}.png`, fullPage: false })
+      // "Bana test gönder" (R13 / B5): yalnız bana gider — ayrı uç, toast sunucunun adresiyle; pencere açık kalır, rapor
+      // gönderimi ÇAĞRILMAZ; düğme dokunmatikte ≥ 40 px (yukarıdaki smallTargets ölçümü pencereyi kapsar)
+      const testBtn = dlg.locator('[data-slot="te-mail-test"]')
+      await expect(testBtn).toBeVisible()
+      await expect(testBtn).toContainText(/Bana test gönder|Send me a test/)
+      await testBtn.click()
+      await expect(page.getByText(/Test postası ayse\.yilmaz@example\.com adresine gönderildi|Test mail sent to ayse\.yilmaz@example\.com/)).toBeVisible()
+      await expect.poll(() => testMails).toBe(1)
+      expect(sends, 'test postası rapor gönderimi değildir').toBe(0)
+      await expect(dlg).toBeVisible()
+      await expect(testBtn).toBeEnabled()
       // Pencereden gönder: pencere kapanır, mevcut onay sorusu açılır, onaylanınca gönderim gider
       await dlg.locator('[data-slot="te-mail-send"]').click()
       await expect(dlg).toHaveCount(0)

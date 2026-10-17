@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, fireEvent, waitFor } from './test-utils.jsx'
 import { reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
@@ -13,10 +13,13 @@ vi.mock('../api/client', () => ({
   api: withApiFallback({
     techErrors: {
       overview: vi.fn(), reports: vi.fn(), template: vi.fn(), report: vi.fn(), approval: vi.fn(), createReport: vi.fn(),
-      saveReport: vi.fn(), mailPreview: vi.fn(), send: vi.fn(), imageUrl: (id) => `/api/tech-error-reports/images/${id}`,
+      saveReport: vi.fn(), mailPreview: vi.fn(), mailPreviewTest: vi.fn(), send: vi.fn(), imageUrl: (id) => `/api/tech-error-reports/images/${id}`,
     },
   }),
 }))
+// A4: eylem çubuğunun ölçüsü (jsdom ölçmez) — test ayarlar: 0 = pb-24 tabanı, > 0 = çubuk yüksekliği + 16 px alt boşluk
+const barHeight = vi.hoisted(() => ({ value: 0 }))
+vi.mock('../hooks/useElementHeight.js', () => ({ useElementHeight: () => [() => {}, barHeight.value] }))
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
@@ -197,5 +200,178 @@ describe('e-posta önizlemesi — pencere', () => {
     te().mailPreview.mockResolvedValueOnce({ success: false, error: 'Rapor bulunamadı.' })
     const dlg2 = await openPreview()
     expect(await within(dlg2).findByText('Rapor bulunamadı.')).toBeInTheDocument()
+  })
+
+  it('A3 (2026-10-17): takım adresinde 20’den fazla alıcı — to_dropped > 0 ise uyarı şeridi (sayı, Admin → Takımlar yönlendirmesi), posta yine gider (Gönder açık); 0 / eksik ise şerit yok', async () => {
+    await openEditor()
+    te().mailPreview.mockResolvedValueOnce(preview({ to_dropped: 3, to_count: 20 }))
+    let dlg = await openPreview()
+    const strip = dlg.querySelector('[data-slot="te-mail-dropped"]')
+    expect(strip).not.toBeNull()
+    expect(strip.getAttribute('data-count')).toBe('3')
+    expect(strip).toHaveTextContent('Alıcı sınırı aşıldı — 3 adres bu postayı almaz')
+    expect(strip).toHaveTextContent(/Takım adresinde 3 alıcı daha var; bir rapor postası en çok 20 adrese gider/)
+    expect(strip).toHaveTextContent(/Admin → Takımlar/)
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).not.toBeNull()          // posta 20 adrese yine gider — engel değil
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockResolvedValueOnce(preview({ to_dropped: 0 }))
+    dlg = await openPreview()
+    expect(dlg.querySelector('[data-slot="te-mail-dropped"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    // Eski sunucu (alan yok) → şerit yok, ham anahtar yok
+    te().mailPreview.mockResolvedValueOnce(preview())
+    dlg = await openPreview()
+    expect(dlg.querySelector('[data-slot="te-mail-dropped"]')).toBeNull()
+    expect(dlg.querySelector('[data-slot="te-mail-cc-dropped"]')).toBeNull()
+    expect(dlg.textContent).not.toMatch(/te\.mail\./)
+  })
+
+  it('inceleme 2026-10-17: yöneticilere gönderimde Bilgi (takım adresi) 20’yi aşarsa cc_dropped > 0 → ikinci şerit (Kime şeridinden ayrı), posta yine gider; 0 / eksik → yok', async () => {
+    await openEditor()
+    te().mailPreview.mockResolvedValueOnce(preview({ delivery: 'EXECUTIVE', to: ['ceo@example.com'], to_count: 1,
+      cc: Array.from({ length: 20 }, (_, i) => `u${i + 1}@example.com`), cc_count: 20, cc_dropped: 4, to_dropped: 0 }))
+    let dlg = await openPreview()
+    const strip = dlg.querySelector('[data-slot="te-mail-cc-dropped"]')
+    expect(strip).not.toBeNull()
+    expect(strip.getAttribute('data-count')).toBe('4')
+    expect(strip).toHaveTextContent('Bilgi (CC) sınırı aşıldı — 4 takım adresi bu postayı almaz')
+    expect(strip).toHaveTextContent(/Takım adresinde \(Bilgi \/ CC\) 4 alıcı daha var; bir rapor postası en çok 20 Bilgi adresine gider, fazlası gitmez/)
+    expect(strip).toHaveTextContent(/Admin → Takımlar/)
+    expect(dlg.querySelector('[data-slot="te-mail-dropped"]')).toBeNull()             // Kime sınır içinde
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).not.toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockResolvedValueOnce(preview({ delivery: 'EXECUTIVE', cc_dropped: 0 }))
+    dlg = await openPreview()
+    expect(dlg.querySelector('[data-slot="te-mail-cc-dropped"]')).toBeNull()
+  })
+})
+
+describe('A4 (2026-10-17): eylem çubuğunun yüksekliği kabın alt boşluğunu sürer', () => {
+  afterEach(() => { barHeight.value = 0 })
+
+  it('ölçüm yokken (jsdom / ilk boyama) pb-24 tabanı, satır içi alt boşluk yok; çubuk ve önizleme düğmesi yerinde', async () => {
+    barHeight.value = 0
+    await openEditor()
+    const editor = document.querySelector('[data-slot="te-report"]')
+    expect(editor.className).toContain('pb-24')
+    expect(editor.style.paddingBottom).toBe('')
+    expect(document.querySelector('[data-slot="te-report-actions"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="te-mail-preview-btn"]')).not.toBeNull()   // e2e seçicisi her biçimde var
+  })
+
+  it('ölçüm varsa (çubuk 3 satıra sarıldı, 172 px) satır içi alt boşluk = yükseklik + 16, pb-24 yok', async () => {
+    barHeight.value = 172
+    await openEditor()
+    const editor = document.querySelector('[data-slot="te-report"]')
+    expect(editor.className).not.toContain('pb-24')
+    expect(editor.style.paddingBottom).toBe('188px')
+  })
+})
+
+// "Bana test gönder" (R13 / B5, 2026-10-17): önizlenen posta YALNIZ bana — her okuyana (gönderemeyen de), PDF sınırı aşıyorsa
+// yok (gönderim gibi test de gidemez), alıcı eksikliği engellemez; meşgulken kapalı + "gönderiliyor", sonuç toast (sunucu
+// adresi), hata sunucu metniyle; pencere kendi düğmeleriyle kapanır, test gönderimi rapor gönderimini ÇAĞIRMAZ.
+describe('e-posta önizlemesi — bana test gönder', () => {
+  it('düğme pencerede; tıklanınca uç çağrılır, meşgulken düğme kapalı ve "gönderiliyor", Gönder kapalı; başarıda toast sunucunun adresiyle; gönderim çağrılmaz', async () => {
+    let resolveTest
+    te().mailPreviewTest.mockReturnValueOnce(new Promise((r) => { resolveTest = r }))
+    await openEditor()
+    const dlg = await openPreview()
+    const btn = dlg.querySelector('[data-slot="te-mail-test"]')
+    expect(btn).not.toBeNull()
+    expect(btn).toHaveTextContent('Bana test gönder')
+    fireEvent.click(btn)
+    expect(String(te().mailPreviewTest.mock.calls[0][0])).toBe('100')
+    await waitFor(() => expect(dlg.querySelector('[data-slot="te-mail-test"]')).toBeDisabled())
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toHaveTextContent('Test postası gönderiliyor…')
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toHaveAttribute('aria-busy', 'true')
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).toBeDisabled()
+    resolveTest({ success: true, data: { sent_to: 'ayse@example.com', status: 'SENT' } })
+    expect(await screen.findByText('Test postası ayse@example.com adresine gönderildi — yalnız size; takıma / yöneticilere gönderilmedi.')).toBeInTheDocument()
+    await waitFor(() => expect(dlg.querySelector('[data-slot="te-mail-test"]')).not.toBeDisabled())
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toHaveTextContent('Bana test gönder')
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).not.toBeDisabled()
+    expect(te().send).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'E-posta önizlemesi' })).toBeInTheDocument()   // pencere açık kalır
+    // Kuyruk cevabı: bilgi toast'u, "gönderildi" denmez
+    te().mailPreviewTest.mockResolvedValueOnce({ success: true, data: { sent_to: 'ayse@example.com', status: 'QUEUED' } })
+    fireEvent.click(dlg.querySelector('[data-slot="te-mail-test"]'))
+    expect(await screen.findByText(/Test postası posta sunucusuna verildi \(ayse@example.com\)/)).toBeInTheDocument()
+  })
+
+  it('hata: sunucu metni toast olur (NO_EMAIL 409, 429); ağ hatası mesajıyla; success:false gövdesi hata sayılır; pencere açık kalır', async () => {
+    await openEditor()
+    const dlg = await openPreview()
+    te().mailPreviewTest.mockResolvedValueOnce({ success: false, status: 409, code: 'NO_EMAIL',
+      error: 'Hesabınızda e-posta adresi yok; test postası gönderilemez. Yöneticinizden adres eklemesini isteyin.' })
+    fireEvent.click(dlg.querySelector('[data-slot="te-mail-test"]'))
+    expect(await screen.findByText(/Hesabınızda e-posta adresi yok/)).toBeInTheDocument()
+    te().mailPreviewTest.mockRejectedValueOnce(new Error('Test sınırı: dakikada en çok 3 test postası. 42 saniye sonra yeniden deneyin.'))
+    fireEvent.click(dlg.querySelector('[data-slot="te-mail-test"]'))
+    expect(await screen.findByText(/dakikada en çok 3 test postası/)).toBeInTheDocument()
+    te().mailPreviewTest.mockResolvedValueOnce({ success: false })
+    fireEvent.click(dlg.querySelector('[data-slot="te-mail-test"]'))
+    expect(await screen.findByText(/Test postası gönderilemedi/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'E-posta önizlemesi' })).toBeInTheDocument()
+    expect(te().send).not.toHaveBeenCalled()
+  })
+
+  it('görünürlük: PDF sınırı aşıyorsa düğme YOK; takım adresi yoksa VAR (yalnız bana gider); gönderemeyen okuyucu ve paylaşımla okuyan da görür; yük hatasında yok', async () => {
+    await openEditor({ can_edit: false, can_send: false, shared_access: true })
+    te().mailPreview.mockResolvedValueOnce(preview({ problem: 'PDF_TOO_LARGE', pdf_bytes: 16_000_000, max_mail_mb: 15 }))
+    let dlg = await openPreview()
+    await within(dlg).findByText('PDF e-posta sınırını aşıyor — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockResolvedValueOnce(preview({ to: [], to_count: 0, problem: 'TEAM_EMAIL_MISSING' }))
+    dlg = await openPreview()
+    await within(dlg).findByText('Alıcı yok — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockResolvedValueOnce(preview({ to: [], to_count: 1, recipients_hidden: true }))
+    dlg = await openPreview()
+    await waitFor(() => expect(dlg.querySelector('[data-slot="te-mail-frame"]')).not.toBeNull())
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).not.toBeNull()       // paylaşımla okuyan: yalnız kendine
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    te().mailPreview.mockRejectedValueOnce(new Error('okunamadı'))
+    dlg = await openPreview()
+    await within(dlg).findByText('Önizleme hazırlanamadı')
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toBeNull()
+  })
+
+  it('inceleme 2026-10-17: alıcı sorunu VE PDF sınırı birlikte — problem alıcıyı söyler ama pdf_too_large ayrı: iki şerit, test düğmesi YOK, Gönder yok; eski sunucu (bayrak yok) PDF boyutundan anlar', async () => {
+    await openEditor()
+    te().mailPreview.mockResolvedValueOnce(preview({ to: [], to_count: 0, problem: 'TEAM_EMAIL_MISSING', pdf_too_large: true,
+      pdf_bytes: 16_000_000, max_mail_mb: 15 }))
+    let dlg = await openPreview()
+    await within(dlg).findByText('Alıcı yok — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-problem"]')).toHaveAttribute('data-problem', 'TEAM_EMAIL_MISSING')
+    expect(dlg.querySelector('[data-slot="te-mail-pdf-too-large"]')).toHaveTextContent('PDF e-posta sınırını aşıyor — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-pdf-too-large"]')).toHaveTextContent(/PDF 15,3 MB; e-posta sınırı 15 MB/)
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toBeNull()
+    expect(dlg.querySelector('[data-slot="te-mail-send"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    // Eski sunucu: bayrak yok, problem alıcıyı söylüyor — PDF boyutu sınırın üstünde → yine düğme yok, PDF şeridi var
+    te().mailPreview.mockResolvedValueOnce(preview({ to: [], to_count: 0, problem: 'TEAM_EMAIL_MISSING', pdf_bytes: 16_000_000, max_mail_mb: 15 }))
+    dlg = await openPreview()
+    await within(dlg).findByText('Alıcı yok — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-pdf-too-large"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    // Bayrak false (yeni sunucu) → PDF şeridi yok, test düğmesi var (alıcı eksikliği testi engellemez)
+    te().mailPreview.mockResolvedValueOnce(preview({ to: [], to_count: 0, problem: 'TEAM_EMAIL_MISSING', pdf_too_large: false }))
+    dlg = await openPreview()
+    await within(dlg).findByText('Alıcı yok — bu posta gönderilemez')
+    expect(dlg.querySelector('[data-slot="te-mail-pdf-too-large"]')).toBeNull()
+    expect(dlg.querySelector('[data-slot="te-mail-test"]')).not.toBeNull()
   })
 })
