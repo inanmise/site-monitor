@@ -46,10 +46,16 @@ public interface SystemMetricSampleRepository extends JpaRepository<SystemMetric
     List<Object[]> aggregate(@Param("from") String from, @Param("to") String to, @Param("instance") String instance,
                              @Param("len") int len);
 
-    /** Bu andan sonra örnek yazmış podlar: [instance_id, pod_name, son örnek, kapanış işareti var mı (1/0)]. */
+    /**
+     * Bu andan sonra örnek yazmış podlar: [instance_id, pod_name, son örnek, kapanış işareti var mı (1/0), ilk örnek].
+     * İlk örnek (2026-10-17) = süreç bu pencerede ilk ne zaman görüldü — "en yeni pod en başta" sıralamasının anahtarı; son
+     * örnek gibi kapanış işaretini de sayar (işaret sürecin SON satırıdır: ilk örnek ancak penceredeki tek satırsa ona düşer).
+     * Yeni sütunlar hep SONA eklenir.
+     */
     @Query("""
             SELECT s.instanceId, MAX(s.podName), MAX(s.sampledAt),
-                   MAX(CASE WHEN s.shutdownMarker = true THEN 1 ELSE 0 END)
+                   MAX(CASE WHEN s.shutdownMarker = true THEN 1 ELSE 0 END),
+                   MIN(s.sampledAt)
               FROM SystemMetricSample s
              WHERE s.sampledAt >= :since
              GROUP BY s.instanceId

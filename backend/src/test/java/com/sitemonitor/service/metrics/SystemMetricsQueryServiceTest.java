@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -134,9 +135,48 @@ class SystemMetricsQueryServiceTest {
         when(repo.aggregate(anyString(), anyString(), isNull(), eq(15))).thenReturn(List.of());
         @SuppressWarnings("unchecked") List<Map<String, Object>> pods =
                 (List<Map<String, Object>>) svc.series("6h", null, Instant.parse("2031-04-02T12:00:30Z")).get("pods");
-        assertThat(pods).extracting(p -> p.get("name")).containsExactly("web-1 · aaaa1111", "web-1 · bbbb2222", "web-2");
+        assertThat(pods).as("canlılar önce (eski 4 sütunlu satır: ilk örnek yok → son örnek, ad), susan eski süreç sonda")
+                .extracting(p -> p.get("name")).containsExactly("web-1 · bbbb2222", "web-2", "web-1 · aaaa1111");
+        assertThat(pods.get(0)).containsEntry("first_seen", null);
         assertThat(SystemMetricsQueryService.suffix("tek")).isEqualTo("tek");
         assertThat(SystemMetricsQueryService.suffix("son-")).isEqualTo("son-");
+    }
+
+    @Test
+    @DisplayName("pod sırası: canlı → sessiz → durdu; aynı durumda ilk örneği en yeni (en son açılan) önce, ilk örneği bilinmeyen sonra; özet ve seri aynı sırada")
+    void podOrderLiveFirstNewestFirst() {
+        Instant now = Instant.parse("2031-04-02T12:00:30Z");
+        when(repo.podsSince(anyString())).thenReturn(List.<Object[]>of(
+                // [kimlik, ad, son örnek, işaret, ilk örnek]
+                new Object[]{"stop-1", "pod-stop", "2031-04-02T11:59:00", 1, "2031-04-02T11:58:00"},
+                new Object[]{"old-1", "pod-old", "2031-04-02T11:59:00", 0, "2031-03-30T08:00:00"},
+                new Object[]{"silent-1", "pod-silent", "2031-04-02T11:40:00", 0, "2031-04-02T11:30:00"},
+                new Object[]{"nofirst-1", "pod-a-nofirst", "2031-04-02T11:59:00", 0, null},
+                new Object[]{"new-1", "pod-new", "2031-04-02T11:59:00", 0, "2031-04-02T11:20:00"},
+                new Object[]{"silent-2", "pod-silent-old", "2031-04-02T11:50:00", 0, "2031-04-01T12:30:00"}));
+        when(repo.findBySampledAtGreaterThanEqualAndShutdownMarkerIsNullOrderBySampledAtDesc(anyString())).thenReturn(List.of());
+        when(repo.aggregate(anyString(), anyString(), isNull(), anyInt())).thenReturn(List.of());
+
+        @SuppressWarnings("unchecked") List<Map<String, Object>> ov = (List<Map<String, Object>>) svc.overview(now).get("pods");
+        assertThat(ov).extracting(p -> p.get("id"))
+                .as("canlı: en yeni süreç (11:20) eski süreçten (30 Mart) önce, ilk örneği bilinmeyen canlıların sonunda; "
+                        + "sessiz: en son açılan önce; durmuş pod en sonda — en yeni olsa da")
+                .containsExactly("new-1", "old-1", "nofirst-1", "silent-1", "silent-2", "stop-1");
+        assertThat(ov.get(0)).containsEntry("first_seen", "2031-04-02T11:20:00").containsEntry("state", "live");
+        assertThat(ov.get(5)).containsEntry("state", "stopped");
+
+        @SuppressWarnings("unchecked") List<Map<String, Object>> se =
+                (List<Map<String, Object>>) svc.series("6h", null, now).get("pods");
+        assertThat(se).as("seri yanıtının podları da aynı sırada").extracting(p -> p.get("id"))
+                .containsExactly("new-1", "old-1", "nofirst-1", "silent-1", "silent-2", "stop-1");
+
+        // Aynı durum + aynı ilk örnek: son örneği yeni önce; o da eşitse ad
+        Map<String, Object> x = new java.util.HashMap<>(Map.of("id", "x", "name", "b", "state", "live", "first_seen", "2031-04-02T11:00:00", "last_seen", "2031-04-02T11:59:00"));
+        Map<String, Object> y = new java.util.HashMap<>(Map.of("id", "y", "name", "a", "state", "live", "first_seen", "2031-04-02T11:00:00", "last_seen", "2031-04-02T11:58:00"));
+        Map<String, Object> z = new java.util.HashMap<>(Map.of("id", "z", "name", "a", "state", "live", "first_seen", "2031-04-02T11:00:00", "last_seen", "2031-04-02T11:59:00"));
+        List<Map<String, Object>> tie = new java.util.ArrayList<>(List.of(y, x, z));
+        tie.sort(SystemMetricsQueryService.POD_ORDER);
+        assertThat(tie).extracting(p -> p.get("id")).containsExactly("z", "x", "y");
     }
 
     @Test
@@ -172,12 +212,12 @@ class SystemMetricsQueryServiceTest {
 
         Map<String, Object> out = svc.overview(now);
         @SuppressWarnings("unchecked") List<Map<String, Object>> pods = (List<Map<String, Object>>) out.get("pods");
-        assertThat(pods).as("24 saatten eski pod listede yok").extracting(p -> p.get("name"))
-                .containsExactly("a-1", "pod-b", "pod-c", "pod-e");
+        assertThat(pods).as("24 saatten eski pod listede yok; canlı → sessiz (son örneği yeni önce) → durdu")
+                .extracting(p -> p.get("name")).containsExactly("a-1", "pod-b", "pod-e", "pod-c");
         assertThat(pods.get(0)).containsEntry("live", true).containsEntry("state", "live");
         assertThat(pods.get(1)).containsEntry("live", false).containsEntry("state", "silent").containsEntry("latest", null);
-        assertThat(pods.get(2)).as("kapanış işareti: 5 dk önce dağıtımla durdu — uyarı değil").containsEntry("state", "stopped");
-        assertThat(pods.get(3)).as("işaretsiz 3 saattir susan pod (takılı / çökmüş) sessiz kalır").containsEntry("state", "silent");
+        assertThat(pods.get(2)).as("işaretsiz 3 saattir susan pod (takılı / çökmüş) sessiz kalır").containsEntry("state", "silent");
+        assertThat(pods.get(3)).as("kapanış işareti: 5 dk önce dağıtımla durdu — uyarı değil").containsEntry("state", "stopped");
         assertThat(pods.get(0)).doesNotContainKey("marker");
         assertThat(out).containsEntry("enabled", true);
         assertThat(out.get("served_uptime_s")).as("sunan podun çalışma süresi").isInstanceOf(Long.class);

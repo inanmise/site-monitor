@@ -53,7 +53,10 @@ class SystemMetricSamplePostgresTest {
         assertThat(((Number) rows.get(0)[37]).longValue()).as("HTTP dakikası").isEqualTo(4);
         assertThat(((Number) rows.get(0)[38]).longValue()).as("artış dakikası").isEqualTo(4);
         assertThat(repo.podsSince("2032-02-03T10:00:00")).filteredOn(r -> pod.equals(r[0]))
-                .singleElement().satisfies(r -> assertThat(((Number) r[3]).intValue()).as("kapanış işareti").isEqualTo(1));
+                .singleElement().satisfies(r -> {
+                    assertThat(((Number) r[3]).intValue()).as("kapanış işareti").isEqualTo(1);
+                    assertThat(r[4]).as("ilk örnek (sondaki sütun) = en eski örnek zamanı").isEqualTo("2032-02-03T10:11:00");
+                });
         assertThat(repo.aggregate("2032-02-03T10:00:00", "2032-02-03T10:59:59", null, 16))
                 .extracting(r -> String.valueOf(r[0])).contains(pod);
     }
