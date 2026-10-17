@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
+import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 
 /** Önizleme genişlikleri: e-postanın kendi 1000 px kartı (masaüstü istemci) ve telefon tek sütunu. */
 export const PREVIEW_WIDTHS = Object.freeze({ desktop: 1040, phone: 400 })
@@ -147,7 +148,9 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
               <span className="text-xs text-muted-foreground">{t('te.mail.sandboxNote')}</span>
             </div>
             <div className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/40 p-2 sm:p-4" data-slot="te-mail-frame-box">
-              <iframe title={t('te.mail.previewTitle')} sandbox="" srcDoc={d.html || ''} data-slot="te-mail-frame" data-width={width}
+              {/* Proje kuralı (mail-preview-guard): her önizleme HTML'i mailPreviewSrcDoc'tan geçer — <base target="_blank"> +
+                  marka logosu cid: çözümü (sunucu da data: URI'ye çevirir; burada yalnız güvence) */}
+              <iframe title={t('te.mail.previewTitle')} sandbox="" srcDoc={mailPreviewSrcDoc(d.html || '')} data-slot="te-mail-frame" data-width={width}
                 className={cn('mx-auto block h-[60dvh] min-h-[320px] rounded-md border bg-white', width === 'phone' ? 'w-[400px] max-w-full' : 'w-full')}
                 style={width === 'desktop' ? { maxWidth: `${PREVIEW_WIDTHS.desktop}px` } : undefined} />
             </div>
