@@ -85,6 +85,16 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(exportStaticUsers).toEqual([])
   })
 
+  it('Kanal raporları → Analiz görünümü (grafikler) yalnız açılınca yüklenir (2026-10-18, R22)', () => {
+    const page = 'components/techerror/TechErrorReportsPage.jsx'
+    expect(hasStatic(page, /analytics\/TechErrorAnalytics(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(page, /analytics\/TechErrorAnalytics\.jsx$/)).toBe(true)
+    // Başka hiçbir dosya görünümü statik içe aktarmaz (saf model içe aktarılabilir — grafik kitaplığı yok)
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /analytics\/TechErrorAnalytics(\.jsx)?$/.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    expect(staticImports(read('components/techerror/analytics/analyticsModel.js')).some((s) => /chart|recharts/.test(s))).toBe(false)
+  })
+
   it('Sistem Sağlığı → Metrikler görünümü (grafikler) yalnız açılınca yüklenir (2026-10-13)', () => {
     const page = 'components/admin/SystemHealth.jsx'
     expect(hasStatic(page, /metrics\/MetricsView(\.jsx)?$/)).toBe(false)

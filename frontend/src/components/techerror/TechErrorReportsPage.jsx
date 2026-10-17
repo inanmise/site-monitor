@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { flushUrlQuerySync, readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
+import { useT } from '../../i18n/index.jsx'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import ChannelsView from './ChannelsView.jsx'
 import ChannelView from './ChannelView.jsx'
 import ReportEditor from './ReportEditor.jsx'
@@ -8,6 +10,21 @@ import {
 } from './techErrorModel.js'
 import { REPORT_LIST_KEYS } from './channelListModel.js'
 import { SENDLOG_KEYS, TAB_SENDLOG } from './sendModel.js'
+import { VIEW_ANALYTICS } from './analytics/analyticsModel.js'
+
+// Kanal analizi (2026-10-18, R22): grafik kitaplığıyla birlikte yalnız açılınca yüklenir (lazyChunks kapısı)
+const TechErrorAnalytics = lazy(() => import('./analytics/TechErrorAnalytics.jsx'))
+
+function AnalyticsLoading() {
+  const t = useT()
+  return (
+    <div role="status" aria-live="polite" className="flex flex-col gap-3" data-slot="te-an-chunk-loading">
+      <span className="sr-only">{t('te.an.loading')}</span>
+      <Skeleton className="h-24 w-full rounded-xl motion-reduce:animate-none" />
+      <Skeleton className="h-72 w-full rounded-xl motion-reduce:animate-none" />
+    </div>
+  )
+}
 
 const ID_RE = /^[1-9][0-9]{0,17}$/
 
@@ -25,6 +42,7 @@ function readInitial() {
   const view = readUrlParam(TE_VIEW, '')
   const channel = readId(TE_CHANNEL)
   const report = readId(TE_REPORT)
+  if (view === VIEW_ANALYTICS) return { view: VIEW_ANALYTICS, channel: null, report: null }
   if (view === VIEW_REPORT && report) return { view: VIEW_REPORT, channel, report }
   if (view === VIEW_CHANNEL && channel) return { view: VIEW_CHANNEL, channel, report: null }
   return { view: VIEW_CHANNELS, channel: null, report: null }
@@ -42,22 +60,27 @@ function readInitial() {
  * `te_rq` / `te_rst` / `te_ry` / `te_rpage` / `te_rps` (8. sürüm, 2026-10-17), gönderim günlüğü `te_tab=sendlog` +
  * `te_slp` / `te_slps` / `te_slk` / `te_sls` (R18, 2026-10-18) — her görünüm bağlantıyla paylaşılabilir.
  * Kapsamı sunucu belirler.
+ *
+ * <p><b>Analiz</b> (2026-10-18, R22): `te_view=analytics` — kanallar arası / aylar arası grafik + tablo (tembel parça);
+ * anahtarları `te_an_team` / `te_an_months` / `te_an_fields` görünümün kendisi yazar ve sekme içinde kalır (rapora inip
+ * kanallara dönünce "Analiz" son seçimi açar; sekme değişince App `te_` ailesini siler).
  */
 export default function TechErrorReportsPage() {
   const [nav, setNav] = useState(readInitial)
   const [tab, setTab] = useState(() => tabOf(readUrlParam(TE_TAB, '')))
   const [team, setTeam] = useState(() => readId(TE_TEAM))
 
+  const listOrAnalytics = nav.view === VIEW_CHANNELS || nav.view === VIEW_ANALYTICS
   useUrlQuerySync({
     [TE_VIEW]: nav.view === VIEW_CHANNELS ? null : nav.view,
-    [TE_CHANNEL]: nav.view === VIEW_CHANNELS ? null : nav.channel,
+    [TE_CHANNEL]: listOrAnalytics ? null : nav.channel,
     [TE_REPORT]: nav.view === VIEW_REPORT ? nav.report : null,
     [TE_TAB]: nav.view === VIEW_CHANNEL && tab !== TAB_REPORTS ? tab : null,
     [TE_TEAM]: nav.view === VIEW_CHANNELS && team ? team : null,
-    // Kanal görünümünden ÇIKINCA (kanallar listesi) rapor listesi süzgeçleri silinir — başka bir kanala eski arama / yıl
-    // taşınmasın; rapora inip kanala dönünce korunur (8. sürüm). Kanal listesinin süzgeçleri (te_q / te_st / te_sort /
-    // te_page / te_ps) silinmez: kanaldan dönünce liste aynı kalır.
-    ...(nav.view === VIEW_CHANNELS ? Object.fromEntries(REPORT_LIST_KEYS.map((k) => [k, null])) : {}),
+    // Kanal görünümünden ÇIKINCA (kanallar listesi ya da analiz) rapor listesi süzgeçleri silinir — başka bir kanala eski
+    // arama / yıl taşınmasın; rapora inip kanala dönünce korunur (8. sürüm). Kanal listesinin süzgeçleri (te_q / te_st /
+    // te_sort / te_page / te_ps) silinmez: kanaldan dönünce liste aynı kalır.
+    ...(listOrAnalytics ? Object.fromEntries(REPORT_LIST_KEYS.map((k) => [k, null])) : {}),
     // Gönderim günlüğünün sayfa / süzgeç anahtarları (R18 / E22) yalnız o sekme açıkken yaşar (günlük kendisi yazar)
     ...(nav.view === VIEW_CHANNEL && tab === TAB_SENDLOG ? {} : Object.fromEntries(SENDLOG_KEYS.map((k) => [k, null]))),
   })
@@ -81,6 +104,20 @@ export default function TechErrorReportsPage() {
 
   const toChannels = useCallback(() => { flushUrlQuerySync(); setNav({ view: VIEW_CHANNELS, channel: null, report: null }) }, [])
 
+  const openAnalytics = useCallback(() => {
+    flushUrlQuerySync()
+    setNav({ view: VIEW_ANALYTICS, channel: null, report: null })
+    try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
+  }, [])
+
+  if (nav.view === VIEW_ANALYTICS) {
+    return (
+      <Suspense fallback={<AnalyticsLoading />}>
+        <TechErrorAnalytics onBack={toChannels} onOpenReport={openReport} />
+      </Suspense>
+    )
+  }
+
   if (nav.view === VIEW_REPORT) {
     return (
       <ReportEditor key={nav.report} reportId={nav.report}
@@ -95,5 +132,8 @@ export default function TechErrorReportsPage() {
         onBack={toChannels} onOpenReport={openReport} />
     )
   }
-  return <ChannelsView team={team} onTeamChange={setTeam} onOpenChannel={openChannel} onOpenReport={openReport} />
+  return (
+    <ChannelsView team={team} onTeamChange={setTeam} onOpenChannel={openChannel} onOpenReport={openReport}
+      onOpenAnalytics={openAnalytics} />
+  )
 }

@@ -13,6 +13,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
+import com.sitemonitor.service.techerror.TechErrorAnalyticsService;
 import com.sitemonitor.service.techerror.TechErrorApprovalService;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorReportSender;
@@ -97,6 +98,9 @@ public class TechErrorReportController {
     /** Kanal başına gönderim günlüğü (R18 / E22). Yoksa (dilim testleri) uç 409 {@code SEND_LOG_UNAVAILABLE} döner. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.service.techerror.TechErrorSendLogService sendLogs;
+    /** Kanallar arası analiz (2026-10-18, R22). Yoksa (dilim testleri) analiz ucu 409 {@code ANALYTICS_UNAVAILABLE} döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorAnalyticsService analytics;
 
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
@@ -196,6 +200,157 @@ public class TechErrorReportController {
             summaryMemo.put(key, new SummaryMemo(nowMs, frozen));
         }
         return ok(frozen);
+    }
+
+    // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────────
+
+    /**
+     * Takımın (ya da okunabilen bütün takımların) AKTİF kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24
+     * BİTMİŞ ayı (önceki takvim ayıyla biter, İstanbul). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
+     * görünürlüğü uygulanır); okunamayan takım 404. Değerler raporların KENDİ şablonundan, aynı kimlik ve aynı türle;
+     * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar SAKLANDIĞI hâliyle (eski aylar yeniden
+     * hesaplanmaz). Kişi verisi yok (kanal ve takım adları, değerler). Yazma yok.
+     */
+    @GetMapping("/analytics")
+    public ResponseEntity<Map<String, Object>> analytics(@RequestParam(value = "team", required = false) String team,
+                                                         @RequestParam(value = "months", required = false) String months,
+                                                         @RequestParam(value = "fields", required = false) String fields,
+                                                         HttpSession session) {
+        requireRead(session);
+        int m = analyticsMonths(months);
+        List<String> requested = analyticsFields(fields);
+        if (analytics == null) {
+            throw new CodedConflictException("ANALYTICS_UNAVAILABLE", Msg.t(
+                    "Kanal analizi bu sunucuda kullanılamıyor. Sayfayı yenileyin; sürerse sistem yöneticisine bildirin.",
+                    "Channel analysis is not available on this server. Reload the page; if it persists, tell a system administrator."));
+        }
+        Set<Long> visible = visibleTeamIds(session);          // null = hepsi (kurum geneli görüntüleyici)
+        Map<Long, Team> teamMap = new LinkedHashMap<>();
+        for (Team t : visible == null ? teams.findAll() : teams.findAllById(visible)) {
+            if (t != null && t.getId() != null && canRead(session, t.getId())) teamMap.put(t.getId(), t);
+        }
+        Long teamFilter = null;
+        if (team != null && !team.isBlank() && !"all".equals(team.trim())) {
+            teamFilter = parseId(team);
+            if (teamFilter == null || !teamMap.containsKey(teamFilter)) {
+                throw new NoSuchElementException(Msg.t(
+                        "Takım bulunamadı ya da bu takımın raporlarını göremezsiniz. Listeden başka bir takım seçin.",
+                        "The team wasn't found, or you can't see its reports. Pick another team from the list."));
+            }
+        }
+        Map<Long, String> names = new HashMap<>();
+        teamMap.forEach((id, t) -> names.put(id, t.getName() == null ? "" : t.getName()));
+        YearMonth end = service.defaultPeriod();
+        TechErrorAnalyticsService.Result res = analytics.analytics(teamMap.keySet(), teamFilter, m, requested, end, names);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("team", teamFilter == null ? "all" : String.valueOf(teamFilter));
+        data.put("months_requested", res.monthsRequested());
+        List<Map<String, Object>> monthRows = new ArrayList<>();
+        for (YearMonth ym : res.months()) monthRows.add(Map.of("year", ym.getYear(), "month", ym.getMonthValue()));
+        data.put("months", monthRows);
+        data.put("end", Map.of("year", end.getYear(), "month", end.getMonthValue()));
+        List<Map<String, Object>> fieldRows = new ArrayList<>();
+        for (TechErrorAnalyticsService.FieldRef f : res.fields()) {
+            Map<String, Object> fm = new LinkedHashMap<>();
+            fm.put("id", f.id());
+            fm.put("label", f.label());
+            fm.put("type", f.type());
+            fieldRows.add(fm);
+        }
+        data.put("fields", fieldRows);
+        List<Map<String, Object>> options = new ArrayList<>();
+        for (TechErrorAnalyticsService.FieldOption o : res.available()) {
+            Map<String, Object> om = new LinkedHashMap<>();
+            om.put("id", o.id());
+            om.put("label", o.label());
+            om.put("type", o.type());
+            om.put("channels", o.channels());
+            options.add(om);
+        }
+        data.put("available_fields", options);
+        List<Map<String, Object>> chRows = new ArrayList<>();
+        for (TechErrorAnalyticsService.ChannelSeries s : res.channels()) {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            cm.put("id", s.id());
+            cm.put("name", s.name());
+            cm.put("team_id", s.teamId());
+            cm.put("team_name", names.get(s.teamId()));
+            cm.put("points", new LinkedHashMap<>(s.values()));
+            List<Map<String, Object>> reps = new ArrayList<>();
+            for (TechErrorAnalyticsService.ReportRef rr : s.reports()) {
+                if (rr == null) { reps.add(null); continue; }
+                Map<String, Object> rm = new LinkedHashMap<>();
+                rm.put("id", rr.id());
+                rm.put("sent", rr.sent());
+                reps.add(rm);
+            }
+            cm.put("reports", reps);
+            chRows.add(cm);
+        }
+        data.put("channels", chRows);
+        data.put("channel_count", res.channelCount());
+        data.put("truncated", res.truncated());
+        List<Map<String, Object>> teamRows = new ArrayList<>();
+        // Takım seçici: aktif kanalı olan okunabilen takımlar; seçili takımın aktif kanalı yoksa o da listede (seçim boş görünmesin)
+        List<Long> pickable = new ArrayList<>(res.teamsWithChannels());
+        if (teamFilter != null && !pickable.contains(teamFilter)) pickable.add(teamFilter);
+        for (Long id : pickable) {
+            Team t = teamMap.get(id);
+            if (t == null) continue;
+            Map<String, Object> tm = new LinkedHashMap<>();
+            tm.put("id", t.getId());
+            tm.put("name", t.getName());
+            teamRows.add(tm);
+        }
+        data.put("teams", teamRows);
+        data.put("month_choices", TechErrorAnalyticsService.MONTH_CHOICES);
+        data.put("max_fields", TechErrorAnalyticsService.MAX_FIELDS);
+        return ok(data);
+    }
+
+    /** {@code months}: boş = 12; yalnız 6 / 12 / 24 — başka değer 400 {@code VALIDATION_FAILED} (alan {@code months}). */
+    static int analyticsMonths(String raw) {
+        if (raw == null || raw.isBlank()) return TechErrorAnalyticsService.DEFAULT_MONTHS;
+        String s = raw.trim();
+        if (s.length() <= 3) {
+            try {
+                int v = Integer.parseInt(s);
+                if (TechErrorAnalyticsService.MONTH_CHOICES.contains(v)) return v;
+            } catch (NumberFormatException ignored) { /* aşağıda */ }
+        }
+        throw new FieldValidationException("months", Msg.t(
+                "Dönem 6, 12 ya da 24 ay olabilir. Listeden birini seçip yeniden deneyin.",
+                "The period can be 6, 12 or 24 months. Pick one from the list and try again."));
+    }
+
+    /**
+     * {@code fields}: virgülle ayrılmış alan kimlikleri (boş = varsayılan). Kimlik kuralı şablonla aynı; tekrarlar düşer;
+     * en çok {@value TechErrorAnalyticsService#MAX_FIELDS} — aşan ya da bozuk kimlik 400 {@code VALIDATION_FAILED}.
+     * Uzunluk düzenli ifadeden ÖNCE denetlenir.
+     */
+    static List<String> analyticsFields(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        if (raw.length() > 400) throw tooManyFields();
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            String id = part.trim();
+            if (id.isEmpty()) continue;
+            if (id.length() > 40 || !TechErrorAnalyticsService.FIELD_ID.matcher(id).matches()) {
+                throw new FieldValidationException("fields", Msg.t(
+                        "Seçilen alanlardan biri okunamadı. Alanları listeden yeniden seçin.",
+                        "One of the chosen fields couldn't be read. Pick the fields from the list again."));
+            }
+            out.add(id);
+        }
+        if (out.size() > TechErrorAnalyticsService.MAX_FIELDS) throw tooManyFields();
+        return List.copyOf(out);
+    }
+
+    private static FieldValidationException tooManyFields() {
+        return new FieldValidationException("fields", Msg.t(
+                "En çok " + TechErrorAnalyticsService.MAX_FIELDS + " alan birlikte incelenebilir. Bir alanı kaldırıp yeniden deneyin.",
+                "At most " + TechErrorAnalyticsService.MAX_FIELDS + " fields can be compared together. Remove one and try again."));
     }
 
     // ── Kanallar ─────────────────────────────────────────────────────────────────────────────────────

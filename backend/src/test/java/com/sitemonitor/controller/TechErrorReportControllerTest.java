@@ -74,6 +74,7 @@ class TechErrorReportControllerTest {
     @MockitoBean PermissionService permissions;
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.techerror.TechErrorApprovalService approvals;
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorAnalyticsService analytics;
 
     private final List<TechErrorChannel> channels = new ArrayList<>();
     private final List<TechErrorReport> reports = new ArrayList<>();
@@ -1442,5 +1443,134 @@ class TechErrorReportControllerTest {
         org.assertj.core.api.Assertions.assertThat(TechErrorReportController.maskHistoryPeople(Map.of("state", "SENT"))).isEqualTo(Map.of("state", "SENT"));
         org.assertj.core.api.Assertions.assertThat(TechErrorReportController.extraCcOf(null)).isNull();
         org.assertj.core.api.Assertions.assertThat(TechErrorReportController.extraCcOf(Map.of("extra_cc", ""))).isNull();
+    }
+
+    // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────
+
+    private static com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result analyticsResult() {
+        java.util.List<Double> tx = new ArrayList<>(java.util.Collections.nCopies(12, (Double) null));
+        tx.set(11, 1_250_000d);
+        java.util.List<com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef> reps =
+                new ArrayList<>(java.util.Collections.nCopies(12, (com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef) null));
+        reps.set(11, new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef(100L, true));
+        java.util.List<YearMonth> months = new ArrayList<>();
+        for (int i = 11; i >= 0; i--) months.add(YearMonth.of(2026, 9).minusMonths(i));
+        return new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(months, 12,
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldRef("total-tx", "Toplam işlem adedi", "number")),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldOption("total-tx", "Toplam işlem adedi", "number", 1)),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(10L, "Kanal 10", A,
+                        Map.of("total-tx", tx), reps)), 1, false, List.of(A));
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Collection<Long> analyticsTeams() {
+        org.mockito.ArgumentCaptor<java.util.Collection<Long>> c = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(analytics, org.mockito.Mockito.atLeastOnce()).analytics(c.capture(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+        return c.getValue();
+    }
+
+    @Test
+    @DisplayName("analiz: üye kendi takımıyla, varsayılan 12 ay ve alan istenmeden; yanıtta boş ay null (0 değil), rapor kimliği + gönderildi, takım adı")
+    void analytics_memberScopeAndShape() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team").value("all"))
+                .andExpect(jsonPath("$.data.months.length()").value(12))
+                .andExpect(jsonPath("$.data.months[11].month").value(9))
+                .andExpect(jsonPath("$.data.end.year").value(2026))
+                .andExpect(jsonPath("$.data.fields[0].id").value("total-tx"))
+                .andExpect(jsonPath("$.data.available_fields[0].channels").value(1))
+                .andExpect(jsonPath("$.data.channels[0].team_name").value("Takım 1"))
+                .andExpect(jsonPath("$.data.channels[0].points['total-tx'][11]").value(1_250_000d))
+                .andExpect(jsonPath("$.data.channels[0].points['total-tx'][0]").doesNotExist())
+                .andExpect(jsonPath("$.data.channels[0].reports[11].id").value(100))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].sent").value(true))
+                .andExpect(jsonPath("$.data.channels[0].reports[0]").doesNotExist())
+                .andExpect(jsonPath("$.data.teams[0].name").value("Takım 1"))
+                .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.max_fields").value(4));
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(null), eq(12), eq(List.of()), eq(YearMonth.of(2026, 9)), any());
+    }
+
+    @Test
+    @DisplayName("analiz: takım süzgeci yalnız okunabilen takım (başka takım / bozuk kimlik 404); AUDIT her takımı okur; alan ve ay parametreleri iletilir")
+    void analytics_teamFilter() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(s)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "abc").session(s)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").param("months", "24")
+                        .param("fields", "error-rate, total-tx,error-rate").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team").value("1"));
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(A), eq(24), eq(List.of("error-rate", "total-tx")), any(), any());
+        org.mockito.Mockito.clearInvocations(analytics);
+        // Seçili takımın aktif kanalı yoksa da takım seçicide kalır (sonuçta yalnız A'nın kanalı var)
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(audit()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams.length()").value(2))
+                .andExpect(jsonPath("$.data.teams[1].id").value(2));
+        assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);
+    }
+
+    @Test
+    @DisplayName("analiz parametreleri: ay yalnız 6 / 12 / 24, en çok 4 alan, bozuk alan kimliği → 400 VALIDATION_FAILED (servise gitmez)")
+    void analytics_paramValidation() throws Exception {
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("months", "7").session(s))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("months"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("months", "abc").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("months"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "a,b,c,d,e").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "Toplam İşlem").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "x".repeat(500)).session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        verify(analytics, never()).analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("analiz: okuma izni yoksa 403; modül görünürlüğü (S6) kapalı takımın üyesi 403, açık takımın üyesi yalnız kendi takımı")
+    void analytics_permissionAndModuleVisibility() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        MockHttpSession noRead = user("USER", A, List.of());
+        noRead.setAttribute("systemRole", "NONE");
+        when(permissions.allows(org.mockito.ArgumentMatchers.<HttpSession>argThat(x -> x != null && "NONE".equals(x.getAttribute("systemRole"))),
+                eq("tech_error_reports.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/tech-error-reports/analytics").session(noRead)).andExpect(status().isForbidden());
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of()))).andExpect(status().isForbidden());
+            mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", B, List.of()))).andExpect(status().isOk());
+            assertThat(analyticsTeams()).containsExactly(B);
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
+    }
+
+    @Test
+    @DisplayName("analiz + erişim paylaşımı: VIEW paylaşımı paylaşan takımı okur (süzgeçle de); modül o takıma kapalıysa paylaşımla da 404")
+    void analytics_teamAccessGrant() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        MockHttpSession g = grantee(B, A, false);
+        mvc.perform(get("/api/tech-error-reports/analytics").session(g)).andExpect(status().isOk());
+        assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").session(g)).andExpect(status().isOk());
+        verify(analytics).analytics(any(), eq(A), eq(12), any(), any(), any());
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").session(grantee(B, A, false)))
+                    .andExpect(status().isNotFound());
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
     }
 }

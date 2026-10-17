@@ -536,6 +536,13 @@ export const api = {
    */
   techErrors: {
     overview: (team = null) => request(`/tech-error-reports/overview${team ? `?team=${encodeURIComponent(team)}` : ''}`, { withStatus: true }),
+    // Kanallar arası analiz (2026-10-18, R22): { team?, months (6|12|24), fields? ("error-rate,total-tx") } — yalnız okuma
+    analytics: (params = {}) => {
+      const q = new URLSearchParams()
+      for (const [k, v] of Object.entries(params || {})) if (v != null && v !== '') q.set(k, String(v))
+      const s = q.toString()
+      return request(`/tech-error-reports/analytics${s ? `?${s}` : ''}`, { withStatus: true })
+    },
     createChannel: (body) => request('/tech-error-reports/channels', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     updateChannel: (id, body) => request(`/tech-error-reports/channels/${id}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     deleteChannel: (id) => request(`/tech-error-reports/channels/${id}`, { method: 'DELETE', withStatus: true }),

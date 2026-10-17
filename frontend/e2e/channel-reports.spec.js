@@ -11,6 +11,8 @@
 // bölümleri açık tohumlar (`seedOpenSections`).
 // 2026-10-17 (8. sürüm): kanal listesi — dönem kartları süzgeç, arama / sıralama, geniş kapta tablo, telefonda kart, sayfalama
 // (60 kanal → 50 + 10); kanalın rapor listesi durum / yıl / arama süzgeçleri ve sayfalama (30 → 25 + 5); URL'de taşınır.
+// 2026-10-18 (R22): kanal analizi — çizgi grafiği (boş ay boşluk, tek değer nokta), ay × kanal tablosu / kanal kartları,
+// dönem ve alan seçimi URL'de; uzun kanal / takım adları sarar; hücre o ayın raporunu açar.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -351,10 +353,56 @@ const SENDLOG_ROWS = [
   { id: 1, at: '2026-10-11T08:00:00Z', kind: 'approval', trigger: 'TECH_ERROR_APPROVAL', role: 'APPROVER', status: 'queued', reason: 'QUEUED',
     report_id: null, year: null, month: null, to: ['mehmet.kaya@example.com'], to_more: 0, cc: [], cc_more: 0, to_count: 1, cc_count: 0 },
 ]
+let analyticsCalls = []         // Kanal analizi istekleri (2026-10-18, R22): URLSearchParams
+
+// Kanal analizi (2026-10-18, R22) — sunucu yanıtı isteğin ay sayısı ve alanlarıyla kurulur. Uzun kanal / takım adları,
+// boşluklu seri (iki ay boş), yalnız TEK değeri olan kanal (nokta), gönderilmemiş ay.
+const LONG_CHANNEL_2 = 'Kurumsal İnternet Şubesi ve Nakit Yönetimi Ortak Kanalı (Kurumsal Bankacılık / Dijital Kanallar)'
+const AN_FIELDS = {
+  'error-rate': { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' },
+  'total-tx': { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
+  'sla-rate': { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent' },
+}
+function analyticsBody(params) {
+  const n = [6, 12, 24].includes(Number(params.get('months'))) ? Number(params.get('months')) : 12
+  const months = Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 8 - (n - 1) + i, 1))
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
+  })
+  const ids = (params.get('fields') || 'error-rate,total-tx').split(',').filter((id) => AN_FIELDS[id])
+  const last = n - 1
+  const pts = (kind) => ({
+    'error-rate': months.map((_, i) => (kind === 'lone' ? (i === last - 4 ? 0.9 : null) : kind === 'gaps' && (i === last - 7 || i === last - 6) ? null : 0.4 + i / 100)),
+    'total-tx': months.map((_, i) => (kind === 'lone' ? (i === last - 4 ? 4200 : null) : 1_100_000 + i * 12_500)),
+    'sla-rate': months.map(() => null),
+  })
+  const reps = (base, unsent) => months.map((_, i) => ({ id: i === last && base === 700 ? 100 : base + i, sent: i !== unsent }))
+  const ch = (id, name, teamId, teamName, kind, base) => ({
+    id, name, team_id: teamId, team_name: teamName, points: Object.fromEntries(ids.map((f) => [f, pts(kind)[f]])),
+    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null)) : reps(base, last),
+  })
+  return {
+    team: params.get('team') || 'all', months_requested: n, months, end: { year: 2026, month: 9 },
+    fields: ids.map((id) => AN_FIELDS[id]),
+    available_fields: [
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number', channels: 3 },
+      { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent', channels: 3 },
+      { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent', channels: 2 },
+    ],
+    channels: [
+      ch(10, LONG_CHANNEL, 5, LONG_TEAM, 'gaps', 700),
+      ch(20, 'POS', 5, LONG_TEAM, 'full', 800),
+      ch(30, LONG_CHANNEL_2, 6, 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi', 'lone', 900),
+    ],
+    channel_count: 3, truncated: false,
+    teams: [{ id: 5, name: LONG_TEAM }, { id: 6, name: 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi' }],
+    month_choices: [6, 12, 24], max_fields: 4,
+  }
+}
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
   testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
-  sendLogCalls = []
+  sendLogCalls = []; analyticsCalls = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -399,6 +447,10 @@ async function mock(page, { openSections = true } = {}) {
       orderPuts.push({ team, ids })
       ids.forEach((id, i) => { const c = (overviewOverride || []).find((x) => x.id === id); if (c) c.sort_order = i + 1 })
       body = { success: true, data: { team_id: team, changed: ids.length, channels: ids.map((id, i) => ({ id, sort_order: i + 1 })) } }
+    } else if (p === '/api/tech-error-reports/analytics') {
+      const params = new URL(req.url()).searchParams
+      analyticsCalls.push(params)
+      body = { success: true, data: analyticsBody(params) }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -1731,6 +1783,79 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon, hepsi açık)').toEqual([])
       // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
       await page.screenshot({ path: `test-results/channel-reports-sections-${vp.name}.png`, fullPage: true })
+    })
+
+    test('analiz (2026-10-18, R22): kanallardan açılır; çizgi grafiği (boş ay boşluk, tek değer nokta), tablo / kart, alan + dönem seçimi; uzun adlar sarar; sığar, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      await page.goto('/?tab=channelreports')
+      const open = page.locator('[data-slot="te-analytics-open"]')
+      await expect(open).toBeVisible({ timeout: 20_000 })
+      await open.click()
+      const view = page.locator('[data-slot="te-analytics"]')
+      await expect(view).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('analytics')
+      await expect.poll(() => analyticsCalls.length).toBeGreaterThan(0)
+      expect(analyticsCalls[0].get('months')).toBe('12')
+      expect(analyticsCalls[0].get('fields')).toBeNull()
+
+      const cards = view.locator('[data-slot="te-an-field"]')
+      await expect(cards).toHaveCount(2)
+      const rate = view.locator('[data-slot="te-an-field"][data-field="error-rate"]')
+      // Grafik gerçekten çizildi: kanal başına bir çizgi; yalnız tek değeri olan kanal NOKTA alır (boş ay boşluk, 0 değil)
+      await expect(rate.locator('.recharts-line-curve').first()).toBeVisible()
+      expect(await rate.locator('.recharts-line-curve').count(), 'çizgi sayısı').toBeGreaterThanOrEqual(2)
+      await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(3)
+      await expect(rate.locator('[data-slot="te-an-legend"]')).toContainText(LONG_CHANNEL)
+      // Kap genişliği: geniş ekranda ay × kanal tablosu, dar ekranda kanal kartları
+      const wrap = rate.locator('[data-slot="te-an-table-wrap"]')
+      await expect(wrap).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+      if (vp.width >= 1280) {
+        await expect(rate.locator('[data-slot="te-an-row"]')).toHaveCount(12)
+        await expect(rate.locator('[data-slot="te-an-row"]').first()).toHaveAttribute('data-month', '2026-9')
+      } else {
+        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(3)
+        await expect(rate.locator('[data-slot="te-an-card"]').first()).toContainText(LONG_CHANNEL)
+      }
+      // Boş ay "—"; gönderilmemiş ay soluk (adında "gönderilmedi")
+      const unsent = rate.locator('[data-slot="te-an-cell"][data-report="100"]')
+      await expect(unsent).toHaveAttribute('data-state', 'unsent')
+      await expect(unsent).toHaveAccessibleName(/gönderilmedi|not sent/)
+      await expect(rate.locator('[data-slot="te-an-cell"][data-state="none"]').first()).toContainText('—')
+
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef').toEqual([])
+
+      // Dönem: 24 ay → yeni istek ve URL
+      await view.getByRole('button', { name: /^(24 ay|24 months)$/ }).click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('months')).toBe('24')
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
+      await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+
+      // Alan seçici: SLA oranı eklenir → üçüncü kart, değer yoksa "değer girilmemiş" (grafik / 0 değil)
+      await view.locator('[data-slot="te-an-field-picker"]').click()
+      const list = page.locator('[data-slot="te-an-field-list"]')
+      await expect(list).toBeVisible()
+      await list.getByRole('option', { name: /Kritik fonksiyonların SLA oranı/ }).click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('fields')).toBe('error-rate,total-tx,sla-rate')
+      await page.keyboard.press('Escape')
+      await expect(cards).toHaveCount(3)
+      const sla = view.locator('[data-slot="te-an-field"][data-field="sla-rate"]')
+      await expect(sla.locator('[data-slot="te-an-novalues"]')).toBeVisible()
+      await expect(sla.locator('.recharts-line-curve')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (üç alan, 24 ay)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin (üç alan)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef (üç alan)').toEqual([])
+
+      // Hücre o ayın raporunu açar
+      await rate.locator('[data-slot="te-an-cell"][data-report="100"]').click()
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_rep')).toBe('100')
+      expect(new URL(page.url()).searchParams.get('te_view')).toBe('report')
     })
 
     if (!vp.touch) {
