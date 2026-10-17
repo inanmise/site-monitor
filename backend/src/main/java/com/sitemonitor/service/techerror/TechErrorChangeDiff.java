@@ -128,6 +128,16 @@ public final class TechErrorChangeDiff {
                                     a == null ? null : TechErrorFormat.value(f, a, lang), null, null).keyed(key, b, a));
                         }
                     }
+                    // Raporun o aya özel hedefi (2026-10-17, 4b): "<alan> — bu ayın hedefi"; şablon hedefine dönüş = kaldırıldı
+                    for (Field f : s.fields()) {
+                        if (f.target() == null) continue;
+                        Object b = before.targets().get(f.id()), a = after.targets().get(f.id());
+                        if (same(b, a)) continue;
+                        String label = res(f.label(), channel, year, month, lang) + " — " + (en ? "this month's target" : "bu ayın hedefi");
+                        c.add(new Change(section, label, "percent", op(b, a),
+                                b == null ? null : TechErrorFormat.value(f, b, lang),
+                                a == null ? null : TechErrorFormat.value(f, a, lang), null, null).keyed("g:" + f.id(), b, a));
+                    }
                 }
                 case "issues" -> issues(c, s, section, before.issues().get(s.id()), after.issues().get(s.id()), en, lang,
                         channel, year, month);

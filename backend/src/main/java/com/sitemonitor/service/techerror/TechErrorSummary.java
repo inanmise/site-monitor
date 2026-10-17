@@ -33,25 +33,44 @@ public final class TechErrorSummary {
     /** Bir cümlede en çok bu kadar başvuru okunur: 500 karakterlik cümleye sığabilecek en çok "{f:a}" kadar. */
     static final int MAX_REFS = 100;
 
-    /** {@code {f:id}} ya da {@code {f:id?evet|hayır}}; {@code start}/{@code end} kalıptaki konum ({@code end} hariç). */
-    public record Ref(String id, String yes, String no, int start, int end) { }
+    /**
+     * Başvuru türleri (2026-10-17, 4b): {@code f} değer ({@code {f:id}} / {@code {f:id?evet|hayır}}), {@code d} önceki aya
+     * göre fark ({@code {d:id}}), {@code t} alanın etkin hedefi ({@code {t:id}}), {@code dt} değerin hedefe uzaklığı
+     * ({@code {dt:id}}). Yalnız {@code f} seçim ({@code ?…|…}) alır.
+     */
+    static final List<String> KINDS = List.of("f", "d", "t", "dt");
 
-    /** Doğrusal tarama: "{f:" … "}" (iç içe yok; kapanmayan başvuru düz metin sayılır). */
+    /** Bir başvuru; {@code kind} {@link #KINDS}, {@code start}/{@code end} kalıptaki konum ({@code end} hariç). */
+    public record Ref(String kind, String id, String yes, String no, int start, int end) { }
+
+    /** Kalıbın {@code i} konumundaki "{" bir başvuru öneki mi: "f" / "d" / "t" / "dt", değilse null. */
+    private static String kindAt(String line, int i) {
+        for (String k : KINDS) if (line.startsWith("{" + k + ":", i)) return k;
+        return null;
+    }
+
+    /** Doğrusal tarama: "{f:" / "{d:" / "{t:" / "{dt:" … "}" (iç içe yok; kapanmayan başvuru düz metin sayılır). */
     public static List<Ref> refs(String line) {
         List<Ref> out = new ArrayList<>();
         if (line == null) return out;
-        int i = line.indexOf("{f:");
+        int i = line.indexOf('{');
         while (i >= 0 && out.size() < MAX_REFS) {
-            int close = line.indexOf('}', i + 3);
+            String kind = kindAt(line, i);
+            if (kind == null) {
+                i = line.indexOf('{', i + 1);
+                continue;
+            }
+            int bodyStart = i + kind.length() + 2;
+            int close = line.indexOf('}', bodyStart);
             if (close < 0) break;
-            String body = line.substring(i + 3, close);
+            String body = line.substring(bodyStart, close);
             // İç içe süslü parantez okunamaz ("{f:x?{ay} ayında|…}" ilk "}"de biterdi ve bozuk basılırdı): başvuru
             // sayılmaz → malformed() true → şablon kaydı reddeder
             if (body.indexOf('{') >= 0) {
-                i = line.indexOf("{f:", close + 1);
+                i = line.indexOf('{', close + 1);
                 continue;
             }
-            int q = body.indexOf('?');
+            int q = "f".equals(kind) ? body.indexOf('?') : -1;
             String id = TechErrorRichText.strip(q < 0 ? body : body.substring(0, q));
             String yes = null, no = null;
             if (q >= 0) {
@@ -61,17 +80,17 @@ public final class TechErrorSummary {
                 yes = bar < 0 ? choice : choice.substring(0, bar);
                 no = bar < 0 ? "" : choice.substring(bar + 1);
             }
-            if (TechErrorTemplate.ID.matcher(id).matches()) out.add(new Ref(id, yes, no, i, close + 1));
-            i = line.indexOf("{f:", close + 1);
+            if (TechErrorTemplate.ID.matcher(id).matches()) out.add(new Ref(kind, id, yes, no, i, close + 1));
+            i = line.indexOf('{', close + 1);
         }
         return out;
     }
 
-    /** Kalıpta çözülemeyen bir "{f:" var mı (kapanmamış ya da geçersiz kimlik)? Şablon kaydında reddedilir. */
+    /** Kalıpta çözülemeyen bir başvuru öneki var mı (kapanmamış, iç içe ya da geçersiz kimlik)? Şablon kaydında reddedilir. */
     public static boolean malformed(String line) {
         if (line == null) return false;
         int count = 0;
-        for (int i = line.indexOf("{f:"); i >= 0; i = line.indexOf("{f:", i + 3)) count++;
+        for (int i = line.indexOf('{'); i >= 0; i = line.indexOf('{', i + 1)) if (kindAt(line, i) != null) count++;
         return count != refs(line).size();
     }
 
@@ -80,9 +99,14 @@ public final class TechErrorSummary {
      * otomatik sayılır (inceleme 2026-10-14: boş özetle "elle düzenle" özeti kalıcı olarak boş bırakıyordu).
      */
     public static String effective(Section s, Template t, Values v, String channel, int year, int month) {
+        return effective(s, t, v, null, channel, year, month);
+    }
+
+    /** {@link #effective(Section, Template, Values, String, int, int)} + geçen ayın değerleri ({@code {d:…}} farkları). */
+    public static String effective(Section s, Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
         String override = v.texts().get(s.id());
         if (override != null && !TechErrorRichText.blank(override)) return TechErrorTemplate.resolveText(override, channel, year, month, t.lang());
-        return auto(s, t, v.fields(), channel, year, month);
+        return auto(s, t, v.fields(), channel, year, month, previous, v.targets());
     }
 
     /**
@@ -92,13 +116,19 @@ public final class TechErrorSummary {
      * kurulmasın).
      */
     public static String auto(Section s, Template t, Map<String, Object> fields, String channel, int year, int month) {
+        return auto(s, t, fields, channel, year, month, null, Map.of());
+    }
+
+    /** {@link #auto(Section, Template, Map, String, int, int)} + geçen ayın değerleri ve raporun hedefleri (2026-10-17, 4b). */
+    public static String auto(Section s, Template t, Map<String, Object> fields, String channel, int year, int month,
+                              Map<String, Object> previous, Map<String, Object> targets) {
         Map<String, Field> byId = new HashMap<>();
         for (Field f : t.allFields()) byId.put(f.id(), f);
         StringBuilder out = new StringBuilder();
         boolean inParagraph = false;
         for (String line : s.lines()) {
             if (out.length() > TechErrorTemplate.MAX_RESOLVED_TEXT) break;
-            String r = line(line, byId, fields, t.lang(), channel, year, month);
+            String r = line(line, byId, fields, previous, targets, t.lang(), channel, year, month);
             if (r == null || TechErrorRichText.blank(r)) continue;
             boolean item = isItem(line);
             // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer: tek başına işaret basılmaz
@@ -140,7 +170,17 @@ public final class TechErrorSummary {
 
     /** {@link #blocks(Section, Template, Map, Map, String, int, int)} saklı değerlerle (hesaplar uygulanmış olmalı). */
     public static List<Block> blocks(Section s, Template t, Values v, String channel, int year, int month) {
-        return blocks(s, t, v.fields(), v.texts(), channel, year, month);
+        return blocks(s, t, v.fields(), v.texts(), channel, year, month, null, v.targets());
+    }
+
+    /** Saklı değerler + geçen ayın değerleri ({@code {d:…}} farkları; 2026-10-17, 4b). */
+    public static List<Block> blocks(Section s, Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
+        return blocks(s, t, v.fields(), v.texts(), channel, year, month, previous, v.targets());
+    }
+
+    public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
+                                     String channel, int year, int month) {
+        return blocks(s, t, fields, texts, channel, year, month, null, Map.of());
     }
 
     /**
@@ -170,7 +210,7 @@ public final class TechErrorSummary {
      * </ul>
      */
     public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
-                                     String channel, int year, int month) {
+                                     String channel, int year, int month, Map<String, Object> previous, Map<String, Object> targets) {
         Map<String, Object> vals = fields == null ? Map.of() : fields;
         List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
         List<Block> out = new ArrayList<>();
@@ -193,12 +233,13 @@ public final class TechErrorSummary {
                 kept.add(null);
                 continue;
             }
-            String r = line(line, byId, vals, t.lang(), channel, year, month);
+            String r = line(line, byId, vals, previous, targets, t.lang(), channel, year, month);
             // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (auto ile aynı)
             boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
             kept.add(ok ? r : null);
             if (!ok) continue;
-            for (Ref ref : refs(line)) told.add(ref.id());
+            // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
+            for (Ref ref : refs(line)) if ("f".equals(ref.kind())) told.add(ref.id());
             boolean item = isItem(line);
             len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length();
             par = !item;
@@ -377,7 +418,19 @@ public final class TechErrorSummary {
      */
     static String line(String pattern, Map<String, Field> byId, Map<String, Object> fields, String lang, String channel,
                        int year, int month) {
+        return line(pattern, byId, fields, null, Map.of(), lang, channel, year, month);
+    }
+
+    /**
+     * {@link #line(String, Map, Map, String, String, int, int)} + geçen ayın değerleri ve raporun hedefleri (2026-10-17, 4b):
+     * {@code {d:x}} önceki aya göre fark (geçen ay yoksa cümle düşer — kullanıcı kararı "geçen ay verisi yoksa hiç
+     * gösterilmez"), {@code {t:x}} etkin hedef, {@code {dt:x}} değerin hedefe uzaklığı (puan). Sayı / yüzde kalın; "değişim
+     * yok" düz.
+     */
+    static String line(String pattern, Map<String, Field> byId, Map<String, Object> fields, Map<String, Object> previous,
+                       Map<String, Object> targets, String lang, String channel, int year, int month) {
         if (pattern == null || TechErrorRichText.blank(pattern)) return null;
+        boolean en = "en".equals(lang);
         List<Ref> refs = refs(pattern);
         StringBuilder b = new StringBuilder();
         int pos = 0;
@@ -385,6 +438,28 @@ public final class TechErrorSummary {
             b.append(literal(pattern.substring(pos, r.start()), channel, year, month, lang));
             Field f = byId.get(r.id());
             if (f == null || "textarea".equals(f.type()) || TechErrorTemplate.exempt(f, fields)) return null;
+            if (!"f".equals(r.kind())) {
+                boolean numeric = "number".equals(f.type()) || "percent".equals(f.type());
+                if ("d".equals(r.kind())) {
+                    if (!numeric) return null;
+                    TechErrorFormat.Delta d = TechErrorFormat.delta(f, previous == null ? null : previous.get(f.id()), fields.get(f.id()), lang);
+                    if (d == null) return null;
+                    boolean plain = "flat".equals(d.dir()) && !"percent".equals(f.type());
+                    b.append(plain ? d.text() : "**" + d.text() + "**");
+                } else {
+                    Double target = TechErrorTemplate.effectiveTarget(f, targets);
+                    if (target == null) return null;
+                    if ("t".equals(r.kind())) {
+                        b.append("**").append(TechErrorFormat.percent(target, en)).append("**");
+                    } else {
+                        Double cur = TechErrorValues.number(fields.get(f.id()));
+                        if (cur == null) return null;
+                        b.append("**").append(TechErrorFormat.points(cur - target, en).text()).append("**");
+                    }
+                }
+                pos = r.end();
+                continue;
+            }
             Object v = fields.get(f.id());
             if (v == null) return null;
             if (r.yes() != null) {

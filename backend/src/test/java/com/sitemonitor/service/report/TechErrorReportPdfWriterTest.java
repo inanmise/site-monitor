@@ -203,6 +203,13 @@ class TechErrorReportPdfWriterTest {
         int afterSummary = 0;     // "Verileri" bölümünün ardına (2026-10-17: önünde özet kartına gömülü map / kota bölümleri var)
         for (int i = 0; i < secs.size(); i++) if ("summary".equals(secs.get(i).get("id"))) afterSummary = i + 1;
         secs.add(afterSummary, extra);
+        // Kutucuksuz özet: e-postanın gösterge zinciri sınanıyor (kutucuklar varken zincir basılmaz — 4b)
+        secs.replaceAll(sec -> {
+            if (!"exec-summary".equals(sec.get("id"))) return sec;
+            Map<String, Object> c = new LinkedHashMap<>(sec);
+            c.remove("tiles");
+            return c;
+        });
         raw.put("sections", secs);
         Template t = TechErrorTemplate.normalize(raw);
         Map<String, Object> f = new HashMap<>();
@@ -670,9 +677,17 @@ class TechErrorReportPdfWriterTest {
         assertThat(text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " "))
                 .contains("oranlar bu adetlerden Site Monitor tarafından hesaplanmıştır").doesNotContain("sistem hesaplamaz");
         var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "mobil.pdf");
+        // 2026-10-17 (4b): özetin renkli kutucukları varken 16'lık gösterge zinciri basılmaz (aynı rakamlar iki kez görünmesin;
+        // tam liste PDF ekinde) — kutucuklar şablonun seçtiği 6 alan
         assertThat(m.html()).contains("Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.")
-                .contains("Toplam işlem adedi").contains("Teknik hata oranı").contains("Kota hatalarının teknik hatalara oranı")
-                .doesNotContain("bu rakamları hesaplamaz");
+                .contains("data-slot=\"te-tiles\"").contains("Toplam işlem adedi").contains("Teknik hata oranı").contains("Kota hatası adedi")
+                .doesNotContain("Kota hatalarının teknik hatalara oranı").doesNotContain("bu rakamları hesaplamaz");
+        // Kutucuksuz özet (takım listeyi boşalttı): eski gösterge zinciri geri gelir
+        Template noTiles = new Template(ct.lang(), ct.title(), ct.sections().stream()
+                .map(s -> "exec-summary".equals(s.id()) ? s.withTiles(List.of()) : s).toList());
+        var nt = com.sitemonitor.service.mail.TechErrorReportMail.build(new TechErrorPdfInput(noTiles, cv, "Mobil", "Takım", 2026, 9,
+                null, null, Map.of()), null, "mobil.pdf");
+        assertThat(nt.html()).doesNotContain("te-tiles").contains("Kota hatalarının teknik hatalara oranı").contains("Toplam işlem adedi");
         // Şablonda oran formülü var ama bu ay hiçbiri hesaplanamadı (adet girilmemiş; oran elle) → eski not (inceleme 2026-10-16)
         TechErrorPdfInput none = input("tr", Map.of());
         assertThat(text(TechErrorReportPdfWriter.render(none))).contains("sistem hesaplamaz");
@@ -708,7 +723,8 @@ class TechErrorReportPdfWriterTest {
         assertThat(m.html()).contains("Map yapılmamış hatalar hakkında açıklama").contains("<strong>kodlar</strong>")
                 .doesNotContain("Map Yapılmamış Hatalar");
         assertThat(m.text()).contains("Map yapılmamış hatalar hakkında açıklama:\nYeni kodlar eşlenmedi");
-        assertThat(m.html().indexOf("Yeni")).isLessThan(m.html().indexOf("Kota hatası adedi"));
+        // Açıklama kota CÜMLESİNDEN önce (kutucuk şeridindeki "Kota hatası adedi" etiketi özetin başındadır — 4b)
+        assertThat(m.html().indexOf("Yeni")).isLessThan(m.html().indexOf("Kota hatası adedi <strong>1</strong>"));
         // Cümlesi düşen adet (teknik hata adedi yok → oran yok): PDF'te kendi satırında, sessizce kaybolmaz
         TechErrorValues.Values v2 = TechErrorValues.normalize(Map.of("fields", Map.of("unmapped-count", 2, "unmapped-note", "Not")), t);
         String s2 = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v2, "Mobil", "Takım", 2026, 9, null, null, Map.of())))
@@ -722,5 +738,147 @@ class TechErrorReportPdfWriterTest {
                 t.sections().get(0), t, v3, "Mobil", 2026, 9);
         assertThat(blocks).hasSize(1);
         assertThat(blocks.get(0).text()).contains("Map yapılmamış hata adedi **2** olup").contains("Kota hatası adedi **1** olup");
+    }
+
+    @Test
+    @DisplayName("2026-10-17 (4b): özetin başında renkli kutucuklar — PDF'te değer, fark ve hedef (özet metninden önce); e-postada ton renkleri, boş değer '—' (gizlenmez); EN 'target' / 'pts'; fark cümlesi geçen ayla")
+    void tilesInPdfAndMail() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, Object> f = new HashMap<>();
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        f.put("quota-count", 1);
+        f.put("sla-rate", 99.9);
+        Map<String, Object> prev = new HashMap<>();
+        prev.put("total-tx", 800);
+        prev.put("error-count", 4);
+        prev.put("error-rate", 0.6);
+        prev.put("sla-rate", 99.8);
+        TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", f), t), prev);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of()).withPrevious(prev);
+        String s = text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " ");
+        // Kutucuk: etiket, değer, fark (ok çizimdir, metinde yok) [· hedef]
+        assertThat(s).contains("Teknik hata oranı %0,5 −0,1 puan")                       // 5 / 1000; geçen ay %0,6 → düştü
+                .contains("Toplam işlem adedi 1.000 +200 (+%25)")
+                .contains("Ay içindeki teknik hata adedi 5 +1 (+%25)")
+                .contains("Map yapılmamış hata adedi —")                                   // girilmedi: bilinmiyor, gizlenmez
+                .contains("Kota hatası adedi 1 ")
+                .contains("Kritik fonksiyonların SLA oranı %99,9 +0,1 puan · hedef %99,95");
+        assertThat(s.indexOf("Toplam işlem adedi 1.000")).isLessThan(s.indexOf("verilerine göre teknik hata oranı"));
+        // Fark cümlesi geçen ayla üretilir
+        assertThat(s).contains("Önceki aya göre teknik hata adedi +1 (+%25), teknik hata oranı −0,1 puan değişmiştir.");
+        assertThat(s).contains("SLA oranı %99,9 (hedef %99,95, fark −0,05 puan) ile hedefin altında kalmıştır.");
+        // E-posta: ton renkleri (oran düştü → iyi, SLA hedefin altında → kötü, adet yönsüz → nötr, boş → bilinmiyor), düz metin eşi
+        var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "m.pdf");
+        String html = m.html();
+        assertThat(html).contains("data-slot=\"te-tiles\"");
+        assertThat(toneOf(html, "Teknik hata oranı")).isEqualTo("good");
+        assertThat(toneOf(html, "Kritik fonksiyonların SLA oranı")).isEqualTo("bad");
+        assertThat(toneOf(html, "Toplam işlem adedi")).isEqualTo("neutral");
+        assertThat(toneOf(html, "Map yapılmamış hata adedi")).isEqualTo("unknown");
+        assertThat(html).contains("▲ +200 (+%25)").contains("▼ −0,1 puan").contains("▲ +0,1 puan · hedef %99,95");
+        assertThat(m.text()).contains("Toplam işlem adedi: 1.000 (▲ +200 (+%25))")
+                .contains("Kritik fonksiyonların SLA oranı: %99,9 (▲ +0,1 puan · hedef %99,95)")
+                .contains("Map yapılmamış hata adedi: —");
+        assertThat(html.indexOf("te-tiles")).isLessThan(html.indexOf("verilerine göre teknik hata oranı"));
+        // Geçen ay yok: fark yok, yön yok → oran nötr, SLA yine hedefe göre; fark cümlesi düşer
+        TechErrorPdfInput noPrev = new TechErrorPdfInput(t, com.sitemonitor.service.techerror.TechErrorCalc.apply(t,
+                TechErrorValues.normalize(Map.of("fields", f), t), null), "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        String h2 = com.sitemonitor.service.mail.TechErrorReportMail.build(noPrev, null, "m.pdf").html();
+        assertThat(toneOf(h2, "Teknik hata oranı")).isEqualTo("neutral");
+        assertThat(toneOf(h2, "Kritik fonksiyonların SLA oranı")).isEqualTo("bad");
+        assertThat(h2).doesNotContain("▲").doesNotContain("▼").doesNotContain("Önceki aya göre teknik hata adedi");
+        // EN: "target", "pts", İngilizce sayı biçimi
+        Template en = TechErrorTemplate.defaults("en");
+        TechErrorValues.Values ev = com.sitemonitor.service.techerror.TechErrorCalc.apply(en, TechErrorValues.normalize(Map.of("fields", f), en), prev);
+        var em = com.sitemonitor.service.mail.TechErrorReportMail.build(
+                new TechErrorPdfInput(en, ev, "Mobile", "Team", 2026, 9, null, null, Map.of()).withPrevious(prev), null, "m.pdf");
+        assertThat(em.text()).contains("SLA rate of critical functions: 99.9% (▲ +0.1 pts · target 99.95%)")
+                .contains("Total transactions: 1,000 (▲ +200 (+25%))");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-17: özet başlığı ilk kutucuk satırıyla aynı sayfada (uzun bir bölümün ardına taşınmış özet, sınır durumları taranır)")
+    void summaryTitleNeverOrphanedByTiles() throws IOException {
+        // Özet, anomali bölümünün ARDINA alınır: konu sayısı başlığın sayfadaki yerini kaydırır
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        // Tek kutucuk (ilk satır): yalnız kutucukta geçen metinle ("Map yapılmamış hata adedi —") bulunur; birden çok satırda
+        // ikinci satır sayfa sonunda meşru olarak bölünebilir
+        Map<String, Object> exec = new LinkedHashMap<>(secs.remove(0));
+        exec.put("tiles", List.of("unmapped-count"));
+        int issuesAt = -1;
+        for (int i = 0; i < secs.size(); i++) if ("issues".equals(secs.get(i).get("kind"))) issuesAt = i;
+        secs.add(issuesAt + 1, exec);
+        raw.put("sections", secs);
+        // Tek satırlı ve 2–3 satıra sarılan başlık (sectionTitle'ın ayırdığı yer satır sayısına bağlı)
+        for (String title : List.of("Yönetici Özeti", "Yönetici Özeti — Dönemin Öne Çıkan Göstergeleri, Hedefe Uzaklık ve Önceki Aya Göre Farklar (Kanal Bazında Değerlendirme)")) {
+        exec.put("title", title);
+        Template t = TechErrorTemplate.normalize(raw);
+        for (int n = 0; n < 28; n++) {
+            List<Object> issues = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                issues.add(Map.of("id", "k" + i, "topic", "Konu " + i, "title_auto", true, "description", ("Satır " + i + " ").repeat(12)));
+            }
+            Map<String, Object> f = new HashMap<>();
+            f.put("total-tx", 1000);
+            f.put("error-count", 5);
+            f.put("sla-rate", 99.9);
+            TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t,
+                    TechErrorValues.normalize(Map.of("fields", f, "issues", Map.of("issues", issues)), t), null);
+            byte[] pdf = TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of()));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                int titlePage = -1, tilePage = -1;
+                for (int pg = 1; pg <= doc.getNumberOfPages(); pg++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(pg);
+                    st.setEndPage(pg);
+                    String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (titlePage < 0 && txt.contains("Yönetici Özeti")) titlePage = pg;
+                    // Yalnız kutucukta geçen metin: girilmemiş "map yok" adedi (etiket + "—"); Verileri bölümü sayfadan önce basılır
+                    if (tilePage < 0 && txt.contains("Map yapılmamış hata adedi —")) tilePage = pg;
+                }
+                assertThat(titlePage).as("konu sayısı %d", n).isPositive();
+                assertThat(tilePage).as("konu sayısı %d: kutucuklar başlıkla aynı sayfada", n).isEqualTo(titlePage);
+            }
+        }
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-17: e-posta kutucuk şeridinin dar ekran sınıfı satırdaki sayıya göre (1 → yok, 2 → tile, 3+ → tile3)")
+    void mailTileClassFollowsPerRow() {
+        Template d = TechErrorTemplate.defaults("tr");
+        Map<String, Object> f = new HashMap<>();
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        f.put("unmapped-count", 2);
+        f.put("quota-count", 1);
+        f.put("sla-rate", 99.9);
+        List<String> all = List.of("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
+        for (int n : new int[] { 1, 2, 3, 4, 6 }) {
+            Template t = new Template(d.lang(), d.title(), d.sections().stream()
+                    .map(s -> "exec-summary".equals(s.id()) ? s.withTiles(all.subList(0, n)) : s).toList());
+            TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", f), t), null);
+            String html = com.sitemonitor.service.mail.TechErrorReportMail.build(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9,
+                    null, null, Map.of()), null, "m.pdf").html();
+            int tile3 = html.split("class=\"tile3\"", -1).length - 1;
+            int tile = html.split("class=\"tile\"", -1).length - 1;
+            // Satırda en çok 3: tek kutucuk sınıfsız, iki → "tile", üç ve üstü (3'lü satırlar) → "tile3"
+            if (n == 1) assertThat(tile3 + tile).as("tek kutucuk sınıfsız").isZero();
+            else if (n == 2) { assertThat(tile).as("%d kutucuk", n).isEqualTo(n); assertThat(tile3).isZero(); }
+            else { assertThat(tile3).as("%d kutucuk", n).isEqualTo(n); assertThat(tile).isZero(); }
+            // Outlook hücresi ile satır içi genişlik aynı
+            String pct = n == 1 ? "100%" : n == 2 ? "50%" : "33.33%";
+            assertThat(html).contains("<td width=\"" + pct + "\"").contains("max-width:" + pct);
+        }
+    }
+
+    /** E-posta kutucuğunun tonu: etiketin önündeki en yakın {@code data-tone}. */
+    private static String toneOf(String html, String label) {
+        int at = html.indexOf("\">" + label + "</p>");
+        assertThat(at).as("kutucuk " + label).isPositive();
+        int tone = html.lastIndexOf("data-tone=\"", at);
+        return html.substring(tone + 11, html.indexOf('"', tone + 11));
     }
 }

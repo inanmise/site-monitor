@@ -327,6 +327,16 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       }
     }
   }
+  /** Raporun o aya özel hedefi (2026-10-17, 4b): boş = şablon hedefi (anahtar silinir, kayda gitmez). */
+  const setTarget = (id, v) => {
+    setDraft((d) => {
+      const targets = { ...(d.targets || {}) }
+      if (v == null || v === '') delete targets[id]
+      else targets[id] = v
+      return { ...d, targets }
+    })
+    clearServer((k) => k === `targets.${id}`)
+  }
   const setIssues = (sid, list) => {
     setDraft((d) => ({ ...d, issues: { ...d.issues, [sid]: list } }))
     clearServer((k) => k.startsWith(`issues.${sid}.`))
@@ -635,8 +645,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // Otomatik oranlar (2026-10-16): taslağın adetlerinden CANLI hesap — yalnız gösterim (alan çıktısı, özet önizlemesi,
   // trendin bu ayı); taslağa yazılmaz, kaydedilen değeri sunucu hesaplar
   const prevFields = data?.previous?.fields || null
-  const calc = useMemo(() => calcResults(tpl, draft?.fields, prevFields), [tpl, draft?.fields, prevFields])
-  const shownFields = useMemo(() => applyCalc(tpl, draft?.fields, prevFields, calc), [tpl, draft?.fields, prevFields, calc])
+  // Raporun o aya özel hedefleri (4b) hedef karşılaştırmasını etkiler
+  const draftTargets = draft?.targets
+  const calc = useMemo(() => calcResults(tpl, draft?.fields, prevFields, draftTargets), [tpl, draft?.fields, prevFields, draftTargets])
+  const shownFields = useMemo(() => applyCalc(tpl, draft?.fields, prevFields, calc, draftTargets),
+    [tpl, draft?.fields, prevFields, calc, draftTargets])
   const shownValues = useMemo(() => (draft && shownFields !== draft.fields ? { ...draft, fields: shownFields } : draft),
     [draft, shownFields])
 
@@ -837,7 +850,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
             readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
-            calc={calc} />
+            calc={calc} onTarget={setTarget} />
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
@@ -847,7 +860,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
             month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText}
             embedded={embeddedSections(tpl, s.id)} fieldValues={draft} uiLang={uiLang} previous={data.previous}
-            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} />
+            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget} />
         }
         if (s.kind === 'table') {
           return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}

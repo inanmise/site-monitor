@@ -386,9 +386,10 @@ class TechErrorReportServiceTest {
     void refreshTemplateDropsValuesExemptUnderNewLink() {
         TechErrorChannel ch = channel(1, "Mobil");
         TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        // 2026-10-17 (4b): "SLA hedefin üstünde mi?" artık hesaplanıyor (bağ hedefi olamaz) → bağ "kesinti oldu mu?" sorusuna
         Map<String, Object> fields = new HashMap<>();
-        fields.put("sla-above", false);
-        fields.put("sla-rate", 95);
+        fields.put("had-outage", false);
+        fields.put("total-tx", 95);
         TechErrorReport s = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", fields), 7L);
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
@@ -396,9 +397,9 @@ class TechErrorReportServiceTest {
         Map<String, Object> summary = new LinkedHashMap<>(secs.get(at));
         @SuppressWarnings("unchecked") List<Map<String, Object>> fs = new ArrayList<>((List<Map<String, Object>>) summary.get("fields"));
         fs.replaceAll(f -> {
-            if (!"sla-rate".equals(f.get("id"))) return f;
+            if (!"total-tx".equals(f.get("id"))) return f;
             Map<String, Object> m = new LinkedHashMap<>(f);
-            m.put("skip_if_no", "sla-above");
+            m.put("skip_if_no", "had-outage");
             return m;
         });
         summary.put("fields", fs);
@@ -409,7 +410,7 @@ class TechErrorReportServiceTest {
         assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), fresh)).containsEntry("lost_values", 1);
         var res = service.refreshTemplate(r.getId(), s.getVersion(), 7L);
         assertThat(res.removedValues()).isEqualTo(1);
-        assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("sla-above").doesNotContain("sla-rate");
+        assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("had-outage").doesNotContain("total-tx");
     }
 
     @Test
@@ -573,6 +574,47 @@ class TechErrorReportServiceTest {
         assertThat(ps.getValuesJson()).contains("\"tx-increase-pct\":3.5").contains("\"tx-increase\":false");
     }
 
+    @Test
+    @DisplayName("2026-10-17 (4b): raporun o aya özel SLA hedefi saklanır ve karşılaştırmayı ezer; kaldırılınca şablon hedefi; şablon yenilemede taşınır; PDF girdisi geçen ayın değerlerini taşır (kutucuk farkı), ilk ayda yok")
+    void targetsSavedCarriedAndPreviousForTiles() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport aug = service.createReport(ch, 2026, 8, 7L);
+        service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("total-tx", 800, "error-count", 4)), 7L);
+        TechErrorReport sep = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = new HashMap<>();
+        f.put("sla-rate", 99.9);
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        f.put("sla-above", false);                                               // istemcinin gönderdiği cevap yok sayılır (hesaplanır)
+        TechErrorReport s = service.saveValues(sep.getId(), sep.getVersion(), Map.of("fields", f, "targets", Map.of("sla-rate", 99.8)), 7L);
+        Template t = TechErrorTemplate.fromStored(s.getTemplateJson());
+        var stored = TechErrorValues.fromStored(s.getValuesJson(), t);
+        assertThat(TechErrorValues.number(stored.targets().get("sla-rate"))).isEqualTo(99.8);
+        assertThat(stored.fields()).containsEntry("sla-above", true);            // %99,9 ≥ raporun hedefi %99,8 (şablon %99,95 olsa da)
+        assertThat(String.valueOf(TechErrorHistoryService.detail(eventsOf(sep.getId()).get(0)))).contains("bu ayın hedefi");
+        // Hedef kaldırılınca şablonun hedefi geçer → Hayır; anahtar yazılmaz
+        f.remove("sla-above");
+        TechErrorReport s2 = service.saveValues(sep.getId(), s.getVersion(), Map.of("fields", f), 7L);
+        assertThat(TechErrorValues.fromStored(s2.getValuesJson(), t).fields()).containsEntry("sla-above", false);
+        assertThat(s2.getValuesJson()).doesNotContain("targets");
+        // Şablon yenileme: hedef aynı kimlikli, hedefi olan yüzde alanına taşınır
+        TechErrorReport s3 = service.saveValues(sep.getId(), s2.getVersion(), Map.of("fields", f, "targets", Map.of("sla-rate", 99.8)), 7L);
+        Template d = TechErrorTemplate.defaults("tr");
+        service.saveTemplate(ch.getId(), 1, new Template(d.lang(), d.title() + " (v2)", d.sections()), 7L);
+        service.refreshTemplate(sep.getId(), s3.getVersion(), 7L);
+        var refreshed = reports.findById(sep.getId()).orElseThrow();
+        var rv = TechErrorValues.fromStored(refreshed.getValuesJson(), TechErrorTemplate.fromStored(refreshed.getTemplateJson()));
+        assertThat(TechErrorValues.number(rv.targets().get("sla-rate"))).isEqualTo(99.8);
+        assertThat(rv.fields()).containsEntry("sla-above", true);
+        // PDF / e-posta girdisi geçen ayın değerlerini taşır (kutucuk farkları, {d:} cümlesi); ilk ayda yok
+        var in = service.pdfInput(refreshed, ch, "Dijital");
+        assertThat(in.previousOrNull()).isNotNull();
+        assertThat(TechErrorValues.number(in.previousOrNull().get("total-tx"))).isEqualTo(800.0);
+        assertThat(TechErrorValues.number(in.previousOrNull().get("error-count"))).isEqualTo(4.0);
+        assertThat(in.values().fields()).containsEntry("sla-above", true);
+        assertThat(service.pdfInput(reports.findById(aug.getId()).orElseThrow(), ch, "Dijital").previousOrNull()).isNull();
+    }
+
     // ── Değişiklik ve sürüm geçmişi (2026-10-14, Faz B) ──────────────────────────────────────────────
 
     private List<com.sitemonitor.model.TechErrorReportEvent> eventsOf(Long reportId) {
@@ -661,8 +703,9 @@ class TechErrorReportServiceTest {
                 .containsEntry("first_at", t0.toString());
         assertThat(list.get(0).getEventAt()).isEqualTo(t0.plusSeconds(300));
         assertThat(list.get(0).getReportVersion()).isEqualTo(o2.report().getVersion());
+        // 2026-10-17 (4b): SLA oranı girilince "SLA hedefin üstünde mi?" hedefle (%99,95) otomatik hesaplanır → onun satırı da var
         assertThat(changesOf(list.get(0))).extracting(c -> c.get("key") + " " + c.get("op") + " " + c.get("before") + " → " + c.get("after"))
-                .containsExactly("f:sla-rate set null → %0,5", "f:total-tx set null → 1.000");
+                .containsExactly("f:sla-rate set null → %0,5", "f:sla-above set null → Hayır", "f:total-tx set null → 1.000");
 
         // İkisi de geri alındı → satır kalmaz ama olay SİLİNMEZ: "geri alındı" (gönderildiyse "değişti" durumu açıklanır)
         at(t0.plusSeconds(600));

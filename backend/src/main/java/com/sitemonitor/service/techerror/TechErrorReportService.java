@@ -675,14 +675,16 @@ public class TechErrorReportService {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
         // Hesaplanan alanlar PDF / e-posta anında CANLI: geçen ayın rakamı sonradan düzeltildiyse değişim oranı da güncel
         // (ekranda görülenle aynı; saklı değer bir sonraki kayıtta tazelenir)
-        Values v = TechErrorCalc.apply(t, TechErrorValues.fromStored(r.getValuesJson(), t), previousFields(r, t));
+        Map<String, Object> previous = previousFields(r, t);
+        Values v = TechErrorCalc.apply(t, TechErrorValues.fromStored(r.getValuesJson(), t), previous);
         Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
         for (TechErrorReportImage i : images.findAllByReportIdOrderByIdAsc(r.getId())) {
             imgs.put(i.getSlotId(), new TechErrorPdfInput.Image(i.getData(), i.getWidth(), i.getHeight()));
         }
         String prepared = displayName(r.getUpdatedById() != null ? r.getUpdatedById() : r.getCreatedById());
+        // Geçen ayın değerleri (2026-10-17, 4b): kutucuk farkları ve {d:…} cümleleri — CANLI (geçen ay düzeltildiyse fark da güncel)
         return new TechErrorPdfInput(t, v, ch.getName(), teamName, r.getReportYear(), r.getReportMonth(), prepared, now(), imgs,
-                trend(r, t, v));
+                trend(r, t, v), previous);
     }
 
     /**
@@ -832,7 +834,13 @@ public class TechErrorReportService {
                 if (!rows.isEmpty()) tables.put(s.id(), rows);
             }
         }
-        return new Values(fields, issues, texts, tables);
+        // O aya özel hedef (2026-10-17, 4b): aynı kimlik, yeni şablonda da hedefi olan yüzde alanı
+        Map<String, Object> targets = new LinkedHashMap<>();
+        for (var f : next.allFields()) {
+            Object tv = before.targets().get(f.id());
+            if (tv != null && "percent".equals(f.type()) && f.target() != null && "percent".equals(prevTypes.get(f.id()))) targets.put(f.id(), tv);
+        }
+        return new Values(fields, issues, texts, tables, targets);
     }
 
     /** Liste başlığı için kopyanın başlık kalıbı + dili (sütun sınırına sığdırılır). */
@@ -852,7 +860,8 @@ public class TechErrorReportService {
     }
 
     private static int countValues(Values v) {
-        int n = v.fields().size() + v.texts().size();
+        // O aya özel hedefler de kaybolabilir (yeni şablon alanın hedefini kaldırdı — inceleme 2026-10-17)
+        int n = v.fields().size() + v.texts().size() + v.targets().size();
         for (var l : v.issues().values()) n += l.size();
         for (var t : v.tables().values()) for (var r : t.values()) n += r.size();
         return n;

@@ -38,8 +38,19 @@ class TechErrorTemplateTest {
         // Kullanıcı kararı 2026-10-16: üstte girilen adetler, altta otomatik oranlar
         assertThat(t.sections().get(3).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Verileri");
         assertThat(t.sections().get(3).host()).isNull();
-        assertThat(t.sections().get(3).fields()).allMatch(f -> f.calc() == null);
+        // 2026-10-17 (4b): "SLA hedefin üstünde mi?" hedefle otomatik (kullanıcı kararı: alanda hedef + otomatik hesap); diğerleri elle
+        assertThat(t.sections().get(3).fields()).filteredOn(f -> !"sla-above".equals(f.id())).allMatch(f -> f.calc() == null);
         assertThat(t.sections().get(3).fields()).extracting(f -> f.id()).doesNotContain("unmapped-count", "quota-count");
+        var slaRate = t.sections().get(3).fields().stream().filter(f -> "sla-rate".equals(f.id())).findFirst().orElseThrow();
+        assertThat(slaRate.target()).isEqualTo(99.95);
+        assertThat(slaRate.better()).isEqualTo("higher");
+        var slaAbove = t.sections().get(3).fields().stream().filter(f -> "sla-above".equals(f.id())).findFirst().orElseThrow();
+        assertThat(slaAbove.calc().kind()).isEqualTo("compare");
+        assertThat(slaAbove.calc().of()).isEqualTo("sla-rate");
+        // Renkli kutucuklar (kullanıcı kararı: 6 karışık) ve karşılaştırma cümleleri ({d:} fark, {t:} hedef, {dt:} hedefe uzaklık)
+        assertThat(t.sections().get(0).tiles()).containsExactly("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
+        assertThat(t.sections().get(0).lines()).anyMatch(l -> l.contains("{d:error-count}") && l.contains("{d:error-rate}"))
+                .anyMatch(l -> l.contains("{t:sla-rate}") && l.contains("{dt:sla-rate}"));
         assertThat(t.sections().get(4).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
         assertThat(t.sections().get(4).fields()).allMatch(f -> f.calc() != null);
         // Kullanıcı kararı 2026-10-17: anomali adları
@@ -309,11 +320,13 @@ class TechErrorTemplateTest {
             assertThat(lenient.allFields().stream().filter(f -> f.id().equals("error-rate")).findFirst().orElseThrow().skipIfNo()).isNull();
         }
         assertInvalid(withSkip(raw, "had-outage", "had-outage"));               // kendisine
-        assertInvalid(withSkip(raw, "had-outage", "sla-above"));                // zincir: bağlı alanların sorusu kendisi bağlı
-        // geçerli bağ: evet/hayır sorusuna, zincirsiz
-        Template ok = TechErrorTemplate.normalize(withSkip(raw, "sla-rate", "sla-above"));
+        // 2026-10-17 (4b): "SLA hedefin üstünde mi?" hedef karşılaştırmasıyla HESAPLANIR → bağ hedefi olamaz (inceleme 2026-10-16)
+        assertInvalid(withSkip(raw, "sla-rate", "sla-above"));
+        assertInvalid(withSkip(raw, "had-outage", "sla-above"));
+        // geçerli bağ: elle cevaplanan evet/hayır sorusuna, zincirsiz (aynı soruya birden çok alan bağlanabilir)
+        Template ok = TechErrorTemplate.normalize(withSkip(raw, "sla-rate", "had-outage"));
         assertThat(ok.allFields().stream().filter(f -> f.id().equals("sla-rate")).findFirst().orElseThrow().skipIfNo())
-                .isEqualTo("sla-above");
+                .isEqualTo("had-outage");
     }
 
     @SuppressWarnings("unchecked")
@@ -331,6 +344,106 @@ class TechErrorTemplateTest {
                 }
                 sc.put("fields", fs);
             }
+            secs.add(sc);
+        }
+        copy.put("sections", secs);
+        return copy;
+    }
+
+    @Test
+    @DisplayName("2026-10-17 (4b): hedef yalnız yüzde alanında, %0–100 ve yönlü; 'daha iyi' yalnız sayı / yüzde; kutucuk ≤ 6, tekil, varlığı denetlenmez; karşılaştırma yalnız evet/hayır alanında — katı 400, saklıda düşer, toMap geri yazar")
+    void targetBetterAndTilesRules() {
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        Template round = TechErrorTemplate.normalize(raw);
+        assertThat(field(round, "sla-rate").target()).isEqualTo(99.95);
+        assertThat(field(round, "sla-rate").better()).isEqualTo("higher");
+        assertThat(round.sections().get(0).tiles()).hasSize(6);
+        // Hedef: sayı alanında / aralık dışı / yönsüz → katı 400; saklıda hedef düşer, alan kalır
+        assertInvalid(withField(raw, "total-tx", "target", 50));
+        assertInvalid(withField(raw, "sla-rate", "target", 101));
+        assertInvalid(withField(raw, "sla-rate", "target", -1));
+        assertInvalid(withField(raw, "sla-rate", "target", "yüksek"));
+        assertInvalid(withField(raw, "sla-rate", "better", null));                 // hedef var, yön yok
+        assertInvalid(withField(raw, "sla-rate", "better", "none"));               // hedef var, "yön yok" da yönsüz (inceleme)
+        Template noneDir = stored(withField(raw, "sla-rate", "better", "none"));
+        assertThat(field(noneDir, "sla-rate").target()).isNull();
+        assertThat(field(noneDir, "sla-rate").better()).isEqualTo("none");
+        assertThat(field(stored(withField(raw, "total-tx", "target", 50)), "total-tx").target()).isNull();
+        assertThat(field(stored(withField(raw, "sla-rate", "target", 101)), "sla-rate").target()).isNull();
+        Template noBetter = stored(withField(raw, "sla-rate", "better", null));
+        assertThat(field(noBetter, "sla-rate").target()).isNull();
+        assertThat(field(noBetter, "sla-rate").better()).isNull();
+        // "Daha iyi": tanınmayan değer / evet-hayır alanında → katı 400, saklıda düşer; sayı alanında yönsüz hedefsiz olur
+        assertInvalid(withField(raw, "sla-rate", "better", "up"));
+        assertInvalid(withField(raw, "had-outage", "better", "higher"));
+        assertThat(field(stored(withField(raw, "had-outage", "better", "higher")), "had-outage").better()).isNull();
+        assertThat(field(TechErrorTemplate.normalize(withField(raw, "error-count", "better", "lower")), "error-count").better()).isEqualTo("lower");
+        // Kutucuklar: 7 → katı 400, saklıda ilk 6; yinelenen tekilleşir; olmayan kimlik kalır (çizimde atlanır); bozuk kimlik 400
+        List<Object> seven = List.of("a", "b", "c", "d", "e", "f", "g");
+        assertInvalid(withTiles(raw, seven));
+        assertThat(stored(withTiles(raw, seven)).sections().get(0).tiles()).containsExactly("a", "b", "c", "d", "e", "f");
+        assertThat(TechErrorTemplate.normalize(withTiles(raw, List.of("error-rate", "error-rate", "ghost"))).sections().get(0).tiles())
+                .containsExactly("error-rate", "ghost");
+        assertInvalid(withTiles(raw, List.of("Büyük Harf")));
+        assertInvalid(withTiles(raw, "error-rate"));
+        // Boş liste yazılmaz: kutucuksuz şablonun belgesi 4b öncesiyle aynı
+        @SuppressWarnings("unchecked") Map<String, Object> first = (Map<String, Object>) ((List<Object>) TechErrorTemplate.toMap(
+                TechErrorTemplate.normalize(withTiles(raw, List.of()))).get("sections")).get(0);
+        assertThat(first).doesNotContainKey("tiles");
+        // Hedef karşılaştırması: yalnız evet/hayır alanında ve 'of' zorunlu; başvurunun türü / hedefi kayıtta denetlenmez (silme kilitlemez)
+        assertInvalid(withField(raw, "sla-rate", "calc", Map.of("kind", "compare", "of", "error-rate")));
+        assertInvalid(withField(raw, "sla-above", "calc", Map.of("kind", "compare")));
+        assertInvalid(withField(raw, "sla-above", "calc", Map.of("kind", "compare", "of", "sla-above")));
+        Template loose = TechErrorTemplate.normalize(withField(raw, "sla-above", "calc", Map.of("kind", "compare", "of", "total-tx")));
+        assertThat(field(loose, "sla-above").calc().of()).isEqualTo("total-tx");
+        assertThat(field(stored(withField(raw, "sla-rate", "calc", Map.of("kind", "compare", "of", "error-rate"))), "sla-rate").calc()).isNull();
+        // EN varsayılan aynı yapıyı taşır
+        Template en = TechErrorTemplate.defaults("en");
+        assertThat(field(en, "sla-rate").target()).isEqualTo(99.95);
+        assertThat(field(en, "sla-above").calc().kind()).isEqualTo("compare");
+        assertThat(en.sections().get(0).tiles()).isEqualTo(round.sections().get(0).tiles());
+    }
+
+    private static TechErrorTemplate.Field field(Template t, String id) {
+        return t.allFields().stream().filter(f -> f.id().equals(id)).findFirst().orElseThrow();
+    }
+
+    private static Template stored(Map<String, Object> raw) {
+        return TechErrorTemplate.fromStored(TechErrorTemplate.JSON.writeValueAsString(raw));
+    }
+
+    /** Alan haritasında bir anahtarı değiştirir (null = anahtarı siler). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withField(Map<String, Object> raw, String fieldId, String key, Object value) {
+        Map<String, Object> copy = new LinkedHashMap<>(raw);
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(s);
+            if (s.get("fields") instanceof List<?> fl) {
+                List<Map<String, Object>> fs = new ArrayList<>();
+                for (Object o : fl) {
+                    Map<String, Object> fm = new LinkedHashMap<>((Map<String, Object>) o);
+                    if (fieldId.equals(fm.get("id"))) {
+                        if (value == null) fm.remove(key);
+                        else fm.put(key, value);
+                    }
+                    fs.add(fm);
+                }
+                sc.put("fields", fs);
+            }
+            secs.add(sc);
+        }
+        copy.put("sections", secs);
+        return copy;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withTiles(Map<String, Object> raw, Object tiles) {
+        Map<String, Object> copy = new LinkedHashMap<>(raw);
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(s);
+            if ("summary".equals(s.get("kind"))) sc.put("tiles", tiles);
             secs.add(sc);
         }
         copy.put("sections", secs);

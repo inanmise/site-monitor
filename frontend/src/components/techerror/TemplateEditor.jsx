@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2, Trash2,
   TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
-import { useT } from '../../i18n/index.jsx'
+import { useLanguage, useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   allFields, allSectionsOpen, allSlots, calcFieldsUsing, calcInput, calcRefIssues, canonicalTemplate, COLUMN_TYPES,
+  BETTER, calcNumber, pruneRemovedTiles, tileSectionsUsing,
   embeddedSections, errorCountsBySection, FIELD_TYPES, hostOf, imageRows, insertToken, LIMITS, move, newId, newSection,
   pruneRemovedTrendRefs, resolvePlaceholders, resolveTextPlaceholders, sanitizeHosts, sanitizeSkipRefs, stableJson,
   summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields,
@@ -32,6 +33,7 @@ import {
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
+import { NumberInput } from './ReportSections.jsx'
 import {
   CollapsibleCard, ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
 } from './SectionCollapse.jsx'
@@ -99,6 +101,13 @@ function dropTplBackup(id) {
  * silinmiş bir alanınkini yeniden kullanmaz. Kaydedilmemiş düzenleme tarayıcıda yedeklenir (uygulamada başka sekmeye
  * geçmek ya da geri tuşu emeği silmez; dönüşte "geri yükle" önerilir).
  */
+/**
+ * Şablon düzenleyicinin İSTEMCİ hataları (inceleme 2026-10-17): sayı okunamayan bir hedef metni gibi taslağa hiç
+ * yazılamayan girişler — `templateErrors` taslaktan türediği için onları göremez; kayıt kapısı ikisini birlikte okur.
+ * Değer `(anahtar, i18n anahtarı | null)` bildiren bir işlevdir.
+ */
+export const TplClientErrorContext = createContext(null)
+
 export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const t = useT()
   const toast = useToast()
@@ -166,7 +175,18 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     return () => window.removeEventListener('beforeunload', h)
   }, [dirty])
 
-  const errors = useMemo(() => (draft ? templateErrors(draft) : {}), [draft])
+  const modelErrors = useMemo(() => (draft ? templateErrors(draft) : {}), [draft])
+  // Taslağa yazılamayan geçersiz girişler (ör. "Hedef (%)" alanında sayı olmayan metin) — kayıt kapısı bunları da okur
+  const [clientErrors, setClientErrors] = useState({})
+  const setClientError = useCallback((key, msg) => setClientErrors((e) => {
+    if ((e[key] || null) === (msg || null)) return e
+    const out = { ...e }
+    if (msg) out[key] = msg
+    else delete out[key]
+    return out
+  }), [])
+  const errors = useMemo(() => (Object.keys(clientErrors).length ? { ...modelErrors, ...clientErrors } : modelErrors),
+    [modelErrors, clientErrors])
   const canEdit = !!channel?.can_edit
   // Alanlar salt okunurda ve kayıt sürerken kilitli (bölüm aç / kapat düğmeleri hariç — aşağıdaki fieldset notu)
   const locked = !canEdit || saving
@@ -234,7 +254,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   // Her değişiklikten sonra geçersiz kalan "Hayır cevabında sorma" bağları kalkar (soru silindi / türü değişti); silinen
   // alan otomatik trend seçimlerinden de düşer (silme onayında söylenir); silinen özetin kartında gösterilen bölümler
   // ayrı bölüm olur (2026-10-17, silme onayında söylenir)
-  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(sanitizeHosts(pruneRemovedTrendRefs(d, fn(d)), d)) : d))
+  // Silinen alan özet kutucuklarından da düşer (2026-10-17, 4b; silme onayında söylenir)
+  const update = (fn) => setDraft((d) => (d ? sanitizeSkipRefs(sanitizeHosts(pruneRemovedTiles(d, pruneRemovedTrendRefs(d, fn(d))), d)) : d))
   const updateSection = (id, fn) => update((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? fn(s) : s)) }))
 
   async function save() {
@@ -420,7 +441,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
 
           <SectionOpenContext.Provider value={openValue}>
             {draft.sections.map((s, i) => (
-              <SectionCard key={`${s.id}:${gen}`} section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
+              <TplClientErrorContext.Provider key={`${s.id}:${gen}`} value={setClientError}>
+              <SectionCard section={s} index={i} count={draft.sections.length} errors={shownErrors} slotCount={slotCount}
                 draft={draft} resolve={resolve} resolveLong={resolveLong} locked={locked}
                 onChange={(fn) => updateSection(s.id, fn)}
                 onMove={(delta) => update((d) => ({ ...d, sections: move(d.sections, i, delta) }))}
@@ -436,15 +458,19 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                   for (const f of s.fields || []) for (const c of calcFieldsUsing(draft, f.id)) if (!own.has(c.id)) calcs.add(c.label || c.id)
                   // Bu özetin kartında gösterilen bölümler ayrı bölüm olur (2026-10-17)
                   const hosted = s.kind === 'summary' ? embeddedSections(draft, s.id).length : 0
+                  // Bölümün renkli kutucuk olan alanları (4b): kutucuklar da kalkar (pruneRemovedTiles)
+                  const tiled = (s.fields || []).filter((f) => tileSectionsUsing(draft, f.id).length).length
                   const message = t('te.tpl.removeSectionBody', s.title || '')
                     + (hosted ? `\n\n${t('te.tpl.removeSectionHosted', hosted)}` : '')
                     + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
                     + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
                     + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
+                    + (tiled ? `\n\n${t('te.tpl.removeSectionTiles', tiled)}` : '')
                   const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                     variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                   if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
                 }} />
+              </TplClientErrorContext.Provider>
             ))}
           </SectionOpenContext.Provider>
 
@@ -706,16 +732,21 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
     const charts = trendSectionsUsing(draft, f.id)
     // Otomatik hesabın formülünde kullanılan alan (2026-10-16): silinirse o hesap kullanılamaz, alan raporda elle girilir
     const calcs = calcFieldsUsing(draft, f.id)
-    if (used.length || charts.length || calcs.length) {
+    // Renkli kutucuk olarak gösterilen alan (2026-10-17, 4b): silinirse kutucuğu da kalkar (pruneRemovedTiles)
+    const tiles = tileSectionsUsing(draft, f.id)
+    if (used.length || charts.length || calcs.length || tiles.length) {
       const calcPart = calcs.length ? t('te.tpl.removeFieldCalcPart', calcs.map((x) => x.label || t('te.tpl.field')).join(', ')) : ''
+      const tilePart = tiles.length ? t('te.tpl.removeFieldTilePart') : ''
       const [title, message] = used.length && charts.length
         ? [t('te.tpl.removeFieldUsedAnyTitle'), t('te.tpl.removeFieldBothBody', f.label || '', used.length)]
         : used.length
           ? [t('te.tpl.removeFieldUsedTitle'), t('te.tpl.removeFieldUsedBody', f.label || '', used.length)]
           : charts.length
             ? [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
-            : [t('te.tpl.removeFieldCalcTitle'), '']
-      const ok = await showConfirm({ title, message: [message, calcPart].filter(Boolean).join(' '), variant: 'warning',
+            : calcs.length
+              ? [t('te.tpl.removeFieldCalcTitle'), '']
+              : [t('te.tpl.removeFieldTileTitle'), '']
+      const ok = await showConfirm({ title, message: [message, calcPart, tilePart].filter(Boolean).join(' '), variant: 'warning',
         confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -749,6 +780,10 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
                     {FIELD_TYPES.map((ty) => <NativeSelectOption key={ty} value={ty}>{t(`te.type.${ty}`)}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
+                {(f.type === 'number' || f.type === 'percent') && (
+                  <TargetEditor field={f} error={errors[`target:${f.id}`]}
+                    onChange={(patch) => onChange((x) => ({ ...x, fields: x.fields.map((y) => (y.id === f.id ? withTarget(y, patch) : y)) }))} />
+                )}
                 <SkipIfNoSelect field={f} draft={draft} resolveLabel={(x) => x.label || t('te.tpl.field')}
                   onChange={(v) => onChange((x) => ({ ...x, fields: x.fields.map((y) => {
                     if (y.id !== f.id) return y
@@ -786,12 +821,77 @@ function withoutCalc(field) {
   return Object.fromEntries(Object.entries(field || {}).filter(([k]) => k !== 'calc'))
 }
 
-/** Tür değişince yeni türle uyumsuz otomatik hesap düşer (oran / değişim yüzde, artış evet/hayır alanında). */
+/**
+ * Tür değişince yeni türle uyumsuz otomatik hesap düşer (oran / değişim yüzde, artış ve hedef karşılaştırması evet/hayır
+ * alanında); hedef yalnız yüzdede, "daha iyi" yönü yalnız sayı / yüzdede kalır (4b).
+ */
 function withType(field, type) {
-  const next = { ...field, type }
+  let next = { ...field, type }
   const k = field?.calc?.kind
-  if (k && (k === 'increase' ? type !== 'yesno' : type !== 'percent')) return withoutCalc(next)
+  const yesNoKind = k === 'increase' || k === 'compare'
+  if (k && (yesNoKind ? type !== 'yesno' : type !== 'percent')) next = withoutCalc(next)
+  if (type !== 'percent') delete next.target
+  if (type !== 'percent' && type !== 'number') delete next.better
   return next
+}
+
+/** Hedef / yön yaması: boş hedef ve boş yön anahtarı silinir (sunucu yalnız dolu değeri yazar). */
+function withTarget(field, patch) {
+  const next = { ...field, ...patch }
+  if (next.target == null || next.target === '') delete next.target
+  if (!next.better) delete next.better
+  // Hedef yazılırken "yön yok" düşer: seçici gerçekten "Yön seçin" durumuna geçer (gizli bir "none" taslakta kalmaz)
+  if (next.target != null && next.better === 'none') delete next.better
+  return next
+}
+
+/**
+ * Hedef ve "daha iyi" yönü (2026-10-17, 4b; kullanıcı kararı "alanda hedef + otomatik hesap", "hedef + yön"): yüzde alanına
+ * hedef (%0–100) verilebilir — raporda hedefiyle karşılaştırılır, kutucuğu hedefi tutturdu mu diye renklenir, rapor o ay
+ * için farklı hedef yazabilir. Yön sayı / yüzde alanında: hedefsiz kutucuk önceki aya göre iyileşti mi diye renklenir
+ * (varsayılan: yüzde düşük iyi, adet yönsüz). Hedefi olan alan yön seçmek zorundadır (sunucu da reddeder).
+ */
+function TargetEditor({ field, error, onChange }) {
+  const t = useT()
+  const { lang: uiLang } = useLanguage()
+  const [typeErr, setTypeErr] = useState(null)
+  const id = `te-fg-${field.id}`
+  const percent = field.type === 'percent'
+  const hasTarget = percent && calcNumber(field.target) != null
+  // Sayı okunamayan hedef metni taslağa yazılamaz → kayıt kapısı onu istemci hatası olarak görür (inceleme 2026-10-17:
+  // eski hedef sessizce kaydediliyordu); tür yüzdeden çıkınca ve bileşen kalkınca hata silinir
+  const report = useContext(TplClientErrorContext)
+  const errKey = `target:${field.id}`
+  const setErr = (k) => { setTypeErr(k); report?.(errKey, k) }
+  useEffect(() => { if (!percent) setErr(null) }, [percent])     // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => report?.(errKey, null), [report, errKey])
+  return (
+    <div className={cn('grid min-w-0 gap-2 md:col-span-2', percent && 'sm:grid-cols-2')} data-slot="te-tpl-target" data-field={`target:${field.id}`}>
+      {percent && (
+        <div className="flex min-w-0 flex-col gap-1">
+          <label htmlFor={id} className="text-xs font-medium text-muted-foreground">{t('te.tpl.target')}</label>
+          <NumberInput id={id} value={field.target ?? null} lang={uiLang} percent invalid={error || typeErr ? true : undefined}
+            describedBy={`${id}-h`} onChange={(n) => onChange({ target: n })} onError={setErr} />
+        </div>
+      )}
+      <div className="flex min-w-0 flex-col gap-1">
+        <label htmlFor={`${id}-b`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.better')}</label>
+        <NativeSelect id={`${id}-b`} value={field.better || ''} className="w-full pointer-coarse:h-10" data-slot="te-tpl-better"
+          aria-invalid={error ? true : undefined} aria-describedby={`${id}-h`}
+          onChange={(e) => onChange({ better: e.target.value || null })}>
+          <NativeSelectOption value="">{hasTarget ? t('te.tpl.betterPick') : t('te.tpl.betterDefault')}</NativeSelectOption>
+          {/* Hedefi olan alanda "yön yok" seçilemez (sunucu reddeder): seçenek gizlenir; kayıtlı "none" hata olarak görünür */}
+          {BETTER.filter((b) => !(hasTarget && b === 'none')).map((b) => (
+            <NativeSelectOption key={b} value={b}>{t(`te.tpl.better.${b}`)}</NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <p id={`${id}-h`} className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:col-span-2">
+        {percent ? t('te.tpl.targetHint') : t('te.tpl.betterHint')}
+      </p>
+      {(typeErr || error) && <p className="m-0 text-sm text-destructive sm:col-span-2" role="alert">{t(typeErr || error)}</p>}
+    </div>
+  )
 }
 
 /**
@@ -804,15 +904,17 @@ function CalcEditor({ field, draft, error, onChange }) {
   const t = useT()
   if (field.type !== 'percent' && field.type !== 'yesno') return null
   const c = field.calc || {}
-  const kinds = field.type === 'yesno' ? ['increase'] : ['ratio', 'change']
+  const kinds = field.type === 'yesno' ? ['increase', 'compare'] : ['ratio', 'change']
   const inputs = allFields(draft).filter((x) => calcInput(x) && x.id !== field.id)
+  // Hedef karşılaştırması (4b): şablonda hedefi olan yüzde alanları (hesaplanan da olabilir)
+  const targetsPct = allFields(draft).filter((x) => x.type === 'percent' && x.id !== field.id && calcNumber(x.target) != null)
   const name = (x) => x.label || t('te.tpl.field')
   const id = `te-fc-${field.id}`
   const set = (patch) => onChange({ ...c, ...patch })
-  const picker = (key, label, optional = false) => {
+  const picker = (key, label, optional = false, options = inputs) => {
     const pid = `${id}-${key}`
     const value = c[key] || ''
-    const known = !value || inputs.some((x) => x.id === value)
+    const known = !value || options.some((x) => x.id === value)
     return (
       <div className="flex min-w-0 flex-col gap-1">
         <label htmlFor={pid} className="text-xs font-medium text-muted-foreground">{label}</label>
@@ -820,7 +922,7 @@ function CalcEditor({ field, draft, error, onChange }) {
           onChange={(e) => set({ [key]: e.target.value || undefined })}>
           <NativeSelectOption value="">{optional ? t('te.tpl.calcMinusNone') : t('te.tpl.calcPick')}</NativeSelectOption>
           {!known && <NativeSelectOption value={value}>{value}</NativeSelectOption>}
-          {inputs.map((x) => <NativeSelectOption key={x.id} value={x.id}>{name(x)}</NativeSelectOption>)}
+          {options.map((x) => <NativeSelectOption key={x.id} value={x.id}>{name(x)}</NativeSelectOption>)}
         </NativeSelect>
       </div>
     )
@@ -836,7 +938,9 @@ function CalcEditor({ field, draft, error, onChange }) {
           onChange={(e) => {
             const kind = e.target.value
             if (!kind) { onChange(null); return }
-            onChange(kind === 'ratio' ? { kind, num: c.num, minus: c.minus, den: c.den } : { kind, of: c.of })
+            // Karşılaştırmanın 'of'u hedefli yüzde, artış / değişiminki adet: tür değişince seçim sıfırlanır
+            onChange(kind === 'ratio' ? { kind, num: c.num, minus: c.minus, den: c.den }
+              : { kind, of: (kind === 'compare') === (c.kind === 'compare') ? c.of : undefined })
           }}>
           <NativeSelectOption value="">{t('te.tpl.calcNone')}</NativeSelectOption>
           {kinds.map((k) => <NativeSelectOption key={k} value={k}>{t(`te.tpl.calcKind.${k}`)}</NativeSelectOption>)}
@@ -850,7 +954,8 @@ function CalcEditor({ field, draft, error, onChange }) {
         </div>
       )}
       {(c.kind === 'change' || c.kind === 'increase') && picker('of', t('te.tpl.calcOf'))}
-      {c.kind && <p className="text-xs text-muted-foreground">{t('te.tpl.calcHint')}</p>}
+      {c.kind === 'compare' && picker('of', t('te.tpl.calcOfTarget'), false, targetsPct)}
+      {c.kind && <p className="text-xs text-muted-foreground">{t(c.kind === 'compare' ? 'te.tpl.calcCompareHint' : 'te.tpl.calcHint')}</p>}
       {issues.map((x) => (
         <p key={x.id} className="text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]" data-slot="te-tpl-calc-issue">
           {t(`te.tpl.calcRef.${x.status}`, x.field?.label || x.id)}
@@ -1017,6 +1122,78 @@ function LayoutPreview({ draft, resolve }) {
  * görünmez — kayıt engellenmez), okunamayan başvuru (kayıt engellenir). Satırların istemci tarafında KARARLI
  * kimliği vardır: taşıma / silme sonrası odak ve imleç doğru cümlede kalır.
  */
+/**
+ * Renkli kutucuklar (2026-10-17, 4b; kullanıcı kararı "6 karışık, her takım şablonunda değiştirebilir"): özetin başında
+ * gösterilecek en çok 6 sayı / yüzde alanı, seçim sırasıyla; taşıma ve kaldırma düğmeleri. Alanın varlığı kayıtta
+ * denetlenmez (silinen alanın kutucuğu çizilmez) — burada uyarılır.
+ */
+function TilesEditor({ section: s, draft, resolve, onChange }) {
+  const t = useT()
+  const tiles = s.tiles || []
+  const byId = new Map(allFields(draft).map((f) => [f.id, f]))
+  const candidates = allFields(draft).filter((f) => (f.type === 'number' || f.type === 'percent') && !tiles.includes(f.id))
+  const [pick, setPick] = useState('')
+  // Seçilen alan bu arada silinmiş / türü değişmişse eklenemez (bayat seçim — inceleme 2026-10-17)
+  const pickOk = !!pick && candidates.some((f) => f.id === pick)
+  const setTiles = (next) => onChange((x) => {
+    const out = { ...x }
+    if (next.length) out.tiles = next
+    else delete out.tiles
+    return out
+  })
+  const headId = `te-tiles-${s.id}`
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-dashed p-2.5" data-slot="te-tpl-tiles">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p id={headId} className="m-0 text-xs font-medium text-muted-foreground">{t('te.tpl.tiles')}</p>
+        <span className="text-xs text-muted-foreground" data-slot="te-tpl-tiles-count">{t('te.tpl.tilesCount', tiles.length, LIMITS.tiles)}</span>
+      </div>
+      <p className="m-0 text-xs text-muted-foreground">{t('te.tpl.tilesHint')}</p>
+      {tiles.length === 0 ? (
+        <p className="m-0 text-xs text-muted-foreground" data-slot="te-tpl-tiles-empty">{t('te.tpl.tilesEmpty')}</p>
+      ) : (
+        <ol className="m-0 flex list-none flex-col gap-1.5 p-0" aria-labelledby={headId}>
+          {tiles.map((tid, i) => {
+            const f = byId.get(tid)
+            // Şablonda olmayan alanın ham kimliği gösterilmez (inceleme 2026-10-17)
+            const name = f ? resolve(f.label) : t('te.sum.removedField')
+            const usable = !!f && (f.type === 'number' || f.type === 'percent')
+            return (
+              <li key={tid} className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background px-2 py-1"
+                data-slot="te-tpl-tile" data-tile={tid}>
+                <span className="min-w-0 text-sm [overflow-wrap:anywhere]">
+                  <span className="me-1 text-xs text-muted-foreground">{i + 1}.</span>{name}
+                  {!usable && <span className="ms-1 text-xs text-amber-800 dark:text-amber-300">{t('te.tpl.tileUnusable')}</span>}
+                </span>
+                <MoveButtons index={i} count={tiles.length} label={name} onMove={(d) => setTiles(move(tiles, i, d))}
+                  onRemove={() => setTiles(tiles.filter((x) => x !== tid))} removeLabel={t('te.tpl.removeTileAria', name)} />
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      {tiles.length < LIMITS.tiles ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex min-w-0 grow flex-col gap-1 sm:max-w-xs">
+            <label htmlFor={`${headId}-pick`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.tileAdd')}</label>
+            <NativeSelect id={`${headId}-pick`} value={pick} className="w-full pointer-coarse:h-10" data-slot="te-tpl-tile-pick"
+              onChange={(e) => setPick(e.target.value)}>
+              <NativeSelectOption value="">{t('te.tpl.tilePick')}</NativeSelectOption>
+              {candidates.map((f) => <NativeSelectOption key={f.id} value={f.id}>{resolve(f.label)}</NativeSelectOption>)}
+            </NativeSelect>
+          </div>
+          <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10" disabled={!pickOk} data-slot="te-tpl-tile-add"
+            onClick={() => { if (pickOk && !tiles.includes(pick)) setTiles([...tiles, pick]); setPick('') }}>
+            <Plus aria-hidden="true" /> {t('te.tpl.tileAdd')}
+          </Button>
+        </div>
+      ) : (
+        <p className="m-0 text-xs text-muted-foreground">{t('te.tpl.tilesFull', LIMITS.tiles)}</p>
+      )}
+    </div>
+  )
+}
+
 function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = resolve, onChange }) {
   const t = useT()
   const lines = s.lines || []
@@ -1031,6 +1208,15 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
   const picked = useRef(false)
   const [choice, setChoice] = useState(null)        // { lineId, field, yes, no }
   const tokenFields = allFields(draft).filter((f) => f.type !== 'textarea')
+  // Karşılaştırma başvuruları (4b): sayı / yüzde alanı için önceki aya göre fark; hedefli yüzde için hedef ve hedefe uzaklık
+  const compareItems = tokenFields.filter((f) => f.type === 'number' || f.type === 'percent').flatMap((f) => {
+    const items = [{ key: `d:${f.id}`, token: `{d:${f.id}}`, field: f, kind: 'd' }]
+    if (f.type === 'percent' && calcNumber(f.target) != null) {
+      items.push({ key: `t:${f.id}`, token: `{t:${f.id}}`, field: f, kind: 't' }, { key: `dt:${f.id}`, token: `{dt:${f.id}}`, field: f, kind: 'dt' })
+    }
+    return items
+  })
+  const decorateRef = (kind, label) => t(`te.tpl.refKind.${kind}`, label)
   const indexOf = (lineId) => ids.current.indexOf(lineId)
   // Kimlikler (l1, l2 …) bölüm başınadır: arama bu bölümün kabıyla sınırlı (iki özet bölümü birbirine karışmaz)
   const focusLine = (lineId, pos = null, selector = 'textarea') => requestAnimationFrame(() => {
@@ -1086,6 +1272,7 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
   return (
     <div ref={root} className="flex flex-col gap-2" data-slot="te-tpl-summary">
       <p className="m-0 text-xs text-muted-foreground">{t('te.tpl.summaryHint')}</p>
+      <TilesEditor section={s} draft={draft} resolve={resolve} onChange={onChange} />
       <ol className="m-0 flex list-none flex-col gap-2 p-0">
         {lines.map((line, i) => {
           const lineId = ids.current[i]
@@ -1145,6 +1332,22 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs pointer-coarse:h-10"
+                      disabled={compareItems.length === 0} data-slot="te-tpl-insert-compare">
+                      <Braces aria-hidden="true" /> {t('te.tpl.insertCompare')}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="z-(--z-menu) max-h-72 max-w-[min(24rem,calc(100vw-2rem))] overflow-y-auto"
+                    onCloseAutoFocus={(e) => { if (picked.current) { e.preventDefault(); picked.current = false } }}>
+                    {compareItems.map((x) => (
+                      <DropdownMenuItem key={x.key} className="whitespace-normal" onSelect={() => { picked.current = true; insert(lineId, x.token) }}>
+                        <span className="min-w-0 [overflow-wrap:anywhere]">{decorateRef(x.kind, resolve(x.field.label))}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {placeholders.map(([ph, key]) => (
                   <Button key={ph} type="button" size="sm" variant="outline" className="h-7 px-2 font-mono text-xs pointer-coarse:h-10"
                     aria-label={`${ph} — ${t(key)}`} title={t(key)} onClick={() => insert(lineId, ph)}>{ph}</Button>
@@ -1179,7 +1382,7 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
                 </div>
               )}
               <p className="m-0 mt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-line-preview">
-                {t('te.tpl.linePreview')} <span className="text-foreground">{summaryLinePreview(line, draft, resolve, t('te.sum.removedField'), resolveLong)}</span>
+                {t('te.tpl.linePreview')} <span className="text-foreground">{summaryLinePreview(line, draft, resolve, t('te.sum.removedField'), resolveLong, decorateRef)}</span>
               </p>
               {issues.length > 0 && (
                 <div id={warnId} className="mt-1 flex flex-col gap-1">
@@ -1190,6 +1393,8 @@ function SummaryLinesEditor({ section: s, errors, draft, resolve, resolveLong = 
                         data-slot="te-tpl-line-warn">
                         <span>{x.kind === 'missing' ? t('te.tpl.lineMissingField')
                           : x.kind === 'textarea' ? t('te.tpl.lineTextarea', resolve(x.label || ''))
+                          : x.kind === 'notNumeric' ? t('te.tpl.lineNotNumeric', resolve(x.label || ''))
+                          : x.kind === 'noTarget' ? t('te.tpl.lineNoTarget', resolve(x.label || ''))
                           : t('te.tpl.lineNotYesNo', resolve(x.label || ''))}</span>
                         {x.kind === 'missing' && ref && (
                           <Button type="button" size="sm" variant="link" className="h-auto p-0 text-xs pointer-coarse:min-h-10"

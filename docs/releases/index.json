@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T03:31:27Z",
+  "generatedAt": "2026-10-17T09:35:18Z",
   "repo": "inanmise/site-monitor",
-  "count": 759,
+  "count": 760,
   "releases": [
+    {
+      "version": "20.142.0",
+      "tag": "v20.142.0",
+      "releasedAt": "2026-10-17T09:35:11Z",
+      "commit": "15acd03764468c4651e84f27ee7c409b317cd565",
+      "prevVersion": "20.141.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "15acd037",
+          "subject": "teknik hata raporu 4b için kök whitepaper kopyaları eşitlendi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "820690d1",
+          "subject": "teknik hata raporunda SLA hedefi, renkli kutucuklar ve önceki aya göre fark cümleleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.141.0",
       "tag": "v20.141.0",

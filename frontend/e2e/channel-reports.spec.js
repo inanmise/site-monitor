@@ -233,6 +233,28 @@ const EMBED_TEMPLATE = {
 }
 const EMBED_REPORT = { ...REPORT, template: EMBED_TEMPLATE, trend: undefined, values: { fields: { 'error-rate': 0.42 }, issues: {}, texts: {} } }
 
+// SLA hedefi + renkli kutucuklar + fark cümleleri (2026-10-17, 4b): SLA oranında hedef %99,95 (yüksek iyi), "SLA hedefin
+// üstünde mi?" hedefle otomatik; özetin başında 3 kutucuk; {d:} / {t:} / {dt:} cümleleri; geçen ayın raporu var
+const SLA_TEMPLATE = {
+  ...TEMPLATE,
+  sections: [
+    { ...TEMPLATE.sections[0], tiles: ['error-rate', 'total-tx', 'sla-rate'], lines: [
+      TEMPLATE.sections[0].lines[0],
+      'Önceki aya göre toplam işlem adedi {d:total-tx} değişmiştir.',
+      'SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} (hedef {t:sla-rate}, fark {dt:sla-rate}) ile '
+        + '{f:sla-above?hedef başarıyla tutturulmuştur|hedefin altında kalmıştır}.',
+    ] },
+    { ...TEMPLATE.sections[1], fields: TEMPLATE.sections[1].fields.map((f) => (f.id === 'sla-rate' ? { ...f, target: 99.95, better: 'higher' }
+      : f.id === 'sla-above' ? { ...f, calc: { kind: 'compare', of: 'sla-rate' } } : f)) },
+    ...TEMPLATE.sections.slice(2),
+  ],
+}
+const SLA_REPORT = {
+  ...REPORT, template: SLA_TEMPLATE, trend: undefined,
+  values: { fields: { 'error-rate': 0.42, 'total-tx': 1000, 'sla-rate': 99.9 }, issues: {}, texts: {} },
+  previous: { id: 90, year: 2026, month: 8, fields: { 'error-rate': 0.6, 'total-tx': 800 } },
+}
+
 // Faz B (2026-10-14): değişiklik geçmişi ve şablon sürümleri — gerçek uzunlukta adlar / değerler
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Demirtaş (Dijital Kanallar / Uygulama Geliştirme Yöneticisi)'
 const HISTORY = {
@@ -501,6 +523,77 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => savedTemplate?.version).toBe(3)
       expect(savedTemplate.template.sections.find((s) => s.id === 'unmapped')).not.toHaveProperty('host')
       await page.screenshot({ path: `test-results/channel-reports-embed-${vp.name}.png` })
+    })
+
+    test('SLA hedefi ve renkli kutucuklar (2026-10-17, 4b): kutucuklar özetin başında (ton, fark, hedef), hedef karşılaştırması otomatik, raporun hedefi kaydedilir; şablonda hedef / yön / kutucuk seçimi', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      reportOverride = SLA_REPORT
+      templateOverride = SLA_TEMPLATE
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const card = editor.locator('[data-slot="te-summary"]')
+      const tiles = card.locator('[data-slot="te-tiles"] [data-slot="te-tile"]')
+      await expect(tiles).toHaveCount(3, { timeout: 20_000 })
+      // Oran %0,42 < geçen ay %0,6 → iyi (yüzde varsayılanı düşük-iyi); adet yönsüz → nötr, ok + fark; SLA hedefin altında → kötü
+      await expect(card.locator('[data-slot="te-tile"][data-tile="error-rate"]')).toHaveAttribute('data-tone', 'good')
+      await expect(card.locator('[data-slot="te-tile"][data-tile="total-tx"]')).toHaveAttribute('data-tone', 'neutral')
+      await expect(card.locator('[data-slot="te-tile"][data-tile="total-tx"]')).toContainText('+200 (+%25)')
+      const sla = card.locator('[data-slot="te-tile"][data-tile="sla-rate"]')
+      await expect(sla).toHaveAttribute('data-tone', 'bad')
+      await expect(sla).toContainText(/(hedef|target) %99,95/)
+      // Kutucuklar özet kartının içinde; geniş ekranda yan yana, telefonda alt alta; metin kesilmez
+      const cb = await card.boundingBox()
+      const boxes = await tiles.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } }))
+      for (const b of boxes) {
+        expect(b.x, 'kutucuk solda içeride').toBeGreaterThanOrEqual(cb.x - 1)
+        expect(b.x + b.w, 'kutucuk sağda içeride').toBeLessThanOrEqual(cb.x + cb.width + 1)
+      }
+      if (vp.width >= 1024) expect(boxes[0].y, 'üç kutucuk yan yana').toBe(boxes[2].y)
+      else if (vp.width < 640) expect(boxes[1].y, 'telefonda alt alta').toBeGreaterThan(boxes[0].y + boxes[0].h - 1)
+      // Hedef karşılaştırması sorulmaz: çıktı Hayır; SLA cümlesi hedef ve puan farkıyla; fark cümlesi geçen aydan
+      await expect(editor.getByLabel('SLA hedefin üstünde mi?', { exact: true })).toHaveText(/^(Hayır|No)$/)
+      await expect(card.locator('[data-slot="te-sum-text"]')).toContainText('SLA oranı %99,9 (hedef %99,95, fark −0,05 puan) ile hedefin altında kalmıştır.')
+      await expect(card.locator('[data-slot="te-sum-text"]')).toContainText('Önceki aya göre toplam işlem adedi +200 (+%25) değişmiştir.')
+      // Raporun o aya özel hedefi (arayüz dili EN: ondalık nokta): karşılaştırma, kutucuk ve cümle yeni hedefi kullanır
+      const target = editor.getByLabel(/^(Bu ayın hedefi|This month's target)/)
+      await target.fill('99.8')
+      await expect(editor.getByLabel('SLA hedefin üstünde mi?', { exact: true })).toHaveText(/^(Evet|Yes)$/)
+      await expect(sla).toHaveAttribute('data-tone', 'good')
+      await expect(card.locator('[data-slot="te-sum-text"]')).toContainText('(hedef %99,8, fark +0,1 puan) ile hedef başarıyla tutturulmuştur.')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kutucuklar)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (kutucuklar)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (kutucuklar)').toEqual([])
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.targets?.['sla-rate']).toBe(99.8)
+      expect(savedReport.values.fields).not.toHaveProperty('sla-above')          // hesaplanan cevap istemciden gitmez
+
+      // Şablon düzenleyici: hedef + yön yüzde alanında, yalnız yön adet alanında; karşılaştırma hesabı; kutucuk listesi
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      const tplEditor = page.locator('[data-slot="te-template-editor"]')
+      const slaField = tplEditor.locator('[data-slot="te-tpl-field"][data-field="field:sla-rate"]')
+      await expect(slaField.locator('[data-slot="te-tpl-target"] input')).toHaveValue(/99[.,]95/, { timeout: 20_000 })
+      await expect(slaField.locator('[data-slot="te-tpl-better"]')).toHaveValue('higher')
+      const totalField = tplEditor.locator('[data-slot="te-tpl-field"][data-field="field:total-tx"]')
+      await expect(totalField.locator('[data-slot="te-tpl-target"] input')).toHaveCount(0)
+      await expect(totalField.locator('[data-slot="te-tpl-better"]')).toHaveValue('')
+      await expect(tplEditor.locator('[data-slot="te-tpl-field"][data-field="field:sla-above"] [data-slot="te-tpl-calc"] select').first()).toHaveValue('compare')
+      const tilesBox = tplEditor.locator('[data-slot="te-tpl-tiles"]')
+      await expect(tilesBox.locator('[data-slot="te-tpl-tiles-count"]')).toHaveText(/3 \/ 6/)
+      await tilesBox.locator('[data-slot="te-tpl-tile-pick"]').selectOption('error-rate-excl')
+      await tilesBox.locator('[data-slot="te-tpl-tile-add"]').click()
+      await expect(tilesBox.locator('[data-slot="te-tpl-tiles-count"]')).toHaveText(/4 \/ 6/)
+      await expect(tilesBox.locator('[data-slot="te-tpl-tile"]')).toHaveCount(4)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon hedef)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon hedef)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon hedef)').toEqual([])
+      await page.locator('[data-slot="te-tpl-save"]').click()
+      await expect.poll(() => savedTemplate?.version).toBe(3)
+      expect(savedTemplate.template.sections[0].tiles).toEqual(['error-rate', 'total-tx', 'sla-rate', 'error-rate-excl'])
+      expect(savedTemplate.template.sections[1].fields.find((f) => f.id === 'sla-rate')).toMatchObject({ target: 99.95, better: 'higher' })
+      await page.screenshot({ path: `test-results/channel-reports-sla-tiles-${vp.name}.png` })
     })
 
     test('otomatik oranlar (2026-10-16): oranlar adetlerden; adet girişinin altında yüzde; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {

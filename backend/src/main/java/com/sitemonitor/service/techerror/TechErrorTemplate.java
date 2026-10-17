@@ -72,8 +72,15 @@ public final class TechErrorTemplate {
     public static final List<String> COLUMN_TYPES = List.of("number", "percent", "text");
     public static final List<String> FIELD_TYPES = List.of("number", "percent", "yesno", "text", "textarea");
     public static final List<String> WIDTHS = List.of("half", "full");
-    /** Otomatik hesap türleri (2026-10-16): {@code ratio} / {@code change} yüzde alanında, {@code increase} evet/hayır alanında. */
-    public static final List<String> CALC_KINDS = List.of("ratio", "change", "increase");
+    /**
+     * Otomatik hesap türleri (2026-10-16): {@code ratio} / {@code change} yüzde alanında, {@code increase} evet/hayır alanında;
+     * {@code compare} (2026-10-17, 4b) evet/hayır alanında — hedefi olan bir yüzde alanı hedefi tutturdu mu.
+     */
+    public static final List<String> CALC_KINDS = List.of("ratio", "change", "increase", "compare");
+    /** "Daha iyi" yönü (2026-10-17, 4b): {@code lower} düşük iyi (hata oranı), {@code higher} yüksek iyi (SLA), {@code none} yönsüz (adet). */
+    public static final List<String> BETTER = List.of("lower", "higher", "none");
+    /** Yönetici özetinin başındaki renkli kutucuk şeridinde en çok bu kadar alan (kullanıcı kararı 2026-10-17: 4–6). */
+    public static final int MAX_TILES = 6;
     public static final List<String> LANGS = List.of("tr", "en");
 
     static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
@@ -85,22 +92,52 @@ public final class TechErrorTemplate {
      * değeri saklanmaz, PDF'e ve e-postaya girmez. Soru boşsa ya da "Evet" ise alan istenir. Zincir yok: bağlanılan
      * soru kendisi başka bir soruya bağlı olamaz.
      */
-    public record Field(String id, String label, String type, String hint, String skipIfNo, Calc calc) {
+    public record Field(String id, String label, String type, String hint, String skipIfNo, Calc calc, Double target, String better) {
         public Field(String id, String label, String type, String hint) {
-            this(id, label, type, hint, null, null);
+            this(id, label, type, hint, null, null, null, null);
         }
 
         public Field(String id, String label, String type, String hint, String skipIfNo) {
-            this(id, label, type, hint, skipIfNo, null);
+            this(id, label, type, hint, skipIfNo, null, null, null);
+        }
+
+        public Field(String id, String label, String type, String hint, String skipIfNo, Calc calc) {
+            this(id, label, type, hint, skipIfNo, calc, null, null);
         }
 
         public Field withCalc(Calc c) {
-            return new Field(id, label, type, hint, skipIfNo, c);
+            return new Field(id, label, type, hint, skipIfNo, c, target, better);
         }
 
         public Field withHint(String h) {
-            return new Field(id, label, type, h, skipIfNo, calc);
+            return new Field(id, label, type, h, skipIfNo, calc, target, better);
         }
+
+        /**
+         * Hedef (yalnız yüzde alanı, 0–100; 2026-10-17, 4b — "şablonda SLA hedef değeri") ve "daha iyi" yönü
+         * ({@link #BETTER}; hedefi olan alanda zorunlu). Rapor, hedefi o ay için değiştirebilir ({@code Values.targets}).
+         */
+        public Field withTarget(Double t, String b) {
+            return new Field(id, label, type, hint, skipIfNo, calc, t, b);
+        }
+    }
+
+    /**
+     * Alanın etkin hedefi: raporun o aya özel hedefi, yoksa şablondaki; yüzde alanı değilse ya da ŞABLONDA hedefi yoksa
+     * {@code null} — rapor hedefi yalnız şablon hedefli alanda geçer (TechErrorValues de yalnız onu saklar; inceleme
+     * 2026-10-17: yedekten dönen bayat bir rapor hedefi ekranda PDF'te olmayan bir hedef gösteriyordu).
+     */
+    public static Double effectiveTarget(Field f, Map<String, Object> targets) {
+        if (f == null || !"percent".equals(f.type()) || f.target() == null) return null;
+        Double d = targets == null ? null : TechErrorValues.number(targets.get(f.id()));
+        return d != null ? d : f.target();
+    }
+
+    /** Alanın etkin "daha iyi" yönü: açıkça yazılmışsa o; yoksa yüzde → {@code lower}, sayı → {@code none}, diğer → {@code none}. */
+    public static String effectiveBetter(Field f) {
+        if (f == null) return "none";
+        if (f.better() != null) return f.better();
+        return "percent".equals(f.type()) ? "lower" : "none";
     }
 
     /**
@@ -122,6 +159,13 @@ public final class TechErrorTemplate {
         public static Calc change(String of) { return new Calc("change", null, null, null, of); }
 
         public static Calc increase(String of) { return new Calc("increase", null, null, null, of); }
+
+        /**
+         * Hedef karşılaştırması (2026-10-17, 4b; evet/hayır alanı): {@code of} hedefi olan bir YÜZDE alanı (hesaplanan da
+         * olabilir — oranlar önce, karşılaştırma sonra hesaplanır); yön alanın "daha iyi"sinden: yüksek iyi → değer ≥ hedef,
+         * düşük iyi → değer ≤ hedef (eşitlik hedef tutturuldu — kullanıcı kararı).
+         */
+        public static Calc compare(String of) { return new Calc("compare", null, null, null, of); }
 
         /** Formülün başvurduğu alan kimlikleri (sırayla, boşlar atlanır). */
         public List<String> refs() {
@@ -153,40 +197,57 @@ public final class TechErrorTemplate {
      */
     public record Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                           String descriptionLabel, String customersLabel, String errorsLabel, String text,
-                          List<String> lines, List<Column> columns, List<TableRow> rows, String host) {
+                          List<String> lines, List<Column> columns, List<TableRow> rows, String host, List<String> tiles) {
+        public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
+                       String descriptionLabel, String customersLabel, String errorsLabel, String text,
+                       List<String> lines, List<Column> columns, List<TableRow> rows, String host) {
+            this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host, List.of());
+        }
+
         public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                        String descriptionLabel, String customersLabel, String errorsLabel, String text,
                        List<String> lines, List<Column> columns, List<TableRow> rows) {
             this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, null);
+                    lines, columns, rows, null, List.of());
         }
 
         public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                        String descriptionLabel, String customersLabel, String errorsLabel, String text) {
             this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    List.of(), List.of(), List.of(), null);
+                    List.of(), List.of(), List.of(), null, List.of());
         }
 
-        /** Aynı bölüm, başka alanlarla ({@code host} dahil diğer her şey korunur). */
+        /** Aynı bölüm, başka alanlarla ({@code host} / {@code tiles} dahil diğer her şey korunur). */
         public Section withFields(List<Field> f) {
             return new Section(id, kind, title, f, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, host);
+                    lines, columns, rows, host, tiles);
         }
 
         /** Aynı bölüm, başka cümlelerle (özet) / serilerle (trend). */
         public Section withLines(List<String> l) {
             return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    l, columns, rows, host);
+                    l, columns, rows, host, tiles);
         }
 
         public Section withHost(String h) {
             return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, h);
+                    lines, columns, rows, h, tiles);
         }
 
         public Section withTitle(String t) {
             return new Section(id, kind, t, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, host);
+                    lines, columns, rows, host, tiles);
+        }
+
+        /**
+         * Yönetici özetinin başındaki renkli KUTUCUKLAR (2026-10-17, 4b): alan kimlikleri (sayı / yüzde; ≤ {@link #MAX_TILES}).
+         * Kayıtta türüne göre REDDEDİLMEZ (özet / trend ile aynı kural); çizimde uygun olmayan alan atlanır
+         * ({@link TechErrorTiles}).
+         */
+        public Section withTiles(List<String> tl) {
+            return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host, tl == null ? List.of() : tl);
         }
     }
 
@@ -281,6 +342,8 @@ public final class TechErrorTemplate {
                         if (f.hint() != null && !f.hint().isEmpty()) fm.put("hint", f.hint());
                         if (f.skipIfNo() != null) fm.put("skip_if_no", f.skipIfNo());
                         if (f.calc() != null) fm.put("calc", calcMap(f.calc()));
+                        if (f.target() != null) fm.put("target", f.target());
+                        if (f.better() != null) fm.put("better", f.better());
                         fs.add(fm);
                     }
                     sm.put("fields", fs);
@@ -302,7 +365,10 @@ public final class TechErrorTemplate {
                     sm.put("customers_label", s.customersLabel());
                     sm.put("errors_label", s.errorsLabel());
                 }
-                case "summary" -> sm.put("lines", new ArrayList<>(s.lines()));
+                case "summary" -> {
+                    sm.put("lines", new ArrayList<>(s.lines()));
+                    if (!s.tiles().isEmpty()) sm.put("tiles", new ArrayList<>(s.tiles()));
+                }
                 case "trend" -> sm.put("series", new ArrayList<>(s.lines()));
                 case "table" -> {
                     List<Map<String, Object>> cs = new ArrayList<>();
@@ -449,7 +515,7 @@ public final class TechErrorTemplate {
                         continue;
                     }
                     sections.add(new Section(id, kind, stitle, List.of(), List.of(), null, null, null, null, null,
-                            lines, List.of(), List.of()));
+                            lines, List.of(), List.of(), null, tiles(sm.get("tiles"), si, strict)));
                 }
                 case "trend" -> {
                     // Kanalın son 12 ayının GİRİLEN rakamlarından çubuk grafikler (2026-10-15, Faz C): alan kimlikleri
@@ -542,6 +608,74 @@ public final class TechErrorTemplate {
      */
     public static boolean trendable(Field f) {
         return f != null && ("number".equals(f.type()) || "percent".equals(f.type()));
+    }
+
+    /**
+     * Özet kutucukları (2026-10-17, 4b): alan kimlikleri, tekil, en çok {@link #MAX_TILES}. Alanın varlığı / türü kayıtta
+     * denetlenmez (alan silmek şablonu kilitlemesin; çizimde atlanır). Hoşgörülü okumada bozuk kimlik düşer.
+     */
+    private static List<String> tiles(Object raw, int si, boolean strict) {
+        if (raw == null) return List.of();
+        List<?> list = raw instanceof List<?> l ? l : List.of();
+        if (!(raw instanceof List<?>)) {
+            if (strict) throw invalid(where(si) + Msg.t("kutucuk listesi okunamadı.", "the tile list couldn't be read."));
+            return List.of();
+        }
+        if (list.size() > MAX_TILES) {
+            if (strict) throw invalid(where(si) + Msg.t("yönetici özetinde en çok " + MAX_TILES + " kutucuk olabilir.",
+                    "an executive summary can have at most " + MAX_TILES + " tiles."));
+            list = list.subList(0, MAX_TILES);
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (Object o : list) {
+            String ref = str(o);
+            if (ref == null || !ID.matcher(ref).matches()) {
+                if (strict) throw invalid(where(si) + Msg.t("kutucuklarda okunamayan bir alan kimliği var.",
+                        "the tiles have a field id that can't be read."));
+                continue;
+            }
+            out.add(ref);
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * Alan hedefi (2026-10-17, 4b) BİÇİMCE: yoksa / boşsa {@code null}; yalnız yüzde alanında, 0–100 arası sayı. Katı: hata;
+     * hoşgörülü: düşer. Hedefi olan alanın "daha iyi" yönü de olmalı — {@link #fields} denetler.
+     */
+    private static Double target(Object raw, String type, boolean strict, String at) {
+        if (raw == null || (raw instanceof String s && s.isBlank())) return null;
+        if (!"percent".equals(type)) {
+            if (strict) throw invalid(at + Msg.t("hedef yalnız yüzde alanında olabilir.", "a target is only allowed on a percentage field."));
+            return null;
+        }
+        Double d = TechErrorValues.number(raw);
+        if (d == null) {
+            if (strict) throw invalid(at + Msg.t("hedef bir sayı olmalı (ör. 99,95).", "the target must be a number (e.g. 99.95)."));
+            return null;
+        }
+        if (d < 0 || d > 100) {
+            if (strict) throw invalid(at + Msg.t("hedef %0 ile %100 arasında olmalı.", "the target must be between 0% and 100%."));
+            return null;
+        }
+        return d;
+    }
+
+    /** "Daha iyi" yönü BİÇİMCE: yoksa / boşsa {@code null}; sayı / yüzde alanında, {@link #BETTER} değerlerinden biri. */
+    private static String better(Object raw, String type, boolean strict, String at) {
+        String v = str(raw);
+        if (v == null || v.isEmpty()) return null;
+        if (!"number".equals(type) && !"percent".equals(type)) {
+            if (strict) throw invalid(at + Msg.t("“daha iyi” yönü yalnız sayı ve yüzde alanında olabilir.",
+                    "a “better” direction is only allowed on number and percentage fields."));
+            return null;
+        }
+        if (!BETTER.contains(v)) {
+            if (strict) throw invalid(at + Msg.t("“daha iyi” yönü tanınmadı (düşük / yüksek / yok).",
+                    "the “better” direction isn't recognised (lower / higher / none)."));
+            return null;
+        }
+        return v;
     }
 
     private static List<String> trendSeries(Object raw, int si, boolean strict) {
@@ -733,7 +867,16 @@ public final class TechErrorTemplate {
                 skip = null;
             }
             Calc calc = calc(fm.get("calc"), type, id, strict, at);
-            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint, skip, calc));
+            Double target = target(fm.get("target"), type, strict, at);
+            String better = better(fm.get("better"), type, strict, at);
+            if (target != null && (better == null || "none".equals(better))) {
+                // Yönsüz hedef karşılaştırılamaz (SLA'da yüksek iyi, hata oranında düşük iyi; inceleme 2026-10-17: "yön yok" da
+                // yönsüzdür — "yüksek" sayılıp rengi ters çeviriyordu): katı 400, saklı okumada hedef düşer, yön kalır
+                if (strict) throw invalid(at + Msg.t("hedefi olan alan için “daha iyi” yönü düşük ya da yüksek olmalı.",
+                        "a field with a target needs a “better” direction of lower or higher."));
+                target = null;
+            }
+            out.add(new Field(id, label, type, hint.isEmpty() ? null : hint, skip, calc, target, better));
         }
         return out;
     }
@@ -754,13 +897,13 @@ public final class TechErrorTemplate {
             if (strict) throw invalid(at + Msg.t("otomatik hesap türü tanınmadı.", "the automatic calculation type isn't recognised."));
             return null;
         }
-        boolean percentKind = !"increase".equals(kind);
+        boolean percentKind = !"increase".equals(kind) && !"compare".equals(kind);
         if (percentKind ? !"percent".equals(type) : !"yesno".equals(type)) {
             if (strict) throw invalid(at + (percentKind
                     ? Msg.t("oran ve değişim hesabı yalnız yüzde alanında kullanılabilir.",
                             "a ratio or change calculation can only be used on a percentage field.")
-                    : Msg.t("artış hesabı yalnız evet/hayır alanında kullanılabilir.",
-                            "an increase calculation can only be used on a yes/no field.")));
+                    : Msg.t("artış ve hedef karşılaştırması yalnız evet/hayır alanında kullanılabilir.",
+                            "an increase or target comparison can only be used on a yes/no field.")));
             return null;
         }
         String[] keys = "ratio".equals(kind) ? new String[] {"num", "minus", "den"} : new String[] {"of"};
@@ -907,6 +1050,13 @@ public final class TechErrorTemplate {
     static final String DEFAULT_HINT_CHANGE_EN = "Enter by hand when there is no report for last month (no sign, e.g. 3.5); otherwise it's calculated";
     static final String DEFAULT_HINT_INCREASE_TR = "Geçen ayın raporu yoksa elle seçin; varsa otomatik belirlenir";
     static final String DEFAULT_HINT_INCREASE_EN = "Pick by hand when there is no report for last month; otherwise it's set automatically";
+    /** SLA hedef karşılaştırması ipucu (2026-10-17, 4b): eşitlik hedef tutturuldu sayılır (kullanıcı kararı). */
+    static final String DEFAULT_HINT_SLA_TR = "SLA oranı hedefle karşılaştırılarak otomatik belirlenir (hedefe eşit = tutturuldu)";
+    static final String DEFAULT_HINT_SLA_EN = "Set automatically by comparing the SLA rate with the target (equal to the target = met)";
+    /** Varsayılan SLA hedefi (kullanıcı örneği: %99,95). */
+    static final double DEFAULT_SLA_TARGET = 99.95;
+    /** Varsayılan kutucuklar (kullanıcı kararı 2026-10-17: 6 karışık — oran, adet, SLA). */
+    static final List<String> DEFAULT_TILES = List.of("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
 
     public static Template defaults(String lang) {
         return "en".equals(lang) ? defaultsEn() : defaultsTr();
@@ -914,16 +1064,19 @@ public final class TechErrorTemplate {
 
     private static Template defaultsTr() {
         List<Section> s = new ArrayList<>();
+        // 2026-10-17 (4b): önceki aya göre fark cümlesi ({d:…}) ve hedef farklı SLA cümlesi ({t:…} / {dt:…}); kutucuk şeridi
         s.add(summary("exec-summary", "Yönetici Özeti", List.of(
                 "{kanal} Kanalı {ay} {yil} verilerine göre teknik hata oranı {f:error-rate} olarak gerçekleşmiştir.",
                 "Kesintiler hariç teknik hata oranı {f:error-rate-excl} olarak hesaplanmaktadır.",
                 "{kanal} Kanalından yapılan toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.",
                 "Bir önceki aya göre işlem adedinde {f:tx-increase-pct} {f:tx-increase?artış|azalış} görülmüştür.",
                 "Ay içindeki teknik hata adedi {f:error-count} olarak gerçekleşmiştir.",
+                "Önceki aya göre teknik hata adedi {d:error-count}, teknik hata oranı {d:error-rate} değişmiştir.",
                 "Map yapılmamış hata adedi {f:unmapped-count} olup teknik hataların {f:unmapped-rate} kadarını oluşturmaktadır.",
                 "Kota hatası adedi {f:quota-count} olup teknik hataların {f:quota-rate} kadarını oluşturmaktadır.",
                 "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup teknik hataların {f:outage-share} kadarını oluşturmaktadır.",
-                "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} ile {f:sla-above?hedefin üzerinde|hedefin altında} gerçekleşmiştir.")));
+                "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} (hedef {t:sla-rate}, fark {dt:sla-rate}) ile "
+                        + "{f:sla-above?hedef başarıyla tutturulmuştur|hedefin altında kalmıştır}.")).withTiles(DEFAULT_TILES));
         // Map yapılmamış ve kota hataları yönetici özeti kartında girilir (kullanıcı kararı 2026-10-17): adet + açıklama;
         // açıklama PDF'te / e-postada ilgili özet cümlesinin hemen altına düşer
         s.add(metrics("unmapped", "Map Yapılmamış Hatalar", List.of(
@@ -941,8 +1094,8 @@ public final class TechErrorTemplate {
                         "“Hayır” işaretlenirse kesinti kaynaklı hata adedi ve kesinti günleri hariç oran istenmez, PDF'e girmez"),
                 new Field("outage-errors", "Kesinti kaynaklı teknik hata adedi", "number", null, "had-outage"),
                 new Field("sla-rate", "Kritik fonksiyonların SLA oranı", "percent",
-                        "SLA taahhüdü kapsamındaki kritik fonksiyonlar (elle girilir)"),
-                new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", null))));
+                        "SLA taahhüdü kapsamındaki kritik fonksiyonlar (elle girilir)", null, null, DEFAULT_SLA_TARGET, "higher"),
+                new Field("sla-above", "SLA hedefin üstünde mi?", "yesno", DEFAULT_HINT_SLA_TR, null, Calc.compare("sla-rate")))));
         s.add(metrics("rates", "{kanal} Kanalı — {ay} {yil} Oranları (otomatik)", List.of(
                 new Field("error-rate", "Teknik hata oranı", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
                 new Field("error-rate-excl", "Kesinti günleri hariç teknik hata oranı", "percent", null, "had-outage",
@@ -983,10 +1136,12 @@ public final class TechErrorTemplate {
                 "Total transactions through {channel} were {f:total-tx}.",
                 "Compared with the previous month, transactions show a {f:tx-increase-pct} {f:tx-increase?increase|decrease}.",
                 "There were {f:error-count} technical errors in the month.",
+                "Compared with the previous month, technical errors changed by {d:error-count} and the technical error rate by {d:error-rate}.",
                 "There were {f:unmapped-count} unmapped errors, {f:unmapped-rate} of the technical errors.",
                 "There were {f:quota-count} quota errors, {f:quota-rate} of the technical errors.",
                 "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of the technical errors.",
-                "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate}, {f:sla-above?above|below} the target.")));
+                "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate} (target {t:sla-rate}, difference {dt:sla-rate}), "
+                        + "so {f:sla-above?the target was met|the target was missed}.")).withTiles(DEFAULT_TILES));
         s.add(metrics("unmapped", "Unmapped Errors", List.of(
                 new Field("unmapped-count", "Unmapped errors", "number", null),
                 new Field("unmapped-note", "About the unmapped errors", "textarea", null))).withHost("exec-summary"));
@@ -1000,8 +1155,8 @@ public final class TechErrorTemplate {
                         "If “No”, the outage-caused errors and the rate excluding outage days aren't asked or printed"),
                 new Field("outage-errors", "Technical errors caused by outages", "number", null, "had-outage"),
                 new Field("sla-rate", "SLA rate of critical functions", "percent",
-                        "Critical functions covered by the SLA commitment (entered by hand)"),
-                new Field("sla-above", "Above the SLA target?", "yesno", null))));
+                        "Critical functions covered by the SLA commitment (entered by hand)", null, null, DEFAULT_SLA_TARGET, "higher"),
+                new Field("sla-above", "Above the SLA target?", "yesno", DEFAULT_HINT_SLA_EN, null, Calc.compare("sla-rate")))));
         s.add(metrics("rates", "{channel} Channel — {month} {year} Rates (automatic)", List.of(
                 new Field("error-rate", "Technical error rate", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
                 new Field("error-rate-excl", "Technical error rate excluding outage days", "percent", null, "had-outage",
