@@ -74,6 +74,10 @@ class AuditCoverageTest {
                 "Manuel sertifika dosyası ANALİZİ (2026-10-06): yalnız okur ve yanıtlar — veritabanına yazmaz, kayıt açmaz. "
               + "POST yalnız çok parçalı dosya gövdesi taşıdığı için; oluşturma (CERT_MANUAL_UPLOAD) ve yenileme "
               + "(CERT_MANUAL_RENEW) denetlenir. Hız sınırlı (dakikada 30).");
+        EXEMPT.put("TechErrorReportController#templatePreviewPdf",
+                "Teknik hata raporu şablonu ÖRNEK PDF önizlemesi (2026-10-17): düzenleyicideki taslağı örnek değerlerle PDF'e "
+              + "çizer ve döndürür — hiçbir kaydı yazmaz, göndermez. POST yalnız kaydedilmemiş taslak şablonu gövdede taşıdığı "
+              + "için; şablon kaydı (TECH_ERROR_TEMPLATE_SAVE) denetlenir. Kullanıcı başına dakikada 6.");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");
