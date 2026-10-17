@@ -74,11 +74,12 @@ class TechErrorSummaryEmbedMigrationTest {
 
     /**
      * 20.138 varsayılanı (şekil A): adetler "Verileri" bölümünde (teknik hata adedinden sonra), map / kota bölümleri yalnız
-     * "Açıklama" / "Notes"; anomali eski adlarla. Bugünkü varsayılandan türetilir — geri kalanı aynı.
+     * "Açıklama" / "Notes"; anomali eski adlarla. 4a düzeninden (gömülü map / kota, Verileri'nde adet yok —
+     * {@link TechErrorTestTemplates#hostedDefaults}) türetilir; bugünkü varsayılan (7. sürüm) adetleri Verileri'nde taşır.
      */
     static Template shapeA(String lang) {
         boolean en = "en".equals(lang);
-        Template d = TechErrorTemplate.defaults(lang);
+        Template d = TechErrorTestTemplates.hostedDefaults(lang);
         List<Section> out = new ArrayList<>();
         for (Section s : d.sections()) {
             switch (s.id()) {
@@ -110,7 +111,7 @@ class TechErrorSummaryEmbedMigrationTest {
     /** 20.138 öncesi (şekil B, oran göçünden sonra): map / kota bölümleri adet + "Açıklama", eski başlıklarla, anomali eski adlarla. */
     static Template shapeB(String lang) {
         boolean en = "en".equals(lang);
-        Template d = TechErrorTemplate.defaults(lang);
+        Template d = TechErrorTestTemplates.hostedDefaults(lang);
         List<Section> out = new ArrayList<>();
         for (Section s : d.sections()) {
             switch (s.id()) {
@@ -137,15 +138,18 @@ class TechErrorSummaryEmbedMigrationTest {
     }
 
     @Test
-    @DisplayName("iki üretim şekli de (TR / EN) bugünkü varsayılanın aynısına döner: adet bölüme, açıklama adı yeni, bölüm özetin ardında, anomali adları; tekrar uygulanmaz")
+    @DisplayName("iki üretim şekli de (TR / EN) 4a düzeninin aynısına döner: adet bölüme, açıklama adı yeni, bölüm özetin ardında, anomali adları; tekrar uygulanmaz; 7. sürüm göçüyle zincir bugünkü varsayılanı verir")
     void bothShapesBecomeToday() {
         for (String lang : List.of("tr", "en")) {
             for (Template old : List.of(shapeA(lang), shapeB(lang))) {
                 assertThat(old.sections()).allMatch(s -> s.host() == null);
                 Template m = TechErrorSummaryEmbedMigration.migrate(old).orElseThrow();
-                assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+                assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults(lang)));
                 TechErrorTemplate.normalize(TechErrorTemplate.toMap(m));                 // katı doğrulamadan geçer
                 assertThat(TechErrorSummaryEmbedMigration.migrate(m)).isEmpty();
+                // Zincir (üretim sırası): gömme (4a) → adetler Verileri'ne (7. sürüm) = bugünkü varsayılan, bayt bayt
+                Template chained = TechErrorCountsInFiguresMigration.migrate(m).orElseThrow();
+                assertThat(TechErrorTemplate.toJson(chained)).as(lang + " zincir").isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
             }
         }
         assertThat(TechErrorSummaryEmbedMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();
@@ -272,7 +276,7 @@ class TechErrorSummaryEmbedMigrationTest {
         }
 
         @Test
-        @DisplayName("iş: eski şekilli kanallar güncellenir (sürüm +1, geçmişte 'SiteMonitor'), bugünkü varsayılan dokunulmaz; açılmış rapor aynen kalır; nişan sonrası koşmaz")
+        @DisplayName("iş: eski şekilli kanallar 4a düzenine güncellenir (sürüm +1, geçmişte 'SiteMonitor'), bugünkü varsayılan dokunulmaz; açılmış rapor aynen kalır; nişan sonrası koşmaz")
         void migratesOnce() {
             TechErrorChannel a = service.createChannel(1L, "Mobil", null, shapeA("tr"), 7L);
             TechErrorChannel b = service.createChannel(1L, "POS", null, shapeB("en"), 7L);
@@ -284,9 +288,9 @@ class TechErrorSummaryEmbedMigrationTest {
             assertThat(migration.migrateLocked()).isEqualTo(2);
             TechErrorChannel afterA = channels.findById(a.getId()).orElseThrow();
             assertThat(afterA.getTemplateVersion()).isEqualTo(2);
-            assertThat(afterA.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+            assertThat(afterA.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults("tr")));
             TechErrorChannel afterB = channels.findById(b.getId()).orElseThrow();
-            assertThat(afterB.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("en")));
+            assertThat(afterB.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults("en")));
             assertThat(channels.findById(fresh.getId()).orElseThrow().getTemplateVersion()).isEqualTo(1);
             assertThat(versions.findAll()).anySatisfy(v -> {
                 assertThat(v.getChannelId()).isEqualTo(a.getId());

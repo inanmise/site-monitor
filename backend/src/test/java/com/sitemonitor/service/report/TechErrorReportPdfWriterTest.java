@@ -132,9 +132,10 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("%0,42").contains("1.250.000").contains("Evet");
         assertThat(s).contains("1. Kart Limiti: Hata Artışı");
         assertThat(s).contains("Etkilenen müşteri sayısı: 1.200").contains("3.400");
-        // Map yapılmamış hatalar özet kartında (2026-10-17): açıklama özetin notu olarak basılır, bölüm başlığı basılmaz
+        // Map yapılmamış hata açıklaması "Verileri" bölümünde (7. sürüm, 2026-10-17): alanın adıyla basılır; ayrı bölüm başlığı yok
         assertThat(s).contains("İlk satır").contains("İkinci satır").contains("Map yapılmamış hatalar hakkında açıklama");
         assertThat(s).doesNotContain("Map Yapılmamış Hatalar");
+        assertThat(s.indexOf("Mobil Kanalı — Eylül 2026 Verileri")).isLessThan(s.indexOf("Map yapılmamış hatalar hakkında açıklama"));
         assertThat(s).contains("Bu bölüme görsel yüklenmedi.");
         assertThat(s).contains("Sayfa 1 /");
         assertThat(s).contains("Hazırlayan: Ayşe Yılmaz");
@@ -705,9 +706,9 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
-    @DisplayName("2026-10-17: özete gömülü map / kota bölümleri PDF'te ayrı bölüm değil; açıklama ilgili cümlenin altında, cümlesi düşen adet kendi satırında; e-posta aynı; kutucuklara girmez")
+    @DisplayName("2026-10-17: özete gömülü map / kota bölümleri (4a düzeni; ekip şablonda gömebilir) PDF'te ayrı bölüm değil; açıklama ilgili cümlenin altında, cümlesi düşen adet kendi satırında; e-posta aynı; kutucuklara girmez")
     void summaryEmbeddedNotesAndFacts() throws IOException {
-        Template t = TechErrorTemplate.defaults("tr");
+        Template t = com.sitemonitor.service.techerror.TechErrorTestTemplates.hostedDefaults("tr");
         TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", Map.of(
                 "total-tx", 1000, "error-count", 5, "unmapped-count", 2, "unmapped-note", "Yeni **kodlar** eşlenmedi", "quota-count", 1)), t), null);
         TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of());
@@ -739,6 +740,43 @@ class TechErrorReportPdfWriterTest {
                 t.sections().get(0), t, v3, "Mobil", 2026, 9);
         assertThat(blocks).hasSize(1);
         assertThat(blocks.get(0).text()).contains("Map yapılmamış hata adedi **2** olup").contains("Kota hatası adedi **1** olup");
+    }
+
+    @Test
+    @DisplayName("7. sürüm (inceleme 2026-10-17): Verileri'ndeki boş açıklama (textarea) PDF'te ve e-postada basılmaz; dolu açıklama alanın adıyla basılır; kısa metin alanı boşsa '—'; yalnız boş notlardan oluşan bölümün başlığı da basılmaz")
+    void blankTextareaNotPrinted() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        TechErrorValues.Values empty = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1000, "error-count", 5)), t);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, empty, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        String s = text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("Mobil Kanalı — Eylül 2026 Verileri").contains("Toplam işlem adedi")
+                .doesNotContain("Map yapılmamış hatalar hakkında açıklama").doesNotContain("Kota hataları hakkında açıklama");
+        var m = com.sitemonitor.service.mail.TechErrorReportMail.build(in, null, "m.pdf");
+        assertThat(m.html()).doesNotContain("Map yapılmamış hatalar hakkında açıklama").doesNotContain("Kota hataları hakkında açıklama");
+        assertThat(m.text()).doesNotContain("hakkında açıklama:");
+        // Dolu açıklama basılır (alanın adıyla, Verileri bölümünde)
+        TechErrorValues.Values filled = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1000, "quota-note", "Kota **notu**")), t);
+        TechErrorPdfInput in2 = new TechErrorPdfInput(t, filled, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        String s2 = text(TechErrorReportPdfWriter.render(in2)).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s2).contains("Kota hataları hakkında açıklama Kota notu").doesNotContain("Map yapılmamış hatalar hakkında açıklama");
+        assertThat(com.sitemonitor.service.mail.TechErrorReportMail.build(in2, null, "m.pdf").html())
+                .contains("Kota hataları hakkında açıklama").contains("<strong>notu</strong>").doesNotContain("Map yapılmamış hatalar hakkında açıklama");
+        // Kısa metin alanı boşsa "—" kalır; yalnız boş notlardan oluşan bölümün başlığı basılmaz
+        Map<String, Object> raw = TechErrorTemplate.toMap(t);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.add(1, new LinkedHashMap<>(Map.of("id", "kisa", "kind", "metrics", "title", "Kısa Metinler", "fields", List.of(
+                Map.of("id", "kisa-metin", "label", "Kısa açıklama", "type", "text")))));
+        secs.add(2, new LinkedHashMap<>(Map.of("id", "yalniz-not", "kind", "metrics", "title", "Yalnız Notlar", "fields", List.of(
+                Map.of("id", "not-1", "label", "Birinci not", "type", "textarea"),
+                Map.of("id", "not-2", "label", "İkinci not", "type", "textarea")))));
+        raw.put("sections", secs);
+        Template t3 = TechErrorTemplate.normalize(raw);
+        TechErrorPdfInput in3 = new TechErrorPdfInput(t3, TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1)), t3), "Mobil", "Takım", 2026, 9,
+                null, null, Map.of());
+        String s3 = text(TechErrorReportPdfWriter.render(in3)).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s3).contains("Kısa Metinler").contains("Kısa açıklama " + com.sitemonitor.service.techerror.TechErrorFormat.EMPTY).doesNotContain("Yalnız Notlar").doesNotContain("Birinci not");
+        var m3 = com.sitemonitor.service.mail.TechErrorReportMail.build(in3, null, "m.pdf");
+        assertThat(m3.html()).contains("Kısa Metinler").doesNotContain("Yalnız Notlar").doesNotContain("Birinci not");
     }
 
     @Test
@@ -804,10 +842,11 @@ class TechErrorReportPdfWriterTest {
         // Özet, anomali bölümünün ARDINA alınır: konu sayısı başlığın sayfadaki yerini kaydırır
         Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
         @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
-        // Tek kutucuk (ilk satır): yalnız kutucukta geçen metinle ("Map yapılmamış hata adedi —") bulunur; birden çok satırda
+        // Tek kutucuk (ilk satır): yalnız kutucukta geçen metinle bulunur — SLA kutucuğunun "hedef %99,95" alt satırı (Verileri
+        // kartı hedefi basmaz; 7. sürümde map adedi de Verileri kartı olduğundan o etiket artık tekil değil); birden çok satırda
         // ikinci satır sayfa sonunda meşru olarak bölünebilir
         Map<String, Object> exec = new LinkedHashMap<>(secs.remove(0));
-        exec.put("tiles", List.of("unmapped-count"));
+        exec.put("tiles", List.of("sla-rate"));
         int issuesAt = -1;
         for (int i = 0; i < secs.size(); i++) if ("issues".equals(secs.get(i).get("kind"))) issuesAt = i;
         secs.add(issuesAt + 1, exec);
@@ -836,8 +875,8 @@ class TechErrorReportPdfWriterTest {
                     st.setEndPage(pg);
                     String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
                     if (titlePage < 0 && txt.contains("Yönetici Özeti")) titlePage = pg;
-                    // Yalnız kutucukta geçen metin: girilmemiş "map yok" adedi (etiket + "—"); Verileri bölümü sayfadan önce basılır
-                    if (tilePage < 0 && txt.contains("Map yapılmamış hata adedi —")) tilePage = pg;
+                    // Yalnız kutucukta geçen metin: SLA kutucuğunun hedef alt satırı (özet cümlesi kutucuklardan SONRA gelir)
+                    if (tilePage < 0 && txt.contains("hedef %99,95")) tilePage = pg;
                 }
                 assertThat(titlePage).as("konu sayısı %d", n).isPositive();
                 assertThat(tilePage).as("konu sayısı %d: kutucuklar başlıkla aynı sayfada", n).isEqualTo(titlePage);

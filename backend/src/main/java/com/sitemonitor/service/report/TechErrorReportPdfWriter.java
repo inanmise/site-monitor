@@ -131,12 +131,19 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
 
     // ── Bölümler ─────────────────────────────────────────────────────────────────────────────────────
 
+    public static boolean blankText(Object v) {
+        return v == null || String.valueOf(v).isBlank();
+    }
+
     private void metrics(TechErrorPdfInput in, Section s) throws IOException {
         List<Field> cards = new ArrayList<>();
         List<Field> texts = new ArrayList<>();
         Map<String, Object> vals = in.values().fields();
         for (Field f : s.fields()) {
             if (TechErrorTemplate.exempt(f, vals)) continue;     // "Hayır" cevabıyla muaf alan PDF'e girmez
+            // Boş uzun açıklama (isteğe bağlı) basılmaz — özet kartına gömülü notlarla aynı kural (7. sürüm, inceleme 2026-10-17);
+            // kısa metin alanı boşsa "—" (alan vardı, doldurulmadı)
+            if ("textarea".equals(f.type()) && blankText(vals.get(f.id()))) continue;
             if ("text".equals(f.type()) || "textarea".equals(f.type())) texts.add(f);
             else cards.add(f);
         }

@@ -114,7 +114,15 @@ class TechErrorValuesTest {
         String json = TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 1.5, "quota-note", "Not")), t));
         Map<String, Object> raw = TechErrorTemplate.toMap(t);
         @SuppressWarnings("unchecked") List<Object> secs = new ArrayList<>((List<Object>) raw.get("sections"));
-        secs.removeIf(o -> "quota".equals(((Map<?, ?>) o).get("id")));   // kota bölümü çıkarıldı
+        // Kota açıklaması şablondan çıkarıldı (7. sürüm: alan "Verileri" bölümünde — bölüm değil alan silinir)
+        for (Object o : secs) {
+            @SuppressWarnings("unchecked") Map<String, Object> sec = (Map<String, Object>) o;
+            if (sec.get("fields") instanceof List<?> fl) {
+                List<Object> fields = new ArrayList<>(fl);
+                fields.removeIf(f -> "quota-note".equals(((Map<?, ?>) f).get("id")));
+                sec.put("fields", fields);
+            }
+        }
         Map<String, Object> smaller = new HashMap<>(raw);
         smaller.put("sections", secs);
         Values v = TechErrorValues.fromStored(json, TechErrorTemplate.normalize(smaller));
