@@ -28,7 +28,8 @@ export const TES_SORTS = Object.freeze(['name', 'team', 'status'])
  * dört DAR sütunla (kanal · takım durumu · onay akışı · dönem raporu; rozetler sarar) 540 px'te okunur kalır; tablet ve
  * telefon kart alır. Kenar çubuğu daraltılınca aynı sayfa daha geniş kapta tabloya geçer — karar görünüm alanına değil KABA göre.
  */
-export const TES_TABLE_MIN_PX = 540
+// 1280'de Ayarlar içerik sütunu ~560–575 px (kenar çubuğu açık); 520 eşiği kaydırma çubuğu / yazı tipi farkına pay bırakır
+export const TES_TABLE_MIN_PX = 520
 
 const STATUS_RANK = { missing: 0, open: 1, sent: 2, inactive: 3 }
 const collator = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })

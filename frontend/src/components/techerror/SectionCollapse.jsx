@@ -93,7 +93,9 @@ function supportsUntilFound() {
  * rozet satırı olarak okunur, boş kutu değil. Yalnız jeton renkleri (sekiz tema, `dark:` yok).
  */
 const CARD = 'gap-0 border-border py-0 shadow-none'
-const HEADER = 'flex flex-col gap-0 px-0'
+// `items-stretch`: shadcn CardHeader taşıdığı `items-start` flex-col'da satırı İÇERİĞE büzüyordu (inceleme 2026-10-17:
+// kısa başlıkta düğme, vurgu ve taşı / sil düğmeleri metnin yanında kalıyordu) — satır kartın tam genişliği
+const HEADER = 'flex flex-col items-stretch gap-0 px-0'
 const CONTENT = 'border-t px-4 pb-4 pt-4'
 /** Başlık satırının iç boşluğu (6 px): düğmenin vurgu dikdörtgeni ve odak halkası kartın kenarından içeride kalır. */
 const ROW = 'flex items-start gap-1 p-1.5'

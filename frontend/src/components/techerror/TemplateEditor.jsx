@@ -52,15 +52,12 @@ const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images', 't
  * "1. görsel, 2. görsel gibi alanların birbirinden ayrı bölümler olduğu keskin hatlarla belli olsun"). Koyu çerçeve +
  * gölge + kartın kenarına yaslanan başlık şeridi (numara ve taşıma / silme düğmeleri); öğeler arası boşluk 12 px.
  */
-/*
- * Şablon ögesi kartları (alan / yuva / cümle / kutucuk / sütun / satır): bölüm kartının içinde YUMUŞAK kutular — jeton
- * kenarı (`border-border/60`), hafif tonlu yüzey (`bg-muted/30`), gölge yok (2026-10-17, kullanıcı geri bildirimi: koyu
- * `border-foreground/25` + gölge, açık bölümde "kutu içinde kutu" ızgarası veriyordu). Üst şerit: numara + taşı / sil;
- * iç yarıçap dış yarıçaptan kenar kalınlığı (1 px) kadar küçük → köşeler örtüşür. Yalnız jetonlar (sekiz tema, `dark:` yok).
- */
-const TPL_ITEM = 'rounded-lg border border-border/60 bg-muted/30 p-3'
-const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-border/60 bg-muted/50 px-3 py-1.5'
-const TPL_ITEM_TITLE = 'text-sm font-medium text-muted-foreground'
+// 2026-10-17: "açılan bölümün çevresindeki çizgi" şikâyetinin kaynağı düzenleme kilidi fieldset'lerinin tarayıcı
+// çerçevesiydi (artık `border-0`); öge kartları kullanıcının 2026-10-16 kararıyla belirgin kalır. Şeridin iç yarıçapı dış
+// yarıçaptan kenar kalınlığı kadar küçük → köşeler örtüşür.
+const TPL_ITEM = 'rounded-lg border border-foreground/25 bg-card p-3 shadow-sm'
+const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-foreground/20 bg-muted px-3 py-1.5'
+const TPL_ITEM_TITLE = 'text-sm font-semibold text-foreground'
 
 function fieldToken(f, yes = null, no = null) {
   if (f.type === 'yesno' && yes != null) return `{f:${f.id}?${cleanChoice(yes)}|${cleanChoice(no)}}`

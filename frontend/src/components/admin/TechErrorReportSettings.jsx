@@ -5,6 +5,7 @@ import {
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
@@ -68,6 +69,10 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [listRef, listWidth] = useElementWidth()
   const alive = useRef(true)
   const loadSeq = useRef(0)
+  // Yenile kaydedilmemiş seçimi silmesin (inceleme 2026-10-17): okuma yanıtı geldiğinde taslak kirliyse korunur
+  const settingsRef = useRef(null)
+  settingsRef.current = settings
+  const { showConfirm } = useDialog()
 
   const load = useCallback(async () => {
     const id = ++loadSeq.current
@@ -83,8 +88,9 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       if (!r.ok) { setLoadError(r.error || t('te.set.loadError')); return }
       const data = r.data || {}
       const ids = normalizeIds(data.team_ids)
+      const prev = settingsRef.current
       setSettings({ ...data, ids, readOnly: readOnly || data.read_only === true })
-      setDraft(ids)
+      setDraft((cur) => (prev && isDirty(prev.ids, cur) ? cur : ids))
       const d = unwrap(dir)
       setDirectory(d.ok && Array.isArray(d.data) ? d.data : [])
     } catch (e) {
@@ -99,19 +105,25 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     return () => { alive.current = false }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const options = useMemo(() => teamOptions(directory, draft, t('noc.ot.inactiveTeam')), [directory, draft, t])
+  // Takım dizini okunamazsa adlar kanal satırlarından gelir ("#12" yerine takım adı)
+  const options = useMemo(() => teamOptions(directory.length ? directory : teamsFromChannels(settings?.channels), draft,
+    t('noc.ot.inactiveTeam')), [directory, settings, draft, t])
   const dirty = !!settings && isDirty(settings.ids, draft)
   const locked = !!settings?.readOnly
 
   async function save() {
     if (!settings || saving || locked) return
     setSaving(true)
+    // Kayıttan ÖNCE başlamış bir okuma kayıttan SONRA gelirse eski seçimi "kayıtlı" gösterirdi → o yanıt düşer
+    loadSeq.current += 1
+    setLoading(false)
     try {
       const r = unwrap(await api.admin.saveTechErrorSettings({ team_ids: normalizeIds(draft) }))
       if (!alive.current) return
       if (!r.ok) { toast.error(r.error || t('te.set.saveError'), { details: r.errorInfo }); return }
       const ids = normalizeIds(r.data?.team_ids ?? draft)
-      setSettings((s) => ({ ...s, ids }))
+      // Görünürlük rozetleri ve "modül kapalı" sayısı kaydedilen seçimi izler (sunucu satırları eski ayara göre hesaplamıştı)
+      setSettings((s) => ({ ...s, ids, channels: withVisibility(s?.channels, ids) }))
       setDraft(ids)
       toast.success(t('te.set.saved'))
     } catch (e) {
@@ -140,9 +152,16 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setFilter(ALL)
   }
 
-  function openChannel(ch) {
+  async function openChannel(ch) {
+    if (dirty) {
+      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t('te.set.leaveBody'), variant: 'warning',
+        confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
+      if (!ok) return
+    }
     navigateTo('channelreports', { [TE_VIEW]: VIEW_CHANNEL, [TE_CHANNEL]: String(ch.id) })
   }
+  // Salt okunur (kapsamlı) görüntüleyici modülü kapalı bir takımın kanalını açamaz (sayfa "erişim yok" derdi)
+  const openFor = (ch) => (locked && ch.team_visible === false ? null : () => openChannel(ch))
 
   const kpiItems = channels.length === 0 ? [] : [
     { key: ALL, Icon: Radio, label: t('te.set.kpi.total'), value: counts.total, cls: 'total', hint: t('te.set.kpi.hint.total') },
@@ -155,7 +174,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   ]
 
   const refreshButton = settings && (
-    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
+    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
       <RefreshCw aria-hidden="true" className={cn(loading && 'animate-spin motion-reduce:animate-none')} /> {t('te.refresh')}
     </Button>
   )
@@ -293,7 +312,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                   // Kart düzeni yalnız dar kapta (< TES_TABLE_MIN_PX) — tek sütun: 768 px tablette kap ≈ 350 px, iki sütun
                   // uzun takım adını 160 px'e sıkıştırıyordu (görünüm alanı değil KAP dar)
                   <div className="grid grid-cols-1 gap-3">
-                    {pager.pageItems.map((ch) => <ChannelCard key={ch.id} ch={ch} period={period} onOpen={() => openChannel(ch)} />)}
+                    {pager.pageItems.map((ch) => <ChannelCard key={ch.id} ch={ch} period={period} onOpen={openFor(ch)} />)}
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-xl border" data-slot="tes-table">
@@ -309,7 +328,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {pager.pageItems.map((ch) => <ChannelRow key={ch.id} ch={ch} period={period} onOpen={() => openChannel(ch)} />)}
+                        {pager.pageItems.map((ch) => <ChannelRow key={ch.id} ch={ch} period={period} onOpen={openFor(ch)} />)}
                       </TableBody>
                     </Table>
                   </div>
@@ -341,10 +360,14 @@ function ChannelName({ ch, onOpen }) {
   const t = useT()
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <Button type="button" variant="link" onClick={onOpen} data-slot="tes-open" aria-label={t('te.set.openChannelFor', ch.name)}
-        className={cn('h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere]', TOUCH)}>
-        <span data-slot="tes-channel-name" className="[overflow-wrap:anywhere]">{ch.name}</span>
-      </Button>
+      {onOpen ? (
+        <Button type="button" variant="link" onClick={onOpen} data-slot="tes-open" aria-label={t('te.set.openChannelFor', ch.name)}
+          className={cn('h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere]', TOUCH)}>
+          <span data-slot="tes-channel-name" className="[overflow-wrap:anywhere]">{ch.name}</span>
+        </Button>
+      ) : (
+        <span data-slot="tes-channel-name" className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{ch.name}</span>
+      )}
       <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
         {!ch.active && <Badge variant="outline" className={CHIP}>{t('te.inactive')}</Badge>}
@@ -442,12 +465,33 @@ function ChannelCard({ ch, period, onOpen }) {
           <dt className="text-xs font-medium text-muted-foreground">{t('te.col.periodReport', periodLabel(period, t))}</dt>
           <dd className="m-0"><ReportBadges ch={ch} period={period} /></dd>
         </dl>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="outline" onClick={onOpen} data-slot="tes-open-btn" className={cn(TOUCH, 'whitespace-normal')}>
-            <ExternalLink aria-hidden="true" /> {t('te.set.openChannel')}
-          </Button>
-        </div>
+        {onOpen ? (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={onOpen} data-slot="tes-open-btn" className={cn(TOUCH, 'whitespace-normal')}>
+              <ExternalLink aria-hidden="true" /> {t('te.set.openChannel')}
+            </Button>
+          </div>
+        ) : (
+          <p className="m-0 text-xs text-muted-foreground" data-slot="tes-open-hidden">{t('te.set.openHiddenTeam')}</p>
+        )}
       </CardContent>
     </Card>
   )
+}
+
+/** Kaydedilen seçime göre `team_visible` (boş seçim = herkes); `team_id`'si olmayan satır dokunulmadan kalır. */
+export function withVisibility(channels, ids) {
+  if (!Array.isArray(channels)) return channels
+  const set = new Set((ids || []).map(String))
+  return channels.map((c) => (c?.team_id == null ? c : { ...c, team_visible: set.size === 0 || set.has(String(c.team_id)) }))
+}
+
+/** Dizin okunamazsa seçicinin takım adları kanal satırlarından (id → ad). */
+export function teamsFromChannels(channels) {
+  const seen = new Map()
+  for (const c of Array.isArray(channels) ? channels : []) {
+    if (c?.team_id == null || seen.has(String(c.team_id))) continue
+    seen.set(String(c.team_id), { id: c.team_id, name: c.team_name || `#${c.team_id}` })
+  }
+  return [...seen.values()]
 }

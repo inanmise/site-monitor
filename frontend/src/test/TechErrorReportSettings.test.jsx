@@ -187,11 +187,11 @@ describe('TechErrorReportSettings', () => {
     expect(document.querySelector('[data-slot="stat-item"][data-key="missing"]')).toHaveAttribute('aria-pressed', 'true')
     fireEvent.change(status, { target: { value: 'all' } })
     expect(names()).toEqual(['İnternet Şubesi', 'POS'])
-    // Sıralama: takıma göre → aynı takımda aktifler önce
-    fireEvent.change(screen.getByLabelText('Sıralama'), { target: { value: 'status' } })
-    expect(names()).toEqual(['İnternet Şubesi', 'POS'])
     fireEvent.click(screen.getByRole('button', { name: 'Süzgeçleri temizle' }))
-    expect(names()).toHaveLength(3)
+    expect(names()).toEqual(['İnternet Şubesi', 'Mobil', 'POS'])          // ad: aktifler önce, Türkçe harf sırası
+    // Sıralama takıma göre: Dijital Kanallar (Mobil) önce, aynı takımda aktifler önce — ad sırasından FARKLI
+    fireEvent.change(screen.getByLabelText('Sıralama'), { target: { value: 'team' } })
+    expect(names()).toEqual(['Mobil', 'İnternet Şubesi', 'POS'])
   })
 
   it('"Kanalı aç" (kanal adı) kanal sayfasına gider: sm:navigate → channelreports + te_view=channel + te_ch', async () => {
@@ -232,7 +232,7 @@ describe('TechErrorReportSettings', () => {
     expect(document.querySelector('[data-slot="tes-toolbar"]')).toBeNull()
   })
 
-  it('eski sunucu satırı (e-posta / görünürlük alanı yok): rozetler "Bilinmiyor", KPI eksik / kapalı sayımı 0 ama yeşil değil', async () => {
+  it('eski sunucu satırı (e-posta / görünürlük alanı yok): rozetler "Bilinmiyor"; bilinmeyen alan "e-postası yok" / "kapalı takım" sayımına girmez', async () => {
     api.admin.techErrorSettings.mockResolvedValue(settings({ channels: [{ id: 40, name: 'Eski', active: true, team_id: 1, team_name: 'Dijital Kanallar',
       executive_count: 0, approver_count: 0, period_report: null }] }))
     render(<TechErrorReportSettings />)
@@ -241,6 +241,38 @@ describe('TechErrorReportSettings', () => {
     expect(row.querySelector('[data-slot="tes-email"]')).toHaveAttribute('data-state', 'unknown')
     expect(row.querySelector('[data-slot="tes-visibility"]')).toHaveAttribute('data-state', 'unknown')
     expect(within(row).getAllByText('Bilinmiyor')).toHaveLength(2)
+    expect(document.querySelector('[data-slot="stat-item"][data-key="noEmail"] [data-slot="stat-value"]')).toHaveTextContent('0')
+    expect(document.querySelector('[data-slot="stat-item"][data-key="hidden"] [data-slot="stat-value"]')).toHaveTextContent('0')
+  })
+
+  it('inceleme 2026-10-17: Yenile kaydedilmemiş seçimi korur; kayıttan sonra görünürlük rozetleri kaydedilen seçimi izler', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ team_ids: [] }))
+    api.admin.saveTechErrorSettings.mockResolvedValue({ success: true, data: { team_ids: [1] } })
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Modülü gören takımlar' }))
+    const opt = (await screen.findAllByText('Dijital Kanallar')).map((el) => el.closest('[role="option"]')).find(Boolean)
+    fireEvent.mouseDown(opt)
+    const bar = document.querySelector('[data-slot="settings-save-bar"]')
+    await waitFor(() => expect(bar).toHaveAttribute('data-dirty', 'true'))
+    fireEvent.click(document.querySelector('[data-slot="tes-refresh"]'))
+    await waitFor(() => expect(api.admin.techErrorSettings).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('[data-slot="tes-refresh"]')).not.toBeDisabled())
+    expect(bar).toHaveAttribute('data-dirty', 'true')                       // seçim yerinde
+    fireEvent.click(within(bar).getByRole('button', { name: /Kaydet/ }))
+    await waitFor(() => expect(api.admin.saveTechErrorSettings).toHaveBeenCalledWith({ team_ids: [1] }))
+    // Ödeme Sistemleri artık modülü göremez: POS satırının rozeti "kapalı", KPI "kapalı takım" sayımı güncel
+    await waitFor(() => expect(document.querySelector('[data-channel="20"] [data-slot="tes-visibility"]')).toHaveAttribute('data-state', 'hidden'))
+    expect(document.querySelector('[data-channel="10"] [data-slot="tes-visibility"]')).toHaveAttribute('data-state', 'visible')
+  })
+
+  it('inceleme 2026-10-17: salt okunur görüntüleyici modülü kapalı takımın kanalını açamaz (bağlantı yok, açıklama var)', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ read_only: true }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const pos = document.querySelector('[data-channel="20"]')
+    expect(pos.querySelector('[data-slot="tes-open"]')).toBeNull()
+    expect(document.querySelector('[data-channel="10"] [data-slot="tes-open"]')).not.toBeNull()
   })
 
   it('sayfalama: 30 kanal → 25 + 5 (panel ön ayarı), sayfa 2 kalanları gösterir', async () => {

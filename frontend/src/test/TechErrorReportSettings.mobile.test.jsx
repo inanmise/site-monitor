@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within } from './test-utils.jsx'
 
-// Ayarlar → Teknik hata raporu, dar kapta (telefon; kap < 600 px): KART düzeni — tablo yok, kartta takım durumu / onay akışı /
+// Ayarlar → Teknik hata raporu, dar kapta (telefon; kap < 520 px): KART düzeni — tablo yok, kartta takım durumu / onay akışı /
 // dönem raporu satırları ve "Kanalı aç" düğmesi. Genişlik kancası 400 px'e sabitlenir (TechErrorChannelsList.mobile ile aynı).
 vi.mock('../hooks/useElementWidth.js', () => ({ useElementWidth: () => [() => {}, 400], useElementWidthState: () => [400, () => {}] }))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
