@@ -234,6 +234,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
   const dirty = draft != null && base.json != null && !isSavedJson(canonJson(draft))
   const readOnly = !data?.can_edit
+  // Gönderim / onay isteği takımın kendi kapsamı: paylaşımla düzenleyen (9. sürüm) `can_send:false` alır; eski sunucuda can_edit
+  const canSend = data?.can_send != null ? !!data.can_send : !readOnly
   const hasClientErrors = hasAny(clientErrors)
   const clientErrorsRef = useRef(clientErrors)
   clientErrorsRef.current = clientErrors
@@ -864,10 +866,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           {backup.version === base.version ? t('te.backupBody') : t('te.backupBodyStale')}
         </AlertBanner>
       )}
-      {!readOnly && data.team_email_set === false && (
+      {!readOnly && canSend && data.team_email_set === false && (
         <AlertBanner tone="warning" icon={MailWarning} title={t('te.noTeamEmailTitle')}>{t('te.noTeamEmailBody')}</AlertBanner>
       )}
-      {report.status === 'changed' && !readOnly && (
+      {report.status === 'changed' && !readOnly && canSend && (
         <AlertBanner tone="info" title={t('te.changedTitle')}>{t('te.changedBody')}</AlertBanner>
       )}
       {upd?.differs && !readOnly && (
@@ -953,7 +955,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             {busy === 'pdf' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden="true" />}
             {t('te.downloadPdf')}
           </Button>
-          {!readOnly && !approvalRequired && (
+          {!readOnly && canSend && !approvalRequired && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send"
               disabled={busy != null || data.team_email_set === false || report.status === 'sending'} onClick={send}>
               {busy === 'send' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}

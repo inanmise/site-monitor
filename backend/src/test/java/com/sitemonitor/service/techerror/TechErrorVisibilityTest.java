@@ -79,6 +79,13 @@ class TechErrorVisibilityTest {
         assertThat(v.sessionSees(session("ADMIN", 9L, List.of(2L), List.of(2L)))).isTrue();   // kapsamlı müdür, görüş kapsamında açık takım
         assertThat(v.sessionSees(session("ADMIN", 9L, List.of(3L), List.of(3L)))).isFalse();
         assertThat(v.sessionSees(session("ADMIN", null, null, null))).isTrue();         // global yönetici
+        // Erişim paylaşımı (9. sürüm): kendi takımı kapalı, paylaşan takım açık → modül görünür (menü + 403 kapısı aynı küme)
+        MockHttpSession granted = session("USER", 3L, null, null);
+        granted.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(1L)));
+        assertThat(v.sessionSees(granted)).isTrue();
+        MockHttpSession grantedClosed = session("USER", 3L, null, null);
+        grantedClosed.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(4L)));
+        assertThat(v.sessionSees(grantedClosed)).isFalse();
         assertThat(v.sessionSees(session("AUDIT", 3L, null, null))).isTrue();           // kurum geneli görüntüleyici
         assertThat(v.sessionSees(null)).isFalse();
 

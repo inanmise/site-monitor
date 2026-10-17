@@ -115,7 +115,7 @@ public class TechErrorReportController {
             Map<String, Object> m = channelDto(ch, teamMap.get(ch.getTeamId()), session, writer);
             m.put("report_count", counts.getOrDefault(ch.getId(), 0L));
             TechErrorReportRepository.Row pr = periodRows.get(ch.getId());
-            m.put("period_report", pr == null ? null : statusDto(pr, service.now()));
+            m.put("period_report", pr == null ? null : maskSharedPeople(statusDto(pr, service.now()), session, ch.getTeamId()));
             channelRows.add(m);
         }
         List<Map<String, Object>> teamRows = new ArrayList<>();
@@ -129,7 +129,7 @@ public class TechErrorReportController {
             tm.put("name", t.getName());
             tm.put("active", !Boolean.FALSE.equals(t.getActive()));
             tm.put("has_email", !TechErrorReportSender.recipients(t).isEmpty());
-            tm.put("can_edit", writer && canWrite(session, t.getId()));
+            tm.put("can_edit", writer && canWriteOwn(session, t.getId()));          // kanal açılabilen takımlar (paylaşım değil)
             tm.put("can_manage", writer && SessionScope.canManage(session, t.getId()));
             teamRows.add(tm);
         }
@@ -155,7 +155,7 @@ public class TechErrorReportController {
             throw new FieldValidationException("team_id", Msg.t(
                     "Bu takım pasif; pasif takıma kanal açılamaz.", "This team is inactive; you can't open a channel for it."));
         }
-        if (team == null || !canWrite(session, teamId)) {
+        if (team == null || !canWriteOwn(session, teamId)) {
             throw new FieldValidationException("team_id", Msg.t(
                     "Bu takım için kanal açamazsınız: üyesi ya da yöneticisi değilsiniz.",
                     "You can't open a channel for this team: you're not a member or manager of it."));
@@ -274,7 +274,7 @@ public class TechErrorReportController {
         Instant now = service.now();
         List<Map<String, Object>> out = new ArrayList<>();
         for (var r : rows) {
-            Map<String, Object> m = statusDto(r, now);
+            Map<String, Object> m = maskSharedPeople(statusDto(r, now), session, r.getTeamId());
             // Raporun KENDİ başlığı (gönderilmiş raporun adı şablon sonradan değişse de PDF'teki gibi kalır)
             String pattern = r.getTitlePattern() != null ? r.getTitlePattern() : current.title();
             String lang = r.getTitlePattern() != null && r.getTemplateLang() != null ? r.getTemplateLang() : current.lang();
@@ -301,7 +301,7 @@ public class TechErrorReportController {
         Map<String, Object> b = body == null ? Map.of() : body;
         Long channelId = b.get("channel_id") == null ? null : parseId(String.valueOf(b.get("channel_id")));
         if (channelId == null) throw notFoundChannel();
-        TechErrorChannel ch = writableChannel(channelId, session);
+        TechErrorChannel ch = contentWritableChannel(channelId, session);     // rapor açma = içerik yazma: EDIT paylaşımı da (9. sürüm)
         int year = intOf(b.get("year"), "year");
         int month = intOf(b.get("month"), "month");
         TechErrorReport r;
@@ -333,7 +333,7 @@ public class TechErrorReportController {
         TechErrorValues.Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
         Instant now = service.now();
 
-        Map<String, Object> rep = statusDto(rowOf(r), now);
+        Map<String, Object> rep = maskSharedPeople(statusDto(rowOf(r), now), session, r.getTeamId());
         rep.put("version", r.getVersion());
         rep.put("title", TechErrorTemplate.resolve(t.title(), ch.getName(), r.getReportYear(), r.getReportMonth(), t.lang()));
         Map<Long, String> names = service.displayNames(Arrays.asList(r.getCreatedById(), r.getUpdatedById(), r.getLastSentById()));
@@ -366,6 +366,9 @@ public class TechErrorReportController {
         }
         data.put("can_edit", canEdit);
         data.put("can_delete", writer && canDeleteReport(session, r.getTeamId(), r.getLastSentAt(), r.getSendState()));
+        // Gönderim / onay isteği takımın kendi kapsamı — paylaşımla düzenleyen gönderemez (9. sürüm); satır paylaşımla mı okunuyor
+        data.put("can_send", writer && canWriteOwn(session, r.getTeamId()));
+        data.put("shared_access", SessionScope.viewableOnlyByGrant(session, r.getTeamId()));
         data.put("team_email_set", team != null && !TechErrorReportSender.recipients(team).isEmpty());
         data.put("approval_detail", approvalDetail(r, ch, team, session, writer));
         data.put("template_update", canEdit ? service.refreshPreview(r, ch) : null);
@@ -419,7 +422,7 @@ public class TechErrorReportController {
     @DeleteMapping("/reports/{id}")
     public ResponseEntity<Map<String, Object>> deleteReport(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireWrite(session);
-        TechErrorReport r = writableReport(id, session);
+        TechErrorReport r = ownWritableReport(id, session);
         if (!canDeleteReport(session, r.getTeamId(), r.getLastSentAt(), r.getSendState())) {
             throw new SecurityException(Msg.t(
                     "Gönderilmiş bir raporu yalnız takım yöneticisi silebilir.",
@@ -645,7 +648,7 @@ public class TechErrorReportController {
     @PostMapping("/reports/{id}/send")
     public ResponseEntity<Map<String, Object>> send(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireWrite(session);
-        TechErrorReport r = writableReport(id, session);
+        TechErrorReport r = ownWritableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         // Yönetici alıcısı tanımlı kanal (S6): gönderim yalnız onaylı ve onaydan beri değişmemiş raporda, yöneticilere
@@ -706,7 +709,7 @@ public class TechErrorReportController {
     public ResponseEntity<Map<String, Object>> requestApproval(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireWrite(session);
         TechErrorApprovalService a = requireApprovals();
-        TechErrorReport r = writableReport(id, session);
+        TechErrorReport r = ownWritableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         TechErrorApprovalService.RequestResult res;
@@ -783,18 +786,20 @@ public class TechErrorReportController {
         Map<String, Object> m = new LinkedHashMap<>();
         boolean required = TechErrorApprovalService.approvalRequired(ch);
         List<String> execs = TechErrorReportSender.executiveRecipients(ch);
+        boolean sharedOnly = SessionScope.viewableOnlyByGrant(session, r.getTeamId());   // kişi verisi paylaşımla görünmez
         m.put("required", required);
         m.put("executive_count", execs.size());
-        m.put("executive_emails", execs);
+        m.put("executive_emails", sharedOnly ? null : execs);
         List<TechErrorApprovalService.Approver> apps = approvals == null || team == null ? List.of() : approvals.approvers(team.getId());
-        m.put("approvers", approverRows(apps));
+        m.put("approvers", approverRows(apps, sharedOnly));
+        m.put("approver_count", apps.size());
         Map<Long, String> names = service.displayNames(Arrays.asList(r.getApprovalRequestedById(), r.getApprovalDecidedById()));
         m.put("requested_by_name", nameOf(names, r.getApprovalRequestedById()));
         m.put("decided_by_name", nameOf(names, r.getApprovalDecidedById()));
         Map<String, Object> a = approvalDto(rowOf(r));
         m.put("approval", a);
         String state = String.valueOf(a.get("state"));
-        boolean canWrite = writer && canWrite(session, r.getTeamId());
+        boolean canWrite = writer && canWriteOwn(session, r.getTeamId());        // onay / gönderim paylaşımla açılmaz (9. sürüm)
         // İstenebilir: akış var, onaylayıcı var ve istek yok / reddedildi / eskidi; bekleyen istek sessiz süreden eskiyse
         // yeniden gönderilebilir (hatırlatma); ONAYLI ve değişmemiş rapor yeniden istenmez (onay boşa gitmesin — inceleme 2026-10-17)
         Instant now = service.now();
@@ -814,10 +819,15 @@ public class TechErrorReportController {
     }
 
     private static List<Map<String, Object>> approverRows(List<TechErrorApprovalService.Approver> apps) {
+        return approverRows(apps, false);
+    }
+
+    /** Onaylayıcı satırları; paylaşımla okuyana ad verilmez (kişi listesi) — yalnız sayı ve e-posta var/yok. */
+    private static List<Map<String, Object>> approverRows(List<TechErrorApprovalService.Approver> apps, boolean nameless) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (TechErrorApprovalService.Approver a : apps) {
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("name", a.name());
+            row.put("name", nameless ? null : a.name());
             row.put("has_email", a.email() != null);
             out.add(row);
         }
@@ -832,6 +842,19 @@ public class TechErrorReportController {
      */
     static Set<Long> visibleTeamIds(HttpSession session) {
         if (SessionScope.isGlobalViewer(session)) return null;
+        Set<Long> out = ownVisibleTeamIds(session);
+        out.addAll(SessionScope.grantViewTeamIds(session));              // erişim paylaşımı (9. sürüm, 2026-10-17): VIEW ve üstü okur
+        out.remove(null);
+        out.removeIf(t -> !TechErrorVisibilityService.visible(t));
+        return out;
+    }
+
+    /**
+     * Takımın KENDİ kapsamı (paylaşım hariç) — yönetim yüzeyleri (Ayarlar → Teknik hata raporu genel bakışı) bunu kullanır:
+     * yönetim alanları paylaşımla açılmaz (inceleme 2026-10-17). null = kurum geneli görüntüleyici.
+     */
+    static Set<Long> ownVisibleTeamIds(HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return null;
         Set<Long> out = new LinkedHashSet<>();
         List<Long> v = SessionScope.viewTeamIds(session);
         if (v != null) out.addAll(v);
@@ -843,6 +866,20 @@ public class TechErrorReportController {
         return out;
     }
 
+    /**
+     * Kişi verisi paylaşımla görünmez (proje kuralı, 4. inceleme turu 2026-10-12): yalnız paylaşımla okuyan kişi gönderim
+     * alıcılarını (adresler) görmez — yalnız sayısı kalır. Yönetici alıcıları ve onaylayıcı adları ilgili DTO'larda maskelenir.
+     */
+    static Map<String, Object> maskSharedPeople(Map<String, Object> row, HttpSession session, Long teamId) {
+        if (row == null || !SessionScope.viewableOnlyByGrant(session, teamId)) return row;
+        Object to = row.get("last_sent_to");
+        if (to != null) {
+            row.put("last_sent_to", null);
+            row.put("last_sent_count", TechErrorReportSender.parseAddresses(String.valueOf(to)).size());
+        }
+        return row;
+    }
+
     static boolean canRead(HttpSession session, Long teamId) {
         if (teamId == null) return false;
         if (SessionScope.isGlobalViewer(session)) return true;
@@ -850,16 +887,27 @@ public class TechErrorReportController {
         return v != null && v.contains(teamId);
     }
 
+    /**
+     * Rapor İÇERİĞİNİ yazma (değerler, görseller, rapor açma, şablonun son hâlini uygulama): takımın üyesi / yöneticisi
+     * ya da takım erişim paylaşımında EDIT (ve üstü) düzeyi olan (9. sürüm, 2026-10-17 — kullanıcı isteği: "raporlar
+     * paylaşıma açılabilsin"). Kanal / şablon / onay / gönderim / silme ve yönetici alıcıları {@link #canWriteOwn} ister.
+     */
     static boolean canWrite(HttpSession session, Long teamId) {
+        return canWriteOwn(session, teamId)
+                || (teamId != null && TechErrorVisibilityService.visible(teamId) && SessionScope.grantedEdit(session, teamId));
+    }
+
+    /** Takımın KENDİ yazma kapsamı (paylaşım hariç): kanal açma / düzenleme / silme, şablon, onay isteği, gönderim, rapor silme. */
+    static boolean canWriteOwn(HttpSession session, Long teamId) {
         if (teamId == null) return false;
         if (SessionScope.isGlobalAdmin(session)) return true;
         if (!TechErrorVisibilityService.visible(teamId)) return false;      // modül bu takıma kapalı (S6)
         return SessionScope.canManage(session, teamId) || SessionScope.isMemberOf(session, teamId);
     }
 
-    /** Hiç gönderilmemiş taslak: yazabilen siler; gönderilmiş rapor: yalnız yönetim kapsamı. */
+    /** Hiç gönderilmemiş taslak: takımın yazabileni siler; gönderilmiş rapor: yalnız yönetim kapsamı. Paylaşım silmez. */
     static boolean canDeleteReport(HttpSession session, Long teamId, Instant lastSentAt, String sendState) {
-        if (!canWrite(session, teamId)) return false;
+        if (!canWriteOwn(session, teamId)) return false;
         // Kuyruktaki gönderim teslim edilmiş olabilir: üye için "gönderilmiş" sayılır
         return (lastSentAt == null && !"QUEUED".equals(sendState)) || SessionScope.canManage(session, teamId);
     }
@@ -877,7 +925,7 @@ public class TechErrorReportController {
     private TechErrorChannel writableChannel(Long id, HttpSession session) {
         TechErrorChannel ch = readableChannel(id, session);
         if (ch == null) throw notFoundChannel();
-        if (!canWrite(session, ch.getTeamId())) {
+        if (!canWriteOwn(session, ch.getTeamId())) {
             throw new SecurityException(Msg.t(
                     "Bu kanalı yalnız takımın üyeleri ve yöneticileri değiştirebilir.",
                     "Only the team's members and managers can change this channel."));
@@ -899,8 +947,31 @@ public class TechErrorReportController {
         TechErrorReport r = readableReport(id, session);
         if (!canWrite(session, r.getTeamId())) {
             throw new SecurityException(Msg.t(
-                    "Bu raporu yalnız takımın üyeleri ve yöneticileri değiştirebilir.",
-                    "Only the team's members and managers can change this report."));
+                    "Bu raporu yalnız takımın üyeleri ve yöneticileri (ya da düzenleme paylaşımı olanlar) değiştirebilir.",
+                    "Only the team's members and managers (or people with an edit share) can change this report."));
+        }
+        return r;
+    }
+
+    /** Rapor AÇMA (içerik yazma kapsamı): takımın üyesi / yöneticisi ya da EDIT paylaşımı (9. sürüm); kanalı değiştirmez. */
+    private TechErrorChannel contentWritableChannel(Long id, HttpSession session) {
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        if (!canWrite(session, ch.getTeamId())) {
+            throw new SecurityException(Msg.t(
+                    "Bu kanalda rapor açmak için takımın üyesi ya da yöneticisi olmanız (ya da düzenleme paylaşımı almanız) gerekir.",
+                    "To open a report in this channel you must be a member or manager of the team (or have an edit share)."));
+        }
+        return ch;
+    }
+
+    /** Gönderim / onay isteği / silme: paylaşımla DEĞİL — takımın kendi yazma kapsamı (9. sürüm). */
+    private TechErrorReport ownWritableReport(Long id, HttpSession session) {
+        TechErrorReport r = readableReport(id, session);
+        if (!canWriteOwn(session, r.getTeamId())) {
+            throw new SecurityException(Msg.t(
+                    "Bu işlemi yalnız takımın üyeleri ve yöneticileri yapabilir; erişim paylaşımı raporu düzenletir, göndertmez.",
+                    "Only the team's members and managers can do this; an access share lets you edit the report, not send it."));
         }
         return r;
     }
@@ -943,12 +1014,15 @@ public class TechErrorReportController {
         m.put("section_count", t.sections().size());
         m.put("field_count", t.allFields().size());
         m.put("slot_count", t.allSlots().size());
-        m.put("can_edit", writer && canWrite(session, ch.getTeamId()));
+        m.put("can_edit", writer && canWriteOwn(session, ch.getTeamId()));       // kanal / şablon: takımın kendi kapsamı
+        m.put("can_report", writer && canWrite(session, ch.getTeamId()));        // rapor açma / içerik: paylaşım EDIT de (9. sürüm)
         m.put("can_delete", writer && SessionScope.canManage(session, ch.getTeamId()));
         m.put("can_manage", writer && SessionScope.canManage(session, ch.getTeamId()));
+        m.put("shared_access", SessionScope.viewableOnlyByGrant(session, ch.getTeamId()));
         // PO onayı (S6): yönetici alıcıları (takımı yönetenler değiştirir) — doluysa gönderim onaya bağlı
         List<String> execs = TechErrorReportSender.executiveRecipients(ch);
-        m.put("executive_emails", ch.getExecutiveEmails());
+        // Adresler kişi verisidir: yalnız paylaşımla okuyan sayıyı görür (inceleme 2026-10-17)
+        m.put("executive_emails", SessionScope.viewableOnlyByGrant(session, ch.getTeamId()) ? null : ch.getExecutiveEmails());
         m.put("executive_count", execs.size());
         m.put("approval_required", !execs.isEmpty());
         return m;

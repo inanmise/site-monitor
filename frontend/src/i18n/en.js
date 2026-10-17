@@ -19786,6 +19786,8 @@ export const EN = {
   'te.kpi.open': "Draft or changed after sending",
   'te.kpi.missing': "Not started",
   'te.kpi.inactive': "Inactive channels",
+  'te.sharedAccess': "Shared access",
+  'te.sharedAccessHint': "You see this team's reports through an access share: an edit share lets you write report content; channel, template, approval and sending stay with the team.",
   'te.kpi.hint.channels': "Number of active channels; click to clear the filter.",
   'te.kpi.hint.sent': "Active channels whose report for this period was sent; click to list only them.",
   'te.kpi.hint.open': "Channels whose report for this period is open but not sent, or changed after sending.",

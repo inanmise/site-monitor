@@ -19820,6 +19820,8 @@ export const TR = {
   'te.kpi.open': "Taslak ya da gönderimden sonra değişen",
   'te.kpi.missing': "Raporu başlanmamış",
   'te.kpi.inactive': "Pasif kanal",
+  'te.sharedAccess': "Paylaşımla erişim",
+  'te.sharedAccessHint': "Bu takımın raporlarını erişim paylaşımıyla görüyorsunuz: düzenleme paylaşımı rapor içeriğini yazdırır; kanal, şablon, onay ve gönderim takımın kendisinde kalır.",
   'te.kpi.hint.channels': "Aktif kanal sayısı; tıklayınca süzgeç kalkar.",
   'te.kpi.hint.sent': "Bu dönemin raporu gönderilmiş aktif kanallar; tıklayınca yalnız onlar listelenir.",
   'te.kpi.hint.open': "Bu dönemin raporu açılmış ama gönderilmemiş ya da gönderimden sonra değişmiş kanallar.",

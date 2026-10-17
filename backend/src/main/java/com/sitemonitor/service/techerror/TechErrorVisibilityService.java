@@ -66,7 +66,11 @@ public class TechErrorVisibilityService {
         return false;
     }
 
-    /** Oturumun görüş + yönetim + üyelik takımları (denetleyicinin {@code visibleTeamIds}'i ile aynı küme). */
+    /**
+     * Oturumun görüş + yönetim + üyelik takımları + erişim paylaşımıyla gördüğü takımlar (denetleyicinin
+     * {@code visibleTeamIds}'i ile aynı küme; 9. sürüm, inceleme 2026-10-17: kendi takımları kapalı ama paylaşan takım açık
+     * olan kullanıcı modülü görür — menü ve 403 kapısı aynı kümeye bakar).
+     */
     static Set<Long> sessionTeamIds(HttpSession session) {
         Set<Long> out = new LinkedHashSet<>();
         List<Long> v = SessionScope.viewTeamIds(session);
@@ -74,6 +78,7 @@ public class TechErrorVisibilityService {
         List<Long> m = SessionScope.manageTeamIds(session);
         if (m != null) out.addAll(m);
         out.addAll(SessionScope.memberTeamIds(session));
+        out.addAll(SessionScope.grantViewTeamIds(session));
         out.remove(null);
         return out;
     }

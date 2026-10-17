@@ -55,7 +55,7 @@ public class TechErrorSettingsController {
         boolean global = SessionScope.isGlobalAdmin(session);
         Set<Long> enabled = visibility.enabledTeamIds();
         Map<Long, Team> teamMap = new LinkedHashMap<>();
-        Collection<Long> scope = global ? null : TechErrorReportController.visibleTeamIds(session);
+        Collection<Long> scope = global ? null : TechErrorReportController.ownVisibleTeamIds(session);   // yönetim yüzeyi: paylaşım açmaz
         for (Team t : scope == null ? teams.findAll() : teams.findAllById(scope)) teamMap.put(t.getId(), t);
         List<TechErrorChannel> chs = service.channels(scope);
         YearMonth period = service.defaultPeriod();

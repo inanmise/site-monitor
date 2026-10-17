@@ -343,12 +343,22 @@ function menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, withOpen) {
   return items
 }
 
+/** Rapor içeriğini yazabilir mi: `can_report` (9. sürüm: paylaşım EDIT de); eski sunucuda `can_edit`. */
+export function canReport(ch) {
+  return ch?.can_report != null ? !!ch.can_report : !!ch?.can_edit
+}
+
 function ChannelChips({ ch }) {
   const t = useT()
-  if (ch.active && !ch.approval_required) return null
+  if (ch.active && !ch.approval_required && !ch.shared_access) return null
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {!ch.active && <Badge variant="outline">{t('te.inactive')}</Badge>}
+      {ch.shared_access && (
+        <Badge variant="outline" className="rounded-md overflow-visible whitespace-normal" data-slot="te-shared" title={t('te.sharedAccessHint')}>
+          {t('te.sharedAccess')}
+        </Badge>
+      )}
       {ch.approval_required && (
         <Badge variant="secondary" className="rounded-md overflow-visible whitespace-normal" data-slot="te-channel-approval">
           {t('te.approvalChip', ch.executive_count || 0)}
@@ -361,7 +371,7 @@ function ChannelChips({ ch }) {
 function PeriodReportButton({ ch, period, busy, onReport, size = 'sm' }) {
   const t = useT()
   const pr = ch.period_report
-  const canStart = ch.can_edit && ch.active
+  const canStart = canReport(ch) && ch.active
   if (!pr?.id && !canStart) return null
   return (
     <Button type="button" size={size} variant={pr?.id ? 'outline' : 'default'} onClick={onReport} disabled={busy === `r${ch.id}`}
