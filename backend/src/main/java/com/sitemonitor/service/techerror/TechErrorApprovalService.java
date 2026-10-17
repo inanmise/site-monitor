@@ -115,7 +115,9 @@ public class TechErrorApprovalService {
         Set<String> seenMail = new LinkedHashSet<>();
         for (AppUser u : users.findActiveByOrgRoleInTeam(teamId, APPROVER_ROLE)) {
             String mail = u.getEmail() == null ? null : u.getEmail().trim();
-            if (mail != null && (mail.isEmpty() || !seenMail.add(mail.toLowerCase(Locale.ROOT)))) mail = mail.isEmpty() ? null : mail;
+            // Boş adres → yok; aynı kutuyu paylaşan ikinci PO → yok (inceleme 2026-10-17: eski satır adresi aynen bırakıyordu —
+            // ortak kutuya iki istek postası, iki belirteç). Uygulama içi onay yine açık.
+            if (mail != null && (mail.isEmpty() || !seenMail.add(mail.toLowerCase(Locale.ROOT)))) mail = null;
             out.add(new Approver(u.getId(), displayName(u), mail));
         }
         return out;

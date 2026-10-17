@@ -714,7 +714,32 @@ public class TechErrorReportService {
         String prepared = displayName(r.getUpdatedById() != null ? r.getUpdatedById() : r.getCreatedById());
         // Geçen ayın değerleri (2026-10-17, 4b): kutucuk farkları ve {d:…} cümleleri — CANLI (geçen ay düzeltildiyse fark da güncel)
         return new TechErrorPdfInput(t, v, ch.getName(), teamName, r.getReportYear(), r.getReportMonth(), prepared, now(), imgs,
-                trend(r, t, v), previous);
+                trend(r, t, v), previous, provenance(r, ch));
+    }
+
+    /**
+     * Kimlik satırları (2026-10-17, 10. sürüm): oluşturan + zamanı, son düzenleyen + zamanı, onay akışlı kanalda onay durumu ve
+     * — onay BU içeriği kapsıyorsa (APPROVED ∧ approval_rev = content_rev) — onaylayan + zamanı. İçerik onaydan sonra değiştiyse
+     * {@code stale}: eski onaylayan basılmaz (gönderim de bu durumda APPROVAL_STALE ile durur). Adlar o ANKİ görünen ad (silinmiş
+     * kullanıcı "—").
+     */
+    public TechErrorPdfInput.Provenance provenance(TechErrorReport r, TechErrorChannel ch) {
+        String approvalState = null;
+        String approvedBy = null;
+        Instant approvedAt = null;
+        if (TechErrorApprovalService.approvalRequired(ch)) {
+            long contentRev = r.getContentRev() == null ? 0L : r.getContentRev();
+            String st = r.getApprovalState();
+            if (st == null) approvalState = "none";
+            else if (r.getApprovalRev() != null && contentRev > r.getApprovalRev()) approvalState = "stale";
+            else approvalState = st.toLowerCase(Locale.ROOT);
+            if ("approved".equals(approvalState)) {
+                approvedBy = displayName(r.getApprovalDecidedById());
+                approvedAt = r.getApprovalDecidedAt();
+            }
+        }
+        return new TechErrorPdfInput.Provenance(displayName(r.getCreatedById()), r.getCreatedAt(),
+                r.getUpdatedById() == null ? null : displayName(r.getUpdatedById()), r.getUpdatedAt(), approvalState, approvedBy, approvedAt);
     }
 
     /**

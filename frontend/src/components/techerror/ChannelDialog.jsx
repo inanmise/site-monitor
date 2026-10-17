@@ -140,7 +140,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
             <Field label={t('te.ch.execEmails')} hint={t('te.ch.execEmailsHint')} error={errors.executive_emails} name="executive_emails">
               {({ id, describedBy, invalid }) => (
                 <Textarea id={id} value={execEmails} rows={2} aria-describedby={describedBy} aria-invalid={invalid}
-                  placeholder="ad.soyad@kurum.com, ad.soyad@kurum.com"
+                  placeholder={t('te.ch.execPlaceholder')}
                   onChange={(e) => { setExecEmails(e.target.value); setErrors((x) => ({ ...x, executive_emails: undefined })) }} />
               )}
             </Field>

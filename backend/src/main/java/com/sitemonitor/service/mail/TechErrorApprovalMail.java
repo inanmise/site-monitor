@@ -59,7 +59,7 @@ public final class TechErrorApprovalMail {
             }
             if (reportUrl != null) d.button(reportUrl, en ? "Open in Site Monitor" : "Site Monitor'de aç", Variant.OUTLINE);
         };
-        return TechErrorReportMail.buildFull(in, prepared, appUrl, fileName, intro);
+        return TechErrorReportMail.buildFull(in, prepared, appUrl, fileName, intro, TechErrorReportMail.Audience.APPROVER);
     }
 
     /** Karar postası (isteyene). {@code sendState}: SENT | QUEUED | SKIPPED | FAILED | <hata kodu>; red için null. */

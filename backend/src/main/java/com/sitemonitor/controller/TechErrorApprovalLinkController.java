@@ -241,11 +241,12 @@ public class TechErrorApprovalLinkController {
     }
 
     static ResponseEntity<String> htmlPage(String title, String bodyHtml, String accent) {
-        String html = "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+        String html = "<!DOCTYPE html><html lang='" + Msg.t("tr", "en") + "'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             + "<title>" + esc(title) + " — Site Monitor</title>"
-            + "<meta name='description' content='Site Monitor teknik hata raporu onayı: e-postadaki bağlantıyla raporu"
-            + " giriş yapmadan onaylayın ya da gerekçesiyle reddedin.'>"
+            + "<meta name='description' content='" + Msg.t("Site Monitor teknik hata raporu onayı: e-postadaki bağlantıyla raporu"
+            + " giriş yapmadan onaylayın ya da gerekçesiyle reddedin.",
+            "Site Monitor technical error report approval: approve the report from the e-mail link without signing in, or reject it with a reason.") + "'>"
             + "<link rel='icon' href='/favicon.ico' sizes='32x32'><link rel='icon' href='/favicon.svg' type='image/svg+xml'>"
             + "<style>"
             + "body{margin:0;background:#eef1f4;font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#1F2937;-webkit-font-smoothing:antialiased}"

@@ -467,4 +467,15 @@ class TechErrorApprovalServiceTest {
         var ev = events.findAll().stream().filter(e -> "APPROVAL_REQUEST".equals(e.getKind())).findFirst().orElseThrow();
         assertThat(ev.getDetailJson()).contains("PDF_BUSY").doesNotContain("po1@example.com");   // kimseye gitmedi
     }
+
+    @Test
+    @DisplayName("onaylayıcılar: aynı kutuyu paylaşan ikinci PO'nun e-postası yok (tek istek postası, tek belirteç); boş adres yok; her ikisi listede (uygulama içi onay)")
+    void approversSharedMailboxDedupe() {
+        user("po-ortak-a", "PO Üç", "ortak@example.com", "PO", 77L, Set.of(77L), true);
+        user("po-ortak-b", "PO Dört", "ORTAK@example.com", "PO", 77L, Set.of(77L), true);
+        user("po-adressiz", "PO Beş", "  ", "PO", 77L, Set.of(77L), true);
+        java.util.List<TechErrorApprovalService.Approver> list = approvals.approvers(77L);
+        assertThat(list).extracting(TechErrorApprovalService.Approver::name).containsExactlyInAnyOrder("PO Üç", "PO Dört", "PO Beş");
+        assertThat(list.stream().map(TechErrorApprovalService.Approver::email).filter(java.util.Objects::nonNull).toList()).containsExactly("ortak@example.com");
+    }
 }

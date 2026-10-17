@@ -920,4 +920,25 @@ class TechErrorReportPdfWriterTest {
         int tone = html.lastIndexOf("data-tone=\"", at);
         return html.substring(tone + 11, html.indexOf('"', tone + 11));
     }
+
+    // ── Kimlik satırları (2026-10-17, 10. sürüm) ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("kapak kimlik satırları: Oluşturan / Son düzenleyen / Onaylayan / Üretim ayrı satırlar, band uzar, ilk bölüm bandın altında kalır; kimlik yoksa eski tek satır")
+    void coverProvenanceLines() throws Exception {
+        TechErrorPdfInput base = input("tr", Map.of());
+        TechErrorPdfInput.Provenance p = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                "Ali Veli", Instant.parse("2026-09-05T06:12:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
+        String s = text(new TechErrorReportPdfWriter().write(base.withProvenance(p)));
+        assertThat(s).contains("Oluşturan: Ayşe Yılmaz · 03.09.2026 14:05").contains("Son düzenleyen: Ali Veli · 05.09.2026 09:12")
+                .contains("Onaylayan: Mehmet PO · 06.09.2026 10:00").contains("Üretim: ").doesNotContain("Hazırlayan:");
+        assertThat(s.indexOf("Oluşturan:")).isLessThan(s.indexOf("Son düzenleyen:"));
+        assertThat(s.indexOf("Onaylayan:")).isLessThan(s.indexOf("Üretim:"));
+        // Onay bekleyen: durum satırı
+        TechErrorPdfInput.Provenance pending = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                null, null, "pending", null, null);
+        assertThat(text(new TechErrorReportPdfWriter().write(base.withProvenance(pending)))).contains("Onay: PO onayı bekleniyor").doesNotContain("Onaylayan:");
+        // Eski imza: tek satır
+        assertThat(text(new TechErrorReportPdfWriter().write(base))).contains("Hazırlayan: Ayşe Yılmaz").doesNotContain("Oluşturan:");
+    }
 }

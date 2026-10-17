@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send, Trash2,
-  Undo2, ShieldCheck } from 'lucide-react'
+  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send,
+  Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -21,6 +21,7 @@ import {
 import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
+import MailPreviewDialog from './MailPreviewDialog.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
   reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
@@ -126,6 +127,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [pending, setPendingMap] = useState({})         // yarım yazılmış sayı alanları (taslağa girmemiş)
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
   const historyBtnRef = useRef(null)
   const titleRef = useRef(null)
   const seq = useRef(0)
@@ -819,6 +821,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <StatusBadge status={report.status} sendState={report.last_send_status} />
           <TeamBadge teamId={channel?.team_id} teamName={channel?.team_name} static wrap />
+          {report.created_at && (
+            <span className="[overflow-wrap:anywhere]" data-slot="te-created">· {t('te.createdLine', fmtDateTime(report.created_at, uiLang), report.created_by_name || '—')}</span>
+          )}
           <span>· {t('te.lastSaved', fmtDateTime(report.updated_at, uiLang), report.updated_by_name || '—')}</span>
           {report.last_sent_at && (
             <span className="[overflow-wrap:anywhere]">· {t('te.lastSent', fmtDateTime(report.last_sent_at, uiLang), report.last_sent_to || '—')}</span>
@@ -918,6 +923,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       </PendingInputContext.Provider>
       </SectionOpenContext.Provider>
 
+      {mailPreviewOpen && (
+        <MailPreviewDialog reportId={reportId} open onClose={() => setMailPreviewOpen(false)} uiLang={uiLang}
+          onSend={!readOnly && canSend && busy == null && report.status !== 'sending'
+            && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
+          sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
+      )}
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 
@@ -954,6 +965,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             data-slot="te-pdf">
             {busy === 'pdf' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden="true" />}
             {t('te.downloadPdf')}
+          </Button>
+          <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy != null} data-slot="te-mail-preview-btn"
+            onClick={async () => { if (!(await ensureSaved())) return; setMailPreviewOpen(true) }}>
+            <Eye aria-hidden="true" /> {t('te.mail.preview')}
           </Button>
           {!readOnly && canSend && !approvalRequired && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send"

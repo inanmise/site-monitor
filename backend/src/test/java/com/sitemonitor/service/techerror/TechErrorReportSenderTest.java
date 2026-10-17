@@ -9,6 +9,7 @@ import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.repository.TechErrorReportRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.EmailNotificationService;
+import com.sitemonitor.service.mail.TechErrorReportMail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,75 @@ class TechErrorReportSenderTest {
         when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(1);
         when(reports.releaseClaim(anyLong(), any(), any())).thenReturn(1);
         when(reports.finishNotSent(anyLong(), any(), anyString(), anyString(), any())).thenReturn(1);
+    }
+
+    @Test
+    @DisplayName("önizleme (10. sürüm): gönderimle aynı gövde ve konu, cid görseller data: URI, ek adı; talep / posta / günlük yok; alıcı yoksa problem kodu; EXECUTIVE yolu To / CC")
+    void previewBuildsWithoutSending() throws Exception {
+        pdfReturns(new byte[1000]);                                  // gönderimle aynı merdiven: PDF üretilir, izin renderPdf'te
+        TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
+                "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(1600, 400), 1600, 400)));
+        when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.subject()).isEqualTo(TechErrorReportMail.subject(withImage));
+        assertThat(p.role()).isEqualTo("TEAM");
+        assertThat(p.to()).isEqualTo(TechErrorReportSender.recipients(team));
+        assertThat(p.cc()).isEmpty();
+        assertThat(p.problem()).isNull();
+        assertThat(p.fileName()).endsWith(".pdf");
+        assertThat(p.embeddedImages()).isEqualTo(1);
+        assertThat(p.html()).contains("data:image/").doesNotContain("cid:te-img-");
+        assertThat(p.html()).contains("TEKNİK HATA RAPORU");
+        assertThat(p.html()).doesNotContain("cid:");                 // marka logosu da data: URI (duman testi: iframe'de kırık görsel)
+        assertThat(TechErrorReportSender.inlineBrandLogo("<img src=\"cid:brand-logo\" alt=\"x\">")).startsWith("<img src=\"data:image/png;base64,").endsWith("\" alt=\"x\">");
+        assertThat(TechErrorReportSender.inlineBrandLogo("no logo")).isEqualTo("no logo");
+        assertThat(p.provenance()).isNull();                         // pdfInput sahte: kimlik yok → eski "Hazırlayan" satırı
+        assertThat(p.html()).contains("Hazırlayan: Ayşe");
+        assertThat(p.pdfBytes()).isEqualTo(1000);
+        assertThat(p.maxMailMb()).isEqualTo(sender.maxMailMb);
+        assertThat(p.html()).contains("takımının adresi olduğu");  // TEAM dipnotu
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+        verify(reports, never()).claimSend(any(), any(), any());
+        verify(logs, never()).save(any());
+        // Yönetici alıcılı kanal: To yöneticiler, CC takım (yöneticide zaten olan adres tekrar etmez)
+        channel.setExecutiveEmails("ceo@example.com, " + TechErrorReportSender.recipients(team).get(0));
+        TechErrorReportSender.Preview ex = sender.preview(report, channel, team, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(ex.role()).isEqualTo("EXECUTIVE");
+        assertThat(ex.to()).hasSize(2).contains("ceo@example.com");
+        assertThat(ex.cc()).doesNotContain(TechErrorReportSender.recipients(team).get(0));
+        assertThat(ex.html()).contains("yönetici (executive) alıcısı").doesNotContain("takımının adresi olduğu");   // EXECUTIVE dipnotu
+        // PDF tek başına sınırı aşıyor: gövde gelir, problem PDF_TOO_LARGE (gönderim 409 verir)
+        sender.maxMailMb = 1;
+        pdfReturns(new byte[2 * 1024 * 1024]);
+        TechErrorReportSender.Preview big = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(big.problem()).isEqualTo("PDF_TOO_LARGE");
+        assertThat(big.pdfBytes()).isEqualTo(2 * 1024 * 1024);
+        assertThat(big.html()).isNotBlank();
+        // PDF + gömülü görsel toplamı sınırı aşıyor: görseller yalnız PDF'te (gönderimdeki kuralın aynısı), problem yok
+        pdfReturns(new byte[1024 * 1024 - 64]);
+        TechErrorReportSender.Preview sum = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(sum.problem()).isNull();
+        assertThat(sum.embeddedImages()).isZero();
+        assertThat(sum.skippedImages()).isEqualTo(1);
+        assertThat(sum.html()).contains("te-image-pdf");           // yuva "PDF ekinde" kutusu; logo yine data: URI
+        sender.maxMailMb = 15;
+        pdfReturns(new byte[1000]);
+        // Takım adresi yok: gövde yine gelir, problem kodu söyler
+        team.setEmail("");
+        TechErrorReportSender.Preview noMail = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(noMail.problem()).isEqualTo("TEAM_EMAIL_MISSING");
+        assertThat(noMail.to()).isEmpty();
+        assertThat(noMail.html()).isNotBlank();
+        // Görsel hazırlama hatası postayı durdurmadığı gibi önizlemeyi de durdurmaz
+        sender.mailImagePreparer = (in, budget) -> { throw new IllegalStateException("ImageIO yok"); };
+        assertThat(sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM).skippedImages()).isEqualTo(1);
+        assertThat(TechErrorReportSender.inlineCids("<img src=\"cid:a\">", List.of(new EmailNotificationService.InlineImage("a", new byte[] { 1 }, null))))
+                .isEqualTo("<img src=\"data:image/png;base64,AQ==\">");
+        assertThat(TechErrorReportSender.inlineCids("x", null)).isEqualTo("x");
+        // Önek çakışması (inceleme): "a" "a-b"nin öneki — her src kendi görselini alır
+        assertThat(TechErrorReportSender.inlineCids("<img src=\"cid:a-b\"><img src=\"cid:a\">",
+                List.of(new EmailNotificationService.InlineImage("a", new byte[] { 1 }, null), new EmailNotificationService.InlineImage("a-b", new byte[] { 2 }, null))))
+                .isEqualTo("<img src=\"data:image/png;base64,Ag==\"><img src=\"data:image/png;base64,AQ==\">");
     }
 
     /** renderPdf yükleyiciyi gerçekten çağırır (izin ÖNCE, görseller SONRA — sıra testte de korunur). */

@@ -89,6 +89,17 @@ public final class TechErrorReportMail {
     /** {@link #buildFull(TechErrorPdfInput, TechErrorMailImages.Result, String, String)} + banddan sonra ek blok (null = yok). */
     public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName,
                                   Intro intro) {
+        return buildFull(in, prepared, appUrl, fileName, intro, Audience.TEAM);
+    }
+
+    /**
+     * Alıcı kitlesi (inceleme 2026-10-17): dipnotun "bu e-postayı neden aldınız" cümlesi teslim yoluna göre — TEAM takım adresi
+     * (eski metin, bayt bayt), EXECUTIVE kanalın yönetici alıcısı (+ onaylayan PO, kimlik varsa), APPROVER onay isteği alan PO.
+     */
+    public enum Audience { TEAM, EXECUTIVE, APPROVER }
+
+    public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName,
+                                  Intro intro, Audience audience) {
         TechErrorMailImages.Result imgs = prepared == null ? TechErrorMailImages.Result.empty() : prepared;
         boolean en = in.template().en();
         String lang = in.template().lang();
@@ -130,14 +141,38 @@ public final class TechErrorReportMail {
         }
         String base = appUrl == null ? "" : appUrl.replaceAll("/+$", "");
         if (!base.isBlank()) d.button(base + "/?tab=channelreports", en ? "Open technical error reports →" : "Teknik hata raporlarını aç →");
-        String why = en
-                ? "You received this e-mail because it is the team address of " + nz(in.teamName()) + " and a team member sent the report from Site Monitor."
-                : "Bu e-posta, " + nz(in.teamName()) + " takımının adresi olduğu ve bir takım üyesi raporu Site Monitor'den gönderdiği için geldi.";
+        String why = whyText(in, audience == null ? Audience.TEAM : audience, en);
         d.footerWhyCustom(MailKit.esc(why), why);
         d.footerMeta(en ? "Site Monitor — technical error report" : "Site Monitor — teknik hata raporu", "Site Monitor");
         List<InlineImage> inline = new ArrayList<>();
         for (TechErrorMailImages.Prepared p : imgs.embedded().values()) inline.add(p.inline());
         return new Built(d.build(), List.copyOf(inline), imgs.embedded().size(), imgs.skipped().size() + imgs.unreadable().size());
+    }
+
+    /** Dipnot cümlesi; EXECUTIVE'de onaylayan PO ve zamanı eklenir (kimlik {@code approved} ise). */
+    static String whyText(TechErrorPdfInput in, Audience audience, boolean en) {
+        return switch (audience) {
+            case EXECUTIVE -> {
+                String base = en
+                        ? "You received this e-mail because you are a registered executive recipient of the " + nz(in.channelName())
+                                + " channel; the team address of " + nz(in.teamName()) + " is in Cc."
+                        : "Bu e-posta, " + nz(in.channelName()) + " kanalının yönetici (executive) alıcısı olarak tanımlı olduğunuz için geldi; "
+                                + nz(in.teamName()) + " takımının adresi bilgidedir.";
+                TechErrorPdfInput.Provenance p = in.provenance();
+                if (p != null && p.approved()) {
+                    base += en ? " The report was approved by " + nz(p.approvedBy()) + (p.approvedAt() == null ? "" : " on " + STAMP.format(p.approvedAt())) + "."
+                            : " Raporu " + nz(p.approvedBy()) + (p.approvedAt() == null ? "" : " " + STAMP.format(p.approvedAt()) + " tarihinde") + " onayladı.";
+                }
+                yield base;
+            }
+            case APPROVER -> en
+                    ? "You received this e-mail because you are a PO approver of " + nz(in.teamName())
+                            + "; the report waits for your approval before it goes to the executives."
+                    : "Bu e-posta, " + nz(in.teamName()) + " takımının PO onaylayıcısı olduğunuz için geldi; rapor yöneticilere gönderilmeden önce onayınızı bekliyor.";
+            default -> en
+                    ? "You received this e-mail because it is the team address of " + nz(in.teamName()) + " and a team member sent the report from Site Monitor."
+                    : "Bu e-posta, " + nz(in.teamName()) + " takımının adresi olduğu ve bir takım üyesi raporu Site Monitor'den gönderdiği için geldi.";
+        };
     }
 
     // ── Kapak bandı ──────────────────────────────────────────────────────────────────────────────────
@@ -153,17 +188,67 @@ public final class TechErrorReportMail {
                 + "<p style=\"margin:0;font-size:22px;line-height:30px;font-weight:600;color:" + WHITE + ";word-break:break-word;overflow-wrap:anywhere\">" + MailKit.esc(in.title()) + "</p>"
                 + "<p style=\"margin:8px 0 0;font-size:14px;line-height:20px;color:" + NAVY_SUB + ";word-break:break-word;overflow-wrap:anywhere\">"
                 + MailKit.esc(join(in.teamName(), in.channelName(), period)) + "</p>"
-                + "<p style=\"margin:6px 0 0;font-size:12px;line-height:16px;color:" + NAVY_META + "\">" + MailKit.esc(meta(in, en)) + "</p>"
+                + metaHtml(in, en)
                 + "</td></tr></table>";
     }
 
     static String bandPlain(TechErrorPdfInput in, String period, boolean en) {
-        return in.title() + "\n" + join(in.teamName(), in.channelName(), period) + "\n" + meta(in, en);
+        return in.title() + "\n" + join(in.teamName(), in.channelName(), period) + "\n" + String.join("\n", metaLines(in, en));
     }
 
-    private static String meta(TechErrorPdfInput in, boolean en) {
-        return (en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + " · " + (en ? "Generated: " : "Üretim: ")
-                + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt()) + (en ? " (Turkey time)" : " (Türkiye saati)");
+    private static String metaHtml(TechErrorPdfInput in, boolean en) {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (String line : metaLines(in, en)) {
+            sb.append("<p style=\"margin:").append(first ? "6px" : "2px").append(" 0 0;font-size:12px;line-height:16px;color:").append(NAVY_META)
+                    .append("\" data-slot=\"te-mail-provenance\">").append(MailKit.esc(line)).append("</p>");
+            first = false;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Band alt satırları. Kimlik yoksa (eski imza) tek satır "Hazırlayan · Üretim" — bayt bayt eski çıktı. Kimlik varsa
+     * (2026-10-17, 10. sürüm — kullanıcı isteği: oluşturan ve onaylayan görünsün): "Oluşturan: A · tarih", farklıysa
+     * "Son düzenleyen: B · tarih", onay akışlı kanalda "Onaylayan: C · tarih" ya da onay durumu, sonra "Üretim: tarih (Türkiye saati)".
+     * PDF kapağıyla aynı metinler ({@link #provenanceLines}).
+     */
+    static List<String> metaLines(TechErrorPdfInput in, boolean en) {
+        String generated = (en ? "Generated: " : "Üretim: ") + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt())
+                + (en ? " (Turkey time)" : " (Türkiye saati)");
+        if (in.provenance() == null) {
+            return List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + " · " + generated);
+        }
+        List<String> out = new ArrayList<>(provenanceLines(in.provenance(), en));
+        out.add(generated);
+        return out;
+    }
+
+    /** Oluşturan / son düzenleyen / onay satırları — posta ve PDF kapağı için ortak (sıra ve sözcükler aynı). */
+    public static List<String> provenanceLines(TechErrorPdfInput.Provenance p, boolean en) {
+        List<String> out = new ArrayList<>();
+        out.add((en ? "Created by: " : "Oluşturan: ") + nz(p.createdBy()) + stamp(p.createdAt()));
+        if (p.updatedDiffers() || (p.updatedAt() != null && p.createdAt() != null && !p.updatedAt().equals(p.createdAt()) && p.updatedBy() != null)) {
+            out.add((en ? "Last edited by: " : "Son düzenleyen: ") + nz(p.updatedBy()) + stamp(p.updatedAt()));
+        }
+        if (p.approvalState() != null) {
+            if (p.approved()) out.add((en ? "Approved by: " : "Onaylayan: ") + nz(p.approvedBy()) + stamp(p.approvedAt()));
+            else out.add((en ? "Approval: " : "Onay: ") + approvalText(p.approvalState(), en));
+        }
+        return out;
+    }
+
+    private static String stamp(Instant t) {
+        return t == null ? "" : " · " + STAMP.format(t);
+    }
+
+    static String approvalText(String state, boolean en) {
+        return switch (state == null ? "" : state) {
+            case "pending" -> en ? "awaiting PO approval" : "PO onayı bekleniyor";
+            case "rejected" -> en ? "rejected — back to draft" : "reddedildi — taslağa döndü";
+            case "stale" -> en ? "content changed after approval — re-approval needed" : "içerik onaydan sonra değişti — yeniden onay gerekir";
+            default -> en ? "not requested yet" : "henüz onaya gönderilmedi";
+        };
     }
 
     // ── Yönetici özeti ───────────────────────────────────────────────────────────────────────────────
