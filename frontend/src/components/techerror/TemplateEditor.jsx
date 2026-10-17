@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileText, Gauge, History, ListPlus, Plus, RotateCcw, Save, ScrollText, Table2, Trash2,
-  TrendingUp, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileSearch, FileText, Gauge, History, ListPlus, Plus, RefreshCw, RotateCcw, Save,
+  ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
@@ -129,6 +129,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const [serverError, setServerError] = useState(null)
   const [conflict, setConflict] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Örnek PDF (R19) hazırlanıyor — düğme kilitli, adı "hazırlanıyor"
+  const [previewing, setPreviewing] = useState(false)
   const [showErrors, setShowErrors] = useState(false)
   const [backup, setBackup] = useState(null)
   const seq = useRef(0)
@@ -298,6 +300,59 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   }
 
   /**
+   * ÖRNEK PDF (2026-10-17, R19 — kullanıcı onayı): düzenleyicideki GÜNCEL taslak (kaydedilmemiş değişiklikler dahil) sunucuda
+   * örnek değerlerle PDF'e basılır ve yeni sekmede açılır; hiçbir şey kaydedilmez ya da gönderilmez. Salt okuyan da önizler.
+   * Kayıtla aynı kapı: işaretli (hatalı) alan varsa istek gitmez, alanlar gösterilir. Sekme TIKLAMA ANINDA açılır (PDF birkaç
+   * saniye sürer; istek bittikten sonra açılan pencereyi tarayıcı engeller); tarayıcı yine engellerse PDF indirilir.
+   */
+  async function previewPdf() {
+    if (!draft || previewing || saving) return
+    if (Object.keys(errors).length) {
+      setShowErrors(true)
+      openMany([...errorCountsBySection(errors, (k) => templateErrorSection(k, draft)).keys()])
+      toast.error(t('te.tpl.previewFixErrors'))
+      return
+    }
+    let win = null
+    try { win = window.open('', '_blank') } catch { win = null }
+    if (win) {
+      try {
+        win.opener = null
+        win.document.title = t('te.tpl.previewPdfTab')
+        win.document.body.textContent = t('te.tpl.previewPdfTab')
+      } catch { /* sekmeye yazılamadı — boş kalır, PDF gelince dolar */ }
+    }
+    setPreviewing(true)
+    try {
+      const res = await api.techErrors.templatePreviewPdf(channelId, draft)
+      if (!res?.success || !res.blob) {
+        try { win?.close() } catch { /* kapanmış */ }
+        toast.error(res?.error || t('te.tpl.previewPdfError'))
+        return
+      }
+      const url = URL.createObjectURL(res.blob)
+      let shown = false
+      if (win && !win.closed) {
+        try { win.location.href = url; shown = true } catch { shown = false }
+      }
+      if (!shown) {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = res.name || 'sablon-onizleme.pdf'
+        a.click()
+        toast.info(t('te.tpl.previewPdfDownloaded'))
+      }
+      // Sekme PDF'i okuduktan sonra adres bırakılır (hemen bırakılırsa sekme boş kalabilir)
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      try { win?.close() } catch { /* kapanmış */ }
+      toast.error(e?.message || t('te.tpl.previewPdfError'))
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  /**
    * Sürüm geçmişinden bir sürümü TASLAĞA yükler (2026-10-14): sunucuya bir şey yazılmaz; kaydedince yeni sürüm olur.
    * Kaydedilmemiş değişiklik varsa onay sorulur. Pencerenin kapanması için true döner.
    */
@@ -399,6 +454,14 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
           <Button ref={versionsBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-versions-open"
             onClick={() => setVersionsOpen(true)}>
             <History aria-hidden="true" /> {t('te.ver.open')}
+          </Button>
+          {/* Örnek PDF (R19): salt okuyan da önizler; kayıt sürerken ve PDF hazırlanırken kilitli */}
+          <Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-tpl-preview-pdf"
+            disabled={previewing || saving} aria-busy={previewing || undefined} title={t('te.tpl.previewPdfHint')} onClick={previewPdf}>
+            {previewing
+              ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+              : <FileSearch aria-hidden="true" />}
+            {previewing ? t('te.tpl.previewPdfBusy') : t('te.tpl.previewPdf')}
           </Button>
         </div>
       </div>

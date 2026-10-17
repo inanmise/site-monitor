@@ -34,6 +34,11 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  * satırlı TABLO (başlık her sayfada tekrar, sayılar sağa yaslı) ve açıklamalarda madde / alt madde / kalın yazı
  * ({@link TechErrorRichText}).
  *
+ * <p>2026-10-17 (R19): kapak dışındaki sayfalarda ÜST BİLGİ (kanal · dönem, sığarsa rapor başlığı — sayfa numarasıyla
+ * birlikte en sonda basılır, devam sayfalarının içeriği bandın altından başlar); en az {@link #TOC_MIN_PAGES} içerik
+ * sayfasında ilk sayfanın arkasına İÇİNDEKİLER (yalnız basılan bölümler, sayfa numarası + iç bağlantı); her uzunlukta
+ * PDF YER İMLERİ. {@code in.sample()} (şablon önizlemesi) ilk sayfaya "ÖRNEK ÖNİZLEME" şeridini ekler.
+ *
  * <p>Yazıcı hesaplamaz: adetleri kullanıcı girer, otomatik oranları ({@code TechErrorCalc}) servis PDF girdisini kurarken
  * hesaplar. Dil şablondan gelir (TR / EN etiketleri, ay adları,
  * sayı biçimi). Döngüler girdiyle sınırlıdır (bölüm ≤ 20, alan ≤ 30, başlık ≤ 30, yuva ≤ 40, metin ≤ 10 000 karakter).
@@ -57,6 +62,15 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private final PdfCanvas c = new PdfCanvas();
     private boolean en;
     private float embedScale = PdfCanvas.EMBED_SCALE;
+
+    /**
+     * İçindekiler sayfası en az bu kadar İÇERİK sayfasında eklenir (2026-10-17, R19 — kullanıcı onayı); daha kısa raporun
+     * sayfa takımı aynı kalır. Yer imleri her uzunlukta eklenir.
+     */
+    static final int TOC_MIN_PAGES = 4;
+
+    /** Basılan bölüm başlıkları (çizim sırasıyla): içindekiler ve yer imleri bunlardan kurulur. */
+    private final List<PdfCanvas.Mark> marks = new ArrayList<>();
 
     /**
      * Görselleri gömme katları (çizim ölçüsünün katı piksel): önce ≈ 432 dpi; PDF e-posta sınırını aşarsa servis aynı
@@ -83,11 +97,21 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         return (slug.isEmpty() ? "" : slug + "-") + kind + "-" + year + "-" + String.format("%02d", month) + ".pdf";
     }
 
+    /** Şablon önizleme PDF'inin adı (R19): {@code mobil-sablon-onizleme.pdf} (EN: {@code mobile-template-preview.pdf}). */
+    public static String previewFileName(String channelName, String lang) {
+        String slug = ExecutiveSummaryPdfWriter.slug(channelName);
+        return (slug.isEmpty() ? "" : slug + "-") + ("en".equals(lang) ? "template-preview" : "sablon-onizleme") + ".pdf";
+    }
+
     byte[] write(TechErrorPdfInput in) throws IOException {
         en = in.template().en();
         c.setPageLabel(en ? "Page" : "Sayfa");
+        // Üst bilgi (R19): kapak dışındaki her sayfada kanal · dönem (şablon dili) ve sığarsa rapor başlığı
+        String period = TechErrorTemplate.monthName(in.month(), in.template().lang()) + " " + in.year();
+        c.setRunningHeader(join(in.channelName(), period), in.title());
         c.newPage();
         cover(in);
+        if (in.sample()) sampleBanner();
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
                 // Yönetici özetine gömülü bölüm (2026-10-17) kendi bölümü olarak basılmaz: rakamları özet cümlelerinde,
@@ -102,7 +126,58 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             }
         }
         closing(in);
+        // İçindekiler (R19): bütün içerik çizildikten sonra — sayfa numaraları ancak şimdi bellidir; ilk sayfanın arkasına
+        // eklenir, sonraki sayfaların numarası bir kayar (Mark sayfa nesnesini tuttuğundan numara son sıradan okunur)
+        if (c.pageCount() >= TOC_MIN_PAGES && !marks.isEmpty()) toc();
+        c.outline(marks);
         return c.finish();
+    }
+
+    // ── İçindekiler (2026-10-17, R19) ───────────────────────────────────────────────────────────────
+
+    private static final float TOC_FONT = 10f;
+    private static final float TOC_LINE = 13f;
+    private static final float TOC_GAP = 5f;
+    private static final float TOC_NUM_W = 28f;
+
+    /**
+     * İçindekiler sayfası: BASILAN her bölüm başlığı (muaf / boş olup hiç basılmayan bölüm burada da yok) ve sayfa numarası;
+     * uzun başlık en çok iki satır, sonra "…"; numara sağa yaslı, başlıkla arası noktalı. Satır görünmez bir iç bağlantıdır
+     * (tıklanınca bölüme gider). Bölüm sayısı ≤ 20 (şablon sınırı): 20 × (2 satır + aralık) tek sayfaya sığar; sayfa sonu
+     * koruması yine de var (sayfanın dışına çizilmez).
+     */
+    private void toc() throws IOException {
+        c.insertPageAfter(0);
+        String heading = en ? "Contents" : "İçindekiler";
+        c.text(c.bold, 14f, MARGIN, c.y, heading, INK);
+        c.y -= 8;
+        c.line(MARGIN, c.y, MARGIN + CONTENT_W, RULE);
+        c.y -= 18;
+        float textW = CONTENT_W - TOC_NUM_W - 12;
+        for (PdfCanvas.Mark m : marks) {
+            List<String> lines = c.wrapCell(m.title(), textW, c.regular, TOC_FONT, 2);
+            if (lines.isEmpty()) continue;
+            float h = lines.size() * TOC_LINE;
+            if (c.y - h < BOTTOM) break;
+            float top = c.y;
+            for (String l : lines) {
+                c.text(c.regular, TOC_FONT, MARGIN, c.y, l, INK);
+                c.y -= TOC_LINE;
+            }
+            float lastY = c.y + TOC_LINE;
+            String num = String.valueOf(c.pageNumber(m.page()));
+            float numW = c.width(num, c.bold, TOC_FONT);
+            float numX = MARGIN + CONTENT_W - numW;
+            c.text(c.bold, TOC_FONT, numX, lastY, num, INK);
+            // Noktalı ayraç: son satırın bitiminden numaraya kadar (döngü yok — tek dizgi, uzunluğu genişlikle sınırlı)
+            float from = MARGIN + c.width(lines.get(lines.size() - 1), c.regular, TOC_FONT) + 6;
+            float to = numX - 6;
+            float dot = c.width(" .", c.regular, TOC_FONT);
+            int n = dot <= 0 ? 0 : (int) Math.min(200, Math.floor((to - from) / dot));
+            if (n >= 2) c.text(c.regular, TOC_FONT, to - n * dot, lastY, " .".repeat(n), MUTED);
+            c.link(MARGIN, lastY - 3, CONTENT_W, top - lastY + TOC_FONT + 3, m);
+            c.y -= TOC_GAP;
+        }
     }
 
     // ── Kapak ────────────────────────────────────────────────────────────────────────────────────────
@@ -132,6 +207,32 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             my -= 10;
         }
         c.y = top - bandH - 22;
+    }
+
+    private static final float[] SAMPLE_BG = { 254 / 255f, 243 / 255f, 199 / 255f };
+    private static final float[] SAMPLE_FG = { 120 / 255f, 53 / 255f, 15 / 255f };
+
+    /**
+     * Şablon önizlemesi işareti (R19): kapak bandının hemen altında, ilk sayfada görünür bir şerit — bu PDF örnek
+     * değerlerle üretildi, hiçbir yere gönderilmez. Yalnız {@code in.sample()}; gerçek raporun ilk sayfası aynı kalır.
+     */
+    private void sampleBanner() throws IOException {
+        String head = en ? "SAMPLE PREVIEW — generated with sample values, never sent"
+                : "ÖRNEK ÖNİZLEME — örnek değerlerle üretildi, gönderilmez";
+        String sub = en ? "Figures, text and topics were made up by Site Monitor to show the template's layout; image slots stay empty and no earlier month exists for trends."
+                : "Rakamlar, metinler ve konular şablonun görünümünü göstermek için Site Monitor tarafından uyduruldu; görsel yuvaları boş kalır, trend için geçmiş ay yoktur.";
+        List<String> subLines = c.wrapCell(sub, CONTENT_W - 20, c.regular, 7.5f, 2);
+        float h = 24 + subLines.size() * 9.5f;
+        float top = c.y + 12;
+        c.rect(MARGIN, top - h, CONTENT_W, h, SAMPLE_BG);
+        c.rect(MARGIN, top - h, CONTENT_W, 0.8f, AMBER);
+        c.text(c.bold, 9.5f, MARGIN + 10, top - 14, c.clip(head, CONTENT_W - 20, c.bold, 9.5f), SAMPLE_FG);
+        float ly = top - 26;
+        for (String l : subLines) {
+            c.text(c.regular, 7.5f, MARGIN + 10, ly, l, SAMPLE_FG);
+            ly -= 9.5f;
+        }
+        c.y = top - h - 22;
     }
 
     private String generatedLine(TechErrorPdfInput in) {
@@ -778,6 +879,8 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private void sectionTitle(String title) throws IOException {
         List<String> lines = c.wrapCell(title, CONTENT_W, c.bold, 12.5f, 3);
         c.ensureSpace(lines.size() * 15 + 40);
+        // Basılan bölüm (R19): içindekiler + yer imi — başlığın çizildiği sayfa (ensureSpace'ten SONRA) ve üst kenarı
+        if (!lines.isEmpty()) marks.add(new PdfCanvas.Mark(title.replaceAll("\\s+", " ").trim(), c.currentPage(), c.y + 14));
         for (String l : lines) {
             c.text(c.bold, 12.5f, MARGIN, c.y, l, INK);
             c.y -= 15;

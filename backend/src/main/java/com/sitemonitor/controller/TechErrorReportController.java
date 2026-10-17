@@ -383,6 +383,44 @@ public class TechErrorReportController {
         return ok(Map.of("template", TechErrorTemplate.toMap(TechErrorTemplate.defaults("en".equals(lang) ? "en" : "tr"))));
     }
 
+    /**
+     * Şablon önizleme PDF'i (2026-10-17, R19 — kullanıcı onayı): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir)
+     * örnek değerlerle ({@link com.sitemonitor.service.techerror.TechErrorSampleValues}) raporun PDF'i gibi basılır; ilk
+     * sayfada "ÖRNEK ÖNİZLEME" şeridi. Kapı şablonu OKUMAKLA aynı (paylaşımla okuyan salt okunur şablonu da önizler);
+     * taslak kayıttaki gibi KATI doğrulanır (400 {@code VALIDATION_FAILED}, alan {@code template}). Hiçbir şey yazılmaz
+     * (rapor, geçmiş, denetim yok — okuma). Üretim rapor PDF'iyle aynı izin ve boyut merdiveninden geçer (429 meşgul).
+     */
+    @PostMapping("/channels/{id}/template/preview-pdf")
+    public ResponseEntity<byte[]> templatePreviewPdf(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                                     HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        Template t = TechErrorTemplate.normalize(body == null ? null : body.get("template"));
+        Team team = teams.findById(ch.getTeamId()).orElse(null);
+        String teamName = team == null ? null : team.getName();
+        YearMonth period = service.defaultPeriod();
+        String by = sessionDisplayName(session);
+        Instant at = service.now();
+        TechErrorReportService.Rendered out = service.renderPdf(() -> com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(
+                t, ch.getName(), teamName, by, period.getYear(), period.getMonthValue(), at));
+        String name = TechErrorReportPdfWriter.previewFileName(ch.getName(), t.lang());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                        .filename(name, StandardCharsets.UTF_8).build().toString())
+                .body(out.pdf());
+    }
+
+    /** Oturumdaki görünen ad (giriş anında yazılır); yoksa kullanıcı adı. */
+    private static String sessionDisplayName(HttpSession session) {
+        Object d = session.getAttribute("displayName");
+        if (d instanceof String s && !s.isBlank()) return s;
+        Object u = session.getAttribute("username");
+        return u instanceof String s && !s.isBlank() ? s : null;
+    }
+
     // ── Raporlar ─────────────────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/channels/{id}/reports")

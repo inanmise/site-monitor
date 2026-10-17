@@ -319,9 +319,10 @@ let sends = 0
 let testMails = 0               // "Bana test gönder" (R13): rapor gönderimi DEĞİL — ayrı sayılır
 let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
+let previewBodies = []          // şablon önizleme PDF'i (R19): gönderilen taslaklar
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []
+  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -335,6 +336,13 @@ async function mock(page, { openSections = true } = {}) {
     const p = new URL(req.url()).pathname
     if (p === '/api/tech-error-reports/images/501') {
       await route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
+      return
+    }
+    if (/^\/api\/tech-error-reports\/channels\/(10|20)\/template\/preview-pdf$/.test(p) && req.method() === 'POST') {
+      previewBodies.push({ id: Number(p.split('/')[4]), ...JSON.parse(req.postData() || '{}') })
+      await route.fulfill({ status: 200, contentType: 'application/pdf',
+        headers: { 'Content-Disposition': 'inline; filename="mobil-sablon-onizleme.pdf"', 'Cache-Control': 'no-store' },
+        body: '%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n' })
       return
     }
     let body = { success: true, data: [] }
@@ -554,6 +562,22 @@ for (const vp of VIEWPORTS) {
       expect(savedTemplate.template.sections.find((s) => s.id === 'sla').rows.at(-1)).toMatchObject({ group: true })
       expect(savedTemplate.template.sections.find((s) => s.id === 'auto-trend').series)
         .toEqual(['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'])
+
+      // R19: "Örnek PDF" düzenleyicideki GÜNCEL taslağı (kaydedilmemiş başlık dahil) gönderir, PDF tıklamada açılan sekmede
+      // gösterilir; düğme hazırlanırken kilitli, sonra yine açık; araç çubuğu sığar, dokunma hedefleri ≥ 40 px
+      await page.locator('#te-tpl-title').fill('Önizleme başlığı {kanal} {ay}')
+      const popupP = page.waitForEvent('popup', { timeout: 15_000 }).catch(() => null)
+      await page.locator('[data-slot="te-tpl-preview-pdf"]').click()
+      await expect.poll(() => previewBodies.length).toBe(1)
+      expect(previewBodies[0].id).toBe(10)
+      expect(previewBodies[0].template.title).toBe('Önizleme başlığı {kanal} {ay}')
+      expect(previewBodies[0].template.sections.find((s) => s.id === 'charts').slots).toHaveLength(4)
+      const popup = await popupP
+      expect(popup, 'örnek PDF sekmesi').not.toBeNull()
+      await popup?.close().catch(() => {})
+      await expect(page.locator('[data-slot="te-tpl-preview-pdf"]')).toBeEnabled()
+      expect(await page.evaluate(overflowX), 'yatay taşma (örnek PDF araç çubuğu)').toBeLessThanOrEqual(1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-tpl-toolbar"]'), 'küçük hedef (araç çubuğu)').toEqual([])
 
       // Bölüm kartı yeniden tasarımı (2026-10-17): TÜM bölümler açıkken tek çerçeve + başlık ayracı; öge kartları yumuşak —
       // yatay taşma, kırpılan metin, küçük dokunma hedefi yok (tohum bölümleri açık getirir; kapalı kaldıysa "Tümünü aç")

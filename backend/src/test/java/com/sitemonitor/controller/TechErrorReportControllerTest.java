@@ -769,6 +769,67 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(user("USER", B, List.of()))).andExpect(status().isNotFound());
     }
 
+    // ── Şablon önizleme PDF'i (R19, 2026-10-17) ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("R19 şablon önizleme PDF'i: okuyan (üye, AUDIT, paylaşımla okuyan) KAYDEDİLMEMİŞ taslağı gönderir → inline PDF, no-store, örnek değerler; başka takım 404; geçersiz taslak 400 template; PDF sırası dolu 429; hiçbir şey yazılmaz")
+    void templatePreviewPdf() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<TechErrorPdfInput> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        when(service.renderPdf(any())).thenAnswer(inv -> {
+            java.util.function.Supplier<TechErrorPdfInput> loader = inv.getArgument(0);
+            TechErrorPdfInput in = loader.get();
+            seen.set(in);
+            return new TechErrorReportService.Rendered(in.withoutImages(), "%PDF-1.7 önizleme".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        });
+        // Düzenleyicideki taslak: başlığı değiştirilmiş, henüz kaydedilmemiş
+        Map<String, Object> draft = new java.util.LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr")));
+        draft.put("title", "Taslak Başlık {kanal} {ay} {yil}");
+        String body = new tools.jackson.databind.ObjectMapper().writeValueAsString(Map.of("template", draft));
+        MockHttpSession member = user("USER", A, List.of());
+        member.setAttribute("displayName", "Ayşe Yılmaz");
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(member)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType(MediaType.APPLICATION_PDF))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Disposition",
+                        org.hamcrest.Matchers.allOf(org.hamcrest.Matchers.startsWith("inline"),
+                                org.hamcrest.Matchers.containsString("kanal-10-sablon-onizleme.pdf"))));
+        TechErrorPdfInput in = seen.get();
+        assertThat(in.sample()).isTrue();
+        assertThat(in.title()).isEqualTo("Taslak Başlık Kanal 10 Eylül 2026");          // kaydedilmemiş taslak, önceki ay
+        assertThat(in.channelName()).isEqualTo("Kanal 10");
+        assertThat(in.teamName()).isEqualTo("Takım 1");
+        assertThat(in.preparedBy()).isEqualTo("Ayşe Yılmaz");
+        assertThat(in.values().fields()).containsKey("total-tx").containsKey("error-rate");
+        // Salt okuyan (AUDIT) ve paylaşımla okuyan da önizler (şablonu okumakla aynı kapı)
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(audit())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(grantee(B, A, false))
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        // Başka takımın kanalı: 404 (geçersiz taslakla da — kapsam doğrulamadan önce)
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(user("USER", B, List.of()))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"template\":{}}")).andExpect(status().isNotFound());
+        // Geçersiz taslak: kayıttaki gibi katı — 400, alan template
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(member)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"template\":{\"lang\":\"tr\",\"title\":\"\",\"sections\":[]}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("template"));
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(member)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("template"));
+        // PDF sırası dolu → 429
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        mvc.perform(post("/api/tech-error-reports/channels/10/template/preview-pdf").session(member)
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isTooManyRequests());
+        // Okuma: hiçbir şey yazılmaz, denetim kaydı yok
+        verify(service, never()).saveTemplate(anyLong(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
+        verify(auditService, never()).recordAction(anyString(), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                anyString(), anyString(), anyString());
+    }
+
     // ── Takım erişim paylaşımı (9. sürüm, 2026-10-17) ──────────────────────────────────────────────
 
     private static MockHttpSession grantee(long ownTeam, long sharedTeam, boolean edit) {
