@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T12:11:09Z",
+  "generatedAt": "2026-10-17T15:08:32Z",
   "repo": "inanmise/site-monitor",
-  "count": 761,
+  "count": 762,
   "releases": [
+    {
+      "version": "20.144.0",
+      "tag": "v20.144.0",
+      "releasedAt": "2026-10-17T15:08:27Z",
+      "commit": "627d73adc215bbfc2abc9c38abd6237408e030de",
+      "prevVersion": "20.143.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "627d73ad",
+          "subject": "teknik hata raporunda PO onayı, kanal başına yönetici alıcıları ve takım bazlı modül görünürlüğü"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.143.0",
       "tag": "v20.143.0",
