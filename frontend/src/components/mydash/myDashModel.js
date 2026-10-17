@@ -12,7 +12,7 @@
  */
 
 import { zonedMs } from '../../utils/relativeTime.js'
-import { STAT_DEFS } from './statDefs.js'
+import { STAT_DEFS, STAT_PRESET_DEFS } from './statDefs.js'
 import { TV_DEFAULT_DENSITY, normalizeDensity } from './tvLayout.js'
 
 export const MAX_WIDGETS = 24
@@ -49,8 +49,11 @@ export const WIDGET_CATALOG = Object.freeze([
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])
 
-/** "Renkli panel duvarı" hazır düzeni: tüm renkli panel kutuları küçük boyutta (TV / duvar ekranı için). */
-export const STAT_PRESET = Object.freeze(STAT_DEFS.map((d) => ({ type: d.type, size: 'sm' })))
+/**
+ * "Renkli panel duvarı" hazır düzeni: renkli panel kutuları küçük boyutta (TV / duvar ekranı için). `preset: false` tanımlar
+ * (R14: kanal raporu paneli) dışarıda — hazır düzen sonradan eklenen panelle değişmez, o panel "Kutu ekle"den alınır.
+ */
+export const STAT_PRESET = Object.freeze(STAT_PRESET_DEFS.map((d) => ({ type: d.type, size: 'sm' })))
 
 /** Sahte izin: 7/24 konsolunu açabilir mi (sayfa `canView`'u sarar; izin matrisi anahtarı DEĞİL). */
 export const NOC_CONSOLE = '@noc_console'

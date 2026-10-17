@@ -10,8 +10,10 @@ import {
 
 /**
  * Tablo "İşlem" sütunu / kart başlığı için 3-çizgili (hamburger) menü. Butonları tek bir
- * açılır menüde toplar. items: [{ label, icon?, onClick, danger?, hidden? }].
- * İç uygulama shadcn DropdownMenu (Radix); dış API değişmedi.
+ * açılır menüde toplar. items: [{ label, icon?, onClick, danger?, hidden?, disabled?, ariaLabel? }].
+ * İç uygulama shadcn DropdownMenu (Radix); dış API değişmedi. `disabled` (2026-10-17, kanal sırası): öğe görünür ama
+ * seçilemez (Radix `aria-disabled`, soluk) — "neden yok?" yerine "şu an olmaz" (takımın ilk / son kanalı). `ariaLabel`:
+ * erişilebilir ad görünür etiketten farklı olsun ("Yukarı taşı: <kanal>" — ekran okuyucu hangi kaydı taşıdığını duyar).
  *
  * <h3>Neden PORTAL</h3>
  * Menü `document.body`'ye portal'lanır (Radix Portal). Şablon kartlarında
@@ -94,7 +96,8 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
         }}
       >
         {visible.map((it, i) => (
-          <DropdownMenuItem key={i} variant={it.danger ? 'destructive' : 'default'}
+          <DropdownMenuItem key={i} variant={it.danger ? 'destructive' : 'default'} disabled={!!it.disabled}
+            aria-label={it.ariaLabel || undefined}
             onSelect={() => { selectedRef.current = true; it.onClick() }}>
             {it.icon}{it.label}
           </DropdownMenuItem>

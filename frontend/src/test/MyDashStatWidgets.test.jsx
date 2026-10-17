@@ -115,6 +115,46 @@ describe('Renkli panel kutuları', () => {
     expect(api.getStats).toHaveBeenCalledTimes(1)
   })
 
+  it('kanal raporu paneli (R14): başlanmamış rapor sayısı turuncu zeminde, alt satır gönderilen / kanal; tıklama kanal listesini "başlanmamış" süzgeciyle açar; "sayfayı aç" da', async () => {
+    perm.value = { ...PERMS, 'tech_error_reports.read': { view: true } }
+    const ch = (id, name, extra = {}) => ({ id, name, team_id: 1, team_name: 'Dijital Kanallar', active: true, period_report: null, ...extra })
+    api.techErrors.overview.mockResolvedValue({ success: true, data: { period: { year: 2026, month: 9 }, teams: [],
+      channels: [ch(1, 'Mobil', { period_report: { id: 100, status: 'sent' } }), ch(2, 'POS'), ch(3, 'ATM'), ch(4, 'Şube', { active: false })] } })
+    render(<Shell initial={layout('stat_channel_reports_missing')}><MyDashPage /></Shell>)
+    const w = () => widget('stat_channel_reports_missing')
+    await waitFor(() => expect(w()).toHaveAttribute('data-stat', 'on'))
+    expect(w().querySelector('[data-slot="mydash-stat-value"]')).toHaveTextContent('2')
+    expect(w()).toHaveAttribute('data-tone', 'warning')
+    expect(w().querySelector('[data-slot="card"]').className).toMatch(/bg-amber-/)
+    expect(w()).toHaveTextContent(EN['mydash.st.stat_channel_reports_missing'])
+    expect(w()).toHaveTextContent('1 of 3 channels sent')
+    expect(api.techErrors.overview).toHaveBeenCalledWith(null)
+    fireEvent.click(w().querySelector('[data-slot="mydash-stat"]'))
+    expect(navs.at(-1)).toEqual({ tab: 'channelreports', params: { te_st: 'missing' } })
+    fireEvent.click(w().querySelector('[data-slot="mydash-open"]'))
+    expect(navs.at(-1)).toEqual({ tab: 'channelreports', params: { te_st: 'missing' } })
+  })
+
+  it('kanal raporu paneli: modül kapalı (403) → "yetki yok", boyanmaz; hepsi gönderilmişse yeşil; izin yoksa kutu çizilmez', async () => {
+    perm.value = { ...PERMS, 'tech_error_reports.read': { view: true } }
+    api.techErrors.overview.mockResolvedValue({ success: false, status: 403, error: 'kapalı' })
+    const { unmount } = render(<Shell initial={layout('stat_channel_reports_missing')}><MyDashPage /></Shell>)
+    const w = () => widget('stat_channel_reports_missing')
+    await waitFor(() => expect(w().querySelector('[data-slot="mydash-stat-value"]')).toHaveTextContent('—'))
+    expect(w()).not.toHaveAttribute('data-stat')
+    expect(w()).toHaveTextContent(EN['mydash.noAccess'])
+    expect(w().querySelector('[data-slot="card"]').className).not.toMatch(/bg-green-700/)
+    unmount()
+    api.techErrors.overview.mockResolvedValue({ success: true, data: { channels: [{ id: 1, name: 'Mobil', team_id: 1, active: true, period_report: { id: 5, status: 'sent' } }] } })
+    const r2 = render(<Shell initial={layout('stat_channel_reports_missing')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(w()).toHaveAttribute('data-tone', 'success'))
+    expect(w().querySelector('[data-slot="mydash-stat-value"]')).toHaveTextContent('0')
+    r2.unmount()
+    perm.value = PERMS      // tech_error_reports.read yok → kutu saklanır ama çizilmez
+    render(<Shell initial={layout('stat_channel_reports_missing', 'stat_certs_week')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(ids()).toEqual(['stat_certs_week']))
+  })
+
   it('"Kutu ekle": kutular ve renkli paneller ayrı grupta; "Renkli panel duvarı" onaylı uygulanır, yetkisiz panel düşer', async () => {
     perm.value = { 'monitoring.read': { view: true } }   // alarm / olay izni yok
     render(<Shell initial={layout('stat_certs_week')}><MyDashPage /></Shell>)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus, Radio,
-  RefreshCw, Search, Users, X,
+  ArrowDown, ArrowUp, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus,
+  Radio, RefreshCw, Search, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -29,8 +29,8 @@ import { cn } from '@/lib/utils'
 import ChannelDialog from './ChannelDialog.jsx'
 import { StatusBadge, periodLabel } from './TechErrorParts.jsx'
 import {
-  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, channelCounts, filterChannels,
-  normalizeChannelSort, normalizeChannelStatus, sortChannels,
+  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, applyReorderPlan, channelCounts, filterChannels,
+  inverseReorderPlan, normalizeChannelSort, normalizeChannelStatus, reorderPlan, sortChannels,
 } from './channelListModel.js'
 
 const ALL = '__all__'
@@ -42,6 +42,11 @@ const ALL = '__all__'
  * URL'de (`te_q` / `te_st` / `te_sort`): bağlantı paylaşılır, kanaldan dönünce liste aynı kalır. Kart / satır eylemleri
  * satırın sunucu bayraklarından (`can_edit` / `can_delete`) çizilir; yazamayan kullanıcı yalnız açar. Veri ve uçlar
  * değişmedi (`GET overview`).
+ *
+ * Kanal sırası (R14, 2026-10-17): sıralama "Sıra" iken satır / kart menüsü "Yukarı taşı" / "Aşağı taşı" alır — yalnız
+ * kanalı düzenleyebilen (`can_edit`, kendi kapsamı; paylaşımla görenlerde yok). Taşıma AYNI takımın komşusuyla
+ * `sort_order` değiştirir (`reorderPlan`), liste iyimser güncellenir, PUT'lar sırayla gider (`updateChannel`, yalnız
+ * `sort_order`), başarıda yeniden yüklenir; biri düşerse eski sıra geri gelir + bildirim, sunucu gerçeği yeniden okunur.
  */
 export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpenReport }) {
   const t = useT()
@@ -92,6 +97,8 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email && channels.some((c) => c.team_id === tm.id))
   const counts = useMemo(() => channelCounts(channels), [channels])
   const visible = useMemo(() => sortChannels(filterChannels(channels, { q, status }), sort), [channels, q, status, sort])
+  // Sıra kipinde komşuluk TÜM listede (süzgeçsiz) hesaplanır: süzgeçle gizlenmiş kanal da takımın komşusudur
+  const orderedAll = useMemo(() => (sort === 'order' ? sortChannels(channels, 'order') : null), [channels, sort])
   const pager = usePagination(visible, {
     listKey: 'te-channels', preset: 'page', resetDeps: [q, status, sort, team], url: { pageKey: TE_PAGE, sizeKey: TE_PS },
   })
@@ -158,6 +165,39 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     }
   }
 
+  /** Taşıma planı (boş = taşınamaz: takımın ilk / son kanalı). */
+  function planFor(ch, dir) {
+    if (!orderedAll) return []
+    return reorderPlan(orderedAll, ch.team_id, orderedAll.indexOf(ch), dir)
+  }
+
+  async function move(ch, dir) {
+    const plan = planFor(ch, dir)
+    if (plan.length === 0 || busy) return
+    const before = channels
+    setBusy(`m${ch.id}`)
+    setState((s) => (s.data ? { ...s, data: { ...s.data, channels: applyReorderPlan(s.data.channels, plan) } } : s))
+    try {
+      for (const p of plan) {
+        const res = await api.techErrors.updateChannel(p.id, { sort_order: p.sort_order })
+        if (!res?.success) {
+          const err = new Error(res?.error || t('te.saveError'))
+          err.errorInfo = res?.errorInfo
+          throw err
+        }
+      }
+      load()
+    } catch (e) {
+      // Geri al (iyimser sıra), söyle, sonra sunucunun gerçeğini oku (yarıda kalan plan yarım kalmış olabilir)
+      const undo = inverseReorderPlan(before, plan)
+      setState((s) => (s.data ? { ...s, data: { ...s.data, channels: applyReorderPlan(s.data.channels, undo) } } : s))
+      toast.error(e?.message || t('te.saveError'), { details: e?.errorInfo })
+      load()
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const rowActions = (ch) => ({
     onOpen: () => onOpenChannel(ch.id),
     onTemplate: () => onOpenChannel(ch.id, 'template'),
@@ -165,6 +205,12 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     onEdit: () => setDialog({ mode: 'edit', channel: ch }),
     onToggle: () => toggleActive(ch),
     onDelete: () => remove(ch),
+    orderMode: sort === 'order',
+    // Bir eylem sürerken (taşıma PUT'ları gidiyor, pasife alma, silme) taşıma öğeleri devre dışı: iki taşıma üst üste binmez
+    canMoveUp: !busy && planFor(ch, -1).length > 0,
+    canMoveDown: !busy && planFor(ch, 1).length > 0,
+    onMoveUp: () => move(ch, -1),
+    onMoveDown: () => move(ch, 1),
   })
 
   const header = (
@@ -256,9 +302,14 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
               <div className="flex min-w-0 flex-col gap-1.5">
                 <label htmlFor="te-sort" className="text-xs font-medium text-muted-foreground">{t('te.sort.label')}</label>
                 <NativeSelect id="te-sort" value={sort} onChange={(e) => setSort(normalizeChannelSort(e.target.value))}
-                  className="pointer-coarse:h-10" data-slot="te-sort">
+                  className="pointer-coarse:h-10" data-slot="te-sort" aria-describedby={sort === 'order' ? 'te-sort-hint' : undefined}>
                   {CHANNEL_SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t(`te.sort.${s}`)}</NativeSelectOption>)}
                 </NativeSelect>
+                {sort === 'order' && (
+                  <p id="te-sort-hint" data-slot="te-sort-hint" className="m-0 max-w-72 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {t('te.sort.orderHint')}
+                  </p>
+                )}
               </div>
               {filtersActive && (
                 <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-clear-filters">
@@ -331,13 +382,23 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   )
 }
 
-/** Menü öğeleri (tablo satırı = etiketli "İşlemler" menüsü; kart = ikonlu menü): yalnız yazabilenin eylemleri. */
-function menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, withOpen) {
+/**
+ * Menü öğeleri (tablo satırı = etiketli "İşlemler" menüsü; kart = ikonlu menü): yalnız yazabilenin eylemleri. Sıra kipinde
+ * (`orderMode`) düzenleyebilen — paylaşımla gören DEĞİL — "Yukarı / Aşağı taşı" alır; takımın ucunda devre dışı (görünür,
+ * seçilemez); erişilebilir ad kanal adını taşır ("Yukarı taşı: <kanal>").
+ */
+function menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete, orderMode, canMoveUp, canMoveDown, onMoveUp, onMoveDown }, withOpen) {
   const items = []
   if (withOpen) items.push({ label: t('te.allReports'), onClick: onOpen })
   if (ch.can_edit) {
     items.push({ label: t('te.editChannel'), onClick: onEdit })
     items.push({ label: ch.active ? t('te.pauseChannel') : t('te.resumeChannel'), onClick: onToggle })
+  }
+  if (orderMode && ch.can_edit && !ch.shared_access) {
+    items.push({ label: t('te.order.moveUp'), ariaLabel: t('te.order.moveUpOf', ch.name), icon: <ArrowUp aria-hidden="true" />,
+      onClick: onMoveUp, disabled: !canMoveUp })
+    items.push({ label: t('te.order.moveDown'), ariaLabel: t('te.order.moveDownOf', ch.name), icon: <ArrowDown aria-hidden="true" />,
+      onClick: onMoveDown, disabled: !canMoveDown })
   }
   if (ch.can_delete) items.push({ label: t('te.deleteChannel'), onClick: onDelete, danger: true })
   return items
@@ -382,10 +443,10 @@ function PeriodReportButton({ ch, period, busy, onReport, size = 'sm' }) {
   )
 }
 
-function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, onToggle, onDelete }) {
+function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, ...actions }) {
   const t = useT()
   const pr = ch.period_report
-  const items = menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, true)
+  const items = menuItems(t, ch, { onOpen, ...actions }, true)
   return (
     <TableRow data-slot="te-channel-row" data-channel={ch.id} data-active={ch.active ? 'true' : 'false'}
       className={cn(!ch.active && 'bg-muted/30')}>
@@ -426,10 +487,10 @@ function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, on
   )
 }
 
-function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, onToggle, onDelete }) {
+function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, ...actions }) {
   const t = useT()
   const pr = ch.period_report
-  const items = menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, false)
+  const items = menuItems(t, ch, { onOpen, ...actions }, false)
   return (
     <Card data-slot="te-channel-card" data-channel={ch.id} data-active={ch.active ? 'true' : 'false'}
       className={cn('gap-3', !ch.active && 'border-dashed')}>

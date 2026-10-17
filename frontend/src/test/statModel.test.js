@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { OLDEST_SEVERE_RED_MIN, STAT_DEFS, STAT_TYPES, SUCCESS_AMBER, SUCCESS_GREEN, statReading } from '../components/mydash/statModel.js'
 import { WIDGET_CATALOG, STAT_PRESET } from '../components/mydash/myDashModel.js'
 import { WIDGETS } from '../components/mydash/widgets.jsx'
+import { channel } from './helpers/techErrorFixtures.js'
 
 /**
  * Renkli panel kutuları (2026-10-13): tek gösterge + eşik rengi. Okunamayan / yetkisiz / verisi olmayan gösterge ASLA yeşil
@@ -15,9 +16,14 @@ describe('renkli panel kataloğu', () => {
       expect(WIDGETS[t], t).toBeTruthy()
       expect(WIDGET_CATALOG.find((e) => e.type === t)).toMatchObject({ group: 'stat', size: 'sm' })
     }
-    expect(STAT_PRESET.map((p) => p.type)).toEqual(STAT_TYPES)
+    // Duvar = `preset: false` olmayan tanımlar, tanım sırasında; R14 kanal raporu paneli duvara GİRMEZ (mevcut duvar değişmez)
+    expect(STAT_PRESET.map((p) => p.type)).toEqual(STAT_DEFS.filter((d) => d.preset !== false).map((d) => d.type))
+    expect(STAT_PRESET.map((p) => p.type)).not.toContain('stat_channel_reports_missing')
+    expect(STAT_PRESET).toHaveLength(14)
     expect(STAT_PRESET.every((p) => p.size === 'sm')).toBe(true)
-    expect(STAT_DEFS.length).toBeGreaterThanOrEqual(14)
+    expect(STAT_DEFS.length).toBeGreaterThanOrEqual(15)
+    expect(STAT_TYPES).toContain('stat_channel_reports_missing')
+    expect(WIDGET_CATALOG.find((e) => e.type === 'stat_channel_reports_missing')).toMatchObject({ perm: 'tech_error_reports.read', tab: 'channelreports' })
   })
   it('her katalog türü sunucunun biçim kuralına uyar ([a-z_], ≤ 40) — aksi halde kayıtlı düzenden düşer / kayıt 400 alır', () => {
     for (const e of WIDGET_CATALOG) expect(e.type, e.type).toMatch(/^[a-z_]{1,40}$/)
@@ -107,5 +113,26 @@ describe('okuma ve eşikler', () => {
     expect(statReading('stat_certs_month', st)).toMatchObject({ value: 3, tone: 'warning' })
     expect(statReading('stat_cert_errors', st)).toMatchObject({ value: 2, tone: 'warning', link: ['all', { c_st: 'error' }] })
     expect(statReading('stat_certs_expired', { total_certificates: 0 })).toMatchObject({ tone: 'muted' })
+  })
+
+  it('kanal raporu (R14): dönem raporu başlanmamış AKTİF kanal — varsa turuncu (görev, kesinti değil), 0 yeşil; alt satır "N kanaldan M gönderildi"; 403 / kısmi / boş gri', () => {
+    const ov = (chs) => ({ period: { year: 2026, month: 9 }, teams: [], channels: chs, can_create: true })
+    const list = [
+      channel(1, 'Mobil', { period_report: { id: 100, status: 'sent' } }),
+      channel(2, 'POS', { period_report: { id: 101, status: 'draft' } }),      // açık rapor: eksik değil
+      channel(3, 'ATM'),                                                        // başlanmamış
+      channel(4, 'Şube', { active: false }),                                    // pasif: sayılmaz
+    ]
+    expect(statReading('stat_channel_reports_missing', ov(list))).toEqual({
+      value: 1, tone: 'warning', sub: ['mydash.st.channelsSent', 3, 1], link: ['channelreports', { te_st: 'missing' }],
+    })
+    expect(statReading('stat_channel_reports_missing', ov(list.slice(0, 2)))).toMatchObject({ value: 0, tone: 'success', sub: ['mydash.st.channelsSent', 2, 1] })
+    // Modül kapalı / okuma izni yok (getirici 403'ü visible:false yapar) → yetki yok, gri; yeşil değil
+    expect(statReading('stat_channel_reports_missing', { visible: false })).toMatchObject({ value: null, tone: 'muted', reason: 'noaccess' })
+    // Kanal listesi gelmedi (kısmi / beklenmeyen gövde) ya da hiç aktif kanal yok → veri yok, gri
+    expect(statReading('stat_channel_reports_missing', { period: { year: 2026, month: 9 } })).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', ov([]))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', ov([channel(4, 'Şube', { active: false })]))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', null)).toMatchObject({ tone: 'muted' })
   })
 })

@@ -1,11 +1,11 @@
 import {
-  AlarmClockOff, BellOff, CalendarX, Clock, FileWarning, Gauge, PhoneOff, ServerCrash, ShieldAlert, ShieldX, Siren, TimerOff,
+  AlarmClockOff, BellOff, CalendarX, Clock, FileWarning, FileX, Gauge, PhoneOff, ServerCrash, ShieldAlert, ShieldX, Siren, TimerOff,
   TriangleAlert, Users,
 } from 'lucide-react'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import WidgetCard from './WidgetCard.jsx'
 import { useWidgetData } from './useWidgetData.js'
-import { fetchOpenAlerts, fetchOverview, fetchStats, fetchStatus, linkTo } from './widgetParts.jsx'
+import { fetchChannelReports, fetchOpenAlerts, fetchOverview, fetchStats, fetchStatus, linkTo } from './widgetParts.jsx'
 import { fetchNocUncalled } from './nocWidgets.jsx'
 import { formatPct } from './myDashModel.js'
 import { STAT_DEFS, statDef, statReading } from './statModel.js'
@@ -16,7 +16,8 @@ import { STAT_DEFS, statDef, statReading } from './statModel.js'
  * eşzamanlı istekleri birleştirir). Bilinmeyen değer "—" ve gri; okunamayan veri WidgetCard'ın hata durumunda.
  */
 
-const FETCHERS = { alerts: fetchOpenAlerts, overview: fetchOverview, stats: fetchStats, status: fetchStatus, noc: fetchNocUncalled }
+const FETCHERS = { alerts: fetchOpenAlerts, overview: fetchOverview, stats: fetchStats, status: fetchStatus, noc: fetchNocUncalled,
+  channels: fetchChannelReports }
 
 const ICONS = {
   stat_alarms_critical: Siren,
@@ -33,6 +34,7 @@ const ICONS = {
   stat_certs_week: CalendarX,
   stat_certs_month: Clock,
   stat_cert_errors: ShieldAlert,
+  stat_channel_reports_missing: FileX,
 }
 
 /** Dakika → kısa süre metni (TV'den okunur: "45 dk", "3 sa", "2 gün"). */
