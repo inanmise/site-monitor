@@ -13,6 +13,8 @@
 // (60 kanal → 50 + 10); kanalın rapor listesi durum / yıl / arama süzgeçleri ve sayfalama (30 → 25 + 5); URL'de taşınır.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
+import { readFileSync } from 'node:fs'
+import { unzipSync, strFromU8 } from 'fflate'
 
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_CHANNEL = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Kanalı (Dijital Kanallar / Bireysel Bankacılık)'
@@ -752,6 +754,104 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => new URL(page.url()).searchParams.get('te_rq')).toBeNull()
       expect(new URL(page.url()).searchParams.get('te_q')).toBe('bireysel internet')
       await page.screenshot({ path: `test-results/channel-reports-list-back-${vp.name}.png`, fullPage: false })
+    })
+
+    test('başka kanaldan şablon al (2026-10-17, D16): pencere sığar, diğer kanal seçilir, taslak olarak yüklenir ve bu kanalın sürümüyle kaydedilir', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      // Kaynak kanalın (POS) şablonu farklı: İngilizce, başka başlık — mock'tan SONRA kaydedilen yol önceliklidir
+      const POS_TPL = { ...TEMPLATE, lang: 'en', title: 'POS Channel Technical Error Messages - {month} {year}' }
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/channels/20/template', (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { channel: channel(20, 'POS'), template: POS_TPL, version: 9 } }) }))
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      await expect(page.locator('[data-slot="te-template-editor"]')).toBeVisible({ timeout: 20_000 })
+      const open = page.locator('[data-slot="te-tpl-import"]')
+      await expect(open).toBeVisible()
+      if (vp.touch) expect((await open.boundingBox()).height, 'aç düğmesi dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+      await open.click()
+      const dlg = page.locator('[data-slot="te-tpl-import-dialog"]')
+      await expect(dlg).toBeVisible()
+      const picker = dlg.getByRole('combobox')
+      await expect(picker).toBeVisible()
+      await page.waitForTimeout(300)
+      const box = await dlg.boundingBox()
+      expect(box.x, 'pencere solda ekrana sığar').toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, 'pencere sağda ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon al)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-tpl-import-dialog"]'), 'kırpılan metin (şablon al)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-tpl-import-dialog"]'), 'küçük hedef (şablon al)').toEqual([])
+
+      // Liste: yalnız DİĞER kanal (bu kanal — uzun adlı 10 — yok); uzun takım adı seçenekte sarar
+      await picker.dispatchEvent('mousedown')
+      const options = page.getByRole('option')
+      await expect(options).toHaveCount(1)
+      await expect(options.first()).toContainText('POS')
+      await expect(options.first()).toContainText(LONG_TEAM)
+      await options.first().dispatchEvent('mousedown')
+      await expect(dlg.locator('[data-slot="te-tpl-import-meta"]')).toBeVisible()
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, '[data-slot="te-tpl-import-dialog"]'), 'kırpılan metin (seçimden sonra)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-tpl-import-dialog"]'), 'küçük hedef (seçimden sonra)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-template-import-${vp.name}.png`, fullPage: false })
+
+      await dlg.locator('[data-slot="te-tpl-import-load"]').click()
+      await expect(dlg).toHaveCount(0)
+      await expect(page.locator('#te-tpl-title')).toHaveValue(POS_TPL.title)
+      await expect(page.locator('#te-tpl-lang')).toHaveValue('en')
+      const save = page.locator('[data-slot="te-tpl-save"]')
+      await expect(save).toBeEnabled()
+      await save.click()
+      await expect.poll(() => savedTemplate?.version).toBe(3)       // bu kanalın okunan sürümü — kaynağınki (9) değil
+      expect(savedTemplate.id).toBe(10)
+      expect(savedTemplate.template.title).toBe(POS_TPL.title)
+      expect(savedTemplate.template.lang).toBe('en')
+    })
+
+    test('yıl arşivi (2026-10-17, C12): menü görünür ve sığar; seçilen yılın PDF\'leri tek ZIP olarak iner', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      const pdfCalls = []
+      await page.route((u) => /^\/api\/tech-error-reports\/reports\/\d+\/pdf$/.test(new URL(u).pathname), (route) => {
+        const id = new URL(route.request().url()).pathname.split('/')[4]
+        pdfCalls.push(id)
+        return route.fulfill({ status: 200, contentType: 'application/pdf', body: `%PDF-1.4 rapor ${id}`,
+          headers: { 'Content-Disposition': `attachment; filename="kanal-teknik-hata-${id}.pdf"` } })
+      })
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
+      await expect(page.locator('[data-slot="te-report-row"]')).toHaveCount(2, { timeout: 20_000 })
+      const trigger = page.locator('[data-slot="te-year-zip"]')
+      await expect(trigger).toBeVisible()
+      if (vp.touch) expect((await trigger.boundingBox()).height, 'ZIP düğmesi dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kanal, ZIP)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-channel"]'), 'kırpılan metin (kanal, ZIP)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channel"]'), 'küçük hedef (kanal, ZIP)').toEqual([])
+
+      await trigger.click()
+      const menu = page.locator('[data-slot="te-year-zip-menu"]')
+      await expect(menu).toBeVisible()
+      const items = menu.locator('[data-slot="te-year-zip-item"]')
+      await expect(items).toHaveCount(2)
+      await expect(items.first()).toHaveAttribute('data-year', '2026')
+      const mb = await menu.boundingBox()
+      expect(mb.x, 'menü solda sığar').toBeGreaterThanOrEqual(-1)
+      expect(mb.x + mb.width, 'menü sağda sığar').toBeLessThanOrEqual(vp.width + 1)
+      if (vp.touch) {
+        for (const h of await items.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+          expect(h, 'menü öğesi dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+        }
+      }
+      await page.screenshot({ path: `test-results/channel-reports-year-zip-${vp.name}.png`, fullPage: false })
+
+      const [zip] = await Promise.all([page.waitForEvent('download'), items.nth(1).click()])   // 2025 (1 rapor)
+      expect(zip.suggestedFilename()).toMatch(/^[a-z0-9-]+-2025-teknik-hata-raporlari\.zip$/)
+      const files = unzipSync(new Uint8Array(readFileSync(await zip.path())))
+      expect(Object.keys(files)).toEqual(['kanal-teknik-hata-80.pdf'])
+      expect(strFromU8(files['kanal-teknik-hata-80.pdf'])).toBe('%PDF-1.4 rapor 80')
+      expect(pdfCalls).toEqual(['80'])
+      await expect(page.locator('[data-slot="te-year-zip-status"]')).toHaveText('')
+      await expect(trigger).toBeEnabled()
     })
 
     test('özet kartına gömülü bölümler (2026-10-17): adet ve açıklama özet kartında, açıklama cümlenin altında; şablonda gösterim yeri', async ({ page }) => {

@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import TemplateEditor from './TemplateEditor.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
+import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
 import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 import {
   REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
@@ -79,6 +80,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   })
   const narrow = listWidth > 0 && listWidth < TABLE_MIN_PX
   const filtersActive = Boolean(rq.trim()) || rstatus !== 'all' || ryear !== 'all'
+  // Yıl arşivi (ZIP, 2026-10-17): o yılın TÜM raporları (liste süzgeçlerinden bağımsız), sırayla
+  const archive = useYearArchive({ channelName: ch?.name || '', reports, resetKey: channelId })
 
   useUrlQuerySync({
     [TE_RQ]: rq.trim() ? rq : null,
@@ -237,12 +240,14 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                       </NativeSelect>
                     </div>
                   )}
+                  <YearArchiveMenu reports={reports} run={archive.run} onStart={archive.start} />
                   {filtersActive && (
                     <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-rclear">
                       <X aria-hidden="true" /> {t('te.filters.clear')}
                     </Button>
                   )}
                 </div>
+                <YearArchiveStatus run={archive.run} onCancel={archive.cancel} />
                 <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">
                   {t('te.rcount', filtered.length, reports.length)}
                 </p>

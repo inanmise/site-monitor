@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { unzipSync, strFromU8 } from 'fflate'
 import { mockApi } from './support/monitorMocks.js'
 
 // 2026-10-17 (kullanıcı: "Ayarlar içindeki Teknik hata raporu sayfasını yeniden shadcn ile tasarla, mweb responsive, mevcut
@@ -208,6 +210,54 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('channelreports')
       await expect.poll(() => new URL(page.url()).searchParams.get('te_ch')).toBe('10')
       await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('channel')
+    })
+
+    test('dışa aktar (2026-10-17, E22): menü sığar, dokunma hedefleri; CSV ve Excel süzülmüş listeyi dönem adlı dosyaya yazar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=settings&sec=techerror')
+      const root = page.locator(ROOT)
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
+      const trigger = root.locator('[data-slot="tes-export"]')
+      await trigger.scrollIntoViewIfNeeded()
+      await expect(trigger).toBeVisible()
+      await expect(trigger).toBeEnabled()
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="tes-toolbar"]'), `@${vp.name}: küçük hedef (araç çubuğu)`).toEqual([])
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (dışa aktar)`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, '[data-slot="tes-toolbar"]'), `@${vp.name}: araç çubuğu dışına taşan`).toEqual([])
+
+      await trigger.click()
+      const menu = page.locator('[data-slot="tes-export-menu"]')
+      await expect(menu).toBeVisible()
+      const mb = await menu.boundingBox()
+      expect(mb.x, `@${vp.name}: menü solda sığar`).toBeGreaterThanOrEqual(-1)
+      expect(mb.x + mb.width, `@${vp.name}: menü sağda sığar`).toBeLessThanOrEqual(vp.width + 1)
+      if (vp.touch) {
+        for (const h of await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+          expect(h, `@${vp.name}: menü öğesi dokunma hedefi`).toBeGreaterThanOrEqual(39.5)
+        }
+      }
+      // CSV: tüm liste (4 kanal + başlık), Türkçe metinler, BOM
+      const [csv] = await Promise.all([page.waitForEvent('download'), menu.locator('[data-slot="tes-export-csv"]').click()])
+      expect(csv.suggestedFilename()).toBe('teknik-hata-raporu-kanallar-2026-09.csv')
+      const text = readFileSync(await csv.path(), 'utf8')
+      expect(text.charCodeAt(0), 'BOM').toBe(0xfeff)
+      const lines = text.slice(1).trim().split('\r\n')
+      expect(lines).toHaveLength(5)
+      expect(lines[0]).toBe('Kanal,Takım,Aktif,Modül takıma açık,Takım e-postası,Yönetici alıcı sayısı,PO onaylayıcı sayısı,Dönem raporu durumu,Onay durumu')
+      expect(lines.some((l) => l.includes(LONG_CHANNEL))).toBe(true)
+
+      // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal)
+      await root.locator('[data-slot="tes-search"]').fill('odeme')
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(2)
+      await trigger.click()
+      const [xl] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="tes-export-xlsx"]').click()])
+      expect(xl.suggestedFilename()).toBe('teknik-hata-raporu-kanallar-2026-09.xlsx')
+      const files = unzipSync(new Uint8Array(readFileSync(await xl.path())))
+      const sheet = strFromU8(files['xl/worksheets/sheet1.xml'])
+      expect(sheet).toContain('İnternet Şubesi')
+      expect(sheet).toContain('POS')
+      expect(sheet).not.toContain('ATM')
     })
   })
 }

@@ -50,3 +50,21 @@ export function downloadText(filename, text, type = 'text/plain;charset=utf-8') 
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch { /* indirme ortamı yok */ }
 }
+
+/**
+ * Hazır bir Blob'u indir (2026-10-17: kanalın yıl arşivi ZIP'i, Ayarlar kanal özeti Excel'i) — {@link downloadCsv} ile aynı
+ * yol. Büyük dosyada (yıllık PDF arşivi) tarayıcı indirmeyi başlatmadan adres iptal edilmesin diye bağlantı 60 sn tutulur.
+ * jsdom'da (test) sessizce çıkar. Yukarıdaki gövdeler DEĞİŞMEDİ.
+ */
+export function downloadBlob(filename, blob, revokeAfterMs = 60000) {
+  try {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), revokeAfterMs)
+  } catch { /* indirme ortamı yok */ }
+}

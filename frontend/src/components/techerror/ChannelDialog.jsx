@@ -1,7 +1,7 @@
 import { useId, useMemo, useState } from 'react'
 import { Copy, Globe, LayoutTemplate } from 'lucide-react'
 import { api } from '../../api/client'
-import { useT } from '../../i18n/index.jsx'
+import { useLanguage, useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import Field from '../ui/Field.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
@@ -20,11 +20,13 @@ const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/
 /**
  * Kanal aç / düzenle. Açarken şablon üç yoldan gelir: varsayılan (Türkçe), varsayılan (İngilizce) ya da görülebilen
  * başka bir kanalın şablonunun KOPYASI — seçim, erişim paylaşımı penceresiyle aynı shadcn "seçim kartları" (RadioGroup +
- * Field; ikon, başlık, açıklama; 2026-10-17, kullanıcı isteği: düz radyo düğmeleri proje geneline uymuyordu). Düzenleme
+ * Field; ikon, başlık, açıklama; 2026-10-17, kullanıcı isteği: düz radyo düğmeleri proje geneline uymuyordu). Seçili gelen
+ * varsayılan arayüz dilinin şablonudur (2026-10-17, D20: İngilizce arayüz → İngilizce varsayılan, aksi Türkçe). Düzenleme
  * yalnız değişen alanları gönderir (ad / açıklama).
  */
 export default function ChannelDialog({ mode, channel = null, teams = [], channels = [], defaultTeam = null, onClose, onSaved }) {
   const t = useT()
+  const { lang: uiLang } = useLanguage()
   const toast = useToast()
   const editable = teams.filter((tm) => tm.can_edit && tm.active !== false)
   const [teamId, setTeamId] = useState(() => {
@@ -36,7 +38,8 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
   const [description, setDescription] = useState(channel?.description || '')
   // Yönetici (executive) alıcıları (2026-10-17, S6): yalnız takımı yönetenler yazar; doluysa gönderim PO onayına bağlı
   const [execEmails, setExecEmails] = useState(channel?.executive_emails || '')
-  const [source, setSource] = useState('tr')
+  // Varsayılan şablon dili arayüz dilinden (2026-10-17, D20): İngilizce arayüzde İngilizce varsayılan, aksi Türkçe; değiştirilebilir
+  const [source, setSource] = useState(() => (uiLang === 'en' ? 'en' : 'tr'))
   const [copyFrom, setCopyFrom] = useState('')
   const sourceLabelId = useId()
   const [errors, setErrors] = useState({})

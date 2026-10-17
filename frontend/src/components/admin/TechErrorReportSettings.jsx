@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CheckCircle2, CircleAlert, ExternalLink, EyeOff, FileClock, FileWarning, Landmark, MailWarning, Radio, RefreshCw, Search, Users, X,
+  CheckCircle2, ChevronDown, CircleAlert, Download, ExternalLink, EyeOff, FileClock, FileSpreadsheet, FileText, FileWarning, Landmark,
+  MailWarning, Radio, RefreshCw, Search, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -26,9 +27,14 @@ import { isDirty, normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
 import {
-  TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, filterChannels,
-  filtersActive, hasExecutives, normalizeFilter, normalizeSort, searchChannels, sortChannels, teamEmailState, teamVisibleState, teamsOf,
+  TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, exportFileName, exportTable,
+  filterChannels, filtersActive, hasExecutives, normalizeFilter, normalizeSort, searchChannels, sortChannels, teamEmailState,
+  teamVisibleState, teamsOf,
 } from './techErrorSettingsModel.js'
+import { downloadBlob, downloadCsv, toCsv } from '../../utils/csvExport.js'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent } from '@/components/shadcn/card'
@@ -54,6 +60,9 @@ const TOUCH = 'pointer-coarse:min-h-10'
  * göre TABLO (≥ {@link TES_TABLE_MIN_PX}) ya da KART, sayfalama (`panel` ön ayarı), "Kanalı aç" → kanal sayfası. Yükleme
  * iskeletle, okuma hatası tehlike bloğu + Tekrar dene (boş "kanal yok" durumu YALNIZ başarılı yanıtta). Saf mantık
  * `techErrorSettingsModel.js`. Test kancaları `tes-*`.
+ *
+ * Dışa aktarma (2026-10-17, E22): araç çubuğundaki "Dışa aktar" süzülmüş + sıralanmış listenin TÜMÜNÜ (bütün sayfalar) CSV ya
+ * da Excel (.xlsx) olarak indirir; değerler ekrandaki metinler, bilinmeyen "Bilinmiyor" (`exportTable`).
  */
 export default function TechErrorReportSettings({ readOnly = false }) {
   const t = useT()
@@ -167,6 +176,28 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }
   // Salt okunur (kapsamlı) görüntüleyici modülü kapalı bir takımın kanalını açamaz (sayfa "erişim yok" derdi)
   const openFor = (ch) => (locked && ch.team_visible === false ? null : () => openChannel(ch))
+
+  // Dışa aktarma (2026-10-17, E22): süzülmüş + sıralanmış listenin TÜMÜ (sayfalamadan bağımsız), ekrandaki metinlerle
+  const [exporting, setExporting] = useState(false)
+  function exportCsv() {
+    const { header, rows } = exportTable(visible, t)
+    downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows))
+  }
+  async function exportXlsx() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const { header, rows } = exportTable(visible, t)
+      const { buildXlsx, XLSX_MIME } = await import('../../utils/xlsxWriter.js')
+      const bytes = buildXlsx([{ name: t('te.set.export.sheet'), rows: [header, ...rows], freezeHeader: true, autoFilter: true,
+        widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
+      downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
+    } catch (e) {
+      toast.error(e?.message || t('te.set.export.unavailable'))
+    } finally {
+      if (alive.current) setExporting(false)
+    }
+  }
 
   const kpiItems = channels.length === 0 ? [] : [
     { key: ALL, Icon: Radio, label: t('te.set.kpi.total'), value: counts.total, cls: 'total', hint: t('te.set.kpi.hint.total') },
@@ -302,6 +333,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                         <X aria-hidden="true" /> {t('te.filters.clear')}
                       </Button>
                     )}
+                    <ExportMenu disabled={visible.length === 0 || exporting} onCsv={exportCsv} onXlsx={exportXlsx} />
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                     <span data-slot="tes-count">{t('te.filters.count', visible.length, channels.length)}</span>
@@ -350,6 +382,28 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         </Card>
       )}
     </div>
+  )
+}
+
+/** "Dışa aktar" menüsü: CSV ve Excel (.xlsx) — araç çubuğunun sonunda (geniş ekranda sağa yaslı). */
+function ExportMenu({ disabled, onCsv, onXlsx }) {
+  const t = useT()
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" disabled={disabled} data-slot="tes-export" className={cn('sm:ms-auto', TOUCH)}>
+          <Download aria-hidden="true" /> {t('te.set.export.open')} <ChevronDown aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="z-(--z-menu) max-w-[calc(100vw-2rem)]" data-slot="tes-export-menu">
+        <DropdownMenuItem onSelect={onCsv} className={TOUCH} data-slot="tes-export-csv">
+          <FileText aria-hidden="true" /> {t('te.set.export.csv')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onXlsx} className={TOUCH} data-slot="tes-export-xlsx">
+          <FileSpreadsheet aria-hidden="true" /> {t('te.set.export.xlsx')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
