@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus, Radio,
-  RefreshCw, Search, Users, X,
+  ArrowDown, ArrowUp, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus,
+  Radio, RefreshCw, Search, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -26,14 +26,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { cn } from '@/lib/utils'
+import { errorInfoOf } from '../../utils/errorMessages.js'
 import ChannelDialog from './ChannelDialog.jsx'
 import { StatusBadge, periodLabel } from './TechErrorParts.jsx'
 import {
-  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, channelCounts, filterChannels,
-  normalizeChannelSort, normalizeChannelStatus, sortChannels,
+  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, applyReorderPlan, channelCounts, filterChannels,
+  fullOrderPlan, inverseReorderPlan, moveInTeam, normalizeChannelSort, normalizeChannelStatus, reorderPlan, sortChannels,
 } from './channelListModel.js'
 
 const ALL = '__all__'
+
+/**
+ * Toplu sıra ucu YOK mu (eski pod, kademeli dağıtım): 405 ya da kodu `TEAM_NOT_FOUND` olmayan 404 (SpaNotFoundAdvice
+ * `NOT_FOUND`). Yeni sunucunun "takım görülemiyor" 404'ü `TEAM_NOT_FOUND` taşır — o bir hatadır, eski yola düşülmez.
+ */
+function reorderEndpointMissing(res) {
+  const info = errorInfoOf(res)
+  return info?.status === 405 || (info?.status === 404 && info?.code !== 'TEAM_NOT_FOUND')
+}
+
+/** Satır taşınabilir mi: kanalı kendi kapsamında düzenleyebilen (paylaşımla gören değil). */
+const movable = (ch) => !!ch?.can_edit && !ch?.shared_access
 
 /**
  * Kanallar görünümü (yeniden tasarım 2026-10-17, 8. sürüm — kullanıcı isteği: "sayfalama, shadcn ile profesyonel UI,
@@ -42,6 +55,15 @@ const ALL = '__all__'
  * URL'de (`te_q` / `te_st` / `te_sort`): bağlantı paylaşılır, kanaldan dönünce liste aynı kalır. Kart / satır eylemleri
  * satırın sunucu bayraklarından (`can_edit` / `can_delete`) çizilir; yazamayan kullanıcı yalnız açar. Veri ve uçlar
  * değişmedi (`GET overview`).
+ *
+ * Kanal sırası (R14, 2026-10-17): sıralama "Sıra" iken satır / kart menüsü "Yukarı taşı" / "Aşağı taşı" alır — yalnız
+ * kanalı düzenleyebilen (`can_edit`, kendi kapsamı; paylaşımla görenlerde yok). Taşıma AYNI takımın komşusuyla yer
+ * değiştirir (`moveInTeam`); takımın tüm dizilişi TEK istekle gider (`reorderChannels` → sunucu 1…n yazar, tek denetim
+ * satırı); eski pod (uç yok) → kanal başına PUT (`reorderPlan`). Liste iyimser güncellenir, sürmekte olan yüklemeler düşer
+ * (sıra numarası), meşgul durumu yeniden yükleme bitene dek sürer; düşerse eski sıra geri gelir + bildirim (kısmen
+ * kaydedildiyse söylenir), sunucu gerçeği yeniden okunur. Süzgeç / arama açıkken taşıma kapalı (komşu gizli bir kanal
+ * olabilirdi — hiçbir şey görünür biçimde değişmezdi); takım süzgeci sunucuda süzdüğü için takımın tüm kanalları
+ * listededir, taşımayı kapatmaz. Taşıma sonucu `aria-live` satırında söylenir; kanal başka sayfaya geçtiyse sayfa izler.
  */
 export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpenReport }) {
   const t = useT()
@@ -49,7 +71,23 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const { showConfirm } = useDialog()
   const [state, setState] = useState({ loading: true, error: null, status: null, data: null })
   const [dialog, setDialog] = useState(null)   // { mode: 'create' | 'edit', channel? }
-  const [busy, setBusy] = useState(null)
+  // Meşgul durumu SAHİPLİ (inceleme 2026-10-17): bir eylem (rapor açma, pasife alma, silme, taşıma) sürerken diğeri başlamaz;
+  // bitiren yalnız KENDİ anahtarını temizler — taşımanın meşgul durumunu başka bir eylemin `finally`si silemez.
+  const busyRef = useRef(null)
+  const [busy, setBusyState] = useState(null)
+  const claimBusy = useCallback((key) => {
+    if (busyRef.current) return false
+    busyRef.current = key
+    setBusyState(key)
+    return true
+  }, [])
+  const releaseBusy = useCallback((key) => {
+    if (busyRef.current !== key) return
+    busyRef.current = null
+    setBusyState(null)
+  }, [])
+  const [orderStatus, setOrderStatus] = useState('')
+  const followRef = useRef(null)   // taşınan kanal: yeni sayfasına geçilir
   const [q, setQ] = useState(() => readUrlParam(TE_Q, ''))
   const [status, setStatus] = useState(() => normalizeChannelStatus(readUrlParam(TE_STATUS, 'all')))
   const [sort, setSort] = useState(() => normalizeChannelSort(readUrlParam(TE_SORT, 'name')))
@@ -92,12 +130,37 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email && channels.some((c) => c.team_id === tm.id))
   const counts = useMemo(() => channelCounts(channels), [channels])
   const visible = useMemo(() => sortChannels(filterChannels(channels, { q, status }), sort), [channels, q, status, sort])
+  // Sıra kipinde komşuluk TÜM listede (süzgeçsiz) hesaplanır; süzgeç / arama açıkken taşıma zaten kapalıdır (orderLocked)
+  const orderedAll = useMemo(() => (sort === 'order' ? sortChannels(channels, 'order') : null), [channels, sort])
   const pager = usePagination(visible, {
     listKey: 'te-channels', preset: 'page', resetDeps: [q, status, sort, team], url: { pageKey: TE_PAGE, sizeKey: TE_PS },
   })
   const cardsLayout = listWidth > 0 && listWidth < CHANNEL_TABLE_MIN_PX
   const filtersActive = Boolean(q.trim()) || status !== 'all'
+  // Süzgeç / arama açıkken sıra değiştirilmez: komşu, süzgeçle GİZLENMİŞ bir kanal olabilir — sıra değişir ama listede
+  // görünür hiçbir şey değişmezdi (inceleme 2026-10-17). Takım süzgeci sunucuda süzer: takımın tüm kanalları listede.
+  const orderLocked = filtersActive
+  const anyMovable = useMemo(() => visible.some(movable), [visible])
+  const moving = typeof busy === 'string' && busy.startsWith('m')
   const pLabel = periodLabel(period, t)
+
+  // Taşınan kanal başka sayfaya geçtiyse sayfa onu izler (ve menü düğmesi odağı alır — eski sayfadaki tetik söküldü)
+  useEffect(() => {
+    const id = followRef.current
+    if (id == null) return
+    followRef.current = null
+    const idx = visible.findIndex((c) => c.id === id)
+    if (idx < 0) return
+    const page = Math.floor(idx / pager.pageSize) + 1
+    if (page === pager.page) return
+    pager.setPage(page)
+    setTimeout(() => {
+      const a = document.activeElement
+      if (a && a !== document.body) return
+      document.querySelector(`[data-channel="${id}"] [aria-haspopup="menu"]`)?.focus()
+    }, 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible])
 
   function clearFilters() {
     setQ('')
@@ -107,7 +170,8 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   async function startReport(ch) {
     if (!period) return
     if (ch.period_report?.id) { onOpenReport(ch.period_report.id, ch.id); return }
-    setBusy(`r${ch.id}`)
+    const key = `r${ch.id}`
+    if (!claimBusy(key)) return
     try {
       const res = await api.techErrors.createReport(ch.id, period.year, period.month)
       if (res?.success && res.data?.id) onOpenReport(res.data.id, ch.id)
@@ -116,12 +180,13 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     } catch (e) {
       toast.error(e?.message || t('te.createReportError'))
     } finally {
-      setBusy(null)
+      releaseBusy(key)
     }
   }
 
   async function toggleActive(ch) {
-    setBusy(`a${ch.id}`)
+    const key = `a${ch.id}`
+    if (!claimBusy(key)) return
     try {
       const res = await api.techErrors.updateChannel(ch.id, { active: !ch.active })
       if (res?.success) {
@@ -131,11 +196,12 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     } catch (e) {
       toast.error(e?.message || t('te.saveError'))
     } finally {
-      setBusy(null)
+      releaseBusy(key)
     }
   }
 
   async function remove(ch) {
+    if (busyRef.current) return
     const ok = await showConfirm({
       title: t('te.deleteChannelTitle'),
       message: t('te.deleteChannelBody', ch.name, ch.report_count || 0),
@@ -144,7 +210,8 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
       cancelText: t('te.cancel'),
     })
     if (!ok) return
-    setBusy(`d${ch.id}`)
+    const key = `d${ch.id}`
+    if (!claimBusy(key)) return      // onay penceresi açıkken başka bir eylem başladıysa silme bekler değil, vazgeçer
     try {
       const res = await api.techErrors.deleteChannel(ch.id)
       if (res?.success) {
@@ -154,7 +221,64 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     } catch (e) {
       toast.error(e?.message || t('te.deleteError'))
     } finally {
-      setBusy(null)
+      releaseBusy(key)
+    }
+  }
+
+  /** Takımın taşınmış dizilişi (null = taşınamaz: takımın ilk / son kanalı ya da süzgeç açık). */
+  function nextTeamFor(ch, dir) {
+    if (!orderedAll || orderLocked) return null
+    return moveInTeam(orderedAll, ch.team_id, orderedAll.indexOf(ch), dir)
+  }
+
+  async function move(ch, dir) {
+    const nextTeam = nextTeamFor(ch, dir)
+    if (!nextTeam) return
+    const key = `m${ch.id}`
+    if (!claimBusy(key)) return
+    // Sürmekte olan yüklemeler (önceki taşıma ya da Yenile) düşer: geç dönen eski liste iyimser sırayı geri almasın
+    seq.current++
+    const before = channels
+    const ids = nextTeam.map((c) => c.id)
+    const full = fullOrderPlan(nextTeam)
+    const fallback = reorderPlan(orderedAll, ch.team_id, orderedAll.indexOf(ch), dir)
+    followRef.current = ch.id
+    setOrderStatus('')
+    setState((s) => (s.data ? { ...s, loading: false, data: { ...s.data, channels: applyReorderPlan(s.data.channels, full) } } : s))
+    let done = 0          // eski yolda kaydedilen PUT sayısı (toplu uç atomiktir — kısmen kayıt yalnız eski yolda olur)
+    try {
+      const res = await api.techErrors.reorderChannels(ch.team_id, ids)
+      if (!res?.success && reorderEndpointMissing(res)) {
+        // Eski pod (kademeli dağıtım): kanal başına PUT; biri düşerse kalanlar gitmez
+        for (const p of fallback) {
+          const r = await api.techErrors.updateChannel(p.id, { sort_order: p.sort_order })
+          if (!r?.success) {
+            const err = new Error(r?.error || t('te.saveError'))
+            err.errorInfo = r?.errorInfo
+            throw err
+          }
+          done++
+        }
+      } else if (!res?.success) {
+        const err = new Error(res?.error || t('te.saveError'))
+        err.errorInfo = res?.errorInfo
+        throw err
+      }
+      await load()
+      setOrderStatus(t('te.order.moved', ch.name, ids.indexOf(ch.id) + 1))
+    } catch (e) {
+      // Hiçbir şey kaydedilmediyse iyimser sıra geri alınır; kısmen kaydedildiyse sunucunun gerçeği gösterilir (yeniden okuma)
+      const partial = done > 0
+      if (!partial) {
+        followRef.current = ch.id          // kanal eski yerine dönünce sayfa da onu izler
+        const undo = inverseReorderPlan(before, full)
+        setState((s) => (s.data ? { ...s, data: { ...s.data, channels: applyReorderPlan(s.data.channels, undo) } } : s))
+      }
+      await load()
+      const msg = e?.message || t('te.saveError')
+      toast.error(partial ? `${msg} ${t('te.order.partial')}` : msg, { details: e?.errorInfo })
+    } finally {
+      releaseBusy(key)
     }
   }
 
@@ -165,13 +289,20 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     onEdit: () => setDialog({ mode: 'edit', channel: ch }),
     onToggle: () => toggleActive(ch),
     onDelete: () => remove(ch),
+    anyBusy: !!busy,
+    orderMode: sort === 'order',
+    // Bir eylem sürerken (taşıma, pasife alma, silme) ya da süzgeç açıkken taşıma öğeleri devre dışı
+    canMoveUp: !busy && nextTeamFor(ch, -1) != null,
+    canMoveDown: !busy && nextTeamFor(ch, 1) != null,
+    onMoveUp: () => move(ch, -1),
+    onMoveDown: () => move(ch, 1),
   })
 
   const header = (
     <PageHeader icon={FileWarning} title={t('te.title')} description={t('te.subtitle')}
       actions={(
         <>
-          <Button type="button" variant="outline" onClick={load} disabled={state.loading} data-slot="te-refresh" className="pointer-coarse:min-h-10">
+          <Button type="button" variant="outline" onClick={load} disabled={state.loading || moving} data-slot="te-refresh" className="pointer-coarse:min-h-10">
             <RefreshCw aria-hidden="true" className={cn(state.loading && 'animate-spin motion-reduce:animate-none')} />
             {t('te.refresh')}
           </Button>
@@ -218,6 +349,8 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   return (
     <div className="flex flex-col gap-4" data-slot="te-channels">
       {header}
+      {/* Taşıma sonucu (ekran okuyucu): hep bağlı canlı bölge — içerik değişince okunur */}
+      <p role="status" aria-live="polite" className="sr-only" data-slot="te-order-status">{orderStatus}</p>
 
       {state.error && (
         <AlertBanner tone="danger" title={t('te.refreshFailed')}>{state.error}</AlertBanner>
@@ -256,9 +389,16 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
               <div className="flex min-w-0 flex-col gap-1.5">
                 <label htmlFor="te-sort" className="text-xs font-medium text-muted-foreground">{t('te.sort.label')}</label>
                 <NativeSelect id="te-sort" value={sort} onChange={(e) => setSort(normalizeChannelSort(e.target.value))}
-                  className="pointer-coarse:h-10" data-slot="te-sort">
+                  className="pointer-coarse:h-10" data-slot="te-sort" aria-describedby={sort === 'order' && anyMovable ? 'te-sort-hint' : undefined}>
                   {CHANNEL_SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t(`te.sort.${s}`)}</NativeSelectOption>)}
                 </NativeSelect>
+                {/* İpucu yalnız görünür listede taşınabilir satır varken; süzgeç açıksa neden taşınamadığını söyler */}
+                {sort === 'order' && anyMovable && (
+                  <p id="te-sort-hint" data-slot="te-sort-hint" data-locked={orderLocked ? 'true' : 'false'}
+                    className="m-0 max-w-72 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {orderLocked ? t('te.sort.orderLocked') : t('te.sort.orderHint')}
+                  </p>
+                )}
               </div>
               {filtersActive && (
                 <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-clear-filters">
@@ -331,15 +471,26 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   )
 }
 
-/** Menü öğeleri (tablo satırı = etiketli "İşlemler" menüsü; kart = ikonlu menü): yalnız yazabilenin eylemleri. */
-function menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, withOpen) {
+/**
+ * Menü öğeleri (tablo satırı = etiketli "İşlemler" menüsü; kart = ikonlu menü): yalnız yazabilenin eylemleri. Sıra kipinde
+ * (`orderMode`) düzenleyebilen — paylaşımla gören DEĞİL — "Yukarı / Aşağı taşı" alır; takımın ucunda devre dışı (görünür,
+ * seçilemez); erişilebilir ad kanal adını taşır ("Yukarı taşı: <kanal>").
+ */
+function menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete, anyBusy, orderMode, canMoveUp, canMoveDown, onMoveUp, onMoveDown }, withOpen) {
   const items = []
   if (withOpen) items.push({ label: t('te.allReports'), onClick: onOpen })
   if (ch.can_edit) {
     items.push({ label: t('te.editChannel'), onClick: onEdit })
-    items.push({ label: ch.active ? t('te.pauseChannel') : t('te.resumeChannel'), onClick: onToggle })
+    // Bir eylem sürerken (taşıma, rapor açma, silme) pasife alma / silme seçilemez — eylemler üst üste binmez
+    items.push({ label: ch.active ? t('te.pauseChannel') : t('te.resumeChannel'), onClick: onToggle, disabled: !!anyBusy })
   }
-  if (ch.can_delete) items.push({ label: t('te.deleteChannel'), onClick: onDelete, danger: true })
+  if (orderMode && movable(ch)) {
+    items.push({ label: t('te.order.moveUp'), ariaLabel: t('te.order.moveUpOf', ch.name), icon: <ArrowUp aria-hidden="true" />,
+      onClick: onMoveUp, disabled: !canMoveUp })
+    items.push({ label: t('te.order.moveDown'), ariaLabel: t('te.order.moveDownOf', ch.name), icon: <ArrowDown aria-hidden="true" />,
+      onClick: onMoveDown, disabled: !canMoveDown })
+  }
+  if (ch.can_delete) items.push({ label: t('te.deleteChannel'), onClick: onDelete, danger: true, disabled: !!anyBusy })
   return items
 }
 
@@ -382,23 +533,36 @@ function PeriodReportButton({ ch, period, busy, onReport, size = 'sm' }) {
   )
 }
 
-function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, onToggle, onDelete }) {
+/**
+ * Kanal adı (kanalı açan bağlantı) + takım rozeti. Dokunmatikte aralık 12 px (`pointer-coarse:gap-3`, inceleme 2026-10-17):
+ * rozetin `::after` vuruş alanı dikeyde 10 px taşar (TEAM_BADGE_TOUCH) — 6 px'lik aralıkta ad düğmesinin üstüne biniyordu.
+ * Yalnız paylaşımla görülen satırda rozet DÜZ metindir (tıklanmaz): üye penceresi sahip takımın kişilerini gösterirdi
+ * (kişi verisi paylaşımla görünmez).
+ */
+function ChannelNameAndTeam({ ch, onOpen, className }) {
+  return (
+    <div className={cn('flex flex-col gap-1.5 pointer-coarse:gap-3', className)}>
+      <Button type="button" variant="link" onClick={onOpen} data-slot="te-channel-name"
+        className="h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere] pointer-coarse:min-h-10">
+        {ch.name}
+      </Button>
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <TeamBadge teamId={ch.team_id} teamName={ch.team_name} wrap static={!!ch.shared_access} />
+      </div>
+    </div>
+  )
+}
+
+function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, ...actions }) {
   const t = useT()
   const pr = ch.period_report
-  const items = menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, true)
+  const items = menuItems(t, ch, { onOpen, ...actions }, true)
   return (
     <TableRow data-slot="te-channel-row" data-channel={ch.id} data-active={ch.active ? 'true' : 'false'}
       className={cn(!ch.active && 'bg-muted/30')}>
       <TableCell className="whitespace-normal align-top">
         <div className="flex flex-col gap-1.5">
-          <Button type="button" variant="link" onClick={onOpen} data-slot="te-channel-name"
-            className="h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere] pointer-coarse:min-h-10">
-            {ch.name}
-          </Button>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <Users aria-hidden="true" className="size-3.5 shrink-0" />
-            <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
-          </div>
+          <ChannelNameAndTeam ch={ch} onOpen={onOpen} />
           {ch.description && <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{ch.description}</p>}
           <ChannelChips ch={ch} />
         </div>
@@ -426,25 +590,16 @@ function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, on
   )
 }
 
-function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, onEdit, onToggle, onDelete }) {
+function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, ...actions }) {
   const t = useT()
   const pr = ch.period_report
-  const items = menuItems(t, ch, { onOpen, onEdit, onToggle, onDelete }, false)
+  const items = menuItems(t, ch, { onOpen, ...actions }, false)
   return (
     <Card data-slot="te-channel-card" data-channel={ch.id} data-active={ch.active ? 'true' : 'false'}
       className={cn('gap-3', !ch.active && 'border-dashed')}>
       <CardHeader className="gap-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-col gap-1">
-            <Button type="button" variant="link" onClick={onOpen} data-slot="te-channel-name"
-              className="h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere] pointer-coarse:min-h-10">
-              {ch.name}
-            </Button>
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <Users aria-hidden="true" className="size-3.5 shrink-0" />
-              <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
-            </div>
-          </div>
+          <ChannelNameAndTeam ch={ch} onOpen={onOpen} className="min-w-0" />
           {items.length > 0 && <KebabMenu items={items} label={t('te.channelActions')} rowLabel={ch.name} placement="right" />}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">

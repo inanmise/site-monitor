@@ -290,6 +290,7 @@ public final class AuditEventCatalog {
             "TEAM_WEEKLY_NOTIFICATIONS",
             "TECH_ERROR_CHANNEL_CREATE",  // kanal teknik hata raporu: kanal açıldı (2026-10-13)
             "TECH_ERROR_CHANNEL_DELETE",  // kanal + raporları kalıcı silindi
+            "TECH_ERROR_CHANNEL_REORDER", // takımın kanal sırası tek istekte (önceki / yeni dizilim; R14, 2026-10-17)
             "TECH_ERROR_CHANNEL_UPDATE",  // kanal adı / açıklaması / aktifliği
             "TECH_ERROR_REPORT_CREATE",   // ay raporu açıldı
             "TECH_ERROR_REPORT_DELETE",

@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T21:15:58Z",
+  "generatedAt": "2026-10-17T21:53:26Z",
   "repo": "inanmise/site-monitor",
-  "count": 769,
+  "count": 770,
   "releases": [
+    {
+      "version": "20.152.0",
+      "tag": "v20.152.0",
+      "releasedAt": "2026-10-17T21:53:18Z",
+      "commit": "fbd411c882270a3e9ac1de3fca7e5dbf8911a300",
+      "prevVersion": "20.151.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "fbd411c8",
+          "subject": "denetim kapsamı — şablon örnek PDF önizlemesi gerekçeli muafiyet (yazmaz, göndermez)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "de2c8fee",
+          "subject": "kılavuz PDF'i ve kök kopyalar birleşik kaynakla yeniden üretildi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "04f5a7e4",
+          "subject": "birleşik dalda yinelenen controller alanı (iki paket aynı alanı ekledi)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "92ea5381",
+          "subject": "kanal sırası, dönem özeti, takım rozeti, PDF içindekiler ve örnek PDF için CLAUDE.md ve kılavuz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1f3bf504",
+          "subject": "teknik hata raporu PDF'i — içindekiler hiçbir bölümü bölmez (iki geçiş, 1. sayfada kapak altında), örnek önizleme her sayfada işaretli, kısa başlık üst bilgide, önizleme kullanıcı başına dakikada 6, …"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "424fe937",
+          "subject": "teknik hata raporu PDF'inde üst bilgi, içindekiler ve yer imleri; şablon düzenleyicide örnek değerlerle \"Örnek PDF\" önizlemesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5be43048",
+          "subject": "kanal sırası inceleme turu — toplu sıra ucu + tek denetim, eşit sırada yeniden numaralama, süzgeçte taşıma kapalı, dönem özeti ucu (önbellekli), Panom paneli modül kapsamına uyar, paylaşımda takım ro…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bef199a1",
+          "subject": "teknik hata raporlarında takım bilgisinin yanındaki çift ikon kaldırıldı, takım rozeti üye penceresini açar"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ff7ed5e3",
+          "subject": "kanal listesinde \"Sıra\" sıralaması ve menüden yukarı / aşağı taşıma; Kişisel Panom'a \"Dönem raporu eksik kanal\" renkli paneli"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.151.0",
       "tag": "v20.151.0",

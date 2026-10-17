@@ -77,6 +77,23 @@ public class TechErrorReportController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     TechErrorApprovalService approvals;
 
+    /**
+     * Dönem özeti önbelleği (R14 inceleme 2026-10-17): Kişisel Panom paneli her açık sekmede / TV'de 60 sn'de bir sorar;
+     * anahtar = dönem + kapsam (kurum geneli "*" ya da sıralı görünür takım kimlikleri). 0 = önbellek yok.
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.tech-error-report.summary-cache-ms:30000}")
+    long summaryCacheMs = 30_000;
+    /** Önbellek tavanı: aşılırsa boşaltılır (kapsam anahtarı kullanıcıdan gelir — sınırsız büyümesin). */
+    static final int SUMMARY_MEMO_MAX = 500;
+    private final java.util.concurrent.ConcurrentHashMap<String, SummaryMemo> summaryMemo = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record SummaryMemo(long at, Map<String, Object> data) { }
+
+    /** Testler için: dönem özeti önbelleğini boşaltır (denetleyici örneği test sınıfının yöntemleri arasında paylaşılır). */
+    void resetSummaryCache() {
+        summaryMemo.clear();
+    }
+
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
         this.service = service;
@@ -142,6 +159,41 @@ public class TechErrorReportController {
         return ok(data);
     }
 
+    /**
+     * Dönem özeti (R14 inceleme 2026-10-17): Kişisel Panom'un "Dönem raporu eksik kanal" paneli için yalnız SAYILAR —
+     * {@code {period:{year,month}, active, sent, open, missing, inactive}}. Okuma kapsamı ve modül görünürlüğü genel bakışla
+     * AYNI (aynı 403), sayım anlamı genel bakış listesinin {@code channelCounts}'u ile aynı
+     * ({@link TechErrorReportService#periodSummary}). Genel bakıştan farkı: şablon ayrıştırılmaz, kuyruk sonuçlandırılmaz,
+     * kapsam başına {@code summaryCacheMs} (30 sn) önbellek.
+     */
+    @GetMapping("/period-summary")
+    public ResponseEntity<Map<String, Object>> periodSummary(HttpSession session) {
+        requireRead(session);
+        Set<Long> visible = visibleTeamIds(session);          // null = hepsi (kurum geneli görüntüleyici)
+        YearMonth period = service.defaultPeriod();
+        String key = period + "|" + (visible == null ? "*"
+                : visible.stream().sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")));
+        long nowMs = System.currentTimeMillis();
+        SummaryMemo memo = summaryCacheMs > 0 ? summaryMemo.get(key) : null;
+        if (memo != null && nowMs - memo.at() >= 0 && nowMs - memo.at() < summaryCacheMs) return ok(memo.data());
+        Set<Long> teamIds = new LinkedHashSet<>();
+        for (Team t : visible == null ? teams.findAll() : teams.findAllById(visible)) teamIds.add(t.getId());
+        TechErrorReportService.PeriodSummary s = service.periodSummary(teamIds, period);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("period", Map.of("year", period.getYear(), "month", period.getMonthValue()));
+        data.put("active", s.active());
+        data.put("sent", s.sent());
+        data.put("open", s.open());
+        data.put("missing", s.missing());
+        data.put("inactive", s.inactive());
+        Map<String, Object> frozen = Collections.unmodifiableMap(data);
+        if (summaryCacheMs > 0) {
+            if (summaryMemo.size() >= SUMMARY_MEMO_MAX) summaryMemo.clear();
+            summaryMemo.put(key, new SummaryMemo(nowMs, frozen));
+        }
+        return ok(frozen);
+    }
+
     // ── Kanallar ─────────────────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/channels")
@@ -199,6 +251,81 @@ public class TechErrorReportController {
         return ok(channelDto(ch, teams.findById(ch.getTeamId()).orElse(null), session, true));
     }
 
+    /**
+     * Takımın kanal sırasını TEK istekte yazar (R14 inceleme 2026-10-17): gövde {@code {ids:[…]}} = takımın TÜM kanallarının
+     * istenen dizilimi. Kapı kanal PUT'uyla aynı: yazma izni + takımın KENDİ yazma kapsamı (üye / yönetici / global
+     * yönetici — erişim paylaşımı sıra değiştirmez → 403); görülemeyen ya da olmayan takım 404 {@code TEAM_NOT_FOUND}
+     * (istemci bu kodla "eski pod — uç yok" 404'ünü ayırır). Eksik / fazla / başka takımın kimliği 400 {@code ids}. Bir şey
+     * değiştiyse TEK denetim satırı {@code TECH_ERROR_CHANNEL_REORDER} (önceki ve yeni dizilim, kimlikler); değişiklik yoksa
+     * yazılmaz. Yanıt: takımın kanalları yeni sırasıyla {@code {id, sort_order}}.
+     */
+    @PutMapping("/teams/{teamId}/channel-order")
+    public ResponseEntity<Map<String, Object>> reorderChannels(@PathVariable Long teamId,
+                                                               @RequestBody(required = false) Map<String, Object> body,
+                                                               HttpSession session, HttpServletRequest request) {
+        requireWrite(session);
+        Team team = teamId == null ? null : teams.findById(teamId).orElse(null);
+        if (team == null || !canRead(session, teamId)) {
+            return error(404, "TEAM_NOT_FOUND", Msg.t(
+                    "Takım bulunamadı; silinmiş olabilir ya da görme yetkiniz yok. Listeyi yenileyin.",
+                    "The team wasn't found; it may have been deleted or you can't see it. Refresh the list."), null);
+        }
+        if (!canWriteOwn(session, teamId)) {
+            throw new SecurityException(Msg.t(
+                    "Kanal sırasını yalnız takımın üyeleri ve yöneticileri değiştirebilir; erişim paylaşımı sırayı değiştirmez.",
+                    "Only the team's members and managers can change the channel order; an access share doesn't change it."));
+        }
+        List<Long> ids = idList(body == null ? null : body.get("ids"));
+        TechErrorReportService.ReorderResult r = service.reorderChannels(teamId, ids, userId(session));
+        if (r.changed() > 0) {
+            // Kimlik listeleri virgüllü metin: denetim ayrıntısında diziler 20 ögede "+N daha" ile kısalır (takımda 50 kanal olabilir)
+            auditService.recordAction("TECH_ERROR_CHANNEL_REORDER", session, request, "TEAM", String.valueOf(teamId),
+                    AuditDetail.of("team_id", teamId, "before", joinIds(r.before()), "after", joinIds(r.after()),
+                            "changed", r.changed()));
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < r.after().size(); i++) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.after().get(i));
+            m.put("sort_order", i + 1);
+            rows.add(m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("team_id", teamId);
+        data.put("changed", r.changed());
+        data.put("channels", rows);
+        return ok(data);
+    }
+
+    /** {@code ids} gövdesi → kimlik listesi; liste değilse, tavanı aşıyorsa ya da bir öge kimlik değilse 400 {@code ids}. */
+    private static List<Long> idList(Object raw) {
+        if (!(raw instanceof List<?> list) || list.size() > 2 * TechErrorReportService.MAX_CHANNELS_PER_TEAM) {
+            throw new FieldValidationException("ids", Msg.t(
+                    "Kanal sırası, takımın kanal kimliklerinin listesi olarak gönderilmeli (takım başına en çok 50 kanal). Sayfayı yenileyip tekrar deneyin.",
+                    "The channel order must be sent as a list of the team's channel ids (at most 50 channels per team). Reload the page and try again."));
+        }
+        List<Long> out = new ArrayList<>(list.size());
+        for (Object o : list) {
+            Long v = o instanceof Number n ? Long.valueOf(n.longValue()) : o instanceof String s ? parseId(s) : null;
+            if (v == null || v <= 0) {
+                throw new FieldValidationException("ids", Msg.t(
+                        "Kanal sırasında geçersiz bir kanal kimliği var. Sayfayı yenileyip tekrar deneyin.",
+                        "The channel order contains an invalid channel id. Reload the page and try again."));
+            }
+            out.add(v);
+        }
+        return out;
+    }
+
+    private static String joinIds(List<Long> ids) {
+        StringBuilder sb = new StringBuilder();
+        for (Long id : ids) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(id);
+        }
+        return sb.toString();
+    }
+
     @DeleteMapping("/channels/{id}")
     public ResponseEntity<Map<String, Object>> deleteChannel(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireWrite(session);
@@ -254,6 +381,92 @@ public class TechErrorReportController {
                                                                HttpSession session) {
         requireRead(session);
         return ok(Map.of("template", TechErrorTemplate.toMap(TechErrorTemplate.defaults("en".equals(lang) ? "en" : "tr"))));
+    }
+
+    /**
+     * Şablon önizleme PDF'i (2026-10-17, R19 — kullanıcı onayı): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir)
+     * örnek değerlerle ({@link com.sitemonitor.service.techerror.TechErrorSampleValues}) raporun PDF'i gibi basılır; ilk
+     * sayfada "ÖRNEK ÖNİZLEME" şeridi. Kapı şablonu OKUMAKLA aynı (paylaşımla okuyan salt okunur şablonu da önizler);
+     * taslak kayıttaki gibi KATI doğrulanır (400 {@code VALIDATION_FAILED}, alan {@code template}). Hiçbir şey yazılmaz
+     * (rapor, geçmiş, denetim yok — okuma). Üretim rapor PDF'iyle aynı izin ve boyut merdiveninden geçer (429 meşgul).
+     * Pod'un iki PDF iznini rapor indirme / gönderimiyle paylaştığından kullanıcı başına dakikada en çok
+     * {@link #PREVIEW_PER_MINUTE} önizleme (R19 inceleme): aşan istek 429 {@code RATE_LIMITED} + {@code Retry-After} alır.
+     */
+    @PostMapping("/channels/{id}/template/preview-pdf")
+    public ResponseEntity<?> templatePreviewPdf(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                                HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        Template t = TechErrorTemplate.normalize(body == null ? null : body.get("template"));
+        // Sınır doğrulamadan SONRA: geçersiz taslak (400) PDF üretmez, hakkı yemez
+        Long retryAfter = reservePreview(previewKey(session));
+        if (retryAfter != null) {
+            ResponseEntity<Map<String, Object>> e = error(429, "RATE_LIMITED", Msg.t(
+                    "Örnek PDF sınırına ulaşıldı: kişi başına dakikada en çok " + PREVIEW_PER_MINUTE + " önizleme hazırlanır, çünkü PDF'ler rapor indirme ve gönderimiyle aynı sırayı paylaşır. " + retryAfter + " saniye sonra yeniden deneyin.",
+                    "Sample PDF limit reached: at most " + PREVIEW_PER_MINUTE + " previews per person per minute, because PDFs share one queue with report downloads and sending. Try again in " + retryAfter + " seconds."),
+                    Map.of("retry_after_seconds", retryAfter));
+            return ResponseEntity.status(429).header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter)).body(e.getBody());
+        }
+        Team team = teams.findById(ch.getTeamId()).orElse(null);
+        String teamName = team == null ? null : team.getName();
+        YearMonth period = service.defaultPeriod();
+        String by = sessionDisplayName(session);
+        Instant at = service.now();
+        TechErrorReportService.Rendered out = service.renderPdf(() -> com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(
+                t, ch.getName(), teamName, by, period.getYear(), period.getMonthValue(), at));
+        String name = TechErrorReportPdfWriter.previewFileName(ch.getName(), t.lang());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                        .filename(name, StandardCharsets.UTF_8).build().toString())
+                .body(out.pdf());
+    }
+
+    /** Şablon önizleme PDF'i: kullanıcı başına dakikadaki en çok istek (R19 inceleme). */
+    static final int PREVIEW_PER_MINUTE = 6;
+    private static final long PREVIEW_WINDOW_MS = 60_000L;
+    /** Kullanıcı → son istek zamanları (ms); pod başına, sınırlı (1 000 anahtarda süresi geçenler atılır, 10 000'de sıfırlanır). */
+    private final Map<String, Deque<Long>> previewCalls = new HashMap<>();
+    /** Saat (testlerde ileri sarılır). */
+    java.util.function.LongSupplier previewClock = System::currentTimeMillis;
+
+    /** Sınır içindeyse isteği kaydeder ve {@code null} döner; doluysa en eski isteğin pencereden düşmesine kalan saniye (≥ 1). */
+    Long reservePreview(String key) {
+        long now = previewClock.getAsLong();
+        synchronized (previewCalls) {
+            if (previewCalls.size() > 1_000) {
+                previewCalls.values().removeIf(q -> {
+                    while (!q.isEmpty() && now - q.peekFirst() >= PREVIEW_WINDOW_MS) q.pollFirst();
+                    return q.isEmpty();
+                });
+                if (previewCalls.size() > 10_000) previewCalls.clear();
+            }
+            Deque<Long> q = previewCalls.computeIfAbsent(key, k -> new ArrayDeque<>());
+            while (!q.isEmpty() && now - q.peekFirst() >= PREVIEW_WINDOW_MS) q.pollFirst();
+            if (q.size() >= PREVIEW_PER_MINUTE) {
+                long ms = q.peekFirst() + PREVIEW_WINDOW_MS - now;
+                return Math.max(1L, (ms + 999) / 1000);
+            }
+            q.addLast(now);
+            return null;
+        }
+    }
+
+    private static String previewKey(HttpSession session) {
+        Long uid = userId(session);
+        if (uid != null) return "u:" + uid;
+        Object u = session.getAttribute("username");
+        return u != null ? "n:" + u : "s:" + session.getId();
+    }
+
+    /** Oturumdaki görünen ad (giriş anında yazılır); yoksa kullanıcı adı. */
+    private static String sessionDisplayName(HttpSession session) {
+        Object d = session.getAttribute("displayName");
+        if (d instanceof String s && !s.isBlank()) return s;
+        Object u = session.getAttribute("username");
+        return u instanceof String s && !s.isBlank() ? s : null;
     }
 
     // ── Raporlar ─────────────────────────────────────────────────────────────────────────────────────
@@ -1268,17 +1481,9 @@ public class TechErrorReportController {
         };
     }
 
+    /** Tek kaynak servistedir ({@link TechErrorReportService#reportStatus}) — dönem özeti de aynı kuralı okur. */
     static String status(TechErrorReportRepository.Row r, Instant now) {
-        if ("SENDING".equals(r.getSendState()) && r.getSendClaimedAt() != null
-                && r.getSendClaimedAt().isAfter(now.minus(java.time.Duration.ofMinutes(10)))) return "sending";
-        if (r.getLastSentAt() == null) return "QUEUED".equals(r.getSendState()) ? "queued" : "draft";
-        if (r.getSentRev() != null) {
-            long content = r.getContentRev() == null ? 0L : r.getContentRev();
-            return content > r.getSentRev() ? "changed" : "sent";
-        }
-        // Sayaçtan önceki gönderim: zaman damgası
-        if (r.getContentChangedAt() != null && r.getContentChangedAt().isAfter(r.getLastSentAt())) return "changed";
-        return "sent";
+        return TechErrorReportService.reportStatus(r, now);
     }
 
     /** Son denemenin sonucu (ham SMTP iletisi değil — yalnız sınıf). */

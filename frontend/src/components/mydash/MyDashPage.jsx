@@ -14,7 +14,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import {
-  MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, STAT_PRESET, addWidget, addableTypes, catalogEntry, effectiveLayout, moveWidget, moveWidgetTo,
+  CHANNEL_REPORTS, MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, STAT_PRESET, addWidget, addableTypes, catalogEntry, effectiveLayout, moveWidget, moveWidgetTo,
   presetLayout, removeWidget, resizeWidget, setWidgetStyle, toDoc, typeVisible, visibleWidgets,
 } from './myDashModel.js'
 import { WIDGETS } from './widgets.jsx'
@@ -38,8 +38,12 @@ export default function MyDashPage({ nocConsole = false }) {
   // görür); eski sunucu `scope` göndermezse App'in giriş anındaki bilgisi (`nocConsole`). İzin matrisinde anahtarı yok —
   // katalog bunu sahte izinle sorar (2026-10-13).
   const consoleOk = typeof scope?.noc_console === 'boolean' ? scope.noc_console : !!nocConsole
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const canView = useCallback((p) => (p === NOC_CONSOLE ? consoleOk : canViewPerm(p)), [perms, consoleOk])
+  // Kanal teknik hata raporu modülü (R14 inceleme): menü girişiyle aynı kural — yalnız açık `false` kapalı; scope yok (eski
+  // sunucu) = sunulur
+  const channelReportsOk = scope?.channel_reports !== false
+  const canView = useCallback((p) => (p === NOC_CONSOLE ? consoleOk : p === CHANNEL_REPORTS ? channelReportsOk : canViewPerm(p)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [perms, consoleOk, channelReportsOk])
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)

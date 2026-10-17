@@ -512,6 +512,12 @@ export const api = {
     createChannel: (body) => request('/tech-error-reports/channels', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     updateChannel: (id, body) => request(`/tech-error-reports/channels/${id}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     deleteChannel: (id) => request(`/tech-error-reports/channels/${id}`, { method: 'DELETE', withStatus: true }),
+    // Kanal sırası tek istekte (R14 inceleme 2026-10-17): takımın TÜM kanal kimlikleri istenen dizilimde; sunucu 1…n yazar.
+    // Eski pod (uç yok) 404 NOT_FOUND / 405 döner — çağıran kanal başına PUT'a düşer; görülemeyen takım 404 TEAM_NOT_FOUND.
+    reorderChannels: (teamId, ids) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/channel-order`,
+      { method: 'PUT', body: JSON.stringify({ ids }), withStatus: true }),
+    // Dönem özeti (Kişisel Panom paneli): yalnız sayılar, sunucuda kapsam başına 30 sn önbellek
+    periodSummary: () => request('/tech-error-reports/period-summary', { withStatus: true }),
     template: (id) => request(`/tech-error-reports/channels/${id}/template`, { withStatus: true }),
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),
@@ -572,6 +578,35 @@ export const api = {
         return { success: true, name }
       } catch (e) {
         return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+    },
+    /**
+     * Şablon önizleme PDF'i (R19): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir) örnek değerlerle; hiçbir şey
+     * yazılmaz. Blob döner — açma / indirme çağıranda (yeni sekme). PDF üretimi uzun sürebilir: süre sınırı yok.
+     * Hata: sunucu metni + kod + alan (400 VALIDATION_FAILED → `field: 'template'`); ağ hatasında metin yok (çağıran söyler).
+     */
+    templatePreviewPdf: async (channelId, template) => {
+      try {
+        const res = await fetch(`${BASE}/tech-error-reports/channels/${channelId}/template/preview-pdf`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
+          body: JSON.stringify({ template }),
+        })
+        if (!res.ok) {
+          let body = null
+          try { body = await res.json() } catch { body = null }
+          return { success: false, status: res.status, error: body?.error || null, code: body?.code || null, field: body?.field || null }
+        }
+        const blob = await res.blob()
+        const disp = res.headers.get('Content-Disposition') || ''
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+        const plain = /filename="?([^";]+)"?/.exec(disp)
+        let name = 'sablon-onizleme.pdf'
+        try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : name) } catch { /* ham ad */ }
+        return { success: true, blob, name }
+      } catch {
+        return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
       }
     },
   },

@@ -214,6 +214,8 @@ const CALC_REPORT = {
 let reportOverride = null
 let templateOverride = null
 let overviewOverride = null     // kanal listesi (8. sürüm: 60 kanal, sayfalama)
+let channelPuts = []            // kanal sırası (R14): PUT /channels/<id> gövdeleri — {id, ...body}
+let orderPuts = []              // toplu kanal sırası (R14 inceleme): PUT /teams/<id>/channel-order — {team, ids}
 let reportsOverride = null      // kanalın rapor listesi (8. sürüm: 30 rapor)
 
 // Özet kartına gömülü bölüm (2026-10-17): map yapılmamış hata adedi + açıklama yönetici özeti kartında girilir; açıklama
@@ -317,9 +319,10 @@ let sends = 0
 let testMails = 0               // "Bana test gönder" (R13): rapor gönderimi DEĞİL — ayrı sayılır
 let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
+let previewBodies = []          // şablon önizleme PDF'i (R19): gönderilen taslaklar
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  testMails = 0; approvalRequests = 0; decisions = []
+  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -335,6 +338,13 @@ async function mock(page, { openSections = true } = {}) {
       await route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
       return
     }
+    if (/^\/api\/tech-error-reports\/channels\/(10|20)\/template\/preview-pdf$/.test(p) && req.method() === 'POST') {
+      previewBodies.push({ id: Number(p.split('/')[4]), ...JSON.parse(req.postData() || '{}') })
+      await route.fulfill({ status: 200, contentType: 'application/pdf',
+        headers: { 'Content-Disposition': 'inline; filename="mobil-sablon-onizleme.pdf"', 'Cache-Control': 'no-store' },
+        body: '%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n' })
+      return
+    }
     let body = { success: true, data: [] }
     if (p === '/api/me') body = { success: true, username: ME_USER, system_role: 'USER', global_admin: false, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
     else if (p === '/api/me/permissions') body = { success: true, data: { 'tech_error_reports.read': { view: true }, 'tech_error_reports.crud': { edit: true } } }
@@ -342,6 +352,21 @@ async function mock(page, { openSections = true } = {}) {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
         teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false }],
         channels: overviewOverride || [channel(10, LONG_CHANNEL), channel(20, 'POS')] } }
+    } else if (/^\/api\/tech-error-reports\/channels\/\d+$/.test(p) && req.method() === 'PUT') {
+      // Kanal sırası (R14): gövde kaydedilir, overviewOverride'daki kanal güncellenir — yeniden yükleme yeni sırayı getirir
+      const id = Number(p.split('/').pop())
+      const put = JSON.parse(req.postData() || '{}')
+      channelPuts.push({ id, ...put })
+      const ch = (overviewOverride || []).find((c) => c.id === id)
+      if (ch && 'sort_order' in put) ch.sort_order = put.sort_order
+      body = { success: true, data: { ...(ch || { id }), ...put } }
+    } else if (/^\/api\/tech-error-reports\/teams\/\d+\/channel-order$/.test(p) && req.method() === 'PUT') {
+      // Toplu kanal sırası (R14 inceleme 2026-10-17): takımın tüm dizilişi tek istekte; sunucu gibi 1…n yazar
+      const team = Number(p.split('/')[4])
+      const { ids = [] } = JSON.parse(req.postData() || '{}')
+      orderPuts.push({ team, ids })
+      ids.forEach((id, i) => { const c = (overviewOverride || []).find((x) => x.id === id); if (c) c.sort_order = i + 1 })
+      body = { success: true, data: { team_id: team, changed: ids.length, channels: ids.map((id, i) => ({ id, sort_order: i + 1 })) } }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -419,6 +444,12 @@ function smallTargets(sel) {
     // Radyo (seçim kartı): vuruş alanı kartın tamamı — kapsayan label ölçülür (team-access e2e ile aynı kural)
     let h = r.height
     if (b.getAttribute('role') === 'radio' || b.type === 'radio') h = Math.max(h, b.closest('label')?.getBoundingClientRect().height ?? 0)
+    // Takım rozeti gibi küçük görünen hedefler dokunmatikte ::after ile dikeyde büyür (TEAM_BADGE_TOUCH, ~42 px) — o alan sayılır
+    const af = getComputedStyle(b, '::after')
+    if (af.position === 'absolute' && af.content !== 'none') {
+      const top = parseFloat(af.top) || 0, bottom = parseFloat(af.bottom) || 0
+      h = Math.max(h, r.height - Math.min(0, top) - Math.min(0, bottom))
+    }
     if (h < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(h)}`)
   }
   return out
@@ -433,6 +464,36 @@ function clipped(sel) {
     .filter((n) => !n.closest('.sr-only'))
     .filter((n) => (n.childElementCount === 0 || n.dataset.slot === 'te-copy-row') && n.textContent.trim().length > 20
       && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis')).map((n) => n.textContent.slice(0, 30))
+}
+
+/**
+ * Takım rozetinin GENİŞLETİLMİŞ vuruş alanı (rozet kutusu ± `::after` taşması, TEAM_BADGE_TOUCH) kanal adı düğmesinin
+ * kutusuyla kesişmesin (R14 inceleme 2026-10-17: 6 px aralıkta rozetin 10 px'lik `::after`'ı ada biniyordu — dokunulan ad
+ * değil takım penceresi açılırdı). Kesişen satırların kanal adlarını döner; 0,5 px altı yuvarlama sayılmaz.
+ */
+function badgeHitOverlaps(sel) {
+  const root = document.querySelector(sel)
+  if (!root) return ['NO_ROOT']
+  const out = []
+  for (const item of root.querySelectorAll('[data-slot="te-channel-row"], [data-slot="te-channel-card"]')) {
+    const name = item.querySelector('[data-slot="te-channel-name"]')
+    const badge = item.querySelector('[data-slot="team-badge"]')
+    if (!name || !badge) continue
+    const n = name.getBoundingClientRect()
+    const b = badge.getBoundingClientRect()
+    const af = getComputedStyle(badge, '::after')
+    let top = b.top, bottom = b.bottom, left = b.left, right = b.right
+    if (af.position === 'absolute' && af.content !== 'none') {
+      top += Math.min(0, parseFloat(af.top) || 0)
+      bottom -= Math.min(0, parseFloat(af.bottom) || 0)
+      left += Math.min(0, parseFloat(af.left) || 0)
+      right -= Math.min(0, parseFloat(af.right) || 0)
+    }
+    const overlapY = Math.min(bottom, n.bottom) - Math.max(top, n.top)
+    const overlapX = Math.min(right, n.right) - Math.max(left, n.left)
+    if (overlapY > 0.5 && overlapX > 0.5) out.push(`${name.textContent.trim().slice(0, 30)} ${Math.round(overlapY)}px`)
+  }
+  return out
 }
 
 const overflowX = () => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -502,6 +563,22 @@ for (const vp of VIEWPORTS) {
       expect(savedTemplate.template.sections.find((s) => s.id === 'auto-trend').series)
         .toEqual(['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'])
 
+      // R19: "Örnek PDF" düzenleyicideki GÜNCEL taslağı (kaydedilmemiş başlık dahil) gönderir, PDF tıklamada açılan sekmede
+      // gösterilir; düğme hazırlanırken kilitli, sonra yine açık; araç çubuğu sığar, dokunma hedefleri ≥ 40 px
+      await page.locator('#te-tpl-title').fill('Önizleme başlığı {kanal} {ay}')
+      const popupP = page.waitForEvent('popup', { timeout: 15_000 }).catch(() => null)
+      await page.locator('[data-slot="te-tpl-preview-pdf"]').click()
+      await expect.poll(() => previewBodies.length).toBe(1)
+      expect(previewBodies[0].id).toBe(10)
+      expect(previewBodies[0].template.title).toBe('Önizleme başlığı {kanal} {ay}')
+      expect(previewBodies[0].template.sections.find((s) => s.id === 'charts').slots).toHaveLength(4)
+      const popup = await popupP
+      expect(popup, 'örnek PDF sekmesi').not.toBeNull()
+      await popup?.close().catch(() => {})
+      await expect(page.locator('[data-slot="te-tpl-preview-pdf"]')).toBeEnabled()
+      expect(await page.evaluate(overflowX), 'yatay taşma (örnek PDF araç çubuğu)').toBeLessThanOrEqual(1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-tpl-toolbar"]'), 'küçük hedef (araç çubuğu)').toEqual([])
+
       // Bölüm kartı yeniden tasarımı (2026-10-17): TÜM bölümler açıkken tek çerçeve + başlık ayracı; öge kartları yumuşak —
       // yatay taşma, kırpılan metin, küçük dokunma hedefi yok (tohum bölümleri açık getirir; kapalı kaldıysa "Tümünü aç")
       const tplAll = page.locator('[data-slot="te-tpl-toolbar"] [data-slot="te-sections-all"]')
@@ -528,7 +605,8 @@ for (const vp of VIEWPORTS) {
       for (let i = 1; i <= 60; i++) {
         const extra = i <= 20 ? { period_report: { id: 1000 + i, status: 'sent' } }
           : i <= 40 ? { period_report: { id: 1000 + i, status: 'draft' } } : i <= 55 ? {} : { active: false }
-        many.push({ ...channel(i, i === 10 ? LONG_CHANNEL : `Kanal ${String(i).padStart(2, '0')}`), period_report: null, ...extra })
+        // sort_order = i: "Sıra" sıralamasında Kanal 01, 02, … (R14) — taşıma iki PUT'luk yer değiştirme olur
+        many.push({ ...channel(i, i === 10 ? LONG_CHANNEL : `Kanal ${String(i).padStart(2, '0')}`), period_report: null, sort_order: i, ...extra })
       }
       const months = ['', 'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
       const reps = []
@@ -551,6 +629,8 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma (liste)').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="te-channels"]'), 'kırpılan metin (liste)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channels"]'), 'küçük hedef (liste)').toEqual([])
+      // Dokunmatikte takım rozetinin ::after vuruş alanı kanal adı düğmesine binmez (ad ↔ takım satırı 12 px)
+      if (vp.touch) expect(await page.evaluate(badgeHitOverlaps, '[data-slot="te-channels"]'), 'rozet vuruş alanı adla çakışıyor').toEqual([])
 
       // "Yeni kanal" penceresi (kullanıcı isteği 2026-10-17): şablon kaynağı shadcn seçim kartları — 3 seçenek, sığar, 40 px
       await page.locator('[data-slot="te-new-channel"]').click()
@@ -598,6 +678,45 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-channels"]'), 'kırpılan metin (2. sayfa)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channels"]'), 'küçük hedef (2. sayfa)').toEqual([])
       await page.screenshot({ path: `test-results/channel-reports-list-${vp.name}.png`, fullPage: false })
+
+      // Kanal sırası (R14, 2026-10-17): "Sıra" sıralaması → ipucu, sayfa 1'e döner (Kanal 01 ilk); satır menüsünde
+      // "Yukarı / Aşağı taşı" (takımın ilkinde yukarı devre dışı); "Aşağı taşı" takımın TÜM dizilişini TEK istekle gönderir
+      // (toplu uç, inceleme 2026-10-17 — kanal başına PUT yok), liste yeni sırayı gösterir ve canlı bölge söyler; sığar,
+      // kesilmez, dokunma hedefleri
+      await page.locator('[data-slot="te-sort"]').selectOption('order')
+      await expect(page.locator('[data-slot="te-sort-hint"]')).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_sort')).toBe('order')
+      await expect(rows).toHaveCount(50)
+      await expect(rows.nth(0)).toContainText('Kanal 01')
+      await expect(rows.nth(1)).toContainText('Kanal 02')
+      const menuOf = (row) => row.getByRole('button', { name: /İşlemler|Kanal işlemleri|Actions|Channel actions/ })
+      await menuOf(rows.nth(0)).click()
+      // Arayüz dili e2e'de EN (varsayılan) — erişilebilir adlar iki dilde de kabul edilir
+      const upFirst = page.getByRole('menuitem', { name: /^(Yukarı taşı|Move up): Kanal 01$/ })
+      await expect(upFirst).toBeVisible()
+      await expect(upFirst).toHaveAttribute('aria-disabled', 'true')
+      await expect(page.getByRole('menuitem', { name: /^(Aşağı taşı|Move down): Kanal 01$/ })).not.toHaveAttribute('aria-disabled', 'true')
+      await page.waitForTimeout(150)
+      expect(await page.evaluate(clipped, '[role="menu"]'), 'kırpılan metin (sıra menüsü)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="menu"]'), 'küçük hedef (sıra menüsü)').toEqual([])
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      await menuOf(rows.nth(1)).click()
+      await page.getByRole('menuitem', { name: /^(Aşağı taşı|Move down): Kanal 02$/ }).click()
+      await expect.poll(() => orderPuts.length).toBe(1)
+      expect(orderPuts[0].team).toBe(5)
+      expect(orderPuts[0].ids).toHaveLength(60)                                         // takımın tüm kanalları
+      expect(orderPuts[0].ids.slice(0, 4)).toEqual([1, 3, 2, 4])
+      expect(channelPuts).toEqual([])                                                   // kanal başına PUT yok
+      await expect(rows.nth(1)).toContainText('Kanal 03')
+      await expect(rows.nth(2)).toContainText('Kanal 02')
+      await expect(page.locator('[data-slot="te-order-status"]')).toHaveText(/Kanal 02/)
+      await expect(rows).toHaveCount(50)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (sıra)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-channels"]'), 'kırpılan metin (sıra)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channels"]'), 'küçük hedef (sıra)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-order-${vp.name}.png`, fullPage: false })
 
       // Kanal 10'u aç (sayfa 1, ad sırası): rapor listesi 30 → 25 + 5; durum süzgeci; yıl süzgeci; arama
       await page.locator('[data-slot="te-sort"]').selectOption('name')

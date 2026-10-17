@@ -355,11 +355,14 @@ function rowAttrs(ch) {
   }
 }
 
-/** Kanal adı = kanalı açan bağlantı (kanal listesi sayfasıyla aynı kalıp); altında takım rozeti (+ pasif çipi). */
+/**
+ * Kanal adı = kanalı açan bağlantı (kanal listesi sayfasıyla aynı kalıp); altında takım rozeti (+ pasif çipi). Dokunmatikte
+ * aralık 12 px: rozetin `::after` vuruş alanı (burada 12 px) ad düğmesinin üstüne binmesin (inceleme 2026-10-17).
+ */
 function ChannelName({ ch, onOpen }) {
   const t = useT()
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5 pointer-coarse:gap-3">
       {onOpen ? (
         <Button type="button" variant="link" onClick={onOpen} data-slot="tes-open" aria-label={t('te.set.openChannelFor', ch.name)}
           className={cn('h-auto justify-start p-0 text-left text-base font-semibold leading-snug whitespace-normal text-foreground [overflow-wrap:anywhere]', TOUCH)}>
@@ -369,7 +372,7 @@ function ChannelName({ ch, onOpen }) {
         <span data-slot="tes-channel-name" className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{ch.name}</span>
       )}
       <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-        <TeamBadge teamId={ch.team_id} teamName={ch.team_name} static wrap />
+        <TeamBadge teamId={ch.team_id} teamName={ch.team_name} wrap className="pointer-coarse:after:-inset-y-3" />
         {!ch.active && <Badge variant="outline" className={CHIP}>{t('te.inactive')}</Badge>}
       </div>
     </div>

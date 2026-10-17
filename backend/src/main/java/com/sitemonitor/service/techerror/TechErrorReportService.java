@@ -51,6 +51,8 @@ public class TechErrorReportService {
     public static final int MAX_CHANNELS_PER_TEAM = 50;
     public static final int MAX_NAME = 120;
     public static final int MAX_DESCRIPTION = 500;
+    /** Kanal sıra numarasının üst sınırı (PUT doğrulaması ve yeni kanalın "en büyük + 1" değeri). */
+    public static final int MAX_SORT_ORDER = 10_000;
     public static final long MAX_REPORT_IMAGE_BYTES = 40L * 1024 * 1024;
     static final int PDF_CONCURRENCY = 2;
 
@@ -151,6 +153,7 @@ public class TechErrorReportService {
         ch.setNameKey(key);
         ch.setDescription(description(rawDescription));
         ch.setActive(true);
+        ch.setSortOrder(nextSortOrder(teamId));
         ch.setTemplateJson(TechErrorTemplate.toJson(template));
         ch.setTemplateVersion(1);
         ch.setTemplateUpdatedAt(now);
@@ -229,7 +232,7 @@ public class TechErrorReportService {
             Integer v = so == null ? null : so instanceof Number n ? Integer.valueOf(n.intValue()) : null;
             if (so != null && v == null) throw new FieldValidationException("sort_order", Msg.t(
                     "Sıra numarası bir sayı olmalı.", "The order must be a number."));
-            if (v != null && (v < 0 || v > 10_000)) throw new FieldValidationException("sort_order", Msg.t(
+            if (v != null && (v < 0 || v > MAX_SORT_ORDER)) throw new FieldValidationException("sort_order", Msg.t(
                     "Sıra numarası 0 ile 10 000 arasında olmalı.", "The order must be between 0 and 10,000."));
             if (!Objects.equals(v, ch.getSortOrder())) {
                 ch.setSortOrder(v);
@@ -244,6 +247,126 @@ public class TechErrorReportService {
         } catch (DataIntegrityViolationException e) {
             throw channelExists(ch.getName());
         }
+    }
+
+    /**
+     * Yeni kanalın sırası (R14 inceleme 2026-10-17): "Sıra" sıralamasında EN SONA gelsin. Takımda sırasız (null) kanal
+     * varsa null kalır — sırasızlar zaten en sondadır ve ad sırasıyla dizilir; 1 vermek yeni kanalı onların ÖNÜNE alırdı.
+     * Aksi en büyük + 1 (üst sınırda kalır); boş takımda 1. Mevcut satırlara dokunulmaz.
+     */
+    private Integer nextSortOrder(Long teamId) {
+        if (channels.countByTeamIdAndSortOrderIsNull(teamId) > 0) return null;
+        Integer max = channels.maxSortOrder(teamId);
+        return max == null ? 1 : Math.min(max + 1, MAX_SORT_ORDER);
+    }
+
+    /** Toplu sıra sonucu: önceki ve yeni dizilim (kanal kimlikleri) + gerçekten değişen satır sayısı. */
+    public record ReorderResult(List<Long> before, List<Long> after, int changed) { }
+
+    /**
+     * Takımın kanal sırasını TEK işlemde yazar (R14 inceleme 2026-10-17): {@code ids} takımın TÜM kanallarının istenen
+     * dizilimidir; eksik / fazla / tekrar eden / başka takıma ait kimlik → 400 {@code ids} (liste arada değişti). Sıra 1…n
+     * olur; yalnız değeri değişen satıra hedefli UPDATE gider (varlık kaydı yok — ad / aktiflik / alıcılar geri sarılmaz).
+     * Yazdıktan sonra takımın sıraları aynı işlemde yeniden okunur: eşzamanlı başka bir sıra kaydı (ya da yeni kanal) karışık
+     * bir dizilim bıraktıysa 409 {@code CONCURRENT_MODIFICATION} → işlem geri alınır, hiçbir şey yarım kalmaz.
+     */
+    @Transactional
+    public ReorderResult reorderChannels(Long teamId, List<Long> ids, Long by) {
+        List<TechErrorChannel> team = channels(List.of(teamId));          // o anki "Sıra": sıra no artan, boş en sonda, ad
+        List<Long> before = new ArrayList<>(team.size());
+        Map<Long, TechErrorChannel> byId = new HashMap<>();
+        for (TechErrorChannel ch : team) {
+            before.add(ch.getId());
+            byId.put(ch.getId(), ch);
+        }
+        List<Long> given = ids == null ? List.of() : ids;
+        Set<Long> seen = new HashSet<>();
+        boolean valid = given.size() == team.size();
+        for (Long id : given) {
+            if (id == null || !byId.containsKey(id) || !seen.add(id)) { valid = false; break; }
+        }
+        if (!valid) {
+            throw new FieldValidationException("ids", Msg.t(
+                    "Kanal listesi siz sıralarken değişti (kanal eklendi, silindi ya da başka bir takımın kanalı gönderildi). Listeyi yenileyip tekrar deneyin.",
+                    "The channel list changed while you were reordering it (a channel was added or deleted, or another team's channel was sent). Reload the list and try again."));
+        }
+        Instant now = now();
+        int changed = 0;
+        for (int i = 0; i < given.size(); i++) {
+            TechErrorChannel ch = byId.get(given.get(i));
+            int order = i + 1;
+            if (ch.getSortOrder() != null && ch.getSortOrder() == order) continue;
+            changed += channels.updateSortOrder(ch.getId(), teamId, order, now, by);
+        }
+        if (changed > 0) {
+            Map<Long, Integer> stored = new HashMap<>();
+            for (Object[] row : channels.orderRows(teamId)) {
+                stored.put(((Number) row[0]).longValue(), row[1] == null ? null : ((Number) row[1]).intValue());
+            }
+            boolean intact = stored.size() == given.size();
+            for (int i = 0; intact && i < given.size(); i++) intact = Integer.valueOf(i + 1).equals(stored.get(given.get(i)));
+            if (!intact) {
+                throw new CodedConflictException("CONCURRENT_MODIFICATION", Msg.t(
+                        "Kanal sırası siz kaydederken başka biri tarafından değiştirildi; sıra kaydedilmedi. Listeyi yenileyip tekrar deneyin.",
+                        "Someone else changed the channel order while you were saving it, so the order wasn't saved. Reload the list and try again."));
+            }
+        }
+        return new ReorderResult(before, List.copyOf(given), changed);
+    }
+
+    /**
+     * Varsayılan dönemin kanal sayımları (Kişisel Panom "Dönem raporu eksik kanal" paneli, R14 inceleme 2026-10-17) — genel
+     * bakışın {@code channels} listesinden istemcinin {@code channelListModel.channelCounts} ile bulduğu sayılarla AYNI
+     * anlam: pasif kanal {@code inactive}; aktif kanalın dönem raporu durumu (raporStatus) {@code sent} → gönderildi, başka
+     * bir durum (taslak / değişti / kuyrukta / gönderiliyor) → {@code open}, rapor yok → {@code missing}; {@code active} =
+     * sent + open + missing. Şablon okunmaz, kuyruk sonuçlandırılmaz (genel bakış ve rapor okumaları yapar — kuyruktaki
+     * gönderim sonucu okunana dek "açık" sayılır). {@code teamIds} = görünür ve VAR olan takımlar (silinmiş takımın kanalı
+     * genel bakışta da listelenmez).
+     */
+    public PeriodSummary periodSummary(Collection<Long> teamIds, YearMonth ym) {
+        if (teamIds == null || teamIds.isEmpty()) return new PeriodSummary(0, 0, 0, 0, 0);
+        List<Long> teamList = new ArrayList<>(teamIds);
+        List<Long> activeIds = new ArrayList<>();
+        int inactive = 0;
+        for (int i = 0; i < teamList.size(); i += 500) {
+            for (Object[] row : channels.summaryRows(teamList.subList(i, Math.min(teamList.size(), i + 500)))) {
+                if (Boolean.TRUE.equals(row[2])) activeIds.add(((Number) row[0]).longValue());
+                else inactive++;
+            }
+        }
+        Map<Long, TechErrorReportRepository.Row> period = new HashMap<>();
+        for (int i = 0; i < activeIds.size(); i += 500) {
+            period.putAll(periodRows(activeIds.subList(i, Math.min(activeIds.size(), i + 500)), ym));
+        }
+        Instant now = now();
+        int sent = 0, open = 0, missing = 0;
+        for (Long id : activeIds) {
+            TechErrorReportRepository.Row r = period.get(id);
+            if (r == null) missing++;
+            else if ("sent".equals(reportStatus(r, now))) sent++;
+            else open++;
+        }
+        return new PeriodSummary(activeIds.size(), sent, open, missing, inactive);
+    }
+
+    /** Dönem özeti: aktif kanal (= sent + open + missing), gönderildi, açık, başlanmamış, pasif. */
+    public record PeriodSummary(int active, int sent, int open, int missing, int inactive) { }
+
+    /**
+     * Raporun liste durumu: draft | queued | sending | sent | changed (gönderimden sonra değişti). Tek kaynak — denetleyicinin
+     * satır DTO'su ve dönem özeti aynı kuralı okur.
+     */
+    public static String reportStatus(TechErrorReportRepository.Row r, Instant now) {
+        if ("SENDING".equals(r.getSendState()) && r.getSendClaimedAt() != null
+                && r.getSendClaimedAt().isAfter(now.minus(java.time.Duration.ofMinutes(10)))) return "sending";
+        if (r.getLastSentAt() == null) return "QUEUED".equals(r.getSendState()) ? "queued" : "draft";
+        if (r.getSentRev() != null) {
+            long content = r.getContentRev() == null ? 0L : r.getContentRev();
+            return content > r.getSentRev() ? "changed" : "sent";
+        }
+        // Sayaçtan önceki gönderim: zaman damgası
+        if (r.getContentChangedAt() != null && r.getContentChangedAt().isAfter(r.getLastSentAt())) return "changed";
+        return "sent";
     }
 
     /** Kanalı, raporlarını ve görsellerini KALICI siler (tek işlem). Silinen rapor sayısını döner. */

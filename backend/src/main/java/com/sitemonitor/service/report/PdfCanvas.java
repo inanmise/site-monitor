@@ -62,6 +62,20 @@ class PdfCanvas implements AutoCloseable {
     /** Sayfa numarası öneki (varsayılan Türkçe; İngilizce raporlar "Page" verir — 2026-10-13, teknik hata raporu). */
     private String pageLabel = "Sayfa";
 
+    /**
+     * Sayfa üst bilgisi (2026-10-17, R19 — teknik hata raporu): ilk sayfa (kapak) HARİÇ her sayfanın üst kenar boşluğunda
+     * ince bir satır. Açıkken devam sayfalarının çizim üst kenarı {@link #HEADER_BAND} kadar aşağı iner ({@link #pageTop()}),
+     * böylece hiçbir içerik bandın içine çizilmez; kapak kendi {@code y}'sini kurduğundan ilk sayfanın yerleşimi aynı kalır.
+     * Kapalıyken (diğer PDF'ler) hiçbir şey değişmez.
+     */
+    static final float HEADER_BAND = 10f;
+    private boolean runningHeader;
+    private String headerLeft;
+    private String headerRight;
+
+    /** Çizimin sürdüğü sayfa ({@link #insertPageAfter} sonrası eklenen sayfa). */
+    private PDPage current;
+
     PdfCanvas() {
         PDType0Font r = loadFont("Roboto-Regular.ttf");
         PDType0Font b = loadFont("Roboto-Bold.ttf");
@@ -85,21 +99,66 @@ class PdfCanvas implements AutoCloseable {
         PDPage page = new PDPage(PAGE);
         doc.addPage(page);
         pages.add(page);
+        current = page;
         cs = new PDPageContentStream(doc, page);
-        y = PAGE.getHeight() - MARGIN;
+        y = pageTop();
         if (pageHeaderHook != null) pageHeaderHook.run();
+    }
+
+    /**
+     * Çizimi DAHA ÖNCE açılmış bir sayfaya döndürür (2026-10-17, R19 inceleme): içindekiler satırları içerikten önce yerine
+     * yazılır, sayfa numaraları ise ancak bütün içerik çizilince bilinir — numara, noktalı ayraç ve iç bağlantı o satırların
+     * sayfasına SONRADAN eklenir (mevcut çizimin üstüne, {@code APPEND}). Sayfa eklenmez, sayfa sırası değişmez; {@code y}
+     * dokunulmaz (çağıran koordinatı kendisi verir).
+     */
+    void drawOn(PDPage page) throws IOException {
+        if (page == null || (page == current && cs != null)) return;
+        closeStream();
+        cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true);
+        current = page;
+    }
+
+    /** Şu an çizilen sayfa. */
+    PDPage currentPage() { return current; }
+
+    /** Sayfanın belgedeki 1 tabanlı numarası; belgede yoksa 0. */
+    int pageNumber(PDPage page) { return pages.indexOf(page) + 1; }
+
+    /**
+     * Belge bilgisindeki başlık (2026-10-17, R19 inceleme): görüntüleyicinin sekmesi / pencere başlığı dosya adı yerine bunu
+     * gösterir ({@code DisplayDocTitle}). Yalnız üst veri — çizime ve sayfalara dokunmaz.
+     */
+    void setDocumentTitle(String title) {
+        if (title == null || title.isBlank()) return;
+        doc.getDocumentInformation().setTitle(title.replaceAll("\\s+", " ").trim());
+        try {
+            org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences prefs =
+                    new org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences(new org.apache.pdfbox.cos.COSDictionary());
+            prefs.setDisplayDocTitle(true);
+            doc.getDocumentCatalog().setViewerPreferences(prefs);
+        } catch (Exception ignored) { /* tercih yazılamazsa başlık yine belge bilgisinde */ }
     }
 
     void ensureSpace(float needed) throws IOException {
         if (y - needed < BOTTOM) newPage();
     }
 
-    /** Sayfanın çizilebilir üst kenarı (yeni sayfada {@code y} buradan başlar). */
-    float pageTop() { return PAGE.getHeight() - MARGIN; }
+    /** Sayfanın çizilebilir üst kenarı (yeni sayfada {@code y} buradan başlar); üst bilgi açıkken bandın altı. */
+    float pageTop() { return PAGE.getHeight() - MARGIN - (runningHeader ? HEADER_BAND : 0f); }
 
     void setPageHeaderHook(Runnable hook) { this.pageHeaderHook = hook; }
 
     void setPageLabel(String label) { if (label != null && !label.isBlank()) this.pageLabel = label; }
+
+    /**
+     * Kapak dışındaki sayfalara üst bilgi: solda {@code left} (ör. "Mobil · Eylül 2026"), sağda sığarsa {@code right}
+     * (rapor başlığı, gerekirse "…" ile kısaltılır; çok dar kalırsa hiç basılmaz). İlk {@link #newPage()}'den ÖNCE çağrılır.
+     */
+    void setRunningHeader(String left, String right) {
+        this.runningHeader = true;
+        this.headerLeft = left;
+        this.headerRight = right;
+    }
 
     private void closeStream() throws IOException {
         if (cs != null) { cs.close(); cs = null; }
@@ -115,7 +174,10 @@ class PdfCanvas implements AutoCloseable {
         return out.toByteArray();
     }
 
-    /** Sayfa numaraları en sonda basılır — toplam ancak her şey çizilince bilinir. */
+    /**
+     * Sayfa numaraları (ve açıksa üst bilgi) en sonda basılır — toplam ancak her şey çizilince bilinir; sonradan
+     * basıldıkları için yerleşimi kaydırmazlar.
+     */
     private void stampPageNumbers() throws IOException {
         int total = pages.size();
         for (int i = 0; i < total; i++) {
@@ -127,8 +189,94 @@ class PdfCanvas implements AutoCloseable {
                 s.newLineAtOffset(PAGE.getWidth() - MARGIN - 60, MARGIN - 18);
                 s.showText(pageLabel + " " + (i + 1) + " / " + total);
                 s.endText();
+                if (runningHeader && i > 0) stampHeader(s);
             }
         }
+    }
+
+    private static final float HEADER_FONT = 7.5f;
+    /** Üst bilgi taban çizgisi: sayfa üst kenarından ~24 pt (alttaki sayfa numarasıyla simetrik). */
+    static final float HEADER_BASELINE = PAGE.getHeight() - 24f;
+
+    /** Üst bilgi satırı + altındaki ince çizgi; içerik {@link #pageTop()}'tan başladığından bandın altında kalır. */
+    private void stampHeader(PDPageContentStream s) throws IOException {
+        String left = clip(headerLeft, CONTENT_W * 0.6f, regular, HEADER_FONT);
+        float leftW = left.isEmpty() ? 0 : width(left, regular, HEADER_FONT);
+        float avail = CONTENT_W - leftW - (left.isEmpty() ? 0 : 16f);
+        String full = clip(headerRight, Float.MAX_VALUE, regular, HEADER_FONT);      // yalnız boşluk düzeltmesi, kesmez
+        String right = "";
+        if (!full.isEmpty() && width(full, regular, HEADER_FONT) <= avail) {
+            right = full;                                    // sığan başlık uzunluğu ne olursa olsun basılır ("POS")
+        } else if (!full.isEmpty() && avail >= 60f) {
+            right = clip(full, avail, regular, HEADER_FONT);
+            // KISALTILAN başlıktan yalnız "…" ya da birkaç harf kaldıysa hiç basılmaz (anlamsız parça göstermektense)
+            if (right.length() < 8) right = "";
+        }
+        s.setNonStrokingColor(MUTED[0], MUTED[1], MUTED[2]);
+        if (!left.isEmpty()) {
+            s.beginText();
+            s.setFont(regular, HEADER_FONT);
+            s.newLineAtOffset(MARGIN, HEADER_BASELINE);
+            s.showText(encodable(regular, left));
+            s.endText();
+        }
+        if (!right.isEmpty()) {
+            s.beginText();
+            s.setFont(regular, HEADER_FONT);
+            s.newLineAtOffset(PAGE.getWidth() - MARGIN - width(right, regular, HEADER_FONT), HEADER_BASELINE);
+            s.showText(encodable(regular, right));
+            s.endText();
+        }
+        s.setStrokingColor(RULE[0], RULE[1], RULE[2]);
+        s.setLineWidth(0.6f);
+        s.moveTo(MARGIN, HEADER_BASELINE - 4.5f);
+        s.lineTo(PAGE.getWidth() - MARGIN, HEADER_BASELINE - 4.5f);
+        s.stroke();
+    }
+
+    // ── Yer imleri ve iç bağlantılar (2026-10-17, R19) ───────────────────────────────────────
+
+    /** Yer imi / içindekiler girdisi: başlık, sayfası ve başlığın üst kenarı (sayfa koordinatı). */
+    record Mark(String title, PDPage page, float top) { }
+
+    /** PDF yer imleri (görüntüleyicinin kenar çubuğu): her girdi kendi sayfasına, başlığın hizasına götürür. */
+    void outline(List<Mark> marks) {
+        if (marks == null || marks.isEmpty()) return;
+        org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline out =
+                new org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline();
+        for (Mark m : marks) {
+            if (m.title() == null || m.title().isBlank() || pageNumber(m.page()) == 0) continue;
+            org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem item =
+                    new org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem();
+            item.setTitle(m.title());
+            item.setDestination(destination(m));
+            out.addLast(item);
+        }
+        out.openNode();
+        doc.getDocumentCatalog().setDocumentOutline(out);
+    }
+
+    private static org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination destination(Mark m) {
+        org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination d =
+                new org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination();
+        d.setPage(m.page());
+        d.setTop(Math.round(Math.min(PAGE.getHeight(), m.top())));
+        return d;
+    }
+
+    /** Geçerli sayfada görünmez iç bağlantı (içindekiler satırı → bölümün sayfası); çerçeve çizilmez. */
+    void link(float x, float yy, float w, float h, Mark target) {
+        try {
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink link =
+                    new org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink();
+            link.setRectangle(new PDRectangle(x, yy, w, h));
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary border =
+                    new org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary();
+            border.setWidth(0);
+            link.setBorderStyle(border);
+            link.setDestination(destination(target));
+            current.getAnnotations().add(link);
+        } catch (Exception ignored) { /* bağlantısız satır da okunur */ }
     }
 
     // ── Çizim ilkelleri ──────────────────────────────────────────────────────
