@@ -150,3 +150,120 @@ describe('kanal listesi — tablo, süzgeçler, sayfalama', () => {
     expect(window.location.search).toContain('te_st=missing')      // liste süzgeci URL'de kalır → dönüşte aynı liste
   })
 })
+
+// Kanal sırası (R14, 2026-10-17): "Sıra" sıralamasında satır menüsü "Yukarı / Aşağı taşı" — yalnız düzenleyebilen
+// (paylaşımla gören değil), takımın ucunda devre dışı; taşıma aynı takımın komşusuyla sort_order değiştirir (sırasız takım
+// önce 1…n numaralanır), PUT'lar yalnız sort_order taşır, liste iyimser güncellenir ve yeniden yüklenir; hata → bildirim + eski sıra.
+const order = () => [...rows()].map((r) => r.getAttribute('data-channel'))
+const menuOf = (name) => pressMenuTrigger(screen.getByRole('button', { name: `${name} — İşlemler` }))
+/**
+ * Menüyü Escape ile kapatır ve bir tur bekler: Radix odağı eski tetiğe setTimeout(0) ile geri verir; hemen açılan bir sonraki
+ * menü o geç `focusin`i "dışarıya odak" sayıp kendini kapatıyordu (jsdom'da art arda açılan satır menüleri).
+ */
+async function closeMenu() {
+  fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+  await new Promise((r) => setTimeout(r, 0))
+}
+function orderFixture() {
+  const t2 = { team_id: 2, team_name: 'Ağ Operasyon' }
+  return [
+    channel(1, 'A Kanalı'), channel(2, 'B Kanalı'), channel(3, 'C Kanalı'),                       // takım 1, sırasız (null)
+    channel(9, 'Z Kanalı', { ...t2, sort_order: 1 }),
+    channel(7, 'Paylaşılan Kanal', { ...t2, sort_order: 2, can_edit: true, shared_access: true }), // paylaşımla: taşınmaz
+    channel(8, 'Salt Okunur Kanal', { ...t2, sort_order: 3, can_edit: false }),
+  ]
+}
+/** Sunucu gibi davranan mock: PUT sort_order'u listede günceller, overview güncel listeyi döner. */
+function liveMocks(list) {
+  te().overview.mockImplementation(async () => overview(list.map((c) => ({ ...c }))))
+  te().updateChannel.mockImplementation(async (id, body) => {
+    const c = list.find((x) => x.id === id)
+    if (c && 'sort_order' in body) c.sort_order = body.sort_order
+    return { success: true, data: { ...c, ...body } }
+  })
+}
+
+describe('kanal sırası (R14)', () => {
+  it('taşıma öğeleri yalnız "Sıra" sıralamasında ve yalnız düzenleyebilen satırda; takımın ilkinde yukarı devre dışı; ipucu ve URL te_sort=order', async () => {
+    liveMocks(orderFixture())
+    render(<TechErrorReportsPage />)
+    await screen.findByText('6 / 6 kanal gösteriliyor')
+    menuOf('A Kanalı')
+    expect(await screen.findByRole('menuitem', { name: 'Kanalı düzenle' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /taşı/ })).toBeNull()          // ad sıralamasında yok
+    await closeMenu()
+    expect(document.querySelector('[data-slot="te-sort-hint"]')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Sıralama'), { target: { value: 'order' } })
+    await waitFor(() => expect(window.location.search).toContain('te_sort=order'))
+    expect(screen.getByText('Sıra bu takım içindeki kanalların listelenme sırasıdır; menüden taşıyın.')).toHaveAttribute('id', 'te-sort-hint')
+    expect(screen.getByLabelText('Sıralama')).toHaveAttribute('aria-describedby', 'te-sort-hint')
+    // "Ağ Operasyon" < "Dijital …": takım 2 (sıra 1, 2, 3) önce; takım 1 sırasız → ad sırası
+    expect(order()).toEqual(['9', '7', '8', '1', '2', '3'])
+    menuOf('A Kanalı')
+    const up = await screen.findByRole('menuitem', { name: 'Yukarı taşı: A Kanalı' })
+    expect(up).toHaveAttribute('aria-disabled', 'true')                           // takımının ilki (önündeki 8 başka takım)
+    expect(screen.getByRole('menuitem', { name: 'Aşağı taşı: A Kanalı' })).not.toHaveAttribute('aria-disabled')
+    await closeMenu()
+    menuOf('C Kanalı')
+    expect(await screen.findByRole('menuitem', { name: 'Aşağı taşı: C Kanalı' })).toHaveAttribute('aria-disabled', 'true')   // takımının sonu
+    await closeMenu()
+    menuOf('Paylaşılan Kanal')
+    expect(await screen.findByRole('menuitem', { name: 'Kanalı düzenle' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /taşı/ })).toBeNull()          // paylaşımla görülen: düzenlese de taşımaz
+    await closeMenu()
+    menuOf('Salt Okunur Kanal')
+    expect(await screen.findByRole('menuitem', { name: 'Tüm raporlar' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /taşı/ })).toBeNull()          // can_edit yok
+  })
+
+  it('sırasız takımda "Aşağı taşı": takım 1…n numaralanır (3 PUT, yalnız sort_order, sırayla), liste yeniden yüklenir; sonraki taşıma iki PUT ile yer değiştirir', async () => {
+    const list = orderFixture()
+    liveMocks(list)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_sort=order')
+    render(<TechErrorReportsPage />)
+    await screen.findByText('6 / 6 kanal gösteriliyor')
+    expect(order()).toEqual(['9', '7', '8', '1', '2', '3'])
+    menuOf('A Kanalı')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Aşağı taşı: A Kanalı' }))
+    await waitFor(() => expect(te().updateChannel).toHaveBeenCalledTimes(3))
+    expect(te().updateChannel.mock.calls).toEqual([[2, { sort_order: 1 }], [1, { sort_order: 2 }], [3, { sort_order: 3 }]])
+    await waitFor(() => expect(te().overview).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(order()).toEqual(['9', '7', '8', '2', '1', '3']))
+    // Artık ikisinin de sırası var: A yukarı ↔ B yalnız iki PUT (başka takıma dokunulmaz)
+    menuOf('A Kanalı')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Yukarı taşı: A Kanalı' }))
+    await waitFor(() => expect(te().updateChannel).toHaveBeenCalledTimes(5))
+    expect(te().updateChannel.mock.calls.slice(3)).toEqual([[1, { sort_order: 1 }], [2, { sort_order: 2 }]])
+    await waitFor(() => expect(order()).toEqual(['9', '7', '8', '1', '2', '3']))
+    expect(te().updateChannel.mock.calls.every(([id]) => [1, 2, 3].includes(id))).toBe(true)
+  })
+
+  it('iyimser sıra: PUT henüz dönmeden liste yeni sırayı gösterir; taşıma sürerken öğeler devre dışı', async () => {
+    liveMocks(orderFixture())
+    te().updateChannel.mockReturnValue(new Promise(() => {}))        // hiç dönmez
+    window.history.replaceState({}, '', '/?tab=channelreports&te_sort=order')
+    render(<TechErrorReportsPage />)
+    await screen.findByText('6 / 6 kanal gösteriliyor')
+    menuOf('B Kanalı')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Aşağı taşı: B Kanalı' }))
+    await waitFor(() => expect(order()).toEqual(['9', '7', '8', '1', '3', '2']))
+    expect(te().updateChannel).toHaveBeenCalledTimes(1)               // sıralı: ilk PUT bekleniyor
+    expect(te().overview).toHaveBeenCalledTimes(1)                    // yeniden yükleme yalnız başarıda
+    menuOf('A Kanalı')
+    expect(await screen.findByRole('menuitem', { name: 'Aşağı taşı: A Kanalı' })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('PUT düşerse: bildirim (sunucu metni), eski sıra geri gelir, kalan PUT gönderilmez, sunucu gerçeği yeniden okunur', async () => {
+    liveMocks(orderFixture())
+    te().updateChannel.mockResolvedValue({ success: false, status: 400, error: 'Sıra numarası 0 ile 10 000 arasında olmalı.' })
+    window.history.replaceState({}, '', '/?tab=channelreports&te_sort=order')
+    render(<TechErrorReportsPage />)
+    await screen.findByText('6 / 6 kanal gösteriliyor')
+    menuOf('A Kanalı')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Aşağı taşı: A Kanalı' }))
+    expect((await screen.findAllByText('Sıra numarası 0 ile 10 000 arasında olmalı.')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(te().overview).toHaveBeenCalledTimes(2))
+    expect(te().updateChannel).toHaveBeenCalledTimes(1)               // ilk PUT düştü, ikincisi / üçüncüsü gitmedi
+    await waitFor(() => expect(order()).toEqual(['9', '7', '8', '1', '2', '3']))
+  })
+})

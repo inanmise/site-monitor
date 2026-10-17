@@ -17,6 +17,16 @@ export const fetchStatus = () => api.statusPage.get(false)
 export const fetchOverview = () => api.monitoring.getOverview(24, false)
 /** Sertifika istatistikleri — sertifika bitişleri kutusu ve sertifika renkli panelleri aynı ucu okur. */
 export const fetchStats = () => api.getStats()
+/**
+ * Kanal teknik hata raporları genel bakışı (R14, 2026-10-17) — "dönem raporu eksik kanal" paneli okur; mevcut uç, kapsam
+ * sunucuda. 403 = modül bu kullanıcının takımlarına kapalı (ya da okuma izni yok) → `visible:false` (kutu gri "yetki yok",
+ * ASLA yeşil); başka bir hata olduğu gibi döner (kutu hata durumunda kalır — kısmi / okunamayan veriden renk çıkmaz).
+ */
+export const fetchChannelReports = async () => {
+  const res = await api.techErrors.overview(null)
+  if (res && res.success === false && (res.status === 403 || res.errorInfo?.status === 403)) return { success: true, data: { visible: false } }
+  return res
+}
 
 // ── Ortak sunum parçaları ─────────────────────────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@
  * reason }` (`reason`: noaccess | nodata | partial).
  */
 import { zonedMs } from '../../utils/relativeTime.js'
+import { channelCounts } from '../techerror/channelListModel.js'
 import { alertsSummary, certSummary, incidentsSummary, lightSummary, nocUncalledSummary, teamTypeMatrix } from './myDashModel.js'
 
 export { STAT_DEFS, STAT_TYPES, statDef } from './statDefs.js'
@@ -121,6 +122,17 @@ export function statReading(type, data, nowMs = Date.now()) {
       if (type === 'stat_certs_week') return { value: c.exp7, tone: countTone(c.exp7, 'danger'), sub: ['mydash.st.ofCerts', c.total], link: ['all', { c_win: '7' }] }
       if (type === 'stat_certs_month') return { value: c.exp30, tone: countTone(c.exp30, 'warning'), sub: ['mydash.st.ofCerts', c.total], link: ['all', { c_win: '30' }] }
       return { value: c.errors, tone: countTone(c.errors, 'warning'), sub: ['mydash.st.ofCerts', c.total], link: ['all', { c_st: 'error' }] }
+    }
+    case 'stat_channel_reports_missing': {
+      // Kanal teknik hata raporu (R14): dönem raporu başlanmamış AKTİF kanal — kanal listesinin "Raporu başlanmamış" sayımıyla
+      // aynı kural (channelPeriodStatus → missing). 403 → yetki yok (gri); kanal listesi okunamadı / yok → veri yok (gri).
+      // Eksik aylık rapor bir görevdir, kesinti değil → turuncu; 0 → yeşil. Bağlantı listeyi aynı süzgeçle açar.
+      if (data.visible === false) return NONE('noaccess')
+      if (!Array.isArray(data.channels)) return NONE('nodata')
+      const c = channelCounts(data.channels)
+      if (c.channels === 0) return NONE('nodata')
+      return { value: c.missing, tone: countTone(c.missing, 'warning'), sub: ['mydash.st.channelsSent', c.channels, c.sent],
+        link: ['channelreports', { te_st: 'missing' }] }
     }
     default:
       return NONE('nodata')

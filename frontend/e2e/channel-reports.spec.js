@@ -214,6 +214,7 @@ const CALC_REPORT = {
 let reportOverride = null
 let templateOverride = null
 let overviewOverride = null     // kanal listesi (8. sürüm: 60 kanal, sayfalama)
+let channelPuts = []            // kanal sırası (R14): PUT /channels/<id> gövdeleri — {id, ...body}
 let reportsOverride = null      // kanalın rapor listesi (8. sürüm: 30 rapor)
 
 // Özet kartına gömülü bölüm (2026-10-17): map yapılmamış hata adedi + açıklama yönetici özeti kartında girilir; açıklama
@@ -319,7 +320,7 @@ let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  testMails = 0; approvalRequests = 0; decisions = []
+  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -342,6 +343,14 @@ async function mock(page, { openSections = true } = {}) {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
         teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false }],
         channels: overviewOverride || [channel(10, LONG_CHANNEL), channel(20, 'POS')] } }
+    } else if (/^\/api\/tech-error-reports\/channels\/\d+$/.test(p) && req.method() === 'PUT') {
+      // Kanal sırası (R14): gövde kaydedilir, overviewOverride'daki kanal güncellenir — yeniden yükleme yeni sırayı getirir
+      const id = Number(p.split('/').pop())
+      const put = JSON.parse(req.postData() || '{}')
+      channelPuts.push({ id, ...put })
+      const ch = (overviewOverride || []).find((c) => c.id === id)
+      if (ch && 'sort_order' in put) ch.sort_order = put.sort_order
+      body = { success: true, data: { ...(ch || { id }), ...put } }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -528,7 +537,8 @@ for (const vp of VIEWPORTS) {
       for (let i = 1; i <= 60; i++) {
         const extra = i <= 20 ? { period_report: { id: 1000 + i, status: 'sent' } }
           : i <= 40 ? { period_report: { id: 1000 + i, status: 'draft' } } : i <= 55 ? {} : { active: false }
-        many.push({ ...channel(i, i === 10 ? LONG_CHANNEL : `Kanal ${String(i).padStart(2, '0')}`), period_report: null, ...extra })
+        // sort_order = i: "Sıra" sıralamasında Kanal 01, 02, … (R14) — taşıma iki PUT'luk yer değiştirme olur
+        many.push({ ...channel(i, i === 10 ? LONG_CHANNEL : `Kanal ${String(i).padStart(2, '0')}`), period_report: null, sort_order: i, ...extra })
       }
       const months = ['', 'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
       const reps = []
@@ -598,6 +608,40 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot="te-channels"]'), 'kırpılan metin (2. sayfa)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channels"]'), 'küçük hedef (2. sayfa)').toEqual([])
       await page.screenshot({ path: `test-results/channel-reports-list-${vp.name}.png`, fullPage: false })
+
+      // Kanal sırası (R14, 2026-10-17): "Sıra" sıralaması → ipucu, sayfa 1'e döner (Kanal 01 ilk); satır menüsünde
+      // "Yukarı / Aşağı taşı" (takımın ilkinde yukarı devre dışı); "Aşağı taşı" komşuyla sort_order değiştirir = tam iki PUT,
+      // liste yeni sırayı gösterir; sığar, kesilmez, dokunma hedefleri
+      await page.locator('[data-slot="te-sort"]').selectOption('order')
+      await expect(page.locator('[data-slot="te-sort-hint"]')).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_sort')).toBe('order')
+      await expect(rows).toHaveCount(50)
+      await expect(rows.nth(0)).toContainText('Kanal 01')
+      await expect(rows.nth(1)).toContainText('Kanal 02')
+      const menuOf = (row) => row.getByRole('button', { name: /İşlemler|Kanal işlemleri|Actions|Channel actions/ })
+      await menuOf(rows.nth(0)).click()
+      // Arayüz dili e2e'de EN (varsayılan) — erişilebilir adlar iki dilde de kabul edilir
+      const upFirst = page.getByRole('menuitem', { name: /^(Yukarı taşı|Move up): Kanal 01$/ })
+      await expect(upFirst).toBeVisible()
+      await expect(upFirst).toHaveAttribute('aria-disabled', 'true')
+      await expect(page.getByRole('menuitem', { name: /^(Aşağı taşı|Move down): Kanal 01$/ })).not.toHaveAttribute('aria-disabled', 'true')
+      await page.waitForTimeout(150)
+      expect(await page.evaluate(clipped, '[role="menu"]'), 'kırpılan metin (sıra menüsü)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="menu"]'), 'küçük hedef (sıra menüsü)').toEqual([])
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      await menuOf(rows.nth(1)).click()
+      await page.getByRole('menuitem', { name: /^(Aşağı taşı|Move down): Kanal 02$/ }).click()
+      await expect.poll(() => channelPuts.length).toBe(2)
+      expect(channelPuts).toEqual([{ id: 2, sort_order: 3 }, { id: 3, sort_order: 2 }])    // yalnız sort_order gönderilir
+      await expect(rows.nth(1)).toContainText('Kanal 03')
+      await expect(rows.nth(2)).toContainText('Kanal 02')
+      await expect(rows).toHaveCount(50)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (sıra)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-channels"]'), 'kırpılan metin (sıra)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channels"]'), 'küçük hedef (sıra)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-order-${vp.name}.png`, fullPage: false })
 
       // Kanal 10'u aç (sayfa 1, ad sırası): rapor listesi 30 → 25 + 5; durum süzgeci; yıl süzgeci; arama
       await page.locator('[data-slot="te-sort"]').selectOption('name')
