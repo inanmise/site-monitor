@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-16T19:38:11Z",
+  "generatedAt": "2026-10-17T00:02:53Z",
   "repo": "inanmise/site-monitor",
-  "count": 757,
+  "count": 758,
   "releases": [
+    {
+      "version": "20.140.0",
+      "tag": "v20.140.0",
+      "releasedAt": "2026-10-17T00:02:46Z",
+      "commit": "053b7a6c9cf8b4b17cb6508492d25f7ee88c9a54",
+      "prevVersion": "20.139.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "053b7a6c",
+          "subject": "teknik hata raporunda katlanır bölümler ve otomatik kayıt (30 sn; geçmişte 15 dk tek satır)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.139.0",
       "tag": "v20.139.0",
