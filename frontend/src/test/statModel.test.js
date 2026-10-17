@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { OLDEST_SEVERE_RED_MIN, STAT_DEFS, STAT_TYPES, SUCCESS_AMBER, SUCCESS_GREEN, statReading } from '../components/mydash/statModel.js'
-import { WIDGET_CATALOG, STAT_PRESET } from '../components/mydash/myDashModel.js'
+import { OLDEST_SEVERE_RED_MIN, STAT_DEFS, STAT_TYPES, SUCCESS_AMBER, SUCCESS_GREEN, channelReportCounts, statReading } from '../components/mydash/statModel.js'
+import { CHANNEL_REPORTS, WIDGET_CATALOG, STAT_PRESET, typeVisible } from '../components/mydash/myDashModel.js'
 import { WIDGETS } from '../components/mydash/widgets.jsx'
 import { channel } from './helpers/techErrorFixtures.js'
 
@@ -23,7 +23,13 @@ describe('renkli panel kataloğu', () => {
     expect(STAT_PRESET.every((p) => p.size === 'sm')).toBe(true)
     expect(STAT_DEFS.length).toBeGreaterThanOrEqual(15)
     expect(STAT_TYPES).toContain('stat_channel_reports_missing')
-    expect(WIDGET_CATALOG.find((e) => e.type === 'stat_channel_reports_missing')).toMatchObject({ perm: 'tech_error_reports.read', tab: 'channelreports' })
+    // R14 inceleme: modül kullanıcının takımlarına kapalıysa panel sunulmaz — `@channel_reports` sahte izni (scope.channel_reports)
+    expect(WIDGET_CATALOG.find((e) => e.type === 'stat_channel_reports_missing'))
+      .toMatchObject({ perm: ['tech_error_reports.read', CHANNEL_REPORTS], tab: 'channelreports' })
+    expect(CHANNEL_REPORTS).toBe('@channel_reports')
+    expect(typeVisible('stat_channel_reports_missing', (p) => p === 'tech_error_reports.read' || p === CHANNEL_REPORTS)).toBe(true)
+    expect(typeVisible('stat_channel_reports_missing', (p) => p === 'tech_error_reports.read')).toBe(false)   // modül kapalı
+    expect(typeVisible('stat_channel_reports_missing', (p) => p === CHANNEL_REPORTS)).toBe(false)             // okuma izni yok
   })
   it('her katalog türü sunucunun biçim kuralına uyar ([a-z_], ≤ 40) — aksi halde kayıtlı düzenden düşer / kayıt 400 alır', () => {
     for (const e of WIDGET_CATALOG) expect(e.type, e.type).toMatch(/^[a-z_]{1,40}$/)
@@ -134,5 +140,22 @@ describe('okuma ve eşikler', () => {
     expect(statReading('stat_channel_reports_missing', ov([]))).toMatchObject({ tone: 'muted', reason: 'nodata' })
     expect(statReading('stat_channel_reports_missing', ov([channel(4, 'Şube', { active: false })]))).toMatchObject({ tone: 'muted', reason: 'nodata' })
     expect(statReading('stat_channel_reports_missing', null)).toMatchObject({ tone: 'muted' })
+  })
+
+  it('kanal raporu — dönem özeti şekli (R14 inceleme: GET /period-summary, sunucu sayar; channelCounts ile aynı anlam, active = aktif kanal)', () => {
+    const sum = (x) => ({ period: { year: 2026, month: 9 }, active: 3, sent: 1, open: 1, missing: 1, inactive: 1, ...x })
+    expect(statReading('stat_channel_reports_missing', sum())).toEqual({
+      value: 1, tone: 'warning', sub: ['mydash.st.channelsSent', 3, 1], link: ['channelreports', { te_st: 'missing' }],
+    })
+    expect(statReading('stat_channel_reports_missing', sum({ missing: 0, sent: 2 }))).toMatchObject({ value: 0, tone: 'success' })
+    // Aktif kanal yok → veri yok (yeşil değil); bozuk / eksik sayı → veri yok
+    expect(statReading('stat_channel_reports_missing', sum({ active: 0, sent: 0, open: 0, missing: 0 }))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', sum({ missing: null }))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', sum({ missing: '2' }))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    expect(statReading('stat_channel_reports_missing', sum({ active: -1 }))).toMatchObject({ tone: 'muted', reason: 'nodata' })
+    // Aynı veri iki şekilde: genel bakış listesi ile özet aynı okumayı verir
+    const list = [channel(1, 'Mobil', { period_report: { id: 100, status: 'sent' } }), channel(2, 'POS', { period_report: { id: 101, status: 'changed' } }),
+      channel(3, 'ATM'), channel(4, 'Şube', { active: false })]
+    expect(channelReportCounts({ channels: list })).toEqual(channelReportCounts(sum()))
   })
 })

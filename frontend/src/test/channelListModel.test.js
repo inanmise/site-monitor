@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   CHANNEL_SORTS, CHANNEL_STATUSES, REPORT_LIST_KEYS, REPORT_STATUSES, applyReorderPlan, channelCounts, channelPeriodStatus,
-  filterChannels, filterReports, inverseReorderPlan, normalizeChannelSort, normalizeChannelStatus, normalizeReportStatus,
-  normalizeReportYear, reorderPlan, reportCounts, reportStatusKey, reportYears, sortChannels,
+  filterChannels, filterReports, fullOrderPlan, inverseReorderPlan, moveInTeam, normalizeChannelSort, normalizeChannelStatus,
+  normalizeReportStatus, normalizeReportYear, reorderPlan, reportCounts, reportStatusKey, reportYears, sortChannels,
 } from '../components/techerror/channelListModel.js'
 import { PAGE_STATE_PREFIXES } from '../hooks/useUrlQuerySync.js'
 
@@ -115,6 +115,35 @@ describe('channelListModel — kanal sırası', () => {
     expect(undo).toEqual([{ id: 2, sort_order: null }, { id: 1, sort_order: null }, { id: 3, sort_order: null }])
     expect(applyReorderPlan(applied, undo).map((c) => c.sort_order)).toEqual([null, null, null, null])
     expect(applyReorderPlan(ordered, [])).toBe(ordered)
+  })
+
+  it('inceleme 2026-10-17: takımda EŞİT sıra varsa (komşular farklı olsa da) yer değiştirme yapılmaz — 1…n numaralanır, kanal tek basamak taşınır', () => {
+    // Zeynep 1, Ali 2, Can 2, T 3 → "Zeynep aşağı": yer değiştirme Ali 1, Zeynep 2, Can 2 bırakırdı ve ad eşitlik bozucusu
+    // Zeynep'i Can'ın ALTINA (iki basamak) indirirdi
+    const list = [oc(1, 'Zeynep', 1, 1), oc(2, 'Ali', 1, 2), oc(3, 'Can', 1, 2), oc(4, 'T Kanalı', 1, 3)]
+    const ordered = sortChannels(list, 'order')
+    expect(ordered.map((c) => c.name)).toEqual(['Zeynep', 'Ali', 'Can', 'T Kanalı'])
+    const plan = reorderPlan(ordered, 1, 0, 1)
+    expect(plan).toEqual([{ id: 2, sort_order: 1 }, { id: 1, sort_order: 2 }, { id: 3, sort_order: 3 }, { id: 4, sort_order: 4 }])
+    expect(sortChannels(applyReorderPlan(ordered, plan), 'order').map((c) => c.name)).toEqual(['Ali', 'Zeynep', 'Can', 'T Kanalı'])
+    // Takımın başka bir kanalı sırasızsa da (null) yer değiştirme yok
+    const withNull = sortChannels([oc(1, 'A', 1, 1), oc(2, 'B', 1, 2), oc(3, 'C', 1, null)], 'order')
+    expect(reorderPlan(withNull, 1, 0, 1)).toEqual([{ id: 2, sort_order: 1 }, { id: 1, sort_order: 2 }, { id: 3, sort_order: 3 }])
+    // Hepsi dolu ve farklıysa yalnız iki komşu (en az PUT)
+    const distinct = sortChannels([oc(1, 'A', 1, 5), oc(2, 'B', 1, 10), oc(3, 'C', 1, 20)], 'order')
+    expect(reorderPlan(distinct, 1, 1, 1)).toEqual([{ id: 2, sort_order: 20 }, { id: 3, sort_order: 10 }])
+  })
+
+  it('toplu sıra: moveInTeam takımın TÜM kanallarını taşınmış dizilişte döner (başka takım yok); fullOrderPlan 1…n; ucunda null', () => {
+    const ordered = sortChannels([oc(1, 'A', 1, null), oc(2, 'B', 1, 7), oc(3, 'C', 1, 7), oc(9, 'Z', 2, 1)], 'order')
+    expect(ordered.map((c) => c.id)).toEqual([9, 2, 3, 1])
+    const next = moveInTeam(ordered, 1, 3, -1)                    // A yukarı
+    expect(next.map((c) => c.id)).toEqual([2, 1, 3])
+    expect(fullOrderPlan(next)).toEqual([{ id: 2, sort_order: 1 }, { id: 1, sort_order: 2 }, { id: 3, sort_order: 3 }])
+    expect(moveInTeam(ordered, 1, 1, -1)).toBeNull()              // B takımın ilki
+    expect(moveInTeam(ordered, 2, 0, 1)).toBeNull()               // Z tek kanal
+    expect(moveInTeam(ordered, 1, 0, 1)).toBeNull()               // konum başka takımın
+    expect(fullOrderPlan(null)).toEqual([])
   })
 })
 

@@ -512,6 +512,12 @@ export const api = {
     createChannel: (body) => request('/tech-error-reports/channels', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     updateChannel: (id, body) => request(`/tech-error-reports/channels/${id}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     deleteChannel: (id) => request(`/tech-error-reports/channels/${id}`, { method: 'DELETE', withStatus: true }),
+    // Kanal sırası tek istekte (R14 inceleme 2026-10-17): takımın TÜM kanal kimlikleri istenen dizilimde; sunucu 1…n yazar.
+    // Eski pod (uç yok) 404 NOT_FOUND / 405 döner — çağıran kanal başına PUT'a düşer; görülemeyen takım 404 TEAM_NOT_FOUND.
+    reorderChannels: (teamId, ids) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/channel-order`,
+      { method: 'PUT', body: JSON.stringify({ ids }), withStatus: true }),
+    // Dönem özeti (Kişisel Panom paneli): yalnız sayılar, sunucuda kapsam başına 30 sn önbellek
+    periodSummary: () => request('/tech-error-reports/period-summary', { withStatus: true }),
     template: (id) => request(`/tech-error-reports/channels/${id}/template`, { withStatus: true }),
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),

@@ -827,7 +827,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <StatusBadge status={report.status} sendState={report.last_send_status} />
-          <TeamBadge teamId={channel?.team_id} teamName={channel?.team_name} wrap />
+          {/* Yalnız paylaşımla görülen raporda rozet tıklanmaz: üye penceresi sahip takımın kişilerini gösterirdi */}
+          <TeamBadge teamId={channel?.team_id} teamName={channel?.team_name} wrap
+            static={!!(data?.shared_access || channel?.shared_access)} />
           {report.created_at && (
             <span className="[overflow-wrap:anywhere]" data-slot="te-created">· {t('te.createdLine', fmtDateTime(report.created_at, uiLang), report.created_by_name || '—')}</span>
           )}

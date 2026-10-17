@@ -176,7 +176,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
-            <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} wrap />
+            {/* Yalnız paylaşımla görülen kanalda rozet tıklanmaz: üye penceresi sahip takımın kişilerini gösterirdi */}
+            <TeamBadge teamId={ch?.team_id} teamName={ch?.team_name} wrap static={!!ch?.shared_access} />
           </span>
           <span data-slot="te-channel-stats">{t('te.hdr.reports', counts.total, counts.sent)}</span>
         </div>

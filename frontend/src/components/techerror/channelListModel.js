@@ -124,33 +124,55 @@ export function sortChannels(list, sort = 'name') {
 }
 
 /**
- * Taşıma planı (R14, 2026-10-17): `ordered` = `order` sıralamasındaki GÜNCEL liste (sortChannels(…, 'order') — süzülmemiş,
- * tüm kanallar), `fromIdx` = taşınan kanalın bu listedeki konumu, `direction` −1 yukarı / +1 aşağı. Komşu AYNI takımın bir
- * önceki / sonraki kanalıdır (başka takımlar araya girmez; süzgeçle gizlenmiş kanal da komşudur). Döner: sunucuya gidecek
- * `{ id, sort_order }` PUT'ları — en az sayıda:
- *   - iki kanalın da farklı sayısal sırası varsa yalnız ikisi yer değiştirir (2 PUT);
- *   - biri sırasızsa (null) ya da sıraları eşitse önce takımın tüm kanallarına ardışık sıra (1…n, taşınmış dizilişte)
- *     verilir — değeri zaten doğru olan kanala PUT yazılmaz.
- * Takımın ilk / son konumunda, kanal takıma ait değilse ya da yön geçersizse boş liste (menü öğesi devre dışı).
+ * Takımın kanalları TAŞINMIŞ dizilişte (R14): `ordered` = `order` sıralamasındaki GÜNCEL liste (sortChannels(…, 'order') —
+ * süzülmemiş, tüm kanallar), `fromIdx` = taşınan kanalın bu listedeki konumu, `direction` −1 yukarı / +1 aşağı. Komşu AYNI
+ * takımın bir önceki / sonraki kanalıdır (başka takımlar araya girmez). Takımın ilk / son konumunda, kanal takıma ait değilse
+ * ya da yön geçersizse null (menü öğesi devre dışı). Toplu sıra ucu (`PUT /teams/{id}/channel-order`) bu dizilişin
+ * kimliklerini alır; sunucu 1…n yazar.
  */
-export function reorderPlan(ordered, teamId, fromIdx, direction) {
+export function moveInTeam(ordered, teamId, fromIdx, direction) {
   const list = Array.isArray(ordered) ? ordered : []
   const ch = list[fromIdx]
   const dir = direction < 0 ? -1 : direction > 0 ? 1 : 0
-  if (!ch || dir === 0 || teamId == null || String(ch.team_id) !== String(teamId)) return []
+  if (!ch || dir === 0 || teamId == null || String(ch.team_id) !== String(teamId)) return null
   const team = list.filter((c) => c && String(c.team_id) === String(teamId))
   const pos = team.indexOf(ch)
-  const other = team[pos + dir]
-  if (!other) return []
-  const a = orderOf(ch)
-  const b = orderOf(other)
-  if (a != null && b != null && a !== b) return [{ id: ch.id, sort_order: b }, { id: other.id, sort_order: a }]
+  const other = pos < 0 ? null : team[pos + dir]
+  if (!other) return null
   const next = [...team]
   next[pos] = other
   next[pos + dir] = ch
   return next
+}
+
+/**
+ * Taşıma planı — eski sunucu yolu (toplu uç yokken kanal başına PUT, R14): `moveInTeam`'in dizilişini en az PUT'la yazar:
+ *   - takımın TÜM kanallarının sırası dolu ve birbirinden farklıysa yalnız iki komşu yer değiştirir (2 PUT);
+ *   - bir kanal bile sırasızsa (null) ya da iki kanalın sırası eşitse (inceleme 2026-10-17: Zeynep 1, Ali 2, Can 2 → "Zeynep
+ *     aşağı" yer değiştirmeyle Ali 1, Zeynep 2, Can 2 olur ve ad eşitlik bozucusu Zeynep'i Can'ın ALTINA, iki basamak
+ *     indirirdi) takım taşınmış dizilişte 1…n numaralanır — değeri zaten doğru olana PUT yazılmaz.
+ * Taşınamıyorsa boş liste.
+ */
+export function reorderPlan(ordered, teamId, fromIdx, direction) {
+  const next = moveInTeam(ordered, teamId, fromIdx, direction)
+  if (!next) return []
+  const list = Array.isArray(ordered) ? ordered : []
+  const ch = list[fromIdx]
+  const team = list.filter((c) => c && String(c.team_id) === String(teamId))
+  const values = team.map(orderOf)
+  const distinct = values.every((v) => v != null) && new Set(values).size === values.length
+  if (distinct) {
+    const other = next[team.indexOf(ch)]
+    return [{ id: ch.id, sort_order: orderOf(other) }, { id: other.id, sort_order: orderOf(ch) }]
+  }
+  return next
     .map((c, i) => ({ id: c.id, sort_order: i + 1 }))
     .filter((p) => orderOf(team.find((c) => c.id === p.id)) !== p.sort_order)
+}
+
+/** Toplu sıra planı: taşınmış dizilişin TAMAMI 1…n (iyimser görünüm + geri alma — sunucu da aynısını yazar). */
+export function fullOrderPlan(teamInOrder) {
+  return (teamInOrder || []).map((c, i) => ({ id: c.id, sort_order: i + 1 }))
 }
 
 /** Planı listeye uygular (iyimser görünüm / geri alma): eşleşen kanalların `sort_order`u yeni değeri alır, diğerleri aynı nesne. */

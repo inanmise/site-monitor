@@ -22,9 +22,21 @@ export const fetchStats = () => api.getStats()
  * sunucuda. 403 = modül bu kullanıcının takımlarına kapalı (ya da okuma izni yok) → `visible:false` (kutu gri "yetki yok",
  * ASLA yeşil); başka bir hata olduğu gibi döner (kutu hata durumunda kalır — kısmi / okunamayan veriden renk çıkmaz).
  */
+/**
+ * Kanal raporu paneli (R14 inceleme 2026-10-17): dönem özeti ucu (yalnız sayılar, sunucuda kapsam başına 30 sn önbellek —
+ * genel bakış her istekte kuyruğu sonuçlandırır ve tüm şablonları ayrıştırır, 60 sn'lik yoklamaya ağırdı). Eski pod (uç yok:
+ * 404 / 405) → genel bakış (statModel `channels` listesini sayar). 403 → modül kapalı / yetki yok.
+ */
 export const fetchChannelReports = async () => {
-  const res = await api.techErrors.overview(null)
-  if (res && res.success === false && (res.status === 403 || res.errorInfo?.status === 403)) return { success: true, data: { visible: false } }
+  const forbidden = (r) => r && r.success === false && (r.status === 403 || r.errorInfo?.status === 403)
+  const res = await api.techErrors.periodSummary()
+  if (forbidden(res)) return { success: true, data: { visible: false } }
+  const st = res && res.success === false ? (res.status ?? res.errorInfo?.status) : null
+  if (st === 404 || st === 405) {
+    const ov = await api.techErrors.overview(null)
+    if (forbidden(ov)) return { success: true, data: { visible: false } }
+    return ov
+  }
   return res
 }
 
