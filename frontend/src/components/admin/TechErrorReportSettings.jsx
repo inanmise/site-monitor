@@ -32,6 +32,7 @@ import {
   teamVisibleState, teamsOf,
 } from './techErrorSettingsModel.js'
 import { downloadBlob, downloadCsv, toCsv } from '../../utils/csvExport.js'
+import { clientFailure } from '../../utils/errorMessages.js'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
@@ -193,7 +194,10 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
       downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
     } catch (e) {
-      toast.error(e?.message || t('te.set.export.unavailable'))
+      // API dışı hata (bayat paket "Failed to fetch dynamically imported module", bellek, çalışma kitabı): tostta yalnız
+      // çevrilmiş metin, teknik metin "Teknik ayrıntı"da (hata sözleşmesi)
+      const f = clientFailure(e, { fallback: t('te.set.export.unavailable'), chunk: t('te.pageUpdated') })
+      toast.error(f.message, { details: f.details })
     } finally {
       if (alive.current) setExporting(false)
     }

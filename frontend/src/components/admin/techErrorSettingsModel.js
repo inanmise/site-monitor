@@ -184,12 +184,25 @@ export function exportReportStatus(ch, t) {
   return attempt ? `${t(meta.key)} · ${t(attempt.key)}` : t(meta.key)
 }
 
-/** Dönem raporunun onay durumu — rapor yoksa "—" (uygulanmaz), durum okunamazsa "Bilinmiyor". */
+/**
+ * Dönem raporunun onay durumu — ekrandaki rozetle aynı (inceleme 2026-10-17):
+ *  - rapor yok → "—" (uygulanmaz);
+ *  - süren / sonuçlanmış bir onay (`pending` / `approved` / `rejected` / `stale`) → onun metni (ekran rozeti de gösterir);
+ *  - onay AKIŞI YOK (yönetici alıcısı 0 — sunucu o zaman da `state:"none"` yollar, ekran rozet çizmez) → "—", "Onaya
+ *    gönderilmedi" DEĞİL;
+ *  - alıcı sayısı bilinmiyor (alan yok / okunamaz) ya da durum okunamaz → "Bilinmiyor";
+ *  - akış var, henüz gönderilmedi → "Onaya gönderilmedi".
+ */
 export function exportApprovalStatus(ch, t) {
   const pr = ch?.period_report
   if (!pr) return '—'
   const st = pr.approval?.state
-  return APPROVAL_STATES.has(st) ? t(`te.appr.state.${st}`) : t('te.set.export.unknown')
+  if (APPROVAL_STATES.has(st) && st !== 'none') return t(`te.appr.state.${st}`)
+  const raw = ch?.executive_count
+  const count = raw == null || raw === '' ? NaN : Number(raw)
+  if (count === 0) return '—'
+  if (!Number.isFinite(count)) return t('te.set.export.unknown')
+  return st === 'none' ? t('te.appr.state.none') : t('te.set.export.unknown')
 }
 
 /** Bir kanalın dışa aktarma satırı (sütun sırası {@link TES_EXPORT_COLUMNS}). */

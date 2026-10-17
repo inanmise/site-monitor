@@ -349,3 +349,41 @@ export function normalizeErrorBody(body, { status, requestId, retryAfter, lang, 
   rememberErrorInfo(out.error, info)
   return out
 }
+
+// ── İstemci içi (API dışı) hatalar ───────────────────────────────────────────
+
+/**
+ * Kod bölme parçası (dinamik `import()`) yüklenemedi mi — çoğunlukla dağıtım sonrası bayat paket ("Failed to fetch
+ * dynamically imported module …"). Aynı imza `ErrorBoundary`'de.
+ */
+export function isChunkLoadError(e) {
+  const name = typeof e?.name === 'string' ? e.name : ''
+  const msg = typeof e?.message === 'string' ? e.message : ''
+  return name === 'ChunkLoadError'
+    || /Loading chunk|Loading CSS chunk|dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported/i.test(msg)
+}
+
+const TECH_TEXT_MAX = 300
+
+function technicalText(e) {
+  if (e == null) return ''
+  const name = typeof e?.name === 'string' ? e.name : ''
+  const msg = typeof e?.message === 'string' ? e.message : (typeof e === 'string' ? e : '')
+  const s = (msg && name && !msg.startsWith(name) ? `${name}: ${msg}` : (msg || name)).trim()
+  return s.length > TECH_TEXT_MAX ? `${s.slice(0, TECH_TEXT_MAX - 1)}…` : s
+}
+
+/**
+ * Tosta giden metin + teknik künye (2026-10-17, hata sözleşmesi). API hatasının (`ApiError` — kullanıcıya hazır metin)
+ * dostça iletisi korunur, künyesi kendisidir. API DIŞI istisnada (bayat paket, bellek yetmedi `RangeError`, ZIP / Blob /
+ * çalışma kitabı hatası) kullanıcı yalnız çevrilmiş metni görür: parça yüklenemediyse `chunk` ("Sayfa güncellendi;
+ * yenileyip tekrar deneyin."), yoksa `fallback`; tarayıcının teknik metni "Teknik ayrıntı"da (`code`), tost metninde ASLA.
+ * @returns {{ message: string, details: object|null }}
+ */
+export function clientFailure(e, { fallback, chunk = null } = {}) {
+  if (e instanceof ApiError || e?.name === 'ApiError') {
+    return { message: (typeof e.message === 'string' && e.message.trim()) ? e.message : fallback, details: e }
+  }
+  const tech = technicalText(e)
+  return { message: chunk && isChunkLoadError(e) ? chunk : fallback, details: tech ? { code: tech } : null }
+}

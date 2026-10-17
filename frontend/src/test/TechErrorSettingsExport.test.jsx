@@ -10,10 +10,10 @@ vi.mock('../utils/csvExport.js', async (orig) => ({
   downloadCsv: (name, csv) => { dl.csv.push({ name, csv }) },
   downloadBlob: (name, blob) => { dl.blob.push({ name, blob }) },
 }))
-const xl = vi.hoisted(() => ({ sheets: [] }))
+const xl = vi.hoisted(() => ({ sheets: [], throwWith: null }))
 vi.mock('../utils/xlsxWriter.js', async (orig) => {
   const real = await orig()
-  return { ...real, buildXlsx: (sheets) => { xl.sheets.push(sheets); return real.buildXlsx(sheets) } }
+  return { ...real, buildXlsx: (sheets) => { if (xl.throwWith) throw xl.throwWith; xl.sheets.push(sheets); return real.buildXlsx(sheets) } }
 })
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -55,7 +55,7 @@ async function openExport() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  dl.csv = []; dl.blob = []; xl.sheets = []
+  dl.csv = []; dl.blob = []; xl.sheets = []; xl.throwWith = null
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   api.teams.directory.mockResolvedValue({ success: true, data: [] })
   api.admin.techErrorSettings.mockResolvedValue({ success: true, data: {
@@ -113,6 +113,31 @@ describe('Ayarlar → Teknik hata raporu — dışa aktarma', () => {
     expect(sheet.rows).toHaveLength(34)
     expect(sheet.rows[1][5]).toBe('Bilinmiyor')
     expect(sheet.rows.find((r) => r[0] === 'Mobil').slice(5, 7)).toEqual([2, 1])
+  })
+
+  it('Excel hazırlanamazsa (API dışı hata) bildirimde yalnız çevrilmiş metin; tarayıcının metni "Teknik ayrıntı"da', async () => {
+    xl.throwWith = new RangeError('Invalid array length')
+    render(<TechErrorReportSettings />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="tes-channel"]')).toHaveLength(25))
+    await openExport()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Excel (.xlsx)' }))
+    expect(await screen.findByText(/Excel dosyası hazırlanamadı\. Sayfayı yenileyip yeniden deneyin/)).toBeInTheDocument()
+    expect(screen.queryByText(/Invalid array length/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Teknik ayrıntı/ }))
+    expect(document.querySelector('[data-detail="code"]')).toHaveTextContent('RangeError: Invalid array length')
+    expect(dl.blob).toEqual([])
+    // Düğme yeniden kullanılabilir (meşgul bayrağı bırakıldı)
+    expect(screen.getByRole('button', { name: /Dışa aktar/ })).not.toBeDisabled()
+  })
+
+  it('bayat paket (çalışma kitabı parçası yüklenemedi): "Sayfa güncellendi; yenileyip tekrar deneyin."', async () => {
+    xl.throwWith = new TypeError('Failed to fetch dynamically imported module: https://sm.example/assets/xlsxWriter-1a2b.js')
+    render(<TechErrorReportSettings />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="tes-channel"]')).toHaveLength(25))
+    await openExport()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Excel (.xlsx)' }))
+    expect(await screen.findByText('Sayfa güncellendi; yenileyip tekrar deneyin.')).toBeInTheDocument()
+    expect(screen.queryByText(/dynamically imported module/)).toBeNull()
   })
 
   it('eşleşen kanal yoksa "Dışa aktar" kapalı', async () => {

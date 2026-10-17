@@ -2,8 +2,42 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   ERROR_TEXTS, ApiError, statusMessage, networkMessage, nonJsonMessage, parseRetryAfter, isTechnicalMessage,
   isVagueMessage, isCodeLike, friendlyServerMessage, normalizeErrorBody, errorInfoOf, lookupErrorInfo,
-  rememberErrorInfo, clearErrorRegistry, errorLang,
+  rememberErrorInfo, clearErrorRegistry, errorLang, clientFailure, isChunkLoadError,
 } from '../utils/errorMessages.js'
+
+describe('clientFailure — API dışı hatada tosta teknik metin girmez (2026-10-17)', () => {
+  const opts = { fallback: 'Arşiv hazırlanamadı; yenileyip yeniden deneyin.', chunk: 'Sayfa güncellendi; yenileyip tekrar deneyin.' }
+
+  it('bayat paket (dinamik import) → "sayfa güncellendi"; teknik metin künyede', () => {
+    const e = new TypeError('Failed to fetch dynamically imported module: https://sm.example/assets/a-1.js')
+    expect(isChunkLoadError(e)).toBe(true)
+    expect(isChunkLoadError(new Error('Importing a module script failed.'))).toBe(true)
+    expect(isChunkLoadError(Object.assign(new Error('x'), { name: 'ChunkLoadError' }))).toBe(true)
+    const f = clientFailure(e, opts)
+    expect(f.message).toBe(opts.chunk)
+    expect(f.details).toEqual({ code: 'TypeError: Failed to fetch dynamically imported module: https://sm.example/assets/a-1.js' })
+    // chunk metni verilmezse genel metin
+    expect(clientFailure(e, { fallback: opts.fallback }).message).toBe(opts.fallback)
+  })
+
+  it('bellek / ZIP / Blob hatası → yalnız çevrilmiş metin; künye kısaltılır (≤ 300)', () => {
+    const f = clientFailure(new RangeError('Array buffer allocation failed'), opts)
+    expect(f).toEqual({ message: opts.fallback, details: { code: 'RangeError: Array buffer allocation failed' } })
+    expect(isChunkLoadError(new RangeError('Array buffer allocation failed'))).toBe(false)
+    const long = clientFailure(new Error('x'.repeat(1000)), opts)
+    expect(long.details.code.length).toBeLessThanOrEqual(300)
+    expect(clientFailure(null, opts)).toEqual({ message: opts.fallback, details: null })
+    expect(clientFailure('düz metin', opts)).toEqual({ message: opts.fallback, details: { code: 'düz metin' } })
+  })
+
+  it('API hatası (ApiError) dostça iletisini korur, künyesi kendisi', () => {
+    const api = new ApiError('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.', { status: 0, code: 'NETWORK_ERROR' })
+    const f = clientFailure(api, opts)
+    expect(f.message).toBe('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.')
+    expect(f.details).toBe(api)
+    expect(clientFailure(new ApiError(''), opts).message).toBe(opts.fallback)
+  })
+})
 
 /**
  * Kullanıcıya görünen API hata metinleri (2026-10-08): her durumun açıklayıcı metni (ne · neden · ne yapmalı), iyi

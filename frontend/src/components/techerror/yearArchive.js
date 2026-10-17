@@ -5,15 +5,25 @@
  * başka bir hata gelirse ay EKSİK sayılır: ZIP başarılı olanlarla yine verilir, içine eksik ayları ve nedenlerini yazan
  * `missing.txt` konur — sessiz, yarım arşiv yok. Kullanıcı iptal ederse hiçbir şey indirilmez.
  *
- * Bu dosya SAF parçaları taşır (plan, adlar, eksik listesi, sıralı koşucu); React ve API bağımlılığı yok — çağıran
- * `fetchPdf`'i verir. ZIP paketleyici (`fflate`) ilk kullanımda `import()` ile yüklenir (ekran paketine girmez). PDF zaten
- * sıkıştırılmış olduğundan girdiler sıkıştırılmadan (`level: 0`) yazılır.
+ * İnceleme düzeltmeleri (2026-10-17):
+ *  - her PDF isteğinin üst sınırı {@link ARCHIVE_REQUEST_TIMEOUT_MS} (5 dk, kullanıcının iptal sinyaliyle birleşik); süre
+ *    dolarsa o ay "zaman aşımı" diye eksik, sıradakine geçilir — asılı bir istek arşivi sonsuza dek bekletmez;
+ *  - ilk 401 (oturum düştü / pasif / bakım) ya da 403'te DURULUR: kalan aylar istenmez, nedeniyle eksik yazılır (oturum
+ *    işleyişini istemci yapar — `api/client.js`);
+ *  - ZIP AKIŞLA yazılır (`fflate` `Zip` + `ZipPassThrough`, sıkıştırmasız): her PDF gelir gelmez arşive eklenir, çıktı
+ *    parçaları hemen Blob'a çevrilir ve PDF baytları bırakılır — bellekte her PDF'in üç kopyası (PDF listesi, `zipSync`
+ *    çıktısı, son Blob) birikmez.
+ *
+ * Bu dosya SAF parçaları taşır (plan, adlar, eksik listesi, sıralı koşucu, akış yazıcısı); React ve API bağımlılığı yok —
+ * çağıran `fetchPdf`'i verir. ZIP paketleyici (`fflate`) ilk kullanımda `import()` ile yüklenir (ekran paketine girmez).
  */
 
 /** 429'da bir raporu yeniden istemeden önce beklenen süre. */
 export const ARCHIVE_RETRY_WAIT_MS = 3000
 /** 429'da aynı rapor için en çok bu kadar YENİDEN deneme (toplam ≤ 4 istek). */
 export const ARCHIVE_MAX_RETRIES = 3
+/** Tek PDF isteğinin (yanıt + gövde) üst sınırı; dolarsa ay "zaman aşımı" diye eksik sayılır. */
+export const ARCHIVE_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 /** Eksik ayları anlatan dosyanın ZIP içindeki adı. */
 export const MISSING_FILE = 'missing.txt'
 /** UTF-8 BOM — `missing.txt` Windows not defterinde Türkçe karakterlerle doğru açılsın. */
@@ -119,22 +129,19 @@ export function zipPlan(reports, year) {
 }
 
 /**
- * İndirilen PDF'lerin ZIP içindeki adları: sunucunun adı (Content-Disposition) varsa o, yoksa {@link fallbackPdfName};
- * çakışan adlar numaralanır.
- * @param {{ item: { year: number, month: number }, name?: string|null, bytes: Uint8Array }[]} files
+ * ZIP içi ad verici: sunucunun adı (Content-Disposition) varsa o, yoksa {@link fallbackPdfName}; çakışan adlar numaralanır,
+ * `missing.txt` ayrılmıştır. Geliş sırasıyla çağrılır (plan sırası) — adlar PDF'ler birikmeden, geldikçe verilir.
+ * @returns {(item: { year: number, month: number }, serverName?: string|null) => string}
  */
-export function namedEntries(files, channelName) {
+export function entryNamer(channelName) {
   const used = new Set([MISSING_FILE])
-  return (files || []).map((f) => ({
-    ...f,
-    entry: uniqueName(safeEntryName(f.name) || fallbackPdfName(channelName, f.item.year, f.item.month), used),
-  }))
+  return (item, serverName) => uniqueName(safeEntryName(serverName) || fallbackPdfName(channelName, item?.year, item?.month), used)
 }
 
 /**
  * `missing.txt` içeriği (arayüz dilinde): başlık, her eksik ay için "- Ay Yıl — neden", tek tek deneme önerisi. Satır
  * sonu CRLF, başta BOM (Windows not defteri Türkçe karakterleri doğru açsın).
- * @param {{ item, reason: 'busy'|'notPdf'|'failed', status?: number, error?: string|null }[]} missing
+ * @param {{ item, reason: 'busy'|'notPdf'|'failed'|'timeout'|'auth'|'skipped', status?: number, error?: string|null }[]} missing
  * @param {{ t: Function, channelName: string, year: number, labelOf: (item) => string }} ctx
  */
 export function missingText(missing, { t, channelName, year, labelOf }) {
@@ -145,12 +152,18 @@ export function missingText(missing, { t, channelName, year, labelOf }) {
 }
 
 /**
- * Eksik ayın nedeni (arayüz dilinde): meşgul, PDF olmayan yanıt, ağ (durum 0 — tarayıcının teknik metni yazılmaz) ya da
- * sunucunun kendi iletisi / HTTP durumu.
+ * Eksik ayın nedeni (arayüz dilinde): meşgul, PDF olmayan yanıt, zaman aşımı, oturum düştü (401) / erişim yok (403) ve
+ * bu yüzden denenmeyen aylar, ağ (durum 0 — tarayıcının teknik metni yazılmaz) ya da sunucunun kendi iletisi / HTTP durumu.
  */
 export function missingReason(m, t) {
   if (m?.reason === 'busy') return t('te.zip.reason.busy', ARCHIVE_MAX_RETRIES + 1)
   if (m?.reason === 'notPdf') return t('te.zip.reason.notPdf')
+  if (m?.reason === 'timeout') return t('te.zip.reason.timeout', Math.round(ARCHIVE_REQUEST_TIMEOUT_MS / 60000))
+  if (m?.reason === 'auth') {
+    if (m.status === 401) return t('te.zip.reason.session')
+    return m.error ? String(m.error) : t('te.zip.reason.forbidden')
+  }
+  if (m?.reason === 'skipped') return m.status === 401 ? t('te.zip.reason.skippedSession') : t('te.zip.reason.skippedForbidden')
   if (!m?.status) return t('te.zip.reason.network')
   if (m?.error) return String(m.error)
   return t('te.zip.reason.failed', m.status)
@@ -172,6 +185,77 @@ export function abortableSleep(ms, signal) {
   })
 }
 
+function timeoutReason() {
+  try {
+    return new DOMException('The PDF request timed out.', 'TimeoutError')
+  } catch {
+    const e = new Error('The PDF request timed out.')
+    e.name = 'TimeoutError'
+    return e
+  }
+}
+
+const NATIVE_ANY = typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function' ? AbortSignal.any : null
+const ENDED = Object.freeze({ success: false, status: 0, aborted: true, error: null })
+
+/**
+ * Tek isteğin sinyali: kullanıcının iptali (`parent`) + `ms` süre sınırı. `AbortSignal.any` varsa onunla, yoksa (eski
+ * tarayıcı / farklı gerçeklikten sinyal) elle bağlı bir denetleyiciyle birleşir. `ended` sinyal kesilince (iptal ya da süre)
+ * çözülür — istek sinyali yok sayıp asılı kalsa bile koşucu beklemez. `timedOut()` sürenin dolduğunu söyler; `done()` zamanlayıcıyı
+ * ve dinleyicileri bırakır (her istekten sonra çağrılır).
+ * @param {{ any?: Function|null }} [opts] test kancası: `any: null` elle bağlı yolu zorlar
+ */
+export function requestSignal(parent, ms, { any = NATIVE_ANY } = {}) {
+  const timeout = new AbortController()
+  let timer = setTimeout(() => { timer = null; timeout.abort(timeoutReason()) }, ms)
+  let signal = null
+  let unlink = () => {}
+  if (!parent) {
+    signal = timeout.signal
+  } else {
+    if (typeof any === 'function') {
+      try { signal = any.call(AbortSignal, [parent, timeout.signal]) } catch { signal = null }
+    }
+    if (!signal) {
+      const linked = new AbortController()
+      const fromParent = () => linked.abort(parent.reason)
+      const fromTimeout = () => linked.abort(timeout.signal.reason)
+      if (parent.aborted) linked.abort(parent.reason)
+      else parent.addEventListener?.('abort', fromParent, { once: true })
+      timeout.signal.addEventListener('abort', fromTimeout, { once: true })
+      unlink = () => {
+        parent.removeEventListener?.('abort', fromParent)
+        timeout.signal.removeEventListener('abort', fromTimeout)
+      }
+      signal = linked.signal
+    }
+  }
+  let onEnd = null
+  const ended = new Promise((resolve) => {
+    if (signal.aborted) { resolve(ENDED); return }
+    onEnd = () => resolve(ENDED)
+    signal.addEventListener('abort', onEnd, { once: true })
+  })
+  return {
+    signal,
+    ended,
+    timedOut: () => timeout.signal.aborted,
+    done: () => {
+      if (timer != null) { clearTimeout(timer); timer = null }
+      unlink()
+      if (onEnd) signal.removeEventListener('abort', onEnd)
+    },
+  }
+}
+
+async function callFetch(fetchPdf, item, signal) {
+  try {
+    return await fetchPdf(item, signal)
+  } catch (e) {
+    return { success: false, status: 0, error: e?.message || null, aborted: e?.name === 'AbortError' }
+  }
+}
+
 async function bytesOf(res) {
   // ArrayBuffer.isView: başka gerçeklikten (realm) gelen Uint8Array'de `instanceof` yanılır
   if (res?.bytes && ArrayBuffer.isView(res.bytes)) return new Uint8Array(res.bytes.buffer, res.bytes.byteOffset, res.bytes.byteLength)
@@ -180,21 +264,27 @@ async function bytesOf(res) {
 }
 
 /**
- * Planı SIRAYLA koşar — aynı anda tek istek. 429 → {@link ARCHIVE_RETRY_WAIT_MS} bekleyip aynı raporu yeniden ister (en
- * çok `maxRetries` kez); başka hata, PDF olmayan yanıt ya da tükenen deneme → ay `missing`'e. İptal (signal) bir sonraki
- * adımda (istek / bekleme sonunda; `fetchPdf` sinyali isteğe de geçirebilir) durdurur ve `{ aborted: true }` döner —
- * çağıran hiçbir şey indirmez.
+ * Planı SIRAYLA koşar — aynı anda tek istek, her istek {@link requestSignal} ile süre sınırlı. 429 →
+ * {@link ARCHIVE_RETRY_WAIT_MS} bekleyip aynı raporu yeniden ister (en çok `maxRetries` kez); zaman aşımı, başka hata, PDF
+ * olmayan yanıt ya da tükenen deneme → ay `missing`'e, sıradakine geçilir. 401 / 403 → o ay ve KALAN bütün aylar `missing`'e
+ * (`auth` / `skipped`), `stopped` = durum — kalan istekler gönderilmez. İptal (signal) süren isteği keser ve
+ * `{ aborted: true }` döner — çağıran hiçbir şey indirmez.
+ *
+ * `onFile` verilirse her PDF GELİR GELMEZ ona verilir (akış ZIP'i — {@link createArchiveZip}); sonuçta baytlar tutulmaz
+ * (`{ item, name, entry }`, `entry` = `onFile`'ın dönüşü). Verilmezse baytlar sonuçta döner. `onFile` fırlatırsa koşu fırlatır.
  *
  * @param {{ id, year, month }[]} plan
  * @param {{ fetchPdf: (item, signal) => Promise<{ success: boolean, status?: number, error?: string, aborted?: boolean,
  *           blob?: Blob, bytes?: Uint8Array, name?: string|null }>, signal?: AbortSignal,
  *           onProgress?: (p: { index: number, total: number, item, waiting: boolean, attempt: number }) => void,
- *           sleep?: (ms: number, signal?: AbortSignal) => Promise<boolean>, waitMs?: number, maxRetries?: number }} opts
- * @returns {Promise<{ aborted: boolean, files: { item, name: string|null, bytes: Uint8Array }[], missing: object[] }>}
+ *           onFile?: (f: { item, name: string|null, bytes: Uint8Array }) => any,
+ *           sleep?: (ms: number, signal?: AbortSignal) => Promise<boolean>, waitMs?: number, maxRetries?: number,
+ *           timeoutMs?: number }} opts
+ * @returns {Promise<{ aborted: boolean, files: object[], missing: object[], stopped?: number|null }>}
  */
 export async function runArchive(plan, {
-  fetchPdf, signal = null, onProgress = () => {}, sleep = abortableSleep, waitMs = ARCHIVE_RETRY_WAIT_MS,
-  maxRetries = ARCHIVE_MAX_RETRIES,
+  fetchPdf, signal = null, onProgress = () => {}, onFile = null, sleep = abortableSleep, waitMs = ARCHIVE_RETRY_WAIT_MS,
+  maxRetries = ARCHIVE_MAX_RETRIES, timeoutMs = ARCHIVE_REQUEST_TIMEOUT_MS,
 } = {}) {
   const ABORTED = { aborted: true, files: [], missing: [] }
   const files = []
@@ -206,20 +296,36 @@ export async function runArchive(plan, {
     let retries = 0
     onProgress({ index: i + 1, total, item, waiting: false, attempt: 1 })
     for (;;) {
+      const req = requestSignal(signal, timeoutMs)
       let res
       try {
-        res = await fetchPdf(item, signal)
-      } catch (e) {
-        res = { success: false, status: 0, error: e?.message || null, aborted: e?.name === 'AbortError' }
+        res = await Promise.race([callFetch(fetchPdf, item, req.signal), req.ended])
+      } finally {
+        req.done()
       }
-      if (signal?.aborted || res?.aborted) return ABORTED
+      if (signal?.aborted) return ABORTED
+      if (!res?.success && req.timedOut()) {
+        missing.push({ item, reason: 'timeout', status: 0, error: null })
+        break
+      }
+      if (res?.aborted) return ABORTED
       if (res?.success) {
         let bytes = null
         try { bytes = await bytesOf(res) } catch { bytes = null }
         if (signal?.aborted) return ABORTED
-        if (isPdfBytes(bytes)) files.push({ item, name: res.name || null, bytes })
-        else missing.push({ item, reason: bytes ? 'notPdf' : 'failed', status: 0, error: null })
+        if (isPdfBytes(bytes)) {
+          const name = res.name || null
+          if (onFile) files.push({ item, name, entry: await onFile({ item, name, bytes }) })
+          else files.push({ item, name, bytes })
+        } else {
+          missing.push({ item, reason: bytes ? 'notPdf' : 'failed', status: 0, error: null })
+        }
         break
+      }
+      if (res?.status === 401 || res?.status === 403) {
+        missing.push({ item, reason: 'auth', status: res.status, error: res.error || null })
+        for (let j = i + 1; j < total; j++) missing.push({ item: plan[j], reason: 'skipped', status: res.status, error: null })
+        return { aborted: false, files, missing, stopped: res.status }
       }
       if (res?.status === 429 && retries < maxRetries) {
         retries++
@@ -233,18 +339,53 @@ export async function runArchive(plan, {
       break
     }
   }
-  return { aborted: false, files, missing }
+  return { aborted: false, files, missing, stopped: null }
 }
 
 /**
- * ZIP baytları: her PDF sıkıştırmasız (`level: 0`), varsa `missing.txt`. `fflate` ilk çağrıda yüklenir.
- * @param {{ entry: string, bytes: Uint8Array }[]} entries
- * @param {string|null} missing  `missing.txt` içeriği (eksik yoksa null)
+ * AKIŞ ZIP yazıcısı (`fflate` `Zip` + `ZipPassThrough`, sıkıştırmasız — PDF zaten sıkıştırılmış). `addPdf` PDF'i hemen
+ * arşive yazar; çıktı parçaları geldikçe Blob'a çevrilir, çağıran PDF baytlarını bırakabilir. `finish` varsa `missing.txt`'yi
+ * ekler, arşivi kapatır ve `application/zip` Blob'u döner; `abort` yarım arşivi bırakır (iptal / hata). Adlar
+ * {@link entryNamer} ile. `fflate` burada yüklenir — yüklenemezse (dağıtım sonrası bayat paket) PDF istenmeden fırlatır.
+ * @param {{ load?: () => Promise<object> }} [opts] test kancası
  */
-export async function buildArchiveZip(entries, missing = null) {
-  const { zipSync, strToU8 } = await import('fflate')
-  const files = {}
-  for (const e of entries || []) files[e.entry] = [e.bytes, { level: 0 }]
-  if (missing) files[MISSING_FILE] = [strToU8(missing), { level: 0 }]
-  return zipSync(files)
+export async function createArchiveZip(channelName, { load = () => import('fflate') } = {}) {
+  const { Zip, ZipPassThrough, strToU8 } = await load()
+  let parts = []
+  let failure = null
+  let closed = false
+  const zip = new Zip((err, chunk) => {
+    if (err) { if (!failure) failure = err; return }
+    if (parts && chunk && chunk.length) parts.push(new Blob([chunk]))
+  })
+  const nameOf = entryNamer(channelName)
+  const put = (name, bytes) => {
+    if (closed) throw new Error('The archive is already closed.')
+    const file = new ZipPassThrough(name)
+    zip.add(file)
+    file.push(bytes, true)
+    if (failure) throw failure
+  }
+  return {
+    addPdf(item, serverName, bytes) {
+      const entry = nameOf(item, serverName)
+      put(entry, bytes)
+      return entry
+    },
+    finish(missing = null) {
+      if (missing) put(MISSING_FILE, strToU8(missing))
+      zip.end()
+      if (failure) throw failure
+      closed = true
+      const blob = new Blob(parts, { type: 'application/zip' })
+      parts = null
+      return blob
+    },
+    abort() {
+      if (closed) return
+      closed = true
+      try { zip.terminate() } catch { /* yarım arşiv zaten bırakılıyor */ }
+      parts = null
+    },
+  }
 }

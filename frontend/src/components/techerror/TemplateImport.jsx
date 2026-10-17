@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
@@ -16,13 +17,23 @@ const collator = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })
 /**
  * Seçilebilecek kaynak kanallar: kullanıcının OKUYABİLDİĞİ kanallar (kanal listesiyle aynı `overview` yanıtı — yeni kanal
  * penceresinin "başka bir kanalın şablonunu kopyala" seçicisiyle aynı veri yolu), bu kanal hariç; ad A→Z (Türkçe), sonra takım.
- * Etiket "<kanal> — <takım>".
+ * Etiket "<kanal> — <takım>"; pasif kanal (`active === false`) `inactiveSuffix` ile ("(pasif)") işaretlenir.
  */
-export function importOptions(channels, currentId) {
+export function importOptions(channels, currentId, { inactiveSuffix = '' } = {}) {
   return (channels || [])
     .filter((c) => c && c.id != null && String(c.id) !== String(currentId))
     .sort((a, b) => collator.compare(a.name || '', b.name || '') || collator.compare(a.team_name || '', b.team_name || ''))
-    .map((c) => ({ value: String(c.id), label: c.team_name ? `${c.name} — ${c.team_name}` : (c.name || `#${c.id}`), channel: c }))
+    .map((c) => {
+      const base = c.team_name ? `${c.name} — ${c.team_name}` : (c.name || `#${c.id}`)
+      return { value: String(c.id), label: c.active === false && inactiveSuffix ? `${base} ${inactiveSuffix}` : base, channel: c }
+    })
+}
+
+/** Şablon dili adı (arayüz dilinde); bilinmeyen dil null. */
+function langName(lang, t) {
+  if (lang === 'en') return t('te.tpl.langEn')
+  if (lang === 'tr') return t('te.tpl.langTr')
+  return null
 }
 
 /**
@@ -32,14 +43,20 @@ export function importOptions(channels, currentId) {
  * kaydederse kayıt 409 alır. Şablon kendi dilini korur. Okuma başarısızsa yarım şablon yüklenmez, sunucu iletisi gösterilir.
  * Yalnız düzenleyebilen görür (çağıran çizer).
  *
+ * İnceleme (2026-10-17): pasif kanal "(pasif)" diye işaretlenir; seçilen şablonun dili taslağınkinden (`draftLang`) farklıysa
+ * satır içi uyarı (rapor dili ve ay adları o dile döner); okumada 404 (kanal bu arada silinmiş / erişim kalkmış) → kanal
+ * listeden çıkarılır, seçim temizlenir ve pencerede söylenir.
+ *
  * @param onLoad `(template, channelName) => Promise<boolean>` — true: yüklendi (pencere kapanır), false: kullanıcı vazgeçti
+ * @param draftLang düzenleyicideki taslağın dili ('tr' | 'en')
  */
-export default function TemplateImportDialog({ open, channelId, onClose, onLoad, returnFocusRef }) {
+export default function TemplateImportDialog({ open, channelId, draftLang = null, onClose, onLoad, returnFocusRef }) {
   const t = useT()
   const toast = useToast()
   const [list, setList] = useState({ loading: false, error: null, channels: null })
   const [selected, setSelected] = useState('')
   const [busy, setBusy] = useState(false)
+  const [gone, setGone] = useState(null)
   const seq = useRef(0)
 
   const load = useCallback(async () => {
@@ -56,17 +73,29 @@ export default function TemplateImportDialog({ open, channelId, onClose, onLoad,
   }, [t])
 
   useEffect(() => {
-    if (open) { setSelected(''); load() } else seq.current++
+    if (open) { setSelected(''); setGone(null); load() } else seq.current++
   }, [open, load])
 
-  const options = useMemo(() => importOptions(list.channels, channelId), [list.channels, channelId])
+  const inactiveSuffix = t('te.imp.inactive')
+  const options = useMemo(() => importOptions(list.channels, channelId, { inactiveSuffix }), [list.channels, channelId, inactiveSuffix])
   const chosen = options.find((o) => o.value === selected)?.channel || null
+  const chosenLang = langName(chosen?.lang, t)
+  const langDiffers = chosenLang != null && (draftLang === 'tr' || draftLang === 'en') && chosen.lang !== draftLang
 
   async function submit() {
     if (!chosen || busy) return
     setBusy(true)
+    setGone(null)
     try {
       const res = await api.techErrors.template(chosen.id)
+      // Kanal bu arada silinmiş ya da erişim kalkmış (başka takımın kanalı da 404): listeden çıkar, söyle
+      if (res?.success === false && res?.status === 404) {
+        const removed = chosen
+        setList((l) => (l.channels ? { ...l, channels: l.channels.filter((c) => String(c?.id) !== String(removed.id)) } : l))
+        setSelected('')
+        setGone(removed.name || `#${removed.id}`)
+        return
+      }
       const tpl = res?.success ? res.data?.template : null
       // Yarım şablon yüklenmez: bölüm dizisi olmayan yanıt okunamamış sayılır
       if (!tpl || typeof tpl !== 'object' || !Array.isArray(tpl.sections)) {
@@ -108,6 +137,11 @@ export default function TemplateImportDialog({ open, channelId, onClose, onLoad,
             <StatusBlock tone="danger" icon={CircleAlert} title={t('te.imp.listUnavailableTitle')} description={list.error}
               actions={<Button type="button" variant="outline" onClick={load} className="pointer-coarse:min-h-10">{t('te.retry')}</Button>} />
           )}
+          {gone && (
+            <AlertBanner tone="warning" className="mb-0">
+              <span data-slot="te-tpl-import-gone">{t('te.imp.gone', gone)}</span>
+            </AlertBanner>
+          )}
           {list.channels && options.length === 0 && (
             <p className="m-0 text-sm text-muted-foreground" data-slot="te-tpl-import-empty">{t('te.imp.none')}</p>
           )}
@@ -121,6 +155,11 @@ export default function TemplateImportDialog({ open, channelId, onClose, onLoad,
                   {t('te.imp.meta', chosen.lang === 'en' ? t('te.tpl.langEn') : t('te.tpl.langTr'),
                     chosen.section_count ?? '—', chosen.field_count ?? '—', chosen.slot_count ?? '—')}
                 </p>
+              )}
+              {langDiffers && (
+                <AlertBanner tone="warning" className="mb-0">
+                  <span data-slot="te-tpl-import-lang">{t('te.imp.langWarn', chosenLang)}</span>
+                </AlertBanner>
               )}
             </div>
           )}

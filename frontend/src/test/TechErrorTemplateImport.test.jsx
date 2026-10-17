@@ -33,6 +33,7 @@ const OVERVIEW = {
     channel(10, 'Mobil'),
     channel(20, 'POS', { lang: 'en', section_count: 2, field_count: 3, slot_count: 0 }),
     channel(30, 'ATM', { team_id: 2, team_name: 'Kurumsal Kanallar', can_edit: false, shared_access: true }),
+    channel(40, 'Eski Kanal', { active: false }),
   ] },
 }
 
@@ -92,8 +93,41 @@ describe('şablon düzenleyici — başka kanaldan şablon al', () => {
     expect(load).toBeDisabled()
     fireEvent.mouseDown(await within(dlg).findByRole('combobox', { name: 'Şablonu alınacak kanal' }))
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent.trim())
-    expect(options).toEqual(['ATM — Kurumsal Kanallar', `POS — ${TEAMS[0].name}`])
+    // Pasif kanal "(pasif)" ile işaretli
+    expect(options).toEqual(['ATM — Kurumsal Kanallar', `Eski Kanal — ${TEAMS[0].name} (pasif)`, `POS — ${TEAMS[0].name}`])
     expect(options.some((o) => o.startsWith('Mobil'))).toBe(false)
+  })
+
+  it('seçilen şablonun dili taslağınkinden farklıysa satır içi uyarı; aynı dilde uyarı yok', async () => {
+    await openEditor()
+    const dlg = await openDialog()
+    await pick(dlg, `POS — ${TEAMS[0].name}`)
+    const warn = await within(dlg).findByText('Bu şablon İngilizce dilinde; içe alırsanız rapor dili ve ay adları İngilizce olur.')
+    expect(warn).toHaveAttribute('data-slot', 'te-tpl-import-lang')
+    expect(warn.closest('[data-slot="alert"]')).toHaveAttribute('data-tone', 'warning')
+    await pick(dlg, 'ATM — Kurumsal Kanallar')
+    await waitFor(() => expect(within(dlg).queryByText(/Bu şablon .* dilinde/)).toBeNull())
+    expect(dlg.querySelector('[data-slot="te-tpl-import-lang"]')).toBeNull()
+  })
+
+  it('okumada 404 (kanal bu arada silinmiş): kanal listeden çıkarılır, seçim temizlenir, pencerede söylenir; düzenleyici değişmez', async () => {
+    te().template.mockImplementation(async (id) => (String(id) === '20'
+      ? { success: false, status: 404, error: 'Kanal bulunamadı.' }
+      : templateResponse(channel(Number(id), 'Mobil'), 3)))
+    await openEditor()
+    const before = screen.getByLabelText('Rapor başlığı').value
+    const dlg = await openDialog()
+    await pick(dlg, `POS — ${TEAMS[0].name}`)
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Yükle' }))
+    const gone = await within(dlg).findByText('“POS” kanalı artık yok (silinmiş ya da erişiminiz kalkmış); listeden çıkarıldı. Başka bir kanal seçin.')
+    expect(gone).toHaveAttribute('data-slot', 'te-tpl-import-gone')
+    expect(within(dlg).getByRole('button', { name: 'Yükle' })).toBeDisabled()
+    expect(dlg.querySelector('[data-slot="te-tpl-import-meta"]')).toBeNull()
+    fireEvent.mouseDown(within(dlg).getByRole('combobox', { name: 'Şablonu alınacak kanal' }))
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent.trim())
+    expect(options).toEqual(['ATM — Kurumsal Kanallar', `Eski Kanal — ${TEAMS[0].name} (pasif)`])
+    expect(screen.getByLabelText('Rapor başlığı')).toHaveValue(before)
+    expect(screen.queryByText('Kanal bulunamadı.')).toBeNull()
   })
 
   it('yükleme: kaynak şablon kendi diliyle TASLAK olur; Kaydet bu kanalın ŞU ANKİ sürümüyle gider', async () => {
@@ -181,5 +215,9 @@ describe('şablon düzenleyici — başka kanaldan şablon al', () => {
     expect(importOptions(rows, 1).map((o) => o.label)).toEqual(['ATM — A', 'Şube'])
     expect(importOptions(rows, '3').map((o) => o.value)).toEqual(['2', '1'])
     expect(importOptions(null, 1)).toEqual([])
+    // Pasif işareti yalnız `active === false` ve ek verildiğinde
+    const withPassive = [{ id: 5, name: 'Eski', team_name: 'T', active: false }, { id: 6, name: 'Yeni', active: true }, { id: 7, name: 'Belirsiz' }]
+    expect(importOptions(withPassive, 1, { inactiveSuffix: '(pasif)' }).map((o) => o.label)).toEqual(['Belirsiz', 'Eski — T (pasif)', 'Yeni'])
+    expect(importOptions(withPassive, 1).map((o) => o.label)).toEqual(['Belirsiz', 'Eski — T', 'Yeni'])
   })
 })

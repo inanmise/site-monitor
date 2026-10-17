@@ -10,16 +10,22 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { periodLabel } from './TechErrorParts.jsx'
+import { clientFailure } from '../../utils/errorMessages.js'
 import {
-  archiveFileName, archiveYears, buildArchiveZip, missingText, namedEntries, runArchive, zipPlan,
+  archiveFileName, archiveYears, createArchiveZip, missingText, runArchive, zipPlan,
 } from './yearArchive.js'
+
+const LONG_TOAST_MS = 12000
 
 /**
  * Kanalın yıl arşivi (ZIP) — durum + eylemler (2026-10-17, C12). Bir yılın PDF'leri sırayla alınır (`api.techErrors.pdfBlob`,
- * "PDF indir" ile aynı uç), tarayıcıda paketlenir ve tek dosya olarak indirilir. Raporları görebilen herkes kullanır
- * (paylaşımla okuyan da — her PDF'i zaten tek tek indirebiliyor). Görünüm yerinden ayrılırsa iş iptal edilir.
+ * "PDF indir" ile aynı uç), geldikçe akış ZIP'ine yazılır ve tek dosya olarak indirilir. Raporları görebilen herkes kullanır
+ * (paylaşımla okuyan da — her PDF'i zaten tek tek indirebiliyor). Görünüm yerinden ayrılırsa iş iptal edilir (kanal görünümü
+ * çıkmadan önce sorar — `isRunning`). İlk 401 / 403'te durulur; oturum işleyişini istemci yapar (`api/client.js`).
+ * API dışı hatalar (bayat paket, bellek, ZIP) tostta yalnız çevrilmiş metinle, teknik metin "Teknik ayrıntı"da.
  *
- * @returns {{ run: null | { year, index, total, waiting, cancelling, packing }, start: (year) => void, cancel: () => void }}
+ * @returns {{ run: null | { year, index, total, waiting, cancelling, packing }, start: (year) => void, cancel: () => void,
+ *            isRunning: () => boolean }}
  */
 export function useYearArchive({ channelName, reports, resetKey = null }) {
   const t = useT()
@@ -42,32 +48,52 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
     ctrl.current = c
     setRun({ year, index: 0, total: plan.length, waiting: false, cancelling: false, packing: false })
     const labelOf = (item) => periodLabel(item, t)
+    let writer = null
     try {
+      // Paketleyici PDF'ler istenmeden yüklenir: dağıtım sonrası bayat paketse 12 PDF beklemeden söylenir
+      writer = await createArchiveZip(channelName)
+      if (!alive.current) return
+      if (c.signal.aborted) { toast.info(t('te.zip.cancelled')); return }
+      const zip = writer
       const res = await runArchive(plan, {
         fetchPdf: (item, signal) => api.techErrors.pdfBlob(item.id, { signal }),
         signal: c.signal,
         onProgress: (p) => { if (alive.current) setRun((r) => (r ? { ...r, index: p.index, waiting: p.waiting } : r)) },
+        // Her PDF gelir gelmez arşive — baytlar bellekte birikmez
+        onFile: (f) => zip.addPdf(f.item, f.name, f.bytes),
       })
+      // 401 (oturum düştü / pasif / bakım): PDF isteği ham `fetch` — oturum işleyişini istemcinin olağan yolu yapsın diye
+      // tek bir oturum yoklaması (`sessionPing` 401 alırsa pasif / bakım penceresi ya da /?session=expired). Sonucu beklenmez.
+      if (res.stopped === 401) {
+        try { Promise.resolve(api.sessionPing()).catch(() => {}) } catch { /* yoklama yok — bildirim yine söyler */ }
+      }
       if (!alive.current) return
       if (res.aborted || c.signal.aborted) { toast.info(t('te.zip.cancelled')); return }
       const months = res.missing.map((m) => labelOf(m.item)).join(', ')
       if (!res.files.length) {
-        toast.error(t('te.zip.noneProblem', year, months), { duration: 12000 })
+        if (res.stopped === 401) toast.error(t('te.zip.sessionEnded'), { duration: LONG_TOAST_MS })
+        else if (res.stopped === 403) toast.error(t('te.zip.forbiddenNone', year), { duration: LONG_TOAST_MS })
+        else toast.error(t('te.zip.noneProblem', year, months), { duration: LONG_TOAST_MS })
         return
       }
       setRun((r) => (r ? { ...r, packing: true } : r))
-      const entries = namedEntries(res.files, channelName)
       const text = res.missing.length ? missingText(res.missing, { t, channelName, year, labelOf }) : null
-      const bytes = await buildArchiveZip(entries, text)
+      const blob = writer.finish(text)
+      writer = null
       // Paketleme sırasında iptal edildiyse de indirme YOK
       if (!alive.current) return
       if (c.signal.aborted) { toast.info(t('te.zip.cancelled')); return }
-      downloadBlob(archiveFileName(channelName, year), new Blob([bytes], { type: 'application/zip' }))
-      if (res.missing.length) toast.error(t('te.zip.partial', res.files.length, plan.length, months), { duration: 12000 })
+      downloadBlob(archiveFileName(channelName, year), blob)
+      if (res.stopped === 401) toast.error(t('te.zip.sessionEndedPartial', res.files.length, plan.length), { duration: LONG_TOAST_MS })
+      else if (res.missing.length) toast.error(t('te.zip.partial', res.files.length, plan.length, months), { duration: LONG_TOAST_MS })
       else toast.success(t('te.zip.done', res.files.length, year), 8000)
     } catch (e) {
-      if (alive.current) toast.error(e?.message || t('te.zip.unexpected'))
+      if (alive.current) {
+        const f = clientFailure(e, { fallback: t('te.zip.unexpected'), chunk: t('te.pageUpdated') })
+        toast.error(f.message, { duration: LONG_TOAST_MS, details: f.details })
+      }
     } finally {
+      writer?.abort()
       if (ctrl.current === c) ctrl.current = null
       if (alive.current) setRun(null)
     }
@@ -79,7 +105,10 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
     setRun((r) => (r ? { ...r, cancelling: true } : r))
   }, [])
 
-  return { run, start, cancel }
+  // Kanal görünümü ayrılmadan önce sorar (iş sürüyorsa) — React durumundan değil, denetleyiciden: bayat kapanış yok
+  const isRunning = useCallback(() => ctrl.current != null && !ctrl.current.signal.aborted, [])
+
+  return { run, start, cancel, isRunning }
 }
 
 /**

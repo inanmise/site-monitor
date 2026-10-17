@@ -7,8 +7,11 @@ import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 // Kanalın yıl arşivi — ZIP (2026-10-17, C12): kanal görünümünün rapor araç çubuğunda "Yıl arşivi (ZIP)" menüsü; seçilen
 // yılın PDF'leri SIRAYLA alınır (429 → 3 sn sonra yeniden), tarayıcıda paketlenir; durum satırı "PDF'ler hazırlanıyor… n / N"
 // + Vazgeç; eksik aylar missing.txt + bildirim; iptalde hiçbir şey indirilmez. Paylaşımla okuyan da görür.
-const dl = vi.hoisted(() => ({ calls: [] }))
-vi.mock('../utils/csvExport.js', async (orig) => ({ ...(await orig()), downloadBlob: (name, blob) => { dl.calls.push({ name, blob }) } }))
+const dl = vi.hoisted(() => ({ calls: [], throwWith: null }))
+vi.mock('../utils/csvExport.js', async (orig) => ({
+  ...(await orig()),
+  downloadBlob: (name, blob) => { if (dl.throwWith) throw dl.throwWith; dl.calls.push({ name, blob }) },
+}))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
@@ -49,6 +52,7 @@ async function openMenu() {
 beforeEach(() => {
   vi.clearAllMocks()
   dl.calls = []
+  dl.throwWith = null
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10')
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil Şube'), reports: REPORTS,
@@ -166,11 +170,141 @@ describe('kanal yıl arşivi (ZIP)', () => {
   })
 
   it('hiçbiri alınamazsa ZIP yok, bildirim denenen ayları söyler', async () => {
-    te().pdfBlob.mockResolvedValue({ success: false, status: 403, error: 'Bu raporu görme izniniz yok.' })
+    te().pdfBlob.mockResolvedValue({ success: false, status: 500, error: 'PDF üretilemedi; birkaç dakika sonra yeniden deneyin.' })
     await openMenu()
     fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
     expect(await screen.findByText(/2025 yılının hiçbir raporunun PDF'i alınamadı; arşiv oluşturulmadı\. Denenen aylar: Kasım 2025, Aralık 2025\./)).toBeInTheDocument()
+    expect(te().pdfBlob).toHaveBeenCalledTimes(2)
     expect(dl.calls).toEqual([])
+  })
+
+  it('403: ilk erişim reddinde DURULUR — kalan aylar istenmez; alınanlarla ZIP, missing.txt nedenleri ve "denenmedi"', async () => {
+    te().pdfBlob.mockImplementation(async (id) => (id === 2603
+      ? { success: false, status: 403, error: 'Bu raporu görme izniniz yok.' }
+      : pdfOf(id)))
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2026 — 3 rapor' }))
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    expect(te().pdfBlob.mock.calls.map((c) => c[0])).toEqual([2601, 2603])          // Eylül istenmedi
+    const files = await unzipped(dl.calls[0].blob)
+    expect(Object.keys(files)).toEqual(['mobil-teknik-hata-2601.pdf', 'missing.txt'])
+    const missing = strFromU8(files['missing.txt'])
+    expect(missing).toContain('- Mart 2026 — Bu raporu görme izniniz yok.')
+    expect(missing).toContain('- Eylül 2026 — Denenmedi: erişim reddedildiği için arşiv durduruldu.')
+    expect(await screen.findByText(/ZIP indirildi, ancak 3 rapordan yalnız 1 tanesi içinde\. Eksik aylar: Mart 2026, Eylül 2026\./)).toBeInTheDocument()
+    expect(api.sessionPing).not.toHaveBeenCalled()
+  })
+
+  it('403 ilk raporda: hiçbir şey inmez, bildirim erişimin reddedildiğini söyler (tek istek)', async () => {
+    te().pdfBlob.mockResolvedValue({ success: false, status: 403, error: 'Bu raporu görme izniniz yok.' })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    expect(await screen.findByText(/2025 yılının raporlarının PDF'lerine erişim reddedildi; arşiv durduruldu ve hiçbir şey indirilmedi/)).toBeInTheDocument()
+    expect(te().pdfBlob).toHaveBeenCalledTimes(1)
+    expect(dl.calls).toEqual([])
+  })
+
+  it('401 (oturum düştü): durur, oturum yoklaması istemcinin oturum yolunu tetikler, bildirim "Oturum sona erdi"', async () => {
+    te().pdfBlob.mockResolvedValue({ success: false, status: 401, error: null })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2026 — 3 rapor' }))
+    expect(await screen.findByText('Oturum sona erdi; yeniden girip tekrar deneyin.')).toBeInTheDocument()
+    expect(te().pdfBlob).toHaveBeenCalledTimes(1)
+    expect(api.sessionPing).toHaveBeenCalledTimes(1)
+    expect(dl.calls).toEqual([])
+  })
+
+  it('401 bir PDF alındıktan sonra: alınanla ZIP (eksikler missing.txt\'de), bildirim oturumun bittiğini ve eksikliği söyler', async () => {
+    te().pdfBlob.mockImplementation(async (id) => (id === 2601 ? pdfOf(id) : { success: false, status: 401, error: null }))
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2026 — 3 rapor' }))
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    expect(te().pdfBlob.mock.calls.map((c) => c[0])).toEqual([2601, 2603])
+    const missing = strFromU8((await unzipped(dl.calls[0].blob))['missing.txt'])
+    expect(missing).toContain('- Mart 2026 — Oturum sona erdi; yeniden girip tekrar deneyin.')
+    expect(missing).toContain('- Eylül 2026 — Denenmedi: oturum sona erdiği için arşiv durduruldu.')
+    expect(await screen.findByText(/Oturum sona erdi; yeniden girip tekrar deneyin\. İndirilen ZIP 3 rapordan yalnız 1 tanesini içeriyor/)).toBeInTheDocument()
+    expect(api.sessionPing).toHaveBeenCalledTimes(1)
+  })
+
+  it('API dışı hata (bellek): bildirimde yalnız çevrilmiş metin, tarayıcının metni "Teknik ayrıntı"da', async () => {
+    te().pdfBlob.mockImplementation(async (id) => pdfOf(id))
+    dl.throwWith = new RangeError('Array buffer allocation failed')
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    expect(await screen.findByText(/Yıl arşivi hazırlanamadı\. Sayfayı yenileyip yeniden deneyin/)).toBeInTheDocument()
+    expect(screen.queryByText(/Array buffer allocation failed/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Teknik ayrıntı/ }))
+    expect(await screen.findByText('RangeError: Array buffer allocation failed')).toBeInTheDocument()
+    expect(document.querySelector('[data-detail="code"]')).toHaveTextContent('RangeError: Array buffer allocation failed')
+    expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'idle')
+  })
+
+  it('bayat paket (dinamik import yüklenemedi): "Sayfa güncellendi; yenileyip tekrar deneyin."', async () => {
+    te().pdfBlob.mockImplementation(async (id) => pdfOf(id))
+    dl.throwWith = new TypeError('Failed to fetch dynamically imported module: https://sm.example/assets/fflate-abc123.js')
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    expect(await screen.findByText('Sayfa güncellendi; yenileyip tekrar deneyin.')).toBeInTheDocument()
+    expect(screen.queryByText(/dynamically imported module/)).toBeNull()
+  })
+
+  it('arşiv sürerken kanaldan çıkış (geri) önce sorulur: "Sayfada kal" sürdürür, "Arşivi iptal et ve çık" iptal eder, hiçbir şey inmez', async () => {
+    const gate = deferred()
+    te().pdfBlob.mockImplementation(async (id, { signal }) => {
+      await gate.promise
+      return signal?.aborted ? { success: false, aborted: true } : pdfOf(id)
+    })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2026 — 3 rapor' }))
+    await screen.findByRole('button', { name: 'Vazgeç' })
+    fireEvent.click(screen.getByRole('button', { name: 'Kanallara dön' }))
+    let dlg = await screen.findByRole('dialog', { name: 'Yıl arşivi hazırlanıyor' })
+    expect(within(dlg).getByText('Yıl arşivi hazırlanıyor. Çıkarsanız iptal edilir ve hiçbir şey inmez.')).toBeInTheDocument()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Sayfada kal' }))
+    await waitFor(() => expect(screen.queryByText('Yıl arşivi hazırlanıyor. Çıkarsanız iptal edilir ve hiçbir şey inmez.')).toBeNull())
+    expect(document.querySelector('[data-slot="te-channel"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'running')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kanallara dön' }))
+    dlg = await screen.findByRole('dialog', { name: 'Yıl arşivi hazırlanıyor' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Arşivi iptal et ve çık' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="te-channel"]')).toBeNull())
+    await act(async () => { gate.resolve() })
+    expect(te().pdfBlob).toHaveBeenCalledTimes(1)
+    expect(dl.calls).toEqual([])
+  })
+
+  it('arşiv sürerken rapor açmak da sorulur; kalırsa rapor açılmaz, çıkarsa açılır', async () => {
+    const gate = deferred()
+    te().pdfBlob.mockImplementation(async (id, { signal }) => {
+      await gate.promise
+      return signal?.aborted ? { success: false, aborted: true } : pdfOf(id)
+    })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2026 — 3 rapor' }))
+    await screen.findByRole('button', { name: 'Vazgeç' })
+    const row = () => document.querySelector('[data-slot="te-report-row"][data-report="2603"]')
+    fireEvent.click(within(row()).getByRole('button', { name: 'Aç' }))
+    let dlg = await screen.findByRole('dialog', { name: 'Yıl arşivi hazırlanıyor' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Sayfada kal' }))
+    await waitFor(() => expect(screen.queryByText('Yıl arşivi hazırlanıyor. Çıkarsanız iptal edilir ve hiçbir şey inmez.')).toBeNull())
+    expect(te().report).not.toHaveBeenCalled()
+    fireEvent.click(within(row()).getByRole('button', { name: 'Aç' }))
+    dlg = await screen.findByRole('dialog', { name: 'Yıl arşivi hazırlanıyor' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Arşivi iptal et ve çık' }))
+    await waitFor(() => expect(te().report).toHaveBeenCalled())
+    expect(String(te().report.mock.calls[0][0])).toBe('2603')
+    await act(async () => { gate.resolve() })
+    expect(dl.calls).toEqual([])
+  })
+
+  it('arşiv yokken çıkış sorulmaz', async () => {
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('button', { name: /Yıl arşivi \(ZIP\)/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Kanallara dön' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="te-channel"]')).toBeNull())
+    expect(screen.queryByText(/Çıkarsanız iptal edilir/)).toBeNull()
   })
 
   it('raporu olmayan kanalda menü yok', async () => {

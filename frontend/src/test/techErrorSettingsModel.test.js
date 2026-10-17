@@ -168,6 +168,33 @@ describe('techErrorSettingsModel — dışa aktarma (E22)', () => {
     expect(exportRow({}, tr).slice(0, 2)).toEqual(['—', '—'])
   })
 
+  it('İngilizce sütun adları sayım sütunlarını sayı olarak adlandırır (kişi adı listesi gibi okunmasın)', async () => {
+    const { EN } = await import('../i18n/en.js')
+    const en = (key) => EN[key] ?? key
+    expect(exportHeader(en).slice(5, 7)).toEqual(['Executive recipient count', 'PO approver count'])
+  })
+
+  it('onay durumu ekranla aynı: onay akışı YOKSA (yönetici alıcısı 0) "—", "Onaya gönderilmedi" değil; sayı bilinmiyorsa "Bilinmiyor"', () => {
+    const pr = (state) => ({ id: 1, status: 'draft', ...(state === undefined ? {} : { approval: { state } }) })
+    // Akış yok: sunucu yine state "none" yollar, ekran rozet çizmez → "—"
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr('none') }, tr)).toBe('—')
+    expect(exportApprovalStatus({ executive_count: '0', period_report: pr('none') }, tr)).toBe('—')
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr(undefined) }, tr)).toBe('—')
+    // Akış var, henüz gönderilmedi
+    expect(exportApprovalStatus({ executive_count: 2, period_report: pr('none') }, tr)).toBe('Onaya gönderilmedi')
+    // Alıcı sayısı bilinmiyor → akışın olup olmadığı da bilinmiyor
+    expect(exportApprovalStatus({ period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: null, period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: 'x', period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: 2, period_report: pr(undefined) }, tr)).toBe('Bilinmiyor')
+    // Süren / sonuçlanmış onay ekranda rozetle görünür → metni yazılır (alıcılar sonradan kaldırılmış olsa da)
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr('pending') }, tr)).toBe('Onay bekliyor')
+    expect(exportApprovalStatus({ executive_count: 3, period_report: pr('approved') }, tr)).toBe('Onaylandı')
+    // Rapor yok → uygulanmaz
+    expect(exportApprovalStatus({ executive_count: 2, period_report: null }, tr)).toBe('—')
+    expect(exportRow(ch(9, 'Akışsız', { period_report: pr('none') }), tr)[8]).toBe('—')
+  })
+
   it('exportTable verilen SIRAYI korur (çağıran süzülmüş + sıralanmış tam listeyi verir)', () => {
     const list = sortChannels(filterChannels(ROWS, { filter: 'open' }), 'name')
     const { header, rows } = exportTable(list, tr)

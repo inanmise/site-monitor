@@ -522,7 +522,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
       <TemplateVersionsDialog channelId={channelId} channelName={channel?.name} period={previewPeriod} open={versionsOpen}
         onClose={() => setVersionsOpen(false)} canEdit={canEdit && !saving} onLoad={loadVersion} returnFocusRef={versionsBtnRef} />
       {canEdit && (
-        <TemplateImportDialog channelId={channelId} open={importOpen} onClose={() => setImportOpen(false)}
+        <TemplateImportDialog channelId={channelId} draftLang={draft?.lang || 'tr'} open={importOpen} onClose={() => setImportOpen(false)}
           onLoad={importTemplate} returnFocusRef={importBtnRef} />
       )}
 
