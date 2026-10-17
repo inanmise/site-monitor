@@ -17,10 +17,11 @@ const latest = (cpu, heap) => ({ uptime_s: 93_784, cpu_process: cpu, heap_pct: h
   db_active: 3, db_max: 10, db_pending: 0, db_usage_pct: 30, exec_queue: 4, exec_queue_cap: 5000, http_requests: 40, http_errors: 0, http_p95_ms: 120 })
 const OVERVIEW = {
   generated_at: fmt(NOW), served_by: 'pod-a:1', pods_live: 2,
+  // Sıra karışık verilir: istemci de canlı önce, aynı durumda en yeni süreç (first_seen) önce dizer (2026-10-17)
   pods: [
-    { ...PODS[0], last_seen: fmt(NOW - 40_000), latest: latest(23.4, 48) },
-    { ...PODS[1], last_seen: fmt(NOW - 50_000), latest: latest(71.2, 66) },
-    { ...PODS[2], state: 'stopped', last_seen: fmt(NOW - 5 * 3_600_000), latest: null },
+    { ...PODS[2], state: 'stopped', first_seen: fmt(NOW - 6 * 3_600_000), last_seen: fmt(NOW - 5 * 3_600_000), latest: null },
+    { ...PODS[0], first_seen: fmt(NOW - 26 * 3_600_000), last_seen: fmt(NOW - 40_000), latest: latest(23.4, 48) },
+    { ...PODS[1], first_seen: fmt(NOW - 2 * 3_600_000), last_seen: fmt(NOW - 50_000), latest: latest(71.2, 66) },
   ],
   last_hour: { http_requests: 2400, http_errors: 18, http_error_pct: 0.8, http_avg_ms: 46, http_p95_ms: 410, caller_runs: 0, log_warn: 12, log_error: 1, gc_pause_ms: 140 },
 }
@@ -114,6 +115,8 @@ for (const vp of VIEWPORTS) {
       await expect(pods).toHaveAttribute('data-layout', vp.layout)
       await expect(pods.locator('[data-slot="mx-pod"]')).toHaveCount(3)
       await expect(pods.locator('[data-slot="mx-pod-status"][data-state="stopped"]')).toHaveCount(1)
+      expect(await pods.locator('[data-slot="mx-pod"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-pod'))),
+        'canlı önce, en yeni süreç önce, durmuş pod sonda').toEqual(['pod-b:1', 'pod-a:1', 'pod-c:1'])
       // Tablo başlıkları dar sütunda taşmaz (sarar)
       const headOverflow = await pods.evaluate((root) => [...root.querySelectorAll('th')]
         .filter((th) => th.scrollWidth > th.clientWidth + 1).map((th) => th.textContent))

@@ -4,10 +4,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useElementWidthState } from '../../../hooks/useElementWidth.js'
 import { agoText } from '../../../utils/relativeTime.js'
 import { cn } from '@/lib/utils'
-import { CPU_PCT, MEMORY_PCT, fmtNum, fmtPct, podState, toneOf, uptimeText, utcMs } from './metricsModel.js'
+import { CPU_PCT, MEMORY_PCT, fmtNum, fmtPct, podState, sortPods, toneOf, uptimeText, utcMs } from './metricsModel.js'
 
 /**
  * Pod listesi (2026-10-13): her podun son örneği. Kapsayıcı ≥ 860 px → tablo (başlıklar sarar), altında kart. Pod adı KIRPILMAZ (sarar).
+ * Sıra `sortPods` (2026-10-17): canlı önce, aynı durumda en yeni süreç önce — sunucu da bu sırayla verir; eski sunucuda da canlı önde.
  * Sessiz pod (son örneği 3 dakikadan eski) "Sessiz" rozetiyle gösterilir, anlık değerleri "—" (eski değer güncel gibi
  * okunmaz). Bu sayfayı sunan pod "bu pod" rozeti taşır.
  */
@@ -53,7 +54,7 @@ function podCells(p, t, now) {
 export default function PodList({ t, pods, servedBy, failed = false, now = Date.now() }) {
   const [width, setEl] = useElementWidthState()
   const asTable = width === 0 || width >= TABLE_MIN_PX
-  const list = Array.isArray(pods) ? pods : []
+  const list = sortPods(pods)
 
   if (failed && !list.length) {
     return <p data-slot="mx-pods-failed" role="status" className="m-0 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{t('mx.pod.failed')}</p>

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -131,7 +132,7 @@ public class SystemMetricsQueryService {
     /**
      * {@code since}'ten sonra örnek yazmış podlar. Adlar {@value #NAME_WINDOW_DAYS} günlük pencerede ayrıştırılır (tek sorgu):
      * aynı pod adında birden çok süreç (konteyner yeniden başladı → yeni örnek kimliği) kimliğin son ekiyle ayrılır ve bu ad
-     * her aralıkta / ekranda aynıdır.
+     * her aralıkta / ekranda aynıdır. Sıra {@link #POD_ORDER}: canlı önce, aynı durumda en yeni süreç önce.
      */
     private List<Map<String, Object>> pods(Instant now, String since) {
         String liveSince = SystemMetricSampler.MINUTE.format(now.minus(LIVE_MINUTES, ChronoUnit.MINUTES));
@@ -143,6 +144,8 @@ public class SystemMetricsQueryService {
             m.put("id", r[0]);
             m.put("name", r[1] != null ? r[1] : r[0]);
             m.put("last_seen", r[2]);
+            // İlk örnek: eski sorgu biçiminde (4 sütun) yok → null (sıralamada sona)
+            m.put("first_seen", r.length > 4 ? r[4] : null);
             m.put("marker", r.length > 3 && r[3] instanceof Number n && n.intValue() > 0);
             all.add(m);
         }
@@ -159,9 +162,31 @@ public class SystemMetricsQueryService {
             m.put("live", "live".equals(state));
             out.add(m);
         }
-        out.sort((a, b) -> String.valueOf(a.get("name")).compareTo(String.valueOf(b.get("name"))));
+        out.sort(POD_ORDER);
         return out;
     }
+
+    /**
+     * Pod sırası (2026-10-17, kullanıcı isteği: "canlı olan pod en önde, en yeni pod en başta"): durum (canlı → sessiz →
+     * durdu), aynı durumda ilk örneği EN YENİ olan (en son açılan süreç; ilk örneği bilinmeyen sona), sonra son örneği en
+     * yeni, sonra ad, en son kimlik (belirlenimci). Özet listesi de seri yanıtının podları da bu sırayla gelir; istemci aynı
+     * kuralı {@code metricsModel.sortPods}'ta uygular (eski sunucu yanıtı için). Zamanlar aynı biçimli UTC metni —
+     * sözlük sırası zaman sırasıdır.
+     */
+    static final Comparator<Map<String, Object>> POD_ORDER = Comparator
+            .<Map<String, Object>>comparingInt((p) -> stateRank(p.get("state")))
+            .thenComparing((p) -> text(p.get("first_seen")), Comparator.nullsLast(Comparator.<String>reverseOrder()))
+            .thenComparing((p) -> text(p.get("last_seen")), Comparator.nullsLast(Comparator.<String>reverseOrder()))
+            .thenComparing((p) -> String.valueOf(p.get("name")))
+            .thenComparing((p) -> String.valueOf(p.get("id")));
+
+    static int stateRank(Object state) {
+        if ("live".equals(state)) return 0;
+        if ("silent".equals(state)) return 1;
+        return 2;
+    }
+
+    private static String text(Object v) { return v == null ? null : String.valueOf(v); }
 
     /** Örnek kimliğinin son eki ({@code host-1a2b3c4d} → {@code 1a2b3c4d}); ek yoksa kimliğin tamamı. */
     static String suffix(String id) {

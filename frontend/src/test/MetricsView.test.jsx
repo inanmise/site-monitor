@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, within, act } from './test-utils.jsx'
+import { render, screen, waitFor, within, act, fireEvent } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 import MetricsView from '../components/admin/metrics/MetricsView.jsx'
 import MetricChart from '../components/admin/metrics/MetricChart.jsx'
@@ -53,6 +53,23 @@ describe('MetricsView', () => {
     }
     expect(document.querySelectorAll('[data-slot="mx-chart"]').length).toBeGreaterThanOrEqual(14)
     expect(sm.series).toHaveBeenCalledWith('6h', null)
+  })
+
+  it('pod listesi ve pod seçici: canlı önce, aynı durumda en yeni süreç önce (sunucu ad sırasıyla verse de)', async () => {
+    const pod = (id, extra) => ({ id, name: `pod-${id}`, latest: null, ...extra })
+    sm.overview.mockResolvedValue({ success: true, data: { ...overview, served_by: 'x', pods: [
+      pod('a', { state: 'stopped', live: false, first_seen: '2031-04-02T11:58:00', last_seen: '2031-04-02T11:59:00' }),
+      pod('b', { state: 'live', live: true, first_seen: '2031-03-30T08:00:00', last_seen: '2031-04-02T11:59:00' }),
+      pod('c', { state: 'silent', live: false, first_seen: '2031-04-02T09:00:00', last_seen: '2031-04-02T10:00:00' }),
+      pod('d', { state: 'live', live: true, first_seen: '2031-04-02T11:20:00', last_seen: '2031-04-02T11:59:00' }),
+    ] } })
+    render(<MetricsView onBack={() => {}} />)
+    await screen.findByRole('group', { name: /Summary of current values|Anlık değerlerin özeti/ })
+    const rows = () => [...document.querySelectorAll('[data-slot="mx-pods"] [data-slot="mx-pod"]')].map((el) => el.getAttribute('data-pod'))
+    await waitFor(() => expect(rows()).toEqual(['d', 'b', 'c', 'a']))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /^(Pod|Pod seçimi)$/ }))
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent)
+    expect(options.slice(1), 'seçicide de aynı sıra ("Tüm podlar" en üstte)').toEqual(['pod-d', 'pod-b', 'pod-c', 'pod-a'])
   })
 
   it('aralık değişince yeni seri istenir, adrese yazılır; önceki aralığın geç yanıtı düşer', async () => {
