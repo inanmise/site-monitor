@@ -507,6 +507,12 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma (şablon, hepsi açık)').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon, hepsi açık)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon, hepsi açık)').toEqual([])
+      // Kullanıcı geri bildirimi (2026-10-17): açılan bölümün çevresindeki köşeli çizgi = tarayıcının varsayılan fieldset
+      // kenarlığı. Düzenleme kilidi fieldset'leri çerçevesiz ve boşluksuz olmalı.
+      const fieldsetFrames = await page.evaluate(() => [...document.querySelectorAll('[data-slot="te-template-editor"] fieldset')]
+        .map((f) => { const s = getComputedStyle(f); return `${s.borderTopWidth}/${s.paddingTop}/${s.marginLeft}` })
+        .filter((v) => v !== '0px/0px/0px'))
+      expect(fieldsetFrames, 'fieldset kenarlığı / boşluğu (şablon)').toEqual([])
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
       // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
       await page.screenshot({ path: `test-results/te-sections-template-${vp.name}.png`, fullPage: true })

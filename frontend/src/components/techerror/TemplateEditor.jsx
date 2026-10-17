@@ -414,7 +414,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
             (2026-10-16). Başlık kartı ve bölüm içerikleri kendi fieldset'inde, bölüm başlığındaki taşı / sil düğmeleri
             `disabled` ile, "Bölüm ekle" (yalnız yazabilene) kayıt sürerken kapalı — alanlar eskisi gibi kilitli. */}
         <div className="flex min-w-0 flex-col gap-4" data-slot="te-tpl-form">
-          <fieldset disabled={locked} className="min-w-0">
+          <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
             <Card className="gap-3" data-slot="te-tpl-head">
               <CardHeader>
                 <h3 className="text-base font-semibold">{t('te.tpl.headTitle')}</h3>
@@ -668,7 +668,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           onRemove={onRemove} removeLabel={t('te.tpl.removeSectionAria', s.title || kindName)} />
       )}
       cardProps={{ 'data-kind': s.kind, 'data-field': `section:${s.id}` }}>
-      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-3">
+      <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
         <div className="flex flex-col gap-1.5">
           <label htmlFor={titleId} className="text-sm font-semibold">{t('te.tpl.sectionTitle')}</label>
           <Input id={titleId} className="pointer-coarse:h-10" value={s.title || ''} maxLength={LIMITS.label + 20}
