@@ -830,6 +830,48 @@ class TechErrorReportControllerTest {
                 anyString(), anyString(), anyString());
     }
 
+    @Autowired TechErrorReportController controller;
+
+    @Test
+    @DisplayName("R19 inceleme: şablon önizleme PDF'i kullanıcı başına dakikada 6 — 7. istek 429 RATE_LIMITED + Retry-After, PDF üretilmez; başka kullanıcı etkilenmez; pencere geçince yine açılır; geçersiz taslak (400) hak yemez")
+    void templatePreviewPdfRateLimited() throws Exception {
+        when(service.renderPdf(any())).thenReturn(new TechErrorReportService.Rendered(null, "%PDF-1.7".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        String body = new tools.jackson.databind.ObjectMapper().writeValueAsString(
+                Map.of("template", TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"))));
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000_000L);
+        java.util.function.LongSupplier saved = controller.previewClock;
+        controller.previewClock = now::get;
+        try {
+            MockHttpSession me = user("USER", A, List.of());
+            me.setAttribute("userId", 9_001L);                       // bu teste özel kullanıcı (bağlam testler arasında paylaşılır)
+            String url = "/api/tech-error-reports/channels/10/template/preview-pdf";
+            // Geçersiz taslak sınırdan önce reddedilir — hak yemez
+            mvc.perform(post(url).session(me).contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isBadRequest());
+            for (int i = 0; i < TechErrorReportController.PREVIEW_PER_MINUTE; i++) {
+                now.addAndGet(1_000);
+                mvc.perform(post(url).session(me).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+            }
+            now.addAndGet(1_000);
+            mvc.perform(post(url).session(me).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("dakikada en çok 6")))
+                    .andExpect(jsonPath("$.data.retry_after_seconds").value(54))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After", "54"));
+            verify(service, org.mockito.Mockito.times(TechErrorReportController.PREVIEW_PER_MINUTE)).renderPdf(any());
+            // Başka kullanıcı etkilenmez
+            MockHttpSession other = user("USER", A, List.of());
+            other.setAttribute("userId", 9_002L);
+            mvc.perform(post(url).session(other).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+            // İlk isteğin üstünden bir dakika geçince yeniden açılır
+            now.addAndGet(54_000);
+            mvc.perform(post(url).session(me).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        } finally {
+            controller.previewClock = saved;
+        }
+    }
+
     // ── Takım erişim paylaşımı (9. sürüm, 2026-10-17) ──────────────────────────────────────────────
 
     private static MockHttpSession grantee(long ownTeam, long sharedTeam, boolean edit) {

@@ -106,26 +106,38 @@ class PdfCanvas implements AutoCloseable {
     }
 
     /**
-     * Çizim bittikten sonra {@code index}'inci sayfanın ARKASINA yeni bir sayfa ekler ve çizimi oraya taşır (2026-10-17,
-     * R19: içindekiler sayfası — sayfa numaraları ancak bütün içerik çizilince bilinir). Sonraki sayfaların sırası bir
-     * kayar; {@link #pageNumber(PDPage)} her zaman son sırayı verir. Sayfa başlığı kancası çalışmaz (tablo başlığı yok).
+     * Çizimi DAHA ÖNCE açılmış bir sayfaya döndürür (2026-10-17, R19 inceleme): içindekiler satırları içerikten önce yerine
+     * yazılır, sayfa numaraları ise ancak bütün içerik çizilince bilinir — numara, noktalı ayraç ve iç bağlantı o satırların
+     * sayfasına SONRADAN eklenir (mevcut çizimin üstüne, {@code APPEND}). Sayfa eklenmez, sayfa sırası değişmez; {@code y}
+     * dokunulmaz (çağıran koordinatı kendisi verir).
      */
-    PDPage insertPageAfter(int index) throws IOException {
+    void drawOn(PDPage page) throws IOException {
+        if (page == null || (page == current && cs != null)) return;
         closeStream();
-        PDPage page = new PDPage(PAGE);
-        doc.getPages().insertAfter(page, pages.get(index));
-        pages.add(index + 1, page);
+        cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true);
         current = page;
-        cs = new PDPageContentStream(doc, page);
-        y = pageTop();
-        return page;
     }
 
     /** Şu an çizilen sayfa. */
     PDPage currentPage() { return current; }
 
-    /** Sayfanın belgedeki 1 tabanlı numarası (eklenen sayfalar dahil son sıra); belgede yoksa 0. */
+    /** Sayfanın belgedeki 1 tabanlı numarası; belgede yoksa 0. */
     int pageNumber(PDPage page) { return pages.indexOf(page) + 1; }
+
+    /**
+     * Belge bilgisindeki başlık (2026-10-17, R19 inceleme): görüntüleyicinin sekmesi / pencere başlığı dosya adı yerine bunu
+     * gösterir ({@code DisplayDocTitle}). Yalnız üst veri — çizime ve sayfalara dokunmaz.
+     */
+    void setDocumentTitle(String title) {
+        if (title == null || title.isBlank()) return;
+        doc.getDocumentInformation().setTitle(title.replaceAll("\\s+", " ").trim());
+        try {
+            org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences prefs =
+                    new org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences(new org.apache.pdfbox.cos.COSDictionary());
+            prefs.setDisplayDocTitle(true);
+            doc.getDocumentCatalog().setViewerPreferences(prefs);
+        } catch (Exception ignored) { /* tercih yazılamazsa başlık yine belge bilgisinde */ }
+    }
 
     void ensureSpace(float needed) throws IOException {
         if (y - needed < BOTTOM) newPage();
@@ -163,8 +175,8 @@ class PdfCanvas implements AutoCloseable {
     }
 
     /**
-     * Sayfa numaraları (ve açıksa üst bilgi) en sonda basılır — toplam ancak her şey çizilince (içindekiler sayfası
-     * eklendikten sonra) bilinir; sonradan basıldıkları için yerleşimi kaydırmazlar.
+     * Sayfa numaraları (ve açıksa üst bilgi) en sonda basılır — toplam ancak her şey çizilince bilinir; sonradan
+     * basıldıkları için yerleşimi kaydırmazlar.
      */
     private void stampPageNumbers() throws IOException {
         int total = pages.size();
@@ -191,9 +203,15 @@ class PdfCanvas implements AutoCloseable {
         String left = clip(headerLeft, CONTENT_W * 0.6f, regular, HEADER_FONT);
         float leftW = left.isEmpty() ? 0 : width(left, regular, HEADER_FONT);
         float avail = CONTENT_W - leftW - (left.isEmpty() ? 0 : 16f);
-        String right = avail >= 60f ? clip(headerRight, avail, regular, HEADER_FONT) : "";
-        // Yalnız "…" ya da birkaç harf kaldıysa başlık hiç basılmaz (anlamsız parça göstermektense)
-        if (right.length() < 8) right = "";
+        String full = clip(headerRight, Float.MAX_VALUE, regular, HEADER_FONT);      // yalnız boşluk düzeltmesi, kesmez
+        String right = "";
+        if (!full.isEmpty() && width(full, regular, HEADER_FONT) <= avail) {
+            right = full;                                    // sığan başlık uzunluğu ne olursa olsun basılır ("POS")
+        } else if (!full.isEmpty() && avail >= 60f) {
+            right = clip(full, avail, regular, HEADER_FONT);
+            // KISALTILAN başlıktan yalnız "…" ya da birkaç harf kaldıysa hiç basılmaz (anlamsız parça göstermektense)
+            if (right.length() < 8) right = "";
+        }
         s.setNonStrokingColor(MUTED[0], MUTED[1], MUTED[2]);
         if (!left.isEmpty()) {
             s.beginText();

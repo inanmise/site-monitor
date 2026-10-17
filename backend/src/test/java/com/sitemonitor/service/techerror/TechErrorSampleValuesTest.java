@@ -130,6 +130,47 @@ class TechErrorSampleValuesTest {
     }
 
     @Test
+    @DisplayName("R19 inceleme: formülü sonuç vermeyen hesaplı alan da dolu — eksik başvurulu oran ve hedefsiz yüzdeyle karşılaştırma \"—\" basılmaz (yüzde örnek değer, evet / hayır \"Evet\"); geçen ay da dolu")
+    void brokenFormulasStillGetSampleValues() {
+        Map<String, Object> broken = field("broken-rate", "percent");
+        broken.put("calc", Map.of("kind", "ratio", "num", "ghost", "den", "x"));        // "ghost" şablonda yok → BAD_REF
+        Map<String, Object> cmp = field("cmp", "yesno");
+        cmp.put("calc", Map.of("kind", "compare", "of", "p"));                          // p'nin hedefi yok → BAD_REF
+        Map<String, Object> zero = field("zero-rate", "percent");
+        zero.put("calc", Map.of("kind", "ratio", "num", "x", "den", "x-missing"));      // payda yok
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal} Önizleme");
+        raw.put("sections", List.of(Map.of("id", "m", "kind", "metrics", "title", "Göstergeler", "fields", List.of(
+                field("x", "number"), field("p", "percent"), broken, cmp, zero))));
+        Template t = TechErrorTemplate.normalize(raw);
+        Map<String, Field> byId = new HashMap<>();
+        for (Field x : t.allFields()) byId.put(x.id(), x);
+        TechErrorSampleValues.Sample s = TechErrorSampleValues.build(t, "tr");
+        Map<String, Object> f = s.values().fields();
+        // Hesap gerçekten sonuç vermiyor (düzeltme olmasaydı alan boş kalırdı)
+        assertThat(TechErrorCalc.result(byId.get("broken-rate"), byId, f, s.previous()).status()).isNotEqualTo(TechErrorCalc.Status.OK);
+        assertThat(TechErrorCalc.result(byId.get("cmp"), byId, f, s.previous()).status()).isNotEqualTo(TechErrorCalc.Status.OK);
+        for (String id : List.of("broken-rate", "zero-rate")) {
+            assertThat(f.get(id)).as(id).isInstanceOf(Double.class);
+            assertThat(((Number) f.get(id)).doubleValue()).as(id).isBetween(0.1, 0.99);
+            assertThat(s.previous()).as("geçen ay " + id).containsKey(id);
+        }
+        assertThat(f.get("cmp")).isEqualTo(Boolean.TRUE);
+        assertThat(s.previous().get("cmp")).isEqualTo(Boolean.TRUE);
+        // Varsayılan şablonun çalışan hesapları DEĞİŞMEZ (dolgu yalnız boş kalan alana)
+        Template d = TechErrorTemplate.defaults("tr");
+        Map<String, Field> dById = new HashMap<>();
+        for (Field x : d.allFields()) dById.put(x.id(), x);
+        TechErrorSampleValues.Sample ds = TechErrorSampleValues.build(d, "tr");
+        for (Field x : d.allFields()) {
+            if (x.calc() == null) continue;
+            TechErrorCalc.Result r = TechErrorCalc.result(x, dById, ds.values().fields(), ds.previous());
+            assertThat(r.status()).as(x.id()).isEqualTo(TechErrorCalc.Status.OK);
+        }
+    }
+
+    @Test
     @DisplayName("deterministik: aynı şablon iki kez → bayt bayt aynı değerler ve geçen ay (PDF kararlı)")
     void deterministic() {
         Template t = TechErrorTemplate.defaults("tr");
