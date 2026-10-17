@@ -1179,7 +1179,6 @@ class TechErrorReportControllerTest {
 
     // ── Kanal sırası toplu ucu + dönem özeti (R14 inceleme, 2026-10-17) ─────────────────────────────
 
-    @Autowired TechErrorReportController controller;
 
     @Test
     @DisplayName("toplu kanal sırası: üye 200 (yeni sıra 1…n) + TEK denetim (önceki / yeni dizilim kimliklerle); değişiklik yoksa"
