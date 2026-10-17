@@ -1,17 +1,25 @@
 /*
  * Kanallar arası analiz — saf yardımcılar (2026-10-18, R22). Sunucu yanıtı (`GET /tech-error-reports/analytics`):
- * `{ months:[{year,month}], fields:[{id,label,type}], available_fields:[{id,label,type,channels}],
- *    channels:[{id,name,team_id,team_name,points:{<alan>:[v|null…]},reports:[{id,sent}|null…]}], truncated, teams }`.
+ * `{ months:[{year,month}], fields:[{id,label,type,type_mismatch:[kanal]}], available_fields:[{id,label,type,channels}],
+ *    dropped_fields:[alan], fields_fallback,
+ *    channels:[{id,name,team_id,team_name,points:{<alan>:[v|null…]},reports:[{id,sent,queued?}|null…]}], truncated, teams }`.
  * Boş ay `null` — asla 0 değildir (grafikte boşluk, tabloda "—"). React'ten bağımsız; testler doğrudan çağırır.
  */
 import { compactNumber, formatNumber, formatPercent, monthName, shortMonth } from '../techErrorModel.js'
+import { csvNumber } from '../../../utils/csv.js'
 
 export const VIEW_ANALYTICS = 'analytics'
 export const TE_AN_TEAM = 'te_an_team'
 export const TE_AN_MONTHS = 'te_an_months'
 export const TE_AN_FIELDS = 'te_an_fields'
-/** Analiz görünümünün adres anahtarları — görünümden çıkınca silinir (TechErrorReportsPage). */
+/**
+ * Analiz görünümünün adres anahtarları. Görünümden çıkınca KALIR (rapora inip "Analize dön" ya da kanallardan yeniden
+ * "Analiz" son seçimi açar; sekme değişince App `te_` ailesini siler); "Varsayılana dön" hepsini siler.
+ */
 export const ANALYTICS_KEYS = [TE_AN_TEAM, TE_AN_MONTHS, TE_AN_FIELDS]
+/** Rapora analizden inildiyse `te_from=analytics` — raporun "Geri"si analize döner (TechErrorReportsPage). */
+export const TE_FROM = 'te_from'
+export const FROM_ANALYTICS = 'analytics'
 
 /** Sunucuyla aynı (TechErrorAnalyticsService.MONTH_CHOICES / DEFAULT_MONTHS / MAX_FIELDS). */
 export const MONTH_CHOICES = [6, 12, 24]
@@ -73,6 +81,11 @@ export function serializeFields(list) {
   return Array.isArray(list) && list.length ? list.join(',') : null
 }
 
+/** Süzgeç varsayılanda mı (takım yok, 12 ay, sunucu varsayılan alanları) — "Varsayılana dön" yalnız değilse görünür. */
+export function isDefaultFilter({ team, months, fields }) {
+  return !normalizeTeam(team) && normalizeMonths(months) === DEFAULT_MONTHS && !(Array.isArray(fields) && fields.length)
+}
+
 /**
  * Seçimi değiştirir: seçiliyse çıkarır (son alan kalır — en az biri), değilse sınır içindeyse ekler. Değişmezse AYNI dizi.
  */
@@ -93,6 +106,26 @@ export function requestParams({ team, months, fields }) {
   return p
 }
 
+/** Süzgeç anahtarı — veri bu anahtar için okundu; anahtar değişince eski veri hemen kalkar (Yenile'de kalır). */
+export function filterKey(filter) {
+  return JSON.stringify(requestParams(filter || {}))
+}
+
+/**
+ * Sunucu istenen alanların bir kısmını ya da hiçbirini bu kapsamda bulamadıysa adrese yazılacak YENİ seçim:
+ * hiçbiri yoksa (`fields_fallback`) null (varsayılan alanlar), bir kısmı yoksa kalanlar; değişmiyorsa `undefined`.
+ * Ekrandaki yanıt yeni seçimi zaten karşılar — ikinci istek gönderilmez (TechErrorAnalytics `adopt`).
+ */
+export function adoptedFields(data, fields) {
+  if (!Array.isArray(fields) || !fields.length) return undefined
+  if (data?.fields_fallback === true) return null
+  const dropped = Array.isArray(data?.dropped_fields) ? data.dropped_fields : []
+  if (!dropped.length) return undefined
+  const next = fields.filter((id) => !dropped.includes(id))
+  if (next.length === fields.length) return undefined
+  return next.length ? next : null
+}
+
 /** Hücre metni — PDF'teki biçim (TechErrorFormat): sayı 1.250.000, yüzde %0,42; değer yoksa "—" (asla 0). */
 export function formatCell(value, type, lang) {
   if (value == null || !Number.isFinite(Number(value))) return '—'
@@ -102,6 +135,66 @@ export function formatCell(value, type, lang) {
 /** Y ekseni etiketi — rapor grafikleriyle aynı kısa biçim (TechErrorFormat.compact / compactNumber). */
 export function axisLabel(value, type, lang) {
   return compactNumber(value, type, lang)
+}
+
+/** "Güzel" adım: 1 / 2 / 5 × 10ⁿ (ham adımdan büyük ya da eşit en küçüğü). */
+export function niceStep(raw) {
+  if (!(raw > 0) || !Number.isFinite(raw)) return 1
+  const exp = Math.floor(Math.log10(raw))
+  const base = 10 ** exp
+  const f = raw / base
+  const m = f <= 1 + 1e-9 ? 1 : f <= 2 + 1e-9 ? 2 : f <= 5 + 1e-9 ? 5 : 10
+  return m * base
+}
+
+function stepDecimals(step) {
+  if (step >= 1) return 0
+  return Math.min(10, Math.ceil(-Math.log10(step) - 1e-9))
+}
+
+/**
+ * Y ekseni ölçeği (inceleme 2026-10-18): VERİYE göre — sıfırdan başlayan eksende %99,80–%99,95 gibi dar bir aralık
+ * tepede düz çizgi görünüyordu. Çizilen serilerin en küçük / en büyük değeri, aralığın %5'i kadar payla, "güzel" adıma
+ * (1 / 2 / 5 × 10ⁿ, yaklaşık `target` çentik) yuvarlanır. Adet ekseni negatif değer yoksa 0'ın altına inmez ve adımı tam
+ * sayıdır; yüzde ekseni değerler 0–100 içindeyse o aralıktan çıkmaz. Tek değer (düz seri) çevresinde küçük bir pencere.
+ * Etiketler kısa biçim (compactNumber); kısa biçimde iki çentik aynı yazılıyorsa (1,05 Mn / 1,1 Mn → "1,1Mn") tam biçim.
+ * Değer yoksa null (grafik zaten çizilmez).
+ * Dönüş: `{ domain:[lo, hi], ticks:[…], labels:[…] }` (labels çentiklerle aynı sırada).
+ */
+export function yAxisScale(rows, keys, type, lang, target = 4) {
+  let min = Infinity
+  let max = -Infinity
+  for (const r of rows || []) {
+    for (const k of keys || []) {
+      const v = r?.[k]
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+  }
+  if (min === Infinity) return null
+  let span = max - min
+  if (span === 0) span = Math.abs(max) * 0.02 || 1
+  const pad = span * 0.05
+  let step = niceStep(span / Math.max(1, target - 1))
+  if (type !== 'percent') step = Math.max(1, step)
+  const dec = stepDecimals(step)
+  const round = (x) => Number(x.toFixed(dec))
+  let lo = round(Math.floor((min - pad) / step + 1e-9) * step)
+  let hi = round(Math.ceil((max + pad) / step - 1e-9) * step)
+  if (min >= 0 && lo < 0) lo = 0
+  if (type === 'percent' && max <= 100 && hi > 100) hi = 100
+  if (hi <= lo) hi = round(lo + step)
+  const ticks = []
+  for (let i = 0; i <= 50; i++) {
+    const v = round(lo + i * step)
+    if (v > hi + step * 1e-6) break
+    ticks.push(v)
+  }
+  if (ticks[ticks.length - 1] !== hi) ticks.push(hi)
+  let labels = ticks.map((v) => axisLabel(v, type, lang))
+  if (new Set(labels).size !== labels.length) labels = ticks.map((v) => formatCell(v, type, lang))
+  return { domain: [lo, hi], ticks, labels }
 }
 
 /** "Eki 2025" — arayüz dilinde kısa ay + yıl. */
@@ -127,10 +220,22 @@ export function seriesOf(channel, fieldId, length) {
   return out
 }
 
-/** Kanalın i. ayındaki rapor ({id, sent}) ya da null. */
+/**
+ * Kanalın i. ayındaki rapor ({id, sent, queued}) ya da null. `queued`: hiç gönderilmemiş, gönderimi posta kuyruğunda
+ * (sonuç henüz bilinmiyor) — "gönderilmedi" denmez.
+ */
 export function reportAt(channel, i) {
   const r = Array.isArray(channel?.reports) ? channel.reports[i] : null
-  return r && r.id != null ? { id: r.id, sent: r.sent === true } : null
+  if (!r || r.id == null) return null
+  const sent = r.sent === true
+  return { id: r.id, sent, queued: !sent && r.queued === true }
+}
+
+/** Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (Set; değerleri okunmaz — kanalın yanında not). */
+export function typeMismatchIds(data, fieldId) {
+  const f = (Array.isArray(data?.fields) ? data.fields : []).find((x) => x?.id === fieldId)
+  const ids = Array.isArray(f?.type_mismatch) ? f.type_mismatch : []
+  return new Set(ids.map((x) => String(x)))
 }
 
 /** Alanın kaç değeri var (bütün kanallar) — 0 ise grafik yerine "değer yok". */
@@ -144,14 +249,16 @@ export function valueCount(data, fieldId) {
 /**
  * Grafik verisi: aylar eskiden yeniye satır (`{ key, idx, year, month, c0, c1 … }`), çizilen kanallar en çok `MAX_LINES`
  * (güvenli seri anahtarları `c0…` — kanal kimliği CSS değişkeni adı olamaz). Değeri olmayan ay null (boşluk).
- * Dönüş: `{ rows, series:[{key, channelId, label, team, color, dashed}], hidden:[{id, name, team}] }`.
+ * Dönüş: `{ rows, series:[{key, channelId, label, team, color, dashed, mismatch}], hidden:[{id, name, team, mismatch}] }`.
  */
 export function buildChart(data, fieldId, max = MAX_LINES) {
   const months = Array.isArray(data?.months) ? data.months : []
   const channels = Array.isArray(data?.channels) ? data.channels : []
+  const mismatch = typeMismatchIds(data, fieldId)
   const drawn = channels.slice(0, max)
   const series = drawn.map((ch, i) => ({
     key: `c${i}`, channelId: ch.id, label: ch.name || `#${ch.id}`, team: ch.team_name || null, ...lineStyle(i),
+    mismatch: mismatch.has(String(ch.id)),
   }))
   const values = drawn.map((ch) => seriesOf(ch, fieldId, months.length))
   const rows = months.map((m, idx) => {
@@ -159,7 +266,9 @@ export function buildChart(data, fieldId, max = MAX_LINES) {
     series.forEach((s, i) => { row[s.key] = values[i][idx] })
     return row
   })
-  const hidden = channels.slice(max).map((ch) => ({ id: ch.id, name: ch.name || `#${ch.id}`, team: ch.team_name || null }))
+  const hidden = channels.slice(max).map((ch) => ({
+    id: ch.id, name: ch.name || `#${ch.id}`, team: ch.team_name || null, mismatch: mismatch.has(String(ch.id)),
+  }))
   return { rows, series, hidden }
 }
 
@@ -198,20 +307,31 @@ export function tableRows(data, field, lang) {
 /** Kart görünümü: kanal başına ay listesi (en yeni önce). */
 export function channelCards(data, field, lang) {
   const rows = tableRows(data, field, lang)
+  const mismatch = typeMismatchIds(data, field?.id)
   return (data?.channels || []).map((ch, c) => ({
     id: ch.id, name: ch.name || `#${ch.id}`, team_id: ch.team_id, team_name: ch.team_name || null,
+    mismatch: mismatch.has(String(ch.id)),
     items: rows.map((r) => ({ key: r.key, year: r.year, month: r.month, ...r.cells[c] })),
   }))
 }
 
+/** Alanın birimli adı (CSV başlığı): yüzde alanı "Teknik hata oranı (%)". */
+export function fieldUnitLabel(field) {
+  const label = field?.label || field?.id || ''
+  return field?.type === 'percent' ? `${label} (%)` : label
+}
+
 /**
- * Görünen tablonun CSV'si: başlık [Ay, kanal adları…], satırlar tablo sırasıyla (en yeni ay önce); değer HAM sayı (Excel
- * hesaplasın), değer yoksa boş hücre — 0 yazılmaz.
+ * Görünen tablonun CSV'si: başlık [Ay · alan (birim), kanal adları…], satırlar tablo sırasıyla (en yeni ay önce); değer
+ * HAM SAYI (Excel hesaplasın — negatif yüzde de sayı kalır, formül koruması metne çevirmez: `csvNumber`), değer yoksa boş
+ * hücre — 0 yazılmaz.
  */
 export function csvTable(data, field, lang, monthHeader) {
   const channels = Array.isArray(data?.channels) ? data.channels : []
-  const headers = [monthHeader, ...channels.map((ch) => (ch.team_name ? `${ch.name} (${ch.team_name})` : ch.name))]
-  const rows = tableRows(data, field, lang).map((r) => [monthFullLabel(r, lang), ...r.cells.map((c) => (c.value == null ? '' : c.value))])
+  const corner = `${monthHeader} · ${fieldUnitLabel(field)}`
+  const headers = [corner, ...channels.map((ch) => (ch.team_name ? `${ch.name} (${ch.team_name})` : ch.name))]
+  const rows = tableRows(data, field, lang).map((r) => [monthFullLabel(r, lang),
+    ...r.cells.map((c) => (c.value == null ? '' : csvNumber(c.value) ?? ''))])
   return { headers, rows }
 }
 
@@ -223,11 +343,22 @@ export function csvFileName(field, months) {
   return `te-analiz-${field?.id || 'alan'}-${p(first)}_${p(last)}.csv`
 }
 
-/** Seçici seçenekleri: sunucunun alanları (ilk tanımlayan kanalın etiketiyle), seçili mi, sınır dolu mu. */
-export function fieldOptions(available, selected, max = MAX_FIELDS) {
+/**
+ * Seçici seçenekleri: sunucunun alanları (kanalların çoğunluk türü ve etiketiyle), seçili mi, sınır dolu mu. SEÇİLİ olup
+ * listede olmayan alan da (yalnız varsayılan şablonda bulunan, ya da yanıt henüz yokken adresteki) listelenir — yoksa
+ * kaldırılamazdı (inceleme 2026-10-18). `shown`: sunucunun çözdüğü alanlar (etiket / tür kaynağı); `channels` bilinmiyorsa null.
+ */
+export function fieldOptions(available, selected, max = MAX_FIELDS, shown = []) {
   const sel = Array.isArray(selected) ? selected : []
   const full = sel.length >= max
-  return (available || []).map((o) => {
+  const list = Array.isArray(available) ? available : []
+  const known = new Set(list.map((o) => o.id))
+  const byId = new Map((Array.isArray(shown) ? shown : []).map((f) => [f.id, f]))
+  const extra = sel.filter((id) => !known.has(id)).map((id) => {
+    const f = byId.get(id)
+    return { id, label: f?.label || id, type: f?.type || null, channels: f ? 0 : null, extra: true }
+  })
+  return [...list, ...extra].map((o) => {
     const checked = sel.includes(o.id)
     return { ...o, checked, disabled: (!checked && full) || (checked && sel.length <= 1) }
   })

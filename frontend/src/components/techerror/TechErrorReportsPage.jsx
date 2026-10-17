@@ -10,7 +10,7 @@ import {
 } from './techErrorModel.js'
 import { REPORT_LIST_KEYS } from './channelListModel.js'
 import { SENDLOG_KEYS, TAB_SENDLOG } from './sendModel.js'
-import { VIEW_ANALYTICS } from './analytics/analyticsModel.js'
+import { FROM_ANALYTICS, TE_FROM, VIEW_ANALYTICS } from './analytics/analyticsModel.js'
 
 // Kanal analizi (2026-10-18, R22): grafik kitaplığıyla birlikte yalnız açılınca yüklenir (lazyChunks kapısı)
 const TechErrorAnalytics = lazy(() => import('./analytics/TechErrorAnalytics.jsx'))
@@ -43,7 +43,9 @@ function readInitial() {
   const channel = readId(TE_CHANNEL)
   const report = readId(TE_REPORT)
   if (view === VIEW_ANALYTICS) return { view: VIEW_ANALYTICS, channel: null, report: null }
-  if (view === VIEW_REPORT && report) return { view: VIEW_REPORT, channel, report }
+  if (view === VIEW_REPORT && report) {
+    return { view: VIEW_REPORT, channel, report, from: readUrlParam(TE_FROM, '') === FROM_ANALYTICS ? FROM_ANALYTICS : null }
+  }
   if (view === VIEW_CHANNEL && channel) return { view: VIEW_CHANNEL, channel, report: null }
   return { view: VIEW_CHANNELS, channel: null, report: null }
 }
@@ -63,9 +65,13 @@ function readInitial() {
  *
  * <p><b>Analiz</b> (2026-10-18, R22): `te_view=analytics` — kanallar arası / aylar arası grafik + tablo (tembel parça);
  * anahtarları `te_an_team` / `te_an_months` / `te_an_fields` görünümün kendisi yazar ve sekme içinde kalır (rapora inip
- * kanallara dönünce "Analiz" son seçimi açar; sekme değişince App `te_` ailesini siler).
+ * kanallara dönünce "Analiz" son seçimi açar; sekme değişince App `te_` ailesini siler). Analizden açılan raporun adresi
+ * `te_from=analytics` taşır: "Analize dön" (ve rapor silinince dönüş) analizi aynı süzgeçlerle açar; raporun önceki /
+ * sonraki ay geçişi bu dönüşü korur (inceleme 2026-10-18).
  */
 export default function TechErrorReportsPage() {
+  const t = useT()
+  const backToAnalytics = t('te.an.backToAnalytics')
   const [nav, setNav] = useState(readInitial)
   const [tab, setTab] = useState(() => tabOf(readUrlParam(TE_TAB, '')))
   const [team, setTeam] = useState(() => readId(TE_TEAM))
@@ -77,6 +83,7 @@ export default function TechErrorReportsPage() {
     [TE_REPORT]: nav.view === VIEW_REPORT ? nav.report : null,
     [TE_TAB]: nav.view === VIEW_CHANNEL && tab !== TAB_REPORTS ? tab : null,
     [TE_TEAM]: nav.view === VIEW_CHANNELS && team ? team : null,
+    [TE_FROM]: nav.view === VIEW_REPORT && nav.from === FROM_ANALYTICS ? FROM_ANALYTICS : null,
     // Kanal görünümünden ÇIKINCA (kanallar listesi ya da analiz) rapor listesi süzgeçleri silinir — başka bir kanala eski
     // arama / yıl taşınmasın; rapora inip kanala dönünce korunur (8. sürüm). Kanal listesinin süzgeçleri (te_q / te_st /
     // te_sort / te_page / te_ps) silinmez: kanaldan dönünce liste aynı kalır.
@@ -96,11 +103,16 @@ export default function TechErrorReportsPage() {
 
   // Ay geçişiyle açılan raporda odak başlığa taşınır (ReportEditor yeniden kurulur)
   const focusTitle = useRef(false)
-  const openReport = useCallback((id, channelId) => {
+  // `from`: dönüş hedefi — verilmezse rapordan rapora geçişte (önceki / sonraki ay) korunur, başka görünümden açılınca yok
+  const openReport = useCallback((id, channelId, from) => {
     flushUrlQuerySync()
-    setNav((n) => ({ view: VIEW_REPORT, channel: channelId != null ? String(channelId) : n.channel, report: String(id) }))
+    setNav((n) => ({
+      view: VIEW_REPORT, channel: channelId != null ? String(channelId) : n.channel, report: String(id),
+      from: from !== undefined ? from : (n.view === VIEW_REPORT ? n.from ?? null : null),
+    }))
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
   }, [])
+  const openReportFromAnalytics = useCallback((id, channelId) => openReport(id, channelId, FROM_ANALYTICS), [openReport])
 
   const toChannels = useCallback(() => { flushUrlQuerySync(); setNav({ view: VIEW_CHANNELS, channel: null, report: null }) }, [])
 
@@ -113,15 +125,17 @@ export default function TechErrorReportsPage() {
   if (nav.view === VIEW_ANALYTICS) {
     return (
       <Suspense fallback={<AnalyticsLoading />}>
-        <TechErrorAnalytics onBack={toChannels} onOpenReport={openReport} />
+        <TechErrorAnalytics onBack={toChannels} onOpenReport={openReportFromAnalytics} />
       </Suspense>
     )
   }
 
   if (nav.view === VIEW_REPORT) {
+    const fromAnalytics = nav.from === FROM_ANALYTICS
     return (
-      <ReportEditor key={nav.report} reportId={nav.report}
-        onBack={(channelId) => (channelId || nav.channel ? openChannel(channelId || nav.channel) : toChannels())}
+      <ReportEditor key={nav.report} reportId={nav.report} backLabel={fromAnalytics ? backToAnalytics : null}
+        onBack={(channelId) => (fromAnalytics ? openAnalytics()
+          : channelId || nav.channel ? openChannel(channelId || nav.channel) : toChannels())}
         onOpenChannels={toChannels} onOpenTemplate={(channelId) => openChannel(channelId, TAB_TEMPLATE)}
         onOpenReport={(id, channelId) => { focusTitle.current = true; openReport(id, channelId) }} focusTitleRef={focusTitle} />
     )

@@ -553,6 +553,21 @@ function smallTargets(sel) {
   return out
 }
 
+/** Kanal analizi hücre bağlantıları (te-an-cell düğmeleri): dokunmatikte GENİŞLİK de ≥ 40 px ("—" tek karakter). */
+function narrowCells(sel) {
+  const root = document.querySelector(sel)
+  if (!root) return ['NO_ROOT']
+  const out = []
+  let measured = 0
+  for (const b of root.querySelectorAll('button[data-slot="te-an-cell"]')) {
+    const r = b.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    measured++
+    if (r.width < 39.5 || r.height < 39.5) out.push(`"${(b.textContent || '').trim().slice(0, 20)}" ${Math.round(r.width)}×${Math.round(r.height)}`)
+  }
+  return measured ? out : ['NO_CELLS']
+}
+
 function clipped(sel) {
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
@@ -1824,10 +1839,19 @@ for (const vp of VIEWPORTS) {
       await expect(unsent).toHaveAccessibleName(/gönderilmedi|not sent/)
       await expect(rate.locator('[data-slot="te-an-cell"][data-state="none"]').first()).toContainText('—')
 
+      // Y ekseni VERİYE göre (inceleme 2026-10-18): oranlar %0,4–%0,9 — eksen 0'dan başlamaz
+      const domain = (await rate.locator('[data-slot="te-an-chart"]').getAttribute('data-y-domain')).split(',').map(Number)
+      expect(domain[0], 'Y ekseni alt sınırı').toBeGreaterThan(0)
+      expect(domain[1]).toBeGreaterThanOrEqual(0.9)
+
       await page.waitForTimeout(300)
       expect(await page.evaluate(overflowX), 'yatay taşma').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin').toEqual([])
-      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef').toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef').toEqual([])
+        // Hücre bağlantıları ("—" tek karakter de) GENİŞLİKTE de en az 40 px (inceleme 2026-10-18)
+        expect(await page.evaluate(narrowCells, '[data-slot="te-analytics"]'), 'dar hücre bağlantısı').toEqual([])
+      }
 
       // Dönem: 24 ay → yeni istek ve URL
       await view.getByRole('button', { name: /^(24 ay|24 months)$/ }).click()
@@ -1849,13 +1873,30 @@ for (const vp of VIEWPORTS) {
       await page.waitForTimeout(300)
       expect(await page.evaluate(overflowX), 'yatay taşma (üç alan, 24 ay)').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin (üç alan)').toEqual([])
-      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef (üç alan)').toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef (üç alan)').toEqual([])
+        expect(await page.evaluate(narrowCells, '[data-slot="te-analytics"]'), 'dar hücre bağlantısı (üç alan)').toEqual([])
+      }
+      // Araç çubuğu: Yenile (fresh=1, veri yerinde) ve süzgeç varsayılanda değilken "Varsayılana dön"
+      await view.locator('[data-slot="te-an-refresh"]').click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('fresh')).toBe('1')
+      await expect(cards).toHaveCount(3)
+      await expect(view.locator('[data-slot="te-an-reset"]')).toBeVisible()
 
-      // Hücre o ayın raporunu açar
+      // Hücre o ayın raporunu açar; "Analize dön" analizi aynı süzgeçlerle açar (inceleme 2026-10-18)
       await rate.locator('[data-slot="te-an-cell"][data-report="100"]').click()
       await expect(page.locator('[data-slot="te-report"]')).toBeVisible()
       await expect.poll(() => new URL(page.url()).searchParams.get('te_rep')).toBe('100')
       expect(new URL(page.url()).searchParams.get('te_view')).toBe('report')
+      expect(new URL(page.url()).searchParams.get('te_from')).toBe('analytics')
+      const backBtn = page.locator('[data-slot="te-back"]')
+      await expect(backBtn).toContainText(/Analize dön|Back to the analysis/)
+      await backBtn.click()
+      await expect(view).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('analytics')
+      expect(new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
+      expect(new URL(page.url()).searchParams.get('te_from')).toBeNull()
+      await expect(cards).toHaveCount(3)
     })
 
     if (!vp.touch) {

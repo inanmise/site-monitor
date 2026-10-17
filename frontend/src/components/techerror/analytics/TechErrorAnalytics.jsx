@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChartLine, CircleAlert, Download, Info, ListFilter, Radio } from 'lucide-react'
+import { ArrowLeft, ChartLine, CircleAlert, Download, Info, ListFilter, Radio, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react'
 import { api } from '../../../api/client'
 import { useLanguage, useT } from '../../../i18n/index.jsx'
 import PageHeader from '../../ui/PageHeader.jsx'
@@ -25,25 +25,31 @@ import { ChartContainer, ChartTooltip, ComposedChart, Line, XAxis, YAxis, Cartes
 import { cn } from '@/lib/utils'
 import { trendTicks } from '../techErrorModel.js'
 import {
-  DEFAULT_MONTHS, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, TABLE_MIN_PX, TE_AN_FIELDS, TE_AN_MONTHS, TE_AN_TEAM, axisLabel,
-  buildChart, channelCards, csvFileName, csvTable, fieldOptions, formatCell, isLonePoint, monthFullLabel, monthShortLabel,
-  normalizeMonths, normalizeTeam, parseFieldsParam, requestParams, serializeFields, tableRows, toggleField, valueCount,
+  DEFAULT_MONTHS, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, TABLE_MIN_PX, TE_AN_FIELDS, TE_AN_MONTHS, TE_AN_TEAM, adoptedFields,
+  axisLabel, buildChart, channelCards, csvFileName, csvTable, fieldOptions, filterKey, formatCell, isDefaultFilter,
+  isLonePoint, monthFullLabel, monthShortLabel, normalizeMonths, normalizeTeam, parseFieldsParam, requestParams,
+  serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from './analyticsModel.js'
 
 const ALL = '__all__'
 // Çizim kenar boşlukları (px) ve Y ekseni genişliği — ay adlarının sığıp sığmadığı çizim genişliğine göre seçilir
 const MARGIN = { top: 8, right: 12, bottom: 0, left: 0 }
 const Y_AXIS_W = 56
+const EMPTY_STATE = { loading: true, error: null, status: null, details: null, data: null, key: null }
 
 /**
  * KANAL ANALİZİ (2026-10-18, R22 — kullanıcı onayı: "takımın kanallarında aynı kimlikli alanlar 12 ay × kanal tablo ve
  * grafik"). `?tab=channelreports&te_view=analytics`, adres anahtarları `te_an_team` / `te_an_months` / `te_an_fields`.
  *
  * <p>Araç çubuğu: takım, dönem (6 / 12 / 24 bitmiş ay), en çok 4 alan (kanalların GÜNCEL şablonlarındaki sayı / yüzde
- * alanları). Her alan için bir kart: kanal başına çizgi (en çok 8; diğerleri "N kanal daha"), değeri olmayan ay BOŞLUK
- * (0 değil), yalnız başına kalan değer nokta; altında ay × kanal tablosu (kap ≥ 760 px; değilse kanal kartları), hücre o
- * raporu açar, gönderilmemiş raporun değeri soluk; görünen tablonun CSV'si. Okuma hatası "veri yok" değil — tekrar dene.
- * Değerler raporlara girilen / kaydedilen rakamlar (sunucu yeniden hesaplamaz).
+ * alanları), Yenile (`fresh=1`) ve süzgeç varsayılanda değilse "Varsayılana dön". Araç çubuğu okuma HATASINDA da çizilir
+ * (adresteki süzgeç kalıcı 500 veriyorsa kullanıcı sıkışmasın). Her alan için bir kart: kanal başına çizgi (en çok 8;
+ * diğerleri "N kanal daha"), Y ekseni VERİYE göre (`yAxisScale`), değeri olmayan ay BOŞLUK (0 değil), yalnız başına kalan
+ * değer nokta; altında ay × kanal tablosu (kap ≥ 760 px; değilse kanal kartları), hücre o raporu açar, gönderilmemiş
+ * raporun değeri soluk (kuyruktaki "gönderim sırada"); görünen tablonun CSV'si. Okuma hatası "veri yok" değil — tekrar
+ * dene. Süzgeç (takım / ay / alanlar) değişince eski veri HEMEN kalkar (yükleniyor iskeleti); Yenile'de kalır. Geç gelen
+ * eski yanıt sıra numarasıyla düşer. İstenen alanlar bu kapsamda yoksa sunucu varsayılanları döner — not gösterilir ve
+ * adres ikinci istek olmadan düzeltilir. Hesaplanan alanlar sunucuda CANLI (rapor ekranı / PDF ile aynı).
  */
 export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   const t = useT()
@@ -51,8 +57,16 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   const [team, setTeam] = useState(() => normalizeTeam(readUrlParam(TE_AN_TEAM, '')))
   const [months, setMonths] = useState(() => normalizeMonths(readUrlParam(TE_AN_MONTHS, DEFAULT_MONTHS)))
   const [fields, setFields] = useState(() => parseFieldsParam(readUrlParam(TE_AN_FIELDS, '')))   // null = sunucu varsayılanı
-  const [state, setState] = useState({ loading: true, error: null, status: null, details: null, data: null })
+  // `data` = `key` süzgeci için okunan son yanıt; süzgeç değişince hemen kalkar (eski takımın tablosu yeni süzgeçle görünmesin)
+  const [state, setState] = useState(EMPTY_STATE)
+  // Araç çubuğu için son başarılı yanıtın takım listesi / alan seçenekleri — yeniden okurken araç çubuğu zıplamasın
+  const [meta, setMeta] = useState({ teams: [], available: [], shown: [] })
   const seq = useRef(0)
+  // Sunucunun alan çözümü benimsendi: bu anahtarın verisi zaten ekranda — ikinci istek yok
+  const adopt = useRef(null)
+
+  const params = useMemo(() => requestParams({ team, months, fields }), [team, months, fields])
+  const key = useMemo(() => filterKey({ team, months, fields }), [team, months, fields])
 
   useUrlQuerySync({
     [TE_AN_TEAM]: team,
@@ -60,14 +74,27 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
     [TE_AN_FIELDS]: serializeFields(fields),
   })
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ fresh = false } = {}) => {
+    if (!fresh && adopt.current === key) { adopt.current = null; seq.current++; return }
+    adopt.current = null
     const my = ++seq.current
-    setState((s) => ({ ...s, loading: true }))
+    setState((s) => (s.key === key ? { ...s, loading: true } : { ...EMPTY_STATE, key }))
     try {
-      const res = await api.techErrors.analytics(requestParams({ team, months, fields }))
+      const res = await api.techErrors.analytics(fresh ? { ...params, fresh: 1 } : params)
       if (my !== seq.current) return
       if (res?.success && res.data) {
-        setState({ loading: false, error: null, status: null, details: null, data: res.data })
+        const next = adoptedFields(res.data, fields)
+        const answered = next === undefined ? key : filterKey({ team, months, fields: next })
+        setState({ loading: false, error: null, status: null, details: null, data: res.data, key: answered })
+        setMeta({
+          teams: Array.isArray(res.data.teams) ? res.data.teams : [],
+          available: Array.isArray(res.data.available_fields) ? res.data.available_fields : [],
+          shown: Array.isArray(res.data.fields) ? res.data.fields : [],
+        })
+        if (next !== undefined) {
+          adopt.current = answered
+          setFields(next)
+        }
       } else if (res?.status === 404 && team) {
         // Paylaşılan bağlantıdaki takım görünmüyor (ya da silindi): süzgeç kalkar, kurum kapsamı yeniden okunur
         setTeam(null)
@@ -78,21 +105,28 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('te.loadError'), status: 0, details: e?.errorInfo }))
     }
-  }, [team, months, fields, t])
+  }, [key, params, team, months, fields, t])
   useEffect(() => { load() }, [load])
 
-  const data = state.data
+  const data = state.key === key ? state.data : null
   const shownFields = useMemo(() => (Array.isArray(data?.fields) ? data.fields : []), [data])
-  const available = useMemo(() => (Array.isArray(data?.available_fields) ? data.available_fields : []), [data])
-  const known = useMemo(() => new Set([...available.map((f) => f.id), ...shownFields.map((f) => f.id)]), [available, shownFields])
-  // Seçim: kullanıcının listesi (sunucunun tanımadığı kimlik sayılmaz) ya da sunucunun çözdüğü varsayılan
-  const selected = useMemo(() => (fields ? fields.filter((id) => known.has(id)) : shownFields.map((f) => f.id)),
-    [fields, known, shownFields])
-  const teams = useMemo(() => (Array.isArray(data?.teams) ? data.teams : []), [data])
-  const teamOptions = useMemo(() => [{ value: ALL, label: t('te.allTeams') },
-    ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))], [teams, t])
+  // Seçim: kullanıcının listesi ya da sunucunun çözdüğü varsayılan (yanıt yokken son yanıtınki)
+  const selected = useMemo(() => (fields || (data ? shownFields : meta.shown).map((f) => f.id)), [fields, data, shownFields, meta.shown])
+  const teams = meta.teams
+  const teamOptions = useMemo(() => {
+    const list = [{ value: ALL, label: t('te.allTeams') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))]
+    if (team && !teams.some((tm) => String(tm.id) === team)) list.push({ value: team, label: `#${team}` })
+    return list
+  }, [teams, team, t])
   const channels = Array.isArray(data?.channels) ? data.channels : []
   const monthList = Array.isArray(data?.months) ? data.months : []
+  const isDefault = isDefaultFilter({ team, months, fields })
+
+  const reset = useCallback(() => {
+    setTeam(null)
+    setMonths(DEFAULT_MONTHS)
+    setFields(null)
+  }, [])
 
   const back = (
     <Button type="button" variant="ghost" size="sm" onClick={onBack} className="w-fit pointer-coarse:min-h-10" data-slot="te-back">
@@ -101,11 +135,11 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   )
   const header = <PageHeader icon={ChartLine} title={t('te.an.title')} description={t('te.an.subtitle')} />
 
-  const toolbar = data && (
+  const toolbar = (
     <Card data-slot="te-an-toolbar" className="py-3">
       <CardContent className="flex flex-col gap-3 px-3 sm:px-4">
         <div className="flex flex-wrap items-end gap-3">
-          {teams.length > 1 && (
+          {(teams.length > 1 || team) && (
             <div className="flex min-w-0 w-full flex-col gap-1.5 sm:w-72">
               <span id="te-an-team-label" className="text-xs font-medium text-muted-foreground">{t('te.teamFilter')}</span>
               <SearchableSelect ariaLabelledBy="te-an-team-label" value={team || ALL} options={teamOptions} wrapLabels
@@ -119,12 +153,24 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">{t('te.an.fields')}</span>
-            <FieldPicker options={available} selected={selected}
+            <FieldPicker options={meta.available} shown={data ? shownFields : meta.shown} selected={selected}
               onToggle={(id) => setFields((cur) => {
-                const base = cur ? cur.filter((x) => known.has(x)) : selected
+                const base = cur || selected
                 const next = toggleField(base, id)
                 return next === base ? cur : next             // değişmediyse istek yok (son alan / sınır dolu)
               })} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {!isDefault && (
+              <Button type="button" variant="ghost" onClick={reset} className="pointer-coarse:min-h-10" data-slot="te-an-reset">
+                <RotateCcw aria-hidden="true" /> {t('te.an.reset')}
+              </Button>
+            )}
+            <Button type="button" variant="outline" onClick={() => load({ fresh: true })} disabled={state.loading}
+              className="pointer-coarse:min-h-10" data-slot="te-an-refresh">
+              <RefreshCw aria-hidden="true" className={cn(state.loading && 'animate-spin motion-reduce:animate-none')} />
+              {t('te.refresh')}
+            </Button>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
@@ -140,7 +186,24 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   )
 
   let body
-  if (state.loading && !data) {
+  if (!data && state.error) {
+    const forbidden = state.status === 403
+    body = (
+      <StatusBlock tone={forbidden ? 'neutral' : 'danger'} icon={CircleAlert}
+        title={forbidden ? t('te.forbiddenTitle') : t('te.loadErrorTitle')}
+        description={forbidden ? t('te.forbiddenBody') : state.error} details={state.details}
+        actions={forbidden ? null : (
+          <>
+            <Button type="button" variant="outline" onClick={() => load()} data-slot="te-an-retry">{t('te.retry')}</Button>
+            {!isDefault && (
+              <Button type="button" variant="ghost" onClick={reset} data-slot="te-an-reset-error">
+                <RotateCcw aria-hidden="true" /> {t('te.an.reset')}
+              </Button>
+            )}
+          </>
+        )} />
+    )
+  } else if (!data) {
     body = (
       <div role="status" aria-live="polite" className="flex flex-col gap-3" data-slot="te-an-loading">
         <span className="sr-only">{t('te.an.loading')}</span>
@@ -148,25 +211,19 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
         <Skeleton className="h-72 w-full rounded-xl motion-reduce:animate-none" />
       </div>
     )
-  } else if (state.error && !data) {
-    const forbidden = state.status === 403
-    body = (
-      <StatusBlock tone={forbidden ? 'neutral' : 'danger'} icon={CircleAlert}
-        title={forbidden ? t('te.forbiddenTitle') : t('te.loadErrorTitle')}
-        description={forbidden ? t('te.forbiddenBody') : state.error} details={state.details}
-        actions={forbidden ? null : <Button type="button" variant="outline" onClick={load} data-slot="te-an-retry">{t('te.retry')}</Button>} />
-    )
-  } else if (data && channels.length === 0) {
+  } else if (channels.length === 0) {
     body = <StatusBlock tone="neutral" icon={Radio} title={t('te.an.emptyTitle')} description={t('te.an.emptyBody')} />
-  } else if (data && shownFields.length === 0) {
+  } else if (shownFields.length === 0) {
     body = <StatusBlock tone="neutral" icon={ListFilter} title={t('te.an.noFieldsTitle')} description={t('te.an.noFieldsBody')} />
-  } else if (data) {
+  } else {
     body = (
       <div className="flex flex-col gap-4" data-slot="te-an-fields-list" aria-busy={state.loading || undefined}>
         {shownFields.map((f) => <FieldPanel key={f.id} field={f} data={data} lang={lang} onOpenReport={onOpenReport} />)}
       </div>
     )
   }
+
+  const dropped = Array.isArray(data?.dropped_fields) ? data.dropped_fields : []
 
   return (
     <div className="flex flex-col gap-4" data-slot="te-analytics">
@@ -175,9 +232,17 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
       {toolbar}
       {state.error && data && (
         <AlertBanner tone="danger" title={t('te.an.staleTitle')}
-          actions={<Button type="button" variant="outline" size="sm" onClick={load} className="pointer-coarse:min-h-10">{t('te.retry')}</Button>}>
+          actions={<Button type="button" variant="outline" size="sm" onClick={() => load()} className="pointer-coarse:min-h-10">{t('te.retry')}</Button>}>
           {state.error}
         </AlertBanner>
+      )}
+      {data && dropped.length > 0 && (
+        <div data-slot="te-an-dropped" data-fallback={data.fields_fallback ? 'true' : undefined}>
+          <AlertBanner tone="info" icon={Info}
+            title={data.fields_fallback ? t('te.an.fieldsFallback') : t('te.an.fieldsDroppedSome', dropped.join(', '))}>
+            {data.fields_fallback ? t('te.an.fieldsFallbackBody', dropped.join(', ')) : null}
+          </AlertBanner>
+        </div>
       )}
       {data?.truncated && monthList.length > 0 && (
         <div data-slot="te-an-truncated">
@@ -192,11 +257,11 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
 }
 
 /** Alan seçici — Popover + Command (çoklu, en çok MAX_FIELDS; son alan kaldırılamaz). Adlar SARAR, kırpılmaz. */
-function FieldPicker({ options, selected, onToggle }) {
+function FieldPicker({ options, shown, selected, onToggle }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const opts = fieldOptions(options, selected)
+  const opts = fieldOptions(options, selected, MAX_FIELDS, shown)
   const visible = opts.filter((o) => matchesSearchText(query, [o.label, o.id]))
   const names = opts.filter((o) => o.checked).map((o) => o.label)
   const full = selected.length >= MAX_FIELDS
@@ -228,9 +293,12 @@ function FieldPicker({ options, selected, onToggle }) {
                       <Checkbox checked={o.checked} tabIndex={-1} aria-hidden="true" className="pointer-events-none mt-0.5" />
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span className="whitespace-normal [overflow-wrap:anywhere]">{o.label}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {t(o.type === 'percent' ? 'te.an.type.percent' : 'te.an.type.number')} · {t('te.an.fieldChannels', o.channels)}
-                        </span>
+                        {(o.type || o.channels != null) && (
+                          <span className="text-xs text-muted-foreground">
+                            {[o.type ? t(o.type === 'percent' ? 'te.an.type.percent' : 'te.an.type.number') : null,
+                              o.channels != null ? t('te.an.fieldChannels', o.channels) : null].filter(Boolean).join(' · ')}
+                          </span>
+                        )}
                       </span>
                     </CommandItem>
                   ))}
@@ -247,6 +315,17 @@ function FieldPicker({ options, selected, onToggle }) {
         <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-an-field-names">{names.join(' · ')}</span>
       )}
     </div>
+  )
+}
+
+/** "Bu kanalda alan türü farklı" notu — kanalın değeri okunmaz (referans tür çoğunluktan). */
+function MismatchNote({ className }) {
+  const t = useT()
+  return (
+    <span className={cn('inline-flex items-start gap-1 text-xs text-muted-foreground', className)} data-slot="te-an-mismatch">
+      <TriangleAlert aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">{t('te.an.typeMismatch')}</span>
+    </span>
   )
 }
 
@@ -290,11 +369,15 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
         )}
         <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1.5 p-0 text-xs" data-slot="te-an-legend" aria-label={t('te.an.legend')}>
           {chart.series.map((s) => (
-            <li key={s.key} className="inline-flex min-w-0 items-start gap-1.5" data-slot="te-an-legend-item">
+            <li key={s.key} className="inline-flex min-w-0 items-start gap-1.5" data-slot="te-an-legend-item"
+              data-mismatch={s.mismatch ? 'true' : undefined}>
               <span className="mt-1"><SeriesKey shape={s.dashed ? 'dashed' : 'line'} color={s.color} /></span>
-              <span className="min-w-0 [overflow-wrap:anywhere]">
-                <span className="text-foreground">{s.label}</span>
-                {s.team && <span className="text-muted-foreground"> · {s.team}</span>}
+              <span className="flex min-w-0 flex-col">
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  <span className="text-foreground">{s.label}</span>
+                  {s.team && <span className="text-muted-foreground"> · {s.team}</span>}
+                </span>
+                {s.mismatch && <MismatchNote />}
               </span>
             </li>
           ))}
@@ -310,8 +393,9 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
                 <p className="m-0 text-xs text-muted-foreground">{t('te.an.moreNote', MAX_LINES)}</p>
                 <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0" data-slot="te-an-hidden-list">
                   {chart.hidden.map((h) => (
-                    <li key={h.id} className="min-w-0 [overflow-wrap:anywhere]">
-                      {h.name}{h.team && <span className="text-muted-foreground"> · {h.team}</span>}
+                    <li key={h.id} className="flex min-w-0 flex-col [overflow-wrap:anywhere]">
+                      <span>{h.name}{h.team && <span className="text-muted-foreground"> · {h.team}</span>}</span>
+                      {h.mismatch && <MismatchNote />}
                     </li>
                   ))}
                 </ul>
@@ -319,7 +403,7 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
             )}
           </div>
         )}
-        <div ref={wrapRef} className="min-w-0" data-slot="te-an-table-wrap" data-layout={cards ? 'cards' : 'table'}>
+        <div ref={wrapRef} className="@container min-w-0" data-slot="te-an-table-wrap" data-layout={cards ? 'cards' : 'table'}>
           {cards
             ? <ChannelCards data={data} field={field} lang={lang} onOpenReport={onOpenReport} />
             : <MonthTable data={data} field={field} lang={lang} onOpenReport={onOpenReport} />}
@@ -336,6 +420,13 @@ function FieldChart({ field, chart, lang, titleId }) {
   const ticks = useMemo(() => trendTicks(chart.rows, lang, plotWidth), [chart.rows, lang, plotWidth])
   const rows = useMemo(() => chart.rows.map((r, i) => ({ ...r, tick: ticks[i]?.label || '', tickYear: ticks[i]?.year || '' })),
     [chart.rows, ticks])
+  // Y ekseni VERİYE göre (inceleme 2026-10-18): %99,80–%99,95 sıfırdan başlayan eksende düz çizgi görünüyordu
+  const scale = useMemo(() => yAxisScale(chart.rows, chart.series.map((s) => s.key), field.type, lang),
+    [chart.rows, chart.series, field.type, lang])
+  const yLabel = (v) => {
+    const i = scale ? scale.ticks.indexOf(v) : -1
+    return i >= 0 ? scale.labels[i] : axisLabel(v, field.type, lang)
+  }
   const config = useMemo(() => Object.fromEntries(chart.series.map((s) => [s.key, { label: s.label, color: s.color }])), [chart.series])
   const loneDot = (s) => function LoneDot(props) {
     const { cx, cy, index } = props
@@ -344,15 +435,17 @@ function FieldChart({ field, chart, lang, titleId }) {
     return <circle key={k} data-slot="te-an-dot" cx={cx} cy={cy} r={3} fill={s.color} stroke="none" />
   }
   return (
-    <figure className="m-0 flex min-w-0 flex-col gap-1" aria-labelledby={titleId} data-slot="te-an-chart">
+    <figure className="m-0 flex min-w-0 flex-col gap-1" aria-labelledby={titleId} data-slot="te-an-chart"
+      data-y-domain={scale ? scale.domain.join(',') : undefined}>
       <figcaption className="sr-only">{t('te.an.chartLabel', field.label)}</figcaption>
       <div ref={boxRef} className="w-full">
         <ChartContainer config={config} className="aspect-auto h-[220px] w-full sm:h-[260px]" aria-hidden="true">
           <ComposedChart data={rows} margin={MARGIN}>
             <CartesianGrid vertical={false} />
             <XAxis dataKey="key" tickLine={false} axisLine={false} interval={0} height={32} tick={<MonthTick rows={rows} />} />
-            <YAxis width={Y_AXIS_W} tickCount={4} tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
-              allowDecimals={field.type === 'percent'} tickFormatter={(v) => axisLabel(v, field.type, lang)} />
+            <YAxis width={Y_AXIS_W} tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
+              {...(scale ? { domain: scale.domain, ticks: scale.ticks, interval: 0 } : { tickCount: 4 })}
+              allowDecimals={field.type === 'percent'} tickFormatter={yLabel} />
             <ChartTooltip isAnimationActive={false} cursor={{ stroke: 'var(--muted-foreground)', strokeOpacity: 0.35, strokeWidth: 1 }}
               content={<ChartTip series={chart.series} field={field} lang={lang} />} />
             {chart.series.map((s) => (
@@ -400,7 +493,10 @@ function ChartTip({ active, payload, series, field, lang }) {
   )
 }
 
-/** Hücre değeri: raporu varsa o raporu açan bağlantı; gönderilmemiş raporun değeri soluk (ekran okuyucuya "gönderilmedi"). */
+/**
+ * Hücre değeri: raporu varsa o raporu açan bağlantı; gönderilmemiş raporun değeri soluk (ekran okuyucuya "gönderilmedi"),
+ * gönderimi kuyruktaki "gönderim sırada". Dokunmatikte hedef en az 40 × 40 px ("—" tek karakter de).
+ */
 function CellValue({ cell, channel, month, lang, onOpenReport, align = 'right' }) {
   const t = useT()
   const label = monthFullLabel(month, lang)
@@ -412,13 +508,15 @@ function CellValue({ cell, channel, month, lang, onOpenReport, align = 'right' }
       </span>
     )
   }
-  const sent = cell.report.sent
+  const { sent, queued } = cell.report
+  const stateName = sent ? 'sent' : queued ? 'queued' : 'unsent'
   const valueText = cell.value == null ? t('te.an.noValue') : cell.text
-  const name = `${valueText}${sent ? '' : ` (${t('te.an.notSent')})`} — ${t('te.an.openReport', channel.name, label)}`
+  const suffix = sent ? '' : ` (${t(queued ? 'te.an.queued' : 'te.an.notSent')})`
+  const name = `${valueText}${suffix} — ${t('te.an.openReport', channel.name, label)}`
   return (
     <Button type="button" variant="link" size="sm" onClick={() => onOpenReport?.(cell.report.id, channel.id)} aria-label={name}
-      data-slot="te-an-cell" data-state={sent ? 'sent' : 'unsent'} data-report={cell.report.id}
-      className={cn('h-auto min-h-8 px-1 tabular-nums pointer-coarse:min-h-10', align === 'right' && 'ml-auto',
+      data-slot="te-an-cell" data-state={stateName} data-report={cell.report.id}
+      className={cn('h-auto min-h-8 px-1 tabular-nums pointer-coarse:min-h-10 pointer-coarse:min-w-10', align === 'right' && 'ml-auto',
         sent ? 'text-foreground' : 'text-muted-foreground italic')}>
       {cell.text}
     </Button>
@@ -429,6 +527,7 @@ function MonthTable({ data, field, lang, onOpenReport }) {
   const t = useT()
   const channels = data?.channels || []
   const rows = tableRows(data, field, lang)
+  const mismatch = typeMismatchIds(data, field.id)
   return (
     <div className="overflow-hidden rounded-xl border" data-slot="te-an-table">
       <Table>
@@ -440,6 +539,7 @@ function MonthTable({ data, field, lang, onOpenReport }) {
                 <div className="ml-auto flex min-w-32 max-w-56 flex-col items-end py-1">
                   <span className="text-foreground [overflow-wrap:anywhere]">{ch.name}</span>
                   {ch.team_name && <span className="text-xs font-normal text-muted-foreground [overflow-wrap:anywhere]">{ch.team_name}</span>}
+                  {mismatch.has(String(ch.id)) && <MismatchNote className="text-right font-normal" />}
                 </div>
               </TableHead>
             ))}
@@ -462,15 +562,17 @@ function MonthTable({ data, field, lang, onOpenReport }) {
   )
 }
 
+/** Kanal kartları — sütun sayısı KAP genişliğine göre (`@xl`: kap ≥ 36 rem; görünüm alanına göre değil). */
 function ChannelCards({ data, field, lang, onOpenReport }) {
   const cards = channelCards(data, field, lang)
   return (
-    <div className="grid gap-3 sm:grid-cols-2" data-slot="te-an-cards">
+    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2" data-slot="te-an-cards">
       {cards.map((c) => (
         <div key={c.id} className="flex min-w-0 flex-col gap-2 rounded-xl border p-3" data-slot="te-an-card" data-channel={c.id}>
           <div className="flex min-w-0 flex-col gap-1">
             <span className="font-semibold leading-snug [overflow-wrap:anywhere]">{c.name}</span>
             {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} static wrap />}
+            {c.mismatch && <MismatchNote />}
           </div>
           <ul className="m-0 flex list-none flex-col divide-y p-0 text-sm">
             {c.items.map((it) => (

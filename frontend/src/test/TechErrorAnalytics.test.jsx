@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import { channel, overview } from './helpers/techErrorFixtures.js'
 
 // Kanal analizi (2026-10-18, R22): kanal listesindeki "Analiz" düğmesi `te_view=analytics` görünümünü açar; araç çubuğu
@@ -23,6 +23,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
+import { ANALYTICS_KEYS } from '../components/techerror/analytics/analyticsModel.js'
 
 const te = () => api.techErrors
 const LONG = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Kanalı (Dijital Kanallar / Bireysel Bankacılık)'
@@ -233,5 +234,195 @@ describe('kanal analizi', () => {
     expect(lines[0]).toContain('POS (Kurumsal Kanallar)')
     expect(lines[1]).toBe('Eylül 2026,1250000,900000')
     expect(lines[3]).toBe('Temmuz 2026,,')
+  })
+})
+
+/** Elle çözülen yanıt — geç gelen / bekleyen istek senaryoları için. */
+function deferred() {
+  let resolve
+  const promise = new Promise((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+const param = (k) => new URL(window.location.href).searchParams.get(k)
+
+describe('kanal analizi — inceleme düzeltmeleri (2026-10-18)', () => {
+  it('ilk okuma HATASINDA da araç çubuğu: adresteki süzgeç görünür; "Varsayılana dön" te_an_* anahtarlarını siler ve varsayılanla okur', async () => {
+    te().analytics.mockResolvedValue({ success: false, status: 500, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra tekrar deneyin.' })
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_team=1&te_an_months=24&te_an_fields=error-rate')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="empty"][data-tone="danger"]')).not.toBeNull())
+    const toolbar = document.querySelector('[data-slot="te-an-toolbar"]')
+    expect(toolbar).not.toBeNull()
+    expect(within(toolbar).getByRole('button', { name: '24 ay' })).toHaveAttribute('aria-pressed', 'true')
+    // Seçili alan (adresten) seçicide sayılır; yanıt yokken de kaldırılabilir olarak listelenir
+    expect(within(toolbar).getByRole('button', { name: /Alan seç/ })).toHaveTextContent('1/4')
+    te().analytics.mockResolvedValue(analytics())
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'Varsayılana dön' }))
+    await waitFor(() => expect(lastParams()).toEqual({ months: 12 }))
+    await waitFor(() => { for (const k of ANALYTICS_KEYS) expect(param(k)).toBeNull() })
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    expect(screen.queryByRole('button', { name: 'Varsayılana dön' })).toBeNull()
+  })
+
+  it('süzgeç değişince eski veri HEMEN kalkar (iskelet); önceki süzgecin geç yanıtı düşer', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const six = deferred()
+    te().analytics.mockImplementationOnce(() => six.promise)
+    fireEvent.click(screen.getByRole('button', { name: '6 ay' }))
+    // Eski (12 aylık) tablo yeni süzgeçle GÖRÜNMEZ — yükleniyor iskeleti; araç çubuğu yerinde
+    expect(field('total-tx')).toBeNull()
+    expect(document.querySelector('[data-slot="te-an-loading"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="te-an-toolbar"]')).not.toBeNull()
+    const twentyFour = deferred()
+    te().analytics.mockImplementationOnce(() => twentyFour.promise)
+    fireEvent.click(screen.getByRole('button', { name: '24 ay' }))
+    await waitFor(() => expect(lastParams()).toEqual({ months: 24 }))
+    const fresh = analytics()
+    fresh.data.channels = [{ ...fresh.data.channels[1], name: 'Yeni Süzgeç Kanalı' }]
+    await act(async () => { twentyFour.resolve(fresh) })
+    await waitFor(() => expect(screen.getAllByText('Yeni Süzgeç Kanalı').length).toBeGreaterThan(0))
+    // 6 ayın yanıtı SONRA gelir: düşer, ekran 24 ayın verisinde kalır
+    const stale = analytics()
+    stale.data.channels = [{ ...stale.data.channels[1], name: 'Eski Süzgeç Kanalı' }]
+    await act(async () => { six.resolve(stale) })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('Eski Süzgeç Kanalı')).toBeNull()
+    expect(screen.getAllByText('Yeni Süzgeç Kanalı').length).toBeGreaterThan(0)
+  })
+
+  it('Yenile: veri yerinde kalır (aria-busy), istek fresh=1 taşır; yenileme hatası eski veriyi silmez', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const pending = deferred()
+    te().analytics.mockImplementationOnce(() => pending.promise)
+    fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
+    await waitFor(() => expect(lastParams()).toEqual({ months: 12, fresh: 1 }))
+    expect(field('total-tx')).not.toBeNull()
+    expect(document.querySelector('[data-slot="te-an-fields-list"]')).toHaveAttribute('aria-busy', 'true')
+    await act(async () => { pending.resolve({ success: false, status: 500, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra tekrar deneyin.' }) })
+    expect(await screen.findByText('Analiz yenilenemedi; son okunan değerler gösteriliyor')).toBeInTheDocument()
+    expect(field('total-tx')).not.toBeNull()
+  })
+
+  it('istenen alanlar kapsamda yok: sunucu varsayılanları döner — not gösterilir, adres İKİNCİ İSTEK OLMADAN düzeltilir', async () => {
+    te().analytics.mockResolvedValue(analytics({ fields_fallback: true, dropped_fields: ['eski-alan'] }))
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_fields=eski-alan')
+    render(<TechErrorReportsPage />)
+    expect(await screen.findByText('Seçili alanlar bu kapsamda yok; varsayılan alanlar gösteriliyor')).toBeInTheDocument()
+    expect(screen.getByText(/Bulunamayan alanlar: eski-alan/)).toBeInTheDocument()
+    expect(screen.queryByText('Karşılaştırılacak alan yok')).toBeNull()
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    await waitFor(() => expect(param('te_an_fields')).toBeNull())
+    await new Promise((r) => setTimeout(r, 30))
+    expect(te().analytics).toHaveBeenCalledTimes(1)
+    expect(te().analytics).toHaveBeenCalledWith({ months: 12, fields: 'eski-alan' })
+    // Seçici sunucunun çözdüğü alanları seçili gösterir
+    expect(screen.getByRole('button', { name: /Alan seç/ })).toHaveTextContent('2/4')
+  })
+
+  it('bir kısmı kapsamda yok: kalanlar adrese yazılır (ikinci istek yok), kısa not', async () => {
+    te().analytics.mockResolvedValue(analytics({ fields_fallback: false, dropped_fields: ['eski-alan'] }))
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_fields=error-rate,eski-alan,total-tx')
+    render(<TechErrorReportsPage />)
+    expect(await screen.findByText(/Seçili alanlardan bazıları bu kapsamda yok \(eski-alan\)/)).toBeInTheDocument()
+    await waitFor(() => expect(param('te_an_fields')).toBe('error-rate,total-tx'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(te().analytics).toHaveBeenCalledTimes(1)
+  })
+
+  it('alan türü farklı kanal: grafik anahtarında, tablo başlığında ve kartta not', async () => {
+    const d = analytics()
+    d.data.fields[1] = { ...d.data.fields[1], type_mismatch: [20] }
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const card = field('total-tx')
+    const legend = [...card.querySelectorAll('[data-slot="te-an-legend-item"]')]
+    expect(legend[1]).toHaveAttribute('data-mismatch', 'true')
+    expect(within(legend[1]).getByText('Bu kanalda alan türü farklı; değerleri karşılaştırılmıyor')).toBeInTheDocument()
+    expect(legend[0]).not.toHaveAttribute('data-mismatch')
+    const head = card.querySelector('[data-slot="te-an-table"] th[data-channel="20"]')
+    expect(within(head).getByText('Bu kanalda alan türü farklı; değerleri karşılaştırılmıyor')).toBeInTheDocument()
+    expect(field('error-rate').querySelector('[data-slot="te-an-mismatch"]')).toBeNull()
+  })
+
+  it('kuyruktaki rapor: "gönderim sırada" (gönderilmedi değil), soluk', async () => {
+    const d = analytics()
+    d.data.channels[0].reports[11] = { id: 100, sent: false, queued: true }
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const cell = within(field('total-tx')).getByRole('button', { name: /1\.250\.000 \(gönderim sırada\)/ })
+    expect(cell).toHaveAttribute('data-state', 'queued')
+    expect(cell.className).toContain('text-muted-foreground')
+    expect(cell.className).toContain('pointer-coarse:min-w-10')
+  })
+
+  it('Y ekseni veriye göre: %99,80–%99,95 aralığında eksen 0\'dan başlamaz', async () => {
+    const d = analytics()
+    d.data.fields = [{ id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent', type_mismatch: [] }]
+    d.data.channels.forEach((ch, c) => {
+      const a = Array(12).fill(null)
+      a[9] = 99.8 + c * 0.05
+      a[10] = 99.9
+      a[11] = 99.95
+      ch.points = { 'sla-rate': a }
+    })
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_fields=sla-rate')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('sla-rate')).not.toBeNull())
+    const [lo, hi] = field('sla-rate').querySelector('[data-slot="te-an-chart"]').dataset.yDomain.split(',').map(Number)
+    expect(lo).toBeGreaterThan(99)
+    expect(hi).toBeLessThanOrEqual(100)
+  })
+
+  it('seçici yalnız varsayılan şablondaki seçili alanı da listeler ve kaldırtır', async () => {
+    const d = analytics()
+    d.data.fields = [...d.data.fields, { id: 'quota-rate', label: 'Kota hatalarının teknik hatalara oranı', type: 'percent', type_mismatch: [] }]
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_fields=error-rate,total-tx,quota-rate')
+    render(<TechErrorReportsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /Alan seç/ }))
+    const quota = await screen.findByRole('option', { name: /Kota hatalarının teknik hatalara oranı/ })
+    expect(quota).toHaveAttribute('aria-checked', 'true')
+    expect(quota).not.toHaveAttribute('aria-disabled', 'true')
+    expect(quota).toHaveTextContent('0 kanalda')
+    fireEvent.click(quota)
+    await waitFor(() => expect(lastParams()).toEqual({ months: 12, fields: 'error-rate,total-tx' }))
+  })
+
+  it('analizden açılan rapor: adres te_from=analytics; "Analize dön" analizi aynı süzgeçle açar', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_months=24')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    fireEvent.click(within(field('total-tx')).getByRole('button', { name: /1\.250\.000 \(gönderilmedi\)/ }))
+    await waitFor(() => expect(param('te_view')).toBe('report'))
+    await waitFor(() => expect(param('te_from')).toBe('analytics'))
+    const back = await screen.findByRole('button', { name: 'Analize dön' })
+    fireEvent.click(back)
+    expect(await screen.findByRole('heading', { name: 'Kanal analizi' })).toBeInTheDocument()
+    await waitFor(() => expect(param('te_view')).toBe('analytics'))
+    expect(param('te_from')).toBeNull()
+    expect(param('te_an_months')).toBe('24')
+    await waitFor(() => expect(lastParams()).toEqual({ months: 24 }))
+  })
+
+  it('kanal kartları KAP genişliğine göre iki sütun (görünüm alanına göre değil)', async () => {
+    width.value = 600
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const wrap = field('total-tx').querySelector('[data-slot="te-an-table-wrap"]')
+    expect(wrap.className).toContain('@container')
+    const grid = wrap.querySelector('[data-slot="te-an-cards"]')
+    expect(grid.className).toContain('@xl:grid-cols-2')
+    expect(grid.className).not.toMatch(/(^|\s)sm:grid-cols-2/)
   })
 })

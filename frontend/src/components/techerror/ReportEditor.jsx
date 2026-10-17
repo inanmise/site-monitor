@@ -100,7 +100,7 @@ function isFileDrag(e) {
  * kaydı bekler (iki kayıt aynı sürümle yarışmaz). Sunucu aynı kişinin 15 dk içindeki otomatik kayıtlarını geçmişte tek
  * satırda birleştirir.
  */
-export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef }) {
+export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef, backLabel = null }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
   const toast = useToast()
@@ -768,7 +768,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       className="h-auto min-h-8 w-fit max-w-full justify-start whitespace-normal py-1.5 text-left pointer-coarse:min-h-10"
       onClick={() => leave(() => onBack(channel?.id))}>
       <ArrowLeft aria-hidden="true" />
-      <span className="[overflow-wrap:anywhere]">{channel?.name ? t('te.backToChannel', channel.name) : t('te.backToChannels')}</span>
+      <span className="[overflow-wrap:anywhere]">{backLabel || (channel?.name ? t('te.backToChannel', channel.name) : t('te.backToChannels'))}</span>
     </Button>
   )
 
@@ -786,7 +786,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return (
       <div className="flex flex-col gap-4">
         <Button type="button" variant="ghost" size="sm" className="w-fit pointer-coarse:min-h-10" onClick={() => onBack(null)}>
-          <ArrowLeft aria-hidden="true" /> {t('te.backToChannels')}
+          <ArrowLeft aria-hidden="true" /> {backLabel || t('te.backToChannels')}
         </Button>
         <StatusBlock tone={gone ? 'neutral' : 'danger'} icon={CircleAlert} title={gone ? t('te.reportGoneTitle') : t('te.loadErrorTitle')}
           description={state.error}

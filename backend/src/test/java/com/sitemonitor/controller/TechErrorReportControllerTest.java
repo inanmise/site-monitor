@@ -1462,17 +1462,30 @@ class TechErrorReportControllerTest {
                         Map.of("total-tx", tx), reps)), 1, false, List.of(A));
     }
 
+    private static com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result analyticsFallbackResult() {
+        var base = analyticsResult();
+        java.util.List<com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef> reps =
+                new ArrayList<>(java.util.Collections.nCopies(12, (com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef) null));
+        reps.set(11, new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef(100L, false, true));
+        var ch = base.channels().get(0);
+        return new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(base.months(), 12,
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldRef("total-tx", "Toplam işlem adedi", "number", List.of(20L))),
+                base.available(),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(ch.id(), ch.name(), ch.teamId(), ch.values(), reps)),
+                1, false, List.of(A), List.of("gone-field"), true);
+    }
+
     @SuppressWarnings("unchecked")
     private java.util.Collection<Long> analyticsTeams() {
         org.mockito.ArgumentCaptor<java.util.Collection<Long>> c = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
-        verify(analytics, org.mockito.Mockito.atLeastOnce()).analytics(c.capture(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+        verify(analytics, org.mockito.Mockito.atLeastOnce()).analytics(c.capture(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
         return c.getValue();
     }
 
     @Test
     @DisplayName("analiz: üye kendi takımıyla, varsayılan 12 ay ve alan istenmeden; yanıtta boş ay null (0 değil), rapor kimliği + gönderildi, takım adı")
     void analytics_memberScopeAndShape() throws Exception {
-        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
         mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.team").value("all"))
@@ -1490,13 +1503,13 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.teams[0].name").value("Takım 1"))
                 .andExpect(jsonPath("$.data.truncated").value(false))
                 .andExpect(jsonPath("$.data.max_fields").value(4));
-        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(null), eq(12), eq(List.of()), eq(YearMonth.of(2026, 9)), any());
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(null), eq(12), eq(List.of()), eq(YearMonth.of(2026, 9)), any(), eq(false));
     }
 
     @Test
     @DisplayName("analiz: takım süzgeci yalnız okunabilen takım (başka takım / bozuk kimlik 404); AUDIT her takımı okur; alan ve ay parametreleri iletilir")
     void analytics_teamFilter() throws Exception {
-        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
         MockHttpSession s = user("USER", A, List.of());
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(s)).andExpect(status().isNotFound());
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "abc").session(s)).andExpect(status().isNotFound());
@@ -1504,7 +1517,7 @@ class TechErrorReportControllerTest {
                         .param("fields", "error-rate, total-tx,error-rate").session(s))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.team").value("1"));
-        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(A), eq(24), eq(List.of("error-rate", "total-tx")), any(), any());
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(A), eq(24), eq(List.of("error-rate", "total-tx")), any(), any(), eq(false));
         org.mockito.Mockito.clearInvocations(analytics);
         // Seçili takımın aktif kanalı yoksa da takım seçicide kalır (sonuçta yalnız A'nın kanalı var)
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(audit()))
@@ -1530,13 +1543,13 @@ class TechErrorReportControllerTest {
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
         mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "x".repeat(500)).session(s))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
-        verify(analytics, never()).analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+        verify(analytics, never()).analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
     @DisplayName("analiz: okuma izni yoksa 403; modül görünürlüğü (S6) kapalı takımın üyesi 403, açık takımın üyesi yalnız kendi takımı")
     void analytics_permissionAndModuleVisibility() throws Exception {
-        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
         MockHttpSession noRead = user("USER", A, List.of());
         noRead.setAttribute("systemRole", "NONE");
         when(permissions.allows(org.mockito.ArgumentMatchers.<HttpSession>argThat(x -> x != null && "NONE".equals(x.getAttribute("systemRole"))),
@@ -1557,12 +1570,12 @@ class TechErrorReportControllerTest {
     @Test
     @DisplayName("analiz + erişim paylaşımı: VIEW paylaşımı paylaşan takımı okur (süzgeçle de); modül o takıma kapalıysa paylaşımla da 404")
     void analytics_teamAccessGrant() throws Exception {
-        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any())).thenReturn(analyticsResult());
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
         MockHttpSession g = grantee(B, A, false);
         mvc.perform(get("/api/tech-error-reports/analytics").session(g)).andExpect(status().isOk());
         assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").session(g)).andExpect(status().isOk());
-        verify(analytics).analytics(any(), eq(A), eq(12), any(), any(), any());
+        verify(analytics).analytics(any(), eq(A), eq(12), any(), any(), any(), eq(false));
         com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
         when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
         com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
@@ -1572,5 +1585,32 @@ class TechErrorReportControllerTest {
         } finally {
             com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
         }
+    }
+
+    @Test
+    @DisplayName("analiz: fresh=1 servise iletilir; düşen alanlar + varsayılana dönüş, alan türü farkı ve kuyruktaki rapor yanıtta")
+    void analytics_freshFallbackMismatchQueued() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(analyticsFallbackResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "gone-field").param("fresh", "1")
+                        .session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fields_fallback").value(true))
+                .andExpect(jsonPath("$.data.dropped_fields[0]").value("gone-field"))
+                .andExpect(jsonPath("$.data.fields[0].type_mismatch[0]").value(20))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].sent").value(false))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].queued").value(true));
+        verify(analytics).analytics(any(), eq(null), eq(12), eq(List.of("gone-field")), any(), any(), eq(true));
+        org.mockito.Mockito.clearInvocations(analytics);
+        // Varsayılan yanıt: dönüş yok, düşen alan yok, kuyruk işareti yalnız kuyruktaki raporda
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(analyticsResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fields_fallback").value(false))
+                .andExpect(jsonPath("$.data.dropped_fields.length()").value(0))
+                .andExpect(jsonPath("$.data.fields[0].type_mismatch.length()").value(0))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].queued").doesNotExist());
+        verify(analytics).analytics(any(), any(), eq(12), any(), any(), any(), eq(false));
     }
 }

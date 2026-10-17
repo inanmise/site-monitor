@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  DEFAULT_MONTHS, LINE_STYLES, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, buildChart, channelCards, csvFileName, csvTable,
-  fieldOptions, formatCell, isLonePoint, lineStyle, monthFullLabel, monthShortLabel, normalizeMonths, normalizeTeam,
-  parseFieldsParam, requestParams, seriesOf, serializeFields, tableRows, toggleField, valueCount,
+  ANALYTICS_KEYS, DEFAULT_MONTHS, LINE_STYLES, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, adoptedFields, buildChart, channelCards,
+  csvFileName, csvTable, fieldOptions, fieldUnitLabel, filterKey, formatCell, isDefaultFilter, isLonePoint, lineStyle,
+  monthFullLabel, monthShortLabel, niceStep, normalizeMonths, normalizeTeam, parseFieldsParam, reportAt, requestParams,
+  seriesOf, serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from '../components/techerror/analytics/analyticsModel.js'
+import { toCsv } from '../utils/csvExport.js'
 
 // Kanallar arası analiz modeli (2026-10-18, R22): boş ay null (grafikte boşluk, tabloda "—" — asla 0), en çok 8 çizgi,
 // yalnız başına kalan değer nokta, PDF biçimi, CSV ham sayı, sunucu sınırlarıyla aynı sabitler.
@@ -91,6 +93,93 @@ describe('sabitler ve adres parametreleri', () => {
     expect(fullOpts.find((o) => o.id === 'x').disabled).toBe(true)
     expect(fullOpts.find((o) => o.id === 'a').disabled).toBe(false)
   })
+
+  it('seçici SEÇİLİ her alanı listeler: yalnız varsayılan şablondaki alan (kanallarda yok) ve adresteki bilinmeyen kimlik kaldırılabilir', () => {
+    const shown = [{ id: 'quota-rate', label: 'Kota hatalarının teknik hatalara oranı', type: 'percent' }]
+    const opts = fieldOptions(data().available_fields, ['error-rate', 'quota-rate', 'eski-alan'], MAX_FIELDS, shown)
+    const quota = opts.find((o) => o.id === 'quota-rate')
+    expect(quota).toMatchObject({ label: 'Kota hatalarının teknik hatalara oranı', type: 'percent', channels: 0, checked: true, disabled: false })
+    expect(opts.find((o) => o.id === 'eski-alan')).toMatchObject({ label: 'eski-alan', type: null, channels: null, checked: true })
+    expect(toggleField(['error-rate', 'quota-rate', 'eski-alan'], 'quota-rate')).toEqual(['error-rate', 'eski-alan'])
+    // Listede olanlar tekrarlanmaz
+    expect(opts.filter((o) => o.id === 'error-rate')).toHaveLength(1)
+  })
+
+  it('süzgeç anahtarı / varsayılan mı / adres anahtarları', () => {
+    expect(filterKey({ team: '1', months: 24, fields: ['a'] })).toBe(JSON.stringify({ team: '1', months: 24, fields: 'a' }))
+    expect(filterKey({ team: null, months: 12, fields: null })).toBe(filterKey({}))
+    expect(filterKey({ team: '1', months: 12, fields: null })).not.toBe(filterKey({ team: '2', months: 12, fields: null }))
+    expect(isDefaultFilter({ team: null, months: 12, fields: null })).toBe(true)
+    expect(isDefaultFilter({ team: '1', months: 12, fields: null })).toBe(false)
+    expect(isDefaultFilter({ team: null, months: 6, fields: null })).toBe(false)
+    expect(isDefaultFilter({ team: null, months: 12, fields: ['total-tx'] })).toBe(false)
+    expect(ANALYTICS_KEYS).toEqual(['te_an_team', 'te_an_months', 'te_an_fields'])
+  })
+
+  it('sunucunun alan çözümü benimsenir: hiçbiri yoksa varsayılan (null), bir kısmı yoksa kalanlar, değişmiyorsa undefined', () => {
+    expect(adoptedFields({ fields_fallback: true, dropped_fields: ['x'] }, ['x'])).toBeNull()
+    expect(adoptedFields({ fields_fallback: false, dropped_fields: ['x'] }, ['x', 'total-tx'])).toEqual(['total-tx'])
+    expect(adoptedFields({ fields_fallback: false, dropped_fields: [] }, ['total-tx'])).toBeUndefined()
+    expect(adoptedFields({ fields_fallback: true }, null)).toBeUndefined()                // istek zaten varsayılan
+    expect(adoptedFields({}, ['total-tx'])).toBeUndefined()                               // eski sunucu (alan yok)
+  })
+})
+
+describe('Y ekseni ölçeği (veriye göre)', () => {
+  const rows = (vals) => vals.map((v, i) => ({ key: `k${i}`, c0: v }))
+
+  it('güzel adım 1 / 2 / 5 × 10ⁿ', () => {
+    expect(niceStep(0.05)).toBeCloseTo(0.05)
+    expect(niceStep(0.06)).toBeCloseTo(0.1)
+    expect(niceStep(3)).toBe(5)
+    expect(niceStep(1.5)).toBe(2)
+    expect(niceStep(50_000)).toBe(50_000)
+    expect(niceStep(0)).toBe(1)
+  })
+
+  it('SLA gibi dar yüzde aralığı (%99,80–%99,95): eksen 0\'dan değil, verinin çevresinden; 100\'ü aşmaz', () => {
+    const s = yAxisScale(rows([99.8, 99.85, null, 99.95]), ['c0'], 'percent', 'tr')
+    expect(s.domain[0]).toBeGreaterThan(99)
+    expect(s.domain[0]).toBeLessThanOrEqual(99.8)
+    expect(s.domain[1]).toBeGreaterThanOrEqual(99.95)
+    expect(s.domain[1]).toBeLessThanOrEqual(100)
+    expect(s.ticks[0]).toBe(s.domain[0])
+    expect(s.ticks.at(-1)).toBe(s.domain[1])
+    expect(s.ticks.length).toBeGreaterThanOrEqual(3)
+    expect(s.ticks.length).toBeLessThanOrEqual(8)
+    expect(s.labels).toHaveLength(s.ticks.length)
+    expect(new Set(s.labels).size).toBe(s.labels.length)
+    expect(s.labels[0]).toMatch(/^%99/)
+  })
+
+  it('adet ekseni: negatif değer yoksa 0\'ın altına inmez, adım tam sayı; kısa etiketler çakışırsa tam biçim', () => {
+    const near = yAxisScale(rows([3, 5, 4]), ['c0'], 'number', 'tr')
+    expect(near.domain[0]).toBeGreaterThanOrEqual(0)
+    for (const v of near.ticks) expect(Number.isInteger(v)).toBe(true)
+    const big = yAxisScale(rows([1_100_000, 1_250_000]), ['c0'], 'number', 'tr')
+    expect(big.domain[0]).toBeGreaterThan(0)
+    expect(big.domain[0]).toBeLessThanOrEqual(1_100_000)
+    expect(big.domain[1]).toBeGreaterThanOrEqual(1_250_000)
+    expect(new Set(big.labels).size).toBe(big.labels.length)            // "1,1Mn" iki kez yazılmaz
+    const zero = yAxisScale(rows([0, 0]), ['c0'], 'number', 'tr')
+    expect(zero.domain[0]).toBe(0)
+    expect(zero.domain[1]).toBeGreaterThan(0)
+  })
+
+  it('negatif değer varsa eksen 0\'ın altına iner; tek değer çevresinde pencere; değer yoksa null', () => {
+    const neg = yAxisScale(rows([-2, 3]), ['c0'], 'percent', 'tr')
+    expect(neg.domain[0]).toBeLessThanOrEqual(-2)
+    expect(neg.domain[1]).toBeGreaterThanOrEqual(3)
+    const flat = yAxisScale(rows([99.9, 99.9]), ['c0'], 'percent', 'tr')
+    expect(flat.domain[0]).toBeLessThan(99.9)
+    expect(flat.domain[1]).toBeGreaterThanOrEqual(99.9)
+    expect(flat.domain[1]).toBeLessThanOrEqual(100)
+    expect(yAxisScale(rows([null, null]), ['c0'], 'percent', 'tr')).toBeNull()
+    // Birden çok seri: hepsinin en küçük / en büyüğü
+    const two = yAxisScale([{ c0: 10, c1: 400 }, { c0: 20, c1: null }], ['c0', 'c1'], 'number', 'tr')
+    expect(two.domain[0]).toBeLessThanOrEqual(10)
+    expect(two.domain[1]).toBeGreaterThanOrEqual(400)
+  })
 })
 
 describe('seriler, grafik ve tablo', () => {
@@ -132,7 +221,7 @@ describe('seriler, grafik ve tablo', () => {
     const rows = tableRows(data(2), { id: 'error-rate', type: 'percent' }, 'tr')
     expect(rows[0]).toMatchObject({ year: 2026, month: 9 })
     expect(rows[0].cells[0]).toMatchObject({ channelId: 10, value: 0.42, text: '%0,42', report: { id: 100, sent: true } })
-    expect(rows[0].cells[1].report).toEqual({ id: 101, sent: false })
+    expect(rows[0].cells[1].report).toEqual({ id: 101, sent: false, queued: false })
     expect(rows[1].cells[0]).toMatchObject({ value: null, text: '—', report: { id: 200, sent: true } })
     expect(rows[2].cells[0]).toMatchObject({ value: null, text: '—', report: null })
     const en = tableRows(data(1), { id: 'total-tx', type: 'number' }, 'en')
@@ -150,12 +239,49 @@ describe('seriler, grafik ve tablo', () => {
     expect(cards[0].items[0]).toMatchObject({ year: 2026, month: 9, text: '1.250.000' })
   })
 
-  it('CSV: başlık Ay + kanal (takım), satırlar tablo sırası, değer HAM sayı, boş değer boş hücre (0 değil)', () => {
-    const { headers, rows } = csvTable(data(2), { id: 'total-tx', type: 'number' }, 'tr', 'Ay')
-    expect(headers).toEqual(['Ay', 'Kanal 0 (Dijital Kanallar)', 'Kanal 1 (Dijital Kanallar)'])
-    expect(rows[0]).toEqual(['Eylül 2026', 1_250_000, 1_250_001])
-    expect(rows[2]).toEqual(['Temmuz 2026', '', ''])
+  it('CSV: başlık Ay · alan (birim) + kanal (takım), satırlar tablo sırası, değer HAM sayı, boş değer boş hücre (0 değil)', () => {
+    const { headers, rows } = csvTable(data(2), { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' }, 'tr', 'Ay')
+    expect(headers).toEqual(['Ay · Toplam işlem adedi', 'Kanal 0 (Dijital Kanallar)', 'Kanal 1 (Dijital Kanallar)'])
+    const lines = toCsv(headers, rows).slice(1).split('\r\n')
+    expect(lines[1]).toBe('Eylül 2026,1250000,1250001')
+    expect(lines[3]).toBe('Temmuz 2026,,')
     expect(csvFileName({ id: 'total-tx' }, data().months)).toBe('te-analiz-total-tx-2025-10_2026-09.csv')
+  })
+
+  it('CSV: negatif yüzde SAYI kalır (formül koruması metne çevirmez); yüzde başlığında birim', () => {
+    const d = data(1)
+    d.channels[0].points['error-rate'][11] = -0.5
+    const field = { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' }
+    expect(fieldUnitLabel(field)).toBe('Teknik hata oranı (%)')
+    const { headers, rows } = csvTable(d, field, 'tr', 'Ay')
+    expect(headers[0]).toBe('Ay · Teknik hata oranı (%)')
+    const lines = toCsv(headers, rows).slice(1).split('\r\n')
+    expect(lines[1]).toBe('Eylül 2026,-0.5')
+    expect(lines[1]).not.toContain("'-0")
+    // Kanal adı gibi METİN hâlâ formül korumasından geçer
+    d.channels[0].name = '=cmd'
+    expect(toCsv(...Object.values(csvTable(d, field, 'tr', 'Ay'))).split('\r\n')[0]).toContain("'=cmd")
+  })
+
+  it('kuyruktaki rapor: queued (gönderilmedi değil); gönderilmiş raporda queued yok sayılır', () => {
+    expect(reportAt({ reports: [{ id: 1, sent: false, queued: true }] }, 0)).toEqual({ id: 1, sent: false, queued: true })
+    expect(reportAt({ reports: [{ id: 2, sent: true, queued: true }] }, 0)).toEqual({ id: 2, sent: true, queued: false })
+    expect(reportAt({ reports: [{ id: 3, sent: false }] }, 0)).toEqual({ id: 3, sent: false, queued: false })
+    expect(reportAt({ reports: [null] }, 0)).toBeNull()
+  })
+
+  it('alan türü farkı: yanıttaki type_mismatch kanalları grafikte, gizli listede ve kartlarda işaretli', () => {
+    const d = data(10)
+    d.fields[1].type_mismatch = [11, 19]
+    expect([...typeMismatchIds(d, 'total-tx')]).toEqual(['11', '19'])
+    expect(typeMismatchIds(d, 'error-rate').size).toBe(0)
+    const chart = buildChart(d, 'total-tx')
+    expect(chart.series.find((s) => s.channelId === 11).mismatch).toBe(true)
+    expect(chart.series.find((s) => s.channelId === 10).mismatch).toBe(false)
+    expect(chart.hidden.find((h) => h.id === 19).mismatch).toBe(true)
+    const cards = channelCards(d, { id: 'total-tx', type: 'number' }, 'tr')
+    expect(cards.find((c) => c.id === 11).mismatch).toBe(true)
+    expect(cards.find((c) => c.id === 12).mismatch).toBe(false)
   })
 
   it('ay etiketleri arayüz dilinde', () => {

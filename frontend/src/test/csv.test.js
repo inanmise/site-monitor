@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { csvCell, csvRows } from '../utils/csv.js'
+import { csvCell, csvNumber, csvRows } from '../utils/csv.js'
 
 /**
  * CSV hücresi kaçışı — arayüz dışa aktarımlarının ortak kuralı.
@@ -47,6 +47,16 @@ describe('csvCell', () => {
     expect(csvCell(443)).toBe('443')
     expect(csvCell(true)).toBe('true')
     expect(csvCell(-5)).toBe("'-5")
+  })
+
+  it('csvNumber: kodun ürettiği sonlu sayı SAYI kalır (negatif de); sonsuz / NaN / metin kabul edilmez', () => {
+    expect(csvCell(csvNumber(-0.5))).toBe('-0.5')
+    expect(csvCell(csvNumber(1250000))).toBe('1250000')
+    expect(csvCell(csvNumber(0))).toBe('0')
+    expect(csvNumber(Number.NaN)).toBeNull()
+    expect(csvNumber(Infinity)).toBeNull()
+    expect(csvNumber('-1+2')).toBeNull()
+    expect(csvRows([['a', csvNumber(-2)]])).toBe('a,-2')
   })
 })
 

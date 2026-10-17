@@ -208,13 +208,16 @@ public class TechErrorReportController {
      * Takımın (ya da okunabilen bütün takımların) AKTİF kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24
      * BİTMİŞ ayı (önceki takvim ayıyla biter, İstanbul). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
      * görünürlüğü uygulanır); okunamayan takım 404. Değerler raporların KENDİ şablonundan, aynı kimlik ve aynı türle;
-     * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar SAKLANDIĞI hâliyle (eski aylar yeniden
-     * hesaplanmaz). Kişi verisi yok (kanal ve takım adları, değerler). Yazma yok.
+     * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar (oran / değişim) rapor ekranı ve PDF gibi CANLI
+     * hesaplanır (geçen ay düzeltildiyse analiz de güncel). {@code fresh=1} (Yenile) belleği en fazla 5 sn'de bir atlar.
+     * İstenen alanların hiçbiri kapsamda yoksa varsayılan alanlar döner ({@code fields_fallback}, {@code dropped_fields}).
+     * Kişi verisi yok (kanal ve takım adları, değerler). Yazma yok.
      */
     @GetMapping("/analytics")
     public ResponseEntity<Map<String, Object>> analytics(@RequestParam(value = "team", required = false) String team,
                                                          @RequestParam(value = "months", required = false) String months,
                                                          @RequestParam(value = "fields", required = false) String fields,
+                                                         @RequestParam(value = "fresh", required = false) String fresh,
                                                          HttpSession session) {
         requireRead(session);
         int m = analyticsMonths(months);
@@ -241,7 +244,8 @@ public class TechErrorReportController {
         Map<Long, String> names = new HashMap<>();
         teamMap.forEach((id, t) -> names.put(id, t.getName() == null ? "" : t.getName()));
         YearMonth end = service.defaultPeriod();
-        TechErrorAnalyticsService.Result res = analytics.analytics(teamMap.keySet(), teamFilter, m, requested, end, names);
+        boolean refresh = "1".equals(fresh) || "true".equalsIgnoreCase(fresh);
+        TechErrorAnalyticsService.Result res = analytics.analytics(teamMap.keySet(), teamFilter, m, requested, end, names, refresh);
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("team", teamFilter == null ? "all" : String.valueOf(teamFilter));
@@ -256,9 +260,13 @@ public class TechErrorReportController {
             fm.put("id", f.id());
             fm.put("label", f.label());
             fm.put("type", f.type());
+            // Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (değeri okunmaz; arayüz "alan türü farklı" der)
+            fm.put("type_mismatch", f.typeMismatch() == null ? List.of() : f.typeMismatch());
             fieldRows.add(fm);
         }
         data.put("fields", fieldRows);
+        data.put("dropped_fields", res.dropped() == null ? List.of() : res.dropped());
+        data.put("fields_fallback", res.fieldsFallback());
         List<Map<String, Object>> options = new ArrayList<>();
         for (TechErrorAnalyticsService.FieldOption o : res.available()) {
             Map<String, Object> om = new LinkedHashMap<>();
@@ -283,6 +291,8 @@ public class TechErrorReportController {
                 Map<String, Object> rm = new LinkedHashMap<>();
                 rm.put("id", rr.id());
                 rm.put("sent", rr.sent());
+                // Hiç gönderilmemiş, gönderimi posta kuyruğunda (sonuç bilinmiyor) — "gönderilmedi" değil
+                if (rr.queued()) rm.put("queued", true);
                 reps.add(rm);
             }
             cm.put("reports", reps);
