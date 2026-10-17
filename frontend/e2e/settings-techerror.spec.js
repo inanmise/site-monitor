@@ -271,10 +271,13 @@ for (const vp of VIEWPORTS) {
       // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal)
       await root.locator('[data-slot="tes-search"]').fill('odeme')
       await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(2)
-      // CSV adımıyla AYNI sıra (CI 2026-10-18: 2 vCPU makinede menü açılırken tıklanan öğe indirme başlatmadı): menü
-      // görünür, açılış animasyonu biter, öğe menünün İÇİNDEN tıklanır. İndirme gelmezse ekrandaki tost metni hataya yazılır.
-      await trigger.click()
-      await expect(menu).toBeVisible()
+      // CSV adımıyla AYNI sıra: menü görünür, açılış animasyonu biter, öğe menünün İÇİNDEN tıklanır. CI (Linux, 2026-10-18):
+      // CSV seçiminden sonra menü bazen açık kalıyordu ve ikinci tetik tıklaması onu KAPATIYORDU (öğe / menü bulunamadı) —
+      // menü görünmüyorsa açılır, açıksa olduğu gibi kullanılır. İndirme gelmezse ekrandaki tost metni hataya yazılır.
+      await expect(async () => {
+        if (!(await menu.isVisible())) await trigger.click()
+        await expect(menu).toBeVisible({ timeout: 2_000 })
+      }).toPass({ timeout: 30_000 })
       await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
       const xlDownload = page.waitForEvent('download', { timeout: 45_000 }).catch(async (e) => {
         const toasts = await page.locator('[data-sonner-toast], [role="status"], [role="alert"]').allInnerTexts().catch(() => [])
