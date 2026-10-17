@@ -52,9 +52,15 @@ const ADD_KINDS = ['summary', 'metrics', 'issues', 'table', 'text', 'images', 't
  * "1. görsel, 2. görsel gibi alanların birbirinden ayrı bölümler olduğu keskin hatlarla belli olsun"). Koyu çerçeve +
  * gölge + kartın kenarına yaslanan başlık şeridi (numara ve taşıma / silme düğmeleri); öğeler arası boşluk 12 px.
  */
-const TPL_ITEM = 'rounded-lg border border-foreground/25 bg-card p-3 shadow-sm'
-const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-lg border-b border-foreground/20 bg-muted px-3 py-1.5'
-const TPL_ITEM_TITLE = 'text-sm font-semibold text-foreground'
+/*
+ * Şablon ögesi kartları (alan / yuva / cümle / kutucuk / sütun / satır): bölüm kartının içinde YUMUŞAK kutular — jeton
+ * kenarı (`border-border/60`), hafif tonlu yüzey (`bg-muted/30`), gölge yok (2026-10-17, kullanıcı geri bildirimi: koyu
+ * `border-foreground/25` + gölge, açık bölümde "kutu içinde kutu" ızgarası veriyordu). Üst şerit: numara + taşı / sil;
+ * iç yarıçap dış yarıçaptan kenar kalınlığı (1 px) kadar küçük → köşeler örtüşür. Yalnız jetonlar (sekiz tema, `dark:` yok).
+ */
+const TPL_ITEM = 'rounded-lg border border-border/60 bg-muted/30 p-3'
+const TPL_ITEM_HEAD = '-mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-border/60 bg-muted/50 px-3 py-1.5'
+const TPL_ITEM_TITLE = 'text-sm font-medium text-muted-foreground'
 
 function fieldToken(f, yes = null, no = null) {
   if (f.type === 'yesno' && yes != null) return `{f:${f.id}?${cleanChoice(yes)}|${cleanChoice(no)}}`
@@ -1143,7 +1149,7 @@ function TilesEditor({ section: s, draft, resolve, onChange }) {
   })
   const headId = `te-tiles-${s.id}`
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-dashed p-2.5" data-slot="te-tpl-tiles">
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 p-2.5" data-slot="te-tpl-tiles">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p id={headId} className="m-0 text-xs font-medium text-muted-foreground">{t('te.tpl.tiles')}</p>
         <span className="text-xs text-muted-foreground" data-slot="te-tpl-tiles-count">{t('te.tpl.tilesCount', tiles.length, LIMITS.tiles)}</span>
@@ -1159,7 +1165,7 @@ function TilesEditor({ section: s, draft, resolve, onChange }) {
             const name = f ? resolve(f.label) : t('te.sum.removedField')
             const usable = !!f && (f.type === 'number' || f.type === 'percent')
             return (
-              <li key={tid} className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background px-2 py-1"
+              <li key={tid} className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1"
                 data-slot="te-tpl-tile" data-tile={tid}>
                 <span className="min-w-0 text-sm [overflow-wrap:anywhere]">
                   <span className="me-1 text-xs text-muted-foreground">{i + 1}.</span>{name}
@@ -1520,7 +1526,7 @@ function TableEditor({ section: s, errors, draft, resolve, onChange }) {
         <p className="text-sm font-semibold">{t('te.tpl.rows')} <span className="font-normal text-muted-foreground">{t('te.tpl.rowCount', rows.length, LIMITS.rows)}</span></p>
         <ol className="flex flex-col gap-3">
           {rows.map((r, i) => (
-            <li key={r.id} className={cn(TPL_ITEM, r.group && 'bg-muted/40')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
+            <li key={r.id} className={cn(TPL_ITEM, r.group && 'bg-muted/60')} data-slot="te-tpl-row" data-item={r.id} data-field={`row:${s.id}:${r.id}`}>
               <div className={TPL_ITEM_HEAD}>
                 <span className={TPL_ITEM_TITLE}>{t('te.tpl.rowN', i + 1)}</span>
                 <MoveButtons index={i} count={rows.length} label={rowName(r, i)}

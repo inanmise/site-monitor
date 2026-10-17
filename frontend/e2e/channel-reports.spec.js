@@ -497,7 +497,19 @@ for (const vp of VIEWPORTS) {
       expect(savedTemplate.template.sections.find((s) => s.id === 'sla').rows.at(-1)).toMatchObject({ group: true })
       expect(savedTemplate.template.sections.find((s) => s.id === 'auto-trend').series)
         .toEqual(['error-rate', 'total-tx', 'unmapped-count', 'outage-errors'])
+
+      // Bölüm kartı yeniden tasarımı (2026-10-17): TÜM bölümler açıkken tek çerçeve + başlık ayracı; öge kartları yumuşak —
+      // yatay taşma, kırpılan metin, küçük dokunma hedefi yok (tohum bölümleri açık getirir; kapalı kaldıysa "Tümünü aç")
+      const tplAll = page.locator('[data-slot="te-tpl-toolbar"] [data-slot="te-sections-all"]')
+      if (/Tümünü aç|Expand all/.test(await tplAll.innerText())) await tplAll.click()
+      await expect(page.locator('[data-slot="te-tpl-section"][data-open="false"]')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon, hepsi açık)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-template-editor"]'), 'kırpılan metin (şablon, hepsi açık)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon, hepsi açık)').toEqual([])
       await page.screenshot({ path: `test-results/channel-reports-template-${vp.name}.png` })
+      // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
+      await page.screenshot({ path: `test-results/te-sections-template-${vp.name}.png`, fullPage: true })
     })
 
     test('liste yeniden tasarımı (2026-10-17, 8. sürüm): dönem kartı süzgeç, arama, sıralama, sayfalama; kanalda rapor süzgeçleri + sayfalama; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
@@ -884,7 +896,19 @@ for (const vp of VIEWPORTS) {
       await expect(dlg).toBeVisible()
       await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
       await expect.poll(() => sends).toBe(1)
+
+      // Bölüm kartı yeniden tasarımı (2026-10-17): TÜM bölümler açıkken tek çerçeve + başlık ayracı — yatay taşma, kırpılan
+      // metin, küçük dokunma hedefi yok (tohum bölümleri açık getirir; kapalı kaldıysa gezinme satırındaki "Tümünü aç")
+      const allBtn = editor.locator('[data-slot="te-report-nav"] [data-slot="te-sections-all"]')
+      if (/Tümünü aç|Expand all/.test(await allBtn.innerText())) await allBtn.click()
+      await expect(editor.locator('[data-section][data-open="false"]')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (rapor, hepsi açık)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (rapor, hepsi açık)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (rapor, hepsi açık)').toEqual([])
       await page.screenshot({ path: `test-results/channel-reports-report-${vp.name}.png` })
+      // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
+      await page.screenshot({ path: `test-results/te-sections-report-${vp.name}.png`, fullPage: true })
     })
   
     test('Faz C: otomatik trend sığar, etiketler binmez; büyük görsel tarayıcıda küçültülür, PDF yüklenmez', async ({ page }) => {
