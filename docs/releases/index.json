@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T15:08:32Z",
+  "generatedAt": "2026-10-17T16:05:31Z",
   "repo": "inanmise/site-monitor",
-  "count": 762,
+  "count": 763,
   "releases": [
+    {
+      "version": "20.145.0",
+      "tag": "v20.145.0",
+      "releasedAt": "2026-10-17T16:05:25Z",
+      "commit": "4f631e38a3ad841b781e498c4b1a00e3e9c0e327",
+      "prevVersion": "20.144.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4f631e38",
+          "subject": "teknik hata raporunda map yapılmamış ve kota adetleri Verileri bölümünde — özet kartındaki gömülü bloklar kaldırıldı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.144.0",
       "tag": "v20.144.0",
