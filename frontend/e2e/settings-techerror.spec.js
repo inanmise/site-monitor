@@ -229,6 +229,8 @@ for (const vp of VIEWPORTS) {
       await trigger.click()
       const menu = page.locator('[data-slot="tes-export-menu"]')
       await expect(menu).toBeVisible()
+      // Radix menü açılırken zoom-in-95 animasyonu oynar: ölçüm animasyon bitince (ölçek 1) alınır
+      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
       const mb = await menu.boundingBox()
       expect(mb.x, `@${vp.name}: menü solda sığar`).toBeGreaterThanOrEqual(-1)
       expect(mb.x + mb.width, `@${vp.name}: menü sağda sığar`).toBeLessThanOrEqual(vp.width + 1)

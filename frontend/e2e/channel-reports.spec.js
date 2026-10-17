@@ -834,6 +834,8 @@ for (const vp of VIEWPORTS) {
       const items = menu.locator('[data-slot="te-year-zip-item"]')
       await expect(items).toHaveCount(2)
       await expect(items.first()).toHaveAttribute('data-year', '2026')
+      // Radix menü açılırken zoom-in-95 animasyonu oynar: ölçüm animasyon bitince (ölçek 1) alınır
+      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
       const mb = await menu.boundingBox()
       expect(mb.x, 'menü solda sığar').toBeGreaterThanOrEqual(-1)
       expect(mb.x + mb.width, 'menü sağda sığar').toBeLessThanOrEqual(vp.width + 1)
