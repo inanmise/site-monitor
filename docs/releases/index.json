@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T16:55:16Z",
+  "generatedAt": "2026-10-17T18:00:39Z",
   "repo": "inanmise/site-monitor",
-  "count": 764,
+  "count": 765,
   "releases": [
+    {
+      "version": "20.147.0",
+      "tag": "v20.147.0",
+      "releasedAt": "2026-10-17T18:00:32Z",
+      "commit": "330cbfb5781eb3de58be5189fe62ce9fe533d994",
+      "prevVersion": "20.146.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "330cbfb5",
+          "subject": "teknik hata raporları takım erişim paylaşımıyla açılır — görüntüleme okur, düzenleme rapor içeriğini yazar"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.146.0",
       "tag": "v20.146.0",
