@@ -1827,6 +1827,9 @@ public class SchedulerService {
         // Raporun kopyaladığı şablon sürümü (2026-10-18, D19 — NULL = bilinmiyor; TechErrorReportTemplateVersionBackfill
         // geçmiş olaylarından doldurur) + kanal açılışındaki şablon kaynağı (D17, sürüm geçmişinin ilk satırı).
         patch("ALTER TABLE tech_error_reports ADD COLUMN template_version INTEGER");
+        // Kuyruktaki gönderim için zaten push alan kişi (2026-10-18, son inceleme) — TechErrorReport.queuedNotifiedId (NULL = yok).
+        // Varsayılansız nullable kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE tech_error_reports ADD COLUMN queued_notified_id BIGINT");
         patch("ALTER TABLE tech_error_template_versions ADD COLUMN source_kind VARCHAR(16)");
         patch("ALTER TABLE tech_error_template_versions ADD COLUMN source_name VARCHAR(200)");
         // Takım şablon kütüphanesi (D17): takım başına EN ÇOK BİR varsayılan — servis takım satırını kilitleyip öncekini

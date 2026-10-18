@@ -35,8 +35,8 @@ import {
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
-  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf,
-  normalizeValues, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
+  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
+  normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
   issueValidation, monthName, outageAnswerConflict, resolvePlaceholders,
   resolveTextPlaceholders, revertInvalidValues, stableJson, topicOpenId, trendRefs,
 } from './techErrorModel.js'
@@ -323,6 +323,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
   const dirty = draft != null && base.json != null && !isSavedJson(canonJson(draft))
   const readOnly = !data?.can_edit
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
   // Gönderim / onay isteği takımın kendi kapsamı: paylaşımla düzenleyen (9. sürüm) `can_send:false` alır; eski sunucuda can_edit
   const canSend = data?.can_send != null ? !!data.can_send : !readOnly
   // Anomali konularının istemci denetimi (2026-10-18; sunucu kuralının aynası — techErrorModel.issueProblems): kaydı kilitler,
@@ -423,6 +425,23 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // raporda panel açılınca her pencere dönüşü "gönderimden sonra değişti" demiyor). Değişen liste e-posta önizlemesinin de
   // içeriğidir (önizleme eski isteğe katılmaz) ve durumu bu pencere yazar (gönderim yoklamasının eski yanıtı ezmesin)
   const applySyncedImages = useCallback((list, status) => {
+    // Panelde SİLİNEN konu görselinin açıklaması taslaktan düşer (son inceleme 2026-10-18: boş yuvanın açıklaması taslakta ve
+    // kayıtta kalıyordu — bu pencerenin kendi silmesi bunu `onRemoved` ile zaten yapar). Açıklama kayıtlıysa bu bir
+    // değişikliktir ve öteki düzenlemeler gibi kaydedilir; yalnız taslakta olan açıklama taslağı kayıtlı hâline yaklaştırır
+    // (sahte "kaydedilmemiş değişiklik" yok — dropIssueCaptions değişmeyen taslağı aynen döner)
+    // Salt okunur görünümde taslak değişmez (açıklama görselle birlikte zaten görünmez; sahte "kaydedilmemiş" olmasın)
+    const now = new Set((list || []).map((i) => i?.slot_id))
+    const gone = (imagesRef.current || []).map((i) => (now.has(i?.slot_id) ? null : parseIssueSlot(i?.slot_id))).filter(Boolean)
+    if (gone.length && !readOnlyRef.current) {
+      setDraft((d) => dropIssueCaptions(d, gone))
+      setClientErrors((e) => {
+        const keys = gone.map((p) => `issue:${p.sectionId}:${p.issueId}:caption${p.n}`).filter((k) => k in e)
+        if (!keys.length) return e
+        const out = { ...e }
+        for (const k of keys) delete out[k]
+        return out
+      })
+    }
     setImages(list)
     setPreviewRev(bumpMailPreviewContent(reportId))
     if (status) {

@@ -82,6 +82,35 @@ public final class TechErrorTestTemplates {
         return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(out))));
     }
 
+    /**
+     * Kesinti cümlesi göçü ({@link TechErrorOutageSentenceMigration}, 2026-10-18) ÖNCESİ: özet bölümlerinin cümle listesinden
+     * bugünkü kesinti cümlesi ({@link TechErrorTemplate#OUTAGE_LINE_TR} / {@code _EN}) çıkarılır, başka hiçbir şey değişmez.
+     * Üretimde bu cümle zincirin EN SONUNDA eklendi: eski göçlerin (gömme, SLA, adetler, anomali) o günkü çıktısı cümlesizdi —
+     * zincir testleri kesinti adımını AÇIKÇA bu hâlden geçirir (son inceleme 2026-10-18: bugünkü varsayılanla karşılaştırma
+     * kesinti adımının gerilemesini görmüyordu).
+     */
+    public static Template withoutOutageLine(Template t) {
+        List<Section> out = new ArrayList<>();
+        for (Section s : t.sections()) {
+            if ("summary".equals(s.kind()) && s.lines() != null) {
+                List<String> lines = new ArrayList<>(s.lines());
+                lines.remove(TechErrorTemplate.OUTAGE_LINE_TR);
+                lines.remove(TechErrorTemplate.OUTAGE_LINE_EN);
+                out.add(s.withLines(List.copyOf(lines)));
+            } else {
+                out.add(s);
+            }
+        }
+        return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(t.lang(), t.title(), List.copyOf(out))));
+    }
+
+    /** Bir şablonun özet cümleleri (tüm özet bölümleri, sırayla). */
+    public static List<String> summaryLines(Template t) {
+        List<String> out = new ArrayList<>();
+        for (Section s : t.sections()) if ("summary".equals(s.kind()) && s.lines() != null) out.addAll(s.lines());
+        return out;
+    }
+
     private static Section hosted(String id, String title, Field count, Field note) {
         return new Section(id, "metrics", title, List.of(count, note), List.of(), null, null, null, null, null,
                 List.of(), List.of(), List.of(), "exec-summary");

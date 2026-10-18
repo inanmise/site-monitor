@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  OPEN_STATE_MAX_IDS, allSectionsOpen, errorCountsBySection, isSectionOpen, parseOpenState, reportErrorSection,
+  OPEN_STATE_MAX_IDS, allSectionsOpen, dropIssueCaptions, errorCountsBySection, isSectionOpen, parseOpenState, reportErrorSection,
   reportErrorTopic, revertInvalidValues, templateErrorSection, topicOpenId, withSectionOpen, withSectionsClosed, withSectionsOpened,
 } from '../components/techerror/techErrorModel.js'
 
@@ -301,7 +301,7 @@ describe('açık bölüm durumu', () => {
 })
 
 // Katlanır anomali konuları (2026-10-18, kullanıcı isteği): konunun açık-küme kimliği, hata anahtarı → konu, bir bölümün
-// konularını kapatma
+// konularını kapatma ve panelde silinen konu görselinin açıklamasının taslaktan düşmesi
 describe('katlanır anomali konuları — saf model', () => {
   it('topicOpenId: <bölüm>:<konu> — iki bölümün aynı konu kimliği karışmaz, bölüm kimliğiyle çakışmaz', () => {
     expect(topicOpenId('issues', 'k1')).toBe('issues:k1')
@@ -329,5 +329,19 @@ describe('katlanır anomali konuları — saf model', () => {
     expect(withSectionsClosed(s0, null, [])).toBe(s0)
     const all = deepFreeze({ all: true, ids: [] })
     expect(withSectionsClosed(all, ['a:1', 'a:2'], ['a:1', 'a:2', 'b:1'])).toEqual({ all: false, ids: ['b:1'] })
+  })
+
+  it('dropIssueCaptions: silinen yuvanın açıklaması düşer (son açıklama giderse captions null); açıklamasız yuva / bilinmeyen konu → AYNI nesne', () => {
+    const v = deepFreeze({ fields: {}, issues: { iss: [{ id: 'k1', captions: { 1: 'Saatlik', 2: 'Günlük' } }, { id: 'k2' }] } })
+    const a = dropIssueCaptions(v, [{ sectionId: 'iss', issueId: 'k1', n: 1 }])
+    expect(a.issues.iss[0].captions).toEqual({ 2: 'Günlük' })
+    expect(a.issues.iss[1]).toBe(v.issues.iss[1])
+    const b = dropIssueCaptions(a, [{ sectionId: 'iss', issueId: 'k1', n: 2 }])
+    expect(b.issues.iss[0].captions).toBeNull()
+    expect(dropIssueCaptions(v, [{ sectionId: 'iss', issueId: 'k2', n: 1 }])).toBe(v)
+    expect(dropIssueCaptions(v, [{ sectionId: 'iss', issueId: 'yok', n: 1 }])).toBe(v)
+    expect(dropIssueCaptions(v, [{ sectionId: 'baska', issueId: 'k1', n: 1 }])).toBe(v)
+    expect(dropIssueCaptions(v, [])).toBe(v)
+    expect(dropIssueCaptions(null, [{ sectionId: 'iss', issueId: 'k1', n: 1 }])).toBeNull()
   })
 })

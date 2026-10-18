@@ -251,11 +251,24 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Modifying
     @Transactional
     @Query("UPDATE TechErrorReport r SET r.sendState = 'QUEUED', r.lastAttemptAt = :at, r.lastSendStatus = :status, "
-            + "r.sendLogId = :logId, r.queuedTo = :to, r.queuedById = :by, r.queuedRev = :rev "
+            + "r.sendLogId = :logId, r.queuedTo = :to, r.queuedById = :by, r.queuedRev = :rev, r.queuedNotifiedId = NULL "
             + "WHERE r.id = :id AND r.sendState = 'SENDING' AND r.sendClaimedAt = :claimedAt")
     int finishQueued(@Param("id") Long id, @Param("claimedAt") Instant claimedAt, @Param("status") String status,
                      @Param("at") Instant at, @Param("logId") Long logId, @Param("by") Long by, @Param("to") String to,
                      @Param("rev") Long rev);
+
+    /**
+     * {@link #finishQueued} + bu gönderim için ZATEN push alan kişi (2026-10-18, son inceleme): onay kararının push'u isteyene
+     * "kuyrukta" dedi — teslim edilince takımın "gönderildi" bildiriminden düşülür ({@code queued_notified_id}).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.sendState = 'QUEUED', r.lastAttemptAt = :at, r.lastSendStatus = :status, "
+            + "r.sendLogId = :logId, r.queuedTo = :to, r.queuedById = :by, r.queuedRev = :rev, r.queuedNotifiedId = :notified "
+            + "WHERE r.id = :id AND r.sendState = 'SENDING' AND r.sendClaimedAt = :claimedAt")
+    int finishQueuedNotified(@Param("id") Long id, @Param("claimedAt") Instant claimedAt, @Param("status") String status,
+                             @Param("at") Instant at, @Param("logId") Long logId, @Param("by") Long by, @Param("to") String to,
+                             @Param("rev") Long rev, @Param("notified") Long notified);
 
     /** Kuyruktaki gönderim teslim edildi (günlük satırı SENT): son gönderim bekleyen alanlardan yazılır. */
     @Modifying

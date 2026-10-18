@@ -2600,6 +2600,30 @@ export function reportErrorTopic(key, issues) {
   return null
 }
 
+/**
+ * Görsel panelinde (başka pencere) SİLİNEN konu görsellerinin açıklamaları taslaktan düşer (son inceleme 2026-10-18: boş
+ * yuvanın açıklaması taslakta ve kayıtta kalıyordu). `slots`: `{ sectionId, issueId, n }` listesi ({@link parseIssueSlot}).
+ * Değişecek bir şey yoksa AYNI nesne döner (açıklaması olmayan yuva sahte "kaydedilmemiş değişiklik" doğurmaz).
+ */
+export function dropIssueCaptions(values, slots) {
+  if (!values || !slots?.length) return values
+  let out = values
+  for (const p of slots) {
+    const list = out.issues?.[p.sectionId]
+    const idx = (list || []).findIndex((i) => i?.id === p.issueId)
+    if (idx < 0) continue
+    const cur = list[idx]
+    const capKey = String(p.n)
+    if (!cur?.captions || !(capKey in cur.captions)) continue
+    const captions = { ...cur.captions }
+    delete captions[capKey]
+    const nextIssue = { ...cur, captions: Object.keys(captions).length ? captions : null }
+    const nextList = list.map((x, j) => (j === idx ? nextIssue : x))
+    out = { ...out, issues: { ...out.issues, [p.sectionId]: nextList } }
+  }
+  return out
+}
+
 export const allSectionsOpen = (state, ids) => !!state && (state.all || (ids || []).every((id) => state.ids.includes(id)))
 
 

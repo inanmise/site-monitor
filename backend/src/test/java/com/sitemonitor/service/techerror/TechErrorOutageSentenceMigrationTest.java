@@ -117,6 +117,28 @@ class TechErrorOutageSentenceMigrationTest {
     }
 
     @Test
+    @DisplayName("zincir (son inceleme 2026-10-18): üretim sırasıyla — 2026-10-17 düzeni (anomali soruları ve kesinti cümlesi yok) → anomali soruları → kesinti cümlesi = bugünkü varsayılan (TR / EN, bayt bayt); kesinti adımı tam bir cümleyi tam yerine ekler, anomali adımı eklemez")
+    void productionChainEndsWithOutageSentence() {
+        for (String lang : List.of("tr", "en")) {
+            String line = "en".equals(lang) ? TechErrorTemplate.OUTAGE_LINE_EN : TechErrorTemplate.OUTAGE_LINE_TR;
+            Template start = TechErrorTestTemplates.withoutOutageLine(TechErrorTestTemplates.beforeAnomaly(lang));
+            Template anomaly = TechErrorAnomalyFieldsMigration.migrate(start).orElseThrow();
+            assertThat(TechErrorTestTemplates.summaryLines(anomaly)).as(lang + " anomali adımı cümle eklemez").doesNotContain(line);
+            assertThat(anomaly.sections().get(0).lines()).isEqualTo("en".equals(lang)
+                    ? TechErrorOutageSentenceMigration.OLD_LINES_EN : TechErrorOutageSentenceMigration.OLD_LINES_TR);
+            Template outaged = TechErrorOutageSentenceMigration.migrate(anomaly).orElseThrow();
+            List<String> lines = outaged.sections().get(0).lines();
+            assertThat(lines).as(lang).hasSize(anomaly.sections().get(0).lines().size() + 1);
+            assertThat(lines.get(TechErrorOutageSentenceMigration.OUTAGE_ERRORS_LINE)).as(lang).isEqualTo(line);
+            assertThat(TechErrorTemplate.toJson(outaged)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+            // Sıra bozuk olsa da (kesinti önce) sonuç aynı: iki adım birbirinin alanına dokunmaz
+            Template reversed = TechErrorAnomalyFieldsMigration.migrate(TechErrorOutageSentenceMigration.migrate(start).orElseThrow())
+                    .orElseThrow();
+            assertThat(TechErrorTemplate.toJson(reversed)).as(lang + " ters sıra").isEqualTo(TechErrorTemplate.toJson(outaged));
+        }
+    }
+
+    @Test
     @DisplayName("dokunulmaz: ekibin değiştirdiği / eklediği cümle, kesinti sorusu yok, türü değişmiş ya da hesaplanan kesinti sorusu, özetsiz şablon")
     void changedTemplatesAreLeftAlone() {
         Template old = oldDefault("tr");

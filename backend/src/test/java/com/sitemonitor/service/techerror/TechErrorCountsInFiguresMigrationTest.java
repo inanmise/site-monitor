@@ -87,6 +87,20 @@ class TechErrorCountsInFiguresMigrationTest {
             assertThat(section(m, "exec-summary").tiles()).isEqualTo(section(old, "exec-summary").tiles());
             assertThat(section(m, "rates")).isEqualTo(section(old, "rates"));
             assertThat(m.allFields()).extracting(Field::id).containsExactlyInAnyOrderElementsOf(old.allFields().stream().map(Field::id).toList());
+
+            // Kesinti cümlesi adımı AÇIKÇA (son inceleme 2026-10-18): üretimde cümle zincirin en sonunda eklendi — cümlesiz 4a
+            // düzeni adetler → anomali soruları → kesinti cümlesi ile bugünkü varsayılana gelir; kesinti adımı tam bir cümle ekler
+            String outageLine = "en".equals(lang) ? TechErrorTemplate.OUTAGE_LINE_EN : TechErrorTemplate.OUTAGE_LINE_TR;
+            Template preOutage = TechErrorTestTemplates.withoutOutageLine(old);
+            assertThat(TechErrorTestTemplates.summaryLines(preOutage)).as(lang).doesNotContain(outageLine);
+            Template anomaly = TechErrorAnomalyFieldsMigration.migrate(TechErrorCountsInFiguresMigration.migrate(preOutage).orElseThrow())
+                    .orElseThrow();
+            assertThat(TechErrorTestTemplates.summaryLines(anomaly)).as(lang + " kesinti adımından önce").doesNotContain(outageLine);
+            Template outaged = TechErrorOutageSentenceMigration.migrate(anomaly).orElseThrow();
+            assertThat(TechErrorTestTemplates.summaryLines(outaged)).as(lang).containsOnlyOnce(outageLine);
+            assertThat(TechErrorTemplate.toJson(outaged)).as(lang + " zincir (kesinti dahil)")
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+            assertThat(TechErrorOutageSentenceMigration.migrate(outaged)).as(lang + " kesinti ikinci kez").isEmpty();
         }
         assertThat(TechErrorCountsInFiguresMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();
         assertThat(TechErrorCountsInFiguresMigration.migrate(TechErrorTemplate.defaults("en"))).isEmpty();

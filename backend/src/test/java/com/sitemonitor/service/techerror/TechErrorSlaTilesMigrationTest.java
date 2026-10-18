@@ -93,7 +93,20 @@ class TechErrorSlaTilesMigrationTest {
             Template counted = TechErrorCountsInFiguresMigration.migrate(m).orElseThrow();
             assertThat(TechErrorTemplate.toJson(counted)).as(lang + " zincir")
                     .isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly(lang)));
-            assertThat(TechErrorTemplate.toJson(TechErrorAnomalyFieldsMigration.migrate(counted).orElseThrow())).as(lang + " zincir")
+            Template anomaly = TechErrorAnomalyFieldsMigration.migrate(counted).orElseThrow();
+            assertThat(TechErrorTemplate.toJson(anomaly)).as(lang + " zincir")
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+            // Kesinti cümlesi adımı AÇIKÇA (son inceleme 2026-10-18): bugünkü SLA göçü güncel cümleleri (kesinti cümlesi dahil)
+            // yazar → kesinti adımı dokunmaz; 2026-10-18 öncesi SLA çıktısı (cümlesiz) adetler → anomali → kesinti ile bugüne gelir
+            String outageLine = "en".equals(lang) ? TechErrorTemplate.OUTAGE_LINE_EN : TechErrorTemplate.OUTAGE_LINE_TR;
+            assertThat(TechErrorTestTemplates.summaryLines(m)).as(lang).containsOnlyOnce(outageLine);
+            assertThat(TechErrorOutageSentenceMigration.migrate(anomaly)).as(lang + " bugünkü zincirde kesinti adımı").isEmpty();
+            Template historic = TechErrorTestTemplates.withoutOutageLine(m);
+            Template historicAnomaly = TechErrorAnomalyFieldsMigration.migrate(TechErrorCountsInFiguresMigration.migrate(historic).orElseThrow())
+                    .orElseThrow();
+            assertThat(TechErrorTestTemplates.summaryLines(historicAnomaly)).as(lang).doesNotContain(outageLine);
+            Template outaged = TechErrorOutageSentenceMigration.migrate(historicAnomaly).orElseThrow();
+            assertThat(TechErrorTemplate.toJson(outaged)).as(lang + " zincir (kesinti dahil)")
                     .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
         }
         assertThat(TechErrorSlaTilesMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();

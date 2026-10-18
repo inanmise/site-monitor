@@ -131,6 +131,16 @@ public class TechErrorReport {
     @Column(name = "queued_rev", updatable = false)
     private Long queuedRev;
 
+    /**
+     * Kuyruktaki bu gönderim için ZATEN push alan kişi (2026-10-18, son inceleme): onay kararıyla yöneticilere giden gönderim
+     * kuyruğa girdiyse isteyen, karar push'unda "gönderim kuyrukta" bilgisini aldı. Gönderim sonra teslim edilince takımın
+     * "gönderildi" bildiriminden düşülür — aynı teslim için iki push yok. NULL = yok; yalnız {@code finishQueued} (siler) ve
+     * {@code finishQueuedNotified} (yazar) — her yeni kuyruk talebi kendi değerini yazar, eski talebin kişisi kalmaz.
+     */
+    @JsonIgnore
+    @Column(name = "queued_notified_id", updatable = false)
+    private Long queuedNotifiedId;
+
     /** NULL (hiç denenmedi) | SENDING | SENT | QUEUED | FAILED | SKIPPED — yalnız toplu JPQL ile yazılır. */
     @Column(name = "send_state", length = 16, updatable = false)
     private String sendState;
