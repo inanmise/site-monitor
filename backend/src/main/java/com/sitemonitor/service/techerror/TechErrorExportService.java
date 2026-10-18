@@ -31,9 +31,14 @@ import java.util.Set;
  * alanları (uzun metin, görsel, tablo, anomali konuları yok). Muaf alanın ({@code skip_if_no} "Hayır") değeri boş,
  * {@code exempt} işaretli. Hesaplanan alanlar ({@code calc}) PDF / e-posta gibi CANLI hesaplanır
  * ({@code TechErrorReportService.pdfInput} ile aynı: {@link TechErrorCalc#apply} + aynı kanalın bir önceki takvim ayının
- * raporu, {@link TechErrorReportService#sameTypeFields} kuralıyla); {@code computed} yalnız sonuç {@code OK} iken doğrudur —
- * formül kullanılamadığında (MANUAL / BAD_REF: ör. kanalın ilk raporunda değişim oranı) girilen değer kalır,
- * {@code computed = false}.
+ * raporu, {@link TechErrorReportService#sameTypeFields} kuralıyla); {@code computed} yalnız sonuç {@code OK} iken doğrudur.
+ * {@code calc_status} hesaplanan alanın SONUCUNU söyler ({@link TechErrorCalc.Status} adı): OK = hesaplandı; MISSING / ZERO /
+ * NEGATIVE / EQUAL / RANGE = formül var ama bu ay sonuç yok (değer boş — elle girilmiş değil); MANUAL / BAD_REF = formül
+ * kullanılamıyor (ör. kanalın ilk raporunda değişim oranı), girilen değer kalır. Hesabı olmayan (ya da muaf) alanda boş.
+ *
+ * <p><b>Bellek ≈ 1×.</b> Yüklenen satırlar TEK geçişte ayrıştırılır ({@link Loaded}: durum sütunları + paylaşılan şablon +
+ * yalnız alan / hedef değerleri) ve her satırın JSON metinleri ayrıştırılır ayrıştırılmaz bırakılır (listenin yuvası
+ * boşaltılır); şablon önbelleği metnin kendisini değil SHA-256 özetini anahtar tutar.
  *
  * <p><b>Kişi verisi yok.</b> İzdüşüm alıcı / gönderen / onaylayan / düzenleyen kimliklerini ve onay notunu okumaz bile;
  * satırda yalnız gönderim ZAMANI ({@code sent_at}) ve onay DURUMU ({@code approval_state}, yalnız onay akışlı kanalda).
@@ -54,7 +59,7 @@ public class TechErrorExportService {
     public static final List<String> COLUMNS = List.of(
             "team_id", "team_name", "channel_id", "channel_name", "year", "month", "report_id", "report_status",
             "sent_at", "changed_after_send", "approval_state", "field_id", "field_label", "field_type", "value",
-            "exempt", "computed");
+            "exempt", "computed", "calc_status");
 
     /** Dışa aktarılan alan türleri (uzun metin ve görseller hariç). */
     public static final Set<String> FIELD_TYPES = Set.of("number", "percent", "yesno", "text");
@@ -112,83 +117,161 @@ public class TechErrorExportService {
         if (count > MAX_REPORTS) throw new TooLargeException();
         if (count == 0) return new Result(List.of(), List.of());
         // 2) Tek yükleme: dışa aktarılanlar + her birinin önceki takvim ayı (canlı hesap için) — en çok iki kat
-        List<ExportRow> found = repo.findForExport(byId.keySet(), pFrom - 1, pFrom, pTo, f.sentOnly(),
-                Limit.of(2 * MAX_REPORTS + 1));
+        // Kendi kopyamız: Spring Data'nın listesi değiştirilemez olabilir; her yuva satırı ayrıştırılır ayrıştırılmaz
+        // boşaltılır → JSON metinleri (şablon ≤ 64 KB, değerler ≤ 256 KB) ayrıştırılmış nesnelerle birlikte yaşamaz
+        List<ExportRow> found = new ArrayList<>(repo.findForExport(byId.keySet(), pFrom - 1, pFrom, pTo, f.sentOnly(),
+                Limit.of(2 * MAX_REPORTS + 1)));
         if (found.size() > 2 * MAX_REPORTS) throw new TooLargeException();
-        Map<String, ExportRow> byPeriod = new HashMap<>();
-        List<ExportRow> sorted = new ArrayList<>();
+        // Ucuz ön geçiş (JSON'a dokunmaz): sayım ile yükleme arasında açılan raporlar tavanı aştıysa ayrıştırmadan reddedilir
+        int exported = 0;
         for (ExportRow r : found) {
-            if (r.getChannelId() == null || r.getReportYear() == null || r.getReportMonth() == null) continue;
-            byPeriod.put(r.getChannelId() + ":" + period(r.getReportYear(), r.getReportMonth()), r);
-            int p = period(r.getReportYear(), r.getReportMonth());
-            if (p >= pFrom && p <= pTo && (!f.sentOnly() || r.getLastSentAt() != null)) sorted.add(r);
+            if (valid(r) && exported(r, pFrom, pTo, f.sentOnly())) exported++;
         }
-        // Sayım ile yükleme arasında açılan raporlar tavanı aşırdıysa yine reddedilir
-        if (sorted.size() > MAX_REPORTS) throw new TooLargeException();
+        if (exported > MAX_REPORTS) throw new TooLargeException();
+
+        Map<String, Template> templates = new HashMap<>();
+        java.security.MessageDigest sha = sha256();
+        Map<String, Loaded> byPeriod = new HashMap<>();
+        List<Loaded> sorted = new ArrayList<>(exported);
+        for (int i = 0; i < found.size(); i++) {
+            ExportRow r = found.set(i, null);
+            if (!valid(r)) continue;
+            Loaded l = load(r, templates, sha);
+            byPeriod.put(l.channelId + ":" + l.period, l);
+            if (exported(r, pFrom, pTo, f.sentOnly())) sorted.add(l);
+        }
+        found = null;
 
         java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
         col.setStrength(java.text.Collator.SECONDARY);
         Map<Long, String> names = teamNames == null ? Map.of() : teamNames;
-        sorted.sort(Comparator.<ExportRow, String>comparing(r -> names.getOrDefault(r.getTeamId(), ""), col)
-                .thenComparing(ExportRow::getTeamId, Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(r -> order.getOrDefault(r.getChannelId(), Integer.MAX_VALUE))
-                .thenComparing(ExportRow::getReportYear)
-                .thenComparing(ExportRow::getReportMonth)
-                .thenComparing(ExportRow::getId));
+        sorted.sort(Comparator.<Loaded, String>comparing(r -> names.getOrDefault(r.teamId, ""), col)
+                .thenComparing(r -> r.teamId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(r -> order.getOrDefault(r.channelId, Integer.MAX_VALUE))
+                .thenComparingInt(r -> r.year)
+                .thenComparingInt(r -> r.month)
+                .thenComparing(r -> r.id, Comparator.nullsLast(Comparator.naturalOrder())));
 
-        // Aynı kanalın ayları çoğu zaman AYNI kopyalanmış şablonu taşır: metin başına bir kez ayrıştırılır
-        Map<String, Template> templates = new HashMap<>();
         List<ReportMeta> metas = new ArrayList<>(sorted.size());
         List<List<Object>> rows = new ArrayList<>();
-        for (ExportRow r : sorted) {
-            TechErrorChannel ch = byId.get(r.getChannelId());
+        for (Loaded r : sorted) {
+            TechErrorChannel ch = byId.get(r.channelId);
             if (ch == null) continue;
-            Template t = template(templates, r.getTemplateJson());
-            Values stored = TechErrorValues.fromStored(r.getValuesJson(), t);
+            Template t = r.template;
+            Values stored = r.values;
             // Hesaplanan alanlar PDF gibi CANLI (TechErrorReportService.pdfInput): aynı kanalın bir önceki takvim ayının
             // raporu, bu şablondaki alanlarla AYNI kimlik ve türdeki değerleri (sameTypeFields — tek kural)
-            ExportRow prev = byPeriod.get(r.getChannelId() + ":" + (period(r.getReportYear(), r.getReportMonth()) - 1));
-            Map<String, Object> previous = null;
-            if (prev != null) {
-                Template pt = template(templates, prev.getTemplateJson());
-                previous = TechErrorReportService.sameTypeFields(pt, TechErrorValues.fromStored(prev.getValuesJson(), pt), t);
-            }
+            Loaded prev = byPeriod.get(r.channelId + ":" + (r.period - 1));
+            Map<String, Object> previous = prev == null ? null
+                    : TechErrorReportService.sameTypeFields(prev.template, prev.values, t);
             TechErrorCalc.Applied applied = TechErrorCalc.applyDetailed(t, stored, previous);
             Map<String, Object> live = applied.values().fields();
             String status = TechErrorReportService.reportStatus(asRow(r), now);
             // Durumdan BAĞIMSIZ: taze bir gönderim talebi ("sending") sürerken de gönderilenden farklı olabilir
             boolean changed = TechErrorReportService.changedAfterSend(asRow(r));
             String approval = TechErrorApprovalService.approvalRequired(ch)
-                    ? approvalState(r.getApprovalState(), r.getApprovalRev(), r.getContentRev()) : null;
-            String teamName = names.get(r.getTeamId());
-            int year = r.getReportYear();
-            int month = r.getReportMonth();
-            String sentAt = r.getLastSentAt() == null ? null : r.getLastSentAt().toString();
+                    ? approvalState(r.approvalState, r.approvalRev, r.contentRev) : null;
+            String teamName = names.get(r.teamId);
+            int year = r.year;
+            int month = r.month;
+            String sentAt = r.lastSentAt == null ? null : r.lastSentAt.toString();
             int fieldCount = 0;
             for (Field fd : t.allFields()) {
                 if (!FIELD_TYPES.contains(fd.type())) continue;
                 boolean exempt = TechErrorTemplate.exempt(fd, stored.fields());
                 Object value = exempt ? null : exportValue(fd, live.get(fd.id()));
-                boolean computed = !exempt && applied.status(fd.id()) == TechErrorCalc.Status.OK;
+                TechErrorCalc.Status cs = exempt || fd.calc() == null ? null : applied.status(fd.id());
+                boolean computed = cs == TechErrorCalc.Status.OK;
                 String label = TechErrorTemplate.resolve(fd.label(), ch.getName(), year, month, t.lang());
-                rows.add(Collections.unmodifiableList(Arrays.asList(r.getTeamId(), teamName, ch.getId(), ch.getName(),
-                        year, month, r.getId(), status, sentAt, changed, approval, fd.id(), label, fd.type(), value,
-                        exempt, computed)));
+                rows.add(Collections.unmodifiableList(Arrays.asList(r.teamId, teamName, ch.getId(), ch.getName(),
+                        year, month, r.id, status, sentAt, changed, approval, fd.id(), label, fd.type(), value,
+                        exempt, computed, cs == null ? null : cs.name())));
                 fieldCount++;
             }
-            metas.add(new ReportMeta(r.getTeamId(), teamName, ch.getId(), ch.getName(), year, month, r.getId(), status,
-                    r.getLastSentAt(), changed, approval, fieldCount));
+            metas.add(new ReportMeta(r.teamId, teamName, ch.getId(), ch.getName(), year, month, r.id, status,
+                    r.lastSentAt, changed, approval, fieldCount));
         }
         return new Result(metas, rows);
+    }
+
+    private static boolean valid(ExportRow r) {
+        return r != null && r.getChannelId() != null && r.getReportYear() != null && r.getReportMonth() != null;
+    }
+
+    /** Satır dışa aktarılır mı (aralıkta + durum süzgeci) — değilse yalnız bir sonraki ayın canlı hesabı için yüklenmiştir. */
+    private static boolean exported(ExportRow r, int pFrom, int pTo, boolean sentOnly) {
+        int p = period(r.getReportYear(), r.getReportMonth());
+        return p >= pFrom && p <= pTo && (!sentOnly || r.getLastSentAt() != null);
+    }
+
+    /**
+     * Ayrıştırılmış rapor satırı — JSON metni TUTMAZ. Şablon önbellekten paylaşılır; değerlerden yalnız dışa aktarımın ve
+     * canlı hesabın okuduğu alan + hedef haritaları kalır (uzun metinler, anomali konuları, tablolar atılır).
+     */
+    static final class Loaded {
+        final Long id;
+        final Long channelId;
+        final Long teamId;
+        final int year;
+        final int month;
+        final int period;
+        final Instant contentChangedAt;
+        final Long contentRev;
+        final Long sentRev;
+        final String sendState;
+        final Instant sendClaimedAt;
+        final Instant lastSentAt;
+        final String approvalState;
+        final Long approvalRev;
+        final Template template;
+        final Values values;
+
+        private Loaded(ExportRow r, Template template, Values values) {
+            this.id = r.getId();
+            this.channelId = r.getChannelId();
+            this.teamId = r.getTeamId();
+            this.year = r.getReportYear();
+            this.month = r.getReportMonth();
+            this.period = period(year, month);
+            this.contentChangedAt = r.getContentChangedAt();
+            this.contentRev = r.getContentRev();
+            this.sentRev = r.getSentRev();
+            this.sendState = r.getSendState();
+            this.sendClaimedAt = r.getSendClaimedAt();
+            this.lastSentAt = r.getLastSentAt();
+            this.approvalState = r.getApprovalState();
+            this.approvalRev = r.getApprovalRev();
+            this.template = template;
+            this.values = values;
+        }
+    }
+
+    /** Satırı bir kez ayrıştırır: şablon özetine göre paylaşılır (aynı kanalın ayları çoğu zaman AYNI şablonu taşır). */
+    private static Loaded load(ExportRow r, Map<String, Template> templates, java.security.MessageDigest sha) {
+        String tj = r.getTemplateJson();
+        String key = tj == null || tj.isEmpty() ? "" : java.util.HexFormat.of().formatHex(
+                sha.digest(tj.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        Template t = templates.get(key);
+        if (t == null) {
+            t = TechErrorTemplate.fromStored(tj);
+            templates.put(key, t);
+        }
+        Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+        Values slim = new Values(v.fields(), Map.of(), Map.of(), Map.of(), v.targets());
+        return new Loaded(r, t, slim);
+    }
+
+    private static java.security.MessageDigest sha256() {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 yok", e);        // her JDK'da zorunlu algoritma
+        }
     }
 
     /** Dönem numarası: {@code yıl × 12 + ay} — ardışık aylar ardışık sayılar (Ocak'ın öncesi önceki yılın Aralık'ı). */
     static int period(int year, int month) {
         return year * 12 + month;
-    }
-
-    private static Template template(Map<String, Template> cache, String json) {
-        return cache.computeIfAbsent(json == null ? "" : json, TechErrorTemplate::fromStored);
     }
 
     /**
@@ -228,31 +311,31 @@ public class TechErrorExportService {
     }
 
     /** Durum hesabının tek kaynağı satır görünümü ister: yalnız gereken alanlar dolu (kişi alanları boş). */
-    static TechErrorReportRepository.Row asRow(ExportRow r) {
+    static TechErrorReportRepository.Row asRow(Loaded r) {
         return new TechErrorReportRepository.Row() {
-            public Long getId() { return r.getId(); }
-            public Long getChannelId() { return r.getChannelId(); }
-            public Long getTeamId() { return r.getTeamId(); }
-            public Integer getReportYear() { return r.getReportYear(); }
-            public Integer getReportMonth() { return r.getReportMonth(); }
+            public Long getId() { return r.id; }
+            public Long getChannelId() { return r.channelId; }
+            public Long getTeamId() { return r.teamId; }
+            public Integer getReportYear() { return r.year; }
+            public Integer getReportMonth() { return r.month; }
             public String getTitlePattern() { return null; }
             public String getTemplateLang() { return null; }
             public Instant getCreatedAt() { return null; }
             public Instant getUpdatedAt() { return null; }
             public Long getUpdatedById() { return null; }
-            public Instant getContentChangedAt() { return r.getContentChangedAt(); }
-            public Long getContentRev() { return r.getContentRev(); }
-            public Long getSentRev() { return r.getSentRev(); }
-            public String getSendState() { return r.getSendState(); }
-            public Instant getSendClaimedAt() { return r.getSendClaimedAt(); }
-            public Instant getLastSentAt() { return r.getLastSentAt(); }
+            public Instant getContentChangedAt() { return r.contentChangedAt; }
+            public Long getContentRev() { return r.contentRev; }
+            public Long getSentRev() { return r.sentRev; }
+            public String getSendState() { return r.sendState; }
+            public Instant getSendClaimedAt() { return r.sendClaimedAt; }
+            public Instant getLastSentAt() { return r.lastSentAt; }
             public Long getLastSentById() { return null; }
             public String getLastSentTo() { return null; }
             public Instant getLastAttemptAt() { return null; }
             public String getLastSendStatus() { return null; }
             public int getSendCount() { return 0; }
-            public String getApprovalState() { return r.getApprovalState(); }
-            public Long getApprovalRev() { return r.getApprovalRev(); }
+            public String getApprovalState() { return r.approvalState; }
+            public Long getApprovalRev() { return r.approvalRev; }
             public Instant getApprovalRequestedAt() { return null; }
             public Long getApprovalRequestedById() { return null; }
             public Instant getApprovalDecidedAt() { return null; }

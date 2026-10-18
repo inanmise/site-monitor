@@ -100,7 +100,8 @@ class TechErrorReportExportControllerTest {
     /** Satır: gerçek sütun sırası; "comment" alanı formül gibi başlayan metin, oran negatif yüzde. */
     private static List<Object> row(TechErrorChannel ch, String field, String type, Object value) {
         return Arrays.asList(ch.getTeamId(), "Takım " + ch.getTeamId(), ch.getId(), ch.getName(), 2026, 9, 100L + ch.getId(),
-                "sent", "2026-10-02T08:00:00Z", false, null, field, "Etiket, " + field, type, value, false, "percent".equals(type));
+                "sent", "2026-10-02T08:00:00Z", false, null, field, "Etiket, " + field, type, value, false, "percent".equals(type),
+                "percent".equals(type) ? "OK" : null);
     }
 
     @BeforeEach
@@ -262,6 +263,8 @@ class TechErrorReportExportControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].length()").value(TechErrorExportService.COLUMNS.size()))
                 .andExpect(jsonPath("$.data.rows[1][14]").value(-1.5))
                 .andExpect(jsonPath("$.data.rows[2][14]").value(true))
+                .andExpect(jsonPath("$.data.columns[" + (TechErrorExportService.COLUMNS.size() - 1) + "]").value("calc_status"))
+                .andExpect(jsonPath("$.data.rows[1][" + TechErrorExportService.COLUMNS.indexOf("calc_status") + "]").value("OK"))
                 .andExpect(jsonPath("$.data.notes.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(5)))
                 .andExpect(jsonPath("$.data.reports[0].report_status").value("sent"))
                 .andExpect(jsonPath("$.data.reports[0].field_count").value(3))
@@ -304,11 +307,12 @@ class TechErrorReportExportControllerTest {
         assertThat(TechErrorReportExportController.csvValue(null)).isEmpty();
         // Akıtılan gövde, bellekteki biçimle bayt bayt aynı
         List<List<Object>> sample = List.of(Arrays.asList(1L, "Takım, A", 10L, "=X", 2026, 9, 5L, "sent", null, false, null,
-                "f", "Etiket", "percent", new BigDecimal("-1.5"), false, true));
+                "f", "Etiket", "percent", new BigDecimal("-1.5"), false, true, "OK"));
         java.io.StringWriter sw = new java.io.StringWriter();
         TechErrorReportExportController.writeCsv(sw, sample);
         assertThat(sw.toString()).isEqualTo(TechErrorReportExportController.csv(sample));
-        assertThat(sw.toString()).startsWith("\uFEFFteam_id,").contains(",-1.5,").contains("'=X");
+        assertThat(sw.toString()).startsWith("\uFEFFteam_id,").contains(",-1.5,").contains("'=X").contains(",true,OK\r\n");
+        assertThat(lines[0]).endsWith(",exempt,computed,calc_status");
         assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
     }
 
@@ -361,6 +365,9 @@ class TechErrorReportExportControllerTest {
                 .andExpect(jsonPath("$.data.notes[2]").value(org.hamcrest.Matchers.containsString("field_type")))
                 .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("LIVE")))
                 .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("computed = false")))
+                .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("calc_status")))
+                .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("MISSING")))
+                .andExpect(jsonPath("$.data.notes[3]").value(org.hamcrest.Matchers.containsString("does not mean")))
                 .andExpect(jsonPath("$.data.notes[5]").value(org.hamcrest.Matchers.containsString("CURRENT executive recipient list")))
                 .andExpect(jsonPath("$.data.notes[6]").value(org.hamcrest.Matchers.containsString("No personal data")));
     }
@@ -419,5 +426,161 @@ class TechErrorReportExportControllerTest {
         org.mockito.Mockito.doThrow(new TechErrorExportService.TooLargeException()).when(exporter).export(any(), any(), any(), any());
         mvc.perform(get(URL).param("year", "2026").session(user(B))).andExpect(status().isBadRequest());
         assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+    }
+
+    private MvcResult perform(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder b) {
+        try {
+            return mvc.perform(b).andReturn();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String code(MvcResult r) throws Exception {
+        String body = r.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return body.isEmpty() ? "" : com.jayway.jsonpath.JsonPath.read(body, "$.code");
+    }
+
+    @Test
+    @DisplayName("pod izni YANIT YAZILMADAN bırakılır: CSV yazılırken izin geri verilmiş — başka kullanıcının dışa aktarımı beklemeden geçer;"
+            + " aynı kullanıcının ikinci isteği (süren dışa aktarımı varken) pod dolu olsa da BEKLEMEDEN 429 EXPORT_BUSY ve dakikalık hakkı yemez")
+    void permitReleasedBeforeStreamingAndOnePerUser() throws Exception {
+        long savedWait = controller.exportWaitMs;
+        controller.exportWaitMs = 0;                                   // izin bırakılmamışsa ikinci kullanıcı anında düşer
+        int held = TechErrorReportExportController.EXPORT_CONCURRENCY - 1;
+        java.util.concurrent.atomic.AtomicInteger permitsWhileWriting = new java.util.concurrent.atomic.AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicReference<MvcResult> other = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<MvcResult> same = new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicLong sameMs = new AtomicLong(-1);
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        // CSV yazılırken (csvValue → toString) çalışır: o an akış sürüyor
+        Object probe = new Object() {
+            @Override
+            public String toString() {
+                if (once.compareAndSet(false, true)) {
+                    try {
+                        permitsWhileWriting.set(controller.exportSlots.availablePermits());
+                        other.set(pool.submit(() -> perform(get(URL).param("year", "2026").param("team", "2").session(user(B))))
+                                .get(20, java.util.concurrent.TimeUnit.SECONDS));
+                        // Pod dolu + uzun bekleme: aynı kişinin isteği yine de beklemeden reddedilmeli
+                        int drained = controller.exportSlots.drainPermits();
+                        controller.exportWaitMs = 4_000;
+                        try {
+                            long t0 = System.nanoTime();
+                            same.set(pool.submit(() -> perform(get(URL).param("year", "2026").session(user(A))))
+                                    .get(20, java.util.concurrent.TimeUnit.SECONDS));
+                            sameMs.set((System.nanoTime() - t0) / 1_000_000L);
+                        } finally {
+                            controller.exportWaitMs = 0;
+                            controller.exportSlots.release(drained);
+                        }
+                    } catch (Throwable e) {
+                        failure.set(e);
+                    }
+                }
+                return "probe";
+            }
+        };
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<TechErrorChannel> chs = inv.getArgument(0);
+            List<List<Object>> rows = new ArrayList<>();
+            for (TechErrorChannel ch : chs) rows.add(row(ch, "comment", "text", ch.getId() == 10L ? probe : "metin"));
+            return new TechErrorExportService.Result(List.of(), rows);
+        }).when(exporter).export(any(), any(), any(), any());
+        controller.exportSlots.acquire(held);                         // tek izin kalsın: ilk istek alır, yazmadan bırakmalı
+        try {
+            MvcResult first = mvc.perform(get(URL).param("year", "2026").param("format", "csv").session(user(A)))
+                    .andExpect(status().isOk()).andReturn();
+            assertThat(first.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains(",probe,");
+        } finally {
+            controller.exportSlots.release(held);
+            controller.exportWaitMs = savedWait;
+            pool.shutdownNow();
+        }
+        assertThat(failure.get()).isNull();
+        assertThat(permitsWhileWriting.get()).as("CSV yazılırken pod izni geri verilmiş").isEqualTo(1);
+        assertThat(other.get().getResponse().getStatus()).as("başka kullanıcı akış sürerken geçer").isEqualTo(200);
+        assertThat(same.get().getResponse().getStatus()).isEqualTo(429);
+        assertThat(code(same.get())).isEqualTo("EXPORT_BUSY");
+        assertThat(same.get().getResponse().getHeader("Retry-After")).isEqualTo("10");
+        assertThat(sameMs.get()).as("aynı kişinin ikinci isteği izin beklemez").isLessThan(2_000L);
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        assertThat(controller.running).isEmpty();
+        // Reddedilen eşzamanlı istek hakkı yemedi: 1 başarılı + 5 daha = dakikada 6
+        for (int i = 0; i < TechErrorReportExportController.EXPORT_PER_MINUTE - 1; i++) {
+            mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().isOk());
+        }
+        mvc.perform(get(URL).param("year", "2026").session(user(A)))
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+    }
+
+    @Test
+    @DisplayName("JSON yolu da izni yanıt gövdesi yazılmadan bırakır; hata (tavan aşımı) ve beklenmeyen istisna izni ve kişi işaretini geri verir")
+    void permitAndMarkerReleasedOnEveryPath() throws Exception {
+        mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().isOk());
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        assertThat(controller.running).isEmpty();
+        org.mockito.Mockito.doThrow(new RuntimeException("beklenmeyen")).when(exporter).export(any(), any(), any(), any());
+        mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().is5xxServerError());
+        assertThat(controller.exportSlots.availablePermits()).isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        assertThat(controller.running).isEmpty();
+        // Ardından aynı kişi yeniden dışa aktarabilir (işaret takılı kalmadı)
+        org.mockito.Mockito.doThrow(new TechErrorExportService.TooLargeException()).when(exporter).export(any(), any(), any(), any());
+        mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("EXPORT_TOO_LARGE"));
+        assertThat(controller.running).isEmpty();
+    }
+
+    @Test
+    @DisplayName("meşgul bütçesi: kişi başına dakikada " + TechErrorReportExportController.EXPORT_BUSY_PER_MINUTE + " EXPORT_BUSY reddi, sonrası BEKLEMEDEN"
+            + " 429 RATE_LIMITED + Retry-After (pod boşalsa da pencere boşalana dek); başka kullanıcı etkilenmez; pencere geçince açılır")
+    void busyRefusalsHaveTheirOwnBudget() throws Exception {
+        MockHttpSession me = user(A);
+        long savedWait = controller.exportWaitMs;
+        controller.exportWaitMs = 0;
+        int drained = controller.exportSlots.drainPermits();
+        try {
+            for (int i = 0; i < TechErrorReportExportController.EXPORT_BUSY_PER_MINUTE; i++) {
+                mvc.perform(get(URL).param("year", "2026").session(me))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("EXPORT_BUSY"));
+            }
+            mvc.perform(get(URL).param("year", "2026").session(me))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.retry_after_seconds").value(60))
+                    .andExpect(header().string("Retry-After", "60"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(
+                            String.valueOf(TechErrorReportExportController.EXPORT_BUSY_PER_MINUTE))));
+        } finally {
+            controller.exportSlots.release(drained);
+            controller.exportWaitMs = savedWait;
+        }
+        // Pod boş ama bütçe penceresi dolu: yine beklemeden sınırlanır, dışa aktarım çağrılmaz
+        mvc.perform(get(URL).param("year", "2026").session(me))
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        verify(exporter, never()).export(any(), any(), any(), any());
+        mvc.perform(get(URL).param("year", "2026").session(user(B))).andExpect(status().isOk());
+        CLOCK.addAndGet(61_000L);
+        mvc.perform(get(URL).param("year", "2026").session(me)).andExpect(status().isOk());
+        assertThat(controller.running).isEmpty();
+    }
+
+    @Test
+    @DisplayName("meşgul reddi kayıtları sınırlı: 1 000 anahtarı aşan haritada süresi geçenler atılır; anahtar başına en çok bütçe kadar kayıt")
+    void busyMapIsBounded() {
+        long t0 = CLOCK.get();
+        for (int i = 0; i < 1_200; i++) controller.noteBusy("k" + i);
+        for (int i = 0; i < 3 * TechErrorReportExportController.EXPORT_BUSY_PER_MINUTE; i++) controller.noteBusy("k0");
+        assertThat(controller.busyRetryAfter("k0")).isEqualTo(60L);
+        assertThat(controller.busyRetryAfter("k1")).isNull();
+        CLOCK.set(t0 + 61_000L);
+        controller.noteBusy("yeni");
+        synchronized (controller.busyCalls) {
+            assertThat(controller.busyCalls).containsOnlyKeys("yeni");
+        }
+        assertThat(controller.busyRetryAfter("k0")).isNull();
     }
 }

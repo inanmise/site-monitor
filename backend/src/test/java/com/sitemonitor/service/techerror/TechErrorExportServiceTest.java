@@ -64,6 +64,7 @@ class TechErrorExportServiceTest {
     private static final int COL_APPROVAL = TechErrorExportService.COLUMNS.indexOf("approval_state");
     private static final int COL_MONTH = TechErrorExportService.COLUMNS.indexOf("month");
     private static final int COL_SENT_AT = TechErrorExportService.COLUMNS.indexOf("sent_at");
+    private static final int COL_CALC = TechErrorExportService.COLUMNS.indexOf("calc_status");
 
     @Autowired TechErrorExportService exporter;
     @Autowired TechErrorChannelRepository channels;
@@ -192,7 +193,10 @@ class TechErrorExportServiceTest {
         assertThat(rate.get(COL_COMPUTED)).isEqualTo(true);
         assertThat(rate.get(COL_EXEMPT)).isEqualTo(false);
         assertThat(rate.get(COL_VALUE)).isEqualTo(new BigDecimal("1.47"));           // canlı, 2 hane (PDF ile aynı)
+        assertThat(rate.get(COL_CALC)).isEqualTo("OK");
         assertThat(field(rows, "total-tx").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(rows, "total-tx").get(COL_CALC)).isNull();                   // hesabı yok: girilen değer
+        assertThat(outage.get(COL_CALC)).isNull();
         assertThat(field(rows, "comment").get(COL_VALUE)).isNull();
         assertThat(field(rows, "comment").get(COL_EXEMPT)).isEqualTo(false);
         assertThat(r.getId()).isNotNull();
@@ -402,6 +406,8 @@ class TechErrorExportServiceTest {
         assertThat(field(a, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(false);
         assertThat(field(a, "tx-increase").get(COL_VALUE)).isEqualTo(false);
         assertThat(field(a, "tx-increase").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(a, "tx-increase-pct").get(COL_CALC)).isEqualTo("MANUAL");      // formül kullanılamıyor → elle girilen
+        assertThat(field(a, "tx-increase").get(COL_CALC)).isEqualTo("MANUAL");
         assertThat(field(a, "error-rate").get(COL_VALUE)).isEqualTo(new BigDecimal("1"));
         assertThat(field(a, "error-rate").get(COL_COMPUTED)).isEqualTo(true);
         List<List<Object>> s = rowsOf(res, sep.getId());
@@ -409,6 +415,7 @@ class TechErrorExportServiceTest {
         assertThat(field(s, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(true);
         assertThat(field(s, "tx-increase").get(COL_VALUE)).isEqualTo(true);
         assertThat(field(s, "tx-increase").get(COL_COMPUTED)).isEqualTo(true);
+        assertThat(field(s, "tx-increase-pct").get(COL_CALC)).isEqualTo("OK");
         assertThat(field(s, "error-rate").get(COL_VALUE)).isEqualTo(new BigDecimal("1"));         // saklı 7 değil
     }
 
@@ -463,8 +470,10 @@ class TechErrorExportServiceTest {
                 new TechErrorExportService.Filter(2026, 9, false), NOW), sep.getId());
         assertThat(field(rows, "error-rate").get(COL_VALUE)).isNull();                  // hata adedi boş → oran yok
         assertThat(field(rows, "error-rate").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(rows, "error-rate").get(COL_CALC)).isEqualTo("MISSING");      // sonuç yok, elle girilmiş DEĞİL
         assertThat(field(rows, "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("12"));
         assertThat(field(rows, "tx-increase-pct").get(COL_COMPUTED)).isEqualTo(false);
+        assertThat(field(rows, "tx-increase-pct").get(COL_CALC)).isEqualTo("MANUAL");   // elle girilen değer
     }
 
     @Test
@@ -510,5 +519,78 @@ class TechErrorExportServiceTest {
         assertThat(TechErrorExportService.exportValue(num, "metin")).isNull();
         assertThat(TechErrorExportService.exportValue(yes, 1)).isNull();
         assertThat(TechErrorExportService.exportValue(yes, false)).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("calc_status: computed = false'un nedenini ayırır — bölen sıfır ZERO (değer boş, elle girilmemiş), muaf hesaplanan alan boş"
+            + " (exempt), hesabı olmayan alan boş; sütun COLUMNS'un SONUNDA (eski sütun sırası korunur)")
+    void calcStatusSeparatesNoResultFromTyped() {
+        List<Field> fields = List.of(
+                new Field("total-tx", "Toplam işlem", "number", null),
+                new Field("error-count", "Teknik hata adedi", "number", null),
+                new Field("had-outage", "Kesinti oldu mu?", "yesno", null),
+                new Field("outage-errors", "Kesinti kaynaklı hata", "number", null, "had-outage"),
+                new Field("error-rate", "Teknik hata oranı", "percent", null, null, Calc.ratio("error-count", null, "total-tx")),
+                new Field("outage-share", "Kesinti payı", "percent", null, "had-outage", Calc.ratio("outage-errors", null, "error-count")),
+                new Field("typed-rate", "Elle oran", "percent", null));
+        TechErrorChannel ch = channel(1, "POS", null);
+        TechErrorReport r = report(ch, 2026, 9, template(fields),
+                values("total-tx", 0, "error-count", 5, "had-outage", false, "outage-share", 40, "error-rate", 9, "typed-rate", 2.5));
+        List<List<Object>> rows = rowsOf(exporter.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, 9, false), NOW), r.getId());
+        List<Object> rate = field(rows, "error-rate");
+        assertThat(rate.get(COL_CALC)).isEqualTo("ZERO");
+        assertThat(rate.get(COL_VALUE)).isNull();                                       // saklı 9 dışa aktarılmaz (PDF gibi)
+        assertThat(rate.get(COL_COMPUTED)).isEqualTo(false);
+        List<Object> share = field(rows, "outage-share");
+        assertThat(share.get(COL_EXEMPT)).isEqualTo(true);
+        assertThat(share.get(COL_CALC)).isNull();
+        assertThat(share.get(COL_VALUE)).isNull();
+        List<Object> typed = field(rows, "typed-rate");
+        assertThat(typed.get(COL_CALC)).isNull();
+        assertThat(typed.get(COL_VALUE)).isEqualTo(new BigDecimal("2.5"));
+        assertThat(rows).allSatisfy(row -> assertThat(row).hasSize(TechErrorExportService.COLUMNS.size()));
+        assertThat(TechErrorExportService.COLUMNS).startsWith("team_id", "team_name", "channel_id", "channel_name", "year",
+                "month", "report_id", "report_status", "sent_at", "changed_after_send", "approval_state", "field_id",
+                "field_label", "field_type", "value", "exempt", "computed").endsWith("calc_status").hasSize(18);
+    }
+
+    @Test
+    @DisplayName("bellek: her yüklenen satırın JSON'u BİR KEZ okunur (önceki ay da — canlı hesap ayrıştırılmış hâlden);"
+            + " eşit metinli şablonlar (ayrı String örnekleri) tek ayrıştırmayı paylaşır, sonuç aynı")
+    void eachRowJsonIsReadOnce() {
+        TechErrorReportExportRepository repo = mock(TechErrorReportExportRepository.class);
+        TechErrorExportService svc = new TechErrorExportService(repo);
+        TechErrorChannel ch = new TechErrorChannel();
+        ch.setId(10L);
+        ch.setTeamId(1L);
+        ch.setName("Mobil");
+        String tj = TechErrorTemplate.toJson(template(CHANGE_FIELDS));
+        TechErrorReportExportRepository.ExportRow aug = exportRow(1L, 8, new String(tj), "{\"fields\":{\"total-tx\":1000}}");
+        TechErrorReportExportRepository.ExportRow sep = exportRow(2L, 9, new String(tj), "{\"fields\":{\"total-tx\":1200,\"error-count\":12}}");
+        when(repo.countForExport(any(), anyInt(), anyInt(), anyBoolean())).thenReturn(1L);
+        when(repo.findForExport(any(), anyInt(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(List.of(aug, sep));
+        TechErrorExportService.Result res = svc.export(List.of(ch), Map.of(1L, "Takım A"),
+                new TechErrorExportService.Filter(2026, 9, false), NOW);
+        assertThat(res.reports()).extracting(TechErrorExportService.ReportMeta::reportId).containsExactly(2L);
+        assertThat(field(res.rows(), "tx-increase-pct").get(COL_VALUE)).isEqualTo(new BigDecimal("20"));  // |1200 − 1000| / 1000
+        assertThat(field(res.rows(), "tx-increase-pct").get(COL_CALC)).isEqualTo("OK");
+        assertThat(field(res.rows(), "error-rate").get(COL_VALUE)).isEqualTo(new BigDecimal("1"));
+        for (TechErrorReportExportRepository.ExportRow r : List.of(aug, sep)) {
+            verify(r, times(1)).getTemplateJson();
+            verify(r, times(1)).getValuesJson();
+        }
+    }
+
+    private static TechErrorReportExportRepository.ExportRow exportRow(long id, int month, String templateJson, String valuesJson) {
+        TechErrorReportExportRepository.ExportRow r = mock(TechErrorReportExportRepository.ExportRow.class);
+        when(r.getId()).thenReturn(id);
+        when(r.getChannelId()).thenReturn(10L);
+        when(r.getTeamId()).thenReturn(1L);
+        when(r.getReportYear()).thenReturn(2026);
+        when(r.getReportMonth()).thenReturn(month);
+        when(r.getTemplateJson()).thenReturn(templateJson);
+        when(r.getValuesJson()).thenReturn(valuesJson);
+        return r;
     }
 }

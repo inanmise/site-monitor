@@ -31,11 +31,12 @@ import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.j
 
 const te = () => api.techErrors
 const COLUMNS = ['team_id', 'team_name', 'channel_id', 'channel_name', 'year', 'month', 'report_id', 'report_status',
-  'sent_at', 'changed_after_send', 'approval_state', 'field_id', 'field_label', 'field_type', 'value', 'exempt', 'computed']
+  'sent_at', 'changed_after_send', 'approval_state', 'field_id', 'field_label', 'field_type', 'value', 'exempt', 'computed',
+  'calc_status']
 const row = (year, month, id, field, label, type, value, extra = {}) => {
   const o = { team_id: 1, team_name: 'Takım A', channel_id: 10, channel_name: 'Mobil', year, month, report_id: id, report_status: 'sent',
     sent_at: '2026-10-02T08:00:00Z', changed_after_send: false, approval_state: null, field_id: field, field_label: label, field_type: type,
-    value, exempt: false, computed: false, ...extra }
+    value, exempt: false, computed: false, calc_status: null, ...extra }
   return COLUMNS.map((c) => o[c])
 }
 const exportData = () => ({

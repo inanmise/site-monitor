@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
+import { readJavaMain } from './helpers/javaTable.js'
 import {
   buildSheets, cellValue, channelSlug, exportFileName, exportParams, numberCell, pivotExport,
 } from '../components/techerror/channelExportModel.js'
@@ -11,11 +12,12 @@ const t = (k, ...a) => {
 }
 
 const COLUMNS = ['team_id', 'team_name', 'channel_id', 'channel_name', 'year', 'month', 'report_id', 'report_status',
-  'sent_at', 'changed_after_send', 'approval_state', 'field_id', 'field_label', 'field_type', 'value', 'exempt', 'computed']
+  'sent_at', 'changed_after_send', 'approval_state', 'field_id', 'field_label', 'field_type', 'value', 'exempt', 'computed',
+  'calc_status']
 
 function row(o) {
   const base = { team_id: 1, team_name: 'Takım A', channel_id: 10, channel_name: 'Mobil', report_status: 'sent',
-    sent_at: '2026-10-02T08:00:00Z', changed_after_send: false, approval_state: null, exempt: false, computed: false, ...o }
+    sent_at: '2026-10-02T08:00:00Z', changed_after_send: false, approval_state: null, exempt: false, computed: false, calc_status: null, ...o }
   return COLUMNS.map((c) => (c in base ? base[c] : null))
 }
 
@@ -25,7 +27,7 @@ function data() {
     columns: COLUMNS,
     rows: [
       row({ year: 2026, month: 9, report_id: 102, field_id: 'total-tx', field_label: 'Toplam işlem (Eylül)', field_type: 'number', value: 2000 }),
-      row({ year: 2026, month: 9, report_id: 102, field_id: 'error-rate', field_label: 'Teknik hata oranı', field_type: 'percent', value: 1.475, computed: true }),
+      row({ year: 2026, month: 9, report_id: 102, field_id: 'error-rate', field_label: 'Teknik hata oranı', field_type: 'percent', value: 1.475, computed: true, calc_status: 'OK' }),
       row({ year: 2026, month: 9, report_id: 102, field_id: 'outage-errors', field_label: 'Kesinti kaynaklı hata', field_type: 'number', value: null, exempt: true }),
       row({ year: 2026, month: 9, report_id: 102, field_id: 'had-outage', field_label: 'Kesinti oldu mu?', field_type: 'yesno', value: false }),
       row({ year: 2026, month: 9, report_id: 102, field_id: 'comment', field_label: 'Kısa not', field_type: 'text', value: '=1+1' }),
@@ -80,6 +82,21 @@ describe('channelExportModel — pivot', () => {
     const map = (r) => perm.map((c) => r[COLUMNS.indexOf(c)])
     const p = pivotExport({ ...d, columns: perm, rows: d.rows.map(map) }, 10)
     expect(p.fields.map((f) => f.key)).toEqual(pivotExport(d, 10).fields.map((f) => f.key))
+  })
+
+  it('fikstür sütunları sunucunun COLUMNS listesiyle AYNI (TechErrorExportService); eklenen calc_status sonda — pivot etkilenmez', () => {
+    const src = readJavaMain('service/techerror/TechErrorExportService.java')
+    const m = src.match(/List<String> COLUMNS = List\.of\(([^;]*)\);/)
+    expect(m).not.toBeNull()
+    const javaCols = [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1])
+    expect(javaCols).toEqual(COLUMNS)
+    expect(javaCols[javaCols.length - 1]).toBe('calc_status')
+    // Eski 17 sütunlu yanıt (calc_status yok) da aynı tabloyu verir: konum adla okunur
+    const d = data()
+    const old = COLUMNS.slice(0, -1)
+    const p = pivotExport({ ...d, columns: old, rows: d.rows.map((r) => r.slice(0, -1)) }, 10)
+    expect(p.fields.map((f) => f.key)).toEqual(pivotExport(d, 10).fields.map((f) => f.key))
+    expect(p.cells.get('error-rate|percent').get('2026-09').value).toBe(1.475)
   })
 
   it('bozuk / eksik yanıt boş tablo verir (çökmez)', () => {
