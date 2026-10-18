@@ -62,14 +62,14 @@ function withTablet(on) {
 describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
   beforeEach(() => setUrl(''))
 
-  it('ARIA sekme deseni: 21 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu), tekil aria-selected, panele bağlı', () => {
+  it('ARIA sekme deseni: 22 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu; 2026-10-18: + Grafana panosu), tekil aria-selected, panele bağlı', () => {
     render(<AdminSettings />)
     // shadcn Tabs (Radix) — dikey liste
     const list = screen.getByRole('tablist', { name: /^settings$/i })
     expect(list).toHaveAttribute('data-slot', 'tabs-list')
     expect(list).toHaveAttribute('aria-orientation', 'vertical')
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(21)
+    expect(tabs).toHaveLength(22)
     expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 
     const panel = screen.getByRole('tabpanel')
@@ -192,13 +192,13 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
 describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, durum noktaları', () => {
   beforeEach(() => { setUrl(''); vi.clearAllMocks() })
 
-  it('PageHeader: h2 başlık + açıklama + "21 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
+  it('PageHeader: h2 başlık + açıklama + "22 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
     render(<AdminSettings />)
     const header = document.querySelector('[data-slot="page-header"]')
     expect(header).not.toBeNull()
     expect(within(header).getByRole('heading', { level: 2, name: /^(Settings|Ayarlar)$/ })).toBeInTheDocument()
     expect(header.querySelector('[data-slot="page-description"]')).not.toBeNull()
-    expect(within(header).getByText(/21 (sections|bölüm)/)).toBeInTheDocument()
+    expect(within(header).getByText(/22 (sections|bölüm)/)).toBeInTheDocument()
     const panel = screen.getByRole('tabpanel')
     expect(panel.className).toMatch(/\bw-full\b/)
     expect(panel.className).not.toMatch(/max-w-\[/)
@@ -233,7 +233,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(screen.getByText(/No matching sections|Eşleşen bölüm yok/)).toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
-    expect(screen.getAllByRole('tab')).toHaveLength(21)
+    expect(screen.getAllByRole('tab')).toHaveLength(22)
   })
 
   it('yapılandırma sağlığı verisi → ilgili sekmede durum noktası (en kötü durum) + başlıkta sayaç çipi; ek istek yok', async () => {
@@ -269,7 +269,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(api.admin.getConfigHealth).not.toHaveBeenCalled()
   })
 
-  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 21 sekme, kendi kaydırma kabında', () => {
+  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 22 sekme, kendi kaydırma kabında', () => {
     const restore = withTablet(true)
     try {
       render(<AdminSettings />)
@@ -277,7 +277,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
       expect(list).toHaveAttribute('aria-orientation', 'horizontal')
       expect(list).toHaveAttribute('data-variant', 'line')
       expect(list.closest('[data-slot="settings-rail"]')).not.toBeNull()
-      expect(screen.getAllByRole('tab')).toHaveLength(21)
+      expect(screen.getAllByRole('tab')).toHaveLength(22)
       expect(screen.queryByRole('searchbox')).toBeNull()   // arama kutusu yalnız masaüstü listesinde
       pressMenuTrigger(screen.getByRole('tab', { name: /LDAP/ }))
       expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
@@ -367,17 +367,17 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
   })
 })
 
-/** Telefon (< md, 2026-09-26 mweb): 21 bölümlük dikey menü yerine tek, GRUPLU NativeSelect. */
+/** Telefon (< md, 2026-09-26 mweb): 22 bölümlük dikey menü yerine tek, GRUPLU NativeSelect. */
 describe('AdminSettings — telefon bölüm seçicisi', () => {
   beforeEach(() => { setUrl(''); mobile.on = true })
   afterEach(() => { mobile.on = false })
 
-  it('sekme listesi yok; 21 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', () => {
+  it('sekme listesi yok; 22 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', () => {
     render(<AdminSettings />)
     expect(screen.queryByRole('tablist')).toBeNull()
     const select = screen.getByRole('combobox', { name: /^settings$/i })
     expect(select).toHaveAttribute('data-slot', 'native-select')
-    expect(select.options).toHaveLength(21)
+    expect(select.options).toHaveLength(22)
     expect(select.querySelectorAll('optgroup')).toHaveLength(5)
     expect([...select.querySelectorAll('optgroup')].map((g) => g.label)).toEqual(
       expect.arrayContaining([expect.stringMatching(/Platform/), expect.stringMatching(/Notifications|Bildirimler/)]))

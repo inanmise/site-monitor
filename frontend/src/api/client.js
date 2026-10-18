@@ -1387,6 +1387,31 @@ export const api = {
     // Teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı özeti
     techErrorSettings: () => request('/admin/tech-error-reports/settings', { withStatus: true }),
     saveTechErrorSettings: (body) => request('/admin/tech-error-reports/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // Grafana panosu (2026-10-18): ayarlar + aktarıcı durumu, yalnız değişen alanların kaydı, ön izleme ve JSON indirme
+    grafanaSettings: () => request('/admin/grafana/settings', { withStatus: true }),
+    saveGrafanaSettings: (body) => request('/admin/grafana/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    grafanaPreview: (body, { signal } = {}) => request('/admin/grafana/dashboard/preview',
+      { method: 'POST', body: JSON.stringify(body || {}), withStatus: true, ...(signal ? { signal } : {}) }),
+    /** Kayıtlı ayarlarla pano JSON'u (Blob + sunucunun dosya adı). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır. */
+    downloadGrafanaDashboard: async () => {
+      try {
+        const res = await fetch(`${BASE}/admin/grafana/dashboard`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        if (!res.ok) {
+          let body = null
+          try { body = await res.json() } catch { body = null }
+          return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
+        }
+        const blob = await res.blob()
+        const disp = headerOf(res, 'Content-Disposition') || ''
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+        const plain = /filename="?([^";]+)"?/.exec(disp)
+        let name = null
+        try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
+        return { success: true, blob, name }
+      } catch (e) {
+        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+    },
     // Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta: eski pod bu yolu tanımaz (404 / 405) ve görünürlüğe dokunmaz
     techErrorReminderSettings: () => request('/admin/tech-error-reports/settings/reminders', { withStatus: true }),
     saveTechErrorReminderSettings: (body) => request('/admin/tech-error-reports/settings/reminders',

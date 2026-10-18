@@ -220,6 +220,9 @@ const SPECIAL = {
   NOC_TEAMS_UPDATE: 'audit.ev.NOC_TEAMS_UPDATE',
   // Ayarlar → Görünüm → Temalar: açık temalar + varsayılan (2026-10-05) — "THEME" kural sözlüğünde yok
   THEME_SETTINGS_SAVE: 'audit.ev.THEME_SETTINGS_SAVE',
+  // Ayarlar → Grafana panosu (2026-10-18): ayar kaydı + pano JSON'u indirme — "GRAFANA" nesne sözlüğünde yok
+  GRAFANA_SETTINGS_SAVE: 'audit.ev.GRAFANA_SETTINGS_SAVE',
+  GRAFANA_DASHBOARD_EXPORT: 'audit.ev.GRAFANA_DASHBOARD_EXPORT',
   // Manuel (dosyadan yüklenen) sertifika: ilk yükleme / yeni sürüm (2026-10-06) — "_UPLOAD"/"_RENEW" eylem sözlüğünde yok
   CERT_MANUAL_UPLOAD: 'audit.ev.CERT_MANUAL_UPLOAD',
   CERT_MANUAL_RENEW: 'audit.ev.CERT_MANUAL_RENEW',
