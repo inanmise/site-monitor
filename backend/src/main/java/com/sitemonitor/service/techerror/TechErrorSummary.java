@@ -397,6 +397,76 @@ public final class TechErrorSummary {
         return out;
     }
 
+    /**
+     * PDF / e-posta çizim planı (2026-10-18): {@code shown} = {@link #shownValues}; {@code dissolved} = sayı / yüzde /
+     * evet-hayır değerlerinin HEPSİ özette gösterilen, özete gömülü OLMAYAN gösterge bölümleri — kendi bölümü olarak hiç
+     * basılmaz; {@code moved} = bu bölümlerin dolu açıklama ({@code textarea}) ve kısa metin alanları, özetin sonuna not
+     * olarak (gömülü bölüm notlarıyla aynı çizim: alanın adı + zengin metin); {@code anchor} = notların düştüğü özet (şablon
+     * sırasıyla ilk GÖRÜNEN özet — kutucuğu ya da metni olan).
+     */
+    public record Plan(Set<String> shown, Set<String> dissolved, String anchor, List<Block> moved) {
+        public static Plan none() { return new Plan(Set.of(), Set.of(), null, List.of()); }
+
+        /** Bölüm özete taşındı mı (kendi yerinde hiç basılmaz). */
+        public boolean dissolved(Section s) { return s != null && dissolved.contains(s.id()); }
+
+        /** Bu özetin sonuna eklenecek taşınmış notlar (başka özet için boş). */
+        public List<Block> movedFor(Section s) { return s != null && s.id().equals(anchor) ? moved : List.of(); }
+    }
+
+    /**
+     * Çizim planı ({@link Plan}). Kurallar (kullanıcı kararı 2026-10-18: "Verileri bölümünü tamamen kaldıralım"):
+     * <ul>
+     *   <li>bölüm, muaf olmayan sayı / yüzde / evet-hayır alanlarından EN AZ BİRİ olan ve HEPSİ özette gösterilen
+     *       ({@link #shownInSummary}) gömülü olmayan gösterge bölümüyse çözülür — yalnız açıklamalardan oluşan bölüm (değer
+     *       alanı yok) yerinde kalır;</li>
+     *   <li>çözülen bölümün DOLU açıklama ve kısa metin alanları (muaf değil) özetin sonuna taşınır; boşlar hiç basılmaz;
+     *       değerleri gösterilmemiş bir alanı olan bölüm notlarını YERİNDE basar (bir not iki kez basılmaz);</li>
+     *   <li>görünen bir özet yoksa hiçbir bölüm çözülmez (not kaybolmaz).</li>
+     * </ul>
+     */
+    public static Plan plan(Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
+        if (t == null || v == null) return Plan.none();
+        Set<String> shown = shownValues(t, v, previous, channel, year, month);
+        if (shown.isEmpty()) return new Plan(shown, Set.of(), null, List.of());
+        Map<String, Object> vals = v.fields() == null ? Map.of() : v.fields();
+        String anchor = null;
+        for (Section s : t.sections()) {
+            if (!"summary".equals(s.kind())) continue;
+            boolean visible = !TechErrorTiles.build(t, s, v, previous, channel, year, month).isEmpty();
+            if (!visible) {
+                for (Block b : blocks(s, t, v, previous, channel, year, month)) visible |= b.note() || !TechErrorRichText.blank(b.text());
+            }
+            if (visible) {
+                anchor = s.id();
+                break;
+            }
+        }
+        if (anchor == null) return new Plan(shown, Set.of(), null, List.of());
+        Set<String> dissolved = new java.util.LinkedHashSet<>();
+        List<Block> moved = new ArrayList<>();
+        for (Section s : t.sections()) {
+            if (!"metrics".equals(s.kind()) || TechErrorTemplate.hostOf(t, s) != null) continue;
+            int values = 0;
+            boolean all = true;
+            for (Field f : s.fields()) {
+                boolean value = "number".equals(f.type()) || "percent".equals(f.type()) || "yesno".equals(f.type());
+                if (!value || TechErrorTemplate.exempt(f, vals)) continue;
+                values++;
+                if (!shownInSummary(f, shown)) all = false;
+            }
+            if (values == 0 || !all) continue;
+            dissolved.add(s.id());
+            for (Field f : s.fields()) {
+                if (!"textarea".equals(f.type()) && !"text".equals(f.type())) continue;
+                if (TechErrorTemplate.exempt(f, vals)) continue;
+                if (!(vals.get(f.id()) instanceof String text) || TechErrorRichText.blank(text)) continue;
+                moved.add(Block.note(s.id(), f.id(), TechErrorTemplate.resolve(f.label(), channel, year, month, t.lang()), text));
+            }
+        }
+        return new Plan(shown, java.util.Collections.unmodifiableSet(dissolved), anchor, List.copyOf(moved));
+    }
+
     /** Metin bloklarının "\n\n" ile birleşik metni (notlar sayılmaz) — {@link #capText} ile aynı ölçü. */
     private static String joinedText(List<Block> blocks) {
         StringBuilder joined = new StringBuilder();

@@ -219,6 +219,28 @@ public class TechErrorTeamTemplateService {
         }
     }
 
+    /**
+     * SİSTEMİN şablon güncellemesi (tek seferlik göçler, 2026-10-18): yalnız şablon, okunan sürümle (farklıysa
+     * {@link OptimisticLockingFailureException} — ekibin aynı andaki kaydı ezilmez); "son güncelleyen" {@code actorName}
+     * (kullanıcı kimliği yok). Kayıt / takım yoksa {@link NoSuchElementException}. Değişiklik yoksa hiçbir şey yazılmaz
+     * (dönüş false).
+     */
+    @Transactional
+    public boolean systemUpdateTemplate(Long teamId, Long id, Long expectedVersion, Template template, String actorName) {
+        lockTeam(teamId);
+        TechErrorTeamTemplate e = get(teamId, id);
+        if (expectedVersion == null || !expectedVersion.equals(e.getVersion())) {
+            throw new OptimisticLockingFailureException("tech_error_team_template version");
+        }
+        if (TechErrorTemplate.toJson(template).equals(e.getTemplateJson())) return false;
+        applyTemplate(e, template);
+        e.setUpdatedAt(now());
+        e.setUpdatedById(null);
+        e.setUpdatedByName(actorName);
+        repo.saveAndFlush(e);
+        return true;
+    }
+
     /** Kaydı KALICI siler; silinen kaydı döner (denetim adı için). Kanallar etkilenmez (şablonlarının kopyasını taşırlar). */
     @Transactional
     public TechErrorTeamTemplate delete(Long teamId, Long id) {

@@ -39,7 +39,8 @@ import java.util.Map;
  * tablolar, görseller (≤ {@link TechErrorMailImages#MAX_WIDTH} px CID gömülü, bütçeyi aşan ya da okunamayan görsel "PDF
  * ekinde" kutusu; tam çözünürlük PDF ekinde), trend bölümleri için PDF notu; kapanış notu. Düz metin eşi her blokla
  * birlikte üretilir (MailDoc). Değeri yönetici özetinde gösterilen alan gösterge bölümünde tekrar basılmaz — PDF ile aynı
- * kural ({@link TechErrorSummary#shownValues}, 2026-10-18). Tablo tabanlı, Outlook hayalet tabloları, renkli sol şerit yok, dış görsel URL'si yok
+ * kural ({@link TechErrorSummary#shownValues}, 2026-10-18); bütün değerleri özette olan bölüm hiç basılmaz, dolu notları
+ * özetin sonunda ({@link TechErrorSummary#plan}). Tablo tabanlı, Outlook hayalet tabloları, renkli sol şerit yok, dış görsel URL'si yok
  * (EmailResponsiveContractTest).
  */
 public final class TechErrorReportMail {
@@ -126,13 +127,16 @@ public final class TechErrorReportMail {
                     : "Tam rapor — görseller tam çözünürlükte — ekteki PDF'tedir (" + fileName + ").");
         }
 
-        // Değeri yönetici özetinde gösterilen alanlar gösterge bölümlerinde tekrar basılmaz — PDF ile AYNI küme (2026-10-18)
-        java.util.Set<String> shown = TechErrorSummary.shownValues(in.template(), in.values(), in.previousOrNull(),
+        // Değeri yönetici özetinde gösterilen alanlar gösterge bölümlerinde tekrar basılmaz; bütün değerleri özette olan bölüm
+        // hiç basılmaz, notları özetin sonunda — PDF ile AYNI plan (2026-10-18)
+        TechErrorSummary.Plan plan = TechErrorSummary.plan(in.template(), in.values(), in.previousOrNull(),
                 in.channelName(), in.year(), in.month());
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
-                case "summary" -> summary(d, in, s);
-                case "metrics" -> { if (TechErrorTemplate.hostOf(in.template(), s) == null) metrics(d, in, s, en, lang, shown); }
+                case "summary" -> summary(d, in, s, plan.movedFor(s));
+                case "metrics" -> {
+                    if (TechErrorTemplate.hostOf(in.template(), s) == null && !plan.dissolved(s)) metrics(d, in, s, en, lang, plan.shown());
+                }
                 case "issues" -> issues(d, in, s, en, lang, imgs, attached);
                 case "text" -> text(d, in, s);
                 case "table" -> table(d, in, s, en, lang);
@@ -273,10 +277,11 @@ public final class TechErrorReportMail {
      * metin paragrafları ve gömülü bölümlerin açıklamaları ilgili cümlenin altında — küçük kalın başlık = alanın adı (ad
      * boşsa "Açıklama") + girintili metin (sol şerit yok). Hiç kutucuk, metin ve not yoksa başlık da basılmaz.
      */
-    private static void summary(MailDoc d, TechErrorPdfInput in, Section s) {
+    private static void summary(MailDoc d, TechErrorPdfInput in, Section s, List<TechErrorSummary.Block> moved) {
         boolean en = in.template().en();
-        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
-                in.channelName(), in.year(), in.month());
+        List<TechErrorSummary.Block> blocks = new ArrayList<>(TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
+                in.channelName(), in.year(), in.month()));
+        blocks.addAll(moved);                 // özete taşınan gösterge bölümlerinin notları (2026-10-18), gömülü notlarla aynı çizim
         List<Tile> tiles = TechErrorTiles.build(in.template(), s, in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
         StringBuilder html = new StringBuilder();
         StringBuilder plain = new StringBuilder();

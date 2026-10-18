@@ -175,7 +175,7 @@ class TechErrorSummaryShownTest {
     }
 
     @Test
-    @DisplayName("varsayılan TR + EN şablon, tam dolu rapor: Verileri'nin bütün adetleri ve Oranları'nın bütün oranları özette — kesinti sorusu (hiçbir cümle yazmıyor) ve notlar kalır")
+    @DisplayName("varsayılan TR + EN şablon, tam dolu rapor: Verileri'nin bütün değerleri (2026-10-18: kesinti sorusu da — kesinti cümlesi) ve Oranları'nın bütün oranları özette; yalnız notlar kalır")
     void defaultTemplateFullyFilled() {
         for (String lang : List.of("tr", "en")) {
             Template t = TechErrorTemplate.defaults(lang);
@@ -187,16 +187,80 @@ class TechErrorSummaryShownTest {
                     "error-rate", 2.1));
             Set<String> shown = TechErrorSummary.shownValues(t, v, Map.of("error-count", 4_000_000_000L, "error-rate", 2.1), "Mobil", 2026, 9);
             assertThat(shown).as(lang).containsExactlyInAnyOrder("error-rate", "error-rate-excl", "total-tx", "tx-increase-pct", "tx-increase",
-                    "error-count", "unmapped-count", "unmapped-rate", "quota-count", "quota-rate", "outage-errors", "outage-share", "sla-rate",
-                    "sla-above");
+                    "error-count", "unmapped-count", "unmapped-rate", "quota-count", "quota-rate", "had-outage", "outage-errors", "outage-share",
+                    "sla-rate", "sla-above");
             for (Section s : t.sections()) {
                 if (!"metrics".equals(s.kind())) continue;
                 List<String> left = new ArrayList<>();
                 for (Field x : s.fields()) if (!TechErrorSummary.shownInSummary(x, shown)) left.add(x.id());
                 if ("rates".equals(s.id())) assertThat(left).as(lang + " Oranları").isEmpty();
-                if ("summary".equals(s.id())) assertThat(left).as(lang + " Verileri").containsExactly("unmapped-note", "quota-note", "had-outage");
+                if ("summary".equals(s.id())) assertThat(left).as(lang + " Verileri").containsExactly("unmapped-note", "quota-note");
             }
         }
+    }
+
+    // ── Çizim planı: bütün değerleri özette olan bölüm (kullanıcı kararı 2026-10-18) ───────────────────────
+
+    private static final String ALL_M = "A {f:n1}, B {f:n2}, oran {f:p1}, {f:y1?var|yok}, {f:gate?kesinti var|kesinti yok}.";
+
+    @Test
+    @DisplayName("çizim planı: bütün değerleri özette olan bölüm çözülür — dolu kısa metin ve açıklama (alan sırasıyla, alan adıyla) ilk görünen özetin sonuna; boş olanlar taşınmaz; muaf değer gerekmez; gömülü bölüm hiç çözülmez")
+    void planDissolvesFullyShownSection() {
+        Template t = template(List.of(ALL_M, "Gömülü {f:h1}."), List.of(), null, null);
+        Values v = values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", false, "ex", 3, "t1", "kısa", "ta1", "uzun **not**", "h1", 4),
+                Map.of());
+        TechErrorSummary.Plan plan = TechErrorSummary.plan(t, v, null, "Mobil", 2026, 9);
+        assertThat(plan.dissolved()).containsExactly("m");
+        assertThat(plan.anchor()).isEqualTo("sa");
+        assertThat(plan.moved()).extracting(TechErrorSummary.Block::kind, TechErrorSummary.Block::section, TechErrorSummary.Block::field,
+                        TechErrorSummary.Block::label, TechErrorSummary.Block::text)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("note", "m", "t1", "Kısa metin", "kısa"),
+                        org.assertj.core.groups.Tuple.tuple("note", "m", "ta1", "Uzun açıklama", "uzun **not**"));
+        Section sa = t.sections().get(0);
+        Section m = t.sections().stream().filter(s -> "m".equals(s.id())).findFirst().orElseThrow();
+        Section h = t.sections().stream().filter(s -> "h".equals(s.id())).findFirst().orElseThrow();
+        assertThat(plan.dissolved(m)).isTrue();
+        assertThat(plan.dissolved(h)).as("gömülü bölüm kendi kuralıyla").isFalse();
+        assertThat(plan.movedFor(sa)).hasSize(2);
+        assertThat(plan.movedFor(m)).isEmpty();
+        // Boş not / kısa metin taşınmaz; bölüm yine çözülür (basılacak değer kalmadı)
+        TechErrorSummary.Plan blank = TechErrorSummary.plan(t, values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", false, "ta1", "  "),
+                Map.of()), null, "Mobil", 2026, 9);
+        assertThat(blank.dissolved()).containsExactly("m");
+        assertThat(blank.moved()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("çizim planı: değerlerinden biri özette değilse bölüm notlarıyla YERİNDE (not iki kez basılmaz); yalnız notlu bölüm çözülmez; görünen özet yoksa hiçbir şey çözülmez; notlar ilk GÖRÜNEN özete düşer")
+    void planKeepsSectionsWithUnshownValues() {
+        // Kesinti "Evet": ex özette değil → m yerinde
+        Template t = template(List.of(ALL_M), List.of(), null, null);
+        TechErrorSummary.Plan p1 = TechErrorSummary.plan(t, values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", true, "ex", 3,
+                "ta1", "not"), Map.of()), null, "Mobil", 2026, 9);
+        assertThat(p1.dissolved()).isEmpty();
+        assertThat(p1.moved()).isEmpty();
+        // Seçilen dal boş: y1 özette değil → m yerinde
+        Template t2 = template(List.of("A {f:n1}, B {f:n2}, oran {f:p1}.{f:y1? Var.|} {f:gate?kesinti var|kesinti yok}"), List.of(), null, null);
+        assertThat(TechErrorSummary.plan(t2, values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", false, "gate", false), Map.of()), null,
+                "Mobil", 2026, 9).dissolved()).isEmpty();
+        // Yalnız açıklamalardan oluşan bölüm (değer alanı yok) yerinde kalır
+        List<Section> secs = new ArrayList<>(t.sections());
+        secs.add(metrics("notes", null, List.of(new Field("free", "Serbest not", "textarea", null))));
+        Template withNotes = new Template("tr", "{kanal}", List.copyOf(secs));
+        TechErrorSummary.Plan p2 = TechErrorSummary.plan(withNotes, values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", false,
+                "free", "serbest"), Map.of()), null, "Mobil", 2026, 9);
+        assertThat(p2.dissolved()).containsExactly("m");
+        assertThat(p2.moved()).isEmpty();
+        // Görünen özet yok (cümle düştü, kutucuk yok): hiçbir bölüm çözülmez
+        assertThat(TechErrorSummary.plan(t, values(f("n1", 1), Map.of()), null, "Mobil", 2026, 9).dissolved()).isEmpty();
+        // İki özet: ilki görünmüyor (cümlesi düştü), notlar ikincinin sonuna
+        Template two = template(List.of("Düşen {f:nope}."), List.of(), List.of(ALL_M), List.of());
+        TechErrorSummary.Plan p3 = TechErrorSummary.plan(two, values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", false,
+                "ta1", "not"), Map.of()), null, "Mobil", 2026, 9);
+        assertThat(p3.anchor()).isEqualTo("sb");
+        assertThat(p3.movedFor(two.sections().get(0))).isEmpty();
+        assertThat(p3.movedFor(two.sections().get(1))).extracting(TechErrorSummary.Block::text).containsExactly("not");
+        assertThat(TechErrorSummary.plan(null, Values.empty(), null, "Mobil", 2026, 9).dissolved()).isEmpty();
     }
 
     // ── Metin sınırı (inceleme 2026-10-18) ─────────────────────────────────────────────────────────────

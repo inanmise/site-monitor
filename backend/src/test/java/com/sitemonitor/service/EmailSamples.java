@@ -560,8 +560,9 @@ final class EmailSamples {
             // 2026-10-18: kısaltmayla girilmiş toplam işlem ("12,5M") ve sıfır kota hatası (yeşil tik — CID görsel)
             tf.put("quota-count", 0);
             tf.put("quota-rate", 0);
-            // 2026-10-18 (veri tekrarı yok): kesinti yok → kesinti alanları muaf. Özette yazılan her değer Verileri / Oranları
-            // bölümünde tekrar basılmaz: bu örnekte Oranları hiç basılmaz, Verileri yalnız kesinti sorusu + map açıklamasıyla
+            // 2026-10-18 (veri tekrarı yok): kesinti yok → kesinti alanları muaf, cevap özetin kesinti cümlesinde. Özette yazılan
+            // her değer Verileri / Oranları bölümünde tekrar basılmaz: bu örnekte iki bölüm de hiç basılmaz (kullanıcı kararı
+            // "Verileri'ni kaldıralım"), map açıklaması özetin sonunda alanın adıyla
             tf.put("had-outage", false);
             // 2026-10-18: anomali konusu — cevaplardan kurulan giriş metni + konunun görseli (kartın içinde, cid)
             java.util.Map<String, Object> topic = new java.util.LinkedHashMap<>();

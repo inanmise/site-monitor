@@ -44,7 +44,9 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  *
  * <p>2026-10-18 (kullanıcı isteği: "aynı veriyi birden fazla kez göstermeyelim"): değeri yönetici özetinde (kutucuk ya da
  * tutulan {@code {f:}} cümlesi) gösterilen sayı / yüzde / evet-hayır alanı gösterge bölümlerinde tekrar basılmaz
- * ({@link TechErrorSummary#shownValues}); geriye bir şey kalmayan bölüm hiç basılmaz. E-posta aynı kümeyi kullanır.
+ * ({@link TechErrorSummary#shownValues}); geriye bir şey kalmayan bölüm hiç basılmaz. Bütün değerleri özette olan bölüm
+ * (kullanıcı kararı 2026-10-18: "Verileri bölümünü kaldıralım") kendi yerinde hiç basılmaz, dolu notları özetin sonuna
+ * taşınır ({@link TechErrorSummary#plan}). E-posta aynı planı kullanır.
  *
  * <p>Yazıcı hesaplamaz: adetleri kullanıcı girer, otomatik oranları ({@code TechErrorCalc}) servis PDF girdisini kurarken
  * hesaplar. Dil şablondan gelir (TR / EN etiketleri, ay adları,
@@ -81,10 +83,11 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     private final List<PdfCanvas.Mark> marks = new ArrayList<>();
 
     /**
-     * Değeri yönetici özetinde gösterilen alanlar ({@link TechErrorSummary#shownValues}, 2026-10-18): gösterge bölümlerinde
-     * tekrar basılmaz. Çizimin başında bir kez hesaplanır; iki geçiş aynı girdiden aynı kümeyi kurar.
+     * Veri tekrarı planı ({@link TechErrorSummary#plan}, 2026-10-18): değeri yönetici özetinde gösterilen alanlar gösterge
+     * bölümlerinde tekrar basılmaz; bütün değerleri özette olan bölüm hiç basılmaz, notları özetin sonuna taşınır. Çizimin
+     * başında bir kez hesaplanır; iki geçiş aynı girdiden aynı planı kurar.
      */
-    private java.util.Set<String> shown = java.util.Set.of();
+    private TechErrorSummary.Plan plan = TechErrorSummary.Plan.none();
 
     /**
      * Yalnız yerleşim (ilk geçiş, R19 inceleme): görseller gömülmez (en pahalı adım) — yerleşim görselin baytına değil,
@@ -164,7 +167,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         cover(in);
         if (in.sample()) sampleBanner();
         List<TocRow> tocRows = tocTitles == null || tocTitles.isEmpty() ? null : reserveToc(tocTitles);
-        shown = TechErrorSummary.shownValues(in.template(), in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
+        plan = TechErrorSummary.plan(in.template(), in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
                 // Yönetici özetine gömülü bölüm (2026-10-17) kendi bölümü olarak basılmaz: rakamları özet cümlelerinde,
@@ -331,6 +334,8 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     }
 
     private void metrics(TechErrorPdfInput in, Section s) throws IOException {
+        // Bütün değerleri özette: bölüm basılmaz, dolu notları özetin sonunda (2026-10-18, kullanıcı kararı "kaldıralım")
+        if (plan.dissolved(s)) return;
         List<Field> cards = new ArrayList<>();
         List<Field> texts = new ArrayList<>();
         Map<String, Object> vals = in.values().fields();
@@ -338,7 +343,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             if (TechErrorTemplate.exempt(f, vals)) continue;     // "Hayır" cevabıyla muaf alan PDF'e girmez
             // Değeri yönetici özetinde (kutucuk ya da tutulan cümle) gösterilen sayı / yüzde / evet-hayır tekrar basılmaz
             // (2026-10-18, kullanıcı isteği: "aynı veriyi birden fazla kez göstermeyelim"); not ve kısa metin etkilenmez
-            if (TechErrorSummary.shownInSummary(f, shown)) continue;
+            if (TechErrorSummary.shownInSummary(f, plan.shown())) continue;
             // Boş uzun açıklama (isteğe bağlı) basılmaz — özet kartına gömülü notlarla aynı kural (7. sürüm, inceleme 2026-10-17);
             // kısa metin alanı boşsa "—" (alan vardı, doldurulmadı)
             if ("textarea".equals(f.type()) && blankText(vals.get(f.id()))) continue;
@@ -522,8 +527,10 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
      * not sonraki cümleleri kısaltmaz.
      */
     private void summary(TechErrorPdfInput in, Section s) throws IOException {
-        List<TechErrorSummary.Block> blocks = TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
-                in.channelName(), in.year(), in.month());
+        List<TechErrorSummary.Block> blocks = new ArrayList<>(TechErrorSummary.blocks(s, in.template(), in.values(), in.previousOrNull(),
+                in.channelName(), in.year(), in.month()));
+        // Özete taşınan gösterge bölümlerinin notları (2026-10-18): özet metninin ardında, gömülü notlarla aynı çizim
+        blocks.addAll(plan.movedFor(s));
         List<com.sitemonitor.service.techerror.TechErrorTiles.Tile> tiles = com.sitemonitor.service.techerror.TechErrorTiles.build(
                 in.template(), s, in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
         boolean any = !tiles.isEmpty();
