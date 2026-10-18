@@ -99,6 +99,7 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
                                          @Param("to") int toPeriod, @Param("after") long afterId,
                                          org.springframework.data.domain.Pageable page);
 
+    /**
      * Kanalın raporlarının kopyaladıkları şablon sürümüne göre sayısı (2026-10-18, D19) — sürüm penceresi için TEK gruplu
      * sorgu (sürüm başına sorgu yok). Satır: [sürüm (null = bilinmiyor), adet].
      */

@@ -318,6 +318,7 @@ public class TechErrorExportService {
             public Long getTeamId() { return r.teamId; }
             public Integer getReportYear() { return r.year; }
             public Integer getReportMonth() { return r.month; }
+            public Integer getTemplateVersion() { return null; }   // durum hesabı kullanmaz (D19 alanı)
             public String getTitlePattern() { return null; }
             public String getTemplateLang() { return null; }
             public Instant getCreatedAt() { return null; }
