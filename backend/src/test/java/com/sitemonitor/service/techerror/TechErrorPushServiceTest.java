@@ -419,6 +419,102 @@ class TechErrorPushServiceTest {
         assertThat(excluded.getValue()).containsExactly("po1");
     }
 
+    @Test
+    @DisplayName("kullanıcı kararı 2026-10-19 ('gitsin'): onaydan sonra KUYRUKTAKİ yöneticilere gönderim teslim edilince isteyen DOĞRUDAN 'teslim edildi' push'u alır ve takım bildiriminden düşülü kalır — iki push da teslimin AYNI anahtarıyla (kişi başına tek push); kendi onayı / isteyen yok / pasif / 'Gönderildi' ayarı kapalı → push yok; opt-out ve kişisel tercih kendi satırını yazar")
+    void queuedDeliveryTellsTheRequesterDirectly() {
+        // 1) teslim: isteyen Teknik Kişi (9), onaylayıp gönderen PO Bir (1)
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 5L, AT);
+        svc.delivered(CTX, true, 1L, "PO Bir", 5L, AT, List.of(9L));
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_SENT);
+        assertThat(names(calls.get(0))).containsExactly("tech");
+        assertThat(text.getValue().tr()).isEqualTo(
+                "[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu yöneticilere teslim edildi; kuyruktaki gönderim tamamlandı. Onaylayan: PO Bir.");
+        assertThat(text.getValue().en()).isEqualTo(
+                "[Technical error report] Mobil Bankacılık September 2026 was delivered to the executives; the queued send has completed. Approved by: PO Bir.");
+        String deliveryKey = "te-sent:42:5:" + AT.toEpochMilli();
+        assertThat(key.getValue()).isEqualTo(deliveryKey).isEqualTo(TechErrorPushService.sentKey(CTX, 5L, AT));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Set<String>> excluded = ArgumentCaptor.forClass(Set.class);
+        verify(push).enqueueTeamNoticeLocalized(eq(7L), eq(TechErrorPushService.TRIGGER_SENT), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                eq("Mobil Bankacılık Eylül 2026"), any(), eq(deliveryKey), excluded.capture());
+        assertThat(excluded.getValue()).containsExactlyInAnyOrder("po1", "tech");   // isteyen ve gönderen takım bildiriminde yok
+        assertThat(TechErrorPushService.requesterDeliveredText(CTX, false, "PO Bir", 200).tr())
+                .contains("takım adresine teslim edildi").endsWith("Gönderen: PO Bir.");
+
+        // 2) push yazılmayan durumlar: kendi onayı (isteyen = gönderen), isteyen yok, pasif, ayar kapalı, modül kapalı
+        svc.queuedDeliveredToRequester(CTX, true, 1L, 1L, "PO Bir", 5L, AT);
+        svc.queuedDeliveredToRequester(CTX, true, null, 1L, "PO Bir", 5L, AT);
+        byId.get(9L).setActive(false);
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 5L, AT);
+        byId.get(9L).setActive(true);
+        settings.put(TechErrorReportSettings.KEY_PUSH_DELIVERED, "false");
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 5L, AT);
+        settings.remove(TechErrorReportSettings.KEY_PUSH_DELIVERED);
+        when(visibility.teamVisible(7L)).thenReturn(false);
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 5L, AT);
+        when(visibility.teamVisible(7L)).thenReturn(true);
+        verify(push, times(1)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+
+        // 3) opt-out ve asgari seviye: kişi yine listede — servis atlama satırını yazar (sessiz kayıp yok)
+        byId.get(9L).setPushOptOut(true);
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 6L, AT);
+        byId.get(9L).setPushOptOut(false);
+        byId.get(9L).setPushMinLevel("HIGH");
+        svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 7L, AT);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UserPushService.DirectRecipient>> list = ArgumentCaptor.forClass(List.class);
+        verify(push, times(3)).enqueueDirectLocalized(list.capture(), eq(7L), eq(TechErrorPushService.TRIGGER_SENT), anyString(),
+                anyString(), anyString(), any(), anyString());
+        assertThat(list.getAllValues().get(1).get(0).optOut()).isTrue();
+        assertThat(list.getAllValues().get(2).get(0).skipReason()).isEqualTo("SKIPPED_USER_LEVEL");
+
+        // 4) hata yayılmaz
+        doThrow(new IllegalStateException("db down")).when(push)
+                .enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        byId.get(9L).setPushMinLevel(null);
+        assertThatCode(() -> svc.queuedDeliveredToRequester(CTX, true, 9L, 1L, "PO Bir", 8L, AT)).doesNotThrowAnyException();
+        TechErrorPushService none = new TechErrorPushService(appSettings, users);
+        assertThatCode(() -> none.queuedDeliveredToRequester(CTX, true, 9L, 1L, "x", 1L, AT)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("isteyenin 'teslim edildi' push'u CANLI tavana sığar (120 / 200 / 320; 66 karakterlik kanal + 71 karakterlik AD adı): çekirdek cümle ve dönem her tavanda, imza ya tam ya kısa ya yok; 320'de hepsi tam")
+    void requesterDeliveredTextFitsTheLimit() {
+        String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
+        TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L,
+                "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması", 2026, 9);
+        for (int limit : new int[] { 120, 200, 320 }) {
+            for (boolean exec : new boolean[] { true, false }) {
+                for (TechErrorPushService.Ctx ctx : List.of(CTX, longCh)) {
+                    UserPushService.LocalizedText t = TechErrorPushService.requesterDeliveredText(ctx, exec, adName, limit);
+                    for (boolean en : new boolean[] { false, true }) {
+                        String s = en ? t.en() : t.tr();
+                        String where = limit + " " + exec + " " + en + ": " + s;
+                        assertThat(s.length()).as(where).isLessThanOrEqualTo(limit);
+                        assertThat(PushText.truncate(PushText.pushSafe(s), limit)).as(where).isEqualTo(s);
+                        assertThat(s).as(where).contains(en ? "September 2026" : "Eylül 2026")
+                                .contains(en ? "the queued send has completed." : "kuyruktaki gönderim tamamlandı.")
+                                .startsWith(en ? "[Technical error report] " : "[Teknik hata raporu] ")
+                                .doesNotContain("http").doesNotContain("://");
+                        assertThat(s.endsWith(".")).as(where).isTrue();
+                        if (limit == 320) assertThat(s).as(where).contains(ctx.channelName()).endsWith(adName + ".");
+                    }
+                }
+            }
+        }
+        // Canlı tavan: messageCharLimit 120 → metin ≤ 120
+        when(push.messageCharLimit()).thenReturn(120);
+        svc.queuedDeliveredToRequester(longCh, true, 9L, 1L, adName, 5L, AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        verify(push).enqueueDirectLocalized(any(), eq(7L), eq(TechErrorPushService.TRIGGER_SENT), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                anyString(), text.capture(), anyString());
+        assertThat(text.getValue().tr().length()).isLessThanOrEqualTo(120);
+        assertThat(text.getValue().en().length()).isLessThanOrEqualTo(120);
+        assertThat(text.getValue().tr()).contains("yöneticilere teslim edildi");
+    }
+
     // ── 5. Gönderilemedi ──────────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -478,6 +574,7 @@ class TechErrorPushServiceTest {
         all.add(TechErrorPushService.decisionText(CTX, false, "Şükrü Öztürk", "Düzeltin — tablo ve “özet” eksik…\nikinci satır", null, null));
         for (boolean exec : new boolean[] { false, true }) {
             all.add(TechErrorPushService.deliveredText(CTX, exec, "Ayşe Yılmaz"));
+            all.add(TechErrorPushService.requesterDeliveredText(CTX, exec, "Şükrü Öztürk (Dijital / Çağrı)", 200));
             for (TechErrorPushService.Failure f : TechErrorPushService.Failure.values()) {
                 all.add(TechErrorPushService.failedText(CTX, exec, f, "PDF_TOO_LARGE"));
                 all.add(TechErrorPushService.failedText(CTX, exec, f, null));
