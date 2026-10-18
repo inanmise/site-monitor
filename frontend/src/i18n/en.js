@@ -9187,6 +9187,7 @@ export const EN = {
   'audit.ev.SCHEMA_PATCH': 'Schema patch',
   // Secret key rotation (2026-10-11)
   'audit.ev.SECRET_REENCRYPT': 'Secrets re-encrypted with the new key',
+  'audit.ev.SCRIPTED_SECRET_REVEAL': 'Synthetic monitor secret variable revealed',
   // Self-monitoring (2026-10-11)
   'audit.ev.WATCHDOG_EVALUATE': 'Self-monitoring evaluated manually',
   'audit.ev.WATCHDOG_TEST': 'Self-monitoring test notification sent',
@@ -13535,7 +13536,15 @@ export const EN = {
   'scripted.scriptCopied': 'Copied',
   'scripted.env': 'Environment Variables', 'scripted.envName': 'NAME', 'scripted.envValue': 'value', 'scripted.envSecret': 'Secret',
   'scripted.envSecretSet': '•••• (configured — leave blank to keep)', 'scripted.envSecretEmpty': 'secret value', 'scripted.envAdd': 'Add Variable',
-  'scripted.envHint': 'Secret values are stored encrypted; never returned as plaintext to the API/UI and cannot be read back.',
+  'scripted.envHint': 'Secret values are stored encrypted and never appear as plaintext in lists, the form, output or logs. Only a global administrator or the administrator who manages the monitor’s team can view a saved value.',
+  // Reveal a secret value (2026-10-19): global admin / the team's managing admin only, 30 s, audited
+  'scripted.envRevealHint': 'As an administrator you can see a saved secret value for 30 seconds with the eye button on its row. Every reveal is written to the audit log (the value itself is not).',
+  'scripted.revealShow': 'Show', 'scripted.revealHide': 'Hide',
+  'scripted.revealShowFor': 'Show secret value: {0}', 'scripted.revealHideFor': 'Hide secret value: {0}',
+  'scripted.revealSavedValue': 'Saved value · {0}',
+  'scripted.revealCopy': 'Copy', 'scripted.revealCopied': 'Copied', 'scripted.revealDismiss': 'Close',
+  'scripted.revealAutoHide': 'Hides itself after {0} seconds, when you switch tabs or windows, and when the form closes. Showing doesn’t change the value; type a new value in the box above.',
+  'scripted.revealFailed': 'The secret value couldn’t be shown. Refresh the page and try again; if it keeps failing, tell a system administrator.',
   'scripted.notifyEmail': 'Send email notifications', 'scripted.active': 'Active',
   'scripted.testRun': 'Test Run', 'scripted.testing': 'Running…', 'scripted.delete': 'Delete', 'scripted.cancel': 'Cancel', 'scripted.save': 'Save', 'scripted.saving': 'Saving…',
   'scripted.nameRequired': 'Name is required', 'scripted.saved': 'Monitor saved', 'scripted.saveError': 'The synthetic monitor couldn’t be saved. Check the fields and the script, then try again; if it keeps happening, tell the system administrators.',

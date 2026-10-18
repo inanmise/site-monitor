@@ -826,6 +826,57 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("2026-10-19: can_reveal = gösterme ucunun kuralı — global yönetici her satır, müdür yalnız YÖNETTİĞİ takım; "
+            + "paylaşım (EDIT / DELETE), TEAM_ADMIN ve izinsiz rol false; env satırları yine yalnız value_set taşır")
+    void scripted_list_canRevealFlag() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor a = k6Monitor(1L, 5L);
+        a.setEnvJson("[{\"name\":\"TOKEN\",\"secret\":true,\"value\":\"enc:v1:AAAA\"}]");
+        when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, k6Monitor(2L, 9L)));
+        when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(permissionService.allows(anyString(), eq("monitoring.read"), eq("view"))).thenReturn(true);
+
+        String body = mvc.perform(get("/api/monitoring/scripted").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_reveal").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 2)].can_reveal").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].env[0].value_set").value(true))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("enc:v1:AAAA");
+
+        MockHttpSession mudur = session("ADMIN");
+        mudur.setAttribute("teamId", 5L);
+        mudur.setAttribute("viewTeamIds", List.of(5L, 9L));
+        mudur.setAttribute("manageTeamIds", List.of(5L));
+        mvc.perform(get("/api/monitoring/scripted").session(mudur))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_reveal").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 2)].can_reveal").value(false));
+
+        mvc.perform(get("/api/monitoring/scripted").session(k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW,
+                        SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT, SessionScope.ATTR_GRANT_DELETE)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_delete").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_reveal").value(false))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 2)].can_reveal").value(false));
+
+        MockHttpSession teamAdmin = session("TEAM_ADMIN");
+        teamAdmin.setAttribute("teamId", 5L);
+        teamAdmin.setAttribute("viewTeamIds", List.of(5L));
+        teamAdmin.setAttribute("memberTeamIds", List.of(5L));
+        teamAdmin.setAttribute("manageTeamIds", List.of(5L));
+        mvc.perform(get("/api/monitoring/scripted").session(teamAdmin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_edit").value(true))
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_reveal").value(false));
+
+        when(permissionService.allows(anyString(), eq("monitoring.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/monitoring/scripted").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[?(@.id == 1)].can_reveal").value(false));
+    }
+
+    @Test
     @DisplayName("inceleme 2026-10-16: liste, maskelemeden ÖNCE yazılmış koşumun checks_json'unu da gizli değerlerle maskeler")
     void scripted_list_masksSecretsInStoredChecksJson() throws Exception {
         when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(k6Monitor(1L, 5L)));

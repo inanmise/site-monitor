@@ -723,6 +723,57 @@ public class ScriptedCheckerService {
         return out;
     }
 
+    /**
+     * Gizli değişkeni yöneticiye GÖSTERME sonucu (2026-10-19, kullanıcı isteği: "admin gizli bilgileri review edebilmeli").
+     * {@code value} yalnız {@link Status#OK} iken doludur ve hiçbir yere yazılmaz (log, denetim, hata gövdesi).
+     */
+    public record SecretLookup(Status status, String value) {
+        public enum Status { OK, NOT_FOUND, UNREADABLE }
+
+        static final SecretLookup NOT_FOUND = new SecretLookup(Status.NOT_FOUND, null);
+        static final SecretLookup UNREADABLE = new SecretLookup(Status.UNREADABLE, null);
+
+        /** Değer metni {@code toString}'e (log / hata ayıklama çıktısı) asla düşmez. */
+        @Override
+        public String toString() {
+            return "SecretLookup[" + status + "]";
+        }
+    }
+
+    /**
+     * İzlemenin GÜNCEL env'indeki tek bir GİZLİ değişkeni çözer — yalnız
+     * {@code ScriptedSecretRevealController} çağırır (kapı orada). Eski script sürümleri çözülmez.
+     *
+     * <ul>
+     *   <li>ad yok / değişken gizli değil / kayıtlı değer boş → {@link SecretLookup.Status#NOT_FOUND}</li>
+     *   <li>şifreli değer güncel ve önceki anahtarla çözülemiyor ya da env kaydı bozuk → {@link SecretLookup.Status#UNREADABLE}</li>
+     * </ul>
+     * Ad karşılaştırması BİREBİRDİR (env adları büyük/küçük harf duyarlı). Hiçbir değer loglanmaz; bozuk JSON'un iletisi
+     * de (şifreli metin parçası taşıyabilir) yazılmaz.
+     */
+    public SecretLookup revealSecret(ScriptedMonitor m, String name) {
+        if (m == null || name == null || name.isBlank()) return SecretLookup.NOT_FOUND;
+        String json = m.getEnvJson();
+        if (json == null || json.isBlank()) return SecretLookup.NOT_FOUND;
+        JsonNode arr;
+        try {
+            arr = mapper.readTree(json);
+        } catch (Exception e) {
+            log.warn("Sentetik izleme env kaydı okunamadı (izleme {}) — gizli değer gösterilemiyor", m.getId());
+            return SecretLookup.UNREADABLE;
+        }
+        if (arr == null || !arr.isArray()) return SecretLookup.UNREADABLE;
+        for (JsonNode n : arr) {
+            if (!name.equals(n.path("name").asText(null))) continue;
+            if (!n.path("secret").asBoolean(false)) return SecretLookup.NOT_FOUND;
+            String raw = n.path("value").asText("");
+            if (raw.isBlank()) return SecretLookup.NOT_FOUND;
+            String plain = cipher.decrypt(raw);
+            return plain == null ? SecretLookup.UNREADABLE : new SecretLookup(SecretLookup.Status.OK, plain);
+        }
+        return SecretLookup.NOT_FOUND;
+    }
+
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
     public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
         return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), proxyUseFor(useProxy));
