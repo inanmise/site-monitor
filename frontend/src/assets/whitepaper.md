@@ -1358,6 +1358,7 @@ Yalnız bootstrap admin hesabına açık, sol menülü yapılandırma merkezi. D
 | Domain Tanılama | Alan adı vade sorgusu adım izi, proxy CA zinciri yakalama (PEM) |
 | Veritabanı | Bağlantı ve şema bilgileri |
 | Gizli Anahtar Araçları | Saklanan SMTP/LDAP parolalarının AES-GCM araçları (`SITE_MONITOR_SECRET_KEY` ile korunur) |
+| Grafana Panosu | Prometheus ölçüm aktarıcısı (aç/kapa, izleme başına seriler, kayıt tavanı, aralık), içe aktarılabilir Grafana panosunun ayarları ve **JSON indir**; kapsamlı müdür salt okunur görür |
 
 ### 14.27 Sistem Sağlığı
 
@@ -1561,6 +1562,24 @@ Bazı domainlerin WAF/firewall'u izleme pod'unun IP'sini reddedebilir. Böyle bi
 > **Operasyonel değerleri `--set` ile vermeyin.** Yalnızca komut satırında verilen değerler release'in kendi values'ında yaşar; sürüm yeniden adlandırıldığında ya da yeniden kurulduğunda sessizce kaybolurlar. Bu gerçekten yaşandı: bir release geçişinde vekil ayarları düştü ve alan adı tescil sorguları (RDAP) günlerce bağlantı zaman aşımına düştü. Üretimin bağlı olduğu her değer `environments/master.yaml` dosyasında durmalıdır.
 
 Uyarı: tüm pod trafiğini vekile yönlendirmek diğer domainlerin kontrollerini kırar — yalnız sorun yaşayan domainleri işaretleyin. Vekilden muaf tutmak istediğiniz iç adresleri `NO_PROXY` listesine yazın; eşleşme sonek tabanlıdır, yani `ornek.com` girdisi tüm alt alanları da doğrudan çıkarır.
+
+### 15.10 Grafana ile Uçtan Uca İzleme
+
+SiteMonitor'ü kendi arayüzü dışında, Grafana'da izlemek isteyen ekipler için hazır bir pano vardır. Pano SiteMonitor'ün kendi Prometheus ölçümlerini okur: izlemelerin anlık durumu, açık alarmlar, sertifika ve alan adı vadeleri, bildirimler, fırtınalar ve SiteMonitor'ün kendi sağlığı. Ekipler SiteMonitor'e giriş yapmadan kendi izlemelerini takip eder; ayrıntı gerektiğinde satırdaki bağlantı SiteMonitor'de ilgili izlemeyi, alarmı ya da sertifikayı açar.
+
+**Kurulum üç adımdır.**
+
+1. **Prometheus SiteMonitor'ü kazısın.** Her pod ölçümlerini `/metrics` yolunda yayar; Helm şeması pod anotasyonlarını (`prometheus.io/scrape|port|path`) zaten ekler. Prometheus'u küme içinden kazıyacak şekilde ayarlayın — **Ayarlar → Platform → Grafana panosu** sayfasında kopyalanabilir bir örnek vardır. `/metrics` kimliksizdir ve takım, izleme ve alan adlarını taşır: Ingress / NetScaler'da dışarıya kapatın (çalıştırma kılavuzu: "/metrics erişimi").
+2. **Panoyu içe aktarın.** Aynı sayfada başlığı, pano kimliğini (UID), SiteMonitor adresini, Prometheus etiket eşleyicisini (aynı Prometheus birden çok ortamı kazıyorsa, ör. `namespace="site-monitor-prod"`), varsayılan zaman aralığını, yenilemeyi, dili, bölümleri ve varsayılan takımı seçip **JSON indir**'e basın. Grafana'da *Dashboards → New → Import* ile dosyayı yükleyin ve SiteMonitor'ü kazıyan Prometheus veri kaynağını seçin. Aynı UID ile yeniden içe aktarmak mevcut panoyu günceller.
+3. **Ekiplerle paylaşın.** Panonun üstündeki **Takım** süzgecini seçip görünümü kaydedin ya da bağlantıya `?var-team=<takım adı>` ekleyin; ekiplere Grafana'da görüntüleme izni verin. Her ekibe ayrı pano istiyorsanız varsayılan takımı ve UID'yi değiştirip ayrı JSON indirin.
+
+**Panoda neler var?** Yedi bölüm: *Genel durum* (sağlıklı / düşük / gecikmiş / bilinmeyen / duraklatılmış sayıları, 24 saatlik başarı oranı, seviyeye göre açık alarmlar, dolacak sertifikalar ve alan adları, aktif fırtınalar, kendi kendini izlemenin genel durumu, türe ve takıma göre dağılım), *Alarmlar* (seviyeye ve türe göre zaman serileri, takım tablosu, açık alarm listesi, en eski alarmlar), *İzleme durumu* (her izlemenin durumu, son ve 24 saatlik yanıt süresi, başarı oranı, seçili aralıktaki erişilebilirlik, son kontrolden beri geçen süre; sorun yaşayan izlemelerin durum zaman çizelgesi; en yavaşlar), *Sertifikalar ve alan adları* (kalan gün, durum, TLS notu, 30 gün içinde dolanlar), *Bildirimler ve fırtınalar*, *SiteMonitor sağlığı* (pod'lar, sürüm, tarama lideri, kendi kendini izleme kontrolleri, kilitler, veritabanı, saklama işi) ve *Çalışma zamanı* (HTTP hızı ve gecikmesi, JVM, GC, CPU, bağlantı ve iş havuzu, günlük hataları). Süzgeçler: takım, izleme türü, izleme, alarm seviyesi, "ilk N", Prometheus işi ve pod. Sürüm dağıtımları ve kritik / yüksek alarm açılışları grafiklerde dikey çizgi olarak görünür.
+
+**Renklerin anlamı her yerde aynıdır:** yeşil sağlıklı, turuncu gecikmiş (kontrol zamanında koşmadı), kırmızı düşük ya da sorunlu, gri duraklatılmış ya da bilinmiyor. **"Veri yok" asla sahte bir 0 değildir:** ölçüm aktarıcısı bir kaynağı okuyamazsa o kaynağın serilerini hiç yaymaz; panoda boşluk görürsünüz ve *SiteMonitor sağlığı → Okunamayan kaynak* nedenini söyler.
+
+**Ölçümler nereden geliyor?** Ölçüm aktarıcısı her pod'da dakikada bir, istek yolunun dışında çalışır ve `sitemonitor_*` ölçümlerini yazar (izleme başına durum ve yanıt süresi, takım / tür toplamları, alarm, sertifika, alan adı, fırtına, bildirim, push, kendi kendini izleme, tarama lideri, kilit, veritabanı ve bakım durumu). Her pod kuruluş değerlerini aynı yayar; pano bunları pod'dan bağımsız birleştirir. İzleme başına seriler ve aile başına kayıt tavanı (varsayılan 5000; aşılınca sorunlu kayıtlar korunur) aynı sayfadan değiştirilir. Kendi panellerinizi ve alarm kurallarınızı yazmak için sayfadaki **Yayınlanan ölçümler** kataloğu her ölçümün adını, kapsamını, etiketlerini ve anlamını listeler.
+
+**Pano revizyonu.** Pano açıklamasında bir revizyon numarası ve SiteMonitor sürümü yazar. Yeni bir sürüm panoya panel ya da ölçüm eklediğinde revizyon artar; sayfadaki rozet yeni revizyonu gösterir — JSON'u yeniden indirip aynı UID ile içe aktarmanız yeterlidir.
 
 ---
 

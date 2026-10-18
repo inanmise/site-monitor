@@ -19,6 +19,7 @@
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
 | RDAP/HTTPS `PKIX path building failed` | [Kurumsal vekil CA rotasyonu](#kurumsal-vekil-ca-rotasyonu) |
 | `/metrics` dışarıdan açık mı? | [/metrics erişimi](#metrics-erişimi) |
+| Grafana panosu boş / "veri yok", Prometheus kazıma ayarı | [Grafana panosu ve Prometheus](#grafana-panosu-ve-prometheus) |
 | Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
 | "Uygulama sorunu: …" e-postası / dış izleyici `/api/public/health/watchdog` 503 | [Kendi kendini izleme](#kendi-kendini-izleme) |
 
@@ -276,6 +277,74 @@ Seçenekler (platform ekibi kararı):
 3. Kalıcı: ayrı yönetim portu (`management.server.port`) + Service'te yayınlamama — kod ve chart değişikliği.
 
 Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/metrics` → engellendiyse 403/404.
+
+2026-10-18'den beri `/metrics` ayrıca **izleme ölçümlerini** (`sitemonitor_*`: takım, izleme ve alan adları, hedef host /
+URL — sorgudaki sır parametresi ve kullanıcı bilgisi maskelenir) taşır. Kenarda engellemek artık zorunludur; Prometheus
+pod IP'sinden küme içinden kazımaya devam eder.
+
+## Grafana panosu ve Prometheus
+
+Ayarlar → Platform → **Grafana panosu**: ölçüm aktarıcısının canlı durumu (bu pod), pano ayarları ve **JSON indir**
+(global yönetici). Ayrıntı: kılavuz §15.10.
+
+**Prometheus kazıma örneği** (pod anotasyonlarıyla; Helm `podAnnotations` zaten ekler — ServiceMonitor kullanan kümede
+aynı yolu `endpoints: [{port: http, path: /metrics}]` ile verin):
+
+```yaml
+scrape_configs:
+  - job_name: site-monitor
+    metrics_path: /metrics
+    scrape_interval: 30s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [<site-monitor-namespace>]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+```
+
+Aynı Prometheus birden çok ortamı (test + prod) kazıyorsa sayfadaki **Prometheus etiket eşleyicisi** alanına
+`namespace="<prod ad alanı>"` yazın; pano her sorguya ekler.
+
+Pano "veri yok" gösteriyorsa sırayla:
+1. Kazıma: Prometheus → Status → Targets'ta SiteMonitor pod'ları `UP` mı? `curl -s http://<pod-ip>:8080/metrics | grep -c '^sitemonitor_'`
+   sıfırdan büyük olmalı.
+2. Aktarıcı: Ayarlar sayfasındaki canlı kontrol "Çalışıyor" mu? Kapalıysa (`site.monitor.metrics.export.enabled`,
+   env `METRICS_EXPORT_ENABLED`) açın; "Takılmış olabilir" ise pod günlüğünde `İzleme ölçümleri tazelenemedi` arayın.
+3. Okunamayan kaynak: `sitemonitor_exporter_source_up == 0` olan kaynakların serileri bilerek DÜŞER (sahte 0 yazılmaz) —
+   genellikle veritabanı erişimi; Sistem Sağlığı → Veritabanı.
+4. Seri tavanı: `sitemonitor_exporter_capped{family} == 1` → aile başına kayıt tavanını artırın ya da izleme başına serileri
+   kapatın (Prometheus yükü). Günlükte saatte bir `seri tavanına takıldı` uyarısı.
+
+Çok pod: her pod kuruluş ölçümlerini aynı değerle yayar; kendi sorgularınızda `max by (<ölçümün etiketleri>)` ile
+birleştirin (ör. `sum(max by (type, team, team_id, state) (sitemonitor_monitors{state="down"}))`). Pod'a özgü olanlar:
+`sitemonitor_sweep_leader` (toplamı 1 olmalı), `sitemonitor_exporter_*`, `sitemonitor_database_status`,
+`sitemonitor_push_circuit_open`.
+
+Örnek Prometheus alarm kuralları:
+
+```yaml
+groups:
+  - name: sitemonitor
+    rules:
+      - alert: SiteMonitorMonitorDown
+        expr: max by (type, team, monitor) (sitemonitor_monitor_state) == 2
+        for: 5m
+        labels: { severity: warning }
+      - alert: SiteMonitorNoSweepLeader
+        expr: sum(sitemonitor_sweep_leader) == 0
+        for: 5m
+        labels: { severity: critical }
+      - alert: SiteMonitorExporterStale
+        expr: time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds) > 600
+        labels: { severity: warning }
+```
 
 ## Günlükler ve izleme
 

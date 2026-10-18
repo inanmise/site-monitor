@@ -5,6 +5,10 @@ Site Monitor her pod açılışında kendi build kimliğini Prometheus'a iki öl
 ne zaman devreye girdi"**, **"sürüm değişince uyar"** ve **"haftada kaç dağıtım yaptık"** sorularına
 bağlar. Uygulama tarafında ek ayar gerekmez; ölçümler her zaman açıktır.
 
+> **Hazır pano (2026-10-18):** Ayarlar → Platform → **Grafana panosu** sayfası, bu anotasyonu ve izleme durumu,
+> alarmlar, sertifikalar, SiteMonitor sağlığı panellerini içeren içe aktarılabilir pano JSON'unu indirir (kılavuz §15.10,
+> çalıştırma kılavuzu "Grafana panosu ve Prometheus"). Bu belge kendi panonuzu elle kurmak içindir.
+
 ## 1. Ölçümler
 
 | Ölçüm (Prometheus adı) | Tür | Etiketler | Anlamı |
