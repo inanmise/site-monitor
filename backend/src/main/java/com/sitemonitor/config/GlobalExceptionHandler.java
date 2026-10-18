@@ -580,17 +580,29 @@ public class GlobalExceptionHandler {
      * Kötümser kilit çatışması (inceleme 2026-10-18): PostgreSQL kilitlenme (40P01 → {@code CannotAcquireLockException} /
      * {@code DeadlockLoserDataAccessException}), serileştirme hatası (40001 → {@code CannotSerializeTransactionException}) ve
      * kilit bekleme zaman aşımı (55P03) — hepsi {@link org.springframework.dao.PessimisticLockingFailureException}. Veritabanı
-     * ERİŞİLEBİLİR; aynı kayıtta aynı anda iki işlem çatıştı ve biri geri alındı → 409 {@code CONCURRENT_MODIFICATION}
-     * ("tekrar deneyin"). Eskiden {@link TransientDataAccessException} üzerinden 503 "veritabanına ulaşılamıyor" alıyordu —
-     * yanlış neden.
+     * ERİŞİLEBİLİR; aynı kayıtta aynı anda iki işlem çatıştı ve biri geri alındı → 503 {@code LOCK_CONFLICT} +
+     * {@code Retry-After: 2} (gövdede {@code retry_after_seconds}). Eskiden {@link TransientDataAccessException} üzerinden
+     * 503 "veritabanına ulaşılamıyor" alıyordu — yanlış neden.
+     *
+     * <p>409 DEĞİL: istemci ekranları 409'u / {@code CONCURRENT_MODIFICATION}'ı "kaydı başkası değiştirdi" diye okur
+     * (rapor otomatik kaydı çakışma afişiyle durur, envanter formu alan adı altına yazar, kodla giriş "başka oturum açık"
+     * adımını açar). Geçici, yinelenebilir bir ret olarak 503 → otomatik kayıt eskisi gibi artan aralıkla yeniden dener.
+     * Metin "hiçbir şey kaydedilmedi" DEMEZ: çok adımlı istekler (onay kararı, gönderim talebi) kısmen ilerlemiş olabilir.
      */
     @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
     public ResponseEntity<Map<String, Object>> handlePessimisticLock(Exception e) {
         log.warn("Kilit çatışması (eşzamanlı işlem, geri alındı) [istek={}]: {}", rid(), e.toString());
-        return respond(409, "CONCURRENT_MODIFICATION", Msg.t(
-                "Aynı kayıt üzerinde aynı anda başka bir işlem sürüyordu; işleminiz tamamlanmadı ve hiçbir şey kaydedilmedi. Birkaç saniye sonra tekrar deneyin; sayfayı yenilemek son durumu gösterir.",
-                "Another action was working on the same record at the same moment, so yours didn’t finish and nothing was saved. Try again in a few seconds; reloading the page shows the latest state."));
+        Map<String, Object> body = errorBody("LOCK_CONFLICT", Msg.t(
+                "Aynı kayıt üzerinde aynı anda başka bir işlem sürdüğü için veritabanı isteğinizi durdurdu; işlem tamamlanmamış olabilir. Birkaç saniye sonra tekrar deneyin; önce sayfayı yenileyip son durumu kontrol etmeniz önerilir.",
+                "The database stopped your request because another action was working on the same record at the same moment; the action may not have completed. Try again in a few seconds; reloading the page first shows the current state."));
+        body.put("retry_after_seconds", LOCK_CONFLICT_RETRY_SECONDS);
+        return ResponseEntity.status(503)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, String.valueOf(LOCK_CONFLICT_RETRY_SECONDS))
+                .body(body);
     }
+
+    /** Kilit çatışmasından sonra önerilen bekleme (sn) — {@code Retry-After} başlığı ve {@code retry_after_seconds}. */
+    static final int LOCK_CONFLICT_RETRY_SECONDS = 2;
 
     /** JPA "kayıt yok" (getReferenceById / tembel yükleme) → 404, 500 değil. */
     @ExceptionHandler({jakarta.persistence.EntityNotFoundException.class,

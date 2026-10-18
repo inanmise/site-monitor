@@ -212,6 +212,19 @@ describe('normalizeErrorBody', () => {
     expect(normalizeErrorBody({ success: false }, { status: 429, retryAfter: '7', lang: 'tr' }).error).toContain('7 saniye')
   })
 
+  it('503 LOCK_CONFLICT (kilit çatışması, 2026-10-18): sunucunun "tamamlanmamış olabilir" metni korunur — genel 503 / DB metni değil', () => {
+    const tr = 'Aynı kayıt üzerinde aynı anda başka bir işlem sürdüğü için veritabanı isteğinizi durdurdu; işlem tamamlanmamış olabilir. Birkaç saniye sonra tekrar deneyin; önce sayfayı yenileyip son durumu kontrol etmeniz önerilir.'
+    const out = normalizeErrorBody({ success: false, code: 'LOCK_CONFLICT', error: tr, retry_after_seconds: 2, request_id: 'rid-l' },
+      { status: 503, retryAfter: '2', lang: 'tr' })
+    expect(out.error).toBe(tr)
+    expect(out.error).not.toBe(statusMessage(503, { lang: 'tr' }))
+    expect(out.errorInfo).toEqual({ status: 503, code: 'LOCK_CONFLICT', requestId: 'rid-l' })
+    const en = 'The database stopped your request because another action was working on the same record at the same moment; the action may not have completed. Try again in a few seconds; reloading the page first shows the current state.'
+    expect(normalizeErrorBody({ success: false, code: 'LOCK_CONFLICT', error: en }, { status: 503, lang: 'en' }).error).toBe(en)
+    expect(isTechnicalMessage(tr)).toBe(false)
+    expect(isTechnicalMessage(en)).toBe(false)
+  })
+
   it('metin→künye kaydı: aynı metin ortak bildirimde künyeyi bulur; süre dolunca düşer', () => {
     normalizeErrorBody({ error: 'Kayıt çakıştı, sayfayı yenileyin' }, { status: 409, requestId: 'r1', lang: 'tr' })
     expect(lookupErrorInfo('Kayıt çakıştı, sayfayı yenileyin')).toEqual({ status: 409, requestId: 'r1' })
