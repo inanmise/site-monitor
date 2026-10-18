@@ -94,6 +94,15 @@ class TechErrorSummaryShownTest {
                     Map.of(), null, Set.of("y1")),
             new Row("madde kalıbı boş gövdeye çözüldü — düşer", List.of("- {f:y1?Var|}"), List.of(), null, null, f("y1", false), Map.of(),
                     null, Set.of()),
+            // İnceleme 2026-10-18: seçilen dal BOŞSA cümle y1 hakkında bir şey yazmaz → y1 sayılmaz (Verileri'nde kalır)
+            new Row("seçim, Hayır dalı boş — y1 sayılmaz, cümlenin diğer değeri sayılır", List.of("Toplam işlem {f:n1}.{f:y1? Kesinti yaşandı.|}"),
+                    List.of(), null, null, f("n1", 5, "y1", false), Map.of(), null, Set.of("n1")),
+            new Row("seçim, Evet dalı dolu — y1 sayılır", List.of("Toplam işlem {f:n1}.{f:y1? Kesinti yaşandı.|}"), List.of(), null, null,
+                    f("n1", 5, "y1", true), Map.of(), null, Set.of("n1", "y1")),
+            new Row("seçim, seçilen dal yalnız boşluk — sayılmaz", List.of("Durum: {f:y1?   |Yok}"), List.of(), null, null, f("y1", true),
+                    Map.of(), null, Set.of()),
+            new Row("seçim, Hayır dalı dolu — sayılır", List.of("{f:y1?Var|Yok}."), List.of(), null, null, f("y1", false), Map.of(), null,
+                    Set.of("y1")),
             new Row("elle metin — yalnız kutucuklar", List.of("A {f:n1} oldu."), List.of("n2"), null, null, f("n1", 5, "n2", 7),
                     Map.of("sa", "Elle yazılmış özet."), null, Set.of("n2")),
             new Row("boş elle metin = otomatik", List.of("A {f:n1} oldu."), List.of(), null, null, f("n1", 5), Map.of("sa", "  "), null,
@@ -187,6 +196,115 @@ class TechErrorSummaryShownTest {
                 if ("rates".equals(s.id())) assertThat(left).as(lang + " Oranları").isEmpty();
                 if ("summary".equals(s.id())) assertThat(left).as(lang + " Verileri").containsExactly("unmapped-note", "quota-note", "had-outage");
             }
+        }
+    }
+
+    // ── Metin sınırı (inceleme 2026-10-18) ─────────────────────────────────────────────────────────────
+
+    /** n0…n{count-1} sayı alanlı gösterge bölümü + uzun cümleli özet; {@code facts} > 0 ise özete gömülü, uzun adlı alanlar. */
+    private static Template capTemplate(int count, int facts) {
+        List<String> lines = new ArrayList<>();
+        if (facts > 0) lines.add("Gömülü bölüm {f:h0} ile başlar.");
+        for (int k = 0; k < count; k++) {
+            String head = "Uzun cümle " + k + ": ";
+            lines.add(head + "x".repeat(480 - head.length()) + " değer {f:n" + k + "}.");
+        }
+        List<Field> fields = new ArrayList<>();
+        for (int k = 0; k < count; k++) fields.add(new Field("n" + k, "Gösterge " + k + " numaralı", "number", null));
+        List<Section> s = new ArrayList<>();
+        s.add(summary("sa", lines, List.of()));
+        s.add(metrics("m", null, fields));
+        if (facts > 0) {
+            List<Field> hosted = new ArrayList<>();
+            hosted.add(new Field("h0", "Gömülü başlangıç", "number", null));
+            for (int k = 1; k <= facts; k++) hosted.add(new Field("h" + k, "Gömülü uzun adlı alan " + k + " " + "y".repeat(240), "number", null));
+            s.add(metrics("h", "sa", hosted));
+        }
+        return new Template("tr", "{kanal}", List.copyOf(s));
+    }
+
+    private static Map<String, Object> capValues(int count, int facts) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (int k = 0; k < count; k++) m.put("n" + k, 1000 + k);
+        for (int k = 0; k <= facts; k++) m.put("h" + k, 2000 + k);
+        return m;
+    }
+
+    /** Basılan özet metni: blokların metin kısmı "\n\n" ile birleşik (kesilmişse "…" ile biter). */
+    private static String printed(List<TechErrorSummary.Block> blocks) {
+        StringBuilder b = new StringBuilder();
+        for (TechErrorSummary.Block x : blocks) {
+            if (x.note()) continue;
+            if (!b.isEmpty()) b.append("\n\n");
+            b.append(x.text());
+        }
+        return b.toString();
+    }
+
+    /**
+     * Kehanet: bir alan özette gösterildi ⇔ ona başvuran cümle basılan metinde TAMAMEN var. Ayrıca en az bir cümle kesim
+     * noktasında BÖLÜNMÜŞ (başı basıldı, sonu yok) olmalı — eski kural onu "gösterildi" sayıyordu.
+     */
+    private static void assertCapOracle(Template t, Values v, String what) {
+        Section sa = t.sections().get(0);
+        Set<String> shown = TechErrorSummary.shownValues(t, v, null, "Mobil", 2026, 9);
+        String text = printed(TechErrorSummary.blocks(sa, t, v, "Mobil", 2026, 9));
+        assertThat(text.length()).as(what + ": metin sınırda kesildi").isLessThanOrEqualTo(TechErrorTemplate.MAX_RESOLVED_TEXT);
+        Map<String, Field> byId = new HashMap<>();
+        for (Field x : t.allFields()) byId.put(x.id(), x);
+        boolean straddled = false;
+        int counted = 0;
+        for (String line : sa.lines()) {
+            String id = TechErrorSummary.refs(line).get(0).id();
+            if (!id.startsWith("n")) continue;
+            String sentence = TechErrorSummary.line(line, byId, v.fields(), null, Map.of(), Map.of(), "tr", "Mobil", 2026, 9);
+            boolean whole = text.contains(sentence);
+            String head = sentence.substring(0, 20);
+            if (!whole && text.contains(head)) straddled = true;
+            assertThat(shown.contains(id)).as(what + ": " + id + " (cümlesi basıldı mı: " + whole + ")").isEqualTo(whole);
+            if (whole) counted++;
+        }
+        assertThat(straddled).as(what + ": kesim noktasında bölünen cümle var").isTrue();
+        assertThat(counted).as(what + ": kesimden önce biten cümleler sayıldı").isPositive();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: 12 000 karakter sınırı — yalnız kesimden ÖNCE biten cümlenin alanları gösterildi sayılır; kesilen ve sonraki cümlelerin değerleri gösterge bölümünde kalır (PDF)")
+    void textCapCountsOnlySentencesEndingBeforeTheCut() throws java.io.IOException {
+        Template t = capTemplate(30, 0);
+        Values v = values(capValues(30, 0), Map.of());
+        assertCapOracle(t, v, "yalnız cümleler");
+        // PDF: kesilen cümlenin (ve sonrakilerin) değeri gösterge bölümünde basılır, kesimden önce bitenler basılmaz
+        Set<String> shown = TechErrorSummary.shownValues(t, v, null, "Mobil", 2026, 9);
+        String pdf = pdfText(t, v);
+        for (int k = 0; k < 30; k++) {
+            assertThat(pdf.contains("Gösterge " + k + " numaralı")).as("n" + k).isEqualTo(!shown.contains("n" + k));
+        }
+        assertThat(shown).contains("n0").doesNotContain("n29");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: gömülü bölümün söylenmemiş değer satırları aynı metin bütçesindedir — onların ittiği ve kesilen cümlelerin değerleri gösterildi sayılmaz")
+    void embeddedFactLinesShareTheBudget() throws java.io.IOException {
+        Template t = capTemplate(21, 15);
+        Values v = values(capValues(21, 15), Map.of());
+        // Cümleler tek başına sınıra sığar (eski ölçü hepsini sayardı); söylenmemiş değer satırları onları sınırın dışına iter
+        int sentences = 0;
+        for (String line : t.sections().get(0).lines()) sentences += line.length() + 1;
+        assertThat(sentences).isLessThan(TechErrorTemplate.MAX_RESOLVED_TEXT);
+        assertCapOracle(t, v, "gömülü satırlarla");
+        Set<String> shown = TechErrorSummary.shownValues(t, v, null, "Mobil", 2026, 9);
+        String pdf = pdfText(t, v);
+        for (int k = 0; k < 21; k++) {
+            assertThat(pdf.contains("Gösterge " + k + " numaralı")).as("n" + k).isEqualTo(!shown.contains("n" + k));
+        }
+    }
+
+    private static String pdfText(Template t, Values v) throws java.io.IOException {
+        byte[] pdf = com.sitemonitor.service.report.TechErrorReportPdfWriter.render(new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9,
+                null, null, Map.of()));
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = org.apache.pdfbox.Loader.loadPDF(pdf)) {
+            return new org.apache.pdfbox.text.PDFTextStripper().getText(doc).replaceAll("[\\s\\u00a0]+", " ");
         }
     }
 }

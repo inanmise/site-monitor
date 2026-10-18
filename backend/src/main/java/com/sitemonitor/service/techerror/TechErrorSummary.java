@@ -236,11 +236,29 @@ public final class TechErrorSummary {
             for (Section e : embedded) out.addAll(notes(e, t, vals, channel, year, month));
             return out;
         }
+        return capText(layout(s, t, vals, previous, targets, units, channel, year, month).blocks());
+    }
+
+    /**
+     * Otomatik özetin sınırsız (kesilmemiş) yerleşimi: bloklar, 1. geçişin tutulan cümleleri ve her tutulan cümlenin
+     * birleşik metindeki BİTİŞ konumu ({@code ends[i]}; metin blokları "\n\n" ile birleşik sayılır — {@link #capText} ile
+     * aynı ölçü —, yerleşmeyen cümle −1). {@link #blocks} bunu keser; {@link #shownValues} hangi cümlenin kesimden önce
+     * BİTTİĞİNİ buradan okur (gömülü bölümlerin söylenmemiş değer satırları da aynı birleşik metindedir).
+     */
+    private record Layout(List<Block> blocks, List<String> kept, int[] ends) { }
+
+    private static Layout layout(Section s, Template t, Map<String, Object> vals, Map<String, Object> previous,
+                                 Map<String, Object> targets, Map<String, Integer> units, String channel, int year, int month) {
+        List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
+        List<Block> out = new ArrayList<>();
         Map<String, Field> byId = new HashMap<>();
         for (Field f : t.allFields()) byId.put(f.id(), f);
         Told pass = told(s, byId, vals, previous, targets, units, t.lang(), channel, year, month);
         List<String> kept = pass.kept();
         Set<String> told = pass.told();
+        int[] ends = new int[kept.size()];
+        java.util.Arrays.fill(ends, -1);
+        List<int[]> pending = new ArrayList<>();      // tampondaki cümleler: {satır, tampon içindeki bitiş}
         // 2. geçiş: paragraf akışı auto ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir
         boolean[] placed = new boolean[embedded.size()];
         StringBuilder buf = new StringBuilder();
@@ -264,6 +282,7 @@ public final class TechErrorSummary {
                 buf.append(r);
                 inParagraph = true;
             }
+            pending.add(new int[] { i, buf.length() });
             if (embedded.isEmpty()) continue;
             Set<String> ids = new HashSet<>();
             for (Ref ref : refs(line)) ids.add(ref.id());
@@ -272,16 +291,29 @@ public final class TechErrorSummary {
                 placed[k] = true;
                 List<Block> add = embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month);
                 if (add.isEmpty()) continue;                      // eklenecek bir şey yok: paragraf bölünmez
+                resolveEnds(pending, ends, flushed, buf);
                 flushed = flush(out, buf, flushed);
                 flushed = append(out, add, flushed);
                 inParagraph = false;
             }
         }
+        resolveEnds(pending, ends, flushed, buf);
         flushed = flush(out, buf, flushed);
         for (int k = 0; k < embedded.size(); k++) {
             if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month), flushed);
         }
-        return capText(out);
+        return new Layout(out, kept, ends);
+    }
+
+    /** Tampondaki cümlelerin bitişini birleşik metne çevirir (tampon blok olmadan hemen önce çağrılır). */
+    private static void resolveEnds(List<int[]> pending, int[] ends, int flushed, StringBuilder buf) {
+        if (buf.isEmpty()) {
+            pending.clear();
+            return;
+        }
+        int start = flushed > 0 ? flushed + 2 : 0;
+        for (int[] p : pending) ends[p[0]] = start + p[1];
+        pending.clear();
     }
 
     /** 1. geçişin sonucu: kalıp satırı başına tutulan cümle ({@code null} = düşen) ve "söylenen" alanlar. */
@@ -290,8 +322,8 @@ public final class TechErrorSummary {
     /**
      * 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar ("söylenenler"). Metin sınırı
      * {@link #auto} ile aynı ölçüyle burada da işler: sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz.
-     * {@link #blocks} (söylenmemiş değerler) ve {@link #shownValues} (gösterge bölümünde tekrar basılmayacaklar) AYNI
-     * sonucu kullanır — iki kural ayrışamaz.
+     * {@link #blocks} (söylenmemiş değerler) bunu kullanır; {@link #shownValues} (gösterge bölümünde tekrar basılmayacaklar)
+     * aynı geçişin üstüne kurulan yerleşimden ({@link #layout}) okur — basılan metinde tamamı kalan cümleler.
      */
     private static Told told(Section s, Map<String, Field> byId, Map<String, Object> vals, Map<String, Object> previous,
                              Map<String, Object> targets, Map<String, Integer> units, String lang, String channel, int year, int month) {
@@ -326,9 +358,14 @@ public final class TechErrorSummary {
      * <ul>
      *   <li>kutucuk şeridinde ÇİZİLEN alanlar ({@link TechErrorTiles#build} — şablonda olmayan / sayı-yüzde olmayan / muaf
      *       kutucuk çizilmez, sayılmaz; boş değer "—" ile çizilir, sayılır);</li>
-     *   <li>özet otomatikse: TUTULAN (düşmeyen) bir cümlede {@code {f:<alan>}} ile değeri yazılan alanlar — söylenmemiş değer
-     *       kuralının ({@link #blocks}) aynı 1. geçişi; {@code {d:}} / {@code {t:}} / {@code {dt:}} değeri yazmaz, sayılmaz;
-     *       metin sınırından sonraki cümle sayılmaz;</li>
+     *   <li>özet otomatikse: tutulan (düşmeyen) ve basılan metinde TAMAMI kalan bir cümlede {@code {f:<alan>}} ile değeri
+     *       yazılan alanlar. Cümleler {@link #blocks} ile aynı yerleşimden okunur ({@link #layout}); metin sınırı
+     *       ({@link TechErrorTemplate#MAX_RESOLVED_TEXT}) aşılırsa yalnız kesim noktasından ÖNCE biten cümle sayılır — kesilen
+     *       ya da sınırdan sonraki cümlenin değeri basılmaz (inceleme 2026-10-18); gömülü bölümlerin söylenmemiş değer
+     *       satırları da aynı birleşik metindedir. {@code {d:}} / {@code {t:}} / {@code {dt:}} değeri yazmaz, sayılmaz;
+     *       {@code {f:x?evet|hayır}} yalnız SEÇİLEN dal boş değilse sayılır ("…{f:y?Kesinti yaşandı.|}" Hayır cevabında y
+     *       hakkında bir şey yazmaz — inceleme 2026-10-18). Söylenmemiş değer kuralının ({@link #facts}) kümesi bu iki
+     *       ayrıntıyı bilerek İÇERMEZ (istemciyle ortak doğruluk tablosu değişmesin);</li>
      *   <li>özet elle düzenlendiyse ({@code texts[<özet>]} boş değil): YALNIZ kutucuklar (elle metnin içeriği bilinmez).</li>
      * </ul>
      * PDF ve e-posta, özete GÖMÜLÜ olmayan gösterge bölümlerinde bu alanların sayı / yüzde / evet-hayır değerini tekrar
@@ -338,19 +375,49 @@ public final class TechErrorSummary {
         Set<String> out = new HashSet<>();
         if (t == null || v == null) return out;
         Map<String, Object> vals = v.fields() == null ? Map.of() : v.fields();
-        Map<String, Field> byId = null;
         for (Section s : t.sections()) {
             if (!"summary".equals(s.kind())) continue;
             for (TechErrorTiles.Tile tile : TechErrorTiles.build(t, s, v, previous, channel, year, month)) out.add(tile.id());
             String override = v.texts() == null ? null : v.texts().get(s.id());
             if (override != null && !TechErrorRichText.blank(override)) continue;
-            if (byId == null) {
-                byId = new HashMap<>();
-                for (Field f : t.allFields()) byId.put(f.id(), f);
+            Layout lay = layout(s, t, vals, previous, v.targets(), v.units(), channel, year, month);
+            int cut = cutEnd(joinedText(lay.blocks()));
+            for (int i = 0; i < lay.kept().size(); i++) {
+                if (lay.kept().get(i) == null || lay.ends()[i] < 0 || lay.ends()[i] > cut) continue;
+                for (Ref ref : refs(s.lines().get(i))) {
+                    if (!"f".equals(ref.kind())) continue;
+                    if (ref.yes() != null) {
+                        String branch = Boolean.TRUE.equals(vals.get(ref.id())) ? ref.yes() : ref.no();
+                        if (TechErrorRichText.blank(literal(branch, channel, year, month, t.lang()))) continue;
+                    }
+                    out.add(ref.id());
+                }
             }
-            out.addAll(told(s, byId, vals, previous, v.targets(), v.units(), t.lang(), channel, year, month).told());
         }
         return out;
+    }
+
+    /** Metin bloklarının "\n\n" ile birleşik metni (notlar sayılmaz) — {@link #capText} ile aynı ölçü. */
+    private static String joinedText(List<Block> blocks) {
+        StringBuilder joined = new StringBuilder();
+        for (Block b : blocks) {
+            if (b.note()) continue;
+            if (!joined.isEmpty()) joined.append("\n\n");
+            joined.append(b.text());
+        }
+        return joined.toString();
+    }
+
+    /**
+     * Birleşik metnin basılan önekinin uzunluğu: sınıra sığıyorsa tamamı, sığmıyorsa kesim noktası ({@code MAX − 1}, vekil
+     * çiftinin ilk yarısında bir eksik — {@code capResolved} ile aynı); {@link #capText} ve {@link #shownValues} ortak.
+     */
+    private static int cutEnd(String joined) {
+        int max = TechErrorTemplate.MAX_RESOLVED_TEXT;
+        if (joined.length() <= max) return joined.length();
+        int end = max - 1;
+        if (Character.isHighSurrogate(joined.charAt(end - 1))) end--;
+        return end;
     }
 
     /**
@@ -459,16 +526,9 @@ public final class TechErrorSummary {
      * Notlar sınıra girmez, hiç düşmez. İstemcide aynı kural: {@code techErrorModel.capTextBlocks}.
      */
     static List<Block> capText(List<Block> blocks) {
-        StringBuilder joined = new StringBuilder();
-        for (Block b : blocks) {
-            if (b.note()) continue;
-            if (!joined.isEmpty()) joined.append("\n\n");
-            joined.append(b.text());
-        }
-        int max = TechErrorTemplate.MAX_RESOLVED_TEXT;
-        if (joined.length() <= max) return blocks;
-        int end = max - 1;
-        if (Character.isHighSurrogate(joined.charAt(end - 1))) end--;
+        String joined = joinedText(blocks);
+        if (joined.length() <= TechErrorTemplate.MAX_RESOLVED_TEXT) return blocks;
+        int end = cutEnd(joined);
         List<Block> out = new ArrayList<>(blocks.size());
         int start = 0;
         int last = -1;
