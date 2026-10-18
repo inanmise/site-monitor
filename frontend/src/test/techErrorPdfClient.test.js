@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { api } from '../api/client.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { clearErrorRegistry, networkMessage } from '../utils/errorMessages.js'
+import { downloadBlob } from '../utils/csvExport.js'
 
 /**
  * Kanal teknik hata raporu PDF istemcisi (inceleme 2026-10-18):
@@ -97,5 +98,43 @@ describe('teknik hata raporu PDF istemcisi', () => {
     const limited = await api.techErrors.downloadPdf(100)
     expect(limited).toMatchObject({ success: false, status: 429, code: 'RATE_LIMITED', error: 'PDF sınırına ulaşıldı.' })
     expect(limited.errorInfo).toEqual({ status: 429, code: 'RATE_LIMITED', requestId: 'r-1' })
+  })
+
+  it('inceleme 2026-10-18 (3. tur): 429 yanıtının bekleme önerisi (Retry-After başlığı, yoksa gövdenin retry_after_seconds) `retryAfter` (sn) olarak döner — yıl arşivi buna uyar', async () => {
+    const limited = (headers, body) => ({ ok: false, status: 429, headers: { get: (h) => headers[h.toLowerCase()] ?? null },
+      json: () => Promise.resolve({ success: false, code: 'RATE_LIMITED', error: 'PDF sınırına ulaşıldı.', ...body }) })
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(limited({ 'retry-after': '42' }, { retry_after_seconds: 7 }))
+      .mockResolvedValueOnce(limited({}, { retry_after_seconds: 7 }))
+      .mockResolvedValueOnce(limited({}, {}))
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === 'retry-after' ? '9' : null) },
+        json: () => Promise.reject(new SyntaxError('Unexpected token <')) })
+    expect((await api.techErrors.pdfBlob(100)).retryAfter).toBe(42)
+    expect((await api.techErrors.pdfBlob(100)).retryAfter).toBe(7)
+    const none = await api.techErrors.pdfBlob(100)
+    expect(none.retryAfter).toBeUndefined()
+    expect(none.errorInfo).not.toHaveProperty('retryAfter')                          // künyeye karışmaz
+    const html = await api.techErrors.pdfBlob(100)
+    expect(html).toMatchObject({ success: false, status: 429, retryAfter: 9 })
+  })
+
+  it('inceleme 2026-10-18 (3. tur): PDF geldi ama tarayıcı indirmeyi başlatamadı (createObjectURL fırlattı) → başarı DEĞİL, DOWNLOAD_FAILED', async () => {
+    global.fetch = vi.fn().mockResolvedValue(pdfResponse())
+    URL.createObjectURL = vi.fn(() => { throw new Error('blob URL yok') })
+    const res = await api.techErrors.downloadPdf(100)
+    expect(res).toMatchObject({ success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null })
+  })
+})
+
+describe('downloadBlob dönüşü (inceleme 2026-10-18, 3. tur)', () => {
+  it('indirme başlatıldıysa true; ortam izin vermediyse fırlatmaz, false döner', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    expect(downloadBlob('a.pdf', new Blob(['x']))).toBe(true)
+    expect(click).toHaveBeenCalledTimes(1)
+    URL.createObjectURL = vi.fn(() => { throw new TypeError('URL.createObjectURL is not a function') })
+    expect(downloadBlob('a.pdf', new Blob(['x']))).toBe(false)
+    URL.createObjectURL = vi.fn(() => 'blob:x')
+    click.mockImplementation(() => { throw new Error('engellendi') })
+    expect(downloadBlob('a.pdf', new Blob(['x']))).toBe(false)
   })
 })

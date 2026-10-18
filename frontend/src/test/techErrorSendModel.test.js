@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
-  sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf,
+  sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -114,11 +114,10 @@ describe('gönderim günlüğü modeli', () => {
 })
 
 describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)', () => {
-  it('yeniden denenebilir: 429 (PDF sırası / kişi başı sınır), 409 SEND_IN_PROGRESS, 503 → retry', () => {
+  it('yeniden denenebilir: yalnız 429 (PDF sırası / kişi başı sınır) — gönderim talebi alınmadan reddedildi → retry', () => {
     expect(sendFailureKind({ success: false, status: 429, code: 'HTTP_429' })).toBe('retry')
     expect(sendFailureKind({ success: false, status: 429, code: 'RATE_LIMITED' })).toBe('retry')
-    expect(sendFailureKind({ success: false, status: 409, code: 'SEND_IN_PROGRESS' })).toBe('retry')
-    expect(sendFailureKind({ success: false, status: 503, code: 'DB_UNAVAILABLE' })).toBe('retry')
+    expect(sendFailureKind({ success: false, status: 429, code: 'PDF_BUSY' })).toBe('retry')
     expect(sendFailureKind({ success: false, errorInfo: { status: 429 } })).toBe('retry')
   })
   it('sonucu bilinmeyen: ağ hatası / zaman aşımı (durum 0, ApiError dahil) → unsure', () => {
@@ -126,6 +125,21 @@ describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)
     expect(sendFailureKind({ success: false, status: 0, code: 'REQUEST_TIMEOUT' })).toBe('unsure')
     expect(sendFailureKind(Object.assign(new Error('Sunucuya ulaşılamadı.'), { status: 0, code: 'OFFLINE' }))).toBe('unsure')
     expect(sendFailureKind({ success: false, status: 0 })).toBe('unsure')
+  })
+  it('inceleme 2026-10-18 (3. tur): 409 SEND_IN_PROGRESS (gönderim O AN sürüyor — çoğu kez yanıtı kaybolan ilk istek) ve 503 (posta gitmiş, sonuç yazılamamış olabilir; pod ölürken ağ geçidi) "yeniden dene" DEĞİL → unsure', () => {
+    expect(sendFailureKind({ success: false, status: 409, code: 'SEND_IN_PROGRESS' })).toBe('unsure')
+    expect(sendFailureKind({ success: false, errorInfo: { status: 409, code: 'SEND_IN_PROGRESS' } })).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 503, code: 'DB_UNAVAILABLE' })).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 503, code: 'HTTP_503' })).toBe('unsure')      // ağ geçidinin HTML sayfası
+    expect(sendFailureKind({ success: false, status: 503 })).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 504, code: 'HTTP_504' })).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 502, code: 'HTTP_502' })).toBe('unsure')
+    // Posta sunucusunun kesin reddi (502 MAIL_FAILED) kesin sonuçtur — bilinmeyen değil
+    expect(sendFailureKind({ success: false, status: 502, code: 'MAIL_FAILED' })).toBeNull()
+    // Sunucu kodları gerçekten var (Java kaynağı) — ad değişirse istemci sessizce "kesin hata" saymasın
+    const handler = fs.readFileSync(path.join(ROOT, 'backend/src/main/java/com/sitemonitor/config/GlobalExceptionHandler.java'), 'utf8')
+    expect(SENDER).toMatch(/CodedConflictException\("SEND_IN_PROGRESS"/)
+    expect(handler).toMatch(/respond\(503, "DB_UNAVAILABLE"/)
   })
   it('kesin sonuç: başarı ve kalıcı retler pencereyi kapatır (null)', () => {
     expect(sendFailureKind({ success: true, data: {} })).toBeNull()
@@ -135,5 +149,38 @@ describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)
     }
     expect(sendFailureKind(null)).toBeNull()
     expect(sendFailureKind(new TypeError('x is not a function'))).toBeNull()
+  })
+})
+
+describe('sonucu bilinmeyen gönderimden sonra yeniden okunan rapor (inceleme 2026-10-18, 3. tur)', () => {
+  const draft = { status: 'draft', send_state: null, last_sent_at: null, last_attempt_at: null, send_count: 0 }
+  const sentOnce = { status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-01T08:00:00Z', last_attempt_at: '2026-10-01T08:00:00Z', send_count: 1 }
+
+  it('okunamadı (null / nesne değil) → unknown: gönder kilitli kalır', () => {
+    expect(unsureSendOutcome(draft, null)).toBe('unknown')
+    expect(unsureSendOutcome(draft, undefined)).toBe('unknown')
+    expect(unsureSendOutcome(draft, 'x')).toBe('unknown')
+  })
+  it('süren gönderim (taze talep) → sending; kuyrukta (durum queued ya da daha önce gönderilmiş raporda send_state QUEUED) → queued', () => {
+    expect(unsureSendOutcome(draft, { ...draft, status: 'sending', send_state: 'SENDING' })).toBe('sending')
+    expect(unsureSendOutcome(draft, { ...draft, status: 'queued', send_state: 'QUEUED' })).toBe('queued')
+    expect(unsureSendOutcome(sentOnce, { ...sentOnce, status: 'sent', send_state: 'QUEUED' })).toBe('queued')
+  })
+  it('gönderim gitmiş: son gönderim zamanı değişti ya da gönderim sayısı arttı → sent (yeniden gönderimde de)', () => {
+    expect(unsureSendOutcome(draft, { ...draft, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', send_count: 1 })).toBe('sent')
+    expect(unsureSendOutcome(sentOnce, { ...sentOnce, last_sent_at: '2026-10-18T07:00:00Z', send_count: 2 })).toBe('sent')
+    // Zaman aynı biçimde yazılmamış olsa da sayaç artışı yeter
+    expect(unsureSendOutcome(sentOnce, { ...sentOnce, send_count: 2 })).toBe('sent')
+    // Önceki satır bilinmiyor ve rapor gönderilmiş → çift gönderimden kaçınılır
+    expect(unsureSendOutcome(null, sentOnce)).toBe('sent')
+  })
+  it('açıkça gitmemiş: son gönderim aynı, süren / kuyrukta gönderim yok (deneme başarısız bittiyse de) → notSent', () => {
+    expect(unsureSendOutcome(draft, draft)).toBe('notSent')
+    expect(unsureSendOutcome(draft, { ...draft, send_state: 'FAILED', last_attempt_at: '2026-10-18T07:00:00Z' })).toBe('notSent')
+    expect(unsureSendOutcome(sentOnce, { ...sentOnce, status: 'changed' })).toBe('notSent')
+    // 10 dakikadan eski (bayat) talep — bu denemenin değil
+    expect(unsureSendOutcome(sentOnce, { ...sentOnce, status: 'sent', send_state: 'SENDING' })).toBe('notSent')
+    // Sayaç yoksa (eski sunucu) yalnız zaman karşılaştırılır
+    expect(unsureSendOutcome({ status: 'draft' }, { status: 'draft' })).toBe('notSent')
   })
 })

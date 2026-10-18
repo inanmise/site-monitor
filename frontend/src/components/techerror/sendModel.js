@@ -49,19 +49,32 @@ export function parseExtraCc(raw) {
   return { addresses: out, error: null }
 }
 
-/** Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir. */
-const RETRYABLE_SEND_CODES = new Set(['SEND_IN_PROGRESS', 'PDF_BUSY', 'RATE_LIMITED', 'DB_UNAVAILABLE'])
-/** Sonucu BİLİNMEYEN hatalar: istek sunucuya ulaştı mı belli değil (gönderim olmuş olabilir). */
-const UNSURE_SEND_CODES = new Set(['NETWORK_ERROR', 'OFFLINE', 'REQUEST_TIMEOUT', 'REQUEST_ABORTED'])
+/**
+ * Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir (PDF sırası dolu,
+ * kişi başı sınır — gönderim talebi alınmadan reddedilir).
+ */
+const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED'])
+/**
+ * Sonucu BİLİNMEYEN hatalar (inceleme 2026-10-18, 3. tur): istek sunucuya ulaştı mı, gönderim oldu mu belli değil.
+ *  - ağ hatası / zaman aşımı / iptal (durum 0);
+ *  - 409 `SEND_IN_PROGRESS`: o an bir gönderim SÜRÜYOR — çoğu kez yanıtı kaybolan ilk isteğin kendisi;
+ *  - 503 `DB_UNAVAILABLE` (posta gitmiş, sonuç yazılamamış olabilir) ya da ağ geçidinin 502 / 503 / 504 sayfası (pod
+ *    ölürken, istek işlenirken).
+ */
+const UNSURE_SEND_CODES = new Set(['NETWORK_ERROR', 'OFFLINE', 'REQUEST_TIMEOUT', 'REQUEST_ABORTED', 'SEND_IN_PROGRESS',
+  'DB_UNAVAILABLE', 'HTTP_502', 'HTTP_503', 'HTTP_504'])
 
 /**
  * Gönderim hatası penceresi KAPATMALI mı (inceleme 2026-10-18)? Yeniden denenebilir hatada pencere AÇIK kalır ve yazılan ek
  * Bilgi (CC) korunur — eskiden pencere kapanıyor, bir sonraki "Gönder" ek adreslerSİZ (geri alınamaz) gidebiliyordu.
  * `res` bir yanıt yükü ya da fırlatılan `ApiError` olabilir. Dönüş:
- *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır), 409 `SEND_IN_PROGRESS`, 503: posta gitmedi, yeniden denenebilir;
- *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0): istek sunucuya ulaşmış olabilir — pencere açık, ama kullanıcıya
- *                 yeniden göndermeden önce durumu kontrol etmesi söylenir;
- *  - `null`     — kesin sonuç (başarı ya da kalıcı ret: posta kapalı, adres yok, onay gerekli…) → pencere kapanır.
+ *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır): posta gitmedi, yeniden denenebilir;
+ *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0), 409 `SEND_IN_PROGRESS`, 503 / 504, ağ geçidinin 502 sayfası: gönderim
+ *                 olmuş ya da sürüyor olabilir — pencere açık, rapor yeniden okunup durum bilinene kadar "Gönder" KİLİTLİ
+ *                 (`unsureSendOutcome`; inceleme 2026-10-18, 3. tur: kilit yokken ikinci tıklama raporu yöneticilere
+ *                 İKİNCİ kez yolluyordu);
+ *  - `null`     — kesin sonuç (başarı ya da kalıcı ret: posta kapalı, adres yok, onay gerekli, 502 `MAIL_FAILED`…) →
+ *                 pencere kapanır.
  */
 export function sendFailureKind(res) {
   if (!res || typeof res !== 'object' || res.success === true) return null
@@ -70,9 +83,33 @@ export function sendFailureKind(res) {
   const status = typeof res.status === 'number' ? res.status : (typeof info.status === 'number' ? info.status : null)
   if (code && UNSURE_SEND_CODES.has(code)) return 'unsure'
   if (code && RETRYABLE_SEND_CODES.has(code)) return 'retry'
-  if (status === 429 || status === 503) return 'retry'
+  if (status === 503 || status === 504) return 'unsure'
+  if (status === 429) return 'retry'
   if (status === 0) return 'unsure'
   return null
+}
+
+/**
+ * Sonucu bilinmeyen gönderimden sonra raporun YENİDEN OKUNAN hâli ne diyor (inceleme 2026-10-18, 3. tur)? `before` =
+ * gönderimden önce eldeki rapor satırı, `after` = yeniden okunan (`null` = okunamadı). Dönüş:
+ *  - `'sending'` — bir gönderim sürüyor (taze talep): pencere kapanır, "sürüyor" bildirimi;
+ *  - `'queued'`  — posta kuyrukta (posta servisi yeniden deneyecek): pencere kapanır;
+ *  - `'sent'`    — gönderim gitmiş (son gönderim zamanı değişti ya da gönderim sayısı arttı): pencere kapanır;
+ *  - `'notSent'` — açıkça gitmemiş (son gönderim aynı, süren ya da kuyrukta gönderim yok; deneme olduysa başarısız
+ *                  bitmiş): "Gönder" yeniden açılır, yazılan ek Bilgi korunur;
+ *  - `'unknown'` — rapor okunamadı: "Gönder" KİLİTLİ kalır (yeniden denetlenir).
+ * Önceki satır bilinmiyorsa gönderilmiş bir rapor "gitmiş" sayılır (çift gönderimden kaçınılır).
+ */
+export function unsureSendOutcome(before, after) {
+  if (!after || typeof after !== 'object') return 'unknown'
+  if (after.status === 'sending') return 'sending'
+  if (after.status === 'queued' || after.send_state === 'QUEUED') return 'queued'
+  const sentAt = after.last_sent_at ?? null
+  if (sentAt != null && sentAt !== (before?.last_sent_at ?? null)) return 'sent'
+  const nowCount = Number(after.send_count ?? 0)
+  const wasCount = Number(before?.send_count ?? 0)
+  if (Number.isFinite(nowCount) && Number.isFinite(wasCount) && nowCount > wasCount) return 'sent'
+  return 'notSent'
 }
 
 // ── Gönderim günlüğü ────────────────────────────────────────────────────────────────────────────────

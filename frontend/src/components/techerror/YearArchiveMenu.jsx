@@ -83,7 +83,11 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
       // Paketleme sırasında iptal edildiyse de indirme YOK
       if (!alive.current) return
       if (c.signal.aborted) { toast.info(t('te.zip.cancelled')); return }
-      downloadBlob(archiveFileName(channelName, year), blob)
+      // Tarayıcı indirmeyi başlatmadıysa başarı bildirimi YOK (inceleme 2026-10-18, 3. tur — `downloadBlob` false döner)
+      if (downloadBlob(archiveFileName(channelName, year), blob) === false) {
+        toast.error(t('te.zip.downloadFailed'), { duration: LONG_TOAST_MS })
+        return
+      }
       if (res.stopped === 401) toast.error(t('te.zip.sessionEndedPartial', res.files.length, plan.length), { duration: LONG_TOAST_MS })
       else if (res.missing.length) toast.error(t('te.zip.partial', res.files.length, plan.length, months), { duration: LONG_TOAST_MS })
       else toast.success(t('te.zip.done', res.files.length, year), 8000)

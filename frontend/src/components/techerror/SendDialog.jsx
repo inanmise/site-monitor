@@ -19,16 +19,24 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  *
  * `onConfirm(extraCc)`: `extraCc` boşsa `''` — çağıran gövdesiz eski isteği atar.
  *
- * `failure` (inceleme 2026-10-18): `{ kind: 'retry' | 'unsure', title, message, details }` — yeniden denenebilir gönderim
- * hatası (PDF sırası dolu, gönderim sürüyor, ağ hatası) pencerenin İÇİNDE gösterilir; pencere açık kalır, yazılan ek Bilgi
+ * `failure` (inceleme 2026-10-18): `{ kind: 'retry' | 'unsure', title, message, details, check? }` — yeniden denenebilir
+ * gönderim hatası (PDF sırası dolu, kişi başı sınır) pencerenin İÇİNDE gösterilir; pencere açık kalır, yazılan ek Bilgi
  * silinmez (yalnız pencere yeniden açılınca boşalır), odak alana döner.
+ *
+ * Sonucu bilinmeyen hata (`kind: 'unsure'` — ağ hatası, gönderim sürüyor, 503; inceleme 2026-10-18, 3. tur): "Gönder" ve
+ * Ctrl+Enter KİLİTLİ — gönderim gitmiş olabilir, ikinci tıklama raporu yöneticilere ikinci kez yollardı. `check`
+ * 'checking' = rapor yeniden okunuyor (düğmede dönen simge), 'unknown' = okunamadı → "Durumu yeniden denetle"
+ * (`onRecheck`). Çağıran durumu çözünce bandı değiştirir (gitmemişse `retry`) ya da pencereyi kapatır.
  */
-export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit }) {
+export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit, onRecheck = null }) {
   const t = useT()
   const [value, setValue] = useState('')
   const [clientError, setClientError] = useState(null)
   const inputRef = useRef(null)
   const formId = useId()
+  // Sonucu bilinmeyen gönderim: durum bilinene kadar gönderim YOK (düğme + Ctrl+Enter)
+  const locked = failure?.kind === 'unsure'
+  const checking = locked && failure?.check !== 'unknown'
 
   // Her açılışta boş başlar (ek adresler kaydedilmez — bir sonraki gönderime taşınmaz)
   useEffect(() => {
@@ -48,7 +56,7 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
 
   function submit(e) {
     e?.preventDefault?.()
-    if (busy) return
+    if (busy || locked) return
     const parsed = parseExtraCc(value)
     if (parsed.error) {
       setClientError(t(parsed.error.key, ...parsed.error.params))
@@ -92,14 +100,21 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
                 details={failure.kind === 'unsure' ? undefined : (failure.details || undefined)}>
                 {failure.message}
               </AlertBanner>
+              {locked && !checking && onRecheck && (
+                <Button type="button" variant="outline" size="sm" className="mt-2 w-full sm:w-auto pointer-coarse:min-h-10"
+                  data-slot="te-send-recheck" onClick={() => onRecheck()}>
+                  <RefreshCw aria-hidden="true" /> {t('te.send.recheck')}
+                </Button>
+              )}
             </div>
           )}
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy} onClick={onCancel}>
               {t('te.cancel')}
             </Button>
-            <Button type="submit" className="pointer-coarse:min-h-10" disabled={busy} aria-busy={busy || undefined} data-slot="te-send-confirm">
-              {busy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
+            <Button type="submit" className="pointer-coarse:min-h-10" disabled={busy || locked} aria-busy={busy || checking || undefined}
+              data-slot="te-send-confirm" data-locked={locked || undefined}>
+              {busy || checking ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
               {t('te.sendConfirm')}
             </Button>
           </DialogFooter>

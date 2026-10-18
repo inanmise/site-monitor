@@ -10,7 +10,7 @@ import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpi
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import { downloadBlob } from '../utils/csvExport.js'
 import {
-  ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, rememberErrorInfo,
+  ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
 } from '../utils/errorMessages.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
@@ -43,9 +43,16 @@ async function fetchTechErrorPdf(id, signal = null) {
     if (!res.ok) {
       let body = null
       try { body = await res.json() } catch { body = null }
-      if (!body || typeof body !== 'object') return nonJsonErrorPayload(res.status, res)
+      // Sunucunun bekleme önerisi (sn; 429 kişi başı sınır — inceleme 2026-10-18, 3. tur): yıl arşivi buna uyar
+      const retryAfter = parseRetryAfter(headerOf(res, 'Retry-After')) ?? parseRetryAfter(body?.retry_after_seconds)
+      if (!body || typeof body !== 'object') {
+        const raw = nonJsonErrorPayload(res.status, res)
+        if (retryAfter != null) raw.retryAfter = retryAfter
+        return raw
+      }
       const out = { success: false, status: res.status, error: body.error || null, code: body.code || null }
       attachErrorInfo(out, errorInfoOf({ ...out, requestId: body.request_id || headerOf(res, 'X-Request-Id') }))
+      if (retryAfter != null) out.retryAfter = retryAfter
       return out
     }
     const blob = await res.blob()
@@ -632,8 +639,10 @@ export const api = {
       if (status && status !== 'all') qs.set('status', status)
       return request(`/tech-error-reports/channels/${channelId}/send-log?${qs.toString()}`, { withStatus: true })
     },
-    // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir
-    mailPreview: (id) => request(`/tech-error-reports/reports/${id}/mail-preview`, { withStatus: true, timeoutMs: 0 }),
+    // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir.
+    // Pencere `techerror/mailPreviewFetch.js` üzerinden çağırır (süren isteğe katılır, `signal` ile iptal — 3. tur)
+    mailPreview: (id, { signal } = {}) => request(`/tech-error-reports/reports/${id}/mail-preview`,
+      { withStatus: true, timeoutMs: 0, ...(signal ? { signal } : {}) }),
     // Önizlenen postayı YALNIZ kendine gönderir (R13): sunucu PDF'i yeniden üretir — uzun sürebilir; 409 NO_EMAIL / 429 RATE_LIMITED
     mailPreviewTest: (id) => request(`/tech-error-reports/reports/${id}/mail-preview/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
     // PO onayı (2026-10-17, S6): istek PDF üretip onaylayıcılara posta atar, karar yöneticilere gönderir — uzun sürebilir
@@ -645,12 +654,14 @@ export const api = {
      * PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. İndirme
      * `utils/csvExport.downloadBlob` ile (inceleme 2026-10-18): bağlantı DOM'a eklenip tıklanır, adres 60 sn tutulur —
      * Safari / iPad DOM dışı bağlantıda ya da tıklamadan hemen sonra iptal edilen adreste indirmeyi başlatmıyordu.
+     * Tarayıcı indirmeyi başlatamadıysa (3. tur) başarı DEĞİL: `{ success: false, status: 0, code: 'DOWNLOAD_FAILED' }` —
+     * çağıran çevrilmiş metni gösterir (`te.pdfDownloadFailed`).
      */
     downloadPdf: async (id) => {
       const res = await fetchTechErrorPdf(id)
       if (!res.success) return res
       const name = res.name || 'teknik-hata-raporu.pdf'
-      downloadBlob(name, res.blob)
+      if (!downloadBlob(name, res.blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null, name }
       return { success: true, name }
     },
     /**

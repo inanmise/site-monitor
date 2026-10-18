@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
+import { fetchMailPreview } from './mailPreviewFetch.js'
 
 /** Önizleme genişlikleri: e-postanın kendi 1000 px kartı (masaüstü istemci) ve telefon tek sütunu. */
 export const PREVIEW_WIDTHS = Object.freeze({ desktop: 1040, phone: 400 })
@@ -55,6 +56,7 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
   const [width, setWidth] = useState('desktop')
   const [testing, setTesting] = useState(false)
   const seq = useRef(0)
+  const ctrl = useRef(null)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
@@ -77,16 +79,23 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
     }
   }, [reportId, toast, t])
 
-  // Bir açılışta bir okuma (sunucu PDF'i de üretir — dil değişimi yeniden üretmez); geç cevap düşer (sıra)
+  // Bir açılışta bir okuma (sunucu PDF'i de üretir — dil değişimi yeniden üretmez); geç cevap düşer (sıra). İnceleme
+  // 2026-10-18, 3. tur: sunucu kişi başına aynı anda TEK önizleme hazırlar — StrictMode'un ikinci efekti (ya da hemen
+  // yeniden açılış) ikinci istek atıp 429 alıyor, ilk yanıt da sıra korumasıyla düşüyordu ("okunamadı"). Artık her okuma
+  // kendi AbortController'ıyla (temizlikte iptal, sonucu yok sayılır) ve `fetchMailPreview` ile: aynı rapor için süren
+  // istek varsa yenisi atılmaz, ona katılınır.
   const load = useCallback(() => {
+    ctrl.current?.abort()
+    const c = new AbortController()
+    ctrl.current = c
     const my = ++seq.current
     setState({ loading: true, failed: false, error: null, data: null })
-    api.techErrors.mailPreview(reportId).then((res) => {
-      if (my !== seq.current) return
+    fetchMailPreview(reportId, { signal: c.signal }).then((res) => {
+      if (my !== seq.current || c.signal.aborted || res?.aborted) return
       if (res?.success && res.data) setState({ loading: false, failed: false, error: null, data: res.data })
       else setState({ loading: false, failed: true, error: res?.error || null, data: null })
     }).catch((e) => {
-      if (my !== seq.current) return
+      if (my !== seq.current || c.signal.aborted) return
       setState({ loading: false, failed: true, error: e?.message || null, data: null })
     })
   }, [reportId])
@@ -94,7 +103,11 @@ export default function MailPreviewDialog({ reportId, open, onClose, onSend, sen
   useEffect(() => {
     if (!open) return undefined
     load()
-    return () => { seq.current++ }
+    return () => {
+      seq.current++
+      ctrl.current?.abort()
+      ctrl.current = null
+    }
   }, [open, load])
 
   const d = state.data

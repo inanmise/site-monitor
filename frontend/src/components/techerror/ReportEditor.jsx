@@ -24,7 +24,7 @@ import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErr
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
 import SendDialog from './SendDialog.jsx'
-import { sendFailureKind } from './sendModel.js'
+import { sendFailureKind, unsureSendOutcome } from './sendModel.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
@@ -135,6 +135,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
   const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
+  // Sonucu bilinmeyen gönderim (inceleme 2026-10-18, 3. tur): { before, msg, details } — rapor yeniden okunup durum
+  // bilinene kadar "Gönder" kilitli; pencere kapatılıp yeniden açılırsa kilit taşınır ve durum yeniden denetlenir
+  const unsureSend = useRef(null)
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
@@ -221,19 +224,21 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setState((s) => ({ ...s, loading: true }))
     try {
       const res = await api.techErrors.report(reportId)
-      if (my !== seq.current) return
+      if (my !== seq.current) return null
       if (res?.success && res.data?.report) {
         applyLoaded(res.data, keepDraft)
         setState({ loading: false, error: null, status: null })
-      } else {
-        setState({ loading: false, error: res?.error || tRef.current('te.loadError'), status: res?.status ?? null })
+        // Okunan rapor çağırana döner (sonucu bilinmeyen gönderimin denetimi); geç kalan / hatalı okuma null
+        return res.data
       }
+      setState({ loading: false, error: res?.error || tRef.current('te.loadError'), status: res?.status ?? null })
     } catch (e) {
-      if (my !== seq.current) return
+      if (my !== seq.current) return null
       setState({ loading: false, error: e?.message || tRef.current('te.loadError'), status: 0 })
     } finally {
       if (my === seq.current) loadInFlight.current = false
     }
+    return null
   }, [reportId, applyLoaded, settleSave])
   useEffect(() => { load() }, [load])
   // Ay geçişiyle açıldıysa odak yeni raporun başlığına (tıklanan düğme yeniden kurulumda kaybolur — inceleme 2026-10-14)
@@ -514,7 +519,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setBusy('pdf')
     try {
       const res = await api.techErrors.downloadPdf(reportId)
-      if (!res?.success) toast.error(res?.error || t('te.pdfError'), { details: res?.errorInfo })
+      // DOWNLOAD_FAILED (inceleme 2026-10-18, 3. tur): PDF geldi ama tarayıcı indirmeyi başlatmadı — sessiz "başarı" yok
+      if (!res?.success) toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('te.pdfDownloadFailed') : (res?.error || t('te.pdfError')),
+        { details: res?.errorInfo })
     } catch (e) {
       toast.error(e?.message || t('te.pdfError'))
     } finally {
@@ -555,33 +562,98 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   /**
    * Gönderim: önce kayıt (ensureSaved), sonra gönderim penceresi (R18 / C13 — eski onay sorusunun metni + isteğe bağlı ek
    * Bilgi (CC) alanı). Onay penceresi açık kalırken istek gider; sunucu ek Bilgi'yi reddederse (alan `extra_cc`) hata alanın
-   * altında, pencere açık. Yeniden denenebilir hatada (429 PDF sırası / kişi başı sınır, 409 `SEND_IN_PROGRESS`, 503, ağ
-   * hatası — `sendFailureKind`) pencere de AÇIK kalır, hata pencerenin içinde, yazılan ek Bilgi korunur (inceleme 2026-10-18:
-   * pencere kapanıyor, bir sonraki "Gönder" ek adresleri olmadan — geri alınamaz — gidebiliyordu); rapor arkada yenilenir.
-   * Başarıda ve kesin hatada pencere kapanır, bildirim gösterilir.
+   * altında, pencere açık. Yeniden denenebilir hatada (429 PDF sırası / kişi başı sınır — `sendFailureKind`) pencere de AÇIK
+   * kalır, hata pencerenin içinde, yazılan ek Bilgi korunur (inceleme 2026-10-18: pencere kapanıyor, bir sonraki "Gönder" ek
+   * adresleri olmadan — geri alınamaz — gidebiliyordu); rapor arkada yenilenir. Başarıda ve kesin hatada pencere kapanır,
+   * bildirim gösterilir.
+   *
+   * Sonucu BİLİNMEYEN hatada (ağ hatası, 409 `SEND_IN_PROGRESS`, 503 / 504 — inceleme 2026-10-18, 3. tur) gönderim gitmiş ya
+   * da sürüyor olabilir: pencere açık, "Gönder" (ve Ctrl+Enter) rapor YENİDEN OKUNUP durum bilinene kadar KİLİTLİ
+   * (`checkUnsureSend`, okuma beklenir). Gitmiş / sürüyor / kuyrukta → pencere kapanır, durum bildirilir; açıkça gitmemiş →
+   * "Gönder" yeniden açılır, ek Bilgi korunur; okunamadı → kilit kalır, "Durumu yeniden denetle". Eskiden kilit yoktu: ilk
+   * istek sunucuda tamamlandıysa ikinci tıklama raporu yöneticilere İKİNCİ kez yolluyordu (`claimSend` gönderilmiş raporun
+   * yeniden gönderimine izin verir).
    */
   async function send() {
     if (!(await ensureSaved())) return
+    if (unsureSend.current) {
+      // Çözülmemiş belirsiz gönderim: pencere kilitli açılır ve durum yeniden denetlenir (taze, kilitsiz pencere değil)
+      setSendDialog({ error: null, failure: unsureFailure(unsureSend.current, 'checking') })
+      checkUnsureSend()
+      return
+    }
     setSendDialog({ error: null, failure: null })
   }
 
-  /** Pencere içi hata bandı: tür (`retry` | `unsure`), başlık, metin, künye. */
+  /** Pencere içi yeniden denenebilir hata bandı: başlık, metin (+ "ek Bilgi korundu"), künye. */
   function sendFailure(kind, res, fallback) {
     const msg = res?.message || res?.error || fallback
-    return kind === 'unsure'
-      ? { kind, title: t('te.send.unsureTitle'), message: `${msg} ${t('te.send.unsureBody')}`, details: errorInfoOf(res) }
-      : { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`, details: res?.errorInfo ?? errorInfoOf(res) }
+    return { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`, details: res?.errorInfo ?? errorInfoOf(res) }
+  }
+
+  /** Sonucu bilinmeyen gönderimin bandı: `check` 'checking' (rapor okunuyor) | 'unknown' (okunamadı) — ikisinde de kilitli. */
+  function unsureFailure(u, check) {
+    const tail = check === 'unknown' ? t('te.send.unsureCheckFailed') : t('te.send.unsureBody')
+    return { kind: 'unsure', check, title: t('te.send.unsureTitle'), message: `${u.msg} ${tail}`, details: u.details }
+  }
+
+  /**
+   * Sonucu bilinmeyen gönderimden sonra raporu YENİDEN OKUR (beklenir) ve durumu pencereye taşır. Okuma sürerken `busy`
+   * 'sendcheck': düzenleyicinin gönder / gezinme düğmeleri ve otomatik kayıt bekler; pencere kapatılabilir (sonuç yine
+   * bildirilir; çözülmezse yeniden açılışta kilit taşınır).
+   */
+  async function checkUnsureSend() {
+    const u = unsureSend.current
+    if (!u) return
+    setBusy('sendcheck')
+    setSendDialog((d) => (d ? { ...d, failure: unsureFailure(u, 'checking') } : d))
+    let after = null
+    try {
+      const loaded = await load({ keepDraft: true })
+      after = loaded?.report || null
+    } catch {
+      after = null
+    } finally {
+      setBusy(null)
+    }
+    if (unsureSend.current !== u) return
+    const outcome = unsureSendOutcome(u.before, after)
+    if (outcome === 'unknown') {
+      setSendDialog((d) => (d ? { ...d, failure: unsureFailure(u, 'unknown') } : d))
+      return
+    }
+    unsureSend.current = null
+    if (outcome === 'notSent') {
+      setSendDialog((d) => (d ? { ...d, failure: { kind: 'retry', title: t('te.send.checkedNotSentTitle'),
+        message: t('te.send.checkedNotSent'), details: u.details } } : d))
+      return
+    }
+    setSendDialog(null)
+    if (outcome === 'sent') toast.success(t('te.send.checkedSent'))
+    else if (outcome === 'queued') toast.info(t('te.sendQueued'))
+    else toast.info(t('te.send.checkedSending'))
   }
 
   async function confirmSend(extraCc) {
-    if (busy != null) return
+    if (busy != null || unsureSend.current) return
+    // Gönderimden ÖNCEKİ rapor satırı: sonucu bilinmeyen hatada yeniden okunanla karşılaştırılır
+    const before = data?.report || null
     setBusy('send')
     setSendDialog((d) => (d ? { ...d, failure: null } : d))
     let keepOpen = false
     let refresh = true
+    let unsure = null
+    const markUnsure = (r) => {
+      keepOpen = true
+      refresh = false
+      unsure = { before, msg: r?.message || r?.error || t('te.sendError'), details: errorInfoOf(r) }
+      unsureSend.current = unsure
+      setSendDialog({ error: null, failure: unsureFailure(unsure, 'checking') })
+    }
     try {
       // Ek Bilgi yoksa gövdesiz (eski çağrı aynen); varsa yalnız `extra_cc`
       const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
+      const kind = sendFailureKind(res)
       if (res?.success && res.data) {
         const cc = (res.data.cc || []).join(', ')
         const to = (res.data.to || []).join(', ')
@@ -598,24 +670,29 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         keepOpen = true
         refresh = false
         setSendDialog({ error: res.error || t('te.send.ccRejected'), failure: null })
-      } else if (sendFailureKind(res)) {
+      } else if (kind === 'unsure') {
+        markUnsure(res)
+      } else if (kind) {
         keepOpen = true
-        setSendDialog({ error: null, failure: sendFailure(sendFailureKind(res), res, t('te.sendError')) })
+        setSendDialog({ error: null, failure: sendFailure(kind, res, t('te.sendError')) })
       } else {
         toast.error(res?.error || t('te.sendError'), { details: res?.errorInfo })
       }
     } catch (e) {
       const kind = sendFailureKind(e)
-      if (kind) {
+      if (kind === 'unsure') markUnsure(e)
+      else if (kind) {
         keepOpen = true
         setSendDialog({ error: null, failure: sendFailure(kind, e, t('te.sendError')) })
       } else toast.error(e?.message || t('te.sendError'))
     } finally {
       setBusy(null)
       if (!keepOpen) setSendDialog(null)
-      // Pencere açık kalsa da rapor arkada yenilenir (gönderim başka sekmede sürüyor / ağ koptu ama gitmiş olabilir)
+      // Pencere açık kalsa da rapor arkada yenilenir (gönderim başka sekmede sürüyor)
       if (refresh) load({ keepDraft: true })
     }
+    // Belirsiz sonuç: rapor yeniden okunur ve BEKLENİR — durum bilinene kadar "Gönder" kilitli
+    if (unsure) await checkUnsureSend()
   }
 
   async function applyTemplate() {
@@ -1006,7 +1083,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       )}
       {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
       <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}
-        failure={sendDialog?.failure || null}
+        failure={sendDialog?.failure || null} onRecheck={busy == null ? checkUnsureSend : null}
         title={approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle')}
         message={approvalRequired
           ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')

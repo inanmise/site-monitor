@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import { reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
 
 // R18 / C13 (2026-10-18): gönderim penceresi — eski onay sorusunun metni + "Bu gönderime ek bilgi (CC)" alanı. İstemci
@@ -186,11 +186,10 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
-  it('inceleme 2026-10-18: yeniden denenebilir hata (429 PDF sırası, 409 SEND_IN_PROGRESS) pencereyi KAPATMAZ — hata pencerenin içinde, yazılan ek Bilgi korunur, rapor arkada yenilenir; ikinci deneme aynı ek Bilgi ile gider', async () => {
+  it('inceleme 2026-10-18: yeniden denenebilir hata (429 PDF sırası) pencereyi KAPATMAZ — hata pencerenin içinde, yazılan ek Bilgi korunur, rapor arkada yenilenir; ikinci deneme aynı ek Bilgi ile gider', async () => {
     const busyMsg = 'PDF sırası dolu; birkaç saniye sonra yeniden deneyin.'
     te().send
       .mockResolvedValueOnce({ success: false, status: 429, code: 'HTTP_429', error: busyMsg })
-      .mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_IN_PROGRESS', error: 'Bu rapor şu anda gönderiliyor.' })
       .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
     const dlg = await openSendDialog()
     const input = ccInput(dlg)
@@ -207,35 +206,161 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     expect(input).not.toHaveAttribute('aria-invalid', 'true')
     await waitFor(() => expect(input).toHaveFocus())
     await waitFor(() => expect(te().report.mock.calls.length).toBeGreaterThan(loadsBefore))
-    // Gönderim başka sekmede sürüyor: yine açık
+    // 429 kilitlemez: ikinci deneme aynı ek Bilgi ile gider ve pencere kapanır
+    expect(within(dlg).getByRole('button', { name: 'Gönder' })).not.toBeDisabled()
     fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
-    expect(await within(dlg).findByText(/Bu rapor şu anda gönderiliyor/)).toBeInTheDocument()
-    expect(within(dlg).queryByText(new RegExp(busyMsg.replace(/[.;]/g, '.')))).toBeNull()
-    expect(input).toHaveValue('ek@example.com')
-    // Üçüncü deneme aynı ek Bilgi ile gider ve pencere kapanır
-    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
-    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(3))
-    expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
+    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+    expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
-  it('inceleme 2026-10-18: ağ hatası (ApiError NETWORK_ERROR) — pencere açık, ek Bilgi korunur; sonucun BİLİNMEDİĞİ ve önce durumun kontrol edilmesi söylenir', async () => {
-    const { ApiError } = await import('../utils/errorMessages.js')
-    te().send.mockRejectedValueOnce(new ApiError('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.', { status: 0, code: 'NETWORK_ERROR' }))
-    const dlg = await openSendDialog()
-    fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
-    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
-    const box = await waitFor(() => {
-      const el = dlg.querySelector('[data-slot="te-send-failure"]')
-      expect(el).not.toBeNull()
-      return el
+  describe('inceleme 2026-10-18 (3. tur): sonucu BİLİNMEYEN gönderim — rapor yeniden okunup durum bilinene kadar "Gönder" ve Ctrl+Enter KİLİTLİ', () => {
+    const base = () => reportResponse().data.report
+    const reportWith = (patch) => reportResponse({ report: { ...base(), ...patch } })
+    const sentReport = () => reportWith({ status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:00:05Z', last_attempt_at: '2026-10-18T07:00:05Z', send_count: 1 })
+    const netError = async () => {
+      const { ApiError } = await import('../utils/errorMessages.js')
+      return new ApiError('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.', { status: 0, code: 'NETWORK_ERROR' })
+    }
+    const failureBox = (dlg) => dlg.querySelector('[data-slot="te-send-failure"]')
+
+    it('ağ hatası: okuma sürerken kilitli (düğme kapalı, Ctrl+Enter göndermez, düzenleyicinin gönder düğmesi de bekler); rapor GÖNDERİLMİŞ okunursa pencere kapanır, "gönderilmiş" bildirimi — ikinci gönderim YOK', async () => {
+      te().send.mockRejectedValueOnce(await netError())
+      const dlg = await openSendDialog()
+      const input = ccInput(dlg)
+      fireEvent.change(input, { target: { value: 'ek@example.com' } })
+      let release
+      te().report.mockImplementationOnce(() => new Promise((r) => { release = r }))
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      await waitFor(() => expect(failureBox(dlg)).not.toBeNull())
+      const box = failureBox(dlg)
+      expect(box).toHaveAttribute('data-kind', 'unsure')
+      expect(within(box).getByText('Gönderimin sonucu bilinmiyor')).toBeInTheDocument()
+      expect(box).toHaveTextContent(/Sunucuya ulaşılamadı/)
+      expect(box).toHaveTextContent(/raporun durumu yeniden okunuyor/)
+      await waitFor(() => expect(release).toBeTypeOf('function'))
+      const confirm = within(dlg).getByRole('button', { name: 'Gönder' })
+      expect(confirm).toBeDisabled()
+      expect(confirm).toHaveAttribute('data-locked', 'true')
+      expect(confirm).toHaveAttribute('aria-busy', 'true')
+      fireEvent.click(confirm)
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', ctrlKey: true })
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', metaKey: true })
+      expect(te().send).toHaveBeenCalledTimes(1)
+      expect(input).toHaveValue('ek@example.com')
+      expect(document.querySelector('[data-slot="te-send"]')).toBeDisabled()
+      await act(async () => { release(sentReport()) })
+      expect(await screen.findByText('Rapor gönderilmiş: yanıt gelmeden önce gönderim sunucuda tamamlanmıştı. Rapor yeniden gönderilmedi.')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      expect(te().send).toHaveBeenCalledTimes(1)
     })
-    expect(box).toHaveAttribute('data-kind', 'unsure')
-    expect(within(box).getByText('Gönderimin sonucu bilinmiyor')).toBeInTheDocument()
-    expect(box).toHaveTextContent(/Sunucuya ulaşılamadı/)
-    expect(box).toHaveTextContent(/gönderim günlüğüne bakın/)
-    expect(screen.getByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeInTheDocument()
-    expect(ccInput(dlg)).toHaveValue('ek@example.com')
+
+    it.each([
+      ['409 SEND_IN_PROGRESS (gönderim sürüyor)', () => ({ success: false, status: 409, code: 'SEND_IN_PROGRESS', error: 'Bu rapor şu anda gönderiliyor.' })],
+      ['503 DB_UNAVAILABLE (posta gitmiş, sonuç yazılamamış olabilir)', () => ({ success: false, status: 503, code: 'DB_UNAVAILABLE', error: 'Veritabanına şu anda ulaşılamıyor.' })],
+    ])('%s da "yeniden dene" değil, belirsiz: rapor gönderilmiş okunursa pencere kapanır', async (_label, res) => {
+      te().send.mockResolvedValueOnce(res())
+      const dlg = await openSendDialog()
+      fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+      te().report.mockResolvedValueOnce(sentReport())
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await screen.findByText(/Rapor gönderilmiş: yanıt gelmeden önce/)).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      expect(te().send).toHaveBeenCalledTimes(1)
+    })
+
+    it('409 SEND_IN_PROGRESS + rapor "gönderiliyor" okunur → pencere kapanır, "sürüyor, yeniden göndermeyin" bildirimi; düzenleyicinin gönder düğmesi kapalı', async () => {
+      te().send.mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_IN_PROGRESS', error: 'Bu rapor şu anda gönderiliyor.' })
+      const dlg = await openSendDialog()
+      te().report.mockResolvedValue(reportWith({ status: 'sending', send_state: 'SENDING' }))
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await screen.findByText(/Rapor şu anda gönderiliyor; sonuç birkaç dakika içinde raporda/)).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).toBeDisabled())
+      expect(te().send).toHaveBeenCalledTimes(1)
+    })
+
+    it('ağ hatası + rapor KUYRUKTA okunur → pencere kapanır, kuyruk bildirimi', async () => {
+      te().send.mockRejectedValueOnce(await netError())
+      const dlg = await openSendDialog()
+      te().report.mockResolvedValueOnce(reportWith({ status: 'queued', send_state: 'QUEUED' }))
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await screen.findByText(/Posta sunucusu yoğun; rapor sıraya alındı/)).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      expect(te().send).toHaveBeenCalledTimes(1)
+    })
+
+    it('ağ hatası + rapor açıkça GİTMEMİŞ okunur → kilit kalkar, "gönderilmemiş" bandı, yazılan ek Bilgi korunur; ikinci deneme aynı ek Bilgi ile gider', async () => {
+      te().send
+        .mockRejectedValueOnce(await netError())
+        .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+      const dlg = await openSendDialog()
+      const input = ccInput(dlg)
+      fireEvent.change(input, { target: { value: 'ek@example.com' } })
+      const loadsBefore = te().report.mock.calls.length
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await within(dlg).findByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+      expect(failureBox(dlg)).toHaveAttribute('data-kind', 'retry')
+      expect(failureBox(dlg)).toHaveTextContent(/bu gönderim gitmemiş/)
+      expect(te().report.mock.calls.length).toBe(loadsBefore + 1)      // tek, beklenen okuma
+      expect(input).toHaveValue('ek@example.com')
+      const confirm = within(dlg).getByRole('button', { name: 'Gönder' })
+      await waitFor(() => expect(confirm).not.toBeDisabled())
+      expect(confirm).not.toHaveAttribute('data-locked')
+      fireEvent.click(confirm)
+      await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+      expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    })
+
+    it('ağ hatası + rapor OKUNAMADI → kilit kalır, "durumu yeniden denetle"; pencere kapatılıp yeniden açılsa da kilitli açılır ve durumu yeniden denetler; gitmemiş okununca açılır', async () => {
+      te().send
+        .mockRejectedValueOnce(await netError())
+        .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: [] } })
+      let dlg = await openSendDialog()
+      te().report.mockResolvedValueOnce({ success: false, status: 0, code: 'NETWORK_ERROR', error: 'Sunucuya ulaşılamadı.' })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await within(dlg).findByText(/Raporun durumu okunamadı, gönderimin gidip gitmediği hâlâ bilinmiyor/)).toBeInTheDocument()
+      expect(failureBox(dlg)).toHaveAttribute('data-kind', 'unsure')
+      expect(within(dlg).getByRole('button', { name: 'Gönder' })).toBeDisabled()
+      const recheck = within(dlg).getByRole('button', { name: 'Durumu yeniden denetle' })
+      expect(recheck).toHaveAttribute('data-slot', 'te-send-recheck')
+      // Yeniden denetim de okunamazsa kilit sürer
+      te().report.mockResolvedValueOnce({ success: false, status: 503, code: 'DB_UNAVAILABLE', error: 'Veritabanı yok.' })
+      const loads = te().report.mock.calls.length
+      fireEvent.click(recheck)
+      await waitFor(() => expect(te().report.mock.calls.length).toBe(loads + 1))
+      expect(await within(dlg).findByRole('button', { name: 'Durumu yeniden denetle' })).toBeInTheDocument()
+      expect(within(dlg).getByRole('button', { name: 'Gönder' })).toBeDisabled()
+      // Kapatıp yeniden açmak kilidi KALDIRMAZ: pencere kilitli açılır ve durum hemen yeniden okunur
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      let releaseReopen
+      te().report.mockImplementationOnce(() => new Promise((r) => { releaseReopen = r }))
+      await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+      dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+      await waitFor(() => expect(releaseReopen).toBeTypeOf('function'))
+      expect(failureBox(dlg)).toHaveAttribute('data-kind', 'unsure')
+      expect(within(dlg).getByRole('button', { name: 'Gönder' })).toBeDisabled()
+      fireEvent.keyDown(ccInput(dlg), { key: 'Enter', code: 'Enter', ctrlKey: true })
+      expect(te().send).toHaveBeenCalledTimes(1)
+      await act(async () => { releaseReopen(reportResponse()) })
+      expect(await within(dlg).findByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+      await waitFor(() => expect(within(dlg).getByRole('button', { name: 'Gönder' })).not.toBeDisabled())
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    })
+  })
+
+  it('inceleme 2026-10-18 (3. tur): PDF geldi ama tarayıcı indirmeyi başlatmadı (DOWNLOAD_FAILED) → sessiz başarı değil, çevrilmiş açıklayıcı metin', async () => {
+    te().downloadPdf.mockResolvedValue({ success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'PDF indir' }))
+    expect(await screen.findByText('PDF hazırlandı ama tarayıcı indirmeyi başlatmadı. Sayfayı yenileyip yeniden “PDF indir”e basın; sorun sürerse tarayıcının indirme iznini ve boş disk alanını denetleyin.')).toBeInTheDocument()
+    expect(te().downloadPdf).toHaveBeenCalledWith('100')
   })
 
   it('gönderemeyen (paylaşımla düzenleyen, can_send:false): gönder düğmesi ve pencere yok', async () => {

@@ -7,10 +7,10 @@ import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 // Kanalın yıl arşivi — ZIP (2026-10-17, C12): kanal görünümünün rapor araç çubuğunda "Yıl arşivi (ZIP)" menüsü; seçilen
 // yılın PDF'leri SIRAYLA alınır (429 → 3 sn sonra yeniden), tarayıcıda paketlenir; durum satırı "PDF'ler hazırlanıyor… n / N"
 // + Vazgeç; eksik aylar missing.txt + bildirim; iptalde hiçbir şey indirilmez. Paylaşımla okuyan da görür.
-const dl = vi.hoisted(() => ({ calls: [], throwWith: null }))
+const dl = vi.hoisted(() => ({ calls: [], throwWith: null, result: undefined }))
 vi.mock('../utils/csvExport.js', async (orig) => ({
   ...(await orig()),
-  downloadBlob: (name, blob) => { if (dl.throwWith) throw dl.throwWith; dl.calls.push({ name, blob }) },
+  downloadBlob: (name, blob) => { if (dl.throwWith) throw dl.throwWith; dl.calls.push({ name, blob }); return dl.result },
 }))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -53,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   dl.calls = []
   dl.throwWith = null
+  dl.result = undefined
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10')
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil Şube'), reports: REPORTS,
@@ -238,6 +239,17 @@ describe('kanal yıl arşivi (ZIP)', () => {
     expect(await screen.findByText('RangeError: Array buffer allocation failed')).toBeInTheDocument()
     expect(document.querySelector('[data-detail="code"]')).toHaveTextContent('RangeError: Array buffer allocation failed')
     expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'idle')
+  })
+
+  it('inceleme 2026-10-18 (3. tur): tarayıcı ZIP indirmesini başlatmadıysa (downloadBlob false) başarı bildirimi YOK, açıklayıcı hata', async () => {
+    te().pdfBlob.mockImplementation(async (id) => pdfOf(id))
+    dl.result = false
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    expect(await screen.findByText(/Yıl arşivi hazırlandı ama tarayıcı indirmeyi başlatmadı/)).toBeInTheDocument()
+    expect(dl.calls).toHaveLength(1)
+    expect(screen.queryByText(/2025 arşivi indirildi/)).toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'idle'))
   })
 
   it('bayat paket (dinamik import yüklenemedi): "Sayfa güncellendi; yenileyip tekrar deneyin."', async () => {
