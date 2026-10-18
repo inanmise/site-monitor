@@ -336,6 +336,34 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("2026-10-18: rapor okuma kısaltma üslerini taşır (values.units); geçen ayın ipucu kendi üssüyle (previous.units — yalnız aynı tür alanlar); üssüz raporda anahtar yok")
+    void readReportCarriesUnits() throws Exception {
+        TechErrorTemplate.Template t = TechErrorTemplate.defaults("tr");
+        report(100, 10, A, null).setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of(
+                "fields", Map.of("total-tx", 4_400_000_000L, "error-count", 12), "units", Map.of("total-tx", 9)), t)));
+        TechErrorReport aug = new TechErrorReport();
+        aug.setId(90L);
+        aug.setReportYear(2026);
+        aug.setReportMonth(8);
+        aug.setTemplateJson(TechErrorTemplate.toJson(t));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of(
+                "fields", Map.of("total-tx", 4_350_000_000L, "error-count", 5_000_000), "units", Map.of("total-tx", 9, "error-count", 6)), t)));
+        when(service.previousReport(any())).thenReturn(Optional.of(aug));
+        when(service.imageMeta(100L)).thenReturn(List.of());
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.values.units['total-tx']").value(9))
+                .andExpect(jsonPath("$.data.values.units['error-count']").doesNotExist())
+                .andExpect(jsonPath("$.data.previous.fields['total-tx']").value(4_350_000_000L))
+                .andExpect(jsonPath("$.data.previous.units['total-tx']").value(9))
+                .andExpect(jsonPath("$.data.previous.units['error-count']").value(6));
+        aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 5)), t)));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.previous.fields['total-tx']").value(5))
+                .andExpect(jsonPath("$.data.previous.units").doesNotExist());
+    }
+
+    @Test
     @DisplayName("gönderim: SENT 200, SKIPPED 409 MAIL_DISABLED, FAILED 502 MAIL_FAILED, takım adresi yok 409; her sonuç denetlenir")
     void sendOutcomes() throws Exception {
         report(100, 10, A, null);

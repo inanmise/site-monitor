@@ -371,8 +371,25 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     for (const k of keys) delete out[k]
     return out
   })
-  const setField = (id, v) => {
-    setDraft((d) => ({ ...d, fields: { ...d.fields, [id]: v } }))
+  /** Kısaltma üssü (2026-10-18): üs varsa yazılır, yoksa anahtar silinir (değişmediyse aynı nesne — sahte değişiklik yok). */
+  const withUnit = (units, key, exp) => {
+    const cur = units?.[key] ?? null
+    const next = exp ?? null
+    if (cur === next) return units
+    const out = { ...(units || {}) }
+    if (next == null) delete out[key]
+    else out[key] = next
+    return out
+  }
+  const setUnit = (key, exp) => setDraft((d) => {
+    const units = withUnit(d.units, key, exp)
+    return units === d.units ? d : { ...d, units }
+  })
+  const setField = (id, v, exp = null) => {
+    setDraft((d) => {
+      const units = withUnit(d.units, id, v == null ? null : exp)
+      return { ...d, fields: { ...d.fields, [id]: v }, ...(units === d.units ? {} : { units }) }
+    })
     clearServer((k) => k === `values.${id}`)
     if (v === false) {
       // Muaf olan (gizlenen) alanın hatası görünmeden kaydı kilitlemesin
@@ -410,13 +427,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     })
     clearServer((k) => k === `text.${sid}`)
   }
-  const setCell = (sid, rid, cid, v) => {
+  const setCell = (sid, rid, cid, v, exp = null) => {
     setDraft((d) => {
       const tables = { ...(d.tables || {}) }
       const rows = { ...(tables[sid] || {}) }
       rows[rid] = { ...(rows[rid] || {}), [cid]: v }
       tables[sid] = rows
-      return { ...d, tables }
+      const units = withUnit(d.units, `tables.${sid}.${rid}.${cid}`, v == null ? null : exp)
+      return { ...d, tables, ...(units === d.units ? {} : { units }) }
     })
     clearServer((k) => k === `tables.${sid}.${rid}.${cid}`)
   }
@@ -1213,7 +1231,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
-            errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError} />
+            errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError} onUnit={setUnit} />
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}

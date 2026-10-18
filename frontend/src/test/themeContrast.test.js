@@ -165,6 +165,8 @@ const TEXT_PAIRS = [
   ['--input-text', '--input-bg'],
 ]
 const FOCUS_PAIRS = [['--ring', '--background'], ['--ring', '--card']]
+/** Metin dışı grafik (WCAG 1.4.11, ≥ 3:1): kanal raporunun sıfır adı işareti (yeşil yuvarlak tik, 2026-10-18) zemin ve kart üstünde. */
+const GRAPHIC_PAIRS = [['--success', '--background'], ['--success', '--card']]
 
 /** Ek temaların bloğunda TAMAMI tanımlı olmalı: iç içe önizleme / başka şemada çizilen renk örneği tabandan değer sızdırmasın. */
 const REQUIRED = [
@@ -208,6 +210,15 @@ describe('tema kontrast kapısı (WCAG 2.1)', () => {
         const bad = []
         for (const [fg, bg] of FOCUS_PAIRS) {
           const ratio = contrast(color(fg), color(bg))   // yarı saydam halka zemine karıştırılarak ölçülür
+          if (ratio < 3) bad.push(`${fg} / ${bg} = ${ratio.toFixed(2)}`)
+        }
+        expect(bad).toEqual([])
+      })
+
+      it('grafik işaretleri (başarı yeşili — sıfır adet tiki) zemin ve kart üstünde ≥ 3:1', () => {
+        const bad = []
+        for (const [fg, bg] of GRAPHIC_PAIRS) {
+          const ratio = contrast(color(fg), color(bg))
           if (ratio < 3) bad.push(`${fg} / ${bg} = ${ratio.toFixed(2)}`)
         }
         expect(bad).toEqual([])

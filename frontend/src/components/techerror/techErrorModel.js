@@ -157,6 +157,122 @@ export function hasAbbreviation(raw) {
   return !!p && /\d/.test(p.mantissa) && ABBREV_EXP.has(p.suffix)
 }
 
+/** Geçerli kısaltma üsleri (TechErrorValues.exponent): 3 / 6 / 9 / 12. */
+export const UNIT_EXPONENTS = Object.freeze([3, 6, 9, 12])
+
+/** Yazımın kısaltma üssü ("4.4G" → 9, "681,6 bin" → 3); soneksiz ya da tanınmayan sonek → null. */
+export function abbreviationExp(raw) {
+  const p = splitAbbrev(raw)
+  return p && /\d/.test(p.mantissa) && ABBREV_EXP.has(p.suffix) ? ABBREV_EXP.get(p.suffix) : null
+}
+
+/** Kısaltma harfi (Qlik, iki dilde aynı — TechErrorFormat.letter): 3 k, 6 M, 9 G, 12 T. */
+const ABBREV_LETTER = Object.freeze({ 3: 'k', 6: 'M', 9: 'G', 12: 'T' })
+
+/** Anomali konusu adedinin kısaltma anahtarı (TechErrorValues.issueUnitKey). */
+export function issueUnitKey(sectionId, issueId, part) {
+  return `issues.${sectionId}.${issueId}.${part}`
+}
+
+/** Tablo sayı hücresinin kısaltma anahtarı (TechErrorValues.tableUnitKey). */
+export function tableUnitKey(sectionId, rowId, colId) {
+  return `tables.${sectionId}.${rowId}.${colId}`
+}
+
+/** |x| / 10^exp'in TAM ondalık basamakları {int, frac} (kayan nokta bölmesi yok — Java BigDecimal.movePointLeft). */
+function shiftedDigits(x, exp) {
+  const { all, point } = decimalParts(x)
+  const p = point - exp
+  let int
+  let frac
+  if (p <= 0) { int = '0'; frac = '0'.repeat(-p) + all } else if (p >= all.length) { int = all + '0'.repeat(p - all.length); frac = '' } else { int = all.slice(0, p); frac = all.slice(p) }
+  int = int.replace(/^0+(?=\d)/, '')
+  return { int, frac }
+}
+
+/** Basamakları `scale` ondalığa yarım yukarı yuvarlar (dizgi üzerinde — Java setScale(scale, HALF_UP)); sondaki sıfırlar düşer. */
+function roundDigits({ int, frac }, scale) {
+  let i = int
+  let f = frac
+  if (f.length > scale) {
+    const up = f[scale] >= '5'
+    let n = BigInt(i + f.slice(0, scale))
+    if (up) n += 1n
+    const str = n.toString().padStart(scale + 1, '0')
+    i = str.slice(0, str.length - scale)
+    f = str.slice(str.length - scale)
+  }
+  let end = f.length
+  while (end > 0 && f[end - 1] === '0') end--
+  return { int: i, frac: f.slice(0, end) }
+}
+
+/** Tam kısmı binlik gruplarına ayırır (döngüyle — basamak dizisi kısa). */
+function groupDigits(int, sep) {
+  let out = ''
+  for (let k = 0; k < int.length; k++) {
+    if (k > 0 && (int.length - k) % 3 === 0) out += sep
+    out += int[k]
+  }
+  return out
+}
+
+function joinDigits({ int, frac }, lang, grouping) {
+  const en = lang === 'en'
+  const g = grouping ? groupDigits(int, en ? ',' : '.') : int
+  return frac ? `${g}${en ? '.' : ','}${frac}` : g
+}
+
+/**
+ * Kısaltmayla girilmiş sayının gösterimi — sunucudaki TechErrorFormat.abbreviated ile AYNI (ortak doğruluk tablosu
+ * TechErrorNumberDisplayTest.ABBREV_TABLE): değer 10^exp ile ondalık gösterimde kaydırılır, en çok 6 ondalık yarım yukarı,
+ * sondaki sıfırlar düşer, binlik gruplaması dilin biçiminde, harf (k / M / G / T) eklenir, boşluk yok — 4.400.000.000 / 9 →
+ * TR "4,4G", EN "4.4G". `grouping: false`: GİRİŞ kutusunun metni ("4400M" — "4.400M" geri okununca 4,4 milyon olurdu:
+ * sonekten önceki tek ayraç ondalıktır). Geçersiz üs → tam sayı biçimi.
+ */
+export function formatAbbreviated(n, exp, lang, { grouping = true } = {}) {
+  if (n == null || n === '' || !Number.isFinite(Number(n))) return '—'
+  const letter = ABBREV_LETTER[exp]
+  if (!letter) return formatNumber(n, lang)
+  const x = Number(n) + 0
+  const d = roundDigits(shiftedDigits(x, exp), 6)
+  const zero = d.int === '0' && d.frac === ''
+  return `${x < 0 && !zero ? '-' : ''}${joinDigits(d, lang, grouping)}${letter}`
+}
+
+/**
+ * Farkın kısa yazımı — sunucudaki TechErrorFormat.compactQlik ile AYNI: 1000'in altı tam (en çok 2 ondalık), üstü büyüklüğe
+ * göre k / M / G / T, en çok 2 ondalık yarım yukarı; yuvarlanınca 1000 olan bir üst birime geçer. `a` ≥ 0.
+ */
+export function compactQlik(a, lang) {
+  const v = Math.abs(Number(a)) + 0
+  const small = roundDigits(shiftedDigits(v, 0), 2)
+  if (small.int.length < 4) return joinDigits(small, lang, true)
+  let exp = v < 1e6 ? 3 : v < 1e9 ? 6 : v < 1e12 ? 9 : 12
+  let d = roundDigits(shiftedDigits(v, exp), 2)
+  if (d.int.length >= 4 && exp < 12) {
+    exp += 3
+    d = roundDigits(shiftedDigits(v, exp), 2)
+  }
+  return `${joinDigits(d, lang, true)}${ABBREV_LETTER[exp]}`
+}
+
+/**
+ * Sıfır adedin yanına yeşil yuvarlak tik konur mu — sunucudaki TechErrorFormat.zeroOk ile AYNI (ortak doğruluk tablosu
+ * TechErrorNumberDisplayTest.ZERO_TABLE): yalnız SAYI alanı, otomatik hesap yok, "daha iyi" yönü `higher` değil, değer tam 0
+ * (sayı türünde — boş / bilinmeyen 0 DEĞİLDİR). Muaf alan çağıranın işi (muaf alan çizilmez).
+ */
+export function zeroOk(field, v) {
+  if (!field || field.type !== 'number' || field.calc?.kind) return false
+  if (effectiveBetter(field) === 'higher') return false
+  return zeroCount(v)
+}
+
+/** Anomali konusunun adedi tam 0 mı (TechErrorFormat.zeroCount) — yalnız sayı türü. */
+export function zeroCount(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v === 0
+}
+
 /** Ondalık gösterimi 10^exp ile KAYDIRIR (kayan nokta çarpımı yok: 7,42 × 10⁹ = 7.420.000.000 tam). */
 function shiftDecimal(normalized, exp) {
   const [ip, fp = ''] = normalized.split('.')
@@ -259,10 +375,10 @@ export function formatPercent(n, lang) {
   return lang === 'en' ? `${v}%` : `%${v}`
 }
 
-export function formatValue(field, value, lang, yesNo) {
+export function formatValue(field, value, lang, yesNo, unit = null) {
   if (value == null || value === '') return '—'
   switch (field?.type) {
-    case 'number': return formatNumber(value, lang)
+    case 'number': return ABBREV_LETTER[unit] ? formatAbbreviated(value, unit, lang) : formatNumber(value, lang)
     case 'percent': return formatPercent(value, lang)
     case 'yesno': return yesNo(!!value)
     default: return String(value)
@@ -523,7 +639,7 @@ export function pointsOf(diff, lang) {
  * sayı → "+1.250 (+%3,2)" (önceki 0 ise yalnız adet; değişim yoksa "değişim yok"), yüzde → puan; `dir` up / down / flat;
  * biri yoksa null (cümle düşer, kutucukta fark satırı yok).
  */
-export function deltaOf(field, prev, cur, lang) {
+export function deltaOf(field, prev, cur, lang, unit = null) {
   const p = calcNumber(prev)
   const c = calcNumber(cur)
   if (p == null || c == null) return null
@@ -531,7 +647,8 @@ export function deltaOf(field, prev, cur, lang) {
   const diff = c - p
   if (diff === 0) return { text: lang === 'en' ? 'no change' : 'değişim yok', dir: 'flat' }
   const sign = diff > 0 ? '+' : '−'
-  let text = sign + formatNumber(Math.abs(diff), lang)
+  // Bu ayın değeri kısaltmayla girildiyse fark da kısa (2026-10-18; TechErrorFormat.delta(…, unit))
+  let text = sign + (ABBREV_LETTER[unit] ? compactQlik(Math.abs(diff), lang) : formatNumber(Math.abs(diff), lang))
   if (p !== 0) text += ` (${sign}${formatPercent(roundCalc(Math.abs(diff) / Math.abs(p) * 100), lang)})`
   return { text, dir: diff > 0 ? 'up' : 'down' }
 }
@@ -580,7 +697,7 @@ function summaryValue(f, v) {
  * metin değerindeki yıldız dizisi tek yıldıza iner (işaretleme bozulmasın). Uzun açıklama (`textarea`) alanına
  * başvuran cümle düşer (sunucudaki TechErrorSummary.line ile aynı; inceleme 2026-10-14).
  */
-export function summaryLine(pattern, byId, fields, lang, resolveLiteral, previous = null, targets = null) {
+export function summaryLine(pattern, byId, fields, lang, resolveLiteral, previous = null, targets = null, units = null) {
   if (pattern == null || richBlank(pattern)) return null
   const str = String(pattern)
   let out = ''
@@ -594,7 +711,7 @@ export function summaryLine(pattern, byId, fields, lang, resolveLiteral, previou
       const numeric = f.type === 'number' || f.type === 'percent'
       if (r.kind === 'd') {
         if (!numeric) return null
-        const d = deltaOf(f, previous?.[f.id], fields?.[f.id], lang)
+        const d = deltaOf(f, previous?.[f.id], fields?.[f.id], lang, units?.[f.id] ?? null)
         if (!d) return null
         const plain = d.dir === 'flat' && f.type !== 'percent'
         out += plain ? d.text : `**${d.text}**`
@@ -617,7 +734,7 @@ export function summaryLine(pattern, byId, fields, lang, resolveLiteral, previou
       if (typeof v !== 'boolean') return null
       out += resolveLiteral(v ? r.yes : r.no)
     } else if (f.type === 'number' || f.type === 'percent') {
-      out += `**${formatValue(f, v, lang, summaryYesNo(lang))}**`
+      out += `**${formatValue(f, v, lang, summaryYesNo(lang), units?.[f.id] ?? null)}**`
     } else {
       out += neutralValue(formatValue(f, v, lang, summaryYesNo(lang)))
     }
@@ -646,7 +763,7 @@ function isItemLine(pattern) {
  * Kalıplardan üretilen özet (sunucudaki TechErrorSummary.auto): düz cümleler tek paragrafta akar, madde satırı ayrı
  * satır, maddeden sonraki düz cümle yeni paragraf. `fields` = raporun değerleri.
  */
-export function summaryAutoText(section, template, fields, channel, year, month, previous = null, targets = null) {
+export function summaryAutoText(section, template, fields, channel, year, month, previous = null, targets = null, units = null) {
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
   const lang = template?.lang
   const lit = (x) => resolveTextPlaceholders(x, channel, year, month, lang)
@@ -655,7 +772,7 @@ export function summaryAutoText(section, template, fields, channel, year, month,
   for (const line of section?.lines || []) {
     // Sınır aşıldıysa sonraki cümleler üretilmez — sonuç zaten sınırda kesilir (sunucu ile aynı)
     if (out.length > MAX_RESOLVED_TEXT) break
-    let r = summaryLine(line, byId, fields, lang, lit, previous, targets)
+    let r = summaryLine(line, byId, fields, lang, lit, previous, targets, units)
     if (!r || richBlank(r)) continue
     const item = isItemLine(line)
     // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (sunucu ile aynı)
@@ -685,7 +802,8 @@ export function summaryAutoText(section, template, fields, channel, year, month,
 export function summaryEffective(section, template, values, channel, year, month, previous = null) {
   const override = values?.texts?.[section?.id]
   if (override != null && !richBlank(override)) return resolveTextPlaceholders(override, channel, year, month, template?.lang)
-  return summaryAutoText(section, template, values?.fields || {}, channel, year, month, previous, values?.targets || null)
+  return summaryAutoText(section, template, values?.fields || {}, channel, year, month, previous, values?.targets || null,
+    values?.units || null)
 }
 
 /**
@@ -707,7 +825,7 @@ function noteValue(f, fields) {
  * metin; yoksa null. Cümlesi (eksik başka bir rakam yüzünden) düşen bir adet önizlemeden ve PDF'ten sessizce kaybolmaz
  * (inceleme 2026-10-17).
  */
-function summaryFacts(e, template, fields, told, channel, year, month) {
+function summaryFacts(e, template, fields, told, channel, year, month, units = null) {
   const lang = template?.lang
   const parts = []
   for (const f of e.fields || []) {
@@ -723,7 +841,7 @@ function summaryFacts(e, template, fields, told, channel, year, month) {
       if (richBlank(s)) continue
       value = neutralValue(s)
     } else {
-      value = formatValue(f, v, lang, summaryYesNo(lang))
+      value = formatValue(f, v, lang, summaryYesNo(lang), units?.[f.id] ?? null)
     }
     const label = String(resolvePlaceholders(f.label || '', channel, year, month, lang) ?? '')
     const bold = !yesno && !text
@@ -735,10 +853,10 @@ function summaryFacts(e, template, fields, told, channel, year, month) {
 }
 
 /** Gömülü bölümün yerleşince ekleyeceği bloklar: önce söylenmemiş değerleri (tek metin bloğu), sonra notları. */
-function embeddedBlocks(e, template, fields, told, channel, year, month) {
+function embeddedBlocks(e, template, fields, told, channel, year, month, units = null) {
   const lang = template?.lang
   const out = []
-  const facts = summaryFacts(e, template, fields, told, channel, year, month)
+  const facts = summaryFacts(e, template, fields, told, channel, year, month, units)
   if (facts != null) out.push({ kind: 'text', text: facts })
   for (const f of e.fields || []) {
     const v = noteValue(f, fields)
@@ -767,7 +885,7 @@ function embeddedBlocks(e, template, fields, told, channel, year, month) {
  * </ul>
  * Gömülü bölüm yoksa tek metin bloğu = {@link summaryAutoText} (davranış değişmez).
  */
-export function summaryBlocks(template, section, fields, texts, channel, year, month, previous = null, targets = null) {
+export function summaryBlocks(template, section, fields, texts, channel, year, month, previous = null, targets = null, units = null) {
   if (!section) return []
   const lang = template?.lang
   const embedded = embeddedSections(template, section.id)
@@ -793,7 +911,7 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
   let par = false
   for (const line of lines) {
     if (len > MAX_RESOLVED_TEXT) { kept.push(null); continue }
-    const r = summaryLine(line, byId, fields, lang, lit, previous, targets)
+    const r = summaryLine(line, byId, fields, lang, lit, previous, targets, units)
     const ok = r != null && !richBlank(r) && (!isItemLine(line) || isItemLine(r))
     kept.push(ok ? r : null)
     if (!ok) continue
@@ -845,7 +963,7 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
     for (const e of embedded) {
       if (placed.has(e.id) || !(e.fields || []).some((f) => ids.has(f.id))) continue
       placed.add(e.id)
-      const add = embeddedBlocks(e, template, fields, told, channel, year, month)
+      const add = embeddedBlocks(e, template, fields, told, channel, year, month, units)
       if (!add.length) continue                 // eklenecek bir şey yok: paragraf bölünmez
       flush()
       append(add)
@@ -853,7 +971,7 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
     }
   }
   flush()
-  for (const e of embedded) if (!placed.has(e.id)) append(embeddedBlocks(e, template, fields, told, channel, year, month))
+  for (const e of embedded) if (!placed.has(e.id)) append(embeddedBlocks(e, template, fields, told, channel, year, month, units))
   return capTextBlocks(out, MAX_RESOLVED_TEXT)
 }
 
@@ -1269,6 +1387,8 @@ export function normalizeValues(values) {
       Object.fromEntries(Object.entries(rows || {}).map(([rid, cells]) => [rid, { ...(cells || {}) }]))])),
     // Raporun o aya özel hedefleri (2026-10-17, 4b)
     targets: { ...(values?.targets || {}) },
+    // Kısaltmayla girilmiş sayıların üssü (2026-10-18): anahtar alan kimliği / issues.… / tables.…
+    units: { ...(values?.units || {}) },
   }
 }
 
@@ -1358,7 +1478,37 @@ export function canonicalValues(v, template = null) {
   const out = { fields, issues, texts }
   if (Object.keys(tables).length) out.tables = tables
   if (Object.keys(targets).length) out.targets = targets
+  // Kısaltma üsleri (2026-10-18): sunucudaki TechErrorValues.units ile aynı süzgeç — yalnız DEĞERİ olan sayı yeri (sayı
+  // alanı / hesapsız, anomali adedi, sayı sütunu); boşsa anahtar hiç yazılmaz (kısaltmasız raporun belgesi öncekiyle aynı)
+  const units = {}
+  for (const [k, e] of Object.entries(v?.units || {})) {
+    if (!UNIT_EXPONENTS.includes(e)) continue
+    if (unitPlaceHasValue(k, out, template)) units[k] = e
+  }
+  if (Object.keys(units).length) out.units = units
   return out
+}
+
+/** Kısaltma anahtarının gösterdiği yerde sayı değer var mı (kanonik belgede; şablon verildiyse tür de denetlenir)? */
+function unitPlaceHasValue(key, out, template) {
+  const parts = String(key).split('.')
+  if (parts[0] === 'issues' && parts.length === 4) {
+    if (parts[3] !== 'customers' && parts[3] !== 'errors') return false
+    if (template && !(template.sections || []).some((s) => s.id === parts[1] && s.kind === 'issues')) return false
+    const iss = (out.issues[parts[1]] || []).find((i) => i?.id === parts[2])
+    return typeof iss?.[parts[3]] === 'number'
+  }
+  if (parts[0] === 'tables' && parts.length === 4) {
+    if (template) {
+      const s = (template.sections || []).find((x) => x.id === parts[1] && x.kind === 'table')
+      if (!s || !(s.rows || []).some((r) => r.id === parts[2])) return false
+      if (!(s.columns || []).some((c) => c.id === parts[3] && c.type === 'number')) return false
+    }
+    return typeof out.tables?.[parts[1]]?.[parts[2]]?.[parts[3]] === 'number'
+  }
+  if (parts.length !== 1) return false
+  if (template && !allFields(template).some((f) => f.id === key && f.type === 'number' && !f.calc?.kind)) return false
+  return typeof out.fields[key] === 'number'
 }
 
 /** Şablonun karşılaştırma hâli: boş isteğe bağlı metinler (ipucu vb.) "yok" ile aynı sayılır. */
@@ -1683,7 +1833,7 @@ export function calcRefIssues(template, field) {
  * hedefsiz alan "daha iyi" yönüne göre önceki aya karşı (iyileşme good, kötüleşme bad; yön yok / geçen ay yok / değişim yok
  * neutral). `fields` hesaplar uygulanmış değerler olmalı.
  */
-export function summaryTiles(template, section, fields, targets, previous, channel, year, month) {
+export function summaryTiles(template, section, fields, targets, previous, channel, year, month, units = null) {
   const out = []
   if (!template || !section || !(section.tiles || []).length) return out
   const lang = template.lang
@@ -1696,8 +1846,9 @@ export function summaryTiles(template, section, fields, targets, previous, chann
     const cur = fields?.[id]
     const c = calcNumber(cur)
     const label = resolvePlaceholders(f.label || '', channel, year, month, lang)
-    const value = c == null ? '—' : formatValue(f, c, lang, summaryYesNo(lang))
-    const d = deltaOf(f, previous?.[id], cur, lang)
+    const unit = units?.[id] ?? null
+    const value = c == null ? '—' : formatValue(f, c, lang, summaryYesNo(lang), unit)
+    const d = deltaOf(f, previous?.[id], cur, lang, unit)
     const target = effectiveTarget(f, targets)
     const better = effectiveBetter(f)
     let met = null
@@ -1712,7 +1863,7 @@ export function summaryTiles(template, section, fields, targets, previous, chann
       else tone = (d.dir === 'up') === (better === 'higher') ? 'good' : 'bad'
     }
     out.push({ id, label, value, delta: d ? d.text : null, dir: d ? d.dir : null, tone,
-      target: target == null ? null : formatPercent(target, lang), met })
+      target: target == null ? null : formatPercent(target, lang), met, zero: zeroOk(f, cur) })
   }
   return out
 }
@@ -1827,8 +1978,9 @@ export function trendPoints(trend, fieldId, draftFields, field) {
 }
 
 /**
- * Çubuk etiketi — sunucudaki TechErrorFormat.compact ile AYNI: sayı TR B / Mn / Mr, EN K / M / B, 100'ün altında bir
- * ondalık; yuvarlanınca 1000 olacak değer bir üst birime geçer ("1Mn", "1.000B" değil). Yüzde en çok iki ondalık, 0,1'in
+ * Çubuk etiketi — sunucudaki TechErrorFormat.compact ile AYNI: sayı iki dilde de Qlik harfleriyle k / M / G / T (2026-10-18;
+ * önce TR B / Mn / Mr, EN K / M / B), 100'ün altında bir ondalık; yuvarlanınca 1000 olacak değer bir üst birime geçer ("1M",
+ * "1.000k" değil). Yüzde en çok iki ondalık, 0,1'in
  * altında iki anlamlı basamak kalacak kadar (en çok altı — saklama hassasiyeti). Yuvarlama Java HALF_UP ile aynı (Intl "halfExpand"). Tam
  * değer araç ipucunda ve ekran okuyucu listesinde.
  */
@@ -1852,8 +2004,9 @@ export function compactNumber(value, type, lang) {
     return en ? `${n}%` : `%${n}`
   }
   if (a < 1000) return formatNumber(v, lang)
-  const units = en ? ['K', 'M', 'B'] : ['B', 'Mn', 'Mr']
-  let u = a < 1e6 ? 0 : a < 1e9 ? 1 : 2
+  // Qlik harfleri iki dilde de (kullanıcı kararı 2026-10-18; TechErrorFormat.compact)
+  const units = ['k', 'M', 'G', 'T']
+  let u = a < 1e6 ? 0 : a < 1e9 ? 1 : a < 1e12 ? 2 : 3
   let scaled = v / 1000 ** (u + 1)
   if (Math.abs(scaled) >= 999.5 && u < units.length - 1) {           // 999,5 → 1000: bir üst birim
     u += 1
@@ -2137,14 +2290,23 @@ export function revertInvalidValues(values, base, errorKeys) {
     if (v == null) delete obj[key]
     else obj[key] = v
   }
+  // Kısaltma üssü değerle birlikte kayıtlı hâline döner (2026-10-18): "4,4G" yazılıp bozulan alan eski yazımıyla gider
+  const sameUnit = (uk) => (values.units?.[uk] ?? null) === (base?.units?.[uk] ?? null)
+  const revertUnit = (uk) => {
+    if (sameUnit(uk)) return
+    const o = own()
+    o.units = o.units || {}
+    put(o.units, uk, base?.units?.[uk] ?? null)
+  }
   for (const key of errorKeys || []) {
     const k = String(key || '')
     if (k.startsWith('values.')) {
       const fid = k.slice(7)
-      if ((values.fields?.[fid] ?? null) === (base?.fields?.[fid] ?? null)) continue
+      if ((values.fields?.[fid] ?? null) === (base?.fields?.[fid] ?? null) && sameUnit(fid)) continue
       const o = own()
       o.fields = o.fields || {}
       put(o.fields, fid, base?.fields?.[fid] ?? null)
+      revertUnit(fid)
     } else if (k.startsWith('targets.')) {
       // Raporun o aya özel hedefi (2026-10-17, 4b): geçersiz yazım kayıtlı hedefte kalır
       const fid = k.slice(8)
@@ -2159,20 +2321,24 @@ export function revertInvalidValues(values, base, errorKeys) {
       const idx = (values.issues?.[sid] || []).findIndex((i) => i?.id === iid)
       if (idx < 0) continue
       const was = (base?.issues?.[sid] || []).find((i) => i?.id === iid)?.[f] ?? null
-      if ((values.issues[sid][idx]?.[f] ?? null) === was) continue
+      const uk = issueUnitKey(sid, iid, f)
+      if ((values.issues[sid][idx]?.[f] ?? null) === was && sameUnit(uk)) continue
       put(own().issues[sid][idx], f, was)
+      revertUnit(uk)
     } else if (k.startsWith('tables.')) {
       const parts = k.split('.')
       if (parts.length !== 4) continue
       const [, sid, rid, cid] = parts
       const cur = values.tables?.[sid]?.[rid]?.[cid] ?? null
       const was = base?.tables?.[sid]?.[rid]?.[cid] ?? null
-      if (cur === was) continue
+      const uk = tableUnitKey(sid, rid, cid)
+      if (cur === was && sameUnit(uk)) continue
       const o = own()
       o.tables = o.tables || {}
       o.tables[sid] = o.tables[sid] || {}
       o.tables[sid][rid] = o.tables[sid][rid] || {}
       put(o.tables[sid][rid], cid, was)
+      revertUnit(uk)
     }
   }
   return out

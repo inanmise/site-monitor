@@ -2018,12 +2018,18 @@ public class TechErrorReportController {
         TechErrorReport p = prev.get();
         // Yalnız AYNI türdeki alan (inceleme 2026-10-13): kimliği başka bir alana geçmiş ya da türü değişmiş bir alanın geçen
         // ay değeri "geçen ay" ipucu olarak gösterilmez — sunucunun değişim hesabı da aynı süzgeci kullanır
-        Map<String, Object> fields = TechErrorReportService.sameTypeFields(p, current);
+        Template pt = TechErrorTemplate.fromStored(p.getTemplateJson());
+        com.sitemonitor.service.techerror.TechErrorValues.Values pv =
+                com.sitemonitor.service.techerror.TechErrorValues.fromStored(p.getValuesJson(), pt);
+        Map<String, Object> fields = TechErrorReportService.sameTypeFields(pt, pv, current);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", p.getId());
         m.put("year", p.getReportYear());
         m.put("month", p.getReportMonth());
         m.put("fields", fields);
+        // Geçen ayın kısaltmaları (2026-10-18): "geçen ay" ipucu geçen ayın kendi yazımıyla ("4,4G") — yalnız yukarıdaki alanlar
+        Map<String, Integer> units = TechErrorReportService.sameTypeUnits(pv, fields);
+        if (!units.isEmpty()) m.put("units", units);
         return m;
     }
 

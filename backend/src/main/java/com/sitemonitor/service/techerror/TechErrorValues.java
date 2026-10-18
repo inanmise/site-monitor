@@ -22,7 +22,8 @@ import java.util.Set;
  * { "fields": { "&lt;alan&gt;": 0.42 | 12000 | true | "metin" },
  *   "issues": { "&lt;bölüm&gt;": [ { id, topic, title, title_auto, description, customers, errors } ] },
  *   "texts":  { "&lt;bölüm&gt;": "serbest metin" },            // metin bölümü ve elle düzenlenmiş yönetici özeti
- *   "tables": { "&lt;bölüm&gt;": { "&lt;satır&gt;": { "&lt;sütun&gt;": 12 | 99.5 | "metin" } } } }   // 2026-10-14
+ *   "tables": { "&lt;bölüm&gt;": { "&lt;satır&gt;": { "&lt;sütun&gt;": 12 | 99.5 | "metin" } } },   // 2026-10-14
+ *   "units":  { "&lt;alan&gt;" | "issues.&lt;bölüm&gt;.&lt;konu&gt;.customers" | "tables.&lt;bölüm&gt;.&lt;satır&gt;.&lt;sütun&gt;": 9 } }   // 2026-10-18
  * </pre>
  *
  * Şablonda olmayan kimlikler düşer (şablondan çıkarılan alanın değeri raporda tutulmaz). Boş değer saklanmaz. Sayı
@@ -51,23 +52,56 @@ public final class TechErrorValues {
         }
     }
 
-    /** Okunmuş, şablona göre süzülmüş değerler. */
+    /**
+     * Okunmuş, şablona göre süzülmüş değerler. {@code units} (2026-10-18): kısaltmayla girilmiş sayıların üssü (3 / 6 / 9 /
+     * 12) — anahtar sayı alanının kimliği, {@link TechErrorValues#issueUnitKey} ya da {@link TechErrorValues#tableUnitKey};
+     * yalnız değeri olan sayı yerleri.
+     */
     public record Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
-                         Map<String, Map<String, Map<String, Object>>> tables, Map<String, Object> targets) {
+                         Map<String, Map<String, Map<String, Object>>> tables, Map<String, Object> targets,
+                         Map<String, Integer> units) {
         public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts) {
-            this(fields, issues, texts, Map.of(), Map.of());
+            this(fields, issues, texts, Map.of(), Map.of(), Map.of());
         }
 
         /** Hedefsiz (2026-10-17 öncesi imza): {@code targets} boş. */
         public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
                       Map<String, Map<String, Map<String, Object>>> tables) {
-            this(fields, issues, texts, tables, Map.of());
+            this(fields, issues, texts, tables, Map.of(), Map.of());
         }
 
-        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of(), Map.of(), Map.of()); }
+        /** Kısaltmasız (2026-10-18 öncesi imza): {@code units} boş. */
+        public Values(Map<String, Object> fields, Map<String, List<Issue>> issues, Map<String, String> texts,
+                      Map<String, Map<String, Map<String, Object>>> tables, Map<String, Object> targets) {
+            this(fields, issues, texts, tables, targets, Map.of());
+        }
 
-        /** Aynı değerler, başka alan haritasıyla ({@code targets} ve diğerleri korunur). */
-        public Values withFields(Map<String, Object> f) { return new Values(f, issues, texts, tables, targets); }
+        public static Values empty() { return new Values(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of()); }
+
+        /**
+         * Aynı değerler, başka alan haritasıyla ({@code targets} ve diğerleri korunur). Değeri kalmayan sayı alanının
+         * kısaltması düşer (hesap bir alanı boşaltırsa üssü sahipsiz kalmasın).
+         */
+        public Values withFields(Map<String, Object> f) {
+            Map<String, Integer> u = units;
+            if (!u.isEmpty()) {
+                u = new LinkedHashMap<>();
+                for (var e : units.entrySet()) {
+                    boolean bare = e.getKey().indexOf('.') < 0;
+                    if (!bare || f.get(e.getKey()) instanceof Number) u.put(e.getKey(), e.getValue());
+                }
+            }
+            return new Values(f, issues, texts, tables, targets, u);
+        }
+
+        /** Sayı alanının kısaltma üssü (yoksa null). */
+        public Integer unit(String fieldId) { return units.get(fieldId); }
+
+        /** Anomali konusu adedinin ({@code customers} / {@code errors}) kısaltma üssü (yoksa null). */
+        public Integer issueUnit(String sectionId, String issueId, String part) { return units.get(issueUnitKey(sectionId, issueId, part)); }
+
+        /** Tablo sayı hücresinin kısaltma üssü (yoksa null). */
+        public Integer cellUnit(String sectionId, String rowId, String colId) { return units.get(tableUnitKey(sectionId, rowId, colId)); }
 
         /** Tablo hücresi (yoksa null). */
         public Object cell(String section, String row, String col) {
@@ -130,6 +164,8 @@ public final class TechErrorValues {
         }
         // Raporun o aya özel hedefleri (2026-10-17, 4b) — yoksa anahtar hiç yazılmaz (eski belgelerle bayt bayt aynı)
         if (!v.targets().isEmpty()) m.put("targets", new LinkedHashMap<>(v.targets()));
+        // Kısaltmayla girilmiş sayıların üssü (2026-10-18) — yoksa anahtar hiç yazılmaz (eski belgelerle bayt bayt aynı)
+        if (!v.units().isEmpty()) m.put("units", new LinkedHashMap<>(v.units()));
         return m;
     }
 
@@ -206,7 +242,8 @@ public final class TechErrorValues {
                 }
             }
         }
-        Values out = new Values(fields, issues, texts, tables, targets);
+        Values out = new Values(fields, issues, texts, tables, targets,
+                units(root.get("units"), t, fields, issues, tables));
         if (strict && toJson(out).length() > MAX_JSON_CHARS) {
             throw bad("values", Msg.t("Rapor içeriği çok büyük (en çok 256 KB). Uzun açıklamaları kısaltın.",
                     "The report content is too large (at most 256 KB). Shorten the long descriptions."));
@@ -367,6 +404,74 @@ public final class TechErrorValues {
             return null;
         }
         return compact(d);
+    }
+
+    // ── Kısaltma üsleri (2026-10-18) ─────────────────────────────────────────────────────────────────
+
+    /** Anomali konusu adedinin kısaltma anahtarı: {@code issues.<bölüm>.<konu>.<customers|errors>}. */
+    public static String issueUnitKey(String sectionId, String issueId, String part) {
+        return "issues." + sectionId + "." + issueId + "." + part;
+    }
+
+    /** Tablo sayı hücresinin kısaltma anahtarı: {@code tables.<bölüm>.<satır>.<sütun>}. */
+    public static String tableUnitKey(String sectionId, String rowId, String colId) {
+        return "tables." + sectionId + "." + rowId + "." + colId;
+    }
+
+    /**
+     * Kısaltmayla girilmiş sayıların üsleri (kullanıcı isteği 2026-10-18: "4.4G gibi bir giriş raporda da aynı şekilde
+     * gözüksün"). Sayının KENDİSİ gerçektir; üs yalnız gösterim bilgisidir — bu yüzden katı okumada da geçersiz kayıt
+     * (bilinmeyen anahtar, 3 / 6 / 9 / 12 dışı ya da tam sayı olmayan üs, metin, o yerde değer yok, sayı olmayan alan /
+     * sütun, otomatik hesaplanan alan) SESSİZCE düşer, 400 olmaz. Şablon sırasıyla dolaşılır: maliyet şablonla sınırlı
+     * (istemcinin haritası ne kadar büyük olursa olsun). Değeri taşınmayan yerin üssü de taşınmaz ({@code carry}).
+     */
+    public static Map<String, Integer> units(Object raw, Template t, Map<String, Object> fields, Map<String, List<Issue>> issues,
+                                             Map<String, Map<String, Map<String, Object>>> tables) {
+        if (!(raw instanceof Map<?, ?> ru) || ru.isEmpty()) return Map.of();
+        Map<String, Integer> out = new LinkedHashMap<>();
+        for (Field f : t.allFields()) {
+            if (!"number".equals(f.type()) || f.calc() != null) continue;
+            if (!(fields.get(f.id()) instanceof Number)) continue;
+            Integer e = exponent(ru.get(f.id()));
+            if (e != null) out.put(f.id(), e);
+        }
+        for (Section s : t.sections()) {
+            if ("issues".equals(s.kind())) {
+                for (Issue i : issues.getOrDefault(s.id(), List.of())) {
+                    if (i.customers() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "customers"));
+                    if (i.errors() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "errors"));
+                }
+            } else if ("table".equals(s.kind())) {
+                Map<String, Map<String, Object>> rows = tables.get(s.id());
+                if (rows == null) continue;
+                for (TechErrorTemplate.TableRow r : s.rows()) {
+                    Map<String, Object> cells = rows.get(r.id());
+                    if (cells == null) continue;
+                    for (TechErrorTemplate.Column c : s.columns()) {
+                        if ("number".equals(c.type()) && cells.get(c.id()) instanceof Number) put(out, ru, tableUnitKey(s.id(), r.id(), c.id()));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** {@link #units} — saklı / taşınmış değerlerle (şablon yenileme: üs yalnız değeri taşınan yerde kalır). */
+    public static Map<String, Integer> units(Map<String, Integer> raw, Template t, Values v) {
+        return units(raw, t, v.fields(), v.issues(), v.tables());
+    }
+
+    private static void put(Map<String, Integer> out, Map<?, ?> raw, String key) {
+        Integer e = exponent(raw.get(key));
+        if (e != null) out.put(key, e);
+    }
+
+    /** Geçerli kısaltma üssü: tam sayı 3 / 6 / 9 / 12 (sayı türünde); değilse null. */
+    static Integer exponent(Object v) {
+        if (!(v instanceof Number n)) return null;
+        double d = n.doubleValue();
+        if (d != 3 && d != 6 && d != 9 && d != 12) return null;
+        return (int) d;
     }
 
     /** Sayı ya da sayısal metin ("1234.5"; istemci yerel biçimi kendisi çözer) → sonlu double; değilse null. */

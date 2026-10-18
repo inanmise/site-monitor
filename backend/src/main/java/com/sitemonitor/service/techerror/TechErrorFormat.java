@@ -11,6 +11,10 @@ import java.util.Locale;
 /**
  * Teknik hata raporunun DEĞER biçimi (PDF + e-posta ortak; 2026-10-13). Dil şablondan gelir: TR "1.234.567" ve
  * "%0,42", EN "1,234,567" ve "0.42%". Boş değer "—". Ondalık en çok 4 hane, sondaki sıfırlar düşer.
+ *
+ * <p>2026-10-18 (kullanıcı isteği: "4.4G gibi bir giriş yapıldığında raporda da aynı şekilde gözüksün"): kısaltmayla
+ * girilmiş sayı ({@code values.units}, {@link TechErrorValues}) kısaltmasıyla basılır — {@link #abbreviated}; tam yazılmış
+ * sayı eskisi gibi tam. Harfler Qlik'inkiler (k / M / G / T) iki dilde de; ondalık ayracı raporun dilinden.
  */
 public final class TechErrorFormat {
 
@@ -19,10 +23,18 @@ public final class TechErrorFormat {
     public static final String EMPTY = "—";
 
     public static String value(Field f, Object v, String lang) {
+        return value(f, v, lang, null);
+    }
+
+    /**
+     * {@link #value(Field, Object, String)} + kısaltma üssü ({@code unit}: 3 / 6 / 9 / 12; null = tam sayı). Kısaltma
+     * yalnız SAYI alanında geçer (yüzde / evet-hayır / metin üssü yok sayar).
+     */
+    public static String value(Field f, Object v, String lang, Integer unit) {
         if (v == null) return EMPTY;
         boolean en = "en".equals(lang);
         return switch (f.type()) {
-            case "number" -> v instanceof Number n ? number(n.doubleValue(), en) : String.valueOf(v);
+            case "number" -> v instanceof Number n ? numberOrAbbrev(n.doubleValue(), unit, en) : String.valueOf(v);
             case "percent" -> v instanceof Number n ? percent(n.doubleValue(), en) : String.valueOf(v);
             case "yesno" -> v instanceof Boolean b ? yesNo(b, en) : String.valueOf(v);
             default -> String.valueOf(v);
@@ -31,10 +43,15 @@ public final class TechErrorFormat {
 
     /** Tablo hücresi: sütun türüne göre (sayı / yüzde / metin); boş "—". */
     public static String cell(TechErrorTemplate.Column c, Object v, String lang) {
+        return cell(c, v, lang, null);
+    }
+
+    /** {@link #cell(TechErrorTemplate.Column, Object, String)} + kısaltma üssü (yalnız sayı sütunu). */
+    public static String cell(TechErrorTemplate.Column c, Object v, String lang, Integer unit) {
         if (v == null) return EMPTY;
         boolean en = "en".equals(lang);
         return switch (c.type()) {
-            case "number" -> v instanceof Number n ? number(n.doubleValue(), en) : String.valueOf(v);
+            case "number" -> v instanceof Number n ? numberOrAbbrev(n.doubleValue(), unit, en) : String.valueOf(v);
             case "percent" -> v instanceof Number n ? percent(n.doubleValue(), en) : String.valueOf(v);
             default -> String.valueOf(v);
         };
@@ -57,6 +74,15 @@ public final class TechErrorFormat {
      * (yüzdede "0 puan"). İkisinden biri yoksa {@code null} (cümle düşer, kutucukta fark satırı yoktur).
      */
     public static Delta delta(Field f, Object prev, Object cur, String lang) {
+        return delta(f, prev, cur, lang, null);
+    }
+
+    /**
+     * {@link #delta(Field, Object, Object, String)} + bu ayın değerinin kısaltma üssü (2026-10-18): bu ayın değeri
+     * kısaltmayla girildiyse SAYI farkı da kısa yazılır — birim büyüklüğe göre, en çok 2 ondalık ("+50M (+%1,15)"); yüzde
+     * kısmı ve puan farkı değişmez. Üs yoksa çıktı eskisiyle bayt bayt aynı.
+     */
+    public static Delta delta(Field f, Object prev, Object cur, String lang, Integer unit) {
         Double p = TechErrorValues.number(prev);
         Double c = TechErrorValues.number(cur);
         if (p == null || c == null) return null;
@@ -65,7 +91,7 @@ public final class TechErrorFormat {
         double diff = c - p;
         if (diff == 0) return new Delta(en ? "no change" : "değişim yok", "flat");
         String sign = diff > 0 ? "+" : "−";
-        String text = sign + number(Math.abs(diff), en);
+        String text = sign + (isUnit(unit) ? compactQlik(Math.abs(diff), en) : number(Math.abs(diff), en));
         if (p != 0) text += " (" + sign + percent(TechErrorCalc.roundRate(Math.abs(diff) / Math.abs(p) * 100), en) + ")";
         return new Delta(text, diff > 0 ? "up" : "down");
     }
@@ -79,7 +105,12 @@ public final class TechErrorFormat {
     }
 
     public static String count(Number n, String lang) {
-        return n == null ? EMPTY : number(n.doubleValue(), "en".equals(lang));
+        return count(n, lang, null);
+    }
+
+    /** Anomali konusunun adedi (müşteri / hata) + kısaltma üssü (2026-10-18). */
+    public static String count(Number n, String lang, Integer unit) {
+        return n == null ? EMPTY : numberOrAbbrev(n.doubleValue(), unit, "en".equals(lang));
     }
 
     public static String number(double d, boolean en) {
@@ -108,12 +139,89 @@ public final class TechErrorFormat {
         return en ? n + "%" : "%" + n;
     }
 
+    // ── Kısaltmalı sayı (2026-10-18) ─────────────────────────────────────────────────────────────────
+
+    /** Kısaltma harfi (Qlik, iki dilde aynı): 3 → k, 6 → M, 9 → G, 12 → T; başka üs → null. */
+    public static String letter(int exp) {
+        return switch (exp) {
+            case 3 -> "k";
+            case 6 -> "M";
+            case 9 -> "G";
+            case 12 -> "T";
+            default -> null;
+        };
+    }
+
+    /** Geçerli kısaltma üssü mü (3 / 6 / 9 / 12)? */
+    public static boolean isUnit(Integer exp) {
+        return exp != null && letter(exp) != null;
+    }
+
     /**
-     * Grafik çubuğu etiketi (2026-10-15, otomatik trend): sayı binlik / milyon / milyar kısaltmasıyla (TR "B" / "Mn" /
-     * "Mr", EN "K" / "M" / "B"), 100'ün altında bir ondalık ("12,5Mn"), üstünde tam ("125Mn"); yuvarlanınca 1000 olacak
-     * değer bir üst birime geçer ("1.000B" değil "1Mn" — inceleme 2026-10-15). Yüzde en çok iki ondalık, 0,1'in altında
-     * iki anlamlı basamak kalacak kadar (en çok altı): %0,42 · %0,042 · %0,0042 · %0,00004. Tam değer göstergede / araç ipucunda
-     * görünür; bu yalnız dar çubuk başlığı içindir. İstemci aynası: techErrorModel.compactNumber.
+     * Kısaltmayla girilmiş sayının gösterimi: değer 10^{@code exp} ile KAYDIRILIR (ondalık gösterimde — kayan nokta bölmesi
+     * yok), en çok 6 ondalık yarım yukarı, sondaki sıfırlar düşer, binlik gruplaması {@link #number} gibi, harf eklenir,
+     * boşluk yok: 4.400.000.000 / 9 → TR "4,4G", EN "4.4G"; 1.250.000.000.000 / 9 → "1.250G". Yazılan rakam böylece aynen
+     * geri gelir ("4.40G" → "4,4G"). Geçersiz üs → tam sayı. İstemci aynası: {@code techErrorModel.formatAbbreviated} (ortak
+     * doğruluk tablosu {@code TechErrorNumberDisplayTest.ABBREV_TABLE}).
+     */
+    public static String abbreviated(double value, int exp, boolean en) {
+        String l = letter(exp);
+        if (l == null || !Double.isFinite(value)) return number(value, en);
+        BigDecimal s = BigDecimal.valueOf(value).movePointLeft(exp).setScale(6, RoundingMode.HALF_UP).stripTrailingZeros();
+        return decimal(en, "#,##0.######").format(s) + l;
+    }
+
+    private static String numberOrAbbrev(double d, Integer unit, boolean en) {
+        return isUnit(unit) ? abbreviated(d, unit, en) : number(d, en);
+    }
+
+    private static final BigDecimal THOUSAND = BigDecimal.valueOf(1000);
+
+    /**
+     * Farkın kısa yazımı (kısaltmalı değerin {@code {d:}} farkı ve kutucuk farkı): 1000'in altı tam (en çok 2 ondalık),
+     * üstü büyüklüğe göre k / M / G / T, en çok 2 ondalık yarım yukarı; yuvarlanınca 1000 olan bir üst birime geçer
+     * ("999.999" → "1M", "1.000k" değil). {@code a} ≥ 0. İstemci aynası: {@code techErrorModel.compactQlik}.
+     */
+    public static String compactQlik(double a, boolean en) {
+        BigDecimal v = BigDecimal.valueOf(Math.abs(a));
+        if (v.setScale(2, RoundingMode.HALF_UP).compareTo(THOUSAND) < 0) return number(Math.abs(a), en, 2);
+        double m = Math.abs(a);
+        int exp = m < 1e6 ? 3 : m < 1e9 ? 6 : m < 1e12 ? 9 : 12;
+        BigDecimal s = v.movePointLeft(exp).setScale(2, RoundingMode.HALF_UP);
+        if (s.compareTo(THOUSAND) >= 0 && exp < 12) {
+            exp += 3;
+            s = v.movePointLeft(exp).setScale(2, RoundingMode.HALF_UP);
+        }
+        return decimal(en, "#,##0.##").format(s) + letter(exp);
+    }
+
+    // ── Sıfır işareti (2026-10-18) ───────────────────────────────────────────────────────────────────
+
+    /**
+     * Sıfır adedin yanına yeşil yuvarlak tik konur mu (kullanıcı isteği: "0 adet gibi olursa 0 yanına yeşil yuvarlak tik")?
+     * Yalnız SAYI (adet) alanında, değer tam 0 (bilinmeyen / boş değer 0 DEĞİLDİR) ve alanın "daha iyi" yönü {@code higher}
+     * değilse (ör. "toplam işlem 0" iyi değildir). Yüzde, evet/hayır, metin ve otomatik hesaplanan alanda hiç. Muaf alan
+     * çağıranın işi (muaf alan zaten çizilmez). İstemci aynası: {@code techErrorModel.zeroOk} (ortak doğruluk tablosu
+     * {@code TechErrorNumberDisplayTest.ZERO_TABLE}).
+     */
+    public static boolean zeroOk(Field f, Object v) {
+        if (f == null || !"number".equals(f.type()) || f.calc() != null) return false;
+        if ("higher".equals(TechErrorTemplate.effectiveBetter(f))) return false;
+        return zeroCount(v);
+    }
+
+    /** Anomali konusunun adedi (müşteri / hata) tam 0 mı — yalnız sayı değer; boş / metin hayır. */
+    public static boolean zeroCount(Object v) {
+        return v instanceof Number n && Double.isFinite(n.doubleValue()) && n.doubleValue() == 0;
+    }
+
+    /**
+     * Grafik çubuğu etiketi (2026-10-15, otomatik trend): sayı binlik / milyon / milyar / trilyon kısaltmasıyla — 2026-10-18
+     * kullanıcı kararıyla iki dilde de Qlik harfleri k / M / G / T (önce TR "B" / "Mn" / "Mr", EN "K" / "M" / "B"); 100'ün
+     * altında bir ondalık ("12,5M"), üstünde tam ("125M"); yuvarlanınca 1000 olacak değer bir üst birime geçer ("1.000k"
+     * değil "1M" — inceleme 2026-10-15). Yüzde en çok iki ondalık, 0,1'in altında iki anlamlı basamak kalacak kadar (en çok
+     * altı): %0,42 · %0,042 · %0,0042 · %0,00004. Tam değer göstergede / araç ipucunda görünür; bu yalnız dar çubuk başlığı
+     * içindir. İstemci aynası: techErrorModel.compactNumber.
      */
     public static String compact(double d, String type, boolean en) {
         if ("percent".equals(type)) {
@@ -125,8 +233,8 @@ public final class TechErrorFormat {
         }
         double a = Math.abs(d);
         if (a < 1000) return number(d, en);
-        String[] units = en ? new String[] { "K", "M", "B" } : new String[] { "B", "Mn", "Mr" };
-        int u = a < 1_000_000d ? 0 : a < 1_000_000_000d ? 1 : 2;
+        String[] units = { "k", "M", "G", "T" };
+        int u = a < 1_000_000d ? 0 : a < 1_000_000_000d ? 1 : a < 1_000_000_000_000d ? 2 : 3;
         double scaled = d / Math.pow(1000, u + 1);
         if (Math.abs(scaled) >= 999.5 && u < units.length - 1) {          // 999,5 → 1000: bir üst birim
             u++;

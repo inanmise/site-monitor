@@ -325,6 +325,39 @@ class PdfCanvas implements AutoCloseable {
         cs.fill();
     }
 
+    /** Sıfır işaretinin yeşili (Tailwind green-700 #15803d): beyaz ve kutucuk zeminlerinde ≥ 4:1, beyaz tik üstünde ≥ 5:1. */
+    static final float[] ZERO_OK = { 21 / 255f, 128 / 255f, 61 / 255f };
+
+    /** Bezier ile çeyrek çember yaklaşımının denetim noktası oranı. */
+    private static final float KAPPA = 0.5522848f;
+
+    /**
+     * Yeşil dolu yuvarlak + beyaz tik (2026-10-18, kullanıcı isteği: "0 adet gibi olursa 0 yanına yeşil yuvarlak tik"):
+     * {@code (x, yy)} çemberin sol alt köşesi, {@code d} çap. Vektör çizim — yazı tipine bağlı ✓ karakteri değil (gömülü
+     * yazı tipinde olmayabilir), her ölçek geçişinde aynı. Grafik durumu korunur (çizgi kalınlığı / uçlar sonrakine sızmaz).
+     */
+    void zeroTick(float x, float yy, float d) throws IOException {
+        float r = d / 2f, cx = x + r, cy = yy + r, k = r * KAPPA;
+        cs.saveGraphicsState();
+        cs.setNonStrokingColor(ZERO_OK[0], ZERO_OK[1], ZERO_OK[2]);
+        cs.moveTo(cx + r, cy);
+        cs.curveTo(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
+        cs.curveTo(cx - k, cy + r, cx - r, cy + k, cx - r, cy);
+        cs.curveTo(cx - r, cy - k, cx - k, cy - r, cx, cy - r);
+        cs.curveTo(cx + k, cy - r, cx + r, cy - k, cx + r, cy);
+        cs.closePath();
+        cs.fill();
+        cs.setStrokingColor(1f, 1f, 1f);
+        cs.setLineWidth(Math.max(0.8f, d * 0.13f));
+        cs.setLineCapStyle(1);
+        cs.setLineJoinStyle(1);
+        cs.moveTo(x + d * 0.27f, yy + d * 0.50f);
+        cs.lineTo(x + d * 0.43f, yy + d * 0.34f);
+        cs.lineTo(x + d * 0.73f, yy + d * 0.66f);
+        cs.stroke();
+        cs.restoreGraphicsState();
+    }
+
     /**
      * PNG/JPEG görsel (marka logosu, 2026-10-10 yönetici özeti). Bozuk/boş bayt sessizce atlanır — logo yüzünden belge
      * düşmez.

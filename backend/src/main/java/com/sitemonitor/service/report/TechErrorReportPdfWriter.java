@@ -350,8 +350,14 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                         ly -= 9;
                     }
                     Object v = vals.get(f.id());
-                    String shown = TechErrorFormat.value(f, v, in.template().lang());
-                    c.text(c.bold, 14f, x + 7, top - CARD_H + 9, c.clip(shown, w - 14, c.bold, 14f), v == null ? MUTED : INK);
+                    String shown = TechErrorFormat.value(f, v, in.template().lang(), in.values().unit(f.id()));
+                    // Sıfır adet (2026-10-18): değerin hemen sağında yeşil yuvarlak tik — yazıya binmez, değer ona yer bırakır
+                    boolean zero = TechErrorFormat.zeroOk(f, v);
+                    float tick = zero ? ZERO_D + ZERO_GAP : 0;
+                    float baseline = top - CARD_H + 9;
+                    String clipped = c.clip(shown, w - 14 - tick, c.bold, 14f);
+                    c.text(c.bold, 14f, x + 7, baseline, clipped, v == null ? MUTED : INK);
+                    if (zero) c.zeroTick(x + 7 + c.width(clipped, c.bold, 14f) + ZERO_GAP, baseline - 0.5f, ZERO_D);
                 }
                 c.y -= CARD_H + GAP;
             }
@@ -390,8 +396,11 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                 c.text(c.bold, 10.5f, MARGIN, c.y, l, INK);
                 c.y -= 13;
             }
-            String counts = in.resolve(s.customersLabel()) + ": " + TechErrorFormat.count(i.customers(), in.template().lang())
-                    + "     " + in.resolve(s.errorsLabel()) + ": " + TechErrorFormat.count(i.errors(), in.template().lang());
+            String lang = in.template().lang();
+            String counts = in.resolve(s.customersLabel()) + ": "
+                    + TechErrorFormat.count(i.customers(), lang, in.values().issueUnit(s.id(), i.id(), "customers"))
+                    + "     " + in.resolve(s.errorsLabel()) + ": "
+                    + TechErrorFormat.count(i.errors(), lang, in.values().issueUnit(s.id(), i.id(), "errors"));
             for (String l : c.wrapCell(counts, CONTENT_W, c.bold, 8f, 2)) {
                 c.ensureSpace(11);
                 c.text(c.bold, 8f, MARGIN, c.y, l, BLUE);
@@ -470,6 +479,11 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
 
     // ── Kutucuk şeridi (2026-10-17, 4b) ─────────────────────────────────────────────────────────────
     private static final float TILE_H = 58f;
+    /** Sıfır işaretinin çapı (2026-10-18): 14 pt değerin büyük harf yüksekliği kadar; kutucukta 13 pt değere göre. */
+    static final float ZERO_D = 10f;
+    static final float ZERO_D_TILE = 9.5f;
+    /** Değer ile işaret arası. */
+    static final float ZERO_GAP = 4f;
     private static final float[] GOOD_BG = { 220 / 255f, 252 / 255f, 231 / 255f };
     private static final float[] GOOD_FG = { 22 / 255f, 101 / 255f, 52 / 255f };
     private static final float[] BAD_BG = { 254 / 255f, 226 / 255f, 226 / 255f };
@@ -510,7 +524,10 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                     c.text(c.regular, 7.5f, x + 7, ly, l, col[1]);
                     ly -= 9;
                 }
-                c.text(c.bold, 13f, x + 7, top - TILE_H + 20, c.clip(tile.value(), w - 14, c.bold, 13f), col[1]);
+                float tick = tile.zero() ? ZERO_D_TILE + ZERO_GAP : 0;
+                String value = c.clip(tile.value(), w - 14 - tick, c.bold, 13f);
+                c.text(c.bold, 13f, x + 7, top - TILE_H + 20, value, col[1]);
+                if (tile.zero()) c.zeroTick(x + 7 + c.width(value, c.bold, 13f) + ZERO_GAP, top - TILE_H + 19.5f, ZERO_D_TILE);
                 StringBuilder sub = new StringBuilder();
                 float sx = x + 7;
                 if (tile.dir() != null && !"flat".equals(tile.dir())) {
@@ -598,7 +615,8 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             int maxLines = Math.max(1, label.lines().size());
             for (int k = 0; k < n; k++) {
                 Column col = cols.get(k);
-                String v = TechErrorFormat.cell(col, in.values().cell(s.id(), r.id(), col.id()), lang);
+                String v = TechErrorFormat.cell(col, in.values().cell(s.id(), r.id(), col.id()), lang,
+                        in.values().cellUnit(s.id(), r.id(), col.id()));
                 float w = colW[k] - TABLE_PAD * 2;
                 if ("text".equals(col.type())) {
                     PdfCanvas.Wrapped t = c.wrapCellChecked(v, w, font, TABLE_FONT, TABLE_TEXT_LINES);

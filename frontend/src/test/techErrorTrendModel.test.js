@@ -63,12 +63,13 @@ describe('sunucuyla aynı sabitler', () => {
     }
   })
 
-  it('kısaltma sınırları: 999 tam, 1000 → 1B; 99.950 yarım yukarı → 100B; boş değer tire', () => {
+  it('kısaltma sınırları: 999 tam, 1000 → 1k (iki dilde Qlik harfleri, 2026-10-18); 99.950 yarım yukarı → 100k; boş değer tire', () => {
     expect(compactNumber(999, 'number', 'tr')).toBe('999')
-    expect(compactNumber(1000, 'number', 'tr')).toBe('1B')
-    expect(compactNumber(1000, 'number', 'en')).toBe('1K')
-    expect(compactNumber(99_950, 'number', 'tr')).toBe('100B')
-    expect(compactNumber(150_000, 'number', 'en')).toBe('150K')
+    expect(compactNumber(1000, 'number', 'tr')).toBe('1k')
+    expect(compactNumber(1000, 'number', 'en')).toBe('1k')
+    expect(compactNumber(99_950, 'number', 'tr')).toBe('100k')
+    expect(compactNumber(150_000, 'number', 'en')).toBe('150k')
+    expect(compactNumber(3.2e12, 'number', 'tr')).toBe('3,2T')
     expect(compactNumber(-0, 'percent', 'tr')).toBe('%0')
     expect(compactNumber(-0, 'number', 'en')).toBe('0')
     expect(compactNumber(null, 'number', 'tr')).toBe('—')

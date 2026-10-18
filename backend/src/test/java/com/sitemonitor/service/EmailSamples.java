@@ -557,8 +557,11 @@ final class EmailSamples {
             tf.put("unmapped-count", 1250);
             tf.put("unmapped-rate", 2.38);
             tf.put("unmapped-note", "Yeni hata kodları eşlenmedi.\n- **E-1042** kart limiti\n- E-2210 zaman aşımı");
+            // 2026-10-18: kısaltmayla girilmiş toplam işlem ("12,5M") ve sıfır kota hatası (yeşil tik — CID görsel)
+            tf.put("quota-count", 0);
             var v = "tr".equals(lang)
-                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", tf), t)
+                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", tf,
+                            "units", java.util.Map.of("total-tx", 6)), t)
                     : com.sitemonitor.service.techerror.TechErrorValues.Values.empty();
             // 2026-10-17 (S5): görseller gövdede de — bir yarım ve bir tam yuva (sözleşme: cid görsel, MSO dışı sabit genişlik yok)
             java.util.Map<String, com.sitemonitor.service.techerror.TechErrorPdfInput.Image> timgs = "tr".equals(lang)

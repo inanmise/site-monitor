@@ -828,6 +828,18 @@ public class TechErrorReportService {
         return fields;
     }
 
+    /**
+     * Geçen ayın kısaltma üsleri (2026-10-18), yalnız {@link #sameTypeFields} ile seçilmiş alanlar için: "geçen ay" ipucu
+     * değeri geçen ayın raporunda nasıl yazıldıysa öyle gösterir ("4,4G"). Anomali / tablo anahtarları taşınmaz.
+     */
+    public static Map<String, Integer> sameTypeUnits(Values pv, Map<String, Object> fields) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        for (var e : pv.units().entrySet()) {
+            if (e.getKey().indexOf('.') < 0 && fields.get(e.getKey()) instanceof Number) out.put(e.getKey(), e.getValue());
+        }
+        return out;
+    }
+
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
 
     public List<TechErrorReportImageRepository.Meta> imageMeta(Long reportId) {
@@ -1148,7 +1160,9 @@ public class TechErrorReportService {
             Object tv = before.targets().get(f.id());
             if (tv != null && "percent".equals(f.type()) && f.target() != null && "percent".equals(prevTypes.get(f.id()))) targets.put(f.id(), tv);
         }
-        return new Values(fields, issues, texts, tables, targets);
+        // Kısaltma üssü (2026-10-18): yalnız değeri taşınan sayı yerinde kalır (aynı kimlik + tür; muaf / düşen değerle düşer)
+        Values carried = new Values(fields, issues, texts, tables, targets);
+        return new Values(fields, issues, texts, tables, targets, TechErrorValues.units(before.units(), next, carried));
     }
 
     /** Liste başlığı için kopyanın başlık kalıbı + dili (sütun sınırına sığdırılır). */

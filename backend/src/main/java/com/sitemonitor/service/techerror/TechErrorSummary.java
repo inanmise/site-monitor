@@ -106,7 +106,7 @@ public final class TechErrorSummary {
     public static String effective(Section s, Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
         String override = v.texts().get(s.id());
         if (override != null && !TechErrorRichText.blank(override)) return TechErrorTemplate.resolveText(override, channel, year, month, t.lang());
-        return auto(s, t, v.fields(), channel, year, month, previous, v.targets());
+        return auto(s, t, v.fields(), channel, year, month, previous, v.targets(), v.units());
     }
 
     /**
@@ -122,13 +122,22 @@ public final class TechErrorSummary {
     /** {@link #auto(Section, Template, Map, String, int, int)} + geçen ayın değerleri ve raporun hedefleri (2026-10-17, 4b). */
     public static String auto(Section s, Template t, Map<String, Object> fields, String channel, int year, int month,
                               Map<String, Object> previous, Map<String, Object> targets) {
+        return auto(s, t, fields, channel, year, month, previous, targets, Map.of());
+    }
+
+    /**
+     * {@link #auto(Section, Template, Map, String, int, int, Map, Map)} + kısaltma üsleri (2026-10-18): kısaltmayla girilmiş
+     * sayı cümlede de kısaltmasıyla ("4,4G"), farkı kısa ({@link TechErrorFormat#delta(Field, Object, Object, String, Integer)}).
+     */
+    public static String auto(Section s, Template t, Map<String, Object> fields, String channel, int year, int month,
+                              Map<String, Object> previous, Map<String, Object> targets, Map<String, Integer> units) {
         Map<String, Field> byId = new HashMap<>();
         for (Field f : t.allFields()) byId.put(f.id(), f);
         StringBuilder out = new StringBuilder();
         boolean inParagraph = false;
         for (String line : s.lines()) {
             if (out.length() > TechErrorTemplate.MAX_RESOLVED_TEXT) break;
-            String r = line(line, byId, fields, previous, targets, t.lang(), channel, year, month);
+            String r = line(line, byId, fields, previous, targets, units, t.lang(), channel, year, month);
             if (r == null || TechErrorRichText.blank(r)) continue;
             boolean item = isItem(line);
             // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer: tek başına işaret basılmaz
@@ -170,12 +179,12 @@ public final class TechErrorSummary {
 
     /** {@link #blocks(Section, Template, Map, Map, String, int, int)} saklı değerlerle (hesaplar uygulanmış olmalı). */
     public static List<Block> blocks(Section s, Template t, Values v, String channel, int year, int month) {
-        return blocks(s, t, v.fields(), v.texts(), channel, year, month, null, v.targets());
+        return blocks(s, t, v.fields(), v.texts(), channel, year, month, null, v.targets(), v.units());
     }
 
     /** Saklı değerler + geçen ayın değerleri ({@code {d:…}} farkları; 2026-10-17, 4b). */
     public static List<Block> blocks(Section s, Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
-        return blocks(s, t, v.fields(), v.texts(), channel, year, month, previous, v.targets());
+        return blocks(s, t, v.fields(), v.texts(), channel, year, month, previous, v.targets(), v.units());
     }
 
     public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
@@ -211,6 +220,13 @@ public final class TechErrorSummary {
      */
     public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
                                      String channel, int year, int month, Map<String, Object> previous, Map<String, Object> targets) {
+        return blocks(s, t, fields, texts, channel, year, month, previous, targets, Map.of());
+    }
+
+    /** {@link #blocks(Section, Template, Map, Map, String, int, int, Map, Map)} + kısaltma üsleri (2026-10-18). */
+    public static List<Block> blocks(Section s, Template t, Map<String, Object> fields, Map<String, String> texts,
+                                     String channel, int year, int month, Map<String, Object> previous, Map<String, Object> targets,
+                                     Map<String, Integer> units) {
         Map<String, Object> vals = fields == null ? Map.of() : fields;
         List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
         List<Block> out = new ArrayList<>();
@@ -233,7 +249,7 @@ public final class TechErrorSummary {
                 kept.add(null);
                 continue;
             }
-            String r = line(line, byId, vals, previous, targets, t.lang(), channel, year, month);
+            String r = line(line, byId, vals, previous, targets, units, t.lang(), channel, year, month);
             // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (auto ile aynı)
             boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
             kept.add(ok ? r : null);
@@ -273,7 +289,7 @@ public final class TechErrorSummary {
             for (int k = 0; k < embedded.size(); k++) {
                 if (placed[k] || !referencesAny(embedded.get(k), ids)) continue;
                 placed[k] = true;
-                List<Block> add = embeddedBlocks(embedded.get(k), t, vals, told, channel, year, month);
+                List<Block> add = embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month);
                 if (add.isEmpty()) continue;                      // eklenecek bir şey yok: paragraf bölünmez
                 flushed = flush(out, buf, flushed);
                 flushed = append(out, add, flushed);
@@ -282,7 +298,7 @@ public final class TechErrorSummary {
         }
         flushed = flush(out, buf, flushed);
         for (int k = 0; k < embedded.size(); k++) {
-            if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, channel, year, month), flushed);
+            if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month), flushed);
         }
         return capText(out);
     }
@@ -311,10 +327,10 @@ public final class TechErrorSummary {
     }
 
     /** Gömülü bölümün yerleşince ekleyeceği bloklar: önce söylenmemiş değerleri (tek metin bloğu), sonra notları. */
-    private static List<Block> embeddedBlocks(Section e, Template t, Map<String, Object> vals, Set<String> told, String channel,
-                                              int year, int month) {
+    private static List<Block> embeddedBlocks(Section e, Template t, Map<String, Object> vals, Set<String> told,
+                                              Map<String, Integer> units, String channel, int year, int month) {
         List<Block> out = new ArrayList<>();
-        String facts = facts(e, t, vals, told, channel, year, month);
+        String facts = facts(e, t, vals, told, units, channel, year, month);
         if (facts != null) out.add(Block.text(facts));
         out.addAll(notes(e, t, vals, channel, year, month));
         return out;
@@ -333,6 +349,12 @@ public final class TechErrorSummary {
      * {@code techErrorModel.summaryFacts}.
      */
     static String facts(Section e, Template t, Map<String, Object> vals, Set<String> told, String channel, int year, int month) {
+        return facts(e, t, vals, told, Map.of(), channel, year, month);
+    }
+
+    /** {@link #facts(Section, Template, Map, Set, String, int, int)} + kısaltma üsleri (2026-10-18). */
+    static String facts(Section e, Template t, Map<String, Object> vals, Set<String> told, Map<String, Integer> units,
+                        String channel, int year, int month) {
         StringBuilder b = new StringBuilder();
         for (Field f : e.fields()) {
             boolean yesno = "yesno".equals(f.type());
@@ -346,7 +368,7 @@ public final class TechErrorSummary {
                 if (!(v instanceof String sv) || TechErrorRichText.blank(sv)) continue;
                 value = neutral(sv);
             } else {
-                value = TechErrorFormat.value(f, v, t.lang());
+                value = TechErrorFormat.value(f, v, t.lang(), units == null ? null : units.get(f.id()));
             }
             String label = TechErrorTemplate.resolve(f.label() == null ? "" : f.label(), channel, year, month, t.lang());
             if (label == null) label = "";
@@ -429,6 +451,16 @@ public final class TechErrorSummary {
      */
     static String line(String pattern, Map<String, Field> byId, Map<String, Object> fields, Map<String, Object> previous,
                        Map<String, Object> targets, String lang, String channel, int year, int month) {
+        return line(pattern, byId, fields, previous, targets, Map.of(), lang, channel, year, month);
+    }
+
+    /**
+     * {@link #line(String, Map, Map, Map, Map, String, String, int, int)} + kısaltma üsleri (2026-10-18): {@code {f:x}}
+     * kısaltmayla girilmiş sayıyı kısaltmasıyla yazar ("**4,4G**"), {@code {d:x}} bu ayın değeri kısaltmalıysa farkı kısa
+     * yazar ("**+50M (+%1,15)**"). Üssü olmayan değer eskisiyle bayt bayt aynı.
+     */
+    static String line(String pattern, Map<String, Field> byId, Map<String, Object> fields, Map<String, Object> previous,
+                       Map<String, Object> targets, Map<String, Integer> units, String lang, String channel, int year, int month) {
         if (pattern == null || TechErrorRichText.blank(pattern)) return null;
         boolean en = "en".equals(lang);
         List<Ref> refs = refs(pattern);
@@ -442,7 +474,8 @@ public final class TechErrorSummary {
                 boolean numeric = "number".equals(f.type()) || "percent".equals(f.type());
                 if ("d".equals(r.kind())) {
                     if (!numeric) return null;
-                    TechErrorFormat.Delta d = TechErrorFormat.delta(f, previous == null ? null : previous.get(f.id()), fields.get(f.id()), lang);
+                    TechErrorFormat.Delta d = TechErrorFormat.delta(f, previous == null ? null : previous.get(f.id()), fields.get(f.id()), lang,
+                            units == null ? null : units.get(f.id()));
                     if (d == null) return null;
                     boolean plain = "flat".equals(d.dir()) && !"percent".equals(f.type());
                     b.append(plain ? d.text() : "**" + d.text() + "**");
@@ -466,7 +499,7 @@ public final class TechErrorSummary {
                 if (!(v instanceof Boolean yes)) return null;
                 b.append(literal(yes ? r.yes() : r.no(), channel, year, month, lang));
             } else if ("number".equals(f.type()) || "percent".equals(f.type())) {
-                b.append("**").append(TechErrorFormat.value(f, v, lang)).append("**");
+                b.append("**").append(TechErrorFormat.value(f, v, lang, units == null ? null : units.get(f.id()))).append("**");
             } else {
                 b.append(neutral(TechErrorFormat.value(f, v, lang)));
             }

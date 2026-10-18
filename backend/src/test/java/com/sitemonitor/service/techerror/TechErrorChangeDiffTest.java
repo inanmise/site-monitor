@@ -221,6 +221,36 @@ class TechErrorChangeDiffTest {
     }
 
     @Test
+    @DisplayName("2026-10-18: kısaltma da değişikliktir — '4,4G' → '4.400.000.000' satırı; önce / sonra PDF'teki gibi; parmak izi farklı; otomatik kayıt birleştirmesi 4,4G'ye dönüşü 'değişmedi' sayar")
+    void unitChangeIsAChange() {
+        Template ut = TechErrorValuesTest.unitTemplate();
+        Map<String, Object> issue = Map.of("id", "i-a", "topic", "A", "title_auto", true, "customers", 1_250_000);
+        Map<String, Object> tables = Map.of("tb", Map.of("r1", Map.of("n", 2500)));
+        Values abbrev = values(Map.of("fields", Map.of("total", 4_400_000_000L), "issues", Map.of("iss", List.of(issue)), "tables", tables,
+                "units", Map.of("total", 9, "issues.iss.i-a.customers", 6, "tables.tb.r1.n", 3)), ut);
+        Values full = values(Map.of("fields", Map.of("total", 4_400_000_000L), "issues", Map.of("iss", List.of(issue)), "tables", tables), ut);
+        TechErrorChangeDiff.Result r = TechErrorChangeDiff.diff(ut, abbrev, full, "Mobil", 2026, 9);
+        Change total = find(r, "Toplam");
+        assertThat(total).extracting(Change::op, Change::before, Change::after).containsExactly("change", "4,4G", "4.400.000.000");
+        assertThat(total.beforeHash()).isNotEqualTo(total.afterHash());
+        assertThat(find(r, "Etkilenen müşteri")).extracting(Change::before, Change::after).containsExactly("1,25M", "1.250.000");
+        assertThat(find(r, "R1 — N")).extracting(Change::before, Change::after).containsExactly("2,5k", "2.500");
+        assertThat(r.changes()).hasSize(3);
+        // Aynı değer + aynı üs: değişiklik yok
+        assertThat(TechErrorChangeDiff.diff(ut, abbrev, abbrev, "Mobil", 2026, 9).isEmpty()).isTrue();
+        // Kısaltmasız eski yol: parmak izi sayının kendisi (eski olaylarla aynı iz)
+        Values five = values(Map.of("fields", Map.of("total", 5)), ut), six = values(Map.of("fields", Map.of("total", 6)), ut);
+        Change plain = TechErrorChangeDiff.diff(ut, five, six, "Mobil", 2026, 9).changes().get(0);
+        assertThat(plain.beforeHash()).isEqualTo(TechErrorChangeDiff.fp(5L));
+        // 4,4G → tam → 4,4G (otomatik kayıt penceresinde): birleşince ham değer eski hâline döndü → satır düşer
+        List<Map<String, Object>> first = new ArrayList<>();
+        for (Change c : r.changes()) first.add(c.toMap());
+        List<Map<String, Object>> back = new ArrayList<>();
+        for (Change c : TechErrorChangeDiff.diff(ut, full, abbrev, "Mobil", 2026, 9).changes()) back.add(c.toMap());
+        assertThat(TechErrorHistoryService.mergeChanges(first, back)).isEmpty();
+    }
+
+    @Test
     @DisplayName("en çok 200 satır; fazlası 'more' olarak sayılır")
     void capped() {
         String sid = TRT.sections().stream().filter(s -> "table".equals(s.kind())).findFirst().orElseThrow().id();

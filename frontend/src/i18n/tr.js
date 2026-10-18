@@ -20647,6 +20647,7 @@ export const TR = {
   'te.err.abbrevB': "Tek başına \"B\" kullanılamaz: Türkçede bin, İngilizcede milyar demek. Bin için k ya da bin, milyar için G ya da Mr yazın.",
   'te.err.tooLarge': "Sayı çok büyük; en çok 1.000.000.000.000.000 (1000T) olabilir. Rakamı ya da kısaltmayı kontrol edin.",
   'te.num.expanded': "Tam sayı:",
+  'te.zero.ok': "Sıfır — sorun yok",
   'te.err.negative': "Bu alan negatif olamaz; sıfır ya da pozitif bir sayı yazın.",
   'te.backToChannel': "{0} kanalına dön",
   'te.reportGoneTitle': "Rapor bulunamadı ya da görme yetkiniz yok",

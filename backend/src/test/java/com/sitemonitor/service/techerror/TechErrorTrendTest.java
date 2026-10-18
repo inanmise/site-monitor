@@ -141,7 +141,7 @@ class TechErrorTrendTest {
     }
 
     @Test
-    @DisplayName("çubuk etiketi: yüzde kısa; sayı TR B / Mn / Mr, EN K / M / B; 100 altı tek ondalık; 1000'e yuvarlanan üst birime geçer")
+    @DisplayName("çubuk etiketi: yüzde kısa; sayı iki dilde de Qlik k / M / G / T (2026-10-18); 100 altı tek ondalık; 1000'e yuvarlanan üst birime geçer")
     void compactLabels() {
         assertThat(TechErrorFormat.compact(0.42, "percent", false)).isEqualTo("%0,42");
         assertThat(TechErrorFormat.compact(0.42, "percent", true)).isEqualTo("0.42%");
@@ -160,18 +160,20 @@ class TechErrorTrendTest {
         assertThat(TechErrorFormat.compact(-1.255, "percent", true)).isEqualTo("-1.26%");
         assertThat(TechErrorFormat.compact(0, "percent", false)).isEqualTo("%0");
         // Birim sınırı: 999,5 ve üstü yuvarlanınca 1000 olur → bir üst birim (inceleme 2026-10-15)
-        assertThat(TechErrorFormat.compact(999_950, "number", false)).isEqualTo("1Mn");
+        assertThat(TechErrorFormat.compact(999_950, "number", false)).isEqualTo("1M");
         assertThat(TechErrorFormat.compact(999_950, "number", true)).isEqualTo("1M");
-        assertThat(TechErrorFormat.compact(999_499, "number", false)).isEqualTo("999B");
-        assertThat(TechErrorFormat.compact(999_999_500d, "number", false)).isEqualTo("1Mr");
-        assertThat(TechErrorFormat.compact(1_000, "number", false)).isEqualTo("1B");
-        assertThat(TechErrorFormat.compact(99_950, "number", false)).isEqualTo("100B");
+        assertThat(TechErrorFormat.compact(999_499, "number", false)).isEqualTo("999k");
+        assertThat(TechErrorFormat.compact(999_999_500d, "number", false)).isEqualTo("1G");
+        assertThat(TechErrorFormat.compact(1_000, "number", false)).isEqualTo("1k");
+        assertThat(TechErrorFormat.compact(99_950, "number", false)).isEqualTo("100k");
         assertThat(TechErrorFormat.compact(987, "number", false)).isEqualTo("987");
-        assertThat(TechErrorFormat.compact(12_345, "number", false)).isEqualTo("12,3B");
-        assertThat(TechErrorFormat.compact(125_430_112, "number", false)).isEqualTo("125Mn");
+        assertThat(TechErrorFormat.compact(12_345, "number", false)).isEqualTo("12,3k");
+        assertThat(TechErrorFormat.compact(125_430_112, "number", false)).isEqualTo("125M");
         assertThat(TechErrorFormat.compact(1_250_000, "number", true)).isEqualTo("1.3M");
-        assertThat(TechErrorFormat.compact(2_400_000_000d, "number", false)).isEqualTo("2,4Mr");
-        assertThat(TechErrorFormat.compact(-12_500, "number", true)).isEqualTo("-12.5K");
+        assertThat(TechErrorFormat.compact(2_400_000_000d, "number", false)).isEqualTo("2,4G");
+        assertThat(TechErrorFormat.compact(-12_500, "number", true)).isEqualTo("-12.5k");
+        assertThat(TechErrorFormat.compact(3_200_000_000_000d, "number", false)).isEqualTo("3,2T");
+        assertThat(TechErrorFormat.compact(999_999_500_000d, "number", true)).isEqualTo("1T");
     }
 
     private static void assertInvalid(Map<String, Object> raw) {

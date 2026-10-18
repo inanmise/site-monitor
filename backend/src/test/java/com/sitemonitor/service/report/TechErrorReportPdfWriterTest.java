@@ -373,7 +373,7 @@ class TechErrorReportPdfWriterTest {
                 .contains("%0,42").contains("%0,5").contains("Eki").contains("Ağu").contains("Eyl");
         // toplam işlem yalnız bu ay → grafik yerine not; diğerleri hiç → not
         assertThat(s).contains("Toplam işlem adedi (Son 12 Ay)").contains("Trend için en az iki ayın rakamı gerekir");
-        assertThat(s).doesNotContain("125Mn");
+        assertThat(s).doesNotContain("125M");
         // EN
         Template en = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("en");
         TechErrorValues.Values ev = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 1_250_000)), en);
@@ -383,7 +383,7 @@ class TechErrorReportPdfWriterTest {
         String e = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(en, ev, "ATM", "Team", 2026, 9, null, null, Map.of(), et)))
                 .replaceAll("[\\s\\u00a0]+", " ");
         assertThat(e).contains("Automatic Trends (Last 12 Months)").contains("Total transactions (Last 12 Months)")
-                .contains("1.3M").contains("900K").contains("Sep");
+                .contains("1.3M").contains("900k").contains("Sep");
     }
 
     @Test
@@ -886,6 +886,139 @@ class TechErrorReportPdfWriterTest {
             }
         }
         }
+    }
+
+    /** Sayfaya çizilen yeşil sıfır işaretleri (dolu yol, renk {@link PdfCanvas#ZERO_OK}) — kutuları {sol, üst, sağ, alt} (üstten ölçülü). */
+    static List<List<float[]>> zeroTicks(byte[] pdf) throws IOException {
+        List<List<float[]>> out = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (PDPage p : doc.getPages()) {
+                List<float[]> page = new ArrayList<>();
+                float h = p.getMediaBox().getHeight();
+                class Recorder extends org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine {
+                    float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+                    int curves;
+                    Recorder() { super(p); }
+                    void add(java.awt.geom.Point2D q) {
+                        minX = Math.min(minX, (float) q.getX()); maxX = Math.max(maxX, (float) q.getX());
+                        minY = Math.min(minY, (float) q.getY()); maxY = Math.max(maxY, (float) q.getY());
+                    }
+                    void reset() { minX = minY = Float.MAX_VALUE; maxX = maxY = -Float.MAX_VALUE; curves = 0; }
+                    @Override public void drawImage(org.apache.pdfbox.pdmodel.graphics.image.PDImage image) { }
+                    @Override public void appendRectangle(java.awt.geom.Point2D a, java.awt.geom.Point2D b, java.awt.geom.Point2D c,
+                                                          java.awt.geom.Point2D d) { add(a); add(b); add(c); add(d); }
+                    @Override public void clip(int windingRule) { }
+                    @Override public void moveTo(float x, float y) { add(new java.awt.geom.Point2D.Float(x, y)); }
+                    @Override public void lineTo(float x, float y) { add(new java.awt.geom.Point2D.Float(x, y)); }
+                    @Override public void curveTo(float x1, float y1, float x2, float y2, float x3, float y3) {
+                        curves++;
+                        add(new java.awt.geom.Point2D.Float(x3, y3));
+                    }
+                    @Override public java.awt.geom.Point2D getCurrentPoint() { return new java.awt.geom.Point2D.Float(); }
+                    @Override public void closePath() { }
+                    @Override public void endPath() { reset(); }
+                    @Override public void strokePath() { reset(); }
+                    @Override public void fillPath(int windingRule) throws IOException {
+                        float[] rgb = getGraphicsState().getNonStrokingColor().getComponents();
+                        if (curves == 4 && rgb.length == 3 && Math.abs(rgb[0] - PdfCanvas.ZERO_OK[0]) < 0.01f
+                                && Math.abs(rgb[1] - PdfCanvas.ZERO_OK[1]) < 0.01f && Math.abs(rgb[2] - PdfCanvas.ZERO_OK[2]) < 0.01f) {
+                            page.add(new float[] { minX, h - maxY, maxX, h - minY });
+                        }
+                        reset();
+                    }
+                    @Override public void fillAndStrokePath(int windingRule) { reset(); }
+                    @Override public void shadingFill(org.apache.pdfbox.cos.COSName name) { }
+                }
+                new Recorder().processPage(p);
+                out.add(page);
+            }
+        }
+        return out;
+    }
+
+    /** Sayfadaki karakter kutuları {sol, üst, sağ, alt} (üstten ölçülü) — işaretin yazıya binmediğini ölçmek için. */
+    static List<List<float[]>> glyphBoxes(byte[] pdf) throws IOException {
+        List<List<float[]>> out = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (int i = 1; i <= doc.getNumberOfPages(); i++) {
+                List<float[]> page = new ArrayList<>();
+                PDFTextStripper st = new PDFTextStripper() {
+                    @Override
+                    protected void writeString(String text, List<TextPosition> pos) {
+                        for (TextPosition tp : pos) {
+                            if (tp.getUnicode().isBlank()) continue;
+                            page.add(new float[] { tp.getXDirAdj(), tp.getYDirAdj() - tp.getHeightDir(), tp.getXDirAdj() + tp.getWidthDirAdj(), tp.getYDirAdj() });
+                        }
+                    }
+                };
+                st.setStartPage(i);
+                st.setEndPage(i);
+                st.getText(doc);
+                out.add(page);
+            }
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("2026-10-18: kısaltmayla girilen sayı PDF ve e-postada kısaltmasıyla (gösterge, özet cümlesi, kutucuk, anomali adedi); sıfır adetin yanında yeşil tik — yazıya binmez, bir kez; e-postada tek CID ek")
+    void abbreviatedNumbersAndZeroTicks() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, Object> f = new HashMap<>();
+        f.put("total-tx", 4_400_000_000L);
+        f.put("error-count", 1_250_000);
+        f.put("unmapped-count", 0);
+        f.put("quota-count", 0);
+        Map<String, Object> issue = new LinkedHashMap<>(Map.of("id", "a", "topic", "Kart Limiti", "title_auto", true,
+                "customers", 0, "errors", 681_600));
+        TechErrorValues.Values raw = TechErrorValues.normalize(Map.of("fields", f, "issues", Map.of("issues", List.of(issue)),
+                "units", Map.of("total-tx", 9, "error-count", 6, "issues.issues.a.errors", 3)), t);
+        Map<String, Object> prev = new HashMap<>(Map.of("total-tx", 4_350_000_000L));
+        TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, raw, prev);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of()).withPrevious(prev);
+        byte[] pdf = TechErrorReportPdfWriter.render(in);
+        String s = text(pdf).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("Toplam işlem adedi 4,4G +50M (+%1,15)")                  // kutucuk: kısaltmalı değer + kısa fark
+                .contains("Ay içindeki teknik hata adedi 1,25M")
+                .contains("4,4G olarak")                                                     // özet cümlesi {f:total-tx}
+                .contains("Bu konudan kaynaklı teknik hata adedi: 681,6k")
+                .doesNotContain("4.400.000.000");
+        // Sıfır işareti: kutucukta 2 (map / kota adedi) + gösterge kartında 2; anomali adedi PDF satırında işaretlenmez
+        List<List<float[]>> ticks = zeroTicks(pdf);
+        List<List<float[]>> glyphs = glyphBoxes(pdf);
+        int total = 0;
+        for (int p = 0; p < ticks.size(); p++) {
+            for (float[] c : ticks.get(p)) {
+                total++;
+                assertThat(c[2] - c[0]).as("çap").isBetween(8.5f, 10.5f);
+                for (float[] g : glyphs.get(p)) {
+                    boolean overlap = Math.min(c[2], g[2]) - Math.max(c[0], g[0]) > 0.3f && Math.min(c[3], g[3]) - Math.max(c[1], g[1]) > 0.3f;
+                    assertThat(overlap).as("işaret yazıya biniyor (sayfa " + (p + 1) + ")").isFalse();
+                }
+            }
+        }
+        assertThat(total).isEqualTo(4);
+        // Sıfırsız rapor: hiç işaret yok
+        assertThat(zeroTicks(TechErrorReportPdfWriter.render(input("tr", Map.of()))).stream().mapToInt(List::size).sum()).isZero();
+        // E-posta: kısaltmalı değer, sıfır işareti görseli (alt metinli, ölçülü) ve TEK ek
+        var built = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(in,
+                com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(), null, "m.pdf");
+        String html = built.mail().html();
+        assertThat(html).contains("4,4G").contains("+50M (+%1,15)").contains("681,6k").doesNotContain("4.400.000.000");
+        int zeroImgs = html.split("src=\"cid:" + com.sitemonitor.service.mail.TechErrorZeroMark.CID + "\"", -1).length - 1;
+        assertThat(zeroImgs).isEqualTo(4);                                                  // 2 kutucuk + 2 değer kutusu
+        assertThat(html).contains("width=\"16\" height=\"16\" alt=\"sıfır — sorun yok\"");
+        assertThat(built.inline()).filteredOn(i -> com.sitemonitor.service.mail.TechErrorZeroMark.CID.equals(i.cid())).hasSize(1)
+                .allSatisfy(i -> {
+                    assertThat(i.contentType()).isEqualTo("image/png");
+                    assertThat(i.data()).isNotEmpty();
+                });
+        assertThat(built.mail().text()).contains("Kota hatası adedi: 0 ✓ (sıfır — sorun yok)");
+        // Sıfırsız postada ek yok
+        var plain = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(input("tr", Map.of()),
+                com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(), null, "m.pdf");
+        assertThat(plain.mail().html()).doesNotContain("cid:" + com.sitemonitor.service.mail.TechErrorZeroMark.CID);
+        assertThat(plain.inline()).noneMatch(i -> com.sitemonitor.service.mail.TechErrorZeroMark.CID.equals(i.cid()));
     }
 
     @Test
