@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T22:26:05Z",
+  "generatedAt": "2026-10-18T23:53:03Z",
   "repo": "inanmise/site-monitor",
-  "count": 780,
+  "count": 781,
   "releases": [
+    {
+      "version": "20.163.0",
+      "tag": "v20.163.0",
+      "releasedAt": "2026-10-18T23:52:56Z",
+      "commit": "7a27805b02863317a45d01e8247f472cb85eac1f",
+      "prevVersion": "20.162.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7a27805b",
+          "subject": "sentetik izleme gizli değişken açıklaması dürüst — çıktı ve günlüklerde değer maskelenir, scripti düzenleyip çalıştırabilen biri değeri okuyabilir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2e25c3b3",
+          "subject": "kanal teknik hata raporunda 20.162.0 inceleme takipleri — kendi görselini bulan yeniden deneme bitmiş sayılır, geç başarı yeni görseli ezmez, push çekirdekleri 80 karaktere sığar, yedek taslakta kayı…"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "e46bfe29",
+          "subject": "sentetik izlemede gizli ortam değişkenini yönetici görebilir — global yönetici ve izlemenin takımını yöneten yönetici, 30 sn, denetlenir"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.162.0",
       "tag": "v20.162.0",

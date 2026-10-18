@@ -4937,7 +4937,7 @@ public class MonitoringController {
         Map<String, Object> out = new LinkedHashMap<>();
         // Satır bayrakları öteki sekiz türle AYNI (2026-10-16, kullanıcı kararı: paylaşımda k6 da tam düzenlenir —
         // "yetki verdiği kişi aynı o ekipteki gibi"; 2026-10-12'deki "k6 paylaşımla düzenlenmez" istisnası kaldırıldı)
-        out.put("monitors", withCheckFlag(session, result));
+        out.put("monitors", withRevealFlag(session, withCheckFlag(session, result)));
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
@@ -5004,6 +5004,7 @@ public class MonitoringController {
         // Uyarılar YANITTA taşınır, istekte değil: kaydetme payload'ının şekli değişmez
         // (frontend testi create payload'ını tam eşitlikle pinliyor).
         Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved, null, teamNameMap(), null));
+        withRevealFlag(session, List.of(out));
         List<String> warnings = withFileReadWarning(body.get("script"), diag.warnings());
         if (!warnings.isEmpty()) out.put("warnings", warnings);
         return ok(out);
@@ -5107,6 +5108,7 @@ public class MonitoringController {
             Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved,
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+            withRevealFlag(session, List.of(out));
             List<String> warnings = withFileReadWarning(body.get("script"), diag.warnings());
             if (!warnings.isEmpty()) out.put("warnings", warnings);
             return ok(out);
@@ -5547,6 +5549,23 @@ public class MonitoringController {
         auditService.recordAction("MONITOR_DIAGNOSE", session, "SCRIPTED_MONITOR",
                 String.valueOf(m.getId()), m.getName(), null);
         return ok(out);
+    }
+
+    /**
+     * Sentetik satırlara {@code can_reveal} (2026-10-19): bu oturum satırın GİZLİ env değerini "Göster" ile görebilir mi —
+     * {@code POST /scripted/{id}/env/{name}/reveal} kapısıyla AYNI kural ({@link ScriptedSecretRevealController#canReveal}:
+     * global yönetici ya da takımı KENDİ kapsamıyla yöneten kapsamlı yönetici; erişim paylaşımı, AUDIT, 7/24 ve takım
+     * üyeleri hayır) + uç izni {@code monitoring.read/view}. Arayüz düğmeyi yalnız bundan çizer. Satırın env'i değişmez
+     * (gizli satırlar yine yalnız {@code value_set} taşır).
+     */
+    private List<Map<String, Object>> withRevealFlag(HttpSession session, List<Map<String, Object>> rows) {
+        boolean perm = permissionService.allows((String) session.getAttribute("systemRole"), "monitoring.read", "view");
+        for (Map<String, Object> row : rows) {
+            Object t = row.get("team_id");
+            Long team = t instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            row.put("can_reveal", perm && ScriptedSecretRevealController.canReveal(session, team));
+        }
+        return rows;
     }
 
     /**

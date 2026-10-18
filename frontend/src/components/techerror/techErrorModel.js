@@ -2570,6 +2570,23 @@ export function withSectionsOpened(state, ids, max = OPEN_STATE_MAX_IDS) {
  * kimlikleri hiç düşmüyor, tavanı dolduruyordu). `existing` boşsa (liste henüz yok / bilinmiyor) küme olduğu gibi kalır —
  * bilinmeyen liste kayıtlı açık konuları silmesin. "Hepsi açık" kimlik taşımaz. Değişiklik yoksa AYNI nesne.
  */
+/**
+ * Kayıtlı raporun (tabanın kanonik JSON'u) anomali konularının açık-kayıt kimlikleri (`<bölüm>:<konu>`) — açık konu kaydının
+ * arınmasında taslağın konularına EK olarak korunur (inceleme 2026-10-19). Okunamayan / boş taban → boş liste.
+ */
+export function savedTopicOpenIds(baseJson, sections) {
+  if (!baseJson || !Array.isArray(sections)) return []
+  let issues = null
+  try { issues = JSON.parse(baseJson)?.issues } catch { return [] }
+  if (!issues || typeof issues !== 'object') return []
+  const out = []
+  for (const s of sections) {
+    if (s?.kind !== 'issues' || !Array.isArray(issues[s.id])) continue
+    for (const i of issues[s.id]) if (i?.id) out.push(topicOpenId(s.id, i.id))
+  }
+  return out
+}
+
 export function pruneOpenState(state, existing) {
   if (!state || state.all || !existing?.length) return state
   const ok = new Set(existing)

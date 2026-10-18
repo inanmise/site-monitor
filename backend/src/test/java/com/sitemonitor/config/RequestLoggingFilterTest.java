@@ -204,6 +204,27 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("2026-10-19: gizli env değerini gösterme ucunun YANITI (çözülmüş değer) hiçbir biçimde loglanmaz")
+    void trace_scriptedSecretReveal_responseNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        for (String uri : new String[] { "/api/monitoring/scripted/7/env/API_TOKEN/reveal",
+                "/api/monitoring/scripted;x=1/7/env/API_TOKEN/reveal", "/api//monitoring/Scripted/7/env/API_TOKEN/reveal",
+                "/api/%6Donitoring/scripted/7/env/API_TOKEN/reveal" }) {
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            filter.doFilter(req, resp, (request, response) -> {
+                response.setContentType("application/json");
+                response.getOutputStream().write("{\"success\":true,\"data\":{\"name\":\"API_TOKEN\",\"value\":\"SAHTE-GIZLI-7777\"}}"
+                        .getBytes(StandardCharsets.UTF_8));
+            });
+            assertThat(resp.getContentAsString()).as(uri).contains("SAHTE-GIZLI-7777");   // yanıt bozulmaz
+            String all = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (a, b) -> a + "\n" + b);
+            assertThat(all).as(uri).contains(RequestLoggingFilter.BODY_OMITTED).doesNotContain("SAHTE-GIZLI-7777");
+        }
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

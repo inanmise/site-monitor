@@ -95,6 +95,7 @@ export function apiClientMock() {
         updateScriptedMonitor: vi.fn(),
         deleteScriptedMonitor: vi.fn(),
         triggerScriptedCheck: vi.fn(),
+        revealScriptedSecret: vi.fn(),   // gizli env değerini göster (2026-10-19)
         testScripted: vi.fn(() => Promise.resolve({ success: true, data: { status: 'PASS', checks_passed: 3, checks_failed: 0, duration_ms: 820, output_tail: 'out' } })),
         listGroups: vi.fn(() => Promise.resolve({ success: true, data: [] })),
         monitorDefaults: vi.fn(() => Promise.resolve({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })),

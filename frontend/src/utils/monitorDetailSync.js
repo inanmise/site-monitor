@@ -40,8 +40,9 @@ export function mergeSavedRow(prev, saved) {
  */
 const SHARE_FLAGS = ['shared_access', 'routing_locked']
 
-/** Liste satırının sunucu kapı bayrakları — tetik ("Şimdi kontrol et") yanıtı bunları taşımaz. */
-const ROW_FLAGS = ['can_check', 'can_edit', 'can_delete', 'can_diagnose', ...SHARE_FLAGS]
+/** Liste satırının sunucu kapı bayrakları — tetik ("Şimdi kontrol et") yanıtı bunları taşımaz. `can_reveal` (2026-10-19):
+ *  sentetik izlemenin gizli env değerini gösterme kapısı. */
+const ROW_FLAGS = ['can_check', 'can_edit', 'can_delete', 'can_diagnose', 'can_reveal', ...SHARE_FLAGS]
 
 /**
  * "Şimdi kontrol et" yanıtını açık pencerenin kopyasına koyarken satır bayraklarını korur (2026-10-12, takım erişim

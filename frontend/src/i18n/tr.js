@@ -9202,6 +9202,7 @@ export const TR = {
   'audit.ev.SCHEMA_PATCH': 'Şema güncellemesi',
   // Gizli anahtar döndürme (2026-10-11)
   'audit.ev.SECRET_REENCRYPT': 'Gizli değerler yeni anahtarla yeniden şifrelendi',
+  'audit.ev.SCRIPTED_SECRET_REVEAL': 'Sentetik izlemenin gizli ortam değişkeni gösterildi',
   // Kendi kendini izleme (2026-10-11)
   'audit.ev.WATCHDOG_EVALUATE': 'Kendi kendini izleme elle değerlendirildi',
   'audit.ev.WATCHDOG_TEST': 'Kendi kendini izleme test bildirimi gönderildi',
@@ -13564,7 +13565,15 @@ export const TR = {
   'scripted.scriptCopied': 'Kopyalandı',
   'scripted.env': 'Ortam Değişkenleri', 'scripted.envName': 'AD', 'scripted.envValue': 'değer', 'scripted.envSecret': 'Gizli',
   'scripted.envSecretSet': '•••• (ayarlı — değişmezse boş bırakın)', 'scripted.envSecretEmpty': 'gizli değer', 'scripted.envAdd': 'Değişken Ekle',
-  'scripted.envHint': 'Gizli (secret) değerler şifreli saklanır; API/ekranda asla düz metin dönmez, geri okunamaz.',
+  'scripted.envHint': 'Gizli (secret) değerler şifreli saklanır; listede ve formda düz metin gösterilmez, çıktıda ve günlüklerde değerin kendisi maskelenir. Scripti düzenleyip çalıştırabilen biri değeri script içinden okuyabilir; gizli değeri yalnız güvendiğiniz kişilerin düzenleyebildiği izlemelerde kullanın. Kayıtlı değeri ekranda yalnız global yönetici ve izlemenin takımını yöneten yönetici görebilir.',
+  // Gizli değeri göster (2026-10-19): yalnız global yönetici / takımı yöneten yönetici, 30 sn, denetlenir
+  'scripted.envRevealHint': 'Yönetici olarak kayıtlı bir gizli değeri satırındaki göz düğmesiyle 30 saniyeliğine görebilirsiniz. Her gösterim denetim kaydına yazılır (değerin kendisi yazılmaz).',
+  'scripted.revealShow': 'Göster', 'scripted.revealHide': 'Gizle',
+  'scripted.revealShowFor': 'Gizli değeri göster: {0}', 'scripted.revealHideFor': 'Gizli değeri gizle: {0}',
+  'scripted.revealSavedValue': 'Kayıtlı değer · {0}',
+  'scripted.revealCopy': 'Kopyala', 'scripted.revealCopied': 'Kopyalandı', 'scripted.revealDismiss': 'Kapat',
+  'scripted.revealAutoHide': '{0} saniye sonra, sekme ya da pencere değişince ve form kapanınca kendiliğinden gizlenir. Göstermek değeri değiştirmez; yeni değeri yukarıdaki kutuya yazın.',
+  'scripted.revealFailed': 'Gizli değer gösterilemedi. Sayfayı yenileyip yeniden deneyin; sorun sürerse sistem yöneticisine bildirin.',
   'scripted.notifyEmail': 'E-posta bildirimi gönder', 'scripted.active': 'Aktif',
   'scripted.testRun': 'Test Çalıştır', 'scripted.testing': 'Çalışıyor…', 'scripted.delete': 'Sil', 'scripted.cancel': 'İptal', 'scripted.save': 'Kaydet', 'scripted.saving': 'Kaydediliyor…',
   'scripted.nameRequired': 'Ad zorunlu', 'scripted.saved': 'İzleme kaydedildi', 'scripted.saveError': 'Sentetik izleme kaydedilemedi. Alanları ve betiği kontrol edip tekrar deneyin; sorun sürerse sistem yöneticilerine bildirin.',

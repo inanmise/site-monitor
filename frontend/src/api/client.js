@@ -2194,6 +2194,10 @@ export const api = {
     // k6 çekmiyor" ayrımını ÖLÇER. İzleme havuzunu tüketmez (ayrı semafor), bacaklar sırayla koşar.
     diagnoseScripted:      (id, url) => request(`/monitoring/scripted/${id}/diagnose`,
                              { method: 'POST', body: JSON.stringify(url ? { url } : {}) }),
+    // Gizli env değerini GÖSTER (2026-10-19): yalnız global yönetici / takımı yöneten yönetici (satırın `can_reveal`).
+    // POST + no-store; yanıt { name, value } yalnız çağıranın bileşen durumunda yaşar — hiçbir depoya yazılmaz.
+    revealScriptedSecret:  (id, name) => request(`/monitoring/scripted/${id}/env/${encodeURIComponent(name)}/reveal`,
+                             { method: 'POST' }),
     // Sürüm geçmişi: liste gövde taşımaz (yüzlerce sürümde yanıt şişmesin), önizleme ayrı çağrı.
     getScriptedVersions:   (id) => request(`/monitoring/scripted/${id}/versions`),
     getScriptedVersion:    (id, versionId) => request(`/monitoring/scripted/${id}/versions/${versionId}`),

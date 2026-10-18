@@ -278,4 +278,38 @@ describe('katlanır anomali konuları', () => {
     expect(result.current.state.ids).toContain('b2:yeni')
     expect(JSON.parse(localStorage.getItem('sm.te.open.ri.555'))).toEqual({ ids: result.current.state.ids })
   })
+
+  it('inceleme 2026-10-19: arınma taslak ∪ kayıtlı rapor kümesine karşı — keep\'teki (kayıtlı) konunun açık kaydı daha az konulu taslakta yapılan yazımda düşmez; ikisinde de olmayan düşer', () => {
+    localStorage.setItem('sm.te.open.ri.556', JSON.stringify({ ids: ['issues:k1', 'issues:k2', 'issues:eski'] }))
+    const { result, rerender } = renderHook(({ list, keep }) => useSectionOpenState('sm.te.open.ri.556', list,
+      { ...TOPIC_OPEN_OPTS, keep }), { initialProps: { list: ['issues:k1'], keep: ['issues:k1', 'issues:k2'] } })
+    act(() => result.current.setOpen('issues:k1', false))
+    expect(result.current.state.ids).toEqual(['issues:k2'])
+    // keep yoksa (eski davranış) kayıtlı konu da düşerdi
+    rerender({ list: ['issues:k1'], keep: null })
+    act(() => result.current.setOpen('issues:k1', true))
+    expect(result.current.state.ids).toEqual(['issues:k1'])
+  })
+
+  it('inceleme 2026-10-19: daha az konulu yedek taslak geri yüklenip bir konu açılıp kapanınca kayıtlı konuların açık kaydı silinmez — "Değişiklikleri geri al"dan sonra açık görünürler', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ ids: ['issues:k1', 'issues:k2'] }))
+    localStorage.setItem('sm.te.draft.100', JSON.stringify({ version: 4, at: Date.now(),
+      values: { fields: { 'error-count': 5000 }, issues: { issues: [{ ...K1, topic: 'Kart Limiti (yedek)' }] }, texts: {} } }))
+    te().report.mockResolvedValue(respond([K1, K2]))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    await waitFor(() => expect(toggleOf('k2')).toHaveAttribute('aria-expanded', 'true'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Geri yükle' }))
+    await waitFor(() => expect(cardOf('k2')).toBeNull())
+    // Yedekte olmayan kayıtlı konu (k2) taslakta yok; k1'i kapatmak bir YAZIM — k2'nin açık kaydı kalmalı
+    fireEvent.click(toggleOf('k1'))
+    await waitFor(() => expect(toggleOf('k1')).toHaveAttribute('aria-expanded', 'false'))
+    expect(stored()).toEqual({ ids: ['issues:k2'] })
+    // Vazgeç: kayıtlı taslak geri gelir, k2 AÇIK
+    fireEvent.pointerDown(screen.getByRole('button', { name: /Diğer işlemler/ }), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Değişiklikleri geri al' }))
+    await waitFor(() => expect(cardOf('k2')).not.toBeNull())
+    expect(toggleOf('k2')).toHaveAttribute('aria-expanded', 'true')
+    expect(toggleOf('k1')).toHaveAttribute('aria-expanded', 'false')
+  })
 })

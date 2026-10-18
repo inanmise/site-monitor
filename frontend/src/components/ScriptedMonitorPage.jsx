@@ -62,6 +62,7 @@ import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSa
 import { ROUTING_DEFAULTS, formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { VersionChip } from './scripted/VersionTimeline.jsx'
+import { useSecretReveal, SecretRevealButton, SecretRevealPanel } from './scripted/ScriptedSecretReveal.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -1742,6 +1743,14 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
     (teamSelectOptions || []).find(o => String(o.value) === String(form.teamId))?.label
     || teamName || t('app.noTeam')
 
+  // Gizli değeri gösterilebilecek değişken adları (2026-10-19): yalnız KAYITLI izlemede, sunucu satırı `can_reveal`
+  // diyorsa ve değişken izlemenin GÜNCEL env'inde gizli + değeri kayıtlıysa (sunucu da yalnız güncel env'i çözer).
+  // Kopya / yeni kayıt (`modal.id` yok) ve eski sürümden yüklenen adlar bu kümede değilse düğme çizilmez.
+  const revealNames = useMemo(() => new Set(
+    modal?.id != null && modal.can_reveal === true
+      ? (modal.env || []).filter(e => e && e.secret && e.value_set && e.name).map(e => e.name)
+      : []), [modal])
+
   // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
   const selectedSavedName = form.template?.startsWith('saved:')
     ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
@@ -1990,13 +1999,15 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
           {form.env.length > 0 &&
             <div className="flex flex-col gap-2">
               {form.env.map((e, i) => (
-                <EnvRow key={i} t={t} row={e} onPatch={patch => setEnvRow(i, patch)} onDelete={() => delEnvRow(i)} />
+                <EnvRow key={i} t={t} row={e} onPatch={patch => setEnvRow(i, patch)} onDelete={() => delEnvRow(i)}
+                  reveal={e.secret && revealNames.has(e.name) ? { monitorId: modal.id, name: e.name } : null} />
               ))}
             </div>}
           <Button type="button" variant="secondary" size="sm" className="self-start" onClick={addEnvRow}>
             <Plus size={13} aria-hidden="true" /> {t('scripted.envAdd')}
           </Button>
           <FieldDescription className="text-xs">{t('scripted.envHint')}</FieldDescription>
+          {revealNames.size > 0 && <FieldDescription className="text-xs" data-slot="env-reveal-hint">{t('scripted.envRevealHint')}</FieldDescription>}
         </FormSection>
 
         <CheckField full checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('scripted.active')} />
@@ -2056,10 +2067,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
  * Tek env satırı: ad + değer + "gizli" kutusu + sil (şablon editöründeki EnvRow'un DEĞERLİ kardeşi).
  * shadcn Input / Checkbox + Label / ikon Button (ipucu Tooltip). Test kancası: data-slot="env-row".
  */
-function EnvRow({ t, row, onPatch, onDelete }) {
+function EnvRow({ t, row, onPatch, onDelete, reveal = null }) {
   const secretId = useId()
+  // Gizli değeri göster (2026-10-19): yalnız sunucunun izin verdiği, değeri KAYITLI gizli satırda; değer forma girmez
+  const secret = useSecretReveal(reveal)
   // Mobil-önce: telefonda ad TEK satırı kaplar, değer + "Gizli" + sil alt satırda; sm ve üstünde tek satır.
   return (
+    <>
     <div data-slot="env-row" className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
       <Input className="w-full min-w-0 sm:w-auto sm:flex-1" placeholder={t('scripted.envName')} aria-label={t('scripted.envName')} value={row.name}
         onChange={ev => onPatch({ name: ev.target.value })} />
@@ -2077,6 +2091,7 @@ function EnvRow({ t, row, onPatch, onDelete }) {
           {row.secret ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}{t('scripted.envSecret')}
         </Label>
       </div>
+      {reveal && <SecretRevealButton t={t} name={row.name} state={secret.state} onReveal={secret.reveal} onHide={secret.hide} />}
       <SimpleTooltip content={t('scripted.delete')}>
         {/* Dokunma hedefi telefonda 40 px (RESPONSIVE.md §4), masaüstünde sıkı 32 px. */}
         <Button type="button" variant="outline" size="icon"
@@ -2085,5 +2100,7 @@ function EnvRow({ t, row, onPatch, onDelete }) {
           onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></Button>
       </SimpleTooltip>
     </div>
+    {reveal && <SecretRevealPanel t={t} name={row.name} state={secret.state} onHide={secret.hide} />}
+    </>
   )
 }

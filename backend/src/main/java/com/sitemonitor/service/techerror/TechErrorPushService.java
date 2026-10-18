@@ -41,7 +41,8 @@ import java.util.Set;
  * <ol>
  *   <li>Onay isteği / yeniden gönderilen istek → takımın PO onaylayıcıları (e-postası olmayanlar dahil; isteyen hariç).</li>
  *   <li>Onay hatırlatması (günlük iş) → aynı PO'lar, hatırlatma penceresi başına bir kez (iş talebi tekilleştirir).</li>
- *   <li>Karar (onay / red) → isteyen; kararı kendisi verdiyse atlanır.</li>
+ *   <li>Karar (onay / red) → isteyen; kararı kendisi verdiyse atlanır. İsteyen o arada takımdan ayrılmışsa da alır (onayı
+ *   O istedi — doğrudan push takım üyeliği sormaz; "teslim edildi" push'u da öyle).</li>
  *   <li>Rapor gönderildi (SENT; kuyruktaki gönderim sonuçlanınca da) → takım bildirimi, gönderen ve bu olay için zaten push
  *   alan kişiler hariç; onaydan sonra kuyruğa giren gönderim teslim edilince onaya gönderen kişi bunun yerine DOĞRUDAN
  *   "teslim edildi" push'u alır (2026-10-19 — kişi başına tek push).</li>
@@ -73,6 +74,13 @@ public class TechErrorPushService {
     static final String HEAD_EN = "[Technical error report] ";
     /** Push mesaj tavanı okunamazsa (servis yok / hata) — {@code UserPushService} varsayılanı. */
     static final int DEFAULT_MESSAGE_LIMIT = 200;
+    /** Push mesaj tavanının alt sınırı ({@code UserPushService.messageCharLimit}, 80–320) — çekirdek cümleler buna sığar. */
+    static final int MIN_MESSAGE_LIMIT = 80;
+    /** Red: çekirdek + öneri (inceleme 2026-10-19: tek parça 90 karakterdi, 80'lik tavanda kesiliyordu — öneri ayrı düşer). */
+    static final String REJECT_CORE_TR = " raporu reddedildi.";
+    static final String REJECT_ADVICE_TR = " Ret notu Site Monitor'de.";
+    static final String REJECT_CORE_EN = " was rejected.";
+    static final String REJECT_ADVICE_EN = " See note in Site Monitor.";
 
     private final AppSettingsService settings;
     private final AppUserRepository users;
@@ -227,7 +235,8 @@ public class TechErrorPushService {
      * ({@link #approvedOutcome}); redde yalnız "reddedildi, ret notunu Site Monitor'de görüntüleyin" — notun KENDİSİ push'a
      * yazılmaz (karar 2026-10-18: push uygulaması kurum ağının dışında, serbest metin oraya gitmez; {@code note} parametresi
      * bilerek kullanılmaz). Metin kişinin push tavanına ({@code UserPushService.messageCharLimit}, 80–320) göre kurulur
-     * ({@link #fitText}). İsteyen kararı kendisi verdiyse atlanır.
+     * ({@link #fitText}). İsteyen kararı kendisi verdiyse atlanır. İsteyen o arada takımdan ayrılmış olsa da push'u alır
+     * (onayı O istedi; takım üyeliği sorulmaz — yalnız hesabın etkin olması; inceleme 2026-10-19).
      */
     public void decided(Ctx c, Long requesterId, Long deciderId, String deciderName, boolean approved, String note,
                         String sendState, String sendError, Instant decidedAt) {
@@ -256,8 +265,8 @@ public class TechErrorPushService {
                                                       String sendError, int limit) {
         if (!approved) {
             return new UserPushService.LocalizedText(
-                    fitText(c, false, " raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin.", "", " Reddeden: ", decider, limit),
-                    fitText(c, true, " was rejected. See the rejection note in Site Monitor.", "", " Rejected by: ", decider, limit));
+                    fitText(c, false, REJECT_CORE_TR, REJECT_ADVICE_TR, " Reddeden: ", decider, limit),
+                    fitText(c, true, REJECT_CORE_EN, REJECT_ADVICE_EN, " Rejected by: ", decider, limit));
         }
         String code = sendState != null ? sendState : sendError == null ? "FAILED" : sendError;
         String[] tr = approvedParts(code, false);
@@ -270,33 +279,37 @@ public class TechErrorPushService {
      * Onaydan sonra yöneticilere gönderimin sonucu — {@code [çekirdek cümle, öneri]} (öneri boş olabilir), her sonuca bir cümle
      * (inceleme 2026-10-18: SKIPPED / onay eskidi / zaten gönderiliyor / PDF sırası dolu hepsi "e-posta BAŞARISIZ (KOD)"
      * yazıyordu; atlanan gönderim başarısız değildir, eskiyen onay yeniden onay ister). Bilinmeyen kod "ulaşmadı" der — kod metne
-     * yazılmaz. Çekirdek tavana sığdırmada asla düşmez; öneri dar tavanda (120) düşebilir.
+     * yazılmaz. Çekirdek tavana sığdırmada asla düşmez; öneri dar tavanda (120) düşebilir. Çekirdek EN KÜÇÜK tavana (80)
+     * sığacak kadar kısadır (inceleme 2026-10-19): başlık + en uzun dönem ("Ağustos 2026" / "September 2026") + " raporu " +
+     * çekirdek ≤ 80 — ayrıntı öneriye taşındı (geniş tavanda görünür, darda önce o düşer).
      */
     static String[] approvedParts(String code, boolean en) {
         return switch (code == null ? "FAILED" : code) {
             case "SENT" -> en ? new String[] { "was approved and sent to the executives.", "" }
                     : new String[] { "onaylandı ve yöneticilere gönderildi.", "" };
-            case "QUEUED" -> en ? new String[] { "was approved; sending to the executives is queued.", " The mail server is retrying." }
-                    : new String[] { "onaylandı; yöneticilere gönderim kuyrukta.", " Posta sunucusu yeniden deniyor." };
-            case "SKIPPED" -> en ? new String[] { "was approved but no e-mail went to the executives.",
+            case "QUEUED" -> en ? new String[] { "was approved; queued for the executives.", " The mail server is retrying." }
+                    : new String[] { "onaylandı; yönetici gönderimi kuyrukta.", " Posta sunucusu yeniden deniyor." };
+            case "SKIPPED" -> en ? new String[] { "was approved; no e-mail to executives.",
                     " The e-mail channel is off or there is no active recipient." }
-                    : new String[] { "onaylandı ama yöneticilere e-posta gitmedi.", " E-posta kanalı kapalı ya da etkin alıcı yok." };
-            case "APPROVAL_STALE" -> en ? new String[] { "was approved but changed afterwards, so it was not sent to the executives.",
-                    " Submit it for approval again." }
-                    : new String[] { "onaylandı ama sonradan değiştiği için yöneticilere gönderilmedi.", " Yeniden onaya gönderin." };
+                    : new String[] { "onaylandı; yöneticilere posta gitmedi.", " E-posta kanalı kapalı ya da etkin alıcı yok." };
+            case "APPROVAL_STALE" -> en ? new String[] { "was approved but changed; not sent.",
+                    " It changed after the approval; submit it for approval again." }
+                    : new String[] { "onaylandı ama değişti; gönderilmedi.",
+                    " Onaydan sonra değişti; yeniden onaya gönderin." };
             case "SEND_IN_PROGRESS" -> en ? new String[] { "was approved; it is already being sent.",
                     " The result will show on the report in Site Monitor." }
                     : new String[] { "onaylandı; rapor zaten gönderiliyor.", " Sonuç Site Monitor'de raporda görünecek." };
-            case "PDF_BUSY" -> en ? new String[] { "was approved; the PDF queue was busy, so it was not sent to the executives yet.",
-                    " Send it again from Site Monitor shortly." }
-                    : new String[] { "onaylandı; PDF sırası dolu olduğu için yöneticilere henüz gönderilmedi.",
-                    " Birazdan Site Monitor'den yeniden gönderin." };
-            case "PDF_TOO_LARGE" -> en ? new String[] { "was approved but the PDF is too large to e-mail to the executives.",
-                    " Use smaller images and send it again." }
-                    : new String[] { "onaylandı ama PDF yöneticilere e-postayla gönderilemeyecek kadar büyük.",
-                    " Görselleri küçültüp yeniden gönderin." };
-            default -> en ? new String[] { "was approved but the e-mail did not reach the executives.", " Send it again from Site Monitor." }
-                    : new String[] { "onaylandı ama yöneticilere e-posta ulaşmadı.", " Raporu Site Monitor'den yeniden gönderin." };
+            case "PDF_BUSY" -> en ? new String[] { "was approved; PDF queue busy, not sent.",
+                    " The executives did not get it yet; send it again shortly." }
+                    : new String[] { "onaylandı; PDF sırası dolu, gitmedi.",
+                    " Yöneticilere henüz gönderilmedi; birazdan Site Monitor'den yeniden gönderin." };
+            case "PDF_TOO_LARGE" -> en ? new String[] { "was approved but the PDF is too large.",
+                    " It exceeds the e-mail limit; use smaller images and send again." }
+                    : new String[] { "onaylandı ama PDF çok büyük, gitmedi.",
+                    " PDF yöneticilere e-posta sınırını aşıyor; görselleri küçültüp yeniden gönderin." };
+            default -> en ? new String[] { "was approved but the e-mail failed.",
+                    " It did not reach the executives; send it again from Site Monitor." }
+                    : new String[] { "onaylandı ama yöneticilere ulaşmadı.", " Raporu Site Monitor'den yeniden gönderin." };
         };
     }
 
@@ -407,7 +420,8 @@ public class TechErrorPushService {
      * çıkış kutusunun anahtar × kullanıcı tekilliğinde ikinci push yazamaz. Ayar anahtarı "Gönderildi" (sonucun olayı);
      * isteyen = gönderen ise (kendi onayı) ya da pasifse push yok (modülün öteki doğrudan push'ları gibi); opt-out / kişisel
      * tercih kendi atlama satırını yazar. Metin canlı push tavanına sığar ({@link #fitText}). Kuyrukta BAŞARISIZ sonuç bu yolu
-     * kullanmaz ({@link #sendFailedTo} isteyene zaten söyler).
+     * kullanmaz ({@link #sendFailedTo} isteyene zaten söyler). İsteyen o arada takımdan ayrılmış olsa da push'u alır (onayı
+     * O istedi; karar push'u gibi takım üyeliği sorulmaz — yalnız hesabın etkin olması; inceleme 2026-10-19).
      */
     public void queuedDeliveredToRequester(Ctx c, boolean executive, Long requesterId, Long senderId, String senderName,
                                            Long sentRev, Instant claimedAt) {
@@ -424,18 +438,20 @@ public class TechErrorPushService {
     }
 
     /**
-     * İsteyenin "teslim edildi" metni: çekirdek cümle ("… teslim edildi; kuyruktaki gönderim tamamlandı") + imza (yöneticilere
-     * gönderimde onaylayan PO, aksi hâlde gönderen). Canlı tavana {@link #fitText} ile sığar — başlık, dönem ve çekirdek düşmez.
+     * İsteyenin "teslim edildi" metni: çekirdek cümle ("… teslim edildi.") + öneri ("Kuyruktaki gönderim tamamlandı.") + imza
+     * (yöneticilere gönderimde onaylayan PO, aksi hâlde gönderen). Canlı tavana {@link #fitText} ile sığar — başlık, dönem ve
+     * çekirdek düşmez; çekirdek en küçük tavana (80) sığar (inceleme 2026-10-19: eskiden tek parça 98 / 103 karakterdi).
      */
     static UserPushService.LocalizedText requesterDeliveredText(Ctx c, boolean executive, String sender, int limit) {
-        String tr = executive ? " raporu yöneticilere teslim edildi; kuyruktaki gönderim tamamlandı."
-                : " raporu takım adresine teslim edildi; kuyruktaki gönderim tamamlandı.";
-        String en = executive ? " was delivered to the executives; the queued send has completed."
-                : " was delivered to the team address; the queued send has completed.";
+        String tr = executive ? " raporu yöneticilere teslim edildi." : " raporu takım adresine teslim edildi.";
+        String en = executive ? " was delivered to the executives." : " was delivered to the team address.";
         return new UserPushService.LocalizedText(
-                fitText(c, false, tr, "", executive ? " Onaylayan: " : " Gönderen: ", sender, limit),
-                fitText(c, true, en, "", executive ? " Approved by: " : " Sent by: ", sender, limit));
+                fitText(c, false, tr, DELIVERED_ADVICE_TR, executive ? " Onaylayan: " : " Gönderen: ", sender, limit),
+                fitText(c, true, en, DELIVERED_ADVICE_EN, executive ? " Approved by: " : " Sent by: ", sender, limit));
     }
+
+    static final String DELIVERED_ADVICE_TR = " Kuyruktaki gönderim tamamlandı.";
+    static final String DELIVERED_ADVICE_EN = " The queued send has completed.";
 
     static UserPushService.LocalizedText deliveredText(Ctx c, boolean executive, String sender) {
         String tr = HEAD_TR + c.subject(false) + " raporu " + (executive ? "yöneticilere" : "takım adresine") + " gönderildi."
