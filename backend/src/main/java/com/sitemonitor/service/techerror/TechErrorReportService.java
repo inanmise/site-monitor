@@ -212,6 +212,7 @@ public class TechErrorReportService {
             throw channelExists(name);   // eşzamanlı aynı ad (tekillik kısıtı)
         }
         history.recordTemplateVersion(saved, 1, saved.getTemplateJson(), now, by);
+        analyticsChanged();   // yeni kanal analizdeki kanal listesini değiştirir (3. tur inceleme)
         return saved;
     }
 
@@ -355,6 +356,7 @@ public class TechErrorReportService {
                         "Someone else changed the channel order while you were saving it, so the order wasn't saved. Reload the list and try again."));
             }
         }
+        if (changed > 0) analyticsChanged();   // sıra, grafikteki ilk 8 kanalı belirler (3. tur inceleme)
         return new ReorderResult(before, List.copyOf(given), changed);
     }
 

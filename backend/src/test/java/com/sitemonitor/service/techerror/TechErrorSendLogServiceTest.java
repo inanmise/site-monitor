@@ -238,7 +238,7 @@ class TechErrorSendLogServiceTest {
         table.put(TechErrorReminderService.ST_NOFLOW, "APPROVAL_FLOW_REMOVED");
         table.put(TechErrorReminderService.ST_MAINTENANCE, "SYSTEM_MAINTENANCE");
         table.put(com.sitemonitor.service.SystemMaintenanceService.STATUS_SKIPPED, "SYSTEM_MAINTENANCE");
-        table.put(TechErrorReminderService.ST_NO_APPROVER_EMAIL, "NO_RECIPIENT");
+        table.put(TechErrorReminderService.ST_NO_APPROVER_EMAIL, "NO_APPROVER_EMAIL");   // 3. tur: PO adresi, takım adresi değil
         // Genel kurallar değişmedi: pasif KULLANICI adresleri hâlâ INACTIVE_RECIPIENTS
         table.put("SKIPPED: pasif kullanıcı", "INACTIVE_RECIPIENTS");
         for (var e : table.entrySet()) {
@@ -251,7 +251,7 @@ class TechErrorSendLogServiceTest {
         row(ch.getId(), sep.getId(), TechErrorSendLogService.APPROVAL_REMINDER_TRIGGER, "PO", TechErrorReminderService.ST_NO_APPROVER_EMAIL,
                 "", null, "2026-10-12T09:00:00");
         assertThat(sendLog.page(ch.getId(), "reminder", null, 0, 25).rows()).extracting(TechErrorSendLogService.Row::reason)
-                .containsExactly("NO_RECIPIENT", "TEAM_INACTIVE");
+                .containsExactly("NO_APPROVER_EMAIL", "TEAM_INACTIVE");
     }
 
     @Test

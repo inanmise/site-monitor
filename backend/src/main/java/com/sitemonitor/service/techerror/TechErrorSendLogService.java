@@ -68,9 +68,10 @@ public class TechErrorSendLogService {
      * pasif), MODULE_HIDDEN (modül bu takıma kapalı), APPROVAL_FLOW_REMOVED (kanalın onay akışı kaldırıldı),
      * SYSTEM_MAINTENANCE (sistem bakımı susturması); ek olarak QUEUED (posta sunucusu yeniden
      * deniyor), SMTP_FAILED (posta sunucusu kabul etmedi / ulaşılamadı), INTERNAL_ERROR (uygulama içinde yarıda kaldı),
-     * SKIPPED_OTHER (bilinmeyen atlama), UNKNOWN (sonuç kaydı yok). SENT → kod yok (null).
+     * SKIPPED_OTHER (bilinmeyen atlama), UNKNOWN (sonuç kaydı yok), NO_APPROVER_EMAIL (onay hatırlatması: takımda e-postası
+     * olan PO yok). SENT → kod yok (null).
      */
-    public static final List<String> REASON_CODES = List.of("QUEUED", "MAIL_OFF", "INACTIVE_RECIPIENTS", "NO_RECIPIENT",
+    public static final List<String> REASON_CODES = List.of("QUEUED", "MAIL_OFF", "INACTIVE_RECIPIENTS", "NO_RECIPIENT", "NO_APPROVER_EMAIL",
             "TEAM_INACTIVE", "MODULE_HIDDEN", "APPROVAL_FLOW_REMOVED", "SYSTEM_MAINTENANCE", "PDF_BUSY",
             "PDF_TOO_LARGE", "APPROVAL_STALE", "SMTP_FAILED", "INTERNAL_ERROR", "SKIPPED_OTHER", "UNKNOWN");
     /** "FAILED: " + istisna sınıfının kısa adı (uygulama içi hata; posta sunucusunun iletisi değil). Girdi ≤ 255 karakter. */
@@ -174,7 +175,8 @@ public class TechErrorSendLogService {
         if (s.startsWith(TechErrorReminderService.ST_HIDDEN)) return "MODULE_HIDDEN";
         if (s.startsWith(TechErrorReminderService.ST_NOFLOW)) return "APPROVAL_FLOW_REMOVED";
         if (s.startsWith(TechErrorReminderService.ST_MAINTENANCE)) return "SYSTEM_MAINTENANCE";
-        if (s.startsWith(TechErrorReminderService.ST_NO_APPROVER_EMAIL)) return "NO_RECIPIENT";
+        // Onay hatırlatması: takımda e-postası olan PO yok — düzeltme PO kullanıcılarının adresi (AD), takım / kanal adresi değil
+        if (s.startsWith(TechErrorReminderService.ST_NO_APPROVER_EMAIL)) return "NO_APPROVER_EMAIL";
         String known = TechErrorHistoryService.sendReason(s);
         if (known != null) return known;
         if (s.startsWith("SKIPPED")) return "SKIPPED_OTHER";

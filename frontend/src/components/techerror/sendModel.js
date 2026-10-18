@@ -120,6 +120,7 @@ export const SENDLOG_REASON_KEYS = Object.freeze({
   MAIL_OFF: 'te.slog.reason.MAIL_OFF',
   INACTIVE_RECIPIENTS: 'te.slog.reason.INACTIVE_RECIPIENTS',
   NO_RECIPIENT: 'te.slog.reason.NO_RECIPIENT',
+  NO_APPROVER_EMAIL: 'te.slog.reason.NO_APPROVER_EMAIL',
   TEAM_INACTIVE: 'te.slog.reason.TEAM_INACTIVE',
   MODULE_HIDDEN: 'te.slog.reason.MODULE_HIDDEN',
   APPROVAL_FLOW_REMOVED: 'te.slog.reason.APPROVAL_FLOW_REMOVED',
