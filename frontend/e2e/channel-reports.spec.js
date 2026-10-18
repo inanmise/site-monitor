@@ -222,7 +222,8 @@ const CALC_REPORT = {
 const NUMDISP_TEMPLATE = {
   ...CALC_TEMPLATE,
   sections: [
-    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: ['{kanal} toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.'],
+    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: ['{kanal} toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.',
+      'Ay içindeki teknik hata adedi {f:error-count} olarak gerçekleşmiştir.'],
       tiles: ['total-tx', 'quota-count', 'error-count'] },
     ...CALC_TEMPLATE.sections,
     { id: 'issues', kind: 'issues', title: 'Anormal Artış Gösteren Hatalar', item_title: '{konu}: Hata Artışı',
@@ -1262,14 +1263,25 @@ for (const vp of VIEWPORTS) {
       await total.fill('4.4G')
       await editor.getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('1,25M')
       await expect(editor.locator('[data-field="values.unmapped-count"] [data-slot="te-number-expanded"]')).toContainText(/1[.,]250[.,]000/)
+      // Kullanıcı isteği (2026-10-18): "teknik hata adedine 4,4G … yazdığımda … yönetici özetinde gözükmesini" — yazılır yazılmaz
+      // özet cümlesi ve kutucuğu "4,4G" (PDF / e-posta aynı kural: TechErrorReportPdfWriterTest.technicalErrorCountTypedAbbreviatedReachesExecutiveSummary)
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('4,4G')
+      const sumText = editor.locator('[data-slot="te-sum-text"]')
+      await expect(sumText).toContainText('Ay içindeki teknik hata adedi 4,4G olarak gerçekleşmiştir.')
+      await expect(sumText).not.toContainText(/4[.,]400[.,]000[.,]000/)
+      const errorTile = tiles.filter({ hasText: 'Ay içindeki teknik hata adedi' }).locator('[data-slot="te-tile-value"]')
+      await expect(errorTile).toContainText('4,4G')
+      await expect(errorTile).not.toContainText(/4[.,]400[.,]000[.,]000/)
       await page.locator('[data-slot="te-save"]').click()
       await expect.poll(() => savedReport?.values?.units?.['unmapped-count']).toBe(6)
-      expect(savedReport.values.fields).toMatchObject({ 'total-tx': 4400000000, 'unmapped-count': 1250000 })
-      expect(savedReport.values.units).toEqual({ 'total-tx': 9, 'unmapped-count': 6, 'issues.issues.i-a.errors': 3 })
+      expect(savedReport.values.fields).toMatchObject({ 'total-tx': 4400000000, 'error-count': 4400000000, 'unmapped-count': 1250000 })
+      expect(savedReport.values.units).toEqual({ 'total-tx': 9, 'error-count': 9, 'unmapped-count': 6, 'issues.issues.i-a.errors': 3 })
       // Yeniden aç: sunucunun sakladığı belge → kutular kısaltmasıyla
       reportOverride = { ...NUMDISP_REPORT, values: savedReport.values, report: { ...NUMDISP_REPORT.report, version: savedReport.version + 1 } }
       await page.reload()
       await expect(editor.getByLabel('Toplam işlem adedi', { exact: true })).toHaveValue(/^(4,4G|4\.4G)$/, { timeout: 20_000 })
+      await expect(editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true })).toHaveValue(/^(4,4G|4\.4G)$/)
+      await expect(editor.locator('[data-slot="te-sum-text"]')).toContainText('Ay içindeki teknik hata adedi 4,4G olarak gerçekleşmiştir.')
       await expect(editor.getByLabel('Map yapılmamış hata adedi', { exact: true })).toHaveValue(/^(1,25M|1\.25M)$/)
       await expect(page.locator('[data-slot="te-save"]')).toBeDisabled()                // sahte "kaydedilmemiş değişiklik" yok
       // Tam yazılan sayı tam kalır: üs düşer

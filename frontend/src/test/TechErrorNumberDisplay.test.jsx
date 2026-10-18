@@ -198,6 +198,37 @@ describe('6 ondalığa sığmayan kısaltma (inceleme 2026-10-18)', () => {
     expect(sent.units || {}).not.toHaveProperty('total-tx')
   })
 
+  it('"0G" yazılınca tik görünür; kaydedilen belge üssüz (rapor "0" basar, "0G" değil); 0 → "0k" değişiklik sayılmaz', async () => {
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    // Kayıtlı 0'ı "0k" yazmak değişiklik değildir (üs saklanmaz): Kaydet açılmaz
+    fireEvent.change(screen.getByLabelText('Kota hatası adedi'), { target: { value: '0k' } })
+    await waitFor(() => expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull())
+    expect(screen.getByRole('button', { name: /^(Kaydet|Save)$/ })).toBeDisabled()
+    const tile = document.querySelector('[data-slot="te-tile"][data-tile="quota-count"]')
+    expect(tile).not.toHaveTextContent(/0k/)
+    const unmapped = screen.getByLabelText('Map yapılmamış hata adedi')
+    fireEvent.change(unmapped, { target: { value: '0G' } })
+    await waitFor(() => expect(field('unmapped-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull())
+    expect(unmapped).toHaveValue('0G')
+    fireEvent.click(screen.getByRole('button', { name: /^(Kaydet|Save)$/ }))
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalled())
+    const sent = te().saveReport.mock.calls[0][1]
+    expect(sent.fields['unmapped-count']).toBe(0)
+    expect(sent.units || {}).not.toHaveProperty('unmapped-count')
+    expect(sent.units || {}).not.toHaveProperty('quota-count')
+  })
+
+  it('saklı belgede sıfırın üssü varsa (elle yazılmış) kutu ve kutucuk "0" gösterir, "0G" değil', async () => {
+    te().report.mockResolvedValue(report({ values: { ...VALUES, units: { ...VALUES.units, 'quota-count': 9 } } }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(screen.getByLabelText('Kota hatası adedi')).toHaveValue('0')
+    const tile = document.querySelector('[data-slot="te-tile"][data-tile="quota-count"]')
+    expect(tile).not.toHaveTextContent(/0G/)
+    expect(tile.querySelector('[data-slot="te-zero-ok"]')).not.toBeNull()
+  })
+
   it('saklı kısaltma 6 ondalığa sığmıyorsa (eski / elle yazılmış belge) kutu tam sayıyı gösterir', async () => {
     te().report.mockResolvedValue(report({ values: { ...VALUES, fields: { ...VALUES.fields, 'total-tx': 4_123_456_789 } } }))
     render(<TechErrorReportsPage />)

@@ -35,7 +35,9 @@ class TechErrorNumberDisplayTest {
             { "1250000000000", "9", "en", "1250G" },                  // "1.250G" düzenleyicide 1,25 milyar okunurdu)
             { "4400000000", "6", "tr", "4400M" },
             { "4400000000", "6", "en", "4400M" },
-            { "0", "3", "tr", "0k" },
+            { "0", "3", "tr", "0" },                                   // sıfır kısaltılmaz (inceleme 2026-10-18: tikin
+            { "0", "9", "en", "0" },                                   // yanında "0G" basılıyordu)
+            { "0", "12", "tr", "0" },
             { "1234567.891", "3", "tr", "1234,567891k" },              // tam 6 ondalık sığar
             { "2.5", "3", "tr", "0,0025k" },
             { "999999999999999", "3", "en", "999999999999.999k" },      // kayan nokta bölmesi yok: basamaklar aynen
@@ -135,6 +137,8 @@ class TechErrorNumberDisplayTest {
             { "yüzde alanında üs yok sayılır", "Oran {f:rate}.", "rate=0.42", "-", "rate=9", "Oran **%0,42**." },
             { "adet + düşüş farkı kısa", "{f:count} adet, {d:count}.", "count=1250000", "count=2000000", "count=6",
               "**1,25M** adet, **−750k (−%37,5)**." },
+            { "kısaltmayla yazılan sıfır harfsiz (0G değil)", "{f:count} adet, {d:count}.", "count=0", "count=0", "count=9",
+              "**0** adet, değişim yok." },
     };
 
     /**
@@ -148,10 +152,10 @@ class TechErrorNumberDisplayTest {
               "count|0|−5 (−%100)|true",
               "denied|0|-|false",
               "rate|%0,42|-|false" },
-            { "boş değer bilinmiyor (işaret yok); kısaltmalı sıfır işaretli",
+            { "boş değer bilinmiyor (işaret yok); kısaltmayla yazılan sıfır harfsiz (0k değil) ve işaretli",
               "count=0", "-", "count=3",
               "total|—|-|false",
-              "count|0k|-|true",
+              "count|0|-|true",
               "denied|—|-|false",
               "rate|—|-|false" },
     };
@@ -296,7 +300,9 @@ class TechErrorNumberDisplayTest {
         assertThat(TechErrorFormat.abbreviable(4_400_000_000d, 9)).isTrue();
         assertThat(TechErrorFormat.abbreviable(4_123_456_789d, 9)).isFalse();
         assertThat(TechErrorFormat.abbreviable(4_123_456_789d, 6)).isTrue();
-        assertThat(TechErrorFormat.abbreviable(0, 12)).isTrue();
+        assertThat(TechErrorFormat.abbreviable(0, 12)).isFalse();               // sıfırın büyüklüğü yok: her yerde "0"
+        assertThat(TechErrorFormat.abbreviable(-0.0, 9)).isFalse();
+        assertThat(TechErrorFormat.abbreviable(0.5, 3)).isTrue();               // sıfır olmayan küçük değer kısaltılır
         assertThat(TechErrorFormat.abbreviable(1_250_000_000_000d, 3)).isTrue();
         assertThat(TechErrorFormat.abbreviable(1.5, 6)).isFalse();
         assertThat(TechErrorFormat.abbreviable(4_400_000_000d, 7)).isFalse();

@@ -265,6 +265,25 @@ class TechErrorValuesTest {
         assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":4123456789},\"units\":{\"total\":9}}", ut).units()).isEmpty();
     }
 
+    @Test
+    @DisplayName("kısaltmayla yazılan sıfırın (\"0G\", \"0k\") üssü katı ve saklı okumada sessizce düşer — rapor \"0\" basar")
+    void unitsDroppedForZero() {
+        Template ut = unitTemplate();
+        Map<String, Object> issue = new java.util.LinkedHashMap<>(Map.of("id", "i-a", "topic", "A", "customers", 0, "errors", 2000));
+        Map<String, Object> units = new java.util.LinkedHashMap<>();
+        units.put("total", 9);                                    // 0G → düşer
+        units.put("issues.iss.i-a.customers", 3);                 // 0k → düşer
+        units.put("issues.iss.i-a.errors", 3);                    // 2k → kalır
+        units.put("tables.tb.r1.n", 6);                           // 0M → düşer
+        Map<String, Object> raw = Map.of("fields", Map.of("total", 0), "issues", Map.of("iss", List.of(issue)),
+                "tables", Map.of("tb", Map.of("r1", Map.of("n", 0))), "units", units);
+        Values v = TechErrorValues.normalize(raw, ut);
+        assertThat(v.units()).containsExactly(Map.entry("issues.iss.i-a.errors", 3));
+        assertThat(v.fields()).containsEntry("total", 0L);                               // sayının kendisi aynen
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0},\"units\":{\"total\":9}}", ut).units()).isEmpty();
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0.0},\"units\":{\"total\":12}}", ut).units()).isEmpty();
+    }
+
     private void assertInvalid(Map<String, Object> raw, String field) {
         assertThatThrownBy(() -> TechErrorValues.normalize(raw, t))
                 .isInstanceOf(FieldValidationException.class)

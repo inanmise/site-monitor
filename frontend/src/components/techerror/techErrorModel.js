@@ -221,10 +221,11 @@ export const ABBREV_MAX_DECIMALS = 6
 /**
  * Değer bu üsle kısaltılabilir mi — sunucudaki TechErrorFormat.abbreviable ile AYNI: geçerli üs, sonlu değer ve 10^exp ile
  * kaydırılan değer en çok 6 ondalıkla TAM (yuvarlamasız). "4,123456789G" kısaltmasıyla saklanmaz / gösterilmez (inceleme
- * 2026-10-18: 6 haneye yuvarlanınca 4.123.457.000 görünüyor, sonraki düzenleme yuvarlanmış değeri kaydediyordu).
+ * 2026-10-18: 6 haneye yuvarlanınca 4.123.457.000 görünüyor, sonraki düzenleme yuvarlanmış değeri kaydediyordu). Sıfır hiçbir
+ * üsle kısaltılmaz ("0G" yeşil tikin yanında "0G" basılıyordu — her yerde "0"; üssü gönderilmez, sunucu da düşürür).
  */
 export function abbreviable(n, exp) {
-  if (!ABBREV_LETTER[exp] || n == null || n === '' || !Number.isFinite(Number(n))) return false
+  if (!ABBREV_LETTER[exp] || n == null || n === '' || !Number.isFinite(Number(n)) || Number(n) === 0) return false
   const { frac } = shiftedDigits(Math.abs(Number(n)) + 0, exp)
   let end = frac.length
   while (end > 0 && frac[end - 1] === '0') end--
@@ -242,8 +243,8 @@ export function abbreviable(n, exp) {
 export function formatAbbreviated(n, exp, lang) {
   if (n == null || n === '' || !Number.isFinite(Number(n))) return '—'
   const letter = ABBREV_LETTER[exp]
-  if (!letter || !abbreviable(n, exp)) return formatNumber(n, lang)
-  const x = Number(n) + 0
+  const x = Number(n) + 0                     // -0 → 0 (Java BigDecimal'de eksi sıfır yok: "0")
+  if (!letter || !abbreviable(x, exp)) return formatNumber(x, lang)
   const d = roundDigits(shiftedDigits(x, exp), ABBREV_MAX_DECIMALS)
   const zero = d.int === '0' && d.frac === ''
   return `${x < 0 && !zero ? '-' : ''}${joinDigits(d, lang)}${letter}`

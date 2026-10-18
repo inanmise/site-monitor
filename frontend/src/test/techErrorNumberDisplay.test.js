@@ -102,7 +102,9 @@ describe('kısaltılmış sayı — Java ile ortak doğruluk tabloları', () => 
     expect(abbreviable(4.4e9, 9)).toBe(true)
     expect(abbreviable(4_123_456_789, 9)).toBe(false)
     expect(abbreviable(4_123_456_789, 6)).toBe(true)
-    expect(abbreviable(0, 12)).toBe(true)
+    expect(abbreviable(0, 12)).toBe(false)               // sıfırın büyüklüğü yok: her yerde "0" (inceleme 2026-10-18)
+    expect(abbreviable(-0, 9)).toBe(false)
+    expect(abbreviable(0.5, 3)).toBe(true)
     expect(abbreviable(1.25e12, 3)).toBe(true)
     expect(abbreviable(1.5, 6)).toBe(false)
     expect(abbreviable(4.4e9, 7)).toBe(false)
@@ -177,7 +179,7 @@ describe('kısaltma girişi ve gösterimi', () => {
   })
 
   it('kısaltmalı metin her yerde gruplamasız, geri okununca aynı sayı + aynı üs — "4.400M" tuzağı yok', () => {
-    for (const [n, exp] of [[4.4e9, 9], [4.4e9, 6], [1.25e12, 9], [681600, 3], [1234.5, 3], [0, 3], [7.42e9, 9], [130.1e6, 6]]) {
+    for (const [n, exp] of [[4.4e9, 9], [4.4e9, 6], [1.25e12, 9], [681600, 3], [1234.5, 3], [500, 3], [7.42e9, 9], [130.1e6, 6]]) {
       for (const lang of ['tr', 'en']) {
         const text = formatAbbreviated(n, exp, lang)
         expect(abbreviationExp(text), text).toBe(exp)
@@ -189,6 +191,12 @@ describe('kısaltma girişi ve gösterimi', () => {
     expect(parseNumber('4400M', 'tr')).toBe(4.4e9)
     expect(formatAbbreviated(4.4e9, 9, 'tr')).toBe('4,4G')
     expect(formatAbbreviated(null, 9, 'tr')).toBe('—')
+    // Sıfır hiçbir üsle harf almaz ("0G" tikin yanında basılıyordu — inceleme 2026-10-18)
+    for (const exp of UNIT_EXPONENTS) for (const lang of ['tr', 'en']) {
+      expect(formatAbbreviated(0, exp, lang)).toBe('0')
+      expect(formatAbbreviated(-0, exp, lang)).toBe('0')
+      expect(formatValue({ type: 'number' }, 0, lang, (b) => String(b), exp)).toBe('0')
+    }
     // Geçen ayın ipucu / salt okunur hücre de aynı biçimden (formatValue)
     expect(formatValue({ type: 'number' }, 4.4e9, 'tr', (b) => String(b), 6)).toBe('4400M')
     expect(formatValue({ type: 'number' }, 4_123_456_789, 'tr', (b) => String(b), 9)).toBe('4.123.456.789')
@@ -240,6 +248,12 @@ describe('kanonik belge: units', () => {
     // 6 ondalığa sığmayan değerin üssü sunucudaki gibi düşer (TechErrorValues.units — inceleme 2026-10-18)
     expect(canonicalValues(normalizeValues({ fields: { total: 4_123_456_789 }, units: { total: 9 } }), T).units).toBeUndefined()
     expect(canonicalValues(normalizeValues({ fields: { total: 4_123_456_789 }, units: { total: 6 } }), T).units).toEqual({ total: 6 })
+    // Kısaltmayla yazılan sıfırın ("0G") üssü sunucudaki gibi düşer — rapor tikin yanında "0" basar, "0G" değil
+    expect(canonicalValues(normalizeValues({ fields: { total: 0 }, units: { total: 9 } }), T).units).toBeUndefined()
+    expect(canonicalValues(normalizeValues({ issues: { iss: [{ id: 'i-a', topic: 'A', customers: 0 }] },
+      units: { [issueUnitKey('iss', 'i-a', 'customers')]: 3 } }), T).units).toBeUndefined()
+    expect(canonicalValues(normalizeValues({ tables: { tb: { r1: { n: 0 } } }, units: { [tableUnitKey('tb', 'r1', 'n')]: 6 } }), T).units)
+      .toBeUndefined()
     expect('units' in canonicalValues(normalizeValues({ fields: { total: 5 } }), T)).toBe(false)
     expect(stableJson(canonicalValues(normalizeValues({ fields: { total: 5 } }), T)))
       .toBe(stableJson({ fields: { total: 5 }, issues: {}, texts: {} }))

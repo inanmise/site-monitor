@@ -1030,6 +1030,78 @@ class TechErrorReportPdfWriterTest {
         assertThat(plain.inline()).noneMatch(i -> com.sitemonitor.service.mail.TechErrorZeroMark.CID.equals(i.cid()));
     }
 
+    /**
+     * Kullanıcının sözü (2026-10-18): "teknik hata adedine 4,4G veya benzeri şeklinde ifadeler yazdığımda bu verilerin doğrudan
+     * pdf'de mailde yönetici özetinde gözükmesini istemiştim." VARSAYILAN şablon (TR + EN), istemcinin gönderdiği gövde
+     * (4,4G → 4.400.000.000 + üs 9) → kayıt süzgeci ({@code normalize}, katı) → saklı JSON → okuma ({@code fromStored}) → canlı
+     * hesap: {@code TechErrorReportService.pdfInput} ile aynı zincir. PDF metninde ve e-posta HTML'inde yönetici özeti cümlesi,
+     * özet kutucuğu ve "Verileri" değeri "4,4G" (EN "4.4G") yazar; tam sayı hiçbir yerde yok.
+     */
+    @Test
+    @DisplayName("kullanıcı isteği 2026-10-18: teknik hata adedine 4,4G yazılınca PDF ve e-postada yönetici özeti cümlesi, kutucuğu ve Verileri değeri 4,4G — varsayılan TR + EN şablon")
+    void technicalErrorCountTypedAbbreviatedReachesExecutiveSummary() throws IOException {
+        record Case(String lang, String shown, String delta, String sentence, String label, String execTitle, String figuresTitle,
+                    String ratesTitle) { }
+        List<Case> cases = List.of(
+                new Case("tr", "4,4G", "+400M (+%10)", "Ay içindeki teknik hata adedi 4,4G olarak gerçekleşmiştir.",
+                        "Ay içindeki teknik hata adedi", "Yönetici Özeti", "Mobil Kanalı — Eylül 2026 Verileri",
+                        "Mobil Kanalı — Eylül 2026 Oranları (otomatik)"),
+                new Case("en", "4.4G", "+400M (+10%)", "There were 4.4G technical errors in the month.",
+                        "Technical errors in the month", "Executive Summary", "Mobil Channel — September 2026 Figures",
+                        "Mobil Channel — September 2026 Rates (automatic)"));
+        for (Case c : cases) {
+            Template t = TechErrorTemplate.defaults(c.lang());
+            // İstemcinin kayıt gövdesi: "4,4G" yazılan alan = sayı + üs (techErrorModel.parseNumber / abbreviationExp)
+            Map<String, Object> body = Map.of(
+                    "fields", Map.of("total-tx", 200_000_000_000L, "error-count", 4_400_000_000L),
+                    "units", Map.of("error-count", 9));
+            TechErrorValues.Values saved = TechErrorValues.normalize(body, t);
+            assertThat(saved.unit("error-count")).as(c.lang()).isEqualTo(9);
+            TechErrorValues.Values stored = TechErrorValues.fromStored(TechErrorValues.toJson(saved), t);
+            Map<String, Object> prev = new HashMap<>(Map.of("total-tx", 190_000_000_000L, "error-count", 4_000_000_000L));
+            TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, stored, prev);
+            TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of()).withPrevious(prev);
+
+            // PDF: bölümleri içerik sırasıyla ayır (içindekiler sayfası başlıkları önce listeler — son geçiş içeriktir)
+            String s = text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " ");
+            String exec = between(s, c.execTitle(), c.figuresTitle());
+            String figures = between(s, c.figuresTitle(), c.ratesTitle());
+            assertThat(exec).as(c.lang() + " PDF yönetici özeti cümlesi").contains(c.sentence());
+            assertThat(exec).as(c.lang() + " PDF özet kutucuğu (değer + kısa fark)").contains(c.label() + " " + c.shown() + " " + c.delta());
+            assertThat(figures).as(c.lang() + " PDF Verileri değeri").contains(c.label() + " " + c.shown());
+            assertThat(s).as(c.lang() + " PDF tam sayı yok").doesNotContain("4.400.000.000").doesNotContain("4,400,000,000");
+
+            // E-posta: özet metni, renkli kutucuk ve Verileri değer kutucuğu
+            String html = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(in,
+                    com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(), null, "m.pdf").mail().html();
+            int tilesAt = html.indexOf("data-slot=\"te-tiles\"");
+            int valuesAt = html.indexOf("data-slot=\"te-values\"");
+            assertThat(tilesAt).as(c.lang() + " e-posta kutucuk şeridi").isPositive();
+            assertThat(valuesAt).as(c.lang() + " e-posta değer kutucukları").isGreaterThan(tilesAt);
+            String tilesEnd = "<!--[if mso]></tr></table><![endif]--></td></tr></table>";
+            int tilesClose = html.indexOf(tilesEnd, tilesAt) + tilesEnd.length();
+            String tiles = html.substring(tilesAt, tilesClose);
+            String summaryText = html.substring(tilesClose, valuesAt);
+            String values = html.substring(valuesAt, html.indexOf(tilesEnd, valuesAt));
+            String cellValue = "\">" + c.label() + "</p><p style=\"[^\"]*\">" + java.util.regex.Pattern.quote(c.shown()) + "</p>";
+            assertThat(tiles).as(c.lang() + " e-posta özet kutucuğu").containsPattern(cellValue);
+            assertThat(tiles).as(c.lang() + " e-posta kutucuk farkı").contains(c.delta());
+            assertThat(summaryText).as(c.lang() + " e-posta yönetici özeti cümlesi")
+                    .contains(c.sentence().replace(c.shown(), "<strong>" + c.shown() + "</strong>"));
+            assertThat(values).as(c.lang() + " e-posta Verileri değeri").containsPattern(cellValue);
+            assertThat(html).as(c.lang() + " e-posta tam sayı yok").doesNotContain("4.400.000.000").doesNotContain("4,400,000,000");
+        }
+    }
+
+    /** {@code from}'un SON geçişinden (içerik; içindekiler önce listeler) sonraki {@code to}'ya kadar olan metin. */
+    private static String between(String s, String from, String to) {
+        int a = s.lastIndexOf(from);
+        assertThat(a).as("bölüm başlığı: " + from).isGreaterThanOrEqualTo(0);
+        int b = s.indexOf(to, a + from.length());
+        assertThat(b).as("sonraki bölüm başlığı: " + to).isGreaterThan(a);
+        return s.substring(a, b);
+    }
+
     @Test
     @DisplayName("S5 2026-10-17: e-posta kutucukları telefonda tek sütun (.stack); Outlook hücresi ile satır içi genişlik satırdaki sayıya göre aynı")
     void mailTileClassFollowsPerRow() {

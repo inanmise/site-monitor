@@ -183,10 +183,12 @@ public final class TechErrorFormat {
      * Değer bu üsle kısaltılabilir mi: geçerli üs, sonlu değer ve 10^{@code exp} ile kaydırılan değer en çok
      * {@link #ABBREV_MAX_DECIMALS} ondalıkla TAM (yuvarlamasız) ifade ediliyor (inceleme 2026-10-18: "4,123456789G" 6 haneye
      * yuvarlanınca 4.123.457.000 gösteriliyor, sonraki düzenleme yuvarlanmış değeri kaydediyordu). Sunucu böyle bir üssü
-     * saklamaz ({@link TechErrorValues#units}). İstemci aynası: {@code techErrorModel.abbreviable}.
+     * saklamaz ({@link TechErrorValues#units}). Sıfır hiçbir üsle kısaltılmaz (inceleme 2026-10-18: "0G" yazılınca rapor
+     * yeşil tikin yanında "0G" basıyordu — sıfırın büyüklüğü yoktur, her yerde "0"). İstemci aynası:
+     * {@code techErrorModel.abbreviable}.
      */
     public static boolean abbreviable(double value, int exp) {
-        if (letter(exp) == null || !Double.isFinite(value)) return false;
+        if (letter(exp) == null || !Double.isFinite(value) || value == 0) return false;
         return BigDecimal.valueOf(value).movePointLeft(exp).stripTrailingZeros().scale() <= ABBREV_MAX_DECIMALS;
     }
 
