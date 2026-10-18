@@ -552,6 +552,17 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ ids }), withStatus: true }),
     // Dönem özeti (Kişisel Panom paneli): yalnız sayılar, sunucuda kapsam başına 30 sn önbellek
     periodSummary: () => request('/tech-error-reports/period-summary', { withStatus: true }),
+    // Değer dışa aktarımı (E23): rapor × alan satırları {columns, rows, notes, reports}; kişi verisi yok. Kanal Excel'i
+    // (C14) `channel` + `status: 'all'` + JSON ile çağırır; yıl yoksa tek kanalın tüm yılları. 429 RATE_LIMITED / 400 EXPORT_TOO_LARGE.
+    exportValues: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const k of ['team', 'channel', 'year', 'month', 'status', 'format']) {
+        const v = params[k]
+        if (v !== undefined && v !== null && v !== '') qs.set(k, String(v))
+      }
+      const s = qs.toString()
+      return request(`/tech-error-reports/export${s ? `?${s}` : ''}`, { withStatus: true })
+    },
     template: (id) => request(`/tech-error-reports/channels/${id}/template`, { withStatus: true }),
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),

@@ -306,6 +306,15 @@ class TechErrorAnalyticsServiceTest {
         Result deleted = run(Set.of(A), null, 12, List.of("total-tx"));
         assertThat(series(deleted, "Mobil").values().get("total-tx").get(11)).isNull();
         assertThat(series(deleted, "Mobil").reports().get(11)).isNull();
+
+        // 3. tur: yeni kanal ve değişen kanal sırası da belleği boşaltır (sıra grafikteki ilk 8 kanalı belirler)
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx"))).isSameAs(deleted);
+        TechErrorChannel yeni = reportService.createChannel(A, "Yeni Kanal", null, TechErrorTemplate.defaults("tr"), 7L);
+        Result withNew = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(withNew).isNotSameAs(deleted);
+        assertThat(withNew.channels()).anyMatch(c -> c.name().equals("Yeni Kanal"));
+        reportService.reorderChannels(A, List.of(yeni.getId(), mobil.getId()), 7L);
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx"))).isNotSameAs(withNew);
     }
 
     @Test

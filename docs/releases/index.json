@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T01:07:30Z",
+  "generatedAt": "2026-10-18T01:42:02Z",
   "repo": "inanmise/site-monitor",
-  "count": 772,
+  "count": 773,
   "releases": [
+    {
+      "version": "20.155.0",
+      "tag": "v20.155.0",
+      "releasedAt": "2026-10-18T01:41:55Z",
+      "commit": "7b405bb364d0967f62506b654f75c2aa6b8c01d8",
+      "prevVersion": "20.154.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "7b405bb3",
+          "subject": "değer dışa aktarımı ve kanal Excel'i — CLAUDE.md, kılavuz TR/EN, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "24b1271a",
+          "subject": "gönderim günlüğünde onaylayıcı e-postası yok ayrı sebep (PO adresi), sonuçlanmayan kuyruk satırı yeniden göndermeyi söyler, analiz önbelleği yeni kanal ve sıra değişiminde de temizlenir"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "42acbd3c",
+          "subject": "tembel yükleme kapısı kanal görünümünün Excel'e aktar modülünü tanır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f2d32414",
+          "subject": "değer dışa aktarımında eşzamanlılık izni yazmadan önce bırakılır, kişi başına tek süren dışa aktarım, hesap durumu sütunu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "20224df4",
+          "subject": "değer dışa aktarımı kuyruğu sonuçlandırır, hesaplanan değerler PDF gibi canlı, gönderimde değişti bayrağı doğru, Excel hatası çevrilmiş metinle"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ca1ea7ad",
+          "subject": "teknik hata raporu değer dışa aktarımı (BI, JSON / CSV) ve kanal raporlarını Excel'e aktarma"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.154.0",
       "tag": "v20.154.0",

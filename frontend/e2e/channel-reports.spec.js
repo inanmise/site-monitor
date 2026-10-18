@@ -1492,6 +1492,54 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma (karar sonrası)').toBeLessThanOrEqual(1)
     })
 
+    test("Excel'e aktar (C14, 2026-10-18): düğme rapor araç çubuğuna sığar; tek kanal + tüm durumlar + JSON ister; gerçek indirme beklenen adla (.xlsx); yıl süzgeci yılı taşır", async ({ page }) => {
+      await mock(page)
+      const COLS = ['team_id', 'team_name', 'channel_id', 'channel_name', 'year', 'month', 'report_id', 'report_status',
+        'sent_at', 'changed_after_send', 'approval_state', 'field_id', 'field_label', 'field_type', 'value', 'exempt', 'computed']
+      const r = (y, m, id, field, label, type, value) => [5, LONG_TEAM, 10, LONG_CHANNEL, y, m, id, 'sent', '2026-10-02T08:00:00Z',
+        false, null, field, label, type, value, false, type === 'percent']
+      const exportUrls = []
+      // Genel /api taklidinden SONRA kaydedilir — Playwright son kaydı önce dener
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/export', async (route) => {
+        exportUrls.push(route.request().url())
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+          columns: COLS, notes: [],
+          rows: [r(2025, 12, 80, 'total-tx', 'Toplam işlem adedi', 'number', 1000), r(2026, 9, 100, 'total-tx', 'Toplam işlem adedi', 'number', 2000),
+            r(2026, 9, 100, 'error-rate', 'Teknik hata oranı', 'percent', 1.475)],
+          reports: [{ channel_id: 10, year: 2025, month: 12, report_id: 80, report_status: 'sent', sent_at: '2026-01-05T08:00:00Z' },
+            { channel_id: 10, year: 2026, month: 9, report_id: 100, report_status: 'draft', sent_at: null }] } }) })
+      })
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
+      const btn = page.locator('[data-slot="te-channel-xlsx"]')
+      await expect(btn).toBeVisible({ timeout: 20_000 })
+      await page.waitForTimeout(200)
+      const box = await btn.boundingBox()
+      expect(box.x, 'düğme ekranın solunda taşmaz').toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, 'düğme ekrana sığar').toBeLessThanOrEqual(vp.width)
+      if (vp.touch) expect(box.height, 'dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+      expect(await page.evaluate(overflowX), 'yatay taşma (rapor araç çubuğu)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report-toolbar"]'), 'kırpılan metin (araç çubuğu)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report-toolbar"]'), 'küçük hedef (araç çubuğu)').toEqual([])
+
+      const SLUG = 'bireysel-internet-subesi-ve-mobil-bankacilik-ortak-kanali'
+      const [download] = await Promise.all([page.waitForEvent('download'), btn.click()])
+      expect(download.suggestedFilename()).toBe(`${SLUG}-2025-2026-degerler.xlsx`)
+      const chunks = []
+      for await (const c of await download.createReadStream()) chunks.push(c)
+      const file = Buffer.concat(chunks)
+      expect(file.subarray(0, 2).toString('latin1'), 'gerçek .xlsx (ZIP)').toBe('PK')
+      const first = new URL(exportUrls[0]).searchParams
+      expect(Object.fromEntries(first)).toEqual({ team: '5', channel: '10', status: 'all', format: 'json' })
+
+      await page.locator('[data-slot="te-ryear"]').selectOption('2025')
+      const [second] = await Promise.all([page.waitForEvent('download'), btn.click()])
+      expect(second.suggestedFilename()).toBe(`${SLUG}-2025-degerler.xlsx`)
+      expect(new URL(exportUrls[1]).searchParams.get('year')).toBe('2025')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (indirme sonrası)').toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/channel-reports-xlsx-${vp.name}.png`, fullPage: false })
+    })
+
     test('e-posta önizlemesi (2026-10-17, 10. sürüm): konu / alıcı / ek, gövde kumsandıkta, masaüstü ve telefon genişliği, pencereden gönder; sığar, dokunma hedefleri', async ({ page }) => {
       await mock(page)
       await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
