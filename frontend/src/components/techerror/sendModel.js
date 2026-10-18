@@ -158,6 +158,14 @@ export function withSendStatus(report, fresh, { keepChanged = false } = {}) {
 }
 
 const attemptOf = (r) => r?.last_attempt_at ?? null
+/** Tabandan beri raporda bir teslim görünüyor mu: gönderim sayısı arttı ya da son gönderim zamanı değişti. */
+const deliveredSince = (base, fresh) => {
+  const sentAt = fresh?.last_sent_at ?? null
+  if (sentAt != null && sentAt !== (base?.last_sent_at ?? null)) return true
+  const now = Number(fresh?.send_count ?? 0)
+  const was = Number(base?.send_count ?? 0)
+  return Number.isFinite(now) && Number.isFinite(was) && now > was
+}
 const isQueuedRow = (r) => r?.status === 'queued' || r?.send_state === 'QUEUED'
 
 /**
@@ -188,7 +196,10 @@ export function pollBaselineAfterQueued(before, row) {
  *    ESKİ kuyruk sayardı (damga aynı → "gitmedi", ilk turda); burada damga aynıyken sonuç kuyruğun KENDİ sonucudur:
  *    `confirmQueued` → gitti, `failQueued` → gitmedi (ikisi damgalamaz), kuyrukta → sürüyor. Damga değiştiyse sonraki bir
  *    deneme kuyruğun yerini aldı: o gittiyse gitti, kuyruğa aldıysa onu izler; gitmediyse `superseded` — bu kuyruğun sonucu
- *    artık raporda okunmaz (posta servisi onu yine de teslim edebilir: "yeniden gönder" DENMEZ).
+ *    artık raporda okunmaz (posta servisi onu yine de teslim edebilir: "yeniden gönder" DENMEZ). Ama o sonraki deneme
+ *    gitmediği hâlde raporda tabandan beri bir TESLİM görünüyorsa (`send_count` arttı ya da `last_sent_at` değişti — kuyruk
+ *    `confirmQueued` ile teslim edildi, sonra başka bir deneme başarısız oldu; 20.157.0 incelemesi) sonuç `sent`: rapor
+ *    gönderildi, "yerini aldı" demek yanlış olurdu.
  *
  * Süren talep (durum "sending") her zaman sürüyor; taze OLMAYAN talep (`send_state` SENDING, durum başka — 10 dakikadan
  * eski: pod talepten sonra düşmüş olabilir, posta gitmiş olabilir) `unknown` — "yeniden gönder" denmez.
@@ -207,7 +218,7 @@ export function sendPollStep(poll, fresh) {
     o = isQueuedRow(fresh) ? 'queued' : (fresh.send_state === 'SENT' ? 'sent' : 'notSent')
   } else {
     o = unsureSendOutcome(baseline, fresh)
-    if (own && o === 'notSent') o = 'superseded'
+    if (own && o === 'notSent') o = deliveredSince(baseline, fresh) ? 'sent' : 'superseded'
   }
   if (o === 'queued') {
     // Bu denemenin (ya da onun yerini alan denemenin) kuyruğu: sonraki turlar onun sonucuna bakar

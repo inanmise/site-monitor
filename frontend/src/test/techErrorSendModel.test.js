@@ -296,6 +296,16 @@ describe('süren / kuyruktaki gönderimin yoklaması (inceleme 2026-10-18, 4. tu
         { ...ownQueue, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:05:00Z', last_attempt_at: '2026-10-18T07:05:05Z', send_count: 1 }, 'sent'],
       ['sonraki deneme gitmedi → kuyruğun sonucu artık okunmaz (superseded), "gitmedi" DENMEZ', own(ownQueue),
         { ...ownQueue, status: 'draft', send_state: 'FAILED', last_attempt_at: '2026-10-18T07:05:05Z' }, 'superseded'],
+      // 20.157.0 incelemesi: sonraki deneme gitmedi ama tabandan beri bir TESLİM var (kuyruk confirmQueued ile teslim edildi,
+      // sonra başka bir deneme başarısız oldu) → rapor gönderildi; "yerini aldı" değil
+      ['sonraki deneme gitmedi, gönderim sayısı arttı → gitti (superseded DEĞİL)', own(ownQueue),
+        { ...ownQueue, status: 'sent', send_state: 'FAILED', last_attempt_at: '2026-10-18T07:05:05Z', send_count: 1 }, 'sent'],
+      ['sonraki deneme gitmedi, son gönderim zamanı değişti (sayaç yok — eski satır) → gitti', own({ ...ownQueue, send_count: null }),
+        { ...ownQueue, send_count: null, status: 'sent', send_state: 'SKIPPED', last_sent_at: '2026-10-18T07:01:00Z',
+          last_attempt_at: '2026-10-18T07:05:05Z' }, 'sent'],
+      ['sonraki deneme gitmedi, sayaç ve son gönderim aynı → superseded', own({ ...ownQueue, send_count: 3, last_sent_at: '2026-10-10T08:00:00Z' }),
+        { ...ownQueue, send_count: 3, last_sent_at: '2026-10-10T08:00:00Z', status: 'sent', send_state: 'FAILED',
+          last_attempt_at: '2026-10-18T07:05:05Z' }, 'superseded'],
     ]
     it.each(TABLE)('%s', (_name, poll, fresh, expected) => {
       expect(sendPollStep(poll, fresh).outcome).toBe(expected)

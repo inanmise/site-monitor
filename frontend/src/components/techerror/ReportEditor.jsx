@@ -561,7 +561,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         })
         setServerErrors({})
         setState((s) => (s.loading ? { ...s, loading: false } : s))
-        statusGen.current++
+        // Durumu YALNIZ içeriği değiştiren kayıt "changed" yapar — ancak o zaman yoklamaya "yerel değişiklik var" denir
+        // (20.157.0 incelemesi: hiçbir şey değiştirmeyen kayıt da sayacı artırıyor, yoklama sonraki "sent"i yazmıyor, bayat
+        // "değişti" rozeti kalıyordu)
+        if (res.data.changed) statusGen.current++
         setData((d) => (d ? { ...d, report: { ...d.report, version: res.data.version, updated_at: res.data.updated_at,
           updated_by_name: res.data.updated_by_name ?? d.report.updated_by_name,
           status: d.report.status === 'sent' && res.data.changed ? 'changed' : d.report.status } } : d))
@@ -701,15 +704,50 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     const r = resumeSend.current
     resumeSend.current = null
     // Gönderim "gitmemiş" çözülmüştü: "gitmemiş" bandı + taşınan ek Bilgi (ilk açılışta o denemenin adresleri, sonra
-    // kullanıcının son yazdığı) — yalnız o okumadan beri raporda gönderim olmadıysa (başka sekmede / kişide gönderildiyse
-    // "gitmemiş" bandı bayattır, pencere taze açılır)
-    if (r && sameSendMark(r.mark, data?.report)) {
-      resumeSend.current = r
-      setSendDialog({ error: null, failure: notSentFailure(r.details), initialCc: ccCarry.current })
-      return
+    // kullanıcının son yazdığı) — yalnız o okumadan beri raporda gönderim olmadıysa. Eldeki satır bayat olabilir (20.157.0
+    // incelemesi: başka sekme / kişi arada göndermişse bant "yeniden gönderebilirsiniz" deyip ikinci gönderime çağırıyordu):
+    // önce rapor YENİDEN okunur, bant yalnız TAZE satır hâlâ yeni gönderim göstermiyorsa çıkar
+    if (r) {
+      const fresh = await readSendStatus()
+      if (fresh && sameSendMark(r.mark, fresh)) {
+        resumeSend.current = r
+        setSendDialog({ error: null, failure: notSentFailure(r.details), initialCc: ccCarry.current })
+        return
+      }
+      if (!fresh) {
+        // Okunamadı: "gitmemiş" denmez (bilinmiyor) — pencere taze açılır; sonraki açılış yeniden denetler
+        resumeSend.current = r
+        setSendDialog({ error: null, failure: null })
+        return
+      }
     }
     ccCarry.current = ''
     setSendDialog({ error: null, failure: null })
+  }
+
+  /**
+   * Gönderim alanlarının taze okuması ("gitmemiş" bandından önce — 20.157.0 incelemesi): raporu okur, yalnız gönderim
+   * alanlarını işler (yoklamayla aynı: taslak / sürüm değişmez; istekten sonra yerelde "changed" olduysa "sent" yazılmaz;
+   * okuma sürerken tam yükleme başladıysa satıra yazılmaz). Okuma sürerken `busy` 'sendcheck'. Okunamazsa `null`.
+   */
+  async function readSendStatus() {
+    setBusy('sendcheck')
+    const loadSeq = seq.current
+    const statusMark = statusGen.current
+    let fresh = null
+    try {
+      const res = await api.techErrors.report(reportId)
+      fresh = res?.success ? res.data?.report || null : null
+    } catch {
+      fresh = null
+    } finally {
+      setBusy(null)
+    }
+    if (fresh && loadSeq === seq.current) {
+      const keepChanged = statusGen.current !== statusMark
+      setData((d) => (d ? { ...d, report: withSendStatus(d.report, fresh, { keepChanged }) } : d))
+    }
+    return fresh
   }
 
   /** "Gitmemiş" bandı: metin taşınan ek Bilgi'ye göre (boşsa "korundu" demez). */
