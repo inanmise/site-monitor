@@ -21276,6 +21276,8 @@ export const TR = {
   'te.cap.replaceBody': "“{0}” yuvasındaki görsel yapıştırdığınız görselle değiştirilecek. Şu anki görsel sonradan geri getirilemez.",
   'te.cap.moreActions': "Diğer işlemler",
   'te.cap.moreActionsFor': "Diğer işlemler: {0}",
+  'te.cap.panelMainBusy': "Rapor ana pencerede açılmadı: orada açık bir pencere ya da kaydedilmemiş bir değişiklik var. Ana pencerede onu kapatın ya da kaydedin, sonra yeniden deneyin.",
+  'te.cap.mainBusyHere': "Görsel panelindeki rapor burada açılmadı, çünkü açık bir pencere ya da kaydedilmemiş bir değişiklik var. Önce onu kapatın ya da kaydedin, sonra paneldeki “Ana pencerede aç”a yeniden basın.",
   'te.trend.hint': "Kanalın önceki raporlarına girilen rakamlardan; bu ayın çubuğu kaydedilmemiş değişikliği de gösterir.",
   'te.trend.notEnough': "Trend için en az iki ayın rakamı gerekir; şu ana kadar rakamı girilmiş ay: {0}.",
   'te.trend.unavailable': "Önceki ayların rakamları okunamadı; grafik şu an gösterilemiyor. Sayfayı birkaç dakika sonra yenileyin.",

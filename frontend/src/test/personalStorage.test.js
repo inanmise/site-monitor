@@ -44,9 +44,13 @@ describe('personalStorage — kullanıcıya göre ayrım + çıkışta temizlik'
     localStorage.setItem(`${DEXP_KEY}:bob`, '[]')
     localStorage.setItem('wr.draft.5', '{}')
     localStorage.setItem(OWNER_KEY, 'alice')
+    // Sekmeler arası etkinlik damgaları (kullanıcı adının tuzsuz özeti) çıkışta 24 saat kalmaz (inceleme 2026-10-18)
+    localStorage.setItem('sm.activity.sekme1', '{"u":"uabc","t":1}')
+    localStorage.setItem('sm.activity.sekme2', '{"u":"udef","t":2}')
     localStorage.setItem('sm.pageSize.incidents', '50')              // kişisel değil — dokunulmaz
+    localStorage.setItem('sm.activityx', '1')                        // önek "sm.activity." değil — dokunulmaz
     clearPersonalStorage()
-    expect(Object.keys(localStorage).sort()).toEqual(['sm.pageSize.incidents'])
+    expect(Object.keys(localStorage).sort()).toEqual(['sm.activityx', 'sm.pageSize.incidents'])
   })
 
   it('sahip bilinmiyorsa (ilk giriş / eski sürüm) anahtarsız kalıntılar girişte temizlenir', () => {

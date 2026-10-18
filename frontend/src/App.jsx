@@ -117,7 +117,10 @@ const ExecutiveSummaryPage = lazy(() => import('./components/executive/Executive
 const TechErrorReportsPage = lazy(() => import('./components/techerror/TechErrorReportsPage'))
 // Görsel paneli (2026-10-18): raporun yalnız görsel yuvaları, ayrı pencerede (`te_view=images`) — kenar çubuksuz kabuk
 const ImagesPanelPage = lazy(() => import('./components/techerror/capture/ImagesPanelPage'))
-import { imagesPanelReportFromSearch, isReportEditorSearch, onOpenReportRequest } from './components/techerror/capture/panelWindow.js'   // bağımlılıksız, küçük
+import {
+  OPEN_RESULT_BLOCKED, OPEN_RESULT_OPENED, hasOpenDialog, imagesPanelReportFromSearch, isReportEditorSearch, onOpenReportRequest,
+} from './components/techerror/capture/panelWindow.js'   // bağımlılıksız, küçük
+import { hasUnsavedWork } from './utils/unsavedWork.js'
 // Sekmeler arası etkinlik (2026-10-18): öteki SiteMonitor sekmesi etkinken bu sekme hareketsizlik çıkışı yapmaz
 import {
   ACTIVITY_EVENT, bindActivityUser, clearOwnActivityStamp, latestOtherActivity, onOtherActivity, writeActivityStamp,
@@ -707,8 +710,14 @@ export default function App() {
       arm(Date.now())
     }
 
-    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click']
-    events.forEach((e) => document.addEventListener(e, resetTimer, { passive: true }))
+    // Yalnız KULLANICININ ürettiği olaylar (2. inceleme turu 2026-10-18): `scroll` ve `mousemove`u tarayıcı kendiliğinden de
+    // üretir (yoklanan içerik yükseklik değiştirince kaydırma sabitleme / sıkıştırma; içerik imlecin altında değişince sahte
+    // fare hareketi) — başında kimse olmayan görünür sekme damga yazıp paylaşılan oturumu açık tutuyordu. Tekerlek, işaretçi
+    // basışı (fare / kalem / dokunma, tıklamayı da kapsar), tuş ve dokunma sayılır; yakalama aşamasında (yayılımı durduran
+    // bileşenler de görülür). TV kipi değişmedi (onTvModeChange).
+    const events = ['wheel', 'pointerdown', 'keydown', 'touchstart']
+    const opts = { passive: true, capture: true }
+    events.forEach((e) => document.addEventListener(e, resetTimer, opts))
     // Uygulama içi eylem (ekrandan alma, yapıştırma, yükleme) — belge olayı üretmeyebilir
     window.addEventListener(ACTIVITY_EVENT, resetTimer)
     const offTv = onTvModeChange(resetTimer)   // kip açılınca görünen uyarı kalkar; kapanınca sayaç baştan başlar
@@ -720,7 +729,7 @@ export default function App() {
       clearTimeout(logoutTimer.current)
       clearTimeout(warnTimer.current)
       clearInterval(countdownInterval.current)
-      events.forEach((e) => document.removeEventListener(e, resetTimer))
+      events.forEach((e) => document.removeEventListener(e, resetTimer, opts))
       window.removeEventListener(ACTIVITY_EVENT, resetTimer)
       offTv()
       offOther()
@@ -915,16 +924,30 @@ export default function App() {
   // açılır (sayfa yeniden yüklenmez — açık form / kaydedilmemiş taslak eskiden `location.assign` ile kayboluyordu). Aynı
   // sekmedeysek sekme görünümü yeniden kurulur (Kanal raporları adres paramını yalnız açılışta okur), başka sekmedeysek
   // olağan sekme geçişi. Zaten o rapordaysak yalnız öne gelinir. Oturum yoksa / bu pencere panelin kendisiyse yanıt
-  // verilmez: panel eski yola (adres) düşer.
+  // verilmez: panel eski yola (adres) düşer. Yanıt gezinmeden ÖNCE gider (onOpenReportRequest).
+  // 2. inceleme turu: bu pencerede açık bir pencere (sertifika penceresi, envanter formu, onay, TV kipi … — App durumu ya da
+  // belgedeki dialog) ya da kaydedilmemiş iş (şablon / rapor taslağı, izin matrisi — `useUnsavedWork`) varsa rapor
+  // AÇILMAZ: arkada sayfa değişmez, taslak sessizce bırakılmaz; panel ve bu pencere "önce kapatın / kaydedin" der.
+  const appModalOpenRef = useRef(false)
+  appModalOpenRef.current = !!(modalCert || invForm || sharedCert || planRow || caModal || checkRun || selfPwdModalOpen)
+  const openReqUi = useRef({ t, toast })
+  openReqUi.current = { t, toast }
   useEffect(() => onOpenReportRequest(({ reportId, channelId }) => {
-    if (!userRef.current || imagesPanelReport) return false
-    const params = { te_view: 'report', te_rep: reportId, ...(channelId ? { te_ch: channelId } : {}) }
-    if (!isReportEditorSearch(window.location.search, reportId)) {
-      if (tabRef.current === 'channelreports') applyTabView('channelreports', params)
-      else tabChangeRef.current?.('channelreports', params)
+    if (!userRef.current || imagesPanelReport) return null
+    const front = () => { try { window.focus() } catch { /* yok */ } }
+    if (isReportEditorSearch(window.location.search, reportId)) return { result: OPEN_RESULT_OPENED, run: front }
+    if (appModalOpenRef.current || hasOpenDialog() || hasUnsavedWork()) {
+      return { result: OPEN_RESULT_BLOCKED, run: () => { front(); openReqUi.current.toast.info(openReqUi.current.t('te.cap.mainBusyHere'), 10000) } }
     }
-    try { window.focus() } catch { /* yok */ }
-    return true
+    const params = { te_view: 'report', te_rep: reportId, ...(channelId ? { te_ch: channelId } : {}) }
+    return {
+      result: OPEN_RESULT_OPENED,
+      run: () => {
+        if (tabRef.current === 'channelreports') applyTabView('channelreports', params)
+        else tabChangeRef.current?.('channelreports', params)
+        front()
+      },
+    }
   }), [imagesPanelReport])
 
   useEffect(() => {

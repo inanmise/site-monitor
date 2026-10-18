@@ -59,6 +59,20 @@ describe('App — TV kipi hareketsizlik çıkışını erteler', () => {
     fireEvent.click(document.querySelector('[data-slot="mydash-tv-exit"]'))
     await waitFor(() => expect(document.querySelector('[data-slot="mydash-tv"]')).toBeNull())
     expect(isTvModeActive()).toBe(false)
-    await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).not.toBeNull(), { timeout: 2500 })
+    // Tarayıcının kendiliğinden ürettiği kaydırma / fare hareketi etkinlik sayılmaz (2. inceleme turu 2026-10-18): uyarı
+    // yine gelir
+    const ticker = setInterval(() => {
+      document.dispatchEvent(new Event('scroll'))
+      fireEvent.mouseMove(document)
+    }, 200)
+    try {
+      await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).not.toBeNull(), { timeout: 2500 })
+    } finally {
+      clearInterval(ticker)
+    }
+    // Kullanıcı olayı (tuş) uyarıyı kaldırır
+    fireEvent.keyDown(document, { key: 'Shift' })
+    await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).toBeNull())
+    expect(fx.logout).toBe(0)
   }, 20_000)
 })

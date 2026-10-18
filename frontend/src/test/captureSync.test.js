@@ -3,8 +3,9 @@ import {
   IMAGES_CHANNEL, IMAGES_SYNC_KEY, IMAGES_SYNC_SELF, KIND_IMAGES, KIND_REPORT, onImagesChanged, postImagesChanged, sameImageList,
 } from '../components/techerror/capture/imageSync.js'
 import {
-  OPEN_REPORT_ACK, OPEN_REPORT_REQUEST, PANEL_FEATURES, imagesPanelReportFromSearch, imagesPanelUrl, isReportEditorSearch,
-  onOpenReportRequest, openImagesPanel, openInMainWindow, panelWindowName, reportEditorUrl,
+  OPEN_REPORT_ACK, OPEN_REPORT_ANSWER_WINDOW_MS, OPEN_REPORT_REQUEST, OPEN_REPORT_TIMEOUT_MS, OPEN_RESULT_BLOCKED, OPEN_RESULT_OPENED,
+  PANEL_FEATURES, hasOpenDialog, imagesPanelReportFromSearch, imagesPanelUrl, isReportEditorSearch, onOpenReportRequest,
+  openImagesPanel, openInMainWindow, panelWindowName, reportEditorUrl,
 } from '../components/techerror/capture/panelWindow.js'
 
 // Görsel paneli (2026-10-18): adres, pencere açma (engellenince yeni sekme bağlantısı), ana pencereye dönüş ve iki pencere
@@ -116,13 +117,54 @@ describe('Görsel paneli penceresi', () => {
     const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
       location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
     const win = fakeWin(opener)
-    opener.postMessage.mockImplementation((msg, origin) => win.dispatch({ origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid } }))
+    opener.postMessage.mockImplementation((msg, origin) => win.dispatch({ origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid, result: OPEN_RESULT_OPENED } }))
     await expect(openInMainWindow(100, 10, win)).resolves.toBe('opener')
     expect(opener.postMessage).toHaveBeenCalledWith(
-      { type: OPEN_REPORT_REQUEST, rid: expect.any(String), reportId: '100', channelId: '10' }, loc.origin)
+      { type: OPEN_REPORT_REQUEST, rid: expect.any(String), reportId: '100', channelId: '10', sentAt: expect.any(Number) }, loc.origin)
     expect(opener.location.assign).not.toHaveBeenCalled()
     expect(opener.focus).toHaveBeenCalled()
     expect(win.listeners()).toBe(0)   // dinleyici kaldırıldı
+    // Eski açan pencere (sonuçsuz yanıt) da "açıldı" sayılır
+    opener.postMessage.mockImplementation((msg, origin) => win.dispatch({ origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid } }))
+    await expect(openInMainWindow(100, 10, win)).resolves.toBe('opener')
+  })
+
+  it('açan pencerede açık pencere / kaydedilmemiş iş: "blocked" — adres DEĞİŞMEZ, süre sonu yolu da çalışmaz', async () => {
+    vi.useFakeTimers()
+    try {
+      const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
+        location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
+      const win = fakeWin(opener)
+      opener.postMessage.mockImplementation((msg, origin) => win.dispatch({ origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid, result: OPEN_RESULT_BLOCKED } }))
+      const p = openInMainWindow(100, 10, win)
+      await vi.advanceTimersByTimeAsync(OPEN_REPORT_TIMEOUT_MS + 100)
+      await expect(p).resolves.toBe('blocked')
+      expect(opener.location.assign).not.toHaveBeenCalled()
+      expect(win.open).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('yanıt süre dolmadan gelirse süre sonunda adres değişmez (yanıt bekleme süresi ≥ açan pencerenin yanıt penceresi + pay)', async () => {
+    vi.useFakeTimers()
+    try {
+      expect(OPEN_REPORT_TIMEOUT_MS - OPEN_REPORT_ANSWER_WINDOW_MS).toBeGreaterThanOrEqual(500)
+      const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
+        location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
+      const win = fakeWin(opener)
+      let sent
+      opener.postMessage.mockImplementation((msg) => { sent = msg })
+      const p = openInMainWindow(100, 10, win)
+      // Açan pencere meşgul: istek yanıt penceresinin sonuna doğru işlenir, yanıt hemen gider
+      await vi.advanceTimersByTimeAsync(OPEN_REPORT_ANSWER_WINDOW_MS - 10)
+      win.dispatch({ origin: loc.origin, data: { type: OPEN_REPORT_ACK, rid: sent.rid, result: OPEN_RESULT_OPENED } })
+      await vi.advanceTimersByTimeAsync(OPEN_REPORT_TIMEOUT_MS)
+      await expect(p).resolves.toBe('opener')
+      expect(opener.location.assign).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('başka köken / yanlış kimlikli yanıt sayılmaz; açan pencere yanıt vermezse süre sonunda adres değişir (zaten o rapordaysa yalnız öne gelir)', async () => {
@@ -158,28 +200,61 @@ describe('Görsel paneli penceresi', () => {
     expect(closed.open).toHaveBeenCalled()
   })
 
-  it('açan pencere tarafı: yalnız aynı kökenden geçerli kimlikli istek işlenir; işleyen yanıt verir, işlemeyen (oturum yok) vermez', () => {
+  it('açan pencere tarafı: yalnız aynı kökenden geçerli kimlikli istek işlenir; yanıt gezinmeden ÖNCE gider; işlemeyen (oturum yok) yanıt vermez', () => {
     const win = fakeWin(null)
-    const handler = vi.fn(() => true)
-    const off = onOpenReportRequest(handler, win)
-    const source = { postMessage: vi.fn() }
-    const req = (over = {}) => ({ origin: loc.origin, source, data: { type: OPEN_REPORT_REQUEST, rid: 'r1', reportId: '100', channelId: '10', ...over } })
+    const order = []
+    const run = vi.fn(() => order.push('run'))
+    const handler = vi.fn(() => ({ result: OPEN_RESULT_OPENED, run }))
+    const off = onOpenReportRequest(handler, win, { now: () => 10_000 })
+    const source = { postMessage: vi.fn(() => order.push('ack')) }
+    const req = (over = {}) => ({ origin: loc.origin, source,
+      data: { type: OPEN_REPORT_REQUEST, rid: 'r1', reportId: '100', channelId: '10', sentAt: 9_900, ...over } })
     win.dispatch(req())
     expect(handler).toHaveBeenCalledWith({ reportId: '100', channelId: '10' })
-    expect(source.postMessage).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1' }, loc.origin)
+    expect(source.postMessage).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1', result: OPEN_RESULT_OPENED }, loc.origin)
+    expect(order).toEqual(['ack', 'run'])
     win.dispatch({ ...req(), origin: 'https://qlik.example' })
     win.dispatch(req({ reportId: '1 OR 1' }))
     win.dispatch(req({ type: 'baska' }))
     win.dispatch(req({ rid: 'x'.repeat(41) }))
+    // Geç gelen istek (panel artık adres değiştirecek): yanıt yok, gezinme yok
+    win.dispatch(req({ sentAt: 10_000 - OPEN_REPORT_ANSWER_WINDOW_MS - 1 }))
+    win.dispatch(req({ sentAt: 'x' }))
     expect(handler).toHaveBeenCalledTimes(1)
+    // Eski panel sürümü (sentAt yok): süre denetlenmez
+    win.dispatch(req({ sentAt: undefined }))
+    expect(handler).toHaveBeenCalledTimes(2)
     win.dispatch(req({ channelId: 'abc' }))
     expect(handler).toHaveBeenLastCalledWith({ reportId: '100', channelId: null })
-    handler.mockReturnValue(false)
+    // Engellendi: yanıt "blocked", ardından (bildirim için) run
+    handler.mockReturnValue({ result: OPEN_RESULT_BLOCKED, run })
+    win.dispatch(req({ rid: 'r2' }))
+    expect(source.postMessage).toHaveBeenLastCalledWith({ type: OPEN_REPORT_ACK, rid: 'r2', result: OPEN_RESULT_BLOCKED }, loc.origin)
+    handler.mockReturnValue(null)
     source.postMessage.mockClear()
+    run.mockClear()
     win.dispatch(req())
     expect(source.postMessage).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    // Yanıt gönderilemezse gezinilmez (panel süre sonu yoluna düşer — iki gezinme olmaz)
+    handler.mockReturnValue({ result: OPEN_RESULT_OPENED, run })
+    source.postMessage.mockImplementation(() => { throw new Error('x') })
+    win.dispatch(req())
+    expect(run).not.toHaveBeenCalled()
     off()
     expect(win.listeners()).toBe(0)
+  })
+
+  it('hasOpenDialog: dialog / alertdialog / aria-modal açık pencere sayılır; açılır kutu (popover) ve gizli öğe sayılmaz', () => {
+    const doc = document.implementation.createHTMLDocument('x')
+    expect(hasOpenDialog(doc)).toBe(false)
+    doc.body.innerHTML = '<div data-radix-popper-content-wrapper><div role="dialog"></div></div><div hidden><div role="dialog"></div></div>'
+    expect(hasOpenDialog(doc)).toBe(false)
+    doc.body.insertAdjacentHTML('beforeend', '<div role="alertdialog"></div>')
+    expect(hasOpenDialog(doc)).toBe(true)
+    doc.body.innerHTML = '<div aria-modal="true"></div>'
+    expect(hasOpenDialog(doc)).toBe(true)
+    expect(hasOpenDialog(null)).toBe(false)
   })
 
   it('isReportEditorSearch: yalnız bu raporun düzenleyicisi', () => {

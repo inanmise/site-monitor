@@ -126,11 +126,12 @@ export function useSlotCapture({
     }
     e.preventDefault()
     if (busyRef.current) { setNote({ tone: 'muted', text: t('te.cap.pasteBusy') }); return }
-    // Görsel olmayan dosya adıyla gider: imagePrep türünü söyleyen hatayı yazar (yüklenmez, yuvadaki görsel kalır)
-    if (!image) { give(file); return }
-    const named = renameClipboardFile(file, slotId)
-    if (hasImageRef.current && typeof confirmRef.current === 'function') { giveAfterConfirm(named); return }
-    give(named)
+    // Görsel türü taşımayan dosya kendi adıyla gider: imagePrep türünü baytlardan okur — görselse yüklenir, değilse
+    // türünü söyleyen hatayı yazar. Dolu yuvada TÜRÜNE BAKILMADAN önce sorulur (türsüz bir PNG de görseli değiştirir —
+    // 2. inceleme turu 2026-10-18)
+    const next = image ? renameClipboardFile(file, slotId) : file
+    if (hasImageRef.current && typeof confirmRef.current === 'function') { giveAfterConfirm(next); return }
+    give(next)
   }, [readOnly, give, giveAfterConfirm, slotId, t, keys.snip])
 
   async function pasteFromClipboard() {

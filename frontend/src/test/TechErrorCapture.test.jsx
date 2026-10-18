@@ -183,17 +183,39 @@ describe('yapıştırma', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('görsel olmayan dosya yapıştırılırsa (dosya yöneticisinden PDF) türünü söyleyen hata yazar; yüklenmez, sorulmaz', async () => {
-    te().report.mockResolvedValue(reportResponse({ images: [IMG] }))
+  it('görsel olmayan dosya yapıştırılırsa (dosya yöneticisinden PDF) türünü söyleyen hata yazar; yüklenmez (boş yuvada sorulmaz)', async () => {
     const { slot } = await openEditor()
     const pdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'rapor.pdf', { type: 'application/pdf' })
     prepareImage.mockImplementationOnce(async () => { throw new ImagePrepError('te.img.errPdf', []) })
     fireEvent.paste(slot(), { clipboardData: { items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdf }], files: [pdf], types: ['Files'] } })
     expect(await within(slot()).findByRole('alert')).toHaveTextContent('PDF dosyası görsel yuvasına yüklenemez')
-    expect(prepareImage.mock.calls[0][0]).toBe(pdf)   // adı değişmeden (pano adı yalnız görsele)
+    expect(prepareImage.mock.calls[0][0]).toBe(pdf)   // adı değişmeden (pano adı yalnız görsel türlüye)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(te().uploadImage).not.toHaveBeenCalled()
-    expect(slot().querySelector('img')).not.toBeNull()
+  })
+
+  it('DOLU yuvada türüne bakılmadan sorulur: türsüz dosya (baytları PNG) da görseli değiştirebilir (2. inceleme turu)', async () => {
+    te().report.mockResolvedValue(reportResponse({ images: [IMG] }))
+    const { slot } = await openEditor()
+    const typeless = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'ekran', { type: '' })
+    const paste = () => fireEvent.paste(slot(), { clipboardData: { items: [{ kind: 'file', type: '', getAsFile: () => typeless }], types: ['Files'] } })
+    paste()
+    let dlg = await screen.findByRole('dialog', { name: 'Görsel değiştirilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(prepareImage).not.toHaveBeenCalled()
+    expect(slot().querySelector('img')).toHaveAttribute('src', '/api/tech-error-reports/images/7')
+    paste()
+    dlg = await screen.findByRole('dialog', { name: 'Görsel değiştirilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Değiştir' }))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    expect(prepareImage.mock.calls[0][0]).toBe(typeless)
+    // PDF de dolu yuvada önce sorar; onaylanınca türünü söyleyen hata, görsel kalır
+    const pdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'rapor.pdf', { type: 'application/pdf' })
+    prepareImage.mockImplementationOnce(async () => { throw new ImagePrepError('te.img.errPdf', []) })
+    fireEvent.paste(slot('daily-errors'), { clipboardData: { items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdf }] } })
+    expect(screen.queryByRole('dialog')).toBeNull()   // daily-errors boş: sorulmaz
+    expect(await within(slot('daily-errors')).findByRole('alert')).toHaveTextContent('PDF dosyası görsel yuvasına yüklenemez')
   })
 
   it('yarım yuva: "Yükle / Değiştir" ve "Ekrandan al" düğme; "Panodan yapıştır" ve "Kaldır" adlı "Diğer işlemler" menüsünde; tam yuvada hepsi düğme', async () => {

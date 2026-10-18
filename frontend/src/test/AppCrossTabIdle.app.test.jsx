@@ -45,7 +45,16 @@ import {
   ACTIVITY_PREFIX, ACTIVITY_THROTTLE_MS, activityUserKey, markActivity, ownActivityKey, resetActivityThrottleForTests,
 } from '../utils/crossTabActivity.js'
 import { OWNER_KEY } from '../utils/personalStorage.js'
-import { OPEN_REPORT_ACK, OPEN_REPORT_REQUEST } from '../components/techerror/capture/panelWindow.js'
+import {
+  OPEN_REPORT_ACK, OPEN_REPORT_ANSWER_WINDOW_MS, OPEN_REPORT_REQUEST, OPEN_RESULT_BLOCKED, OPEN_RESULT_OPENED,
+} from '../components/techerror/capture/panelWindow.js'
+import { useUnsavedWork } from '../utils/unsavedWork.js'
+
+/** Kaydedilmemiş iş tutan ekran (şablon / rapor taslağı) yerine. */
+function UnsavedHolder() {
+  useUnsavedWork(true)
+  return null
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const OTHER = `${ACTIVITY_PREFIX}gorsel-paneli`
@@ -120,6 +129,43 @@ describe('App — sekmeler arası hareketsizlik', () => {
     await waitFor(() => expect(localStorage.getItem(ownActivityKey())).toBeNull())
   }, 20_000)
 
+  it('kendiliğinden kaydırma / fare hareketi (içerik yüksekliği değişti) etkinlik sayılmaz: çıkış zamanında; tekerlek / işaretçi / tuş sayılır', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    // Programla üretilen kaydırma ve fare hareketi toplam süreden (3 sn) uzun sürer → yine de çıkış
+    for (let i = 0; i < 9 && fx.logout === 0; i++) {
+      await act(async () => {
+        document.dispatchEvent(new Event('scroll'))
+        window.dispatchEvent(new Event('scroll'))
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+        await sleep(500)
+      })
+    }
+    await waitFor(() => expect(fx.logout).toBe(1), { timeout: 2500 })
+  }, 20_000)
+
+  it('kullanıcı olayları (tekerlek, işaretçi basışı, tuş, dokunma) sayacı yeniden kurar; yayılımı durdurulsa da görülür', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    const stop = (e) => e.stopPropagation()
+    document.body.addEventListener('pointerdown', stop)
+    const kinds = [
+      () => document.body.dispatchEvent(new WheelEvent('wheel', { bubbles: true })),
+      () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })),
+      () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })),
+      () => document.body.dispatchEvent(new Event('touchstart', { bubbles: true })),
+    ]
+    try {
+      for (let i = 0; i < 8; i++) {
+        await act(async () => { kinds[i % kinds.length](); await sleep(600) })
+      }
+      expect(warning()).toBeNull()
+      expect(fx.logout).toBe(0)
+    } finally {
+      document.body.removeEventListener('pointerdown', stop)
+    }
+  }, 20_000)
+
   it('3 saat ileri tarihli damga (saat oynadı) sekmeyi açık tutmaz ve silinir; uyarı ve çıkış zamanında gelir', async () => {
     render(<App />)
     await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
@@ -160,20 +206,69 @@ describe('App — Görsel panelinin "Ana pencerede aç" isteği', () => {
   })
   afterEach(() => { window.history.replaceState({}, '', '/') })
 
-  it('rapor UYGULAMA İÇİNDE açılır (sayfa yüklenmez) ve panele yanıt gider; başka kökenden istek yok sayılır', async () => {
+  /** Panelin isteği (aynı köken; `sentAt` verilmezse şimdi). Kısa hareketsizlik süresi (3 sn) testin ortasında çıkış yapmasın. */
+  const ask = ({ origin = window.location.origin, rid = 'r1', sentAt = Date.now() } = {}) => {
+    markActivity()
+    window.dispatchEvent(new MessageEvent('message',
+      { origin, source: window, data: { type: OPEN_REPORT_REQUEST, rid, reportId: '100', channelId: '10', sentAt } }))
+  }
+  const search = () => new URLSearchParams(window.location.search)
+
+  it('rapor UYGULAMA İÇİNDE açılır (sayfa yüklenmez); yanıt gezinmeden ÖNCE gider; başka kökenden istek yok sayılır', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    const tabAtAck = []
+    const post = vi.spyOn(window, 'postMessage').mockImplementation(() => { tabAtAck.push(search().get('tab')) })
+    act(() => ask({ origin: 'https://qlik.example' }))
+    expect(search().get('tab')).toBe('dashboard')
+    expect(post).not.toHaveBeenCalled()
+    act(() => ask())
+    await waitFor(() => expect(search().get('te_rep')).toBe('100'))
+    expect([search().get('tab'), search().get('te_view'), search().get('te_ch')]).toEqual(['channelreports', 'report', '10'])
+    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1', result: OPEN_RESULT_OPENED }, window.location.origin)
+    // Yanıt gönderildiğinde henüz gezinilmemişti (açan pencere meşgul olsa da panel süre sonu yoluna düşmez)
+    expect(tabAtAck).toEqual(['dashboard'])
+    post.mockRestore()
+  }, 20_000)
+
+  it('açık pencere (dialog) ya da kaydedilmemiş iş varsa rapor AÇILMAZ: arkada sayfa değişmez, panele "blocked", burada bildirim', async () => {
     render(<App />)
     await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
     const post = vi.spyOn(window, 'postMessage').mockImplementation(() => {})
-    const ask = (origin) => window.dispatchEvent(new MessageEvent('message', { origin, source: window,
-      data: { type: OPEN_REPORT_REQUEST, rid: 'r1', reportId: '100', channelId: '10' } }))
-    act(() => ask('https://qlik.example'))
-    expect(new URLSearchParams(window.location.search).get('tab')).toBe('dashboard')
+    const dlg = document.createElement('div')
+    dlg.setAttribute('role', 'dialog')
+    document.body.appendChild(dlg)
+    act(() => ask({ rid: 'r-dlg' }))
+    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r-dlg', result: OPEN_RESULT_BLOCKED }, window.location.origin)
+    expect(await screen.findByText(/Görsel panelindeki rapor burada açılmadı/)).toBeInTheDocument()
+    expect(search().get('tab')).toBe('dashboard')
+    dlg.remove()
+    // Açılır kutu (popover) pencere sayılmaz
+    const pop = document.createElement('div')
+    pop.setAttribute('data-radix-popper-content-wrapper', '')
+    pop.innerHTML = '<div role="dialog"></div>'
+    document.body.appendChild(pop)
+    // Kaydedilmemiş iş (şablon / rapor taslağı)
+    const unsaved = render(<UnsavedHolder />)
+    act(() => ask({ rid: 'r-dirty' }))
+    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r-dirty', result: OPEN_RESULT_BLOCKED }, window.location.origin)
+    expect(search().get('tab')).toBe('dashboard')
+    unsaved.unmount()
+    act(() => ask({ rid: 'r-ok' }))
+    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r-ok', result: OPEN_RESULT_OPENED }, window.location.origin)
+    await waitFor(() => expect(search().get('te_rep')).toBe('100'))
+    pop.remove()
+    post.mockRestore()
+  }, 20_000)
+
+  it('geç gelen istek (panel artık adres değiştirecek) yanıtlanmaz ve uygulama içinde açılmaz: tek gezinme', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    const post = vi.spyOn(window, 'postMessage').mockImplementation(() => {})
+    act(() => ask({ rid: 'r-late', sentAt: Date.now() - OPEN_REPORT_ANSWER_WINDOW_MS - 50 }))
     expect(post).not.toHaveBeenCalled()
-    act(() => ask(window.location.origin))
-    await waitFor(() => expect(new URLSearchParams(window.location.search).get('te_rep')).toBe('100'))
-    const p = new URLSearchParams(window.location.search)
-    expect([p.get('tab'), p.get('te_view'), p.get('te_ch')]).toEqual(['channelreports', 'report', '10'])
-    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1' }, window.location.origin)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(search().get('tab')).toBe('dashboard')
     post.mockRestore()
   }, 20_000)
 })

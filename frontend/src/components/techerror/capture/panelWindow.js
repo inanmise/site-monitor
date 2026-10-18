@@ -69,7 +69,17 @@ export function openImagesPanel(reportId, win = globalThis.window) {
 export const OPEN_REPORT_REQUEST = 'sm-te-open-report'
 export const OPEN_REPORT_ACK = 'sm-te-open-report-ack'
 /** Açan pencerenin yanıtı bu kadar beklenir; gelmezse adres değiştirilerek açılır (eski yol). */
-export const OPEN_REPORT_TIMEOUT_MS = 1000
+export const OPEN_REPORT_TIMEOUT_MS = 1500
+/**
+ * Açan pencere isteği yalnız bu süre içinde aldıysa yanıtlar (inceleme 2026-10-18): daha geç gelen istek (açan pencere
+ * meşguldü) yanıtlanmaz ve uygulama içinde açılmaz — panelin süre sonu yolu (adres) TEK gezinme olur. Eskiden geç yanıt
+ * verilen istekte hem uygulama içi geçiş başlıyor hem panel adresi değiştiriyordu (tam yükleme yine de oluyordu).
+ * Kalan pay (500 ms) hemen gönderilen yanıtın panele ulaşması içindir.
+ */
+export const OPEN_REPORT_ANSWER_WINDOW_MS = OPEN_REPORT_TIMEOUT_MS - 500
+/** Yanıt sonucu: rapor açıldı (ya da zaten açıktı) | açan pencerede açık pencere / kaydedilmemiş iş var, açılmadı. */
+export const OPEN_RESULT_OPENED = 'opened'
+export const OPEN_RESULT_BLOCKED = 'blocked'
 
 /** Adres bu raporun düzenleyicisi mi? */
 export function isReportEditorSearch(search, reportId) {
@@ -82,14 +92,31 @@ export function isReportEditorSearch(search, reportId) {
 }
 
 /**
+ * Belgede açık bir PENCERE (dialog / alertdialog / aria-modal) var mı? Açılır kutular (Radix popper içindeki popover /
+ * hover kartı) sayılmaz. "Ana pencerede aç" isteği açık pencerenin arkasında sayfa değiştirmesin diye okunur.
+ */
+export function hasOpenDialog(doc = globalThis.document) {
+  try {
+    for (const el of doc.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')) {
+      if (el.closest('[data-radix-popper-content-wrapper]')) continue
+      if (el.hidden || el.closest('[hidden]')) continue
+      return true
+    }
+  } catch { /* belge yok */ }
+  return false
+}
+
+/**
  * Panelden "Ana pencerede aç" (inceleme 2026-10-18): açan pencere hâlâ SiteMonitor'deyse ona İLETİ gönderilir
  * (`postMessage`, hedef köken = bu köken) — açan pencere raporu UYGULAMA İÇİNDE açar (`App`, `onOpenReportRequest`):
- * kaydedilmemiş form / taslak sayfa yeniden yüklenmeden ayrılır, uygulamanın geçiş kuralları geçerlidir. Yalnız açan
- * pencere {@link OPEN_REPORT_TIMEOUT_MS} içinde yanıt vermezse (eski sürüm, oturum kapalı) adres değiştirilir
+ * sayfa yeniden yüklenmez, uygulamanın geçiş kuralları geçerlidir. Açan pencere isteği alınca HEMEN yanıt verir (gezinmeden
+ * önce); orada açık bir pencere ya da kaydedilmemiş iş varsa rapor açılmaz ve sonuç `blocked` döner (panel ve ana pencere
+ * "önce kapatın / kaydedin" der — eski yola DÜŞÜLMEZ, tam yükleme taslağı kaybettirirdi). Yalnız açan pencere
+ * {@link OPEN_REPORT_TIMEOUT_MS} içinde hiç yanıt vermezse (eski sürüm, oturum kapalı, meşgul) adres değiştirilir
  * (`location.assign`, zaten o rapordaysa yalnız öne getirilir). Açan pencere başka siteye geçtiyse ya da kapandıysa rapor
  * yeni sekmede açılır — hemen, tıklama anında (açılır pencere engellenmesin; kullanıcının Qlik sekmesi ezilmez).
  *
- * @returns {Promise<'opener'|'assign'|'tab'>}
+ * @returns {Promise<'opener'|'blocked'|'assign'|'tab'>}
  */
 export function openInMainWindow(reportId, channelId, win = globalThis.window, { timeoutMs = OPEN_REPORT_TIMEOUT_MS } = {}) {
   const url = reportEditorUrl(reportId, channelId, win?.location)
@@ -117,6 +144,7 @@ export function openInMainWindow(reportId, channelId, win = globalThis.window, {
       resolve(how)
     }
     const fallback = () => {
+      if (done) return
       try {
         if (!isReportEditorSearch(opener.location.search, reportId)) opener.location.assign(url)
         opener.focus()
@@ -128,12 +156,15 @@ export function openInMainWindow(reportId, channelId, win = globalThis.window, {
     }
     function onMsg(e) {
       if (e?.origin !== origin || e.data?.type !== OPEN_REPORT_ACK || e.data.rid !== rid) return
-      finish('opener')
+      finish(e.data.result === OPEN_RESULT_BLOCKED ? 'blocked' : 'opener')
     }
     try { win.addEventListener?.('message', onMsg) } catch { /* yok */ }
-    timer = setTimeout(() => { if (!done) fallback() }, Math.max(0, timeoutMs))
+    timer = setTimeout(fallback, Math.max(0, timeoutMs))
     try {
-      opener.postMessage({ type: OPEN_REPORT_REQUEST, rid, reportId: String(reportId), channelId: channelId != null ? String(channelId) : null }, origin)
+      opener.postMessage({
+        type: OPEN_REPORT_REQUEST, rid, reportId: String(reportId), channelId: channelId != null ? String(channelId) : null,
+        sentAt: Date.now(),
+      }, origin)
     } catch {
       fallback()
     }
@@ -142,11 +173,14 @@ export function openInMainWindow(reportId, channelId, win = globalThis.window, {
 
 /**
  * Açan pencere tarafı: panelin "raporu aç" isteğine abone olur (App bağlar — bu modül açılış paketindedir, bağımlılığı
- * yoktur). `handler({ reportId, channelId })` true dönerse istek işlendi sayılır ve panele yanıt gider; false (oturum yok,
- * pencere kendisi panel) yanıt vermez — panel eski yola düşer. Yalnız AYNI kökenden ve geçerli kimlikle gelen istek.
+ * yoktur). `handler({ reportId, channelId })` → `null` (oturum yok, pencere kendisi panel: yanıt YOK, panel eski yola
+ * düşer) ya da `{ result: 'opened' | 'blocked', run }`. Yanıt HEMEN, `run` (gezinme / bildirim) ÇALIŞMADAN önce gönderilir
+ * — açan pencere gezinirken meşgul olsa da panel süre sonu yoluna düşmez. Yanıt süresi geçmiş (panelin artık adres
+ * değiştireceği) istek yok sayılır: iki gezinme olmaz. Yalnız AYNI kökenden ve geçerli kimlikle gelen istek.
  */
-export function onOpenReportRequest(handler, win = globalThis.window) {
+export function onOpenReportRequest(handler, win = globalThis.window, { now = () => Date.now() } = {}) {
   const h = (e) => {
+    let decision = null
     try {
       if (e?.origin !== win.location.origin) return
       const d = e.data
@@ -154,9 +188,19 @@ export function onOpenReportRequest(handler, win = globalThis.window) {
       const reportId = String(d.reportId ?? '')
       if (!ID_RE.test(reportId)) return
       const channelId = d.channelId != null && ID_RE.test(String(d.channelId)) ? String(d.channelId) : null
-      if (!handler({ reportId, channelId })) return
-      e.source?.postMessage?.({ type: OPEN_REPORT_ACK, rid: d.rid }, e.origin)
-    } catch { /* yanıt verilemedi: panel eski yola düşer */ }
+      // Eski panel sürümü `sentAt` göndermez: süre denetimi yapılmaz
+      if (d.sentAt != null) {
+        const age = now() - Number(d.sentAt)
+        if (!Number.isFinite(age) || age > OPEN_REPORT_ANSWER_WINDOW_MS) return
+      }
+      decision = handler({ reportId, channelId })
+      if (!decision) return
+      const result = decision.result === OPEN_RESULT_BLOCKED ? OPEN_RESULT_BLOCKED : OPEN_RESULT_OPENED
+      e.source?.postMessage?.({ type: OPEN_REPORT_ACK, rid: d.rid, result }, e.origin)
+    } catch {
+      return   // yanıt verilemedi: panel eski yola düşer — burada gezinilmez (iki gezinme olmasın)
+    }
+    try { decision?.run?.() } catch { /* gezinme / bildirim hatası yanıtı geri almaz */ }
   }
   try { win.addEventListener?.('message', h) } catch { /* yok */ }
   return () => { try { win.removeEventListener?.('message', h) } catch { /* yok */ } }

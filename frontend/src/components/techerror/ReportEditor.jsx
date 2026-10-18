@@ -3,6 +3,7 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send,
   Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -372,6 +373,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }
   useEffect(() => () => flushBackup.current?.(), [])
 
+  useUnsavedWork(unsaved)   // başka pencereden "raporu aç" isteği taslağı sessizce bırakmasın
   useEffect(() => {
     if (!unsaved) return undefined
     const h = (e) => { e.preventDefault(); e.returnValue = '' }

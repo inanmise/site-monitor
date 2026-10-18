@@ -21242,6 +21242,8 @@ export const EN = {
   'te.cap.replaceBody': "The image in “{0}” will be replaced by the one you pasted. The current image can't be restored afterwards.",
   'te.cap.moreActions': "More actions",
   'te.cap.moreActionsFor': "More actions: {0}",
+  'te.cap.panelMainBusy': "The report wasn't opened in the main window: a window is open there or there are unsaved changes. Close or save it in the main window, then try again.",
+  'te.cap.mainBusyHere': "The report from the image panel wasn't opened here because a window is open or there are unsaved changes. Close or save it first, then press “Open in the main window” in the panel again.",
   'te.trend.hint': "From the figures entered in the channel's earlier reports; this month's bar also shows unsaved changes.",
   'te.trend.notEnough': "A trend needs figures for at least two months; months with figures so far: {0}.",
   'te.trend.unavailable': "The earlier months' figures couldn't be read, so the chart can't be shown right now. Reload the page in a few minutes.",

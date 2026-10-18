@@ -5,6 +5,7 @@ import { useLanguage, useT } from '../../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import AlertBanner from '../../ui/AlertBanner.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { ImagesBlock } from '../ReportImages.jsx'
 import { periodLabel } from '../TechErrorParts.jsx'
@@ -32,6 +33,7 @@ export const PANEL_SYNC_RETRY_MAX = 3
  */
 export default function ImagesPanelPage({ reportId }) {
   const t = useT()
+  const toast = useToast()
   const { lang: uiLang } = useLanguage()
   const [state, setState] = useState({ loading: true, error: null, status: null })
   const [data, setData] = useState(null)
@@ -137,7 +139,11 @@ export default function ImagesPanelPage({ reportId }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-panel-main"
-              onClick={() => openInMainWindow(reportId, channel?.id)}>
+              onClick={async () => {
+                // Ana pencerede açık pencere / kaydedilmemiş iş varsa rapor açılmaz (inceleme 2026-10-18): ne yapılacağı söylenir
+                const how = await openInMainWindow(reportId, channel?.id)
+                if (how === 'blocked') toast.info(t('te.cap.panelMainBusy'), 10000)
+              }}>
               <ExternalLink aria-hidden="true" /> {t('te.cap.panelOpenMain')}
             </Button>
             {canClose && (

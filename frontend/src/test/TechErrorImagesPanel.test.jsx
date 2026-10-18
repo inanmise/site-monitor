@@ -22,7 +22,7 @@ vi.mock('../components/techerror/imagePrep.js', async (importOriginal) => {
 import { api } from '../api/client'
 import { prepareImage } from '../components/techerror/imagePrep.js'
 import { IMAGES_CHANNEL, KIND_IMAGES, KIND_REPORT } from '../components/techerror/capture/imageSync.js'
-import { OPEN_REPORT_ACK, OPEN_REPORT_REQUEST } from '../components/techerror/capture/panelWindow.js'
+import { OPEN_REPORT_ACK, OPEN_REPORT_REQUEST, OPEN_RESULT_BLOCKED } from '../components/techerror/capture/panelWindow.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import ImagesPanelPage from '../components/techerror/capture/ImagesPanelPage.jsx'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
@@ -138,6 +138,13 @@ describe('Görsel paneli', () => {
       window.location.origin)
     expect(opener.focus).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 30))
+    expect(opener.location.assign).not.toHaveBeenCalled()
+    // Ana pencerede açık pencere / kaydedilmemiş iş: rapor açılmaz, panel ne yapılacağını söyler, adres değişmez
+    opener.postMessage.mockImplementation((msg, origin) => window.dispatchEvent(new MessageEvent('message',
+      { origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid, result: OPEN_RESULT_BLOCKED } })))
+    fireEvent.click(screen.getByRole('button', { name: /Ana pencerede aç/ }))
+    expect(await screen.findByText(/Rapor ana pencerede açılmadı: orada açık bir pencere ya da kaydedilmemiş bir değişiklik var/))
+      .toBeInTheDocument()
     expect(opener.location.assign).not.toHaveBeenCalled()
     // Yanıt vermeyen açan pencere (eski sürüm): ileti gönderilemez → adres değişir
     opener.postMessage.mockImplementation(() => { throw new Error('x') })

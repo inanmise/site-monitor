@@ -3,6 +3,7 @@ import {
   Archive, Gauge, ListChecks, Lock, Mail, MailCheck, Network, RefreshCw, ShieldAlert, Timer, TrendingUp, Users,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -100,6 +101,7 @@ export default function LoginAnomalySettings({ retentionReadOnly = false }) {
   const warnings = useMemo(() => fieldWarnings(form), [form])
   const shrink = !retentionReadOnly && retentionShrinks(form, loaded)
 
+  useUnsavedWork(dirty)   // başka pencereden gelen "raporu aç" isteği değişikliği sessizce bırakmasın
   // Kaydedilmemiş değişiklikle sekmeyi kapatma / yenileme → tarayıcı uyarısı
   useEffect(() => {
     if (!dirty) return undefined
