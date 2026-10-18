@@ -51,8 +51,8 @@ import java.util.Set;
  * (alıcılar takımın üyeleri / PO'ları ve isteyen / gönderen — ikisi de kendi kapsamıyla yazar); modül takıma kapalıysa
  * push yok. Kişisel tercihler: takım bildiriminde çözümün kendisi, doğrudan push'ta {@link
  * UserPushRecipientResolver#preferenceSkip} (seviye / susturma; satır nedeniyle yazılır). Metinler kişinin push dilinde
- * (TR + EN), {@code PushText.pushSafe} ile değişmeyen karakterlerle, BAĞLANTISIZ (push uygulaması kurum ağının dışında; red
- * notundaki bağlantı / e-posta adresi / sunucu adı {@link #scrubLinks} ile "[bağlantı]" olur).
+ * (TR + EN), {@code PushText.pushSafe} ile değişmeyen karakterlerle, BAĞLANTISIZ ve SERBEST METİNSİZ (push uygulaması kurum
+ * ağının dışında: red notu push'a yazılmaz, yalnız "ret notunu Site Monitor'de görüntüleyin" — karar 2026-10-18).
  * Tekilleştirme anahtarları olay başına benzersiz (rapor + istek / karar / gönderim anı) — iki pod ya da yeniden deneme
  * ikinci push yazmaz (çıkış kutusunun anahtar × kullanıcı tekilliği). Hiçbir hata çağıranın akışını (gönderim, onay)
  * değiştirmez: her yöntem kendi hatasını yutar ve WARN yazar.
@@ -68,17 +68,10 @@ public class TechErrorPushService {
     public static final String TRIGGER_DECISION = "TECH_ERROR_DECISION";
     public static final String TRIGGER_SENT = "TECH_ERROR_SENT";
     public static final String TRIGGER_SEND_FAILED = "TECH_ERROR_SEND_FAILED";
-    /** Red notunun push'a giren ilk karakterleri (mesaj tavanı ~200; kalan "..." ile kesilir). */
-    static final int NOTE_CHARS = 120;
     static final String HEAD_TR = "[Teknik hata raporu] ";
     static final String HEAD_EN = "[Technical error report] ";
     /** Push mesaj tavanı okunamazsa (servis yok / hata) — {@code UserPushService} varsayılanı. */
     static final int DEFAULT_MESSAGE_LIMIT = 200;
-    /** Red notunda ayıklanan bağlantı / adres / sunucu adının yerine yazılan işaret (push metni bağlantısız kalır). */
-    static final String LINK_TR = "[bağlantı]";
-    static final String LINK_EN = "[link]";
-    /** {@link #scrubLinks} en çok bu kadar GİRDİ karakterine bakar — kural ve sınır {@link TechErrorPushLinkScrubber}'da. */
-    static final int SCRUB_MAX_INPUT = TechErrorPushLinkScrubber.MAX_INPUT;
 
     private final AppSettingsService settings;
     private final AppUserRepository users;
@@ -230,8 +223,10 @@ public class TechErrorPushService {
 
     /**
      * Karar → isteyen (doğrudan). Onayda yöneticilere gönderimin sonucu yazılır — her sonucun KENDİ cümlesi, ham kod asla
-     * ({@link #approvedOutcome}); redde not ({@link #rejectionText}: bağlantılar / adresler ayıklanmış, ilk {@value #NOTE_CHARS}
-     * karakter, imzadan ÖNCE). İsteyen kararı kendisi verdiyse atlanır.
+     * ({@link #approvedOutcome}); redde yalnız "reddedildi, ret notunu Site Monitor'de görüntüleyin" — notun KENDİSİ push'a
+     * yazılmaz (karar 2026-10-18: push uygulaması kurum ağının dışında, serbest metin oraya gitmez; {@code note} parametresi
+     * bilerek kullanılmaz). Metin kişinin push tavanına ({@code UserPushService.messageCharLimit}, 80–320) göre kurulur
+     * ({@link #fitText}). İsteyen kararı kendisi verdiyse atlanır.
      */
     public void decided(Ctx c, Long requesterId, Long deciderId, String deciderName, boolean approved, String note,
                         String sendState, String sendError, Instant decidedAt) {
@@ -252,82 +247,83 @@ public class TechErrorPushService {
         return decisionText(c, approved, decider, note, sendState, sendError, DEFAULT_MESSAGE_LIMIT);
     }
 
-    /** {@code limit}: push mesaj tavanı (kişi push'u bu tavanla kırpılır) — metin ona göre kurulur, önemli kısım kesilmez. */
+    /**
+     * {@code limit}: push mesaj tavanı (kişi push'u bu tavanla kırpılır) — metin ona göre kurulur, önemli kısım kesilmez.
+     * {@code note} push metnine GİRMEZ (yalnız imza uyumu için tutuldu).
+     */
     static UserPushService.LocalizedText decisionText(Ctx c, boolean approved, String decider, String note, String sendState,
                                                       String sendError, int limit) {
         if (!approved) {
-            return new UserPushService.LocalizedText(rejectionText(c, false, decider, note, limit),
-                    rejectionText(c, true, decider, note, limit));
+            return new UserPushService.LocalizedText(
+                    fitText(c, false, " raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin.", "", " Reddeden: ", decider, limit),
+                    fitText(c, true, " was rejected. See the rejection note in Site Monitor.", "", " Rejected by: ", decider, limit));
         }
         String code = sendState != null ? sendState : sendError == null ? "FAILED" : sendError;
-        return new UserPushService.LocalizedText(approvedText(c, false, code, decider, limit), approvedText(c, true, code, decider, limit));
+        String[] tr = approvedParts(code, false);
+        String[] en = approvedParts(code, true);
+        return new UserPushService.LocalizedText(fitText(c, false, " raporu " + tr[0], tr[1], " Onaylayan: ", decider, limit),
+                fitText(c, true, " " + en[0], en[1], " Approved by: ", decider, limit));
     }
 
     /**
-     * Onay metni, red yoluyla AYNI sırayla tavana sığdırılır (inceleme 2026-10-18, 2. tur: 60 karakterlik kanal adıyla SKIPPED /
-     * onay eskidi / PDF sırası dolu / PDF çok büyük cümleleri 206–222 karaktere çıkıyor, çıkış kutusu öneriyi kesiyordu):
-     * gövde (sonuç cümlesi + öneri) sığmıyorsa önce kanal adı kısalır (dönem kalır); imza tam → kısa ad → düşer.
+     * Onaydan sonra yöneticilere gönderimin sonucu — {@code [çekirdek cümle, öneri]} (öneri boş olabilir), her sonuca bir cümle
+     * (inceleme 2026-10-18: SKIPPED / onay eskidi / zaten gönderiliyor / PDF sırası dolu hepsi "e-posta BAŞARISIZ (KOD)"
+     * yazıyordu; atlanan gönderim başarısız değildir, eskiyen onay yeniden onay ister). Bilinmeyen kod "ulaşmadı" der — kod metne
+     * yazılmaz. Çekirdek tavana sığdırmada asla düşmez; öneri dar tavanda (120) düşebilir.
      */
-    static String approvedText(Ctx c, boolean en, String code, String decider, int limit) {
-        String body = approvedBody(c.subject(en), en, code);
-        int over = safeLength(body) - limit;
-        if (over > 0) body = approvedBody(shrunkSubject(c, en, over), en, code);
-        return withBy(body, en ? " Approved by: " : " Onaylayan: ", decider, limit);
-    }
-
-    private static String approvedBody(String subject, boolean en, String code) {
-        return en ? HEAD_EN + subject + " " + approvedOutcome(code, true) : HEAD_TR + subject + " raporu " + approvedOutcome(code, false);
-    }
-
-    /**
-     * Onaydan sonra yöneticilere gönderimin sonucu — her sonuca bir cümle (inceleme 2026-10-18: SKIPPED / onay eskidi / zaten
-     * gönderiliyor / PDF sırası dolu hepsi "e-posta BAŞARISIZ (KOD)" yazıyordu; atlanan gönderim başarısız değildir, eskiyen
-     * onay yeniden onay ister). Bilinmeyen kod "ulaşmadı" der — kod metne yazılmaz.
-     */
-    static String approvedOutcome(String code, boolean en) {
+    static String[] approvedParts(String code, boolean en) {
         return switch (code == null ? "FAILED" : code) {
-            case "SENT" -> en ? "was approved and sent to the executives." : "onaylandı ve yöneticilere gönderildi.";
-            case "QUEUED" -> en ? "was approved; sending to the executives is queued and the mail server is retrying."
-                    : "onaylandı; yöneticilere gönderim kuyrukta, posta sunucusu yeniden deniyor.";
-            case "SKIPPED" -> en ? "was approved but no e-mail went to the executives: the e-mail channel is off or there is no active recipient."
-                    : "onaylandı ama yöneticilere e-posta gitmedi: e-posta kanalı kapalı ya da etkin alıcı yok.";
-            case "APPROVAL_STALE" -> en ? "was approved but changed afterwards, so it was not sent to the executives; submit it for approval again."
-                    : "onaylandı ama sonradan değiştiği için yöneticilere gönderilmedi; yeniden onaya gönderin.";
-            case "SEND_IN_PROGRESS" -> en ? "was approved; it is already being sent and the result will show on the report in Site Monitor."
-                    : "onaylandı; rapor zaten gönderiliyor, sonuç Site Monitor'de raporda görünecek.";
-            case "PDF_BUSY" -> en ? "was approved; the PDF queue was busy, so it was not sent to the executives yet. Send it again from Site Monitor shortly."
-                    : "onaylandı; PDF sırası dolu olduğu için yöneticilere henüz gönderilmedi. Birazdan Site Monitor'den yeniden gönderin.";
-            case "PDF_TOO_LARGE" -> en ? "was approved but not sent to the executives: the PDF is over the e-mail size limit. Use smaller images and resend it."
-                    : "onaylandı ama PDF e-posta boyut sınırını aştığı için yöneticilere gönderilemedi. Görselleri küçültüp yeniden gönderin.";
-            default -> en ? "was approved but the e-mail did not reach the executives. Send it again from Site Monitor."
-                    : "onaylandı ama yöneticilere e-posta ulaşmadı. Raporu Site Monitor'den yeniden gönderin.";
+            case "SENT" -> en ? new String[] { "was approved and sent to the executives.", "" }
+                    : new String[] { "onaylandı ve yöneticilere gönderildi.", "" };
+            case "QUEUED" -> en ? new String[] { "was approved; sending to the executives is queued.", " The mail server is retrying." }
+                    : new String[] { "onaylandı; yöneticilere gönderim kuyrukta.", " Posta sunucusu yeniden deniyor." };
+            case "SKIPPED" -> en ? new String[] { "was approved but no e-mail went to the executives.",
+                    " The e-mail channel is off or there is no active recipient." }
+                    : new String[] { "onaylandı ama yöneticilere e-posta gitmedi.", " E-posta kanalı kapalı ya da etkin alıcı yok." };
+            case "APPROVAL_STALE" -> en ? new String[] { "was approved but changed afterwards, so it was not sent to the executives.",
+                    " Submit it for approval again." }
+                    : new String[] { "onaylandı ama sonradan değiştiği için yöneticilere gönderilmedi.", " Yeniden onaya gönderin." };
+            case "SEND_IN_PROGRESS" -> en ? new String[] { "was approved; it is already being sent.",
+                    " The result will show on the report in Site Monitor." }
+                    : new String[] { "onaylandı; rapor zaten gönderiliyor.", " Sonuç Site Monitor'de raporda görünecek." };
+            case "PDF_BUSY" -> en ? new String[] { "was approved; the PDF queue was busy, so it was not sent to the executives yet.",
+                    " Send it again from Site Monitor shortly." }
+                    : new String[] { "onaylandı; PDF sırası dolu olduğu için yöneticilere henüz gönderilmedi.",
+                    " Birazdan Site Monitor'den yeniden gönderin." };
+            case "PDF_TOO_LARGE" -> en ? new String[] { "was approved but the PDF is too large to e-mail to the executives.",
+                    " Use smaller images and send it again." }
+                    : new String[] { "onaylandı ama PDF yöneticilere e-postayla gönderilemeyecek kadar büyük.",
+                    " Görselleri küçültüp yeniden gönderin." };
+            default -> en ? new String[] { "was approved but the e-mail did not reach the executives.", " Send it again from Site Monitor." }
+                    : new String[] { "onaylandı ama yöneticilere e-posta ulaşmadı.", " Raporu Site Monitor'den yeniden gönderin." };
         };
     }
 
-    /**
-     * Red metni: NOT İMZADAN ÖNCE (inceleme 2026-10-18 — gerçek uzunlukta bir AD adı "Reddeden: …" satırını 60+ karaktere
-     * çıkarıyor, not ardından tavana çarpıp birkaç kelimeye iniyordu). Not = bağlantıları / adresleri ayıklanmış
-     * ({@link #scrubLinks}), kanal karakterlerine çevrilmiş, ilk {@value #NOTE_CHARS} karakter. Mesaj tavanına sığmayan önce
-     * düşer: tam imza → kısa imza (parantezsiz ad) → öneri cümlesi; not yine sığmıyorsa kanal adı kısalır (dönem kalır).
-     */
-    static String rejectionText(Ctx c, boolean en, String decider, String note, int limit) {
-        String n = noteHead(PushText.pushSafe(scrubLinks(note, en ? LINK_EN : LINK_TR)));
-        String noteSeg = n == null || n.isEmpty() ? "" : (en ? " Note: " : " Not: ") + n;
-        String base = rejectedHead(c.subject(en), en) + noteSeg;
-        int over = safeLength(base) - limit;
-        if (over > 0) base = rejectedHead(shrunkSubject(c, en, over), en) + noteSeg;
-        String advice = en ? " Fix it and submit it for approval again." : " Düzeltip yeniden onaya gönderin.";
-        String label = en ? " Rejected by: " : " Reddeden: ";
-        String full = byLine(label, decider);
-        String brief = byLine(label, shortName(decider));
-        for (String cand : new String[] { base + advice + full, base + advice + brief, base + full, base + brief, base + advice }) {
-            if (safeLength(cand) <= limit) return cand;
-        }
-        return base;
+    /** Sonuç cümlesinin tamamı (çekirdek + öneri) — testler ve günlük için. */
+    static String approvedOutcome(String code, boolean en) {
+        String[] p = approvedParts(code, en);
+        return p[0] + p[1];
     }
 
-    private static String rejectedHead(String subject, boolean en) {
-        return en ? HEAD_EN + subject + " was rejected." : HEAD_TR + subject + " raporu reddedildi.";
+    /**
+     * Push metnini CANLI tavana ({@code limit}, 80–320) sığdırır (inceleme 2026-10-18, 2.–3. tur). Parçalar: başlık + konu
+     * (kanal + dönem) + çekirdek cümle + öneri + imza. Düşme sırası: imza (tam → kısa ad → yok) → kanal adı kısalır (dönem
+     * kalır, öneriyi tutmak için) → öneri düşer (kanal adı yeniden tam denenir). Başlık, dönem ve çekirdek cümle asla düşmez;
+     * yalnız tavan çekirdeği bile taşıyamıyorsa (80) çıkış kutusunun kırpması devreye girer.
+     */
+    static String fitText(Ctx c, boolean en, String core, String advice, String byLabel, String name, int limit) {
+        String head = en ? HEAD_EN : HEAD_TR;
+        String full = c.subject(en);
+        for (String adv : advice == null || advice.isEmpty() ? new String[] { "" } : new String[] { advice, "" }) {
+            String body = head + full + core + adv;
+            int over = safeLength(body) - limit;
+            if (over > 0) {
+                body = head + shrunkSubject(c, en, over) + core + adv;
+                if (safeLength(body) > limit && !adv.isEmpty()) continue;   // öneriyle dönem bile sığmıyor → öneri düşer
+            }
+            return withBy(body, byLabel, name, limit);
+        }
+        return head + shrunkSubject(c, en, Integer.MAX_VALUE / 2) + core;   // erişilmez (son tur öneri boş)
     }
 
     /** Kanal adı {@code over} karakter kısalır (sözcük sınırında, "..."); çok kısa kalacaksa yalnız dönem. */
@@ -361,10 +357,11 @@ public class TechErrorPushService {
         return safe == null ? 0 : safe.length();
     }
 
+    /** Kişi push'unun tavanı — {@code UserPushService.messageCharLimit} (yönetici ayarı, 80–320); okunamazsa 200. */
     private int messageLimit() {
         try {
             int v = push.messageCharLimit();
-            return v > 0 ? v : DEFAULT_MESSAGE_LIMIT;
+            return v > 0 ? Math.min(320, Math.max(80, v)) : DEFAULT_MESSAGE_LIMIT;
         } catch (RuntimeException e) {
             return DEFAULT_MESSAGE_LIMIT;
         }
@@ -525,25 +522,6 @@ public class TechErrorPushService {
     private Map<String, Object> enqueue(List<UserPushService.DirectRecipient> list, Ctx c, String trigger,
                                         UserPushService.LocalizedText text, String key) {
         return push.enqueueDirectLocalized(list, c.teamId(), trigger, LEVEL, MONITOR_TYPE, c.subject(false), text, key);
-    }
-
-    /**
-     * Serbest metindeki bağlantıları, e-posta adreslerini ve sunucu adlarını {@code placeholder} ile değiştirir (inceleme
-     * 2026-10-18: red notu kurum ağının DIŞINDAKİ push uygulamasına gider). Kurallar, son ek / uzantı listeleri ve sınırlar tek
-     * yerde: {@link TechErrorPushLinkScrubber} (doğrusal tarama, düzenli ifade yok).
-     */
-    static String scrubLinks(String s, String placeholder) {
-        return TechErrorPushLinkScrubber.scrub(s, placeholder);
-    }
-
-    /** Notun ilk {@value #NOTE_CHARS} karakteri, satır sonları boşluğa (push tek satır okunur). */
-    static String noteHead(String note) {
-        if (note == null) return "";
-        String n = note.replaceAll("\\s+", " ").trim();
-        if (n.length() <= NOTE_CHARS) return n;
-        int cut = NOTE_CHARS;
-        if (Character.isHighSurrogate(n.charAt(cut - 1))) cut--;   // vekil çifti bölünmez
-        return n.substring(0, cut).trim() + "...";
     }
 
     /** " Talep eden: Ad." — ad boşsa hiç; ad zaten noktayla bitiyorsa ikinci nokta yok. */

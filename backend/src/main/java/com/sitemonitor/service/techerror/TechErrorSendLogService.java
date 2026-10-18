@@ -69,12 +69,12 @@ public class TechErrorSendLogService {
      * SYSTEM_MAINTENANCE (sistem bakımı susturması); ek olarak QUEUED (posta sunucusu yeniden
      * deniyor), SMTP_FAILED (posta sunucusu kabul etmedi / ulaşılamadı), INTERNAL_ERROR (uygulama içinde yarıda kaldı),
      * SKIPPED_OTHER (bilinmeyen atlama), UNKNOWN (sonuç kaydı yok), NO_APPROVER_EMAIL (onay hatırlatması: takımda e-postası
-     * olan PO yok), RETRIES_EXHAUSTED (hatırlatma turunda {@code TechErrorReminderService.MAX_TRIES} deneme doldu). SENT → kod
-     * yok (null).
+     * olan PO yok), RETRIES_EXHAUSTED (hatırlatma turunda {@code TechErrorReminderService.MAX_TRIES} deneme doldu — adres / teslim
+     * sorunu), RETRIES_FAILED (deneme doldu, son deneme uygulama hatasıyla bitti). SENT → kod yok (null).
      */
     public static final List<String> REASON_CODES = List.of("QUEUED", "MAIL_OFF", "INACTIVE_RECIPIENTS", "NO_RECIPIENT", "NO_APPROVER_EMAIL",
             "TEAM_INACTIVE", "MODULE_HIDDEN", "APPROVAL_FLOW_REMOVED", "SYSTEM_MAINTENANCE", "PDF_BUSY",
-            "PDF_TOO_LARGE", "APPROVAL_STALE", "SMTP_FAILED", "INTERNAL_ERROR", "RETRIES_EXHAUSTED", "SKIPPED_OTHER", "UNKNOWN");
+            "PDF_TOO_LARGE", "APPROVAL_STALE", "SMTP_FAILED", "INTERNAL_ERROR", "RETRIES_EXHAUSTED", "RETRIES_FAILED", "SKIPPED_OTHER", "UNKNOWN");
     /** "FAILED: " + istisna sınıfının kısa adı (uygulama içi hata; posta sunucusunun iletisi değil). Girdi ≤ 255 karakter. */
     private static final java.util.regex.Pattern INTERNAL_FAILURE =
             java.util.regex.Pattern.compile("FAILED: [A-Za-z_$][A-Za-z0-9_$]{0,118}(?:Exception|Error)");
@@ -178,8 +178,10 @@ public class TechErrorSendLogService {
         if (s.startsWith(TechErrorReminderService.ST_MAINTENANCE)) return "SYSTEM_MAINTENANCE";
         // Onay hatırlatması: takımda e-postası olan PO yok — düzeltme PO kullanıcılarının adresi (AD), takım / kanal adresi değil
         if (s.startsWith(TechErrorReminderService.ST_NO_APPROVER_EMAIL)) return "NO_APPROVER_EMAIL";
-        // Hatırlatma turunda MAX_TRIES deneme doldu (inceleme 2026-10-18): bu turda yeniden denenmez — adres kontrol edilmeli
+        // Hatırlatma turunda MAX_TRIES deneme doldu (inceleme 2026-10-18): bu turda yeniden denenmez — posta sunucusu reddiyle
+        // bittiyse adres / teslim sorunu, uygulama hatasıyla bittiyse (FAILED sınıfı, genel FAILED kurallarından ÖNCE) sistem sorunu
         if (s.startsWith(TechErrorReminderService.ST_GAVE_UP)) return "RETRIES_EXHAUSTED";
+        if (s.startsWith(TechErrorReminderService.ST_GAVE_UP_ERROR)) return "RETRIES_FAILED";
         String known = TechErrorHistoryService.sendReason(s);
         if (known != null) return known;
         if (s.startsWith("SKIPPED")) return "SKIPPED_OTHER";

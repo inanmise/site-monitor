@@ -242,12 +242,19 @@ public class TechErrorReminderService {
      * o turda vazgeçilir (talep kalır, {@link #ST_GAVE_UP} satırı), bir sonraki tur (tekrar penceresi) yeniden dener.
      */
     static final int MAX_TRIES = 3;
+    /** Vazgeçme (adres / teslim sorunu): turun son denemesi posta sunucusunun reddiyle bitti — alıcı adresi kontrol edilmeli. */
     static final String ST_GAVE_UP = "SKIPPED: hatırlatma " + MAX_TRIES + " denemede ulaşmadı";
+    /**
+     * Vazgeçme (uygulama hatası, inceleme 2026-10-18 3. tur): turun son denemesi uygulama içinde yarıda kaldı (istisna,
+     * posta servisinden sonuç yok) — adres sorunu değil, FAILED sınıfı; sistem yöneticisi bakmalı.
+     */
+    static final String ST_GAVE_UP_ERROR = "FAILED: hatırlatma " + MAX_TRIES + " denemede hatayla bitti";
 
     /**
      * Bırakılan turun kaydı ({@code reached_ids}): {@code <ref>#<tur>#<deneme>:<virgüllü kimlikler>}. {@code tries} = bu turda
-     * şimdiye kadarki BAŞARISIZ deneme sayısı; {@code reached} = bu turda hatırlatmanın ulaştığı onaylayıcılar (yeniden
-     * denemede onlara posta / push gitmez).
+     * şimdiye kadarki BAŞARISIZ deneme sayısı; {@code reached} = bu turda KARARI VERİLMİŞ onaylayıcılar — hatırlatmanın
+     * ulaştığı (posta SENT / QUEUED ya da push kuyrukta) ya da postası SKIPPED olan (son karar) — yeniden denemede onlara
+     * posta / push gitmez, günlük satırı da yazılmaz.
      */
     record RoundState(String ref, int round, int tries, Set<Long> reached) {
         static final RoundState NONE = new RoundState("", 0, 0, Set.of());
@@ -558,7 +565,7 @@ public class TechErrorReminderService {
                 log.warn("Teknik hata raporu hatırlatması takım {} için yarıda kaldı: {}", team.getId(), e.toString(), e);
                 saveLog(TRIGGER, team.getName(), to, "TEAM", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120),
                         "");
-                retryOrGiveUpPeriod(team, to, subject, mine, claims, enTpl);
+                retryOrGiveUpPeriod(team, to, subject, mine, claims, enTpl, true);
                 counts[3]++;
             }
         }
@@ -627,15 +634,17 @@ public class TechErrorReminderService {
         if (delivered || queued > 0) counts[0]++;
         else counts[3]++;
         saveLog(TRIGGER, team.getName(), to, "TEAM", subject, status, withNote(summary, pushNote + overflow));
-        if (!delivered && queued == 0 && !finalSkip) retryOrGiveUpPeriod(team, to, subject, mine, claims, enTpl);
+        if (!delivered && queued == 0 && !finalSkip) retryOrGiveUpPeriod(team, to, subject, mine, claims, enTpl, internalFailure(status));
     }
 
     /**
      * Dönem hatırlatması ulaşmadı (inceleme 2026-10-18 — aynı desen): her kanalın talebi bırakılır, kalıcı olarak geri dönen
      * takım adresi hatırlatmayı HER GÜN sınırsız yeniden denetmesin diye tur başına {@link #MAX_TRIES} deneme; dolan
-     * kanallar için bir {@link #ST_GAVE_UP} satırı (talep kalır, bir sonraki tur yeniden dener).
+     * kanallar için bir {@link #ST_GAVE_UP} satırı — son deneme uygulama hatasıyla bittiyse {@link #ST_GAVE_UP_ERROR} (FAILED)
+     * — (talep kalır, bir sonraki tur yeniden dener; tekrar 0 ise o dönem için bir daha denenmez).
      */
-    private void retryOrGiveUpPeriod(Team team, List<String> to, String subject, List<Due> mine, List<Claim> claims, boolean enTpl) {
+    private void retryOrGiveUpPeriod(Team team, List<String> to, String subject, List<Due> mine, List<Claim> claims, boolean enTpl,
+                                     boolean error) {
         List<Due> gaveUp = new ArrayList<>();
         for (int k = 0; k < claims.size(); k++) {
             if (!retryOrGiveUp(claims.get(k), List.of()) && k < mine.size()) gaveUp.add(mine.get(k));
@@ -643,7 +652,7 @@ public class TechErrorReminderService {
         if (!gaveUp.isEmpty()) {
             log.warn("Teknik hata raporu hatırlatması takım {} için {} denemede ulaşmadı; bu turda vazgeçildi ({} kanal)", team.getId(),
                     MAX_TRIES, gaveUp.size());
-            saveLog(TRIGGER, team.getName(), to, "TEAM", subject, ST_GAVE_UP, channelSummary(gaveUp, enTpl));
+            saveLog(TRIGGER, team.getName(), to, "TEAM", subject, error ? ST_GAVE_UP_ERROR : ST_GAVE_UP, channelSummary(gaveUp, enTpl));
         }
     }
 
@@ -785,7 +794,7 @@ public class TechErrorReminderService {
                 // hariç). Anahtar TURU taşır (istek + send_count), günü değil: aynı turun yeniden denemesi ikinci push yazmaz.
                 // Karar PO BAŞINA: postası ya da push'u ulaşan PO ulaşılmış sayılır
                 Set<Long> pushedTo = pushTargets.isEmpty() ? Set.of()
-                        : approvalPush(r, ch, pushTargets, requester, waiting, "r" + c.round());
+                        : approvalPush(r, ch, pushTargets, requester, waiting, pushRoundKey(c));
                 reachedNow.addAll(pushedTo);
                 int pushed = pushedTo.size();
                 String pushNote = pushed > 0 ? " · push " + pushed : "";
@@ -799,7 +808,7 @@ public class TechErrorReminderService {
                 Links links = links(r, now);
                 Map<Long, Instant> linkUntil = links.live();
                 String url = TechErrorApprovalMail.reportUrl(base, ch.getId(), r.getId());
-                int delivered = pushed, missed = 0;
+                int delivered = pushed, missed = 0, internal = 0;
                 for (TechErrorApprovalService.Approver a : apps) {
                     if (a.id() != null && already.contains(a.id())) continue;   // bu turda zaten ulaştı (önceki denemenin SENT satırı)
                     String status;
@@ -816,11 +825,15 @@ public class TechErrorReminderService {
                     if (mailed) delivered++;
                     if (mailed || pushedTo.contains(a.id())) {
                         if (a.id() != null) reachedNow.add(a.id());
-                    } else if (!status.startsWith("SKIPPED")) {          // posta BAŞARISIZ ve push'u da yok → yeniden denenir
+                    } else if (status.startsWith("SKIPPED")) {
+                        // SKIPPED (adres yok / posta kapalı / pasif): o PO için BU TURDA son karar — kayda girer, yeniden denemede
+                        // ne posta ne push ne günlük satırı (inceleme 2026-10-18 3. tur: her denemede yeniden deneniyor ve yazılıyordu)
+                        if (a.id() != null) reachedNow.add(a.id());
+                    } else {                                             // posta BAŞARISIZ ve push'u da yok → yeniden denenir
                         missed++;
                         missedPos.add(a);
+                        if (internalFailure(status)) internal++;
                     }
-                    // (SKIPPED: posta kapalı / pasif — o PO için son karar, her gün denenmez)
                     saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status,
                             withNote(title, pushNote));
                 }
@@ -828,13 +841,13 @@ public class TechErrorReminderService {
                 else counts[3]++;
                 // Ulaşılamayan bir PO bile varsa talep bırakılır — ertesi gün YALNIZ ulaşmayanlar yeniden denenir (ulaşılanlar
                 // reached_ids'te); turda MAX_TRIES denemeden sonra vazgeçilir (kalıcı geri dönen adres her gün yeniden denetmez)
-                if (missed > 0 && !retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos);
+                if (missed > 0 && !retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos, internal == missed);
             } catch (RuntimeException e) {
                 // Beklenmeyen hata bir raporda kalır: talep bırakılır (ulaşılanlar kayıtlı), iz FAILED — ertesi gün yeniden,
                 // turda en çok MAX_TRIES deneme
                 log.warn("Onay hatırlatması rapor {} için yarıda kaldı: {}", r.getId(), e.toString(), e);
                 saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
-                if (!retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos);
+                if (!retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos, true);
                 counts[3]++;
             }
         }
@@ -842,10 +855,11 @@ public class TechErrorReminderService {
 
     /**
      * Turda {@link #MAX_TRIES} deneme doldu: bu turda yeniden denenmez (talep kalır, bir sonraki tur — tekrar penceresi —
-     * yeniden dener). Ulaşmayan PO'ların adresleriyle bir {@link #ST_GAVE_UP} satırı (sessiz vazgeçme yok).
+     * yeniden dener). Ulaşmayan PO'ların adresleriyle bir satır (sessiz vazgeçme yok): son deneme posta sunucusunun reddiyle
+     * bittiyse {@link #ST_GAVE_UP} (adres / teslim sorunu), uygulama hatasıyla bittiyse {@link #ST_GAVE_UP_ERROR} (FAILED).
      */
     private void approvalGaveUp(TechErrorReportRepository.Row r, Team team, String subject, String title,
-                                List<TechErrorApprovalService.Approver> missedPos) {
+                                List<TechErrorApprovalService.Approver> missedPos, boolean error) {
         List<String> names = new ArrayList<>();
         List<String> mails = new ArrayList<>();
         for (TechErrorApprovalService.Approver a : missedPos) {
@@ -856,7 +870,24 @@ public class TechErrorReminderService {
                 missedPos.size());
         String who = names.isEmpty() ? team.getName() : String.join(", ", names) + " · " + team.getName();
         saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, who, mails, "PO", subject,
-                ST_GAVE_UP + " — " + (missedPos.isEmpty() ? "hatırlatma yarıda kaldı" : missedPos.size() + " onaylayıcı"), title);
+                (error ? ST_GAVE_UP_ERROR : ST_GAVE_UP) + " — " + (missedPos.isEmpty() ? "hatırlatma yarıda kaldı" : missedPos.size() + " onaylayıcı"),
+                title);
+    }
+
+    /**
+     * Push tekilleştirme anahtarının tur parçası: ilk deneme {@code r<tur>}, sonraki denemeler {@code r<tur>t<deneme>}
+     * (inceleme 2026-10-18 3. tur: tur başına tek anahtar, ilk denemesi kuyruğa GİRMEYEN — saat sınırı / susturma satırı yazılan
+     * — PO'ya 2. ve 3. denemede çıkış kutusunun anahtar × kullanıcı tekilliği yüzünden hiç push yazdırmıyordu). Yeniden
+     * denemenin listesinde yalnız bu turda ULAŞILMAYAN PO'lar olur, ulaşılana ikinci push gitmez.
+     */
+    static String pushRoundKey(Claim c) {
+        int tries = c.prior().tries();
+        return "r" + c.round() + (tries > 0 ? "t" + (tries + 1) : "");
+    }
+
+    /** Posta sonucunun uygulama içi hata olup olmadığı (istisna, sonuç yok) — posta sunucusu reddi değil. */
+    static boolean internalFailure(String status) {
+        return "INTERNAL_ERROR".equals(TechErrorSendLogService.reasonOf(status));
     }
 
     /** Onay hatırlatmasının push'u: push'u kuyruğa alınan PO'ların kimlikleri (push yok / kapalı / hata = boş — talep kararı buna göre). */
