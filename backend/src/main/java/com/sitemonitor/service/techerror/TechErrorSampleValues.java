@@ -10,6 +10,7 @@ import com.sitemonitor.service.techerror.TechErrorValues.Values;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,6 +51,15 @@ public final class TechErrorSampleValues {
 
     /** Şablon için örnek değerler ({@code lang}: örnek metinlerin dili — normalde şablonun dili). */
     public static Sample build(Template t, String lang) {
+        return build(t, lang, null);
+    }
+
+    /**
+     * {@link #build(Template, String)} + raporun dönemi (2026-10-18): anomali konusunun örnek tarihi o ayın 12'si (dönem yoksa
+     * tarih yok), saat aralığı 14:00–15:30, kesinti Evet + "INC-0001", müşteri etkisi Evet; konunun hata adedi "tüm teknik
+     * hatalar" alanının örnek değerinden büyükse onun onda birine iner (pay görünsün).
+     */
+    public static Sample build(Template t, String lang, YearMonth period) {
         boolean en = "en".equals(lang);
         List<Field> all = t.allFields();
         Map<String, Field> byId = new HashMap<>();
@@ -127,6 +137,13 @@ public final class TechErrorSampleValues {
                         : "Ne oldu, nerede, kimleri etkiledi — örnek metin.\n- Etki: örnek madde\n- Çözüm: **örnek** madde");
                 issue.put("customers", 1_250);
                 issue.put("errors", 3_400);
+                // Anomali cevapları (2026-10-18) — yalnız bölümde sorulanlar okunur (hoşgörülü okuma gerisini düşürür)
+                if (period != null) issue.put("date", period.atDay(Math.min(12, period.lengthOfMonth())).toString());
+                issue.put("start", "14:00");
+                issue.put("end", "15:30");
+                issue.put("outage", Boolean.TRUE);
+                issue.put("outage_id", "INC-0001");
+                issue.put("impact", Boolean.TRUE);
                 issues.put(s.id(), List.of(issue));
             } else if ("table".equals(s.kind())) {
                 Map<String, Object> rows = new LinkedHashMap<>();
@@ -172,7 +189,30 @@ public final class TechErrorSampleValues {
                 default -> { /* sayı / metin alanları yukarıda doldu */ }
             }
         }
-        return new Sample(computed.withFields(filled), previous);
+        Values out = computed.withFields(filled);
+        return new Sample(TechErrorIssueShare.apply(t, sampleIssueErrors(t, out)), previous);
+    }
+
+    /** Örnek konunun hata adedi "tüm teknik hatalar" örneğinden büyükse onun onda birine iner (pay "aşıyor" yerine görünsün). */
+    private static Values sampleIssueErrors(Template t, Values v) {
+        Map<String, List<TechErrorValues.Issue>> issues = new LinkedHashMap<>(v.issues());
+        boolean changed = false;
+        for (Section s : t.sections()) {
+            if (!"issues".equals(s.kind()) || s.opts().ratioOf() == null) continue;
+            Double total = TechErrorValues.number(v.fields().get(s.opts().ratioOf()));
+            List<TechErrorValues.Issue> list = issues.get(s.id());
+            if (total == null || total < 10 || list == null) continue;
+            List<TechErrorValues.Issue> next = new java.util.ArrayList<>();
+            for (TechErrorValues.Issue i : list) {
+                if (i.errors() == null || i.errors().doubleValue() <= total) { next.add(i); continue; }
+                next.add(new TechErrorValues.Issue(i.id(), i.topic(), i.title(), i.titleAuto(), i.description(), i.customers(),
+                        Math.max(1L, Math.round(total / 10)), i.date(), i.start(), i.end(), i.endNextDay(), i.outage(), i.outageId(),
+                        i.impact(), i.captions(), null));
+                changed = true;
+            }
+            issues.put(s.id(), List.copyOf(next));
+        }
+        return changed ? new Values(v.fields(), issues, v.texts(), v.tables(), v.targets(), v.units()) : v;
     }
 
     /**
@@ -181,7 +221,7 @@ public final class TechErrorSampleValues {
      */
     public static TechErrorPdfInput previewInput(Template t, String channelName, String teamName, String preparedBy, int year,
                                                  int month, Instant generatedAt) {
-        Sample s = build(t, t.lang());
+        Sample s = build(t, t.lang(), YearMonth.of(year, month));
         return new TechErrorPdfInput(t, s.values(), channelName, teamName, year, month, preparedBy, generatedAt, Map.of(),
                 TechErrorTrend.empty(), s.previous(), null, true);
     }

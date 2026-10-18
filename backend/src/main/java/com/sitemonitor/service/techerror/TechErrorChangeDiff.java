@@ -234,8 +234,54 @@ public final class TechErrorChangeDiff {
                         "number", op(old.errors(), i.errors()), num(old.errors(), lang, ebu), num(i.errors(), lang, eau), null, null)
                         .keyed(k + "errors", raw(old.errors(), ebu), raw(i.errors(), eau)));
             }
+            anomalyRows(c, s, section, name, k, old, i, en, channel, year, month, lang);
         }
         c.subject = null;
+    }
+
+    /**
+     * Anomali cevaplarının satırları (2026-10-18): tarih ("12 Eylül 2026"), saat aralığı ("14:00–15:30" — başlangıç, bitiş ve
+     * "ertesi gün" TEK satır), kesinti (Evet / Hayır), Kesinti ID, müşteri etkisi, görsel açıklamaları. Etiketler şablonun
+     * (çözülmüş) soru adlarıdır. Pay ({@code share}) türetilir — hata adedinin ya da toplamın satırı söyler, ayrıca yazılmaz.
+     */
+    private static void anomalyRows(Collector c, Section s, String section, String name, String k, Issue old, Issue i, boolean en,
+                                    String channel, int year, int month, String lang) {
+        var o = s.opts();
+        if (!Objects.equals(old.date(), i.date())) {
+            String b = TechErrorIssueText.day(old.date(), en), a = TechErrorIssueText.day(i.date(), en);
+            c.add(new Change(section, name + " · " + (en ? "Date" : "Tarih"), "text", op(b, a), b, a, null, null)
+                    .keyed(k + "date", old.date(), i.date()));
+        }
+        String br = TechErrorIssueText.range(old, en), ar = TechErrorIssueText.range(i, en);
+        if (!Objects.equals(br, ar)) {
+            c.add(new Change(section, name + " · " + (en ? "Time range" : "Saat aralığı"), "text", op(br, ar), br, ar, null, null)
+                    .keyed(k + "time", br, ar));
+        }
+        if (!Objects.equals(old.outage(), i.outage())) {
+            String lbl = label(res(o.outageLabel(), channel, year, month, lang), en ? "Caused by an outage?" : "Kesinti kaynaklı mı?");
+            c.add(new Change(section, name + " · " + lbl, "yesno", op(old.outage(), i.outage()), yn(old.outage(), en), yn(i.outage(), en),
+                    null, null).keyed(k + "outage", old.outage(), i.outage()));
+        }
+        if (!Objects.equals(old.outageId(), i.outageId())) {
+            String lbl = label(res(o.outageIdLabel(), channel, year, month, lang), en ? "Outage ID" : "Kesinti ID");
+            c.add(new Change(section, name + " · " + lbl, "text", op(old.outageId(), i.outageId()), old.outageId(), i.outageId(), null, null)
+                    .keyed(k + "outage_id", old.outageId(), i.outageId()));
+        }
+        if (!Objects.equals(old.impact(), i.impact())) {
+            String lbl = label(res(o.impactLabel(), channel, year, month, lang), en ? "Was there customer impact?" : "Müşteri etkisi var mı?");
+            c.add(new Change(section, name + " · " + lbl, "yesno", op(old.impact(), i.impact()), yn(old.impact(), en), yn(i.impact(), en),
+                    null, null).keyed(k + "impact", old.impact(), i.impact()));
+        }
+        for (int n = 1; n <= TechErrorTemplate.MAX_ISSUE_IMAGES; n++) {
+            String b = old.caption(n), a = i.caption(n);
+            if (Objects.equals(b, a)) continue;
+            c.add(new Change(section, name + " · " + (en ? "Image " + n + " caption" : "Görsel " + n + " açıklaması"), "text", op(b, a), b, a,
+                    null, null).keyed(k + "caption" + n, b, a));
+        }
+    }
+
+    private static String yn(Boolean b, boolean en) {
+        return b == null ? null : TechErrorFormat.yesNo(b, en);
     }
 
     /** Değişiklik toplayıcı: sınır aşılınca yalnız sayar. */

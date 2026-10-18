@@ -874,6 +874,98 @@ class TechErrorReportServiceTest {
         return (List<Map<String, Object>>) TechErrorHistoryService.detail(e).get("changes");
     }
 
+    private static Map<String, Object> topicRaw(String id, Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("topic", "Konu " + id);
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    @Test
+    @DisplayName("anomali (2026-10-18): kayıt payı hesaplar (istemcinin payı yok sayılır), tarih ay dışıysa 400 alanın altında; PDF girdisi payı CANLI hesaplar; konu görseli yalnız kayıtlı konuya, geçmişte konunun adıyla; konu silinince görselleri gider (IMAGE_DELETE, topic_removed); şablon yenilemede konuyla taşınır, görsel kapatılınca düşer")
+    void anomalyTopicsShareAndImages() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = Map.of("error-count", 5000, "total-tx", 100000);
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", f, "issues", Map.of("issues", List.of(
+                topicRaw("k1", "date", "2026-09-12", "start", "14:00", "end", "15:30", "errors", 170, "outage", true, "outage_id", "INC-1",
+                        "impact", true, "customers", 320, "share", 99),
+                topicRaw("k2", "errors", 10)))), 7L);
+        assertThat(s1.getValuesJson()).contains("\"share\":3.4").contains("\"share\":0.2").doesNotContain("\"share\":99");
+        // Ay dışı tarih: alanın anahtarıyla 400 (konu kimliği + alan)
+        assertThatThrownBy(() -> service.saveValues(r.getId(), s1.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                topicRaw("k1", "date", "2026-10-02")))), 7L))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("issues.issues.k1.date"));
+
+        // PDF girdisi payı canlı hesaplar: payı yazılmamış eski belge de payla basılır
+        TechErrorReport stored = reports.findById(r.getId()).orElseThrow();
+        stored.setValuesJson(stored.getValuesJson().replace("\"share\":3.4", "\"share\":1").replace(",\"share\":0.2", ""));
+        reports.saveAndFlush(stored);
+        var in = service.pdfInput(reports.findById(r.getId()).orElseThrow(), ch, "Dijital");
+        assertThat(in.values().issues().get("issues")).extracting(TechErrorValues.Issue::share).containsExactly(3.4, 0.2);
+
+        // Konu görseli: kayıtlı konuya yüklenir; kaydedilmemiş konuya / 3. görsele / bilinmeyen bölüme yüklenmez
+        TechErrorReportImage img = service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "iss:issues:k2:2", TechErrorImageValidatorTest.png(300, 200), "b.png", 7L);
+        assertThat(img.getSlotId()).isEqualTo("iss:issues:k1:1");
+        for (String bad : List.of("iss:issues:k9:1", "iss:issues:k1:3", "iss:nope:k1:1")) {
+            assertThatThrownBy(() -> service.upload(r.getId(), bad, TechErrorImageValidatorTest.png(400, 200), "x.png", 7L))
+                    .as(bad).isInstanceOf(FieldValidationException.class);
+        }
+        assertThat(events.findAll()).anySatisfy(e -> {
+            assertThat(e.getKind()).isEqualTo("IMAGE_ADD");
+            assertThat(e.getDetailJson()).contains("Konu k1: Hata Artışı — Görsel 1");
+        });
+        assertThat(service.pdfInput(reports.findById(r.getId()).orElseThrow(), ch, "Dijital").images())
+                .containsKeys("iss:issues:k1:1", "iss:issues:k2:2");
+
+        // Konu silinir → görseli de gider (aynı işlem), geçmişte konunun adıyla
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        service.saveValues(r.getId(), cur.getVersion(), Map.of("fields", f, "issues", Map.of("issues", List.of(topicRaw("k2", "errors", 10)))), 7L);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("iss:issues:k2:2");
+        assertThat(events.findAll()).anySatisfy(e -> {
+            assertThat(e.getKind()).isEqualTo("IMAGE_DELETE");
+            assertThat(e.getDetailJson()).contains("topic_removed").contains("Konu k1: Hata Artışı — Görsel 1");
+        });
+
+        // Şablon yenileme: konu taşınır → görseli kalır; görsel sorusu kapatılırsa düşer (önizleme sayar)
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.put("title", "Anomaliler (yeni)");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v2 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("lost_images", 0);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("iss:issues:k2:2");
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.remove("allow_images");
+            copy.remove("ask_time");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 2, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v3 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v3)).containsEntry("lost_images", 1);
+        var res = service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        assertThat(res.removedImages()).isEqualTo(1);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+        // Konu kimliği ve değerleri kaldı; pay yeniden hesaplandı
+        assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("\"id\":\"k2\"").contains("\"share\":0.2");
+    }
+
     private void at(Instant t) {
         service.useClock(Clock.fixed(t, ZoneOffset.UTC));
     }

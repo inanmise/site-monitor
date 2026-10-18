@@ -157,7 +157,7 @@ public final class TechErrorCalc {
     /**
      * {@link #apply} + alan başına SONUÇ durumu (değer dışa aktarımı okur: {@code computed} = durum {@link Status#OK} — MANUAL /
      * BAD_REF'te girilen değer kalır ve "hesaplandı" denmez). Muaf hesaplanan alanın durumu yoktur. Hesaplanan alan yoksa
-     * değerler AYNI nesnedir ve durum haritası boştur.
+     * değerler AYNI nesnedir ve durum haritası boştur (anomali konularının payı değişmedikçe — {@link TechErrorIssueShare}).
      */
     public record Applied(Values values, Map<String, Status> statuses) {
         public Status status(String fieldId) {
@@ -173,7 +173,8 @@ public final class TechErrorCalc {
             byId.put(f.id(), f);
             any |= f.calc() != null;
         }
-        if (!any) return new Applied(v, Map.of());
+        // Anomali konularının payı (2026-10-18) hesaplanan alan olmasa da uygulanır — oranlardan SONRA (toplam alanı girdi)
+        if (!any) return new Applied(TechErrorIssueShare.apply(t, v), Map.of());
         Map<String, Status> statuses = new HashMap<>();
         Map<String, Object> fields = new LinkedHashMap<>(v.fields());
         Map<String, Object> inputs = v.fields();
@@ -195,6 +196,6 @@ public final class TechErrorCalc {
                 }
             }
         }
-        return new Applied(v.withFields(fields), statuses);
+        return new Applied(TechErrorIssueShare.apply(t, v.withFields(fields)), statuses);
     }
 }

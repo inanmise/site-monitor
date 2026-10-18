@@ -6,6 +6,7 @@ import com.sitemonitor.service.mail.MailKit.Col;
 import com.sitemonitor.service.techerror.TechErrorCalc;
 import com.sitemonitor.service.techerror.TechErrorFormat;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
+import com.sitemonitor.service.techerror.TechErrorIssueText;
 import com.sitemonitor.service.techerror.TechErrorRichText;
 import com.sitemonitor.service.techerror.TechErrorSummary;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
@@ -128,7 +129,7 @@ public final class TechErrorReportMail {
             switch (s.kind()) {
                 case "summary" -> summary(d, in, s);
                 case "metrics" -> { if (TechErrorTemplate.hostOf(in.template(), s) == null) metrics(d, in, s, en, lang); }
-                case "issues" -> issues(d, in, s, en, lang);
+                case "issues" -> issues(d, in, s, en, lang, imgs, attached);
                 case "text" -> text(d, in, s);
                 case "table" -> table(d, in, s, en, lang);
                 case "images" -> images(d, in, s, imgs, en, attached);
@@ -451,35 +452,87 @@ public final class TechErrorReportMail {
 
     // ── Anomali konuları ─────────────────────────────────────────────────────────────────────────────
 
-    /** Her konu bir kart: numaralı başlık, dikkat turuncusu sayaç satırı (müşteri / hata adedi), zengin açıklama. */
-    private static void issues(MailDoc d, TechErrorPdfInput in, Section s, boolean en, String lang) {
+    /**
+     * Her konu bir kart: numaralı başlık, zengin açıklama. Eski düzendeki bölüm (2026-10-18 öncesi şablon) dikkat turuncusu
+     * sayaç satırını (müşteri / hata adedi) basar — bayt bayt eskisi. Yeni düzen (2026-10-18): cevaplardan kurulan GİRİŞ METNİ
+     * ({@link TechErrorIssueText}, PDF ve ekranla aynı), açıklama ve konunun görselleri kartın içinde (gömülü ya da "PDF ekinde"
+     * kutusu — diğer görsellerle aynı bütçe). Müşteri etkisi olmayan konu "konuyu rapora alma" ayarında hiç yazılmaz.
+     */
+    private static void issues(MailDoc d, TechErrorPdfInput in, Section s, boolean en, String lang, TechErrorMailImages.Result prepared,
+                               boolean attached) {
         d.heading(in.resolve(s.title()));
         List<Issue> list = in.values().issues().getOrDefault(s.id(), List.of());
         if (list.isEmpty()) {
             d.note(en ? "No topic was entered for this month." : "Bu ay için başlık girilmedi.");
             return;
         }
+        TechErrorTemplate.IssueOptions o = s.opts();
+        List<Issue> shown = new ArrayList<>();
+        for (Issue i : list) if (!(o.hideTopic() && Boolean.FALSE.equals(i.impact()))) shown.add(i);
+        if (shown.isEmpty()) {
+            d.note(en ? "No topic with customer impact this month." : "Bu ay müşteri etkisi olan bir konu yok.");
+            return;
+        }
         int n = 0;
-        for (Issue i : list) {
+        for (Issue i : shown) {
             n++;
             String title = i.displayTitle(s.itemTitle());
             if (title == null || title.isBlank()) title = en ? "Untitled topic" : "Başlıksız konu";
             String head = n + ". " + title;
-            String counts = in.resolve(s.customersLabel()) + ": "
-                    + TechErrorFormat.count(i.customers(), lang, in.values().issueUnit(s.id(), i.id(), "customers"))
-                    + " · " + in.resolve(s.errorsLabel()) + ": "
-                    + TechErrorFormat.count(i.errors(), lang, in.values().issueUnit(s.id(), i.id(), "errors"));
+            // Kısaltmayla girilmiş adet (2026-10-18): "1,25M" — eski sayaç satırında da giriş metninde de
+            Integer customersUnit = in.values().issueUnit(s.id(), i.id(), "customers");
+            Integer errorsUnit = in.values().issueUnit(s.id(), i.id(), "errors");
             boolean hasDesc = i.description() != null && !i.description().isBlank();
-            String html = "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\" data-slot=\"te-issue\"><tr>"
+            String open = "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\" data-slot=\"te-issue\"><tr>"
                     + "<td bgcolor=\"" + CARD + "\" style=\"background-color:" + CARD + ";border:1px solid " + MailTokens.BORDER + ";border-radius:8px;padding:14px 16px;font-family:"
                     + MailTokens.FONT + ";color:" + MailTokens.FG + "\">"
-                    + "<p style=\"margin:0 0 4px;font-size:15px;line-height:22px;font-weight:600;color:" + MailTokens.FG + ";word-break:break-word;overflow-wrap:anywhere\">" + MailKit.esc(head) + "</p>"
-                    + "<p style=\"margin:0 0 " + (hasDesc ? 10 : 0) + "px;font-size:13px;line-height:20px;font-weight:600;color:" + MailTokens.WARNING + "\">" + MailKit.esc(counts) + "</p>"
-                    + (hasDesc ? richHtml(i.description(), 14, 22) : "")
-                    + "</td></tr></table>";
-            d.raw(html, head + "\n" + counts + (hasDesc ? "\n" + TechErrorRichText.plain(i.description()) : ""));
+                    + "<p style=\"margin:0 0 4px;font-size:15px;line-height:22px;font-weight:600;color:" + MailTokens.FG + ";word-break:break-word;overflow-wrap:anywhere\">" + MailKit.esc(head) + "</p>";
+            if (o.legacy()) {
+                String counts = in.resolve(s.customersLabel()) + ": " + TechErrorFormat.count(i.customers(), lang, customersUnit)
+                        + " · " + in.resolve(s.errorsLabel()) + ": " + TechErrorFormat.count(i.errors(), lang, errorsUnit);
+                String html = open
+                        + "<p style=\"margin:0 0 " + (hasDesc ? 10 : 0) + "px;font-size:13px;line-height:20px;font-weight:600;color:" + MailTokens.WARNING + "\">" + MailKit.esc(counts) + "</p>"
+                        + (hasDesc ? richHtml(i.description(), 14, 22) : "")
+                        + "</td></tr></table>";
+                d.raw(html, head + "\n" + counts + (hasDesc ? "\n" + TechErrorRichText.plain(i.description()) : ""));
+                continue;
+            }
+            String lead = TechErrorIssueText.lead(s, i, i.share() == null ? null : i.share().doubleValue(), lang, in::resolve,
+                    errorsUnit, customersUnit);
+            StringBuilder html = new StringBuilder(open);
+            StringBuilder plain = new StringBuilder(head);
+            if (!lead.isBlank()) {
+                html.append("<div data-slot=\"te-issue-lead\">").append(richHtml(lead, 14, 22)).append("</div>");
+                plain.append('\n').append(TechErrorRichText.plain(lead));
+            }
+            if (hasDesc) {
+                // Aralık hücre dolgusuyla (Outlook margin'i güvenilir okumaz; 1 px yazı boyutlu boşluk sözleşmeye aykırı)
+                html.append(lead.isBlank() ? richHtml(i.description(), 14, 22) : padded(8, richHtml(i.description(), 14, 22)));
+                plain.append('\n').append(TechErrorRichText.plain(i.description()));
+            }
+            if (o.allowImages()) {
+                for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
+                    String slot = TechErrorTemplate.issueSlotId(s.id(), i.id(), k);
+                    if (!prepared.present(slot)) continue;
+                    String caption = i.caption(k);
+                    Slot sl = new Slot(slot, caption == null ? "" : caption, "full");
+                    html.append(padded(12, imageRowHtml(in, List.of(sl), ISSUE_IMAGE_W, prepared, en, attached)));
+                    plain.append('\n').append(imagePlain(in, List.of(sl), prepared, en, attached).strip());
+                }
+            }
+            html.append("</td></tr></table>");
+            d.raw(html.toString(), plain.toString());
         }
     }
+
+    /** Üst dolgulu tek hücreli tablo — kart içindeki parçalar arası aralık (posta istemcileri hücre dolgusunu tutarlı okur). */
+    private static String padded(int topPx, String inner) {
+        return "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding-top:"
+                + topPx + "px\">" + inner + "</td></tr></table>";
+    }
+
+    /** Konu görselinin e-postadaki en geniş hâli: kartın iç genişliği (gövde − iki yanda 16 px dolgu − 1 px kenar). */
+    static final int ISSUE_IMAGE_W = CONTENT_W - 34;
 
     // ── Metin, tablo, görsel, trend ──────────────────────────────────────────────────────────────────
 
@@ -570,9 +623,12 @@ public final class TechErrorReportMail {
             sb.append("<!--[if mso]><td width=\"").append(pct).append("\" valign=\"top\"><![endif]-->")
               .append("<div class=\"stack\" style=\"display:inline-block;vertical-align:top;width:100%;max-width:").append(pct).append("\">")
               .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding:")
-              .append(n == 2 ? "0 " + (GUTTER / 2) + "px 12px " + (GUTTER / 2) + "px" : "0 0 12px 0").append(";font-family:").append(MailTokens.FONT).append("\">")
-              .append("<p style=\"margin:0 0 6px;font-size:13px;line-height:18px;font-weight:600;color:").append(MailTokens.FG)
-              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(caption)).append("</p>");
+              .append(n == 2 ? "0 " + (GUTTER / 2) + "px 12px " + (GUTTER / 2) + "px" : "0 0 12px 0").append(";font-family:").append(MailTokens.FONT).append("\">");
+            // Açıklamasız konu görseli (2026-10-18) başlıksız; şablon yuvalarının adı her zaman dolu (bayt bayt eskisi)
+            if (!caption.isBlank()) {
+                sb.append("<p style=\"margin:0 0 6px;font-size:13px;line-height:18px;font-weight:600;color:").append(MailTokens.FG)
+                  .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(caption)).append("</p>");
+            }
             if (p != null) {
                 int pxW = Math.min(p.width(), colPx);
                 String alt = MailKit.esc(caption);
@@ -617,7 +673,8 @@ public final class TechErrorReportMail {
             else if (prepared.unreadable().contains(sl.id())) tag = en ? "[Image — unreadable] " : "[Görsel — okunamadı] ";
             else if (!attached) tag = en ? "[Image — in the PDF in Site Monitor] " : "[Görsel — Site Monitor'deki PDF'te] ";
             else tag = en ? "[Image — in the PDF] " : "[Görsel — PDF ekinde] ";
-            t.append(tag).append(in.resolve(sl.label())).append('\n');
+            String label = in.resolve(sl.label());
+            t.append(label.isBlank() ? tag.strip() : tag + label).append('\n');
         }
         return t.toString();
     }

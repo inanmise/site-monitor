@@ -618,7 +618,9 @@ public class TechErrorReportService {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
         // Otomatik hesaplanan alanlar (2026-10-16) SUNUCUDA hesaplanır: istemcinin gönderdiği oran yok sayılır, girilen
         // adetlerden (ve geçen ayın raporundan) yeniden bulunur
-        Values v = TechErrorCalc.apply(t, TechErrorValues.normalize(raw, t), previousFields(r, t));
+        // Anomali konusunun tarihi raporun ayı içinde olmalı (2026-10-18) — dönem doğrulamaya verilir
+        Values v = TechErrorCalc.apply(t, TechErrorValues.normalize(raw, t, YearMonth.of(r.getReportYear(), r.getReportMonth())),
+                previousFields(r, t));
         String json = TechErrorValues.toJson(v);
         if (json.equals(r.getValuesJson())) return new SaveOutcome(r, false);   // değişiklik yok → sürüm artmaz, yazılmaz, olay yok
         Values before = TechErrorValues.fromStored(r.getValuesJson(), t);
@@ -630,6 +632,8 @@ public class TechErrorReportService {
         TechErrorReport saved = reports.saveAndFlush(r);
         reports.touchContent(saved.getId(), now);      // içerik sayacı (atomik, aynı işlem)
         boolean merged = history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now, auto);
+        // Silinen anomali konusunun görselleri konuyla gider (2026-10-18): aynı işlemde, her biri geçmişte konunun adıyla
+        dropOrphanIssueImages(saved, t, before, v, by, now);
         analyticsChanged();
         return new SaveOutcome(saved, merged);
     }
@@ -652,8 +656,7 @@ public class TechErrorReportService {
         Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
         // Kayıp yalnız şablon farkından sayılır: yeni hesaplanan oranlar kaybı gizlemesin (inceleme 2026-10-16)
         int removedValues = countValues(before) - countValues(carried);
-        Set<String> keep = new HashSet<>();
-        for (var s : next.allSlots()) keep.add(s.id());
+        Set<String> keep = keepSlots(next, carried);
         int removedImages = keep.isEmpty() ? images.deleteAllForReport(r.getId()) : images.deleteSlotsNotIn(r.getId(), keep);
         Instant now = now();
         r.setTemplateJson(TechErrorTemplate.toJson(next));
@@ -681,8 +684,7 @@ public class TechErrorReportService {
         Values before = TechErrorValues.fromStored(r.getValuesJson(), prev);
         Values carried = carry(before, prev, next);
         Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
-        Set<String> keep = new HashSet<>();
-        for (var s : next.allSlots()) keep.add(s.id());
+        Set<String> keep = keepSlots(next, carried);
         int lostImages = 0;
         for (var m : images.findByReportIdOrderByIdAsc(r.getId())) if (!keep.contains(m.getSlotId())) lostImages++;
         Map<String, Object> out = new LinkedHashMap<>();
@@ -865,12 +867,88 @@ public class TechErrorReportService {
                 "The image wasn't found; it may have been deleted or replaced. Reload the report."));
     }
 
+    /**
+     * Şablon yenilenince KALAN görsel yuvaları: şablonun yuvaları + (2026-10-18) görsele izin veren anomali bölümünde
+     * taşınan her konunun iki yuvası ({@code iss:<bölüm>:<konu>:<n>}). Silinen konunun, kapatılan görsel sorusunun ya da
+     * kaldırılan bölümün konu görselleri düşer.
+     */
+    static Set<String> keepSlots(Template next, Values carried) {
+        Set<String> keep = new HashSet<>();
+        for (var sl : next.allSlots()) keep.add(sl.id());
+        for (var s : next.sections()) {
+            if (!"issues".equals(s.kind()) || !s.opts().allowImages()) continue;
+            for (var i : carried.issues().getOrDefault(s.id(), List.of())) {
+                for (int n = 1; n <= TechErrorTemplate.MAX_ISSUE_IMAGES; n++) keep.add(TechErrorTemplate.issueSlotId(s.id(), i.id(), n));
+            }
+        }
+        return keep;
+    }
+
+    /**
+     * Kayıttan sonra artık konusu olmayan konu görsellerini siler (2026-10-18: "konu silinince görselleri de gider"); her silme
+     * geçmişte IMAGE_DELETE olayıdır (konunun adı + {@code reason: topic_removed}). Konu görseli yoksa sorgu dışında iş yok.
+     */
+    private void dropOrphanIssueImages(TechErrorReport r, Template t, Values before, Values after, Long by, Instant now) {
+        // Görsele izin veren anomali bölümü yoksa konu görseli de olamaz (yükleme reddedilir, şablon yenileme siler) — sorgu yok
+        if (t.sections().stream().noneMatch(s -> "issues".equals(s.kind()) && s.opts().allowImages())) return;
+        List<TechErrorReportImageRepository.Meta> orphans = null;
+        for (var m : images.findByReportIdOrderByIdAsc(r.getId())) {
+            TechErrorTemplate.IssueSlot is = TechErrorTemplate.parseIssueSlot(m.getSlotId());
+            if (is == null) continue;
+            TechErrorTemplate.Section s = t.section(is.sectionId());
+            boolean alive = s != null && "issues".equals(s.kind()) && s.opts().allowImages()
+                    && after.issues().getOrDefault(s.id(), List.of()).stream().anyMatch(i -> i.id().equals(is.issueId()));
+            if (alive) continue;
+            if (orphans == null) orphans = new ArrayList<>();
+            orphans.add(m);
+        }
+        if (orphans == null) return;
+        String channel = channelName(r.getChannelId());
+        for (var m : orphans) {
+            images.deleteSlot(r.getId(), m.getSlotId());
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("slot", issueSlotLabel(t, before, m.getSlotId(), channel, r));
+            if (m.getFileName() != null) d.put("file_name", m.getFileName());
+            d.put("width", m.getWidth());
+            d.put("height", m.getHeight());
+            d.put("size_bytes", m.getSizeBytes());
+            d.put("reason", "topic_removed");
+            history.record(r, "IMAGE_DELETE", by, null, d, now);
+        }
+    }
+
+    /**
+     * Konu görseli yuvasının okunur adı (geçmiş olayı): "&lt;konunun başlığı&gt; — Görsel 1" (şablon dili); konu bulunamazsa
+     * "Anomali konusu — Görsel 1".
+     */
+    static String issueSlotLabel(Template t, Values v, String slotId, String channel, TechErrorReport r) {
+        TechErrorTemplate.IssueSlot is = TechErrorTemplate.parseIssueSlot(slotId);
+        if (is == null) return slotId;
+        boolean en = t.en();
+        TechErrorTemplate.Section s = t.section(is.sectionId());
+        String name = null;
+        if (s != null && v != null) {
+            for (var i : v.issues().getOrDefault(s.id(), List.of())) {
+                if (!i.id().equals(is.issueId())) continue;
+                String title = i.displayTitle(s.itemTitle());
+                if (title != null && !title.isBlank()) {
+                    name = TechErrorTemplate.resolve(title, channel, r.getReportYear(), r.getReportMonth(), t.lang());
+                }
+            }
+        }
+        if (name == null || name.isBlank()) name = en ? "Anomaly topic" : "Anomali konusu";
+        return name + " — " + (en ? "Image " : "Görsel ") + is.n();
+    }
+
     /** Yuvaya görsel yükler (varsa eskisinin yerine). Sürüm artmaz; "içerik değişti" damgası vurulur. */
     @Transactional
     public TechErrorReportImage upload(Long reportId, String slotId, byte[] data, String fileName, Long by) {
         TechErrorReport r = report(reportId);
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
-        if (slotId == null || t.slot(slotId) == null) {
+        TechErrorTemplate.IssueSlot issueSlot = TechErrorTemplate.parseIssueSlot(slotId);
+        if (issueSlot != null) {
+            requireIssueSlot(r, t, issueSlot);
+        } else if (slotId == null || t.slot(slotId) == null) {
             throw new FieldValidationException("slot", Msg.t(
                     "Bu görsel yuvası raporun şablonunda yok. Raporu yenileyip tekrar deneyin.",
                     "This image slot isn't in the report's template. Reload the report and try again."));
@@ -925,12 +1003,37 @@ public class TechErrorReportService {
         return img;
     }
 
+    /**
+     * Konu görseli yuvası yalnız: bölüm raporun şablonunda bir anomali bölümü, görsele izin veriyor ve konu KAYITLI değerlerde
+     * var (kaydedilmemiş konuya yüklenen görsel sahipsiz kalırdı — istemci önce kaydeder).
+     */
+    private static void requireIssueSlot(TechErrorReport r, Template t, TechErrorTemplate.IssueSlot is) {
+        TechErrorTemplate.Section s = t.section(is.sectionId());
+        if (s == null || !"issues".equals(s.kind()) || !s.opts().allowImages()) {
+            throw new FieldValidationException("slot", Msg.t(
+                    "Bu anomali bölümünde konu görseli yok (şablon görsele izin vermiyor). Raporu yenileyip tekrar deneyin.",
+                    "This anomaly section takes no topic images (the template doesn't allow them). Reload the report and try again."));
+        }
+        Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+        boolean saved = v.issues().getOrDefault(s.id(), List.of()).stream().anyMatch(i -> i.id().equals(is.issueId()));
+        if (!saved) {
+            throw new FieldValidationException("slot", Msg.t(
+                    "Bu konu henüz kaydedilmedi. Önce raporu kaydedin, sonra görseli yükleyin.",
+                    "This topic isn't saved yet. Save the report first, then upload the image."));
+        }
+    }
+
     /** Görsel olayının ayrıntısı: yuvanın (çözülmüş) adı + dosya bilgisi. */
     private Map<String, Object> imageDetail(TechErrorReport r, Template t, TechErrorReportImage img) {
         Map<String, Object> m = new LinkedHashMap<>();
         TechErrorTemplate.Slot slot = t.slot(img.getSlotId());
-        m.put("slot", slot == null ? img.getSlotId() : TechErrorTemplate.resolve(slot.label(), channelName(r.getChannelId()),
-                r.getReportYear(), r.getReportMonth(), t.lang()));
+        String channel = channelName(r.getChannelId());
+        if (TechErrorTemplate.parseIssueSlot(img.getSlotId()) != null) {
+            m.put("slot", issueSlotLabel(t, TechErrorValues.fromStored(r.getValuesJson(), t), img.getSlotId(), channel, r));
+        } else {
+            m.put("slot", slot == null ? img.getSlotId() : TechErrorTemplate.resolve(slot.label(), channel,
+                    r.getReportYear(), r.getReportMonth(), t.lang()));
+        }
         if (img.getFileName() != null) m.put("file_name", img.getFileName());
         m.put("width", img.getWidth());
         m.put("height", img.getHeight());
@@ -1131,7 +1234,11 @@ public class TechErrorReportService {
         for (var s : prev.sections()) prevSections.put(s.id(), s);
         for (var s : next.sections()) {
             if (!s.kind().equals(prevKinds.get(s.id()))) continue;
-            if ("issues".equals(s.kind()) && before.issues().containsKey(s.id())) issues.put(s.id(), before.issues().get(s.id()));
+            // Konular yeni bölümün sorularına uydurulur (2026-10-18): kapatılan sorunun cevabı düşer, açılan "müşteri etkisi"
+            // girilmiş müşteri sayısından çıkarılır (> 0 → Evet, 0 → Hayır); kimlikler aynı kalır (görseller konuyla taşınır)
+            if ("issues".equals(s.kind()) && before.issues().containsKey(s.id())) {
+                issues.put(s.id(), TechErrorValues.conform(before.issues().get(s.id()), s));
+            }
             if (("text".equals(s.kind()) || "summary".equals(s.kind())) && before.texts().containsKey(s.id())) {
                 texts.put(s.id(), before.texts().get(s.id()));
             }
@@ -1184,7 +1291,14 @@ public class TechErrorReportService {
     private static int countValues(Values v) {
         // O aya özel hedefler de kaybolabilir (yeni şablon alanın hedefini kaldırdı — inceleme 2026-10-17)
         int n = v.fields().size() + v.texts().size() + v.targets().size();
-        for (var l : v.issues().values()) n += l.size();
+        // Konu + (2026-10-18) cevapları: tarih, saat aralığı, kesinti, Kesinti ID, görsel açıklamaları — sorusu kaldırılan
+        // şablon uygulanınca kaybolanlar da sayılsın (müşteri etkisi sayılmaz: eski raporda müşteri sayısından çıkarılır)
+        for (var l : v.issues().values()) {
+            for (var i : l) {
+                n += 1 + (i.date() != null ? 1 : 0) + (i.start() != null ? 1 : 0) + (i.outage() != null ? 1 : 0)
+                        + (i.outageId() != null ? 1 : 0) + i.captions().size();
+            }
+        }
         for (var t : v.tables().values()) for (var r : t.values()) n += r.size();
         return n;
     }

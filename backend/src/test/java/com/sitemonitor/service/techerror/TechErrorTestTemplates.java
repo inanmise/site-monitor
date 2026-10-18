@@ -47,7 +47,7 @@ public final class TechErrorTestTemplates {
      */
     public static Template hostedDefaults(String lang) {
         boolean en = "en".equals(lang);
-        Template d = TechErrorTemplate.defaults(lang);
+        Template d = beforeAnomaly(lang);
         List<Section> out = new ArrayList<>();
         Map<String, Field> moved = new HashMap<>();
         for (Section s : d.sections()) {
@@ -67,6 +67,18 @@ public final class TechErrorTestTemplates {
         out.add(at + 1, hosted("unmapped", en ? "Unmapped Errors" : "Map Yapılmamış Hatalar",
                 moved.get("unmapped-count"), moved.get("unmapped-note")));
         out.add(at + 2, hosted("quota", en ? "Quota Errors" : "Kota Hataları", moved.get("quota-count"), moved.get("quota-note")));
+        return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(out))));
+    }
+
+    /**
+     * 2026-10-17 düzeni (anomali soruları ÖNCESİ): bugünkü varsayılan, anomali bölümünün soruları kapalı (ne zaman, kesinti,
+     * müşteri etkisi, görseller, pay yok). Eski göç zincirlerinin çıktısı budur; anomali göçü
+     * ({@link TechErrorAnomalyFieldsMigration}) bunu bugünkü varsayılana çevirir.
+     */
+    public static Template beforeAnomaly(String lang) {
+        Template d = TechErrorTemplate.defaults(lang);
+        List<Section> out = new ArrayList<>();
+        for (Section s : d.sections()) out.add("issues".equals(s.kind()) ? s.withOptions(null) : s);
         return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(out))));
     }
 

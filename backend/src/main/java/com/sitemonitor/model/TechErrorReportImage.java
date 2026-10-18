@@ -30,7 +30,8 @@ public class TechErrorReportImage {
     @Column(name = "team_id", nullable = false)
     private Long teamId;
 
-    @Column(name = "slot_id", nullable = false, length = 40)
+    /** Şablon yuvası ya da (2026-10-18) konu görseli {@code iss:<bölüm>:<konu>:<n>} — 120 (SchedulerService yaması büyütür). */
+    @Column(name = "slot_id", nullable = false, length = 120)
     private String slotId;
 
     @Column(name = "content_type", nullable = false, length = 20)

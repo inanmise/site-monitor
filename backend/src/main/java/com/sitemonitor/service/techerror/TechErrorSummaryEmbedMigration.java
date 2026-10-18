@@ -189,7 +189,8 @@ public class TechErrorSummaryEmbedMigration {
             if (!"issues".equals(s.kind())) continue;
             sections.set(i, new Section(s.id(), s.kind(), swap(s.title(), ISSUE_TITLE), s.fields(), s.slots(),
                     swap(s.itemTitle(), ISSUE_ITEM), swap(s.descriptionLabel(), ISSUE_DESCRIPTION), s.customersLabel(),
-                    swap(s.errorsLabel(), ISSUE_ERRORS), s.text(), s.lines(), s.columns(), s.rows(), s.host()));
+                    swap(s.errorsLabel(), ISSUE_ERRORS), s.text(), s.lines(), s.columns(), s.rows(), s.host(), s.tiles(),
+                    s.options()));           // anomali soruları (2026-10-18) korunur — yeni kurulumda varsayılan şablon da geçer
         }
         for (Embed e : EMBEDS) embed(sections, e);
         Template next = new Template(t.lang(), t.title(), List.copyOf(sections));

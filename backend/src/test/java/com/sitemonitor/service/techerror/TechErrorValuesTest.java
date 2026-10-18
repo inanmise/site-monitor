@@ -97,7 +97,7 @@ class TechErrorValuesTest {
         List<Object> tooMany = new ArrayList<>();
         for (int i = 0; i < 31; i++) tooMany.add(Map.of("topic", "k" + i));
         assertInvalid(Map.of("issues", Map.of("issues", tooMany)), "issues.issues");
-        assertInvalid(Map.of("issues", Map.of("issues", List.of(Map.of("customers", -5)))), "issues.issues.1");
+        assertInvalid(Map.of("issues", Map.of("issues", List.of(Map.of("customers", -5)))), "issues.issues.i-1.customers");
     }
 
     @Test
@@ -282,6 +282,126 @@ class TechErrorValuesTest {
         assertThat(v.fields()).containsEntry("total", 0L);                               // sayının kendisi aynen
         assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0},\"units\":{\"total\":9}}", ut).units()).isEmpty();
         assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0.0},\"units\":{\"total\":12}}", ut).units()).isEmpty();
+    }
+
+    /** Varsayılan şablon (anomali soruları açık) + verilen konu → katı okuma; dönem Eylül 2026. */
+    private static Values anomaly(Map<String, Object> issue) {
+        return TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(issue))), TechErrorTemplate.defaults("tr"),
+                java.time.YearMonth.of(2026, 9));
+    }
+
+    private static void anomalyInvalid(Map<String, Object> issue, String key) {
+        assertThatThrownBy(() -> anomaly(issue))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey(key));
+    }
+
+    private static Map<String, Object> topic(Object... kv) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", "k1");
+        m.put("topic", "Kart Limiti");
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    @Test
+    @DisplayName("anomali cevapları (2026-10-18): tarih gerçek ve raporun ayında, saat aralığı ikisi birlikte ve bitiş sonra (ertesi gün ≤ 24 sa), kesinti Evet'te ID zorunlu (≤ 60), müşteri sayısı yalnız etki Evet'te; hatalar alanın altında (issues.<bölüm>.<konu>.<alan>)")
+    void anomalyAnswers() {
+        var v = anomaly(topic("date", "2026-09-12", "start", "14:00", "end", "15:30", "outage", true, "outage_id", "  INC-2026-0915 ",
+                "impact", true, "customers", 320, "errors", 1250, "captions", Map.of("1", "Hata grafiği", "2", " ", "3", "fazla")));
+        var i = v.issues().get("issues").get(0);
+        assertThat(i.date()).isEqualTo("2026-09-12");
+        assertThat(i.start()).isEqualTo("14:00");
+        assertThat(i.end()).isEqualTo("15:30");
+        assertThat(i.endNextDay()).isFalse();
+        assertThat(i.outage()).isTrue();
+        assertThat(i.outageId()).isEqualTo("INC-2026-0915");
+        assertThat(i.impact()).isTrue();
+        assertThat(i.customers()).isEqualTo(320L);
+        assertThat(i.captions()).containsExactly(Map.entry("1", "Hata grafiği"));
+        assertThat(i.share()).isNull();                                    // pay okuma değil hesap işidir (TechErrorIssueShare)
+
+        // Gece yarısını geçen aralık: "ertesi gün" ile bitiş başlangıçtan önce / eşit; saniyeli saat kısalır
+        var night = anomaly(topic("date", "2026-09-30", "start", "23:30:00", "end", "01:15", "end_next_day", true)).issues().get("issues").get(0);
+        assertThat(night.start()).isEqualTo("23:30");
+        assertThat(night.endNextDay()).isTrue();
+        assertThat(anomaly(topic("date", "2026-09-30", "start", "10:00", "end", "10:00", "end_next_day", true)).issues().get("issues").get(0).end())
+                .isEqualTo("10:00");                                       // tam 24 saat
+        // Saat yoksa "ertesi gün" tutulmaz
+        assertThat(anomaly(topic("date", "2026-09-30", "end_next_day", true)).issues().get("issues").get(0).endNextDay()).isFalse();
+
+        anomalyInvalid(topic("date", "2026-10-01"), "issues.issues.k1.date");                       // ay dışı
+        anomalyInvalid(topic("date", "2026-02-31"), "issues.issues.k1.date");                       // gerçek değil
+        anomalyInvalid(topic("date", "12.09.2026"), "issues.issues.k1.date");                       // biçim
+        anomalyInvalid(topic("date", "2026-09-12", "start", "25:00", "end", "26:00"), "issues.issues.k1.start");
+        anomalyInvalid(topic("date", "2026-09-12", "start", "14:00"), "issues.issues.k1.end");      // yarım aralık
+        anomalyInvalid(topic("date", "2026-09-12", "end", "14:00"), "issues.issues.k1.start");
+        anomalyInvalid(topic("date", "2026-09-12", "start", "15:30", "end", "14:00"), "issues.issues.k1.end");   // bitiş önce
+        anomalyInvalid(topic("date", "2026-09-12", "start", "14:00", "end", "14:00"), "issues.issues.k1.end");   // eşit
+        anomalyInvalid(topic("date", "2026-09-12", "start", "10:00", "end", "11:00", "end_next_day", true), "issues.issues.k1.end"); // > 24 sa
+        anomalyInvalid(topic("start", "14:00", "end", "15:00"), "issues.issues.k1.date");           // saatli ama tarihsiz
+        anomalyInvalid(topic("outage", true), "issues.issues.k1.outage_id");                        // ID zorunlu
+        anomalyInvalid(topic("outage", true, "outage_id", "   "), "issues.issues.k1.outage_id");
+        anomalyInvalid(topic("outage", true, "outage_id", "X".repeat(61)), "issues.issues.k1.outage_id");
+        anomalyInvalid(topic("outage", "evet"), "issues.issues.k1.outage");
+        anomalyInvalid(topic("impact", 1), "issues.issues.k1.impact");
+        anomalyInvalid(topic("impact", true, "customers", -1), "issues.issues.k1.customers");
+        anomalyInvalid(topic("captions", Map.of("1", "x".repeat(201))), "issues.issues.k1.caption1");
+        anomalyInvalid(topic("errors", "çok"), "issues.issues.k1.errors");
+
+        // Kesinti Hayır → ID saklanmaz; etki Hayır → müşteri sayısı saklanmaz; cevapsız etki + müşteri sayısı → sayı söyler
+        var no = anomaly(topic("outage", false, "outage_id", "INC-1", "impact", false, "customers", 50)).issues().get("issues").get(0);
+        assertThat(no.outage()).isFalse();
+        assertThat(no.outageId()).isNull();
+        assertThat(no.impact()).isFalse();
+        assertThat(no.customers()).isNull();
+        var inferred = anomaly(topic("customers", 40)).issues().get("issues").get(0);
+        assertThat(inferred.impact()).isTrue();
+        assertThat(inferred.customers()).isEqualTo(40L);
+        var zero = anomaly(topic("customers", 0)).issues().get("issues").get(0);
+        assertThat(zero.impact()).isFalse();
+        assertThat(zero.customers()).isNull();
+
+        // Hoşgörülü (saklı) okuma: bozuk tarih / saat düşer, ay dışı tarih kalır (dönem bilinmez), yarım aralık tutulmaz
+        String stored = "{\"fields\":{},\"issues\":{\"issues\":[{\"id\":\"k1\",\"topic\":\"T\",\"title\":\"\",\"title_auto\":true,"
+                + "\"description\":\"\",\"customers\":null,\"errors\":null,\"date\":\"2026-13-40\",\"start\":\"14:00\","
+                + "\"outage\":true,\"impact\":\"evet\"}]},\"texts\":{}}";
+        var lenient = TechErrorValues.fromStored(stored, TechErrorTemplate.defaults("tr")).issues().get("issues").get(0);
+        assertThat(lenient.date()).isNull();
+        assertThat(lenient.start()).isNull();
+        assertThat(lenient.outage()).isTrue();
+        assertThat(lenient.outageId()).isNull();
+        assertThat(lenient.impact()).isNull();
+    }
+
+    @Test
+    @DisplayName("anomali cevapları: soru kapalıysa cevabı okunmaz (eski düzen bölümü yeni alanları düşürür, müşteri sayısını her zaman tutar); eski belge bayt bayt aynı kalır")
+    void anomalyAnswersFollowTheTemplate() {
+        Template legacy = TechErrorTestTemplates.beforeAnomaly("tr");
+        Map<String, Object> raw = topic("date", "2026-09-12", "start", "14:00", "end", "15:00", "outage", true, "outage_id", "INC-1",
+                "impact", false, "customers", 12, "errors", 5, "captions", Map.of("1", "Grafik"));
+        var i = TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(raw))), legacy).issues().get("issues").get(0);
+        assertThat(i.date()).isNull();
+        assertThat(i.start()).isNull();
+        assertThat(i.outage()).isNull();
+        assertThat(i.outageId()).isNull();
+        assertThat(i.impact()).isNull();
+        assertThat(i.customers()).isEqualTo(12L);                          // etki sorulmuyor: müşteri sayısı eskisi gibi
+        assertThat(i.captions()).isEmpty();
+        // Eski düzende kaydedilmiş belge: yeni anahtar yok, JSON aynı
+        String old = "{\"fields\":{},\"issues\":{\"issues\":[{\"id\":\"k1\",\"topic\":\"Kart Limiti\",\"title\":\"\",\"title_auto\":true,"
+                + "\"description\":\"\",\"customers\":12,\"errors\":5}]},\"texts\":{}}";
+        assertThat(TechErrorValues.toJson(TechErrorValues.fromStored(old, legacy))).isEqualTo(old);
+        assertThat(TechErrorValues.toJson(TechErrorValues.fromStored(old, TechErrorTemplate.defaults("tr"))))
+                .contains("\"customers\":12").contains("\"impact\":true").doesNotContain("\"date\"").doesNotContain("\"captions\"");
+        // Şablona uydurma (şablon yenileme): kapatılan sorunun cevabı düşer, kimlik aynı
+        var answered = TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(raw))), TechErrorTemplate.defaults("tr"),
+                java.time.YearMonth.of(2026, 9)).issues().get("issues");
+        var conformed = TechErrorValues.conform(answered, legacy.sections().stream().filter(s -> "issues".equals(s.kind())).findFirst().orElseThrow());
+        assertThat(conformed.get(0).id()).isEqualTo("k1");
+        assertThat(conformed.get(0).date()).isNull();
+        assertThat(conformed.get(0).outageId()).isNull();
     }
 
     private void assertInvalid(Map<String, Object> raw, String field) {

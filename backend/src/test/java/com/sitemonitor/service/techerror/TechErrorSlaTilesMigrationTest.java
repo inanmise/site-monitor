@@ -89,7 +89,11 @@ class TechErrorSlaTilesMigrationTest {
             assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.hostedDefaults(lang)));
             TechErrorTemplate.normalize(TechErrorTemplate.toMap(m));
             assertThat(TechErrorSlaTilesMigration.migrate(m)).isEmpty();
-            assertThat(TechErrorTemplate.toJson(TechErrorCountsInFiguresMigration.migrate(m).orElseThrow())).as(lang + " zincir")
+            // Zincir: … → adetler Verileri'ne (7. sürüm) → anomali soruları (2026-10-18) = bugünkü varsayılan, bayt bayt
+            Template counted = TechErrorCountsInFiguresMigration.migrate(m).orElseThrow();
+            assertThat(TechErrorTemplate.toJson(counted)).as(lang + " zincir")
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly(lang)));
+            assertThat(TechErrorTemplate.toJson(TechErrorAnomalyFieldsMigration.migrate(counted).orElseThrow())).as(lang + " zincir")
                     .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
         }
         assertThat(TechErrorSlaTilesMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();

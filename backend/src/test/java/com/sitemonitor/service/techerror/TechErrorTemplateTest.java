@@ -451,6 +451,115 @@ class TechErrorTemplateTest {
         return copy;
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withIssueKeys(Map<String, Object> raw, Map<String, Object> put, List<String> remove) {
+        Map<String, Object> copy = new LinkedHashMap<>(raw);
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> s : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(s);
+            if ("issues".equals(s.get("kind"))) {
+                for (String k : remove) sc.remove(k);
+                sc.putAll(put);
+            }
+            secs.add(sc);
+        }
+        copy.put("sections", secs);
+        return copy;
+    }
+
+    private static TechErrorTemplate.Section issuesOf(Template t) {
+        return t.sections().stream().filter(s -> "issues".equals(s.kind())).findFirst().orElseThrow();
+    }
+
+    static final List<String> ANOMALY_KEYS = List.of("ask_time", "time_label", "ask_outage", "outage_label", "outage_id_label",
+            "ask_impact", "impact_label", "no_impact_display", "allow_images", "ratio_of");
+
+    @Test
+    @DisplayName("anomali soruları (2026-10-18): varsayılanda hepsi açık (TR / EN etiketler, pay 'error-count'); katı kayıt bozuk aç/kapa, tanınmayan gösterim ve okunamayan alan kimliğini reddeder, şablonda olmayan alanı kabul eder; boş etiket varsayılana döner; saklı okuma bozuğu düşürür")
+    void anomalyOptionsStrictAndLenient() {
+        for (String lang : List.of("tr", "en")) {
+            boolean en = "en".equals(lang);
+            var o = issuesOf(TechErrorTemplate.defaults(lang)).opts();
+            assertThat(o.askTime()).isTrue();
+            assertThat(o.askOutage()).isTrue();
+            assertThat(o.askImpact()).isTrue();
+            assertThat(o.allowImages()).isTrue();
+            assertThat(o.noImpactDisplay()).isEqualTo("hide_count");
+            assertThat(o.ratioOf()).isEqualTo("error-count");
+            assertThat(o.outageLabel()).isEqualTo(en ? "Caused by an outage?" : "Kesinti kaynaklı mı?");
+            assertThat(o.outageIdLabel()).isEqualTo(en ? "Outage ID" : "Kesinti ID");
+            assertThat(o.impactLabel()).isEqualTo(en ? "Was there customer impact?" : "Müşteri etkisi var mı?");
+            assertThat(o.legacy()).isFalse();
+            assertThat(o.hideTopic()).isFalse();
+        }
+        Map<String, Object> ok = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        // Gidiş-dönüş: JSON'da yalnız açık sorular (ve etiketleri) yazılır
+        assertThat(TechErrorTemplate.toJson(TechErrorTemplate.normalize(ok))).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        assertThat(sectionMap(ok, "issues")).containsEntry("ask_time", true).containsEntry("ratio_of", "error-count")
+                .containsEntry("no_impact_display", "hide_count");
+
+        // Soruların hiçbiri yoksa eski düzen: seçenek yok, JSON'a anahtar yazılmaz (eski şablon bayt bayt aynı)
+        Map<String, Object> none = withIssueKeys(ok, Map.of(), ANOMALY_KEYS);
+        var legacy = issuesOf(TechErrorTemplate.normalize(none));
+        assertThat(legacy.options()).isNull();
+        assertThat(legacy.opts().legacy()).isTrue();
+        assertThat(TechErrorTemplate.toMap(TechErrorTemplate.normalize(none)).toString()).doesNotContain("ask_time", "ratio_of", "allow_images");
+        // Hepsi açıkça false: yine eski düzen
+        Map<String, Object> allFalse = withIssueKeys(ok, Map.of("ask_time", false, "ask_outage", false, "ask_impact", false,
+                "allow_images", false), List.of("ratio_of"));
+        assertThat(issuesOf(TechErrorTemplate.normalize(allFalse)).options()).isNull();
+
+        // Boş etiket → bugünkü varsayılan; kapalı sorunun etiketi saklanmaz
+        Map<String, Object> blank = withIssueKeys(ok, Map.of("outage_label", "", "impact_label", " ", "ask_time", false,
+                "time_label", "Kendi etiketim"), List.of());
+        var b = issuesOf(TechErrorTemplate.normalize(blank)).opts();
+        assertThat(b.outageLabel()).isEqualTo("Kesinti kaynaklı mı?");
+        assertThat(b.impactLabel()).isEqualTo("Müşteri etkisi var mı?");
+        assertThat(b.askTime()).isFalse();
+        assertThat(b.timeLabel()).isNull();
+        // Kendi etiketi ve "konuyu rapora alma" kalır
+        var own = issuesOf(TechErrorTemplate.normalize(withIssueKeys(ok, Map.of("outage_id_label", "Olay numarası",
+                "no_impact_display", "hide_topic"), List.of()))).opts();
+        assertThat(own.outageIdLabel()).isEqualTo("Olay numarası");
+        assertThat(own.hideTopic()).isTrue();
+        // Müşteri etkisi sorulmuyorsa gösterim yok sayılır
+        assertThat(issuesOf(TechErrorTemplate.normalize(withIssueKeys(ok, Map.of("ask_impact", false, "no_impact_display", "hide_topic"),
+                List.of()))).opts().noImpactDisplay()).isNull();
+        // Pay alanı şablonda yok / sayı değil: kayıt REDDEDİLMEZ (düzenleyici uyarır — alan silmek şablonu kilitlemesin)
+        assertThat(issuesOf(TechErrorTemplate.normalize(withIssueKeys(ok, Map.of("ratio_of", "olmayan-alan"), List.of()))).opts().ratioOf())
+                .isEqualTo("olmayan-alan");
+        assertThat(issuesOf(TechErrorTemplate.normalize(withIssueKeys(ok, Map.of("ratio_of", "error-rate"), List.of()))).opts().ratioOf())
+                .isEqualTo("error-rate");
+        // Boş pay alanı = pay sorulmaz
+        assertThat(issuesOf(TechErrorTemplate.normalize(withIssueKeys(ok, Map.of("ratio_of", ""), List.of()))).opts().ratioOf()).isNull();
+
+        // Katı: bozuk aç/kapa, tanınmayan gösterim, okunamayan kimlik, uzun etiket
+        assertInvalid(withIssueKeys(ok, Map.of("ask_time", "evet"), List.of()));
+        assertInvalid(withIssueKeys(ok, Map.of("allow_images", 1), List.of()));
+        assertInvalid(withIssueKeys(ok, Map.of("no_impact_display", "gizle"), List.of()));
+        assertInvalid(withIssueKeys(ok, Map.of("ratio_of", "Kötü Kimlik!"), List.of()));
+        assertInvalid(withIssueKeys(ok, Map.of("outage_label", "x".repeat(TechErrorTemplate.MAX_ISSUE_LABEL + 1)), List.of()));
+
+        // Hoşgörülü: aynı bozukluklar düşer, şablon açılır
+        Map<String, Object> broken = withIssueKeys(ok, Map.of("ask_time", "evet", "no_impact_display", "gizle", "ratio_of", "Kötü!"), List.of());
+        var lenient = issuesOf(TechErrorTemplate.fromStored(TechErrorTemplate.JSON.writeValueAsString(broken))).opts();
+        assertThat(lenient.askTime()).isFalse();
+        assertThat(lenient.noImpactDisplay()).isEqualTo("hide_count");
+        assertThat(lenient.ratioOf()).isNull();
+        assertThat(lenient.askOutage()).isTrue();
+
+        // Konu görseli yuva kimliği
+        assertThat(TechErrorTemplate.issueSlotId("issues", "i-ab12", 2)).isEqualTo("iss:issues:i-ab12:2");
+        var is = TechErrorTemplate.parseIssueSlot("iss:issues:i-ab12:2");
+        assertThat(is.sectionId()).isEqualTo("issues");
+        assertThat(is.issueId()).isEqualTo("i-ab12");
+        assertThat(is.n()).isEqualTo(2);
+        for (String bad : List.of("iss:issues:i-1:3", "iss:issues:i-1:0", "iss:issues:i-1", "iss:Bad:i-1:1", "sla-shot-1",
+                "iss:issues:i-1:1:x", "iss::i-1:1")) {
+            assertThat(TechErrorTemplate.parseIssueSlot(bad)).as(bad).isNull();
+        }
+    }
+
     private static void assertInvalid(Map<String, Object> raw) {
         assertThatThrownBy(() -> TechErrorTemplate.normalize(raw))
                 .isInstanceOf(FieldValidationException.class)

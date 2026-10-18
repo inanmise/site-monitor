@@ -559,13 +559,31 @@ final class EmailSamples {
             tf.put("unmapped-note", "Yeni hata kodları eşlenmedi.\n- **E-1042** kart limiti\n- E-2210 zaman aşımı");
             // 2026-10-18: kısaltmayla girilmiş toplam işlem ("12,5M") ve sıfır kota hatası (yeşil tik — CID görsel)
             tf.put("quota-count", 0);
+            // 2026-10-18: anomali konusu — cevaplardan kurulan giriş metni + konunun görseli (kartın içinde, cid)
+            java.util.Map<String, Object> topic = new java.util.LinkedHashMap<>();
+            topic.put("id", "k1");
+            topic.put("topic", "Kart Limiti Sorgusu");
+            topic.put("title_auto", true);
+            topic.put("description", "Limit sorgusu servisinde yanıt süresi uzadı.\n- Etki: mobil uygulama\n- Çözüm: **önbellek** yenilendi");
+            topic.put("date", "2026-09-12");
+            topic.put("start", "14:00");
+            topic.put("end", "15:30");
+            topic.put("errors", 1250);
+            topic.put("outage", true);
+            topic.put("outage_id", "INC-2026-0915");
+            topic.put("impact", true);
+            topic.put("customers", 320);
+            topic.put("captions", java.util.Map.of("1", "Saatlik hata adedi"));
             var v = "tr".equals(lang)
-                    ? com.sitemonitor.service.techerror.TechErrorValues.normalize(java.util.Map.of("fields", tf,
-                            "units", java.util.Map.of("total-tx", 6)), t)
+                    ? com.sitemonitor.service.techerror.TechErrorCalc.apply(t, com.sitemonitor.service.techerror.TechErrorValues.normalize(
+                            java.util.Map.of("fields", tf, "issues", java.util.Map.of("issues", java.util.List.of(topic)),
+                                    "units", java.util.Map.of("total-tx", 6)), t,
+                            java.time.YearMonth.of(2026, 9)), null)
                     : com.sitemonitor.service.techerror.TechErrorValues.Values.empty();
             // 2026-10-17 (S5): görseller gövdede de — bir yarım ve bir tam yuva (sözleşme: cid görsel, MSO dışı sabit genişlik yok)
             java.util.Map<String, com.sitemonitor.service.techerror.TechErrorPdfInput.Image> timgs = "tr".equals(lang)
-                    ? java.util.Map.of("annual-summary", samplePng(1400, 700, 0x2563eb), "annual-tech-rate", samplePng(1600, 500, 0x16a34a))
+                    ? java.util.Map.of("annual-summary", samplePng(1400, 700, 0x2563eb), "annual-tech-rate", samplePng(1600, 500, 0x16a34a),
+                            "iss:issues:k1:1", samplePng(1200, 400, 0xdc2626))
                     : java.util.Map.of();
             var in = new com.sitemonitor.service.techerror.TechErrorPdfInput(t, v, "Bireysel İnternet Şubesi",
                     "Dijital Kanallar Uygulama Geliştirme (Bireysel / Mobil)", 2026, 9, "Ayşe Yılmaz",
