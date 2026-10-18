@@ -21322,6 +21322,8 @@ export const TR = {
   'te.cap.panelReadOnly': "Bu raporun görsellerini yalnız görüntüleyebilirsiniz; yükleme ve silme takımın üyelerine ve düzenleme paylaşımı olanlara açıktır.",
   'te.cap.panelNoImages': "Bu raporda görsel bölümü yok",
   'te.cap.panelNoImagesBody': "Raporun şablonunda görsel yuvası tanımlı değil. Görsel bölümü eklemek için kanalın şablonunu ana pencerede açın.",
+  'te.cap.panelTopicsHint': "Kayıtlı konuların görselleri, konu başlığının altında. Yeni konu, açıklama ve görsel açıklaması ana penceredeki rapordan eklenir.",
+  'te.cap.panelNoTopics': "Bu bölümde kayıtlı konu yok. Konuyu ana penceredeki raporda ekleyip kaydedin; görselleri sonra buradan eklenebilir.",
   'te.cap.zoneLabel': "{0} görsel yuvası — {1} ile görsel yapıştırabilirsiniz",
   'te.cap.replaceTitle': "Görsel değiştirilsin mi?",
   'te.cap.replaceBody': "“{0}” yuvasındaki görsel yapıştırdığınız görselle değiştirilecek. Şu anki görsel sonradan geri getirilemez.",

@@ -180,10 +180,11 @@ export function captureStamp(date = new Date()) {
 
 /**
  * Dosya adı: `<yuva>-ekran-<yyyyMMdd-HHmmss>.png` (ekrandan) / `<yuva>-pano-…` (panodan). Yuva kimliği şablonda
- * `[a-z0-9-]`; başka karakter atılır, boş kalırsa "gorsel".
+ * `[a-z0-9-]`; anomali konusu görselinin `iss:<bölüm>:<konu>:<n>` kimliğinde `:` / `_` → `-` (`iss-issues-k1-1`, Windows'ta
+ * geçersiz `:` dosya adına girmez); başka karakter atılır, boş kalırsa "gorsel".
  */
 export function captureFileName(slotId, kind = 'ekran', date = new Date(), ext = 'png') {
-  const slot = String(slotId || '').toLowerCase().replace(/[^a-z0-9-]+/g, '').slice(0, 60) || 'gorsel'
+  const slot = String(slotId || '').toLowerCase().replace(/[:_]+/g, '-').replace(/[^a-z0-9-]+/g, '').slice(0, 60) || 'gorsel'
   const e = String(ext || 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png'
   return `${slot}-${kind}-${captureStamp(date)}.${e}`
 }

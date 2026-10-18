@@ -14,6 +14,7 @@ import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './Captur
 import { KIND_IMAGES, KIND_REPORT, onImagesChanged } from './imageSync.js'
 import { openInMainWindow } from './panelWindow.js'
 import { useFileDropGuard } from './useFileDropGuard.js'
+import PanelIssueImages, { panelIssueSection } from './PanelIssueImages.jsx'
 
 /** Pencereye dönülünce (odak / görünür) rapor en çok bu sıklıkla yeniden okunur — şablon uygulandı mı, silindi mi. */
 export const PANEL_FOCUS_RELOAD_MS = 5000
@@ -25,7 +26,8 @@ export const PANEL_SYNC_RETRY_MAX = 3
  * üzerinden diğer sayfaya geçip ekran görüntüsünü alabilmeliyim"): `?tab=channelreports&te_view=images&te_rep=<id>`
  * adresinde App'in kenar çubuksuz kabuğunda açılır (`window.open`, 520 × 900). Raporun YALNIZ görsel bölümleri ve
  * yuvaları — yükleme, sürükle-bırak, yapıştırma, ekrandan alma (kendi paylaşım oturumu), değiştirme / silme, büyük
- * görünüm, rapor toplamı ve sınırlar — rapor düzenleyicisindeki yuvanın AYNISI (ImagesBlock).
+ * görünüm, rapor toplamı ve sınırlar — rapor düzenleyicisindeki yuvanın AYNISI (ImagesBlock). Görsel alan anomali
+ * bölümlerinin KAYITLI konularının görselleri de şablon sırasında, konu başlığının altında (`PanelIssueImages`).
  *
  * <p>Yetki aynıdır: salt okunur görüntüleyen yalnız görselleri görür; başka takımın / silinmiş rapor modülün olağan
  * "bulunamadı / yetki yok" durumunu gösterir. Ana pencereyle eşitleme `imageSync` üzerinden (iki yönlü); ana pencere
@@ -100,7 +102,9 @@ export default function ImagesPanelPage({ reportId }) {
   const channel = data?.channel
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
-  const sections = useMemo(() => (tpl?.sections || []).filter((s) => s.kind === 'images'), [tpl])
+  // Şablon sırasıyla: görsel bölümleri + görsel alan anomali bölümleri (konu görselleri konunun altında — 2026-10-18)
+  const sections = useMemo(() => (tpl?.sections || []).filter((s) => s.kind === 'images' || panelIssueSection(s, tpl?.lang)), [tpl])
+  const firstImagesId = sections.find((s) => s.kind === 'images')?.id
   const readOnly = !data?.can_edit
   const canClose = (() => { try { return !!window.opener } catch { return false } })()
 
@@ -168,10 +172,13 @@ export default function ImagesPanelPage({ reportId }) {
         {readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.cap.panelReadOnly')}</AlertBanner>}
         {sections.length === 0 ? (
           <StatusBlock tone="neutral" icon={ImageOff} title={t('te.cap.panelNoImages')} description={t('te.cap.panelNoImagesBody')} />
-        ) : sections.map((s, i) => (
+        ) : sections.map((s) => (s.kind === 'images' ? (
           <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
-            showTotals={i === 0} readOnly={readOnly} onImagesChange={onImagesChange} inPanel />
-        ))}
+            showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={onImagesChange} inPanel />
+        ) : (
+          <PanelIssueImages key={s.id} section={s} issues={data.values?.issues?.[s.id] || undefined} reportId={reportId}
+            images={images} uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange} resolve={resolve} />
+        )))}
       </main>
     </div>
   )

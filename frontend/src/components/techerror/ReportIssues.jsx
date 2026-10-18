@@ -16,6 +16,8 @@ import { RichText, RichTextarea } from './RichText.jsx'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import { CollapsibleCard } from './SectionCollapse.jsx'
 import { ImageSlotTile } from './ReportImages.jsx'
+import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './capture/CaptureParts.jsx'
+import { postImagesChanged } from './capture/imageSync.js'
 import {
   ISSUE_IMAGES, ISSUE_LIMITS, LIMITS, allFields, formatCount, formatPercent, issueDayLabel, issueDisplayTitle, issueHidden,
   issueLeadText, issueLegacy, issueOptions, issueRangeLabel, issueShare, issueSlotId, issueUnitKey, move, newIssue, reportMonthBounds,
@@ -43,7 +45,7 @@ const EMPTY = Object.freeze([])
  * 2026-10-15 kuralı — hazırlama sürerken başka yuvaya yüklenen görsel de sayılır).
  */
 export function IssuesBlock({ section, template, list = EMPTY, units = null, shownFields, resolve, uiLang, readOnly, errors, onIssuesUpdate,
-  onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload }) {
+  onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload, captureNotice = false }) {
   const t = useT()
   const sid = section.id
   const lang = template?.lang
@@ -68,6 +70,11 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
     }
     return m
   }, [images, sid])
+  // Ekrandan görsel alma (2026-10-18, anomali konusu görselleri de): paylaşım oturumu bu görünümde tutulur (rapordan çıkınca
+  // durur), her yükleme / silme öteki pencerelere (Görsel paneli) duyurulur — ImagesBlock ile aynı. Sabit: kart memo'su bozulmasın
+  useCaptureScope()
+  const notifyChange = useCallback((fn) => { onImagesChange(fn); postImagesChanged(reportId) }, [onImagesChange, reportId])
+  const capture = !legacy && opts.allowImages && !readOnly
   const patch = useCallback((iid, p) => onIssuesUpdate(sid, (l) => l.map((i) => (i.id === iid
     ? { ...i, ...(typeof p === 'function' ? p(i) : p) } : i))), [onIssuesUpdate, sid])
   const moveBy = useCallback((iid, delta) => onIssuesUpdate(sid, (l) => {
@@ -78,6 +85,10 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
   return (
     <CollapsibleCard sectionId={sid} slot="te-issues" title={resolve(section.title)} contentClassName="flex flex-col gap-4"
       hint={<p className="text-sm text-muted-foreground">{t(legacy ? 'te.issues.hint' : 'te.iss.hint')}</p>}>
+      {/* Paylaşım açıkken konu görsellerinin bölümünde de görünür (rapor yalnız konu görseli taşıyabilir); rapordaki ilk
+          görsel alan bölümü kapanma bildirimini bağlar (ReportEditor: görsel bölümü yoksa ilk görselli konu bölümü) */}
+      {capture && <CaptureSessionChip />}
+      {capture && captureNotice && <CaptureStopNotice />}
       {list.length === 0 && <p className="m-0 text-sm text-muted-foreground" data-slot="te-issues-empty">{t('te.issues.empty')}</p>}
       {hidden > 0 && (
         <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground" data-slot="te-issues-hidden-note" role="status">
@@ -90,7 +101,7 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
           <IssueCard key={iss.id} section={section} template={template} opts={opts} legacy={legacy} issue={iss} index={idx}
             count={list.length} shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
             errors={cardErrors(errors, sid, iss.id, idx)} onFieldError={onFieldError} reportId={reportId}
-            images={byIssue.get(iss.id) || EMPTY} otherBytes={otherBytes} onImagesChange={onImagesChange} period={period}
+            images={byIssue.get(iss.id) || EMPTY} otherBytes={otherBytes} onImagesChange={notifyChange} period={period}
             beforeIssueUpload={beforeIssueUpload} onPatch={patch} onMove={moveBy} onRemove={remove}
             // Kısaltma üsleri (2026-10-18) kartın KENDİ iki değeri — memo başka konunun üssünde yeniden çizmesin
             onUnit={onUnit} errorsUnit={units?.[issueUnitKey(sid, iss.id, 'errors')] ?? null}

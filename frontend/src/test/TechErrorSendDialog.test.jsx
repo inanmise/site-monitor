@@ -433,18 +433,21 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
         expect(ccInput(dlg)).toHaveValue('ek@example.com')
       })
 
-      it('taze okuma BAŞARISIZ → "gitmemiş" denmez (bilinmiyor): pencere taze; sonraki açılış yeniden denetler ve bandı getirir', async () => {
+      it('taze okuma BAŞARISIZ → "gitmemiş" denmez (bilinmiyor): pencere bantsız ama yazılan ek Bilgi ALANDA; sonraki açılış yeniden denetler ve bandı getirir', async () => {
         await notSentThenClosed()
         te().report.mockResolvedValueOnce({ success: false, status: 503, code: 'DB_UNAVAILABLE', error: 'Veritabanı yok.' })
         fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
         let dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
         expect(failureBox(dlg)).toBeNull()
+        // Boş açılış ek adresleri sessizce düşürürdü (gönderim geri alınamaz)
+        expect(ccInput(dlg)).toHaveValue('ek@example.com')
         fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
         await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
         await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
         fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
         dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
         expect(within(dlg).getByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+        expect(ccInput(dlg)).toHaveValue('ek@example.com')
       })
     })
 

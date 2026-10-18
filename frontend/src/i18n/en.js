@@ -21288,6 +21288,8 @@ export const EN = {
   'te.cap.panelReadOnly': "You can only view this report's images; uploading and deleting are open to the team's members and to people with edit sharing.",
   'te.cap.panelNoImages': "This report has no image section",
   'te.cap.panelNoImagesBody': "The report's template defines no image slot. Open the channel's template in the main window to add an image section.",
+  'te.cap.panelTopicsHint': "Images of the saved topics, under each topic's title. Add new topics, descriptions and image captions in the report in the main window.",
+  'te.cap.panelNoTopics': "There are no saved topics in this section. Add the topic in the report in the main window and save it; its images can then be added here.",
   'te.cap.zoneLabel': "{0} image slot — paste an image with {1}",
   'te.cap.replaceTitle': "Replace the image?",
   'te.cap.replaceBody': "The image in “{0}” will be replaced by the one you pasted. The current image can't be restored afterwards.",

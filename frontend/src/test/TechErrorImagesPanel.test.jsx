@@ -193,6 +193,86 @@ describe('Görsel paneli', () => {
   })
 })
 
+describe('Görsel paneli — anomali konu görselleri (ekrandan görsel alma × anomali konuları, 2026-10-18)', () => {
+  const ISSUES = { id: 'issues', kind: 'issues', title: 'Anormal Artış Gösteren Hatalar', item_title: '{konu}: Hata Artışı',
+    allow_images: true, ask_time: true }
+  const tplWith = (...sections) => ({ ...TEMPLATE, sections })
+  const CHARTS = TEMPLATE.sections.find((s) => s.kind === 'images')
+  const TOPIC_IMG = { id: 31, slot_id: 'iss:issues:k1:1', file_name: 'kart.png', width: 1200, height: 500, size_bytes: 50_000 }
+
+  it('konu görselleri şablon sırasıyla, KAYITLI konunun başlığı altında; ikinci yuva ilki doluysa; görsel almayan anomali bölümü yok', async () => {
+    te().report.mockResolvedValue(reportResponse({
+      template: tplWith(ISSUES, CHARTS, { id: 'legacy', kind: 'issues', title: 'Eski konular' }),
+      values: { fields: {}, issues: { issues: [{ id: 'k1', topic: 'Kart Limiti', title_auto: true }, { id: 'k2', topic: 'EFT' }] }, texts: {} },
+      images: [TOPIC_IMG],
+    }))
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    const blocks = [...view.container.querySelectorAll('[data-slot="te-panel-issue-images"], [data-slot="te-images"]')]
+    expect(blocks.map((b) => b.getAttribute('data-slot'))).toEqual(['te-panel-issue-images', 'te-images'])
+    expect(screen.queryByText('Eski konular')).toBeNull()
+    const topics = view.container.querySelectorAll('[data-slot="te-panel-issue"]')
+    expect([...topics].map((x) => x.getAttribute('data-issue'))).toEqual(['k1', 'k2'])
+    expect(within(topics[0]).getByRole('heading', { level: 4, name: 'Kart Limiti: Hata Artışı' })).toBeInTheDocument()
+    // k1: görsel 1 dolu → görsel 2 de açık; k2: yalnız görsel 1
+    expect([...topics[0].querySelectorAll('[data-slot="te-image-slot"]')].map((x) => x.getAttribute('data-slot-id')))
+      .toEqual(['iss:issues:k1:1', 'iss:issues:k1:2'])
+    expect([...topics[1].querySelectorAll('[data-slot="te-image-slot"]')].map((x) => x.getAttribute('data-slot-id')))
+      .toEqual(['iss:issues:k2:1'])
+    // Görselin adı konuyu taşır (iki konunun "Görsel 1"i karışmaz); yuva yapıştırma alanı da
+    expect(topics[0].querySelector('[data-slot-id="iss:issues:k1:1"] img')).toHaveAttribute('alt', 'Kart Limiti: Hata Artışı — Görsel 1')
+    expect(within(topics[1]).getByRole('group', { name: /EFT: Hata Artışı — Görsel 1/ })).toBeInTheDocument()
+    expect(screen.queryByText('Bu raporda görsel bölümü yok')).toBeNull()
+  })
+
+  it('panelde konu görseli yüklemesi: raporu KAYDETMEZ (konu kayıtlı), yuvanın kimliğiyle yüklenir ve öteki pencerelere duyurulur; yapıştırma da aynı yol', async () => {
+    te().report.mockResolvedValue(reportResponse({
+      template: tplWith(ISSUES),
+      values: { fields: {}, issues: { issues: [{ id: 'k1', topic: 'Kart Limiti', title_auto: true }] }, texts: {} },
+    }))
+    const got = []
+    other.onmessage = (e) => got.push(e.data)
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    pick(view.container.querySelector('[data-slot-id="iss:issues:k1:1"]'), png('a.png'))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledWith('100', 'iss:issues:k1:1', expect.any(File)))
+    expect(te().saveReport).not.toHaveBeenCalled()
+    await waitFor(() => expect(got).toEqual([expect.objectContaining({ reportId: '100', kind: KIND_IMAGES })]))
+    // İkinci yuva ilki dolunca açılır; Ctrl+V ile yapıştırma aynı yükleme yoluna gider (dosya adı yuvadan, ":" yok)
+    const slot2 = await waitFor(() => {
+      const el = view.container.querySelector('[data-slot-id="iss:issues:k1:2"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'image.png', { type: 'image/png' })
+    fireEvent.paste(slot2, { clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }], files: [file], types: ['Files'] } })
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(2))
+    const [, slotId, sent] = te().uploadImage.mock.calls[1]
+    expect(slotId).toBe('iss:issues:k1:2')
+    expect(sent.name).toMatch(/^iss-issues-k1-2-pano-\d{8}-\d{6}\.png$/)
+    expect(te().saveReport).not.toHaveBeenCalled()
+  })
+
+  it('kayıtlı konusu olmayan görselli anomali bölümü: ne yapılacağını söyler; yalnız konu görseli olan şablonda boş durum yok; salt okunur yükleme yok', async () => {
+    te().report.mockResolvedValue(reportResponse({ template: tplWith(ISSUES), values: { fields: {}, issues: {}, texts: {} } }))
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    expect(view.container.querySelector('[data-slot="te-panel-no-topics"]')).toHaveTextContent('Bu bölümde kayıtlı konu yok')
+    expect(screen.queryByText('Bu raporda görsel bölümü yok')).toBeNull()
+    view.unmount()
+    te().report.mockResolvedValue(reportResponse({
+      template: tplWith(ISSUES), can_edit: false,
+      values: { fields: {}, issues: { issues: [{ id: 'k1', topic: 'Kart Limiti', title_auto: true }] }, texts: {} }, images: [TOPIC_IMG],
+    }))
+    const ro = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    const slot = ro.container.querySelector('[data-slot-id="iss:issues:k1:1"]')
+    expect(slot.querySelector('img')).not.toBeNull()
+    expect(slot.querySelector('[data-slot="te-image-upload"]')).toBeNull()
+    expect(slot.getAttribute('tabindex')).toBeNull()
+  })
+})
+
 describe('düzenleyici ↔ panel eşitlemesi', () => {
   it('panelin iletisi düzenleyicide YALNIZ görselleri yeniler: yazılmış taslak kalır, kayıt gitmez', async () => {
     window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')

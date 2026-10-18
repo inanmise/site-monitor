@@ -178,7 +178,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
 
   // Dolu yuvaya yapıştırma önce sorar: yeni görsel eskisinin yerini alır, geri alma yok (inceleme 2026-10-18)
   const confirmReplace = () => showConfirm({
-    title: t('te.cap.replaceTitle'), message: t('te.cap.replaceBody', label), confirmText: t('te.img.replace'), cancelText: t('te.cancel'),
+    title: t('te.cap.replaceTitle'), message: t('te.cap.replaceBody', fullLabel), confirmText: t('te.img.replace'), cancelText: t('te.cancel'),
   })
 
   async function remove() {
@@ -201,8 +201,10 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     }
   }
 
-  // Yapıştırma (Ctrl/⌘+V, "Panodan yapıştır") ve "Ekrandan al" aynı yükleme yoluna varır (capture/SlotCapture)
-  const cap = useSlotCapture({ slotId: slot.id, label, busy, readOnly, inPanel, hasImage: !!image, confirmReplace, onFile: upload })
+  // Yapıştırma (Ctrl/⌘+V, "Panodan yapıştır") ve "Ekrandan al" aynı yükleme yoluna varır (capture/SlotCapture) — anomali
+  // konusu görselinde de (ImageSlotTile): `beforeUpload` (kaydedilmemiş konu önce kaydedilir) ve nedenli ret metni aynı.
+  // Ad bağlamlı ("Konu — Görsel 1"): iki konunun "Görsel 1" yuvası ekran okuyucuda / onayda karışmasın
+  const cap = useSlotCapture({ slotId: slot.id, label: fullLabel, busy, readOnly, inPanel, hasImage: !!image, confirmReplace, onFile: upload })
   const inputId = `te-img-${slot.id}`
 
   // Yükleme / silme bitince: sürerken düğmeler kapalıydı (ya da "Kaldır" kalktı) ve odak sayfanın gövdesine düşmüş olabilir —
@@ -226,7 +228,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   const moreItems = half ? [
     cap.pasteMenuItem,
     image ? {
-      label: t('te.img.remove'), ariaLabel: `${t('te.img.remove')}: ${label}`, icon: <Trash2 aria-hidden="true" />,
+      label: t('te.img.remove'), ariaLabel: `${t('te.img.remove')}: ${fullLabel}`, icon: <Trash2 aria-hidden="true" />,
       danger: true, disabled: busy, onClick: remove,
     } : null,
   ].filter(Boolean) : []
@@ -308,7 +310,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
             )}
             {half && moreItems.length > 0 && (
               <span className="flex [&>button]:w-full @xs:[&>button]:w-auto" data-slot="te-image-more">
-                <KebabMenu variant="labeled" label={t('te.cap.moreActions')} ariaLabel={t('te.cap.moreActionsFor', label)}
+                <KebabMenu variant="labeled" label={t('te.cap.moreActions')} ariaLabel={t('te.cap.moreActionsFor', fullLabel)}
                   items={moreItems} />
               </span>
             )}

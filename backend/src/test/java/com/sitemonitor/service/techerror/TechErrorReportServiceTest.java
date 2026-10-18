@@ -966,6 +966,59 @@ class TechErrorReportServiceTest {
         assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("\"id\":\"k2\"").contains("\"share\":0.2");
     }
 
+    @Test
+    @DisplayName("anomali + kısaltma (2026-10-18): konunun \"1,25M\" yazılmış hata adedinin üssü (issues.<bölüm>.<konu>.errors = 6)"
+            + " \"şablonun son hâlini uygula\"dan sonra da kalır — değer 1.250.000, pay sayıdan hesaplanır; konu yeni şablonda düşünce"
+            + " üssü de düşer")
+    void issueCountUnitSurvivesTemplateRefresh() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        String key = TechErrorValues.issueUnitKey("issues", "k1", "errors");
+        assertThat(key).isEqualTo("issues.issues.k1.errors");
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of(
+                "fields", Map.of("error-count", 50_000_000, "total-tx", 900_000_000),
+                "issues", Map.of("issues", List.of(topicRaw("k1", "errors", 1_250_000), topicRaw("k2", "errors", 10))),
+                "units", Map.of(key, 6)), 7L);
+        Template t1 = TechErrorTemplate.fromStored(s1.getTemplateJson());
+        assertThat(TechErrorValues.fromStored(s1.getValuesJson(), t1).issueUnit("issues", "k1", "errors")).isEqualTo(6);
+
+        // Şablon değişir (bölüm başlığı) → rapora son hâli uygulanır: konu taşınır, üssü de
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(service.channel(ch.getId()).getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.put("title", "Anomaliler (yeni)");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v2 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("lost_values", 0);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        TechErrorReport refreshed = reports.findById(r.getId()).orElseThrow();
+        Template t2 = TechErrorTemplate.fromStored(refreshed.getTemplateJson());
+        var rv = TechErrorValues.fromStored(refreshed.getValuesJson(), t2);
+        assertThat(rv.issueUnit("issues", "k1", "errors")).isEqualTo(6);
+        assertThat(rv.units()).containsExactly(Map.entry(key, 6));
+        assertThat(rv.issues().get("issues")).extracting(TechErrorValues.Issue::id, i -> i.errors().longValue())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("k1", 1_250_000L), org.assertj.core.groups.Tuple.tuple("k2", 10L));
+        // Pay SAYIDAN (1.250.000 ÷ 50.000.000 = %2,5) — üs hesaba girmez (yenilemede yeniden hesaplanır, PDF girdisinde canlı);
+        // PDF girdisi üssü taşır
+        assertThat(refreshed.getValuesJson()).contains("\"share\":2.5");
+        var pdfValues = service.pdfInput(refreshed, v2, "Dijital").values();
+        assertThat(pdfValues.issues().get("issues").get(0).share().doubleValue()).isEqualTo(2.5);
+        assertThat(pdfValues.issueUnit("issues", "k1", "errors")).isEqualTo(6);
+
+        // Konusu yeni şablonda kalmayan üs taşınmaz (issues bölümü kaldırılır)
+        secs.removeIf(x -> "issues".equals(x.get("kind")));
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 2, TechErrorTemplate.normalize(raw), 7L);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        TechErrorReport gone = reports.findById(r.getId()).orElseThrow();
+        assertThat(TechErrorValues.fromStored(gone.getValuesJson(), TechErrorTemplate.fromStored(gone.getTemplateJson())).units()).isEmpty();
+    }
+
     @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     @Test

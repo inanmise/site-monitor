@@ -138,6 +138,9 @@ describe('captureModel — kare, dosya adı, pano', () => {
     expect(captureFileName('daily-errors', 'pano', d, 'jpg')).toBe('daily-errors-pano-20261018-100509.jpg')
     expect(captureFileName('../Kötü Ad!', 'ekran', d)).toBe('ktad-ekran-20261018-100509.png')
     expect(captureFileName('', 'ekran', d)).toBe('gorsel-ekran-20261018-100509.png')
+    // Anomali konusu görseli (iss:<bölüm>:<konu>:<n>): ":" / "_" tireye döner — dosya adında ":" yok, kimlik okunur kalır
+    expect(captureFileName('iss:issues:k1:1', 'ekran', d)).toBe('iss-issues-k1-1-ekran-20261018-100509.png')
+    expect(captureFileName('iss:anomali_2:i-17x:2', 'pano', d, 'png')).toBe('iss-anomali-2-i-17x-2-pano-20261018-100509.png')
     // Gece yarısını geçen UTC saati İstanbul gününe yazılır
     expect(captureStamp(new Date('2026-10-18T22:30:00Z'))).toBe('20261019-013000')
   })

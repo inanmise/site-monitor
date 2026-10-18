@@ -104,6 +104,24 @@ function clockTime(ms, lang) {
   }).format(new Date(ms))
 }
 
+/** JSON metni → nesne; okunamazsa boş nesne. */
+function parseJsonOr(json) {
+  try { return JSON.parse(json || '{}') || {} } catch { return {} }
+}
+
+/**
+ * Görsel alan anomali bölümlerinin kayıtlı konu kimlikleri (`{bölüm: [kimlik…]}` JSON'u) — Görsel paneli konu görsellerini
+ * bunlardan listeler; değişince panel yeniden okur.
+ */
+function imageTopicIds(values, tpl) {
+  const out = {}
+  for (const s of tpl?.sections || []) {
+    if (s.kind !== 'issues' || !issueOptions(s, tpl?.lang).allowImages) continue
+    out[s.id] = (values?.issues?.[s.id] || []).map((i) => i?.id ?? null)
+  }
+  return JSON.stringify(out)
+}
+
 /**
  * AYLIK RAPOR DÜZENLEYİCİSİ. Bölümler raporun KOPYALANMIŞ şablonundan çizilir (şablon sonradan değişse de bu rapor
  * değişmez; taslakta "şablonun son hâlini uygula" isteyerek alır). Değer kaydı sürüm denetimlidir (409 → uyarı +
@@ -548,7 +566,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       if (res?.success && res.data) {
         const values = normalizeValues(res.data.values)
         const baseJson = canonJson(values)
+        const prevTopics = imageTopicIds(parseJsonOr(baseRef.current.json), canonTpl.current)
         applyBase({ json: baseJson, version: res.data.version })
+        // Görsel paneli konu görsellerini KAYITLI konulardan listeler (2026-10-18): kayıt görsel alan bir bölümün konu listesini
+        // değiştirdiyse (eklenen konu; silinen konu — sunucu görsellerini de bu kayıtta sildi) açık panel yeniden okusun
+        if (imageTopicIds(values, canonTpl.current) !== prevTopics) postImagesChanged(reportId, KIND_REPORT)
         accepted.current = auto ? { sent: sentJson, base: baseJson } : null
         // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır. Otomatik kayıt taslağa
         // HİÇ dokunmaz (kullanıcı yazıyor olabilir); yedek yine silinir — içerik sunucuda
@@ -723,9 +745,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         return
       }
       if (!fresh) {
-        // Okunamadı: "gitmemiş" denmez (bilinmiyor) — pencere taze açılır; sonraki açılış yeniden denetler
+        // Okunamadı: "gitmemiş" denmez (bilinmiyor) — pencere bantsız açılır ama taşınan ek Bilgi ALANDA (bu dalda boş açılış
+        // ek adresleri sessizce düşürür, gönderim geri alınamaz); sonraki açılış yeniden denetler
         resumeSend.current = r
-        setSendDialog({ error: null, failure: null })
+        setSendDialog({ error: null, failure: null, initialCc: ccCarry.current })
         return
       }
     }
@@ -1126,6 +1149,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [issueChecks, clientErrors, pending])
   // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
+  // Ekrandan görsel alma: paylaşımın kendiliğinden kapandığını söyleyen TEK bildirim ilk görsel bölümünde; rapor yalnız anomali
+  // konusu görseli taşıyorsa ilk görsel alan konu bölümünde (yoksa hiç söylenmezdi)
+  const firstIssueImagesId = firstImagesId ? null
+    : sections.find((s) => s.kind === 'issues' && issueOptions(s, tpl?.lang).allowImages)?.id
   // Otomatik oranlar (2026-10-16): taslağın adetlerinden CANLI hesap — yalnız gösterim (alan çıktısı, özet önizlemesi,
   // trendin bu ayı); taslağa yazılmaz, kaydedilen değeri sunucu hesaplar
   const prevFields = data?.previous?.fields || null
@@ -1406,7 +1433,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly} errors={fieldErrors}
             onIssuesUpdate={updateIssues} onFieldError={setFieldError} onUnit={setUnit} reportId={reportId} images={images}
             onImagesChange={onImagesChange} period={issuePeriod}
-            beforeIssueUpload={beforeIssueUpload} />
+            beforeIssueUpload={beforeIssueUpload} captureNotice={s.id === firstIssueImagesId} />
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
