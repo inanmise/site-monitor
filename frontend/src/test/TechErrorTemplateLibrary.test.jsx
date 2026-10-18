@@ -49,7 +49,10 @@ async function pickFrom(scope, name, label) {
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
-  te().createChannel.mockResolvedValue({ success: true, data: { id: 30, name: 'ATM' } })
+  // Yeni pod gibi: gerçekten kullanılan şablon kaynağını yanıtta onaylar (template_source)
+  te().createChannel.mockImplementation(async (body) => ({ success: true, data: { id: 30, name: 'ATM',
+    template_source: body.library_template_id != null ? { kind: 'library', library_template_id: body.library_template_id }
+      : { kind: body.copy_from != null ? 'copy' : 'default' } } }))
   te().teamTemplates.mockImplementation(async (id) => (String(id) === '1' ? LIB : libResponse([])))
 })
 

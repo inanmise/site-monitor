@@ -417,6 +417,7 @@ public class TechErrorReportController {
                     "Seçilen şablon bu takımın kütüphanesinde bulunamadı; silinmiş olabilir. Listeden yeniden seçin.",
                     "The chosen template wasn't found in this team's library; it may have been deleted. Pick it again from the list."));
             try {
+                // Okunamayan kayıt → 409 TEMPLATE_UNREADABLE (alan library_template_id); sistem şablonuna sessizce düşülmez
                 template = com.sitemonitor.service.techerror.TechErrorTeamTemplateService.validatedTemplate(entry.get());
             } catch (FieldValidationException e) {
                 throw new FieldValidationException("library_template_id", Msg.t(
@@ -445,7 +446,17 @@ public class TechErrorReportController {
                                 "library_template_id", libraryRef, "template_name", libraryName)
                         : AuditDetail.of("team_id", teamId, "name", ch.getName(), "copy_from", copyFrom,
                                 "source", source.kind()));
-        return ok(channelDto(ch, team, session, true));
+        Map<String, Object> dto = channelDto(ch, team, session, true);
+        // Şablonun GERÇEKTEN kullanılan kaynağı (2026-10-18 inceleme): istemci kütüphane şablonu istediyse ve yanıtta bu
+        // onay yoksa (yayılım sırasında eski pod library_template_id'yi tanımaz, sistem şablonuyla açar) kullanıcıyı uyarır
+        Map<String, Object> src = new LinkedHashMap<>();
+        src.put("kind", source.kind());
+        if (fromLibrary) {
+            src.put("library_template_id", parseId(String.valueOf(libraryRef)));
+            src.put("name", libraryName);
+        }
+        dto.put("template_source", src);
+        return ok(dto);
     }
 
     @PutMapping("/channels/{id}")

@@ -103,6 +103,7 @@ class TechErrorReportTemplateVersionBackfillTest {
             jdbc.update("DELETE FROM schema_patch_markers WHERE patch_key = ?", TechErrorReportTemplateVersionBackfill.KEY);
             service.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z"), ZoneOffset.UTC));
             backfill.clock = System::currentTimeMillis;
+            backfill.resumeAfter.set(0L);
         }
 
         /** Sütundan önceki rapor gibi: sürümü boşaltılır (geçmiş olayı durur). */
@@ -145,7 +146,9 @@ class TechErrorReportTemplateVersionBackfillTest {
             events.save(bad);
 
             assertThat(backfill.done()).isFalse();
-            assertThat(backfill.backfillLocked()).isEqualTo(2);
+            TechErrorReportTemplateVersionBackfill.Outcome out = backfill.scanLocked();
+            assertThat(out.filled()).isEqualTo(2);
+            assertThat(out.corrected()).isZero();                     // yeni yolun yazdığı sürüm olayıyla aynı → dokunulmaz
             assertThat(versionOf(fromCreate)).isEqualTo(1);
             assertThat(versionOf(refreshed)).isEqualTo(v2);
             assertThat(versionOf(noHistory)).isNull();
@@ -157,15 +160,64 @@ class TechErrorReportTemplateVersionBackfillTest {
         }
 
         @Test
-        @DisplayName("koşullu yazım: arada sürüm yazıldıysa (son hâli uygula / yeni pod) geri doldurma ezmez")
+        @DisplayName("koşullu yazım: boş sütun yalnız boşken, dolu sütun yalnız okunan değerdeyken yazılır; sütun en yeni şablon olayıyla aynıysa (yeni pod) geri doldurma dokunmaz")
         void conditionalWrite() {
             TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTemplate.defaults("tr"), 7L);
             TechErrorReport r = legacy(ch, 8);
             assertThat(reports.fillTemplateVersion(r.getId(), 5)).isEqualTo(1);
             assertThat(reports.fillTemplateVersion(r.getId(), 1)).isZero();
+            assertThat(reports.replaceTemplateVersion(r.getId(), 4, 1)).isZero();        // okunan değer artık yok → yazmaz
             assertThat(versionOf(r)).isEqualTo(5);
+            // Yeni pod sütunu ve olayı AYNI işlemde yazar: en yeni şablon olayı sütunla aynı → dokunulmaz
+            refreshEvent(r, ch, "{\"template_version\":5,\"removed_values\":0}");
             assertThat(backfill.backfillLocked()).isZero();
             assertThat(versionOf(r)).isEqualTo(5);
+        }
+
+        private void refreshEvent(TechErrorReport r, TechErrorChannel ch, String detail) {
+            TechErrorReportEvent e = new TechErrorReportEvent();
+            e.setReportId(r.getId());
+            e.setChannelId(ch.getId());
+            e.setTeamId(1L);
+            e.setKind("TEMPLATE_REFRESH");
+            e.setEventAt(Instant.parse("2026-10-13T11:00:00Z"));
+            e.setDetailJson(detail);
+            events.save(e);
+        }
+
+        @Test
+        @DisplayName("v2 — ESKİ podun 'son hâli uygula'sı: olay yeni sürümü yazdı, sütun eskide kaldı → en yeni olayın sürümü yazılır; ayrıntısı okunamayan en yeni olayda dolu sütun korunur")
+        void correctsStaleVersionFromOldPod() {
+            TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTemplate.defaults("tr"), 7L);
+            TechErrorReport stale = service.createReport(ch, 2026, 8, 7L);                 // sütun 1, CREATE v1
+            TechErrorReport kept = service.createReport(ch, 2026, 7, 7L);                  // sütun 1, CREATE v1
+            int v2 = service.saveTemplate(ch.getId(), 1, TechErrorTemplate.defaults("en"), 7L);
+            TechErrorReport s1 = reports.findById(stale.getId()).orElseThrow();
+            service.refreshTemplate(s1.getId(), s1.getVersion(), 7L);                     // olay TEMPLATE_REFRESH v2 …
+            assertThat(reports.replaceTemplateVersion(stale.getId(), v2, 1)).isEqualTo(1); // … ama eski pod sütunu yazmadı (1'de kaldı)
+            refreshEvent(kept, ch, "{bozuk");                                               // en yeni olay okunamıyor: tahmin yok
+            assertThat(versionOf(stale)).isEqualTo(1);
+
+            TechErrorReportTemplateVersionBackfill.Outcome out = backfill.scanLocked();
+            assertThat(out.corrected()).isEqualTo(1);
+            assertThat(out.filled()).isZero();
+            assertThat(versionOf(stale)).isEqualTo(v2);
+            assertThat(versionOf(kept)).isEqualTo(1);
+            assertThat(backfill.done()).isTrue();
+            assertThat(service.templateVersionCounts(ch.getId())).containsEntry(1, 1L).containsEntry(v2, 1L);
+        }
+
+        @Test
+        @DisplayName("nişan anahtarı v2 (yalnız boşları dolduran ilk yapının nişanı bu taramayı atlatmaz)")
+        void markerKeyIsV2() {
+            assertThat(TechErrorReportTemplateVersionBackfill.KEY).isEqualTo("2026-10-18-tech-error-report-template-version-v2");
+            jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                    "2026-10-18-tech-error-report-template-version", "2026-10-18T00:00:00", 0);
+            try {
+                assertThat(backfill.done()).isFalse();
+            } finally {
+                jdbc.update("DELETE FROM schema_patch_markers WHERE patch_key = ?", "2026-10-18-tech-error-report-template-version");
+            }
         }
 
         @Test
@@ -182,6 +234,28 @@ class TechErrorReportTemplateVersionBackfillTest {
             assertThat(backfill.done()).isTrue();
             assertThat(versionOf(r)).isEqualTo(1);
             assertThat(List.of(r.getId())).isNotEmpty();
+        }
+
+        @Test
+        @DisplayName("bütçe dolunca tarama kaldığı kimlikten sürer (imleç): her koşu ilerler, sonsuza dek baştan başlamaz")
+        void budgetResumesFromCursor() {
+            TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTemplate.defaults("tr"), 7L);
+            TechErrorReport a = legacy(ch, 8);
+            TechErrorReport b = legacy(ch, 7);
+            // sayfa 1 kayıt → her sayfadan sonra bütçe dolar
+            long[] t = { 0 };
+            backfill.clock = () -> { t[0] += TechErrorReportTemplateVersionBackfill.BUDGET_MS + 1; return t[0]; };
+            int batch = TechErrorReportTemplateVersionBackfill.BATCH;
+            assertThat(batch).isGreaterThan(1);
+            assertThat(backfill.backfillLocked()).isEqualTo(2);       // tek sayfada ikisi de (BATCH > 2)
+            assertThat(backfill.done()).isFalse();                    // bütçe doldu → nişan yok
+            TechErrorReport c = legacy(ch, 6);                        // imleçten SONRA gelen kimlik
+            backfill.clock = System::currentTimeMillis;
+            assertThat(backfill.backfillLocked()).isEqualTo(1);       // yalnız imleçten sonrası taranır
+            assertThat(backfill.done()).isTrue();
+            assertThat(versionOf(a)).isEqualTo(1);
+            assertThat(versionOf(b)).isEqualTo(1);
+            assertThat(versionOf(c)).isEqualTo(1);
         }
     }
 }

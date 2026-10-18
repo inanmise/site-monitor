@@ -74,7 +74,8 @@ public class TechErrorTeamTemplateController {
         if (readableTeam(teamId, session) == null) return teamNotFound();
         TechErrorTeamTemplate e = library.get(teamId, id);
         Map<String, Object> m = entryDto(e, canEdit(session, teamId));
-        m.put("template", TechErrorTemplate.toMap(TechErrorTeamTemplateService.templateOf(e)));
+        // Okunamayan (bozuk) kayıt sistem şablonuna DÜŞMEZ: 409 TEMPLATE_UNREADABLE ("Varsayılana dön" taslağı değiştirmez)
+        m.put("template", TechErrorTemplate.toMap(TechErrorTeamTemplateService.readableTemplate(e)));
         return ok(m);
     }
 
@@ -106,14 +107,15 @@ public class TechErrorTeamTemplateController {
         boolean nameSent = b.containsKey("name");
         Template t = b.containsKey("template") ? TechErrorTemplate.normalize(b.get("template")) : null;
         Boolean makeDefault = b.containsKey("default") ? Boolean.valueOf(boolOf(b.get("default"))) : null;
-        String nameBefore = nameSent ? library.get(teamId, id).getName() : null;
         TechErrorTeamTemplateService.UpdateResult res = library.update(teamId, id, version, nameSent, str(b.get("name")), t,
                 makeDefault, userId(session));
         TechErrorTeamTemplate e = res.entry();
         if (res.isChanged()) {
             auditService.recordAction("TECH_ERROR_TEAM_TEMPLATE_UPDATE", session, request, "TEAM", String.valueOf(teamId),
                     AuditDetail.of("team_id", teamId, "template_id", e.getId(), "name", e.getName(),
-                            "name_before", res.changed().contains("name") ? nameBefore : null,
+                            // eski ad servisin KİLİT ALTINDA okuduğu değer (kilit dışında okunsa eşzamanlı bir yeniden
+                            // adlandırmanın adını yazabilirdi)
+                            "name_before", res.changed().contains("name") ? res.nameBefore() : null,
                             "default", e.isDefaultEntry(), "fields", String.join(",", res.changed())));
         }
         Map<String, Object> m = entryDto(e, true);

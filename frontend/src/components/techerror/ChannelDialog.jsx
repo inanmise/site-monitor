@@ -30,6 +30,12 @@ const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/
  * takımın VARSAYILANI varsa ilk kaynak odur (kullanıcı elle başka bir kaynak seçmediyse). Takım değişince kütüphane yeniden
  * okunur; kart her durumda çizilir (yükleniyor / okunamadı + yeniden dene / boş) — okunamayan kütüphane "yok" sayılmaz,
  * diğer kaynaklar çalışır. Gönderim `library_template_id`; sunucu kaydın AÇILAN kanalın takımına ait olduğunu denetler.
+ *
+ * İnceleme (2026-10-18): kaynağa "dokunuldu" sayılması yalnız DEĞİŞİMLE değil her kart tıklaması / klavye seçimiyle olur
+ * (seçili TR kartına bilerek basan kullanıcının seçimi kütüphane gelince ezilmez). Kullanıcı kaynağa dokunmadıysa ve
+ * kütüphane henüz okunuyorsa "Kanalı aç" bekler (takımın varsayılanı gelmeden sistem şablonuyla açılmasın). "Takım
+ * varsayılanı seçili geldi" yalnız otomatik seçim duruyorken söylenir. Sunucu kütüphane şablonunu uyguladığını yanıtta
+ * (`template_source`) onaylamazsa — yayılım sırasında eski pod alanı tanımaz — kullanıcı uyarılır.
  */
 export default function ChannelDialog({ mode, channel = null, teams = [], channels = [], defaultTeam = null, onClose, onSaved }) {
   const t = useT()
@@ -52,6 +58,13 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
   // (kullanıcı bir kaynağı elle seçmediyse). Okunamazsa kart "okunamadı" der, diğer kaynaklar çalışır
   const [libraryId, setLibraryId] = useState('')
   const sourceTouched = useRef(false)
+  // Görünür durum için aynası (Kanalı aç düğmesi ve not); efektler ref'i okur
+  const [touched, setTouched] = useState(false)
+  // Otomatik seçilen takım varsayılanı (kimlik) — kullanıcı kaynağı ya da kaydı değiştirince silinir
+  const [autoDefaultId, setAutoDefaultId] = useState('')
+  const markTouched = () => {
+    if (!sourceTouched.current) { sourceTouched.current = true; setTouched(true) }
+  }
   const lib = useTeamLibrary(teamId, { enabled: mode === 'create' && !!teamId })
   const sourceLabelId = useId()
   const [errors, setErrors] = useState({})
@@ -65,11 +78,18 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
   const libraryOpts = useMemo(() => libraryOptions(lib.entries, t('te.lib.defaultSuffix')), [lib.entries, t])
   const libraryUsable = lib.ready && lib.entries.length > 0
   const libraryDefault = defaultEntry(lib.entries)
+  // "Takım varsayılanı seçili geldi" yalnız otomatik seçim hâlâ duruyorsa; kullanıcı başka kayda / kaynağa geçince nötr sayı
+  const autoChoiceStands = !!libraryDefault && source === 'library' && autoDefaultId !== ''
+    && String(libraryId) === String(autoDefaultId) && String(libraryDefault.id) === String(autoDefaultId)
   const libraryHint = lib.error ? t('te.source.libraryError')
     : !lib.ready ? t('te.source.libraryLoading')
       : lib.entries.length === 0 ? t('te.source.libraryEmpty')
-        : libraryDefault ? t('te.source.libraryHintDefault', lib.entries.length, libraryDefault.name)
+        : autoChoiceStands ? t('te.source.libraryHintDefault', lib.entries.length, libraryDefault.name)
           : t('te.source.libraryHint', lib.entries.length)
+  // Kullanıcı kaynağa dokunmadı ve takımın kütüphanesi (varsayılanı) henüz okunuyor: "Kanalı aç" bekler — yoksa hızlı bir
+  // gönderim takımın varsayılanı varken sistem şablonuyla kanal açardı. Okuma başarısızsa beklenmez (diğer kaynaklar çalışır)
+  const waitingDefault = mode === 'create' && !!teamId && !touched && !lib.error && !lib.ready
+  const waitingId = useId()
 
   // Kütüphane (yeniden) okununca: elle seçilmemişse takım varsayılanı ilk kaynak, yoksa arayüz dilinin varsayılanı. Elle
   // "kütüphane" seçildiyse ve yeni takımın kütüphanesinde o kayıt yoksa seçim temizlenir (başka takımın kaydı gitmesin)
@@ -79,6 +99,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
       const init = initialSource(lib.entries, uiLang)
       setSource(init.source)
       setLibraryId(init.libraryId)
+      setAutoDefaultId(init.source === 'library' ? init.libraryId : '')
       return
     }
     setLibraryId((cur) => (cur && lib.entries.some((e) => String(e.id) === String(cur)) ? cur : ''))
@@ -90,6 +111,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
     if (mode !== 'create' || lib.ready || libTeamMatches) return
     if (!sourceTouched.current && source === 'library') setSource(uiLang === 'en' ? 'en' : 'tr')
     setLibraryId((cur) => (lib.entries.some((e) => String(e.id) === String(cur)) ? cur : ''))
+    setAutoDefaultId('')
   }, [mode, lib.ready, libTeamMatches, lib.entries, source, uiLang])
 
   function validate() {
@@ -112,7 +134,7 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
 
   async function submit(ev) {
     ev?.preventDefault?.()
-    if (busy || !validate()) return
+    if (busy || waitingDefault || !validate()) return
     setBusy(true)
     try {
       let res
@@ -133,6 +155,11 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
       }
       if (res?.success) {
         toast.success(mode === 'create' ? t('te.channelCreated', name.trim()) : t('te.channelSaved'))
+        // Sunucu kütüphane şablonunu uyguladığını onaylamadı (yayılım sırasında eski pod library_template_id'yi tanımaz,
+        // kanalı sistem şablonuyla açar): kullanıcı "kütüphane şablonuyla açıldı" sanmasın
+        if (mode === 'create' && source === 'library' && res.data?.template_source?.kind !== 'library') {
+          toast.error(t('te.lib.notApplied'), { duration: 12000 })
+        }
         onSaved(res.data)
         return
       }
@@ -142,7 +169,8 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
         // Kütüphane kaydı silinmiş / değişmiş olabilir: liste yeniden okunur (seçim geçersizse temizlenir). Kaynak artık
         // kullanıcının seçimi sayılır — yeniden okuma onu sessizce başka bir varsayılana / sistem şablonuna çevirmesin
         if (res.field === 'library_template_id') {
-          sourceTouched.current = true
+          markTouched()
+          setAutoDefaultId('')
           lib.reload()
         }
       } else toast.error(res?.error || t('te.saveError'), { details: res?.errorInfo })
@@ -207,8 +235,9 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
             <div className="mb-3 flex min-w-0 flex-col gap-2" data-field="copy_from" data-slot="te-source">
               <p id={sourceLabelId} className="m-0 text-sm font-semibold">{t('te.field.templateSource')}</p>
               <RadioGroup value={source} onValueChange={(v) => {
-                sourceTouched.current = true
+                markTouched()
                 setSource(v)
+                setAutoDefaultId('')
                 setErrors((x) => ({ ...x, copy_from: undefined, library_template_id: undefined }))
               }}
                 aria-labelledby={sourceLabelId} className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-slot="te-source-options">
@@ -225,7 +254,9 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
                       className={cn('w-full', o.disabled ? 'cursor-not-allowed' : 'cursor-pointer', o.wide && 'sm:col-span-2')}>
                       <ShField orientation="horizontal" data-source={o.value} data-disabled={o.disabled ? 'true' : undefined}
                         className="min-h-10 items-start gap-2 px-3! py-2!">
-                        <RadioGroupItem value={o.value} id={rid} className="mt-0.5" disabled={!!o.disabled} />
+                        {/* Tıklama / Boşluk / ok tuşu seçimi (seçili karta bilerek basmak dahil) kaynağı kullanıcının yapar —
+                            Radix aynı değerde onValueChange çağırmaz, bu yüzden tıklamada işaretlenir */}
+                        <RadioGroupItem value={o.value} id={rid} className="mt-0.5" disabled={!!o.disabled} onClick={markTouched} />
                         <FieldContent className="gap-0.5">
                           <FieldTitle className="flex items-center gap-1.5 text-sm">
                             <o.Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />{o.title}
@@ -249,7 +280,12 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
                 <div className="mt-1 flex flex-col gap-1.5" data-slot="te-source-library" data-touch-picker="">
                   <SearchableSelect value={libraryId} options={libraryOpts} wrapLabels ariaLabel={t('te.source.libraryPick')}
                     placeholder={t('te.lib.targetPlaceholder')} disabled={!libraryUsable}
-                    onChange={(v) => { sourceTouched.current = true; setLibraryId(String(v)); setErrors((x) => ({ ...x, library_template_id: undefined })) }} />
+                    onChange={(v) => {
+                      markTouched()
+                      if (String(v) !== String(autoDefaultId)) setAutoDefaultId('')
+                      setLibraryId(String(v))
+                      setErrors((x) => ({ ...x, library_template_id: undefined }))
+                    }} />
                   {errors.library_template_id && <p className="m-0 text-sm text-destructive" role="alert">{errors.library_template_id}</p>}
                 </div>
               )}
@@ -264,9 +300,16 @@ export default function ChannelDialog({ mode, channel = null, teams = [], channe
             </div>
           )}
 
+          {waitingDefault && (
+            <p id={waitingId} className="m-0 mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status"
+              data-slot="te-source-waiting">
+              {t('te.source.libraryWaiting')}
+            </p>
+          )}
           <DialogFooter className="mt-2 flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" onClick={onClose} disabled={busy} className="pointer-coarse:min-h-10">{t('te.cancel')}</Button>
-            <Button type="submit" disabled={busy} data-slot="te-channel-save" className="pointer-coarse:min-h-10">
+            <Button type="submit" disabled={busy || waitingDefault} data-slot="te-channel-save" className="pointer-coarse:min-h-10"
+              aria-describedby={waitingDefault ? waitingId : undefined}>
               {mode === 'create' ? t('te.createChannel') : t('te.save')}
             </Button>
           </DialogFooter>

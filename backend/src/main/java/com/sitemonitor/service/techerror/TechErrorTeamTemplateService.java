@@ -12,7 +12,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -41,8 +40,6 @@ public class TechErrorTeamTemplateService {
     public static final int MAX_NAME = 100;
     /** PostgreSQL kısmi tekil indeksi (takım başına tek varsayılan) — {@code SchedulerService.applySchemaPatches}. */
     static final String DEFAULT_INDEX = "uq_tett_one_default";
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final TechErrorTeamTemplateRepository repo;
     private final AppUserRepository users;
@@ -90,26 +87,36 @@ public class TechErrorTeamTemplateService {
         return teamId == null ? Optional.empty() : repo.findFirstByTeamIdAndDefaultEntryTrueOrderByIdAsc(teamId);
     }
 
-    /** Kaydın şablonu (hoşgörülü okuma — eski kayıt kural sıkılaşsa da açılır). */
-    public static Template templateOf(TechErrorTeamTemplate e) {
-        return TechErrorTemplate.fromStored(e.getTemplateJson());
+    /**
+     * Kaydın şablonu, HOŞGÖRÜLÜ okuma (eski kayıt kural sıkılaşsa da açılır) — ama okunamayan kayıt varsayılana DÜŞMEZ
+     * (2026-10-18 inceleme): bozuk JSON / bölümsüz kayıt {@link TechErrorTemplate#fromStored} gibi sistem TR şablonunu
+     * "seçtiğiniz kayıt" diye vermesin. Okunamazsa 409 {@code TEMPLATE_UNREADABLE}.
+     */
+    public static Template readableTemplate(TechErrorTeamTemplate e) {
+        return readableTemplate(e, null);
+    }
+
+    /** {@link #readableTemplate(TechErrorTeamTemplate)}; {@code field} doluysa hata alanı (yeni kanal: seçicinin altında). */
+    public static Template readableTemplate(TechErrorTeamTemplate e, String field) {
+        return TechErrorTemplate.readStored(e.getTemplateJson()).orElseThrow(() -> unreadable(e, field));
     }
 
     /**
-     * Kanala KOPYALANACAK şablon: hoşgörülü okunur, sonra KATI yeniden doğrulanır (kanal şablonu kaydıyla aynı kural;
-     * 400 {@code VALIDATION_FAILED} alan {@code template}). JSON okunamıyorsa (bozuk satır) varsayılana sessizce
-     * düşülmez — 400.
+     * Kanala KOPYALANACAK şablon: hoşgörülü okunur ({@link #readableTemplate} — okunamıyorsa 409 {@code TEMPLATE_UNREADABLE},
+     * alan {@code library_template_id}; sistem şablonuna sessizce düşülmez), sonra KATI yeniden doğrulanır (kanal şablonu
+     * kaydıyla aynı kural; 400 {@code VALIDATION_FAILED} alan {@code template}).
      */
     public static Template validatedTemplate(TechErrorTeamTemplate e) {
-        try {
-            Object raw = e.getTemplateJson() == null ? null : JSON.readValue(e.getTemplateJson(), Object.class);
-            if (!(raw instanceof Map<?, ?>)) throw new IllegalArgumentException("not an object");
-        } catch (RuntimeException ex) {
-            throw new FieldValidationException("template", Msg.t(
-                    "Kütüphanedeki “" + e.getName() + "” şablonu okunamadı. Kütüphaneden silip şablonu yeniden kaydedin.",
-                    "The library template “" + e.getName() + "” couldn't be read. Delete it from the library and save the template again."));
-        }
-        return TechErrorTemplate.normalize(TechErrorTemplate.toMap(templateOf(e)));
+        return TechErrorTemplate.normalize(TechErrorTemplate.toMap(readableTemplate(e, "library_template_id")));
+    }
+
+    static CodedConflictException unreadable(TechErrorTeamTemplate e, String field) {
+        String name = e.getName() == null ? "" : e.getName();
+        Map<String, Object> extra = field == null ? null : Map.of("field", field);
+        return new CodedConflictException("TEMPLATE_UNREADABLE", Msg.t(
+                "Kütüphanedeki “" + name + "” şablonu okunamadı; kayıt bozulmuş olabilir. Sistem şablonu yerine kullanılmadı — bu kaydı kütüphaneden silip şablonu bir kanalın şablon ekranından yeniden kaydedin.",
+                "The library template “" + name + "” couldn't be read; the entry may be damaged. The system template wasn't used instead — delete this entry from the library and save the template again from a channel's template screen."),
+                extra);
     }
 
     // ── Yazma ────────────────────────────────────────────────────────────────────────────────────────
@@ -148,8 +155,15 @@ public class TechErrorTeamTemplateService {
         }
     }
 
-    /** Güncelleme sonucu: kayıt + gerçekten değişen alanlar (boşsa hiçbir şey yazılmadı). */
-    public record UpdateResult(TechErrorTeamTemplate entry, List<String> changed) {
+    /**
+     * Güncelleme sonucu: kayıt + gerçekten değişen alanlar (boşsa hiçbir şey yazılmadı) + KİLİT ALTINDA okunan eski ad
+     * (denetimin {@code name_before}'u — kilit dışında okunan ad eşzamanlı bir yeniden adlandırmayı kaçırırdı).
+     */
+    public record UpdateResult(TechErrorTeamTemplate entry, List<String> changed, String nameBefore) {
+        public UpdateResult(TechErrorTeamTemplate entry, List<String> changed) {
+            this(entry, changed, entry == null ? null : entry.getName());
+        }
+
         public boolean isChanged() {
             return !changed.isEmpty();
         }
@@ -170,6 +184,7 @@ public class TechErrorTeamTemplateService {
                     "The version of the library entry you read wasn't sent. Reload the list and try again."));
         }
         if (!expectedVersion.equals(e.getVersion())) throw new OptimisticLockingFailureException("tech_error_team_template version");
+        String nameBefore = e.getName();
         List<String> changed = new ArrayList<>();
         if (nameSent) {
             String name = name(rawName);
@@ -193,12 +208,12 @@ public class TechErrorTeamTemplateService {
             e.setDefaultEntry(makeDefault);
             changed.add("default");
         }
-        if (changed.isEmpty()) return new UpdateResult(e, List.of());
+        if (changed.isEmpty()) return new UpdateResult(e, List.of(), nameBefore);
         e.setUpdatedAt(now());
         e.setUpdatedById(by);
         e.setUpdatedByName(nameOf(by));
         try {
-            return new UpdateResult(repo.saveAndFlush(e), List.copyOf(changed));
+            return new UpdateResult(repo.saveAndFlush(e), List.copyOf(changed), nameBefore);
         } catch (DataIntegrityViolationException ex) {
             throw integrity(ex, e.getName());
         }

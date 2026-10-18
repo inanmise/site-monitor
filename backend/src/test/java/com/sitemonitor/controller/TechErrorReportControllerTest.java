@@ -1635,18 +1635,24 @@ class TechErrorReportControllerTest {
     }
 
     @Test
-    @DisplayName("kütüphaneden kanal: kayıt AÇILAN takımın kütüphanesinden okunur, katı doğrulanır, kaynak (library + ad) servise ve denetime gider; başka takımın / yok kaydı ve bozuk kayıt 400 library_template_id; kopya ile birlikte 400")
+    @DisplayName("kütüphaneden kanal: kayıt AÇILAN takımın kütüphanesinden okunur, katı doğrulanır, kaynak (library + ad) servise ve denetime gider; başka takımın / yok kaydı 400 library_template_id, bozuk / bölümsüz kayıt 409 TEMPLATE_UNREADABLE (sistem şablonuna düşmez); kopya ile birlikte 400; yanıt gerçek kaynağı taşır")
     void createChannelFromLibrary() throws Exception {
         TechErrorTemplate.Template d = TechErrorTemplate.defaults("tr");
         TechErrorTemplate.Template titled = new TechErrorTemplate.Template(d.lang(), "Kütüphane {kanal} {ay} {yil}", d.sections());
         when(library.find(A, 5L)).thenReturn(Optional.of(libraryEntry(5, A, TechErrorTemplate.toJson(titled))));
         when(library.find(A, 6L)).thenReturn(Optional.of(libraryEntry(6, A, "{bozuk")));
+        // Okunabilir JSON ama tek bölüm yok: hoşgörülü okuma sistem bölümlerine düşerdi — o da "okunamadı"
+        when(library.find(A, 8L)).thenReturn(Optional.of(libraryEntry(8, A, "{\"lang\":\"tr\",\"title\":\"x\",\"sections\":[]}")));
         TechErrorChannel created = channel(30, A);
         when(service.createChannel(eq(A), eq("Mobil"), any(), any(), eq(50L), any())).thenReturn(created);
         mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"Mobil\",\"library_template_id\":5}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.id").value(30));
+                .andExpect(jsonPath("$.data.id").value(30))
+                // Gerçekten kullanılan kaynak yanıtta (eski pod bunu yazmaz → istemci uyarır)
+                .andExpect(jsonPath("$.data.template_source.kind").value("library"))
+                .andExpect(jsonPath("$.data.template_source.library_template_id").value(5))
+                .andExpect(jsonPath("$.data.template_source.name").value("Takım varsayılanı (Dijital Kanallar)"));
         verify(service).createChannel(eq(A), eq("Mobil"), any(),
                 org.mockito.ArgumentMatchers.argThat(t -> "Kütüphane {kanal} {ay} {yil}".equals(t.title())), eq(50L),
                 org.mockito.ArgumentMatchers.argThat(src -> src != null && "library".equals(src.kind())
@@ -1660,8 +1666,14 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.field").value("library_template_id"));
         mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":6}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.field").value("library_template_id"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"))
+                .andExpect(jsonPath("$.field").value("library_template_id"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("okunamadı")));
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":8}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"));
         mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":5,\"copy_from\":10}"))
                 .andExpect(status().isBadRequest())
@@ -1671,7 +1683,9 @@ class TechErrorReportControllerTest {
         when(service.createChannel(eq(A), eq("ATM"), any(), any(), eq(50L), any())).thenReturn(channel(31, A));
         mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"ATM\",\"lang\":\"en\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template_source.kind").value("default"))
+                .andExpect(jsonPath("$.data.template_source.name").doesNotExist());
         verify(service).createChannel(eq(A), eq("ATM"), any(), org.mockito.ArgumentMatchers.argThat(t -> "en".equals(t.lang())), eq(50L),
                 org.mockito.ArgumentMatchers.argThat(src -> src != null && "default".equals(src.kind())));
     }

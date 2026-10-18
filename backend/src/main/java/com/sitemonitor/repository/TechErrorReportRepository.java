@@ -108,9 +108,13 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     /** Bu şablon sürümüyle açılmış / güncellenmiş raporlar, en yeni dönem önce (sürüm ayrıntısı en çok 24 dönem gösterir). */
     List<Row> findTop24ByChannelIdAndTemplateVersionOrderByReportYearDescReportMonthDesc(Long channelId, Integer templateVersion);
 
-    /** Geri doldurma (D19): sürümü bilinmeyen raporların kimlikleri, kimlik sırasıyla (anahtar kümesi sayfası). */
-    @Query("SELECT r.id FROM TechErrorReport r WHERE r.templateVersion IS NULL AND r.id > :after ORDER BY r.id")
-    List<Long> idsWithoutTemplateVersion(@Param("after") Long after, org.springframework.data.domain.Pageable page);
+    /**
+     * Geri doldurma (D19, v2): TÜM raporlar kimlik sırasıyla (anahtar kümesi sayfası) — satır [kimlik, şablon sürümü (null =
+     * bilinmiyor)]. Boş sürümler doldurulur; eski bir podun "şablonun son hâlini uygula"sıyla bayatlamış sürüm de
+     * geçmişin en yeni şablon olayına göre düzeltilir.
+     */
+    @Query("SELECT r.id, r.templateVersion FROM TechErrorReport r WHERE r.id > :after ORDER BY r.id")
+    List<Object[]> idsAndTemplateVersions(@Param("after") Long after, org.springframework.data.domain.Pageable page);
 
     /**
      * Geri doldurma (D19): sürümü YALNIZ hâlâ boşsa yazar (koşullu, @Version artmaz) — arada "şablonun son hâlini uygula"
@@ -120,6 +124,15 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Transactional
     @Query("UPDATE TechErrorReport r SET r.templateVersion = :v WHERE r.id = :id AND r.templateVersion IS NULL")
     int fillTemplateVersion(@Param("id") Long id, @Param("v") Integer version);
+
+    /**
+     * Geri doldurma (D19, v2): BAYAT sürümü düzeltir — yalnız sütun hâlâ okunan değerdeyse ({@code seen}; koşullu, @Version
+     * artmaz). Arada yeni bir pod "şablonun son hâlini uygula" ile sürüm (ve olay) yazdıysa o kazanır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.templateVersion = :v WHERE r.id = :id AND r.templateVersion = :seen")
+    int replaceTemplateVersion(@Param("id") Long id, @Param("seen") Integer seen, @Param("v") Integer version);
 
     @Query("SELECT r.id FROM TechErrorReport r WHERE r.channelId = :channelId")
     List<Long> idsForChannel(@Param("channelId") Long channelId);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { BookmarkPlus, CircleAlert, LibraryBig, Pencil, RefreshCw, Star, StarOff, Trash2, X } from 'lucide-react'
+import { BookmarkPlus, CircleAlert, LibraryBig, Loader2, Pencil, RefreshCw, Star, StarOff, Trash2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -41,6 +41,10 @@ import {
 /**
  * Takımın kütüphanesini okur (sıra numarasıyla geç yanıt düşer; takım değişince eski liste gösterilmez). `enabled`
  * false iken istek yok. Okuma başarısızsa `error` dolu ve `entries` boş — çağıran "yok" DEMEZ, "okunamadı" der.
+ *
+ * `ready`: BU takımın listesi elde (2026-10-18 inceleme) — AYNI takımın yeniden okunması sürerken de doğru kalır, liste
+ * ekranda durur (yeniden adlandır / varsayılan yap / sil sonrası liste iskelete dönüp yeniden kuruluyordu: menü tetiği
+ * yok oluyor, odak gövdeye düşüyor, ekran titriyordu). `refreshing`: liste elde ve yeniden okunuyor (küçük gösterge).
  */
 export function useTeamLibrary(teamId, { enabled = true } = {}) {
   const t = useT()
@@ -68,8 +72,9 @@ export function useTeamLibrary(teamId, { enabled = true } = {}) {
   useEffect(() => { reload() }, [reload])
   useEffect(() => () => { seq.current++ }, [])
   const entries = useMemo(() => libraryEntries(state.data), [state.data])
-  const ready = !state.loading && !state.error && state.data != null && String(state.teamId) === String(teamId)
-  return { ...state, entries, ready, max: Number(state.data?.max) || LIBRARY_MAX, canEdit: !!state.data?.can_edit, reload }
+  const ready = !state.error && state.data != null && String(state.teamId) === String(teamId)
+  const refreshing = ready && state.loading
+  return { ...state, entries, ready, refreshing, max: Number(state.data?.max) || LIBRARY_MAX, canEdit: !!state.data?.can_edit, reload }
 }
 
 function LangCounts({ entry, className }) {
@@ -210,7 +215,7 @@ export function SaveToLibraryDialog({ open, teamId, teamName, draft, defaultName
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-slot="te-lib-save-body">
             {banner && <AlertBanner tone="danger" className="mb-0"><span data-slot="te-lib-banner">{banner}</span></AlertBanner>}
-            {lib.loading && (
+            {lib.loading && !lib.ready && (
               <div className="flex flex-col gap-2" role="status" aria-live="polite">
                 <span className="sr-only">{t('te.loading')}</span>
                 <Skeleton className="h-4 w-48 motion-reduce:animate-none" />
@@ -320,19 +325,76 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
   const lib = useTeamLibrary(teamId, { enabled: open && !!teamId })
   const [busy, setBusy] = useState(null)
   const [rename, setRename] = useState(null)       // { entry, name, error }
+  // Odak dönüşü (2026-10-18 inceleme): işlemden sonra satırın menü tetiğine (silmede bir sonraki / önceki satırınkine,
+  // liste boşaldıysa kapat düğmesine) döner — liste yeniden okunurken yerinde kalır, odak gövdeye düşmez
+  const bodyRef = useRef(null)
+  const closeRef = useRef(null)
+  const focusAfter = useRef(null)                  // işlem + yeniden okuma bitince odaklanacak satır kimlikleri (sırayla denenir)
+  const renameIdRef = useRef(null)                 // yeniden adlandırma penceresi kapanınca dönülecek satır
   const [width, setListEl] = useElementWidthState()
   const cards = width > 0 && width < LIBRARY_TABLE_MIN_PX
   const teamOptions = useMemo(() => readable.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` })), [readable])
   const teamName = readable.find((tm) => String(tm.id) === String(teamId))?.name || ''
   const def = defaultEntry(lib.entries)
 
-  async function run(key, call, success) {
+  const triggerOf = useCallback((ids) => {
+    const root = bodyRef.current
+    if (!root) return null
+    for (const id of ids || []) {
+      if (id == null) continue
+      const row = [...root.querySelectorAll('[data-slot="te-lib-entry"]')].find((el) => el.getAttribute('data-entry') === String(id))
+      const trigger = row?.querySelector('[data-kebab]')
+      if (trigger) return trigger
+    }
+    return null
+  }, [])
+
+  const focusEntryTrigger = useCallback((ids) => {
+    const trigger = triggerOf(ids)
+    if (trigger) { trigger.focus(); return true }
+    return false
+  }, [triggerOf])
+
+  // Bekleyen odak dönüşü: işlem menüsü kapanış canlandırması sürerken odaklamak işe yaramaz (Radix kapanan menü odağı geri
+  // alır, sonra gövdeye bırakır) — menü DOM'dan çıkana kadar kısa aralıklarla beklenir (en çok ~1 sn). Odak gerçekten
+  // kaybolduysa (gövde / pencere kabı / kopmuş öğe) hedefe konur; kullanıcı başka bir yere geçtiyse dokunulmaz
+  const focusTimer = useRef(null)
+  useEffect(() => () => clearTimeout(focusTimer.current), [])
+  const restoreFocus = useCallback((ids) => {
+    clearTimeout(focusTimer.current)
+    let tries = 0
+    const tick = () => {
+      const root = bodyRef.current
+      if (!root || !root.isConnected) return
+      if (document.querySelector('[data-slot="dropdown-menu-content"]') && tries++ < 40) {
+        focusTimer.current = setTimeout(tick, 25)
+        return
+      }
+      const target = triggerOf(ids) || closeRef.current
+      const a = document.activeElement
+      if (!target || a === target) return
+      const lost = !a || a === document.body || !a.isConnected || a === root.closest('[role="dialog"]')
+      if (lost) target.focus()
+    }
+    tick()
+  }, [triggerOf])
+
+  // İşlem ve yeniden okuma bittiğinde (meşgul değil, liste elde, okuma sürmüyor, ad penceresi kapalı) bekleyen odak hedefi
+  useEffect(() => {
+    const want = focusAfter.current
+    if (!want || busy || !lib.ready || lib.loading || rename) return
+    focusAfter.current = null
+    restoreFocus(want)
+  }, [busy, lib.ready, lib.loading, lib.entries, rename, restoreFocus])
+
+  async function run(key, call, success, focusIds) {
     if (busy) return false
     setBusy(key)
     try {
       const res = await call()
       if (res?.success) {
         if (success) toast.success(success(res.data || {}))
+        if (focusIds) focusAfter.current = focusIds
         await lib.reload()
         return true
       }
@@ -340,6 +402,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
       if (f.field === 'name') return { field: f.message }
       if (f.banner) toast.error(f.banner)
       else toast.error(f.toast, { details: f.details })
+      if (focusIds) focusAfter.current = focusIds
       if (f.reload) lib.reload()
       return false
     } catch (e) {
@@ -352,7 +415,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
 
   const toggleDefault = (e) => run(`d${e.id}`,
     () => api.techErrors.updateTeamTemplate(teamId, e.id, { default: !e.is_default, version: e.version }),
-    () => (e.is_default ? t('te.lib.defaultRemoved', e.name) : t('te.lib.defaultSet', e.name)))
+    () => (e.is_default ? t('te.lib.defaultRemoved', e.name) : t('te.lib.defaultSet', e.name)), [e.id])
 
   async function remove(e) {
     const ok = await showConfirm({
@@ -360,8 +423,12 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
       message: t('te.lib.deleteBody', e.name) + (e.is_default ? `\n\n${t('te.lib.deleteDefault')}` : ''),
       variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel'),
     })
-    if (!ok) return
-    await run(`x${e.id}`, () => api.techErrors.deleteTeamTemplate(teamId, e.id), () => t('te.lib.deleted', e.name))
+    if (!ok) { focusAfter.current = [e.id]; return }
+    // Silinen satırın yerine bir sonraki, yoksa önceki satırın menüsü; silme başarısızsa aynı satır (ilk aday)
+    const i = lib.entries.findIndex((x) => String(x.id) === String(e.id))
+    const next = lib.entries[i + 1]?.id
+    const prev = i > 0 ? lib.entries[i - 1]?.id : undefined
+    await run(`x${e.id}`, () => api.techErrors.deleteTeamTemplate(teamId, e.id), () => t('te.lib.deleted', e.name), [e.id, next, prev])
   }
 
   async function submitRename(ev) {
@@ -381,7 +448,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
 
   const actionsFor = (e) => (lib.canEdit && e.can_edit !== false ? [
     { label: t('te.lib.rename'), icon: <Pencil aria-hidden="true" />, ariaLabel: t('te.lib.renameOf', e.name),
-      disabled: !!busy, onClick: () => setRename({ entry: e, name: e.name, error: null }) },
+      disabled: !!busy, onClick: () => { renameIdRef.current = e.id; setRename({ entry: e, name: e.name, error: null }) } },
     { label: e.is_default ? t('te.lib.unsetDefault') : t('te.lib.setDefault'),
       icon: e.is_default ? <StarOff aria-hidden="true" /> : <Star aria-hidden="true" />,
       ariaLabel: e.is_default ? t('te.lib.unsetDefaultOf', e.name) : t('te.lib.setDefaultOf', e.name),
@@ -398,7 +465,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
         data-slot="te-lib-manager" showCloseButton={false}
         onCloseAutoFocus={(e) => { if (returnFocusRef?.current) { e.preventDefault(); returnFocusRef.current.focus() } }}>
         <DialogClose asChild>
-          <Button type="button" variant="ghost" size="icon" className="absolute top-2.5 right-2.5 size-8 pointer-coarse:size-10"
+          <Button ref={closeRef} type="button" variant="ghost" size="icon" className="absolute top-2.5 right-2.5 size-8 pointer-coarse:size-10"
             aria-label={t('app.close')}>
             <X aria-hidden="true" />
           </Button>
@@ -407,7 +474,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
           <DialogTitle className="flex items-center gap-2"><LibraryBig aria-hidden="true" className="size-4 shrink-0" /> {t('te.lib.title')}</DialogTitle>
           <DialogDescription>{t('te.lib.desc')}</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-slot="te-lib-manager-body">
+        <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-slot="te-lib-manager-body">
           {readable.length > 1 && (
             <div className="flex min-w-0 flex-col gap-1.5 sm:max-w-md" data-touch-picker="">
               <span id="te-lib-team-label" className="text-sm font-semibold">{t('te.field.team')}</span>
@@ -423,7 +490,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
           {readable.length === 0 && (
             <StatusBlock tone="neutral" icon={LibraryBig} title={t('te.lib.noTeamTitle')} description={t('te.lib.noTeamBody')} />
           )}
-          {lib.loading && (
+          {lib.loading && !lib.ready && (
             <div className="flex flex-col gap-2" role="status" aria-live="polite">
               <span className="sr-only">{t('te.loading')}</span>
               <Skeleton className="h-14 w-full rounded-lg motion-reduce:animate-none" />
@@ -442,6 +509,11 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
                 {def ? t('te.lib.defaultIs', def.name) : t('te.lib.noDefault')}
               </span>
               {!lib.canEdit && <span data-slot="te-lib-readonly">{t('te.lib.readOnly')}</span>}
+              {/* Liste yerinde kalır; yeniden okunduğu küçük bir göstergeyle söylenir (canlı bölge hep çizili, içerik değişir) */}
+              <span className="inline-flex items-center gap-1.5 text-xs" role="status" aria-live="polite" data-slot="te-lib-refreshing"
+                data-state={lib.refreshing ? 'on' : 'off'}>
+                {lib.refreshing && <><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-pulse" /> {t('te.lib.refreshing')}</>}
+              </span>
             </div>
           )}
           {lib.ready && lib.entries.length === 0 && (
@@ -508,7 +580,14 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
           {lib.ready && <p className="m-0 text-xs text-muted-foreground" data-slot="te-lib-how">{t('te.lib.howToAdd')}</p>}
         </div>
         <Dialog open={!!rename} onOpenChange={(o) => { if (!o && !busy) setRename(null) }}>
-          <DialogContent className="max-h-[92dvh] w-[calc(100vw-1.5rem)] overflow-y-auto sm:max-w-md" data-slot="te-lib-rename">
+          <DialogContent className="max-h-[92dvh] w-[calc(100vw-1.5rem)] overflow-y-auto sm:max-w-md" data-slot="te-lib-rename"
+            onCloseAutoFocus={(e) => {
+              // Açan menü öğesi artık yok: odak satırın menü tetiğine döner (kayıt / vazgeç / çakışma — hepsinde)
+              const id = renameIdRef.current
+              renameIdRef.current = null
+              e.preventDefault()
+              if (!focusEntryTrigger([id])) closeRef.current?.focus()
+            }}>
             <form onSubmit={submitRename} noValidate className="flex flex-col gap-3">
               <DialogHeader className="text-left">
                 <DialogTitle>{t('te.lib.renameTitle')}</DialogTitle>

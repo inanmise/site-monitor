@@ -119,7 +119,7 @@ class TechErrorTeamTemplateServiceTest {
         assertThat(library.list(teamB)).isEmpty();
         assertThatThrownBy(() -> library.get(teamB, b.getId())).isInstanceOf(NoSuchElementException.class);
         assertThat(library.get(teamA, b.getId()).getName()).isEqualTo("Zeytin şablonu");
-        assertThat(TechErrorTeamTemplateService.templateOf(library.get(teamA, b.getId())).title()).isEqualTo(tr().title());
+        assertThat(TechErrorTeamTemplateService.readableTemplate(library.get(teamA, b.getId())).title()).isEqualTo(tr().title());
     }
 
     @Test
@@ -228,12 +228,14 @@ class TechErrorTeamTemplateServiceTest {
         assertThat(repo.findById(e.getId()).orElseThrow().getVersion()).isEqualTo(e.getVersion());
         var renamed = library.update(teamA, e.getId(), e.getVersion(), true, "Ana şablon", null, null, 8L);
         assertThat(renamed.changed()).containsExactly("name");
+        assertThat(renamed.nameBefore()).isEqualTo("Ana");                      // kilit altında okunan eski ad (denetim)
+        assertThat(renamed.entry().getName()).isEqualTo("Ana şablon");
         TechErrorTeamTemplate after = repo.findById(e.getId()).orElseThrow();
         assertThat(after.getName()).isEqualTo("Ana şablon");
         assertThat(after.getTemplateJson()).isEqualTo(e.getTemplateJson());
         var tpl = library.update(teamA, e.getId(), after.getVersion(), false, null, titled("{kanal} başlığı {ay} {yil}"), null, 8L);
         assertThat(tpl.changed()).containsExactly("template");
-        assertThat(TechErrorTeamTemplateService.templateOf(repo.findById(e.getId()).orElseThrow()).title())
+        assertThat(TechErrorTeamTemplateService.readableTemplate(repo.findById(e.getId()).orElseThrow()).title())
                 .isEqualTo("{kanal} başlığı {ay} {yil}");
         assertThatThrownBy(() -> library.update(teamA, e.getId(), e.getVersion(), true, "Eski sürüm", null, null, 8L))
                 .isInstanceOf(OptimisticLockingFailureException.class);
@@ -298,8 +300,24 @@ class TechErrorTeamTemplateServiceTest {
         broken.setTemplateJson("{bozuk");
         repo.saveAndFlush(broken);
         TechErrorTeamTemplate reread = repo.findById(e.getId()).orElseThrow();
-        assertThatThrownBy(() -> TechErrorTeamTemplateService.validatedTemplate(reread)).isInstanceOf(FieldValidationException.class);
-        assertThat(TechErrorTeamTemplateService.templateOf(reread).title()).isEqualTo(tr().title());   // hoşgörülü okuma açılır
+        // Okunamayan kayıt sistem şablonuna DÜŞMEZ (2026-10-18 inceleme): hem kanala kopyalama hem tek kayıt okuması 409
+        // TEMPLATE_UNREADABLE; kanal yolunda alan library_template_id (seçicinin altında)
+        assertThatThrownBy(() -> TechErrorTeamTemplateService.validatedTemplate(reread)).isInstanceOf(CodedConflictException.class)
+                .satisfies(x -> {
+                    CodedConflictException c = (CodedConflictException) x;
+                    assertThat(c.getCode()).isEqualTo("TEMPLATE_UNREADABLE");
+                    assertThat(c.getExtra()).containsEntry("field", "library_template_id");
+                    assertThat(c.getMessage()).contains("Eski kayıt");
+                });
+        assertThatThrownBy(() -> TechErrorTeamTemplateService.readableTemplate(reread)).isInstanceOf(CodedConflictException.class)
+                .extracting(x -> ((CodedConflictException) x).getCode()).isEqualTo("TEMPLATE_UNREADABLE");
+        assertThat(TechErrorTemplate.fromStored(reread.getTemplateJson()).title()).isEqualTo(tr().title());   // eski davranış: varsayılana düşerdi
+        for (String json : List.of("", "[]", "\"metin\"", "{\"lang\":\"tr\",\"title\":\"x\"}",
+                "{\"lang\":\"tr\",\"title\":\"x\",\"sections\":[]}",
+                "{\"lang\":\"tr\",\"title\":\"x\",\"sections\":[{\"id\":\"a\",\"kind\":\"tanımsız\",\"title\":\"x\"}]}")) {
+            assertThat(TechErrorTemplate.readStored(json)).as(json).isEmpty();
+        }
+        assertThat(TechErrorTemplate.readStored(TechErrorTemplate.toJson(tr()))).hasValueSatisfying(t -> assertThat(t.title()).isEqualTo(tr().title()));
     }
 
     @Test

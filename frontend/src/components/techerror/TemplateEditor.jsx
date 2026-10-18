@@ -712,7 +712,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                 <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <LibraryBig aria-hidden="true" className="size-3.5" /> {t('te.lib.resetLibrary')}
                 </DropdownMenuLabel>
-                {(resetLib.loading || (!resetLib.ready && !resetLib.error)) && (
+                {!resetLib.ready && !resetLib.error && (
                   <DropdownMenuItem disabled className="whitespace-normal" data-slot="te-tpl-reset-lib-loading">{t('te.loading')}</DropdownMenuItem>
                 )}
                 {resetLib.error && (

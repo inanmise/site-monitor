@@ -296,20 +296,45 @@ class TechErrorTeamTemplateControllerTest {
         verify(auditService, never()).recordAction(eq("TECH_ERROR_TEAM_TEMPLATE_UPDATE"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), anyString());
         TechErrorTeamTemplate renamed = entry(6, A, "POS yeni", false);
         renamed.setVersion(4L);
+        // Eski ad servisin KİLİT ALTINDA okuduğu değerden gelir (kilit dışında okunan "POS" değil: arada biri yeniden
+        // adlandırmıştı) — denetim name_before'u sonuçtan yazar, ek okuma yapmaz
         when(library.update(eq(A), eq(6L), eq(3L), eq(true), eq("POS yeni"), isNull(), isNull(), eq(50L)))
-                .thenReturn(new TechErrorTeamTemplateService.UpdateResult(renamed, List.of("name")));
+                .thenReturn(new TechErrorTeamTemplateService.UpdateResult(renamed, List.of("name"), "POS (kilit altında)"));
         mvc.perform(put("/api/tech-error-reports/teams/1/templates/6").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("name", "POS yeni", "version", 3))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.changed").value(true))
                 .andExpect(jsonPath("$.data.version").value(4));
-        verify(auditService).recordAction(eq("TECH_ERROR_TEAM_TEMPLATE_UPDATE"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("1"), anyString());
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("TECH_ERROR_TEAM_TEMPLATE_UPDATE"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("1"), detail.capture());
+        org.assertj.core.api.Assertions.assertThat(detail.getValue()).contains("POS (kilit altında)").contains("POS yeni");
+        verify(library, never()).get(anyLong(), anyLong());
         when(library.update(eq(A), eq(6L), eq(2L), anyBoolean(), any(), any(), any(), any()))
                 .thenThrow(new OptimisticLockingFailureException("eski"));
         mvc.perform(put("/api/tech-error-reports/teams/1/templates/6").session(user("USER", A, List.of()))
                         .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("name", "x", "version", 2))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+    }
+
+    @Test
+    @DisplayName("okunamayan (bozuk / bölümsüz) kayıt: tek kayıt okuması 409 TEMPLATE_UNREADABLE — sistem TR şablonunu \"seçtiğiniz kayıt\" diye vermez")
+    void unreadableEntry() throws Exception {
+        TechErrorTeamTemplate broken = entry(7, A, "Bozuk kayıt", false);
+        broken.setTemplateJson("{bozuk");
+        TechErrorTeamTemplate empty = entry(8, A, "Bölümsüz kayıt", false);
+        empty.setTemplateJson("{\"lang\":\"tr\",\"title\":\"x\",\"sections\":[]}");
+        when(library.get(eq(A), eq(7L))).thenReturn(broken);
+        when(library.get(eq(A), eq(8L))).thenReturn(empty);
+        mvc.perform(get("/api/tech-error-reports/teams/1/templates/7").session(user("USER", A, List.of())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Bozuk kayıt")))
+                .andExpect(jsonPath("$.data").doesNotExist());
+        mvc.perform(get("/api/tech-error-reports/teams/1/templates/8").session(user("USER", A, List.of())).header("X-Lang", "en"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("couldn't be read")));
     }
 
     @Test

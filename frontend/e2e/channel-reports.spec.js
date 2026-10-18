@@ -494,8 +494,11 @@ async function mock(page, { openSections = true } = {}) {
         body = { success: true, data: { deleted: true } }
       }
     } else if (p === '/api/tech-error-reports/channels' && req.method() === 'POST') {
-      channelCreates.push(JSON.parse(req.postData() || '{}'))
-      body = { success: true, data: channel(20, 'ATM') }
+      const created = JSON.parse(req.postData() || '{}')
+      channelCreates.push(created)
+      // Yeni pod gibi: gerçekten kullanılan şablon kaynağını onaylar (yoksa istemci "uygulanmadı" uyarısı gösterir)
+      body = { success: true, data: { ...channel(20, 'ATM'), template_source: created.library_template_id != null
+        ? { kind: 'library', library_template_id: created.library_template_id } : { kind: created.copy_from != null ? 'copy' : 'default' } } }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -1468,6 +1471,9 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => libraryWrites.length).toBe(1)
       expect(libraryWrites[0]).toEqual({ method: 'PUT', id: 502, body: { default: true, version: 1 } })
       await expect(mgr.locator('[data-slot="te-lib-entry"][data-default="true"]')).toContainText('POS kanalları şablonu')
+      // İnceleme 2026-10-18: liste yeniden okunurken yerinde kalır; odak satırın menü tetiğine döner (gövdeye düşmez)
+      await expect(mgr.locator('[data-slot="te-lib-refreshing"]')).toHaveAttribute('data-state', 'off')
+      await expect(mgr.locator('[data-slot="te-lib-entry"][data-entry="502"] [data-kebab]')).toBeFocused()
       // Silme onayı kaydın adını söyler
       await mgr.locator('[data-slot="te-lib-entry"][data-entry="501"]').getByRole('button', { name: /(İşlemler|Actions)/ }).click()
       await page.getByRole('menuitem', { name: /^(Sil|Delete): / }).click()
@@ -1477,6 +1483,8 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => libraryWrites.length).toBe(2)
       expect(libraryWrites[1]).toEqual({ method: 'DELETE', id: 501, body: null })
       await expect(mgr.locator('[data-slot="te-lib-entry"]')).toHaveCount(1)
+      // Silinen satırın yerine kalan satırın menü tetiği odakta
+      await expect(mgr.locator('[data-slot="te-lib-entry"][data-entry="502"] [data-kebab]')).toBeFocused()
       await page.keyboard.press('Escape')
       await expect(mgr).toHaveCount(0)
 
@@ -1494,6 +1502,8 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => channelCreates.length).toBe(1)
       expect(channelCreates[0]).toMatchObject({ team_id: 5, name: 'ATM', library_template_id: 502 })
       expect(channelCreates[0].lang).toBeUndefined()
+      // Sunucu kaynağı onayladı → "uygulanmadı" uyarısı yok
+      await expect(page.getByText(/uyguladığını doğrulamadı|didn't confirm that it applied/)).toHaveCount(0)
 
       // D17 — şablon düzenleyicisinden kütüphaneye kaydet (kanal açılınca şablonu açılır)
       await expect(page.locator('[data-slot="te-template-editor"]')).toBeVisible({ timeout: 20_000 })
