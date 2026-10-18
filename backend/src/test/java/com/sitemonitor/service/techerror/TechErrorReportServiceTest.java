@@ -759,6 +759,58 @@ class TechErrorReportServiceTest {
         assertThat(service.pdfInput(reports.findById(aug.getId()).orElseThrow(), ch, "Dijital").previousOrNull()).isNull();
     }
 
+    @Test
+    @DisplayName("2026-10-18: kısaltma üssü saklanır (yalnız değeri olan sayı alanında); yalnız üs değişikliği de kayıttır (sürüm + geçmiş satırı); şablon yenilemede değerle taşınır, türü değişende düşer; PDF girdisi ve geçen ayın ipucu üssü taşır")
+    void unitsSavedChangedCarriedAndPrevious() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport aug = service.createReport(ch, 2026, 8, 7L);
+        service.saveValues(aug.getId(), aug.getVersion(), Map.of("fields", Map.of("total-tx", 4_350_000_000L), "units", Map.of("total-tx", 9)), 7L);
+        TechErrorReport sep = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = new HashMap<>(Map.of("total-tx", 4_400_000_000L, "error-count", 1_250_000));
+        TechErrorReport s1 = service.saveValues(sep.getId(), sep.getVersion(),
+                Map.of("fields", f, "units", Map.of("total-tx", 9, "error-count", 6, "error-rate", 6, "ghost", 3)), 7L);
+        Template t = TechErrorTemplate.fromStored(s1.getTemplateJson());
+        assertThat(TechErrorValues.fromStored(s1.getValuesJson(), t).units()).containsExactly(Map.entry("total-tx", 9), Map.entry("error-count", 6));
+        // Aynı sayılar, yalnız üs değişti ("4,4G" → "4.400.000.000"): görünen bir değişiklik — sürüm artar, geçmişe satır yazılır
+        TechErrorReport s2 = service.saveValues(sep.getId(), s1.getVersion(), Map.of("fields", f, "units", Map.of("error-count", 6)), 7L);
+        assertThat(s2.getVersion()).isGreaterThan(s1.getVersion());
+        assertThat(String.valueOf(TechErrorHistoryService.detail(eventsOf(sep.getId()).get(0)))).contains("4,4G").contains("4.400.000.000");
+        // Değişiklik yoksa yazılmaz
+        TechErrorReport same = service.saveValues(sep.getId(), s2.getVersion(), Map.of("fields", f, "units", Map.of("error-count", 6)), 7L);
+        assertThat(same.getVersion()).isEqualTo(s2.getVersion());
+        // PDF girdisi üssü taşır (hesap sonrası da); geçen ayın ipucu üssü
+        var in = service.pdfInput(reports.findById(sep.getId()).orElseThrow(), ch, "Dijital");
+        assertThat(in.values().unit("error-count")).isEqualTo(6);
+        assertThat(in.values().unit("total-tx")).isNull();
+        var pv = TechErrorValues.fromStored(reports.findById(aug.getId()).orElseThrow().getValuesJson(), t);
+        Map<String, Object> prevFields = TechErrorReportService.sameTypeFields(t, pv, t);
+        assertThat(TechErrorReportService.sameTypeUnits(pv, prevFields)).containsExactly(Map.entry("total-tx", 9));
+        assertThat(TechErrorReportService.sameTypeUnits(pv, Map.of())).isEmpty();
+        // Şablon yenileme: aynı kimlik + tür → üs kalır; error-count'un türü değişince değeri ve üssü düşer
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(service.channel(ch.getId()).getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        int at = metricsSummaryIndex(secs);
+        Map<String, Object> summary = new LinkedHashMap<>(secs.get(at));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> fields = new ArrayList<>((List<Map<String, Object>>) summary.get("fields"));
+        TechErrorReport s3 = service.saveValues(sep.getId(), s2.getVersion(),
+                Map.of("fields", Map.of("total-tx", 4_400_000_000L, "error-count", 1_250_000, "unmapped-count", 2500),
+                        "units", Map.of("total-tx", 9, "error-count", 6, "unmapped-count", 3)), 7L);
+        fields.replaceAll(x -> {
+            if (!"error-count".equals(x.get("id"))) return x;
+            Map<String, Object> m = new LinkedHashMap<>(x);
+            m.put("type", "text");
+            return m;
+        });
+        summary.put("fields", fields);
+        secs.set(at, summary);
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        service.refreshTemplate(sep.getId(), s3.getVersion(), 7L);
+        var refreshed = reports.findById(sep.getId()).orElseThrow();
+        var rv = TechErrorValues.fromStored(refreshed.getValuesJson(), TechErrorTemplate.fromStored(refreshed.getTemplateJson()));
+        assertThat(rv.units()).containsExactly(Map.entry("total-tx", 9), Map.entry("unmapped-count", 3));
+    }
+
     // ── Değişiklik ve sürüm geçmişi (2026-10-14, Faz B) ──────────────────────────────────────────────
 
     private List<com.sitemonitor.model.TechErrorReportEvent> eventsOf(Long reportId) {

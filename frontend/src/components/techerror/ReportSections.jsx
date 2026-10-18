@@ -1,5 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronDown, CircleDashed, PenLine, Plus, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, CircleCheck, CircleDashed, PenLine, Plus, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -12,7 +12,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
-  hasAbbreviation, isAmbiguousB, isIncompleteNumber,
+  abbreviable, abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, issueUnitKey, tableUnitKey, zeroOk,
   issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
   summaryTiles, effectiveTarget, effectiveBetter, calcNumber,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
@@ -25,11 +25,37 @@ import { CollapsibleCard } from './SectionCollapse.jsx'
  * Sayı alanının ekrandaki metni: kayıtlı sayı arayüz dilinin biçiminde (çözümleyici aynı biçimi geri okur). Yüzde
  * GRUPLAMASIZ yazılır: yüzde alanında tek ayraç ondalıktır, "%1.000" geri okununca 1 olurdu (2. inceleme turu).
  */
-function numberText(v, lang, percent = false) {
+function numberText(v, lang, percent = false, unit = null) {
   if (v == null || v === '') return ''
   const n = Number(v)
   if (!Number.isFinite(n)) return String(v)
+  // Kısaltmayla girilmiş sayı kısaltmasıyla geri gelir (2026-10-18: "4,4G"); GRUPLAMASIZ — "4.400M" geri okununca 4,4 milyon
+  // olurdu (sonekten önceki tek ayraç ondalıktır). 6 ondalığa sığmayan değer tam sayıyla (inceleme 2026-10-18)
+  if (!percent && unit && abbreviable(n, unit)) return formatAbbreviated(n, unit, lang)
   return new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR', { maximumFractionDigits: 6, useGrouping: !percent }).format(n)
+}
+
+/**
+ * Sıfır adet işareti (2026-10-18, kullanıcı isteği: "0 adet gibi olursa 0 yanına yeşil yuvarlak tik"): başarı jetonunda
+ * `CircleCheck`; simge `aria-hidden`, anlamı ekran okuyucuya metinle (`id` verilirse girişin aria-describedby'ı bunu okur).
+ */
+export function ZeroOkMark({ id, className }) {
+  const t = useT()
+  return (
+    <span className={cn('inline-flex shrink-0 items-center text-success', className)} data-slot="te-zero-ok" title={t('te.zero.ok')}>
+      <CircleCheck aria-hidden="true" className="size-full" />
+      <span id={id} className="sr-only">{t('te.zero.ok')}</span>
+    </span>
+  )
+}
+
+/**
+ * Yazımın SAKLANACAK kısaltma üssü: soneki tanınan ve değeri o üsle 6 ondalığa sığan yazım (inceleme 2026-10-18 —
+ * "4,123456789G" kısaltmasıyla saklanmaz, rapor tam sayıyı gösterir; sunucu da düşürür).
+ */
+function storedExp(raw, n) {
+  const exp = abbreviationExp(raw)
+  return exp != null && abbreviable(n, exp) ? exp : null
 }
 
 /**
@@ -46,9 +72,10 @@ function numberText(v, lang, percent = false) {
  */
 export const PendingInputContext = createContext(null)
 
-export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel, compact = false, pendingKey }) {
+export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel,
+  compact = false, pendingKey, unit, zero = false }) {
   const t = useT()
-  const [text, setText] = useState(() => numberText(value, lang, percent))
+  const [text, setText] = useState(() => numberText(value, lang, percent, unit))
   const reportPending = useContext(PendingInputContext)
   const pendingRef = useRef({ report: reportPending, key: pendingKey })
   pendingRef.current = { report: reportPending, key: pendingKey }
@@ -61,22 +88,34 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
   const expanded = !percent && hasAbbreviation(text) ? parseNumber(text, lang) : null
   const expandedId = id ? `${id}-expanded` : undefined
   const showExpanded = Number.isFinite(expanded) && Math.abs(expanded) <= LIMITS.maxNumber
+  // Sıfır işareti yalnız ŞU ANKİ metin tam 0'a çözülüyorsa ve alan geçersiz / yarım değilse (inceleme 2026-10-18: "0x"
+  // yazılınca eski 0 değeriyle işaret hatanın yanında kalıyordu)
+  const showZero = zero && !invalid && !isIncompleteNumber(text) && parseNumber(text, lang, { percent }) === 0
+  const zeroId = showZero && id ? `${id}-zero` : undefined
   useEffect(() => {
     if (isIncompleteNumber(text)) return     // yazılmakta olan metin (ör. "-") dış değerle ezilmez
     const parsed = parseNumber(text, lang, { percent })
-    if (!(parsed === value || (parsed == null && value == null))) setText(numberText(value, lang, percent))
+    // Kısaltma da metnin parçası (2026-10-18): üssü izleyen girişte (`unit` verilmiş — undefined değil) aynı sayı başka
+    // üsle geldiyse (vazgeç, sunucu üssü düşürdü) metin yenilenir; izlemeyen girişte (şablon hedefi) eski davranış. Saklanmayacak
+    // kısaltma ("4,123456789G") üssüz sayılır: yazarken metin ezilmez
+    const exp = percent || !Number.isFinite(parsed) ? null : storedExp(text, parsed)
+    const sameValue = parsed === value || (parsed == null && value == null)
+    // Kayıtlı üs de yalnız değer o üsle yazılabiliyorsa geçerli (sunucu ve kanonik belge aynı süzgeç)
+    const shownUnit = unit != null && value != null && abbreviable(value, unit) ? unit : null
+    if (!sameValue || (unit !== undefined && value != null && exp !== shownUnit)) setText(numberText(value, lang, percent, unit))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, lang])
+  }, [value, lang, unit])
   return (
     <div className="relative">
       {percent && lang !== 'en' && (
         <span aria-hidden="true" className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-sm text-muted-foreground', compact ? 'left-2' : 'left-3')}>%</span>
       )}
       <Input id={id} inputMode={percent ? 'decimal' : 'text'} value={text} disabled={disabled} aria-invalid={invalid}
-        aria-describedby={[describedBy, showExpanded ? expandedId : null].filter(Boolean).join(' ') || undefined}
+        aria-describedby={[describedBy, zeroId, showExpanded ? expandedId : null].filter(Boolean).join(' ') || undefined}
         aria-label={ariaLabel}
         // compact: tablo hücresi — dar sütunda rakama yer kalsın (inceleme 2026-10-14: "125.000.000" kırpılıyordu)
-        className={cn(compact && 'px-1.5 text-[13px] md:text-[13px]', percent && lang !== 'en' && (compact ? 'pl-6' : 'pl-7'), percent && lang === 'en' && (compact ? 'pr-6' : 'pr-7'), 'tabular-nums pointer-coarse:h-10')}
+        className={cn(compact && 'px-1.5 text-[13px] md:text-[13px]', percent && lang !== 'en' && (compact ? 'pl-6' : 'pl-7'), percent && lang === 'en' && (compact ? 'pr-6' : 'pr-7'),
+          showZero && 'pr-9', 'tabular-nums pointer-coarse:h-10')}
         onBlur={() => {
           // Yarım kalan yazım alan bırakılınca hata olur (kayıt öncesi düğmeye basmak alanı bırakır)
           if (isIncompleteNumber(text)) onError(!percent && isAmbiguousB(text) ? 'te.err.abbrevB' : notNumber)
@@ -92,8 +131,14 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
           if (!negative && n < 0) { onError('te.err.negative'); return }
           if (!percent && Math.abs(n) > LIMITS.maxNumber) { onError('te.err.tooLarge'); return }
           onError(null)
-          onChange(n)
+          // Kısaltmayla yazıldıysa üssü de (2026-10-18): rapor "4,4G" diye gösterir; tam yazılan sayı tam kalır; 6 ondalığa
+          // sığmayan kısaltma üssüz gider (rapor tam sayıyı gösterir — yuvarlanmış kısaltma değeri değiştirirdi)
+          onChange(n, percent ? null : storedExp(raw, n))
         }} />
+      {showZero && (
+        // Kutunun içinde, sağda (giriş yüksekliğinin ortası — alttaki "= tam sayı" satırına kaymaz); genişlik değişmez
+        <ZeroOkMark id={zeroId} className="pointer-events-none absolute right-2.5 top-[18px] size-5 -translate-y-1/2 pointer-coarse:top-5" />
+      )}
       {percent && lang === 'en' && (
         <span aria-hidden="true" className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-sm text-muted-foreground', compact ? 'right-2' : 'right-3')}>%</span>
       )}
@@ -161,7 +206,8 @@ function calcNoteText(field, res, label, previous, t, compare = null) {
 function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
   if (prev == null) return null
   const yesNo = (b) => (b ? t('te.yes') : t('te.no'))
-  const shown = formatValue(field, prev, uiLang, yesNo)
+  // Geçen ayın değeri geçen ayın KENDİ yazımıyla (2026-10-18: o ay "4,4G" girildiyse "4,4G")
+  const shown = formatValue(field, prev, uiLang, yesNo, previous?.units?.[field.id] ?? null)
   let delta = null
   if (field.type === 'number' && cur != null) {
     const c = changePercent(prev, cur)
@@ -214,7 +260,8 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
     control = (
       <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
         disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
-        onChange={(n) => onField(f.id, n)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
+        unit={f.type === 'number' ? values.units?.[f.id] ?? null : null} zero={zeroOk(f, v, all)}
+        onChange={(n, exp) => onField(f.id, n, exp)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
     )
   } else if (f.type === 'yesno') {
     control = (
@@ -331,7 +378,7 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
   )
 }
 
-export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors, onIssues, onFieldError }) {
+export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors, onIssues, onFieldError, onUnit = null }) {
   const t = useT()
   const list = values.issues[section.id] || []
   const pattern = section.item_title
@@ -420,7 +467,11 @@ export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors
                       </div>
                       <NumberInput id={`${base}-${key}`} value={iss[key] ?? null} lang={uiLang} disabled={readOnly}
                         invalid={fe || err ? true : undefined} describedBy={fe ? `${base}-${key}-e` : err ? `${base}-e` : undefined}
-                        onChange={(n) => patch(iss.id, { [key]: n })} pendingKey={issueErrorKey(section.id, iss.id, key)}
+                        unit={onUnit ? values.units?.[issueUnitKey(section.id, iss.id, key)] ?? null : undefined}
+                        onChange={(n, exp) => {
+                          patch(iss.id, { [key]: n })
+                          onUnit?.(issueUnitKey(section.id, iss.id, key), n == null ? null : exp)
+                        }} pendingKey={issueErrorKey(section.id, iss.id, key)}
                         onError={(k) => onFieldError(issueErrorKey(section.id, iss.id, key), k ? t(k) : null)} />
                       {fe && <p id={`${base}-${key}-e`} className="text-sm text-destructive" role="alert">{fe}</p>}
                     </div>
@@ -499,11 +550,13 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
   // Geçen ayın değerleri ve raporun o aya özel hedefleri (2026-10-17, 4b): fark / hedef cümleleri ve renkli kutucuklar
   const prevFields = previous?.fields || null
   const targets = values.targets || null
-  const auto = summaryAutoText(section, template, values.fields, channelName, year, month, prevFields, targets)
+  // Kısaltmayla girilmiş sayılar (2026-10-18): özet ve kutucuklar PDF'teki gibi "4,4G"
+  const units = values.units || null
+  const auto = summaryAutoText(section, template, values.fields, channelName, year, month, prevFields, targets, units)
   // Önizleme PDF'teki gibi bloklardan: gömülü bölümlerin açıklamaları ilgili cümlenin altında (2026-10-17)
-  const blocks = manual ? null : summaryBlocks(template, section, values.fields, values.texts, channelName, year, month, prevFields, targets)
+  const blocks = manual ? null : summaryBlocks(template, section, values.fields, values.texts, channelName, year, month, prevFields, targets, units)
   const status = summaryLineStatus(section, template, values.fields, prevFields, targets)
-  const tiles = summaryTiles(template, section, values.fields, targets, prevFields, channelName, year, month)
+  const tiles = summaryTiles(template, section, values.fields, targets, prevFields, channelName, year, month, units)
   const pending = status.filter((x) => x.state === 'missing')
   const broken = status.filter((x) => x.state === 'broken')
   const err = errors[`text.${section.id}`]
@@ -678,7 +731,11 @@ function SummaryTiles({ tiles, t }) {
         <li key={x.id} className={cn('flex min-w-0 flex-col gap-0.5 rounded-lg border px-3 py-2', TILE_TONE[x.tone] || TILE_TONE.unknown)}
           data-slot="te-tile" data-tile={x.id} data-tone={x.tone}>
           <span className="text-xs font-medium leading-snug [overflow-wrap:anywhere]">{x.label}</span>
-          <span className="text-xl font-bold leading-tight tabular-nums [overflow-wrap:anywhere]" data-slot="te-tile-value">{x.value}</span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xl font-bold leading-tight tabular-nums [overflow-wrap:anywhere]"
+            data-slot="te-tile-value">
+            <span className="min-w-0 [overflow-wrap:anywhere]">{x.value}</span>
+            {x.zero && <ZeroOkMark className="size-5" />}
+          </span>
           {(x.delta || x.target) && (
             <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs [overflow-wrap:anywhere]" data-slot="te-tile-sub">
               {x.delta && (
@@ -781,9 +838,10 @@ export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly
     const err = errors[key]
     const label = t('te.tbl.cellLabel', resolve(r.label), resolve(c.label))
     const v = values.tables?.[section.id]?.[r.id]?.[c.id]
+    const unit = c.type === 'number' ? values.units?.[tableUnitKey(section.id, r.id, c.id)] ?? null : null
     // Salt okunur izleyici (AUDIT vb.) değeri METİN olarak görür: kapalı giriş kutusu yarı saydamdı (≈ 3,5:1 kontrast)
     if (readOnly) {
-      const shown = v == null || v === '' ? '—' : c.type === 'text' ? String(v) : formatValue({ type: c.type }, v, uiLang)
+      const shown = v == null || v === '' ? '—' : c.type === 'text' ? String(v) : formatValue({ type: c.type }, v, uiLang, null, unit)
       const control = (
         <span id={id} data-slot="te-cell-readonly"
           className={cn('block min-h-9 py-2 text-sm leading-snug [overflow-wrap:anywhere]', c.type !== 'text' && 'tabular-nums',
@@ -798,8 +856,8 @@ export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly
     ) : (
       <NumberInput id={id} value={v ?? null} lang={uiLang} percent={c.type === 'percent'} negative={c.type === 'percent'}
         disabled={readOnly} ariaLabel={label} invalid={err ? true : undefined} compact={!cards}
-        describedBy={err ? `${id}-e` : undefined}
-        onChange={(n) => onCell(section.id, r.id, c.id, n)} onError={(k) => onFieldError(key, k ? t(k) : null)} pendingKey={key} />
+        describedBy={err ? `${id}-e` : undefined} unit={unit}
+        onChange={(n, exp) => onCell(section.id, r.id, c.id, n, exp)} onError={(k) => onFieldError(key, k ? t(k) : null)} pendingKey={key} />
     )
     return { id, key, err, control }
   }

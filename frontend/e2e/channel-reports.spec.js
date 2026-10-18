@@ -216,6 +216,29 @@ const CALC_REPORT = {
   values: { fields: { 'total-tx': 125430112, 'error-count': 526806, 'unmapped-count': 3340, 'quota-count': 1250 }, issues: {}, texts: {} },
   previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 124900000 } },
 }
+// Kısaltılmış sayı + sıfır işareti (2026-10-18): kısaltmayla girilmiş toplam işlem ("4,4G" — units), sıfır kota hatası, sıfır
+// müşterili anomali konusu (inceleme 2026-10-18: işaretsiz); özet kutucukları toplam + kota; geçen ay "4350M" (harften önce
+// gruplama yok — "4.350M" düzenleyicide 4,35 milyon okunurdu)
+const NUMDISP_TEMPLATE = {
+  ...CALC_TEMPLATE,
+  sections: [
+    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: ['{kanal} toplam işlem adedi {f:total-tx} olarak gerçekleşmiştir.',
+      'Ay içindeki teknik hata adedi {f:error-count} olarak gerçekleşmiştir.'],
+      tiles: ['total-tx', 'quota-count', 'error-count'] },
+    ...CALC_TEMPLATE.sections,
+    { id: 'issues', kind: 'issues', title: 'Anormal Artış Gösteren Hatalar', item_title: '{konu}: Hata Artışı',
+      description_label: 'Ne oldu? (zaman, yer, etki)', customers_label: 'Etkilenen müşteri sayısı',
+      errors_label: 'Bu konudan kaynaklı teknik hata adedi' },
+  ],
+}
+const NUMDISP_REPORT = {
+  ...CALC_REPORT, template: NUMDISP_TEMPLATE,
+  values: { fields: { 'total-tx': 4400000000, 'error-count': 526806, 'unmapped-count': 3340, 'quota-count': 0 },
+    issues: { issues: [{ id: 'i-a', topic: 'Kart Limiti Sorgulama Servisi ve Mobil Uygulama Giriş Akışı', title: '', title_auto: true,
+      description: '', customers: 0, errors: 681600 }] }, texts: {},
+    units: { 'total-tx': 9, 'issues.issues.i-a.errors': 3 } },
+  previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 4350000000 }, units: { 'total-tx': 6 } },
+}
 let reportOverride = null
 let templateOverride = null
 let overviewOverride = null     // kanal listesi (8. sürüm: 60 kanal, sayfalama)
@@ -1177,6 +1200,97 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/channel-reports-calc-${vp.name}.png` })
     })
 
+    test('kısaltılmış sayı ve sıfır işareti (2026-10-18): "4.4G" yazılır, kaydedilir, yeniden açılınca "4,4G" + tam sayı altında; 0 adet yanında yeşil tik; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      reportOverride = NUMDISP_REPORT
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const total = editor.getByLabel('Toplam işlem adedi', { exact: true })
+      // Saklı üs → giriş kutusu kısaltmasıyla (arayüz dilinde), altında tam sayı
+      await expect(total).toHaveValue(/^(4,4G|4\.4G)$/, { timeout: 20_000 })
+      await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-number-expanded"]')).toContainText(/4[.,]400[.,]000[.,]000/)
+      // Geçen ay ipucu geçen ayın kendi yazımıyla, harften önce gruplamasız (inceleme 2026-10-18)
+      const prevHint = editor.locator('[data-field="values.total-tx"] [data-slot="te-prev"]')
+      await expect(prevHint).toContainText('4350M')
+      await expect(prevHint).not.toContainText(/4[.,]350M/)
+      // Anomali adedi de kısaltmasıyla
+      await expect(editor.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true })).toHaveValue(/^(681,6k|681\.6k)$/)
+      // Sıfır adet: kota hatası yanında yeşil tik (ekran okuyucuya metin); dolu adette ve anomali konusunun adedinde yok
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toBeVisible()
+      await expect(editor.locator('[data-field="values.unmapped-count"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await expect(editor.getByLabel('Etkilenen müşteri sayısı', { exact: true })).toHaveValue('0')
+      await expect(editor.locator('[data-slot="te-issue"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await expect(editor.getByLabel('Kota hatası adedi', { exact: true })).toHaveAccessibleDescription(/(Sıfır — sorun yok|Zero — no issues)/)
+      // Kutucuklar: kısaltmalı değer + kısa fark, sıfır kutucuğunda tik
+      const tiles = editor.locator('[data-slot="te-tile"]')
+      await expect(tiles.filter({ hasText: 'Toplam işlem adedi' })).toContainText('4,4G')
+      await expect(tiles.filter({ hasText: 'Toplam işlem adedi' })).toContainText('+50M')
+      await expect(tiles.filter({ hasText: 'Kota hatası adedi' }).locator('[data-slot="te-zero-ok"]')).toBeVisible()
+      // Özet önizlemesi PDF'teki gibi
+      await expect(editor.locator('[data-slot="te-sum-text"]')).toContainText('4,4G')
+      // İşaret yazıya binmez: kutunun içinde, metnin sağında
+      const zeroBox = await editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]').boundingBox()
+      const inputBox = await editor.getByLabel('Kota hatası adedi', { exact: true }).boundingBox()
+      expect(zeroBox.x + zeroBox.width).toBeLessThanOrEqual(inputBox.x + inputBox.width + 0.5)
+      expect(zeroBox.y).toBeGreaterThanOrEqual(inputBox.y - 0.5)
+      expect(zeroBox.y + zeroBox.height).toBeLessThanOrEqual(inputBox.y + inputBox.height + 0.5)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kısaltma)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (kısaltma)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (kısaltma)').toEqual([])
+      // Kutucuk değeri + tik kutucuğa sığar
+      for (const tile of await tiles.all()) {
+        const tb = await tile.boundingBox()
+        const vb = await tile.locator('[data-slot="te-tile-value"]').boundingBox()
+        expect(vb.x + vb.width).toBeLessThanOrEqual(tb.x + tb.width + 0.5)
+      }
+      // İnceleme 2026-10-18: geçersiz yazımda ("0x") işaret hatanın yanında kalmaz; "0" ile geri gelir
+      const quota = editor.getByLabel('Kota hatası adedi', { exact: true })
+      await quota.fill('0x')
+      await expect(editor.locator('[data-field="values.quota-count"] [role="alert"]')).toBeVisible()
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await quota.fill('0')
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toBeVisible()
+      // Yalnız oran tabanı (toplam işlem — hata oranının paydası) 0 iken işaretsiz; hata adedi (oranın payı) 0 iken işaretli
+      await total.fill('0')
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('0')
+      await expect(editor.locator('[data-field="values.error-count"] [data-slot="te-zero-ok"]')).toBeVisible()
+      await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await expect(tiles.filter({ hasText: 'Toplam işlem adedi' }).locator('[data-slot="te-zero-ok"]')).toHaveCount(0)
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('526806')
+      // "4.4G" yazılır (iki dilde de ondalık: sonekten önceki tek ayraç) ve map adedi "1,25M"; kayıt üsleri gönderir
+      await total.fill('4.4G')
+      await editor.getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('1,25M')
+      await expect(editor.locator('[data-field="values.unmapped-count"] [data-slot="te-number-expanded"]')).toContainText(/1[.,]250[.,]000/)
+      // Kullanıcı isteği (2026-10-18): "teknik hata adedine 4,4G … yazdığımda … yönetici özetinde gözükmesini" — yazılır yazılmaz
+      // özet cümlesi ve kutucuğu "4,4G" (PDF / e-posta aynı kural: TechErrorReportPdfWriterTest.technicalErrorCountTypedAbbreviatedReachesExecutiveSummary)
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('4,4G')
+      const sumText = editor.locator('[data-slot="te-sum-text"]')
+      await expect(sumText).toContainText('Ay içindeki teknik hata adedi 4,4G olarak gerçekleşmiştir.')
+      await expect(sumText).not.toContainText(/4[.,]400[.,]000[.,]000/)
+      const errorTile = tiles.filter({ hasText: 'Ay içindeki teknik hata adedi' }).locator('[data-slot="te-tile-value"]')
+      await expect(errorTile).toContainText('4,4G')
+      await expect(errorTile).not.toContainText(/4[.,]400[.,]000[.,]000/)
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.units?.['unmapped-count']).toBe(6)
+      expect(savedReport.values.fields).toMatchObject({ 'total-tx': 4400000000, 'error-count': 4400000000, 'unmapped-count': 1250000 })
+      expect(savedReport.values.units).toEqual({ 'total-tx': 9, 'error-count': 9, 'unmapped-count': 6, 'issues.issues.i-a.errors': 3 })
+      // Yeniden aç: sunucunun sakladığı belge → kutular kısaltmasıyla
+      reportOverride = { ...NUMDISP_REPORT, values: savedReport.values, report: { ...NUMDISP_REPORT.report, version: savedReport.version + 1 } }
+      await page.reload()
+      await expect(editor.getByLabel('Toplam işlem adedi', { exact: true })).toHaveValue(/^(4,4G|4\.4G)$/, { timeout: 20_000 })
+      await expect(editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true })).toHaveValue(/^(4,4G|4\.4G)$/)
+      await expect(editor.locator('[data-slot="te-sum-text"]')).toContainText('Ay içindeki teknik hata adedi 4,4G olarak gerçekleşmiştir.')
+      await expect(editor.getByLabel('Map yapılmamış hata adedi', { exact: true })).toHaveValue(/^(1,25M|1\.25M)$/)
+      await expect(page.locator('[data-slot="te-save"]')).toBeDisabled()                // sahte "kaydedilmemiş değişiklik" yok
+      // Tam yazılan sayı tam kalır: üs düşer
+      await editor.getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('1250000')
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.units?.['unmapped-count'] ?? 'yok').toBe('yok')
+      await page.screenshot({ path: `test-results/channel-reports-numdisp-${vp.name}.png`, fullPage: true })
+    })
+
     test('rapor: sayı çözülür ve sürümle kaydedilir; grafik ızgarası; görsel yükleme; gönderim onayı', async ({ page }) => {
       test.setTimeout(120_000)
       await mock(page)
@@ -1237,8 +1351,9 @@ for (const vp of VIEWPORTS) {
 
       // Yönetici özeti: girilen rakamla canlı yazılır, rakam kalın; bekleyen cümle neyi beklediğini söyler
       const summary = editor.locator('[data-slot="te-sum-text"]')
-      await expect(summary).toContainText(`${LONG_CHANNEL} Kanalından yapılan toplam işlem adedi 1.250.000 olarak gerçekleşmiştir.`)
-      await expect(summary.locator('strong', { hasText: '1.250.000' })).toBeVisible()
+      // 2026-10-18: kısaltmayla yazılan sayı özette de kısaltmasıyla (PDF / e-posta ile aynı)
+      await expect(summary).toContainText(`${LONG_CHANNEL} Kanalından yapılan toplam işlem adedi 1,25M olarak gerçekleşmiştir.`)
+      await expect(summary.locator('strong', { hasText: '1,25M' })).toBeVisible()
       await expect(editor.locator('[data-slot="te-sum-pending"]')).toContainText(/Kritik fonksiyonların SLA oranı/)
 
       // Tablo: geniş kapta gerçek tablo, dar kapta kart; ikisinde de yatay sayfa taşması yok
@@ -1272,6 +1387,7 @@ for (const vp of VIEWPORTS) {
       expect(savedReport.values.fields).toMatchObject({ 'error-rate': 0.42, 'total-tx': 1250000, 'had-outage': false,
         'unmapped-note': '- Limit sorgusu yavaşladı' })
       expect(savedReport.values.fields).not.toHaveProperty('error-rate-excl')
+      expect(savedReport.values.units).toEqual({ 'total-tx': 6 })                       // 2026-10-18: kısaltma saklanır
       expect(savedReport.values.tables).toEqual({ sla: { total: { functions: 1250, availability: 99.5 } } })
       await expect(page.locator('[data-slot="te-report-actions"]')).toContainText(/Tüm değişiklikler kaydedildi|All changes saved/)
 

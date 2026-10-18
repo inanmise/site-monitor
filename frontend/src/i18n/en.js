@@ -20613,6 +20613,7 @@ export const EN = {
   'te.err.abbrevB': "\"B\" on its own can't be used: it means thousand in Turkish and billion in English. Write k or thousand for thousands, G or bn for billions.",
   'te.err.tooLarge': "The number is too large; the limit is 1,000,000,000,000,000 (1000T). Check the figure or the abbreviation.",
   'te.num.expanded': "Full number:",
+  'te.zero.ok': "Zero — no issues",
   'te.err.negative': "This field can't be negative; enter zero or a positive number.",
   'te.backToChannel': "Back to {0}",
   'te.reportGoneTitle': "The report wasn't found or you can't see it",

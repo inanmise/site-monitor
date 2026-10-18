@@ -176,6 +176,114 @@ class TechErrorValuesTest {
         assertThat(TechErrorFormat.value(rate, 12.123456, "tr")).isEqualTo("%12,1235");
     }
 
+    /** Sayı + yüzde + muaf olabilen sayı + anomali + tablo (kısaltma testleri, 2026-10-18). */
+    static Template unitTemplate() {
+        return TechErrorTemplate.normalize(Map.of("lang", "tr", "title", "{kanal}", "sections", List.of(
+                Map.of("id", "m", "kind", "metrics", "title", "M", "fields", List.of(
+                        Map.of("id", "total", "label", "Toplam", "type", "number"),
+                        Map.of("id", "rate", "label", "Oran", "type", "percent"),
+                        Map.of("id", "q", "label", "Kesinti?", "type", "yesno"),
+                        Map.of("id", "outage", "label", "Kesinti adedi", "type", "number", "skip_if_no", "q"),
+                        Map.of("id", "note", "label", "Not", "type", "text"))),
+                Map.of("id", "iss", "kind", "issues", "title", "I"),
+                Map.of("id", "tb", "kind", "table", "title", "T",
+                        "columns", List.of(Map.of("id", "n", "label", "N", "type", "number"), Map.of("id", "p", "label", "P", "type", "percent")),
+                        "rows", List.of(Map.of("id", "r1", "label", "R1"))))));
+    }
+
+    @Test
+    @DisplayName("2026-10-18: kısaltma üsleri yalnız değeri olan SAYI yerinde (alan / anomali adedi / sayı sütunu) ve 3/6/9/12; geçersiz kayıt 400 değil sessizce düşer; muaf alanla düşer; kısaltmasız belge bayt bayt eski")
+    void unitsAreValidatedSilently() {
+        Template ut = unitTemplate();
+        Map<String, Object> fields = new java.util.LinkedHashMap<>();
+        fields.put("total", 4_400_000_000L);
+        fields.put("rate", 0.42);
+        fields.put("q", false);
+        fields.put("outage", 1000);
+        fields.put("note", "12k");
+        Map<String, Object> issue = new java.util.LinkedHashMap<>(Map.of("id", "i-a", "topic", "A", "customers", 1_250_000));
+        Map<String, Object> units = new java.util.LinkedHashMap<>();
+        units.put("total", 9);
+        units.put("rate", 9);                                     // yüzde: düşer
+        units.put("outage", 3);                                   // muaf alan: düşer
+        units.put("note", 3);                                     // metin: düşer
+        units.put("ghost", 6);                                    // şablonda yok: düşer
+        units.put("issues.iss.i-a.customers", 6);
+        units.put("issues.iss.i-a.errors", 6);                    // değer yok: düşer
+        units.put("issues.iss.i-x.customers", 6);                 // konu yok: düşer
+        units.put("tables.tb.r1.n", 3);
+        units.put("tables.tb.r1.p", 3);                           // yüzde sütunu: düşer
+        Map<String, Object> raw = Map.of("fields", fields, "issues", Map.of("iss", List.of(issue)),
+                "tables", Map.of("tb", Map.of("r1", Map.of("n", 2500, "p", 1.5))), "units", units);
+        Values v = TechErrorValues.normalize(raw, ut);
+        assertThat(v.units()).containsExactly(Map.entry("total", 9), Map.entry("issues.iss.i-a.customers", 6), Map.entry("tables.tb.r1.n", 3));
+        assertThat(v.unit("total")).isEqualTo(9);
+        assertThat(v.issueUnit("iss", "i-a", "customers")).isEqualTo(6);
+        assertThat(v.cellUnit("tb", "r1", "n")).isEqualTo(3);
+        assertThat(TechErrorValues.toMap(v)).containsKey("units");
+        // Geçersiz üsler (7, metin, ondalık, boolean, null, negatif) ve harita olmayan "units" 400 değil: düşer
+        for (Object bad : java.util.Arrays.asList(7, "9", 9.5, true, null, -3, 0, 15)) {
+            Map<String, Object> u = new java.util.HashMap<>();
+            u.put("total", bad);
+            assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5), "units", u), ut).units()).as(String.valueOf(bad)).isEmpty();
+        }
+        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5), "units", List.of(9)), ut).units()).isEmpty();
+        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5_000_000_000L), "units", Map.of("total", 9.0)), ut).units())
+                .containsEntry("total", 9);
+        // Kısaltmasız belge: anahtar hiç yazılmaz (önceki sürümle bayt bayt aynı JSON)
+        Values plain = TechErrorValues.normalize(Map.of("fields", Map.of("total", 5)), ut);
+        assertThat(TechErrorValues.toJson(plain)).isEqualTo("{\"fields\":{\"total\":5},\"issues\":{},\"texts\":{}}");
+        // Saklıdan okuma: aynı süzgeç; bozuk birim kaydı kaydı okutmaz değil, yalnız düşer
+        Values stored = TechErrorValues.fromStored(TechErrorValues.toJson(v), ut);
+        assertThat(stored.units()).isEqualTo(v.units());
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":5},\"units\":{\"total\":\"G\"}}", ut).units()).isEmpty();
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":5},\"units\":{\"total\":\"G\"}}", ut).fields()).containsEntry("total", 5L);
+        // Değeri silinen alanın üssü sahipsiz kalmaz (hesap sonrası alan haritası)
+        assertThat(v.withFields(Map.of("rate", 0.42)).units()).doesNotContainKey("total").containsKeys("issues.iss.i-a.customers", "tables.tb.r1.n");
+        assertThat(Values.empty().units()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: kaydırılınca 6 ondalığa sığmayan değerin üssü saklanmaz (gösterim yuvarlanmış sayı olurdu) — alan, anomali adedi, tablo hücresi")
+    void unitsDroppedWhenAbbreviationWouldRound() {
+        Template ut = unitTemplate();
+        Map<String, Object> issue = new java.util.LinkedHashMap<>(Map.of("id", "i-a", "topic", "A", "customers", 1_234_567, "errors", 1_234_567));
+        Map<String, Object> units = new java.util.LinkedHashMap<>();
+        units.put("total", 9);                                    // 4,123456789G: 9 ondalık → düşer
+        units.put("issues.iss.i-a.customers", 3);                 // 1234,567k: 3 ondalık → kalır
+        units.put("issues.iss.i-a.errors", 12);                   // 0,000001234567T → düşer
+        units.put("tables.tb.r1.n", 12);                          // 2500 / 10^12 → düşer
+        Map<String, Object> raw = Map.of("fields", Map.of("total", 4_123_456_789L), "issues", Map.of("iss", List.of(issue)),
+                "tables", Map.of("tb", Map.of("r1", Map.of("n", 2500))), "units", units);
+        Values v = TechErrorValues.normalize(raw, ut);
+        assertThat(v.units()).containsExactly(Map.entry("issues.iss.i-a.customers", 3));
+        assertThat(v.fields()).containsEntry("total", 4_123_456_789L);                  // sayının kendisi aynen
+        // Tam 6 ondalık sığar: 4123,456789M
+        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 4_123_456_789L), "units", Map.of("total", 6)), ut).units())
+                .containsEntry("total", 6);
+        // Saklıdan okuma (önceki derlemeyle yazılmış satır) aynı süzgeç
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":4123456789},\"units\":{\"total\":9}}", ut).units()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("kısaltmayla yazılan sıfırın (\"0G\", \"0k\") üssü katı ve saklı okumada sessizce düşer — rapor \"0\" basar")
+    void unitsDroppedForZero() {
+        Template ut = unitTemplate();
+        Map<String, Object> issue = new java.util.LinkedHashMap<>(Map.of("id", "i-a", "topic", "A", "customers", 0, "errors", 2000));
+        Map<String, Object> units = new java.util.LinkedHashMap<>();
+        units.put("total", 9);                                    // 0G → düşer
+        units.put("issues.iss.i-a.customers", 3);                 // 0k → düşer
+        units.put("issues.iss.i-a.errors", 3);                    // 2k → kalır
+        units.put("tables.tb.r1.n", 6);                           // 0M → düşer
+        Map<String, Object> raw = Map.of("fields", Map.of("total", 0), "issues", Map.of("iss", List.of(issue)),
+                "tables", Map.of("tb", Map.of("r1", Map.of("n", 0))), "units", units);
+        Values v = TechErrorValues.normalize(raw, ut);
+        assertThat(v.units()).containsExactly(Map.entry("issues.iss.i-a.errors", 3));
+        assertThat(v.fields()).containsEntry("total", 0L);                               // sayının kendisi aynen
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0},\"units\":{\"total\":9}}", ut).units()).isEmpty();
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":0.0},\"units\":{\"total\":12}}", ut).units()).isEmpty();
+    }
+
     private void assertInvalid(Map<String, Object> raw, String field) {
         assertThatThrownBy(() -> TechErrorValues.normalize(raw, t))
                 .isInstanceOf(FieldValidationException.class)

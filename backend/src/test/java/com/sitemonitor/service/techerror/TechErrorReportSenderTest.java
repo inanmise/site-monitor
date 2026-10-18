@@ -79,6 +79,18 @@ class TechErrorReportSenderTest {
     }
 
     @Test
+    @DisplayName("2026-10-18: sıfır adet işareti önizlemede de görünür (CID ek gönderimle aynı listede → data: URI); kısaltmalı değer kısaltmasıyla")
+    void previewCarriesZeroMarkAndAbbreviation() throws Exception {
+        pdfReturns(new byte[1000]);
+        var t = TechErrorTemplate.defaults("tr");
+        var v = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 4_400_000_000L, "quota-count", 0), "units", Map.of("total-tx", 9)), t);
+        when(service.pdfInput(any(), any(), any())).thenReturn(new TechErrorPdfInput(t, v, "Mobil", "Dijital", 2026, 9, "Ayşe", now, Map.of()));
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.html()).contains("4,4G").doesNotContain("cid:").contains("data-slot=\"te-zero-ok\"")
+                .contains("alt=\"sıfır — sorun yok\"");
+    }
+
+    @Test
     @DisplayName("önizleme (10. sürüm): gönderimle aynı gövde ve konu, cid görseller data: URI, ek adı; talep / posta / günlük yok; alıcı yoksa problem kodu; EXECUTIVE yolu To / CC")
     void previewBuildsWithoutSending() throws Exception {
         pdfReturns(new byte[1000]);                                  // gönderimle aynı merdiven: PDF üretilir, izin renderPdf'te

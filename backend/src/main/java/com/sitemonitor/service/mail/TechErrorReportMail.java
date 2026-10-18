@@ -150,7 +150,13 @@ public final class TechErrorReportMail {
         d.footerMeta(en ? "Site Monitor — technical error report" : "Site Monitor — teknik hata raporu", "Site Monitor");
         List<InlineImage> inline = new ArrayList<>();
         for (TechErrorMailImages.Prepared p : imgs.embedded().values()) inline.add(p.inline());
-        return new Built(d.build(), List.copyOf(inline), imgs.embedded().size(), imgs.skipped().size() + imgs.unreadable().size());
+        MailDoc.Mail mail = d.build();
+        // Sıfır işareti (2026-10-18): gövdede en az bir sıfır adet varsa TEK küçük ek (kaç sıfır olursa olsun)
+        if (mail.html().contains("cid:" + TechErrorZeroMark.CID)) {
+            InlineImage zero = TechErrorZeroMark.inline();
+            if (zero != null) inline.add(zero);
+        }
+        return new Built(mail, List.copyOf(inline), imgs.embedded().size(), imgs.skipped().size() + imgs.unreadable().size());
     }
 
     /** Dipnot cümlesi; EXECUTIVE'de onaylayan PO ve zamanı eklenir (kimlik {@code approved} ise). */
@@ -338,7 +344,8 @@ public final class TechErrorReportMail {
               .append(";border-radius:8px;padding:14px 16px;font-family:").append(MailTokens.FONT).append("\">")
               .append("<p style=\"margin:0;font-size:12px;line-height:16px;font-weight:500;color:").append(col[1]).append("\">").append(MailKit.esc(tile.label())).append("</p>")
               .append("<p style=\"margin:4px 0 0;font-size:24px;line-height:30px;font-weight:700;color:").append(col[1])
-              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(tile.value())).append("</p>");
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(tile.value()))
+              .append(tile.zero() ? TechErrorZeroMark.html(en) : "").append("</p>");
             String sub = tileSub(tile, en);
             if (sub != null) {
                 sb.append("<p style=\"margin:2px 0 0;font-size:12px;line-height:16px;color:").append(col[1]).append("\">").append(MailKit.esc(sub)).append("</p>");
@@ -353,6 +360,7 @@ public final class TechErrorReportMail {
         StringBuilder t = new StringBuilder();
         for (Tile tile : tiles) {
             t.append(tile.label()).append(": ").append(tile.value());
+            if (tile.zero()) t.append(TechErrorZeroMark.plain(en));
             String sub = tileSub(tile, en);
             if (sub != null) t.append(" (").append(sub).append(')');
             t.append('\n');
@@ -388,11 +396,13 @@ public final class TechErrorReportMail {
             List<String[]> cells = new ArrayList<>();
             for (Field f : compact) {
                 String label = in.resolve(f.label());
-                String value = TechErrorFormat.value(f, vals.get(f.id()), lang);
-                cells.add(new String[] { label, value });
-                plain.append(label).append(": ").append(value).append('\n');
+                Object v = vals.get(f.id());
+                String value = TechErrorFormat.value(f, v, lang, in.values().unit(f.id()));
+                boolean zero = TechErrorFormat.zeroOk(in.template(), f, v);
+                cells.add(new String[] { label, value, zero ? "zero" : null });
+                plain.append(label).append(": ").append(value).append(zero ? TechErrorZeroMark.plain(en) : "").append('\n');
             }
-            d.raw(valueTilesHtml(cells), plain.toString());
+            d.raw(valueTilesHtml(cells, en), plain.toString());
         }
         for (Field f : longs) {
             Object v = vals.get(f.id());
@@ -405,8 +415,16 @@ public final class TechErrorReportMail {
         }
     }
 
-    /** Küçük değer kutucukları: etiket + değer, satırda 3, telefonda alt alta ({@code .stack}); Outlook hayalet hücreleri. */
+    /** {@link #valueTilesHtml(List, boolean)} Türkçe (sıfır işaretinin alt metni). */
     static String valueTilesHtml(List<String[]> cells) {
+        return valueTilesHtml(cells, false);
+    }
+
+    /**
+     * Küçük değer kutucukları: etiket + değer, satırda 3, telefonda alt alta ({@code .stack}); Outlook hayalet hücreleri.
+     * Hücre {label, value[, "zero"]}: üçüncü öğe doluysa değerin yanında sıfır işareti (2026-10-18).
+     */
+    static String valueTilesHtml(List<String[]> cells, boolean en) {
         int n = cells.size();
         int perRow = Math.min(3, n);
         String pct = perRow == 3 ? "33.33%" : (100 / perRow) + "%";
@@ -423,7 +441,8 @@ public final class TechErrorReportMail {
               .append(";border-radius:8px;padding:10px 14px;font-family:").append(MailTokens.FONT).append("\">")
               .append("<p style=\"margin:0;font-size:12px;line-height:16px;font-weight:500;color:").append(MailTokens.MUTED).append("\">").append(MailKit.esc(c[0])).append("</p>")
               .append("<p style=\"margin:2px 0 0;font-size:18px;line-height:24px;font-weight:600;color:").append(MailTokens.FG)
-              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(c[1])).append("</p>")
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(MailKit.esc(c[1]))
+              .append(c.length > 2 && c[2] != null ? TechErrorZeroMark.html(en) : "").append("</p>")
               .append("</td></tr></table></td></tr></table></div><!--[if mso]></td><![endif]-->");
         }
         sb.append("<!--[if mso]></tr></table><![endif]--></td></tr></table>");
@@ -446,8 +465,10 @@ public final class TechErrorReportMail {
             String title = i.displayTitle(s.itemTitle());
             if (title == null || title.isBlank()) title = en ? "Untitled topic" : "Başlıksız konu";
             String head = n + ". " + title;
-            String counts = in.resolve(s.customersLabel()) + ": " + TechErrorFormat.count(i.customers(), lang)
-                    + " · " + in.resolve(s.errorsLabel()) + ": " + TechErrorFormat.count(i.errors(), lang);
+            String counts = in.resolve(s.customersLabel()) + ": "
+                    + TechErrorFormat.count(i.customers(), lang, in.values().issueUnit(s.id(), i.id(), "customers"))
+                    + " · " + in.resolve(s.errorsLabel()) + ": "
+                    + TechErrorFormat.count(i.errors(), lang, in.values().issueUnit(s.id(), i.id(), "errors"));
             boolean hasDesc = i.description() != null && !i.description().isBlank();
             String html = "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\" data-slot=\"te-issue\"><tr>"
                     + "<td bgcolor=\"" + CARD + "\" style=\"background-color:" + CARD + ";border:1px solid " + MailTokens.BORDER + ";border-radius:8px;padding:14px 16px;font-family:"
@@ -493,7 +514,7 @@ public final class TechErrorReportMail {
                     : Cell.of(label, null, r.group()));
             for (Column col : s.columns()) {
                 Object v = in.values().cell(s.id(), r.id(), col.id());
-                cells.add(Cell.of(TechErrorFormat.cell(col, v, lang), null, r.group()));
+                cells.add(Cell.of(TechErrorFormat.cell(col, v, lang, in.values().cellUnit(s.id(), r.id(), col.id())), null, r.group()));
             }
             rows.add(cells);
             if (r.group()) seenGroup = true;

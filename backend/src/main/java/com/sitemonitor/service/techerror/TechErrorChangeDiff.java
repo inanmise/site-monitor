@@ -117,15 +117,17 @@ public final class TechErrorChangeDiff {
                 case "metrics" -> {
                     for (Field f : s.fields()) {
                         Object b = before.fields().get(f.id()), a = after.fields().get(f.id());
-                        if (same(b, a)) continue;
+                        // Kısaltma da rapordur (2026-10-18): "4,4G" → "4.400.000.000" görünen bir değişikliktir
+                        Integer bu = before.unit(f.id()), au = after.unit(f.id());
+                        if (same(b, a) && Objects.equals(bu, au)) continue;
                         String label = res(f.label(), channel, year, month, lang);
                         String key = "f:" + f.id();
                         if ("textarea".equals(f.type()) || "text".equals(f.type())) {
                             c.text(key, section, label, f.type(), str(b), str(a));
                         } else {
                             c.add(new Change(section, label, f.type(), op(b, a),
-                                    b == null ? null : TechErrorFormat.value(f, b, lang),
-                                    a == null ? null : TechErrorFormat.value(f, a, lang), null, null).keyed(key, b, a));
+                                    b == null ? null : TechErrorFormat.value(f, b, lang, bu),
+                                    a == null ? null : TechErrorFormat.value(f, a, lang, au), null, null).keyed(key, raw(b, bu), raw(a, au)));
                         }
                     }
                     // Raporun o aya özel hedefi (2026-10-17, 4b): "<alan> — bu ayın hedefi"; şablon hedefine dönüş = kaldırıldı
@@ -140,7 +142,7 @@ public final class TechErrorChangeDiff {
                     }
                 }
                 case "issues" -> issues(c, s, section, before.issues().get(s.id()), after.issues().get(s.id()), en, lang,
-                        channel, year, month);
+                        channel, year, month, before, after);
                 case "text" -> {
                     // Saklı metin yoksa şablonun varsayılan metni GÖRÜNÜR — yer tutucuları çözülmüş hâliyle (düzenleyici ve
                     // PDF gibi); fark görünen metinler arasında (inceleme 2026-10-14: ham {kanal} "önce" diye yazılıyordu)
@@ -161,12 +163,13 @@ public final class TechErrorChangeDiff {
                     for (TableRow r : s.rows()) {
                         for (Column col : s.columns()) {
                             Object b = cell(before, s.id(), r.id(), col.id()), a = cell(after, s.id(), r.id(), col.id());
-                            if (same(b, a)) continue;
+                            Integer bu = before.cellUnit(s.id(), r.id(), col.id()), au = after.cellUnit(s.id(), r.id(), col.id());
+                            if (same(b, a) && Objects.equals(bu, au)) continue;
                             String label = res(r.label(), channel, year, month, lang) + " — " + res(col.label(), channel, year, month, lang);
                             c.add(new Change(section, label, "table", op(b, a),
-                                    b == null ? null : TechErrorFormat.cell(col, b, lang),
-                                    a == null ? null : TechErrorFormat.cell(col, a, lang), null, null)
-                                    .keyed("t:" + s.id() + ":" + r.id() + ":" + col.id(), b, a));
+                                    b == null ? null : TechErrorFormat.cell(col, b, lang, bu),
+                                    a == null ? null : TechErrorFormat.cell(col, a, lang, au), null, null)
+                                    .keyed("t:" + s.id() + ":" + r.id() + ":" + col.id(), raw(b, bu), raw(a, au)));
                         }
                     }
                 }
@@ -177,7 +180,7 @@ public final class TechErrorChangeDiff {
     }
 
     private static void issues(Collector c, Section s, String section, List<Issue> before, List<Issue> after, boolean en,
-                               String lang, String channel, int year, int month) {
+                               String lang, String channel, int year, int month, Values vb, Values va) {
         Map<String, Issue> b = new LinkedHashMap<>(), a = new LinkedHashMap<>();
         if (before != null) for (Issue i : before) b.put(i.id(), i);
         if (after != null) for (Issue i : after) a.put(i.id(), i);
@@ -219,15 +222,17 @@ public final class TechErrorChangeDiff {
                 c.text(k + "desc", section, name + " · " + label(s.descriptionLabel(), en ? "Description" : "Açıklama"), "textarea",
                         emptyNull(old.description()), emptyNull(i.description()));
             }
-            if (!same(old.customers(), i.customers())) {
+            Integer cbu = vb.issueUnit(s.id(), i.id(), "customers"), cau = va.issueUnit(s.id(), i.id(), "customers");
+            if (!same(old.customers(), i.customers()) || !Objects.equals(cbu, cau)) {
                 c.add(new Change(section, name + " · " + label(s.customersLabel(), en ? "Affected customers" : "Etkilenen müşteri"),
-                        "number", op(old.customers(), i.customers()), num(old.customers(), lang), num(i.customers(), lang), null, null)
-                        .keyed(k + "customers", old.customers(), i.customers()));
+                        "number", op(old.customers(), i.customers()), num(old.customers(), lang, cbu), num(i.customers(), lang, cau), null, null)
+                        .keyed(k + "customers", raw(old.customers(), cbu), raw(i.customers(), cau)));
             }
-            if (!same(old.errors(), i.errors())) {
+            Integer ebu = vb.issueUnit(s.id(), i.id(), "errors"), eau = va.issueUnit(s.id(), i.id(), "errors");
+            if (!same(old.errors(), i.errors()) || !Objects.equals(ebu, eau)) {
                 c.add(new Change(section, name + " · " + label(s.errorsLabel(), en ? "Errors" : "Hata adedi"),
-                        "number", op(old.errors(), i.errors()), num(old.errors(), lang), num(i.errors(), lang), null, null)
-                        .keyed(k + "errors", old.errors(), i.errors()));
+                        "number", op(old.errors(), i.errors()), num(old.errors(), lang, ebu), num(i.errors(), lang, eau), null, null)
+                        .keyed(k + "errors", raw(old.errors(), ebu), raw(i.errors(), eau)));
             }
         }
         c.subject = null;
@@ -301,8 +306,17 @@ public final class TechErrorChangeDiff {
         return a.equals(b);
     }
 
-    private static String num(Number n, String lang) {
-        return n == null ? null : TechErrorFormat.count(n, lang);
+    private static String num(Number n, String lang, Integer unit) {
+        return n == null ? null : TechErrorFormat.count(n, lang, unit);
+    }
+
+    /**
+     * Parmak izine giren ham değer: kısaltmasız sayı OLDUĞU GİBİ (eski olayların izleri değişmez); kısaltmalı sayı
+     * "değer@üs" metni — 4,4G ile 4.400.000.000 farklı izdir, otomatik kayıt birleştirmesi "eski hâline döndü" sanmaz.
+     */
+    static Object raw(Object v, Integer unit) {
+        if (v == null || unit == null || !(v instanceof Number n)) return v;
+        return Double.toString(n.doubleValue()) + "@" + unit;
     }
 
     private static String res(String s, String channel, int year, int month, String lang) {
