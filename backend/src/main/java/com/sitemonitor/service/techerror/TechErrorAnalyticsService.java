@@ -38,7 +38,8 @@ import java.util.regex.Pattern;
  *   <li>Yalnız AKTİF kanallar (pasif kanallar ürün kararı bekliyor); takım süzgeci yoksa okunabilen bütün takımların kanalları.</li>
  *   <li>Referans tür: kapsamdaki kanalların GÜNCEL şablonlarında alanı sayı / yüzde olarak tanımlayanların ÇOĞUNLUĞU
  *       (eşitlikte kanal sırasında ilk tanımlayan); hiçbir kanalda yoksa varsayılan şablondaki. Alanı başka türle
- *       tanımlayan kanallar {@code typeMismatch}'te listelenir (arayüz o kanalda "alan türü farklı" der). Bir ayın değeri
+ *       tanımlayan kanallar {@code typeMismatch}'te listelenir (arayüz o kanalda "güncel şablonda alan türü farklı; yalnız
+ *       aynı türdeki aylar" der). Bir ayın değeri
  *       yalnız o raporun KENDİ kopyalanmış şablonunda alan AYNI kimlik VE AYNI türdeyse alınır (trend kuralı,
  *       {@link TechErrorTrend}); tür farkı, muaf alan ({@code skip_if_no} "Hayır"), raporu olmayan ay ve değeri olmayan
  *       alan {@code null} — asla 0 değil.</li>
@@ -82,6 +83,11 @@ public class TechErrorAnalyticsService {
     private final TechErrorChannelRepository channels;
     private final TechErrorReportRepository reports;
     private TtlMemo<Result> memo = new TtlMemo<>(256);
+    /**
+     * Bellek kuşağı (inceleme 2026-10-18, 2. tur): {@link #invalidate} artırır ve anahtara girer — boşaltmadan ÖNCE başlamış
+     * bir hesap eski veriyi eski kuşağın anahtarına yazar, kimse onu okumaz (yalnız {@code clear} bu yarışı kaçırırdı).
+     */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
     /** Dilim boyu — testler küçültür (dilimleme gerçekten koşsun). */
     int chunkSize = CHUNK;
 
@@ -97,7 +103,8 @@ public class TechErrorAnalyticsService {
 
     /**
      * Seçilen / çizilen alan (referans tür ve etiket). {@code typeMismatch}: alanı GÜNCEL şablonunda başka türle tanımlayan
-     * kapsam kanalları (o kanalın değeri okunmaz; arayüz kanalın yanında not gösterir).
+     * kapsam kanalları — arayüz kanalın yanında not gösterir; değerler ay ay raporun KENDİ şablonundan okunur, o kanalın
+     * referans türdeki ESKİ raporları da değer verir ("yalnız aynı türdeki aylar", inceleme 2026-10-18, 2. tur).
      */
     public record FieldRef(String id, String label, String type, List<Long> typeMismatch) {
         public FieldRef(String id, String label, String type) {
@@ -138,8 +145,13 @@ public class TechErrorAnalyticsService {
         }
     }
 
-    /** Hafızayı boşaltır (testler). */
+    /**
+     * Belleği boşaltır: rapor değerleri kaydedilince, rapor açılınca / silinince, kanal / şablon değişince
+     * ({@code TechErrorReportService.analyticsChanged}, işlem işlendikten sonra) ve testler. Kuşak artar — süren eski hesap
+     * yeni anahtara yazmaz.
+     */
     public void invalidate() {
+        generation.incrementAndGet();
         memo.clear();
     }
 
@@ -160,7 +172,7 @@ public class TechErrorAnalyticsService {
         List<String> fields = requested == null ? List.of() : List.copyOf(new LinkedHashSet<>(requested));
         if (fields.size() > MAX_FIELDS) throw new IllegalArgumentException("fields");
         String key = TtlMemo.scopeKey(false, teams) + "|f=" + teamFilter + "|m=" + months + "|fl=" + String.join(",", fields)
-                + "|e=" + end;
+                + "|e=" + end + "|g=" + generation.get();
         Map<Long, String> names = teamNames == null ? Map.of() : teamNames;
         long ttl = CACHE_TTL.toMillis();
         if (fresh) ttl = Math.min(ttl, FRESH_MIN_MS);

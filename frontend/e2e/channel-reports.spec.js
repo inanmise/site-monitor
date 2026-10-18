@@ -1891,11 +1891,15 @@ for (const vp of VIEWPORTS) {
       expect(new URL(page.url()).searchParams.get('te_from')).toBe('analytics')
       const backBtn = page.locator('[data-slot="te-back"]')
       await expect(backBtn).toContainText(/Analize dön|Back to the analysis/)
+      const callsBeforeBack = analyticsCalls.length
       await backBtn.click()
       await expect(view).toBeVisible()
       await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('analytics')
       expect(new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
       expect(new URL(page.url()).searchParams.get('te_from')).toBeNull()
+      // Dönüşün ilk okuması taze (inceleme 2026-10-18, 2. tur): düzeltilen değer / silinen rapor bellekten eski gelmesin
+      await expect.poll(() => analyticsCalls.length).toBeGreaterThan(callsBeforeBack)
+      expect(analyticsCalls[callsBeforeBack].get('fresh')).toBe('1')
       await expect(cards).toHaveCount(3)
     })
 

@@ -440,6 +440,37 @@ class TechErrorReportSenderTest {
         assertThat(mailCc.getValue()).containsExactly("dijital@example.com", "ikinci@example.com", "ek@example.com");
     }
 
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): yöneticilerin HEPSİ pasif, takım Bilgi'si etkin → posta Bilgi'ye gitti: günlük satırı SENT, Kime BOŞ (pasif adresler listelenmez), Bilgi etkin adresler; yanıt to boş, cc dolu. Kural tek yerde (loggedTo = loggedCc'nin aynası)")
+    void passiveToNotLoggedWhenCcReceived() {
+        report.setChannelId(3L);
+        sender.inactiveGuard = mock(com.sitemonitor.service.InactiveRecipientGuard.class);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("ceo@example.com")).thenReturn(true);
+        mailReturns("SENT");
+        channel.setExecutiveEmails("ceo@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).isEmpty();
+        assertThat(res.cc()).containsExactly("dijital@example.com", "ikinci@example.com");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).isEqualTo("SENT");
+        assertThat(log.getValue().getRecipientEmail()).isEmpty();
+        assertThat(log.getValue().getCc()).isEqualTo("dijital@example.com, ikinci@example.com");
+
+        // Kural: servise ulaşmadı → istenen; Kime etkin → etkinler; Kime hepsi pasif + Bilgi etkin → boş; hepsi pasif → istenen
+        List<String> to = List.of("a@example.com", "b@example.com");
+        assertThat(TechErrorReportSender.loggedTo(to, null, null)).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(to, List.of("a@example.com"), List.of())).containsExactly("a@example.com");
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), List.of("cc@example.com"))).isEmpty();
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), List.of())).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), null)).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(List.of(), null, null)).isEmpty();
+    }
+
     private static byte[] samplePng(int w, int h) throws java.io.IOException {
         java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = bi.createGraphics();

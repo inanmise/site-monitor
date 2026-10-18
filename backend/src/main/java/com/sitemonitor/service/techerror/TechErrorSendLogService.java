@@ -63,11 +63,15 @@ public class TechErrorSendLogService {
 
     /**
      * Arayüzün gösterdiği sebep kodları (sıra = {@code sendModel.js SENDLOG_REASON_KEYS}; test iki listeyi karşılaştırır).
-     * Gönderilmeyenler {@link TechErrorHistoryService#sendReason} ile aynı kodlar; ek olarak QUEUED (posta sunucusu yeniden
+     * Gönderilmeyenler {@link TechErrorHistoryService#sendReason} ile aynı kodlar; hatırlatmanın kapı / atlama durumları
+     * (inceleme 2026-10-18, 2. tur — {@link TechErrorReminderService} sabitleriyle eşlenir): TEAM_INACTIVE (takımın kendisi
+     * pasif), MODULE_HIDDEN (modül bu takıma kapalı), APPROVAL_FLOW_REMOVED (kanalın onay akışı kaldırıldı),
+     * SYSTEM_MAINTENANCE (sistem bakımı susturması); ek olarak QUEUED (posta sunucusu yeniden
      * deniyor), SMTP_FAILED (posta sunucusu kabul etmedi / ulaşılamadı), INTERNAL_ERROR (uygulama içinde yarıda kaldı),
      * SKIPPED_OTHER (bilinmeyen atlama), UNKNOWN (sonuç kaydı yok). SENT → kod yok (null).
      */
-    public static final List<String> REASON_CODES = List.of("QUEUED", "MAIL_OFF", "INACTIVE_RECIPIENTS", "NO_RECIPIENT", "PDF_BUSY",
+    public static final List<String> REASON_CODES = List.of("QUEUED", "MAIL_OFF", "INACTIVE_RECIPIENTS", "NO_RECIPIENT",
+            "TEAM_INACTIVE", "MODULE_HIDDEN", "APPROVAL_FLOW_REMOVED", "SYSTEM_MAINTENANCE", "PDF_BUSY",
             "PDF_TOO_LARGE", "APPROVAL_STALE", "SMTP_FAILED", "INTERNAL_ERROR", "SKIPPED_OTHER", "UNKNOWN");
     /** "FAILED: " + istisna sınıfının kısa adı (uygulama içi hata; posta sunucusunun iletisi değil). Girdi ≤ 255 karakter. */
     private static final java.util.regex.Pattern INTERNAL_FAILURE =
@@ -75,10 +79,17 @@ public class TechErrorSendLogService {
 
     private final NotificationLogRepository logs;
     private final TechErrorReportRepository reports;
+    /** "Şimdi" — sonucu artık gelemeyecek kuyruk satırı için (testler sabitler). */
+    private java.time.Clock clock = java.time.Clock.systemUTC();
 
     public TechErrorSendLogService(NotificationLogRepository logs, TechErrorReportRepository reports) {
         this.logs = logs;
         this.reports = reports;
+    }
+
+    /** Testler için saat. */
+    void useClock(java.time.Clock c) {
+        this.clock = c == null ? java.time.Clock.systemUTC() : c;
     }
 
     /** Teknik hata satırını kanala / rapora bağlar (her {@code saveLog} yolu çağırır; null güvenli). */
@@ -122,6 +133,7 @@ public class TechErrorSendLogService {
             }
         }
         List<Row> rows = new ArrayList<>(raw.size());
+        java.time.Instant now = clock.instant();
         for (Object[] o : raw) {
             Long id = toLong(o[0]);
             String trigger = str(o[2]);
@@ -130,7 +142,8 @@ public class TechErrorSendLogService {
             int[] period = reportId == null ? null : periods.get(reportId);
             Fitted to = splitFitted(str(o[5]));
             Fitted cc = splitFitted(str(o[6]));
-            rows.add(new Row(id, isoUtc(str(o[1])), trigger, kindOf(trigger), roleOf(str(o[3])), statusClass(emailStatus), reasonOf(emailStatus),
+            String sentAt = str(o[1]);
+            rows.add(new Row(id, isoUtc(sentAt), trigger, kindOf(trigger), roleOf(str(o[3])), statusClass(emailStatus), reasonOf(emailStatus, sentAt, now),
                     reportId, period == null ? null : period[0], period == null ? null : period[1],
                     to.items(), cc.items(), to.count(), cc.count(), to.more(), cc.more()));
         }
@@ -155,12 +168,36 @@ public class TechErrorSendLogService {
         String s = emailStatus.trim();
         if ("SENT".equals(s)) return null;
         if (s.startsWith("QUEUED_RETRY")) return "QUEUED";
+        // Hatırlatmanın kapı / atlama durumları genel kurallardan ÖNCE (inceleme 2026-10-18, 2. tur): "pasif takım" genel
+        // "pasif" kuralına düşüp "alıcıların hepsi pasif" yazıyordu — pasif olan TAKIMIN kendisi
+        if (s.startsWith(TechErrorReminderService.ST_PASSIVE)) return "TEAM_INACTIVE";
+        if (s.startsWith(TechErrorReminderService.ST_HIDDEN)) return "MODULE_HIDDEN";
+        if (s.startsWith(TechErrorReminderService.ST_NOFLOW)) return "APPROVAL_FLOW_REMOVED";
+        if (s.startsWith(TechErrorReminderService.ST_MAINTENANCE)) return "SYSTEM_MAINTENANCE";
+        if (s.startsWith(TechErrorReminderService.ST_NO_APPROVER_EMAIL)) return "NO_RECIPIENT";
         String known = TechErrorHistoryService.sendReason(s);
         if (known != null) return known;
         if (s.startsWith("SKIPPED")) return "SKIPPED_OTHER";
         if (s.startsWith("FAILED: gönderim tamamlanamadı") || s.startsWith("FAILED: sonuç yok")
                 || (s.length() <= 140 && INTERNAL_FAILURE.matcher(s).matches())) return "INTERNAL_ERROR";
         return "SMTP_FAILED";
+    }
+
+    /**
+     * Zamanlı sebep kodu (inceleme 2026-10-18, 2. tur): kuyruktaki bir satır ({@code QUEUED_RETRY…}) sonucunun gelebileceği
+     * süreden ({@link TechErrorReportSender#QUEUED_RESULT_WINDOW}, 20 dk — 421 yeniden denemeleri tek pod'un belleğinde
+     * yaşar) daha eskiyse ve posta servisi sonucu geri yazmadıysa "yeniden deneniyor" değil UNKNOWN ("sonuç alınamadı").
+     * Zamanı okunamayan satır QUEUED kalır. Diğer durumlar {@link #reasonOf(String)}.
+     */
+    public static String reasonOf(String emailStatus, String sentAt, java.time.Instant now) {
+        String code = reasonOf(emailStatus);
+        if (!"QUEUED".equals(code) || now == null || sentAt == null || sentAt.isBlank()) return code;
+        try {
+            java.time.Instant at = LocalDateTime.parse(sentAt.trim()).toInstant(ZoneOffset.UTC);
+            return at.plus(TechErrorReportSender.QUEUED_RESULT_WINDOW).isBefore(now) ? "UNKNOWN" : code;
+        } catch (DateTimeParseException e) {
+            return code;
+        }
     }
 
     /** Sığdırılmış liste: tam adresler + sığmayan sayısı; {@code count} = ikisinin toplamı. */

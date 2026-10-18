@@ -230,6 +230,59 @@ class TechErrorSendLogServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): hatırlatmanın kapı / atlama durumları servisin SABİTLERİYLE kendi koduna — pasif TAKIM 'alıcılar pasif' değil; modül kapalı, onay akışı kaldırıldı, sistem bakımı; onaylayıcı e-postası yok = NO_RECIPIENT")
+    void reminderReasonsMapToTheirOwnCodes() {
+        java.util.Map<String, String> table = new java.util.LinkedHashMap<>();
+        table.put(TechErrorReminderService.ST_PASSIVE, "TEAM_INACTIVE");
+        table.put(TechErrorReminderService.ST_HIDDEN, "MODULE_HIDDEN");
+        table.put(TechErrorReminderService.ST_NOFLOW, "APPROVAL_FLOW_REMOVED");
+        table.put(TechErrorReminderService.ST_MAINTENANCE, "SYSTEM_MAINTENANCE");
+        table.put(com.sitemonitor.service.SystemMaintenanceService.STATUS_SKIPPED, "SYSTEM_MAINTENANCE");
+        table.put(TechErrorReminderService.ST_NO_APPROVER_EMAIL, "NO_RECIPIENT");
+        // Genel kurallar değişmedi: pasif KULLANICI adresleri hâlâ INACTIVE_RECIPIENTS
+        table.put("SKIPPED: pasif kullanıcı", "INACTIVE_RECIPIENTS");
+        for (var e : table.entrySet()) {
+            assertThat(TechErrorSendLogService.reasonOf(e.getKey())).as(e.getKey()).isEqualTo(e.getValue());
+            assertThat(TechErrorSendLogService.REASON_CODES).as(e.getKey()).contains(e.getValue());
+        }
+        // Günlük satırı üzerinden de (onay hatırlatması kanala bağlı yazılır)
+        row(ch.getId(), sep.getId(), TechErrorSendLogService.APPROVAL_REMINDER_TRIGGER, "PO", TechErrorReminderService.ST_PASSIVE,
+                "", null, "2026-10-12T08:00:00");
+        row(ch.getId(), sep.getId(), TechErrorSendLogService.APPROVAL_REMINDER_TRIGGER, "PO", TechErrorReminderService.ST_NO_APPROVER_EMAIL,
+                "", null, "2026-10-12T09:00:00");
+        assertThat(sendLog.page(ch.getId(), "reminder", null, 0, 25).rows()).extracting(TechErrorSendLogService.Row::reason)
+                .containsExactly("NO_RECIPIENT", "TEAM_INACTIVE");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): sonucu gelebileceği süreden (QUEUED_RESULT_WINDOW, 20 dk) eski kuyruk satırı 'yeniden deneniyor' değil UNKNOWN; süre içindeki QUEUED kalır; zamanı okunamayan QUEUED; sınıf (süzgeç) yine 'queued'")
+    void queuedOlderThanResultWindowIsUnknown() {
+        sendLog.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z"), ZoneOffset.UTC));
+        try {
+            NotificationLog fresh = row(ch.getId(), sep.getId(), TechErrorReportSender.TRIGGER, "TEAM", "QUEUED_RETRY: 421", "a@example.com", null,
+                    "2026-10-13T08:45:00");                                     // 15 dk önce: sonuç hâlâ gelebilir
+            NotificationLog lost = row(ch.getId(), sep.getId(), TechErrorReportSender.TRIGGER, "TEAM", "QUEUED_RETRY: 421", "a@example.com", null,
+                    "2026-10-13T08:30:00");                                     // 30 dk önce: 20 dk penceresi geçti
+            java.util.Map<Long, TechErrorSendLogService.Row> byId = new java.util.HashMap<>();
+            for (TechErrorSendLogService.Row r : sendLog.page(ch.getId(), null, "queued", 0, 25).rows()) byId.put(r.id(), r);
+            assertThat(byId).hasSize(2);
+            assertThat(byId.get(fresh.getId()).reason()).isEqualTo("QUEUED");
+            assertThat(byId.get(lost.getId()).reason()).isEqualTo("UNKNOWN");
+            assertThat(byId.get(lost.getId()).status()).isEqualTo("queued");
+        } finally {
+            sendLog.useClock(null);
+        }
+        Instant now = Instant.parse("2026-10-13T09:00:00Z");
+        String edge = java.time.LocalDateTime.ofInstant(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW), ZoneOffset.UTC).toString();
+        assertThat(TechErrorSendLogService.reasonOf("QUEUED_RETRY", edge, now)).isEqualTo("QUEUED");          // tam sınır: hâlâ gelebilir
+        assertThat(TechErrorSendLogService.reasonOf("QUEUED_RETRY", "2026-10-13T08:39:59", now)).isEqualTo("UNKNOWN");
+        assertThat(TechErrorSendLogService.reasonOf("QUEUED_RETRY", "bozuk", now)).isEqualTo("QUEUED");
+        assertThat(TechErrorSendLogService.reasonOf("QUEUED_RETRY", null, now)).isEqualTo("QUEUED");
+        assertThat(TechErrorSendLogService.reasonOf("FAILED: 550", "2026-01-01T00:00:00", now)).isEqualTo("SMTP_FAILED");
+        assertThat(TechErrorSendLogService.reasonOf("SENT", "2026-01-01T00:00:00", now)).isNull();
+    }
+
+    @Test
     @DisplayName("sığdırma eki ayrılır (NotificationLog.fitList ile aynı biçim): tam adresler + sığmayan sayısı; ilk adres bile sığmadıysa yarım adres gösterilmez")
     void splitFittedMirrorsFitList() {
         StringBuilder many = new StringBuilder();

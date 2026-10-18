@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
  * yeni aylar kalır; sorgu sayısı kanal sayısından bağımsız (kanal + dilimler); sonuç 60 sn hafızada (Yenile 5 sn'de bir).
  */
 @DataJpaTest
-@Import(TechErrorAnalyticsService.class)
+@Import({TechErrorAnalyticsService.class, TechErrorReportService.class, TechErrorHistoryService.class})
 @TestPropertySource(properties = {"spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.jpa.properties.hibernate.generate_statistics=true"})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -57,6 +57,7 @@ class TechErrorAnalyticsServiceTest {
     private static final Map<Long, String> NAMES = Map.of(A, "Bireysel Kanallar", B, "Kurumsal Kanallar", C, "Ödeme Sistemleri");
 
     @Autowired TechErrorAnalyticsService analytics;
+    @Autowired TechErrorReportService reportService;
     @Autowired TechErrorChannelRepository channels;
     @Autowired TechErrorReportRepository reports;
     @Autowired EntityManagerFactory emf;
@@ -252,6 +253,59 @@ class TechErrorAnalyticsServiceTest {
         assertThat(opt.channels()).isEqualTo(2);
         var rate = r.available().stream().filter(o -> o.id().equals("error-rate")).findFirst().orElseThrow();
         assertThat(rate.channels()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): tür farkıyla işaretli kanalın ESKİ raporları — kopyalanmış şablonunda alan referans türdeyse — değer verir (aynı tür); güncel türdeki ayları null (not: 'yalnız aynı türdeki aylar gösterilir')")
+    void flaggedChannelOldReportsWithReferenceTypeStillCount() {
+        Template num = TechErrorTemplate.defaults("tr");                                         // total-tx sayı
+        Template pct = withType(num, "total-tx", "percent");
+        TechErrorChannel a = channel(A, "A Kanalı");                                            // güncel: sayı
+        TechErrorChannel c = channel(A, "C Kanalı");                                            // güncel: sayı
+        TechErrorChannel b = channel(A, "B Kanalı", pct, true);                                 // güncel: yüzde (azınlık)
+        report(a, END, vals("total-tx", 10));
+        report(c, END, vals("total-tx", 30));
+        report(b, END.minusMonths(1), num, vals("total-tx", 700), null);                        // eski rapor: alan SAYI iken
+        report(b, END, pct, vals("total-tx", 20), null);                                        // tür değişti
+        Result r = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(r.fields().get(0).type()).isEqualTo("number");
+        assertThat(r.fields().get(0).typeMismatch()).containsExactly(b.getId());
+        List<Double> tx = series(r, "B Kanalı").values().get("total-tx");
+        assertThat(tx.get(10)).as("eski ay, aynı tür").isEqualTo(700d);
+        assertThat(tx.get(11)).as("güncel ay, farklı tür").isNull();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): rapor servisiyle yazım (değer kaydı, rapor açma / silme) bu pod'un analiz belleğini işlem işlendikten sonra boşaltır — düzeltilen değer ve silinen rapor 60 sn beklemeden görünür; değişmeyen kayıt belleği boşaltmaz")
+    void reportWritesClearTheMemo() {
+        TechErrorChannel mobil = channel(A, "Mobil");
+        TechErrorReport sep = report(mobil, END, vals("total-tx", 10));
+        Result first = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(series(first, "Mobil").values().get("total-tx").get(11)).isEqualTo(10d);
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx"))).isSameAs(first);             // bellekte
+
+        long v = reports.findById(sep.getId()).orElseThrow().getVersion();
+        reportService.saveValues(sep.getId(), v, Map.of("fields", Map.of("total-tx", 20)), 7L);
+        Result after = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(after).isNotSameAs(first);
+        assertThat(series(after, "Mobil").values().get("total-tx").get(11)).isEqualTo(20d);
+
+        // Aynı değerle kayıt: yazım yok → bellek kalır
+        long v2 = reports.findById(sep.getId()).orElseThrow().getVersion();
+        reportService.saveValues(sep.getId(), v2, Map.of("fields", Map.of("total-tx", 20)), 7L);
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx"))).isSameAs(after);
+
+        // Yeni rapor açılınca görünür (değeri boş, kimliği dolu)
+        TechErrorReport aug = reportService.createReport(channels.findById(mobil.getId()).orElseThrow(), END.minusMonths(1).getYear(),
+                END.minusMonths(1).getMonthValue(), 7L);
+        Result opened = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(series(opened, "Mobil").reports().get(10)).isNotNull();
+        assertThat(series(opened, "Mobil").reports().get(10).id()).isEqualTo(aug.getId());
+
+        reportService.deleteReport(sep.getId(), false);
+        Result deleted = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(series(deleted, "Mobil").values().get("total-tx").get(11)).isNull();
+        assertThat(series(deleted, "Mobil").reports().get(11)).isNull();
     }
 
     @Test

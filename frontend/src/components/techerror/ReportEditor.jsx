@@ -569,9 +569,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
       if (res?.success && res.data) {
         const cc = (res.data.cc || []).join(', ')
+        const to = (res.data.to || []).join(', ')
         if (res.data.state === 'QUEUED') toast.info(t('te.sendQueued'))
-        else if (extraCc && cc) toast.success(t('te.sendDoneCc', (res.data.to || []).join(', '), cc))
-        else toast.success(t('te.sendDone', (res.data.to || []).join(', ')))
+        // Kime boş (inceleme 2026-10-18, 2. tur: yöneticilerin hepsi pasif, posta yalnız Bilgi'ye gitti) → boş liste yazılmaz
+        else if (!to && cc) toast.success(t('te.sendDoneCcOnly', cc))
+        else if (!to) toast.success(t('te.sendDonePlain'))
+        else if (extraCc && cc) toast.success(t('te.sendDoneCc', to, cc))
+        else toast.success(t('te.sendDone', to))
         // Dönüşümlü dağıtım (inceleme 2026-10-18): ek Bilgi'yi bilmeyen eski bir pod gövdeyi yok sayıp gönderir ve yanıtta
         // `cc` olmaz — ek adreslere posta gitmemiş olabilir; sessiz "gönderildi" yerine kullanıcıya söylenir
         if (extraCc && !Array.isArray(res.data.cc)) toast.info(t('te.sendCcNotConfirmed'), 12000)

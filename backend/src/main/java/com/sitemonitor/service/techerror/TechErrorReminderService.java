@@ -99,6 +99,10 @@ public class TechErrorReminderService {
     static final String ST_HIDDEN = "SKIPPED: modül bu takıma kapalı";
     static final String ST_PASSIVE = "SKIPPED: pasif takım";
     static final String ST_NOFLOW = "SKIPPED: kanalın onay akışı kaldırıldı";
+    /** Sistem bakımı susturması (genel iz metni — {@link TechErrorSendLogService#reasonOf} bu sabitle eşler). */
+    static final String ST_MAINTENANCE = SystemMaintenanceService.STATUS_SKIPPED;
+    /** Onay hatırlatması: takımın hiçbir PO'sunun e-postası yok ({@link TechErrorSendLogService#reasonOf} → NO_RECIPIENT). */
+    static final String ST_NO_APPROVER_EMAIL = "SKIPPED: onaylayıcı e-postası yok";
 
     private static final List<String> PERIOD_KINDS = List.of(TechErrorReminder.KIND_PERIOD, SKIP_HIDDEN, SKIP_PASSIVE);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -416,7 +420,7 @@ public class TechErrorReminderService {
                 continue;
             }
             if (muted) {
-                saveLog(TRIGGER, team.getName(), to, "TEAM", subject, "SKIPPED: sistem bakımı", channelSummary(en.getValue(), enTpl));
+                saveLog(TRIGGER, team.getName(), to, "TEAM", subject, ST_MAINTENANCE, channelSummary(en.getValue(), enTpl));
                 counts[3]++;
                 continue;                                              // talep YOK: bakım bitince ertesi gün yeniden denenir
             }
@@ -600,7 +604,7 @@ public class TechErrorReminderService {
             boolean fresh = existing == null || !ref.equals(existing.getRefKey());
             if (!fresh && !due(existing, today, every)) continue;
             if (muted) {
-                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "SKIPPED: sistem bakımı", title);
+                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_MAINTENANCE, title);
                 counts[3]++;
                 continue;
             }
@@ -610,7 +614,7 @@ public class TechErrorReminderService {
                 List<TechErrorApprovalService.Approver> apps = new ArrayList<>();
                 for (TechErrorApprovalService.Approver a : approvals.approvers(team.getId())) if (a.email() != null) apps.add(a);
                 if (apps.isEmpty()) {
-                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "SKIPPED: onaylayıcı e-postası yok", title);
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_NO_APPROVER_EMAIL, title);
                     counts[3]++;
                     continue;
                 }

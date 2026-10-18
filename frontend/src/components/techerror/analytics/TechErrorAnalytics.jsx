@@ -43,7 +43,9 @@ const EMPTY_STATE = { loading: true, error: null, status: null, details: null, d
  *
  * <p>Araç çubuğu: takım, dönem (6 / 12 / 24 bitmiş ay), en çok 4 alan (kanalların GÜNCEL şablonlarındaki sayı / yüzde
  * alanları), Yenile (`fresh=1`) ve süzgeç varsayılanda değilse "Varsayılana dön". Araç çubuğu okuma HATASINDA da çizilir
- * (adresteki süzgeç kalıcı 500 veriyorsa kullanıcı sıkışmasın). Her alan için bir kart: kanal başına çizgi (en çok 8;
+ * (adresteki süzgeç kalıcı 500 veriyorsa kullanıcı sıkışmasın) — erişim yoksa (403) çizilmez, yalnız erişim yok durumu.
+ * Rapordan "Analize dön" ile gelinince (`returning`) ilk okuma `fresh=1` (düzeltilen değer / silinen rapor bayat kalmasın).
+ * Her alan için bir kart: kanal başına çizgi (en çok 8;
  * diğerleri "N kanal daha"), Y ekseni VERİYE göre (`yAxisScale`), değeri olmayan ay BOŞLUK (0 değil), yalnız başına kalan
  * değer nokta; altında ay × kanal tablosu (kap ≥ 760 px; değilse kanal kartları), hücre o raporu açar, gönderilmemiş
  * raporun değeri soluk (kuyruktaki "gönderim sırada"); görünen tablonun CSV'si. Okuma hatası "veri yok" değil — tekrar
@@ -51,7 +53,7 @@ const EMPTY_STATE = { loading: true, error: null, status: null, details: null, d
  * eski yanıt sıra numarasıyla düşer. İstenen alanlar bu kapsamda yoksa sunucu varsayılanları döner — not gösterilir ve
  * adres ikinci istek olmadan düzeltilir. Hesaplanan alanlar sunucuda CANLI (rapor ekranı / PDF ile aynı).
  */
-export default function TechErrorAnalytics({ onBack, onOpenReport }) {
+export default function TechErrorAnalytics({ onBack, onOpenReport, returning = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const [team, setTeam] = useState(() => normalizeTeam(readUrlParam(TE_AN_TEAM, '')))
@@ -59,9 +61,13 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   const [fields, setFields] = useState(() => parseFieldsParam(readUrlParam(TE_AN_FIELDS, '')))   // null = sunucu varsayılanı
   // `data` = `key` süzgeci için okunan son yanıt; süzgeç değişince hemen kalkar (eski takımın tablosu yeni süzgeçle görünmesin)
   const [state, setState] = useState(EMPTY_STATE)
-  // Araç çubuğu için son başarılı yanıtın takım listesi / alan seçenekleri — yeniden okurken araç çubuğu zıplamasın
-  const [meta, setMeta] = useState({ teams: [], available: [], shown: [] })
+  // Araç çubuğu için son başarılı yanıtın takım listesi / alan seçenekleri — yeniden okurken araç çubuğu zıplamasın.
+  // `teamNames`: sunucunun bildirdiği takım adları (liste + seçili takımın `team_name`'i) — seçici çıplak "#kimlik" yazmaz
+  const [meta, setMeta] = useState({ teams: [], available: [], shown: [], teamNames: {} })
   const seq = useRef(0)
+  // Rapordan "Analize dön" ile gelindi (inceleme 2026-10-18, 2. tur): İLK okuma taze (`fresh=1`, sunucu en fazla 5 sn'de bir
+  // yeniden hesaplar) — az önce düzeltilen değer ya da silinen rapor bellekteki eski sonuçla görünmesin
+  const freshFirst = useRef(!!returning)
   // Sunucunun alan çözümü benimsendi: bu anahtarın verisi zaten ekranda — ikinci istek yok
   const adopt = useRef(null)
 
@@ -74,7 +80,10 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
     [TE_AN_FIELDS]: serializeFields(fields),
   })
 
-  const load = useCallback(async ({ fresh = false } = {}) => {
+  const load = useCallback(async ({ fresh: wantFresh = false } = {}) => {
+    // Taze okuma ilk BAŞARILI yanıta kadar sürer (geç gelen / düşen ilk istek — ör. StrictMode'un ikinci çağrısı — tazeliği
+    // harcamasın)
+    const fresh = wantFresh || freshFirst.current
     if (!fresh && adopt.current === key) { adopt.current = null; seq.current++; return }
     adopt.current = null
     const my = ++seq.current
@@ -83,13 +92,21 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
       const res = await api.techErrors.analytics(fresh ? { ...params, fresh: 1 } : params)
       if (my !== seq.current) return
       if (res?.success && res.data) {
+        freshFirst.current = false
         const next = adoptedFields(res.data, fields)
         const answered = next === undefined ? key : filterKey({ team, months, fields: next })
         setState({ loading: false, error: null, status: null, details: null, data: res.data, key: answered })
-        setMeta({
-          teams: Array.isArray(res.data.teams) ? res.data.teams : [],
-          available: Array.isArray(res.data.available_fields) ? res.data.available_fields : [],
-          shown: Array.isArray(res.data.fields) ? res.data.fields : [],
+        const teamList = Array.isArray(res.data.teams) ? res.data.teams : []
+        setMeta((m) => {
+          const names = { ...m.teamNames }
+          for (const tm of teamList) if (tm?.id != null && tm.name) names[String(tm.id)] = tm.name
+          if (res.data.team && res.data.team !== 'all' && res.data.team_name) names[String(res.data.team)] = res.data.team_name
+          return {
+            teams: teamList,
+            available: Array.isArray(res.data.available_fields) ? res.data.available_fields : [],
+            shown: Array.isArray(res.data.fields) ? res.data.fields : [],
+            teamNames: names,
+          }
         })
         if (next !== undefined) {
           adopt.current = answered
@@ -113,11 +130,15 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   // Seçim: kullanıcının listesi ya da sunucunun çözdüğü varsayılan (yanıt yokken son yanıtınki)
   const selected = useMemo(() => (fields || (data ? shownFields : meta.shown).map((f) => f.id)), [fields, data, shownFields, meta.shown])
   const teams = meta.teams
+  // Ad yoksa çıplak "#kimlik" YAZILMAZ (inceleme 2026-10-18, 2. tur): sunucunun bildirdiği ad, okunurken "yükleniyor",
+  // okunamadıysa "adı okunamayan takım"
+  const teamNames = meta.teamNames
   const teamOptions = useMemo(() => {
-    const list = [{ value: ALL, label: t('te.allTeams') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))]
-    if (team && !teams.some((tm) => String(tm.id) === team)) list.push({ value: team, label: `#${team}` })
+    const nameOf = (id, fallback) => fallback || teamNames[String(id)] || (state.loading ? t('te.an.teamLoading') : t('te.an.teamUnnamed'))
+    const list = [{ value: ALL, label: t('te.allTeams') }, ...teams.map((tm) => ({ value: String(tm.id), label: nameOf(tm.id, tm.name) }))]
+    if (team && !teams.some((tm) => String(tm.id) === team)) list.push({ value: team, label: nameOf(team, null) })
     return list
-  }, [teams, team, t])
+  }, [teams, team, teamNames, state.loading, t])
   const channels = Array.isArray(data?.channels) ? data.channels : []
   const monthList = Array.isArray(data?.months) ? data.months : []
   const isDefault = isDefaultFilter({ team, months, fields })
@@ -194,9 +215,9 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
         description={forbidden ? t('te.forbiddenBody') : state.error} details={state.details}
         actions={forbidden ? null : (
           <>
-            <Button type="button" variant="outline" onClick={() => load()} data-slot="te-an-retry">{t('te.retry')}</Button>
+            <Button type="button" variant="outline" onClick={() => load()} className="pointer-coarse:min-h-10" data-slot="te-an-retry">{t('te.retry')}</Button>
             {!isDefault && (
-              <Button type="button" variant="ghost" onClick={reset} data-slot="te-an-reset-error">
+              <Button type="button" variant="ghost" onClick={reset} className="pointer-coarse:min-h-10" data-slot="te-an-reset-error">
                 <RotateCcw aria-hidden="true" /> {t('te.an.reset')}
               </Button>
             )}
@@ -224,12 +245,14 @@ export default function TechErrorAnalytics({ onBack, onOpenReport }) {
   }
 
   const dropped = Array.isArray(data?.dropped_fields) ? data.dropped_fields : []
+  // Erişim yok (403): yalnız erişim yok durumu — araç çubuğu (Yenile, seçiciler) çizilmez (inceleme 2026-10-18, 2. tur)
+  const noAccess = !data && state.error && state.status === 403
 
   return (
     <div className="flex flex-col gap-4" data-slot="te-analytics">
       {back}
       {header}
-      {toolbar}
+      {!noAccess && toolbar}
       {state.error && data && (
         <AlertBanner tone="danger" title={t('te.an.staleTitle')}
           actions={<Button type="button" variant="outline" size="sm" onClick={() => load()} className="pointer-coarse:min-h-10">{t('te.retry')}</Button>}>
@@ -318,7 +341,10 @@ function FieldPicker({ options, shown, selected, onToggle }) {
   )
 }
 
-/** "Bu kanalda alan türü farklı" notu — kanalın değeri okunmaz (referans tür çoğunluktan). */
+/**
+ * "Bu kanalın güncel şablonunda alan türü farklı" notu (referans tür çoğunluktan). Kanalın ESKİ raporları — kopyalanmış
+ * şablonunda alan referans türdeyse — değer verir; yalnız aynı türdeki aylar gösterilir (inceleme 2026-10-18, 2. tur).
+ */
 function MismatchNote({ className }) {
   const t = useT()
   return (

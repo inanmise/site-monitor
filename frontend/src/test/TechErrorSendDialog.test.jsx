@@ -47,7 +47,7 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     expect(within(dlg).getByText(/Konu: Mobil Kanalı Teknik Hata Mesajları - Eylül 2026/)).toBeInTheDocument()
     const input = ccInput(dlg)
     expect(input).toHaveAttribute('data-slot', 'te-send-extra-cc')
-    expect(within(dlg).getByText('Virgülle ayırın; en çok 10 adres; kaydedilmez, yalnız bu gönderim için.')).toBeInTheDocument()
+    expect(within(dlg).getByText('Virgülle ya da satır satır ayırın; en çok 10 adres; kaydedilmez, yalnız bu gönderim için. Göndermek için Ctrl+Enter (Mac: ⌘+Enter); Enter yeni satırdır.')).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
     await waitFor(() => expect(te().send).toHaveBeenCalledTimes(1))
     expect(te().send.mock.calls[0]).toEqual(['100'])
@@ -101,25 +101,40 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
-  it('Enter formu gönderir (birincil eylem); Shift+Enter yeni satır (gönderim yok); geçersiz girişte Enter alan hatası verir', async () => {
+  it('inceleme 2026-10-18 (2. tur): gönderim geri alınamaz — düz Enter yeni satır (gönderim yok), Ctrl/⌘+Enter gönderir; Shift / IME gönderim yapmaz; geçersiz girişte Ctrl+Enter alan hatası verir', async () => {
     te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
     const dlg = await openSendDialog()
     const input = ccInput(dlg)
     fireEvent.change(input, { target: { value: 'bozuk' } })
-    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', ctrlKey: true })
     expect(await within(dlg).findByText(/«bozuk» geçerli bir e-posta adresi değil/)).toBeInTheDocument()
     expect(te().send).not.toHaveBeenCalled()
     fireEvent.change(input, { target: { value: 'ek@example.com' } })
-    // Shift+Enter: tarayıcının yeni satırı (varsayılan engellenmez), gönderim yok
+    // Düz Enter: tarayıcının yeni satırı (varsayılan engellenmez) — satır başına bir adres yazılır, gönderim YOK
+    const plain = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    expect(plain).toBe(true)
+    // Shift+Enter de yeni satır
     const shift = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', shiftKey: true })
     expect(shift).toBe(true)
-    // IME birleştirmesi sürerken Enter gönderim yapmaz
-    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 229 })
+    // IME birleştirmesi sürerken Ctrl+Enter gönderim yapmaz
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', ctrlKey: true, keyCode: 229 })
+    // Ctrl+Shift+Enter gönderim yapmaz (yalnız Ctrl/⌘+Enter)
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', ctrlKey: true, shiftKey: true })
     expect(te().send).not.toHaveBeenCalled()
-    const plain = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
-    expect(plain).toBe(false)                                   // varsayılan (yeni satır) engellendi
+    // İpucu kısayolu söyler
+    expect(within(dlg).getByText(/Ctrl\+Enter/)).toBeInTheDocument()
+    const ctrl = fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', ctrlKey: true })
+    expect(ctrl).toBe(false)                                    // varsayılan engellendi, form gönderildi
     await waitFor(() => expect(te().send).toHaveBeenCalledWith('100', { extra_cc: 'ek@example.com' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+  })
+
+  it('⌘+Enter (macOS) de gönderir', async () => {
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: [] } })
+    const dlg = await openSendDialog()
+    const input = ccInput(dlg)
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', metaKey: true })
+    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(1))
   })
 
   it('dönüşümlü dağıtım: ek Bilgi yazıldı ama yanıtta cc yok (eski sunucu) → ek adreslerin onaylanmadığı söylenir; ek Bilgi yoksa uyarı yok', async () => {
@@ -139,6 +154,21 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(te().send).toHaveBeenCalledWith('100'))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
     expect(screen.getAllByText(/sunucu ek Bilgi \(CC\) adreslerini onaylamadı/)).toHaveLength(1)   // yalnız ilk gönderimden
+  })
+
+  it('inceleme 2026-10-18 (2. tur): Kime boş döndü (yöneticilerin hepsi pasif, posta yalnız Bilgi alıcılarına gitti) → bildirim boş liste yazmaz, Bilgi alıcılarını söyler; ikisi de boşsa düz "gönderildi"', async () => {
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: [], cc: ['dijital@example.com'] } })
+    let dlg = await openSendDialog()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    expect(await screen.findByText('Rapor yalnız Bilgi (CC) alıcılarına gönderildi: dijital@example.com. Kime adreslerinin hepsi pasif kullanıcılara ait.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Rapor gönderildi: $/)).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    te().send.mockResolvedValue({ success: true, data: { state: 'SENT', to: [], cc: [] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Takıma gönder' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+    dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    expect(await screen.findByText('Rapor gönderildi.')).toBeInTheDocument()
   })
 
   it('başka hata (ör. 502): pencere kapanır, bildirim; vazgeç istek atmaz ve bir sonraki açılış boş başlar', async () => {

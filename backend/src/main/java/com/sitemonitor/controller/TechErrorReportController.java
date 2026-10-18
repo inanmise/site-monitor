@@ -249,6 +249,9 @@ public class TechErrorReportController {
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("team", teamFilter == null ? "all" : String.valueOf(teamFilter));
+        // Seçili takımın adı (inceleme 2026-10-18, 2. tur): seçici aktif kanalı olmayan takımı da adıyla gösterir — çıplak
+        // "#kimlik" değil; okunabilen takımlardan (kapsam denetimi yukarıda)
+        if (teamFilter != null) data.put("team_name", names.get(teamFilter));
         data.put("months_requested", res.monthsRequested());
         List<Map<String, Object>> monthRows = new ArrayList<>();
         for (YearMonth ym : res.months()) monthRows.add(Map.of("year", ym.getYear(), "month", ym.getMonthValue()));
@@ -260,7 +263,8 @@ public class TechErrorReportController {
             fm.put("id", f.id());
             fm.put("label", f.label());
             fm.put("type", f.type());
-            // Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (değeri okunmaz; arayüz "alan türü farklı" der)
+            // Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (arayüz "yalnız aynı türdeki aylar" der — o kanalın
+            // referans türdeki eski raporları değer verir)
             fm.put("type_mismatch", f.typeMismatch() == null ? List.of() : f.typeMismatch());
             fieldRows.add(fm);
         }

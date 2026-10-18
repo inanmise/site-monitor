@@ -551,6 +551,7 @@ public class TechErrorReportSender {
         int pdfBytes = 0;
         Long sentRev = null;
         List<String> active = to;
+        List<String> activeTo = null;      // posta servisi döndükten sonra: Kime'nin pasif hesaplar düşülmüş hâli (önce: bilinmiyor)
         List<String> activeCc = null;      // posta servisi döndükten sonra: Bilgi'nin pasif hesaplar düşülmüş hâli (önce: bilinmiyor)
         Boolean queuedAtClaim = null;      // talepten sonraki okuma: kuyruktaki gönderim hâlâ sonuçlanmamış mıydı?
         boolean mailAttempted = false;     // posta servisine bir şey verildi mi?
@@ -633,6 +634,7 @@ public class TechErrorReportSender {
             // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz (Kime VE
             // Bilgi; günlük satırı, yanıt ve geçmiş aynı listeyi yazar — inceleme 2026-10-18)
             active = activeRecipients(to);
+            activeTo = active;
             activeCc = cc == null ? List.of() : activeRecipients(List.of(cc));
             return new Result(finalState, finalStatus, active, pdfBytes, subject, activeCc);
         } catch (RuntimeException e) {
@@ -649,7 +651,7 @@ public class TechErrorReportSender {
             // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar). Kime ve
             // Bilgi aynı kuralla: posta servisi döndüyse pasif hesaplarınkiler düşülür; hepsi pasifse (gönderim atlandı) istenen
             // liste "neden gitmedi"yi gösterir; servise ulaşmadıysa istenen liste
-            Long logId = saveLog(TRIGGER, team, active.isEmpty() ? to : active, loggedCc(cc, activeCc, active), role,
+            Long logId = saveLog(TRIGGER, team, loggedTo(to, activeTo, activeCc), loggedCc(cc, activeCc, activeTo), role,
                     subject != null ? subject : channel.getName(), finalStatus, report);
             // Kuyruktaki bir gönderimin üzerine yapılan deneme HİÇBİR ŞEY teslim etmediyse ya da kuyruğa almadıysa (posta servisine
             // ulaşmadı: PDF çok büyük / beklenmeyen hata; ya da servis SKIPPED / FAILED döndü) kuyruktaki gönderim yaşamaya devam
@@ -734,6 +736,19 @@ public class TechErrorReportSender {
         if (activeCc == null) return cc;
         if (!activeCc.isEmpty()) return activeCc.toArray(new String[0]);
         return activeTo == null || activeTo.isEmpty() ? cc : null;
+    }
+
+    /**
+     * Günlük satırının Kime listesi — {@link #loggedCc} ile AYNI kural (inceleme 2026-10-18, 2. tur: yöneticilerin hepsi pasif,
+     * takım Bilgi'si etkinken satır SENT ama Kime pasif adresleri listeliyordu): posta servisine ulaşmadıysa
+     * ({@code activeTo == null}) istenen liste; ulaştıysa pasif hesaplarınkiler düşülmüş liste; Kime'nin hepsi pasifse yalnız
+     * Bilgi de tümüyle pasifken (gönderim atlandı — "neden gitmedi") istenen liste, aksi hâlde Kime BOŞ (posta Bilgi'ye gitti).
+     */
+    static List<String> loggedTo(List<String> to, List<String> activeTo, List<String> activeCc) {
+        if (to == null || to.isEmpty()) return List.of();
+        if (activeTo == null) return to;
+        if (!activeTo.isEmpty()) return activeTo;
+        return activeCc == null || activeCc.isEmpty() ? to : List.of();
     }
 
     /** Yalnız pasif kullanıcılara ait adresler çıkarılmış alıcılar (koruma yoksa liste aynen). */

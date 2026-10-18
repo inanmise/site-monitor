@@ -1489,6 +1489,7 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.team").value("all"))
+                .andExpect(jsonPath("$.data.team_name").doesNotExist())
                 .andExpect(jsonPath("$.data.months.length()").value(12))
                 .andExpect(jsonPath("$.data.months[11].month").value(9))
                 .andExpect(jsonPath("$.data.end.year").value(2026))
@@ -1516,12 +1517,15 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").param("months", "24")
                         .param("fields", "error-rate, total-tx,error-rate").session(s))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.team").value("1"));
+                .andExpect(jsonPath("$.data.team").value("1"))
+                .andExpect(jsonPath("$.data.team_name").value("Takım 1"));
         verify(analytics).analytics(eq(java.util.Set.of(A)), eq(A), eq(24), eq(List.of("error-rate", "total-tx")), any(), any(), eq(false));
         org.mockito.Mockito.clearInvocations(analytics);
-        // Seçili takımın aktif kanalı yoksa da takım seçicide kalır (sonuçta yalnız A'nın kanalı var)
+        // Seçili takımın aktif kanalı yoksa da takım seçicide kalır (sonuçta yalnız A'nın kanalı var); adı da yanıtta
+        // (inceleme 2026-10-18, 2. tur — seçici çıplak "#kimlik" yazmasın)
         mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(audit()))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_name").value("Takım 2"))
                 .andExpect(jsonPath("$.data.teams.length()").value(2))
                 .andExpect(jsonPath("$.data.teams[1].id").value(2));
         assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);

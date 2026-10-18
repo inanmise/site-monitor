@@ -13,8 +13,8 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  * kanalda saklanmaz, yalnız bu gönderim içindir. İstemci biçim + sayı denetimi (`parseExtraCc`) alanın altında; sunucunun
  * alan hatası (`extra_cc` — ör. Bilgi toplamı 20'yi aşıyor) `serverError` ile aynı yerde. Gönderim sürerken pencere açık
  * kalır (alan hatası gelirse düzeltilsin), kapatılamaz. Alan çok satırlı (yapıştırılan satır satır liste ayrışır — tek satırlı
- * girdi satır sonlarını SİLER ve adresleri birleştirirdi); Enter formu gönderir (birincil eylem), Shift+Enter yeni satır,
- * IME birleştirmesi sürerken Enter dokunulmaz (inceleme 2026-10-18).
+ * girdi satır sonlarını SİLER ve adresleri birleştirirdi); Ctrl/⌘+Enter formu gönderir, düz Enter yeni satır (gönderim geri
+ * alınamaz — inceleme 2026-10-18, 2. tur), IME birleştirmesi sürerken Enter dokunulmaz.
  *
  * `onConfirm(extraCc)`: `extraCc` boşsa `''` — çağıran gövdesiz eski isteği atar.
  */
@@ -49,8 +49,10 @@ export default function SendDialog({ open, title, message, busy, serverError, on
 
   const error = clientError || serverError || null
 
+  // Gönderim GERİ ALINAMAZ ve alan satır başına bir adres alır: düz Enter yeni satırdır, yalnız Ctrl/⌘+Enter gönderir
+  // (inceleme 2026-10-18, 2. tur — düz Enter alan doldurulurken postayı yolluyordu). IME birleştirmesi sürerken dokunulmaz.
   function onKeyDown(e) {
-    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.nativeEvent?.isComposing || e.keyCode === 229) return
+    if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.nativeEvent?.isComposing || e.keyCode === 229) return
     e.preventDefault()
     submit()
   }

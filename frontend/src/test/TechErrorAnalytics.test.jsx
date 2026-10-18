@@ -344,10 +344,10 @@ describe('kanal analizi — inceleme düzeltmeleri (2026-10-18)', () => {
     const card = field('total-tx')
     const legend = [...card.querySelectorAll('[data-slot="te-an-legend-item"]')]
     expect(legend[1]).toHaveAttribute('data-mismatch', 'true')
-    expect(within(legend[1]).getByText('Bu kanalda alan türü farklı; değerleri karşılaştırılmıyor')).toBeInTheDocument()
+    expect(within(legend[1]).getByText('Bu kanalın güncel şablonunda alan türü farklı; yalnız aynı türdeki aylar gösterilir')).toBeInTheDocument()
     expect(legend[0]).not.toHaveAttribute('data-mismatch')
     const head = card.querySelector('[data-slot="te-an-table"] th[data-channel="20"]')
-    expect(within(head).getByText('Bu kanalda alan türü farklı; değerleri karşılaştırılmıyor')).toBeInTheDocument()
+    expect(within(head).getByText('Bu kanalın güncel şablonunda alan türü farklı; yalnız aynı türdeki aylar gösterilir')).toBeInTheDocument()
     expect(field('error-rate').querySelector('[data-slot="te-an-mismatch"]')).toBeNull()
   })
 
@@ -411,7 +411,58 @@ describe('kanal analizi — inceleme düzeltmeleri (2026-10-18)', () => {
     await waitFor(() => expect(param('te_view')).toBe('analytics'))
     expect(param('te_from')).toBeNull()
     expect(param('te_an_months')).toBe('24')
-    await waitFor(() => expect(lastParams()).toEqual({ months: 24 }))
+    // İnceleme 2026-10-18 (2. tur): dönüşte İLK okuma taze — düzeltilen değer / silinen rapor sunucu belleğinden eski gelmesin
+    await waitFor(() => expect(lastParams()).toEqual({ months: 24, fresh: 1 }))
+    // Sonraki süzgeç değişikliği yeniden taze değil (Yenile'ye kadar normal okuma)
+    fireEvent.click(screen.getByRole('button', { name: '6 ay' }))
+    await waitFor(() => expect(lastParams()).toEqual({ months: 6 }))
+  })
+
+  it('inceleme 2026-10-18 (2. tur): listeden açılan analizin ilk okuması taze DEĞİL; yalnız rapordan dönüşte taze', async () => {
+    render(<TechErrorReportsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Analiz' }))
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    for (const call of te().analytics.mock.calls) expect(call[0]).not.toHaveProperty('fresh')
+  })
+
+  it('inceleme 2026-10-18 (2. tur): erişim yok (403) — yalnız erişim yok durumu; araç çubuğu (Yenile, seçiciler) ve tekrar dene yok', async () => {
+    te().analytics.mockResolvedValue({ success: false, status: 403, error: 'Bu sayfayı görme yetkiniz yok.' })
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_months=24')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="empty"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="te-an-toolbar"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Yenile' })).toBeNull()
+    expect(document.querySelector('[data-slot="te-an-retry"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Kanallara dön' })).toBeInTheDocument()
+  })
+
+  it('inceleme 2026-10-18 (2. tur): hata durumundaki "Tekrar dene" ve "Varsayılana dön" dokunmatikte ≥ 40 px', async () => {
+    te().analytics.mockResolvedValue({ success: false, status: 500, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra tekrar deneyin.' })
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_months=24')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="te-an-retry"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="te-an-retry"]').className).toContain('pointer-coarse:min-h-10')
+    expect(document.querySelector('[data-slot="te-an-reset-error"]').className).toContain('pointer-coarse:min-h-10')
+  })
+
+  it('inceleme 2026-10-18 (2. tur): aktif kanalı olmayan seçili takım adıyla (team_name) görünür; okunurken "yükleniyor", ad okunamazsa "adı okunamayan takım" — asla çıplak "#kimlik"', async () => {
+    const pending = deferred()
+    te().analytics.mockImplementationOnce(() => pending.promise)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics&te_an_team=5')
+    const { unmount } = render(<TechErrorReportsPage />)
+    const toolbar = await waitFor(() => { const el = document.querySelector('[data-slot="te-an-toolbar"]'); expect(el).not.toBeNull(); return el })
+    expect(within(toolbar).getByText('Takım yükleniyor…')).toBeInTheDocument()
+    expect(within(toolbar).queryByText('#5')).toBeNull()
+    await act(async () => { pending.resolve(analytics({ team: '5', team_name: 'Ödeme Sistemleri', channels: [], channel_count: 0 })) })
+    await waitFor(() => expect(within(document.querySelector('[data-slot="te-an-toolbar"]')).getByText('Ödeme Sistemleri')).toBeInTheDocument())
+    expect(screen.queryByText('#5')).toBeNull()
+    unmount()
+    // Okuma hatası, ad bilinmiyor
+    te().analytics.mockResolvedValue({ success: false, status: 500, error: 'Sunucu şu an yanıt vermiyor; birkaç dakika sonra tekrar deneyin.' })
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="te-an-retry"]')).not.toBeNull())
+    expect(within(document.querySelector('[data-slot="te-an-toolbar"]')).getByText('Adı okunamayan takım')).toBeInTheDocument()
+    expect(screen.queryByText('#5')).toBeNull()
   })
 
   it('kanal kartları KAP genişliğine göre iki sütun (görünüm alanına göre değil)', async () => {

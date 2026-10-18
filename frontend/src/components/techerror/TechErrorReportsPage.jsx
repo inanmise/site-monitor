@@ -121,11 +121,18 @@ export default function TechErrorReportsPage() {
     setNav({ view: VIEW_ANALYTICS, channel: null, report: null })
     try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
   }, [])
+  // Rapordan "Analize dön" (ve rapor silinince dönüş): analizin ilk okuması taze (inceleme 2026-10-18, 2. tur) — az önce
+  // düzeltilen değer ya da silinen rapor sunucunun 60 sn'lik belleğinden eski hâliyle gelmesin
+  const returnToAnalytics = useCallback(() => {
+    flushUrlQuerySync()
+    setNav({ view: VIEW_ANALYTICS, channel: null, report: null, returning: true })
+    try { window.scrollTo({ top: 0 }) } catch { /* jsdom */ }
+  }, [])
 
   if (nav.view === VIEW_ANALYTICS) {
     return (
       <Suspense fallback={<AnalyticsLoading />}>
-        <TechErrorAnalytics onBack={toChannels} onOpenReport={openReportFromAnalytics} />
+        <TechErrorAnalytics onBack={toChannels} onOpenReport={openReportFromAnalytics} returning={!!nav.returning} />
       </Suspense>
     )
   }
@@ -134,7 +141,7 @@ export default function TechErrorReportsPage() {
     const fromAnalytics = nav.from === FROM_ANALYTICS
     return (
       <ReportEditor key={nav.report} reportId={nav.report} backLabel={fromAnalytics ? backToAnalytics : null}
-        onBack={(channelId) => (fromAnalytics ? openAnalytics()
+        onBack={(channelId) => (fromAnalytics ? returnToAnalytics()
           : channelId || nav.channel ? openChannel(channelId || nav.channel) : toChannels())}
         onOpenChannels={toChannels} onOpenTemplate={(channelId) => openChannel(channelId, TAB_TEMPLATE)}
         onOpenReport={(id, channelId) => { focusTitle.current = true; openReport(id, channelId) }} focusTitleRef={focusTitle} />
