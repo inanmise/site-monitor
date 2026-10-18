@@ -1396,6 +1396,12 @@ export const api = {
     downloadGrafanaDashboard: async () => {
       try {
         const res = await fetch(`${BASE}/admin/grafana/dashboard`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        if (res.status === 401) {
+          // Oturum bitti / pasif / bakım: ortak oturum yolu (request() 401 dalı → /?session=expired, pasif ya da bakım
+          // penceresi) bir oturum yoklamasıyla tetiklenir — ham fetch bu ayrımı yapamaz
+          try { await request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }) } catch { /* yoklama düştü — bildirim yine söyler */ }
+          return { success: false, status: 401, error: null, code: 'SESSION_EXPIRED' }
+        }
         if (!res.ok) {
           let body = null
           try { body = await res.json() } catch { body = null }

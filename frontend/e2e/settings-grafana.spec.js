@@ -43,12 +43,13 @@ function settingsData(values, readOnly) {
       export_max_entities: { min: 100, max: 50000, default: 5000 }, export_refresh_seconds: { min: 30, max: 600, default: 60 },
     },
     teams: readOnly ? [] : [LONG_TEAM, 'Ödeme Sistemleri'],
-    exporter: { state: 'running', enabled: true, per_monitor: true, refresh_seconds: 60, max_entities: 5000,
+    exporter: { state: 'running', enabled: true, token_configured: true, per_monitor: true, refresh_seconds: 60, max_entities: 5000,
       pod: 'site-monitor-7c9d6f8b5-xk2lq', server_now: new Date().toISOString().slice(0, 19),
       refreshed_at: new Date(Date.now() - 20_000).toISOString().slice(0, 19), duration_ms: 140, series_total: 9120,
       entities: { monitors: 640, certificates: 210, domains: 30, alerts: 12 },
       sources: [{ source: 'overview', up: true }, { source: 'alerts', up: true }], capped: [] },
-    summary: SUMMARY, revision: 1, schema_version: 41, grafana_min_version: '12.0.0', app_version: '20.157.0', metrics_path: '/metrics',
+    summary: SUMMARY, revision: 1, schema_version: 41, grafana_min_version: '12.0.0', app_version: '20.157.0', metrics_path: '/metrics/sitemonitor',
+    runtime_metrics_path: '/metrics', token_env: 'METRICS_EXPORT_TOKEN',
     metrics: [
       { name: 'sitemonitor_monitor_state', scope: 'entity', labels: ['type', 'team', 'team_id', 'group', 'monitor', 'monitor_id', 'target'],
         help: 'Monitor state code: 0 up, 1 stale (check overdue), 2 down, 3 unknown (never checked), 4 paused' },
@@ -156,6 +157,11 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="grafana-exporter"]')).toHaveAttribute('data-state', 'running')
       await expect(root.locator('[data-slot="grafana-section"]')).toHaveCount(7)
       await expect(root.locator('[data-slot="grafana-scrape"]')).toContainText('names: [site-monitor-prod]')
+      // İş ölçümleri belirteçli ayrı uçta; belirteç yalnız EVET / HAYIR; takım panosu erişim denetimi değil
+      await expect(root.locator('[data-slot="grafana-scrape"]')).toContainText('metrics_path: /metrics/sitemonitor')
+      await expect(root.locator('[data-slot="grafana-scrape"]')).toContainText('credentials_file:')
+      await expect(root.locator('[data-slot="grafana-token"]')).toHaveAttribute('data-state', 'configured')
+      await expect(root.locator('[data-slot="grafana-team-scope"]')).toBeVisible()
       await page.screenshot({ path: `test-results/settings-grafana-${vp.name}-top.png`, fullPage: false })
       await root.locator('[data-slot="grafana-catalog-toggle"]').click()
       await expect(root.locator('[data-slot="grafana-catalog-item"]')).toHaveCount(3)

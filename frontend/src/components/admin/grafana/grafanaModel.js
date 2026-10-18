@@ -208,13 +208,16 @@ export function utcMs(iso) {
  */
 export function exporterState(exp, nowMs = Date.now()) {
   if (!exp || typeof exp !== 'object') return 'unknown'
+  // Belirteç yoksa aktarıcı hiç koşmaz (uç 404) — "kapalı"dan önce söylenir: düzeltme ayarda değil, ortam değişkeninde
+  if (exp.state === 'no_token' || exp.token_configured === false) return 'no_token'
   if (exp.state === 'disabled' || exp.enabled === false) return 'disabled'
   if (exp.state === 'waiting') return 'waiting'
   if (exp.state !== 'running') return 'unknown'
   const at = utcMs(exp.refreshed_at)
   const now = Number.isFinite(utcMs(exp.server_now)) ? utcMs(exp.server_now) : nowMs
   const every = Number(exp.refresh_seconds) > 0 ? Number(exp.refresh_seconds) : 60
-  if (!Number.isFinite(at) || now - at > every * 3000) return 'stale'
+  // Sunucuyla aynı eşik: 3 × aralık, en az 3 dk (MonitoringMetricsExporter.staleAfterMs — o sürede uç iş değerlerini gizler)
+  if (!Number.isFinite(at) || now - at > Math.max(180, every * 3) * 1000) return 'stale'
   if ((exp.sources || []).some((s) => s && s.up === false)) return 'degraded'
   return 'running'
 }
@@ -232,17 +235,17 @@ export function namespaceOf(selector) {
   return m ? m[1] : null
 }
 
+/** Prometheus'ta belirtecin okunduğu dosya (yer tutucu — Prometheus pod'una bağlanan Secret). */
+export const TOKEN_FILE_PLACEHOLDER = '/etc/prometheus/secrets/site-monitor/metrics-export-token'
+
 /**
- * Pod anotasyonlarıyla (Helm `podAnnotations`: prometheus.io/scrape|port|path) kazıyan Prometheus için örnek iş. Değerler
- * yer tutucu; ad alanı eşleyiciden okunur.
+ * Pod anotasyonlarıyla (Helm `podAnnotations`: prometheus.io/scrape|port|path) kazıyan Prometheus için İKİ örnek iş:
+ * `site-monitor` (kimliksiz /metrics: JVM / HTTP / uygulama sağlığı) ve `site-monitor-inventory` (iş ölçümleri; taşıyıcı
+ * belirteç `credentials_file`'dan — değer asla örneğe yazılmaz). Değerler yer tutucu; ad alanı eşleyiciden okunur.
  */
-export function scrapeSnippet(selector) {
+export function scrapeSnippet(selector, inventoryPath = '/metrics/sitemonitor') {
   const ns = namespaceOf(selector) || '<site-monitor-namespace>'
-  return [
-    'scrape_configs:',
-    '  - job_name: site-monitor',
-    '    metrics_path: /metrics',
-    '    scrape_interval: 30s',
+  const discovery = [
     '    kubernetes_sd_configs:',
     '      - role: pod',
     '        namespaces:',
@@ -255,5 +258,19 @@ export function scrapeSnippet(selector) {
     '        target_label: namespace',
     '      - source_labels: [__meta_kubernetes_pod_name]',
     '        target_label: pod',
+  ]
+  return [
+    'scrape_configs:',
+    '  - job_name: site-monitor',
+    '    metrics_path: /metrics',
+    '    scrape_interval: 30s',
+    ...discovery,
+    '  - job_name: site-monitor-inventory',
+    `    metrics_path: ${inventoryPath}`,
+    '    scrape_interval: 60s',
+    '    authorization:',
+    '      type: Bearer',
+    `      credentials_file: ${TOKEN_FILE_PLACEHOLDER}`,
+    ...discovery,
   ].join('\n')
 }

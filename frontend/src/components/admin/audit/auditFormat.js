@@ -223,6 +223,8 @@ const SPECIAL = {
   // Ayarlar → Grafana panosu (2026-10-18): ayar kaydı + pano JSON'u indirme — "GRAFANA" nesne sözlüğünde yok
   GRAFANA_SETTINGS_SAVE: 'audit.ev.GRAFANA_SETTINGS_SAVE',
   GRAFANA_DASHBOARD_EXPORT: 'audit.ev.GRAFANA_DASHBOARD_EXPORT',
+  // İş ölçümleri ucu (/metrics/sitemonitor) belirteç reddi — güvenlik olayı, IP başına 10 dk'da bir
+  METRICS_EXPORT_ACCESS_DENIED: 'audit.ev.METRICS_EXPORT_ACCESS_DENIED',
   // Manuel (dosyadan yüklenen) sertifika: ilk yükleme / yeni sürüm (2026-10-06) — "_UPLOAD"/"_RENEW" eylem sözlüğünde yok
   CERT_MANUAL_UPLOAD: 'audit.ev.CERT_MANUAL_UPLOAD',
   CERT_MANUAL_RENEW: 'audit.ev.CERT_MANUAL_RENEW',

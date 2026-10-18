@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  FIELD_KEYS, SECTION_IDS, changedFields, errorsForChanges, exporterState, failedSources, formToBody, isDirty, namespaceOf, orderSections,
+  FIELD_KEYS, SECTION_IDS, TOKEN_FILE_PLACEHOLDER, changedFields, errorsForChanges, exporterState, failedSources, formToBody, isDirty, namespaceOf, orderSections,
   scrapeSnippet, selectorOk, toForm, urlOk, validateForm,
 } from '../components/admin/grafana/grafanaModel.js'
 
@@ -98,10 +98,19 @@ describe('grafanaModel — aktarıcı durumu ve kazıma örneği', () => {
   it('çalışıyor / kısmen / takılmış / bekliyor / kapalı / bilinmiyor — bilinmeyen asla "çalışıyor" değil', () => {
     expect(exporterState(base)).toBe('running')
     expect(exporterState({ ...base, sources: [{ source: 'alerts', up: false }] })).toBe('degraded')
-    expect(exporterState({ ...base, server_now: '2026-10-18T08:04:00' })).toBe('stale')
+    // Sunucuyla aynı eşik: 3 × aralık, en az 3 dk (60 sn aralıkta 180 sn)
+    expect(exporterState({ ...base, server_now: '2026-10-18T08:02:59' })).toBe('running')
+    expect(exporterState({ ...base, server_now: '2026-10-18T08:03:01' })).toBe('stale')
+    expect(exporterState({ ...base, refresh_seconds: 30, server_now: '2026-10-18T08:02:30' })).toBe('running')
+    expect(exporterState({ ...base, refresh_seconds: 300, server_now: '2026-10-18T08:14:00' })).toBe('running')
+    expect(exporterState({ ...base, refresh_seconds: 300, server_now: '2026-10-18T08:16:00' })).toBe('stale')
     expect(exporterState({ ...base, refreshed_at: null })).toBe('stale')
     expect(exporterState({ state: 'waiting', enabled: true })).toBe('waiting')
     expect(exporterState({ state: 'disabled', enabled: false })).toBe('disabled')
+    // Belirteç yoksa "kapalı"dan önce söylenir (düzeltme ortam değişkeninde)
+    expect(exporterState({ state: 'no_token', enabled: true, token_configured: false })).toBe('no_token')
+    expect(exporterState({ ...base, token_configured: false })).toBe('no_token')
+    expect(exporterState({ state: 'disabled', enabled: false, token_configured: false })).toBe('no_token')
     expect(exporterState(null)).toBe('unknown')
     expect(exporterState({ state: 'weird' })).toBe('unknown')
     expect(failedSources({ sources: [{ source: 'alerts', up: false }, { source: 'x', up: true }] })).toEqual(['alerts'])
@@ -113,5 +122,20 @@ describe('grafanaModel — aktarıcı durumu ve kazıma örneği', () => {
     expect(scrapeSnippet('namespace="sm-prod"')).toContain('names: [sm-prod]')
     expect(scrapeSnippet('')).toContain('<site-monitor-namespace>')
     expect(scrapeSnippet('')).toContain('metrics_path: /metrics')
+  })
+
+  it('kazıma örneği: iki iş — kimliksiz /metrics ve belirteçli iş ölçümleri (credentials_file; değer asla örnekte değil)', () => {
+    const y = scrapeSnippet('namespace="sm-prod"')
+    expect(y).toContain('job_name: site-monitor\n')
+    expect(y).toContain('job_name: site-monitor-inventory')
+    expect(y).toContain('metrics_path: /metrics/sitemonitor')
+    expect(y).toContain('type: Bearer')
+    expect(y).toContain(`credentials_file: ${TOKEN_FILE_PLACEHOLDER}`)
+    expect(y).not.toMatch(/credentials:\s/)
+    expect(y.match(/names: \[sm-prod\]/g)).toHaveLength(2)
+    // Yetkilendirme yalnız iş ölçümleri işinde
+    const first = y.split('job_name: site-monitor-inventory')[0]
+    expect(first).not.toContain('authorization')
+    expect(scrapeSnippet('', '/x/y')).toContain('metrics_path: /x/y')
   })
 })

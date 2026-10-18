@@ -40,11 +40,12 @@ const data = (extra = {}) => ({
     export_max_entities: { min: 100, max: 50000, default: 5000 }, export_refresh_seconds: { min: 30, max: 600, default: 60 },
   },
   teams: ['Dijital Kanallar', 'Ödeme Sistemleri'],
-  exporter: { state: 'running', enabled: true, per_monitor: true, refresh_seconds: 60, max_entities: 5000, pod: 'site-monitor-7c9d',
+  exporter: { state: 'running', enabled: true, token_configured: true, per_monitor: true, refresh_seconds: 60, max_entities: 5000, pod: 'site-monitor-7c9d',
     server_now: '2026-10-18T08:01:00', refreshed_at: '2026-10-18T08:00:30', duration_ms: 140, series_total: 9120,
     entities: { monitors: 640, certificates: 210, domains: 30, alerts: 12 }, sources: [{ source: 'overview', up: true }, { source: 'alerts', up: true }],
     capped: [] },
-  summary: SUMMARY, revision: 1, schema_version: 41, grafana_min_version: '12.0.0', app_version: '20.157.0', metrics_path: '/metrics',
+  summary: SUMMARY, revision: 1, schema_version: 41, grafana_min_version: '12.0.0', app_version: '20.157.0',
+  metrics_path: '/metrics/sitemonitor', runtime_metrics_path: '/metrics', token_env: 'METRICS_EXPORT_TOKEN',
   metrics: [{ name: 'sitemonitor_monitor_state', scope: 'entity', labels: ['type', 'team'], help: 'Monitor state code' },
     { name: 'sitemonitor_sweep_leader', scope: 'pod', labels: [], help: '1 when this pod holds the sweep leadership' }],
   ...extra,
@@ -71,7 +72,16 @@ describe('GrafanaDashboardSettings', () => {
     expect(slot('grafana-revision')).toHaveTextContent('Pano revizyonu 1')
     expect(document.querySelectorAll('[data-slot="grafana-step"]')).toHaveLength(3)
     expect(slot('grafana-scrape')).toHaveTextContent('metrics_path: /metrics')
-    expect(slot('grafana-metrics-warning')).toHaveTextContent('/metrics kimliksizdir')
+    expect(slot('grafana-scrape')).toHaveTextContent('metrics_path: /metrics/sitemonitor')
+    expect(slot('grafana-scrape')).toHaveTextContent('credentials_file:')
+    expect(slot('grafana-metrics-warning')).toHaveTextContent('Belirteç bütün envanteri açar')
+    // Belirteç: yalnız EVET / HAYIR
+    expect(slot('grafana-token')).toHaveAttribute('data-state', 'configured')
+    expect(slot('grafana-token')).toHaveTextContent('Tanımlı')
+    expect(slot('grafana-token')).not.toHaveTextContent('Tanımlı değil')
+    // Takım panosu erişim denetimi değildir (3. adım)
+    expect(slot('grafana-team-scope')).toHaveTextContent('erişim denetimi değil')
+    expect(document.querySelector('[data-step="3"]')).toHaveTextContent('Grafana takım kapsamı UYGULAMAZ')
     expect(slot('grafana-exporter')).toHaveAttribute('data-state', 'running')
     expect(within(slot('grafana-exporter-stats')).getByText('640')).toBeInTheDocument()
     expect(within(slot('grafana-exporter')).getByText('site-monitor-7c9d')).toBeInTheDocument()
@@ -183,6 +193,24 @@ describe('GrafanaDashboardSettings', () => {
     expect(slot('grafana-exporter-failed')).toHaveTextContent('alerts')
     expect(slot('grafana-exporter-capped')).toHaveTextContent('monitors')
     expect(slot('grafana-permonitor-mismatch')).toBeInTheDocument()
+  })
+
+  it('belirteç yok: "Tanımlı değil" + ortam değişkeni ipucu; aktarıcı durumu no_token, sayılar gizli', async () => {
+    await mount(ok({ exporter: { state: 'no_token', enabled: true, token_configured: false, refresh_seconds: 60 } }))
+    expect(slot('grafana-token')).toHaveAttribute('data-state', 'missing')
+    expect(slot('grafana-token')).toHaveTextContent('Tanımlı değil')
+    expect(slot('grafana-token')).toHaveTextContent('METRICS_EXPORT_TOKEN')
+    expect(slot('grafana-exporter')).toHaveAttribute('data-state', 'no_token')
+    expect(slot('grafana-exporter')).toHaveTextContent('Belirteç yok')
+    expect(slot('grafana-exporter-stats')).toBeNull()
+    // JSON indirme belirteçten bağımsız (pano yalnız sorgu taşır)
+    expect(screen.getByRole('button', { name: 'JSON indir' })).toBeEnabled()
+  })
+
+  it('eski sunucu belirteç alanını göndermezse belirteç satırı çizilmez (bilinmiyor ≠ hayır)', async () => {
+    await mount(ok({ exporter: { state: 'running', enabled: true, refresh_seconds: 60, refreshed_at: '2026-10-18T08:00:30',
+      server_now: '2026-10-18T08:01:00', sources: [] } }))
+    expect(slot('grafana-token')).toBeNull()
   })
 
   it('aktarıcı kapalı ve bekliyor durumları; sayılar gizli', async () => {

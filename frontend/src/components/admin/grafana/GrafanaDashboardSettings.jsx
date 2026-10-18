@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils'
 
 const TOUCH = 'pointer-coarse:min-h-10'
 const PREVIEW_DEBOUNCE_MS = 400
-const STATE_TONE = { running: 'success', degraded: 'warning', stale: 'danger', waiting: 'info', disabled: 'neutral', unknown: 'neutral' }
+const STATE_TONE = { running: 'success', degraded: 'warning', stale: 'danger', waiting: 'info', disabled: 'neutral', no_token: 'warning', unknown: 'neutral' }
 const TONE_BADGE = {
   success: 'border-success/40 bg-success/10 text-success',
   warning: 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300',
@@ -280,7 +280,8 @@ export default function GrafanaDashboardSettings({ readOnly: readOnlyProp = fals
         </div>
       )}
 
-      <Steps t={t} metricsPath={data.metrics_path || '/metrics'} selector={form.selector} />
+      <Steps t={t} metricsPath={data.metrics_path || '/metrics/sitemonitor'} tokenEnv={data.token_env || 'METRICS_EXPORT_TOKEN'}
+        tokenConfigured={data.exporter?.token_configured} selector={form.selector} />
 
       <ExporterCard t={t} exporter={data.exporter} />
 
@@ -450,10 +451,12 @@ function teamOptions(teams, current, t) {
 
 // ── Kurulum adımları ──────────────────────────────────────────────────────────────────────────────────
 
-function Steps({ t, metricsPath, selector }) {
-  const snippet = scrapeSnippet(selector)
+function Steps({ t, metricsPath, tokenEnv, tokenConfigured, selector }) {
+  const snippet = scrapeSnippet(selector, metricsPath)
+  // Yalnız EVET / HAYIR — belirtecin değeri hiçbir yanıtta yok. Eski sunucu alanı göndermezse (undefined) satır çizilmez.
+  const tokenKnown = typeof tokenConfigured === 'boolean'
   const steps = [
-    { n: 1, icon: Server, title: t('grafana.step1.title'), body: t('grafana.step1.body', metricsPath) },
+    { n: 1, icon: Server, title: t('grafana.step1.title'), body: t('grafana.step1.body', metricsPath, tokenEnv) },
     { n: 2, icon: Upload, title: t('grafana.step2.title'), body: t('grafana.step2.body') },
     { n: 3, icon: Share2, title: t('grafana.step3.title'), body: t('grafana.step3.body') },
   ]
@@ -475,6 +478,21 @@ function Steps({ t, metricsPath, selector }) {
                 <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{s.body}</p>
                 {s.n === 1 && (
                   <>
+                    {tokenKnown && (
+                      <div data-slot="grafana-token" data-state={tokenConfigured ? 'configured' : 'missing'}
+                        className="flex min-w-0 flex-col gap-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                          <span className="text-muted-foreground">{t('grafana.step1.token')}</span>
+                          <Badge className={cn('gap-1 rounded-md', TONE_BADGE[tokenConfigured ? 'success' : 'warning'])}>
+                            {tokenConfigured ? <CircleCheck aria-hidden="true" /> : <Activity aria-hidden="true" />}
+                            {t(tokenConfigured ? 'grafana.step1.tokenYes' : 'grafana.step1.tokenNo')}
+                          </Badge>
+                        </div>
+                        {!tokenConfigured && (
+                          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('grafana.step1.tokenNoHint', tokenEnv)}</p>
+                        )}
+                      </div>
+                    )}
                     <div className="relative min-w-0" data-slot="grafana-scrape">
                       <pre className="m-0 max-h-72 overflow-auto rounded-md border bg-muted/50 p-3 pr-12 font-mono text-xs leading-snug whitespace-pre">{snippet}</pre>
                       <div className="absolute top-1.5 right-1.5">
@@ -487,7 +505,11 @@ function Steps({ t, metricsPath, selector }) {
                     </div>
                   </>
                 )}
-                {s.n === 3 && <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('grafana.step3.perTeam')}</p>}
+                {s.n === 3 && (
+                  <div data-slot="grafana-team-scope">
+                    <AlertBanner tone="info" className="mb-0">{t('grafana.step3.perTeam')}</AlertBanner>
+                  </div>
+                )}
               </div>
             </li>
           )
