@@ -1766,6 +1766,59 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => sends).toBe(1)
     })
 
+    test('e-posta önizlemesi (inceleme 2026-10-18): 20 Kime + 20 Bilgi + üç şerit — gövde kayar, başlık ve alt düğmeler pencerede görünür kalır', async ({ page }) => {
+      await mock(page)
+      const many = (who) => Array.from({ length: 20 }, (_, i) => `${who}.${i}.cok-uzun-bir-adres@dijital-kanallar-uygulama-gelistirme.example.com`)
+      // Genel /api taklidinden SONRA kaydedilir — Playwright son kaydı önce dener
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/100/mail-preview', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+          subject: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Eylül 2026`, delivery: 'EXECUTIVE',
+          to: many('yonetici'), cc: many('takim'), to_count: 20, cc_count: 20, to_dropped: 3, cc_dropped: 4,
+          recipients_hidden: false, problem: 'EXEC_RECIPIENTS_MISSING', pdf_too_large: false,
+          file_name: 'mobil-teknik-hata-2026-09.pdf', images_embedded: 1, images_skipped: 0, pdf_bytes: 123456, max_mail_mb: 15,
+          provenance: { created_by: 'Ayşe Yılmaz', created_at: '2026-09-03T11:05:00Z', updated_by: 'Ali Veli', updated_at: '2026-09-05T06:12:00Z',
+            approval_state: 'pending', approved_by: null, approved_at: null },
+          html: '<!doctype html><html><body style="margin:0;font-family:Arial"><div data-slot="te-mail-band" style="background:#0f172a;color:#fff;padding:24px">TEKNİK HATA RAPORU</div></body></html>',
+          text: 'metin' } }),
+      }))
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-mail-preview-btn"]').click()
+      const dlg = page.locator('[data-slot="te-mail-preview"]')
+      await expect(dlg).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-to"]')).toContainText('yonetici.19.')
+      await expect(dlg.locator('[data-slot="te-mail-dropped"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-cc-dropped"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-problem"]')).toBeVisible()
+      await page.waitForTimeout(300)
+      const box = await dlg.boundingBox()
+      expect(box.y, 'pencere üstte taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(box.y + box.height, 'pencere altta taşmaz').toBeLessThanOrEqual(vp.height + 1)
+      // Alt çubuk (Kapat + Bana test gönder) pencerenin İÇİNDE ve ekranda — kaydırmadan erişilir
+      for (const sel of ['[data-slot="te-mail-test"]']) {
+        const b = await dlg.locator(sel).boundingBox()
+        expect(b, `${sel} çizildi`).not.toBeNull()
+        expect(b.y + b.height, `${sel} pencerenin içinde`).toBeLessThanOrEqual(box.y + box.height + 1)
+        expect(b.y + b.height, `${sel} ekranda`).toBeLessThanOrEqual(vp.height + 1)
+      }
+      const close = dlg.locator('[data-slot="dialog-footer"]').getByRole('button', { name: /^(Kapat|Close)$/ })
+      await expect(close).toBeInViewport()
+      const cb = await close.boundingBox()
+      expect(cb.y + cb.height, 'Kapat pencerenin içinde').toBeLessThanOrEqual(box.y + box.height + 1)
+      await expect(dlg.getByRole('heading', { name: /E-posta önizlemesi|E-mail preview/ })).toBeInViewport()
+      // Gövde kayar: sona kaydırılınca önizleme çerçevesi görünür, alt çubuk yerinde
+      const body = dlg.locator('[data-slot="te-mail-body"]')
+      if (vp.width < 768) {
+        expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 1), 'telefonda gövde kaydırılabilir').toBe(true)
+      }
+      await body.evaluate((el) => { el.scrollTop = el.scrollHeight })
+      await expect(dlg.locator('[data-slot="te-mail-frame"]')).toBeInViewport()
+      await expect(close).toBeInViewport()
+      expect(await page.evaluate(clipped, '[data-slot="te-mail-preview"]'), 'kırpılan metin (önizleme, çok alıcı)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma (önizleme, çok alıcı)').toBeLessThanOrEqual(1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-mail-preview"]'), 'küçük hedef (önizleme, çok alıcı)').toEqual([])
+    })
+
     test('R18: gönderim penceresinde ek Bilgi (CC) — istemci ve sunucu alan hatası alanın altında, gövdede yalnız extra_cc; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
       await mock(page)
       await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')

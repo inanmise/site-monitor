@@ -19,10 +19,15 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.core.JsonEncoding;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -52,15 +57,15 @@ import java.util.regex.Pattern;
  * <p>{@code year} 2020…bu yıl (İstanbul), tek kanal ({@code channel}) dışında zorunlu; {@code month} yıl ister. Tavan
  * {@link TechErrorExportService#MAX_REPORTS} rapor → 400 {@code EXPORT_TOO_LARGE}. Kullanıcı başına dakikada
  * {@link #EXPORT_PER_MINUTE} istek (429 {@code RATE_LIMITED} + {@code Retry-After}). Kişi başına aynı anda TEK dışa
- * aktarım (bekleyen ya da süren — CSV'de yanıt yazılıp bitene kadar): ikinci istek BEKLEMEDEN 429 {@code EXPORT_BUSY}. Pod
+ * aktarım (bekleyen ya da süren — yanıt, CSV ya da JSON, yazılıp bitene kadar): ikinci istek BEKLEMEDEN 429 {@code EXPORT_BUSY}. Pod
  * genelinde aynı anda en çok {@link #EXPORT_CONCURRENCY} dışa aktarım HAZIRLANIR (izin yalnız okuma + hesap süresince
  * tutulur; {@link TechErrorExportService#export} döner dönmez — yanıt yazılmadan önce — bırakılır, yavaş bir istemci izni
  * tutamaz); dolu → en çok {@link #EXPORT_WAIT_MS} beklenir, sonra 429 {@code EXPORT_BUSY} + {@code Retry-After}. Meşgul
  * reddi dakikalık hakkı yemez ama ayrı, küçük bir bütçeden düşer: kişi başına dakikada {@link #EXPORT_BUSY_PER_MINUTE}
  * meşgul reddinden sonra istekler beklemeden 429 {@code RATE_LIMITED} (Retry-After'ı yok sayan döngü sınırlanır).
  * Okumadan önce kuyruktaki gönderimler sonuçlandırılır ({@code reconcileQueued} — diğer okuma uçları gibi). Her başarılı
- * dışa aktarım {@code TECH_ERROR_REPORT_EXPORT} denetim satırı yazar (süzgeç + rapor / satır sayısı). CSV doğrudan yanıt
- * akışına yazılır.
+ * dışa aktarım {@code TECH_ERROR_REPORT_EXPORT} denetim satırı yazar (süzgeç + rapor / satır sayısı). CSV de JSON da
+ * doğrudan yanıt akışına yazılır (JSON: {@link #writeJson}; gövde bellekte tek bir metne çevrilmez).
  *
  * <p>Ayrı denetleyici (aynı taban yol): rapor uçlarının büyük denetleyicisine yalnız bir kapsam yardımcısı açıldı.
  */
@@ -91,6 +96,8 @@ public class TechErrorReportExportController {
     private final TeamRepository teams;
     private final PermissionService permissions;
     private final AuditService auditService;
+    /** Uygulamanın ObjectMapper'ı: JSON gövdesi ileti dönüştürücüsüyle aynı değer serileştirmesiyle akıtılır. */
+    private final ObjectMapper json;
 
     /** Kullanıcı → son istek zamanları (ms); pod başına, sınırlı (1 000 anahtarda süresi geçenler atılır, 10 000'de sıfırlanır). */
     private final Map<String, Deque<Long>> exportCalls = new HashMap<>();
@@ -109,12 +116,14 @@ public class TechErrorReportExportController {
     long exportWaitMs = EXPORT_WAIT_MS;
 
     public TechErrorReportExportController(TechErrorReportService service, TechErrorExportService exporter,
-                                           TeamRepository teams, PermissionService permissions, AuditService auditService) {
+                                           TeamRepository teams, PermissionService permissions, AuditService auditService,
+                                           ObjectMapper json) {
         this.service = service;
         this.exporter = exporter;
         this.teams = teams;
         this.permissions = permissions;
         this.auditService = auditService;
+        this.json = json;
     }
 
     @GetMapping("/export")
@@ -283,28 +292,61 @@ public class TechErrorReportExportController {
                 w.flush();
                 return null;
             }
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("columns", TechErrorExportService.COLUMNS);
-            data.put("rows", res.rows());
-            data.put("notes", notes("sent".equals(st)));
-            data.put("reports", reportRows(res.reports()));
-            data.put("report_count", res.reports().size());
-            data.put("row_count", res.rows().size());
-            data.put("max_reports", TechErrorExportService.MAX_REPORTS);
             Map<String, Object> filter = new LinkedHashMap<>();
             filter.put("team", teamId != null ? teamId : (channelId != null ? null : "all"));
             filter.put("channel", channelId);
             filter.put("year", y);
             filter.put("month", m);
             filter.put("status", st);
-            data.put("filter", filter);
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("success", true);
-            body.put("data", data);
-            return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(body);
+            // JSON de doğrudan yanıt akışına yazılır (inceleme 2026-10-18): gövde ResponseEntity ile dönseydi global olmayan
+            // görüntüleyicide UserRefResponseAdvice (UserRefWire.toOpaqueFast) tüm gövdeyi ÖNCE tek bir metne çevirirdi —
+            // 5 000 raporluk tavanda ~100–150 MB; birkaç eşzamanlı çekiş 1 GiB'lik pod'u düşürebilirdi. Tavsiye yalnız ileti
+            // dönüştürücüsünden geçen gövdeye uygulanır; burada uygulanmaz ve GEREKMEZ: bu yükte kullanıcı kimliği yoktur
+            // (servis izdüşümü kişi sütunu okumaz; sütun / anahtar adlarının hiçbiri UserRefWire.KEYS'te değil —
+            // TechErrorReportExportControllerTest.jsonCarriesNoUserRefKeys bunu kilitler), yani çeviri bir şey değiştirmezdi.
+            // Kişinin "süren dışa aktarım" işareti CSV'deki gibi yazma bitene dek kalır (finally); pod izni zaten bırakıldı.
+            response.setStatus(200);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+            // AUTO_CLOSE_CONTENT kapalı: yazma yarıda kesilirse kapanışta eksik diziler / nesneler KAPATILMAZ — istemci
+            // geçersiz JSON görür; yarım satırlı ama "success: true" görünen geçerli bir gövde (eksik Excel) oluşmaz
+            try (JsonGenerator gen = json.writer().without(StreamWriteFeature.AUTO_CLOSE_CONTENT)
+                    .createGenerator(StreamUtils.nonClosing(response.getOutputStream()), JsonEncoding.UTF8)) {
+                writeJson(gen, res, notes("sent".equals(st)), filter);
+            }
+            return null;
         } finally {
             running.remove(rateKey);
         }
+    }
+
+    /**
+     * JSON gövdesi, satır satır üretici ile: {@code {success, data:{columns, rows, notes, reports, report_count, row_count,
+     * max_reports, filter}}} — eski {@code ResponseEntity} gövdesiyle aynı anahtarlar, aynı sıra, aynı değer serileştirmesi
+     * (uygulamanın ObjectMapper'ı; testte eski haritayla bayt bayt karşılaştırılır). Satırlar tek tek yazılır: tüm gövde
+     * bellekte ikinci kez (metin / ağaç olarak) kurulmaz.
+     */
+    static void writeJson(JsonGenerator gen, TechErrorExportService.Result res, List<String> notes, Map<String, Object> filter) {
+        gen.writeStartObject();
+        gen.writeBooleanProperty("success", true);
+        gen.writeName("data");
+        gen.writeStartObject();
+        gen.writePOJOProperty("columns", TechErrorExportService.COLUMNS);
+        gen.writeName("rows");
+        gen.writeStartArray();
+        for (List<Object> r : res.rows()) gen.writePOJO(r);
+        gen.writeEndArray();
+        gen.writePOJOProperty("notes", notes);
+        gen.writeName("reports");
+        gen.writeStartArray();
+        for (TechErrorExportService.ReportMeta r : res.reports()) gen.writePOJO(reportRow(r));
+        gen.writeEndArray();
+        gen.writeNumberProperty("report_count", res.reports().size());
+        gen.writeNumberProperty("row_count", res.rows().size());
+        gen.writeNumberProperty("max_reports", TechErrorExportService.MAX_REPORTS);
+        gen.writePOJOProperty("filter", filter);
+        gen.writeEndObject();
+        gen.writeEndObject();
     }
 
     /** Eşzamanlılık izni: kısa bekleyişle (PDF izni deseni); kesilirse izin alınmamış sayılır. */
@@ -377,25 +419,22 @@ public class TechErrorReportExportController {
 
     // ── JSON yardımcıları ────────────────────────────────────────────────────────────────────────────
 
-    private static List<Map<String, Object>> reportRows(List<TechErrorExportService.ReportMeta> metas) {
-        List<Map<String, Object>> out = new ArrayList<>(metas.size());
-        for (TechErrorExportService.ReportMeta r : metas) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("team_id", r.teamId());
-            m.put("team_name", r.teamName());
-            m.put("channel_id", r.channelId());
-            m.put("channel_name", r.channelName());
-            m.put("year", r.year());
-            m.put("month", r.month());
-            m.put("report_id", r.reportId());
-            m.put("report_status", r.status());
-            m.put("sent_at", r.sentAt() == null ? null : r.sentAt().toString());
-            m.put("changed_after_send", r.changedAfterSend());
-            m.put("approval_state", r.approvalState());
-            m.put("field_count", r.fieldCount());
-            out.add(m);
-        }
-        return out;
+    /** Rapor künyesi satırı ({@code reports[]}) — kişi verisi yok; anahtarlar {@code UserRefWire.KEYS} dışında. */
+    static Map<String, Object> reportRow(TechErrorExportService.ReportMeta r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("team_id", r.teamId());
+        m.put("team_name", r.teamName());
+        m.put("channel_id", r.channelId());
+        m.put("channel_name", r.channelName());
+        m.put("year", r.year());
+        m.put("month", r.month());
+        m.put("report_id", r.reportId());
+        m.put("report_status", r.status());
+        m.put("sent_at", r.sentAt() == null ? null : r.sentAt().toString());
+        m.put("changed_after_send", r.changedAfterSend());
+        m.put("approval_state", r.approvalState());
+        m.put("field_count", r.fieldCount());
+        return m;
     }
 
     /** Okuyucuya (BI) açıklamalar — istek dilinde. */

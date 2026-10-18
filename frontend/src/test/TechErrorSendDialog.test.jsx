@@ -186,6 +186,58 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
+  it('inceleme 2026-10-18: yeniden denenebilir hata (429 PDF sırası, 409 SEND_IN_PROGRESS) pencereyi KAPATMAZ — hata pencerenin içinde, yazılan ek Bilgi korunur, rapor arkada yenilenir; ikinci deneme aynı ek Bilgi ile gider', async () => {
+    const busyMsg = 'PDF sırası dolu; birkaç saniye sonra yeniden deneyin.'
+    te().send
+      .mockResolvedValueOnce({ success: false, status: 429, code: 'HTTP_429', error: busyMsg })
+      .mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_IN_PROGRESS', error: 'Bu rapor şu anda gönderiliyor.' })
+      .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+    const dlg = await openSendDialog()
+    const input = ccInput(dlg)
+    fireEvent.change(input, { target: { value: 'ek@example.com' } })
+    const loadsBefore = te().report.mock.calls.length
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    const failure = await within(dlg).findByText(new RegExp(busyMsg.replace(/[.;]/g, '.')))
+    expect(failure.closest('[data-slot="te-send-failure"]')).toHaveAttribute('data-kind', 'retry')
+    expect(within(dlg).getByText('Rapor gönderilmedi — yeniden deneyebilirsiniz')).toBeInTheDocument()
+    expect(within(dlg).getByText(/Yazdığınız ek Bilgi \(CC\) adresleri korundu/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeInTheDocument()
+    expect(input).toHaveValue('ek@example.com')
+    // Alan hatası DEĞİL: alan geçersiz işaretlenmez; odak alana döner (Enter gönder düğmesinde kalmasın)
+    expect(input).not.toHaveAttribute('aria-invalid', 'true')
+    await waitFor(() => expect(input).toHaveFocus())
+    await waitFor(() => expect(te().report.mock.calls.length).toBeGreaterThan(loadsBefore))
+    // Gönderim başka sekmede sürüyor: yine açık
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    expect(await within(dlg).findByText(/Bu rapor şu anda gönderiliyor/)).toBeInTheDocument()
+    expect(within(dlg).queryByText(new RegExp(busyMsg.replace(/[.;]/g, '.')))).toBeNull()
+    expect(input).toHaveValue('ek@example.com')
+    // Üçüncü deneme aynı ek Bilgi ile gider ve pencere kapanır
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(3))
+    expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+  })
+
+  it('inceleme 2026-10-18: ağ hatası (ApiError NETWORK_ERROR) — pencere açık, ek Bilgi korunur; sonucun BİLİNMEDİĞİ ve önce durumun kontrol edilmesi söylenir', async () => {
+    const { ApiError } = await import('../utils/errorMessages.js')
+    te().send.mockRejectedValueOnce(new ApiError('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.', { status: 0, code: 'NETWORK_ERROR' }))
+    const dlg = await openSendDialog()
+    fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    const box = await waitFor(() => {
+      const el = dlg.querySelector('[data-slot="te-send-failure"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(box).toHaveAttribute('data-kind', 'unsure')
+    expect(within(box).getByText('Gönderimin sonucu bilinmiyor')).toBeInTheDocument()
+    expect(box).toHaveTextContent(/Sunucuya ulaşılamadı/)
+    expect(box).toHaveTextContent(/gönderim günlüğüne bakın/)
+    expect(screen.getByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeInTheDocument()
+    expect(ccInput(dlg)).toHaveValue('ek@example.com')
+  })
+
   it('gönderemeyen (paylaşımla düzenleyen, can_send:false): gönder düğmesi ve pencere yok', async () => {
     te().report.mockResolvedValue(reportResponse({ can_send: false }))
     render(<TechErrorReportsPage />)

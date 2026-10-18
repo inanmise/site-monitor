@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
-  sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf,
+  sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -110,5 +110,30 @@ describe('gönderim günlüğü modeli', () => {
     expect(sendLogMore({ to_more: 'x' }, 'to')).toBe(0)
     expect(sendLogMore({}, 'cc')).toBe(0)
     expect(sendLogMore(null, 'to')).toBe(0)
+  })
+})
+
+describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)', () => {
+  it('yeniden denenebilir: 429 (PDF sırası / kişi başı sınır), 409 SEND_IN_PROGRESS, 503 → retry', () => {
+    expect(sendFailureKind({ success: false, status: 429, code: 'HTTP_429' })).toBe('retry')
+    expect(sendFailureKind({ success: false, status: 429, code: 'RATE_LIMITED' })).toBe('retry')
+    expect(sendFailureKind({ success: false, status: 409, code: 'SEND_IN_PROGRESS' })).toBe('retry')
+    expect(sendFailureKind({ success: false, status: 503, code: 'DB_UNAVAILABLE' })).toBe('retry')
+    expect(sendFailureKind({ success: false, errorInfo: { status: 429 } })).toBe('retry')
+  })
+  it('sonucu bilinmeyen: ağ hatası / zaman aşımı (durum 0, ApiError dahil) → unsure', () => {
+    expect(sendFailureKind({ success: false, status: 0, code: 'NETWORK_ERROR' })).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 0, code: 'REQUEST_TIMEOUT' })).toBe('unsure')
+    expect(sendFailureKind(Object.assign(new Error('Sunucuya ulaşılamadı.'), { status: 0, code: 'OFFLINE' }))).toBe('unsure')
+    expect(sendFailureKind({ success: false, status: 0 })).toBe('unsure')
+  })
+  it('kesin sonuç: başarı ve kalıcı retler pencereyi kapatır (null)', () => {
+    expect(sendFailureKind({ success: true, data: {} })).toBeNull()
+    for (const [status, code] of [[409, 'MAIL_DISABLED'], [409, 'TEAM_EMAIL_MISSING'], [409, 'APPROVAL_REQUIRED'], [502, 'MAIL_FAILED'],
+      [403, 'FORBIDDEN'], [404, 'NOT_FOUND'], [400, 'VALIDATION_FAILED'], [500, 'INTERNAL_ERROR']]) {
+      expect(sendFailureKind({ success: false, status, code })).toBeNull()
+    }
+    expect(sendFailureKind(null)).toBeNull()
+    expect(sendFailureKind(new TypeError('x is not a function'))).toBeNull()
   })
 })

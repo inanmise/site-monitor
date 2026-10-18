@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { RefreshCw, Send } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import Field from '../ui/Field.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
@@ -17,8 +18,12 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  * alınamaz — inceleme 2026-10-18, 2. tur), IME birleştirmesi sürerken Enter dokunulmaz.
  *
  * `onConfirm(extraCc)`: `extraCc` boşsa `''` — çağıran gövdesiz eski isteği atar.
+ *
+ * `failure` (inceleme 2026-10-18): `{ kind: 'retry' | 'unsure', title, message, details }` — yeniden denenebilir gönderim
+ * hatası (PDF sırası dolu, gönderim sürüyor, ağ hatası) pencerenin İÇİNDE gösterilir; pencere açık kalır, yazılan ek Bilgi
+ * silinmez (yalnız pencere yeniden açılınca boşalır), odak alana döner.
  */
-export default function SendDialog({ open, title, message, busy, serverError, onConfirm, onCancel, onEdit }) {
+export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit }) {
   const t = useT()
   const [value, setValue] = useState('')
   const [clientError, setClientError] = useState(null)
@@ -34,6 +39,12 @@ export default function SendDialog({ open, title, message, busy, serverError, on
   useEffect(() => {
     if (serverError) inputRef.current?.focus()
   }, [serverError])
+
+  // Yeniden denenebilir hata: gönderim bitince (alan yeniden açık) odak alana — gönder düğmesinde kalıp Enter'la yanlışlıkla
+  // yeniden gönderilmesin; yazılan ek Bilgi orada
+  useEffect(() => {
+    if (failure && !busy) inputRef.current?.focus()
+  }, [failure, busy])
 
   function submit(e) {
     e?.preventDefault?.()
@@ -75,6 +86,14 @@ export default function SendDialog({ open, title, message, busy, serverError, on
                 onChange={(e) => { setValue(e.target.value); setClientError(null); onEdit?.() }} />
             )}
           </Field>
+          {failure && (
+            <div data-slot="te-send-failure" data-kind={failure.kind}>
+              <AlertBanner tone={failure.kind === 'unsure' ? 'warning' : 'danger'} role="alert" title={failure.title}
+                details={failure.kind === 'unsure' ? undefined : (failure.details || undefined)}>
+                {failure.message}
+              </AlertBanner>
+            </div>
+          )}
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy} onClick={onCancel}>
               {t('te.cancel')}

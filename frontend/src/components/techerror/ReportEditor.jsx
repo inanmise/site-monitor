@@ -24,6 +24,7 @@ import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErr
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
 import SendDialog from './SendDialog.jsx'
+import { sendFailureKind } from './sendModel.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
@@ -554,17 +555,30 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   /**
    * Gönderim: önce kayıt (ensureSaved), sonra gönderim penceresi (R18 / C13 — eski onay sorusunun metni + isteğe bağlı ek
    * Bilgi (CC) alanı). Onay penceresi açık kalırken istek gider; sunucu ek Bilgi'yi reddederse (alan `extra_cc`) hata alanın
-   * altında, pencere açık — diğer her sonuçta pencere kapanır, bildirim gösterilir ve rapor yenilenir.
+   * altında, pencere açık. Yeniden denenebilir hatada (429 PDF sırası / kişi başı sınır, 409 `SEND_IN_PROGRESS`, 503, ağ
+   * hatası — `sendFailureKind`) pencere de AÇIK kalır, hata pencerenin içinde, yazılan ek Bilgi korunur (inceleme 2026-10-18:
+   * pencere kapanıyor, bir sonraki "Gönder" ek adresleri olmadan — geri alınamaz — gidebiliyordu); rapor arkada yenilenir.
+   * Başarıda ve kesin hatada pencere kapanır, bildirim gösterilir.
    */
   async function send() {
     if (!(await ensureSaved())) return
-    setSendDialog({ error: null })
+    setSendDialog({ error: null, failure: null })
+  }
+
+  /** Pencere içi hata bandı: tür (`retry` | `unsure`), başlık, metin, künye. */
+  function sendFailure(kind, res, fallback) {
+    const msg = res?.message || res?.error || fallback
+    return kind === 'unsure'
+      ? { kind, title: t('te.send.unsureTitle'), message: `${msg} ${t('te.send.unsureBody')}`, details: errorInfoOf(res) }
+      : { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`, details: res?.errorInfo ?? errorInfoOf(res) }
   }
 
   async function confirmSend(extraCc) {
     if (busy != null) return
     setBusy('send')
+    setSendDialog((d) => (d ? { ...d, failure: null } : d))
     let keepOpen = false
+    let refresh = true
     try {
       // Ek Bilgi yoksa gövdesiz (eski çağrı aynen); varsa yalnız `extra_cc`
       const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
@@ -582,18 +596,25 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (extraCc && !Array.isArray(res.data.cc)) toast.info(t('te.sendCcNotConfirmed'), 12000)
       } else if (res?.field === 'extra_cc') {
         keepOpen = true
-        setSendDialog({ error: res.error || t('te.send.ccRejected') })
+        refresh = false
+        setSendDialog({ error: res.error || t('te.send.ccRejected'), failure: null })
+      } else if (sendFailureKind(res)) {
+        keepOpen = true
+        setSendDialog({ error: null, failure: sendFailure(sendFailureKind(res), res, t('te.sendError')) })
       } else {
         toast.error(res?.error || t('te.sendError'), { details: res?.errorInfo })
       }
     } catch (e) {
-      toast.error(e?.message || t('te.sendError'))
+      const kind = sendFailureKind(e)
+      if (kind) {
+        keepOpen = true
+        setSendDialog({ error: null, failure: sendFailure(kind, e, t('te.sendError')) })
+      } else toast.error(e?.message || t('te.sendError'))
     } finally {
       setBusy(null)
-      if (!keepOpen) {
-        setSendDialog(null)
-        load({ keepDraft: true })
-      }
+      if (!keepOpen) setSendDialog(null)
+      // Pencere açık kalsa da rapor arkada yenilenir (gönderim başka sekmede sürüyor / ağ koptu ama gitmiş olabilir)
+      if (refresh) load({ keepDraft: true })
     }
   }
 
@@ -985,12 +1006,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       )}
       {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
       <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}
+        failure={sendDialog?.failure || null}
         title={approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle')}
         message={approvalRequired
           ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
           : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title))}
         onConfirm={confirmSend} onCancel={() => { if (busy !== 'send') setSendDialog(null) }}
-        onEdit={() => { if (sendDialog?.error) setSendDialog({ error: null }) }} />
+        onEdit={() => { if (sendDialog?.error) setSendDialog((d) => (d ? { ...d, error: null } : d)) }} />
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 

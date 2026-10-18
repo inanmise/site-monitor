@@ -307,6 +307,37 @@ describe('kanal yıl arşivi (ZIP)', () => {
     expect(screen.queryByText(/Çıkarsanız iptal edilir/)).toBeNull()
   })
 
+  it("inceleme 2026-10-18: arşiv sürerken \"Excel'e aktar\" kilitli (nedeni açıklamada); Excel hazırlanırken arşiv öğeleri kilitli — tek tıklamadan iki otomatik indirme olmaz", async () => {
+    const gate = deferred()
+    te().pdfBlob.mockImplementation(async (id) => { await gate.promise; return pdfOf(id) })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    const xlsx = await screen.findByRole('button', { name: "Excel'e aktar" })
+    await waitFor(() => expect(xlsx).toBeDisabled())
+    expect(xlsx).toHaveAttribute('data-blocked', 'true')
+    expect(xlsx).toHaveAccessibleDescription(/Yıl arşivi hazırlanırken Excel'e aktarılamaz/)
+    fireEvent.click(xlsx)
+    expect(te().exportValues).not.toHaveBeenCalled()
+    gate.resolve()
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    await waitFor(() => expect(xlsx).not.toBeDisabled())
+    expect(xlsx).not.toHaveAccessibleDescription(/Yıl arşivi hazırlanırken/)
+    // Excel hazırlanırken arşiv menüsünün öğeleri kilitli, başlık nedenini söyler
+    const ex = deferred()
+    te().exportValues.mockReturnValueOnce(ex.promise)
+    fireEvent.click(xlsx)
+    await screen.findByRole('button', { name: 'Excel hazırlanıyor…' })
+    pressMenuTrigger(screen.getByRole('button', { name: /Yıl arşivi \(ZIP\)/ }))
+    const items = await screen.findAllByRole('menuitem')
+    for (const item of items) expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByText('Excel dosyası hazırlanırken yıl arşivi başlatılamaz; o bitince bir yıl seçin.')).toBeInTheDocument()
+    fireEvent.click(items[0])
+    ex.resolve({ success: true, data: { columns: [], rows: [], reports: [], notes: [] } })
+    await screen.findByText(/Dışa aktarılacak değer yok/)
+    expect(te().pdfBlob).toHaveBeenCalledTimes(2)                       // yalnız ilk arşivin iki PDF'i
+    expect(dl.calls).toHaveLength(1)
+  })
+
   it('raporu olmayan kanalda menü yok', async () => {
     te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil'), reports: [], default_period: { year: 2026, month: 9 } } })
     render(<TechErrorReportsPage />)

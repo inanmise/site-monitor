@@ -49,6 +49,32 @@ export function parseExtraCc(raw) {
   return { addresses: out, error: null }
 }
 
+/** Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir. */
+const RETRYABLE_SEND_CODES = new Set(['SEND_IN_PROGRESS', 'PDF_BUSY', 'RATE_LIMITED', 'DB_UNAVAILABLE'])
+/** Sonucu BİLİNMEYEN hatalar: istek sunucuya ulaştı mı belli değil (gönderim olmuş olabilir). */
+const UNSURE_SEND_CODES = new Set(['NETWORK_ERROR', 'OFFLINE', 'REQUEST_TIMEOUT', 'REQUEST_ABORTED'])
+
+/**
+ * Gönderim hatası penceresi KAPATMALI mı (inceleme 2026-10-18)? Yeniden denenebilir hatada pencere AÇIK kalır ve yazılan ek
+ * Bilgi (CC) korunur — eskiden pencere kapanıyor, bir sonraki "Gönder" ek adreslerSİZ (geri alınamaz) gidebiliyordu.
+ * `res` bir yanıt yükü ya da fırlatılan `ApiError` olabilir. Dönüş:
+ *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır), 409 `SEND_IN_PROGRESS`, 503: posta gitmedi, yeniden denenebilir;
+ *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0): istek sunucuya ulaşmış olabilir — pencere açık, ama kullanıcıya
+ *                 yeniden göndermeden önce durumu kontrol etmesi söylenir;
+ *  - `null`     — kesin sonuç (başarı ya da kalıcı ret: posta kapalı, adres yok, onay gerekli…) → pencere kapanır.
+ */
+export function sendFailureKind(res) {
+  if (!res || typeof res !== 'object' || res.success === true) return null
+  const info = res.errorInfo && typeof res.errorInfo === 'object' ? res.errorInfo : {}
+  const code = res.code || info.code || null
+  const status = typeof res.status === 'number' ? res.status : (typeof info.status === 'number' ? info.status : null)
+  if (code && UNSURE_SEND_CODES.has(code)) return 'unsure'
+  if (code && RETRYABLE_SEND_CODES.has(code)) return 'retry'
+  if (status === 429 || status === 503) return 'retry'
+  if (status === 0) return 'unsure'
+  return null
+}
+
 // ── Gönderim günlüğü ────────────────────────────────────────────────────────────────────────────────
 
 export const TAB_SENDLOG = 'sendlog'

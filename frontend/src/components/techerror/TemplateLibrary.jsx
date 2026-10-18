@@ -146,6 +146,11 @@ export function SaveToLibraryDialog({ open, teamId, teamName, draft, defaultName
   const target = lib.entries.find((e) => String(e.id) === String(targetId)) || null
   const full = lib.ready && lib.entries.length >= lib.max
   const canOverwrite = lib.ready && lib.entries.length > 0
+  // Okunamayan / yüklenen liste "boş" değildir (inceleme 2026-10-18): "henüz şablon yok" yalnız liste elde ve boşken
+  const overwriteHint = canOverwrite ? t('te.lib.modeOverwriteHint')
+    : lib.error ? t('te.lib.modeOverwriteUnavailable')
+      : !lib.ready ? t('te.lib.modeOverwriteLoading')
+        : t('te.lib.modeOverwriteNone')
 
   function chooseTarget(v) {
     setTargetId(String(v))
@@ -187,7 +192,10 @@ export function SaveToLibraryDialog({ open, teamId, teamName, draft, defaultName
       }
       const f = libraryFailure(res, t)
       if (f.field === 'name' && mode === 'new') setErrors({ name: f.message })
-      else if (f.gone) { setErrors({ target: f.banner }); setTargetId('') }
+      // 404 yalnız "üzerine yaz"da seçilen kaydı anlatır (alanın altında); "yeni" kipte hedef alanı çizilmez — bant
+      // (inceleme 2026-10-18: yayılımda eski pod / istek sürerken silinen takım → hiçbir şey görünmüyordu)
+      else if (f.gone && mode === 'overwrite') { setErrors({ target: f.banner }); setTargetId('') }
+      else if (f.gone) setBanner(t('te.lib.err.newGone'))
       else if (f.banner) setBanner(f.banner)
       else toast.error(f.toast, { details: f.details })
       if (f.reload) lib.reload()
@@ -237,7 +245,7 @@ export function SaveToLibraryDialog({ open, teamId, teamName, draft, defaultName
                 aria-labelledby={modeLabelId} className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-slot="te-lib-mode">
                 {[
                   { value: 'new', title: t('te.lib.modeNew'), hint: full ? t('te.lib.modeNewFull', lib.max) : t('te.lib.modeNewHint'), disabled: false },
-                  { value: 'overwrite', title: t('te.lib.modeOverwrite'), hint: canOverwrite ? t('te.lib.modeOverwriteHint') : t('te.lib.modeOverwriteNone'), disabled: !canOverwrite },
+                  { value: 'overwrite', title: t('te.lib.modeOverwrite'), hint: overwriteHint, disabled: !canOverwrite },
                 ].map((o) => {
                   const rid = `${modeLabelId}-${o.value}`
                   return (

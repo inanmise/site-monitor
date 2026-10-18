@@ -114,8 +114,9 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
 /**
  * "Yıl arşivi (ZIP)" menüsü: raporu olan her yıl bir öğe (rapor sayısıyla). İş sürerken tetik ODAKLANABİLİR kalır (menü
  * kapanınca odak ona döner — kapalı düğmeye dönemeyip sayfaya düşmesin) ama öğeler kapalıdır; durum satırı süreni söyler.
+ * `blocked`: "Excel'e aktar" hazırlanıyor — öğeler kapalı, menü başlığı nedenini söyler (inceleme 2026-10-18).
  */
-export function YearArchiveMenu({ reports, run, onStart }) {
+export function YearArchiveMenu({ reports, run, onStart, blocked = false }) {
   const t = useT()
   const years = archiveYears(reports)
   if (!years.length) return null
@@ -128,11 +129,11 @@ export function YearArchiveMenu({ reports, run, onStart }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="z-(--z-menu) max-w-[calc(100vw-2rem)]" data-slot="te-year-zip-menu">
         <DropdownMenuLabel className="text-xs font-normal whitespace-normal text-muted-foreground">
-          {run ? t('te.zip.busyHint') : t('te.zip.menuHint')}
+          {run ? t('te.zip.busyHint') : blocked ? t('te.zip.waitXlsx') : t('te.zip.menuHint')}
         </DropdownMenuLabel>
         {years.map((y) => (
           <DropdownMenuItem key={y.year} className="pointer-coarse:min-h-10" data-slot="te-year-zip-item" data-year={y.year}
-            disabled={!!run} onSelect={() => onStart(y.year)}>
+            disabled={!!run || blocked} onSelect={() => { if (!blocked) onStart(y.year) }}>
             <FileArchive aria-hidden="true" /> {t('te.zip.yearItem', y.year, y.count)}
           </DropdownMenuItem>
         ))}

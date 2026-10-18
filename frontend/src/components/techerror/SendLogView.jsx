@@ -148,7 +148,8 @@ export default function SendLogView({ channelId }) {
   } else if (rows.length === 0) {
     body = filtersActive ? (
       <StatusBlock tone="neutral" icon={Inbox} title={t('te.slog.noMatchTitle')} description={t('te.slog.noMatchBody')}
-        actions={<Button type="button" variant="outline" onClick={clearFilters}><X aria-hidden="true" /> {t('te.filters.clear')}</Button>} />
+        actions={<Button type="button" variant="outline" className="pointer-coarse:min-h-10" onClick={clearFilters}
+          data-slot="te-sendlog-clear-filters"><X aria-hidden="true" /> {t('te.filters.clear')}</Button>} />
     ) : (
       <StatusBlock tone="neutral" icon={Inbox} title={t('te.slog.emptyTitle')} description={t('te.slog.emptyBody')} />
     )
@@ -218,7 +219,8 @@ export default function SendLogView({ channelId }) {
       )}
       {state.failed && data && (
         <AlertBanner tone="danger" title={t('te.slog.refreshProblemTitle')}
-          actions={<Button type="button" size="sm" variant="outline" onClick={load}>{t('te.retry')}</Button>}>
+          actions={<Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10" onClick={load}
+            data-slot="te-sendlog-refresh-retry">{t('te.retry')}</Button>}>
           {state.error || t('te.slog.unavailableBody')}
         </AlertBanner>
       )}

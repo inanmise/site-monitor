@@ -774,6 +774,153 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(user("USER", B, List.of()))).andExpect(status().isNotFound());
     }
 
+    private static TechErrorReportSender.Preview simplePreview() {
+        return new TechErrorReportSender.Preview("Konu", List.of("takim1@example.com"), List.of(), "TEAM", "<html></html>", "metin",
+                "m.pdf", 0, 0, null, null, 1L, 15, 0, 0, false);
+    }
+
+    @Test
+    @DisplayName("PDF + e-posta önizlemesi kişi başı sınır (inceleme 2026-10-18): dakikada " + TechErrorReportController.RENDER_PER_MINUTE
+            + " (ikisi ortak, yıl arşivi sığar), aşan 429 RATE_LIMITED + Retry-After; başka kişi etkilenmez; görülemeyen rapor (404) ve PDF sırası dolu (429) hak yemez; pencere geçince açılır")
+    void pdfAndPreviewPerUserRate() throws Exception {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(5_000_000_000L);
+        java.util.function.LongSupplier saved = controller.renderClock;
+        controller.renderClock = clock::get;
+        try {
+            report(100, 10, A, null);
+            report(200, 20, B, null);
+            when(sender.preview(any(), any(), any(), any())).thenReturn(simplePreview());
+            // 5 kez PDF sırası dolu, sonra beklenmeyen hata (üretim denendi → hak harcandı)
+            TechErrorReportService.PdfBusyException busy = new TechErrorReportService.PdfBusyException("PDF sırası dolu");
+            when(service.renderPdf(any())).thenThrow(busy, busy, busy, busy, busy, new RuntimeException("render hatası"));
+            MockHttpSession me = user("USER", A, List.of());
+            me.setAttribute("userId", 501L);
+            // Görülemeyen rapor: 404, hak yemez
+            for (int i = 0; i < 5; i++) {
+                mvc.perform(get("/api/tech-error-reports/reports/200/pdf").session(me)).andExpect(status().isNotFound());
+            }
+            // PDF sırası dolu (kendi 429'u): üretim yapılmadı → hak geri verilir (yıl arşivinin 3 sn'lik yeniden denemeleri)
+            for (int i = 0; i < 5; i++) {
+                mvc.perform(get("/api/tech-error-reports/reports/100/pdf").session(me))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not("RATE_LIMITED")));
+            }
+            assertThat(controller.rendering).isEmpty();
+            // Önizleme + PDF aynı bütçeden: 19 önizleme + 1 PDF (beklenmeyen hata — üretim denendi, hak harcandı) = tam bütçe
+            for (int i = 0; i < TechErrorReportController.RENDER_PER_MINUTE - 1; i++) {
+                mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me)).andExpect(status().isOk());
+            }
+            mvc.perform(get("/api/tech-error-reports/reports/100/pdf").session(me)).andExpect(status().is5xxServerError());
+            mvc.perform(get("/api/tech-error-reports/reports/100/pdf").session(me))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.retry_after_seconds").value(60))
+                    .andExpect(header().string("Retry-After", "60"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(String.valueOf(TechErrorReportController.RENDER_PER_MINUTE))));
+            mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+            // Başka kişi etkilenmez
+            MockHttpSession other = user("USER", A, List.of());
+            other.setAttribute("userId", 502L);
+            mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(other)).andExpect(status().isOk());
+            // Pencere geçince açılır; işaret takılı kalmadı
+            clock.addAndGet(61_000L);
+            mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me)).andExpect(status().isOk());
+            assertThat(controller.rendering).isEmpty();
+        } finally {
+            controller.renderClock = saved;
+        }
+    }
+
+    @Test
+    @DisplayName("PDF + e-posta önizlemesi kişi başına AYNI ANDA TEK: önizleme hazırlanırken aynı kişinin PDF isteği beklemeden 429 RATE_LIMITED + Retry-After 5 (hak yemez); başka kişi geçer; gönderim yolu bu sınıra bağlı değil")
+    void pdfAndPreviewOnePerUserAtATime() throws Exception {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(7_000_000_000L);
+        java.util.function.LongSupplier saved = controller.renderClock;
+        controller.renderClock = clock::get;
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            report(100, 10, A, null);
+            when(sender.preview(any(), any(), any(), any())).thenAnswer(inv -> {
+                inside.countDown();
+                release.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                return simplePreview();
+            });
+            MockHttpSession me = user("USER", A, List.of());
+            me.setAttribute("userId", 601L);
+            java.util.concurrent.Future<org.springframework.test.web.servlet.MvcResult> first = pool.submit(() ->
+                    mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me)).andReturn());
+            assertThat(inside.await(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(controller.rendering).contains("u:601");
+            // Aynı kişinin ikinci isteği (PDF) beklemeden reddedilir; renderPdf hiç çağrılmaz
+            mvc.perform(get("/api/tech-error-reports/reports/100/pdf").session(me))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.retry_after_seconds").value(5))
+                    .andExpect(header().string("Retry-After", "5"));
+            verify(service, never()).renderPdf(any());
+            release.countDown();
+            assertThat(first.get(20, java.util.concurrent.TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(controller.rendering).isEmpty();
+            // Eşzamanlılık reddi hak yemedi: 1 başarılı + (RENDER_PER_MINUTE - 1) daha geçer
+            when(sender.preview(any(), any(), any(), any())).thenReturn(simplePreview());
+            for (int i = 0; i < TechErrorReportController.RENDER_PER_MINUTE - 1; i++) {
+                mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me)).andExpect(status().isOk());
+            }
+            mvc.perform(get("/api/tech-error-reports/reports/100/mail-preview").session(me))
+                    .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+            controller.renderClock = saved;
+        }
+    }
+
+    @Test
+    @DisplayName("bozuk şablon (inceleme 2026-10-18): kanalın kendi şablon ekranı hoşgörülü okur (onarılabilsin); ?strict=1 (başka kanaldan şablon al) ve yeni kanalda kopya kaynağı 409 TEMPLATE_UNREADABLE — sistem şablonuna sessizce düşmez, kanal açılmaz")
+    void unreadableChannelTemplateIsNotReplacedBySystemDefault() throws Exception {
+        TechErrorChannel broken = channel(40, A);
+        broken.setName("Bozuk Kanal");
+        broken.setTemplateJson("{bozuk");
+        TechErrorChannel empty = channel(41, A);
+        empty.setTemplateJson("{\"lang\":\"tr\",\"title\":\"x\",\"sections\":[]}");
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(get("/api/tech-error-reports/channels/40/template").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template.sections").isNotEmpty());
+        mvc.perform(get("/api/tech-error-reports/channels/40/template").param("strict", "1").session(s))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Bozuk Kanal")));
+        mvc.perform(get("/api/tech-error-reports/channels/41/template").param("strict", "1").session(s))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"));
+        mvc.perform(get("/api/tech-error-reports/channels/40/template").param("strict", "1").header("X-Lang", "en").session(s))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("couldn't be read")));
+        mvc.perform(get("/api/tech-error-reports/channels/10/template").param("strict", "1").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template.sections").isNotEmpty());
+        // Başka takımın kanalı strict okumada da 404 (varlığı sızmaz)
+        mvc.perform(get("/api/tech-error-reports/channels/20/template").param("strict", "1").session(s)).andExpect(status().isNotFound());
+        for (long src : new long[] {40L, 41L}) {
+            mvc.perform(post("/api/tech-error-reports/channels").session(s).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"team_id\":1,\"name\":\"Yeni\",\"copy_from\":" + src + "}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("TEMPLATE_UNREADABLE"))
+                    .andExpect(jsonPath("$.field").value("copy_from"));
+        }
+        verify(service, never()).createChannel(any(), eq("Yeni"), any(), any(), any(), any());
+        // Okunabilir kaynak kopyalanır
+        when(service.createChannel(eq(A), eq("Kopya"), any(), any(), eq(50L), any())).thenReturn(channel(42, A));
+        mvc.perform(post("/api/tech-error-reports/channels").session(s).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":1,\"name\":\"Kopya\",\"copy_from\":10}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template_source.kind").value("copy"));
+    }
+
     // ── Şablon önizleme PDF'i (R19, 2026-10-17) ─────────────────────────────────────────────────────
 
     @Test
