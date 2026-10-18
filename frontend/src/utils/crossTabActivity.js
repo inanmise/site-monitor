@@ -165,6 +165,28 @@ export function onOtherActivity(cb) {
   return () => { try { globalThis.removeEventListener?.('storage', h) } catch { /* yok */ } }
 }
 
+/** Fare hareketinin etkinlik sayılması için işaretçinin en az bu kadar (ekran pikseli) yer değiştirmesi gerekir. */
+export const POINTER_MOVE_MIN_PX = 4
+
+/**
+ * Gerçek fare hareketi süzgeci (3. inceleme turu 2026-10-18): tarayıcı imleç dururken de `mousemove` üretir (içerik imlecin
+ * altında değişince, kaydırma / yerleşim sonrası) — bu olaylar AYNI ekran koordinatını taşır. Dönen işlev bir olay için
+ * yalnız işaretçi son SAYILAN konumdan en az `minPx` uzaklaştıysa true döner (yavaş gerçek hareket birikerek sayılır);
+ * ilk olay yalnız başlangıç konumunu alır, koordinatsız olay sayılmaz.
+ */
+export function createPointerMoveFilter(minPx = POINTER_MOVE_MIN_PX) {
+  let last = null
+  return (e) => {
+    const x = Number(e?.screenX)
+    const y = Number(e?.screenY)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false
+    if (!last) { last = { x, y }; return false }
+    if (Math.hypot(x - last.x, y - last.y) < minPx) return false
+    last = { x, y }
+    return true
+  }
+}
+
 /** Uygulama içi eylem (ekrandan alma, yapıştırma, yükleme): kendi sekmesinin hareketsizlik sayacı yeniden kurulur. */
 export function markActivity() {
   try { globalThis.dispatchEvent?.(new Event(ACTIVITY_EVENT)) } catch { /* yok */ }

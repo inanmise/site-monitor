@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
-  ACTIVITY_EVENT, ACTIVITY_PREFIX, ACTIVITY_THROTTLE_MS, FUTURE_SLACK_MS, activityUserKey, bindActivityUser,
+  ACTIVITY_EVENT, ACTIVITY_PREFIX, ACTIVITY_THROTTLE_MS, FUTURE_SLACK_MS, POINTER_MOVE_MIN_PX, activityUserKey, bindActivityUser,
+  createPointerMoveFilter,
   boundActivityUser, clearOwnActivityStamp, latestOtherActivity, markActivity, onOtherActivity, ownActivityKey,
   parseActivityStamp, resetActivityThrottleForTests, writeActivityStamp,
 } from '../utils/crossTabActivity.js'
@@ -149,6 +150,22 @@ describe('sekmeler arası etkinlik', () => {
     expect(activityUserKey(null)).toBe('')
     expect(parseActivityStamp('{"u":"x","t":"y"}')).toBeNull()
     expect(parseActivityStamp('{"t":5}')).toBeNull()
+  })
+
+  it('gerçek fare hareketi süzgeci: ilk olay başlangıç; aynı koordinat (imleç dururken tarayıcının sahte mousemove\'u) sayılmaz; ≥ 4 px sayılır, yavaş hareket birikir', () => {
+    expect(POINTER_MOVE_MIN_PX).toBe(4)
+    const moved = createPointerMoveFilter()
+    const at = (x, y) => moved({ screenX: x, screenY: y })
+    expect(at(100, 100)).toBe(false)   // başlangıç
+    expect(at(100, 100)).toBe(false)   // aynı koordinat
+    expect(at(100, 100)).toBe(false)
+    expect(at(102, 101)).toBe(false)   // < 4 px
+    expect(at(103, 102)).toBe(false)   // son SAYILAN konumdan (100,100) 3,6 px — henüz değil
+    expect(at(104, 101)).toBe(true)    // 4,1 px: sayılır (yavaş hareket birikti)
+    expect(at(104, 101)).toBe(false)
+    expect(at(104, 105)).toBe(true)
+    expect(moved({})).toBe(false)      // koordinatsız olay
+    expect(moved({ screenX: Number.NaN, screenY: 1 })).toBe(false)
   })
 
   it('markActivity kendi sekmesine olay yayar (uygulama içi eylem: ekrandan alma, yapıştırma, yükleme)', () => {

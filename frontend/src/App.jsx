@@ -123,7 +123,8 @@ import {
 import { hasUnsavedWork } from './utils/unsavedWork.js'
 // Sekmeler arası etkinlik (2026-10-18): öteki SiteMonitor sekmesi etkinken bu sekme hareketsizlik çıkışı yapmaz
 import {
-  ACTIVITY_EVENT, bindActivityUser, clearOwnActivityStamp, latestOtherActivity, onOtherActivity, writeActivityStamp,
+  ACTIVITY_EVENT, bindActivityUser, clearOwnActivityStamp, createPointerMoveFilter, latestOtherActivity, onOtherActivity,
+  writeActivityStamp,
 } from './utils/crossTabActivity.js'
 import { emitSessionReset } from './utils/sessionResetBus.js'
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
@@ -710,14 +711,18 @@ export default function App() {
       arm(Date.now())
     }
 
-    // Yalnız KULLANICININ ürettiği olaylar (2. inceleme turu 2026-10-18): `scroll` ve `mousemove`u tarayıcı kendiliğinden de
-    // üretir (yoklanan içerik yükseklik değiştirince kaydırma sabitleme / sıkıştırma; içerik imlecin altında değişince sahte
-    // fare hareketi) — başında kimse olmayan görünür sekme damga yazıp paylaşılan oturumu açık tutuyordu. Tekerlek, işaretçi
-    // basışı (fare / kalem / dokunma, tıklamayı da kapsar), tuş ve dokunma sayılır; yakalama aşamasında (yayılımı durduran
-    // bileşenler de görülür). TV kipi değişmedi (onTvModeChange).
+    // Yalnız KULLANICININ ürettiği olaylar (2. inceleme turu 2026-10-18): `scroll`u tarayıcı kendiliğinden de üretir (yoklanan
+    // içerik yükseklik değiştirince kaydırma sabitleme / sıkıştırma) — başında kimse olmayan görünür sekme damga yazıp paylaşılan
+    // oturumu açık tutuyordu; sayılmaz. Tekerlek, işaretçi basışı (fare / kalem / dokunma, tıklamayı da kapsar), tuş ve dokunma
+    // sayılır; yakalama aşamasında (yayılımı durduran bileşenler de görülür). TV kipi değişmedi (onTvModeChange).
     const events = ['wheel', 'pointerdown', 'keydown', 'touchstart']
     const opts = { passive: true, capture: true }
     events.forEach((e) => document.addEventListener(e, resetTimer, opts))
+    // Fare hareketi (3. inceleme turu): okurken fareyi oynatan kullanıcı eskisi gibi çıkarılmaz — ama yalnız işaretçi GERÇEKTEN
+    // yer değiştirdiyse (≥ 4 px, ekran koordinatı). İmleç dururken tarayıcının ürettiği sahte `mousemove` aynı koordinatı taşır.
+    const realMove = createPointerMoveFilter()
+    const onMouseMove = (e) => { if (realMove(e)) resetTimer() }
+    document.addEventListener('mousemove', onMouseMove, opts)
     // Uygulama içi eylem (ekrandan alma, yapıştırma, yükleme) — belge olayı üretmeyebilir
     window.addEventListener(ACTIVITY_EVENT, resetTimer)
     const offTv = onTvModeChange(resetTimer)   // kip açılınca görünen uyarı kalkar; kapanınca sayaç baştan başlar
@@ -730,6 +735,7 @@ export default function App() {
       clearTimeout(warnTimer.current)
       clearInterval(countdownInterval.current)
       events.forEach((e) => document.removeEventListener(e, resetTimer, opts))
+      document.removeEventListener('mousemove', onMouseMove, opts)
       window.removeEventListener(ACTIVITY_EVENT, resetTimer)
       offTv()
       offOther()

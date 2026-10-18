@@ -59,18 +59,22 @@ describe('App — TV kipi hareketsizlik çıkışını erteler', () => {
     fireEvent.click(document.querySelector('[data-slot="mydash-tv-exit"]'))
     await waitFor(() => expect(document.querySelector('[data-slot="mydash-tv"]')).toBeNull())
     expect(isTvModeActive()).toBe(false)
-    // Tarayıcının kendiliğinden ürettiği kaydırma / fare hareketi etkinlik sayılmaz (2. inceleme turu 2026-10-18): uyarı
-    // yine gelir
+    // Tarayıcının kendiliğinden ürettiği kaydırma ve imleç dururken (AYNI koordinat) fare hareketi etkinlik sayılmaz
+    // (2. / 3. inceleme turu 2026-10-18): uyarı yine gelir
     const ticker = setInterval(() => {
       document.dispatchEvent(new Event('scroll'))
-      fireEvent.mouseMove(document)
+      fireEvent.mouseMove(document, { screenX: 500, screenY: 400 })
     }, 200)
     try {
       await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).not.toBeNull(), { timeout: 2500 })
     } finally {
       clearInterval(ticker)
     }
-    // Kullanıcı olayı (tuş) uyarıyı kaldırır
+    // Gerçek fare hareketi (≥ 4 px) uyarıyı kaldırır
+    fireEvent.mouseMove(document, { screenX: 520, screenY: 400 })
+    await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).toBeNull())
+    // Kullanıcı olayı (tuş) da sayılır
+    await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).not.toBeNull(), { timeout: 2500 })
     fireEvent.keyDown(document, { key: 'Shift' })
     await waitFor(() => expect(document.querySelector('[data-slot="inactivity-warning"]')).toBeNull())
     expect(fx.logout).toBe(0)

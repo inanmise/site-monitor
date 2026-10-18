@@ -129,19 +129,33 @@ describe('App — sekmeler arası hareketsizlik', () => {
     await waitFor(() => expect(localStorage.getItem(ownActivityKey())).toBeNull())
   }, 20_000)
 
-  it('kendiliğinden kaydırma / fare hareketi (içerik yüksekliği değişti) etkinlik sayılmaz: çıkış zamanında; tekerlek / işaretçi / tuş sayılır', async () => {
+  it('kendiliğinden kaydırma ve imleç dururken (AYNI koordinat) fare hareketi etkinlik sayılmaz: çıkış zamanında', async () => {
     render(<App />)
     await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
-    // Programla üretilen kaydırma ve fare hareketi toplam süreden (3 sn) uzun sürer → yine de çıkış
+    // Programla üretilen kaydırma ve yerinde duran imlecin mousemove'u toplam süreden (3 sn) uzun sürer → yine de çıkış
     for (let i = 0; i < 9 && fx.logout === 0; i++) {
       await act(async () => {
         document.dispatchEvent(new Event('scroll'))
         window.dispatchEvent(new Event('scroll'))
-        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, screenX: 400, screenY: 300 }))
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, screenX: 402, screenY: 301 }))   // < 4 px
         await sleep(500)
       })
     }
     await waitFor(() => expect(fx.logout).toBe(1), { timeout: 2500 })
+  }, 20_000)
+
+  it('GERÇEK fare hareketi (≥ 4 px) etkinlik sayılır: fareyi oynatarak okuyan kullanıcı çıkarılmaz (3. inceleme turu)', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    for (let i = 0; i < 8; i++) {
+      await act(async () => {
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, screenX: 400 + i * 10, screenY: 300 }))
+        await sleep(600)
+      })
+    }
+    expect(warning()).toBeNull()
+    expect(fx.logout).toBe(0)
   }, 20_000)
 
   it('kullanıcı olayları (tekerlek, işaretçi basışı, tuş, dokunma) sayacı yeniden kurar; yayılımı durdurulsa da görülür', async () => {
