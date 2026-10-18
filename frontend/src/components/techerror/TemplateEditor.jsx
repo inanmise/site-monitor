@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileSearch, FileText, Gauge, History, ListPlus, Plus, RefreshCw, RotateCcw, Save,
-  ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileSearch, FileText, Gauge, History, Import, ListPlus, Plus, RefreshCw, RotateCcw,
+  Save, ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
@@ -33,6 +33,7 @@ import {
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
+import TemplateImportDialog from './TemplateImport.jsx'
 import { NumberInput } from './ReportSections.jsx'
 import {
   CollapsibleCard, ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
@@ -127,6 +128,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const replaceDraft = (tpl) => { setDraft(tpl); setGen((g) => g + 1) }
   const [versionsOpen, setVersionsOpen] = useState(false)
   const versionsBtnRef = useRef(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const importBtnRef = useRef(null)
   const [base, setBase] = useState({ json: null, version: null })
   const [serverError, setServerError] = useState(null)
   const [conflict, setConflict] = useState(false)
@@ -378,16 +381,39 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
    * Kaydedilmemiş değişiklik varsa onay sorulur. Pencerenin kapanması için true döner.
    */
   async function loadVersion(tpl, version) {
-    if (!tpl) return false
+    return loadIntoDraft(tpl, {
+      confirm: { title: t('te.ver.loadDirtyTitle'), message: t('te.ver.loadDirtyBody', version), confirmText: t('te.ver.loadConfirm') },
+      loaded: t('te.ver.loaded', version),
+    })
+  }
+
+  /**
+   * Başka bir kanalın şablonunu TASLAĞA alır (2026-10-17, D16) — sürüm yüklemesiyle AYNI yol: taban sürüm bu kanalın şu
+   * anki sürümü kalır (araya kayıt girerse kayıt 409 alır), şablon kendi dilini korur, kaydedilmemiş değişiklik varsa sorulur.
+   */
+  async function importTemplate(tpl, sourceName) {
+    return loadIntoDraft(tpl, {
+      confirm: { title: t('te.ver.loadDirtyTitle'), message: t('te.imp.dirtyBody', sourceName || '—'), confirmText: t('te.imp.confirm') },
+      loaded: t('te.imp.loaded', sourceName || '—'),
+    })
+  }
+
+  /**
+   * Dışarıdan gelen şablonu taslağa koyar: sunucuya bir şey yazılmaz, `base` (sürüm) DEĞİŞMEZ → taslak kirli, Kaydet yeni
+   * sürüm olur; nesil sayacı artar (bölüm kartları yeniden kurulur), açık bölüm kaydı olduğu gibi kalır. Pencere kapansın
+   * diye true döner; kullanıcı vazgeçerse false.
+   */
+  async function loadIntoDraft(tpl, { confirm, loaded }) {
+    if (!tpl || !Array.isArray(tpl.sections)) return false
     if (dirty) {
-      const ok = await showConfirm({ title: t('te.ver.loadDirtyTitle'), message: t('te.ver.loadDirtyBody', version),
-        variant: 'warning', confirmText: t('te.ver.loadConfirm'), cancelText: t('te.cancel') })
+      const ok = await showConfirm({ title: confirm.title, message: confirm.message, variant: 'warning',
+        confirmText: confirm.confirmText, cancelText: t('te.cancel') })
       if (!ok) return false
     }
     replaceDraft(tpl)
     setShowErrors(false)
     setServerError(null)
-    toast.success(t('te.ver.loaded', version))
+    toast.success(loaded)
     return true
   }
 
@@ -484,10 +510,21 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
               : <FileSearch aria-hidden="true" />}
             {previewing ? t('te.tpl.previewPdfBusy') : t('te.tpl.previewPdf')}
           </Button>
+          {/* Başka kanaldan şablon al (2026-10-17): yalnız düzenleyebilen; kayıt sürerken kapalı */}
+          {canEdit && (
+            <Button ref={importBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-tpl-import"
+              disabled={saving} onClick={() => setImportOpen(true)}>
+              <Import aria-hidden="true" /> {t('te.imp.open')}
+            </Button>
+          )}
         </div>
       </div>
       <TemplateVersionsDialog channelId={channelId} channelName={channel?.name} period={previewPeriod} open={versionsOpen}
         onClose={() => setVersionsOpen(false)} canEdit={canEdit && !saving} onLoad={loadVersion} returnFocusRef={versionsBtnRef} />
+      {canEdit && (
+        <TemplateImportDialog channelId={channelId} draftLang={draft?.lang || 'tr'} open={importOpen} onClose={() => setImportOpen(false)}
+          onLoad={importTemplate} returnFocusRef={importBtnRef} />
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
         {/* Düzenleme kilidi (salt okuma / kayıt sürüyor) tek bir dış fieldset değil, parça parça: disabled fieldset

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CheckCircle2, CircleAlert, ExternalLink, EyeOff, FileClock, FileWarning, Landmark, MailWarning, Radio, RefreshCw, Search, Users, X,
+  CheckCircle2, ChevronDown, CircleAlert, Download, ExternalLink, EyeOff, FileClock, FileSpreadsheet, FileText, FileWarning, Landmark,
+  MailWarning, Radio, RefreshCw, Search, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -20,13 +21,21 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { unwrap } from '../noc/nocModel.js'
 import { SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
+import TechErrorReminderSettings from './TechErrorReminderSettings.jsx'
+import { reminderState } from './techErrorReminderModel.js'
 import { isDirty, normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
 import {
-  TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, filterChannels,
-  filtersActive, hasExecutives, normalizeFilter, normalizeSort, searchChannels, sortChannels, teamEmailState, teamVisibleState, teamsOf,
+  TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, exportFileName, exportTable,
+  filterChannels, filtersActive, hasExecutives, normalizeFilter, normalizeSort, searchChannels, sortChannels, teamEmailState,
+  teamVisibleState, teamsOf,
 } from './techErrorSettingsModel.js'
+import { downloadBlob, downloadCsv, toCsv } from '../../utils/csvExport.js'
+import { clientFailure } from '../../utils/errorMessages.js'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent } from '@/components/shadcn/card'
@@ -52,6 +61,13 @@ const TOUCH = 'pointer-coarse:min-h-10'
  * göre TABLO (≥ {@link TES_TABLE_MIN_PX}) ya da KART, sayfalama (`panel` ön ayarı), "Kanalı aç" → kanal sayfası. Yükleme
  * iskeletle, okuma hatası tehlike bloğu + Tekrar dene (boş "kanal yok" durumu YALNIZ başarılı yanıtta). Saf mantık
  * `techErrorSettingsModel.js`. Test kancaları `tes-*`.
+ *
+ * Hatırlatmalar ve posta sınırları kartı (12. sürüm) AYRI uçtan okunur / yazılır (`GET/PUT …/settings/reminders`, aynı
+ * okuma dalgasında): eski pod'da 404 / 405 → kart "henüz desteklenmiyor" der; görünürlük kaydı (`PUT …/settings`) 11.
+ * sürümle aynı kalır. Kart kayıt sürerken Yenile kapalıdır ve kayıt başında okuma sırası ilerler (geç gelen eski okuma düşer).
+ *
+ * Dışa aktarma (2026-10-17, E22): araç çubuğundaki "Dışa aktar" süzülmüş + sıralanmış listenin TÜMÜNÜ (bütün sayfalar) CSV ya
+ * da Excel (.xlsx) olarak indirir; değerler ekrandaki metinler, bilinmeyen "Bilinmiyor" (`exportTable`).
  */
 export default function TechErrorReportSettings({ readOnly = false }) {
   const t = useT()
@@ -66,6 +82,10 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [team, setTeam] = useState(ALL)
   const [filter, setFilter] = useState(ALL)
   const [sort, setSort] = useState('name')
+  const [remDirty, setRemDirty] = useState(false)
+  // Hatırlatma kartı (12. sürüm): AYRI uçtan okunur (`reminderState`: ok / unsupported / failed; null = kart yok)
+  const [rem, setRem] = useState(null)
+  const [remSaving, setRemSaving] = useState(false)
   const [listRef, listWidth] = useElementWidth()
   const alive = useRef(true)
   const loadSeq = useRef(0)
@@ -79,11 +99,16 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setLoadError(null)
     setLoading(true)
     try {
-      const [cfg, dir] = await Promise.all([
+      const [cfg, dir, remRes] = await Promise.all([
         api.admin.techErrorSettings(),
         Promise.resolve(api.teams?.directory ? api.teams.directory() : null).catch(() => null),
+        // Ağ hatası "okunamadı"dır (eski pod'un 404 / 405'i değil): değer uydurulmaz, son okunan korunur
+        api.admin.techErrorReminderSettings
+          ? Promise.resolve(api.admin.techErrorReminderSettings()).catch((e) => ({ success: false, error: e?.message || null }))
+          : Promise.resolve(undefined),
       ])
       if (!alive.current || id !== loadSeq.current) return
+      if (remRes !== undefined) setRem((prev) => reminderState(remRes, prev))
       const r = unwrap(cfg)
       if (!r.ok) { setLoadError(r.error || t('te.set.loadError')); return }
       const data = r.data || {}
@@ -106,10 +131,28 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Takım dizini okunamazsa adlar kanal satırlarından gelir ("#12" yerine takım adı)
-  const options = useMemo(() => teamOptions(directory.length ? directory : teamsFromChannels(settings?.channels), draft,
-    t('noc.ot.inactiveTeam')), [directory, settings, draft, t])
+  const teamList = useMemo(() => (directory.length ? directory : teamsFromChannels(settings?.channels)), [directory, settings])
+  const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam')), [teamList, draft, t])
   const dirty = !!settings && isDirty(settings.ids, draft)
   const locked = !!settings?.readOnly
+
+  // Hatırlatma kartının kaydı (inceleme 2026-10-18): görünürlük kaydıyla AYNI kural — kayıt sürerken Yenile kapalı, kayıt
+  // başında okuma sırası ilerler (kayıttan ÖNCE başlamış bir okuma kayıttan SONRA gelirse eski değerleri "kayıtlı"
+  // göstermesin ve temiz formu ezmesin)
+  const onRemSaving = useCallback((on) => {
+    if (!alive.current) return
+    if (on) {
+      loadSeq.current += 1
+      setLoading(false)
+    }
+    setRemSaving(!!on)
+  }, [])
+  const onRemSaved = useCallback((next) => {
+    if (alive.current) setRem({ status: 'ok', data: next, error: null })
+  }, [])
+  const onRemUnsupported = useCallback(() => {
+    if (alive.current) setRem((prev) => ({ status: 'unsupported', data: prev?.data || null, error: null }))
+  }, [])
 
   async function save() {
     if (!settings || saving || locked) return
@@ -153,8 +196,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }
 
   async function openChannel(ch) {
-    if (dirty) {
-      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t('te.set.leaveBody'), variant: 'warning',
+    if (dirty || remDirty) {
+      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t(remDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'), variant: 'warning',
         confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -162,6 +205,31 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }
   // Salt okunur (kapsamlı) görüntüleyici modülü kapalı bir takımın kanalını açamaz (sayfa "erişim yok" derdi)
   const openFor = (ch) => (locked && ch.team_visible === false ? null : () => openChannel(ch))
+
+  // Dışa aktarma (2026-10-17, E22): süzülmüş + sıralanmış listenin TÜMÜ (sayfalamadan bağımsız), ekrandaki metinlerle
+  const [exporting, setExporting] = useState(false)
+  function exportCsv() {
+    const { header, rows } = exportTable(visible, t)
+    downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows))
+  }
+  async function exportXlsx() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const { header, rows } = exportTable(visible, t)
+      const { buildXlsx, XLSX_MIME } = await loadXlsxWriter()
+      const bytes = buildXlsx([{ name: t('te.set.export.sheet'), rows: [header, ...rows], freezeHeader: true, autoFilter: true,
+        widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
+      downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
+    } catch (e) {
+      // API dışı hata (bayat paket "Failed to fetch dynamically imported module", bellek, çalışma kitabı): tostta yalnız
+      // çevrilmiş metin, teknik metin "Teknik ayrıntı"da (hata sözleşmesi)
+      const f = clientFailure(e, { fallback: t('te.set.export.unavailable'), chunk: t('te.pageUpdated') })
+      toast.error(f.message, { details: f.details })
+    } finally {
+      if (alive.current) setExporting(false)
+    }
+  }
 
   const kpiItems = channels.length === 0 ? [] : [
     { key: ALL, Icon: Radio, label: t('te.set.kpi.total'), value: counts.total, cls: 'total', hint: t('te.set.kpi.hint.total') },
@@ -174,7 +242,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   ]
 
   const refreshButton = settings && (
-    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
+    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving || remSaving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
       <RefreshCw aria-hidden="true" className={cn(loading && 'animate-spin motion-reduce:animate-none')} /> {t('te.refresh')}
     </Button>
   )
@@ -230,7 +298,13 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         )}
       </SettingsSection>
 
-      {/* 2 — Kanallar ve onay akışı (özet) */}
+      {/* 2 — Hatırlatmalar ve posta sınırları (12. sürüm) */}
+      {settings && rem && (
+        <TechErrorReminderSettings state={rem} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty}
+          onSaving={onRemSaving} onSaved={onRemSaved} onUnsupported={onRemUnsupported} onRetry={load} />
+      )}
+
+      {/* 3 — Kanallar ve onay akışı (özet) */}
       {settings && (
         <Card data-slot="tes-channels">
           <CardContent className="flex flex-col gap-4 px-4 sm:px-6">
@@ -292,6 +366,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                         <X aria-hidden="true" /> {t('te.filters.clear')}
                       </Button>
                     )}
+                    <ExportMenu disabled={visible.length === 0 || exporting} onCsv={exportCsv} onXlsx={exportXlsx} onOpen={preloadXlsxWriter} />
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                     <span data-slot="tes-count">{t('te.filters.count', visible.length, channels.length)}</span>
@@ -340,6 +415,44 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         </Card>
       )}
     </div>
+  )
+}
+
+/** "Dışa aktar" menüsü: CSV ve Excel (.xlsx) — araç çubuğunun sonunda (geniş ekranda sağa yaslı). */
+/**
+ * Excel yazıcısı (fflate) TEMBEL yüklenir; menü AÇILIRKEN önceden istenir (2026-10-18, CI bulgusu): parça tıklamadan sonra
+ * yüklenirse indirme kullanıcı eyleminden (Chrome ~5 sn) kopar ve aynı sayfadaki İKİNCİ indirmeyi Chrome sessizce engeller
+ * (yavaş ağda gerçek kullanıcı da yaşar). Söz paylaşılır; başarısız yükleme saklanmaz (bir sonraki tıklama yeniden dener).
+ */
+let xlsxWriterPromise = null
+function loadXlsxWriter() {
+  if (!xlsxWriterPromise) {
+    xlsxWriterPromise = import('../../utils/xlsxWriter.js').catch((e) => { xlsxWriterPromise = null; throw e })
+  }
+  return xlsxWriterPromise
+}
+function preloadXlsxWriter() {
+  loadXlsxWriter().catch(() => { /* tıklamada yeniden denenir ve hata orada söylenir */ })
+}
+
+function ExportMenu({ disabled, onCsv, onXlsx, onOpen }) {
+  const t = useT()
+  return (
+    <DropdownMenu modal={false} onOpenChange={(open) => { if (open) onOpen?.() }}>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" disabled={disabled} data-slot="tes-export" className={cn('sm:ms-auto', TOUCH)}>
+          <Download aria-hidden="true" /> {t('te.set.export.open')} <ChevronDown aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="z-(--z-menu) max-w-[calc(100vw-2rem)]" data-slot="tes-export-menu">
+        <DropdownMenuItem onSelect={onCsv} className={TOUCH} data-slot="tes-export-csv">
+          <FileText aria-hidden="true" /> {t('te.set.export.csv')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onXlsx} className={TOUCH} data-slot="tes-export-xlsx">
+          <FileSpreadsheet aria-hidden="true" /> {t('te.set.export.xlsx')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
-  TES_FILTERS, TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, filterChannels,
+  TES_EXPORT_COLUMNS, TES_FILTERS, TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels,
+  exportApprovalStatus, exportFileName, exportHeader, exportReportStatus, exportRow, exportTable, filterChannels,
   filtersActive, hasExecutives, isTeamHidden, matchesFilter, normalizeFilter, normalizeSort, searchChannels, sortChannels,
   teamEmailState, teamVisibleState, teamsOf,
 } from '../components/admin/techErrorSettingsModel.js'
+import { TR } from '../i18n/tr.js'
+
+/** Sözlükten t (yer tutucular {0} …) — bileşensiz saf model denemesi. */
+const tr = (key, ...args) => args.reduce((s, a, i) => s.split(`{${i}}`).join(String(a)), TR[key] ?? key)
 
 // Ayarlar → Teknik hata raporu — kanal özeti saf modeli (2026-10-17 yeniden tasarım). Sunucu satırı: id, name, active,
 // team_id, team_name, team_visible, executive_count, approver_count, team_email_set, period_report.
@@ -136,5 +141,71 @@ describe('techErrorSettingsModel — sıralama ve takımlar', () => {
     ])
     expect(teamsOf([ch(1, 'a', { team_id: 7, team_name: null })])).toEqual([{ id: '7', name: '#7' }])
     expect(teamsOf(undefined)).toEqual([])
+  })
+})
+
+describe('techErrorSettingsModel — dışa aktarma (E22)', () => {
+  it('başlık sütun sırasıyla; satır ekrandaki metinler, sayılar sayı', () => {
+    expect(TES_EXPORT_COLUMNS).toHaveLength(9)
+    expect(exportHeader(tr)).toEqual(['Kanal', 'Takım', 'Aktif', 'Modül takıma açık', 'Takım e-postası', 'Yönetici alıcı sayısı',
+      'PO onaylayıcı sayısı', 'Dönem raporu durumu', 'Onay durumu'])
+    const mobil = ch(1, 'Mobil', { executive_count: 2, approver_count: 1,
+      period_report: { id: 100, status: 'draft', last_send_status: 'failed', approval: { state: 'pending' } } })
+    expect(exportRow(mobil, tr)).toEqual(['Mobil', 'Dijital Kanallar', 'Evet', 'Evet', 'Tanımlı', 2, 1,
+      'Taslak · Son gönderim denemesi başarısız', 'Onay bekliyor'])
+    const pos = ROWS[1]
+    expect(exportRow(pos, tr)).toEqual(['POS', 'Ödeme Sistemleri', 'Hayır', 'Hayır', 'Eksik — rapor gönderilemez', 0, 0,
+      'Dönem raporu yok', '—'])
+  })
+
+  it('bilinmeyen alan "Bilinmiyor" — boş ya da "sorun yok" değil', () => {
+    const odd = { id: 7, name: 'Eski', team_id: 4, period_report: { id: 1, status: null } }
+    expect(exportRow(odd, tr)).toEqual(['Eski', '#4', 'Bilinmiyor', 'Bilinmiyor', 'Bilinmiyor', 'Bilinmiyor', 'Bilinmiyor',
+      'Başlanmadı', 'Bilinmiyor'])
+    expect(exportApprovalStatus({ period_report: { approval: { state: 'garip' } } }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ period_report: { approval: { state: 'stale' } } }, tr)).toMatch(/yeniden onaya/)
+    expect(exportReportStatus({ period_report: { status: 'sent' } }, tr)).toBe('Gönderildi')
+    expect(exportRow({}, tr).slice(0, 2)).toEqual(['—', '—'])
+  })
+
+  it('İngilizce sütun adları sayım sütunlarını sayı olarak adlandırır (kişi adı listesi gibi okunmasın)', async () => {
+    const { EN } = await import('../i18n/en.js')
+    const en = (key) => EN[key] ?? key
+    expect(exportHeader(en).slice(5, 7)).toEqual(['Executive recipient count', 'PO approver count'])
+  })
+
+  it('onay durumu ekranla aynı: onay akışı YOKSA (yönetici alıcısı 0) "—", "Onaya gönderilmedi" değil; sayı bilinmiyorsa "Bilinmiyor"', () => {
+    const pr = (state) => ({ id: 1, status: 'draft', ...(state === undefined ? {} : { approval: { state } }) })
+    // Akış yok: sunucu yine state "none" yollar, ekran rozet çizmez → "—"
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr('none') }, tr)).toBe('—')
+    expect(exportApprovalStatus({ executive_count: '0', period_report: pr('none') }, tr)).toBe('—')
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr(undefined) }, tr)).toBe('—')
+    // Akış var, henüz gönderilmedi
+    expect(exportApprovalStatus({ executive_count: 2, period_report: pr('none') }, tr)).toBe('Onaya gönderilmedi')
+    // Alıcı sayısı bilinmiyor → akışın olup olmadığı da bilinmiyor
+    expect(exportApprovalStatus({ period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: null, period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: 'x', period_report: pr('none') }, tr)).toBe('Bilinmiyor')
+    expect(exportApprovalStatus({ executive_count: 2, period_report: pr(undefined) }, tr)).toBe('Bilinmiyor')
+    // Süren / sonuçlanmış onay ekranda rozetle görünür → metni yazılır (alıcılar sonradan kaldırılmış olsa da)
+    expect(exportApprovalStatus({ executive_count: 0, period_report: pr('pending') }, tr)).toBe('Onay bekliyor')
+    expect(exportApprovalStatus({ executive_count: 3, period_report: pr('approved') }, tr)).toBe('Onaylandı')
+    // Rapor yok → uygulanmaz
+    expect(exportApprovalStatus({ executive_count: 2, period_report: null }, tr)).toBe('—')
+    expect(exportRow(ch(9, 'Akışsız', { period_report: pr('none') }), tr)[8]).toBe('—')
+  })
+
+  it('exportTable verilen SIRAYI korur (çağıran süzülmüş + sıralanmış tam listeyi verir)', () => {
+    const list = sortChannels(filterChannels(ROWS, { filter: 'open' }), 'name')
+    const { header, rows } = exportTable(list, tr)
+    expect(header[0]).toBe('Kanal')
+    expect(rows.map((r) => r[0])).toEqual(['ATM', 'Çağrı Merkezi'])
+    expect(exportTable(null, tr).rows).toEqual([])
+  })
+
+  it('dosya adı dönemle; dönem yoksa bugünün tarihi', () => {
+    expect(exportFileName({ year: 2026, month: 9 }, 'csv')).toBe('teknik-hata-raporu-kanallar-2026-09.csv')
+    expect(exportFileName({ year: 2026, month: 12 }, 'xlsx')).toBe('teknik-hata-raporu-kanallar-2026-12.xlsx')
+    expect(exportFileName(null, 'csv', new Date(2026, 9, 7))).toBe('teknik-hata-raporu-kanallar-2026-10-07.csv')
   })
 })

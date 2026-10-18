@@ -57,4 +57,11 @@ public class TechErrorApprovalToken {
     /** Yeni bir onay isteği bu satırın yerine geçti (A2); NULL = geçerli istek. Yerine geçilmiş belirteç karar veremez. */
     @Column(name = "superseded_at")
     private Instant supersededAt;
+    /**
+     * Bağlantıyı taşıyan onay postası bu onaylayıcıya ULAŞTI mı (inceleme 2026-10-18): posta servisi SENT / QUEUED döndü VE
+     * posta bağlantıyı taşıyordu (uygulama adresi tanımlı). NULL = bağlantı ona gitmedi (PDF sırası dolu → postalar
+     * atlandı, posta kapalı / başarısız, base-url boş) — onay hatırlatması "özgün bağlantınız geçerli" demez.
+     */
+    @Column(name = "mailed_at")
+    private Instant mailedAt;
 }

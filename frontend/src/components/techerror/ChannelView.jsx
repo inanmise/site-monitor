@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import TemplateEditor from './TemplateEditor.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
+import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
 import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 import {
   REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
@@ -79,6 +80,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   })
   const narrow = listWidth > 0 && listWidth < TABLE_MIN_PX
   const filtersActive = Boolean(rq.trim()) || rstatus !== 'all' || ryear !== 'all'
+  // Yıl arşivi (ZIP, 2026-10-17): o yılın TÜM raporları (liste süzgeçlerinden bağımsız), sırayla
+  const archive = useYearArchive({ channelName: ch?.name || '', reports, resetKey: channelId })
 
   useUrlQuerySync({
     [TE_RQ]: rq.trim() ? rq : null,
@@ -97,6 +100,22 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
     const ok = await showConfirm({ title: t('te.leaveTitle'), message: t('te.leaveBody'), variant: 'warning',
       confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
     if (ok) { setTemplateDirty(false); next() }
+  }
+
+  /**
+   * Kanal görünümünden ÇIKIŞ (geri, rapor açma): süren yıl arşivi çıkınca iptal olur ve hiçbir şey inmez — önce sorulur
+   * (inceleme 2026-10-17; eskiden sessizce iptal ediliyordu). Kalırsa `onStay` (ör. yeni açılan raporu listede göstermek
+   * için yenileme). Sekme değişimi (Raporlar ↔ Şablon) görünümden çıkmaz, sormaz. Tarayıcı sekmesini kapatma gibi
+   * yakalanamayan çıkışta bir şey yapılmaz (iş iptal olur, indirme yok).
+   */
+  async function guardExit(next, onStay = null) {
+    if (archive.isRunning()) {
+      const ok = await showConfirm({ title: t('te.zip.leaveTitle'), message: t('te.zip.leaveBody'), variant: 'warning',
+        confirmText: t('te.zip.leaveConfirm'), cancelText: t('te.stay') })
+      if (!ok) { onStay?.(); return }
+      archive.cancel()
+    }
+    guardLeave(next)
   }
 
   async function removeReport(r) {
@@ -119,7 +138,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   }
 
   const back = (
-    <Button type="button" variant="ghost" size="sm" onClick={() => guardLeave(onBack)} className="w-fit pointer-coarse:min-h-10"
+    <Button type="button" variant="ghost" size="sm" onClick={() => guardExit(onBack)} className="w-fit pointer-coarse:min-h-10"
       data-slot="te-back">
       <ArrowLeft aria-hidden="true" /> {t('te.backToChannels')}
     </Button>
@@ -237,12 +256,14 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                       </NativeSelect>
                     </div>
                   )}
+                  <YearArchiveMenu reports={reports} run={archive.run} onStart={archive.start} />
                   {filtersActive && (
                     <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-rclear">
                       <X aria-hidden="true" /> {t('te.filters.clear')}
                     </Button>
                   )}
                 </div>
+                <YearArchiveStatus run={archive.run} onCancel={archive.cancel} />
                 <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">
                   {t('te.rcount', filtered.length, reports.length)}
                 </p>
@@ -282,7 +303,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                                   {r.last_sent_at ? ` · ${t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}` : ''}
                                 </p>
                                 <div className="flex flex-wrap gap-2">
-                                  <Button type="button" size="sm" onClick={() => onOpenReport(r.id, ch.id)} className="pointer-coarse:min-h-10">
+                                  <Button type="button" size="sm" onClick={() => guardExit(() => onOpenReport(r.id, ch.id))} className="pointer-coarse:min-h-10">
                                     {t('te.open')}
                                   </Button>
                                   {r.can_delete && (
@@ -322,7 +343,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                                 <TableCell className="text-right">
                                   <div className="flex justify-end gap-1">
                                     <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10"
-                                      onClick={() => onOpenReport(r.id, ch.id)}>{t('te.open')}</Button>
+                                      onClick={() => guardExit(() => onOpenReport(r.id, ch.id))}>{t('te.open')}</Button>
                                     {r.can_delete && (
                                       <Button type="button" size="sm" variant="ghost" aria-label={t('te.deleteReportAria', periodLabel(r, t))}
                                         onClick={() => removeReport(r)} className="text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10">
@@ -355,7 +376,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
       {newOpen && ch && (
         <NewReportDialog channel={ch} reports={reports} defaultPeriod={state.data?.default_period}
           onClose={() => setNewOpen(false)}
-          onOpen={(id) => { setNewOpen(false); onOpenReport(id, ch.id) }} />
+          onOpen={(id) => { setNewOpen(false); guardExit(() => onOpenReport(id, ch.id), load) }} />
       )}
     </div>
   )

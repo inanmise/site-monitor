@@ -1807,6 +1807,9 @@ public class SchedulerService {
         // Kanal teknik hata raporu PO onayı bağlantı belirteçleri (2026-10-17, inceleme A2): yeni istek eskileri silmez,
         // "yerine geçti" damgalar — TechErrorApprovalToken.supersededAt (Instant → TIMESTAMP WITH TIME ZONE; NULL = geçerli istek).
         patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN superseded_at TIMESTAMP WITH TIME ZONE");
+        // Teknik hata raporu onay bağlantısı postası ulaştı mı (2026-10-18, hatırlatma incelemesi) — TechErrorApprovalToken.mailedAt
+        // (Instant → TIMESTAMP WITH TIME ZONE; NULL = bağlantı onaylayıcıya gitmedi, hatırlatma "bağlantınız geçerli" demez).
+        patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN mailed_at TIMESTAMP WITH TIME ZONE");
 
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim

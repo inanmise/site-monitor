@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { unzipSync, strFromU8 } from 'fflate'
 import { mockApi } from './support/monitorMocks.js'
 
 // 2026-10-17 (kullanıcı: "Ayarlar içindeki Teknik hata raporu sayfasını yeniden shadcn ile tasarla, mweb responsive, mevcut
@@ -35,12 +37,28 @@ function settingsBody(extra = {}) {
   return { success: true, data: { team_ids: [], read_only: false, period: { year: 2026, month: 9 }, channels: CHANNELS, ...extra } }
 }
 
+/**
+ * 12. sürüm (2026-10-17): hatırlatma + posta sınırı bloğu — AYRI uç `/settings/reminders` (inceleme 2026-10-18). Verilmezse
+ * uç 404 döner (eski pod) ve kart "henüz desteklemiyor" notunu gösterir.
+ */
+const REMINDERS = {
+  team_ids: [1], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
+  reminder_push: true,
+  limits: {
+    reminder_day: { min: 1, max: 28, default: 5 }, reminder_repeat_days: { min: 0, max: 14, default: 3 },
+    approval_reminder_days: { min: 1, max: 14, default: 3 }, max_mail_mb: { min: 5, max: 50, default: 15 },
+    mail_inline_mb: { min: 0, max: 20, default: 6 },
+  },
+}
+
 /** mockApi'den SONRA kaydedilen yollar önceliklidir. Arayüz dili TR (varsayılan EN — metin iddiaları Türkçe). */
-async function routes(page, { readOnly = false, fail = () => false } = {}) {
+async function routes(page, { readOnly = false, fail = () => false, reminders = null } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   await page.route((u) => new URL(u).pathname === '/api/teams/directory', json({ success: true, data: TEAMS }))
+  // `saves`: görünürlük PUT'ları (`/settings`, 11. sürüm sözleşmesi); `saves.reminders`: hatırlatma PUT'ları (ayrı uç)
   const saves = []
+  saves.reminders = []
   await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings', (route) => {
     if (route.request().method() === 'PUT') {
       const body = JSON.parse(route.request().postData() || '{}')
@@ -50,7 +68,32 @@ async function routes(page, { readOnly = false, fail = () => false } = {}) {
     if (fail()) return json({ success: false, code: 'DB_UNAVAILABLE', error: 'Veritabanına şu an ulaşılamıyor. Biraz bekleyip yeniden deneyin.' }, 503)(route)
     return json(settingsBody({ read_only: readOnly }))(route)
   })
+  let current = reminders ? { ...reminders } : null
+  await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings/reminders', (route) => {
+    if (!current) {
+      const method = route.request().method()
+      return json({ success: false, code: method === 'GET' ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED', error: 'Kaynak bulunamadı' },
+        method === 'GET' ? 404 : 405)(route)
+    }
+    if (route.request().method() === 'PUT') {
+      const body = JSON.parse(route.request().postData() || '{}')
+      saves.reminders.push(body)
+      current = { ...current, ...pickReminders(body) }
+      return json({ success: true, data: { ...current, read_only: false } })(route)
+    }
+    return json({ success: true, data: { ...current, read_only: readOnly } })(route)
+  })
   return saves
+}
+
+/** PUT gövdesindeki hatırlatma alanları → yanıt bloğu (sunucu gibi: gönderilmeyen alan aynı kalır). */
+function pickReminders(body) {
+  const out = {}
+  for (const k of ['reminder_day', 'reminder_repeat_days', 'approval_reminder_days', 'max_mail_mb', 'mail_inline_mb', 'reminder_push']) {
+    if (k in body) out[k] = body[k]
+  }
+  if ('reminder_team_ids' in body) out.team_ids = body.reminder_team_ids
+  return out
 }
 
 function smallTargets(sel) {
@@ -187,6 +230,67 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => new URL(page.url()).searchParams.get('te_ch')).toBe('10')
       await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('channel')
     })
+
+    test('dışa aktar (2026-10-17, E22): menü sığar, dokunma hedefleri; CSV ve Excel süzülmüş listeyi dönem adlı dosyaya yazar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=settings&sec=techerror')
+      const root = page.locator(ROOT)
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
+      const trigger = root.locator('[data-slot="tes-export"]')
+      await trigger.scrollIntoViewIfNeeded()
+      await expect(trigger).toBeVisible()
+      await expect(trigger).toBeEnabled()
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="tes-toolbar"]'), `@${vp.name}: küçük hedef (araç çubuğu)`).toEqual([])
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (dışa aktar)`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, '[data-slot="tes-toolbar"]'), `@${vp.name}: araç çubuğu dışına taşan`).toEqual([])
+
+      await trigger.click()
+      const menu = page.locator('[data-slot="tes-export-menu"]')
+      await expect(menu).toBeVisible()
+      // Radix menü açılırken zoom-in-95 animasyonu oynar: ölçüm animasyon bitince (ölçek 1) alınır
+      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+      const mb = await menu.boundingBox()
+      expect(mb.x, `@${vp.name}: menü solda sığar`).toBeGreaterThanOrEqual(-1)
+      expect(mb.x + mb.width, `@${vp.name}: menü sağda sığar`).toBeLessThanOrEqual(vp.width + 1)
+      if (vp.touch) {
+        for (const h of await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+          expect(h, `@${vp.name}: menü öğesi dokunma hedefi`).toBeGreaterThanOrEqual(39.5)
+        }
+      }
+      // CSV: tüm liste (4 kanal + başlık), Türkçe metinler, BOM
+      const [csv] = await Promise.all([page.waitForEvent('download'), menu.locator('[data-slot="tes-export-csv"]').click()])
+      expect(csv.suggestedFilename()).toBe('teknik-hata-raporu-kanallar-2026-09.csv')
+      const text = readFileSync(await csv.path(), 'utf8')
+      expect(text.charCodeAt(0), 'BOM').toBe(0xfeff)
+      const lines = text.slice(1).trim().split('\r\n')
+      expect(lines).toHaveLength(5)
+      expect(lines[0]).toBe('Kanal,Takım,Aktif,Modül takıma açık,Takım e-postası,Yönetici alıcı sayısı,PO onaylayıcı sayısı,Dönem raporu durumu,Onay durumu')
+      expect(lines.some((l) => l.includes(LONG_CHANNEL))).toBe(true)
+
+      // Süzgeçten sonra Excel: yalnız süzülenler (arama "odeme" → 2 kanal). Sayfa YENİLENİR ve Excel, CSV adımıyla AYNI
+      // akışla (menünün ilk açılışı) alınır — CI'da (Linux, 2026-10-18) aynı menünün ikinci açılışında Excel öğesi indirme
+      // başlatmadı, tost da yoktu (yerelde 6× işlemci kısıtıyla bile yeniden üretilemedi). Süzülmüş liste yine sınanır;
+      // indirme gelmezse ekrandaki iletiler hataya yazılır.
+      await page.reload()
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
+      await root.locator('[data-slot="tes-search"]').fill('odeme')
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(2)
+      await trigger.click()
+      await expect(menu).toBeVisible()
+      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+      const xlDownload = page.waitForEvent('download', { timeout: 45_000 }).catch(async (e) => {
+        const toasts = await page.locator('[data-sonner-toast], [role="status"], [role="alert"]').allInnerTexts().catch(() => [])
+        throw new Error(`Excel indirmesi başlamadı; ekrandaki iletiler: ${JSON.stringify(toasts)} (${e.message})`)
+      })
+      const [xl] = await Promise.all([xlDownload, menu.locator('[data-slot="tes-export-xlsx"]').click()])
+      expect(xl.suggestedFilename()).toBe('teknik-hata-raporu-kanallar-2026-09.xlsx')
+      const files = unzipSync(new Uint8Array(readFileSync(await xl.path())))
+      const sheet = strFromU8(files['xl/worksheets/sheet1.xml'])
+      expect(sheet).toContain('İnternet Şubesi')
+      expect(sheet).toContain('POS')
+      expect(sheet).not.toContain('ATM')
+    })
   })
 }
 
@@ -200,9 +304,11 @@ test.describe('Ayarlar → Teknik hata raporu — tablet 768 (dokunmatik)', () =
   const root = page.locator(ROOT)
   await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
   await expect(root.locator('[data-slot="tes-readonly"]')).toContainText('yalnız global yöneticiler')
+  // Hatırlatma ucu yok (eski pod, 404): kart "henüz desteklemiyor" der, alan / kayıt çubuğu yok (inceleme 2026-10-18)
+  await expect(root.locator('[data-slot="tes-rem-unsupported"]')).toContainText('hiçbir değişiklik kaydedilmedi')
   await expect(root.getByRole('combobox', { name: 'Modülü gören takımlar' })).toBeDisabled()
   await expect(root.locator('[data-slot="settings-save-bar"]')).toHaveCount(0)
-  expect(saves).toEqual([])
+  expect([...saves]).toEqual([])
   expect(await page.evaluate(overflowX)).toBeLessThanOrEqual(1)
   expect(await page.evaluate(clipped, ROOT)).toEqual([])
   expect(await page.evaluate(smallTargets, ROOT), 'küçük dokunma hedefi (salt okunur)').toEqual([])
@@ -254,3 +360,71 @@ test.describe('Ayarlar → Teknik hata raporu — telefon 390 (dokunmatik)', () 
   await page.screenshot({ path: 'test-results/settings-techerror-phone-saved.png', fullPage: false })
   })
 })
+
+// 12. sürüm (2026-10-17, C9 / C10 / E21): "Hatırlatmalar ve posta sınırları" kartı telefon (390, dokunmatik), tablet (768,
+// dokunmatik) ve dizüstünde (1280): sığar, kırpılmaz, dokunmatikte hedefler ≥ 40 px; yerleşim KABA göre (container query):
+// dizüstünde gün + tekrar yan yana, telefonda / tablette (Ayarlar içerik sütunu ≈ 350 px) alt alta; aralık dışı değer alanın
+// altında hata verir ve istek gitmez; düzeltip Kaydet YALNIZ değişen alanı gönderir.
+const REM_ROOT = '[data-slot="tes-reminders"]'
+for (const vp of VIEWPORTS) {
+  test.describe(`Ayarlar → Teknik hata raporu — hatırlatmalar ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('kart sığar ve kırpılmaz; alan hatası alanın altında; Kaydet yalnız değişen alanı gönderir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const saves = await routes(page, { reminders: REMINDERS })
+      await page.goto('/?tab=settings&sec=techerror')
+      const card = page.locator(REM_ROOT)
+      await expect(card).toBeVisible({ timeout: 20_000 })
+      const day = card.getByLabel('Hatırlatma günü (ayın kaçıncı günü)')
+      await expect(day).toHaveValue('5')
+      await expect(card.getByLabel('E-posta boyut sınırı (MB)')).toHaveValue('15')
+      await expect(card.getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toBeChecked()
+      await card.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(300)
+
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, REM_ROOT), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, REM_ROOT), `@${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
+      const picker = card.getByRole('combobox', { name: 'Hatırlatma alan takımlar' })
+      if (vp.touch) expect((await picker.boundingBox()).height, `@${vp.name}: seçici dokunma hedefi`).toBeGreaterThanOrEqual(40)
+
+      // Yerleşim: dizüstünde iki sütun (aynı satır), dar kapta tek sütun
+      const dayBox = await card.locator('[data-field="reminder_day"]').boundingBox()
+      const repBox = await card.locator('[data-field="reminder_repeat_days"]').boundingBox()
+      if (vp.name === 'laptop') {
+        expect(Math.abs(dayBox.y - repBox.y), '@laptop: gün ve tekrar aynı satırda').toBeLessThan(4)
+      } else {
+        expect(repBox.y, `@${vp.name}: tek sütun`).toBeGreaterThan(dayBox.y + 20)
+      }
+      // Alanlar kartın içinde kalır (kapsayıcının sağından taşmaz)
+      const cardBox = await card.boundingBox()
+      expect(repBox.x + repBox.width, `@${vp.name}: alan kart içinde`).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+
+      // Aralık dışı değer: alanın altında ileti, istek gitmez
+      const bar = card.locator('[data-slot="tes-rem-save"] [data-slot="settings-save-bar"]')
+      await day.fill('29')
+      await expect(bar).toHaveAttribute('data-dirty', 'true')
+      await bar.getByRole('button', { name: /Kaydet/ }).click()
+      await expect(card.locator('[data-field="reminder_day"]')).toContainText('Bir tam sayı girin: 1 ile 28 arasında olmalı.')
+      expect(saves.reminders).toEqual([])
+      expect([...saves]).toEqual([])
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, REM_ROOT), `@${vp.name}: kırpılan metin (hata iletisi)`).toEqual([])
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (hata iletisi)`).toBeLessThanOrEqual(1)
+
+      // Düzelt → Kaydet: yalnız değişen alan
+      await day.fill('7')
+      await expect(card.locator('[data-field="reminder_day"]')).not.toContainText('Bir tam sayı girin')
+      await bar.getByRole('button', { name: /Kaydet/ }).click()
+      await expect.poll(() => saves.reminders.length).toBe(1)
+      expect(saves.reminders[0]).toEqual({ reminder_day: 7 })
+      expect([...saves], 'görünürlük PUT\'u gitmez (eski pod onu eksik team_ids ile boş okurdu)').toEqual([])
+      await expect(bar).not.toHaveAttribute('data-dirty', 'true')
+      await expect(day).toHaveValue('7')
+      if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi (kayıt sonrası)`).toEqual([])
+      await page.screenshot({ path: `test-results/settings-techerror-reminders-${vp.name}.png`, fullPage: false })
+    })
+  })
+}

@@ -1,5 +1,6 @@
 import { matchesSearchText } from '../../utils/monitorFilters.js'
 import { channelPeriodStatus } from '../techerror/channelListModel.js'
+import { lastAttemptMeta, statusMeta } from '../techerror/techErrorModel.js'
 
 /**
  * Ayarlar → Platform → Teknik hata raporu — kanal özetinin SAF modeli (2026-10-17, yeniden tasarım: kullanıcı isteği
@@ -147,4 +148,90 @@ export function teamsOf(channels) {
 /** Herhangi bir süzgeç etkin mi (temizle düğmesi). */
 export function filtersActive({ q = '', team = 'all', filter = 'all' } = {}) {
   return Boolean(String(q).trim()) || (team != null && team !== 'all' && team !== '') || normalizeFilter(filter) !== 'all'
+}
+
+/**
+ * DIŞA AKTARMA (2026-10-17, kullanıcı onayı E22): kanal özetinin CSV / Excel karşılığı — SÜZÜLMÜŞ + SIRALANMIŞ listenin TÜMÜ
+ * (yalnız görünen sayfa değil). Değerler ekranın söylediği gibi; bilinmeyen alan "Bilinmiyor" yazar — boş hücre "sorun yok"
+ * diye okunmasın. Sayılar (yönetici alıcı / PO onaylayıcı) Excel'de sayı hücresi.
+ */
+export const TES_EXPORT_COLUMNS = Object.freeze(['channel', 'team', 'active', 'visible', 'email', 'exec', 'approvers', 'report', 'approval'])
+const APPROVAL_STATES = new Set(['none', 'pending', 'approved', 'rejected', 'stale'])
+
+export function exportHeader(t) {
+  return TES_EXPORT_COLUMNS.map((c) => t(`te.set.export.col.${c}`))
+}
+
+/** Sayım alanı: sonlu sayı → sayı; alan yok / okunamaz → "Bilinmiyor". */
+function countCell(v, unknown) {
+  if (v == null || v === '') return unknown
+  const n = Number(v)
+  return Number.isFinite(n) ? n : unknown
+}
+
+function yesNo(v, t, unknown) {
+  if (v === true) return t('te.yes')
+  if (v === false) return t('te.no')
+  return unknown
+}
+
+/** Dönem raporunun durumu — `StatusBadge` ile aynı metin (+ son denemenin sonucu); rapor yoksa "Dönem raporu yok". */
+export function exportReportStatus(ch, t) {
+  const pr = ch?.period_report
+  if (!pr) return t('te.set.noReport')
+  const meta = pr.status ? statusMeta(pr.status) : { key: 'te.status.notStarted' }
+  const attempt = lastAttemptMeta(pr.last_send_status)
+  return attempt ? `${t(meta.key)} · ${t(attempt.key)}` : t(meta.key)
+}
+
+/**
+ * Dönem raporunun onay durumu — ekrandaki rozetle aynı (inceleme 2026-10-17):
+ *  - rapor yok → "—" (uygulanmaz);
+ *  - süren / sonuçlanmış bir onay (`pending` / `approved` / `rejected` / `stale`) → onun metni (ekran rozeti de gösterir);
+ *  - onay AKIŞI YOK (yönetici alıcısı 0 — sunucu o zaman da `state:"none"` yollar, ekran rozet çizmez) → "—", "Onaya
+ *    gönderilmedi" DEĞİL;
+ *  - alıcı sayısı bilinmiyor (alan yok / okunamaz) ya da durum okunamaz → "Bilinmiyor";
+ *  - akış var, henüz gönderilmedi → "Onaya gönderilmedi".
+ */
+export function exportApprovalStatus(ch, t) {
+  const pr = ch?.period_report
+  if (!pr) return '—'
+  const st = pr.approval?.state
+  if (APPROVAL_STATES.has(st) && st !== 'none') return t(`te.appr.state.${st}`)
+  const raw = ch?.executive_count
+  const count = raw == null || raw === '' ? NaN : Number(raw)
+  if (count === 0) return '—'
+  if (!Number.isFinite(count)) return t('te.set.export.unknown')
+  return st === 'none' ? t('te.appr.state.none') : t('te.set.export.unknown')
+}
+
+/** Bir kanalın dışa aktarma satırı (sütun sırası {@link TES_EXPORT_COLUMNS}). */
+export function exportRow(ch, t) {
+  const unknown = t('te.set.export.unknown')
+  const email = teamEmailState(ch)
+  return [
+    ch?.name || '—',
+    ch?.team_name || (ch?.team_id != null ? `#${ch.team_id}` : '—'),
+    yesNo(typeof ch?.active === 'boolean' ? ch.active : null, t, unknown),
+    yesNo(teamVisibleState(ch), t, unknown),
+    email === true ? t('te.set.emailSet') : email === false ? t('te.set.emailMissing') : unknown,
+    countCell(ch?.executive_count, unknown),
+    countCell(ch?.approver_count, unknown),
+    exportReportStatus(ch, t),
+    exportApprovalStatus(ch, t),
+  ]
+}
+
+/** Başlık + satırlar (verilen sırayla — çağıran süzülmüş ve sıralanmış TAM listeyi verir). */
+export function exportTable(channels, t) {
+  return { header: exportHeader(t), rows: (channels || []).map((c) => exportRow(c, t)) }
+}
+
+/** Dosya adı: `teknik-hata-raporu-kanallar-<yyyy-mm>.<uzantı>` (dönem yoksa bugünün tarihi). */
+export function exportFileName(period, ext, now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0')
+  const stamp = period?.year && period?.month
+    ? `${period.year}-${pad(period.month)}`
+    : `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  return `teknik-hata-raporu-kanallar-${stamp}.${ext}`
 }

@@ -78,6 +78,14 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Value("${site.monitor.tech-error-report.max-mail-mb:15}")
     int maxMailMb = 15;
 
+    /** Canlı posta sınırı (12. sürüm, E21): Ayarlar'dan kaydedilen değer yeniden başlatmadan PDF merdivenini de yönetir (yoksa — dilim testleri — önyükleme değeri). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.AppSettingsService appSettings;
+
+    /** Hatırlatma talepleri (12. sürüm): kanal silinince aynı işlemde silinir (yoksa — dilim testleri — saklama kuralı temizler). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.repository.TechErrorReminderRepository reminders;
+
     /** Kuyruk sonucu ile geçmiş olayını aynı işlemde yazmak için (dilim testlerinde yok → işlemsiz). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     org.springframework.transaction.PlatformTransactionManager txManager;
@@ -385,6 +393,7 @@ public class TechErrorReportService {
             if (approvalTokens != null) for (Long rid : ids) approvalTokens.deleteByReportId(rid);
         }
         history.deleteForChannel(ch.getId());
+        if (reminders != null) reminders.deleteByChannel(ch.getId());
         // Karar silme anında: arada bir gönderim talebi alındıysa (ya da yeni rapor açıldıysa) sayılar tutmaz → geri al
         int n = reports.deleteAllForChannelUnlessSending(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n != ids.size()) {
@@ -921,7 +930,7 @@ public class TechErrorReportService {
             in = loader.get();
             // Görseller tam çözünürlükte saklanır (2026-10-16): PDF e-posta sınırını aşarsa aynı veriden daha düşük gömme
             // katıyla yeniden üretilir — indirilen PDF ile e-posta eki aynı kalır; en düşük katta da sığmazsa gönderen söyler
-            long limit = Math.max(1, maxMailMb) * 1024L * 1024L;
+            long limit = Math.max(1, TechErrorReportSettings.liveInt(appSettings, TechErrorReportSettings.MAX_MAIL_MB, maxMailMb)) * 1024L * 1024L;
             byte[] pdf = null;
             float used = 0;
             for (float scale : TechErrorReportPdfWriter.EMBED_SCALES) {

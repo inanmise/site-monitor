@@ -592,6 +592,29 @@ final class EmailSamples {
                     "Kota hatalarının açıklaması eksik; grafikler güncellenmeli.", "Mehmet Kaya", null, java.util.List.of(), BASE, 100L, 10L);
             add("report-tech-approval-rejected-tr", "report", com.sitemonitor.service.mail.TechErrorApprovalMail.decisionSubject(title, false, false),
                     rej.html(), rej.text(), "warn");
+            // 12. sürüm (2026-10-17, C9 / C10): dönem hatırlatması (takıma; TR + EN), onay hatırlatması (PO'ya), diğer PO'lara bilgi.
+            // Slug "report-tech-error" ile BAŞLAMAZ: o önek 1000 px rapor gövdesine ayrılmış; bunlar 640 px kısa postalar.
+            var items = java.util.List.of(
+                    new com.sitemonitor.service.mail.TechErrorReminderMail.Item("Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Kanalı (Dijital Kanallar)",
+                            com.sitemonitor.service.mail.TechErrorReminderMail.State.MISSING, false),
+                    new com.sitemonitor.service.mail.TechErrorReminderMail.Item("Mobil", com.sitemonitor.service.mail.TechErrorReminderMail.State.PENDING, true),
+                    new com.sitemonitor.service.mail.TechErrorReminderMail.Item("POS", com.sitemonitor.service.mail.TechErrorReminderMail.State.DRAFT, true));
+            for (boolean en : new boolean[] { false, true }) {
+                var rem = com.sitemonitor.service.mail.TechErrorReminderMail.team("Dijital Kanallar Uygulama Geliştirme", 3L, 2026, 9, items, en,
+                        BASE, 5, 3);
+                add("report-tech-reminder-" + (en ? "en" : "tr"), "report",
+                        com.sitemonitor.service.mail.TechErrorReminderMail.teamSubject(2026, 9, en, "Dijital Kanallar Uygulama Geliştirme"),
+                        rem.html(), rem.text(), "warn");
+            }
+            var apr = com.sitemonitor.service.mail.TechErrorReminderMail.approval(title, false, "Mehmet Kaya", "Ayşe Yılmaz",
+                    java.time.Instant.parse("2026-10-02T06:30:00Z"), 3, java.time.Instant.parse("2026-10-16T06:30:00Z"),
+                    com.sitemonitor.service.mail.TechErrorApprovalMail.reportUrl(BASE, 10L, 100L), "Dijital Kanallar", 3);
+            add("report-tech-approval-reminder-tr", "report", com.sitemonitor.service.mail.TechErrorReminderMail.approvalSubject(title, false),
+                    apr.html(), apr.text(), "warn");
+            var info = com.sitemonitor.service.mail.TechErrorReminderMail.approverInfo(title, false, true, "Mehmet Kaya",
+                    java.time.Instant.parse("2026-10-05T07:00:00Z"), "Uygun, teşekkürler.", com.sitemonitor.service.mail.TechErrorApprovalMail.reportUrl(BASE, 10L, 100L));
+            add("report-tech-approval-info-tr", "report", com.sitemonitor.service.mail.TechErrorReminderMail.infoSubject(title, false, true),
+                    info.html(), info.text(), "ok");
         }
     }
 

@@ -1,9 +1,114 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-17T21:53:26Z",
+  "generatedAt": "2026-10-18T00:33:00Z",
   "repo": "inanmise/site-monitor",
-  "count": 770,
+  "count": 771,
   "releases": [
+    {
+      "version": "20.153.0",
+      "tag": "v20.153.0",
+      "releasedAt": "2026-10-18T00:32:54Z",
+      "commit": "7c359c077d58916ab295e4cf5e4f4d30e91dc7a0",
+      "prevVersion": "20.152.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 4
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7c359c07",
+          "subject": "Ayarlar dışa aktarma e2e'sinde Excel adımı yenilenen sayfada menünün ilk açılışıyla alınır (CI Linux'ta aynı menünün ikinci açılışı indirme başlatmıyordu)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f8deae6c",
+          "subject": "Ayarlar kanal özeti Excel yazıcısı menü açılırken önceden yüklenir — indirme tıklamaya bağlı kalır (yavaş yüklemede Chrome aynı sayfadaki ikinci indirmeyi engelliyordu)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "24a9b13f",
+          "subject": "dışa aktarma e2e'si Excel menüsünü açık kalmışsa yeniden açmaya çalışmaz (CI Linux'ta ikinci tıklama menüyü kapatıyordu)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "eb7855eb",
+          "subject": "hatırlatma ve posta sınırı ayarlarının TR/EN yardım metinleri; tembel yükleme kapısı yıl arşivini ve Ayarlar Excel'ini tanır; dışa aktarma e2e'si Excel'i menü açıldıktan sonra tıklar"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "5a56362d",
+          "subject": "hatırlatmalar, canlı posta sınırları, başka kanaldan şablon, yıl arşivi ve Ayarlar dışa aktarma — CLAUDE.md, kılavuz TR/EN, PDF ve kök kopyalar"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f7b57da7",
+          "subject": "Ayarlar e2e'sinde kayıt listesi düz dizi olarak karşılaştırılır (reminders özelliği eşitliği bozuyordu)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2a48cee2",
+          "subject": "onay hatırlatması yerine geçilmiş belirteci canlı bağlantı saymaz (main'deki superseded_at ile birleşim)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5bd3f5b3",
+          "subject": "teknik hata raporu hatırlatma incelemesi — hatırlatma ayarları ayrı uçta (eski pod görünürlüğü silmez), budama satır yaşına göre, dönemden sonra açılan kanal ve takılı kuyruk, bağlantı postası damgas…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f0c694d",
+          "subject": "yıl arşivi akış ZIP + 5 dk istek sınırı + 401/403'te durma + çıkışta onay; şablon alma pasif / dil / 404; Ayarlar dışa aktarma onay sütunu ve teknik metinsiz hata bildirimi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "de4312df",
+          "subject": "menü öğesi dokunma ölçümü açılış animasyonu bittikten sonra (yıl arşivi, Ayarlar dışa aktar)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8fe29830",
+          "subject": "kanal teknik hata raporunda başka kanaldan şablon alma, yıl arşivi (ZIP), Ayarlar kanal özeti CSV / Excel ve arayüz diline göre varsayılan şablon dili"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "709be37d",
+          "subject": "teknik hata raporu hatırlatmaları — dönem raporu açılmamış / gönderilmemiş kanallar için takım postası + push (takım başına açılır), bekleyen onay için PO hatırlatması ve diğer PO'lara bilgi, e-posta…"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.152.0",
       "tag": "v20.152.0",

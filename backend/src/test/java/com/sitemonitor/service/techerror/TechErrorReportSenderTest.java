@@ -363,6 +363,33 @@ class TechErrorReportSenderTest {
     }
 
     @Test
+    @DisplayName("12. sürüm (E21): posta sınırları CANLI — Ayarlar'dan kaydedilen değer yeniden başlatmadan uygulanır (önizleme, gönderim, onay postası); aralık dışı / bozuk override önyükleme değerine düşer")
+    void mailLimitsAreReadLive() {
+        pdfReturns(new byte[6 * 1024 * 1024]);
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn("5");
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.maxMailMb()).isEqualTo(5);
+        assertThat(p.problem()).isEqualTo("PDF_TOO_LARGE");
+        assertThat(sender.maxMailBytes()).isEqualTo(5L * 1024 * 1024);
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
+                .satisfies(e -> {
+                    assertThat(((CodedConflictException) e).getCode()).isEqualTo("PDF_TOO_LARGE");
+                    assertThat(e.getMessage()).contains("5 MB");
+                });
+        // Aynı gönderen nesnesi, ayar değişti: yeniden başlatma yok
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn("20");
+        TechErrorReportSender.Preview p2 = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p2.maxMailMb()).isEqualTo(20);
+        assertThat(p2.problem()).isNull();
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn("99");
+        assertThat(sender.liveMaxMailMb()).as("aralık dışı → önyükleme değeri").isEqualTo(sender.maxMailMb);
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAIL_INLINE_MB)).thenReturn("0");
+        assertThat(sender.liveInlineMb()).isZero();
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAIL_INLINE_MB)).thenReturn(null);
+        assertThat(sender.liveInlineMb()).isEqualTo(sender.mailInlineMb);
+    }
+
+    @Test
     @DisplayName("görsel hazırlayıcı patlarsa posta durmaz: görseli olan yuvalar 'PDF ekinde' kutusu alır, PDF gider, SENT")
     void preparerFailureFallsBackToPdfBoxes() throws java.io.IOException {
         mailReturns("SENT");

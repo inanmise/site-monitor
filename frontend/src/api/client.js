@@ -29,6 +29,33 @@ function headerOf(res, name) {
 }
 
 /**
+ * Kanal teknik hata raporunun PDF'ini Blob olarak okur (e-posta ekinin aynısı) — "PDF indir" ve kanalın yıl arşivi (ZIP,
+ * 2026-10-17) aynı uçtan geçer. `name` sunucunun Content-Disposition adı (yoksa null). `signal` ile iptal edilir: iptal
+ * `{ aborted: true }` döner (hata değil). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır (429 = PDF sırası dolu).
+ */
+async function fetchTechErrorPdf(id, signal = null) {
+  try {
+    const res = await fetch(`${BASE}/tech-error-reports/reports/${id}/pdf`,
+      { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(signal ? { signal } : {}) })
+    if (!res.ok) {
+      let body = null
+      try { body = await res.json() } catch { body = null }
+      return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
+    }
+    const blob = await res.blob()
+    const disp = headerOf(res, 'Content-Disposition') || ''
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+    const plain = /filename="?([^";]+)"?/.exec(disp)
+    let name = null
+    try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
+    return { success: true, blob, name }
+  } catch (e) {
+    if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
+    return { success: false, status: 0, error: e?.message || 'NETWORK' }
+  }
+}
+
+/**
  * JSON olmayan yanıt (proxy HTML hata sayfası / boş gövde) → açıklayıcı yük (2026-10-08: eskiden "Hata (HTTP 502)",
  * "Geçersiz yanıt" gibi ne olduğunu da ne yapılacağını da söylemeyen ve İngilizce arayüzde de Türkçe çıkan metinler).
  */
@@ -556,20 +583,11 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 0 }),
     /** PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. */
     downloadPdf: async (id) => {
+      const res = await fetchTechErrorPdf(id)
+      if (!res.success) return res
       try {
-        const res = await fetch(`${BASE}/tech-error-reports/reports/${id}/pdf`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-        if (!res.ok) {
-          let body = null
-          try { body = await res.json() } catch { body = null }
-          return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
-        }
-        const blob = await res.blob()
-        const disp = res.headers.get('Content-Disposition') || ''
-        const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
-        const plain = /filename="?([^";]+)"?/.exec(disp)
-        let name = 'teknik-hata-raporu.pdf'
-        try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : name) } catch { /* ham ad */ }
-        const objectUrl = URL.createObjectURL(blob)
+        const name = res.name || 'teknik-hata-raporu.pdf'
+        const objectUrl = URL.createObjectURL(res.blob)
         const a = document.createElement('a')
         a.href = objectUrl
         a.download = name
@@ -609,6 +627,8 @@ export const api = {
         return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
       }
     },
+    /** PDF'i indirmeden Blob olarak okur (kanalın yıl arşivi — ZIP, 2026-10-17): `{ success, blob, name }`; iptal `{ aborted }`. */
+    pdfBlob: (id, { signal } = {}) => fetchTechErrorPdf(id, signal),
   },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
@@ -1301,6 +1321,10 @@ export const api = {
     // Teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı özeti
     techErrorSettings: () => request('/admin/tech-error-reports/settings', { withStatus: true }),
     saveTechErrorSettings: (body) => request('/admin/tech-error-reports/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta: eski pod bu yolu tanımaz (404 / 405) ve görünürlüğe dokunmaz
+    techErrorReminderSettings: () => request('/admin/tech-error-reports/settings/reminders', { withStatus: true }),
+    saveTechErrorReminderSettings: (body) => request('/admin/tech-error-reports/settings/reminders',
+      { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
 
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
     // Veri Saklama (retention) — politika matrisi, dry-run, elle temizlik, çalışma geçmişi.

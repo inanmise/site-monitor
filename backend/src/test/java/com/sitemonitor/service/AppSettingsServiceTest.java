@@ -88,6 +88,27 @@ class AppSettingsServiceTest {
     }
 
     @Test
+    @DisplayName("teknik hata raporu (12. sürüm, E21): posta sınırı 5–50, gövde bütçesi 0–20 ve gövde < sınır — hangi uçtan yazılırsa yazılsın; reddedilen değer yazılmaz")
+    void techErrorMailLimits_crossField() {
+        String max = "site.monitor.tech-error-report.max-mail-mb";
+        String inline = "site.monitor.tech-error-report.mail-inline-mb";
+        try {
+            service.save(values(max, "10"), "admin");
+            service.save(values(inline, "8"), "admin");
+            assertThatThrownBy(() -> service.save(values(inline, "10"), "admin")).as("gövde = sınır").isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.save(values(max, "8"), "admin")).as("sınır = gövde").isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.save(values(max, "51"), "admin")).as("aralık dışı").isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.save(values("site.monitor.tech-error-report.reminder-day", "29"), "admin"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(service.getInt(max, 0)).isEqualTo(10);
+            assertThat(service.getInt(inline, 0)).isEqualTo(8);
+        } finally {
+            service.save(values(inline, ""), "admin");
+            service.save(values(max, ""), "admin");
+        }
+    }
+
+    @Test
     @DisplayName("katalog dışı key reddedilir")
     void unknownKey_throws() {
         assertThatThrownBy(() -> service.save(values("some.random.key", "x"), "admin"))

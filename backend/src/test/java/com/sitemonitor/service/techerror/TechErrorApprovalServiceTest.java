@@ -70,6 +70,7 @@ class TechErrorApprovalServiceTest {
     @Autowired com.sitemonitor.repository.TechErrorReportImageRepository images;
     @Autowired com.sitemonitor.repository.TechErrorTemplateVersionRepository versions;
     @Autowired TechErrorHistoryService history;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     @MockitoBean TechErrorReportSender sender;
     @MockitoBean EmailNotificationService email;
@@ -196,6 +197,7 @@ class TechErrorApprovalServiceTest {
             assertThat(t.getTokenHash()).hasSize(64);
             assertThat(t.getUsedAt()).isNull();
             assertThat(t.getExpiresAt()).isEqualTo(service.now().plus(TechErrorApprovalService.TOKEN_TTL));
+            assertThat(t.getMailedAt()).as("bağlantılı posta ulaştı (SENT)").isEqualTo(service.now());
         });
         // Postalar: PO başına bir posta, kendi bağlantısıyla, PDF ekli, "[Onay bekliyor]" konu; ham belirteç DB'de yok
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
@@ -258,9 +260,12 @@ class TechErrorApprovalServiceTest {
         verify(sender).send(any(), eq(ch), eq(team), eq(po2.getId()), eq(TechErrorReportSender.Delivery.EXECUTIVE));
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
-        verify(email, times(3)).sendHtml(to.capture(), any(), subject.capture(), anyString(), any(), any(), eq(false), any());
+        // 2 istek + isteyene karar + kararı vermeyen PO'ya bilgi (12. sürüm, C10)
+        verify(email, times(4)).sendHtml(to.capture(), any(), subject.capture(), anyString(), any(), any(), eq(false), any());
         assertThat(subject.getAllValues().get(2)).startsWith("[Onaylandı] Mobil Kanalı");
         assertThat(to.getAllValues().get(2)[0]).isEqualTo("tech@example.com");
+        assertThat(subject.getAllValues().get(3)).startsWith("[Site Monitor] Onaylandı, işlem gerekmez — Mobil Kanalı");
+        assertThat(to.getAllValues().get(3)[0]).isEqualTo("po1@example.com");
         assertThat(events.findAll()).extracting(e -> e.getKind()).contains("APPROVAL_REQUEST", "APPROVAL");
         // Eskimiş istek: içerik değişti → onaylanamaz
         TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
@@ -285,7 +290,7 @@ class TechErrorApprovalServiceTest {
         assertThat(d.sendError()).isEqualTo("PDF_TOO_LARGE");
         assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("APPROVED");
         ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
-        verify(email, times(3)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        verify(email, times(4)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), any(), eq(false), any());
         assertThat(html.getAllValues().get(2)).contains("Henüz gönderilmedi").contains("PDF_TOO_LARGE");
 
         TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
@@ -301,8 +306,9 @@ class TechErrorApprovalServiceTest {
         assertThat(after.getApprovalNote()).isEqualTo("Rakamlar eksik");
         verify(sender, never()).send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.TEAM));
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
-        verify(email, times(6)).sendHtml(any(String[].class), any(), subject.capture(), anyString(), any(), any(), eq(false), any());
-        assertThat(subject.getAllValues().get(5)).startsWith("[Reddedildi] Mobil Kanalı");
+        verify(email, times(8)).sendHtml(any(String[].class), any(), subject.capture(), anyString(), any(), any(), eq(false), any());
+        assertThat(subject.getAllValues().get(6)).startsWith("[Reddedildi] Mobil Kanalı");
+        assertThat(subject.getAllValues().get(7)).startsWith("[Site Monitor] Reddedildi, işlem gerekmez — Mobil Kanalı");
         // Reddedilen rapor yeniden istenebilir
         approvals.request(service.report(r2.getId()), ch, team, tech.getId());
         assertThat(service.report(r2.getId()).getApprovalState()).isEqualTo("PENDING");
@@ -370,7 +376,7 @@ class TechErrorApprovalServiceTest {
         approvals.request(r2, ch, team, tech.getId());
         service.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z").plus(TechErrorApprovalService.TOKEN_TTL).plusSeconds(60), ZoneOffset.UTC));
         ArgumentCaptor<String> html3 = ArgumentCaptor.forClass(String.class);
-        verify(email, times(7)).sendHtml(any(String[].class), any(), anyString(), html3.capture(), any(), any(), eq(false), any());
+        verify(email, times(8)).sendHtml(any(String[].class), any(), anyString(), html3.capture(), any(), any(), eq(false), any());
         Matcher m = LINK.matcher(html3.getAllValues().get(6));
         assertThat(m.find()).isTrue();
         assertThat(approvals.status(m.group(1)).reason()).isEqualTo("expired");
@@ -666,6 +672,78 @@ class TechErrorApprovalServiceTest {
         assertThat(logs.findAll()).hasSize(2).allMatch(n -> n.getEmailStatus().startsWith("SKIPPED"));
         var ev = events.findAll().stream().filter(e -> "APPROVAL_REQUEST".equals(e.getKind())).findFirst().orElseThrow();
         assertThat(ev.getDetailJson()).contains("PDF_BUSY").doesNotContain("po1@example.com");   // kimseye gitmedi
+        // Bağlantı kimseye ulaşmadı: hatırlatma "özgün bağlantınız geçerli" demesin (inceleme 2026-10-18)
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(2).allSatisfy(t -> assertThat(t.getMailedAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: bağlantı postası damgası (mailed_at) yalnız posta SENT / QUEUED döndüğünde VE posta bağlantıyı taşıdığında: FAILED / SKIPPED ya da boş uygulama adresi → NULL")
+    void tokenMailedAtOnlyWhenTheLinkReachedThePo() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        when(email.sendHtml(eq(new String[] { "po1@example.com" }), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenReturn("QUEUED_RETRY: 421");
+        when(email.sendHtml(eq(new String[] { "po2@example.com" }), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenReturn("FAILED: 550");
+        approvals.request(r, ch, team, tech.getId());
+        Map<Long, Instant> mailed = new java.util.HashMap<>();
+        for (TechErrorApprovalToken t : tokens.findByReportIdOrderByIdAsc(r.getId())) mailed.put(t.getUserId(), t.getMailedAt());
+        assertThat(mailed.get(po1.getId())).as("QUEUED: posta servisi aldı").isEqualTo(service.now());
+        assertThat(mailed).containsEntry(po2.getId(), null);
+
+        // Uygulama adresi boş: posta SENT ama bağlantı taşımıyordu → damga yok
+        when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
+        TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
+        approvals.request(r2, ch, team, tech.getId());
+        assertThat(tokens.findByReportIdOrderByIdAsc(r2.getId())).hasSize(2).allSatisfy(t -> assertThat(t.getMailedAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: diğer PO'lara bilgi postası İSTEKTE değil arka planda, karar yazıldıktan SONRA (işlem varsa commit'ten sonra; geri alınırsa hiç); her posta yine bir günlük satırı")
+    void otherApproversInformedInBackgroundAfterCommit() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+        List<Runnable> queue = new java.util.ArrayList<>();
+        approvals.setMailExecutor(queue::add);
+        try {
+            TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+            approvals.request(r, ch, team, tech.getId());
+            TechErrorApprovalService.Decision d = approvals.decide(service.report(r.getId()), ch, team, po1.getId(), true, null, "app");
+            assertThat(d.state()).isEqualTo("APPROVED");
+            assertThat(queue).hasSize(1);
+            assertThat(logs.findAll()).noneMatch(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()));
+            queue.remove(0).run();
+            assertThat(logs.findAll()).filteredOn(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()))
+                    .singleElement().satisfies(n -> {
+                        assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com");
+                        assertThat(n.getEmailStatus()).isEqualTo("SENT");
+                    });
+
+            // Etkin işlem içinde: iş commit'ten SONRA kuyruğa girer; geri alınan işlemde hiç girmez
+            org.springframework.transaction.support.TransactionTemplate tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+            List<Integer> seenInside = new java.util.ArrayList<>();
+            tx.executeWithoutResult(s -> {
+                approvals.afterDecision(1L, () -> { });
+                seenInside.add(queue.size());
+            });
+            assertThat(seenInside).containsExactly(0);
+            assertThat(queue).hasSize(1);
+            queue.clear();
+            tx.executeWithoutResult(s -> {
+                approvals.afterDecision(1L, () -> { });
+                s.setRollbackOnly();
+            });
+            assertThat(queue).isEmpty();
+            // Havuz işi reddederse aynı iş parçacığında çalışır (bilgi kaybolmaz)
+            approvals.setMailExecutor(task -> { throw new java.util.concurrent.RejectedExecutionException("dolu"); });
+            boolean[] ran = { false };
+            approvals.afterDecision(1L, () -> ran[0] = true);
+            assertThat(ran[0]).isTrue();
+        } finally {
+            approvals.setMailExecutor(null);
+        }
     }
 
     @Test
@@ -677,5 +755,55 @@ class TechErrorApprovalServiceTest {
         java.util.List<TechErrorApprovalService.Approver> list = approvals.approvers(77L);
         assertThat(list).extracting(TechErrorApprovalService.Approver::name).containsExactlyInAnyOrder("PO Üç", "PO Dört", "PO Beş");
         assertThat(list.stream().map(TechErrorApprovalService.Approver::email).filter(java.util.Objects::nonNull).toList()).containsExactly("ortak@example.com");
+    }
+
+    @Test
+    @DisplayName("12. sürüm (C10): karardan sonra kararı VERMEYEN PO'lara 'işlem gerekmez' bilgisi — karar veren, isteyen ve paylaşılan kutu almaz; posta hatası kararı değiştirmez (uygulama içi ve bağlantı)")
+    void otherApproversInformed() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+        // İsteyen de PO (po1): karar postasını alır, bilgi postası ALMAZ — kimse iki posta almaz
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, po1.getId());
+        approvals.decide(service.report(r.getId()), ch, team, po2.getId(), true, null, "app");
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        verify(email, times(3)).sendHtml(to.capture(), any(), subject.capture(), anyString(), any(), any(), eq(false), any());
+        assertThat(subject.getAllValues().get(2)).startsWith("[Onaylandı]");
+        assertThat(to.getAllValues().get(2)[0]).isEqualTo("po1@example.com");
+        assertThat(logs.findAll()).noneMatch(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()));
+
+        // Bilgi postası başarısız: karar yine REJECTED, günlükte FAILED satırı (rol APPROVER_INFO)
+        TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
+        approvals.request(r2, ch, team, tech.getId());
+        when(email.sendHtml(eq(new String[] { "po2@example.com" }), any(), org.mockito.ArgumentMatchers.startsWith("[Site Monitor] Reddedildi"),
+                anyString(), any(), any(), anyBoolean(), any())).thenThrow(new IllegalStateException("smtp yok"));
+        TechErrorApprovalService.Decision d = approvals.decide(service.report(r2.getId()), ch, team, po1.getId(), false, "Eksik", "app");
+        assertThat(d.state()).isEqualTo("REJECTED");
+        assertThat(service.report(r2.getId()).getApprovalState()).isEqualTo("REJECTED");
+        List<NotificationLog> info = logs.findAll().stream()
+                .filter(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole())).toList();
+        assertThat(info).singleElement().satisfies(n -> {
+            assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com");
+            assertThat(n.getEmailStatus()).startsWith("FAILED");
+            assertThat(n.getTrigger()).isEqualTo(TechErrorApprovalService.TRIGGER);
+        });
+
+        // Bağlantıdan karar: diğer PO (po2) bilgi alır
+        TechErrorReport r3 = service.createReport(ch, 2026, 7, tech.getId());
+        approvals.request(r3, ch, team, tech.getId());
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String[]> to2 = ArgumentCaptor.forClass(String[].class);
+        verify(email, org.mockito.Mockito.atLeastOnce()).sendHtml(to2.capture(), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        String raw = null;
+        for (int i = 0; i < html.getAllValues().size(); i++) {
+            Matcher m = LINK.matcher(html.getAllValues().get(i));
+            if (m.find() && to2.getAllValues().get(i)[0].startsWith("po1")) raw = m.group(1);
+        }
+        assertThat(raw).isNotNull();
+        approvals.decideViaToken(raw, team, true, null);
+        assertThat(logs.findAll()).filteredOn(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()))
+                .extracting(NotificationLog::getEmailStatus).containsExactly(info.get(0).getEmailStatus(), "SENT");
     }
 }
