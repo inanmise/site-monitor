@@ -50,7 +50,9 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     // 2026-10-10: kripto envanteri dışa aktarımı ikinci tembel kullanıcı (Excel / PDF / CSV).
     // 2026-10-17 (E22): Ayarlar → Teknik hata raporu kanal özeti Excel'i yazıcıyı YALNIZ tıklamada import() ile alır.
     const SETTINGS_EXPORT = 'components/admin/TechErrorReportSettings.jsx'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT].sort())
+    // 2026-10-18 (C14): kanal görünümünün "Excel'e aktar" modülü (ChannelXlsxButton onu yalnız import() ile alır — lazyChunks kapısı)
+    const CHANNEL_EXPORT = 'components/techerror/channelExport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT].sort())
     const settings = FILES.find((x) => x.rel === SETTINGS_EXPORT)
     expect(staticImports(settings.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Ayarlar Excel yazıcısını statik içe aktarmaz').toEqual([])
     const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(sharedCertExport|cryptoInventoryExport)(\.js)?$/.test(s))).map((x) => x.rel)
