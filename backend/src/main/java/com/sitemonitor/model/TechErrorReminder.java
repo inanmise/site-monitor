@@ -62,6 +62,16 @@ public class TechErrorReminder {
     @Column(name = "claim_rev", nullable = false)
     private int claimRev;
 
+    /**
+     * Bırakılan turun durumu (inceleme 2026-10-18): {@code <ref>#<send_count>#<deneme>:<virgüllü kimlikler>} — bu turda
+     * hatırlatmanın ULAŞTIĞI onaylayıcılar (posta SENT / QUEUED ya da push kuyrukta) ve deneme sayısı. Aynı turun yeniden
+     * denemesi (aynı ref + send_count) bu kişilere posta / push göndermez; {@code TechErrorReminderService.MAX_TRIES}
+     * denemeden sonra o turda vazgeçilir. YALNIZ koşullu bırakma sorgusu yazar ({@code updatable=false}: varlık kaydı
+     * geri saramaz); başka bir turdaki değer yok sayılır. Kişisel veri yok (yalnız kullanıcı kimlikleri).
+     */
+    @Column(name = "reached_ids", length = 4000, updatable = false)
+    private String reachedIds;
+
     @Column(name = "created_at", length = 32)
     private String createdAt;
 

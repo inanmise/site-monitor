@@ -3,6 +3,9 @@ import { render, screen, within } from './test-utils.jsx'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import { familyLabel, PUSH_TYPE_ALIASES } from '../utils/pushPrefs.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from './helpers/javaTable.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../hooks/useElementWidth.js', () => ({ useElementWidth: () => [() => {}, 0] }))
@@ -32,17 +35,90 @@ import PushLogView from '../components/admin/PushLogView.jsx'
  * bildirim" olur — ham tür hiçbir yerde (Push bildirimlerim, yönetici push günlüğü) görünmez.
  */
 const tOf = (dict) => (key) => (Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : key)
-/** Sunucunun push satırlarına yazdığı türler (UserPushService / takım bildirimleri / haftalık / fırtına / teknik hata). */
-const SERVER_TYPES = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted',
-  'CERTIFICATE', 'CERT', 'DOMAIN', 'SCRIPTED', 'STORM', 'WEEKLY_REPORT', 'TECH_ERROR_REPORT']
+
+/**
+ * Sunucunun push satırlarına yazdığı türler — Java KAYNAĞINDAN okunur (inceleme 2026-10-18, 2. tur: sabit liste yeni bir türü
+ * görmezdi): (1) izleme aileleri `MonitorTypeCatalog.ORDER`; (2) her `enqueueTeamNotice*` (4.) / `enqueueDirect*` (5.)
+ * çağrısının tür argümanı (dizgi ya da `static final String` sabiti — değişkenler atlanır); (3) `UserPushService` içindeki
+ * `setMonitorType(...)` dizgileri / sabitleri. Doğrusal tarama (parantez sayımı, dizgi içi atlanır).
+ */
+function javaFiles(dir) {
+  const out = []
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) out.push(...javaFiles(p))
+    else if (e.name.endsWith('.java')) out.push(p)
+  }
+  return out
+}
+/** `(` konumundan eşleşen `)`'ye kadar üst düzey argümanlar (dizgi içi virgül / parantez sayılmaz). */
+function callArgs(src, open) {
+  const args = []
+  let depth = 0
+  let cur = ''
+  let str = false
+  for (let k = open; k < src.length; k++) {
+    const ch = src[k]
+    if (str) {
+      cur += ch
+      if (ch === '\\') { cur += src[++k] ?? ''; continue }
+      if (ch === '"') str = false
+      continue
+    }
+    if (ch === '"') { str = true; cur += ch; continue }
+    if (ch === '(') { depth++; if (depth === 1) continue }
+    if (ch === ')') { depth--; if (depth === 0) { args.push(cur.trim()); return args } }
+    if (ch === ',' && depth === 1) { args.push(cur.trim()); cur = ''; continue }
+    if (depth >= 1) cur += ch
+  }
+  return args
+}
+function serverPushTypes() {
+  const files = javaFiles(path.join(REPO_ROOT, 'backend/src/main/java/com/sitemonitor'))
+  const sources = files.map((f) => [f, fs.readFileSync(f, 'utf8')])
+  const consts = new Map()
+  for (const [, src] of sources) {
+    for (const m of src.matchAll(/static\s+final\s+String\s+([A-Z][A-Z0-9_]*)\s*=\s*([^;]+);/g)) consts.set(m[1], m[2].trim())
+  }
+  const resolve = (expr, depth = 0) => {
+    if (depth > 5 || !expr) return []
+    const lits = [...expr.matchAll(/"([A-Za-z_]+)"/g)].map((m) => m[1])
+    if (lits.length) return lits
+    const id = expr.split('.').pop().trim()
+    return /^[A-Z][A-Z0-9_]*$/.test(id) && consts.has(id) ? resolve(consts.get(id), depth + 1) : []
+  }
+  const types = new Set()
+  const catalog = sources.find(([f]) => f.endsWith('MonitorTypeCatalog.java'))[1]
+  const order = /ORDER\s*=\s*List\.of\(([^)]*)\)/.exec(catalog)[1]
+  for (const m of order.matchAll(/"([a-z]+)"/g)) types.add(m[1])
+  for (const [file, src] of sources) {
+    for (const m of src.matchAll(/\b(enqueueTeamNotice|enqueueTeamNoticeLocalized|enqueueDirect|enqueueDirectLocalized)\s*\(/g)) {
+      // monitorType: takım bildiriminde 4. (teamId, trigger, level, type…), doğrudan push'ta 5. argüman (recipients önde)
+      const at = m[1].startsWith('enqueueDirect') ? 4 : 3
+      const args = callArgs(src, m.index + m[0].length - 1)
+      if (args.length > at) for (const v of resolve(args[at])) types.add(v)
+    }
+    if (file.endsWith('UserPushService.java')) {
+      for (const m of src.matchAll(/setMonitorType\s*\(/g)) for (const v of resolve(callArgs(src, m.index + m[0].length - 1)[0])) types.add(v)
+    }
+  }
+  return [...types]
+}
+const SERVER_TYPES = serverPushTypes()
 
 describe('familyLabel — push türü etiketi', () => {
-  it('her sunucu türü TR ve EN etiketli; ham tür / anahtar asla dönmez', () => {
+  it('Java kaynağından okunan türler beklenenleri içerir (okuyucu çalışıyor)', () => {
+    expect(SERVER_TYPES).toEqual(expect.arrayContaining(['cert', 'http', 'scripted', 'CERTIFICATE', 'CERT', 'DOMAIN', 'SCRIPTED',
+      'STORM', 'WEEKLY_REPORT', 'TECH_ERROR_REPORT']))
+  })
+
+  it('her sunucu türünün KENDİ etiketi var (TR + EN) — "Diğer bildirim"e düşen yeni tür testi düşürür; ham tür / anahtar asla dönmez', () => {
     for (const dict of [TR, EN]) {
       const t = tOf(dict)
       for (const type of SERVER_TYPES) {
         const label = familyLabel(type, t)
         expect(label, `${type}`).not.toBe(type)
+        expect(label, `${type}: etiketi yok (PUSH_TYPE_ALIASES + userpush.type.* ekleyin)`).not.toBe(dict['userpush.type.other'])
         expect(label, `${type}`).not.toMatch(/^userpush\.type\./)
         expect(label, `${type}`).not.toMatch(/_/)
         expect(label.trim().length).toBeGreaterThan(1)

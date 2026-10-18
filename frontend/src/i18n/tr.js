@@ -21094,6 +21094,7 @@ export const TR = {
   'te.slog.reason.APPROVAL_STALE': "Rapor onaydan sonra değiştiği için gönderilmedi; yeniden onay gerekir.",
   'te.slog.reason.SMTP_FAILED': "Posta sunucusu iletiyi kabul etmedi ya da sunucuya ulaşılamadı. Tekrar deneyin; sürerse sistem yöneticisine bildirin (ayrıntı sunucu günlüğünde).",
   'te.slog.reason.INTERNAL_ERROR': "Gönderim uygulama içinde yarıda kaldı; posta gitmemiş olabilir. Tekrar deneyin; sürerse sistem yöneticisine bildirin.",
+  'te.slog.reason.RETRIES_EXHAUSTED': "Hatırlatma 3 denemede bu alıcıya ulaşmadı; bu tur için yeniden denenmeyecek. Alıcının e-posta adresini kontrol edin.",
   'te.slog.reason.SKIPPED_OTHER': "Gönderim atlandı; posta gönderilmedi.",
   'te.slog.reason.UNKNOWN': "Bu denemenin sonucu alınamadı (kaydedilmemiş ya da posta sunucusunun yeniden denemesi sonuç bildirmedi); rapor hâlâ kuyrukta görünüyorsa yeniden gönderin.",
   'te.slog.hiddenTitle': "Alıcı adresleri gizli",

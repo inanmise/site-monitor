@@ -77,17 +77,8 @@ public class TechErrorPushService {
     /** Red notunda ayıklanan bağlantı / adres / sunucu adının yerine yazılan işaret (push metni bağlantısız kalır). */
     static final String LINK_TR = "[bağlantı]";
     static final String LINK_EN = "[link]";
-    /**
-     * {@link #scrubLinks} en çok bu kadar GİRDİ karakterine bakar (not en çok 1000 karakter; push'a ilk {@value #NOTE_CHARS}
-     * girer). Sınırı aşan jeton hiç yazılmaz — kırpılmış bir adres sızmaz, iş girdinin boyundan bağımsız sınırlı kalır.
-     */
-    static final int SCRUB_MAX_INPUT = 2000;
-    /** Tek etiketli ad dışında "kurum içi" sayılan son ekler (srv01.corp.local, jira.intra…). */
-    private static final Set<String> INTERNAL_SUFFIXES = Set.of("local", "localdomain", "lan", "internal", "intra", "intranet",
-            "corp", "home", "private", "priv", "int", "test", "example", "invalid", "localhost");
-    /** İki etiketli bir adı (ornek.com) sunucu adı saydıran yaygın genel son ekler; daha çok etiketli ad her son ekle sayılır. */
-    private static final Set<String> COMMON_TLDS = Set.of("com", "net", "org", "io", "info", "biz", "tr", "gov", "edu", "mil",
-            "app", "dev", "co", "uk", "de", "eu", "us", "me", "cloud", "online", "site", "xyz", "ai", "tech");
+    /** {@link #scrubLinks} en çok bu kadar GİRDİ karakterine bakar — kural ve sınır {@link TechErrorPushLinkScrubber}'da. */
+    static final int SCRUB_MAX_INPUT = TechErrorPushLinkScrubber.MAX_INPUT;
 
     private final AppSettingsService settings;
     private final AppUserRepository users;
@@ -178,21 +169,23 @@ public class TechErrorPushService {
 
     /**
      * Günlük onay hatırlatmasının push'u → aynı PO'lar (e-postası olmayanlar dahil, isteyen hariç). Hatırlatma işinin talebi
-     * pencere başına bir kez çağırır; anahtar gün taşır (iki pod / yeniden deneme ikinci push yazmaz).
+     * tur başına çağırır; anahtar TURU taşır ({@code round} = "r" + send_count — inceleme 2026-10-18: gün taşıyınca aynı turun
+     * yeniden denemesi bu PO'lara her gün yeni bir push yazıyordu). Aynı turun yeniden denemesinde çağıran, ulaşılan PO'ları
+     * listeden zaten çıkarır; çıkış kutusunun anahtar × kullanıcı tekilliği ikinci güvence.
      *
      * @return push'u kuyruğa alınan onaylayıcıların kimlikleri (boş = kimseye push ulaşmadı). Çağıran talebi PO BAŞINA
      *         karara bağlar: postası ya da push'u ulaşan PO ulaşılmış sayılır (inceleme 2026-10-18 — tek PO'ya giden push
      *         postası başarısız diğer PO'ların ertesi gün yeniden denenmesini engellememeli)
      */
     public Set<Long> approvalReminder(Ctx c, List<TechErrorApprovalService.Approver> approvers, Long requesterId, String requesterName,
-                                      long waitingDays, Instant requestedAt, String today) {
+                                      long waitingDays, Instant requestedAt, String round) {
         if (!ready(c, TechErrorReportSettings.KEY_PUSH_APPROVAL_REMINDER)) return Set.of();
         try {
             List<AppUser> people = approverUsers(approvers, requesterId);
             if (people.isEmpty()) return Set.of();
             List<UserPushService.DirectRecipient> list = new ArrayList<>();
             for (AppUser u : people) list.add(direct(u));
-            String key = "te-appr-remind:" + c.reportId() + ":" + millis(requestedAt) + ":" + nz(today);
+            String key = "te-appr-remind:" + c.reportId() + ":" + millis(requestedAt) + ":" + nz(round);
             return queuedIds(people, enqueue(list, c, TRIGGER_APPROVAL_REMINDER, reminderText(c, waitingDays, nz(requesterName)), key));
         } catch (RuntimeException e) {
             log.warn("Teknik hata raporu #{} onay hatırlatması push'u kuyruğa alınamadı: {}", c.reportId(), e.toString());
@@ -267,9 +260,23 @@ public class TechErrorPushService {
                     rejectionText(c, true, decider, note, limit));
         }
         String code = sendState != null ? sendState : sendError == null ? "FAILED" : sendError;
-        String tr = HEAD_TR + c.subject(false) + " raporu " + approvedOutcome(code, false);
-        String en = HEAD_EN + c.subject(true) + " " + approvedOutcome(code, true);
-        return new UserPushService.LocalizedText(withBy(tr, " Onaylayan: ", decider, limit), withBy(en, " Approved by: ", decider, limit));
+        return new UserPushService.LocalizedText(approvedText(c, false, code, decider, limit), approvedText(c, true, code, decider, limit));
+    }
+
+    /**
+     * Onay metni, red yoluyla AYNI sırayla tavana sığdırılır (inceleme 2026-10-18, 2. tur: 60 karakterlik kanal adıyla SKIPPED /
+     * onay eskidi / PDF sırası dolu / PDF çok büyük cümleleri 206–222 karaktere çıkıyor, çıkış kutusu öneriyi kesiyordu):
+     * gövde (sonuç cümlesi + öneri) sığmıyorsa önce kanal adı kısalır (dönem kalır); imza tam → kısa ad → düşer.
+     */
+    static String approvedText(Ctx c, boolean en, String code, String decider, int limit) {
+        String body = approvedBody(c.subject(en), en, code);
+        int over = safeLength(body) - limit;
+        if (over > 0) body = approvedBody(shrunkSubject(c, en, over), en, code);
+        return withBy(body, en ? " Approved by: " : " Onaylayan: ", decider, limit);
+    }
+
+    private static String approvedBody(String subject, boolean en, String code) {
+        return en ? HEAD_EN + subject + " " + approvedOutcome(code, true) : HEAD_TR + subject + " raporu " + approvedOutcome(code, false);
     }
 
     /**
@@ -522,98 +529,11 @@ public class TechErrorPushService {
 
     /**
      * Serbest metindeki bağlantıları, e-posta adreslerini ve sunucu adlarını {@code placeholder} ile değiştirir (inceleme
-     * 2026-10-18: red notu kurum ağının DIŞINDAKİ push uygulamasına gider — "push metninde bağlantı yok" kuralı ve iç adres /
-     * sunucu adı sızmasın). DOĞRUSAL tarama, düzenli ifade YOK ("No unbounded loop, regex…"): metin boşlukla jetonlara
-     * ayrılır, her jeton baştaki / sondaki noktalama soyulup bir kez sınanır ({@link #linkLike}). En çok
-     * {@value #SCRUB_MAX_INPUT} girdi karakterine bakılır; sınıra taşan jeton yazılmaz (yarım adres sızmaz).
+     * 2026-10-18: red notu kurum ağının DIŞINDAKİ push uygulamasına gider). Kurallar, son ek / uzantı listeleri ve sınırlar tek
+     * yerde: {@link TechErrorPushLinkScrubber} (doğrusal tarama, düzenli ifade yok).
      */
     static String scrubLinks(String s, String placeholder) {
-        if (s == null || s.isEmpty()) return "";
-        int n = s.length();
-        int end = Math.min(n, SCRUB_MAX_INPUT);
-        StringBuilder out = new StringBuilder(Math.min(n, SCRUB_MAX_INPUT) + 16);
-        int i = 0;
-        while (i < end) {
-            char ch = s.charAt(i);
-            if (Character.isWhitespace(ch)) {
-                out.append(ch);
-                i++;
-                continue;
-            }
-            int j = i;
-            while (j < end && !Character.isWhitespace(s.charAt(j))) j++;
-            if (j == end && end < n && !Character.isWhitespace(s.charAt(end))) break;   // sınıra taşan jeton: hiç yazılmaz
-            int a = i;
-            int b = j;
-            while (a < b && LEAD_PUNCT.indexOf(s.charAt(a)) >= 0) a++;
-            while (b > a && TRAIL_PUNCT.indexOf(s.charAt(b - 1)) >= 0) b--;
-            if (a < b && linkLike(s.substring(a, b))) out.append(s, i, a).append(placeholder).append(s, b, j);
-            else out.append(s, i, j);
-            i = j;
-        }
-        return out.toString();
-    }
-
-    private static final String LEAD_PUNCT = "([{<\"'«‘“";
-    private static final String TRAIL_PUNCT = ")]}>\"'».,;:!?…’”";
-
-    /** Jeton bağlantı / adres / sunucu adı mı — yalnız indeks taramaları (her biri jeton boyunda doğrusal). */
-    static boolean linkLike(String t) {
-        String low = t.toLowerCase(Locale.ROOT);
-        if (low.contains("://") || low.startsWith("www.") || low.startsWith("\\\\") || low.startsWith("mailto:")) return true;
-        int at = low.indexOf('@');
-        if (at > 0 && at < low.length() - 1 && Character.isLetterOrDigit(low.charAt(at + 1))) return true;   // ad@alan (iç adres de)
-        // Sunucu adı: yol / sorgu / parça ve bağlantı noktası (yalnız rakam) soyulur
-        int cut = low.length();
-        for (int k = 0; k < low.length(); k++) {
-            char ch = low.charAt(k);
-            if (ch == '/' || ch == '?' || ch == '#') { cut = k; break; }
-        }
-        boolean tail = cut < low.length();
-        String host = low.substring(0, cut);
-        int colon = host.lastIndexOf(':');
-        if (colon > 0 && colon < host.length() - 1 && allDigits(host, colon + 1, host.length())) {
-            host = host.substring(0, colon);
-            tail = true;
-        }
-        if ("localhost".equals(host)) return tail;
-        return hostLike(host, tail);
-    }
-
-    /** Noktalı ad: IPv4; ya da geçerli etiketler + harfli son ek (kurum içi son ek, 3+ etiket ya da yaygın son ek / yol ile). */
-    private static boolean hostLike(String host, boolean tail) {
-        if (host.isEmpty() || host.charAt(0) == '.' || host.charAt(host.length() - 1) == '.') return false;
-        int labels = 0;
-        boolean allNumeric = true;
-        int start = 0;
-        String last = "";
-        for (int k = 0; k <= host.length(); k++) {
-            if (k < host.length() && host.charAt(k) != '.') continue;
-            int len = k - start;
-            if (len < 1 || len > 63) return false;
-            boolean digits = allDigits(host, start, k);
-            for (int m = start; m < k; m++) {
-                char ch = host.charAt(m);
-                if (!Character.isLetterOrDigit(ch) && ch != '-') return false;
-            }
-            if (host.charAt(start) == '-' || host.charAt(k - 1) == '-') return false;
-            if (!digits || len > 3) allNumeric = false;
-            labels++;
-            last = host.substring(start, k);
-            start = k + 1;
-        }
-        if (labels < 2) return false;
-        if (allNumeric) return labels == 4;                                        // IPv4
-        boolean letters = last.length() >= 2;
-        for (int m = 0; m < last.length() && letters; m++) letters = Character.isLetter(last.charAt(m));
-        if (!letters) return false;                                                // sürüm / sayı (v1.2, 1.250.000)
-        return INTERNAL_SUFFIXES.contains(last) || labels >= 3 || COMMON_TLDS.contains(last) || tail;
-    }
-
-    private static boolean allDigits(String s, int from, int to) {
-        if (from >= to) return false;
-        for (int k = from; k < to; k++) if (!Character.isDigit(s.charAt(k))) return false;
-        return true;
+        return TechErrorPushLinkScrubber.scrub(s, placeholder);
     }
 
     /** Notun ilk {@value #NOTE_CHARS} karakteri, satır sonları boşluğa (push tek satır okunur). */

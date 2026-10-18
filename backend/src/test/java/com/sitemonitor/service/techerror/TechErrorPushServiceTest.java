@@ -307,6 +307,38 @@ class TechErrorPushServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): 60 karakterlik kanal + 68 karakterlik AD adıyla HER onay sonucu TR + EN tavana (200) kesilmeden sığar — sonuç cümlesi ve öneri tam, dönem görünür; sığmayan önce imza düşer / kısalır, sonra kanal adı kısalır")
+    void approvedOutcomesFitWithLongNames() {
+        String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
+        TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L,
+                "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması", 2026, 9);
+        assertThat(longCh.channelName().length()).isGreaterThanOrEqualTo(60);
+        assertThat(adName.length()).isGreaterThanOrEqualTo(68);
+        for (String code : List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
+                "PDF_TOO_LARGE", "MAIL_FAILED", "EXEC_RECIPIENTS_MISSING")) {
+            boolean state = List.of("SENT", "QUEUED", "SKIPPED", "FAILED").contains(code);
+            for (TechErrorPushService.Ctx ctx : List.of(CTX, longCh)) {
+                UserPushService.LocalizedText t = TechErrorPushService.decisionText(ctx, true, adName, null, state ? code : null, state ? null : code);
+                for (boolean en : new boolean[] { false, true }) {
+                    String s = en ? t.en() : t.tr();
+                    String shown = PushText.truncate(PushText.pushSafe(s), 200);
+                    assertThat(shown).as(code + " " + en + ": " + s).isEqualTo(s);
+                    assertThat(s.length()).as(code).isLessThanOrEqualTo(200);
+                    assertThat(s).as(code).contains(TechErrorPushService.approvedOutcome(code, en))
+                            .contains(en ? "September 2026" : "Eylül 2026");
+                    // İmza ya hiç yok ya TAM (yarım "Onaylayan: Ayşe Yılmaz Kaya (Dijital Kan..." asla)
+                    assertThat(s.endsWith(".")).as(code).isTrue();
+                }
+            }
+            // Kısa kanal adı kısalmaz
+            assertThat(TechErrorPushService.decisionText(CTX, true, adName, null, state ? code : null, state ? null : code).tr())
+                    .as(code).contains("Mobil Bankacılık Eylül 2026");
+        }
+        // SENT ve kısa adla tam imza
+        assertThat(TechErrorPushService.decisionText(CTX, true, "PO Bir", null, "SENT", null).tr()).endsWith("Onaylayan: PO Bir.");
+    }
+
+    @Test
     @DisplayName("inceleme 2026-10-18: red notu İMZADAN ÖNCE — 60+ karakterlik gerçek AD adıyla, push tavanı (200) uygulandıktan sonra notun ilk 120 karakteri kalır (kısa not tam); ad sığmazsa kısalır ya da düşer; TR + EN")
     void rejectionNoteSurvivesTheCap() {
         String adName = "Ayşe Yılmaz Kaya (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
@@ -373,6 +405,42 @@ class TechErrorPushServiceTest {
         directCalls(1, text, key, TechErrorPushService.TRIGGER_DECISION);
         assertThat(text.getValue().tr()).contains("Not: Düzeltin: [bağlantı] ve [bağlantı]").doesNotContain("wiki").doesNotContain("@");
         assertThat(text.getValue().en()).contains("Note: Düzeltin: [link] ve [link]").doesNotContain("corp.local");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): Türkçe ekli / büyük harfli / virgülle bitişik / NBSP ve tireli / yollu / portlu / IPv6 adresler ayıklanır; dosya adı, cümle sınırı, numaralı madde, bilinmeyen son ek DEĞİŞMEZ")
+    void noteScrubTurkishFormsBothWays() {
+        String ph = TechErrorPushService.LINK_TR;
+        Map<String, String> leaks = new java.util.LinkedHashMap<>();
+        leaks.put("srv01.corp.local'a bakın", "[bağlantı]'a bakın");
+        leaks.put("10.20.30.40'ta duruyor", "[bağlantı]'ta duruyor");
+        leaks.put("portal.kurum.com.tr'de", "[bağlantı]'de");
+        leaks.put("jira.corp.local’da kayıt", "[bağlantı]’da kayıt");
+        leaks.put("İNTRANET.KURUM.LOCAL adresi", "[bağlantı] adresi");
+        leaks.put("a.corp.local,b.corp.local;c.kurum.com.tr", "[bağlantı],[bağlantı];[bağlantı]");
+        leaks.put("srv01.corp.local üzerinde", "[bağlantı] üzerinde");
+        leaks.put("srv01.corp.local—ayrıntı", "[bağlantı]—ayrıntı");
+        leaks.put("app.kurum.local–kapalı", "[bağlantı]–kapalı");
+        leaks.put("bkz. intranet/abc", "bkz. [bağlantı]");
+        leaks.put("portal.kurum/rapor", "[bağlantı]");
+        leaks.put("srv01:8080 kapalı", "[bağlantı] kapalı");
+        leaks.put("fe80::1 ve 2001:db8::8a2e:370:7334", "[bağlantı] ve [bağlantı]");
+        leaks.put("[2001:db8::1]:8443", "[bağlantı]");
+        leaks.put("https://wiki.corp.local/x'te", "[bağlantı]'te");
+        leaks.put("Jira.corp.local", "[bağlantı]");
+        for (Map.Entry<String, String> e : leaks.entrySet()) {
+            assertThat(TechErrorPushService.scrubLinks(e.getKey(), ph)).as(e.getKey()).isEqualTo(e.getValue());
+        }
+        // Normal metin aynen kalır
+        List<String> keep = List.of("rapor.v2.pdf", "config.app.json", "Ekler: tablo.xlsx, notlar.txt, liste.csv, karar.docx, ekran.png",
+                "Sorun devam ediyor.Test ortamı da etkilendi", "Kapandı.Site çalışıyor", "Sorun giderildi.Online işlemler açık",
+                "Madde 2.test aşaması", "main.co", "ve/veya", "Toplam:120", "saat 10:30:00", "Not:5", "Site Monitor'de",
+                "Tablo eksik. v1.2 1.250.000 e.g. A.Ş. eksik.Ama Tablo.Özet saat 10:30 %0,5 @ali 3.5", "TR/EN — Ağustos/Eylül");
+        for (String k : keep) assertThat(TechErrorPushService.scrubLinks(k, ph)).as(k).isEqualTo(k);
+        // EN yer tutucu
+        assertThat(TechErrorPushService.scrubLinks("srv01.corp.local'a", TechErrorPushService.LINK_EN)).isEqualTo("[link]'a");
+        // ASCII küçültme indeksleri korur ("İ" birleşik nokta almaz)
+        assertThat(TechErrorPushLinkScrubber.asciiLower("İNTRANET")).isEqualTo("İntranet");
     }
 
     @Test

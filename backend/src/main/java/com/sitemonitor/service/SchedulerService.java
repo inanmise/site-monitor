@@ -1814,6 +1814,9 @@ public class SchedulerService {
         // (NULL = sütundan önceki sürüm / eski pod — 20.153–20.156 mailed_at'ı damgalıyordu ama ayırt edilemez: damgasız NULL'da
         // postanın ulaşıp ulaşmadığı bilinmez sayılır, hatırlatma bilerek nötr metin kullanır).
         patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN mail_tracked BOOLEAN");
+        // Hatırlatma turunun ulaştığı onaylayıcılar + deneme sayısı (inceleme 2026-10-18) — TechErrorReminder.reachedIds
+        // (NULL = kayıt yok; yalnız koşullu bırakma yazar). Varsayılansız nullable kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE tech_error_reminders ADD COLUMN reached_ids VARCHAR(4000)");
 
         // Kanal başına gönderim günlüğü (2026-10-18, R18 / E22): teknik hata raporu satırlarının kanal / rapor bağı —
         // NotificationLog.techErrorChannelId / techErrorReportId (NULL = bağsız; eski satırlar günlükte görünmez). Varsayılansız

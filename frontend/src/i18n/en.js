@@ -21060,6 +21060,7 @@ export const EN = {
   'te.slog.reason.APPROVAL_STALE': "Not sent because the report changed after the approval; it needs approval again.",
   'te.slog.reason.SMTP_FAILED': "The mail server didn't accept the message or couldn't be reached. Try again; if it keeps happening, tell a system administrator (details are in the server log).",
   'te.slog.reason.INTERNAL_ERROR': "The send stopped inside the application; the mail may not have gone out. Try again; if it keeps happening, tell a system administrator.",
+  'te.slog.reason.RETRIES_EXHAUSTED': "The reminder did not reach this recipient in 3 tries and won't be retried this round. Check the recipient's e-mail address.",
   'te.slog.reason.SKIPPED_OTHER': "The send was skipped; no mail went out.",
   'te.slog.reason.UNKNOWN': "The result of this attempt never arrived (it wasn't recorded, or the mail server's retry didn't report back); if the report still shows as queued, send it again.",
   'te.slog.hiddenTitle': "Recipient addresses hidden",
