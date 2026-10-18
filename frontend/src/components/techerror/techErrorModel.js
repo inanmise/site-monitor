@@ -207,68 +207,97 @@ function roundDigits({ int, frac }, scale) {
   return { int: i, frac: f.slice(0, end) }
 }
 
-/** Tam kısmı binlik gruplarına ayırır (döngüyle — basamak dizisi kısa). */
-function groupDigits(int, sep) {
-  let out = ''
-  for (let k = 0; k < int.length; k++) {
-    if (k > 0 && (int.length - k) % 3 === 0) out += sep
-    out += int[k]
-  }
-  return out
+/**
+ * Basamakları dilin ondalık ayracıyla birleştirir — binlik GRUPLAMASI YOK (inceleme 2026-10-18: harften önceki gruplanmış
+ * kısım "4.400M" geri okununca 4,4 milyon olurdu).
+ */
+function joinDigits({ int, frac }, lang) {
+  return frac ? `${int}${lang === 'en' ? '.' : ','}${frac}` : int
 }
 
-function joinDigits({ int, frac }, lang, grouping) {
-  const en = lang === 'en'
-  const g = grouping ? groupDigits(int, en ? ',' : '.') : int
-  return frac ? `${g}${en ? '.' : ','}${frac}` : g
+/** Kısaltmalı yazımın en çok ondalık hanesi (TechErrorFormat.ABBREV_MAX_DECIMALS). */
+export const ABBREV_MAX_DECIMALS = 6
+
+/**
+ * Değer bu üsle kısaltılabilir mi — sunucudaki TechErrorFormat.abbreviable ile AYNI: geçerli üs, sonlu değer ve 10^exp ile
+ * kaydırılan değer en çok 6 ondalıkla TAM (yuvarlamasız). "4,123456789G" kısaltmasıyla saklanmaz / gösterilmez (inceleme
+ * 2026-10-18: 6 haneye yuvarlanınca 4.123.457.000 görünüyor, sonraki düzenleme yuvarlanmış değeri kaydediyordu).
+ */
+export function abbreviable(n, exp) {
+  if (!ABBREV_LETTER[exp] || n == null || n === '' || !Number.isFinite(Number(n))) return false
+  const { frac } = shiftedDigits(Math.abs(Number(n)) + 0, exp)
+  let end = frac.length
+  while (end > 0 && frac[end - 1] === '0') end--
+  return end <= ABBREV_MAX_DECIMALS
 }
 
 /**
  * Kısaltmayla girilmiş sayının gösterimi — sunucudaki TechErrorFormat.abbreviated ile AYNI (ortak doğruluk tablosu
- * TechErrorNumberDisplayTest.ABBREV_TABLE): değer 10^exp ile ondalık gösterimde kaydırılır, en çok 6 ondalık yarım yukarı,
- * sondaki sıfırlar düşer, binlik gruplaması dilin biçiminde, harf (k / M / G / T) eklenir, boşluk yok — 4.400.000.000 / 9 →
- * TR "4,4G", EN "4.4G". `grouping: false`: GİRİŞ kutusunun metni ("4400M" — "4.400M" geri okununca 4,4 milyon olurdu:
- * sonekten önceki tek ayraç ondalıktır). Geçersiz üs → tam sayı biçimi.
+ * TechErrorNumberDisplayTest.ABBREV_TABLE): değer 10^exp ile ondalık gösterimde kaydırılır, sondaki sıfırlar düşer, harf
+ * (k / M / G / T) eklenir, boşluk yok — 4.400.000.000 / 9 → TR "4,4G", EN "4.4G". Sonekten önceki kısım HİÇ GRUPLANMAZ
+ * (inceleme 2026-10-18): "4.400M" düzenleyicide geri okununca 4,4 milyon olurdu (sonekten önceki tek ayraç ondalıktır) — PDF'ten
+ * / ipucundan kopyalayan 1000 kat küçük değer girerdi; gruplamasız metin İKİ dilde de aynı sayıya döner. Kaydırılan değer 6
+ * ondalığa sığmıyorsa (`abbreviable`) tam sayı biçimi; geçersiz üs → tam sayı biçimi.
  */
-export function formatAbbreviated(n, exp, lang, { grouping = true } = {}) {
+export function formatAbbreviated(n, exp, lang) {
   if (n == null || n === '' || !Number.isFinite(Number(n))) return '—'
   const letter = ABBREV_LETTER[exp]
-  if (!letter) return formatNumber(n, lang)
+  if (!letter || !abbreviable(n, exp)) return formatNumber(n, lang)
   const x = Number(n) + 0
-  const d = roundDigits(shiftedDigits(x, exp), 6)
+  const d = roundDigits(shiftedDigits(x, exp), ABBREV_MAX_DECIMALS)
   const zero = d.int === '0' && d.frac === ''
-  return `${x < 0 && !zero ? '-' : ''}${joinDigits(d, lang, grouping)}${letter}`
+  return `${x < 0 && !zero ? '-' : ''}${joinDigits(d, lang)}${letter}`
 }
 
 /**
  * Farkın kısa yazımı — sunucudaki TechErrorFormat.compactQlik ile AYNI: 1000'in altı tam (en çok 2 ondalık), üstü büyüklüğe
- * göre k / M / G / T, en çok 2 ondalık yarım yukarı; yuvarlanınca 1000 olan bir üst birime geçer. `a` ≥ 0.
+ * göre k / M / G / T, en çok 2 ondalık yarım yukarı; yuvarlanınca 1000 olan bir üst birime geçer. Harften önceki kısım
+ * gruplanmaz ("2000T" — formatAbbreviated ile aynı kural). `a` ≥ 0.
  */
 export function compactQlik(a, lang) {
   const v = Math.abs(Number(a)) + 0
   const small = roundDigits(shiftedDigits(v, 0), 2)
-  if (small.int.length < 4) return joinDigits(small, lang, true)
+  if (small.int.length < 4) return joinDigits(small, lang)
   let exp = v < 1e6 ? 3 : v < 1e9 ? 6 : v < 1e12 ? 9 : 12
   let d = roundDigits(shiftedDigits(v, exp), 2)
   if (d.int.length >= 4 && exp < 12) {
     exp += 3
     d = roundDigits(shiftedDigits(v, exp), 2)
   }
-  return `${joinDigits(d, lang, true)}${ABBREV_LETTER[exp]}`
+  return `${joinDigits(d, lang)}${ABBREV_LETTER[exp]}`
 }
 
 /**
- * Sıfır adedin yanına yeşil yuvarlak tik konur mu — sunucudaki TechErrorFormat.zeroOk ile AYNI (ortak doğruluk tablosu
- * TechErrorNumberDisplayTest.ZERO_TABLE): yalnız SAYI alanı, otomatik hesap yok, "daha iyi" yönü `higher` değil, değer tam 0
- * (sayı türünde — boş / bilinmeyen 0 DEĞİLDİR). Muaf alan çağıranın işi (muaf alan çizilmez).
+ * Sıfır adedin yanına yeşil yuvarlak tik konur mu — sunucudaki TechErrorFormat.zeroOk ile AYNI (ortak doğruluk tabloları
+ * TechErrorNumberDisplayTest.ZERO_TABLE + RATE_BASE_TABLE): yalnız SAYI alanı, otomatik hesap yok, "daha iyi" yönü `higher`
+ * değil, değer tam 0 (sayı türünde — boş / bilinmeyen 0 DEĞİLDİR) ve — şablonun alanları `fields` verildiyse — alan yalnız
+ * ORAN TABANI değil (`rateBaseOnly`; inceleme 2026-10-18: "toplam işlem 0" veri yok demektir). Muaf alan çağıranın işi (muaf
+ * alan çizilmez). Anomali konusunun adedinde işaret YOK (2026-10-18 kararı: PDF / e-posta da çizmiyordu).
  */
-export function zeroOk(field, v) {
+export function zeroOk(field, v, fields = null) {
   if (!field || field.type !== 'number' || field.calc?.kind) return false
   if (effectiveBetter(field) === 'higher') return false
-  return zeroCount(v)
+  return zeroCount(v) && !rateBaseOnly(fields, field.id)
 }
 
-/** Anomali konusunun adedi tam 0 mı (TechErrorFormat.zeroCount) — yalnız sayı türü. */
+/**
+ * Alan yalnız oran TABANI mı — sunucudaki TechErrorFormat.rateBaseOnly ile AYNI: bir `ratio` hesabının paydası (`den`) ve
+ * hiçbir `ratio` hesabının payı (`num`) ya da çıkarılanı (`minus`) değil; `change` / `increase` hesabının `of`'u karara
+ * katılmaz (tabanın değişimi izlenir). `fields` yoksa false.
+ */
+export function rateBaseOnly(fields, id) {
+  if (!Array.isArray(fields) || id == null) return false
+  let den = false
+  for (const x of fields) {
+    const c = x?.calc
+    if (!c || c.kind !== 'ratio') continue
+    if (c.num === id || c.minus === id) return false
+    if (c.den === id) den = true
+  }
+  return den
+}
+
+/** Değer tam 0 mı (TechErrorFormat.zeroCount) — yalnız sayı türü. */
 export function zeroCount(v) {
   return typeof v === 'number' && Number.isFinite(v) && v === 0
 }
@@ -1483,32 +1512,38 @@ export function canonicalValues(v, template = null) {
   const units = {}
   for (const [k, e] of Object.entries(v?.units || {})) {
     if (!UNIT_EXPONENTS.includes(e)) continue
-    if (unitPlaceHasValue(k, out, template)) units[k] = e
+    const n = unitPlaceValue(k, out, template)
+    // Kaydırılınca 6 ondalığa sığmayan değerin üssü sunucuda da saklanmaz (TechErrorValues.units — inceleme 2026-10-18)
+    if (n != null && abbreviable(n, e)) units[k] = e
   }
   if (Object.keys(units).length) out.units = units
   return out
 }
 
-/** Kısaltma anahtarının gösterdiği yerde sayı değer var mı (kanonik belgede; şablon verildiyse tür de denetlenir)? */
-function unitPlaceHasValue(key, out, template) {
+/**
+ * Kısaltma anahtarının gösterdiği yerdeki sayı değer (kanonik belgede; şablon verildiyse tür de denetlenir); sayı yoksa
+ * null.
+ */
+function unitPlaceValue(key, out, template) {
+  const num = (x) => (typeof x === 'number' ? x : null)
   const parts = String(key).split('.')
   if (parts[0] === 'issues' && parts.length === 4) {
-    if (parts[3] !== 'customers' && parts[3] !== 'errors') return false
-    if (template && !(template.sections || []).some((s) => s.id === parts[1] && s.kind === 'issues')) return false
+    if (parts[3] !== 'customers' && parts[3] !== 'errors') return null
+    if (template && !(template.sections || []).some((s) => s.id === parts[1] && s.kind === 'issues')) return null
     const iss = (out.issues[parts[1]] || []).find((i) => i?.id === parts[2])
-    return typeof iss?.[parts[3]] === 'number'
+    return num(iss?.[parts[3]])
   }
   if (parts[0] === 'tables' && parts.length === 4) {
     if (template) {
       const s = (template.sections || []).find((x) => x.id === parts[1] && x.kind === 'table')
-      if (!s || !(s.rows || []).some((r) => r.id === parts[2])) return false
-      if (!(s.columns || []).some((c) => c.id === parts[3] && c.type === 'number')) return false
+      if (!s || !(s.rows || []).some((r) => r.id === parts[2])) return null
+      if (!(s.columns || []).some((c) => c.id === parts[3] && c.type === 'number')) return null
     }
-    return typeof out.tables?.[parts[1]]?.[parts[2]]?.[parts[3]] === 'number'
+    return num(out.tables?.[parts[1]]?.[parts[2]]?.[parts[3]])
   }
-  if (parts.length !== 1) return false
-  if (template && !allFields(template).some((f) => f.id === key && f.type === 'number' && !f.calc?.kind)) return false
-  return typeof out.fields[key] === 'number'
+  if (parts.length !== 1) return null
+  if (template && !allFields(template).some((f) => f.id === key && f.type === 'number' && !f.calc?.kind)) return null
+  return num(out.fields[key])
 }
 
 /** Şablonun karşılaştırma hâli: boş isteğe bağlı metinler (ipucu vb.) "yok" ile aynı sayılır. */
@@ -1837,7 +1872,8 @@ export function summaryTiles(template, section, fields, targets, previous, chann
   const out = []
   if (!template || !section || !(section.tiles || []).length) return out
   const lang = template.lang
-  const byId = new Map(allFields(template).map((f) => [f.id, f]))
+  const tplFields = allFields(template)
+  const byId = new Map(tplFields.map((f) => [f.id, f]))
   for (const id of section.tiles) {
     if (out.length >= LIMITS.tiles) break
     const f = byId.get(id)
@@ -1863,7 +1899,7 @@ export function summaryTiles(template, section, fields, targets, previous, chann
       else tone = (d.dir === 'up') === (better === 'higher') ? 'good' : 'bad'
     }
     out.push({ id, label, value, delta: d ? d.text : null, dir: d ? d.dir : null, tone,
-      target: target == null ? null : formatPercent(target, lang), met, zero: zeroOk(f, cur) })
+      target: target == null ? null : formatPercent(target, lang), met, zero: zeroOk(f, cur, tplFields) })
   }
   return out
 }
@@ -2012,7 +2048,10 @@ export function compactNumber(value, type, lang) {
     u += 1
     scaled = v / 1000 ** (u + 1)
   }
-  return fmt(scaled, Math.abs(scaled) < 100 ? 1 : 0) + units[u]
+  // Harften önceki kısım gruplanmaz (inceleme 2026-10-18 — "1250T", formatAbbreviated ile aynı kural)
+  const digits = Math.abs(scaled) < 100 ? 1 : 0
+  return new Intl.NumberFormat(en ? 'en-US' : 'tr-TR', { maximumFractionDigits: digits, roundingMode: 'halfExpand', useGrouping: false })
+    .format(scaled) + units[u]
 }
 
 /**

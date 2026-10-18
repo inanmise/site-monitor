@@ -1,11 +1,13 @@
 package com.sitemonitor.service.techerror;
 
 import com.sitemonitor.service.techerror.TechErrorTemplate.Field;
+import com.sitemonitor.service.techerror.TechErrorTemplate.Template;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -157,18 +159,35 @@ public final class TechErrorFormat {
         return exp != null && letter(exp) != null;
     }
 
+    /** Kısaltmalı yazımın en çok ondalık hanesi (fazlası tam sayıya döner — {@link #abbreviable}). */
+    public static final int ABBREV_MAX_DECIMALS = 6;
+
     /**
      * Kısaltmayla girilmiş sayının gösterimi: değer 10^{@code exp} ile KAYDIRILIR (ondalık gösterimde — kayan nokta bölmesi
-     * yok), en çok 6 ondalık yarım yukarı, sondaki sıfırlar düşer, binlik gruplaması {@link #number} gibi, harf eklenir,
-     * boşluk yok: 4.400.000.000 / 9 → TR "4,4G", EN "4.4G"; 1.250.000.000.000 / 9 → "1.250G". Yazılan rakam böylece aynen
-     * geri gelir ("4.40G" → "4,4G"). Geçersiz üs → tam sayı. İstemci aynası: {@code techErrorModel.formatAbbreviated} (ortak
+     * yok), sondaki sıfırlar düşer, harf eklenir, boşluk yok: 4.400.000.000 / 9 → TR "4,4G", EN "4.4G"; 1.250.000.000.000 / 9
+     * → "1250G". Yazılan rakam böylece aynen geri gelir ("4.40G" → "4,4G"). Sonekten önceki kısım HİÇ GRUPLANMAZ (inceleme
+     * 2026-10-18): "4.400M" düzenleyicide geri okununca 4,4 milyon olurdu (sonekten önceki tek ayraç ondalıktır) — PDF'ten /
+     * ipucundan kopyalayan kullanıcı 1000 kat küçük değer girerdi; gruplamasız metin iki dilde de aynı sayıya döner. Kaydırılan
+     * değer en çok {@link #ABBREV_MAX_DECIMALS} ondalıkla tam ifade edilemiyorsa ("4,123456789G") TAM sayı basılır — yuvarlanmış
+     * kısaltma değeri değiştirirdi. Geçersiz üs → tam sayı. İstemci aynası: {@code techErrorModel.formatAbbreviated} (ortak
      * doğruluk tablosu {@code TechErrorNumberDisplayTest.ABBREV_TABLE}).
      */
     public static String abbreviated(double value, int exp, boolean en) {
         String l = letter(exp);
-        if (l == null || !Double.isFinite(value)) return number(value, en);
-        BigDecimal s = BigDecimal.valueOf(value).movePointLeft(exp).setScale(6, RoundingMode.HALF_UP).stripTrailingZeros();
-        return decimal(en, "#,##0.######").format(s) + l;
+        if (l == null || !abbreviable(value, exp)) return number(value, en);
+        BigDecimal s = BigDecimal.valueOf(value).movePointLeft(exp).stripTrailingZeros();
+        return decimal(en, "0.######").format(s) + l;
+    }
+
+    /**
+     * Değer bu üsle kısaltılabilir mi: geçerli üs, sonlu değer ve 10^{@code exp} ile kaydırılan değer en çok
+     * {@link #ABBREV_MAX_DECIMALS} ondalıkla TAM (yuvarlamasız) ifade ediliyor (inceleme 2026-10-18: "4,123456789G" 6 haneye
+     * yuvarlanınca 4.123.457.000 gösteriliyor, sonraki düzenleme yuvarlanmış değeri kaydediyordu). Sunucu böyle bir üssü
+     * saklamaz ({@link TechErrorValues#units}). İstemci aynası: {@code techErrorModel.abbreviable}.
+     */
+    public static boolean abbreviable(double value, int exp) {
+        if (letter(exp) == null || !Double.isFinite(value)) return false;
+        return BigDecimal.valueOf(value).movePointLeft(exp).stripTrailingZeros().scale() <= ABBREV_MAX_DECIMALS;
     }
 
     private static String numberOrAbbrev(double d, Integer unit, boolean en) {
@@ -180,7 +199,8 @@ public final class TechErrorFormat {
     /**
      * Farkın kısa yazımı (kısaltmalı değerin {@code {d:}} farkı ve kutucuk farkı): 1000'in altı tam (en çok 2 ondalık),
      * üstü büyüklüğe göre k / M / G / T, en çok 2 ondalık yarım yukarı; yuvarlanınca 1000 olan bir üst birime geçer
-     * ("999.999" → "1M", "1.000k" değil). {@code a} ≥ 0. İstemci aynası: {@code techErrorModel.compactQlik}.
+     * ("999.999" → "1M", "1.000k" değil). Harften önceki kısım gruplanmaz ("2000T" — {@link #abbreviated} ile aynı kural).
+     * {@code a} ≥ 0. İstemci aynası: {@code techErrorModel.compactQlik}.
      */
     public static String compactQlik(double a, boolean en) {
         BigDecimal v = BigDecimal.valueOf(Math.abs(a));
@@ -192,7 +212,7 @@ public final class TechErrorFormat {
             exp += 3;
             s = v.movePointLeft(exp).setScale(2, RoundingMode.HALF_UP);
         }
-        return decimal(en, "#,##0.##").format(s) + letter(exp);
+        return decimal(en, "0.##").format(s) + letter(exp);
     }
 
     // ── Sıfır işareti (2026-10-18) ───────────────────────────────────────────────────────────────────
@@ -200,9 +220,10 @@ public final class TechErrorFormat {
     /**
      * Sıfır adedin yanına yeşil yuvarlak tik konur mu (kullanıcı isteği: "0 adet gibi olursa 0 yanına yeşil yuvarlak tik")?
      * Yalnız SAYI (adet) alanında, değer tam 0 (bilinmeyen / boş değer 0 DEĞİLDİR) ve alanın "daha iyi" yönü {@code higher}
-     * değilse (ör. "toplam işlem 0" iyi değildir). Yüzde, evet/hayır, metin ve otomatik hesaplanan alanda hiç. Muaf alan
-     * çağıranın işi (muaf alan zaten çizilmez). İstemci aynası: {@code techErrorModel.zeroOk} (ortak doğruluk tablosu
-     * {@code TechErrorNumberDisplayTest.ZERO_TABLE}).
+     * değilse (ör. "başarılı işlem 0" iyi değildir). Yüzde, evet/hayır, metin ve otomatik hesaplanan alanda hiç. Muaf alan
+     * çağıranın işi (muaf alan zaten çizilmez). Anomali konusunun adedinde işaret YOK (inceleme 2026-10-18 kararı). Alan
+     * düzeyindeki kural; çizen yerler şablonu da veren {@link #zeroOk(Template, Field, Object)}'u çağırır. İstemci aynası:
+     * {@code techErrorModel.zeroOk} (ortak doğruluk tablosu {@code TechErrorNumberDisplayTest.ZERO_TABLE}).
      */
     public static boolean zeroOk(Field f, Object v) {
         if (f == null || !"number".equals(f.type()) || f.calc() != null) return false;
@@ -210,7 +231,36 @@ public final class TechErrorFormat {
         return zeroCount(v);
     }
 
-    /** Anomali konusunun adedi (müşteri / hata) tam 0 mı — yalnız sayı değer; boş / metin hayır. */
+    /**
+     * {@link #zeroOk(Field, Object)} + şablon kuralı (inceleme 2026-10-18, kullanıcı kararı): yalnız ORAN TABANI olarak
+     * kullanılan sayı alanı ({@link #rateBaseOnly}) işaretlenmez — "toplam işlem 0" iyi değil, veri yok demektir (varsayılan
+     * şablonun {@code total-tx} alanı yönsüz). Çizilen her yer (PDF, e-posta, kutucuk, düzenleyici) bunu çağırır. İstemci
+     * aynası: {@code techErrorModel.zeroOk(field, v, fields)} (ortak tablo {@code TechErrorNumberDisplayTest.RATE_BASE_TABLE}).
+     */
+    public static boolean zeroOk(Template t, Field f, Object v) {
+        return zeroOk(f, v) && !rateBaseOnly(t == null ? null : t.allFields(), f.id());
+    }
+
+    /**
+     * Alan yalnız oran TABANI mı: şablonda bir {@code ratio} hesabının paydası ({@code den}) ve hiçbir {@code ratio}
+     * hesabının payı ({@code num}) ya da çıkarılanı ({@code minus}) değil. {@code change} / {@code increase} hesabının
+     * {@code of} alanı karara katılmaz — tabanın kendisinin değişimi izlenir (varsayılan şablonda {@code total-tx}: hata
+     * oranlarının paydası, işlem artışının {@code of}'u → taban; {@code error-count} oranın payı, eşleme / kota oranlarının
+     * paydası → sayılan sorun, işaretlenir). Şablon yoksa false.
+     */
+    public static boolean rateBaseOnly(List<Field> fields, String id) {
+        if (fields == null || id == null) return false;
+        boolean den = false;
+        for (Field x : fields) {
+            TechErrorTemplate.Calc c = x.calc();
+            if (c == null || !"ratio".equals(c.kind())) continue;
+            if (id.equals(c.num()) || id.equals(c.minus())) return false;
+            if (id.equals(c.den())) den = true;
+        }
+        return den;
+    }
+
+    /** Değer tam 0 mı — yalnız sayı değer; boş / metin hayır ({@link #zeroOk} çekirdeği). */
     public static boolean zeroCount(Object v) {
         return v instanceof Number n && Double.isFinite(n.doubleValue()) && n.doubleValue() == 0;
     }
@@ -240,7 +290,8 @@ public final class TechErrorFormat {
             u++;
             scaled = d / Math.pow(1000, u + 1);
         }
-        return decimal(en, Math.abs(scaled) < 100 ? "#,##0.#" : "#,##0").format(BigDecimal.valueOf(scaled)) + units[u];
+        // Harften önceki kısım gruplanmaz (2026-10-18 inceleme — "1000T", {@link #abbreviated} ile aynı kural)
+        return decimal(en, Math.abs(scaled) < 100 ? "0.#" : "0").format(BigDecimal.valueOf(scaled)) + units[u];
     }
 
     private static DecimalFormat decimal(boolean en, String pattern) {

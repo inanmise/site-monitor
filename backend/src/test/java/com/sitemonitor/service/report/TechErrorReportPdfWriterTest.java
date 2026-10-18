@@ -1000,6 +1000,15 @@ class TechErrorReportPdfWriterTest {
         assertThat(total).isEqualTo(4);
         // Sıfırsız rapor: hiç işaret yok
         assertThat(zeroTicks(TechErrorReportPdfWriter.render(input("tr", Map.of()))).stream().mapToInt(List::size).sum()).isZero();
+        // İnceleme 2026-10-18: "toplam işlem 0" (yalnız oran tabanı) işaretlenmez — yalnız hata adedi (kutucuk + kart = 2)
+        Map<String, Object> z = new HashMap<>(Map.of("total-tx", 0, "error-count", 0, "unmapped-count", 3, "quota-count", 2));
+        TechErrorValues.Values zv = com.sitemonitor.service.techerror.TechErrorCalc.apply(t,
+                TechErrorValues.normalize(Map.of("fields", z), t), Map.of());
+        TechErrorPdfInput zin = new TechErrorPdfInput(t, zv, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        assertThat(zeroTicks(TechErrorReportPdfWriter.render(zin)).stream().mapToInt(List::size).sum()).isEqualTo(2);
+        String zhtml = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(zin,
+                com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(), null, "m.pdf").mail().html();
+        assertThat(zhtml.split("src=\"cid:" + com.sitemonitor.service.mail.TechErrorZeroMark.CID + "\"", -1).length - 1).isEqualTo(2);
         // E-posta: kısaltmalı değer, sıfır işareti görseli (alt metinli, ölçülü) ve TEK ek
         var built = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(in,
                 com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(), null, "m.pdf");

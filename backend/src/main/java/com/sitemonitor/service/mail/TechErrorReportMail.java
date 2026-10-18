@@ -398,7 +398,7 @@ public final class TechErrorReportMail {
                 String label = in.resolve(f.label());
                 Object v = vals.get(f.id());
                 String value = TechErrorFormat.value(f, v, lang, in.values().unit(f.id()));
-                boolean zero = TechErrorFormat.zeroOk(f, v);
+                boolean zero = TechErrorFormat.zeroOk(in.template(), f, v);
                 cells.add(new String[] { label, value, zero ? "zero" : null });
                 plain.append(label).append(": ").append(value).append(zero ? TechErrorZeroMark.plain(en) : "").append('\n');
             }

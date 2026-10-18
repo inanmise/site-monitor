@@ -228,7 +228,8 @@ class TechErrorValuesTest {
             assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5), "units", u), ut).units()).as(String.valueOf(bad)).isEmpty();
         }
         assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5), "units", List.of(9)), ut).units()).isEmpty();
-        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5), "units", Map.of("total", 9.0)), ut).units()).containsEntry("total", 9);
+        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 5_000_000_000L), "units", Map.of("total", 9.0)), ut).units())
+                .containsEntry("total", 9);
         // Kısaltmasız belge: anahtar hiç yazılmaz (önceki sürümle bayt bayt aynı JSON)
         Values plain = TechErrorValues.normalize(Map.of("fields", Map.of("total", 5)), ut);
         assertThat(TechErrorValues.toJson(plain)).isEqualTo("{\"fields\":{\"total\":5},\"issues\":{},\"texts\":{}}");
@@ -240,6 +241,28 @@ class TechErrorValuesTest {
         // Değeri silinen alanın üssü sahipsiz kalmaz (hesap sonrası alan haritası)
         assertThat(v.withFields(Map.of("rate", 0.42)).units()).doesNotContainKey("total").containsKeys("issues.iss.i-a.customers", "tables.tb.r1.n");
         assertThat(Values.empty().units()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: kaydırılınca 6 ondalığa sığmayan değerin üssü saklanmaz (gösterim yuvarlanmış sayı olurdu) — alan, anomali adedi, tablo hücresi")
+    void unitsDroppedWhenAbbreviationWouldRound() {
+        Template ut = unitTemplate();
+        Map<String, Object> issue = new java.util.LinkedHashMap<>(Map.of("id", "i-a", "topic", "A", "customers", 1_234_567, "errors", 1_234_567));
+        Map<String, Object> units = new java.util.LinkedHashMap<>();
+        units.put("total", 9);                                    // 4,123456789G: 9 ondalık → düşer
+        units.put("issues.iss.i-a.customers", 3);                 // 1234,567k: 3 ondalık → kalır
+        units.put("issues.iss.i-a.errors", 12);                   // 0,000001234567T → düşer
+        units.put("tables.tb.r1.n", 12);                          // 2500 / 10^12 → düşer
+        Map<String, Object> raw = Map.of("fields", Map.of("total", 4_123_456_789L), "issues", Map.of("iss", List.of(issue)),
+                "tables", Map.of("tb", Map.of("r1", Map.of("n", 2500))), "units", units);
+        Values v = TechErrorValues.normalize(raw, ut);
+        assertThat(v.units()).containsExactly(Map.entry("issues.iss.i-a.customers", 3));
+        assertThat(v.fields()).containsEntry("total", 4_123_456_789L);                  // sayının kendisi aynen
+        // Tam 6 ondalık sığar: 4123,456789M
+        assertThat(TechErrorValues.normalize(Map.of("fields", Map.of("total", 4_123_456_789L), "units", Map.of("total", 6)), ut).units())
+                .containsEntry("total", 6);
+        // Saklıdan okuma (önceki derlemeyle yazılmış satır) aynı süzgeç
+        assertThat(TechErrorValues.fromStored("{\"fields\":{\"total\":4123456789},\"units\":{\"total\":9}}", ut).units()).isEmpty();
     }
 
     private void assertInvalid(Map<String, Object> raw, String field) {

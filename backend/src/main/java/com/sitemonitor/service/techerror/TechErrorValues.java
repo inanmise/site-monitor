@@ -422,7 +422,8 @@ public final class TechErrorValues {
      * Kısaltmayla girilmiş sayıların üsleri (kullanıcı isteği 2026-10-18: "4.4G gibi bir giriş raporda da aynı şekilde
      * gözüksün"). Sayının KENDİSİ gerçektir; üs yalnız gösterim bilgisidir — bu yüzden katı okumada da geçersiz kayıt
      * (bilinmeyen anahtar, 3 / 6 / 9 / 12 dışı ya da tam sayı olmayan üs, metin, o yerde değer yok, sayı olmayan alan /
-     * sütun, otomatik hesaplanan alan) SESSİZCE düşer, 400 olmaz. Şablon sırasıyla dolaşılır: maliyet şablonla sınırlı
+     * sütun, otomatik hesaplanan alan, kaydırılınca 6 ondalığa sığmayan değer — "4,123456789G", inceleme 2026-10-18:
+     * kısaltma yuvarlanmış bir sayı gösterirdi) SESSİZCE düşer, 400 olmaz. Şablon sırasıyla dolaşılır: maliyet şablonla sınırlı
      * (istemcinin haritası ne kadar büyük olursa olsun). Değeri taşınmayan yerin üssü de taşınmaz ({@code carry}).
      */
     public static Map<String, Integer> units(Object raw, Template t, Map<String, Object> fields, Map<String, List<Issue>> issues,
@@ -431,15 +432,15 @@ public final class TechErrorValues {
         Map<String, Integer> out = new LinkedHashMap<>();
         for (Field f : t.allFields()) {
             if (!"number".equals(f.type()) || f.calc() != null) continue;
-            if (!(fields.get(f.id()) instanceof Number)) continue;
+            if (!(fields.get(f.id()) instanceof Number n)) continue;
             Integer e = exponent(ru.get(f.id()));
-            if (e != null) out.put(f.id(), e);
+            if (e != null && TechErrorFormat.abbreviable(n.doubleValue(), e)) out.put(f.id(), e);
         }
         for (Section s : t.sections()) {
             if ("issues".equals(s.kind())) {
                 for (Issue i : issues.getOrDefault(s.id(), List.of())) {
-                    if (i.customers() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "customers"));
-                    if (i.errors() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "errors"));
+                    if (i.customers() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "customers"), i.customers());
+                    if (i.errors() != null) put(out, ru, issueUnitKey(s.id(), i.id(), "errors"), i.errors());
                 }
             } else if ("table".equals(s.kind())) {
                 Map<String, Map<String, Object>> rows = tables.get(s.id());
@@ -448,7 +449,7 @@ public final class TechErrorValues {
                     Map<String, Object> cells = rows.get(r.id());
                     if (cells == null) continue;
                     for (TechErrorTemplate.Column c : s.columns()) {
-                        if ("number".equals(c.type()) && cells.get(c.id()) instanceof Number) put(out, ru, tableUnitKey(s.id(), r.id(), c.id()));
+                        if ("number".equals(c.type()) && cells.get(c.id()) instanceof Number n) put(out, ru, tableUnitKey(s.id(), r.id(), c.id()), n);
                     }
                 }
             }
@@ -461,9 +462,10 @@ public final class TechErrorValues {
         return units(raw, t, v.fields(), v.issues(), v.tables());
     }
 
-    private static void put(Map<String, Integer> out, Map<?, ?> raw, String key) {
+    /** Üs geçerliyse VE değer bu üsle tam yazılabiliyorsa ({@link TechErrorFormat#abbreviable}) saklanır. */
+    private static void put(Map<String, Integer> out, Map<?, ?> raw, String key, Number value) {
         Integer e = exponent(raw.get(key));
-        if (e != null) out.put(key, e);
+        if (e != null && TechErrorFormat.abbreviable(value.doubleValue(), e)) out.put(key, e);
     }
 
     /** Geçerli kısaltma üssü: tam sayı 3 / 6 / 9 / 12 (sayı türünde); değilse null. */

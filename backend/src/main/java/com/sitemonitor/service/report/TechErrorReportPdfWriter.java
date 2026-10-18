@@ -352,7 +352,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
                     Object v = vals.get(f.id());
                     String shown = TechErrorFormat.value(f, v, in.template().lang(), in.values().unit(f.id()));
                     // Sıfır adet (2026-10-18): değerin hemen sağında yeşil yuvarlak tik — yazıya binmez, değer ona yer bırakır
-                    boolean zero = TechErrorFormat.zeroOk(f, v);
+                    boolean zero = TechErrorFormat.zeroOk(in.template(), f, v);
                     float tick = zero ? ZERO_D + ZERO_GAP : 0;
                     float baseline = top - CARD_H + 9;
                     String clipped = c.clip(shown, w - 14 - tick, c.bold, 14f);

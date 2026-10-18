@@ -217,7 +217,8 @@ const CALC_REPORT = {
   previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 124900000 } },
 }
 // Kısaltılmış sayı + sıfır işareti (2026-10-18): kısaltmayla girilmiş toplam işlem ("4,4G" — units), sıfır kota hatası, sıfır
-// müşterili anomali konusu; özet kutucukları toplam + kota
+// müşterili anomali konusu (inceleme 2026-10-18: işaretsiz); özet kutucukları toplam + kota; geçen ay "4350M" (harften önce
+// gruplama yok — "4.350M" düzenleyicide 4,35 milyon okunurdu)
 const NUMDISP_TEMPLATE = {
   ...CALC_TEMPLATE,
   sections: [
@@ -235,7 +236,7 @@ const NUMDISP_REPORT = {
     issues: { issues: [{ id: 'i-a', topic: 'Kart Limiti Sorgulama Servisi ve Mobil Uygulama Giriş Akışı', title: '', title_auto: true,
       description: '', customers: 0, errors: 681600 }] }, texts: {},
     units: { 'total-tx': 9, 'issues.issues.i-a.errors': 3 } },
-  previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 4350000000 }, units: { 'total-tx': 9 } },
+  previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 4350000000 }, units: { 'total-tx': 6 } },
 }
 let reportOverride = null
 let templateOverride = null
@@ -1208,14 +1209,17 @@ for (const vp of VIEWPORTS) {
       // Saklı üs → giriş kutusu kısaltmasıyla (arayüz dilinde), altında tam sayı
       await expect(total).toHaveValue(/^(4,4G|4\.4G)$/, { timeout: 20_000 })
       await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-number-expanded"]')).toContainText(/4[.,]400[.,]000[.,]000/)
-      // Geçen ay ipucu geçen ayın kendi yazımıyla
-      await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-prev"]')).toContainText(/4[,.]35G/)
+      // Geçen ay ipucu geçen ayın kendi yazımıyla, harften önce gruplamasız (inceleme 2026-10-18)
+      const prevHint = editor.locator('[data-field="values.total-tx"] [data-slot="te-prev"]')
+      await expect(prevHint).toContainText('4350M')
+      await expect(prevHint).not.toContainText(/4[.,]350M/)
       // Anomali adedi de kısaltmasıyla
       await expect(editor.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true })).toHaveValue(/^(681,6k|681\.6k)$/)
-      // Sıfır adet: kota hatası ve etkilenen müşteri yanında yeşil tik (ekran okuyucuya metin); dolu adette yok
+      // Sıfır adet: kota hatası yanında yeşil tik (ekran okuyucuya metin); dolu adette ve anomali konusunun adedinde yok
       await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toBeVisible()
       await expect(editor.locator('[data-field="values.unmapped-count"] [data-slot="te-zero-ok"]')).toHaveCount(0)
-      await expect(editor.locator('[data-slot="te-issue"] [data-slot="te-zero-ok"]')).toHaveCount(1)
+      await expect(editor.getByLabel('Etkilenen müşteri sayısı', { exact: true })).toHaveValue('0')
+      await expect(editor.locator('[data-slot="te-issue"] [data-slot="te-zero-ok"]')).toHaveCount(0)
       await expect(editor.getByLabel('Kota hatası adedi', { exact: true })).toHaveAccessibleDescription(/(Sıfır — sorun yok|Zero — no issues)/)
       // Kutucuklar: kısaltmalı değer + kısa fark, sıfır kutucuğunda tik
       const tiles = editor.locator('[data-slot="te-tile"]')
@@ -1240,6 +1244,20 @@ for (const vp of VIEWPORTS) {
         const vb = await tile.locator('[data-slot="te-tile-value"]').boundingBox()
         expect(vb.x + vb.width).toBeLessThanOrEqual(tb.x + tb.width + 0.5)
       }
+      // İnceleme 2026-10-18: geçersiz yazımda ("0x") işaret hatanın yanında kalmaz; "0" ile geri gelir
+      const quota = editor.getByLabel('Kota hatası adedi', { exact: true })
+      await quota.fill('0x')
+      await expect(editor.locator('[data-field="values.quota-count"] [role="alert"]')).toBeVisible()
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await quota.fill('0')
+      await expect(editor.locator('[data-field="values.quota-count"] [data-slot="te-zero-ok"]')).toBeVisible()
+      // Yalnız oran tabanı (toplam işlem — hata oranının paydası) 0 iken işaretsiz; hata adedi (oranın payı) 0 iken işaretli
+      await total.fill('0')
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('0')
+      await expect(editor.locator('[data-field="values.error-count"] [data-slot="te-zero-ok"]')).toBeVisible()
+      await expect(editor.locator('[data-field="values.total-tx"] [data-slot="te-zero-ok"]')).toHaveCount(0)
+      await expect(tiles.filter({ hasText: 'Toplam işlem adedi' }).locator('[data-slot="te-zero-ok"]')).toHaveCount(0)
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('526806')
       // "4.4G" yazılır (iki dilde de ondalık: sonekten önceki tek ayraç) ve map adedi "1,25M"; kayıt üsleri gönderir
       await total.fill('4.4G')
       await editor.getByLabel('Map yapılmamış hata adedi', { exact: true }).fill('1,25M')

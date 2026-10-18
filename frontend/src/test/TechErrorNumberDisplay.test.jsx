@@ -4,7 +4,8 @@ import { channel, overview, reportResponse, openAllSections } from './helpers/te
 
 // Kısaltılmış sayı raporda da kısaltmasıyla + sıfır adet işareti (2026-10-18, kullanıcı istekleri): saklı üs ("units") giriş
 // kutusunda kısaltmalı metin olarak geri gelir, altında tam sayı; özet / kutucuk PDF'teki gibi; tam yazılan sayı üssü siler;
-// sıfır adetin yanında yeşil yuvarlak tik (sayı alanı, yönü "yüksek iyi" değil; anomali adedi), boş / yüzde / yüksek-iyi hayır.
+// sıfır adetin yanında yeşil yuvarlak tik (sayı alanı, yönü "yüksek iyi" değil, yalnız oran tabanı değil), boş / yüzde /
+// yüksek-iyi / anomali adedi hayır (inceleme 2026-10-18).
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
@@ -36,6 +37,8 @@ const TEMPLATE = {
       { id: 'unmapped-count', label: 'Map yapılmamış hata adedi', type: 'number' },
       { id: 'success-tx', label: 'Başarılı işlem adedi', type: 'number', better: 'higher' },
       { id: 'sla-rate', label: 'SLA oranı', type: 'percent' },
+      // Toplam işlem yalnız bu oranın PAYDASI → sıfırda işaretlenmez; kota adedi PAY → işaretlenir (inceleme 2026-10-18)
+      { id: 'quota-rate', label: 'Kota hatası oranı', type: 'percent', calc: { kind: 'ratio', num: 'quota-count', den: 'total-tx' } },
     ] },
     { id: 'issues', kind: 'issues', title: 'Konular', item_title: '{konu} Konusu', description_label: 'Açıklama',
       customers_label: 'Etkilenen müşteri sayısı', errors_label: 'Bu sorundan kaynaklı teknik hata adedi' },
@@ -122,7 +125,7 @@ describe('kısaltılmış sayı raporda da kısaltmasıyla', () => {
 })
 
 describe('sıfır adet işareti', () => {
-  it('sayı alanında tam 0 → yeşil tik + ekran okuyucu metni; boş, yüzde ve "yüksek iyi" alan işaretsiz; anomali adedi 0 işaretli', async () => {
+  it('sayı alanında tam 0 → yeşil tik + ekran okuyucu metni; boş, yüzde ve "yüksek iyi" alan işaretsiz; anomali adedi 0 işaretsiz', async () => {
     render(<TechErrorReportsPage />)
     await screen.findByRole('heading', { name: TITLE })
     const quota = screen.getByLabelText('Kota hatası adedi')
@@ -132,9 +135,11 @@ describe('sıfır adet işareti', () => {
     expect(field('unmapped-count').querySelector('[data-slot="te-zero-ok"]')).toBeNull()          // boş = bilinmiyor
     expect(field('success-tx').querySelector('[data-slot="te-zero-ok"]')).toBeNull()              // yüksek iyi
     expect(field('sla-rate').querySelector('[data-slot="te-zero-ok"]')).toBeNull()                // yüzde
+    // Anomali konusunun adedinde işaret yok (PDF / e-posta ile aynı — inceleme 2026-10-18 kararı)
     const issue = document.querySelector('[data-slot="te-issue"]')
-    expect(issue.querySelectorAll('[data-slot="te-zero-ok"]')).toHaveLength(1)
-    expect(screen.getByLabelText('Etkilenen müşteri sayısı')).toHaveAccessibleDescription(ZERO)
+    expect(screen.getByLabelText('Etkilenen müşteri sayısı')).toHaveValue('0')
+    expect(issue.querySelectorAll('[data-slot="te-zero-ok"]')).toHaveLength(0)
+    expect(screen.getByLabelText('Etkilenen müşteri sayısı')).not.toHaveAccessibleDescription(ZERO)
     // Kutucuk: sıfır kota işaretli, yüksek-iyi sıfır işaretsiz
     expect(document.querySelector('[data-tile="quota-count"] [data-slot="te-zero-ok"]')).not.toBeNull()
     expect(document.querySelector('[data-tile="success-tx"] [data-slot="te-zero-ok"]')).toBeNull()
@@ -143,5 +148,61 @@ describe('sıfır adet işareti', () => {
     await waitFor(() => expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).toBeNull())
     fireEvent.change(screen.getByLabelText('Map yapılmamış hata adedi'), { target: { value: '0' } })
     await waitFor(() => expect(field('unmapped-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull())
+  })
+
+  it('yalnız oran tabanı (toplam işlem — kota oranının paydası) 0 iken işaretsiz; payı olan kota adedi işaretli', async () => {
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.change(screen.getByLabelText('Toplam işlem adedi'), { target: { value: '0' } })
+    await waitFor(() => expect(screen.getByLabelText('Toplam işlem adedi')).toHaveValue('0'))
+    expect(field('total-tx').querySelector('[data-slot="te-zero-ok"]')).toBeNull()
+    expect(screen.getByLabelText('Toplam işlem adedi')).not.toHaveAccessibleDescription(ZERO)
+    expect(document.querySelector('[data-tile="total-tx"] [data-slot="te-zero-ok"]')).toBeNull()
+    expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull()
+    expect(document.querySelector('[data-tile="quota-count"] [data-slot="te-zero-ok"]')).not.toBeNull()
+  })
+
+  it('işaret yalnız ŞU ANKİ metin tam 0 ise: geçersiz ("0x") ya da yarım ("-") yazımda gider, düzeltilince geri gelir', async () => {
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    const quota = screen.getByLabelText('Kota hatası adedi')
+    expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull()
+    fireEvent.change(quota, { target: { value: '0x' } })
+    await waitFor(() => expect(field('quota-count').querySelector('[role="alert"]')).not.toBeNull())
+    expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).toBeNull()
+    expect(quota).not.toHaveAccessibleDescription(expect.stringContaining(ZERO))
+    fireEvent.change(quota, { target: { value: '-' } })
+    await waitFor(() => expect(field('quota-count').querySelector('[role="alert"]')).toBeNull())
+    expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).toBeNull()
+    fireEvent.change(quota, { target: { value: '0' } })
+    await waitFor(() => expect(field('quota-count').querySelector('[data-slot="te-zero-ok"]')).not.toBeNull())
+    expect(quota).toHaveAccessibleDescription(ZERO)
+  })
+})
+
+describe('6 ondalığa sığmayan kısaltma (inceleme 2026-10-18)', () => {
+  it('"4,123456789G" yazılırken metin korunur, altında tam sayı; kaydedilen belge üssüz (rapor tam sayıyı gösterir)', async () => {
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    const total = screen.getByLabelText('Toplam işlem adedi')
+    fireEvent.change(total, { target: { value: '4,123456789G' } })
+    await waitFor(() => expect(field('total-tx').querySelector('[data-slot="te-number-expanded"]')).toHaveTextContent('= 4.123.456.789'))
+    expect(total).toHaveValue('4,123456789G')
+    // Kutucuk ve özet tam sayıyı gösterir (yuvarlanmış "4,123457G" değil)
+    expect(document.querySelector('[data-slot="te-tile"][data-tile="total-tx"]')).toHaveTextContent('4.123.456.789')
+    expect(document.querySelector('[data-slot="te-tile"][data-tile="total-tx"]')).not.toHaveTextContent('4,123457G')
+    fireEvent.click(screen.getByRole('button', { name: /^(Kaydet|Save)$/ }))
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalled())
+    const sent = te().saveReport.mock.calls[0][1]
+    expect(sent.fields['total-tx']).toBe(4_123_456_789)
+    expect(sent.units || {}).not.toHaveProperty('total-tx')
+  })
+
+  it('saklı kısaltma 6 ondalığa sığmıyorsa (eski / elle yazılmış belge) kutu tam sayıyı gösterir', async () => {
+    te().report.mockResolvedValue(report({ values: { ...VALUES, fields: { ...VALUES.fields, 'total-tx': 4_123_456_789 } } }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(screen.getByLabelText('Toplam işlem adedi')).toHaveValue('4.123.456.789')
+    expect(document.querySelector('[data-slot="te-tile"][data-tile="total-tx"]')).toHaveTextContent('4.123.456.789')
   })
 })

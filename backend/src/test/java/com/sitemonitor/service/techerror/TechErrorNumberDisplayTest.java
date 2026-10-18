@@ -31,15 +31,20 @@ class TechErrorNumberDisplayTest {
             { "130100000", "6", "tr", "130,1M" },
             { "681600", "3", "tr", "681,6k" },
             { "681600", "3", "en", "681.6k" },
-            { "1250000000000", "9", "tr", "1.250G" },                 // binlik gruplaması number() gibi
-            { "1250000000000", "9", "en", "1,250G" },
-            { "4400000000", "6", "tr", "4.400M" },
+            { "1250000000000", "9", "tr", "1250G" },                  // harften önce gruplama YOK (inceleme 2026-10-18:
+            { "1250000000000", "9", "en", "1250G" },                  // "1.250G" düzenleyicide 1,25 milyar okunurdu)
+            { "4400000000", "6", "tr", "4400M" },
+            { "4400000000", "6", "en", "4400M" },
             { "0", "3", "tr", "0k" },
-            { "1234.5678", "3", "tr", "1,234568k" },                   // en çok 6 ondalık, yarım yukarı
+            { "1234567.891", "3", "tr", "1234,567891k" },              // tam 6 ondalık sığar
             { "2.5", "3", "tr", "0,0025k" },
-            { "1500000", "12", "tr", "0,000002T" },
-            { "999999999999999", "3", "en", "999,999,999,999.999k" },   // kayan nokta bölmesi yok: basamaklar aynen
-            { "1000000000000000", "12", "tr", "1.000T" },
+            { "999999999999999", "3", "en", "999999999999.999k" },      // kayan nokta bölmesi yok: basamaklar aynen
+            { "1000000000000000", "12", "tr", "1000T" },
+            { "4123456789", "6", "tr", "4123,456789M" },
+            { "4123456789", "9", "tr", "4.123.456.789" },              // 6 ondalığa sığmaz: yuvarlamak değeri değiştirirdi → tam sayı
+            { "4123456789", "9", "en", "4,123,456,789" },
+            { "1234.5678", "3", "tr", "1.234,5678" },                  // 1,2345678k → tam sayı
+            { "1500000", "12", "tr", "1.500.000" },                    // 0,0000015T → tam sayı
             { "2500000", "7", "tr", "2.500.000" },                     // geçersiz üs → tam sayı
     };
 
@@ -55,7 +60,7 @@ class TechErrorNumberDisplayTest {
             { "0.005", "tr", "0,01" },
             { "1250000000", "en", "1.25G" },
             { "250000", "tr", "250k" },
-            { "2000000000000000", "tr", "2.000T" },
+            { "2000000000000000", "tr", "2000T" },                    // harften önce gruplama yok
     };
 
     /**
@@ -66,7 +71,7 @@ class TechErrorNumberDisplayTest {
             { "number", "-", "-", "n:0", "true" },
             { "number", "lower", "-", "n:0", "true" },
             { "number", "none", "-", "n:0", "true" },
-            { "number", "higher", "-", "n:0", "false" },             // "toplam işlem 0" iyi değildir
+            { "number", "higher", "-", "n:0", "false" },             // "başarılı işlem 0" iyi değildir
             { "number", "-", "-", "n:0.0", "true" },
             { "number", "-", "-", "n:5", "false" },
             { "number", "-", "-", null, "false" },                     // bilinmeyen 0 değildir
@@ -76,6 +81,38 @@ class TechErrorNumberDisplayTest {
             { "percent", "lower", "-", "n:0", "false" },
             { "yesno", "-", "-", "b:false", "false" },
             { "text", "-", "-", "s:0", "false" },
+    };
+
+    /**
+     * Yalnız oran tabanı işaretlenmez ({@link TechErrorFormat#zeroOk(Template, Field, Object)}, inceleme 2026-10-18 kullanıcı
+     * kararı). Şablon: satır = alan kimliği, tür, hesap ("-" yok; "ratio:pay:çıkarılan:payda", "change:alan", "increase:alan";
+     * boş parça "-"). JS testinde aynı şablon BU tablodan kurulur.
+     */
+    static final String[][] RATE_BASE_FIELDS = {
+            { "total", "number", "-" },
+            { "count", "number", "-" },
+            { "unmapped", "number", "-" },
+            { "outage", "number", "-" },
+            { "solo", "number", "-" },
+            { "tracked", "number", "-" },
+            { "base2", "number", "-" },
+            { "rate", "percent", "ratio:count:-:total" },
+            { "excl", "percent", "ratio:count:outage:total" },
+            { "share", "percent", "ratio:unmapped:-:count" },
+            { "other", "percent", "ratio:solo:-:base2" },
+            { "growth", "percent", "change:total" },
+            { "up", "yesno", "increase:tracked" },
+    };
+
+    /** Satır: alan kimliği, değer 0 iken işaret beklenir mi. */
+    static final String[][] RATE_BASE_TABLE = {
+            { "total", "false" },      // yalnız payda (+ değişimi izlenir): "toplam işlem 0" veri yok demektir
+            { "count", "true" },       // bir oranın payı (başka oranın paydası olsa da sayılan sorun)
+            { "unmapped", "true" },    // pay
+            { "outage", "true" },      // çıkarılan
+            { "solo", "true" },        // pay
+            { "tracked", "true" },     // yalnız "increase"in of'u — taban değil
+            { "base2", "false" },      // yalnız payda
     };
 
     /** Anomali adedi ({@link TechErrorFormat#zeroCount}). Satır: değer, beklenen. */
@@ -132,6 +169,33 @@ class TechErrorNumberDisplayTest {
                         Map.of("id", "count", "label", "Teknik hata adedi", "type", "number", "better", "lower"),
                         Map.of("id", "denied", "label", "Başarılı işlem adedi", "type", "number", "better", "higher"),
                         Map.of("id", "rate", "label", "Teknik hata oranı", "type", "percent")))));
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    /** {@link #RATE_BASE_FIELDS} şablonu (tek metrik bölümü). */
+    static Template rateBaseTemplate() {
+        List<Map<String, Object>> fields = new ArrayList<>();
+        for (String[] row : RATE_BASE_FIELDS) {
+            Map<String, Object> f = new LinkedHashMap<>(Map.of("id", row[0], "label", row[0], "type", row[1]));
+            if (!"-".equals(row[2])) {
+                String[] c = row[2].split(":");
+                Map<String, Object> calc = new LinkedHashMap<>();
+                calc.put("kind", c[0]);
+                if ("ratio".equals(c[0])) {
+                    calc.put("num", c[1]);
+                    if (!"-".equals(c[2])) calc.put("minus", c[2]);
+                    calc.put("den", c[3]);
+                } else {
+                    calc.put("of", c[1]);
+                }
+                f.put("calc", calc);
+            }
+            fields.add(f);
+        }
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        raw.put("sections", List.of(Map.of("id", "m", "kind", "metrics", "title", "Veriler", "fields", fields)));
         return TechErrorTemplate.normalize(raw);
     }
 
@@ -199,6 +263,45 @@ class TechErrorNumberDisplayTest {
             assertThat(TechErrorFormat.zeroCount(cellValue(row[0]))).as(String.valueOf(row[0])).isEqualTo(Boolean.parseBoolean(row[1]));
         }
         assertThat(TechErrorFormat.zeroOk(null, 0L)).isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: yalnız oran tabanı olan sayı alanı (payda, hiçbir oranın payı / çıkarılanı değil) sıfırda işaretlenmez")
+    void rateBaseOnlyIsNotTicked() {
+        Template t = rateBaseTemplate();
+        Map<String, Field> byId = new HashMap<>();
+        for (Field f : t.allFields()) byId.put(f.id(), f);
+        assertThat(byId.get("rate").calc()).as("şablon hesabı okundu").isNotNull();
+        for (String[] row : RATE_BASE_TABLE) {
+            assertThat(TechErrorFormat.zeroOk(t, byId.get(row[0]), 0L)).as(row[0]).isEqualTo(Boolean.parseBoolean(row[1]));
+            assertThat(TechErrorFormat.zeroOk(t, byId.get(row[0]), 5L)).as(row[0] + " = 5").isFalse();
+        }
+        // Şablonsuz çağrı alan kuralına düşer
+        assertThat(TechErrorFormat.zeroOk(null, byId.get("total"), 0L)).isTrue();
+        // Varsayılan şablon (TR + EN): toplam işlem işaretlenmez; hata / eşleme / kota / kesinti adedi işaretlenir
+        for (String lang : List.of("tr", "en")) {
+            Template d = TechErrorTemplate.defaults(lang);
+            Map<String, Field> dd = new HashMap<>();
+            for (Field f : d.allFields()) dd.put(f.id(), f);
+            assertThat(TechErrorFormat.zeroOk(d, dd.get("total-tx"), 0L)).as(lang + " total-tx").isFalse();
+            for (String id : List.of("error-count", "unmapped-count", "quota-count", "outage-errors")) {
+                assertThat(TechErrorFormat.zeroOk(d, dd.get(id), 0L)).as(lang + " " + id).isTrue();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: kısaltılabilir mi — kaydırılan değer en çok 6 ondalıkla tam; geçersiz üs / sonsuz hayır")
+    void abbreviableRule() {
+        assertThat(TechErrorFormat.abbreviable(4_400_000_000d, 9)).isTrue();
+        assertThat(TechErrorFormat.abbreviable(4_123_456_789d, 9)).isFalse();
+        assertThat(TechErrorFormat.abbreviable(4_123_456_789d, 6)).isTrue();
+        assertThat(TechErrorFormat.abbreviable(0, 12)).isTrue();
+        assertThat(TechErrorFormat.abbreviable(1_250_000_000_000d, 3)).isTrue();
+        assertThat(TechErrorFormat.abbreviable(1.5, 6)).isFalse();
+        assertThat(TechErrorFormat.abbreviable(4_400_000_000d, 7)).isFalse();
+        assertThat(TechErrorFormat.abbreviable(Double.NaN, 3)).isFalse();
+        assertThat(TechErrorFormat.ABBREV_MAX_DECIMALS).isEqualTo(6);
     }
 
     @Test

@@ -25,7 +25,8 @@ import java.util.Map;
  *       kötüleşme {@code bad}; yön yok (adet), geçen ay yok ya da değişim yok → {@code neutral}; değer yok → {@code unknown}.</li>
  *   <li>{@code target}: etkin hedef biçimli (raporun o aya özel hedefi, yoksa şablonun), {@code met}: tutturuldu mu (hedefsiz null).</li>
  *   <li>{@code value} kısaltmayla girilmiş sayıda kısaltmasıyla ("4,4G"), farkı kısa (2026-10-18); {@code zero}: değerin
- *       yanında yeşil yuvarlak tik — {@link TechErrorFormat#zeroOk} (adet tam 0, yönü "yüksek iyi" değil).</li>
+ *       yanında yeşil yuvarlak tik — {@link TechErrorFormat#zeroOk(Template, Field, Object)} (adet tam 0, yönü "yüksek iyi"
+ *       değil, yalnız oran tabanı değil).</li>
  * </ul>
  */
 public final class TechErrorTiles {
@@ -91,7 +92,7 @@ public final class TechErrorTiles {
                 else tone = "up".equals(d.dir()) == "higher".equals(better) ? "good" : "bad";
             }
             out.add(new Tile(id, label == null ? "" : label, value, d == null ? null : d.text(), d == null ? null : d.dir(), tone,
-                    target == null ? null : TechErrorFormat.percent(target, en), met, TechErrorFormat.zeroOk(f, cur)));
+                    target == null ? null : TechErrorFormat.percent(target, en), met, TechErrorFormat.zeroOk(t, f, cur)));
         }
         return out;
     }

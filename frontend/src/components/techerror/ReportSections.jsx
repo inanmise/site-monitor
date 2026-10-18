@@ -12,7 +12,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
-  abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, issueUnitKey, tableUnitKey, zeroCount, zeroOk,
+  abbreviable, abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, issueUnitKey, tableUnitKey, zeroOk,
   issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
   summaryTiles, effectiveTarget, effectiveBetter, calcNumber,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
@@ -29,9 +29,9 @@ function numberText(v, lang, percent = false, unit = null) {
   if (v == null || v === '') return ''
   const n = Number(v)
   if (!Number.isFinite(n)) return String(v)
-  // Kısaltmayla girilmiş sayı kısaltmasıyla geri gelir (2026-10-18: "4,4G"); kutuda GRUPLAMASIZ — "4.400M" geri okununca
-  // 4,4 milyon olurdu (sonekten önceki tek ayraç ondalıktır)
-  if (!percent && unit) return formatAbbreviated(n, unit, lang, { grouping: false })
+  // Kısaltmayla girilmiş sayı kısaltmasıyla geri gelir (2026-10-18: "4,4G"); GRUPLAMASIZ — "4.400M" geri okununca 4,4 milyon
+  // olurdu (sonekten önceki tek ayraç ondalıktır). 6 ondalığa sığmayan değer tam sayıyla (inceleme 2026-10-18)
+  if (!percent && unit && abbreviable(n, unit)) return formatAbbreviated(n, unit, lang)
   return new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR', { maximumFractionDigits: 6, useGrouping: !percent }).format(n)
 }
 
@@ -47,6 +47,15 @@ export function ZeroOkMark({ id, className }) {
       <span id={id} className="sr-only">{t('te.zero.ok')}</span>
     </span>
   )
+}
+
+/**
+ * Yazımın SAKLANACAK kısaltma üssü: soneki tanınan ve değeri o üsle 6 ondalığa sığan yazım (inceleme 2026-10-18 —
+ * "4,123456789G" kısaltmasıyla saklanmaz, rapor tam sayıyı gösterir; sunucu da düşürür).
+ */
+function storedExp(raw, n) {
+  const exp = abbreviationExp(raw)
+  return exp != null && abbreviable(n, exp) ? exp : null
 }
 
 /**
@@ -79,15 +88,21 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
   const expanded = !percent && hasAbbreviation(text) ? parseNumber(text, lang) : null
   const expandedId = id ? `${id}-expanded` : undefined
   const showExpanded = Number.isFinite(expanded) && Math.abs(expanded) <= LIMITS.maxNumber
-  const zeroId = zero && id ? `${id}-zero` : undefined
+  // Sıfır işareti yalnız ŞU ANKİ metin tam 0'a çözülüyorsa ve alan geçersiz / yarım değilse (inceleme 2026-10-18: "0x"
+  // yazılınca eski 0 değeriyle işaret hatanın yanında kalıyordu)
+  const showZero = zero && !invalid && !isIncompleteNumber(text) && parseNumber(text, lang, { percent }) === 0
+  const zeroId = showZero && id ? `${id}-zero` : undefined
   useEffect(() => {
     if (isIncompleteNumber(text)) return     // yazılmakta olan metin (ör. "-") dış değerle ezilmez
     const parsed = parseNumber(text, lang, { percent })
     // Kısaltma da metnin parçası (2026-10-18): üssü izleyen girişte (`unit` verilmiş — undefined değil) aynı sayı başka
-    // üsle geldiyse (vazgeç, sunucu üssü düşürdü) metin yenilenir; izlemeyen girişte (şablon hedefi) eski davranış
-    const exp = percent ? null : abbreviationExp(text)
+    // üsle geldiyse (vazgeç, sunucu üssü düşürdü) metin yenilenir; izlemeyen girişte (şablon hedefi) eski davranış. Saklanmayacak
+    // kısaltma ("4,123456789G") üssüz sayılır: yazarken metin ezilmez
+    const exp = percent || !Number.isFinite(parsed) ? null : storedExp(text, parsed)
     const sameValue = parsed === value || (parsed == null && value == null)
-    if (!sameValue || (unit !== undefined && value != null && exp !== (unit ?? null))) setText(numberText(value, lang, percent, unit))
+    // Kayıtlı üs de yalnız değer o üsle yazılabiliyorsa geçerli (sunucu ve kanonik belge aynı süzgeç)
+    const shownUnit = unit != null && value != null && abbreviable(value, unit) ? unit : null
+    if (!sameValue || (unit !== undefined && value != null && exp !== shownUnit)) setText(numberText(value, lang, percent, unit))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, lang, unit])
   return (
@@ -100,7 +115,7 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
         aria-label={ariaLabel}
         // compact: tablo hücresi — dar sütunda rakama yer kalsın (inceleme 2026-10-14: "125.000.000" kırpılıyordu)
         className={cn(compact && 'px-1.5 text-[13px] md:text-[13px]', percent && lang !== 'en' && (compact ? 'pl-6' : 'pl-7'), percent && lang === 'en' && (compact ? 'pr-6' : 'pr-7'),
-          zero && 'pr-9', 'tabular-nums pointer-coarse:h-10')}
+          showZero && 'pr-9', 'tabular-nums pointer-coarse:h-10')}
         onBlur={() => {
           // Yarım kalan yazım alan bırakılınca hata olur (kayıt öncesi düğmeye basmak alanı bırakır)
           if (isIncompleteNumber(text)) onError(!percent && isAmbiguousB(text) ? 'te.err.abbrevB' : notNumber)
@@ -116,10 +131,11 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
           if (!negative && n < 0) { onError('te.err.negative'); return }
           if (!percent && Math.abs(n) > LIMITS.maxNumber) { onError('te.err.tooLarge'); return }
           onError(null)
-          // Kısaltmayla yazıldıysa üssü de (2026-10-18): rapor "4,4G" diye gösterir; tam yazılan sayı tam kalır
-          onChange(n, percent ? null : abbreviationExp(raw))
+          // Kısaltmayla yazıldıysa üssü de (2026-10-18): rapor "4,4G" diye gösterir; tam yazılan sayı tam kalır; 6 ondalığa
+          // sığmayan kısaltma üssüz gider (rapor tam sayıyı gösterir — yuvarlanmış kısaltma değeri değiştirirdi)
+          onChange(n, percent ? null : storedExp(raw, n))
         }} />
-      {zero && (
+      {showZero && (
         // Kutunun içinde, sağda (giriş yüksekliğinin ortası — alttaki "= tam sayı" satırına kaymaz); genişlik değişmez
         <ZeroOkMark id={zeroId} className="pointer-events-none absolute right-2.5 top-[18px] size-5 -translate-y-1/2 pointer-coarse:top-5" />
       )}
@@ -244,7 +260,7 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
     control = (
       <NumberInput id={id} value={v ?? null} lang={uiLang} percent={f.type === 'percent'} negative={f.type === 'percent'}
         disabled={readOnly} describedBy={describedBy} invalid={err ? true : undefined}
-        unit={f.type === 'number' ? values.units?.[f.id] ?? null : null} zero={zeroOk(f, v)}
+        unit={f.type === 'number' ? values.units?.[f.id] ?? null : null} zero={zeroOk(f, v, all)}
         onChange={(n, exp) => onField(f.id, n, exp)} onError={(k) => onFieldError(`values.${f.id}`, k ? t(k) : null)} pendingKey={`values.${f.id}`} />
     )
   } else if (f.type === 'yesno') {
@@ -451,7 +467,7 @@ export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors
                       </div>
                       <NumberInput id={`${base}-${key}`} value={iss[key] ?? null} lang={uiLang} disabled={readOnly}
                         invalid={fe || err ? true : undefined} describedBy={fe ? `${base}-${key}-e` : err ? `${base}-e` : undefined}
-                        unit={onUnit ? values.units?.[issueUnitKey(section.id, iss.id, key)] ?? null : undefined} zero={zeroCount(iss[key])}
+                        unit={onUnit ? values.units?.[issueUnitKey(section.id, iss.id, key)] ?? null : undefined}
                         onChange={(n, exp) => {
                           patch(iss.id, { [key]: n })
                           onUnit?.(issueUnitKey(section.id, iss.id, key), n == null ? null : exp)

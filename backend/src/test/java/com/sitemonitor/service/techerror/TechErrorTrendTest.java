@@ -174,6 +174,8 @@ class TechErrorTrendTest {
         assertThat(TechErrorFormat.compact(-12_500, "number", true)).isEqualTo("-12.5k");
         assertThat(TechErrorFormat.compact(3_200_000_000_000d, "number", false)).isEqualTo("3,2T");
         assertThat(TechErrorFormat.compact(999_999_500_000d, "number", true)).isEqualTo("1T");
+        // Harften önce gruplama yok (inceleme 2026-10-18 — kısaltmalı gösterimle aynı kural)
+        assertThat(TechErrorFormat.compact(1_250_000_000_000_000d, "number", false)).isEqualTo("1250T");
     }
 
     private static void assertInvalid(Map<String, Object> raw) {
