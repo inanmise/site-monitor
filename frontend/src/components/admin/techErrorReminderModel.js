@@ -111,7 +111,9 @@ export function parseWhole(v) {
 export function validateForm(form, limits = REM_DEFAULT_LIMITS, saved = null) {
   const errs = {}
   const lim = limits || REM_DEFAULT_LIMITS
-  const unchanged = (k) => saved != null && parseWhole(form?.[k]) != null && parseWhole(form?.[k]) === saved[k]
+  // Onarım alanı (aralık dışı değer varsayılana düştü) kayıtta YAZILIR → değişmiş sayılır ve doğrulanır (alanlar-arası kural da)
+  const unchanged = (k) => saved != null && !isRepairKey(saved, k)
+    && parseWhole(form?.[k]) != null && parseWhole(form?.[k]) === saved[k]
   for (const k of REM_INT_FIELDS) {
     if (unchanged(k)) continue
     const l = lim[k] || REM_DEFAULT_LIMITS[k]
@@ -128,27 +130,46 @@ export function validateForm(form, limits = REM_DEFAULT_LIMITS, saved = null) {
 }
 
 /**
- * PUT gövdesi: YALNIZ kayıtlı değerden farklı alanlar (sayılar tam sayıya çevrilir). Değişiklik yoksa boş nesne — çağıran
- * istek göndermez. Biçimsiz sayı "değişiklik" sayılır ama gövdeye girmez (doğrulama önce durdurur).
+ * Onarım alanı (inceleme 2026-10-18, 2. tur): sunucu bu alanın etkin değerinin aralık DIŞI bir ortam / kayıtlı değerden
+ * varsayılana düştüğünü söyledi (`out_of_range`). Form orada etkin değeri (= varsayılan) tutar ve kayıtlı görüntü de aynı
+ * sayıyı söyler — "kayıtlıyla aynı = değişiklik değil" kuralı onu atar, varsayılan hiç yazılamazdı (iki kayıt gerekirdi).
+ * Böyle bir alandaki GEÇERLİ form değeri değişiklik sayılır: Kaydet onu açıkça yazar — sunucu override olarak saklar, ortam
+ * değeri artık uygulanmaz, bozuk kayıtlı değer ezilir ve not kalkar.
  */
-export function changedFields(saved, form) {
+export function isRepairKey(saved, k) {
+  return !!saved?.out_of_range?.[k]
+}
+
+/** Kayıtta yazılacak onarım alanları (`isRepairKey`) — sırası `REM_INT_FIELDS`. */
+export function repairKeys(saved) {
+  return REM_INT_FIELDS.filter((k) => isRepairKey(saved, k))
+}
+
+/**
+ * PUT gövdesi: YALNIZ kayıtlı değerden farklı alanlar (sayılar tam sayıya çevrilir) + onarım alanları (`isRepairKey`; aynı
+ * sayı da yazılır). Değişiklik yoksa boş nesne — çağıran istek göndermez. Biçimsiz sayı "değişiklik" sayılır ama gövdeye
+ * girmez (doğrulama önce durdurur). `{ repairs: false }` onarımları saymaz (kullanıcının kendi değişiklikleri).
+ */
+export function changedFields(saved, form, { repairs = true } = {}) {
   const out = {}
   if (!saved || !form) return out
   if (isDirty(saved.team_ids, form.team_ids)) out.reminder_team_ids = normalizeIds(form.team_ids)
   for (const k of REM_INT_FIELDS) {
     const n = parseWhole(form[k])
-    if (n != null && n !== saved[k]) out[k] = n
+    if (n != null && (n !== saved[k] || (repairs && isRepairKey(saved, k)))) out[k] = n
   }
   if (Boolean(form.reminder_push) !== Boolean(saved.reminder_push)) out.reminder_push = Boolean(form.reminder_push)
   return out
 }
 
 /**
- * Kaydedilmemiş değişiklik var mı: değişen alan ya da yarım / biçimsiz yazılmış sayı (boş, "1.5" — Kaydet doğrulamayı
- * gösterir). Aynı değerin farklı yazımı ("06" = 6) değişiklik değildir.
+ * Kaydedilmemiş değişiklik var mı: değişen alan, onarım alanı ya da yarım / biçimsiz yazılmış sayı (boş, "1.5" — Kaydet
+ * doğrulamayı gösterir). Aynı değerin farklı yazımı ("06" = 6) değişiklik değildir. `{ repairs: false }` = yalnız
+ * kullanıcının kendi değişiklikleri — sayfadan ayrılırken sorulan onay ve Yenile'de taslağı koruma bunu okur (yalnız onarım
+ * bekleyen form her ziyarette "kaydedilmemiş değişiklik" diye sormasın; ayrılınca kaybolan bir şey yok).
  */
-export function isFormDirty(saved, form) {
+export function isFormDirty(saved, form, { repairs = true } = {}) {
   if (!saved || !form) return false
-  if (Object.keys(changedFields(saved, form)).length > 0) return true
+  if (Object.keys(changedFields(saved, form, { repairs })).length > 0) return true
   return REM_INT_FIELDS.some((k) => parseWhole(form[k]) == null)
 }

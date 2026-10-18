@@ -181,6 +181,44 @@ export function missingTeamText(id, directoryLoaded, t, ordinal = 1, count = 1) 
 }
 
 /**
+ * Rehberde olmayan (silinmiş / adı okunamayan) takımların SAYFA GENELİNDE sabit numarası (inceleme 2026-10-18, 2. tur): iki
+ * seçici (görünürlük + hatırlatma) numarayı kendi seçimlerinden veriyordu — aynı silinmiş takım iki seçicide farklı numara
+ * alıyor, bir çip kaldırılınca diğerlerinin numarası kayıyordu ("Silinmiş takım 2" → "Silinmiş takım"). Numara, KAYITLI
+ * listelerin (`baseLists`: görünürlük + hatırlatma) birleşiminde kimliğe göre artan sıradır (1'den) — çip kaldırmak kayıtlı
+ * listeyi değiştirmez, numara kaymaz. `extraLists` (taslak) yalnız kayıtlı listelerde olmayan kimlikleri ekler, sayılar
+ * kayıtlıların ARDINDAN gelir (Yenile'de silinmiş bulunan, taslakta eklenmiş takım). Dönüş: `Map(id → sıra)`; `size` toplam.
+ */
+export function missingTeamOrdinals(baseLists, known, extraLists = []) {
+  const knownIds = new Set((Array.isArray(known) ? known : []).map((tm) => Number(tm?.id)).filter(Number.isFinite))
+  const collect = (lists) => {
+    const ids = new Set()
+    for (const list of Array.isArray(lists) ? lists : []) {
+      for (const v of Array.isArray(list) ? list : []) {
+        const id = Number(v)
+        if (Number.isFinite(id) && id > 0 && !knownIds.has(id)) ids.add(id)
+      }
+    }
+    return [...ids].sort((a, b) => a - b)
+  }
+  const map = new Map(collect(baseLists).map((id, i) => [id, i + 1]))
+  for (const id of collect(extraLists)) if (!map.has(id)) map.set(id, map.size + 1)
+  return map
+}
+
+/**
+ * `teamOptions`'ın `missingLabel(id, ordinal, count)` geri çağrısı — numara `missingTeamOrdinals` haritasından (iki seçicide
+ * aynı, çip kaldırılınca kaymaz). Haritada olmayan kimlik (yalnız bir seçicinin taslağında) haritanın ARDINDAN numaralanır.
+ */
+export function missingTeamLabelFor(ordinals, directoryLoaded, t) {
+  const map = ordinals instanceof Map ? ordinals : new Map()
+  return (id, ordinal = 1, count = 1) => {
+    const n = map.get(Number(id))
+    if (n != null) return missingTeamText(id, directoryLoaded, t, n, map.size)
+    return missingTeamText(id, directoryLoaded, t, map.size + ordinal, map.size + count)
+  }
+}
+
+/**
  * Kayıtlı görünürlük listesi YALNIZ silinmiş takımlardan mı oluşuyor (inceleme 2026-10-18): sunucu böyle bir listeyi "herkes"e
  * çevirmez (kısıt gevşemez) — modülü şu an yalnız kurum geneli görüntüleyiciler görür; sayfa bunu söyler. Rehber okunmadıysa
  * (boş) bilinmez → false (bilinmeyen ≠ silinmiş).

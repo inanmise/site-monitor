@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeOutOfRange, normalizeReminders, parseWhole,
-  reminderState, toForm, validateForm,
+  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isRepairKey, isUnsupportedResponse, normalizeOutOfRange, normalizeReminders,
+  parseWhole, reminderState, repairKeys, toForm, validateForm,
 } from '../components/admin/techErrorReminderModel.js'
 
 // Ayarlar → Teknik hata raporu → hatırlatmalar ve posta sınırları (12. sürüm, 2026-10-17): saf model — sunucu aralıklarıyla
@@ -31,12 +31,38 @@ describe('techErrorReminderModel — aralık dışı değer notu (inceleme 2026-
     })
     expect(normalizeOutOfRange({ max_mail_mb: { source: 'stored', value: 'x'.repeat(60), default: 15 } }).max_mail_mb.value)
       .toBe(`${'x'.repeat(40)}…`)
-    // normalizeReminders taşır; not formu kirletmez (değişiklik sayılmaz)
+    // normalizeReminders taşır
     const saved = normalizeReminders({ ...SERVER, out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 } } })
     expect(saved.out_of_range.max_mail_mb.value).toBe('60')
     expect(normalizeReminders(SERVER).out_of_range).toEqual({})
-    expect(isFormDirty(saved, toForm(saved))).toBe(false)
-    expect(changedFields(saved, toForm(saved))).toEqual({})
+  })
+
+  it('inceleme 2026-10-18 (2. tur): aralık dışı alan ONARIM bekler — formdaki geçerli değer (varsayılan, kayıtlı görüntüyle aynı sayı) değişiklik sayılır ve TEK kayıtta yazılır; kullanıcı değişikliği sayımı ({ repairs: false }) onu saymaz', () => {
+    const saved = normalizeReminders({ ...SERVER, out_of_range: {
+      max_mail_mb: { source: 'env', value: '60', default: 15 }, approval_reminder_days: { source: 'stored', value: 'abc', default: 3 },
+    } })
+    const form = toForm(saved)
+    expect(repairKeys(saved)).toEqual(['approval_reminder_days', 'max_mail_mb'])
+    expect(isRepairKey(saved, 'max_mail_mb')).toBe(true)
+    expect(isRepairKey(saved, 'reminder_day')).toBe(false)
+    expect(isRepairKey(null, 'max_mail_mb')).toBe(false)
+    expect(changedFields(saved, form)).toEqual({ approval_reminder_days: 3, max_mail_mb: 15 })
+    expect(isFormDirty(saved, form)).toBe(true)
+    expect(changedFields(saved, form, { repairs: false })).toEqual({})
+    expect(isFormDirty(saved, form, { repairs: false })).toBe(false)
+    // Kullanıcı onarım alanına başka bir geçerli değer yazdı: o gider; diğer onarım da aynı kayda girer
+    expect(changedFields(saved, { ...form, max_mail_mb: '25', reminder_day: '7' }))
+      .toEqual({ reminder_day: 7, approval_reminder_days: 3, max_mail_mb: 25 })
+    expect(isFormDirty(saved, { ...form, reminder_day: '7' }, { repairs: false })).toBe(true)
+    // Onarım alanı "değişmemiş" sayılıp doğrulamadan kaçmaz: aralık ve alanlar-arası kural ona da uygulanır
+    expect(validateForm(form, REM_DEFAULT_LIMITS, saved)).toEqual({})
+    expect(validateForm({ ...form, max_mail_mb: '4' }, REM_DEFAULT_LIMITS, saved).max_mail_mb).toEqual({ key: 'te.rem.v.whole', params: [5, 50] })
+    const inlineHigh = { ...saved, mail_inline_mb: 20 }
+    expect(validateForm(toForm(inlineHigh), REM_DEFAULT_LIMITS, inlineHigh).mail_inline_mb).toEqual({ key: 'te.rem.v.inline', params: [20, 15] })
+    // Not yoksa eski davranış: kayıtlıyla aynı değer değişiklik değildir
+    const plain = normalizeReminders(SERVER)
+    expect(changedFields(plain, toForm(plain))).toEqual({})
+    expect(isFormDirty(plain, toForm(plain))).toBe(false)
   })
 })
 

@@ -512,13 +512,14 @@ describe('TechErrorReportSettings — inceleme 2026-10-18', () => {
     expect(card).not.toHaveTextContent('#99')
   })
 
-  it('inceleme 2026-10-18: birden fazla silinmiş takım ayırt edilir ("Silinmiş takım 1", "Silinmiş takım 2"); liste yalnız silinmişlerden oluşuyorsa uyarı afişi — biri hâlâ varsa afiş yok', async () => {
+  it('inceleme 2026-10-18: birden fazla silinmiş takım ayırt edilir ("Silinmiş takım N" — numara SAYFA genelinde: kayıtlı görünürlük + hatırlatma listelerinin birleşimi, kimliğe göre); liste yalnız silinmişlerden oluşuyorsa uyarı afişi — biri hâlâ varsa afiş yok', async () => {
     api.admin.techErrorSettings.mockResolvedValueOnce(settings({ team_ids: [99, 98] }))
     api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ team_ids: [97, 96, 1] }))
     const { unmount } = render(<TechErrorReportSettings />)
     await screen.findByText('Mobil')
     const vis = screen.getByRole('combobox', { name: 'Modülü gören takımlar' })
-    expect(vis).toHaveTextContent('Silinmiş takım 1, Silinmiş takım 2')
+    // 96 → 1, 97 → 2 (hatırlatma), 98 → 3, 99 → 4 (görünürlük): iki seçicide aynı takım aynı numara, farklı takım farklı numara
+    expect(vis).toHaveTextContent('Silinmiş takım 3, Silinmiş takım 4')
     expect(vis).not.toHaveTextContent('#9')
     const banner = document.querySelector('[data-slot="tes-only-deleted"]')
     expect(banner).not.toBeNull()
@@ -529,6 +530,7 @@ describe('TechErrorReportSettings — inceleme 2026-10-18', () => {
     expect(remTeams).toHaveTextContent('Dijital Kanallar')
     expect(remTeams).toHaveTextContent('Silinmiş takım 1')
     expect(remTeams).toHaveTextContent('Silinmiş takım 2')
+    expect(remTeams).not.toHaveTextContent('Silinmiş takım 3')
     unmount()
 
     // Bir takım hâlâ var: kısıt geçerli, afiş yok
@@ -544,7 +546,29 @@ describe('TechErrorReportSettings — inceleme 2026-10-18', () => {
     render(<TechErrorReportSettings />)
     await screen.findByText('Mobil')
     expect(document.querySelector('[data-slot="tes-only-deleted"]')).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'Modülü gören takımlar' })).toHaveTextContent('Adı okunamayan takım 1, Adı okunamayan takım 2')
+    expect(screen.getByRole('combobox', { name: 'Modülü gören takımlar' })).toHaveTextContent('Adı okunamayan takım 3, Adı okunamayan takım 4')   // hatırlatma listesi 96, 97 → 1, 2
+  })
+
+  it('inceleme 2026-10-18 (2. tur): silinmiş takımın numarası iki seçicide aynı ve çip kaldırılınca kaymaz', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings({ team_ids: [98, 99] }))
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ team_ids: [99, 1] }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const vis = screen.getByRole('combobox', { name: 'Modülü gören takımlar' })
+    expect(vis).toHaveTextContent('Silinmiş takım 1, Silinmiş takım 2')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    const remTeams = () => within(remCard()).getAllByRole('combobox').find((el) => /Silinmiş takım|Dijital/.test(el.textContent))
+    // 99 hatırlatma seçicisinde de "Silinmiş takım 2" (eski kural kendi seçimine göre "Silinmiş takım" derdi)
+    expect(remTeams()).toHaveTextContent('Silinmiş takım 2')
+    expect(remTeams()).not.toHaveTextContent('Silinmiş takım 1')
+    // Görünürlükte "Silinmiş takım 1" (98) kaldırılır: kalan 99 yine "Silinmiş takım 2" — numara kaymaz
+    fireEvent.mouseDown(vis)
+    const opt = (await screen.findAllByText('Silinmiş takım 1')).map((el) => el.closest('[role="option"]')).find(Boolean)
+    fireEvent.mouseDown(opt)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Modülü gören takımlar' })).not.toHaveTextContent('Silinmiş takım 1'))
+    expect(screen.getByRole('combobox', { name: 'Modülü gören takımlar' })).toHaveTextContent('Silinmiş takım 2')
+    expect(remTeams()).toHaveTextContent('Silinmiş takım 2')
+    expect(card).toBeTruthy()
   })
 
   it('inceleme 2026-10-18: aralık dışı ortam değeri (60 MB) varsayılana düştüyse kart alanın ipucunda söyler (salt okunur not, alana bağlı); aralık içi alanda not yok', async () => {
@@ -565,7 +589,72 @@ describe('TechErrorReportSettings — inceleme 2026-10-18', () => {
     expect(described).toContain('Ortam değeri (60)')
     expect(card.querySelector('[data-slot="tes-rem-oor-mail-inline-mb"]')).toHaveTextContent('Kayıtlı değer (abc) izin verilen aralığın dışında; varsayılan 6 kullanılıyor.')
     expect(card.querySelector('[data-slot="tes-rem-oor-reminder-day"]')).toBeNull()
-    expect(remBar()).not.toHaveAttribute('data-dirty')                         // not formu kirletmez
+    // Yazabilen için not "Kaydet alandaki değeri yazar" der; Kaydet etkin (onarım bekliyor) ama Vazgeç yok — kullanıcı bir şey değiştirmedi
+    expect(env).toHaveTextContent('Kaydet alandaki değeri kalıcı olarak yazar ve ortam değeri artık uygulanmaz')
+    expect(env).not.toHaveTextContent('global yönetici')
+    expect(remBar()).toHaveAttribute('data-dirty', 'true')
+    expect(remBar()).toHaveTextContent('Aralık dışı değerin yerine geçerli değer kaydedilmeyi bekliyor')
+    expect(within(remBar()).queryByRole('button', { name: /Vazgeç/ })).toBeNull()
+    expect(within(remBar()).getByRole('button', { name: /Kaydet/ })).toBeEnabled()
+  })
+
+  it('inceleme 2026-10-18 (2. tur): aralık dışı değer TEK kayıtla düzelir — varsayılan "kayıtlıyla aynı" diye atılmaz, gövdede gider; yanıt notu kaldırır; yalnız onarım bekleyen form sayfadan ayrılırken sormaz', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings())
+    const oor = { max_mail_mb: { source: 'env', value: '60', default: 15 }, mail_inline_mb: { source: 'stored', value: 'abc', default: 6 } }
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ out_of_range: oor }))
+    api.admin.saveTechErrorReminderSettings.mockResolvedValue(remOk({ out_of_range: {} }))
+    const seen = []
+    const onNav = (e) => seen.push(e.detail)
+    window.addEventListener('sm:navigate', onNav)
+    try {
+      render(<TechErrorReportSettings />)
+      await screen.findByText('Mobil')
+      await waitFor(() => expect(remBar()).toHaveAttribute('data-dirty', 'true'))
+      // Ayrılırken onay yok (kullanıcı değişikliği yok; kaybolan bir şey yok)
+      fireEvent.click(screen.getByRole('button', { name: 'Kanalı aç — POS' }))
+      expect(seen).toEqual([{ tab: 'channelreports', params: { te_view: 'channel', te_ch: '20' } }])
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+      fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+      await waitFor(() => expect(api.admin.saveTechErrorReminderSettings).toHaveBeenCalledWith({ max_mail_mb: 15, mail_inline_mb: 6 }))
+      await waitFor(() => expect(remBar()).not.toHaveAttribute('data-dirty'))
+      expect(remCard().querySelector('[data-slot="tes-rem-oor-max-mail-mb"]')).toBeNull()
+      expect(remCard().querySelector('[data-slot="tes-rem-oor-mail-inline-mb"]')).toBeNull()
+      expect(api.admin.saveTechErrorReminderSettings).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('sm:navigate', onNav)
+    }
+  })
+
+  it('inceleme 2026-10-18 (2. tur): kullanıcı başka bir alanı da değiştirdiyse onarım aynı kayda girer; yanıt bloğu gelmezse yazılan alanın notu yine kalkar', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings())
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ out_of_range: { approval_reminder_days: { source: 'stored', value: '40', default: 3 } } }))
+    api.admin.saveTechErrorReminderSettings.mockResolvedValue({ success: true })
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    fireEvent.change(within(card).getByLabelText(DAY), { target: { value: '7' } })
+    await waitFor(() => expect(within(remBar()).getByRole('button', { name: /Vazgeç/ })).toBeInTheDocument())
+    expect(remBar()).not.toHaveTextContent('kaydedilmeyi bekliyor')
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+    await waitFor(() => expect(api.admin.saveTechErrorReminderSettings).toHaveBeenCalledWith({ reminder_day: 7, approval_reminder_days: 3 }))
+    await waitFor(() => expect(remBar()).not.toHaveAttribute('data-dirty'))
+    expect(remCard().querySelector('[data-slot="tes-rem-oor-approval-reminder-days"]')).toBeNull()
+  })
+
+  it('inceleme 2026-10-18 (2. tur): salt okunur görüntüleyen (kapsamlı müdür) "kaydedin" değil "bir global yönetici kaydedebilir" okur', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings())
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({
+      read_only: true,
+      out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 }, mail_inline_mb: { source: 'stored', value: 'abc', default: 6 } },
+    }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    const env = await waitFor(() => { const n = card.querySelector('[data-slot="tes-rem-oor-max-mail-mb"]'); expect(n).not.toBeNull(); return n })
+    expect(env).toHaveTextContent('Ortam değişkeni düzeltilmeli ya da bir global yönetici burada geçerli bir değer kaydedebilir.')
+    expect(env).not.toHaveTextContent('Kaydet alandaki')
+    expect(card.querySelector('[data-slot="tes-rem-oor-mail-inline-mb"]')).toHaveTextContent('Bir global yönetici burada geçerli bir değer kaydedebilir.')
+    expect(remBar()).toBeNull()
   })
 
   it('takım rehberi okunamazsa rehberde olmayan seçili takım "Takım adı okunamadı" (silinmiş denmez)', async () => {

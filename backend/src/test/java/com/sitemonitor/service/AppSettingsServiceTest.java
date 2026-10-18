@@ -28,7 +28,9 @@ import static org.assertj.core.api.Assertions.*;
         // ana dosyayı gölgeler ve bu anahtarları taşımaz → burada prod varsayılanlarıyla verilir.
         "site.monitor.executor.core-size=20",
         "site.monitor.executor.max-size=50",
-        "site.monitor.executor.queue-capacity=5000"
+        "site.monitor.executor.queue-capacity=5000",
+        // Aralık dışı ortam değeri (teknik hata raporu onay hatırlatması 1–14): kayıtlı varsayılanın onu ezdiğini gösterir
+        "site.monitor.tech-error-report.approval-reminder-days=40"
 })
 class AppSettingsServiceTest {
 
@@ -105,6 +107,29 @@ class AppSettingsServiceTest {
         } finally {
             service.save(values(inline, ""), "admin");
             service.save(values(max, ""), "admin");
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): aralık dışı ortam değeri (40) yerine KAYDEDİLEN varsayılan (3) override olarak saklanır — ortam değeri artık uygulanmaz, aralık dışı not kalkar")
+    void techErrorOutOfRangeEnv_savedDefaultIsStored() {
+        String key = com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_APPROVAL_REMINDER_DAYS;
+        var range = com.sitemonitor.service.techerror.TechErrorReportSettings.APPROVAL_REMINDER_DAYS;
+        try {
+            assertThat(service.getOverride(key)).isNull();
+            var before = com.sitemonitor.service.techerror.TechErrorReportSettings.outOfRange(service, range);
+            assertThat(before).isNotNull();
+            assertThat(before.source()).isEqualTo("env");
+            assertThat(before.value()).isEqualTo("40");
+            // Kart varsayılanı (3, etkin değerle aynı sayı) gönderir: yazılır — "aynı değer" diye atılmaz
+            service.save(values(key, "3"), "admin");
+            assertThat(service.getOverride(key)).isEqualTo("3");
+            assertThat(repo.findBySettingKey(key)).hasValueSatisfying(r -> assertThat(r.getValue()).isEqualTo("3"));
+            assertThat(com.sitemonitor.service.techerror.TechErrorReportSettings.outOfRange(service, range)).isNull();
+            assertThat(com.sitemonitor.service.techerror.TechErrorReportSettings.liveInt(service, range, 40)).isEqualTo(3);
+            assertThat(com.sitemonitor.service.techerror.TechErrorReportSettings.effectiveInt(service, range)).isEqualTo(3);
+        } finally {
+            service.save(values(key, ""), "admin");
         }
     }
 

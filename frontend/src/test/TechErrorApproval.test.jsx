@@ -18,7 +18,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
-import ApprovalCard, { approvalStateOf, flowRemovedHintKey } from '../components/techerror/ApprovalCard.jsx'
+import ApprovalCard, { approvalStateOf, currentContentSent, flowRemovedHintKey } from '../components/techerror/ApprovalCard.jsx'
 
 const te = () => api.techErrors
 const TITLE = 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026'
@@ -109,6 +109,49 @@ describe('onay kartı (birim)', () => {
     expect(flowRemovedHintKey('pending', null)).toBe('te.appr.flowRemovedPendingHint')
     expect(flowRemovedHintKey('rejected', null)).toBe('te.appr.flowRemovedHint')
     expect(flowRemovedHintKey('approved', '2026-10-14T09:00:00Z')).toBe('te.appr.flowRemovedSentHint')
+  })
+
+  it('inceleme 2026-10-18 (2. tur): eski bir gönderim (last_sent_at) ŞU ANKİ içeriğin gönderildiği demek değil — gönderilip değiştirilen, yeniden onaya sunulan rapor akış kaldırılınca "karar verilemez" der, "gönderildi" demez', () => {
+    const removed = { required: false, approvers: [], can_decide: false, can_request: false }
+    const pending = { state: 'pending', requested_at: '2026-10-15T09:00:00Z' }
+    // Rapor 14'ünde gönderildi, sonra değişti ("changed"), 15'inde yeniden onaya sunuldu; yönetici alıcıları kaldırıldı
+    const { unmount } = render(<ApprovalCard reportId={1} uiLang="tr" approval={pending} detail={removed}
+      sentAt="2026-10-14T09:00:00Z" sentTo="dijital@example.com" reportStatus="changed" />)
+    let hint = document.querySelector('[data-slot="te-approval-hint"]')
+    expect(hint).toHaveTextContent('bu onay isteği için karar verilemez')
+    expect(hint).not.toHaveTextContent('Rapor gönderildi')
+    unmount()
+    // Durum gelmezse zaman kuralı: son gönderim istekten ÖNCE → gönderilmemiş içerik
+    const second = render(<ApprovalCard reportId={1} uiLang="tr" approval={pending} detail={removed}
+      sentAt="2026-10-14T09:00:00Z" sentTo="dijital@example.com" />)
+    hint = document.querySelector('[data-slot="te-approval-hint"]')
+    expect(hint).toHaveTextContent('bu onay isteği için karar verilemez')
+    expect(hint).not.toHaveTextContent('Rapor gönderildi')
+    second.unmount()
+    // Şu anki içerik gönderildi (durum "sent") → "gönderildi"
+    render(<ApprovalCard reportId={1} uiLang="tr" approval={pending} detail={removed}
+      sentAt="2026-10-14T09:00:00Z" sentTo="dijital@example.com" reportStatus="sent" />)
+    expect(document.querySelector('[data-slot="te-approval-hint"]')).toHaveTextContent('Rapor gönderildi — son gönderim aşağıda.')
+
+    // Saf kural: durum önce; durum yoksa zaman (istekten sonra, eskimemiş); onaylıda gönderim karardan sonra olmalı
+    const appr = { requested_at: '2026-10-13T09:00:00Z', decided_at: '2026-10-14T09:00:00Z' }
+    expect(currentContentSent({ reportStatus: 'changed', sentAt: '2026-10-16T09:00:00Z', approval: pending, state: 'pending' })).toBe(false)
+    expect(currentContentSent({ reportStatus: 'sent', sentAt: null, approval: pending, state: 'pending' })).toBe(false)
+    expect(currentContentSent({ sentAt: '2026-10-16T09:00:00Z', approval: pending, state: 'pending' })).toBe(true)
+    expect(currentContentSent({ sentAt: '2026-10-16T09:00:00Z', approval: pending, state: 'stale' })).toBe(false)
+    expect(currentContentSent({ reportStatus: 'sent', sentAt: '2026-10-12T09:00:00Z', approval: appr, state: 'approved' })).toBe(false)
+    expect(currentContentSent({ reportStatus: 'sent', sentAt: '2026-10-14T09:05:00Z', approval: appr, state: 'approved' })).toBe(true)
+  })
+
+  it('inceleme 2026-10-18 (2. tur): onaylı raporda akış eklenmeden ÖNCEKİ takım gönderimi "yöneticilere gönderildi" demez', () => {
+    const approval = { state: 'approved', requested_at: '2026-10-13T09:00:00Z', decided_at: '2026-10-14T09:00:00Z' }
+    const { unmount } = render(<ApprovalCard reportId={1} uiLang="tr" approval={approval} detail={detail({ can_request: false })}
+      sentAt="2026-10-10T09:00:00Z" sentTo="dijital@example.com" reportStatus="sent" />)
+    expect(document.querySelector('[data-slot="te-approval-hint"]')).toHaveTextContent('henüz yöneticilere gönderilmedi')
+    unmount()
+    render(<ApprovalCard reportId={1} uiLang="tr" approval={approval} detail={detail({ can_request: false })}
+      sentAt="2026-10-14T09:01:00Z" sentTo="ceo@example.com" reportStatus="sent" />)
+    expect(document.querySelector('[data-slot="te-approval-hint"]')).toHaveTextContent('Onaylı rapor yöneticilere gönderildi.')
   })
 
   it('bekleyen istek: durum, isteyen, onaylayıcılar; PO için Onayla / Reddet — red gerekçesiz reddedilmez, gerekçeyle karar gönderilir', async () => {
@@ -232,5 +275,36 @@ describe('rapor düzenleyici', () => {
     await screen.findByRole('heading', { name: TITLE })
     expect(document.querySelector('[data-slot="te-report-actions"] [data-slot="te-approval-request-bar"]')).toBeNull()
     expect(document.querySelector('[data-slot="te-approval"]')).not.toBeNull()   // kart bilgi amaçlı görünür
+  })
+
+  it('inceleme 2026-10-18 (2. tur): gönderilip değiştirilen, yeniden onaya sunulan rapor — kanalın yönetici alıcıları kaldırılınca kart "karar verilemez" der, eski gönderimi "gönderildi" diye okumaz', async () => {
+    const res = withApproval({
+      approval: { state: 'pending', raw_state: 'PENDING', stale: false, requested_at: '2026-10-15T09:00:00Z' },
+      det: detail({ required: false, executive_count: 0, executive_emails: [], approvers: [], can_request: false }),
+      report: { status: 'changed', last_sent_at: '2026-10-14T09:00:00Z', last_sent_to: 'dijital@example.com', send_count: 1 },
+    })
+    res.data.channel = channel(10, 'Mobil', { approval_required: false, executive_count: 0, executive_emails: '', can_manage: false })
+    te().report.mockResolvedValue(res)
+    const { unmount } = render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    const card = document.querySelector('[data-slot="te-approval"]')
+    expect(card.querySelector('[data-slot="te-approval-state"]')).toHaveAttribute('data-flow', 'removed')
+    const hint = card.querySelector('[data-slot="te-approval-hint"]')
+    expect(hint).toHaveTextContent('bu onay isteği için karar verilemez')
+    expect(hint).not.toHaveTextContent('Rapor gönderildi')
+    unmount()
+
+    // Düzenleyici raporun durumunu karta verir: içerik son gönderimden beri değişmedi ("sent") → "gönderildi"
+    // (istek gönderimden sonra yapılmış olsa da — akış sonradan eklenmişti)
+    const sent = withApproval({
+      approval: { state: 'pending', raw_state: 'PENDING', stale: false, requested_at: '2026-10-15T09:00:00Z' },
+      det: detail({ required: false, executive_count: 0, executive_emails: [], approvers: [], can_request: false }),
+      report: { status: 'sent', last_sent_at: '2026-10-14T09:00:00Z', last_sent_to: 'dijital@example.com', send_count: 1 },
+    })
+    sent.data.channel = res.data.channel
+    te().report.mockResolvedValue(sent)
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(document.querySelector('[data-slot="te-approval-hint"]')).toHaveTextContent('Rapor gönderildi — son gönderim aşağıda.')
   })
 })

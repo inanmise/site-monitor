@@ -3,7 +3,7 @@ import {
   TES_EXPORT_COLUMNS, TES_FILTERS, TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels,
   exportApprovalStatus, exportFileName, exportHeader, exportReportStatus, exportRow, exportTable, filterChannels,
   filtersActive, hasExecutives, isTeamHidden, matchesFilter, normalizeFilter, normalizeSort, searchChannels, sortChannels,
-  teamEmailState, teamVisibleState, teamsOf, countOrNull, missingTeamText, onlyDeletedTeams,
+  teamEmailState, teamVisibleState, teamsOf, countOrNull, missingTeamLabelFor, missingTeamOrdinals, missingTeamText, onlyDeletedTeams,
 } from '../components/admin/techErrorSettingsModel.js'
 import { teamOptions } from '../components/admin/noc/operatorTeamsModel.js'
 import { TR } from '../i18n/tr.js'
@@ -217,6 +217,27 @@ describe('techErrorSettingsModel — inceleme 2026-10-18', () => {
     expect(countOrNull('2')).toBe(2)
     expect(countOrNull(0)).toBe(0)
     for (const v of [undefined, null, '', 'x', -1, NaN]) expect(countOrNull(v), String(v)).toBeNull()
+  })
+
+  it('inceleme 2026-10-18 (2. tur): missingTeamOrdinals — silinmiş takım numarası kayıtlı görünürlük + hatırlatma birleşiminde kimliğe göre; taslak eklentileri ARDINDAN; iki seçicide aynı, çip kaldırılınca kaymaz', () => {
+    const known = [{ id: 1, name: 'Dijital' }]
+    const map = missingTeamOrdinals([[99, 98, 1], [97, 99]], known)
+    expect([...map.entries()]).toEqual([[97, 1], [98, 2], [99, 3]])
+    // Taslakta yalnız orada bulunan silinmiş kimlik (Yenile'de silinmiş çıktı) kayıtlıların ardından gelir
+    expect([...missingTeamOrdinals([[99]], known, [[5, 99, 1]]).entries()]).toEqual([[99, 1], [5, 2]])
+    expect(missingTeamOrdinals([null, undefined], known).size).toBe(0)
+    const label = missingTeamLabelFor(map, true, tr)
+    // Seçicinin kendi sırası / sayısı yok sayılır: iki seçicide aynı takım aynı numara
+    expect(label(99, 1, 1)).toBe('Silinmiş takım 3')
+    expect(label(97, 2, 2)).toBe('Silinmiş takım 1')
+    // Haritada olmayan (yalnız bir seçicinin taslağında) kimlik haritanın ardından
+    expect(label(5, 1, 1)).toBe('Silinmiş takım 4')
+    // Tek silinmiş takım numarasız; rehber okunamadıysa "Adı okunamayan takım N"
+    expect(missingTeamLabelFor(new Map([[99, 1]]), true, tr)(99, 1, 1)).toBe('Silinmiş takım')
+    expect(missingTeamLabelFor(map, false, tr)(98)).toBe('Adı okunamayan takım 2')
+    // teamOptions ile: görünürlük [98, 99] → 2, 3; hatırlatma [99] → 3 (kendi seçiminde tek olsa da)
+    expect(teamOptions(known, [98, 99], '', label).filter((o) => o.missing).map((o) => o.label)).toEqual(['Silinmiş takım 2', 'Silinmiş takım 3'])
+    expect(teamOptions(known, [99], '', label).filter((o) => o.missing).map((o) => o.label)).toEqual(['Silinmiş takım 3'])
   })
 
   it('missingTeamText + teamOptions: rehber okunduysa seçili ama rehberde olmayan takım "Silinmiş takım", okunamadıysa "Takım adı okunamadı" — asla çıplak "#99"', () => {

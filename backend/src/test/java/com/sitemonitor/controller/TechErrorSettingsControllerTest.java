@@ -237,6 +237,20 @@ class TechErrorSettingsControllerTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): aralık dışı değerin onarımı — varsayılana EŞİT gönderilen değer (etkin değerle aynı) atılmaz, yazılır ve denetlenir")
+    void putStoresValueEqualToDefaultForOutOfRangeRepair() throws Exception {
+        stored.put(TechErrorReportSettings.KEY_MAX_MAIL_MB, "60");                 // ortam değeri aralık dışı → etkin 15
+        mvc.perform(get(REM).session(globalAdmin()))
+                .andExpect(jsonPath("$.data.max_mail_mb").value(15))
+                .andExpect(jsonPath("$.data.out_of_range.max_mail_mb.source").value("env"));
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"max_mail_mb\":15}"))
+                .andExpect(status().isOk());
+        assertThat(savedValues()).containsExactlyEntriesOf(Map.of(TechErrorReportSettings.KEY_MAX_MAIL_MB, "15"));
+        verify(auditService).recordAction(eq("TECH_ERROR_SETTINGS_SAVE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("tech-error-report"), anyString());
+    }
+
+    @Test
     @DisplayName("PUT /settings/reminders yalnız gönderilen alanları yazar; görünürlük (team_ids) bu uçta YOK SAYILIR; denetim değişen anahtarları taşır; yanıt yeni değerler")
     void putWritesOnlySentKeys() throws Exception {
         mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)

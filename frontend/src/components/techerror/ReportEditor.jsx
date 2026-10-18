@@ -1062,7 +1062,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
       <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}
         onBusy={setBusy} onRequest={requestApproval} onChanged={() => load({ keepDraft: true })}
-        sentAt={report.last_sent_at} sentTo={report.last_sent_to} />
+        sentAt={report.last_sent_at} sentTo={report.last_sent_to} reportStatus={report.status} />
 
       {state.error && (
         <AlertBanner tone="danger" title={t('te.reloadFailed')}

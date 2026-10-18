@@ -434,7 +434,9 @@ public class SmtpLogQueryService {
         // yeniden gönderim 7/24 ekibine eksik bir arama listesi yollardı. Sonraki tetik zaten yeniden dener.
         if (com.sitemonitor.service.noc.NocLogRedaction.isNoc(n)) return new ResendResult(false, null, null, "NOC_NOT_RESENDABLE");
         // İletisi posta GÖVDESİ değil ÖZET / NOT olan satır (teknik hata raporu hatırlatmaları — kanal listesi, push / adres
-        // notu; inceleme 2026-10-18): yeniden gönderim o metni HTML gövde diye takıma postalardı. Sonraki tur zaten yeniden dener.
+        // notu; inceleme 2026-10-18): yeniden gönderim o metni HTML gövde diye takıma postalardı. Ne zaman yeniden
+        // hatırlatılacağına hatırlatma işi karar verir (sonraki tekrar aralığı; tekrar kapalıysa ya da talep tutulduysa hiç —
+        // "sonraki turda kendiliğinden" denemez): kullanıcı raporu gönderir ya da Ayarlar'ı açar.
         if (n.getTrigger() != null && SUMMARY_ONLY_TRIGGERS.contains(n.getTrigger())) {
             return new ResendResult(false, null, null, "SUMMARY_NOT_RESENDABLE");
         }

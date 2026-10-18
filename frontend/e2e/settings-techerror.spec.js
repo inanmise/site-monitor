@@ -79,6 +79,12 @@ async function routes(page, { readOnly = false, fail = () => false, reminders = 
       const body = JSON.parse(route.request().postData() || '{}')
       saves.reminders.push(body)
       current = { ...current, ...pickReminders(body) }
+      // Sunucu gibi: yazılan alanın aralık dışı notu kalkar (override aralık içinde)
+      if (current.out_of_range) {
+        const oor = { ...current.out_of_range }
+        for (const k of Object.keys(body)) delete oor[k]
+        current.out_of_range = oor
+      }
       return json({ success: true, data: { ...current, read_only: false } })(route)
     }
     return json({ success: true, data: { ...current, read_only: readOnly } })(route)
@@ -294,7 +300,7 @@ for (const vp of VIEWPORTS) {
 
     test('inceleme 2026-10-18: yalnız silinmiş takımlardan oluşan görünürlük afişi + numaralı "Silinmiş takım N" + aralık dışı ortam değeri notu sığar, kırpılmaz', async ({ page }) => {
       test.setTimeout(120_000)
-      await routes(page, {
+      const saves = await routes(page, {
         settingsExtra: { team_ids: [98, 99] },
         reminders: { ...REMINDERS, out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 } } },
       })
@@ -315,6 +321,14 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, ROOT), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
       const box = await note.boundingBox()
       expect(box.x + box.width, `@${vp.name}: not sağdan taşmaz`).toBeLessThanOrEqual(vp.width + 1)
+      // 2. tur: aralık dışı alan onarım bekler — kayıt çubuğu kendi etiketiyle etkin; TEK kayıt varsayılanı yazar, not kalkar
+      const remSave = root.locator('[data-slot="tes-rem-save"]')
+      await expect(remSave).toContainText('Aralık dışı değerin yerine geçerli değer kaydedilmeyi bekliyor')
+      await remSave.getByRole('button', { name: /Kaydet/ }).click()
+      await expect.poll(() => saves.reminders.length).toBe(1)
+      expect(saves.reminders[0]).toEqual({ max_mail_mb: 15 })
+      await expect(root.locator('[data-slot="tes-rem-oor-max-mail-mb"]')).toHaveCount(0)
+      await expect(remSave.locator('[data-slot="settings-save-bar"]')).not.toHaveAttribute('data-dirty', 'true')
     })
   })
 }

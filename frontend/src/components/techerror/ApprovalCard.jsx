@@ -24,13 +24,42 @@ const ICON = { none: ShieldCheck, pending: Clock, approved: CheckCircle2, reject
 
 /**
  * Onay akışı kaldırılmış kanalda (yönetici alıcısı yok, rapor eski bir onay durumu taşıyor) ipucu anahtarı — inceleme
- * 2026-10-18: gönderilmiş rapor "gönderildi" der ("doğrudan gönderebilirsiniz" değil); bekleyen istek "karar verilemez, alıcılar
- * geri gelirse istek yeniden geçerli" der; reddedilmiş / eskimiş / onaylanıp gönderilmemiş rapor "bekleyen" sözcüğü taşımaz.
+ * 2026-10-18: ŞU ANKİ içeriği gönderilmiş rapor "gönderildi" der ("doğrudan gönderebilirsiniz" değil); bekleyen istek "karar
+ * verilemez, alıcılar geri gelirse istek yeniden geçerli" der; reddedilmiş / eskimiş / onaylanıp gönderilmemiş rapor "bekleyen"
+ * sözcüğü taşımaz. `contentSent` = {@link currentContentSent} (raporun herhangi bir zamanki son gönderimi DEĞİL).
  */
-export function flowRemovedHintKey(state, sentAt) {
-  if (sentAt) return 'te.appr.flowRemovedSentHint'
+export function flowRemovedHintKey(state, contentSent) {
+  if (contentSent) return 'te.appr.flowRemovedSentHint'
   if (state === 'pending') return 'te.appr.flowRemovedPendingHint'
   return 'te.appr.flowRemovedHint'
+}
+
+const ms = (iso) => {
+  const v = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(v) ? v : null
+}
+
+/**
+ * Raporun ŞU ANKİ içeriği gönderildi mi (inceleme 2026-10-18, 2. tur): `last_sent_at` raporun HERHANGİ bir zamanki son
+ * gönderimidir — önce gönderilip sonra değiştirilen, yeniden onaya sunulan (bekleyen) raporda da doludur; kart onu
+ * "gönderildi" diye okuyunca kararı verilemeyen isteği ve gönderilmemiş içeriği gizliyordu. Kaynak raporun liste durumu
+ * (`report.status`, sunucu `reportStatus`: yalnız "sent" = son gönderimden sonra içerik değişmedi). Durum gelmezse (eski
+ * çağıran) zaman kuralı: son gönderim isteğin kendisinden sonra ve istek eskimemiş. Onaylı raporda ek olarak gönderim
+ * KARARDAN sonra olmalı — akış eklenmeden önceki bir takım gönderimi "yöneticilere gönderildi" demez.
+ */
+export function currentContentSent({ reportStatus, sentAt, approval, state } = {}) {
+  const sent = ms(sentAt)
+  if (sent == null) return false
+  const requested = ms(approval?.requested_at)
+  let ok
+  if (typeof reportStatus === 'string' && reportStatus) ok = reportStatus === 'sent'
+  else ok = state !== 'stale' && (requested == null || sent >= requested)
+  if (!ok) return false
+  if (state === 'approved') {
+    const decided = ms(approval?.decided_at)
+    if (decided != null && sent < decided) return false
+  }
+  return true
 }
 
 export function approvalStateOf(approval) {
@@ -48,7 +77,7 @@ export function approvalStateLabelKey(approval) {
  * geçmişi varsa çizilir. Durum rozeti + kim / ne zaman + not; ekip için "Onaya gönder" (eylem çubuğunda da), PO için
  * "Onayla" / "Reddet" (gerekçe zorunlu). Karar sunucuda doğrulanır (PO üyeliği, bekleyen istek, eskimiş istek 409).
  */
-export default function ApprovalCard({ reportId, detail, approval, uiLang, busy, onBusy, onRequest, onChanged, sentAt, sentTo }) {
+export default function ApprovalCard({ reportId, detail, approval, uiLang, busy, onBusy, onRequest, onChanged, sentAt, sentTo, reportStatus }) {
   const t = useT()
   const toast = useToast()
   const [dialog, setDialog] = useState(null)       // 'approve' | 'reject'
@@ -99,11 +128,13 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
     }
   }
 
-  const hint = flowRemoved ? t(flowRemovedHintKey(state, sentAt))
+  // "Gönderildi" yalnız ŞU ANKİ içerik gönderildiyse (inceleme 2026-10-18, 2. tur) — eski bir gönderim bekleyen isteği gizlemez
+  const contentSent = currentContentSent({ reportStatus, sentAt, approval, state })
+  const hint = flowRemoved ? t(flowRemovedHintKey(state, contentSent))
     : state === 'pending' ? t('te.appr.pendingHint')
     : state === 'rejected' ? t('te.appr.rejectedHint')
       : state === 'stale' ? t('te.appr.state.stale')
-        : state === 'approved' ? (sentAt ? t('te.appr.sentHint') : t('te.appr.waitingSend')) : null
+        : state === 'approved' ? (contentSent ? t('te.appr.sentHint') : t('te.appr.waitingSend')) : null
 
   return (
     <section aria-labelledby="te-approval-title" data-slot="te-approval" data-state={state}
