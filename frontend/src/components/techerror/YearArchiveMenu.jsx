@@ -12,7 +12,7 @@ import {
 import { periodLabel } from './TechErrorParts.jsx'
 import { clientFailure } from '../../utils/errorMessages.js'
 import {
-  archiveFileName, archiveYears, createArchiveZip, missingText, runArchive, zipPlan,
+  ARCHIVE_RETRY_WAIT_MS, archiveFileName, archiveYears, createArchiveZip, missingText, runArchive, zipPlan,
 } from './yearArchive.js'
 
 const LONG_TOAST_MS = 12000
@@ -58,7 +58,12 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
       const res = await runArchive(plan, {
         fetchPdf: (item, signal) => api.techErrors.pdfBlob(item.id, { signal }),
         signal: c.signal,
-        onProgress: (p) => { if (alive.current) setRun((r) => (r ? { ...r, index: p.index, waiting: p.waiting } : r)) },
+        // Bekleme süresi durum satırında (inceleme 2026-10-18, 4. tur: "birkaç saniye" diyordu, tek bekleme 60 sn olabilir)
+        onProgress: (p) => {
+          if (!alive.current) return
+          const waitSeconds = p.waiting ? Math.max(1, Math.ceil((Number(p.waitMs) || ARCHIVE_RETRY_WAIT_MS) / 1000)) : null
+          setRun((r) => (r ? { ...r, index: p.index, waiting: p.waiting, waitSeconds } : r))
+        },
         // Her PDF gelir gelmez arşive — baytlar bellekte birikmez
         onFile: (f) => zip.addPdf(f.item, f.name, f.bytes),
       })
@@ -157,7 +162,7 @@ export function YearArchiveStatus({ run, onCancel }) {
   if (run) {
     if (run.cancelling) text = t('te.zip.cancelling')
     else if (run.packing) text = t('te.zip.packing')
-    else if (run.waiting) text = t('te.zip.waiting', run.index, run.total)
+    else if (run.waiting) text = t('te.zip.waiting', run.index, run.total, run.waitSeconds ?? Math.round(ARCHIVE_RETRY_WAIT_MS / 1000))
     else text = t('te.zip.progress', Math.max(1, run.index), run.total)
   }
   return (

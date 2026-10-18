@@ -6,6 +6,7 @@ import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
   sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
+  SEND_POLL_MS, SEND_POLL_MAX_MS, SEND_STATUS_FIELDS, sendPollState, withSendStatus,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -144,11 +145,24 @@ describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)
   it('kesin sonuç: başarı ve kalıcı retler pencereyi kapatır (null)', () => {
     expect(sendFailureKind({ success: true, data: {} })).toBeNull()
     for (const [status, code] of [[409, 'MAIL_DISABLED'], [409, 'TEAM_EMAIL_MISSING'], [409, 'APPROVAL_REQUIRED'], [502, 'MAIL_FAILED'],
-      [403, 'FORBIDDEN'], [404, 'NOT_FOUND'], [400, 'VALIDATION_FAILED'], [500, 'INTERNAL_ERROR']]) {
+      [403, 'FORBIDDEN'], [404, 'NOT_FOUND'], [400, 'VALIDATION_FAILED']]) {
       expect(sendFailureKind({ success: false, status, code })).toBeNull()
     }
     expect(sendFailureKind(null)).toBeNull()
     expect(sendFailureKind(new TypeError('x is not a function'))).toBeNull()
+  })
+  it('inceleme 2026-10-18 (4. tur): MAIL_FAILED dışındaki HER 5xx belirsiz — posta servise verildikten sonra düşen 500 de "gitmiş olabilir" (yeniden okuma ucuz)', () => {
+    for (const [status, code] of [[500, 'INTERNAL_ERROR'], [500, undefined], [500, 'HTTP_500'], [501, 'HTTP_501'], [507, 'X'],
+      [502, undefined], [599, 'WHATEVER']]) {
+      expect(sendFailureKind({ success: false, status, ...(code ? { code } : {}) })).toBe('unsure')
+    }
+    expect(sendFailureKind({ success: false, errorInfo: { status: 500, code: 'INTERNAL_ERROR' } })).toBe('unsure')
+    // Tek istisna: posta sunucusunun kesin reddi
+    expect(sendFailureKind({ success: false, status: 502, code: 'MAIL_FAILED' })).toBeNull()
+    expect(sendFailureKind({ success: false, errorInfo: { status: 502, code: 'MAIL_FAILED' } })).toBeNull()
+    // 4xx kesin retler değişmedi
+    expect(sendFailureKind({ success: false, status: 409, code: 'MAIL_DISABLED' })).toBeNull()
+    expect(sendFailureKind({ success: false, status: 499 })).toBeNull()
   })
 })
 
@@ -182,5 +196,81 @@ describe('sonucu bilinmeyen gönderimden sonra yeniden okunan rapor (inceleme 20
     expect(unsureSendOutcome(sentOnce, { ...sentOnce, status: 'sent', send_state: 'SENDING' })).toBe('notSent')
     // Sayaç yoksa (eski sunucu) yalnız zaman karşılaştırılır
     expect(unsureSendOutcome({ status: 'draft' }, { status: 'draft' })).toBe('notSent')
+  })
+
+  describe('inceleme 2026-10-18 (4. tur): tıklamadan ÖNCE kuyrukta bekleyen gönderim — eski kuyruk bu gönderimin işareti değil', () => {
+    const queuedBefore = { status: 'sent', send_state: 'QUEUED', last_sent_at: '2026-10-01T08:00:00Z', last_attempt_at: '2026-10-17T09:00:00Z', send_count: 1 }
+    const queuedDraft = { status: 'queued', send_state: 'QUEUED', last_sent_at: null, last_attempt_at: '2026-10-17T09:00:00Z', send_count: 0 }
+    // [ad, önceki, okunan, beklenen]
+    const TABLE = [
+      // Bu gönderim sunucuya hiç ulaşmadı, eski kuyruk değişmedi → 'queued' DEĞİL
+      ['eski kuyruk değişmedi (gönderilmiş rapor)', queuedBefore, { ...queuedBefore }, 'notSent'],
+      ['eski kuyruk değişmedi (hiç gönderilmemiş rapor)', queuedDraft, { ...queuedDraft }, 'notSent'],
+      // Okuma eski kuyruğu sonuçlandırdı (confirmQueued: last_sent_at + send_count, last_attempt_at AYNI) → 'sent' DEĞİL
+      ['okuma eski kuyruğu teslim etti', queuedBefore,
+        { ...queuedBefore, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-17T09:00:00Z', send_count: 2 }, 'notSent'],
+      ['okuma eski kuyruğu teslim etti (taslak)', queuedDraft,
+        { ...queuedDraft, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-17T09:00:00Z', send_count: 1 }, 'notSent'],
+      // Okuma eski kuyruğu başarısız buldu (failQueued) → bu gönderim yine olmamış
+      ['okuma eski kuyruğu başarısız buldu', queuedBefore, { ...queuedBefore, send_state: 'FAILED' }, 'notSent'],
+      // Bu gönderim sonuçlandı: last_attempt_at damgalandı → sonuç send_state'ten
+      ['bu gönderim gitti (finishSent)', queuedBefore,
+        { ...queuedBefore, send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', last_attempt_at: '2026-10-18T07:00:01Z', send_count: 3 }, 'sent'],
+      ['bu gönderim kuyruğa alındı (finishQueued)', queuedBefore, { ...queuedBefore, last_attempt_at: '2026-10-18T07:00:01Z' }, 'queued'],
+      ['bu gönderim kuyruğa alındı, okuma teslim etti', queuedDraft,
+        { ...queuedDraft, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', last_attempt_at: '2026-10-18T07:00:01Z', send_count: 1 }, 'sent'],
+      // Gönderimin içinde eski kuyruk teslim edildi, sonra BU deneme başarısız (finishNotSent) → 'sent' DEĞİL
+      ['eski kuyruk teslim + bu deneme başarısız', queuedBefore,
+        { ...queuedBefore, send_state: 'FAILED', last_sent_at: '2026-10-17T09:00:00Z', last_attempt_at: '2026-10-18T07:00:01Z', send_count: 2 }, 'notSent'],
+      ['bu deneme atlandı (finishNotSent SKIPPED)', queuedBefore, { ...queuedBefore, send_state: 'SKIPPED', last_attempt_at: '2026-10-18T07:00:01Z' }, 'notSent'],
+      // Süren gönderim her zaman önce
+      ['süren gönderim', queuedBefore, { ...queuedBefore, status: 'sending', send_state: 'SENDING' }, 'sending'],
+    ]
+    it.each(TABLE)('%s', (_name, before, after, expected) => {
+      expect(unsureSendOutcome(before, after)).toBe(expected)
+    })
+    it('sunucu kuralı gerçekten böyle: finishSent / finishQueued / finishNotSent last_attempt_at damgalar, confirmQueued / failQueued / releaseClaim damgalamaz; rapor satırı alanı taşır', () => {
+      const repo = fs.readFileSync(path.join(ROOT, 'backend/src/main/java/com/sitemonitor/repository/TechErrorReportRepository.java'), 'utf8')
+      const queryOf = (method) => {
+        const i = repo.indexOf(` ${method}(`)
+        expect(i).toBeGreaterThan(0)
+        const q = repo.lastIndexOf('@Query(', i)
+        return repo.slice(q, i)
+      }
+      for (const m of ['finishSent', 'finishQueued', 'finishNotSent']) expect(queryOf(m)).toMatch(/r\.lastAttemptAt = :at/)
+      for (const m of ['confirmQueued', 'failQueued', 'releaseClaim']) expect(queryOf(m)).not.toMatch(/lastAttemptAt/)
+      const ctrl = fs.readFileSync(path.join(ROOT, 'backend/src/main/java/com/sitemonitor/controller/TechErrorReportController.java'), 'utf8')
+      expect(ctrl).toContain('m.put("last_attempt_at", iso(r.getLastAttemptAt()));')
+    })
+  })
+})
+
+describe('süren / kuyruktaki gönderimin yoklaması (inceleme 2026-10-18, 4. tur)', () => {
+  it('sınırlar: 10 sn arayla, en çok 10 dk', () => {
+    expect(SEND_POLL_MS).toBe(10_000)
+    expect(SEND_POLL_MAX_MS).toBe(10 * 60_000)
+  })
+  it('durum: sürüyor / kuyrukta → pending; SENT → sent; FAILED / SKIPPED → notSent; bayat talep / durum yok → unknown; okunamadı → null', () => {
+    expect(sendPollState({ status: 'sending', send_state: 'SENDING' })).toBe('pending')
+    expect(sendPollState({ status: 'queued', send_state: 'QUEUED' })).toBe('pending')
+    expect(sendPollState({ status: 'sent', send_state: 'QUEUED' })).toBe('pending')
+    expect(sendPollState({ status: 'sent', send_state: 'SENT' })).toBe('sent')
+    expect(sendPollState({ status: 'changed', send_state: 'SENT' })).toBe('sent')
+    expect(sendPollState({ status: 'draft', send_state: 'FAILED' })).toBe('notSent')
+    expect(sendPollState({ status: 'sent', send_state: 'SKIPPED' })).toBe('notSent')
+    expect(sendPollState({ status: 'sent', send_state: 'SENDING' })).toBe('unknown')
+    expect(sendPollState({ status: 'draft', send_state: null })).toBe('unknown')
+    expect(sendPollState(null)).toBeNull()
+    expect(sendPollState('x')).toBeNull()
+  })
+  it('yalnız gönderim alanları işlenir: sürüm, başlık, onay ve yanıtta olmayan alanlar değişmez', () => {
+    const cur = { id: 100, version: 7, title: 'Eylül', status: 'sending', send_state: 'SENDING', send_count: 1, approval: { state: 'approved' }, last_sent_to: 'a@x.com' }
+    const fresh = { id: 100, version: 9, title: 'BAŞKA', status: 'sent', send_state: 'SENT', send_count: 2, last_sent_at: '2026-10-18T07:00:00Z', approval: { state: 'stale' } }
+    const out = withSendStatus(cur, fresh)
+    expect(out).toEqual({ ...cur, status: 'sent', send_state: 'SENT', send_count: 2, last_sent_at: '2026-10-18T07:00:00Z' })
+    expect(out.version).toBe(7)
+    expect(cur.status).toBe('sending')                              // giriş değişmez
+    expect(SEND_STATUS_FIELDS).not.toContain('version')
+    expect(withSendStatus(cur, null)).toBe(cur)
   })
 })

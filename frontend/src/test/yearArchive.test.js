@@ -134,12 +134,13 @@ describe('yıl arşivi — sıralı koşucu', () => {
       .mockResolvedValueOnce({ success: true, bytes: pdf('2') })
       .mockResolvedValueOnce({ success: true, bytes: pdf('3') })
     const waits = []
-    const res = await runArchive(plan, { fetchPdf, sleep, onProgress: (p) => { if (p.waiting) waits.push(`${p.index}:${p.attempt}`) } })
+    const res = await runArchive(plan, { fetchPdf, sleep, onProgress: (p) => { if (p.waiting) waits.push(`${p.index}:${p.attempt}:${p.waitMs}`) } })
     expect(fetchPdf.mock.calls.map((c) => c[0].id)).toEqual([1, 2, 2, 2, 3])
     expect(sleep).toHaveBeenCalledTimes(2)
     expect(sleep.mock.calls[0][0]).toBe(ARCHIVE_RETRY_WAIT_MS)
     expect(ARCHIVE_RETRY_WAIT_MS).toBe(3000)
-    expect(waits).toEqual(['2:2', '2:3'])
+    // Bekleme süresi durum satırına gider (4. tur)
+    expect(waits).toEqual(['2:2:3000', '2:3:3000'])
     expect(res.files).toHaveLength(3)
     expect(res.missing).toEqual([])
   })
@@ -212,9 +213,12 @@ describe('yıl arşivi — sıralı koşucu', () => {
       const text = missingText(res.missing, { t, channelName: 'Mobil', year: 2026, labelOf })
       expect(text).toContain(`- Ocak 2026 — ${TR['te.zip.reason.limit']}`)
       expect(text).toContain(`- Şubat 2026 — ${t('te.zip.reason.busy', ARCHIVE_MAX_RETRIES + 1)}`)
-      expect(TR['te.zip.reason.limit']).toMatch(/dakikalık PDF sınırı/)
-      expect(EN['te.zip.reason.limit']).toMatch(/per-minute PDF limit/)
+      // 4. tur: sunucu kişi başı dakikalık sınırı VE aynı anda tek PDF kuralını aynı kodla (RATE_LIMITED) reddeder — metin ikisini de söyler
+      expect(TR['te.zip.reason.limit']).toMatch(/PDF sınırı \(dakikalık ya da eşzamanlı\)/)
+      expect(EN['te.zip.reason.limit']).toMatch(/PDF limit \(per minute or concurrent\)/)
       expect(TR['te.zip.reason.limit']).not.toMatch(/meşgul/)
+      expect(CTRL.match(/return rateLimited\(/g)).toHaveLength(2)          // eşzamanlılık + dakikalık: tek kod
+      expect(CTRL).toMatch(/error\(429, "RATE_LIMITED"/)
     })
   })
 

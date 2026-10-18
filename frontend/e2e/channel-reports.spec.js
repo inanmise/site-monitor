@@ -1582,12 +1582,12 @@ for (const vp of VIEWPORTS) {
 
       await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
       const years = page.locator('[data-slot="te-report-year"]')
-      await expect(years).toHaveCount(2)
+      await expect(years).toHaveCount(2, { timeout: 20_000 })      // gezinmeden sonraki ilk denetim: yükte 5 sn yetmeyebilir
       await expect(years.first()).toHaveAttribute('data-year', '2026')
       expect(await page.evaluate(overflowX)).toBeLessThanOrEqual(0)
 
       await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
-      await page.locator('[data-slot="te-versions-open"]').click()
+      await page.locator('[data-slot="te-versions-open"]').click({ timeout: 20_000 })
       const dlg = page.locator('[data-slot="te-versions"]')
       await expect(dlg.locator('[data-slot="te-version-item"]')).toHaveCount(2)
       await dlg.locator('[data-slot="te-version-item"][data-version="2"]').click()
@@ -1655,7 +1655,8 @@ for (const vp of VIEWPORTS) {
         report: { ...REPORT.report, approval: { state: 'pending', raw_state: 'PENDING', stale: false, requested_at: '2026-10-13T09:00:00Z' } },
         approval_detail: { ...detail, requested_by_name: LONG_PERSON, can_request: false, is_approver: true, can_decide: true } }
       await page.reload()
-      await expect(card).toHaveAttribute('data-state', 'pending')
+      await expect(editor).toBeVisible({ timeout: 20_000 })      // yeniden yüklemeden sonraki ilk denetim (yükte 5 sn yetmeyebilir)
+      await expect(card).toHaveAttribute('data-state', 'pending', { timeout: 20_000 })
       expect(await page.evaluate(clipped, '[data-slot="te-approval"]'), 'kırpılan metin (bekleyen)').toEqual([])
       expect(await page.evaluate(overflowX), 'yatay taşma (bekleyen)').toBeLessThanOrEqual(1)
       await card.locator('[data-slot="te-approval-approve"]').click()

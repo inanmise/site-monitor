@@ -126,7 +126,9 @@ describe('kanal yıl arşivi (ZIP)', () => {
     await openMenu()
     fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
     const status = document.querySelector('[data-slot="te-year-zip-status"]')
-    await waitFor(() => expect(status).toHaveTextContent(/Sunucu başka PDF'ler hazırlıyor.*1 \/ 2/))
+    // Bekleme süresi GERÇEK değerle (inceleme 2026-10-18, 4. tur: "birkaç saniye" diyordu, tek bekleme 60 sn olabilir)
+    await waitFor(() => expect(status).toHaveTextContent(/PDF şu an hazırlanamıyor \(sunucu meşgul ya da PDF sınırı dolu\); 3 sn bekleniyor.*1 \/ 2/))
+    expect(status).not.toHaveTextContent(/birkaç saniye/)
     expect(te().pdfBlob).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
     await waitFor(() => expect(dl.calls).toHaveLength(1))
@@ -134,6 +136,20 @@ describe('kanal yıl arşivi (ZIP)', () => {
     const files = await unzipped(dl.calls[0].blob)
     expect(Object.keys(files)).toHaveLength(2)
     expect(Object.keys(files)).not.toContain('missing.txt')
+  })
+
+  it('4. tur: sunucunun önerdiği bekleme (Retry-After 42 sn) durum satırında söylenir; süre dolunca aynı ay yeniden istenir', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    te().pdfBlob
+      .mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 42, error: 'PDF sınırına ulaşıldı.' })
+      .mockImplementation(async (id) => pdfOf(id))
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    const status = document.querySelector('[data-slot="te-year-zip-status"]')
+    await waitFor(() => expect(status).toHaveTextContent(/42 sn bekleniyor, sonra yeniden denenecek… 1 \/ 2/))
+    await act(async () => { await vi.advanceTimersByTimeAsync(42_000) })
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    expect(te().pdfBlob.mock.calls.map((c) => c[0])).toEqual([2511, 2511, 2512])
   })
 
   it('Vazgeç: süren istek dönünce durur, kalan PDF\'ler istenmez, hiçbir şey indirilmez', async () => {

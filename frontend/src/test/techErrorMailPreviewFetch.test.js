@@ -7,9 +7,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('../api/client', () => ({ api: { techErrors: { mailPreview: vi.fn() } } }))
 import { api } from '../api/client'
 import {
-  MAIL_PREVIEW_KEEP_MS, clearMailPreviewShares, fetchMailPreview, mailPreviewShareCount,
+  MAIL_PREVIEW_BUSY_RETRY_MAX_S, MAIL_PREVIEW_KEEP_MS, busyRetryWaitMs, clearMailPreviewShares, fetchMailPreview, mailPreviewShareCount,
 } from '../components/techerror/mailPreviewFetch.js'
 import { OWNER_KEY } from '../utils/personalStorage.js'
+import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const mp = () => api.techErrors.mailPreview
 
@@ -118,5 +122,90 @@ describe('e-posta önizlemesi isteğinin paylaşımı', () => {
     localStorage.setItem(OWNER_KEY, 'ali')
     fetchMailPreview('100')
     expect(mp()).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('inceleme 2026-10-18 (4. tur): anahtar raporun SÜRÜMÜNÜ ve isteğin dilini taşır; eşzamanlılık reddinde bir kez yeniden dener', () => {
+  it('kapat → düzenle (kayıt, sürüm 4 → 5) → yeniden aç: kayıttan ÖNCE başlamış isteğe KATILMAZ; kimsenin beklemediği eski istek hemen kesilir', async () => {
+    const d = deferred()
+    mp().mockReturnValueOnce(d.promise).mockResolvedValueOnce({ success: true, data: { subject: 'yeni içerik' } })
+    const c1 = new AbortController()
+    const old = fetchMailPreview('100', { signal: c1.signal, version: 4 })
+    const oldNet = mp().mock.calls[0][1].signal
+    c1.abort()                                                        // pencere kapandı
+    expect(await old).toMatchObject({ aborted: true })
+    const fresh = await fetchMailPreview('100', { version: 5 })
+    expect(mp()).toHaveBeenCalledTimes(2)
+    expect(fresh).toEqual({ success: true, data: { subject: 'yeni içerik' } })
+    expect(oldNet.aborted).toBe(true)
+    d.resolve({ success: true, data: { subject: 'eski içerik' } })
+  })
+
+  it('aynı sürüm hâlâ katılır; başka sürümü BEKLEYEN çağıran varsa onun isteği kesilmez', async () => {
+    const d4 = deferred()
+    const d5 = deferred()
+    mp().mockReturnValueOnce(d4.promise).mockReturnValueOnce(d5.promise)
+    const a = fetchMailPreview('100', { version: 4 })
+    const b = fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(1)
+    const c = fetchMailPreview('100', { version: 5 })
+    expect(mp()).toHaveBeenCalledTimes(2)
+    expect(mp().mock.calls[0][1].signal.aborted).toBe(false)
+    d4.resolve({ success: true, data: { v: 4 } })
+    d5.resolve({ success: true, data: { v: 5 } })
+    expect((await a).data.v).toBe(4)
+    expect((await b).data.v).toBe(4)
+    expect((await c).data.v).toBe(5)
+  })
+
+  it('arayüz dili anahtarda: dil değişince eski dilin isteğine katılınmaz (X-Lang farklı, metinler başka dilde)', async () => {
+    mp().mockImplementation(() => new Promise(() => {}))
+    localStorage.setItem(LANG_STORAGE_KEY, 'tr')
+    fetchMailPreview('100', { version: 4 })
+    fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(1)
+    localStorage.setItem(LANG_STORAGE_KEY, 'en')
+    fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(2)
+  })
+
+  it('yeni istek sunucunun eşzamanlılık reddini (429 RATE_LIMITED, Retry-After ≤ 5 sn) alırsa önerilen süre beklenip BİR kez yeniden denenir', async () => {
+    vi.useFakeTimers()
+    const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5, error: 'Sizin için başka bir PDF hazırlanıyor.' }
+    mp().mockResolvedValueOnce(busy).mockResolvedValueOnce({ success: true, data: { subject: 'ikinci deneme' } })
+    const p = fetchMailPreview('100', { version: 5 })
+    await vi.advanceTimersByTimeAsync(4900)
+    expect(mp()).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(mp()).toHaveBeenCalledTimes(2)
+    expect(await p).toEqual({ success: true, data: { subject: 'ikinci deneme' } })
+  })
+
+  it('yalnız BİR yeniden deneme: ikinci ret olduğu gibi döner; dakikalık sınırın uzun beklemesi ve önerisiz 429 denenmez', async () => {
+    vi.useFakeTimers()
+    const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5, error: 'meşgul' }
+    mp().mockResolvedValue(busy)
+    const p = fetchMailPreview('100', { version: 5 })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(await p).toEqual(busy)
+    expect(mp()).toHaveBeenCalledTimes(2)
+    mp().mockClear()
+    const minute = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 42, error: 'dakikalık sınır' }
+    mp().mockResolvedValue(minute)
+    expect(await fetchMailPreview('100', { version: 6 })).toEqual(minute)
+    expect(mp()).toHaveBeenCalledTimes(1)
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED' })).toBeNull()
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'PDF_BUSY', retry_after_seconds: 3 })).toBeNull()
+    expect(busyRetryWaitMs({ success: false, status: 503, code: 'RATE_LIMITED', retry_after_seconds: 3 })).toBeNull()
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 2 })).toBe(2000)
+    expect(busyRetryWaitMs({ success: false, errorInfo: { status: 429 }, code: 'RATE_LIMITED', retry_after_seconds: '5' })).toBe(5000)
+    expect(busyRetryWaitMs({ success: true })).toBeNull()
+  })
+
+  it('bekleme sınırı sunucunun eşzamanlılık önerisiyle aynı (RENDER_BUSY_RETRY_SECONDS)', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const ctrl = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/controller/TechErrorReportController.java'), 'utf8')
+    const secs = Number(/RENDER_BUSY_RETRY_SECONDS\s*=\s*(\d+)L/.exec(ctrl)[1])
+    expect(MAIL_PREVIEW_BUSY_RETRY_MAX_S).toBe(secs)
   })
 })

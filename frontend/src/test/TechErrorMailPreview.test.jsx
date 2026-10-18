@@ -187,6 +187,30 @@ describe('e-posta önizlemesi — pencere', () => {
     expect(te().mailPreview).toHaveBeenCalledTimes(1)
   })
 
+  it('4. tur: hazırlık sürerken kapat → alanı düzenle → yeniden önizle (kaydet, sürüm 4 → 5): kayıttan ÖNCE başlamış isteğe katılmaz, pencere kaydedilen içeriği gösterir (görülen = gönderilen)', async () => {
+    te().saveReport.mockResolvedValue({ success: true, data: { version: 5, changed: true, updated_at: '2026-10-13T09:00:00Z',
+      values: { fields: { 'error-rate': 0.42, 'total-tx': 1250000 }, issues: {}, texts: {} } } })
+    await openEditor()
+    let releaseOld
+    te().mailPreview.mockImplementationOnce(() => new Promise((r) => { releaseOld = r }))
+    let dlg = await openPreview()
+    await waitFor(() => expect(releaseOld).toBeTypeOf('function'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    fireEvent.change(screen.getByLabelText('Toplam işlem adedi'), { target: { value: '1.250.000' } })
+    te().mailPreview.mockResolvedValueOnce(preview({ subject: 'Kayıttan sonraki içerik' }))
+    fireEvent.click(screen.getByRole('button', { name: 'E-postayı önizle' }))
+    const ask = await screen.findByRole('dialog', { name: 'Önce kaydedilsin mi?' })
+    fireEvent.click(within(ask).getByRole('button', { name: 'Kaydet ve devam et' }))
+    dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
+    expect(await within(dlg).findByText('Kayıttan sonraki içerik')).toBeInTheDocument()
+    expect(te().saveReport).toHaveBeenCalledTimes(1)
+    expect(te().mailPreview).toHaveBeenCalledTimes(2)
+    await act(async () => { releaseOld(preview({ subject: 'Kayıttan önceki içerik' })) })
+    expect(within(dlg).queryByText('Kayıttan önceki içerik')).toBeNull()
+    expect(within(dlg).getByText('Kayıttan sonraki içerik')).toBeInTheDocument()
+  })
+
   it('yük hatası: "Önizleme hazırlanamadı" + sunucu metni + Tekrar dene → ikinci okuma gövdeyi getirir; Gönder hata ekranında yok', async () => {
     await openEditor()
     te().mailPreview.mockRejectedValueOnce(new Error('Şu anda başka raporların PDF\'i hazırlanıyor. Birkaç saniye sonra tekrar deneyin.'))
@@ -421,6 +445,39 @@ describe('e-posta önizlemesi — çift açılış (inceleme 2026-10-18, 3. tur)
     await act(async () => { gate.release(preview()) })
     await waitFor(() => expect(dlg.querySelector('[data-slot="te-mail-frame"]')).not.toBeNull())
     expect(within(dlg).queryByText('Önizleme hazırlanamadı')).toBeNull()
+  })
+
+  it('4. tur: kapat → düzenle (sürüm 4 → 5) → yeniden aç: kayıttan önce başlamış isteğe KATILMAZ (eski içerik gösterilmez); sunucu eskisini hâlâ hazırlıyorsa 429 sonrası Retry-After kadar bekleyip bir kez yeniden dener', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const gate = { inFlight: 0, release: null }
+      te().mailPreview.mockImplementation(() => {
+        if (gate.inFlight > 0) {
+          return Promise.resolve({ success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5,
+            error: 'Sizin için başka bir PDF ya da e-posta önizlemesi hazırlanıyor; kişi başına aynı anda bir tane hazırlanır.' })
+        }
+        gate.inFlight++
+        return new Promise((resolve) => { gate.release = (v) => { gate.inFlight--; resolve(v) } })
+      })
+      const view = render(<MailPreviewDialog reportId="100" reportVersion={4} open onClose={() => {}} uiLang="tr" />)
+      await waitFor(() => expect(gate.release).toBeTypeOf('function'))
+      const releaseOld = gate.release
+      view.rerender(<MailPreviewDialog reportId="100" reportVersion={4} open={false} onClose={() => {}} uiLang="tr" />)
+      view.rerender(<MailPreviewDialog reportId="100" reportVersion={5} open onClose={() => {}} uiLang="tr" />)
+      const dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
+      await waitFor(() => expect(te().mailPreview).toHaveBeenCalledTimes(2))     // katılmadı: yeni istek (429 aldı)
+      expect(te().mailPreview.mock.calls[0][1].signal.aborted).toBe(true)        // eski istek kesildi
+      // Sunucu eski hazırlığı bitirir (yanıtı kimse okumaz), önerilen 5 sn sonra tek yeniden deneme
+      await act(async () => { releaseOld(preview({ subject: 'Eski içerik' })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      await waitFor(() => expect(te().mailPreview).toHaveBeenCalledTimes(3))
+      await act(async () => { gate.release(preview({ subject: 'Yeni içerik' })) })
+      expect(await within(dlg).findByText('Yeni içerik')).toBeInTheDocument()
+      expect(within(dlg).queryByText('Eski içerik')).toBeNull()
+      expect(within(dlg).queryByText('Önizleme hazırlanamadı')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('kapatılan pencerenin geç gelen sonucu yok sayılır; yeniden açılış taze okur', async () => {

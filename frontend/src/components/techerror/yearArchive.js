@@ -8,7 +8,9 @@
  * 429'da sunucunun `Retry-After` önerisine uyulur (inceleme 2026-10-18, 3. tur — kişi başı PDF sınırı dakikada 20; aynı
  * dakikadaki ikinci arşiv son aylarını sabit 3 sn × 3 denemede kaybediyor, `missing.txt` "sunucu meşgul" diyordu): tek
  * bekleme ≤ {@link ARCHIVE_MAX_RETRY_WAIT_MS}, bir koşudaki beklemelerin toplamı ≤ {@link ARCHIVE_TOTAL_WAIT_BUDGET_MS};
- * öneri yoksa 3 sn. 429 `RATE_LIMITED` ile eksik kalan ay `missing.txt`'de "dakikalık PDF sınırı" diye yazılır (`limit`).
+ * öneri yoksa 3 sn. 429 `RATE_LIMITED` ile eksik kalan ay `missing.txt`'de "PDF sınırı (dakikalık ya da eşzamanlı)" diye
+ * yazılır (`limit` — sunucu kişi başı dakikalık sınırı ve aynı anda tek PDF kuralını aynı kodla reddeder; inceleme
+ * 2026-10-18, 4. tur). Bekleme sürerken durum satırı beklenen süreyi söyler (`onProgress` `waitMs`).
  *
  * İnceleme düzeltmeleri (2026-10-17):
  *  - her PDF isteğinin üst sınırı {@link ARCHIVE_REQUEST_TIMEOUT_MS} (5 dk, kullanıcının iptal sinyaliyle birleşik); süre
@@ -161,7 +163,8 @@ export function missingText(missing, { t, channelName, year, labelOf }) {
 }
 
 /**
- * Eksik ayın nedeni (arayüz dilinde): meşgul (PDF sırası), kişi başı dakikalık PDF sınırı (`limit` — 429 `RATE_LIMITED`),
+ * Eksik ayın nedeni (arayüz dilinde): meşgul (PDF sırası), kişi başı PDF sınırı — dakikalık ya da eşzamanlı (`limit` — 429
+ * `RATE_LIMITED`),
  * PDF olmayan yanıt, zaman aşımı, oturum düştü (401) / erişim yok (403) ve bu yüzden denenmeyen aylar, ağ (durum 0 —
  * tarayıcının teknik metni yazılmaz) ya da sunucunun kendi iletisi / HTTP durumu.
  */
@@ -298,7 +301,7 @@ export function retryWaitMs(res, fallbackMs = ARCHIVE_RETRY_WAIT_MS, maxWaitMs =
  * @param {{ id, year, month }[]} plan
  * @param {{ fetchPdf: (item, signal) => Promise<{ success: boolean, status?: number, error?: string, aborted?: boolean,
  *           blob?: Blob, bytes?: Uint8Array, name?: string|null }>, signal?: AbortSignal,
- *           onProgress?: (p: { index: number, total: number, item, waiting: boolean, attempt: number }) => void,
+ *           onProgress?: (p: { index: number, total: number, item, waiting: boolean, attempt: number, waitMs?: number }) => void,
  *           onFile?: (f: { item, name: string|null, bytes: Uint8Array }) => any,
  *           sleep?: (ms: number, signal?: AbortSignal) => Promise<boolean>, waitMs?: number, maxRetries?: number,
  *           timeoutMs?: number, maxWaitMs?: number, waitBudgetMs?: number }} opts
@@ -355,13 +358,13 @@ export async function runArchive(plan, {
       if (res?.status === 429 && retries < maxRetries && waitedMs + wait <= waitBudgetMs) {
         retries++
         waitedMs += wait
-        onProgress({ index: i + 1, total, item, waiting: true, attempt: retries + 1 })
+        onProgress({ index: i + 1, total, item, waiting: true, attempt: retries + 1, waitMs: wait })
         const waited = await sleep(wait, signal)
         if (!waited || signal?.aborted) return ABORTED
         onProgress({ index: i + 1, total, item, waiting: false, attempt: retries + 1 })
         continue
       }
-      // 429 `RATE_LIMITED` = kişi başı PDF sınırı (`limit`), başka 429 = PDF sırası dolu (`busy`)
+      // 429 `RATE_LIMITED` = kişi başı PDF sınırı — dakikalık ya da eşzamanlı (`limit`), başka 429 = PDF sırası dolu (`busy`)
       const reason = res?.status === 429 ? (res?.code === 'RATE_LIMITED' ? 'limit' : 'busy') : 'failed'
       missing.push({ item, reason, status: res?.status ?? 0, error: res?.error || null })
       break

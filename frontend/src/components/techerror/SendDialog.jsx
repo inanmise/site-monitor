@@ -21,14 +21,18 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  *
  * `failure` (inceleme 2026-10-18): `{ kind: 'retry' | 'unsure', title, message, details, check? }` — yeniden denenebilir
  * gönderim hatası (PDF sırası dolu, kişi başı sınır) pencerenin İÇİNDE gösterilir; pencere açık kalır, yazılan ek Bilgi
- * silinmez (yalnız pencere yeniden açılınca boşalır), odak alana döner.
+ * silinmez, odak alana döner.
  *
- * Sonucu bilinmeyen hata (`kind: 'unsure'` — ağ hatası, gönderim sürüyor, 503; inceleme 2026-10-18, 3. tur): "Gönder" ve
+ * `initialCc` (inceleme 2026-10-18, 4. tur): pencere AÇILIRKEN alana yazılan değer (yoksa boş). Sonucu bilinmeyen gönderimden
+ * sonra pencere kapatılıp yeniden açılırsa çağıran o denemenin ek Bilgi'sini verir — bant "ek Bilgi korundu" der; eskiden
+ * alan boş açılıyor, "Gönder" raporu ek adreslersiz (geri alınamaz) yolluyordu.
+ *
+ * Sonucu bilinmeyen hata (`kind: 'unsure'` — ağ hatası, gönderim sürüyor, `MAIL_FAILED` dışı 5xx; inceleme 2026-10-18, 3. tur): "Gönder" ve
  * Ctrl+Enter KİLİTLİ — gönderim gitmiş olabilir, ikinci tıklama raporu yöneticilere ikinci kez yollardı. `check`
  * 'checking' = rapor yeniden okunuyor (düğmede dönen simge), 'unknown' = okunamadı → "Durumu yeniden denetle"
  * (`onRecheck`). Çağıran durumu çözünce bandı değiştirir (gitmemişse `retry`) ya da pencereyi kapatır.
  */
-export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit, onRecheck = null }) {
+export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit, onRecheck = null, initialCc = '' }) {
   const t = useT()
   const [value, setValue] = useState('')
   const [clientError, setClientError] = useState(null)
@@ -38,9 +42,12 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
   const locked = failure?.kind === 'unsure'
   const checking = locked && failure?.check !== 'unknown'
 
-  // Her açılışta boş başlar (ek adresler kaydedilmez — bir sonraki gönderime taşınmaz)
+  // Her açılışta `initialCc` ile (yoksa boş) başlar — ek adresler kanalda saklanmaz; yalnız sonucu bilinmeyen / gitmemiş
+  // denemenin adresleri yeniden açılışa taşınır (çağıran verir). Değer AÇILIŞ anında okunur: açıkken değişmesi alanı ezmez
+  const initialRef = useRef(initialCc)
+  initialRef.current = initialCc
   useEffect(() => {
-    if (open) { setValue(''); setClientError(null) }
+    if (open) { setValue(String(initialRef.current || '')); setClientError(null) }
   }, [open])
 
   // Sunucunun alan hatası gelince odak alana (düzeltme yeri)
