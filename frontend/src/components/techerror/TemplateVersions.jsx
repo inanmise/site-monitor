@@ -8,7 +8,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { cn } from '@/lib/utils'
-import { fmtDateTime } from './TechErrorParts.jsx'
+import { fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { allFields, allSlots, formatPercent, hostOf, resolvePlaceholders, templateDiff } from './techErrorModel.js'
 
 /**
@@ -77,6 +77,8 @@ export default function TemplateVersionsDialog({ channelId, channelName, period,
   }, [channelId, t])
 
   const versions = list.data?.versions || []
+  // Sürümü bilinmeyen raporlar (D19) — "0 rapor" yazan satır ve ayrıntı bunu bilerek konuşur
+  const unknownReports = Number(list.data?.unknown_version_reports) > 0 ? Number(list.data.unknown_version_reports) : 0
   const idx = versions.findIndex((v) => v.version === selected)
   const sel = idx >= 0 ? versions[idx] : null
   // Fark, bir önceki KAYITLI sürüme göre (aradaki sürümler budanmış olabilir)
@@ -131,6 +133,16 @@ export default function TemplateVersionsDialog({ channelId, channelName, period,
               {pruned && <p className="m-0 mb-2 text-xs text-muted-foreground" data-slot="te-versions-partial" data-pruned="true">
                 {t('te.ver.pruned', maxVersions)}</p>}
               {partial && <p className="m-0 mb-2 text-xs text-muted-foreground" data-slot="te-versions-partial">{t('te.ver.partial')}</p>}
+              {/* Raporların şablon sürümü (D19): sürümü bilinmeyen (bu özellikten önce açılmış) ve listede olmayan bir sürümle
+                  açılmış raporlar ayrı söylenir — hiçbiri sessizce düşmez */}
+              {list.data.unknown_version_reports > 0 && (
+                <p className="m-0 mb-2 text-xs text-muted-foreground" data-slot="te-versions-unknown">
+                  {t('te.ver.unknownReports', list.data.unknown_version_reports)}</p>
+              )}
+              {list.data.unlisted_version_reports > 0 && (
+                <p className="m-0 mb-2 text-xs text-muted-foreground" data-slot="te-versions-unlisted">
+                  {t('te.ver.unlistedReports', list.data.unlisted_version_reports)}</p>
+              )}
               <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
                 {versions.map((v) => (
                   <li key={v.version}>
@@ -146,6 +158,11 @@ export default function TemplateVersionsDialog({ channelId, channelName, period,
                       <span className="text-xs font-normal text-muted-foreground [overflow-wrap:anywhere]">
                         {fmtDateTime(v.saved_at, uiLang)} · {v.saved_by_name || '—'}
                       </span>
+                      {reportCountText(v, t, unknownReports) && (
+                        <span className="text-xs font-normal text-muted-foreground" data-slot="te-version-report-count" data-count={v.report_count}>
+                          {reportCountText(v, t, unknownReports)}
+                        </span>
+                      )}
                     </Button>
                   </li>
                 ))}
@@ -161,6 +178,7 @@ export default function TemplateVersionsDialog({ channelId, channelName, period,
               </div>
               {sel && (
                 <VersionDetail sel={sel} prev={prev} detail={details[sel.version]} prevDetail={prev ? details[prev.version] : null}
+                  unknownReports={unknownReports}
                   channelName={channelName} period={period} canEdit={canEdit} uiLang={uiLang}
                   onRetry={() => { setDetails((d) => ({ ...d, [sel.version]: undefined })); fetchDetail(sel.version) }}
                   onLoad={async (tpl) => { if (await onLoad(tpl, sel.version)) onClose() }} />
@@ -173,7 +191,7 @@ export default function TemplateVersionsDialog({ channelId, channelName, period,
   )
 }
 
-function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, canEdit, uiLang, onRetry, onLoad }) {
+function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, canEdit, uiLang, onRetry, onLoad, unknownReports = 0 }) {
   const t = useT()
   if (!detail || detail.loading) {
     return (
@@ -204,7 +222,40 @@ function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, can
         <p className="m-0 text-sm text-muted-foreground">
           {t('te.ver.counts', sel.section_count, sel.field_count, sel.slot_count)}
         </p>
+        {sourceText(detail.data, sel, t) && (
+          <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-version-source">
+            {sourceText(detail.data, sel, t)}
+          </p>
+        )}
       </div>
+
+      {/* Bu sürümle açılmış / güncellenmiş raporlar (D19) — sayı tek gruplu sorgudan, dönemler en çok 24 (en yeni önce) */}
+      {(detail.data.report_count != null || sel.report_count != null) && (
+        <section className="flex flex-col gap-1.5" aria-labelledby="te-ver-reports" data-slot="te-version-reports">
+          <h4 id="te-ver-reports" className="m-0 text-sm font-semibold">
+            {reportCountText({ report_count: detail.data.report_count ?? sel.report_count }, t, unknownReports)}
+          </h4>
+          {/* Sürümü bilinmeyen raporlar varken "rapor yok" kesin değildir — söylenir */}
+          {unknownReports > 0 && (
+            <p className="m-0 text-xs text-muted-foreground" data-slot="te-version-reports-unknown">
+              {t('te.ver.unknownReports', unknownReports)}</p>
+          )}
+          {Array.isArray(detail.data.reports) && detail.data.reports.length > 0 && (
+            <ul className="m-0 flex list-none flex-col gap-1 p-0">
+              {detail.data.reports.map((r) => (
+                <li key={r.id} className="rounded-md bg-muted/40 px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]" data-slot="te-version-report">
+                  <span className="font-medium">{periodLabel(r, t)}</span>
+                  {r.title ? <span className="text-muted-foreground"> · {r.title}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          {Array.isArray(detail.data.reports) && (detail.data.report_count ?? 0) > detail.data.reports.length && (
+            <p className="m-0 text-xs text-muted-foreground" data-slot="te-version-reports-more">
+              {t('te.ver.reportsMore', detail.data.reports.length)}</p>
+          )}
+        </section>
+      )}
 
       {canEdit && !sel.current && (
         <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/30 p-3">
@@ -253,6 +304,28 @@ function VersionDetail({ sel, prev, detail, prevDetail, channelName, period, can
       </section>
     </div>
   )
+}
+
+/**
+ * "Bu sürümle N rapor" (D19). Sayı yoksa (eski sunucu) null — çizilmez; 0 → "Bu sürümle rapor yok". Hiçbir zaman "v0" /
+ * "vnull" yazılmaz (sürüm numarası zaten satırın başlığında).
+ */
+export function reportCountText(v, t, unknownReports = 0) {
+  const n = v?.report_count
+  if (n == null || !Number.isFinite(Number(n))) return null
+  // Sürümü bilinmeyen raporlar varken 0 "rapor yok" değil "bilinen rapor yok" (inceleme 2026-10-18: bilinmeyen ≠ 0)
+  if (Number(n) === 0) return unknownReports > 0 ? t('te.ver.reportsNoneKnown') : t('te.ver.reportsNone')
+  return t('te.ver.reportsN', Number(n))
+}
+
+/** Kanalın ilk sürümünün kaynağı (D17): takım kütüphanesi (+ kaydın adı), başka kanalın kopyası ya da sistem varsayılanı. */
+export function sourceText(detail, sel, t) {
+  const kind = detail?.source_kind ?? sel?.source_kind
+  const name = detail?.source_name ?? sel?.source_name
+  if (kind === 'library') return t('te.ver.sourceLibrary', name || '—')
+  if (kind === 'copy') return t('te.ver.sourceCopy')
+  if (kind === 'default') return t('te.ver.sourceDefault')
+  return null
 }
 
 function outlineCount(s, t) {

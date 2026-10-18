@@ -23,6 +23,9 @@ public interface TechErrorTemplateVersionRepository extends JpaRepository<TechEr
         int getSectionCount();
         int getFieldCount();
         int getSlotCount();
+        /** Kanal açılışındaki kaynak (2026-10-18): library | copy | default; daha eski satırda null. */
+        String getSourceKind();
+        String getSourceName();
     }
 
     List<Meta> findByChannelIdOrderByVersionDesc(Long channelId, Pageable page);

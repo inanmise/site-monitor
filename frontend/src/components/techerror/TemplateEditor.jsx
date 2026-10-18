@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Braces, ChartColumn, CircleAlert, FileSearch, FileText, Gauge, History, Import, ListPlus, Plus, RefreshCw, RotateCcw,
-  Save, ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
+  ArrowDown, ArrowUp, BookmarkPlus, Braces, ChartColumn, ChevronDown, CircleAlert, FileSearch, FileText, Gauge, History, Import,
+  LibraryBig, ListPlus, Plus, RefreshCw, RotateCcw, Save, ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
@@ -20,7 +20,7 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
@@ -34,6 +34,8 @@ import {
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
 import TemplateImportDialog from './TemplateImport.jsx'
+import { DefaultBadge, SaveToLibraryDialog, useTeamLibrary } from './TemplateLibrary.jsx'
+import { LIBRARY_NAME_MAX } from './templateLibraryModel.js'
 import { NumberInput } from './ReportSections.jsx'
 import {
   CollapsibleCard, ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
@@ -130,6 +132,11 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const versionsBtnRef = useRef(null)
   const [importOpen, setImportOpen] = useState(false)
   const importBtnRef = useRef(null)
+  // Takım şablon kütüphanesi (2026-10-18, D17): taslağı kütüphaneye kaydet + "Varsayılana dön" menüsünde kütüphane kayıtları.
+  // Menü ilk açılınca okunur (her açılışta tazelenir)
+  const [saveLibOpen, setSaveLibOpen] = useState(false)
+  const saveLibBtnRef = useRef(null)
+  const [resetLibEnabled, setResetLibEnabled] = useState(false)
   const [base, setBase] = useState({ json: null, version: null })
   const [serverError, setServerError] = useState(null)
   const [conflict, setConflict] = useState(false)
@@ -212,6 +219,8 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const canEdit = !!channel?.can_edit
   // Alanlar salt okunurda ve kayıt sürerken kilitli (bölüm aç / kapat düğmeleri hariç — aşağıdaki fieldset notu)
   const locked = !canEdit || saving
+  // Kanalın takımının kütüphanesi — yalnız düzenleyebilen için ve "Varsayılana dön" menüsü ilk açılınca
+  const resetLib = useTeamLibrary(channel?.team_id, { enabled: canEdit && resetLibEnabled })
 
   // Yazarken yerel yedek (1 sn sonra) — uygulama içinde başka yere geçmek düzenlemeyi silmesin. Taslak yeniden
   // temizlenince bu sayfanın yazdığı yedek silinir; sayfadan çıkarken son saniye de yedeklenir.
@@ -417,17 +426,49 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
     return true
   }
 
-  async function resetToDefault() {
-    const ok = await showConfirm({ title: t('te.tpl.resetTitle'), message: t('te.tpl.resetBody'), variant: 'warning',
-      confirmText: t('te.tpl.resetConfirm'), cancelText: t('te.cancel') })
+  /**
+   * "Varsayılana dön" (2026-10-18, D17 ile genişledi): sistem varsayılanı (Türkçe / İngilizce) ya da takımın kütüphanesindeki
+   * bir kayıt (takım varsayılanı önce) — hepsi eskisi gibi TASLAĞA yüklenir: `base` sürümü değişmez, kaydedene kadar hiçbir
+   * şey yazılmaz. Onay her zaman sorulur. Kütüphane kaydı okunamazsa ya da silinmişse taslak değişmez.
+   */
+  async function resetTo(choice) {
+    const fromLib = choice?.kind === 'library'
+    const ok = await showConfirm({
+      title: fromLib ? t('te.lib.resetTitle') : t('te.tpl.resetTitle'),
+      message: fromLib ? t('te.lib.resetBody', choice.entry.name) : t('te.tpl.resetBody'),
+      variant: 'warning',
+      confirmText: fromLib ? t('te.lib.resetConfirm') : t('te.tpl.resetConfirm'), cancelText: t('te.cancel'),
+    })
     if (!ok) return
     try {
-      const res = await api.techErrors.defaultTemplate(draft?.lang || 'tr')
-      if (res?.success && res.data?.template) replaceDraft(res.data.template)
-      else toast.error(res?.error || t('te.loadError'), { details: res?.errorInfo })
+      const res = fromLib
+        ? await api.techErrors.teamTemplate(channel?.team_id, choice.entry.id)
+        : await api.techErrors.defaultTemplate(choice?.lang || draft?.lang || 'tr')
+      const tpl = res?.success ? res.data?.template : null
+      if (tpl && typeof tpl === 'object' && Array.isArray(tpl.sections)) {
+        replaceDraft(tpl)
+        setShowErrors(false)
+        setServerError(null)
+        if (fromLib) toast.success(t('te.lib.resetLoaded', choice.entry.name))
+      } else if (fromLib && res?.success === false && res?.status === 404) {
+        toast.error(t('te.lib.err.gone'))
+        resetLib.reload()
+      } else toast.error(res?.error || t('te.loadError'), { details: res?.errorInfo })
     } catch (e) {
       toast.error(e?.message || t('te.loadError'))
     }
+  }
+
+  /** Taslağı takımın kütüphanesine kaydet: önce taslağın kendi hataları (kanal şablonu kaydıyla aynı kapı). */
+  function openSaveLibrary() {
+    if (!draft || saving) return
+    if (Object.keys(errors).length) {
+      setShowErrors(true)
+      openMany([...errorCountsBySection(errors, (k) => templateErrorSection(k, draft)).keys()])
+      toast.error(t('te.lib.fixErrors'))
+      return
+    }
+    setSaveLibOpen(true)
   }
 
   if (state.loading && !draft) {
@@ -517,6 +558,13 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
               <Import aria-hidden="true" /> {t('te.imp.open')}
             </Button>
           )}
+          {/* Takım şablon kütüphanesine kaydet (D17): düzenleyicideki taslak — kanal şablonu kaydedilmez */}
+          {canEdit && channel?.team_id != null && (
+            <Button ref={saveLibBtnRef} type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-tpl-save-library"
+              disabled={saving} onClick={openSaveLibrary}>
+              <BookmarkPlus aria-hidden="true" /> {t('te.lib.saveOpen')}
+            </Button>
+          )}
         </div>
       </div>
       <TemplateVersionsDialog channelId={channelId} channelName={channel?.name} period={previewPeriod} open={versionsOpen}
@@ -524,6 +572,12 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
       {canEdit && (
         <TemplateImportDialog channelId={channelId} draftLang={draft?.lang || 'tr'} open={importOpen} onClose={() => setImportOpen(false)}
           onLoad={importTemplate} returnFocusRef={importBtnRef} />
+      )}
+      {canEdit && channel?.team_id != null && (
+        <SaveToLibraryDialog open={saveLibOpen} teamId={channel.team_id} teamName={channel.team_name} draft={draft}
+          defaultName={channel?.name ? t('te.lib.defaultName', channel.name).slice(0, LIBRARY_NAME_MAX).trim() : ''}
+          onClose={() => setSaveLibOpen(false)} onSaved={() => { if (resetLibEnabled) resetLib.reload() }}
+          returnFocusRef={saveLibBtnRef} />
       )}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -632,9 +686,53 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
           data-slot="te-tpl-actions">
           <p className="text-sm text-muted-foreground" aria-live="polite">{dirty ? t('te.unsaved') : t('te.allSaved')}</p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="ghost" onClick={resetToDefault} disabled={saving} className="pointer-coarse:min-h-10">
-              <RotateCcw aria-hidden="true" /> {t('te.tpl.reset')}
-            </Button>
+            {/* Varsayılana dön (D17): sistem varsayılanları + takım kütüphanesi (takım varsayılanı önce); seçim taslağa yüklenir */}
+            <DropdownMenu modal={false} onOpenChange={(o) => {
+              if (!o) return
+              if (resetLibEnabled) resetLib.reload()
+              else setResetLibEnabled(true)
+            }}>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" disabled={saving} className="pointer-coarse:min-h-10" data-slot="te-tpl-reset">
+                  <RotateCcw aria-hidden="true" /> {t('te.tpl.reset')} <ChevronDown aria-hidden="true" className="size-3.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" collisionPadding={8}
+                className="z-(--z-menu) max-h-[min(24rem,70dvh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto" data-slot="te-tpl-reset-menu">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">{t('te.lib.resetSystem')}</DropdownMenuLabel>
+                <DropdownMenuItem className="whitespace-normal pointer-coarse:min-h-10" data-slot="te-tpl-reset-system" data-lang="tr"
+                  onSelect={() => resetTo({ kind: 'system', lang: 'tr' })}>
+                  {t('te.source.tr')}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-normal pointer-coarse:min-h-10" data-slot="te-tpl-reset-system" data-lang="en"
+                  onSelect={() => resetTo({ kind: 'system', lang: 'en' })}>
+                  {t('te.source.en')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <LibraryBig aria-hidden="true" className="size-3.5" /> {t('te.lib.resetLibrary')}
+                </DropdownMenuLabel>
+                {!resetLib.ready && !resetLib.error && (
+                  <DropdownMenuItem disabled className="whitespace-normal" data-slot="te-tpl-reset-lib-loading">{t('te.loading')}</DropdownMenuItem>
+                )}
+                {resetLib.error && (
+                  <DropdownMenuItem className="whitespace-normal text-destructive pointer-coarse:min-h-10" data-slot="te-tpl-reset-lib-error"
+                    onSelect={(e) => { e.preventDefault(); resetLib.reload() }}>
+                    <RefreshCw aria-hidden="true" /> {t('te.lib.resetLibError')}
+                  </DropdownMenuItem>
+                )}
+                {resetLib.ready && resetLib.entries.length === 0 && (
+                  <DropdownMenuItem disabled className="whitespace-normal" data-slot="te-tpl-reset-lib-empty">{t('te.lib.resetLibEmpty')}</DropdownMenuItem>
+                )}
+                {resetLib.ready && resetLib.entries.map((e) => (
+                  <DropdownMenuItem key={e.id} className="flex-wrap items-start whitespace-normal pointer-coarse:min-h-10"
+                    data-slot="te-tpl-reset-lib" data-entry={e.id} onSelect={() => resetTo({ kind: 'library', entry: e })}>
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{e.name}</span>
+                    {e.is_default && <DefaultBadge />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button type="button" variant="outline" disabled={!dirty || saving} className="pointer-coarse:min-h-10"
               onClick={() => { skipFlush.current = true; clearTimeout(backupTimer.current); dropTplBackup(channelId); setBackup(null); load() }}>
               <Undo2 aria-hidden="true" /> {t('te.discard')}

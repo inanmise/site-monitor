@@ -299,6 +299,9 @@ public final class AuditEventCatalog {
             "TECH_ERROR_REPORT_TEST_MAIL", // önizlenen posta yalnız çağıranın kendisine (test, R13 — 2026-10-17); rapor gönderilmiş olmaz
             "TECH_ERROR_REPORT_UPDATE",   // değer kaydı, görsel ekle/kaldır, şablonun son hâlini uygula
             "TECH_ERROR_TEMPLATE_SAVE",   // kanal şablonu kaydedildi
+            "TECH_ERROR_TEAM_TEMPLATE_CREATE", // takım şablon kütüphanesine şablon eklendi (2026-10-18, D17)
+            "TECH_ERROR_TEAM_TEMPLATE_UPDATE", // kütüphane şablonu: ad / şablon / takım varsayılanı değişti
+            "TECH_ERROR_TEAM_TEMPLATE_DELETE", // kütüphane şablonu silindi (kanallar kendi kopyalarını korur)
             "TECH_ERROR_REPORT_APPROVAL_REQUEST", // PO onayına gönderildi (2026-10-17, S6)
             "TECH_ERROR_REPORT_APPROVE",  // PO onayladı → yöneticilere gönderim (via=app | email_token)
             "TECH_ERROR_REPORT_REJECT",   // PO reddetti (not)

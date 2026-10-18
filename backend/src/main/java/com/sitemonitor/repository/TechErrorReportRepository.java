@@ -30,6 +30,8 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
         Integer getReportMonth();
         String getTitlePattern();
         String getTemplateLang();
+        /** Kopyalanan kanal şablonu sürümü (2026-10-18, D19); null = bilinmiyor. */
+        Integer getTemplateVersion();
         Instant getCreatedAt();
         Instant getUpdatedAt();
         Long getUpdatedById();
@@ -96,6 +98,42 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     List<AnalyticsRow> findAnalyticsRows(@Param("ids") Collection<Long> channelIds, @Param("from") int fromPeriod,
                                          @Param("to") int toPeriod, @Param("after") long afterId,
                                          org.springframework.data.domain.Pageable page);
+
+    /**
+     * Kanalın raporlarının kopyaladıkları şablon sürümüne göre sayısı (2026-10-18, D19) — sürüm penceresi için TEK gruplu
+     * sorgu (sürüm başına sorgu yok). Satır: [sürüm (null = bilinmiyor), adet].
+     */
+    @Query("SELECT r.templateVersion, COUNT(r) FROM TechErrorReport r WHERE r.channelId = :channelId GROUP BY r.templateVersion")
+    List<Object[]> countByTemplateVersion(@Param("channelId") Long channelId);
+
+    /** Bu şablon sürümüyle açılmış / güncellenmiş raporlar, en yeni dönem önce (sürüm ayrıntısı en çok 24 dönem gösterir). */
+    List<Row> findTop24ByChannelIdAndTemplateVersionOrderByReportYearDescReportMonthDesc(Long channelId, Integer templateVersion);
+
+    /**
+     * Geri doldurma (D19, v2): TÜM raporlar kimlik sırasıyla (anahtar kümesi sayfası) — satır [kimlik, şablon sürümü (null =
+     * bilinmiyor)]. Boş sürümler doldurulur; eski bir podun "şablonun son hâlini uygula"sıyla bayatlamış sürüm de
+     * geçmişin en yeni şablon olayına göre düzeltilir.
+     */
+    @Query("SELECT r.id, r.templateVersion FROM TechErrorReport r WHERE r.id > :after ORDER BY r.id")
+    List<Object[]> idsAndTemplateVersions(@Param("after") Long after, org.springframework.data.domain.Pageable page);
+
+    /**
+     * Geri doldurma (D19): sürümü YALNIZ hâlâ boşsa yazar (koşullu, @Version artmaz) — arada "şablonun son hâlini uygula"
+     * yazdıysa o kazanır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.templateVersion = :v WHERE r.id = :id AND r.templateVersion IS NULL")
+    int fillTemplateVersion(@Param("id") Long id, @Param("v") Integer version);
+
+    /**
+     * Geri doldurma (D19, v2): BAYAT sürümü düzeltir — yalnız sütun hâlâ okunan değerdeyse ({@code seen}; koşullu, @Version
+     * artmaz). Arada yeni bir pod "şablonun son hâlini uygula" ile sürüm (ve olay) yazdıysa o kazanır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.templateVersion = :v WHERE r.id = :id AND r.templateVersion = :seen")
+    int replaceTemplateVersion(@Param("id") Long id, @Param("seen") Integer seen, @Param("v") Integer version);
 
     @Query("SELECT r.id FROM TechErrorReport r WHERE r.channelId = :channelId")
     List<Long> idsForChannel(@Param("channelId") Long channelId);

@@ -280,4 +280,36 @@ class TechErrorReportPostgresTest {
             channels.deleteById(ch.getId());
         }
     }
+
+    @Test
+    @DisplayName("D19 şablon sürümü PostgreSQL'de: anahtar kümesi sayfası (kimlik + sürüm, null dahil), koşullu doldurma / bayat sürüm düzeltme, sürüm başına gruplu sayım (null ayrı)")
+    void templateVersionQueries() {
+        var service = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        TechErrorReportRepository reports = PostgresIt.app().bean(TechErrorReportRepository.class);
+        long team = 765_430L + (long) (Math.random() * 1000);
+        String tag = "ter-it-" + UUID.randomUUID().toString().substring(0, 8);
+        TechErrorChannel ch = service.createChannel(team, tag + " Şablon sürümü", null, TechErrorTemplate.defaults("tr"), null);
+        try {
+            TechErrorReport a = service.createReport(ch, 2024, 1, null);
+            TechErrorReport b = service.createReport(ch, 2024, 2, null);
+            assertThat(reports.fillTemplateVersion(a.getId(), 3)).isZero();             // dolu (1) → boşa yazım yok
+            PostgresIt.app().jdbc().update("UPDATE tech_error_reports SET template_version = NULL WHERE id = ?", b.getId());
+            List<Object[]> page = reports.idsAndTemplateVersions(a.getId() - 1, org.springframework.data.domain.PageRequest.of(0, 2));
+            assertThat(page).hasSize(2);
+            assertThat(((Number) page.get(0)[0]).longValue()).isEqualTo(a.getId());
+            assertThat(((Number) page.get(0)[1]).intValue()).isEqualTo(1);
+            assertThat(page.get(1)[1]).isNull();
+            assertThat(reports.fillTemplateVersion(b.getId(), 2)).isEqualTo(1);
+            assertThat(reports.replaceTemplateVersion(a.getId(), 9, 2)).isZero();       // okunan değer değil → yazmaz
+            assertThat(reports.replaceTemplateVersion(a.getId(), 1, 2)).isEqualTo(1);
+            TechErrorReport c = service.createReport(ch, 2024, 3, null);
+            PostgresIt.app().jdbc().update("UPDATE tech_error_reports SET template_version = NULL WHERE id = ?", c.getId());
+            java.util.Map<Integer, Long> counts = service.templateVersionCounts(ch.getId());
+            assertThat(counts).containsEntry(2, 2L).containsEntry(null, 1L);
+        } finally {
+            reports.deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorTemplateVersionRepository.class).deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
+        }
+    }
 }

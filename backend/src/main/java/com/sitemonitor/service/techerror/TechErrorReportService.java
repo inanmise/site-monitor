@@ -181,6 +181,23 @@ public class TechErrorReportService {
 
     @Transactional
     public TechErrorChannel createChannel(Long teamId, String rawName, String rawDescription, Template template, Long by) {
+        return createChannel(teamId, rawName, rawDescription, template, by, null);
+    }
+
+    /**
+     * Kanal açılışındaki şablonun KAYNAĞI (2026-10-18, D17) — kanalın ilk sürümüne yazılır: {@code library} (takım
+     * kütüphanesi, {@code name} kaydın adı), {@code copy} (başka kanalın kopyası; ad YAZILMAZ), {@code default}.
+     */
+    public record TemplateSource(String kind, String name) {
+        public static TemplateSource library(String name) { return new TemplateSource("library", name); }
+        public static TemplateSource copy() { return new TemplateSource("copy", null); }
+        public static TemplateSource defaults() { return new TemplateSource("default", null); }
+    }
+
+    /** {@link #createChannel(Long, String, String, Template, Long)} + şablonun kaynağı (sürüm geçmişinin ilk satırı). */
+    @Transactional
+    public TechErrorChannel createChannel(Long teamId, String rawName, String rawDescription, Template template, Long by,
+                                          TemplateSource source) {
         String name = channelName(rawName);
         String key = nameKey(name);
         if (channels.existsByTeamIdAndNameKey(teamId, key)) throw channelExists(name);
@@ -211,7 +228,8 @@ public class TechErrorReportService {
         } catch (DataIntegrityViolationException e) {
             throw channelExists(name);   // eşzamanlı aynı ad (tekillik kısıtı)
         }
-        history.recordTemplateVersion(saved, 1, saved.getTemplateJson(), now, by);
+        history.recordTemplateVersion(saved, 1, saved.getTemplateJson(), now, by, null,
+                source == null ? null : source.kind(), source == null ? null : source.name());
         analyticsChanged();   // yeni kanal analizdeki kanal listesini değiştirir (3. tur inceleme)
         return saved;
     }
@@ -508,6 +526,24 @@ public class TechErrorReportService {
         return out;
     }
 
+    /**
+     * Kanalın raporlarının kopyaladıkları şablon sürümüne göre sayısı (2026-10-18, D19): TEK gruplu sorgu. Anahtar sürüm,
+     * {@code null} = sürümü bilinmeyen raporlar (bu özellikten önce açılmış, geçmişten bulunamamış).
+     */
+    public Map<Integer, Long> templateVersionCounts(Long channelId) {
+        Map<Integer, Long> out = new HashMap<>();
+        for (Object[] row : reports.countByTemplateVersion(channelId)) {
+            Integer v = row[0] == null ? null : Integer.valueOf(((Number) row[0]).intValue());
+            out.merge(v, ((Number) row[1]).longValue(), Long::sum);
+        }
+        return out;
+    }
+
+    /** Bu şablon sürümüyle açılmış / güncellenmiş en yeni 24 rapor (dönem azalan) — sürüm ayrıntısı. */
+    public List<TechErrorReportRepository.Row> reportsWithTemplateVersion(Long channelId, int version) {
+        return reports.findTop24ByChannelIdAndTemplateVersionOrderByReportYearDescReportMonthDesc(channelId, version);
+    }
+
     public Map<Long, Long> reportCounts(Collection<Long> channelIds) {
         Map<Long, Long> out = new HashMap<>();
         if (channelIds.isEmpty()) return out;
@@ -539,6 +575,7 @@ public class TechErrorReportService {
         r.setReportYear(year);
         r.setReportMonth(month);
         r.setTemplateJson(TechErrorTemplate.toJson(t));
+        r.setTemplateVersion(ch.getTemplateVersion());      // kopyalanan şablonun sürümü (aynı varlık okumasından, D19)
         stampTitle(r, t);
         r.setValuesJson(TechErrorValues.toJson(Values.empty()));
         r.setCreatedAt(now);
@@ -620,6 +657,7 @@ public class TechErrorReportService {
         int removedImages = keep.isEmpty() ? images.deleteAllForReport(r.getId()) : images.deleteSlotsNotIn(r.getId(), keep);
         Instant now = now();
         r.setTemplateJson(TechErrorTemplate.toJson(next));
+        r.setTemplateVersion(ch.getTemplateVersion());      // uygulanan kanal şablonunun sürümü (D19)
         stampTitle(r, next);
         r.setValuesJson(TechErrorValues.toJson(after));
         r.setUpdatedAt(now);

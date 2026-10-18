@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -305,6 +306,20 @@ public final class TechErrorTemplate {
         return defaults("tr");
     }
 
+    /**
+     * Saklı JSON'u HOŞGÖRÜLÜ okur ama varsayılana DÜŞMEZ (2026-10-18, takım kütüphanesi incelemesi): JSON boş / okunamıyor,
+     * kök nesne değil ya da hiçbir bölümü okunamıyorsa boş döner. Kullanıcının SEÇTİĞİ bir kayıt (kütüphane şablonu)
+     * için: {@link #fromStored} burada sistem şablonunu "seçtiğiniz kayıt" diye verirdi — çağıran "okunamadı" der.
+     */
+    public static Optional<Template> readStored(String json) {
+        try {
+            Object raw = json == null || json.isBlank() ? null : JSON.readValue(json, Object.class);
+            return raw == null ? Optional.empty() : Optional.ofNullable(parse(raw, false, false));
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
     /** İstemci şablonunu KATI doğrular ve normalleştirir. Hata → {@link FieldValidationException} (alan {@code template}). */
     public static Template normalize(Object raw) {
         Template t = parse(raw, true);
@@ -411,10 +426,15 @@ public final class TechErrorTemplate {
     // ── Ayrıştırma ───────────────────────────────────────────────────────────────────────────────────
 
     private static Template parse(Object raw, boolean strict) {
+        return parse(raw, strict, true);
+    }
+
+    /** {@code fallback} false (yalnız {@link #readStored}): okunamayan şablon varsayılan yerine {@code null}. */
+    private static Template parse(Object raw, boolean strict, boolean fallback) {
         if (!(raw instanceof Map<?, ?> map)) {
             if (strict) throw invalid(Msg.t("Şablon okunamadı: beklenen yapı gelmedi. Sayfayı yenileyip tekrar deneyin.",
                     "The template couldn't be read: the expected structure didn't arrive. Reload the page and try again."));
-            return defaults("tr");
+            return fallback ? defaults("tr") : null;
         }
         String lang = str(map.get("lang"));
         if (lang == null || !LANGS.contains(lang)) {
@@ -436,7 +456,7 @@ public final class TechErrorTemplate {
         List<?> rawSections = rs instanceof List<?> l ? l : List.of();
         if (rawSections.isEmpty()) {
             if (strict) throw invalid(Msg.t("Şablonda en az bir bölüm olmalı.", "The template needs at least one section."));
-            return new Template(lang, title, defaults(lang).sections());
+            return fallback ? new Template(lang, title, defaults(lang).sections()) : null;
         }
         if (rawSections.size() > MAX_SECTIONS) {
             if (strict) throw invalid(Msg.t("Şablonda en çok 20 bölüm olabilir.", "A template can have at most 20 sections."));
@@ -548,7 +568,7 @@ public final class TechErrorTemplate {
                 }
             }
         }
-        if (sections.isEmpty()) return new Template(lang, title, defaults(lang).sections());
+        if (sections.isEmpty()) return fallback ? new Template(lang, title, defaults(lang).sections()) : null;
         List<Section> resolved = resolveHosts(resolveSkipRefs(sections, strict), strict);
         if (strict) validateSummaryRefs(resolved);
         return new Template(lang, title, resolved);

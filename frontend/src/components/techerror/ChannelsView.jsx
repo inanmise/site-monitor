@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown, ArrowUp, ChartLine, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate,
-  MailWarning, Plus, Radio, RefreshCw, Search, Users, X,
+  LibraryBig, MailWarning, Plus, Radio, RefreshCw, Search, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -28,6 +28,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { cn } from '@/lib/utils'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import ChannelDialog from './ChannelDialog.jsx'
+import { LibraryManagerDialog } from './TemplateLibrary.jsx'
 import { StatusBadge, periodLabel } from './TechErrorParts.jsx'
 import {
   CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, applyReorderPlan, channelCounts, filterChannels,
@@ -71,6 +72,9 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const { showConfirm } = useDialog()
   const [state, setState] = useState({ loading: true, error: null, status: null, data: null })
   const [dialog, setDialog] = useState(null)   // { mode: 'create' | 'edit', channel? }
+  // Takım şablon kütüphanesi (2026-10-18, D17): takımın KENDİ kapsamıyla okunan takımlar (`library_read`; eski sunucuda yok → düğme yok)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const libraryBtnRef = useRef(null)
   // Meşgul durumu SAHİPLİ (inceleme 2026-10-17): bir eylem (rapor açma, pasife alma, silme, taşıma) sürerken diğeri başlamaz;
   // bitiren yalnız KENDİ anahtarını temizler — taşımanın meşgul durumunu başka bir eylemin `finally`si silemez.
   const busyRef = useRef(null)
@@ -125,6 +129,7 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const channels = useMemo(() => data?.channels || [], [data])
   const period = data?.period
   const teams = useMemo(() => data?.teams || [], [data])
+  const libraryTeams = useMemo(() => teams.filter((tm) => tm.library_read === true), [teams])
   const teamOptions = useMemo(() => [{ value: ALL, label: t('te.allTeams') },
     ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))], [teams, t])
   const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email && channels.some((c) => c.team_id === tm.id))
@@ -306,6 +311,12 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
             <RefreshCw aria-hidden="true" className={cn(state.loading && 'animate-spin motion-reduce:animate-none')} />
             {t('te.refresh')}
           </Button>
+          {libraryTeams.length > 0 && (
+            <Button ref={libraryBtnRef} type="button" variant="outline" onClick={() => setLibraryOpen(true)} data-slot="te-library-open"
+              className="pointer-coarse:min-h-10">
+              <LibraryBig aria-hidden="true" /> {t('te.lib.open')}
+            </Button>
+          )}
           {data?.can_create && (
             <Button type="button" onClick={() => setDialog({ mode: 'create' })} data-slot="te-new-channel" className="pointer-coarse:min-h-10">
               <Plus aria-hidden="true" /> {t('te.newChannel')}
@@ -462,6 +473,11 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
           )}
           {(pager.totalPages > 1 || visible.length > pager.pageSize) && <PaginationBar {...pager} />}
         </div>
+      )}
+
+      {libraryTeams.length > 0 && (
+        <LibraryManagerDialog open={libraryOpen} teams={libraryTeams} defaultTeam={team} onClose={() => setLibraryOpen(false)}
+          returnFocusRef={libraryBtnRef} />
       )}
 
       {dialog && (

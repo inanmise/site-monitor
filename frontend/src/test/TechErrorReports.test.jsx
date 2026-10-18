@@ -83,8 +83,9 @@ describe('Teknik hata raporları — kanallar', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Kanalı aç' }))
     expect(await within(dialog).findByText('Kanal adı boş olamaz; rapor başlığında kullanılır.')).toBeInTheDocument()
     expect(te().createChannel).not.toHaveBeenCalled()
-    // Şablon kaynağı: shadcn seçim kartları (8. sürüm) — üç seçenek, varsayılan Türkçe; "kopyala" kanal seçiciyi açar
-    expect(within(dialog).getAllByRole('radio')).toHaveLength(3)
+    // Şablon kaynağı: shadcn seçim kartları (8. sürüm) — varsayılan Türkçe; "kopyala" kanal seçiciyi açar. 2026-10-18 (D17):
+    // dördüncü kart "Takım kütüphanesinden" her zaman çizilir (burada kütüphane boş → seçilemez)
+    expect(within(dialog).getAllByRole('radio')).toHaveLength(4)
     expect(within(dialog).getByRole('radio', { name: /Varsayılan şablon \(Türkçe\)/ })).toBeChecked()
     // Kullanıcı bildirimi (2026-10-17): lucide "Languages" ikonu "文A" çizer ve Japonca karakter gibi görünür — seçim
     // kartlarında dil / çeviri ikonu kullanılmaz

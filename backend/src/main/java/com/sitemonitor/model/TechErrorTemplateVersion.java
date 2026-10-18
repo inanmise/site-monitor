@@ -58,4 +58,15 @@ public class TechErrorTemplateVersion {
 
     @Column(name = "slot_count", nullable = false)
     private int slotCount;
+
+    /**
+     * Kanal açılışındaki şablonun KAYNAĞI (2026-10-18, D17) — yalnız kanalın ilk sürümünde: {@code library} (takım
+     * kütüphanesi; {@code sourceName} = kaydın o anki adı), {@code copy} (başka bir kanalın kopyası; ad yazılmaz — başka
+     * takımın kanal adı sürüm geçmişinden sızmasın), {@code default} (sistem varsayılanı). Daha eski satırlarda null.
+     */
+    @Column(name = "source_kind", length = 16)
+    private String sourceKind;
+
+    @Column(name = "source_name", length = 200)
+    private String sourceName;
 }

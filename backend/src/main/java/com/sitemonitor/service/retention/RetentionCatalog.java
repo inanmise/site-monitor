@@ -443,6 +443,11 @@ public final class RetentionCatalog {
                 "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "
                 + "kullanıcı kimliği. Kanal başına en çok 100 sürüm (eskiler budanır); kanal silinince aynı işlemde silinir, "
                 + "öksüz satır burada temizlenir."),
+        orphan("tech-error-team-templates-orphan", "tech_error_team_templates",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = tech_error_team_templates.team_id)", DataClass.PERSONAL,
+                "Takımın teknik hata raporu şablon kütüphanesi (2026-10-18): takım başına en çok 20 adlandırılmış şablon "
+                + "(≤ 64 KB), takım varsayılanı işareti ve ekleyen / güncelleyenin adı ve kullanıcı kimliği. Ekip kararıyla "
+                + "silinir (ASLA otomatik değil); takımı silinmiş kütüphane satırı burada temizlenir (kanallarla aynı yol)."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
