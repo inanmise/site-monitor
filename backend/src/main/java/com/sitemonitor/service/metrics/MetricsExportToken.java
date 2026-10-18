@@ -28,8 +28,8 @@ public class MetricsExportToken {
 
     public static final String PROPERTY = "site.monitor.metrics.export.token";
     public static final String ENV = "METRICS_EXPORT_TOKEN";
-    /** Tahmin edilemezlik için alt sınır (önerilen: 32+ rastgele karakter). */
-    public static final int MIN_LENGTH = 16;
+    /** Tahmin edilemezlik için alt sınır: 32 karakter (ör. {@code openssl rand -hex 32} → 64 onaltılık karakter). */
+    public static final int MIN_LENGTH = 32;
     /** Authorization başlığı üst sınırı — daha uzunu okunmadan reddedilir. */
     static final int MAX_HEADER = 1024;
 
@@ -43,8 +43,8 @@ public class MetricsExportToken {
         this.configured = t.length() >= MIN_LENGTH;
         this.digest = configured ? sha256(t) : null;
         if (tooShort) {
-            log.warn("{} {} karakterden kısa — iş ölçümleri ucu (/metrics/sitemonitor) KAPALI. En az 32 rastgele karakter verin.",
-                    ENV, MIN_LENGTH);
+            log.warn("{} {} karakterden kısa — iş ölçümleri ucu (/metrics/sitemonitor) KAPALI. En az {} rastgele karakter verin "
+                    + "(ör. openssl rand -hex 32).", ENV, MIN_LENGTH, MIN_LENGTH);
         }
     }
 

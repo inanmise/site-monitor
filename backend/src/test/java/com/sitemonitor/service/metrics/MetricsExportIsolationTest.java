@@ -91,7 +91,7 @@ class MetricsExportIsolationTest {
         when(settings.getBoolean(anyString(), anyBoolean())).thenReturn(true);
         when(settings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
         MonitoringMetricsExporter exporter = new MonitoringMetricsExporter(business, settings,
-                MetricsExportToken.of("isolation-token-0123456789"));
+                MetricsExportToken.of("isolation-token-0123456789-0123456789"));
 
         MonitoringMetricsModel.Families f = new MonitoringMetricsModel.Families();
         f.add(MonitoringMetricNames.MONITOR_STATE, 2, "type", "http", "team", "Dijital Kanallar", "team_id", "14", "group", "Ödeme",

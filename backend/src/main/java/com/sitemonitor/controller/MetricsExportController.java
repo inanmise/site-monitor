@@ -24,7 +24,9 @@ import java.util.function.LongSupplier;
  *   <li><b>Yalnız taşıyıcı belirteçle:</b> {@code Authorization: Bearer <METRICS_EXPORT_TOKEN>} sabit sürede karşılaştırılır
  *       ({@link MetricsExportToken}). Belirteç tanımlı değilse uç YOK (404, gövdesiz) ve aktarıcı hiç koşmaz.</li>
  *   <li><b>Yanlış / eksik belirteç:</b> 401 (gövde yok, {@code WWW-Authenticate: Bearer}). IP başına dakikada
- *       {@value #MAX_FAILURES_PER_MINUTE} başarısız denemeden sonra 429 + {@code Retry-After} (belirteç denenmeden). Güvenlik
+ *       {@value #MAX_FAILURES_PER_MINUTE} başarısız denemeden sonra 429 + {@code Retry-After}. DOĞRU belirteç IP engelliyken de
+ *       geçer (karşılaştırma yine sabit süreli): ortak bir adresin (mesh sidecar, SNAT, ingress) arkasında başkasının on kötü
+ *       isteği Prometheus'un doğru belirteçli kazımasını kilitlemesin (2026-10-18 güvenlik incelemesi). Güvenlik
  *       olayı {@code METRICS_EXPORT_ACCESS_DENIED} IP başına {@value #AUDIT_WINDOW_MINUTES} dakikada BİR kez yazılır (Prometheus
  *       yanlış yapılandırıldığında her kazıma bir denetim satırı olmasın).</li>
  *   <li><b>{@code /api/**} dışında:</b> oturum, CSRF ve kullanıcı kapsamı uygulanmaz — Prometheus bir kullanıcı değildir. Başarılı
@@ -74,12 +76,12 @@ public class MetricsExportController {
         if (!token.configured()) return ResponseEntity.status(404).headers(h).build();
         String ip = ipOf(request);
         long minute = clockMs.getAsLong() / 60_000L;
-        if (blocked(ip, minute)) {
-            h.set(HttpHeaders.RETRY_AFTER, "60");
-            return ResponseEntity.status(429).headers(h).build();
-        }
         String auth = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (!token.matches(auth)) {
+            if (blocked(ip, minute)) {
+                h.set(HttpHeaders.RETRY_AFTER, "60");
+                return ResponseEntity.status(429).headers(h).build();
+            }
             countFailure(ip, minute);
             auditOnce(request, ip, minute, auth == null || auth.isBlank() ? "missing" : "invalid");
             h.set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");

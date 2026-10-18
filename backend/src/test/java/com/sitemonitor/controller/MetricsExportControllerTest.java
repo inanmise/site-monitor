@@ -49,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = MetricsExportToken.PROPERTY + "=" + MetricsExportControllerTest.TOKEN)
 class MetricsExportControllerTest {
 
-    static final String TOKEN = "test-token-0123456789abcdef";
+    static final String TOKEN = "test-token-0123456789abcdef-0123456789";
 
     @Autowired MockMvc mvc;
     @Autowired BusinessMetricsRegistry business;
@@ -121,7 +121,8 @@ class MetricsExportControllerTest {
     }
 
     @Test
-    @DisplayName("hız sınırı: IP başına dakikada 10 başarısız denemeden sonra 429 + Retry-After — doğru belirteç bile denenmez")
+    @DisplayName("hız sınırı: IP başına dakikada 10 başarısız denemeden sonra KÖTÜ istek 429 + Retry-After; DOĞRU belirteç "
+            + "engelli IP'den de geçer (ortak adres / SNAT arkasında Prometheus kilitlenmez)")
     void rateLimited() throws Exception {
         long[] clock = { 1_000_000_000_000L };
         controller.setClockMs(() -> clock[0]);
@@ -130,10 +131,13 @@ class MetricsExportControllerTest {
                 mvc.perform(get(MetricsExportController.PATH).header("Authorization", "Bearer bad").with(ip("10.3.0.1")))
                         .andExpect(status().isUnauthorized());
             }
-            mvc.perform(get(MetricsExportController.PATH).header("Authorization", "Bearer " + TOKEN).with(ip("10.3.0.1")))
+            mvc.perform(get(MetricsExportController.PATH).header("Authorization", "Bearer still-bad").with(ip("10.3.0.1")))
                     .andExpect(status().isTooManyRequests())
                     .andExpect(header().string("Retry-After", "60"))
                     .andExpect(content().string(""));
+            mvc.perform(get(MetricsExportController.PATH).with(ip("10.3.0.1"))).andExpect(status().isTooManyRequests());
+            mvc.perform(get(MetricsExportController.PATH).header("Authorization", "Bearer " + TOKEN).with(ip("10.3.0.1")))
+                    .andExpect(status().isOk());   // doğru belirteç engelli IP'den geçer
             mvc.perform(get(MetricsExportController.PATH).header("Authorization", "Bearer " + TOKEN).with(ip("10.3.0.9")))
                     .andExpect(status().isOk());
             clock[0] += 61_000L;   // sonraki dakika: sayaç sıfırlanır

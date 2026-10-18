@@ -131,7 +131,11 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/", "/api/login/otp/",
             "/api/manual-certs", "/api/admin/ldap", "/api/monitoring/scripted", "/api/admin/user-push",
             // Genel ayarlar katalogu ham değerleri genel "value" anahtarıyla taşır (push ağ geçidi URL'si jeton içerir)
-            "/api/admin/general/settings");
+            "/api/admin/general/settings",
+            // Prometheus kazıması: /metrics/sitemonitor bütün izleme envanterini taşır (2026-10-18). shouldSkip ham URI'ye
+            // bakar; ";x=1" yol parametresi ya da yüzde kodlaması (/%6Detrics/…) onu atlatıp denetleyiciye ulaşabilir —
+            // bu normalleştiren kontrol de gövdeyi asla yazmaz.
+            "/metrics");
     static final String BODY_OMITTED = "[omitted: sensitive endpoint]";
 
     private static final int MAX_BODY_LOG = 2000;

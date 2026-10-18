@@ -232,12 +232,14 @@ secret:
   secretKeyPrevious: ""
 
   # Bearer token of the business metrics endpoint /metrics/sitemonitor (Grafana dashboard, 2026-10-18).
-  # Empty (default) or shorter than 16 characters -> the endpoint answers 404 and the exporter does
-  # not run; /metrics keeps serving only JVM / HTTP / app health metrics. Set >= 32 random chars to
-  # enable it, give the SAME value to Prometheus (scrape job "authorization: credentials_file") and
+  # Empty (default) or shorter than 32 characters -> the endpoint answers 404 and the exporter does
+  # not run; /metrics keeps serving only JVM / HTTP / app health metrics. Set >= 32 random chars
+  # (e.g. `openssl rand -hex 32`) to enable it, give the SAME value to Prometheus (scrape job "authorization: credentials_file") and
   # NEVER commit it. Anyone holding it reads the whole monitoring inventory (monitor names,
   # targets, teams, certificates, open alerts) — treat it like a password. Rotate: new value here +
-  # in Prometheus, deploy; old scrapes get 401 until Prometheus is updated.
+  # in Prometheus, deploy; old scrapes get 401 until Prometheus is updated. With existingSecret, editing
+  # the Secret in place does NOT restart the pods: run `kubectl rollout restart deploy/<name>` — until
+  # then the old (possibly leaked) token keeps working. `helm upgrade` with a changed value restarts them.
   metricsExportToken: ""
 
   # Corporate proxy auth (Basic). Leave empty for anonymous proxies.

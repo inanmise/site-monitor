@@ -11,12 +11,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MetricsExportTokenTest {
 
-    static final String TOKEN = "s3cr3t-token-0123456789abcdef";
+    static final String TOKEN = "s3cr3t-token-0123456789abcdef-0123456789";
 
     @Test
-    @DisplayName("yok ya da 16 karakterden kısa → tanımlı değil, hiçbir başlık eşleşmez")
+    @DisplayName("yok ya da 32 karakterden kısa → tanımlı değil, hiçbir başlık eşleşmez")
     void notConfigured() {
-        for (String raw : new String[] { null, "", "   ", "short-token" }) {
+        String thirtyOne = "a".repeat(MetricsExportToken.MIN_LENGTH - 1);
+        assertThat(MetricsExportToken.MIN_LENGTH).isEqualTo(32);
+        assertThat(MetricsExportToken.of(thirtyOne).configured()).isFalse();
+        assertThat(MetricsExportToken.of(thirtyOne + "b").configured()).isTrue();
+        for (String raw : new String[] { null, "", "   ", "short-token", "sixteen-chars-ok", thirtyOne }) {
             MetricsExportToken t = MetricsExportToken.of(raw);
             assertThat(t.configured()).as(String.valueOf(raw)).isFalse();
             assertThat(t.matches("Bearer " + raw)).isFalse();

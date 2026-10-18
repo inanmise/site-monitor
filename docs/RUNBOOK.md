@@ -296,19 +296,26 @@ Ayarlar → Platform → **Grafana panosu**: ölçüm aktarıcısının canlı d
 | `/metrics/sitemonitor` | İzleme envanteri: izleme durumu, alarmlar, sertifikalar / alan adları, bildirimler / fırtınalar / push, aktarıcının kendi sağlığı (`sitemonitor_*` iş ölçümleri) | `Authorization: Bearer <METRICS_EXPORT_TOKEN>` |
 
 **Belirteç:** ortam değişkeni `METRICS_EXPORT_TOKEN` (Helm `secret.metricsExportToken` ya da `existingSecret`'e
-`METRICS_EXPORT_TOKEN` anahtarı). En az 32 rastgele karakter üretin (`openssl rand -base64 48`), git'e yazmayın. Yoksa ya
-da 16 karakterden kısaysa `/metrics/sitemonitor` **404** döner ve aktarıcı hiç koşmaz (veritabanı yükü yok); pano yalnız
+`METRICS_EXPORT_TOKEN` anahtarı). En az 32 rastgele karakter üretin (ör. `openssl rand -hex 32`), git'e yazmayın. Yoksa ya
+da 32 karakterden kısaysa `/metrics/sitemonitor` **404** döner ve aktarıcı hiç koşmaz (veritabanı yükü yok); pano yalnız
 sürüm / JVM / HTTP panellerini doldurur ve "Veri tazeliği" şeridi "veri yok" der. **Belirteci bilen herkes bütün envanteri
 (izleme adları, hedefler, takımlar, sertifikalar, açık alarmlar) okur** — parola gibi saklayın. Grafana takım kapsamı
 uygulamaz: panoya / veri kaynağına erişebilen herkes süzgeci değiştirip bütün takımları görür; takıma özel indirilen pano
 (varsayılan takım + UID) bir kolaylıktır, erişim denetimi değildir.
 
-Yanlış / eksik belirteç **401** (gövdesiz) döner; aynı IP'den dakikada 10 başarısız denemeden sonra **429**. Denetim
+Yanlış / eksik belirteç **401** (gövdesiz) döner; aynı IP'den dakikada 10 başarısız denemeden sonra **429** — DOĞRU
+belirteçle gelen kazıma o IP engelliyken de geçer (ortak adres / SNAT / mesh arkasında başkasının kötü istekleri
+Prometheus'u kilitlemez). Denetim
 günlüğünde güvenlik olayı `METRICS_EXPORT_ACCESS_DENIED` IP başına 10 dakikada bir yazılır — Prometheus'un eski / yanlış
 belirteçle kazıdığını buradan görürsünüz.
 
 **Döndürme:** yeni değeri Secret'a ve Prometheus'un belirteç dosyasına yazın, dağıtın; geçişte eski belirteçle gelen
-kazımalar 401 alır (pano birkaç dakika "veri yok"). Uygulama tek belirteç tutar (önceki belirteç kabul edilmez).
+kazımalar 401 alır (pano birkaç dakika "veri yok"). Uygulama tek belirteç tutar (önceki belirteç kabul edilmez) ve onu
+AÇILIŞTA okur: Secret'ı yerinde düzenlediyseniz (`existingSecret`, `kubectl edit secret`) pod'lar kendiliğinden
+yenilenmez — `kubectl rollout restart deploy/<ad> -n <ad-alanı>` çalıştırın. O zamana kadar ESKİ (sızmış olabilecek)
+belirteç çalışmaya devam eder. Değeri değiştiren bir `helm upgrade` pod'ları zaten yeniden başlatır (Secret özeti).
+Belirteç diğer sırlar gibi pod ortamındadır: k6 senaryoları pod dosyalarını okuyabilir (Ayarlar → k6 dosya okuma politikası,
+`site.monitor.scripted.file-read-policy`) — sentetik izleme yazabilen biri ortamı görebilir.
 
 **Prometheus kazıma örneği** (pod anotasyonlarıyla; Helm `podAnnotations` zaten ekler — ServiceMonitor kullanan kümede
 ikinci uç için `endpoints: [{port: http, path: /metrics/sitemonitor, authorization: {type: Bearer, credentials: {name: …,
@@ -366,7 +373,7 @@ Aynı Prometheus birden çok ortamı (test + prod) kazıyorsa sayfadaki **Promet
 
 Pano "veri yok" gösteriyorsa sırayla:
 1. Kazıma: Prometheus → Status → Targets'ta İKİ işin pod'ları da `UP` mı? `site-monitor-inventory` işi 401 diyorsa
-   belirteç dosyası yanlış / eski; 404 diyorsa uygulamada `METRICS_EXPORT_TOKEN` yok (ya da 16 karakterden kısa).
+   belirteç dosyası yanlış / eski; 404 diyorsa uygulamada `METRICS_EXPORT_TOKEN` yok (ya da 32 karakterden kısa).
 2. Aktarıcı: Ayarlar sayfasındaki canlı kontrol "Çalışıyor" mu? "Belirteç yok" → adım 1; kapalıysa
    (`site.monitor.metrics.export.enabled`, env `METRICS_EXPORT_ENABLED`) açın; "Takılmış olabilir" ise pod günlüğünde
    `İzleme ölçümleri tazelenemedi` arayın — son tur 3 tazeleme aralığından (en az 3 dk) eskiyken uç iş değerlerini
