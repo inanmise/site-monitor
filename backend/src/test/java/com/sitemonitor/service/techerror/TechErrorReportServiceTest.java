@@ -1444,6 +1444,57 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("push (2026-10-18): kuyruktaki gönderim sonuçlanınca bir kez — SENT → delivered (gönderen, sayaç, talep anı; günlük rolü EXECUTIVE → yöneticiler), FAILED → gönderene QUEUE_FAILED; ikinci okuma ikinci push yazmaz")
+    void queuedResultPushesOnce() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n = logs.findById(logId).orElseThrow();
+            n.setRecipientRole("EXECUTIVE");
+            logs.save(n);
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 2L);
+            setLogStatus(logId, "SENT");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isZero();
+            org.mockito.Mockito.verify(pushes).delivered(
+                    org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId()) && Long.valueOf(1L).equals(c.teamId())
+                            && "POS".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.eq(claim), org.mockito.ArgumentMatchers.eq(List.of()));
+            org.mockito.Mockito.verifyNoMoreInteractions(pushes);
+
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
+            reports.claimSend(r2.getId(), claim, claim.minusSeconds(600));
+            Long log2 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r2.getId(), claim, "QUEUED_RETRY: 421", claim, log2, 8L, "a@b.com", 0L);
+            setLogStatus(log2, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailed(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(8L),
+                    org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED), org.mockito.ArgumentMatchers.isNull(),
+                    org.mockito.ArgumentMatchers.eq(claim));
+            // Push hatası sonuçlandırmayı bozmaz
+            TechErrorReport r3 = service.createReport(ch, 2026, 7, 7L);
+            reports.claimSend(r3.getId(), claim, claim.minusSeconds(600));
+            Long log3 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r3.getId(), claim, "QUEUED_RETRY: 421", claim, log3, 7L, "a@b.com", 0L);
+            setLogStatus(log3, "SENT");
+            org.mockito.Mockito.doThrow(new IllegalStateException("push yok")).when(pushes).delivered(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            assertThat(reports.findById(r3.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
     @DisplayName("kuyruk sonucu ve geçmiş olayı TEK işlemde: olay yazılamazsa sonuç da geri alınır, sonraki okumada yeniden denenir")
     void queuedResultAndEventAreAtomic() {
         TechErrorChannel ch = channel(1, "POS");

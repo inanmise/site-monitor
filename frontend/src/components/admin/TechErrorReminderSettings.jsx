@@ -8,7 +8,7 @@ import Field from '../ui/Field.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import { useFormErrors } from '../../hooks/useFormErrors.js'
-import { CheckboxRow, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
+import { SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import { normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import {
   REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeReminders, toForm, validateForm,
@@ -22,7 +22,8 @@ const TOUCH = 'pointer-coarse:min-h-10'
 
 /**
  * Ayarlar → Teknik hata raporu → "Hatırlatmalar ve posta sınırları" (12. sürüm, 2026-10-17 — kullanıcı onayı C9 / C10 /
- * E21). Dönem hatırlatması alan takımlar (seçim yok = KAPALI), ayın günü, tekrar aralığı, push; onay bekleyen rapor
+ * E21). Dönem hatırlatması alan takımlar (seçim yok = KAPALI), ayın günü, tekrar aralığı (push anahtarı 2026-10-18'den beri
+ * "Push bildirimleri" kartında — `TechErrorPushSettings`, aynı ayar anahtarı); onay bekleyen rapor
  * hatırlatması; e-posta boyut sınırı ve gövde görsel bütçesi. Hepsi GLOBAL_ONLY: kapsamlı müdür salt okunur görür (kayıt
  * çubuğu yok). Değerler sayfanın okuma dalgasıyla gelir (`state` = `reminderState`: ok / unsupported / failed); kayıt
  * AYRI uca gider — `PUT /api/admin/tech-error-reports/settings/reminders` — ve YALNIZ değişen alanları gönderir; değişiklik
@@ -112,7 +113,7 @@ export default function TechErrorReminderSettings({
       }
       if (!res || res.success === false) {
         const field = res?.field
-        if (field && (REM_INT_FIELDS.includes(field) || field === 'reminder_team_ids' || field === 'reminder_push')) {
+        if (field && (REM_INT_FIELDS.includes(field) || field === 'reminder_team_ids')) {
           fe.check({ [field]: res.error || t('te.set.saveError') })
         } else {
           toast.error(res?.error || t('te.set.saveError'), { details: res?.errorInfo })
@@ -242,11 +243,8 @@ export default function TechErrorReminderSettings({
             {numberField('reminder_day', 'te.rem.day', 'te.rem.dayHint')}
             {numberField('reminder_repeat_days', 'te.rem.repeat', 'te.rem.repeatHint')}
           </div>
-          <div className="flex min-w-0 flex-col gap-1" data-slot="tes-rem-push">
-            <CheckboxRow checked={!!form.reminder_push} onChange={(v) => set('reminder_push', v)} disabled={locked || saving}
-              label={t('te.rem.push')} className="pointer-coarse:min-h-10" />
-            <p className="m-0 pl-6 text-xs text-muted-foreground">{t('te.rem.pushHint')}</p>
-          </div>
+          {/* Hatırlatmanın push'u (2026-10-18) "Push bildirimleri" kartına taşındı (aynı ayar anahtarı) — burada yalnız yönlendirme */}
+          <p className="m-0 text-xs text-muted-foreground" data-slot="tes-rem-push-moved">{t('te.rem.pushMoved')}</p>
         </section>
 
         <Separator />

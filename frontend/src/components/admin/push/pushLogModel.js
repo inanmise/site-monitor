@@ -9,7 +9,9 @@ export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 
   // 2026-10-04: fırtına / takım bildirimleri + saat tavanı özeti + eskalasyon adımı push'u
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
   // 2026-10-17 (12. sürüm): kanal teknik hata raporu dönem hatırlatması (takım push'u)
-  'TECH_ERROR_REMINDER']
+  'TECH_ERROR_REMINDER',
+  // 2026-10-18: teknik hata raporu onay isteği / onay hatırlatması / karar / gönderildi / gönderilemedi
+  'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT', 'TECH_ERROR_SEND_FAILED']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */

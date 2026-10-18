@@ -122,6 +122,8 @@ public class TechErrorReminderService {
     @Autowired(required = false) @Lazy private SystemMaintenanceService maintenance;
     @Autowired(required = false) @Lazy private UserPushService push;
     @Autowired(required = false) @Lazy private ClusterScheduleService clusterSchedule;
+    /** Onay hatırlatmasının push'u (2026-10-18, {@link TechErrorPushService}); yoksa yalnız posta (bugünkü davranış). */
+    @Autowired(required = false) private TechErrorPushService pushes;
 
     @Value("${site.monitor.tech-error-report.reminder-enabled:true}")
     private boolean enabled = true;
@@ -148,6 +150,7 @@ public class TechErrorReminderService {
     void setMaintenance(SystemMaintenanceService m) { this.maintenance = m; }
     void setPush(UserPushService p) { this.push = p; }
     void setClusterSchedule(ClusterScheduleService c) { this.clusterSchedule = c; }
+    void setPushes(TechErrorPushService p) { this.pushes = p; }
 
     /**
      * Koşu özeti: dönem hatırlatmasında posta / push alan takım sayısı, onay hatırlatmasında posta alan rapor sayısı,
@@ -669,17 +672,24 @@ public class TechErrorReminderService {
             Claim c = claim(ch.getId(), p, TechErrorReminder.KIND_APPROVAL, existing, todayStr, ref);
             if (c == null) continue;
             try {
+                List<TechErrorApprovalService.Approver> all = approvals.approvers(team.getId());
                 List<TechErrorApprovalService.Approver> apps = new ArrayList<>();
-                for (TechErrorApprovalService.Approver a : approvals.approvers(team.getId())) if (a.email() != null) apps.add(a);
+                for (TechErrorApprovalService.Approver a : all) if (a.email() != null) apps.add(a);
+                String requester = service.displayName(r.getApprovalRequestedById());
+                long waiting = waitingDays(r.getApprovalRequestedAt(), today);
+                // Push (2026-10-18): aynı talep / pencere, TÜM onaylayıcılar (e-postası olmayanlar dahil, isteyen hariç). Yalnız
+                // push'la ulaşan hatırlatma da ulaşmış sayılır (dönem hatırlatmasıyla aynı kural): talep bırakılmaz
+                int pushed = approvalPush(r, ch, all, requester, waiting, todayStr);
+                String pushNote = pushed > 0 ? " · push " + pushed : "";
                 if (apps.isEmpty()) {
-                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_NO_APPROVER_EMAIL, title);
-                    counts[3]++;
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_NO_APPROVER_EMAIL,
+                            withNote(title, pushNote));
+                    if (pushed > 0) counts[2]++;
+                    else counts[3]++;
                     continue;
                 }
                 Links links = links(r, now);
                 Map<Long, Instant> linkUntil = links.live();
-                String requester = service.displayName(r.getApprovalRequestedById());
-                long waiting = waitingDays(r.getApprovalRequestedAt(), today);
                 String url = TechErrorApprovalMail.reportUrl(base, ch.getId(), r.getId());
                 int reached = 0, finalSkips = 0;
                 for (TechErrorApprovalService.Approver a : apps) {
@@ -695,12 +705,13 @@ public class TechErrorReminderService {
                     }
                     if (status.startsWith("SENT") || status.startsWith("QUEUED")) reached++;
                     else if (status.startsWith("SKIPPED")) finalSkips++;   // posta kapalı / pasif: son karar, her gün denenmez
-                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status, title);
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status,
+                            withNote(title, pushNote));
                 }
-                if (reached > 0) counts[2]++;
+                if (reached > 0 || pushed > 0) counts[2]++;
                 else {
                     counts[3]++;
-                    if (finalSkips == 0) release(c);                       // hiçbir PO'ya ulaşmadı (FAILED) → ertesi gün yeniden
+                    if (finalSkips == 0) release(c);                       // hiçbir PO'ya ulaşmadı (FAILED, push yok) → ertesi gün yeniden
                 }
             } catch (RuntimeException e) {
                 // Beklenmeyen hata bir raporda kalır: talep bırakılır, iz FAILED — ertesi gün yeniden
@@ -709,6 +720,21 @@ public class TechErrorReminderService {
                 saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
                 counts[3]++;
             }
+        }
+    }
+
+    /** Onay hatırlatmasının push'u: kuyruğa alınan sayı (push yok / kapalı / hata = 0 — talep kararı buna göre). */
+    private int approvalPush(TechErrorReportRepository.Row r, TechErrorChannel ch, List<TechErrorApprovalService.Approver> all,
+                             String requester, long waiting, String todayStr) {
+        TechErrorPushService p = pushes;
+        if (p == null) return 0;
+        try {
+            TechErrorPushService.Ctx ctx = new TechErrorPushService.Ctx(r.getId(), r.getTeamId(), ch.getName(),
+                    r.getReportYear() == null ? 0 : r.getReportYear(), r.getReportMonth() == null ? 0 : r.getReportMonth());
+            return p.approvalReminder(ctx, all, r.getApprovalRequestedById(), requester, waiting, r.getApprovalRequestedAt(), todayStr);
+        } catch (RuntimeException e) {
+            log.warn("Onay hatırlatması push'u kuyruğa alınamadı (rapor {}): {}", r.getId(), e.toString());
+            return 0;
         }
     }
 

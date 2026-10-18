@@ -43,7 +43,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -1010,5 +1013,58 @@ class TechErrorApprovalServiceTest {
             assertThat(n.getTechErrorChannelId()).isEqualTo(ch2.getId());
             assertThat(n.getRecipientName()).isEqualTo("Dijital");
         });
+    }
+
+    // ── Push bildirimleri (2026-10-18) ─────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("push: istek → approvalRequested (postayla aynı onaylayıcılar, isteyen, postası ulaşan adresler); 10 dk sonra yeniden istek → resend; onay → gönderim 7 argümanla (isteyen 'gönderildi' bildiriminden düşülür) + decided(SENT); red → decided(not), gönderim yok")
+    void pushWiring() {
+        TechErrorPushService pushes = mock(TechErrorPushService.class);
+        approvals.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channelWithExecs("ceo@example.com");
+            TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+            Instant t0 = service.now();
+            approvals.request(r, ch, team, tech.getId());
+            ArgumentCaptor<List<TechErrorApprovalService.Approver>> apps = ArgumentCaptor.forClass(List.class);
+            ArgumentCaptor<java.util.Collection<String>> mailed = ArgumentCaptor.forClass(java.util.Collection.class);
+            verify(pushes).approvalRequested(argThat(c -> r.getId().equals(c.reportId()) && Long.valueOf(1L).equals(c.teamId())
+                            && "Mobil".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    apps.capture(), eq(tech.getId()), eq("Teknik"), eq(false), mailed.capture(), eq(t0));
+            assertThat(apps.getValue()).extracting(TechErrorApprovalService.Approver::name).containsExactly("PO Bir", "PO İki");
+            assertThat(mailed.getValue()).containsExactlyInAnyOrder("po1@example.com", "po2@example.com");
+
+            // 10 dakikadan eski bekleyen istek yeniden gönderilir → resend bayrağı (ayrı metin + anahtar)
+            Instant t1 = t0.plus(TechErrorApprovalService.RESEND_AFTER).plusSeconds(1);
+            service.useClock(Clock.fixed(t1, ZoneOffset.UTC));
+            approvals.request(service.report(r.getId()), ch, team, tech.getId());
+            verify(pushes).approvalRequested(any(), any(), eq(tech.getId()), any(), eq(true), any(), eq(t1));
+
+            // Onay: isteyen karar push'unu alacak → gönderim isteyeni "gönderildi" takım bildiriminden düşürür
+            when(pushes.decisionGoesTo(tech.getId(), po1.getId())).thenReturn(true);
+            when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE), isNull(), any()))
+                    .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+            approvals.decide(service.report(r.getId()), ch, team, po1.getId(), true, null, "app");
+            verify(sender).send(any(), eq(ch), eq(team), eq(po1.getId()), eq(TechErrorReportSender.Delivery.EXECUTIVE), isNull(),
+                    eq(Set.of(tech.getId())));
+            verify(sender, never()).send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE));
+            verify(pushes).decided(any(), eq(tech.getId()), eq(po1.getId()), eq("PO Bir"), eq(true), isNull(), eq("SENT"), isNull(), eq(t1));
+
+            // Red: gönderim yok, not push'a gider; karar push'u isteyene gitmeyecekse (kendi kararı) eski 5 argümanlı yol
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, tech.getId());
+            approvals.request(r2, ch, team, tech.getId());
+            approvals.decide(service.report(r2.getId()), ch, team, po2.getId(), false, "Tablo eksik", "app");
+            verify(pushes).decided(any(), eq(tech.getId()), eq(po2.getId()), eq("PO İki"), eq(false), eq("Tablo eksik"), isNull(), isNull(), any());
+            TechErrorReport r3 = service.createReport(ch, 2026, 7, tech.getId());
+            approvals.request(r3, ch, team, po1.getId());                          // PO kendi isteyen
+            when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                    .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+            approvals.decide(service.report(r3.getId()), ch, team, po1.getId(), true, null, "app");
+            verify(sender).send(any(), eq(ch), eq(team), eq(po1.getId()), eq(TechErrorReportSender.Delivery.EXECUTIVE));
+        } finally {
+            approvals.setPushes(null);
+        }
     }
 }

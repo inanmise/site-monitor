@@ -22,7 +22,9 @@ import { navigateTo } from '../../utils/navigate.js'
 import { unwrap } from '../noc/nocModel.js'
 import { SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import TechErrorReminderSettings from './TechErrorReminderSettings.jsx'
+import TechErrorPushSettings from './TechErrorPushSettings.jsx'
 import { reminderState } from './techErrorReminderModel.js'
+import { pushState } from './techErrorPushModel.js'
 import { isDirty, normalizeIds, teamOptions } from './noc/operatorTeamsModel.js'
 import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
@@ -86,6 +88,10 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   // Hatırlatma kartı (12. sürüm): AYRI uçtan okunur (`reminderState`: ok / unsupported / failed; null = kart yok)
   const [rem, setRem] = useState(null)
   const [remSaving, setRemSaving] = useState(false)
+  // Push bildirimleri kartı (2026-10-18): AYRI uçtan okunur (`pushState`: ok / unsupported / failed; null = kart yok)
+  const [pushSt, setPushSt] = useState(null)
+  const [pushSaving, setPushSaving] = useState(false)
+  const [pushDirty, setPushDirty] = useState(false)
   const [listRef, listWidth] = useElementWidth()
   const alive = useRef(true)
   const loadSeq = useRef(0)
@@ -99,16 +105,20 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setLoadError(null)
     setLoading(true)
     try {
-      const [cfg, dir, remRes] = await Promise.all([
+      const [cfg, dir, remRes, pushRes] = await Promise.all([
         api.admin.techErrorSettings(),
         Promise.resolve(api.teams?.directory ? api.teams.directory() : null).catch(() => null),
         // Ağ hatası "okunamadı"dır (eski pod'un 404 / 405'i değil): değer uydurulmaz, son okunan korunur
         api.admin.techErrorReminderSettings
           ? Promise.resolve(api.admin.techErrorReminderSettings()).catch((e) => ({ success: false, error: e?.message || null }))
           : Promise.resolve(undefined),
+        api.admin.techErrorPushSettings
+          ? Promise.resolve(api.admin.techErrorPushSettings()).catch((e) => ({ success: false, error: e?.message || null }))
+          : Promise.resolve(undefined),
       ])
       if (!alive.current || id !== loadSeq.current) return
       if (remRes !== undefined) setRem((prev) => reminderState(remRes, prev))
+      if (pushRes !== undefined) setPushSt((prev) => pushState(pushRes, prev))
       const r = unwrap(cfg)
       if (!r.ok) { setLoadError(r.error || t('te.set.loadError')); return }
       const data = r.data || {}
@@ -163,6 +173,21 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const onRemUnsupported = useCallback(() => {
     if (alive.current) setRem((prev) => ({ status: 'unsupported', data: prev?.data || null, error: null }))
   }, [])
+  // Push kartının kaydı: hatırlatma kartıyla aynı eşgüdüm (Yenile kapalı, kayıt başında okuma sırası ilerler)
+  const onPushSaving = useCallback((on) => {
+    if (!alive.current) return
+    if (on) {
+      loadSeq.current += 1
+      setLoading(false)
+    }
+    setPushSaving(!!on)
+  }, [])
+  const onPushSaved = useCallback((next) => {
+    if (alive.current) setPushSt({ status: 'ok', data: next, error: null })
+  }, [])
+  const onPushUnsupported = useCallback(() => {
+    if (alive.current) setPushSt((prev) => ({ status: 'unsupported', data: prev?.data || null, error: null }))
+  }, [])
 
   async function save() {
     if (!settings || saving || locked) return
@@ -206,8 +231,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   }
 
   async function openChannel(ch) {
-    if (dirty || remDirty) {
-      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t(remDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'), variant: 'warning',
+    if (dirty || remDirty || pushDirty) {
+      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t(remDirty || pushDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'), variant: 'warning',
         confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -252,7 +277,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   ]
 
   const refreshButton = settings && (
-    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving || remSaving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
+    <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading || saving || remSaving || pushSaving} data-slot="tes-refresh" className={cn('h-9 sm:h-8', TOUCH)}>
       <RefreshCw aria-hidden="true" className={cn(loading && 'animate-spin motion-reduce:animate-none')} /> {t('te.refresh')}
     </Button>
   )
@@ -264,7 +289,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         {loadError && !settings && (
           <StatusBlock tone="danger" role="alert" icon={CircleAlert} title={t('te.set.unreadableTitle')} description={String(loadError)}
             className="py-8"
-            actions={<Button type="button" variant="outline" onClick={load} disabled={loading || saving || remSaving} className={TOUCH} data-slot="tes-retry"><RefreshCw aria-hidden="true" /> {t('te.retry')}</Button>} />
+            actions={<Button type="button" variant="outline" onClick={load} disabled={loading || saving || remSaving || pushSaving} className={TOUCH} data-slot="tes-retry"><RefreshCw aria-hidden="true" /> {t('te.retry')}</Button>} />
         )}
         {!settings && !loadError && (
           <div role="status" aria-live="polite" className="flex flex-col gap-3" data-slot="tes-skeleton">
@@ -279,7 +304,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
             {loadError && (
               <AlertBanner tone="danger" title={t('te.refreshFailed')} className="mb-0"
                 actions={<Button type="button" variant="outline" size="sm" className={cn('h-9 sm:h-8', TOUCH)} onClick={load}
-                  disabled={loading || saving || remSaving} data-slot="tes-refresh-retry"><RefreshCw aria-hidden="true" />{t('te.retry')}</Button>}>
+                  disabled={loading || saving || remSaving || pushSaving} data-slot="tes-refresh-retry"><RefreshCw aria-hidden="true" />{t('te.retry')}</Button>}>
                 {String(loadError)}
               </AlertBanner>
             )}
@@ -318,10 +343,17 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       {settings && rem && (
         <TechErrorReminderSettings state={rem} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty}
           onSaving={onRemSaving} onSaved={onRemSaved} onUnsupported={onRemUnsupported} onRetry={load}
-          retryDisabled={loading || saving || remSaving} missingTeamLabel={missingTeamLabel} />
+          retryDisabled={loading || saving || remSaving || pushSaving} missingTeamLabel={missingTeamLabel} />
       )}
 
-      {/* 3 — Kanallar ve onay akışı (özet) */}
+      {/* 3 — Push bildirimleri (2026-10-18) */}
+      {settings && pushSt && (
+        <TechErrorPushSettings state={pushSt} readOnly={locked} onDirtyChange={setPushDirty}
+          onSaving={onPushSaving} onSaved={onPushSaved} onUnsupported={onPushUnsupported} onRetry={load}
+          retryDisabled={loading || saving || remSaving || pushSaving} />
+      )}
+
+      {/* 4 — Kanallar ve onay akışı (özet) */}
       {settings && (
         <Card data-slot="tes-channels">
           <CardContent className="flex flex-col gap-4 px-4 sm:px-6">

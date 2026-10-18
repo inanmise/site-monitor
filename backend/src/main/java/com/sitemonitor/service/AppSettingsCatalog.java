@@ -323,6 +323,13 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.tech-error-report.approval-reminder-days", "tech-error-report", Type.INT),
         new Setting("site.monitor.tech-error-report.max-mail-mb",            "tech-error-report", Type.INT),
         new Setting("site.monitor.tech-error-report.mail-inline-mb",         "tech-error-report", Type.INT),
+        // 2026-10-18: teknik hata raporu push bildirimleri (haftalik rapor push'u gibi) - olay basina ac / kapa, varsayilan
+        // ACIK; Ayarlar > Teknik hata raporu > Push bildirimleri (TechErrorPushService).
+        new Setting("site.monitor.tech-error-report.push.approval-request",  "tech-error-report", Type.BOOL),
+        new Setting("site.monitor.tech-error-report.push.approval-reminder", "tech-error-report", Type.BOOL),
+        new Setting("site.monitor.tech-error-report.push.decision",          "tech-error-report", Type.BOOL),
+        new Setting("site.monitor.tech-error-report.push.delivered",         "tech-error-report", Type.BOOL),
+        new Setting("site.monitor.tech-error-report.push.failed",            "tech-error-report", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
         // Kendi kendini izleme (2026-10-11) — Ayarlar → Genel → Kendi kendini izleme. Aralıklar WatchdogSettings.validate;
@@ -640,7 +647,13 @@ public final class AppSettingsCatalog {
         "site.monitor.tech-error-report.reminder-push",
         "site.monitor.tech-error-report.approval-reminder-days",
         "site.monitor.tech-error-report.max-mail-mb",
-        "site.monitor.tech-error-report.mail-inline-mb"
+        "site.monitor.tech-error-report.mail-inline-mb",
+        // 2026-10-18: teknik hata raporu push bildirimleri - kurum geneli karar (hatirlatma push'uyla ayni sinif).
+        "site.monitor.tech-error-report.push.approval-request",
+        "site.monitor.tech-error-report.push.approval-reminder",
+        "site.monitor.tech-error-report.push.decision",
+        "site.monitor.tech-error-report.push.delivered",
+        "site.monitor.tech-error-report.push.failed"
     ));
 
     /**

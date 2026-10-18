@@ -1391,6 +1391,10 @@ export const api = {
     techErrorReminderSettings: () => request('/admin/tech-error-reports/settings/reminders', { withStatus: true }),
     saveTechErrorReminderSettings: (body) => request('/admin/tech-error-reports/settings/reminders',
       { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // Push bildirimleri (2026-10-18) AYRI uçta: eski pod 404 / 405 döner ve hiçbir şey yazmaz (kart "desteklenmiyor" der)
+    techErrorPushSettings: () => request('/admin/tech-error-reports/settings/push', { withStatus: true }),
+    saveTechErrorPushSettings: (body) => request('/admin/tech-error-reports/settings/push',
+      { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
 
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
     // Veri Saklama (retention) — politika matrisi, dry-run, elle temizlik, çalışma geçmişi.

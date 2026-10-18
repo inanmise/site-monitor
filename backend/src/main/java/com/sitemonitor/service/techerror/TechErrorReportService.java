@@ -788,7 +788,11 @@ public class TechErrorReportService {
             Set<Long> logIds = new HashSet<>();
             for (Object[] r : rows) if (r[1] != null) logIds.add(((Number) r[1]).longValue());
             Map<Long, String> status = new HashMap<>();
-            for (var l : notificationLogs.findAllById(logIds)) status.put(l.getId(), l.getEmailStatus());
+            Map<Long, String> role = new HashMap<>();
+            for (var l : notificationLogs.findAllById(logIds)) {
+                status.put(l.getId(), l.getEmailStatus());
+                role.put(l.getId(), l.getRecipientRole());
+            }
             int changed = 0;
             for (Object[] r : rows) {
                 Long id = ((Number) r[0]).longValue();
@@ -796,7 +800,11 @@ public class TechErrorReportService {
                 String st = status.get(logId);
                 if (!"SENT".equals(st) && (st == null || !st.startsWith("FAILED"))) continue;
                 try {
-                    changed += inNewTx(() -> finishQueuedWithEvent(id, logId, st));
+                    int c = inNewTx(() -> finishQueuedWithEvent(id, logId, st));
+                    changed += c;
+                    // Push (2026-10-18): yalnız bu çağrı sonucu KAZANDIYSA ve işlem işlendikten sonra — iki pod aynı sonucu
+                    // iki kez bildirmez; eşzamanlı yoldaki SENT push'uyla aynı anahtar (rapor + sayaç + talep anı)
+                    if (c > 0) pushQueuedResult(id, "SENT".equals(st), "EXECUTIVE".equals(role.get(logId)));
                 } catch (RuntimeException e) {
                     // Bu satır sonraki okumada yeniden denenir (koşullu UPDATE geri alındı); diğerleri sürer
                     log.warn("Kuyruktaki teknik hata raporu #{} sonuçlandırılamadı: {}", id, e.toString());
@@ -826,6 +834,39 @@ public class TechErrorReportService {
             }
         }
         return c;
+    }
+
+    /**
+     * Push bildirimleri (2026-10-18, {@link TechErrorPushService}): kuyruktaki gönderim sonuçlanınca — SENT → takım
+     * bildirimi (gönderen hariç), FAILED → gönderene. Yoksa (dilim testleri) push yok.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorPushService pushes;
+
+    /** Test dikişi (public: işlem vekili üzerinden de hedefe ulaşsın). */
+    public void setPushes(TechErrorPushService p) {
+        this.pushes = p;
+    }
+
+    /** Sonuçlanan kuyruğun push'u; hata okuma ucunu ve sonuçlandırmayı bozmaz. */
+    private void pushQueuedResult(Long reportId, boolean sent, boolean executive) {
+        TechErrorPushService p = pushes;
+        if (p == null) return;
+        try {
+            TechErrorReport rep = reports.findById(reportId).orElse(null);
+            if (rep == null) return;
+            TechErrorChannel ch = channels.findById(rep.getChannelId()).orElse(null);
+            TechErrorPushService.Ctx c = TechErrorPushService.Ctx.of(rep, ch);
+            // confirmQueued gönderen / sayaç / talep anını bekleyen alanlardan son gönderime yazdı
+            if (sent) {
+                p.delivered(c, executive, rep.getLastSentById(), displayName(rep.getLastSentById()), rep.getSentRev(),
+                        rep.getSendClaimedAt(), List.of());
+            } else {
+                p.sendFailed(c, executive, rep.getQueuedById(), TechErrorPushService.Failure.QUEUE_FAILED, null, rep.getSendClaimedAt());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} kuyruk sonucu push'u kuyruğa alınamadı: {}", reportId, e.toString());
+        }
     }
 
     /** Yeni bir işlemde çalıştırır (işlem yöneticisi yoksa doğrudan). */

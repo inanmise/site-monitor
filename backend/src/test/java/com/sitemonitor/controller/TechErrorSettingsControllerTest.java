@@ -356,4 +356,77 @@ class TechErrorSettingsControllerTest {
         assertThat((Map<String, Object>) saves.get(2).get("values")).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "999");
         assertThat((Map<String, Object>) saves.get(3).get("values")).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "");
     }
+
+    // ── /settings/push (2026-10-18) ─────────────────────────────────────────────────────────────────
+
+    private static final String PUSH = "/api/admin/tech-error-reports/settings/push";
+
+    @Test
+    @DisplayName("GET /settings/push: olay başına anahtar (varsayılan hepsi AÇIK, dönem hatırlatması eski reminder-push anahtarından) + genel push kanalı; kapsamlı müdür read_only; yönetici olmayan 403")
+    void getPush() throws Exception {
+        stored.put("site.monitor.userpush.enabled", "true");
+        stored.put(TechErrorReportSettings.KEY_PUSH_DECISION, "false");
+        stored.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        mvc.perform(get(PUSH).session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.period_reminder").value(false))
+                .andExpect(jsonPath("$.data.approval_request").value(true))
+                .andExpect(jsonPath("$.data.approval_reminder").value(true))
+                .andExpect(jsonPath("$.data.decision").value(false))
+                .andExpect(jsonPath("$.data.delivered").value(true))
+                .andExpect(jsonPath("$.data.failed").value(true))
+                .andExpect(jsonPath("$.data.push_enabled").value(true))
+                .andExpect(jsonPath("$.data.read_only").value(false));
+        mvc.perform(get(PUSH).session(scopedAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.read_only").value(true));
+        MockHttpSession user = globalAdmin();
+        user.setAttribute("systemRole", "USER");
+        mvc.perform(get(PUSH).session(user)).andExpect(status().isForbidden());
+        stored.remove("site.monitor.userpush.enabled");
+        mvc.perform(get(PUSH).session(globalAdmin())).andExpect(jsonPath("$.data.push_enabled").value(false));
+    }
+
+    @Test
+    @DisplayName("PUT /settings/push: YALNIZ gönderilen anahtarlar yazılır (bilinmeyen alan yok sayılır), denetim anahtarlarla; boş gövde hiçbir şey yazmaz; boolean olmayan değer 400 + field; kapsamlı müdür 403")
+    void putPush() throws Exception {
+        mvc.perform(put(PUSH).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":false,\"period_reminder\":true,\"team_ids\":[2],\"reminder_day\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.read_only").value(false));
+        assertThat(savedValues()).containsOnly(
+                Map.entry(TechErrorReportSettings.KEY_PUSH_DECISION, "false"),
+                Map.entry(TechErrorReportSettings.KEY_REMINDER_PUSH, "true"));
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("TECH_ERROR_SETTINGS_SAVE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("tech-error-report"), detail.capture());
+        assertThat(detail.getValue()).contains(TechErrorReportSettings.KEY_PUSH_DECISION).contains("keys");
+
+        org.mockito.Mockito.clearInvocations(settings, auditService);
+        mvc.perform(put(PUSH).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+        mvc.perform(put(PUSH).session(globalAdmin())).andExpect(status().isOk());
+        verify(settings, never()).save(any(), anyString());
+        verify(auditService, never()).recordAction(anyString(), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+
+        mvc.perform(put(PUSH).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"failed\":\"evet\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("failed"));
+        mvc.perform(put(PUSH).session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"failed\":false}"))
+                .andExpect(status().isForbidden());
+        verify(settings, never()).save(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("push alan eşlemesi tek kaynak: her olay anahtarı (TechErrorReportSettings.PUSH_KEYS) + dönem hatırlatması uçta; anahtarlar GLOBAL_ONLY")
+    void pushFieldsCoverEveryKey() {
+        assertThat(TechErrorSettingsController.PUSH_FIELDS.values()).containsAll(TechErrorReportSettings.PUSH_KEYS)
+                .contains(TechErrorReportSettings.KEY_REMINDER_PUSH).hasSize(TechErrorReportSettings.PUSH_KEYS.size() + 1);
+        for (String k : TechErrorSettingsController.PUSH_FIELDS.values()) {
+            assertThat(com.sitemonitor.service.AppSettingsCatalog.isGlobalOnly(k)).as(k).isTrue();
+            assertThat(TechErrorReportSettings.isKey(k)).as(k).isTrue();
+        }
+    }
 }

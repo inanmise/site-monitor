@@ -23,11 +23,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -1064,5 +1066,98 @@ class TechErrorReportSenderTest {
         assertThat(p.pdfTooLarge()).isFalse();
         verify(service).renderPdf(any(), eq(20L * 1024 * 1024));
         verify(settings, org.mockito.Mockito.times(1)).getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB);
+    }
+
+    // ── Push bildirimleri (2026-10-18) ─────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("push: SENT → takım bildirimi (gönderen + zaten bildirilen hariç; sayaç + talep anı); FAILED → gönderene; QUEUED, PDF sırası dolu ve test postası push YOK; push hatası sonucu değiştirmez")
+    void pushOutcomes() {
+        TechErrorPushService pushes = mock(TechErrorPushService.class);
+        sender.setPushes(pushes);
+        report.setTeamId(3L);
+        report.setContentRev(4L);
+        when(service.displayName(7L)).thenReturn("Teknik Kişi");
+        mailReturns("SENT");
+        sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, null, List.of(11L));
+        verify(pushes).delivered(argThat(c -> c.reportId() == 5L && c.teamId() == 3L && "Mobil".equals(c.channelName())), eq(false),
+                eq(7L), eq("Teknik Kişi"), eq(4L), eq(now), eq(List.of(11L)));
+        verify(pushes, never()).sendFailed(any(), anyBoolean(), any(), any(), any(), any());
+
+        org.mockito.Mockito.clearInvocations(pushes);
+        mailReturns("FAILED: 550 kutu yok");
+        assertThat(sender.send(report, channel, team, 7L).state()).isEqualTo("FAILED");
+        verify(pushes).sendFailed(any(), eq(false), eq(7L), eq(TechErrorPushService.Failure.FAILED), org.mockito.ArgumentMatchers.isNull(), eq(now));
+        verify(pushes, never()).delivered(any(), anyBoolean(), any(), any(), any(), any(), any());
+
+        // PDF çok büyük: FAILED yazılır → gönderene, sebep kodu PDF_TOO_LARGE
+        org.mockito.Mockito.clearInvocations(pushes);
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class);
+        verify(pushes).sendFailed(any(), eq(false), eq(7L), eq(TechErrorPushService.Failure.FAILED), eq("PDF_TOO_LARGE"), eq(now));
+        sender.maxMailMb = 15;
+        pdfReturns(new byte[]{ '%', 'P', 'D', 'F' });
+
+        // QUEUED: teslim bilinmiyor → push kuyruk sonuçlanınca (reconcileQueued), burada YOK
+        org.mockito.Mockito.clearInvocations(pushes);
+        when(reports.finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any())).thenReturn(1);
+        mailReturns("QUEUED_RETRY: 421");
+        sender.send(report, channel, team, 7L);
+        org.mockito.Mockito.verifyNoInteractions(pushes);
+
+        // PDF sırası dolu: talep bırakılır → push yok
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(TechErrorReportService.PdfBusyException.class);
+        org.mockito.Mockito.verifyNoInteractions(pushes);
+        pdfReturns(new byte[]{ '%', 'P', 'D', 'F' });
+
+        // Kendine test postası: push yok
+        sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ben@example.com", "tr");
+        org.mockito.Mockito.verifyNoInteractions(pushes);
+
+        // Sonuç yazılamadı (talep başka gönderime geçti): push yok — iki pod / iki sekme aynı sonucu iki kez bildirmez
+        when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(0);
+        mailReturns("SENT");
+        sender.send(report, channel, team, 7L);
+        org.mockito.Mockito.verifyNoInteractions(pushes);
+
+        // Push hatası gönderim sonucunu değiştirmez
+        when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(1);
+        org.mockito.Mockito.doThrow(new IllegalStateException("push yok")).when(pushes)
+                .delivered(any(), anyBoolean(), any(), any(), any(), any(), any());
+        assertThat(sender.send(report, channel, team, 7L).state()).isEqualTo("SENT");
+    }
+
+    @Test
+    @DisplayName("push: yerine geçilen eski kuyruğun sahibi (başka kişi) — bu deneme de ulaşmadıysa 'sonucu alınamadı'; bu deneme gönderdiyse ya da aynı kişiyse yok")
+    void pushSupersededQueueOwner() {
+        TechErrorPushService pushes = mock(TechErrorPushService.class);
+        sender.setPushes(pushes);
+        report.setTeamId(3L);
+        Instant old = now.minusSeconds(3600);                  // pencere dışı: sonucu artık gelemez → kuyruk yaşatılmaz
+        TechErrorReport queued = new TechErrorReport();
+        queued.setId(5L);
+        queued.setSendState("QUEUED");
+        queued.setSendClaimedAt(old);
+        queued.setQueuedById(8L);
+        when(reports.findById(5L)).thenReturn(java.util.Optional.of(queued));
+        report.setLastSendStatus("QUEUED_RETRY: 421");
+        mailReturns("FAILED: 550");
+        sender.send(report, channel, team, 7L);
+        verify(pushes).sendFailed(any(), eq(false), eq(7L), eq(TechErrorPushService.Failure.FAILED), any(), eq(now));
+        verify(pushes).sendFailed(any(), eq(false), eq(8L), eq(TechErrorPushService.Failure.UNKNOWN), org.mockito.ArgumentMatchers.isNull(), eq(old));
+
+        org.mockito.Mockito.clearInvocations(pushes);
+        mailReturns("SENT");
+        sender.send(report, channel, team, 7L);
+        verify(pushes, never()).sendFailed(any(), anyBoolean(), any(), any(), any(), any());
+        verify(pushes).delivered(any(), eq(false), eq(7L), any(), any(), eq(now), any());
+
+        org.mockito.Mockito.clearInvocations(pushes);
+        queued.setQueuedById(7L);                              // aynı kişi: zaten kendi başarısızlık push'unu alır
+        mailReturns("FAILED: 550");
+        sender.send(report, channel, team, 7L);
+        verify(pushes, times(1)).sendFailed(any(), anyBoolean(), any(), any(), any(), any());
     }
 }

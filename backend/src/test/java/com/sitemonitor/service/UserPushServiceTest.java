@@ -1135,6 +1135,25 @@ class UserPushServiceTest {
         assertThat(service.enqueueDirect(List.of(), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", null).get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
     }
 
+    @Test
+    @DisplayName("2026-10-18: doğrudan alıcının kişisel tercih kararı (skipReason) satıra NEDENİYLE yazılır, kuyruğa girmez; opt-out önce gelir; eski biçimler null")
+    void enqueueDirect_skipReasonIsARow() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
+        var level = new UserPushService.DirectRecipient("P00001", "PO Bir", false, "tr", "SKIPPED_USER_LEVEL");
+        var snoozedOptOut = new UserPushService.DirectRecipient("P00002", "PO İki", true, "en", "SKIPPED_USER_SNOOZE");
+        var plain = new UserPushService.DirectRecipient("P00003", "PO Üç", false, "tr");
+        assertThat(plain.skipReason()).isNull();
+        assertThat(new UserPushService.DirectRecipient("P00004", "x", false, "tr", " ").skipReason()).isNull();
+        Map<String, Object> out = service.enqueueDirectLocalized(List.of(level, snoozedOptOut, plain), 5L, "TECH_ERROR_APPROVAL", "WARNING",
+                "TECH_ERROR_REPORT", "Mobil Eylül 2026", new UserPushService.LocalizedText("tr metin", "en text"), "te-appr:1:2");
+        assertThat(out.get("queued")).isEqualTo(1);
+        List<UserPushDelivery> rows = savedRows();
+        assertThat(rows).extracting(UserPushDelivery::getStatus)
+                .containsExactly("SKIPPED_USER_LEVEL", "SKIPPED_USER_OPT_OUT", "PENDING");
+        assertThat(rows.get(1).getMessage()).isEqualTo("en text");
+        assertThat(rows).allMatch(r -> "TECH_ERROR_REPORT".equals(r.getMonitorType()) && "te-appr:1:2".equals(r.getDedupeKey()));
+    }
+
     // ── 2026-09-28: outbox backoff satırda (P4) + zehirli satır (P5) ─────────────────────────
     //
     // Bu testler drainOutbox'ı TEST İPLİĞİNDE doğrudan çağırır (süpürme/enqueue/açılış turlarının çağırdığı AYNI

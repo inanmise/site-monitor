@@ -469,6 +469,27 @@ public class TechErrorReportSender {
      * ({@code TechErrorApprovalService.decide}) ve kendine test postası ek Bilgi kullanmaz.
      */
     public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery, String extraCcRaw) {
+        return send(report, channel, team, by, delivery, extraCcRaw, Set.of());
+    }
+
+    /**
+     * Push bildirimleri (2026-10-18, {@link TechErrorPushService}): gönderim SONUCU yazıldıktan sonra — SENT → takım bildirimi
+     * (gönderen ve {@code alsoNotified} hariç: bu olay için zaten doğrudan push alanlar, ör. onay kararını alan isteyen);
+     * FAILED → gönderene; kuyruktaki eski gönderimin yerine geçilip sonucu hiç okunmayacaksa ve bu deneme de ulaşmadıysa eski
+     * gönderene "sonucu alınamadı". QUEUED push'u kuyruk sonuçlanınca ({@code TechErrorReportService.reconcileQueued}).
+     * Push hatası gönderim sonucunu DEĞİŞTİRMEZ.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorPushService pushes;
+
+    /** Test dikişi. */
+    void setPushes(TechErrorPushService p) {
+        this.pushes = p;
+    }
+
+    /** {@code alsoNotified}: bu gönderim olayı için zaten doğrudan push alan kullanıcı kimlikleri (takım bildiriminden düşülür). */
+    public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery, String extraCcRaw,
+                       java.util.Collection<Long> alsoNotified) {
         List<String> to;
         String[] cc = null;
         String role;
@@ -675,6 +696,7 @@ public class TechErrorReportSender {
             boolean wasQueued = queuedAtClaim != null ? queuedAtClaim : "QUEUED".equals(stateBefore);
             boolean resultMayLand = prevClaimedAt != null && prevClaimedAt.isAfter(claimedAt.minus(QUEUED_RESULT_WINDOW));
             boolean keepQueued = !released && nothingDelivered && wasQueued && resultMayLand;
+            int finished = 0;                // bu talebin sonucu yazıldı mı (push yalnız kazanan yazımdan sonra)
             try {
                 int n;
                 if (released || keepQueued) {
@@ -692,6 +714,7 @@ public class TechErrorReportSender {
                     n = reports.finishNotSent(report.getId(), claimedAt, finalState, clip(finalStatus, 255), at);
                 }
                 if (n == 0) log.warn("Teknik hata raporu gönderim sonucu yazılamadı (rapor {}): talep başka bir gönderime geçmiş", report.getId());
+                finished = n;
             } catch (RuntimeException ex) {
                 log.warn("Teknik hata raporu gönderim sonucu yazılamadı (rapor {}): {}", report.getId(), ex.toString());
             }
@@ -724,6 +747,41 @@ public class TechErrorReportSender {
                     h.recordSend(report, "SEND", by, finalState, recorded, reason, at);
                 }
             }
+            // Push (2026-10-18): yalnız bu talebin sonucu GERÇEKTEN yazıldıysa (koşullu UPDATE kazandı — iki pod / iki sekme
+            // aynı sonucu iki kez bildirmez); bırakılan / yaşatılan kuyruk talebinde push yok
+            if (!released && !keepQueued && finished > 0) {
+                Long oldSender = before == null ? null : before.getQueuedById();
+                boolean superseded = wasQueued;
+                pushOutcome(report, channel, delivery, by, finalState, finalStatus, sentRev, claimedAt, alsoNotified,
+                        superseded ? oldSender : null, prevClaimedAt);
+            }
+        }
+    }
+
+    /**
+     * Gönderim sonucunun push'u ({@link TechErrorPushService}); hiçbir hata yayılmaz. {@code supersededSender}: yerine geçilen
+     * kuyruktaki gönderimin sahibi (sonucu artık okunmayacak) — bu deneme de ulaşmadıysa ve başka bir kişiyse "sonucu alınamadı".
+     */
+    private void pushOutcome(TechErrorReport report, TechErrorChannel channel, Delivery delivery, Long by, String finalState,
+                             String finalStatus, Long sentRev, Instant claimedAt, java.util.Collection<Long> alsoNotified,
+                             Long supersededSender, Instant supersededClaimedAt) {
+        TechErrorPushService p = pushes;
+        if (p == null) return;
+        try {
+            TechErrorPushService.Ctx c = TechErrorPushService.Ctx.of(report, channel);
+            boolean exec = delivery == Delivery.EXECUTIVE;
+            if ("SENT".equals(finalState)) {
+                p.delivered(c, exec, by, service.displayName(by), sentRev, claimedAt, alsoNotified);
+            } else if ("FAILED".equals(finalState)) {
+                p.sendFailed(c, exec, by, TechErrorPushService.Failure.FAILED, TechErrorHistoryService.sendReason(finalStatus), claimedAt);
+            }
+            boolean reached = "SENT".equals(finalState) || "QUEUED".equals(finalState);
+            if (!reached && supersededSender != null && !supersededSender.equals(by)) {
+                p.sendFailed(c, exec, supersededSender, TechErrorPushService.Failure.UNKNOWN, null,
+                        supersededClaimedAt == null ? claimedAt : supersededClaimedAt);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} gönderim push'u kuyruğa alınamadı (gönderim etkilenmedi): {}", report.getId(), e.toString());
         }
     }
 

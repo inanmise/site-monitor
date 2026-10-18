@@ -982,4 +982,63 @@ class TechErrorReminderServiceTest {
         assertThat(links.live()).isEmpty();
         assertThat(links.unconfirmed()).containsOnly(po1.getId());
     }
+
+    // ── Onay hatırlatması push'u (2026-10-18) ────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("onay hatırlatması push'u: aynı talep / pencere, tüm PO'lar (e-postasız dahil, isteyen hariç); posta BAŞARISIZ ama push ulaştı → talep harcanır (ertesi gün yeniden YOK); ikisi de ulaşmadı → bırakılır; kapalı anahtar → push yok, posta sürer")
+    void approvalReminderPushCountsAsDelivered() {
+        TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
+        pushes.setPush(push);
+        pushes.setVisibility(visibility);
+        job.setPushes(pushes);
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenAnswer(inv -> Map.of("queued", ((List<?>) inv.getArgument(0)).size()));
+        AppUser noMail = user("po3", "PO Üç", null, "PO", dijital.getId());
+        TechErrorReport r = pendingSince(OCT5.minus(Duration.ofDays(3)));
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("FAILED: 550");
+        TechErrorReminderService.Result res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(1);
+        org.mockito.ArgumentCaptor<List<UserPushService.DirectRecipient>> who = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        verify(push).enqueueDirectLocalized(who.capture(), eq(dijital.getId()), eq(TechErrorPushService.TRIGGER_APPROVAL_REMINDER),
+                eq("WARNING"), eq("TECH_ERROR_REPORT"), anyString(), any(), key.capture());
+        assertThat(who.getValue()).extracting(UserPushService.DirectRecipient::username).containsExactly("po1", "po2", "po3");
+        assertThat(key.getValue()).isEqualTo("te-appr-remind:" + r.getId() + ":" + r.getApprovalRequestedAt().toEpochMilli() + ":2026-10-05");
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2).allSatisfy(n -> assertThat(n.getMessage()).endsWith(" · push 3"));
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-05"));
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();                                                         // pencere içinde: posta da push da yok
+        verify(push, times(1)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+
+        // E-postası olan PO kalmadı: "onaylayıcı e-postası yok" satırı + push ile ulaşılır
+        reminders.deleteAll();
+        logs.deleteAll();
+        for (AppUser u : List.of(po1, po2)) { u.setEmail(null); users.save(u); }
+        at(OCT5.plus(Duration.ofDays(4)));
+        res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(1);
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).singleElement()
+                .satisfies(n -> assertThat(n.getEmailStatus()).isEqualTo(TechErrorReminderService.ST_NO_APPROVER_EMAIL));
+
+        // Push de ulaşmadı (hepsi atlandı) ve posta BAŞARISIZ → talep bırakılır, ertesi gün yeniden
+        for (AppUser u : List.of(po1, po2)) { u.setEmail(u.getUsername() + "@example.com"); users.save(u); }
+        reminders.deleteAll();
+        org.mockito.Mockito.doReturn(Map.of("queued", 0, "skipped", 3)).when(push)
+                .enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        res = job.run();
+        assertThat(res.approvalReports()).isZero();
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isNull());
+
+        // Anahtar kapalı: push yok, posta sürer (başarılı posta talebi harcar)
+        reminders.deleteAll();
+        org.mockito.Mockito.clearInvocations(push);
+        settings.put(TechErrorReportSettings.KEY_PUSH_APPROVAL_REMINDER, "false");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        verify(push, never()).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(noMail.getId()).isNotNull();
+        job.setPushes(null);
+    }
 }

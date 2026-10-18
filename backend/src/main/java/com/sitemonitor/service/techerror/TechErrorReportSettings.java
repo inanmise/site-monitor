@@ -42,6 +42,20 @@ public final class TechErrorReportSettings {
     public static final String KEY_APPROVAL_REMINDER_DAYS = "site.monitor.tech-error-report.approval-reminder-days";
     public static final String KEY_MAX_MAIL_MB = "site.monitor.tech-error-report.max-mail-mb";
     public static final String KEY_MAIL_INLINE_MB = "site.monitor.tech-error-report.mail-inline-mb";
+    /**
+     * Push bildirimleri (2026-10-18, kullanıcı isteği: "teknik hata raporu bildirimlerini haftalık rapordaki gibi push ile de
+     * yapalım, ayarlardan kontrol edilebilsin") — olay başına bir anahtar, hepsi varsayılan AÇIK (haftalık rapor push'ları
+     * gibi), GLOBAL_ONLY. Dönem hatırlatmasının push'u eski anahtarında kalır ({@link #KEY_REMINDER_PUSH}). Gönderim
+     * {@link TechErrorPushService}.
+     */
+    public static final String KEY_PUSH_APPROVAL_REQUEST = "site.monitor.tech-error-report.push.approval-request";
+    public static final String KEY_PUSH_APPROVAL_REMINDER = "site.monitor.tech-error-report.push.approval-reminder";
+    public static final String KEY_PUSH_DECISION = "site.monitor.tech-error-report.push.decision";
+    public static final String KEY_PUSH_DELIVERED = "site.monitor.tech-error-report.push.delivered";
+    public static final String KEY_PUSH_FAILED = "site.monitor.tech-error-report.push.failed";
+    /** Olay push anahtarları (sıra Ayarlar kartıyla aynı; dönem hatırlatması {@link #KEY_REMINDER_PUSH} ayrı). */
+    public static final java.util.List<String> PUSH_KEYS = java.util.List.of(KEY_PUSH_APPROVAL_REQUEST, KEY_PUSH_APPROVAL_REMINDER,
+            KEY_PUSH_DECISION, KEY_PUSH_DELIVERED, KEY_PUSH_FAILED);
     public static final String GROUP = "tech-error-report";
     public static final int MAX_TEAMS = 500;
 
@@ -57,7 +71,12 @@ public final class TechErrorReportSettings {
             APPROVAL_REMINDER_DAYS, MAX_MAIL_MB, MAIL_INLINE_MB);
 
     public static boolean isKey(String key) {
-        return KEY_TEAM_IDS.equals(key) || KEY_REMINDER_TEAM_IDS.equals(key) || KEY_REMINDER_PUSH.equals(key) || range(key) != null;
+        return KEY_TEAM_IDS.equals(key) || KEY_REMINDER_TEAM_IDS.equals(key) || isBoolKey(key) || range(key) != null;
+    }
+
+    /** Açık / kapalı anahtarlar: dönem hatırlatması push'u + olay push'ları (tür denetimi AppSettingsService'te). */
+    static boolean isBoolKey(String key) {
+        return KEY_REMINDER_PUSH.equals(key) || PUSH_KEYS.contains(key);
     }
 
     static IntRange range(String key) {
@@ -76,7 +95,7 @@ public final class TechErrorReportSettings {
             }
             return;
         }
-        if (KEY_REMINDER_PUSH.equals(key)) return;   // BOOL: tür denetimi AppSettingsService'te
+        if (isBoolKey(key)) return;   // BOOL: tür denetimi AppSettingsService'te
         Set<Long> ids = parse(raw);
         if (ids == null) {
             throw new IllegalArgumentException(Msg.t(
@@ -227,6 +246,19 @@ public final class TechErrorReportSettings {
         if (settings == null) return true;
         try {
             return settings.getBoolean(KEY_REMINDER_PUSH, true);
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Olay push anahtarı açık mı (varsayılan AÇIK — haftalık rapor push'larıyla aynı). Ayar servisi yoksa ya da okunamazsa
+     * açık: bir okuma hatası bildirimi sessizce kapatmasın (kişisel tercih / kanal kapıları yine uygulanır).
+     */
+    public static boolean pushOn(AppSettingsService settings, String key) {
+        if (settings == null) return true;
+        try {
+            return settings.getBoolean(key, true);
         } catch (RuntimeException e) {
             return true;
         }

@@ -970,14 +970,23 @@ public class UserPushService {
         } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
     }
 
-    /** Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. */
-    public record DirectRecipient(String username, String displayName, boolean optOut, String lang) {
+    /**
+     * Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. {@code skipReason} (2026-10-18, teknik hata
+     * raporu push'ları): çağıranın kişisel tercih kararı ({@link UserPushRecipientResolver#preferenceSkip} — seviye / susturma);
+     * doluysa satır o nedenle yazılır (sessiz kayıp yok). Eski biçimler null verir: davranış bugünküyle aynı.
+     */
+    public record DirectRecipient(String username, String displayName, boolean optOut, String lang, String skipReason) {
         /** Eski üç alanlı biçim — push Türkçe (bugünkü davranış). */
         public DirectRecipient(String username, String displayName, boolean optOut) {
-            this(username, displayName, optOut, PushI18n.TR);
+            this(username, displayName, optOut, PushI18n.TR, null);
+        }
+        /** Dört alanlı biçim (haftalık rapor müdür push'u) — kişisel tercih süzgeci yok (bugünkü davranış). */
+        public DirectRecipient(String username, String displayName, boolean optOut, String lang) {
+            this(username, displayName, optOut, lang, null);
         }
         public DirectRecipient {
             lang = PushI18n.norm(lang);
+            skipReason = skipReason == null || skipReason.isBlank() ? null : skipReason;
         }
     }
 
@@ -1011,6 +1020,7 @@ public class UserPushService {
             if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
             String status;
             if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
+            else if (r.skipReason() != null) status = r.skipReason();   // kişisel tercih (seviye / susturma) — satır nedeniyle
             else if (deliveryRepo.countRecentForUser(u, since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, u)) { skipped++; continue; }
