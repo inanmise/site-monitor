@@ -882,9 +882,16 @@ public class TechErrorReportService {
                     ch != null && ch.getName() != null ? ch.getName() : "", rep.year(), rep.month());
             // confirmQueued gönderen / sayaç / talep anını bekleyen alanlardan son gönderime yazdı. Bu gönderim için ZATEN push
             // alan kişi (onay kararının push'u isteyene "kuyrukta" dedi — queued_notified_id) takım bildiriminden düşülür:
-            // aynı teslim için iki push yok (2026-10-18, son inceleme; gönderen = kararı veren PO zaten hariç)
+            // aynı teslim için iki push yok (2026-10-18, son inceleme; gönderen = kararı veren PO zaten hariç). O kişi teslimi
+            // bunun yerine DOĞRUDAN "teslim edildi" push'uyla öğrenir (kullanıcı kararı 2026-10-19, "gitsin") — önce o, sonra
+            // takım bildirimi; ikisi aynı anahtarla (kişi başına tek push)
             if (sent) {
-                p.delivered(c, executive, rep.lastSentById(), displayName(rep.lastSentById()), rep.sentRev(),
+                String senderName = displayName(rep.lastSentById());
+                if (rep.queuedNotifiedId() != null) {
+                    p.queuedDeliveredToRequester(c, executive, rep.queuedNotifiedId(), rep.lastSentById(), senderName,
+                            rep.sentRev(), rep.sendClaimedAt());
+                }
+                p.delivered(c, executive, rep.lastSentById(), senderName, rep.sentRev(),
                         rep.sendClaimedAt(), rep.queuedNotifiedId() == null ? List.of() : List.of(rep.queuedNotifiedId()));
             } else {
                 Set<Long> to = new LinkedHashSet<>();

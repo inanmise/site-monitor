@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T20:07:04Z",
+  "generatedAt": "2026-10-18T22:26:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 779,
+  "count": 780,
   "releases": [
+    {
+      "version": "20.162.0",
+      "tag": "v20.162.0",
+      "releasedAt": "2026-10-18T22:25:58Z",
+      "commit": "1ee10c6c7b546b5aca14f03c65edf5672c3f383c",
+      "prevVersion": "20.161.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "1ee10c6c",
+          "subject": "isteyene teslim push'u, yeniden deneme öncesi yuva okuması ve açık konu tavanı — CLAUDE.md, kılavuz TR / EN satırları, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fadec54b",
+          "subject": "açık konu kaydı her yazımda raporda olmayan konulardan arınır ve tavanı bir raporun en çok konusu (600) olur — 65. konuyu açmak en eski açık konuyu sessizce kapatmaz, Vazgeç / son şablonu uygula ile …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "91389b18",
+          "subject": "görsel yüklemesinde başarı yuva kalksa da listeye ve öteki pencerelere yazılır, \"Yeniden dene\" kilit dışı retle bekleyen görseli bırakır, her yeniden denemeden önce yuva yeniden okunur ve öteki pence…"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1fcf6ac1",
+          "subject": "onaylı raporun kuyruktaki yönetici gönderimi teslim edilince onaya gönderen kişi doğrudan \"teslim edildi\" push'u alır — takım bildiriminden düşülü kalır, iki push teslimin aynı anahtarıyla (kişi başı…"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.161.0",
       "tag": "v20.161.0",

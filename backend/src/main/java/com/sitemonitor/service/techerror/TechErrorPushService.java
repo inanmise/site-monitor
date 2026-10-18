@@ -43,7 +43,8 @@ import java.util.Set;
  *   <li>Onay hatırlatması (günlük iş) → aynı PO'lar, hatırlatma penceresi başına bir kez (iş talebi tekilleştirir).</li>
  *   <li>Karar (onay / red) → isteyen; kararı kendisi verdiyse atlanır.</li>
  *   <li>Rapor gönderildi (SENT; kuyruktaki gönderim sonuçlanınca da) → takım bildirimi, gönderen ve bu olay için zaten push
- *   alan kişiler hariç.</li>
+ *   alan kişiler hariç; onaydan sonra kuyruğa giren gönderim teslim edilince onaya gönderen kişi bunun yerine DOĞRUDAN
+ *   "teslim edildi" push'u alır (2026-10-19 — kişi başına tek push).</li>
  *   <li>Gönderim başarısız (FAILED; kuyruk sonunda FAILED; sonucu alınamayan eski kuyruk) → gönderen.</li>
  * </ol>
  *
@@ -385,12 +386,55 @@ public class TechErrorPushService {
             if (!skipIds.isEmpty()) {
                 for (AppUser u : users.findAllById(skipIds)) if (u.getUsername() != null) excluded.add(u.getUsername().trim());
             }
-            String key = "te-sent:" + c.reportId() + ":" + (sentRev == null ? 0 : sentRev) + ":" + millis(claimedAt);
             push.enqueueTeamNoticeLocalized(c.teamId(), TRIGGER_SENT, LEVEL, MONITOR_TYPE, c.subject(false),
-                    deliveredText(c, executive, nz(senderName)), key, excluded);
+                    deliveredText(c, executive, nz(senderName)), sentKey(c, sentRev, claimedAt), excluded);
         } catch (RuntimeException e) {
             log.warn("Teknik hata raporu #{} gönderildi push'u kuyruğa alınamadı (gönderim etkilenmedi): {}", c.reportId(), e.toString());
         }
+    }
+
+    /** Bir teslimin ("gönderildi") tekilleştirme anahtarı: rapor + içerik sayacı + talep anı — takım ve isteyen push'u ortak. */
+    static String sentKey(Ctx c, Long sentRev, Instant claimedAt) {
+        return "te-sent:" + c.reportId() + ":" + (sentRev == null ? 0 : sentRev) + ":" + millis(claimedAt);
+    }
+
+    /**
+     * Onaydan sonra KUYRUĞA giren yöneticilere gönderim teslim edildi (kullanıcı kararı 2026-10-19, "gitsin") → onaya gönderen
+     * kişiye DOĞRUDAN "teslim edildi" push'u. Karar push'u ona "onaylandı; yöneticilere gönderim kuyrukta" demişti; teslimi
+     * yalnız takım bildiriminden öğrenebiliyordu, oradan da (aynı teslim için ikinci push olmasın diye, 20.161.0) düşülüyordu —
+     * hiç öğrenmiyordu. Kişi takım bildiriminden DÜŞÜLÜ kalır ({@link #delivered}'ın {@code alsoNotified}'ı): kişi başına tek
+     * push. Anahtar takım bildirimiyle AYNI ({@link #sentKey}): iki pod / tekrarlanan okuma ya da dışlamanın kaçırdığı bir yol
+     * çıkış kutusunun anahtar × kullanıcı tekilliğinde ikinci push yazamaz. Ayar anahtarı "Gönderildi" (sonucun olayı);
+     * isteyen = gönderen ise (kendi onayı) ya da pasifse push yok (modülün öteki doğrudan push'ları gibi); opt-out / kişisel
+     * tercih kendi atlama satırını yazar. Metin canlı push tavanına sığar ({@link #fitText}). Kuyrukta BAŞARISIZ sonuç bu yolu
+     * kullanmaz ({@link #sendFailedTo} isteyene zaten söyler).
+     */
+    public void queuedDeliveredToRequester(Ctx c, boolean executive, Long requesterId, Long senderId, String senderName,
+                                           Long sentRev, Instant claimedAt) {
+        if (requesterId == null || Objects.equals(requesterId, senderId)
+                || !ready(c, TechErrorReportSettings.KEY_PUSH_DELIVERED)) return;
+        try {
+            AppUser u = users.findById(requesterId).orElse(null);
+            if (!active(u)) return;
+            direct(List.of(direct(u)), c, TRIGGER_SENT, requesterDeliveredText(c, executive, nz(senderName), messageLimit()),
+                    sentKey(c, sentRev, claimedAt));
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} isteyene teslim push'u kuyruğa alınamadı (gönderim etkilenmedi): {}", c.reportId(), e.toString());
+        }
+    }
+
+    /**
+     * İsteyenin "teslim edildi" metni: çekirdek cümle ("… teslim edildi; kuyruktaki gönderim tamamlandı") + imza (yöneticilere
+     * gönderimde onaylayan PO, aksi hâlde gönderen). Canlı tavana {@link #fitText} ile sığar — başlık, dönem ve çekirdek düşmez.
+     */
+    static UserPushService.LocalizedText requesterDeliveredText(Ctx c, boolean executive, String sender, int limit) {
+        String tr = executive ? " raporu yöneticilere teslim edildi; kuyruktaki gönderim tamamlandı."
+                : " raporu takım adresine teslim edildi; kuyruktaki gönderim tamamlandı.";
+        String en = executive ? " was delivered to the executives; the queued send has completed."
+                : " was delivered to the team address; the queued send has completed.";
+        return new UserPushService.LocalizedText(
+                fitText(c, false, tr, "", executive ? " Onaylayan: " : " Gönderen: ", sender, limit),
+                fitText(c, true, en, "", executive ? " Approved by: " : " Sent by: ", sender, limit));
     }
 
     static UserPushService.LocalizedText deliveredText(Ctx c, boolean executive, String sender) {

@@ -21210,6 +21210,7 @@ export const EN = {
   'te.img.keptHint': "Your prepared image is kept: you can upload the same image again without capturing it again.",
   'te.img.retryKept': "Try again",
   'te.img.dropKept': "Discard image",
+  'te.img.replaceOtherBody': "Another window uploaded an image to “{0}” while you were uploading. If your kept image replaces it, the current image can't be restored; if you cancel, that image stays and yours is discarded.",
   'te.img.removeTitle': "Remove the image?",
   'te.img.removeBody': "The image in the “{0}” slot will be deleted permanently.",
   'te.img.remove': "Remove",

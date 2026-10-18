@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  OPEN_STATE_MAX_IDS, allSectionsOpen, dropIssueCaptions, errorCountsBySection, isSectionOpen, parseOpenState, reportErrorSection,
-  reportErrorTopic, revertInvalidValues, templateErrorSection, topicOpenId, withSectionOpen, withSectionsClosed, withSectionsOpened,
+  LIMITS, OPEN_STATE_MAX_IDS, OPEN_TOPICS_MAX_IDS, allSectionsOpen, dropIssueCaptions, errorCountsBySection, isSectionOpen,
+  parseOpenState, pruneOpenState, reportErrorSection, reportErrorTopic, revertInvalidValues, templateErrorSection, topicOpenId,
+  withSectionOpen, withSectionsClosed, withSectionsOpened,
 } from '../components/techerror/techErrorModel.js'
 
 // Katlanır bölümler + otomatik kayıt (2026-10-16): hata anahtarı → bölüm eşlemesi, otomatik kayıtta geçersiz alanların
@@ -297,6 +298,35 @@ describe('açık bölüm durumu', () => {
     expect(allSectionsOpen({ all: false, ids: ['a', 'b', 'z'] }, ['a', 'b'])).toBe(true)
     expect(allSectionsOpen({ all: false, ids: ['a'] }, ['a', 'b'])).toBe(false)
     expect(allSectionsOpen(null, ['a'])).toBe(false)
+  })
+
+  it('inceleme 2026-10-19 — konu tavanı: bir raporun en çok konusu (20 bölüm × 30 konu); okuma / açma tavanı parametre, bölümlerde 64 kalır', () => {
+    expect(OPEN_TOPICS_MAX_IDS).toBe(LIMITS.sections * LIMITS.issues)
+    expect(OPEN_TOPICS_MAX_IDS).toBe(600)
+    const many = Array.from({ length: 100 }, (_, i) => `issues:t${i}`)
+    expect(parseOpenState({ ids: many }).ids).toHaveLength(OPEN_STATE_MAX_IDS)
+    expect(parseOpenState({ ids: many }, OPEN_TOPICS_MAX_IDS).ids).toHaveLength(100)
+    let s = { all: false, ids: [] }
+    for (const id of many) s = withSectionOpen(s, id, true, [], OPEN_TOPICS_MAX_IDS)
+    expect(s.ids).toEqual(many)                                       // 65. konu en eskiyi kapatmaz
+    expect(withSectionsOpened({ all: false, ids: [] }, many, OPEN_TOPICS_MAX_IDS).ids).toHaveLength(100)
+    // son güvence: tavan aşılırsa en YENİLER tutulur
+    let capped = { all: false, ids: [] }
+    for (let i = 0; i < OPEN_TOPICS_MAX_IDS + 2; i++) capped = withSectionOpen(capped, `x:${i}`, true, [], OPEN_TOPICS_MAX_IDS)
+    expect(capped.ids).toHaveLength(OPEN_TOPICS_MAX_IDS)
+    expect(capped.ids[0]).toBe('x:2')
+  })
+
+  it('pruneOpenState: raporda olmayan kimlikler düşer; liste boş / bilinmiyorsa ya da "hepsi açık"sa dokunulmaz; değişiklik yoksa aynı nesne', () => {
+    const s = deepFreeze({ all: false, ids: ['issues:k1', 'gone:x', 'issues:k2', 'old:y'] })
+    expect(pruneOpenState(s, ['issues:k1', 'issues:k2', 'issues:k3'])).toEqual({ all: false, ids: ['issues:k1', 'issues:k2'] })
+    expect(pruneOpenState(s, [])).toBe(s)
+    expect(pruneOpenState(s, null)).toBe(s)
+    const keep = deepFreeze({ all: false, ids: ['issues:k1'] })
+    expect(pruneOpenState(keep, ['issues:k1', 'issues:k2'])).toBe(keep)
+    const all = deepFreeze({ all: true, ids: [] })
+    expect(pruneOpenState(all, ['issues:k1'])).toBe(all)
+    expect(pruneOpenState(null, ['a'])).toBeNull()
   })
 })
 

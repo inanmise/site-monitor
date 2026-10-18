@@ -21244,6 +21244,7 @@ export const TR = {
   'te.img.keptHint': "Hazırladığınız görsel bekletiliyor: yeniden almadan, aynı görseli yeniden yükleyebilirsiniz.",
   'te.img.retryKept': "Yeniden dene",
   'te.img.dropKept': "Görseli bırak",
+  'te.img.replaceOtherBody': "“{0}” yuvasına siz yüklerken başka bir pencereden görsel yüklendi. Bekletilen görseliniz onun yerine yüklenirse şu anki görsel geri getirilemez; vazgeçerseniz o görsel kalır ve sizinki bırakılır.",
   'te.img.removeTitle': "Görsel kaldırılsın mı?",
   'te.img.removeBody': "“{0}” yuvasındaki görsel kalıcı olarak silinecek.",
   'te.img.remove': "Kaldır",

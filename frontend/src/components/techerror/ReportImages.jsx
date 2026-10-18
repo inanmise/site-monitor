@@ -139,15 +139,20 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
 
   // Kilit çakışmasında (503 LOCK_CONFLICT — Görsel paneli ile ana pencere aynı anda yükledi) ya da ağ hatasında HAZIRLANMIŞ
   // görsel bellekte bekletilir (son inceleme 2026-10-18: kırpılmış ekran görüntüsü yeniden alınmak zorundaydı); başarıda, yeni
-  // yüklemede ya da "Vazgeç"te bırakılır
+  // yüklemede ya da "Vazgeç"te bırakılır. `{ prepared, startId }`: startId = yükleme BAŞLADIĞINDA yuvadaki görselin kimliği
+  // (yeniden deneme öteki pencerenin o arada koyduğu görseli sormadan ezmesin — inceleme 2026-10-19)
   const [kept, setKept] = useState(null)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false }
   }, [])
+  // Yuvadaki görsel (eşitlenmiş liste) — yeniden okuma yapılamazsa yeniden denemenin karşılaştırması buna düşer
+  const imageRef = useRef(image)
+  imageRef.current = image
 
   async function upload(file) {
+    const startId = imageRef.current?.id ?? null
     setError(null)
     setNote(null)
     setKept(null)
@@ -170,7 +175,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         }
         return
       }
-      await send(prepared)
+      await send(prepared, startId)
     } finally {
       setBusy(false)
       setPhase(null)
@@ -179,10 +184,41 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   }
 
   /**
-   * Hazırlanmış görseli yükler (yeni dosya ya da bekletilen görselin "Yeniden dene"si). Kilit çakışmasında AYNI dosya,
-   * sunucunun önerdiği süre (≤ 3 sn) sonra BİR KEZ yeniden gönderilir; yine olmazsa ileti yuvada, görsel bekletilir.
+   * Yeniden denemeden ÖNCE yuva yeniden okunur (inceleme 2026-10-19): kilit çakışması tam da öteki pencerenin (Görsel paneli)
+   * aynı yuvaya yüklediği anda olur. Yuvada yükleme BAŞLADIĞINDA olmayan bir görsel varsa (`since` = o anki kimlik) normal
+   * değiştirmedeki onay sorulur; Vazgeç → öteki pencerenin görseli kalır (eşitleme gösterir), bekletilen dosya bırakılır.
+   * Okunamazsa bu pencerenin eşitlenmiş listesi kullanılır. Dönen `{ ok, since }`: `since` onaylanan görselin kimliği.
    */
-  async function send(prepared) {
+  async function confirmBeforeRetry(since) {
+    let current = imageRef.current ?? null
+    try {
+      const res = await api.techErrors.report(reportId)
+      const list = res?.success ? res.data?.images : null
+      if (Array.isArray(list)) current = list.find((i) => i?.slot_id === slot.id) ?? null
+    } catch { /* okunamadı: eşitlenmiş liste */ }
+    if (!alive.current) return { ok: false }
+    if (!current || current.id == null || current.id === since) return { ok: true, since }
+    const yes = await showConfirm({
+      title: t('te.cap.replaceTitle'), message: t('te.img.replaceOtherBody', fullLabel), confirmText: t('te.img.replace'),
+      cancelText: t('te.cancel'),
+    })
+    if (!alive.current) return { ok: false }
+    if (!yes) {
+      setKept(null)
+      setError(null)
+      return { ok: false }
+    }
+    return { ok: true, since: current.id }
+  }
+
+  /**
+   * Hazırlanmış görseli yükler (yeni dosya ya da bekletilen görselin "Yeniden dene"si). Kilit çakışmasında AYNI dosya,
+   * sunucunun önerdiği süre (≤ 3 sn) sonra BİR KEZ yeniden gönderilir; yine olmazsa ileti yuvada, görsel bekletilir. Her
+   * yeniden denemeden önce yuva yeniden okunur ({@link confirmBeforeRetry}). `startId`: yükleme başladığında yuvadaki görsel;
+   * `retry`: "Yeniden dene" (ilk gönderim de bir yeniden denemedir).
+   */
+  async function send(prepared, startId, retry = false) {
+    let since = startId
     try {
       // Rapor toplamı (sunucu da denetler; burada yüklemeden ÖNCE söylenir)
       const others = otherBytes()
@@ -199,16 +235,28 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         if (!ok) { setError(t(UPLOAD_BLOCK_KEYS[ready?.reason] || UPLOAD_BLOCK_KEYS.invalid)); return }
       }
       setPhase('upload')
+      if (retry) {
+        const go = await confirmBeforeRetry(since)
+        if (!go.ok) return
+        since = go.since
+      }
       let res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
       if (isLockConflict(res)) {
         await new Promise((r) => { setTimeout(r, lockRetryDelayMs(res)) })
         if (!alive.current) return
+        const go = await confirmBeforeRetry(since)
+        if (!go.ok) return
+        since = go.since
         res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
       }
-      if (!alive.current) return
       if (res?.success && res.data) {
+        // Başarı üst listeye ve öteki pencerelere HER ZAMAN yazılır (inceleme 2026-10-19): yükleme sürerken yuva kalktıysa
+        // (Vazgeç / yedeği geri yükleme / tam yeniden yükleme yeni kuşak çizer) görsel sunucuda yine de değişti — yeni yuva
+        // ve Görsel paneli onu göstermeli. Yalnız bu yuvanın yerel durumu ve bildirim kurulu yuvada
+        const uploaded = res.data
+        onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), uploaded])
+        if (!alive.current) return
         setKept(null)
-        onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), res.data])
         const changed = prepared.info.resized || prepared.info.converted || prepared.info.rotated
         // Not YÜKLENEN görsele bağlı: başka biri görseli değiştirip yeniden okunursa eski not o görselin altında kalmaz
         if (changed) setNote({ imageId: res.data.id, info: prepared.info })
@@ -216,26 +264,29 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         if (changed) toast.success(`${t('te.img.uploaded', label)} ${noteText(prepared.info)}`, 8000)
         else toast.success(t('te.img.uploaded', label))
       } else {
+        if (!alive.current) return
+        // Sunucunun iletisi yuvada. Yalnız kilit çakışmasında görsel bekletilir; başka bir ret (doğrulama, boyut — "Yeniden
+        // dene"nin aldığı da) bekleyeni BIRAKIR: aynı dosyayı yeniden denemek aynı reddi alırdı (inceleme 2026-10-19)
         setError(res?.error || t('te.img.uploadError'))
-        if (isLockConflict(res)) setKept(prepared)
+        setKept(isLockConflict(res) ? { prepared, startId: since } : null)
       }
     } catch (e) {
       if (!alive.current) return
       setError(e?.message || t('te.img.uploadError'))
       // Ağ hatası: hazır görsel de bekletilir (kırpılmış ekran görüntüsü yeniden alınmasın)
-      setKept(prepared)
+      setKept({ prepared, startId: since })
     }
   }
 
   /** Bekletilen görseli (yeniden hazırlamadan, yeniden almadan) yeniden yükler. */
   async function retryKept() {
-    const prepared = kept
-    if (!prepared || busy) return
+    const held = kept
+    if (!held || busy) return
     setError(null)
     setBusy(true)
     setPhase('upload')
     try {
-      await send(prepared)
+      await send(held.prepared, held.startId, true)
     } finally {
       if (alive.current) {
         setBusy(false)

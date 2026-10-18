@@ -1548,7 +1548,7 @@ class TechErrorReportServiceTest {
     }
 
     @Test
-    @DisplayName("son inceleme 2026-10-18: onaydan sonra kuyruğa giren yönetici gönderiminde karar push'unu ('kuyrukta') alan isteyen kuyrukla saklanır — teslimde takımın 'gönderildi' bildiriminden düşülür (gönderen = kararı veren PO zaten hariç); aynı satırda sonraki kuyruk talebi bu kişiyi siler (eski talebin kişisi kalmaz)")
+    @DisplayName("son inceleme 2026-10-18: onaydan sonra kuyruğa giren yönetici gönderiminde karar push'unu ('kuyrukta') alan isteyen kuyrukla saklanır — teslimde takımın 'gönderildi' bildiriminden düşülür (gönderen = kararı veren PO zaten hariç) ve teslimi DOĞRUDAN push'la öğrenir (2026-10-19, bir kez); aynı satırda sonraki kuyruk talebi bu kişiyi siler (eski talebin kişisi kalmaz)")
     void queuedDeliveryExcludesTheAlreadyNotifiedRequester() {
         TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
         service.setPushes(pushes);
@@ -1569,6 +1569,20 @@ class TechErrorReportServiceTest {
             org.mockito.Mockito.verify(pushes).delivered(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())),
                     org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(8L), org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(claim), org.mockito.ArgumentMatchers.eq(List.of(9L)));
+            // Kullanıcı kararı 2026-10-19 ("gitsin"): o kişi teslimi DOĞRUDAN push'la öğrenir — takım bildirimiyle aynı teslimin
+            // alanları (gönderen, sayaç, talep anı), ÖNCE o; ikinci okuma (öteki pod) ikinci push yazmaz
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(pushes);
+            order.verify(pushes).queuedDeliveredToRequester(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())
+                            && "POS".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(9L), org.mockito.ArgumentMatchers.eq(8L),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(claim));
+            order.verify(pushes).delivered(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isZero();
+            org.mockito.Mockito.verify(pushes, org.mockito.Mockito.times(1)).queuedDeliveredToRequester(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
 
             // Aynı satır: işaretli kuyruk, sonra ELLE yeniden gönderim (işaretsiz) kuyruğa girer → kişi silinir, teslimde kimse düşülmez
             TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
@@ -1589,6 +1603,11 @@ class TechErrorReportServiceTest {
             org.mockito.Mockito.verify(pushes).delivered(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
                     org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(8L), org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(second), org.mockito.ArgumentMatchers.eq(List.of()));
+            // işaretsiz kuyruk: doğrudan isteyen push'u yok (kişi takım bildirimini alır)
+            org.mockito.Mockito.verify(pushes, org.mockito.Mockito.never()).queuedDeliveredToRequester(
+                    org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())), org.mockito.ArgumentMatchers.anyBoolean(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         } finally {
             service.setPushes(null);
         }

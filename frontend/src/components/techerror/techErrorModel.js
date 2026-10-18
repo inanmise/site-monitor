@@ -2526,12 +2526,20 @@ export function revertInvalidValues(values, base, errorKeys) {
 /** Hatırlanan açık bölümler: `{all: true}` (hepsi — sonradan eklenen bölüm dahil) ya da `{all: false, ids}`. */
 export const OPEN_STATE_MAX_IDS = 64
 
-export function parseOpenState(raw) {
+/**
+ * Açık KONU kümesinin tavanı (inceleme 2026-10-19): bir raporda olabilecek en çok konu (20 bölüm × 30 konu). Küme her
+ * yazımda raporda artık olmayan konuların kimliklerinden arındırılır ({@link pruneOpenState} — Vazgeç / "son şablonu uygula"
+ * ile kalkan konular, başka yoldan silinenler), dolayısıyla tavana gerçek konularla ulaşılamaz: 65. konuyu açmak en eski açık
+ * konuyu SESSİZCE kapatmaz (eski 64'lük ortak tavan bunu yapıyordu). `slice(-max)` yalnız son güvence (en yeniyi tutar).
+ */
+export const OPEN_TOPICS_MAX_IDS = LIMITS.sections * LIMITS.issues
+
+export function parseOpenState(raw, max = OPEN_STATE_MAX_IDS) {
   try {
     const v = typeof raw === 'string' ? JSON.parse(raw) : raw
     if (v && v.all === true) return { all: true, ids: [] }
     const ids = Array.isArray(v?.ids)
-      ? [...new Set(v.ids.filter((x) => typeof x === 'string' && x && x.length <= 120))].slice(0, OPEN_STATE_MAX_IDS)
+      ? [...new Set(v.ids.filter((x) => typeof x === 'string' && x && x.length <= 120))].slice(0, max)
       : []
     return { all: false, ids }
   } catch {
@@ -2542,19 +2550,31 @@ export function parseOpenState(raw) {
 export const isSectionOpen = (state, id) => !!state && (state.all || state.ids.includes(id))
 
 /** Bir bölümü açar / kapatır. "Hepsi açık"ken kapatılan bölüm, o anki bölüm listesinden çıkarılır. */
-export function withSectionOpen(state, id, open, allIds) {
+export function withSectionOpen(state, id, open, allIds, max = OPEN_STATE_MAX_IDS) {
   const want = !!open
   if (state.all) return want ? state : { all: false, ids: (allIds || []).filter((x) => x !== id) }
   const has = state.ids.includes(id)
   if (want === has) return state
-  return { all: false, ids: want ? [...state.ids, id].slice(-OPEN_STATE_MAX_IDS) : state.ids.filter((x) => x !== id) }
+  return { all: false, ids: want ? [...state.ids, id].slice(-max) : state.ids.filter((x) => x !== id) }
 }
 
 /** Verilen bölümleri açar (hata gelen bölümler); değişiklik yoksa aynı nesne. */
-export function withSectionsOpened(state, ids) {
+export function withSectionsOpened(state, ids, max = OPEN_STATE_MAX_IDS) {
   let s = state
-  for (const id of ids || []) s = withSectionOpen(s, id, true, [])
+  for (const id of ids || []) s = withSectionOpen(s, id, true, [], max)
   return s
+}
+
+/**
+ * Açık kümeyi raporda VAR OLAN kimliklere indirir (inceleme 2026-10-19 — Vazgeç / "son şablonu uygula" ile kalkan konuların
+ * kimlikleri hiç düşmüyor, tavanı dolduruyordu). `existing` boşsa (liste henüz yok / bilinmiyor) küme olduğu gibi kalır —
+ * bilinmeyen liste kayıtlı açık konuları silmesin. "Hepsi açık" kimlik taşımaz. Değişiklik yoksa AYNI nesne.
+ */
+export function pruneOpenState(state, existing) {
+  if (!state || state.all || !existing?.length) return state
+  const ok = new Set(existing)
+  const ids = state.ids.filter((x) => ok.has(x))
+  return ids.length === state.ids.length ? state : { all: false, ids }
 }
 
 /**
@@ -2571,8 +2591,9 @@ export function withSectionsClosed(state, ids, allIds) {
 // da kendi içinde akordiyon gibi açılıp kapanabilsin") ─────────────────────────────────────────────────────────────────
 //
 // Konuların açık kümesi bölümlerinkinden AYRI kişisel kayıtta (`sm.te.open.ri.<rapor>` — aynı aile, PERSONAL_PREFIXES
-// `sm.te.open.`): bölüm "Tümünü aç"ı konulara dokunmaz, konu kimlikleri bölüm kimlikleriyle çakışamaz ve iki kümenin 64'lük
-// tavanı ayrı. Kimlik `<bölüm>:<konu>` (iki kimlikte de ':' yok — TechErrorTemplate.ID) — iki bölümün aynı konu kimliği karışmaz.
+// `sm.te.open.`): bölüm "Tümünü aç"ı konulara dokunmaz, konu kimlikleri bölüm kimlikleriyle çakışamaz ve iki kümenin tavanı
+// ayrı (bölümler 64; konular OPEN_TOPICS_MAX_IDS + her yazımda arınma — inceleme 2026-10-19). Kimlik `<bölüm>:<konu>` (iki
+// kimlikte de ':' yok — TechErrorTemplate.ID) — iki bölümün aynı konu kimliği karışmaz.
 
 /** Konunun açık-küme kimliği: `<bölüm>:<konu>`. */
 export function topicOpenId(sectionId, issueId) {
