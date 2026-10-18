@@ -59,8 +59,13 @@ describe('Dialog erisilebilirlik', () => {
     fireEvent.click(screen.getByText('Diyalogu ac'))
 
     const dlg = await screen.findByRole('dialog', { name: 'Silinsin mi?' })
-    const descId = dlg.getAttribute('aria-describedby')
-    expect(document.getElementById(descId).textContent).toBe('Bu islem geri alinamaz.')
+    // Yüklü CI makinesinde portal içeriği diyalog kökünden bir an sonra bağlanabiliyor (2026-10-18, PR #60
+    // parça 4 — yerelde 21/21): açıklama öğesini bekle, kimlik eşleşmesini yine kesin doğrula.
+    await waitFor(() => {
+      const descId = dlg.getAttribute('aria-describedby')
+      expect(descId).toBeTruthy()
+      expect(document.getElementById(descId)?.textContent).toBe('Bu islem geri alinamaz.')
+    })
   })
 
   it('MESAJ yoksa aria-describedby HIC verilmez (bos id\'ye isaret etmez)', async () => {
@@ -152,8 +157,12 @@ describe('Dialog erisilebilirlik', () => {
     const dlg = await screen.findByRole('dialog')
 
     const ta = within(dlg).getByRole('textbox')
-    const hintId = ta.getAttribute('aria-describedby')
-    expect(document.getElementById(hintId).textContent).toContain('En az 3 kelime')
+    // Aynı yarış (yukarıdaki BASLIK testi): ipucu öğesini bekle.
+    await waitFor(() => {
+      const hintId = ta.getAttribute('aria-describedby')
+      expect(hintId).toBeTruthy()
+      expect(document.getElementById(hintId)?.textContent).toContain('En az 3 kelime')
+    })
     expect(ta).toHaveAttribute('aria-invalid', 'true')
   })
 
