@@ -403,7 +403,8 @@ function analyticsBody(params) {
       ch(30, LONG_CHANNEL_2, 6, 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi', 'lone', 900),
       ch(40, LONG_INACTIVE_CHANNEL, 5, LONG_TEAM, 'past', 950, false),
     ],
-    channel_count: 4, truncated: false,
+    // 24 ay (inceleme 2026-10-18): sığmayan pasif kanallar AYRI işaret — aylar tam, `truncated` yalnız aylar için
+    channel_count: n === 24 ? 6 : 4, truncated: false, channels_truncated: n === 24, inactive_omitted: n === 24 ? 2 : 0,
     teams: [{ id: 5, name: LONG_TEAM }, { id: 6, name: 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi' }],
     month_choices: [6, 12, 24], max_fields: 4,
   }
@@ -2044,6 +2045,8 @@ for (const vp of VIEWPORTS) {
 
       const cards = view.locator('[data-slot="te-an-field"]')
       await expect(cards).toHaveCount(2)
+      await expect(view.locator('[data-slot="te-an-inactive-cut"]')).toHaveCount(0)
+      await expect(view.locator('[data-slot="te-an-truncated"]')).toHaveCount(0)
       const rate = view.locator('[data-slot="te-an-field"][data-field="error-rate"]')
       // Grafik gerçekten çizildi: kanal başına bir çizgi; yalnız tek değeri olan kanal NOKTA alır (boş ay boşluk, 0 değil)
       await expect(rate.locator('.recharts-line-curve').first()).toBeVisible()
@@ -2111,6 +2114,11 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => analyticsCalls.at(-1)?.get('months')).toBe('24')
       await expect.poll(() => new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
       await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+      // Sığmayan pasif kanallar: ayrı, sayılı not; aylar kesilmedi → "yalnız son N ay" şeridi YOK (inceleme 2026-10-18)
+      const inactiveCut = view.locator('[data-slot="te-an-inactive-cut"]')
+      await expect(inactiveCut).toBeVisible()
+      await expect(inactiveCut).toContainText(/(sonundaki 2 pasif kanal|left out \(2\))/)
+      await expect(view.locator('[data-slot="te-an-truncated"]')).toHaveCount(0)
 
       // Alan seçici: SLA oranı eklenir → üçüncü kart, değer yoksa "değer girilmemiş" (grafik / 0 değil)
       await view.locator('[data-slot="te-an-field-picker"]').click()

@@ -100,6 +100,19 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
                                          org.springframework.data.domain.Pageable page);
 
     /**
+     * Kanallar arası analiz, pasif kanallar (inceleme 2026-10-18): {@code teams} takımlarının PASİF kanallarının
+     * {@code [from, to]} dönem aralığındaki (yıl × 12 + ay, iki uç dahil) EN YENİ raporunun dönemi — TEK gruplu sorgu, metin
+     * kolonu taşımaz; IN listesi kanal kimlikleri değil takımlar (kanal sayısından bağımsız, dilimlemesiz). Satır:
+     * [kanal kimliği, en yeni dönem]. Raporu olmayan kanal satır vermez.
+     */
+    @Query("SELECT r.channelId, MAX(r.reportYear * 12 + r.reportMonth) FROM TechErrorReport r, TechErrorChannel c "
+            + "WHERE c.id = r.channelId AND c.teamId IN :teams AND c.active = false "
+            + "AND (r.reportYear * 12 + r.reportMonth) >= :from AND (r.reportYear * 12 + r.reportMonth) <= :to "
+            + "GROUP BY r.channelId")
+    List<Object[]> newestPeriodOfInactiveChannels(@Param("teams") Collection<Long> teamIds, @Param("from") int fromPeriod,
+                                                  @Param("to") int toPeriod);
+
+    /**
      * Kanalın raporlarının kopyaladıkları şablon sürümüne göre sayısı (2026-10-18, D19) — sürüm penceresi için TEK gruplu
      * sorgu (sürüm başına sorgu yok). Satır: [sürüm (null = bilinmiyor), adet].
      */

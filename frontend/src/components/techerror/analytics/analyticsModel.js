@@ -2,7 +2,8 @@
  * Kanallar arası analiz — saf yardımcılar (2026-10-18, R22). Sunucu yanıtı (`GET /tech-error-reports/analytics`):
  * `{ months:[{year,month}], fields:[{id,label,type,type_mismatch:[kanal]}], available_fields:[{id,label,type,channels}],
  *    dropped_fields:[alan], fields_fallback,
- *    channels:[{id,name,team_id,team_name,active,points:{<alan>:[v|null…]},reports:[{id,sent,queued?}|null…]}], truncated, teams }`.
+ *    channels:[{id,name,team_id,team_name,active,points:{<alan>:[v|null…]},reports:[{id,sent,queued?}|null…]}], truncated
+ *    (yalnız aylar kesildi), channels_truncated + inactive_omitted (sığmayan pasif kanallar), teams }`.
  * Boş ay `null` — asla 0 değildir (grafikte boşluk, tabloda "—"). React'ten bağımsız; testler doğrudan çağırır.
  * Pasif kanal (2026-10-18, kullanıcı kararı): sunucu yalnız penceresinde raporu olanı, aktiflerin ARDINDAN gönderir
  * (`active: false`); `active` alanı olmayan eski sunucu yanıtında kanal aktif sayılır (rozet yok).
@@ -236,6 +237,28 @@ export function reportAt(channel, i) {
 /** Kanal pasif mi — yalnız sunucu açıkça `active: false` dediyse (eski sunucu: alan yok → aktif). */
 export function isInactiveChannel(channel) {
   return channel?.active === false
+}
+
+/**
+ * Aylar GERÇEKTEN kesildi mi (inceleme 2026-10-18): `truncated` VE gösterilen ay sayısı istenenden az. Pasif kanallar ay
+ * penceresini asla kısaltmaz (sığmayanlar `channels_truncated` ile ayrı bildirilir); ay sayısı karşılaştırması, işareti
+ * pasif kesiminde de koyan önceki sürümün yanıtında "yalnız son N ay" şeridini yanlış göstermez.
+ */
+export function monthsCut(data, requested) {
+  if (!data?.truncated) return false
+  const shown = Array.isArray(data.months) ? data.months.length : 0
+  const want = Number(data.months_requested ?? requested)
+  return shown > 0 && Number.isFinite(want) && shown < want
+}
+
+/**
+ * Sınır nedeniyle listeye alınmayan pasif kanal sayısı: işaret (`channels_truncated`) yoksa 0; işaret var ama sayı okunamıyorsa
+ * null (arayüz sayısız not yazar — asla "0 kanal").
+ */
+export function inactiveOmitted(data) {
+  if (data?.channels_truncated !== true) return 0
+  const n = Number(data.inactive_omitted)
+  return Number.isInteger(n) && n > 0 ? n : null
 }
 
 /** Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (Set; değerleri okunmaz — kanalın yanında not). */

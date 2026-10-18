@@ -40,7 +40,13 @@ import java.util.regex.Pattern;
  *       AKTİF kanalları her zaman (raporu olmasa da), PASİF kanalları yalnız penceredeki aylardan en az birinde raporu varsa
  *       (boş satır yok) — {@link ChannelSeries#active()}. Sıra: önce aktifler (takım adı, sıra numarası, ad), sonra
  *       pasifler aynı sırayla. Takım süzgeci yoksa okunabilen bütün takımların kanalları. Pasif kanalın listelenip
- *       listelenmeyeceği AYNI rapor okumasından anlaşılır (kanal başına sorgu yok).</li>
+ *       listelenmeyeceği TEK hafif gruplu sorgudan anlaşılır (pasif kanal başına en yeni rapor dönemi, İSTENEN pencerede;
+ *       kanal başına sorgu yok, metin kolonu yok) — tam satırlar yalnız LİSTELENECEK pasifler için okunur.</li>
+ *   <li>Pasifler aktiflerin ay penceresini ASLA daraltmaz (inceleme 2026-10-18): ay sayısı yalnız aktiflerle seçilir
+ *       (eski kural); listelenen aktif + pasif × ay {@link #MAX_CELLS}'i aşarsa pasifler SIRANIN SONUNDAN düşer —
+ *       {@code channelsTruncated} (+ {@code inactiveOmitted}); {@code truncated} yalnız ayların kesildiğini söyler.</li>
+ *   <li>Takım seçici: aktif kanalı olan ya da İSTENEN pencerede raporlu pasif kanalı olan okunabilen takımlar — aynı hafif
+ *       sorgudan; takım seçimine ve aktiflerin kesilmesine bağlı değildir.</li>
  *   <li>Referans tür: kapsamın AKTİF kanallarının GÜNCEL şablonlarında alanı sayı / yüzde olarak tanımlayanların ÇOĞUNLUĞU
  *       (eşitlikte kanal sırasında ilk tanımlayan); hiçbir aktif kanal tanımlamıyorsa listelenen PASİF kanalların güncel
  *       şablonlarındaki çoğunluk (aynı kural); hiçbirinde yoksa varsayılan şablondaki. Alanı başka türle
@@ -53,11 +59,11 @@ import java.util.regex.Pattern;
  *       aynı kanalın bir önceki TAKVİM ayının raporu (aynı kimlik + tür, {@code sameTypeFields} kuralı); pencerenin ilk
  *       ayının geçen ayı için okuma penceresi bir ay geriden başlar (kanal başına ek sorgu yok). Geçen ay düzeltildiyse
  *       analiz de güncel.</li>
- *   <li>Maliyet SABİT: bir kanal sorgusu + raporlar kimlik sırasıyla {@link #CHUNK} satırlık dilimlerde (anahtar kümesi).
- *       Hücre sınırı {@link #MAX_CELLS} (LİSTELENEN kanal — aktif + raporu olan pasif — × ay): aşılırsa en YENİ aylar kalır
- *       ve {@code truncated} işaretlenir; aktiflerin okunan satırı ≤ kanal × (ay + 1) ≤ 2 × {@link #MAX_CELLS} → en çok
- *       {@link #MAX_CHUNKS} dilim; pasif adaylar (en çok {@link #MAX_INACTIVE_READ}) yalnız penceredeki GERÇEK raporları
- *       kadar satır ekler (dilim sınırı okunan kanal × (ay + 1)'den hesaplanır — sessiz kesilme yok). Bellekte aynı anda yalnız bir
+ *   <li>Maliyet SABİT: bir kanal sorgusu + (okunabilen takımlarda pasif kanal varsa) bir hafif gruplu pasif sorgusu +
+ *       raporlar kimlik sırasıyla {@link #CHUNK} satırlık dilimlerde (anahtar kümesi), yalnız LİSTELENEN kanallar için.
+ *       Hücre sınırı {@link #MAX_CELLS}: aktif kanal × ay aşılırsa en YENİ aylar kalır ve {@code truncated}; listelenen
+ *       kanal (aktif + pasif) × ay ≤ {@link #MAX_CELLS} ve listelenen kanal ≤ {@link #MAX_CELLS} → okunan satır ≤ kanal ×
+ *       (ay + 1) ≤ 2 × {@link #MAX_CELLS} → en çok {@link #MAX_CHUNKS} dilim (sessiz kesilme yok). Bellekte aynı anda yalnız bir
  *       dilimin JSON metinleri durur; her satırdan yalnız sayı / evet-hayır değerleri ve hedefler tutulur. Aynı şablon
  *       metni (aynı kanal sürümünden kopyalanmış raporlar) bir kez çözülür — farklı metin sayısı kullanılan şablon
  *       sürümleriyle sınırlı.</li>
@@ -78,14 +84,11 @@ public class TechErrorAnalyticsService {
     public static final int MAX_CELLS = 1200;
     /** Rapor okuma dilimi (satır). */
     public static final int CHUNK = 200;
-    /** Dilim sayısı üst sınırı (yalnız aktif kanallar okunurken): okunan satır ≤ kanal × (ay + 1) ≤ 2 × MAX_CELLS (+ bir boş son dilim). */
-    public static final int MAX_CHUNKS = (2 * MAX_CELLS) / CHUNK + 2;
     /**
-     * Aynı okumaya katılan pasif kanal adayı üst sınırı (IN listesi): önce kapsamın pasifleri, sonra — takım seçiliyken —
-     * yalnız takım seçici için okunan pasifler. Sınırı aşan kapsam pasifi {@code truncated}; seçici adayının takımı
-     * bilinmediği için seçicide KALIR (seçilebilir takım gizlenmez).
+     * Dilim sayısı üst sınırı: okunan satır ≤ LİSTELENEN kanal × (ay + 1) ≤ 2 × MAX_CELLS (kanal × ay ≤ MAX_CELLS ve kanal ≤
+     * MAX_CELLS; kanal × dönem tekil) (+ bir boş son dilim).
      */
-    public static final int MAX_INACTIVE_READ = MAX_CELLS;
+    public static final int MAX_CHUNKS = (2 * MAX_CELLS) / CHUNK + 2;
     /** Alan seçilmemişse (ve kanallarda varsa) bu ikisi. */
     public static final List<String> DEFAULT_FIELDS = List.of("error-rate", "total-tx");
     public static final Duration CACHE_TTL = Duration.ofSeconds(60);
@@ -153,15 +156,28 @@ public class TechErrorAnalyticsService {
     /**
      * @param months            pencere (eskiden yeniye; kesildiyse yalnız en yeni aylar)
      * @param monthsRequested   istenen ay sayısı
-     * @param channelCount      kapsamın aktif kanalları + penceresinde raporu olan pasif kanalları (kesilmeden önce)
-     * @param teamsWithChannels okunabilen ve aktif kanalı ya da okunan pencerede raporu olan pasif kanalı bulunan takımlar
-     *                          (takım seçici için; ad sırasıyla)
+     * @param channelCount      kapsamın aktif kanalları + GÖSTERİLEN aylarda raporu olan pasif kanalları (hiçbir kesimden
+     *                          önce) — {@code channels} + {@code inactiveOmitted} (aktifler {@link #MAX_CELLS}'i tek başına
+     *                          aşmadıkça)
+     * @param truncated         yalnız AYLAR kesildi (aktif kanal × istenen ay &gt; {@link #MAX_CELLS} → en yeni aylar)
+     * @param teamsWithChannels okunabilen ve aktif kanalı ya da İSTENEN pencerede raporu olan pasif kanalı bulunan takımlar
+     *                          (takım seçici için; ad sırasıyla — takım seçimine bağlı değil)
      * @param dropped           istenip bu kapsamda bulunamayan alan kimlikleri
      * @param fieldsFallback    istenen alanların HİÇBİRİ bulunamadı → varsayılan alanlar gösteriliyor
+     * @param channelsTruncated listelenebilecek pasif kanallardan bazıları hücre sınırı nedeniyle listeye alınmadı (sıranın
+     *                          sonundan; aylar bundan etkilenmez)
+     * @param inactiveOmitted   listeye alınmayan pasif kanal sayısı
      */
     public record Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
                          List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels,
-                         List<String> dropped, boolean fieldsFallback) {
+                         List<String> dropped, boolean fieldsFallback, boolean channelsTruncated, int inactiveOmitted) {
+        public Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
+                      List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels,
+                      List<String> dropped, boolean fieldsFallback) {
+            this(months, monthsRequested, fields, available, channels, channelCount, truncated, teamsWithChannels, dropped,
+                    fieldsFallback, false, 0);
+        }
+
         public Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
                       List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels) {
             this(months, monthsRequested, fields, available, channels, channelCount, truncated, teamsWithChannels, List.of(), false);
@@ -306,14 +322,6 @@ public class TechErrorAnalyticsService {
         for (TechErrorChannel ch : active) activeTeams.add(ch.getTeamId());
         List<TechErrorChannel> scope = new ArrayList<>();
         for (TechErrorChannel ch : active) if (teamFilter == null || teamFilter.equals(ch.getTeamId())) scope.add(ch);
-        // Pasif adaylar: kapsamın pasifleri (penceresinde raporu varsa listelenir) ve — takım seçiliyken — aktif kanalı
-        // OLMAYAN öteki takımların pasifleri (yalnız takım seçici için: seçim değişince seçicideki takımlar değişmesin)
-        List<TechErrorChannel> inactiveScope = new ArrayList<>();
-        List<TechErrorChannel> pickerOnly = new ArrayList<>();
-        for (TechErrorChannel ch : inactive) {
-            if (teamFilter == null || teamFilter.equals(ch.getTeamId())) inactiveScope.add(ch);
-            else if (!activeTeams.contains(ch.getTeamId())) pickerOnly.add(ch);
-        }
 
         // Seçilebilir alanlar: önce kapsamın AKTİF kanallarının GÜNCEL şablonları (referans tür onların çoğunluğu)
         Map<String, FieldStats> stats = new LinkedHashMap<>();
@@ -323,105 +331,51 @@ public class TechErrorAnalyticsService {
             if (firstLang == null) firstLang = l;
         }
 
-        // Hücre sınırı, 1. adım (aktifler — eski kural): kanal × ay > MAX_CELLS → en yeni aylar (kanal sayısı tek başına
-        // sınırı aşarsa ilk kanallar). Okuma penceresi bu ay sayısıyla; pasifler 2. adımda yalnız daraltabilir.
+        // Hücre sınırı — ay penceresi YALNIZ aktiflerle (eski kural, inceleme 2026-10-18: pasifler daraltmaz): kanal × ay >
+        // MAX_CELLS → en yeni aylar (kanal sayısı tek başına sınırı aşarsa ilk kanallar)
         int activeCount = scope.size();
         boolean truncated = false;
         if (activeCount > MAX_CELLS) {
             scope = new ArrayList<>(scope.subList(0, MAX_CELLS));
             truncated = true;
         }
-        int readMonths = months;
-        if (!scope.isEmpty() && (long) scope.size() * months > MAX_CELLS) readMonths = Math.max(1, MAX_CELLS / scope.size());
-        // Pasif aday sınırı: önce kapsamın pasifleri, sonra yalnız seçici için okunanlar
-        int room = MAX_INACTIVE_READ;
-        List<TechErrorChannel> inactiveRead = new ArrayList<>(inactiveScope.subList(0, Math.min(room, inactiveScope.size())));
-        room -= inactiveRead.size();
-        List<TechErrorChannel> pickerRead = new ArrayList<>(pickerOnly.subList(0, Math.min(room, pickerOnly.size())));
-        // Sınır dışında kalan adayın raporu bilinmiyor: kapsamdaysa kesildi, takımı seçicide KALIR (seçilebilir takım gizlenmez)
-        Set<Long> unknownTeams = new HashSet<>();
-        if (inactiveRead.size() < inactiveScope.size()) {
+        int kept = months;
+        if (!scope.isEmpty() && (long) scope.size() * months > MAX_CELLS) {
+            kept = Math.max(1, MAX_CELLS / scope.size());
             truncated = true;
-            for (TechErrorChannel ch : inactiveScope.subList(inactiveRead.size(), inactiveScope.size())) unknownTeams.add(ch.getTeamId());
         }
-        for (TechErrorChannel ch : pickerOnly.subList(pickerRead.size(), pickerOnly.size())) unknownTeams.add(ch.getTeamId());
-
-        List<YearMonth> readWindow = window(end, readMonths);
-        // Okuma penceresi bir ay geriden başlar: pencerenin ilk ayının "geçen ay"ı (canlı değişim oranı) — dilim 0
-        int from = period(readWindow.get(0)) - 1;
+        List<YearMonth> window = window(end, kept);
+        int firstShown = period(window.get(0));
         int to = period(end);
-        Map<Long, Cell[]> slots = new LinkedHashMap<>();
-        for (TechErrorChannel ch : scope) slots.put(ch.getId(), new Cell[readMonths + 1]);
-        for (TechErrorChannel ch : inactiveRead) slots.put(ch.getId(), new Cell[readMonths + 1]);
-        Map<Long, Long> pickerChannelTeam = new HashMap<>();
-        for (TechErrorChannel ch : pickerRead) pickerChannelTeam.put(ch.getId(), ch.getTeamId());
-        Set<Long> pickerTeamsWithReports = new HashSet<>();
-        // Aktiflerin alanı yoksa ve pasif aday da yoksa okunacak değer yok (eski davranış: tek cümle). Pasif aday varsa
-        // okunur — listelenip listelenmeyeceği ve alanları raporlarından anlaşılır.
-        boolean candidates = !inactiveRead.isEmpty() || !pickerRead.isEmpty();
-        boolean activeFields = !scope.isEmpty()
-                && !resolveFields(requested, options(stats, null), firstLang == null ? "tr" : firstLang).fields().isEmpty();
-        // 2. sorgu (dilimler): penceredeki bütün raporlar (kanal başına sorgu yok)
-        if (candidates || activeFields) {
-            List<Long> ids = new ArrayList<>(slots.keySet());
-            ids.addAll(pickerChannelTeam.keySet());
-            Map<String, Parsed> templates = new HashMap<>();
-            long after = 0;
-            int size = Math.max(1, chunkSize);
-            // Satır ≤ okunan kanal × (ay + 1) (kanal × dönem tekil) — yalnız aktifler okunurken ≤ 2 × MAX_CELLS (MAX_CHUNKS)
-            long maxChunks = (long) ids.size() * (readMonths + 1) / size + 2;
-            for (long chunk = 0; chunk < maxChunks; chunk++) {
-                List<TechErrorReportRepository.AnalyticsRow> page =
-                        reports.findAnalyticsRows(ids, from, to, after, PageRequest.of(0, size));
-                for (TechErrorReportRepository.AnalyticsRow row : page) {
-                    if (row.getId() != null && row.getId() > after) after = row.getId();
-                    if (row.getReportYear() == null || row.getReportMonth() == null || row.getId() == null) continue;
-                    int idx = row.getReportYear() * 12 + row.getReportMonth() - from;
-                    if (idx < 0 || idx > readMonths) continue;
-                    Long pickerTeam = pickerChannelTeam.get(row.getChannelId());
-                    if (pickerTeam != null) {                 // yalnız takım seçici için: değer çözülmez
-                        if (idx >= 1) pickerTeamsWithReports.add(pickerTeam);
-                        continue;
-                    }
-                    Cell[] cs = slots.get(row.getChannelId());
-                    if (cs == null) continue;
-                    String tj = row.getTemplateJson() == null ? "" : row.getTemplateJson();
-                    Parsed parsed = templates.computeIfAbsent(tj, TechErrorAnalyticsService::parse);
-                    Values vals = TechErrorValues.fromStored(row.getValuesJson(), parsed.tpl());
-                    Map<String, Object> compact = new HashMap<>();
-                    vals.fields().forEach((k, v) -> { if (v instanceof Number || v instanceof Boolean) compact.put(k, v); });
-                    boolean sent = row.getLastSentAt() != null;
-                    boolean queued = !sent && "QUEUED".equals(row.getSendState());
-                    cs[idx] = new Cell(row.getId(), sent, queued, parsed, compact,
-                            vals.targets() == null ? Map.of() : vals.targets());
-                }
-                if (page.size() < size) break;
+
+        // 2. sorgu (yalnız okunabilen takımlarda pasif kanal varsa): pasif kanal başına İSTENEN penceredeki en yeni rapor
+        // dönemi — TEK gruplu sorgu, metin kolonu yok, kanal sayısından bağımsız. Hem listeleme hem takım seçici buradan.
+        Map<Long, Integer> newestOf = new HashMap<>();
+        if (!inactive.isEmpty()) {
+            Set<Long> inactiveIds = new HashSet<>();
+            for (TechErrorChannel ch : inactive) inactiveIds.add(ch.getId());
+            int requestedFrom = to - months + 1;
+            for (Object[] row : reports.newestPeriodOfInactiveChannels(teams, requestedFrom, to)) {
+                if (row == null || row.length < 2 || !(row[0] instanceof Number id) || !(row[1] instanceof Number p)) continue;
+                Long channelId = Long.valueOf(id.longValue());
+                if (inactiveIds.contains(channelId)) newestOf.put(channelId, Integer.valueOf(p.intValue()));
             }
         }
 
-        // Pasif kanalın okunan penceredeki en yeni raporunun dilimi (0 = raporu yok → listelenmez)
-        Map<Long, Integer> newestOf = new HashMap<>();
-        for (TechErrorChannel ch : inactiveRead) {
-            Cell[] cs = slots.get(ch.getId());
-            int n = 0;
-            for (int i = readMonths; i >= 1; i--) {
-                if (cs[i] != null) { n = i; break; }
-            }
-            newestOf.put(ch.getId(), n);
+        // Pasifler: kapsamın, GÖSTERİLEN aylarda raporu olanları (sıra korunur); listelenen aktif + pasif × ay ≤ MAX_CELLS —
+        // sığmayanlar SIRANIN SONUNDAN düşer (aylar asla kısalmaz)
+        List<TechErrorChannel> listable = new ArrayList<>();
+        for (TechErrorChannel ch : inactive) {
+            if (teamFilter != null && !teamFilter.equals(ch.getTeamId())) continue;
+            Integer newestPeriod = newestOf.get(ch.getId());
+            if (newestPeriod != null && newestPeriod >= firstShown) listable.add(ch);
         }
-        // Hücre sınırı, 2. adım: LİSTELENEN kanal (aktif + gösterilen aylarda raporu olan pasif) × ay ≤ MAX_CELLS olan en
-        // büyük ay sayısı (ay azaldıkça listelenen pasif azalır — tekdüze, en çok readMonths adım)
-        int kept = readMonths;
-        while (kept > 1 && (long) kept * (scope.size() + countListed(inactiveRead, newestOf, readMonths - kept)) > MAX_CELLS) kept--;
-        if (kept < months) truncated = true;
-        int offset = readMonths - kept;                       // gösterilen ay i → okunan dilim offset + i + 1
-        List<TechErrorChannel> listedInactive = new ArrayList<>();
-        for (TechErrorChannel ch : inactiveRead) if (newestOf.getOrDefault(ch.getId(), 0) > offset) listedInactive.add(ch);
-        int channelCount = activeCount + listedInactive.size();
-        if (scope.size() + listedInactive.size() > MAX_CELLS) {              // tek ayda bile sığmıyor: önce aktifler
-            listedInactive = new ArrayList<>(listedInactive.subList(0, Math.max(0, MAX_CELLS - scope.size())));
-            truncated = true;
-        }
+        int channelCount = activeCount + listable.size();
+        long room = MAX_CELLS - (long) scope.size() * kept;
+        int fit = (int) Math.max(0L, Math.min(listable.size(), room / kept));
+        List<TechErrorChannel> listedInactive = listable.subList(0, fit);
+        int inactiveOmitted = listable.size() - fit;
+        boolean channelsTruncated = inactiveOmitted > 0;
         List<TechErrorChannel> listed = new ArrayList<>(scope);
         listed.addAll(listedInactive);
 
@@ -436,8 +390,42 @@ public class TechErrorAnalyticsService {
         Resolution res = resolveFields(requested, options, lang);
         List<Ref> fields = res.fields();
 
+        // Okuma penceresi bir ay geriden başlar: pencerenin ilk ayının "geçen ay"ı (canlı değişim oranı) — dilim 0
+        int from = firstShown - 1;
+        Map<Long, Cell[]> slots = new LinkedHashMap<>();
+        for (TechErrorChannel ch : listed) slots.put(ch.getId(), new Cell[kept + 1]);
+        // 3. sorgu (dilimler): yalnız LİSTELENEN kanalların penceredeki raporları (kanal başına sorgu yok); alan yoksa okunacak
+        // değer de yok
+        if (!slots.isEmpty() && !fields.isEmpty()) {
+            Map<String, Parsed> templates = new HashMap<>();
+            long after = 0;
+            int size = Math.max(1, chunkSize);
+            // Satır ≤ listelenen kanal × (ay + 1) ≤ 2 × MAX_CELLS (kanal × dönem tekil) = MAX_CHUNKS dilim boyu CHUNK iken
+            int maxChunks = (2 * MAX_CELLS) / size + 2;
+            for (int chunk = 0; chunk < maxChunks; chunk++) {
+                List<TechErrorReportRepository.AnalyticsRow> page =
+                        reports.findAnalyticsRows(slots.keySet(), from, to, after, PageRequest.of(0, size));
+                for (TechErrorReportRepository.AnalyticsRow row : page) {
+                    if (row.getId() != null && row.getId() > after) after = row.getId();
+                    Cell[] cs = slots.get(row.getChannelId());
+                    if (cs == null || row.getReportYear() == null || row.getReportMonth() == null || row.getId() == null) continue;
+                    int idx = row.getReportYear() * 12 + row.getReportMonth() - from;
+                    if (idx < 0 || idx > kept) continue;
+                    String tj = row.getTemplateJson() == null ? "" : row.getTemplateJson();
+                    Parsed parsed = templates.computeIfAbsent(tj, TechErrorAnalyticsService::parse);
+                    Values vals = TechErrorValues.fromStored(row.getValuesJson(), parsed.tpl());
+                    Map<String, Object> compact = new HashMap<>();
+                    vals.fields().forEach((k, v) -> { if (v instanceof Number || v instanceof Boolean) compact.put(k, v); });
+                    boolean sent = row.getLastSentAt() != null;
+                    boolean queued = !sent && "QUEUED".equals(row.getSendState());
+                    cs[idx] = new Cell(row.getId(), sent, queued, parsed, compact,
+                            vals.targets() == null ? Map.of() : vals.targets());
+                }
+                if (page.size() < size) break;
+            }
+        }
+
         // Değerler: raporun kendi şablonu + CANLI hesap (geçen ay = bir önceki dilim, aynı kimlik + tür)
-        List<YearMonth> window = window(end, kept);
         int newest = 0;
         List<ChannelSeries> out = new ArrayList<>(listed.size());
         for (TechErrorChannel ch : listed) {
@@ -446,11 +434,11 @@ public class TechErrorAnalyticsService {
             for (Ref f : fields) values.put(f.id(), new ArrayList<>(Collections.nCopies(kept, (Double) null)));
             List<ReportRef> reps = new ArrayList<>(Collections.nCopies(kept, (ReportRef) null));
             for (int i = 0; i < kept; i++) {
-                Cell c = cs[offset + i + 1];
+                Cell c = cs[i + 1];
                 if (c == null) continue;
                 newest = Math.max(newest, i + 1);
                 reps.set(i, new ReportRef(c.id(), c.sent(), c.queued()));
-                Cell prev = cs[offset + i];
+                Cell prev = cs[i];
                 Map<String, Object> previous = prev == null ? null : sameTypeFields(prev, c.parsed());
                 Values applied = TechErrorCalc.apply(c.parsed().tpl(),
                         new Values(c.fields(), Map.of(), Map.of(), Map.of(), c.targets()), previous);
@@ -468,12 +456,10 @@ public class TechErrorAnalyticsService {
                     Collections.unmodifiableList(reps)));
         }
 
-        // Takım seçici: aktif kanalı olan, okunan pencerede raporu olan pasif kanalı bulunan ya da raporu bilinmeyen
-        // (aday sınırı) takımlar — ad sırasıyla
+        // Takım seçici: aktif kanalı olan ya da İSTENEN pencerede raporlu pasif kanalı olan takımlar — ad sırasıyla (takım
+        // seçimine ve aktiflerin kesilmesine bağlı değil: hafif sorgu hep okunabilen bütün takımlara bakar)
         Set<Long> pick = new HashSet<>(activeTeams);
-        for (TechErrorChannel ch : inactiveRead) if (newestOf.getOrDefault(ch.getId(), 0) >= 1) pick.add(ch.getTeamId());
-        pick.addAll(pickerTeamsWithReports);
-        pick.addAll(unknownTeams);
+        for (TechErrorChannel ch : inactive) if (newestOf.containsKey(ch.getId())) pick.add(ch.getTeamId());
         List<Long> teamsWithChannels = new ArrayList<>(pick);
         teamsWithChannels.sort(Comparator.<Long, String>comparing(id -> teamNames.getOrDefault(id, ""), col)
                 .thenComparing(Comparator.<Long>naturalOrder()));
@@ -499,14 +485,7 @@ public class TechErrorAnalyticsService {
                     optionCounts.getOrDefault(o.id(), 0)));
         }
         return new Result(window, months, List.copyOf(fieldRefs), List.copyOf(available), List.copyOf(out), channelCount,
-                truncated, List.copyOf(teamsWithChannels), res.dropped(), res.fallback());
-    }
-
-    /** Gösterilen aylarda (okunan dilim {@code offset}'ten sonra) raporu olan pasif aday sayısı. */
-    private static int countListed(List<TechErrorChannel> inactiveRead, Map<Long, Integer> newestOf, int offset) {
-        int n = 0;
-        for (TechErrorChannel ch : inactiveRead) if (newestOf.getOrDefault(ch.getId(), 0) > offset) n++;
-        return n;
+                truncated, List.copyOf(teamsWithChannels), res.dropped(), res.fallback(), channelsTruncated, inactiveOmitted);
     }
 
     private static Parsed parse(String templateJson) {

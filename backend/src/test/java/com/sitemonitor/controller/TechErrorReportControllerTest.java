@@ -1507,19 +1507,21 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.channels[0].reports[0]").doesNotExist())
                 .andExpect(jsonPath("$.data.teams[0].name").value("Takım 1"))
                 .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.channels_truncated").value(false))
+                .andExpect(jsonPath("$.data.inactive_omitted").value(0))
                 .andExpect(jsonPath("$.data.max_fields").value(4));
         verify(analytics).analytics(eq(java.util.Set.of(A)), eq(null), eq(12), eq(List.of()), eq(YearMonth.of(2026, 9)), any(), eq(false));
     }
 
     @Test
-    @DisplayName("analiz (2026-10-18, pasif kanallar): kanal satırı active taşır — aktif true, penceresinde raporu olan pasif false (aktiflerin ardında)")
+    @DisplayName("analiz (2026-10-18, pasif kanallar): kanal satırı active taşır — aktif true, penceresinde raporu olan pasif false (aktiflerin ardında); sığmayan pasifler ayrı işaret (channels_truncated + inactive_omitted), truncated yalnız aylar için")
     void analytics_channelActiveFlag() throws Exception {
         var base = analyticsResult();
         var ch = base.channels().get(0);
         var passive = new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(11L, "Eski Kanal", A, false,
                 ch.values(), ch.reports());
         var res = new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(base.months(), 12, base.fields(),
-                base.available(), List.of(ch, passive), 2, false, List.of(A));
+                base.available(), List.of(ch, passive), 5, false, List.of(A), List.of(), false, true, 3);
         when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(res);
         mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
@@ -1530,7 +1532,10 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.channels[1].name").value("Eski Kanal"))
                 .andExpect(jsonPath("$.data.channels[1].active").value(false))
                 .andExpect(jsonPath("$.data.channels[1].points['total-tx'][11]").value(1_250_000d))
-                .andExpect(jsonPath("$.data.channel_count").value(2));
+                .andExpect(jsonPath("$.data.channel_count").value(5))
+                .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.channels_truncated").value(true))
+                .andExpect(jsonPath("$.data.inactive_omitted").value(3));
     }
 
     @Test

@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   ANALYTICS_KEYS, DEFAULT_MONTHS, LINE_STYLES, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, adoptedFields, buildChart, channelCards,
-  csvFileName, csvTable, fieldOptions, fieldUnitLabel, filterKey, formatCell, isDefaultFilter, isInactiveChannel, isLonePoint,
-  lineStyle, monthFullLabel, monthShortLabel, niceStep, normalizeMonths, normalizeTeam, parseFieldsParam, reportAt, requestParams,
+  csvFileName, csvTable, fieldOptions, fieldUnitLabel, filterKey, formatCell, inactiveOmitted, isDefaultFilter, isInactiveChannel,
+  isLonePoint, lineStyle, monthFullLabel, monthShortLabel, monthsCut, niceStep, normalizeMonths, normalizeTeam, parseFieldsParam, reportAt, requestParams,
   seriesOf, serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from '../components/techerror/analytics/analyticsModel.js'
 import { toCsv } from '../utils/csvExport.js'
@@ -319,5 +319,29 @@ describe('seriler, grafik ve tablo', () => {
     expect(monthShortLabel({ year: 2026, month: 9 }, 'en')).toBe('Sep 2026')
     expect(monthFullLabel({ year: 2026, month: 2 }, 'tr')).toBe('Şubat 2026')
     expect(monthFullLabel(null, 'tr')).toBe('')
+  })
+})
+
+describe('kesim işaretleri (inceleme 2026-10-18): aylar ↔ pasif kanallar ayrı', () => {
+  it('monthsCut: yalnız truncated VE gösterilen ay istenenden azsa — pasif kesiminde ay şeridi yok', () => {
+    expect(monthsCut({ truncated: true, months: months(23), months_requested: 24 }, 24)).toBe(true)
+    // Önceki sürüm pasif kesiminde de truncated koyuyordu: ay sayısı tamsa şerit yok
+    expect(monthsCut({ truncated: true, months: months(24), months_requested: 24 }, 24)).toBe(false)
+    expect(monthsCut({ truncated: false, months: months(10), months_requested: 24 }, 24)).toBe(false)
+    expect(monthsCut({ truncated: true, months: [], months_requested: 24 }, 24)).toBe(false)
+    // months_requested yoksa istenen (araç çubuğu) değer
+    expect(monthsCut({ truncated: true, months: months(10) }, 12)).toBe(true)
+    expect(monthsCut({ truncated: true, months: months(12) }, 12)).toBe(false)
+    expect(monthsCut(null, 12)).toBe(false)
+  })
+
+  it('inactiveOmitted: işaret yoksa 0, sayı okunamıyorsa null (asla "0 kanal"), aksi hâlde sayı', () => {
+    expect(inactiveOmitted({ channels_truncated: false, inactive_omitted: 3 })).toBe(0)
+    expect(inactiveOmitted({})).toBe(0)
+    expect(inactiveOmitted(null)).toBe(0)
+    expect(inactiveOmitted({ channels_truncated: true, inactive_omitted: 3 })).toBe(3)
+    expect(inactiveOmitted({ channels_truncated: true })).toBeNull()
+    expect(inactiveOmitted({ channels_truncated: true, inactive_omitted: 0 })).toBeNull()
+    expect(inactiveOmitted({ channels_truncated: true, inactive_omitted: 'x' })).toBeNull()
   })
 })

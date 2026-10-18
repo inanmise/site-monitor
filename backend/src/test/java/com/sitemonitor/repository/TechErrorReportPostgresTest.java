@@ -312,4 +312,59 @@ class TechErrorReportPostgresTest {
             PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
         }
     }
+
+    @Test
+    @DisplayName("kanal analizi, pasif kanallar (inceleme 2026-10-18) PostgreSQL'de: takım IN listesiyle tek gruplu sorgu — pasif kanal"
+            + " başına istenen dönemdeki en yeni dönem (yıl × 12 + ay, yıl sınırı); aktif kanal ve pencere dışı satır vermez")
+    void analyticsNewestPeriodOfInactiveChannels() {
+        TechErrorChannelRepository channels = PostgresIt.app().bean(TechErrorChannelRepository.class);
+        TechErrorReportRepository reports = PostgresIt.app().bean(TechErrorReportRepository.class);
+        String tag = "ter-an-" + UUID.randomUUID().toString().substring(0, 8);
+        long team = 765_430L + (long) (Math.random() * 1000);
+        TechErrorChannel active = new TechErrorChannel();
+        active.setTeamId(team);
+        active.setName(tag + " Mobil");
+        active.setNameKey((tag + " mobil").toLowerCase());
+        active.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        active = channels.saveAndFlush(active);
+        TechErrorChannel passive = new TechErrorChannel();
+        passive.setTeamId(team);
+        passive.setName(tag + " Arşiv");
+        passive.setNameKey((tag + " arşiv").toLowerCase());
+        passive.setActive(false);
+        passive.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        passive = channels.saveAndFlush(passive);
+        try {
+            int[][] periods = {{2025, 11}, {2025, 12}, {2026, 10}};
+            for (int[] p : periods) {
+                TechErrorReport r = new TechErrorReport();
+                r.setChannelId(passive.getId());
+                r.setTeamId(team);
+                r.setReportYear(p[0]);
+                r.setReportMonth(p[1]);
+                r.setTemplateJson(passive.getTemplateJson());
+                r.setValuesJson("{\"fields\":{\"total-tx\":1}}");
+                reports.saveAndFlush(r);
+            }
+            TechErrorReport own = new TechErrorReport();
+            own.setChannelId(active.getId());
+            own.setTeamId(team);
+            own.setReportYear(2026);
+            own.setReportMonth(9);
+            own.setTemplateJson(active.getTemplateJson());
+            own.setValuesJson("{\"fields\":{\"total-tx\":2}}");
+            reports.saveAndFlush(own);
+            int from = 2025 * 12 + 10, to = 2026 * 12 + 9;
+            List<Object[]> rows = reports.newestPeriodOfInactiveChannels(List.of(team), from, to);
+            assertThat(rows).hasSize(1);
+            assertThat(((Number) rows.get(0)[0]).longValue()).isEqualTo(passive.getId());
+            assertThat(((Number) rows.get(0)[1]).intValue()).isEqualTo(2025 * 12 + 12);
+            assertThat(reports.newestPeriodOfInactiveChannels(List.of(team), 2026 * 12 + 1, to)).isEmpty();
+        } finally {
+            reports.deleteAllForChannel(passive.getId());
+            reports.deleteAllForChannel(active.getId());
+            channels.deleteById(passive.getId());
+            channels.deleteById(active.getId());
+        }
+    }
 }

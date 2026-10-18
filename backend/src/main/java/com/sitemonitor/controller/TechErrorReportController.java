@@ -317,9 +317,13 @@ public class TechErrorReportController {
         }
         data.put("channels", chRows);
         data.put("channel_count", res.channelCount());
+        // `truncated` yalnız AYLAR kesildiğinde; pasif kanallar ayı asla kısaltmaz — sığmayanlar sıranın sonundan düşer ve
+        // ayrı işaretlenir (inceleme 2026-10-18)
         data.put("truncated", res.truncated());
+        data.put("channels_truncated", res.channelsTruncated());
+        data.put("inactive_omitted", res.inactiveOmitted());
         List<Map<String, Object>> teamRows = new ArrayList<>();
-        // Takım seçici: aktif kanalı ya da penceresinde raporu olan pasif kanalı bulunan okunabilen takımlar; seçili takım
+        // Takım seçici: aktif kanalı ya da İSTENEN pencerede raporu olan pasif kanalı bulunan okunabilen takımlar; seçili takım
         // listede değilse o da eklenir (seçim boş görünmesin)
         List<Long> pickable = new ArrayList<>(res.teamsWithChannels());
         if (teamFilter != null && !pickable.contains(teamFilter)) pickable.add(teamFilter);

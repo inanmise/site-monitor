@@ -26,8 +26,8 @@ import { cn } from '@/lib/utils'
 import { trendTicks } from '../techErrorModel.js'
 import {
   DEFAULT_MONTHS, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, TABLE_MIN_PX, TE_AN_FIELDS, TE_AN_MONTHS, TE_AN_TEAM, adoptedFields,
-  axisLabel, buildChart, channelCards, csvFileName, csvTable, fieldOptions, filterKey, formatCell, isDefaultFilter,
-  isInactiveChannel, isLonePoint, monthFullLabel, monthShortLabel, normalizeMonths, normalizeTeam, parseFieldsParam,
+  axisLabel, buildChart, channelCards, csvFileName, csvTable, fieldOptions, filterKey, formatCell, inactiveOmitted, isDefaultFilter,
+  isInactiveChannel, isLonePoint, monthFullLabel, monthShortLabel, monthsCut, normalizeMonths, normalizeTeam, parseFieldsParam,
   requestParams, serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from './analyticsModel.js'
 
@@ -143,6 +143,8 @@ export default function TechErrorAnalytics({ onBack, onOpenReport, returning = f
   }, [teams, team, teamNames, state.loading, t])
   const channels = Array.isArray(data?.channels) ? data.channels : []
   const monthList = Array.isArray(data?.months) ? data.months : []
+  // Sınır nedeniyle listeye alınmayan pasif kanallar (ayrı not — "yalnız son N ay" şeridi yalnız aylar kesildiğinde)
+  const omitted = inactiveOmitted(data)
   const isDefault = isDefaultFilter({ team, months, fields })
 
   const reset = useCallback(() => {
@@ -269,10 +271,17 @@ export default function TechErrorAnalytics({ onBack, onOpenReport, returning = f
           </AlertBanner>
         </div>
       )}
-      {data?.truncated && monthList.length > 0 && (
+      {monthsCut(data, months) && (
         <div data-slot="te-an-truncated">
           <AlertBanner tone="info" icon={Info} title={t('te.an.truncatedTitle', monthList.length)}>
             {t('te.an.truncatedBody', monthList.length, data.channel_count ?? channels.length, data.months_requested ?? months)}
+          </AlertBanner>
+        </div>
+      )}
+      {data?.channels_truncated === true && (
+        <div data-slot="te-an-inactive-cut">
+          <AlertBanner tone="info" icon={Info} title={t('te.an.inactiveCutTitle')}>
+            {omitted == null ? t('te.an.inactiveCutBodySome') : t('te.an.inactiveCutBody', omitted)}
           </AlertBanner>
         </div>
       )}
