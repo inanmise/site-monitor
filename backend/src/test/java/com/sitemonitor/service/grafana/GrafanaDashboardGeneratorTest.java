@@ -278,6 +278,83 @@ class GrafanaDashboardGeneratorTest {
     }
 
     @Test
+    @DisplayName("alarm açıldı anotasyonu: açılış zamanı (değer) son pencerede, değer zaman olarak — 'offset' / 'unless' yok "
+            + "(seri boşluğundan sonra sahte fırtına olmasın)")
+    void alertOpenedAnnotationUsesOpenTime() {
+        JsonNode d = tree(defaults());
+        JsonNode opened = null, deploy = null;
+        for (JsonNode a : d.get("annotations").get("list")) {
+            if ("Kritik / yüksek alarm açıldı".equals(a.get("name").asString())) opened = a;
+            if ("Sürüm dağıtımı".equals(a.get("name").asString())) deploy = a;
+        }
+        assertThat(opened).isNotNull();
+        String expr = opened.get("expr").asString();
+        assertThat(expr).contains("sitemonitor_alert_open_since_timestamp_seconds{")
+                .contains("> (time() - " + GrafanaDashboardGenerator.ALERT_OPENED_WINDOW_S + ")").endsWith(") * 1000")
+                .doesNotContain("offset").doesNotContain("unless");
+        assertThat(opened.get("useValueForTime").asBoolean()).isTrue();
+        assertThat(opened.get("target").get("expr").asString()).isEqualTo(expr);
+        assertThat(deploy.get("useValueForTime").asBoolean()).isFalse();
+        assertBalanced(expr, "alarm anotasyonu");
+    }
+
+    @Test
+    @DisplayName("aralık panellerinde adım başına yeniden değerlendirilen [$__range:…] alt sorgusu yok (yalnız @ end() ile, tek kez)")
+    void noPerStepRangeSubqueries() {
+        for (boolean perMonitor : new boolean[] { true, false }) {
+            JsonNode d = tree(opts("tr", GrafanaDashboardGenerator.SECTIONS, perMonitor, "https://sm.example.org", ""));
+            for (JsonNode p : contentPanels(d)) {
+                if (!p.has("targets")) continue;
+                for (JsonNode t : p.get("targets")) {
+                    if (t.has("instant") && t.get("instant").asBoolean()) continue;
+                    String expr = t.get("expr").asString();
+                    int at = expr.indexOf("[$__range:");
+                    while (at >= 0) {
+                        int close = expr.indexOf(']', at);
+                        assertThat(expr.substring(close + 1).stripLeading())
+                                .as("adım başına alt sorgu: " + p.get("title").asString() + " → " + expr).startsWith("@ end()");
+                        at = expr.indexOf("[$__range:", close);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("tazelik şeridi: Genel durumun başında, aktarıcının son turundan beri geçen süre; veri yoksa nedenini söyler")
+    void freshnessBanner() {
+        JsonNode d = tree(defaults());
+        JsonNode fresh = contentPanels(d).stream().filter(p -> "Veri tazeliği".equals(p.get("title").asString())).findFirst().orElseThrow();
+        assertThat(fresh.get("gridPos").get("w").asInt()).isEqualTo(24);
+        assertThat(fresh.get("targets").get(0).get("expr").asString())
+                .startsWith("time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds{");
+        assertThat(fresh.get("fieldConfig").get("defaults").get("noValue").asString()).contains("/metrics/sitemonitor");
+        assertThat(fresh.get("fieldConfig").get("defaults").get("mappings").get(0).get("type").asString()).isEqualTo("range");
+    }
+
+    @Test
+    @DisplayName("metricsIn: PromQL sözcük çözümlemesi — tam adlar; etiketler, fonksiyonlar, gruplama listeleri, dizeler, değişkenler sayılmaz")
+    void metricsInTokenizes() {
+        assertThat(GrafanaDashboardGenerator.metricsIn(
+                "sum by (le, team) (rate(sitemonitor_http_server_duration_seconds_bucket{job=~\"$job\", uri!~\"/metrics.*\"}[5m]))"))
+                .containsExactly("sitemonitor_http_server_duration_seconds_bucket");
+        assertThat(GrafanaDashboardGenerator.metricsIn("up offset 5m and on (instance) sitemonitor_build_info"))
+                .containsExactly("sitemonitor_build_info", "up");
+        assertThat(GrafanaDashboardGenerator.metricsIn(
+                "topk($topn, label_replace(sitemonitor_alerts_open, \"team\", \"$1\", \"ug_team\", \"(.+)\")) * on (a) group_left (b) jvm_x"))
+                .containsExactly("jvm_x", "sitemonitor_alerts_open");
+        assertThat(GrafanaDashboardGenerator.metricsIn("max_over_time((sitemonitor_monitor_state > 0)[${__range}:1m] @ end()) > bool 1e3"))
+                .containsExactly("sitemonitor_monitor_state");
+        assertThat(GrafanaDashboardGenerator.metricsIn("sitemonitor_monitor")).as("kısa ad uzun adın parçası sayılmaz")
+                .containsExactly("sitemonitor_monitor");
+        assertThat(GrafanaDashboardGenerator.metricsIn("sitemonitor_monitor_state")).doesNotContain("sitemonitor_monitor");
+        assertThat(GrafanaDashboardGenerator.metricsIn("label_values(sitemonitor_build_info{job=~\"$job\"}, instance)"))
+                .as("label_values'ın son bağımsız değişkeni etikettir").containsExactly("sitemonitor_build_info");
+        assertThat(GrafanaDashboardGenerator.metricsIn(null)).isEmpty();
+        assertThat(GrafanaDashboardGenerator.metricsIn("\"unterminated")).isEmpty();
+    }
+
+    @Test
     @DisplayName("dosya adı: sürüm dosya adına güvenli yazılır")
     void fileName() {
         assertThat(GrafanaDashboardGenerator.fileName("20.157.0")).isEqualTo("sitemonitor-grafana-dashboard-20.157.0.json");

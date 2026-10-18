@@ -65,12 +65,31 @@ class GrafanaMetricCoverageGateTest {
         return out;
     }
 
-    static String dashboardJson() {
-        GrafanaDashboardOptions all = new GrafanaDashboardOptions("", "gate", "https://sm.example.org", "", "now-24h", "1m", "tr",
+    static GrafanaDashboardOptions allOptions() {
+        return new GrafanaDashboardOptions("", "gate", "https://sm.example.org", "", "now-24h", "1m", "tr",
                 GrafanaDashboardGenerator.SECTIONS, true, "", 10, "0.0.0-gate");
-        String json = new String(GrafanaDashboardGenerator.toJson(GrafanaDashboardGenerator.generate(all).dashboard(), false),
+    }
+
+    static String dashboardJson() {
+        return new String(GrafanaDashboardGenerator.toJson(GrafanaDashboardGenerator.generate(allOptions()).dashboard(), false),
                 StandardCharsets.UTF_8);
-        return json;
+    }
+
+    /**
+     * Panonun kullandığı TAM ölçüm adları (2026-10-18, bağımsız inceleme): sorgular PromQL sözcük çözümlemesiyle okunur
+     * ({@link GrafanaDashboardGenerator#metricsIn}) — düz metin araması ({@code json.contains}) kısa bir adı uzun bir adın
+     * içinde ({@code sitemonitor_monitor} ⊂ {@code sitemonitor_monitor_state}) ya da bir açıklamada "buluyordu".
+     */
+    static Set<String> dashboardMetrics() {
+        return new TreeSet<>(GrafanaDashboardGenerator.generate(allOptions()).summary().metrics());
+    }
+
+    /** Kayıtlı bir ölçümün panoda karşılanma biçimleri: gauge adı, Timer satırları, sayaç. */
+    static boolean onDashboard(String micrometer, Set<String> used) {
+        String prom = MonitoringMetricNames.prom(micrometer);
+        String timer = MonitoringMetricNames.promTimer(micrometer);
+        return used.contains(prom) || used.contains(prom + "_total") || used.contains(timer + "_bucket")
+                || used.contains(timer + "_count") || used.contains(timer + "_sum");
     }
 
     @Test
@@ -79,13 +98,12 @@ class GrafanaMetricCoverageGateTest {
         Map<String, String> meters = registeredMeters();
         assertThat(meters).as("tarama boş — yol ya da kalıp değişmiş").hasSizeGreaterThan(40);
         assertThat(meters).containsKeys("sitemonitor.build.info", "sitemonitor.monitor.state", "sitemonitor.http.server.duration");
-        String json = dashboardJson();
+        Set<String> used = dashboardMetrics();
         Map<String, String> missing = new TreeMap<>();
         for (Map.Entry<String, String> e : meters.entrySet()) {
-            String prom = MonitoringMetricNames.prom(e.getKey());
-            if (json.contains(prom)) continue;
+            if (onDashboard(e.getKey(), used)) continue;
             if (NOT_ON_DASHBOARD.containsKey(e.getKey())) continue;
-            missing.put(prom, e.getValue());
+            missing.put(MonitoringMetricNames.prom(e.getKey()), e.getValue());
         }
         assertThat(missing)
                 .as("Panoda kullanılmayan ölçümler (ölçüm → kaydeden dosya). GrafanaDashboardGenerator'a panel ekleyin ve "
@@ -97,10 +115,10 @@ class GrafanaMetricCoverageGateTest {
     @DisplayName("izin listesi bayat değil: her ad hâlâ kayıtlı ve panoda kullanılmıyor")
     void allowListIsNotStale() throws IOException {
         Map<String, String> meters = registeredMeters();
-        String json = dashboardJson();
+        Set<String> used = dashboardMetrics();
         for (Map.Entry<String, String> e : NOT_ON_DASHBOARD.entrySet()) {
             assertThat(meters).as("izin listesinde ama artık kayıtlı değil: " + e.getKey()).containsKey(e.getKey());
-            assertThat(json).as("izin listesinde ama panoda kullanılıyor: " + e.getKey()).doesNotContain(MonitoringMetricNames.prom(e.getKey()));
+            assertThat(onDashboard(e.getKey(), used)).as("izin listesinde ama panoda kullanılıyor: " + e.getKey()).isFalse();
             assertThat(e.getValue()).as("gerekçe boş: " + e.getKey()).hasSizeGreaterThan(20);
         }
     }
@@ -108,10 +126,13 @@ class GrafanaMetricCoverageGateTest {
     @Test
     @DisplayName("katalogdaki her ölçüm panoda (izleme başına açıkken)")
     void catalogIsCovered() {
-        String json = dashboardJson();
+        Set<String> used = dashboardMetrics();
         Set<String> missing = new TreeSet<>();
-        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) if (!json.contains(d.prom())) missing.add(d.prom());
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) if (!used.contains(d.prom())) missing.add(d.prom());
         assertThat(missing).isEmpty();
+        // Kapı kendini sınar: kısa ad, uzun adın parçası olarak "kullanılmış" sayılmaz
+        assertThat(used).contains("sitemonitor_monitor_state").doesNotContain("sitemonitor_monitor");
+        assertThat(onDashboard("sitemonitor.monitor", used)).isFalse();
     }
 
     @Test

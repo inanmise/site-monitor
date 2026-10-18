@@ -1,1 +1,5 @@
-revision=1 sha256=33780bd2140f62ceb9135f5c227c987a0a0f9b173f522af5958474859224e588
+# Grafana panosu icerik ozetleri — EKLEMELI gunluk (GrafanaDashboardRevisionGateTest).
+# Var olan satirlari DEGISTIRMEYIN: icerik degisince DASHBOARD_REVISION'i artirin ve kapinin yazdirdigi satiri SONA ekleyin.
+# Degiskeler: tr / en = Turkce / Ingilizce pano, tr_no_monitor = izleme basina kapali.
+revision=1 tr=33780bd2140f62ceb9135f5c227c987a0a0f9b173f522af5958474859224e588
+revision=2 tr=a590751ff86af974c7734e188782ebe4d3c6801c224bb8230db75804e08485cd en=e5627bb0240305439c4b578dbea01159ee49de9168ce5be6f23a458d51afb74a tr_no_monitor=e3dbf96f4d31ad9affbf03a85424fb13123684f7abfc67537e41e2b0e102a44c

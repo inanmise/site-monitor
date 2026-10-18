@@ -50,7 +50,12 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 1;
+    public static final int DASHBOARD_REVISION = 2;
+    /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
+    static final int ALERT_OPENED_WINDOW_S = 900;
+    /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
+    static final int EXPORTER_STALE_S = 180;
+
     /** Grafana 12.x klasik pano şema sürümü (12.0+ içe aktarır; daha yeniyi kendisi yükseltir). */
     public static final int SCHEMA_VERSION = 41;
     public static final String GRAFANA_MIN_VERSION = "12.0.0";
@@ -152,15 +157,118 @@ public final class GrafanaDashboardGenerator {
         }
     }
 
-    /** Sorgu metnindeki ölçüm adları ({@code ad{} biçimi — üretici her seçiciye süslü ayraç yazar). */
-    static final Pattern METRIC_IN_EXPR = Pattern.compile("([a-zA-Z_:][a-zA-Z0-9_:]*)\\{");
+    /** PromQL anahtar sözcükleri (ölçüm adı değil). */
+    static final Set<String> PROMQL_KEYWORDS = Set.of("and", "or", "unless", "offset", "bool", "by", "without", "on", "ignoring",
+            "group_left", "group_right", "inf", "nan", "atan2");
+    /** Ardından etiket listesi gelen gruplama sözcükleri ({@code by (a, b)}). */
+    static final Set<String> PROMQL_GROUPING = Set.of("by", "without", "on", "ignoring", "group_left", "group_right");
 
+    /**
+     * Sorgu metnindeki ölçüm adları — PromQL sözcük çözümlemesiyle TAM adlar (2026-10-18, bağımsız inceleme: eski düzenli ifade
+     * yalnız {@code ad{} biçimini görüyor, kapı da düz metin aramasıyla kısa adı uzun adın içinde "buluyordu"). Atlananlar:
+     * dize değişmezleri, {@code {…}} etiket eşleyicileri, {@code […]} aralıklar, Grafana değişkenleri ({@code $x}, {@code ${x}}),
+     * fonksiyon çağrıları ({@code ad(}), gruplama etiket listeleri ({@code by (…)}), anahtar sözcükler, sayı / süreler.
+     * Doğrusal tarama; düzenli ifade yok.
+     */
     public static Set<String> metricsIn(String expr) {
         Set<String> out = new TreeSet<>();
         if (expr == null) return out;
-        Matcher m = METRIC_IN_EXPR.matcher(expr);
-        while (m.find()) out.add(m.group(1));
+        int n = expr.length();
+        int i = 0;
+        while (i < n) {
+            char c = expr.charAt(i);
+            if (c == '"' || c == '\'' || c == '`') {
+                i++;
+                while (i < n && expr.charAt(i) != c) i += expr.charAt(i) == '\\' ? 2 : 1;
+                i++;
+            } else if (c == '{') {
+                i = skipBalanced(expr, i, '{', '}');
+            } else if (c == '[') {
+                i = skipBalanced(expr, i, '[', ']');
+            } else if (c == '$') {
+                i++;
+                if (i < n && expr.charAt(i) == '{') i = skipBalanced(expr, i, '{', '}');
+                else while (i < n && identPart(expr.charAt(i))) i++;
+            } else if (Character.isDigit(c) || c == '.') {
+                while (i < n && (Character.isLetterOrDigit(expr.charAt(i)) || expr.charAt(i) == '.' || expr.charAt(i) == '_')) i++;
+            } else if (identStart(c)) {
+                int start = i;
+                while (i < n && identPart(expr.charAt(i))) i++;
+                String id = expr.substring(start, i);
+                int j = i;
+                while (j < n && Character.isWhitespace(expr.charAt(j))) j++;
+                boolean call = j < n && expr.charAt(j) == '(';
+                String low = id.toLowerCase(java.util.Locale.ROOT);
+                if (call && low.equals("label_values")) {
+                    // Grafana değişken sorgusu label_values(ifade, etiket): son bağımsız değişken ETİKET adıdır, ölçüm değil
+                    int end = skipBalanced(expr, j, '(', ')');
+                    String inner = expr.substring(j + 1, Math.max(j + 1, end - 1));
+                    int comma = lastTopLevelComma(inner);
+                    out.addAll(metricsIn(comma < 0 ? inner : inner.substring(0, comma)));
+                    i = end;
+                } else if (call && PROMQL_GROUPING.contains(low)) i = skipBalanced(expr, j, '(', ')');
+                else if (!call && !PROMQL_KEYWORDS.contains(low) && !aggregatorBeforeGrouping(expr, j)) out.add(id);
+            } else {
+                i++;
+            }
+        }
         return out;
+    }
+
+    /** Ayraç ve dize dışındaki son virgül; yoksa -1. */
+    private static int lastTopLevelComma(String s) {
+        int depth = 0;
+        int last = -1;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"' || c == '\'' || c == '`') {
+                i++;
+                while (i < s.length() && s.charAt(i) != c) i += s.charAt(i) == '\\' ? 2 : 1;
+            } else if (c == '(' || c == '{' || c == '[') {
+                depth++;
+            } else if (c == ')' || c == '}' || c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                last = i;
+            }
+        }
+        return last;
+    }
+
+    /** {@code sum by (…) (…)} / {@code avg without (…)}: tanımlayıcıdan sonra {@code by} / {@code without} geliyorsa işleçtir. */
+    private static boolean aggregatorBeforeGrouping(String expr, int at) {
+        int k = at;
+        while (k < expr.length() && identPart(expr.charAt(k))) k++;
+        String next = expr.substring(at, k).toLowerCase(java.util.Locale.ROOT);
+        return next.equals("by") || next.equals("without");
+    }
+
+    private static boolean identStart(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':';
+    }
+
+    private static boolean identPart(char c) {
+        return identStart(c) || (c >= '0' && c <= '9');
+    }
+
+    /** {@code open}'daki ayracın eşini atlar (içteki dizeler dahil); eşi yoksa metnin sonu. */
+    private static int skipBalanced(String s, int at, char open, char close) {
+        int depth = 0;
+        int i = at;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c == '"' || c == '\'' || c == '`') {
+                i++;
+                while (i < s.length() && s.charAt(i) != c) i += s.charAt(i) == '\\' ? 2 : 1;
+            } else if (c == open) {
+                depth++;
+            } else if (c == close) {
+                depth--;
+                if (depth == 0) return i + 1;
+            }
+            i++;
+        }
+        return s.length();
     }
 
     // ══════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -191,7 +299,7 @@ public final class GrafanaDashboardGenerator {
         static final String LEVEL = "level=~\"$level\"";
         static final String RT = "job=~\"$job\", instance=~\"$instance\"";
         /** Kazıma (/metrics) ve sağlık yoklaması (/health…) kullanıcı trafiği değildir. */
-        static final String NOT_PROBES = "uri!~\"/metrics|/health.*\"";
+        static final String NOT_PROBES = "uri!~\"/metrics.*|/health.*\"";
 
         static final String ML = "type, team, team_id, group, monitor, monitor_id, target";
         static final String MA = "type, team, team_id, state";
@@ -511,25 +619,28 @@ public final class GrafanaDashboardGenerator {
                     + ") unless count by (version, commit, environment) (sitemonitor_build_info" + sel() + " offset 5m)";
             metrics.addAll(metricsIn(deploy));
             l.add(annotation(t("Sürüm dağıtımı", "Deployments"), "blue", deploy, "SiteMonitor {{version}}",
-                    "{{version}} ({{commit}}) — {{environment}}", "version", true));
+                    "{{version}} ({{commit}}) — {{environment}}", "version", true, false));
             if (o.perMonitor()) {
                 String a = metric(MonitoringMetricNames.ALERT_OPEN, TEAM, "level=~\"CRITICAL|HIGH\"");
                 String b = metric(MonitoringMetricNames.ALERT_OPEN, UG, "level=~\"CRITICAL|HIGH\"");
-                // "Açıldı" = bu alarm kimliği bu seviyede 1 dk önce YOKTU. Önceki seri SÜZGEÇSİZ okunur ve yalnız
-                // (alert_id, level) ile eşlenir: sahiplenme, takım taşıma ya da UG değişince seri yeniden doğar — anotasyon
-                // onu "yeni alarm" saymaz. Seviye yükselmesi (uyarı → kritik) yeni kritik alarm sayılır, bilinçli.
+                // "Açıldı" = alarmın AÇILIŞ ZAMANI (serinin değeri, epoch sn) son 15 dk içinde. Değer zaman olarak kullanılır
+                // (useValueForTime, ms): anotasyon tam açılış anına düşer ve aynı alarmın her adımı tek çizgiye birleşir. Önceki
+                // biçim ("1 dk önce seri yoktu") pod yeniden başlatma ya da okunamayan bir aktarıcı turundan sonra (≥ 1 dk boşluk)
+                // bütün açık alarmları yeniden "açıldı" gösteriyordu (sahte fırtına; 2026-10-18 bağımsız inceleme). Pencere,
+                // Grafana'nın uzun aralıkta büyüttüğü adımdan (30 günde ≈ 4 dk) büyük — açılış iki örnek arasında kaçmaz.
                 String an = "alert_id, family, alert_type, target, team, level";
-                String opened = "(max by (" + an + ") (" + a + ") or max by (" + an + ") (" + b + ")) unless on (alert_id, level) "
-                        + "(max by (alert_id, level) (" + metric(MonitoringMetricNames.ALERT_OPEN) + " offset 1m))";
+                String opened = "((max by (" + an + ") (" + a + ") or max by (" + an + ") (" + b + ")) > (time() - "
+                        + ALERT_OPENED_WINDOW_S + ")) * 1000";
                 metrics.addAll(metricsIn(opened));
                 l.add(annotation(t("Kritik / yüksek alarm açıldı", "Critical / high alert opened"), "red", opened,
                         "{{level}} · {{family}} · {{target}}", t("Takım: {{team}} · tür: {{alert_type}}", "Team: {{team}} · type: {{alert_type}}"),
-                        "level,family,team", true));
+                        "level,family,team", true, true));
             }
             return l;
         }
 
-        Map<String, Object> annotation(String name, String color, String expr, String title, String text, String tags, boolean enable) {
+        Map<String, Object> annotation(String name, String color, String expr, String title, String text, String tags, boolean enable,
+                                       boolean valueIsTime) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("datasource", ds());
             m.put("enable", enable);
@@ -540,7 +651,7 @@ public final class GrafanaDashboardGenerator {
             m.put("tagKeys", tags);
             m.put("textFormat", text);
             m.put("titleFormat", title);
-            m.put("useValueForTime", false);
+            m.put("useValueForTime", valueIsTime);
             Map<String, Object> target = new LinkedHashMap<>();
             target.put("expr", expr);
             target.put("interval", "1m");
@@ -696,6 +807,22 @@ public final class GrafanaDashboardGenerator {
                 YELLOW = "yellow", DARK_RED = "dark-red";
 
         /** Değer → metin + renk eşlemesi (Grafana {@code type: value}). */
+        /** Aralık eşlemesi: {@code from ≤ değer ≤ to} → metin + renk. */
+        static Map<String, Object> rangeMap(double from, double to, String text, String color) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("color", color);
+            result.put("index", 0);
+            result.put("text", text);
+            Map<String, Object> opts = new LinkedHashMap<>();
+            opts.put("from", from);
+            opts.put("result", result);
+            opts.put("to", to);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("options", opts);
+            m.put("type", "range");
+            return m;
+        }
+
         static Map<String, Object> valueMap(Object[][] entries) {
             Map<String, Object> opts = new LinkedHashMap<>();
             int i = 0;
@@ -777,17 +904,37 @@ public final class GrafanaDashboardGenerator {
             Panel help = Panel.text(t("Nasıl okunur", "How to read"), t(
                     "Üstteki **Takım** ve **İzleme türü** süzgeçleri bütün panoyu süzer. Renkler: **yeşil** sağlıklı, **turuncu** "
                             + "gecikmiş (kontrol zamanında koşmadı), **kırmızı** düşük / sorunlu, **gri** duraklatılmış ya da bilinmiyor. "
-                            + "\"Veri yok\" = kaynak okunamadı (asla sahte 0 değil). Tür süzgeci izleme ve alarm panellerine uygulanır; "
+                            + "\"Veri yok\" = kaynak okunamadı ya da aktarıcı bayat (asla sahte 0 değil; bkz. Veri tazeliği). "
+                            + "Pano erişim denetimi DEĞİLDİR: Grafana'da panoyu açabilen herkes bütün kurumun izleme verisini görür. "
+                            + "Tür süzgeci izleme ve alarm panellerine uygulanır; "
                             + "bildirimler, SiteMonitor sağlığı ve çalışma zamanı kuruluş genelidir. Ayrıntı için satırdaki bağlantıyla "
                             + "SiteMonitor'a geçin (oturum gerekir).",
                     "The **Team** and **Monitor type** filters above apply to the whole dashboard. Colours: **green** up, **orange** "
                             + "stale (the check did not run on time), **red** down / failing, **grey** paused or unknown. "
-                            + "\"No data\" = the source could not be read (never a fake 0). The type filter applies to monitor and alert "
+                            + "\"No data\" = the source could not be read or the exporter is stale (never a fake 0; see Data freshness). "
+                            + "The dashboard is NOT access control: anyone who can open it in Grafana sees the whole organisation's monitoring data. "
+                            + "The type filter applies to monitor and alert "
                             + "panels; notifications, SiteMonitor health and runtime are organisation-wide. Use the row links to jump into "
                             + "SiteMonitor (sign-in required)."),
                     t("Panonun okunuşu ve renk anlamları.", "How to read the dashboard and what the colours mean."));
-            help.w = 24; help.h = 4;
+            help.w = 24; help.h = 5;
             add(help);
+
+            // Tazelik şeridi: aktarıcının son turundan beri geçen süre. Sunucu, son tamamlanan tur 3 tazeleme aralığından (en az
+            // 3 dk) eskiyse iş değerlerini yayınlamaz → iş panelleri "veri yok"; bu şerit nedenini söyler (takılmış iş parçacığı
+            // eski değerleri "güncel" gösteremez).
+            String freshExpr = "time() - max(" + metric(MonitoringMetricNames.EXPORTER_LAST_REFRESH) + ")";
+            Panel fresh = stat(t("Veri tazeliği", "Data freshness"), t(
+                    "İş ölçümleri aktarıcısının son turundan beri geçen süre (her pod). 3 tazeleme aralığından (en az 3 dk) eskiyse "
+                            + "/metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde "
+                            + "\"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": uç kazınmıyor (belirteç / Prometheus işi).",
+                    "Time since the metrics exporter's last refresh (any pod). When it is older than 3 refresh intervals (at least 3 min) "
+                            + "/metrics/sitemonitor stops serving business values and the panels show \"no data\" — look for "
+                            + "\"İzleme ölçümleri tazelenemedi\" in the pod log. \"No data\": the endpoint is not scraped (token / Prometheus job)."),
+                    freshExpr, "dtdurations", thresholds(GREEN, null, AMBER, EXPORTER_STALE_S, RED, 600), "background", null).size(24, 3);
+            fresh.mappings(List.<Object>of(rangeMap(0, EXPORTER_STALE_S - 0.001, t("Güncel", "Up to date"), GREEN)));
+            fresh.defaults.put("noValue", t("Veri yok — /metrics/sitemonitor kazınmıyor", "No data — /metrics/sitemonitor is not scraped"));
+            add(fresh);
 
             String up = "sum(" + agg(MonitoringMetricNames.MONITORS, MA, "state=\"up\"") + ")";
             String stale = "sum(" + agg(MonitoringMetricNames.MONITORS, MA, "state=\"stale\"") + ")";
@@ -1152,8 +1299,10 @@ public final class GrafanaDashboardGenerator {
                         t("Seçili aralıkta en az bir kez düşük ya da gecikmiş olan izlemelerin durumu, zamanla.",
                                 "State over time of monitors that were down or stale at least once in the selected range."));
                 tl.w = 24; tl.h = 10;
+                // Süzgeç ("aralıkta en az bir kez gecikmiş / düşük") @ end() ile TEK kez değerlendirilir: adım başına yeniden
+                // hesaplanan [$__range:$__interval] alt sorgusu gerçek filoda query.max-samples sınırını aşıyordu (2026-10-18).
                 String problem = "max by (type, monitor_id) (max_over_time(((" + metric(MonitoringMetricNames.MONITOR_STATE, TEAM, TYPE, MON)
-                        + " > 0) < 3)[$__range:$__interval]))";
+                        + " > 0) < 3)[$__range:$__interval] @ end()))";
                 tl.target("max by (type, monitor, monitor_id) (" + metric(MonitoringMetricNames.MONITOR_STATE, TEAM, TYPE, MON)
                         + ") and on (type, monitor_id) " + problem, "{{monitor}} · {{type}}", false);
                 Map<String, Object> to = new LinkedHashMap<>();

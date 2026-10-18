@@ -96,22 +96,22 @@
         "uid" : "${datasource}"
       },
       "enable" : true,
-      "expr" : "(max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless on (alert_id, level) (max by (alert_id, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\"} offset 1m))",
+      "expr" : "((max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) > (time() - 900)) * 1000",
       "iconColor" : "red",
       "name" : "Kritik / yüksek alarm açıldı",
       "step" : "1m",
       "tagKeys" : "level,family,team",
       "textFormat" : "Takım: {{team}} · tür: {{alert_type}}",
       "titleFormat" : "{{level}} · {{family}} · {{target}}",
-      "useValueForTime" : false,
+      "useValueForTime" : true,
       "target" : {
-        "expr" : "(max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless on (alert_id, level) (max by (alert_id, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\"} offset 1m))",
+        "expr" : "((max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) > (time() - 900)) * 1000",
         "interval" : "1m",
         "refId" : "Anno"
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 1 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 2 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -195,16 +195,94 @@
         "showLineNumbers" : false,
         "showMiniMap" : false
       },
-      "content" : "Üstteki **Takım** ve **İzleme türü** süzgeçleri bütün panoyu süzer. Renkler: **yeşil** sağlıklı, **turuncu** gecikmiş (kontrol zamanında koşmadı), **kırmızı** düşük / sorunlu, **gri** duraklatılmış ya da bilinmiyor. \"Veri yok\" = kaynak okunamadı (asla sahte 0 değil). Tür süzgeci izleme ve alarm panellerine uygulanır; bildirimler, SiteMonitor sağlığı ve çalışma zamanı kuruluş genelidir. Ayrıntı için satırdaki bağlantıyla SiteMonitor'a geçin (oturum gerekir).",
+      "content" : "Üstteki **Takım** ve **İzleme türü** süzgeçleri bütün panoyu süzer. Renkler: **yeşil** sağlıklı, **turuncu** gecikmiş (kontrol zamanında koşmadı), **kırmızı** düşük / sorunlu, **gri** duraklatılmış ya da bilinmiyor. \"Veri yok\" = kaynak okunamadı ya da aktarıcı bayat (asla sahte 0 değil; bkz. Veri tazeliği). Pano erişim denetimi DEĞİLDİR: Grafana'da panoyu açabilen herkes bütün kurumun izleme verisini görür. Tür süzgeci izleme ve alarm panellerine uygulanır; bildirimler, SiteMonitor sağlığı ve çalışma zamanı kuruluş genelidir. Ayrıntı için satırdaki bağlantıyla SiteMonitor'a geçin (oturum gerekir).",
       "mode" : "markdown"
     },
     "gridPos" : {
-      "h" : 4,
+      "h" : 5,
       "w" : 24,
       "x" : 0,
       "y" : 1
     },
     "id" : 2
+  }, {
+    "type" : "stat",
+    "title" : "Veri tazeliği",
+    "description" : "İş ölçümleri aktarıcısının son turundan beri geçen süre (her pod). 3 tazeleme aralığından (en az 3 dk) eskiyse /metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde \"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": uç kazınmıyor (belirteç / Prometheus işi).",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "dtdurations",
+        "thresholds" : {
+          "mode" : "absolute",
+          "steps" : [ {
+            "color" : "green",
+            "value" : null
+          }, {
+            "color" : "orange",
+            "value" : 180
+          }, {
+            "color" : "red",
+            "value" : 600
+          } ]
+        },
+        "color" : {
+          "mode" : "thresholds"
+        },
+        "noValue" : "Veri yok — /metrics/sitemonitor kazınmıyor",
+        "mappings" : [ {
+          "options" : {
+            "from" : 0.0,
+            "result" : {
+              "color" : "green",
+              "index" : 0,
+              "text" : "Güncel"
+            },
+            "to" : 179.999
+          },
+          "type" : "range"
+        } ]
+      },
+      "overrides" : [ ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds{namespace=\"site-monitor-prod\"})",
+      "instant" : false,
+      "legendFormat" : "__auto",
+      "range" : true,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "colorMode" : "background",
+      "graphMode" : "area",
+      "justifyMode" : "auto",
+      "orientation" : "auto",
+      "percentChangeColorMode" : "standard",
+      "reduceOptions" : {
+        "calcs" : [ "lastNotNull" ],
+        "fields" : "",
+        "values" : false
+      },
+      "showPercentChange" : false,
+      "textMode" : "auto",
+      "wideLayout" : true
+    },
+    "gridPos" : {
+      "h" : 3,
+      "w" : 24,
+      "x" : 0,
+      "y" : 6
+    },
+    "id" : 3
   }, {
     "type" : "stat",
     "title" : "Etkin izleme",
@@ -267,9 +345,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 0,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 3
+    "id" : 4
   }, {
     "type" : "stat",
     "title" : "Sağlıklı",
@@ -332,9 +410,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 4,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 4
+    "id" : 5
   }, {
     "type" : "stat",
     "title" : "Düşük",
@@ -400,9 +478,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 8,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 5
+    "id" : 6
   }, {
     "type" : "stat",
     "title" : "Gecikmiş",
@@ -468,9 +546,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 12,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 6
+    "id" : 7
   }, {
     "type" : "stat",
     "title" : "Bilinmiyor",
@@ -531,9 +609,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 16,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 7
+    "id" : 8
   }, {
     "type" : "stat",
     "title" : "Duraklatılmış",
@@ -591,9 +669,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 20,
-      "y" : 5
+      "y" : 9
     },
-    "id" : 8
+    "id" : 9
   }, {
     "type" : "stat",
     "title" : "24 sa başarı oranı",
@@ -658,9 +736,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 0,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 9
+    "id" : 10
   }, {
     "type" : "stat",
     "title" : "24 sa kontrol",
@@ -718,9 +796,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 4,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 10
+    "id" : 11
   }, {
     "type" : "stat",
     "title" : "Kritik alarm",
@@ -786,9 +864,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 8,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 11
+    "id" : 12
   }, {
     "type" : "stat",
     "title" : "Yüksek alarm",
@@ -854,9 +932,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 12,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 12
+    "id" : 13
   }, {
     "type" : "stat",
     "title" : "Uyarı alarmı",
@@ -922,9 +1000,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 16,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 13
+    "id" : 14
   }, {
     "type" : "stat",
     "title" : "Sahiplenilmemiş alarm",
@@ -990,9 +1068,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 20,
-      "y" : 9
+      "y" : 13
     },
-    "id" : 14
+    "id" : 15
   }, {
     "type" : "stat",
     "title" : "Sertifika ≤ 30 gün",
@@ -1058,9 +1136,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 0,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 15
+    "id" : 16
   }, {
     "type" : "stat",
     "title" : "Sertifika ≤ 7 gün",
@@ -1126,9 +1204,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 4,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 16
+    "id" : 17
   }, {
     "type" : "stat",
     "title" : "Süresi dolmuş",
@@ -1194,9 +1272,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 8,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 17
+    "id" : 18
   }, {
     "type" : "stat",
     "title" : "Alan adı ≤ 30 gün",
@@ -1262,9 +1340,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 12,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 18
+    "id" : 19
   }, {
     "type" : "stat",
     "title" : "Aktif fırtına",
@@ -1330,9 +1408,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 16,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 19
+    "id" : 20
   }, {
     "type" : "stat",
     "title" : "Kendi kendini izleme",
@@ -1434,9 +1512,9 @@
       "h" : 4,
       "w" : 4,
       "x" : 20,
-      "y" : 13
+      "y" : 17
     },
-    "id" : 20
+    "id" : 21
   }, {
     "type" : "piechart",
     "title" : "İzleme durumu dağılımı",
@@ -1591,9 +1669,9 @@
       "h" : 9,
       "w" : 6,
       "x" : 0,
-      "y" : 17
+      "y" : 21
     },
-    "id" : 21
+    "id" : 22
   }, {
     "type" : "barchart",
     "title" : "Türe göre durum",
@@ -1787,9 +1865,9 @@
       "h" : 9,
       "w" : 9,
       "x" : 6,
-      "y" : 17
+      "y" : 21
     },
-    "id" : 22
+    "id" : 23
   }, {
     "type" : "barchart",
     "title" : "Takıma göre durum",
@@ -1926,9 +2004,9 @@
       "h" : 9,
       "w" : 9,
       "x" : 15,
-      "y" : 17
+      "y" : 21
     },
-    "id" : 23
+    "id" : 24
   }, {
     "type" : "row",
     "title" : "Alarmlar",
@@ -1937,9 +2015,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 26
+      "y" : 30
     },
-    "id" : 24,
+    "id" : 25,
     "panels" : [ ]
   }, {
     "type" : "stat",
@@ -2006,9 +2084,9 @@
       "h" : 5,
       "w" : 4,
       "x" : 0,
-      "y" : 27
+      "y" : 31
     },
-    "id" : 25
+    "id" : 26
   }, {
     "type" : "stat",
     "title" : "En eski kritik / yüksek alarm",
@@ -2087,9 +2165,9 @@
       "h" : 5,
       "w" : 5,
       "x" : 4,
-      "y" : 27
+      "y" : 31
     },
-    "id" : 26
+    "id" : 27
   }, {
     "type" : "stat",
     "title" : "En eski açık alarm",
@@ -2163,9 +2241,9 @@
       "h" : 5,
       "w" : 5,
       "x" : 9,
-      "y" : 27
+      "y" : 31
     },
-    "id" : 27
+    "id" : 28
   }, {
     "type" : "stat",
     "title" : "Sahiplenme oranı",
@@ -2229,9 +2307,9 @@
       "h" : 5,
       "w" : 5,
       "x" : 14,
-      "y" : 27
+      "y" : 31
     },
-    "id" : 28
+    "id" : 29
   }, {
     "type" : "stat",
     "title" : "Fırtınadaki alarm",
@@ -2297,9 +2375,9 @@
       "h" : 5,
       "w" : 5,
       "x" : 19,
-      "y" : 27
+      "y" : 31
     },
-    "id" : 29
+    "id" : 30
   }, {
     "type" : "timeseries",
     "title" : "Açık alarmlar — seviyeye göre",
@@ -2447,9 +2525,9 @@
       "h" : 8,
       "w" : 12,
       "x" : 0,
-      "y" : 32
+      "y" : 36
     },
-    "id" : 30
+    "id" : 31
   }, {
     "type" : "timeseries",
     "title" : "Açık alarmlar — izleme türüne göre",
@@ -2606,9 +2684,9 @@
       "h" : 8,
       "w" : 12,
       "x" : 12,
-      "y" : 32
+      "y" : 36
     },
-    "id" : 31
+    "id" : 32
   }, {
     "type" : "table",
     "title" : "Takımlara göre açık alarmlar",
@@ -2931,9 +3009,9 @@
       "h" : 9,
       "w" : 14,
       "x" : 0,
-      "y" : 40
+      "y" : 44
     },
-    "id" : 32
+    "id" : 33
   }, {
     "type" : "bargauge",
     "title" : "Takımların en eski kritik / yüksek alarmı",
@@ -2995,9 +3073,9 @@
       "h" : 9,
       "w" : 10,
       "x" : 14,
-      "y" : 40
+      "y" : 44
     },
-    "id" : 33
+    "id" : 34
   }, {
     "type" : "table",
     "title" : "Açık alarm listesi",
@@ -3343,9 +3421,9 @@
       "h" : 11,
       "w" : 24,
       "x" : 0,
-      "y" : 49
+      "y" : 53
     },
-    "id" : 34
+    "id" : 35
   }, {
     "type" : "timeseries",
     "title" : "Sahiplenilen / sahiplenilmeyen alarmlar",
@@ -3447,9 +3525,9 @@
       "h" : 7,
       "w" : 12,
       "x" : 0,
-      "y" : 60
+      "y" : 64
     },
-    "id" : 35
+    "id" : 36
   }, {
     "type" : "bargauge",
     "title" : "Alarm tiplerine göre (şu an)",
@@ -3508,9 +3586,9 @@
       "h" : 7,
       "w" : 12,
       "x" : 12,
-      "y" : 60
+      "y" : 64
     },
-    "id" : 36
+    "id" : 37
   }, {
     "type" : "bargauge",
     "title" : "Kuruluş geneli açık alarmlar",
@@ -3655,9 +3733,9 @@
       "h" : 5,
       "w" : 24,
       "x" : 0,
-      "y" : 67
+      "y" : 71
     },
-    "id" : 37
+    "id" : 38
   }, {
     "type" : "row",
     "title" : "İzleme durumu",
@@ -3666,9 +3744,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 72
+      "y" : 76
     },
-    "id" : 38,
+    "id" : 39,
     "panels" : [ ]
   }, {
     "type" : "table",
@@ -4294,9 +4372,9 @@
       "h" : 13,
       "w" : 24,
       "x" : 0,
-      "y" : 73
+      "y" : 77
     },
-    "id" : 39
+    "id" : 40
   }, {
     "type" : "state-timeline",
     "title" : "Sorun yaşayan izlemeler — durum zaman çizelgesi",
@@ -4360,7 +4438,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "max by (type, monitor, monitor_id) (sitemonitor_monitor_state{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"}) and on (type, monitor_id) max by (type, monitor_id) (max_over_time(((sitemonitor_monitor_state{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"} > 0) < 3)[$__range:$__interval]))",
+      "expr" : "max by (type, monitor, monitor_id) (sitemonitor_monitor_state{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"}) and on (type, monitor_id) max by (type, monitor_id) (max_over_time(((sitemonitor_monitor_state{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"} > 0) < 3)[$__range:$__interval] @ end()))",
       "instant" : false,
       "legendFormat" : "{{monitor}} · {{type}}",
       "range" : true,
@@ -4388,9 +4466,9 @@
       "h" : 10,
       "w" : 24,
       "x" : 0,
-      "y" : 86
+      "y" : 90
     },
-    "id" : 40
+    "id" : 41
   }, {
     "type" : "timeseries",
     "title" : "Yanıt süresi — en yavaş $topn izleme",
@@ -4462,9 +4540,9 @@
       "h" : 9,
       "w" : 12,
       "x" : 0,
-      "y" : 96
+      "y" : 100
     },
-    "id" : 41
+    "id" : 42
   }, {
     "type" : "bargauge",
     "title" : "En düşük erişilebilirlik (seçili aralık)",
@@ -4536,9 +4614,9 @@
       "h" : 9,
       "w" : 12,
       "x" : 12,
-      "y" : 96
+      "y" : 100
     },
-    "id" : 42
+    "id" : 43
   }, {
     "type" : "bargauge",
     "title" : "Kontrolü en uzun süredir koşmayanlar",
@@ -4603,9 +4681,9 @@
       "h" : 9,
       "w" : 12,
       "x" : 0,
-      "y" : 105
+      "y" : 109
     },
-    "id" : 43
+    "id" : 44
   }, {
     "type" : "timeseries",
     "title" : "Ortalama yanıt süresi — türe göre",
@@ -4762,9 +4840,9 @@
       "h" : 9,
       "w" : 12,
       "x" : 12,
-      "y" : 105
+      "y" : 109
     },
-    "id" : 44
+    "id" : 45
   }, {
     "type" : "timeseries",
     "title" : "Durum sayıları zaman içinde",
@@ -4935,9 +5013,9 @@
       "h" : 8,
       "w" : 12,
       "x" : 0,
-      "y" : 114
+      "y" : 118
     },
-    "id" : 45
+    "id" : 46
   }, {
     "type" : "bargauge",
     "title" : "Türe göre 24 sa başarı oranı",
@@ -5094,9 +5172,9 @@
       "h" : 8,
       "w" : 12,
       "x" : 12,
-      "y" : 114
+      "y" : 118
     },
-    "id" : 46
+    "id" : 47
   }, {
     "type" : "timeseries",
     "title" : "Düşük izlemeler — takıma göre",
@@ -5163,9 +5241,9 @@
       "h" : 8,
       "w" : 12,
       "x" : 0,
-      "y" : 122
+      "y" : 126
     },
-    "id" : 47
+    "id" : 48
   }, {
     "type" : "timeseries",
     "title" : "24 sa kontrol hacmi — türe göre",
@@ -5243,9 +5321,9 @@
       "h" : 8,
       "w" : 24,
       "x" : 0,
-      "y" : 130
+      "y" : 134
     },
-    "id" : 48
+    "id" : 49
   }, {
     "type" : "row",
     "title" : "Sertifikalar ve alan adları",
@@ -5254,9 +5332,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 138
+      "y" : 142
     },
-    "id" : 49,
+    "id" : 50,
     "panels" : [ {
       "type" : "stat",
       "title" : "İzlenen sertifika",
@@ -5319,9 +5397,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 50
+      "id" : 51
     }, {
       "type" : "stat",
       "title" : "Geçerli",
@@ -5379,9 +5457,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 51
+      "id" : 52
     }, {
       "type" : "stat",
       "title" : "Uyarı / yüksek / kritik",
@@ -5447,9 +5525,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 52
+      "id" : 53
     }, {
       "type" : "stat",
       "title" : "Kontrol hatası",
@@ -5510,9 +5588,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 53
+      "id" : 54
     }, {
       "type" : "stat",
       "title" : "A / A+ notu",
@@ -5576,9 +5654,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 54
+      "id" : 55
     }, {
       "type" : "stat",
       "title" : "Süresi dolmuş",
@@ -5644,9 +5722,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 139
+        "y" : 143
       },
-      "id" : 55
+      "id" : 56
     }, {
       "type" : "piechart",
       "title" : "Sertifika durumu",
@@ -5824,9 +5902,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 0,
-        "y" : 143
+        "y" : 147
       },
-      "id" : 56
+      "id" : 57
     }, {
       "type" : "barchart",
       "title" : "TLS yapılandırma notları",
@@ -5919,9 +5997,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 8,
-        "y" : 143
+        "y" : 147
       },
-      "id" : 57
+      "id" : 58
     }, {
       "type" : "timeseries",
       "title" : "Bitişe kalan süre kovaları",
@@ -6092,9 +6170,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 16,
-        "y" : 143
+        "y" : 147
       },
-      "id" : 58
+      "id" : 59
     }, {
       "type" : "bargauge",
       "title" : "En yakında dolacak $topn sertifika",
@@ -6167,9 +6245,9 @@
         "h" : 10,
         "w" : 10,
         "x" : 0,
-        "y" : 152
+        "y" : 156
       },
-      "id" : 59
+      "id" : 60
     }, {
       "type" : "table",
       "title" : "30 gün içinde dolan sertifikalar",
@@ -6554,9 +6632,9 @@
         "h" : 10,
         "w" : 14,
         "x" : 10,
-        "y" : 152
+        "y" : 156
       },
-      "id" : 60
+      "id" : 61
     }, {
       "type" : "bargauge",
       "title" : "Kaydı en yakında bitecek $topn alan adı",
@@ -6629,9 +6707,9 @@
         "h" : 9,
         "w" : 10,
         "x" : 0,
-        "y" : 162
+        "y" : 166
       },
-      "id" : 61
+      "id" : 62
     }, {
       "type" : "table",
       "title" : "60 gün içinde bitecek alan adı kayıtları",
@@ -6803,9 +6881,9 @@
         "h" : 9,
         "w" : 14,
         "x" : 10,
-        "y" : 162
+        "y" : 166
       },
-      "id" : 62
+      "id" : 63
     }, {
       "type" : "timeseries",
       "title" : "Alan adı kaydı kovaları",
@@ -6976,9 +7054,9 @@
         "h" : 8,
         "w" : 24,
         "x" : 0,
-        "y" : 171
+        "y" : 175
       },
-      "id" : 63
+      "id" : 64
     } ]
   }, {
     "type" : "row",
@@ -6988,9 +7066,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 179
+      "y" : 183
     },
-    "id" : 64,
+    "id" : 65,
     "panels" : [ {
       "type" : "stat",
       "title" : "E-posta gönderildi (24 sa)",
@@ -7048,9 +7126,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 65
+      "id" : 66
     }, {
       "type" : "stat",
       "title" : "E-posta başarısız (24 sa)",
@@ -7111,9 +7189,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 66
+      "id" : 67
     }, {
       "type" : "stat",
       "title" : "Webhook başarısız (24 sa)",
@@ -7174,9 +7252,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 67
+      "id" : 68
     }, {
       "type" : "stat",
       "title" : "Push başarısız (24 sa)",
@@ -7237,9 +7315,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 68
+      "id" : 69
     }, {
       "type" : "stat",
       "title" : "Push kuyruğu",
@@ -7311,9 +7389,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 69
+      "id" : 70
     }, {
       "type" : "stat",
       "title" : "Push devre kesici",
@@ -7389,9 +7467,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 180
+        "y" : 184
       },
-      "id" : 70
+      "id" : 71
     }, {
       "type" : "stat",
       "title" : "Push kanalı",
@@ -7467,9 +7545,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 184
+        "y" : 188
       },
-      "id" : 71
+      "id" : 72
     }, {
       "type" : "timeseries",
       "title" : "E-posta bildirimleri (son 24 sa, kayan)",
@@ -7617,9 +7695,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 4,
-        "y" : 184
+        "y" : 188
       },
-      "id" : 72
+      "id" : 73
     }, {
       "type" : "bargauge",
       "title" : "Tetiğe göre bildirimler (24 sa)",
@@ -7678,9 +7756,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 192
+        "y" : 196
       },
-      "id" : 73
+      "id" : 74
     }, {
       "type" : "table",
       "title" : "Başarısız bildirimler — tetik ve kanal",
@@ -7785,9 +7863,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 192
+        "y" : 196
       },
-      "id" : 74
+      "id" : 75
     }, {
       "type" : "timeseries",
       "title" : "Push teslimleri (son 24 sa, kayan)",
@@ -7958,9 +8036,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 200
+        "y" : 204
       },
-      "id" : 75
+      "id" : 76
     }, {
       "type" : "timeseries",
       "title" : "Aktif fırtınalar ve üyeleri — takıma göre",
@@ -8043,9 +8121,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 200
+        "y" : 204
       },
-      "id" : 76
+      "id" : 77
     }, {
       "type" : "stat",
       "title" : "Aktif fırtına (tüm takımlar)",
@@ -8111,9 +8189,9 @@
         "h" : 4,
         "w" : 12,
         "x" : 0,
-        "y" : 208
+        "y" : 212
       },
-      "id" : 77
+      "id" : 78
     } ]
   }, {
     "type" : "row",
@@ -8123,9 +8201,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 212
+      "y" : 216
     },
-    "id" : 78,
+    "id" : 79,
     "panels" : [ {
       "type" : "stat",
       "title" : "Ayakta pod",
@@ -8202,9 +8280,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 79
+      "id" : 80
     }, {
       "type" : "stat",
       "title" : "Sürüm",
@@ -8262,9 +8340,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 80
+      "id" : 81
     }, {
       "type" : "stat",
       "title" : "En yeni başlatma",
@@ -8325,9 +8403,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 81
+      "id" : 82
     }, {
       "type" : "stat",
       "title" : "Tarama lideri",
@@ -8391,9 +8469,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 82
+      "id" : 83
     }, {
       "type" : "stat",
       "title" : "Veritabanı",
@@ -8477,9 +8555,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 83
+      "id" : 84
     }, {
       "type" : "stat",
       "title" : "Sistem bakımı",
@@ -8579,9 +8657,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 213
+        "y" : 217
       },
-      "id" : 84
+      "id" : 85
     }, {
       "type" : "state-timeline",
       "title" : "Kendi kendini izleme kontrolleri",
@@ -8678,9 +8756,9 @@
         "h" : 8,
         "w" : 16,
         "x" : 0,
-        "y" : 217
+        "y" : 221
       },
-      "id" : 85
+      "id" : 86
     }, {
       "type" : "stat",
       "title" : "Son değerlendirme",
@@ -8744,9 +8822,9 @@
         "h" : 4,
         "w" : 8,
         "x" : 16,
-        "y" : 217
+        "y" : 221
       },
-      "id" : 86
+      "id" : 87
     }, {
       "type" : "stat",
       "title" : "Şema yaması hatası",
@@ -8807,9 +8885,9 @@
         "h" : 4,
         "w" : 8,
         "x" : 0,
-        "y" : 225
+        "y" : 229
       },
-      "id" : 87
+      "id" : 88
     }, {
       "type" : "timeseries",
       "title" : "Tarama liderliği kirası",
@@ -8887,9 +8965,9 @@
         "h" : 7,
         "w" : 12,
         "x" : 8,
-        "y" : 225
+        "y" : 229
       },
-      "id" : 88
+      "id" : 89
     }, {
       "type" : "table",
       "title" : "Tutulan zamanlayıcı kilitleri",
@@ -8970,9 +9048,9 @@
         "h" : 7,
         "w" : 12,
         "x" : 0,
-        "y" : 232
+        "y" : 236
       },
-      "id" : 89
+      "id" : 90
     }, {
       "type" : "stat",
       "title" : "Saklama işi",
@@ -9036,9 +9114,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 12,
-        "y" : 232
+        "y" : 236
       },
-      "id" : 90
+      "id" : 91
     }, {
       "type" : "stat",
       "title" : "Saklama hatası",
@@ -9099,9 +9177,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 18,
-        "y" : 232
+        "y" : 236
       },
-      "id" : 91
+      "id" : 92
     }, {
       "type" : "stat",
       "title" : "Aktarıcı tazeliği",
@@ -9165,9 +9243,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 0,
-        "y" : 239
+        "y" : 243
       },
-      "id" : 92
+      "id" : 93
     }, {
       "type" : "stat",
       "title" : "Okunamayan kaynak",
@@ -9228,9 +9306,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 6,
-        "y" : 239
+        "y" : 243
       },
-      "id" : 93
+      "id" : 94
     }, {
       "type" : "timeseries",
       "title" : "En büyük tablolar",
@@ -9297,9 +9375,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 239
+        "y" : 243
       },
-      "id" : 94
+      "id" : 95
     }, {
       "type" : "timeseries",
       "title" : "Ölçüm aktarıcısı",
@@ -9410,9 +9488,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 247
+        "y" : 251
       },
-      "id" : 95
+      "id" : 96
     } ]
   }, {
     "type" : "row",
@@ -9422,9 +9500,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 255
+      "y" : 259
     },
-    "id" : 96,
+    "id" : 97,
     "panels" : [ {
       "type" : "timeseries",
       "title" : "HTTP istek hızı",
@@ -9467,7 +9545,7 @@
           "uid" : "${datasource}"
         },
         "editorMode" : "code",
-        "expr" : "sum by (outcome) (rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics|/health.*\"}[5m]))",
+        "expr" : "sum by (outcome) (rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics.*|/health.*\"}[5m]))",
         "instant" : false,
         "legendFormat" : "{{outcome}}",
         "range" : true,
@@ -9491,9 +9569,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 256
+        "y" : 260
       },
-      "id" : 97
+      "id" : 98
     }, {
       "type" : "timeseries",
       "title" : "API gecikmesi (p50 / p95 / p99)",
@@ -9582,9 +9660,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 256
+        "y" : 260
       },
-      "id" : 98
+      "id" : 99
     }, {
       "type" : "stat",
       "title" : "5xx oranı (5 dk)",
@@ -9623,7 +9701,7 @@
           "uid" : "${datasource}"
         },
         "editorMode" : "code",
-        "expr" : "sum(rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics|/health.*\", outcome=\"SERVER_ERROR\"}[5m])) / (sum(rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics|/health.*\"}[5m])) > 0)",
+        "expr" : "sum(rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics.*|/health.*\", outcome=\"SERVER_ERROR\"}[5m])) / (sum(rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics.*|/health.*\"}[5m])) > 0)",
         "instant" : false,
         "legendFormat" : "__auto",
         "range" : true,
@@ -9649,9 +9727,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 16,
-        "y" : 256
+        "y" : 260
       },
-      "id" : 99
+      "id" : 100
     }, {
       "type" : "stat",
       "title" : "≤ 500 ms API isteği",
@@ -9716,9 +9794,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 20,
-        "y" : 256
+        "y" : 260
       },
-      "id" : 100
+      "id" : 101
     }, {
       "type" : "timeseries",
       "title" : "En yoğun uçlar",
@@ -9761,7 +9839,7 @@
           "uid" : "${datasource}"
         },
         "editorMode" : "code",
-        "expr" : "topk(10, sum by (method, uri) (rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics|/health.*\"}[5m])))",
+        "expr" : "topk(10, sum by (method, uri) (rate(http_server_requests_seconds_count{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", uri!~\"/metrics.*|/health.*\"}[5m])))",
         "instant" : false,
         "legendFormat" : "{{method}} {{uri}}",
         "range" : true,
@@ -9785,9 +9863,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 264
+        "y" : 268
       },
-      "id" : 101
+      "id" : 102
     }, {
       "type" : "timeseries",
       "title" : "En yavaş uçlar (ortalama)",
@@ -9854,9 +9932,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 264
+        "y" : 268
       },
-      "id" : 102
+      "id" : 103
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (heap)",
@@ -9934,9 +10012,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 272
+        "y" : 276
       },
-      "id" : 103
+      "id" : 104
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (non-heap)",
@@ -10003,9 +10081,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 272
+        "y" : 276
       },
-      "id" : 104
+      "id" : 105
     }, {
       "type" : "timeseries",
       "title" : "GC duraklaması",
@@ -10072,9 +10150,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 272
+        "y" : 276
       },
-      "id" : 105
+      "id" : 106
     }, {
       "type" : "timeseries",
       "title" : "CPU",
@@ -10152,9 +10230,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 280
+        "y" : 284
       },
-      "id" : 106
+      "id" : 107
     }, {
       "type" : "timeseries",
       "title" : "İş parçacıkları",
@@ -10221,9 +10299,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 280
+        "y" : 284
       },
-      "id" : 107
+      "id" : 108
     }, {
       "type" : "timeseries",
       "title" : "Günlük uyarı / hata hızı",
@@ -10290,9 +10368,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 280
+        "y" : 284
       },
-      "id" : 108
+      "id" : 109
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı bağlantı havuzu",
@@ -10392,9 +10470,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 288
+        "y" : 292
       },
-      "id" : 109
+      "id" : 110
     }, {
       "type" : "timeseries",
       "title" : "Bağlantı alma süresi",
@@ -10472,9 +10550,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 288
+        "y" : 292
       },
-      "id" : 110
+      "id" : 111
     }, {
       "type" : "timeseries",
       "title" : "Kontrol iş havuzu",
@@ -10563,9 +10641,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 296
+        "y" : 300
       },
-      "id" : 111
+      "id" : 112
     }, {
       "type" : "timeseries",
       "title" : "Sentetik (k6) koşucu",
@@ -10665,9 +10743,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 296
+        "y" : 300
       },
-      "id" : 112
+      "id" : 113
     }, {
       "type" : "timeseries",
       "title" : "Önbellek isabet oranı",
@@ -10734,9 +10812,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 304
+        "y" : 308
       },
-      "id" : 113
+      "id" : 114
     } ]
   } ],
   "refresh" : "1m",
@@ -11002,6 +11080,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 1,
+  "version" : 2,
   "weekStart" : "monday"
 }
