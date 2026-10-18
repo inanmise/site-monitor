@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   ANALYTICS_KEYS, DEFAULT_MONTHS, LINE_STYLES, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, adoptedFields, buildChart, channelCards,
-  csvFileName, csvTable, fieldOptions, fieldUnitLabel, filterKey, formatCell, isDefaultFilter, isLonePoint, lineStyle,
-  monthFullLabel, monthShortLabel, niceStep, normalizeMonths, normalizeTeam, parseFieldsParam, reportAt, requestParams,
+  csvFileName, csvTable, fieldOptions, fieldUnitLabel, filterKey, formatCell, isDefaultFilter, isInactiveChannel, isLonePoint,
+  lineStyle, monthFullLabel, monthShortLabel, niceStep, normalizeMonths, normalizeTeam, parseFieldsParam, reportAt, requestParams,
   seriesOf, serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from '../components/techerror/analytics/analyticsModel.js'
 import { toCsv } from '../utils/csvExport.js'
@@ -282,6 +282,36 @@ describe('seriler, grafik ve tablo', () => {
     const cards = channelCards(d, { id: 'total-tx', type: 'number' }, 'tr')
     expect(cards.find((c) => c.id === 11).mismatch).toBe(true)
     expect(cards.find((c) => c.id === 12).mismatch).toBe(false)
+  })
+
+  it('pasif kanal (2026-10-18): yalnız active === false pasif — grafikte (gizli listede de), kartlarda işaretli, CSV başlığına etiket; eski sunucu (alan yok) aktif', () => {
+    const d = data(10)
+    d.channels[8].active = false                                       // sunucu pasifleri aktiflerin ARDINDAN gönderir
+    d.channels[9].active = false
+    d.channels[0].active = true
+    expect(isInactiveChannel(d.channels[8])).toBe(true)
+    expect(isInactiveChannel(d.channels[0])).toBe(false)
+    expect(isInactiveChannel(d.channels[1])).toBe(false)               // alan yok → aktif (eski sunucu)
+    expect(isInactiveChannel({ active: null })).toBe(false)
+    expect(isInactiveChannel(null)).toBe(false)
+    const chart = buildChart(d, 'total-tx')
+    expect(chart.series.map((s) => s.inactive)).toEqual(Array(8).fill(false))
+    expect(chart.hidden.map((h) => [h.id, h.inactive])).toEqual([[18, true], [19, true]])   // sıra korunur
+    const cards = channelCards(d, { id: 'total-tx', type: 'number' }, 'tr')
+    expect(cards.map((c) => c.inactive)).toEqual([...Array(8).fill(false), true, true])
+    const field = { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' }
+    const { headers } = csvTable(d, field, 'tr', 'Ay', '(pasif)')
+    expect(headers[1]).toBe('Kanal 0 (Dijital Kanallar)')
+    expect(headers[9]).toBe('Kanal 8 (Dijital Kanallar) (pasif)')
+    expect(headers[10]).toBe('Kanal 9 (Dijital Kanallar) (pasif)')
+    // Takımsız kanal ve etiket verilmeyen çağrı
+    d.channels[9].team_name = null
+    expect(csvTable(d, field, 'en', 'Month', '(inactive)').headers[10]).toBe('Kanal 9 (inactive)')
+    expect(csvTable(d, field, 'tr', 'Ay').headers[10]).toBe('Kanal 9')
+    // Eski sunucu: hiçbir kanalda alan yok → hiç işaret yok
+    const old = data(3)
+    expect(buildChart(old, 'total-tx').series.some((s) => s.inactive)).toBe(false)
+    expect(csvTable(old, field, 'tr', 'Ay', '(pasif)').headers.some((h) => h.includes('(pasif)'))).toBe(false)
   })
 
   it('ay etiketleri arayüz dilinde', () => {

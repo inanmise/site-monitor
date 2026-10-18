@@ -214,8 +214,9 @@ public class TechErrorReportController {
     // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────────
 
     /**
-     * Takımın (ya da okunabilen bütün takımların) AKTİF kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24
-     * BİTMİŞ ayı (önceki takvim ayıyla biter, İstanbul). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
+     * Takımın (ya da okunabilen bütün takımların) kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24 BİTMİŞ
+     * ayı (önceki takvim ayıyla biter, İstanbul): aktif kanallar her zaman, pasif kanallar yalnız penceresinde raporu varsa
+     * (aktiflerin ardından, satırda {@code active: false}; 2026-10-18 kullanıcı kararı). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
      * görünürlüğü uygulanır); okunamayan takım 404. Değerler raporların KENDİ şablonundan, aynı kimlik ve aynı türle;
      * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar (oran / değişim) rapor ekranı ve PDF gibi CANLI
      * hesaplanır (geçen ay düzeltildiyse analiz de güncel). {@code fresh=1} (Yenile) belleği en fazla 5 sn'de bir atlar.
@@ -297,6 +298,9 @@ public class TechErrorReportController {
             cm.put("name", s.name());
             cm.put("team_id", s.teamId());
             cm.put("team_name", names.get(s.teamId()));
+            // Pasif kanal (2026-10-18, kullanıcı kararı): yalnız penceresinde raporu varsa listelenir, aktiflerin ardından —
+            // arayüz "Pasif" rozeti gösterir (eski sunucuda alan yok → aktif sayılır)
+            cm.put("active", s.active());
             cm.put("points", new LinkedHashMap<>(s.values()));
             List<Map<String, Object>> reps = new ArrayList<>();
             for (TechErrorAnalyticsService.ReportRef rr : s.reports()) {
@@ -315,7 +319,8 @@ public class TechErrorReportController {
         data.put("channel_count", res.channelCount());
         data.put("truncated", res.truncated());
         List<Map<String, Object>> teamRows = new ArrayList<>();
-        // Takım seçici: aktif kanalı olan okunabilen takımlar; seçili takımın aktif kanalı yoksa o da listede (seçim boş görünmesin)
+        // Takım seçici: aktif kanalı ya da penceresinde raporu olan pasif kanalı bulunan okunabilen takımlar; seçili takım
+        // listede değilse o da eklenir (seçim boş görünmesin)
         List<Long> pickable = new ArrayList<>(res.teamsWithChannels());
         if (teamFilter != null && !pickable.contains(teamFilter)) pickable.add(teamFilter);
         for (Long id : pickable) {

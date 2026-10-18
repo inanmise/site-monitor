@@ -361,6 +361,7 @@ let analyticsCalls = []         // Kanal analizi istekleri (2026-10-18, R22): UR
 // Kanal analizi (2026-10-18, R22) — sunucu yanıtı isteğin ay sayısı ve alanlarıyla kurulur. Uzun kanal / takım adları,
 // boşluklu seri (iki ay boş), yalnız TEK değeri olan kanal (nokta), gönderilmemiş ay.
 const LONG_CHANNEL_2 = 'Kurumsal İnternet Şubesi ve Nakit Yönetimi Ortak Kanalı (Kurumsal Bankacılık / Dijital Kanallar)'
+const LONG_INACTIVE_CHANNEL = 'Eski Bireysel Mobil Bankacılık ve Kart Ödemeleri Ortak Kanalı (Dijital Kanallar / Kapatıldı Ağustos 2026)'
 const AN_FIELDS = {
   'error-rate': { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' },
   'total-tx': { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
@@ -380,9 +381,13 @@ function analyticsBody(params) {
     'sla-rate': months.map(() => null),
   })
   const reps = (base, unsent) => months.map((_, i) => ({ id: i === last && base === 700 ? 100 : base + i, sent: i !== unsent }))
-  const ch = (id, name, teamId, teamName, kind, base) => ({
-    id, name, team_id: teamId, team_name: teamName, points: Object.fromEntries(ids.map((f) => [f, pts(kind)[f]])),
-    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null)) : reps(base, last),
+  // Pasif kanal (2026-10-18): yalnız eski aylarda raporu var (pasife alınmadan önce), aktiflerin ardında, `active: false`
+  const pastIdx = (i) => i <= last - 3 && i >= last - 5
+  const ch = (id, name, teamId, teamName, kind, base, active = true) => ({
+    id, name, team_id: teamId, team_name: teamName, active,
+    points: Object.fromEntries(ids.map((f) => [f, kind === 'past' ? pts('full')[f].map((v, i) => (pastIdx(i) ? v : null)) : pts(kind)[f]])),
+    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null))
+      : kind === 'past' ? months.map((_, i) => (pastIdx(i) ? { id: base + i, sent: true } : null)) : reps(base, last),
   })
   return {
     team: params.get('team') || 'all', months_requested: n, months, end: { year: 2026, month: 9 },
@@ -396,8 +401,9 @@ function analyticsBody(params) {
       ch(10, LONG_CHANNEL, 5, LONG_TEAM, 'gaps', 700),
       ch(20, 'POS', 5, LONG_TEAM, 'full', 800),
       ch(30, LONG_CHANNEL_2, 6, 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi', 'lone', 900),
+      ch(40, LONG_INACTIVE_CHANNEL, 5, LONG_TEAM, 'past', 950, false),
     ],
-    channel_count: 3, truncated: false,
+    channel_count: 4, truncated: false,
     teams: [{ id: 5, name: LONG_TEAM }, { id: 6, name: 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi' }],
     month_choices: [6, 12, 24], max_fields: 4,
   }
@@ -2043,17 +2049,42 @@ for (const vp of VIEWPORTS) {
       await expect(rate.locator('.recharts-line-curve').first()).toBeVisible()
       expect(await rate.locator('.recharts-line-curve').count(), 'çizgi sayısı').toBeGreaterThanOrEqual(2)
       await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
-      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(3)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(4)
       await expect(rate.locator('[data-slot="te-an-legend"]')).toContainText(LONG_CHANNEL)
+      // Pasif kanal (2026-10-18): aktiflerin ARDINDA, uzun adının yanında "Pasif" rozeti (anahtarda, tabloda / kartta)
+      const inactiveLegend = rate.locator('[data-slot="te-an-legend-item"][data-inactive="true"]')
+      await expect(inactiveLegend).toHaveCount(1)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]').last()).toHaveAttribute('data-inactive', 'true')
+      await expect(inactiveLegend).toContainText(LONG_INACTIVE_CHANNEL)
+      await expect(inactiveLegend.locator('[data-slot="te-an-inactive"]')).toBeVisible()
+      await expect(inactiveLegend.locator('[data-slot="te-an-inactive"]')).toHaveText(/^(Pasif|Inactive)$/)
       // Kap genişliği: geniş ekranda ay × kanal tablosu, dar ekranda kanal kartları
       const wrap = rate.locator('[data-slot="te-an-table-wrap"]')
       await expect(wrap).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+      let inactiveHolder
       if (vp.width >= 1280) {
         await expect(rate.locator('[data-slot="te-an-row"]')).toHaveCount(12)
         await expect(rate.locator('[data-slot="te-an-row"]').first()).toHaveAttribute('data-month', '2026-9')
+        inactiveHolder = rate.locator('[data-slot="te-an-table"] th[data-inactive="true"]')
+        await expect(rate.locator('[data-slot="te-an-table"] th[data-channel]').last()).toHaveAttribute('data-channel', '40')
       } else {
-        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(3)
+        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(4)
         await expect(rate.locator('[data-slot="te-an-card"]').first()).toContainText(LONG_CHANNEL)
+        inactiveHolder = rate.locator('[data-slot="te-an-card"][data-inactive="true"]')
+        await expect(rate.locator('[data-slot="te-an-card"]').last()).toHaveAttribute('data-inactive', 'true')
+      }
+      await expect(inactiveHolder).toHaveCount(1)
+      await expect(inactiveHolder).toContainText(LONG_INACTIVE_CHANNEL)
+      await expect(inactiveHolder.locator('[data-slot="te-an-inactive"]')).toBeVisible()
+      // Pasif kanalın geçmiş ayı rapor bağlantısı; rozet kabının içinde kalır (taşmaz, kırpılmaz)
+      await expect(rate.locator('[data-slot="te-an-cell"][data-report="956"]')).toHaveCount(1)
+      for (const holder of [inactiveLegend, inactiveHolder]) {
+        const box = await holder.boundingBox()
+        const badge = await holder.locator('[data-slot="te-an-inactive"]').boundingBox()
+        expect(badge.x, 'rozet solda taşmaz').toBeGreaterThanOrEqual(box.x - 1)
+        expect(badge.x + badge.width, 'rozet sağda taşmaz').toBeLessThanOrEqual(box.x + box.width + 1)
+        const el = holder.locator('[data-slot="te-an-inactive"]')
+        expect(await el.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'rozet metni kırpılmaz').toBe(true)
       }
       // Boş ay "—"; gönderilmemiş ay soluk (adında "gönderilmedi")
       const unsent = rate.locator('[data-slot="te-an-cell"][data-report="100"]')

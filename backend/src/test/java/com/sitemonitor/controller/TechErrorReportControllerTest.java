@@ -1512,6 +1512,28 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("analiz (2026-10-18, pasif kanallar): kanal satırı active taşır — aktif true, penceresinde raporu olan pasif false (aktiflerin ardında)")
+    void analytics_channelActiveFlag() throws Exception {
+        var base = analyticsResult();
+        var ch = base.channels().get(0);
+        var passive = new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(11L, "Eski Kanal", A, false,
+                ch.values(), ch.reports());
+        var res = new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(base.months(), 12, base.fields(),
+                base.available(), List.of(ch, passive), 2, false, List.of(A));
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(res);
+        mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.channels.length()").value(2))
+                .andExpect(jsonPath("$.data.channels[0].id").value(10))
+                .andExpect(jsonPath("$.data.channels[0].active").value(true))
+                .andExpect(jsonPath("$.data.channels[1].id").value(11))
+                .andExpect(jsonPath("$.data.channels[1].name").value("Eski Kanal"))
+                .andExpect(jsonPath("$.data.channels[1].active").value(false))
+                .andExpect(jsonPath("$.data.channels[1].points['total-tx'][11]").value(1_250_000d))
+                .andExpect(jsonPath("$.data.channel_count").value(2));
+    }
+
+    @Test
     @DisplayName("analiz: takım süzgeci yalnız okunabilen takım (başka takım / bozuk kimlik 404); AUDIT her takımı okur; alan ve ay parametreleri iletilir")
     void analytics_teamFilter() throws Exception {
         when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
