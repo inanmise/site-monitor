@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T17:54:43Z",
+  "generatedAt": "2026-10-18T20:07:04Z",
   "repo": "inanmise/site-monitor",
-  "count": 778,
+  "count": 779,
   "releases": [
+    {
+      "version": "20.161.0",
+      "tag": "v20.161.0",
+      "releasedAt": "2026-10-18T20:06:58Z",
+      "commit": "eabe6c29e9cf4bcb10525816bd8355211cd535d9",
+      "prevVersion": "20.160.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "eabe6c29",
+          "subject": "konu akordiyonu ve son inceleme takipleri — CLAUDE.md, kılavuz TR / EN satırı, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a52623c3",
+          "subject": "görsel yüklemesinde kilit çakışması aynı dosyayla bir kez yeniden denenir ve görsel bekletilir, kuyruktan teslim edilen onay gönderimi isteyene ikinci push göndermez, panelde silinen konu görselinin …"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "63846f74",
+          "subject": "anomali konuları akordeon gibi açılıp kapanır — var olan konular kapalı, başlıkta özet çipleri, yeni konu açık ve odakta, hatalı konu kendiliğinden açılır, tüm konuları aç / kapat"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.160.0",
       "tag": "v20.160.0",
