@@ -13536,7 +13536,7 @@ export const EN = {
   'scripted.scriptCopied': 'Copied',
   'scripted.env': 'Environment Variables', 'scripted.envName': 'NAME', 'scripted.envValue': 'value', 'scripted.envSecret': 'Secret',
   'scripted.envSecretSet': '•••• (configured — leave blank to keep)', 'scripted.envSecretEmpty': 'secret value', 'scripted.envAdd': 'Add Variable',
-  'scripted.envHint': 'Secret values are stored encrypted and never appear as plaintext in lists, the form, output or logs. Only a global administrator or the administrator who manages the monitor’s team can view a saved value.',
+  'scripted.envHint': 'Secret values are stored encrypted: lists and the form never show them as plaintext, and the value itself is masked in output and logs. Anyone who can edit and run the script can still read the value from inside the script, so use secrets only in monitors that people you trust can edit. Only a global administrator or the administrator who manages the monitor’s team can view a saved value on screen.',
   // Reveal a secret value (2026-10-19): global admin / the team's managing admin only, 30 s, audited
   'scripted.envRevealHint': 'As an administrator you can see a saved secret value for 30 seconds with the eye button on its row. Every reveal is written to the audit log (the value itself is not).',
   'scripted.revealShow': 'Show', 'scripted.revealHide': 'Hide',

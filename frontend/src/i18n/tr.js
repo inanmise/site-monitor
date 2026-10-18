@@ -13565,7 +13565,7 @@ export const TR = {
   'scripted.scriptCopied': 'Kopyalandı',
   'scripted.env': 'Ortam Değişkenleri', 'scripted.envName': 'AD', 'scripted.envValue': 'değer', 'scripted.envSecret': 'Gizli',
   'scripted.envSecretSet': '•••• (ayarlı — değişmezse boş bırakın)', 'scripted.envSecretEmpty': 'gizli değer', 'scripted.envAdd': 'Değişken Ekle',
-  'scripted.envHint': 'Gizli (secret) değerler şifreli saklanır; listede, formda, çıktıda ve günlüklerde düz metin görünmez. Kayıtlı değeri yalnız global yönetici ve izlemenin takımını yöneten yönetici görebilir.',
+  'scripted.envHint': 'Gizli (secret) değerler şifreli saklanır; listede ve formda düz metin gösterilmez, çıktıda ve günlüklerde değerin kendisi maskelenir. Scripti düzenleyip çalıştırabilen biri değeri script içinden okuyabilir; gizli değeri yalnız güvendiğiniz kişilerin düzenleyebildiği izlemelerde kullanın. Kayıtlı değeri ekranda yalnız global yönetici ve izlemenin takımını yöneten yönetici görebilir.',
   // Gizli değeri göster (2026-10-19): yalnız global yönetici / takımı yöneten yönetici, 30 sn, denetlenir
   'scripted.envRevealHint': 'Yönetici olarak kayıtlı bir gizli değeri satırındaki göz düğmesiyle 30 saniyeliğine görebilirsiniz. Her gösterim denetim kaydına yazılır (değerin kendisi yazılmaz).',
   'scripted.revealShow': 'Göster', 'scripted.revealHide': 'Gizle',
