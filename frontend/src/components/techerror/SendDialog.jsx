@@ -25,7 +25,8 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  *
  * `initialCc` (inceleme 2026-10-18, 4. tur): pencere AÇILIRKEN alana yazılan değer (yoksa boş). Sonucu bilinmeyen gönderimden
  * sonra pencere kapatılıp yeniden açılırsa çağıran o denemenin ek Bilgi'sini verir — bant "ek Bilgi korundu" der; eskiden
- * alan boş açılıyor, "Gönder" raporu ek adreslersiz (geri alınamaz) yolluyordu.
+ * alan boş açılıyor, "Gönder" raporu ek adreslersiz (geri alınamaz) yolluyordu. `onEdit(value)` alanın her değişikliğini
+ * bildirir (5. tur): çağıran sonraki açılışta kullanıcının SON yazdığını verir — o denemenin eski adreslerini değil.
  *
  * Sonucu bilinmeyen hata (`kind: 'unsure'` — ağ hatası, gönderim sürüyor, `MAIL_FAILED` dışı 5xx; inceleme 2026-10-18, 3. tur): "Gönder" ve
  * Ctrl+Enter KİLİTLİ — gönderim gitmiş olabilir, ikinci tıklama raporu yöneticilere ikinci kez yollardı. `check`
@@ -98,7 +99,7 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
                 aria-describedby={describedBy} aria-invalid={invalid} autoComplete="off" spellCheck={false}
                 placeholder={t('te.send.ccPlaceholder')} data-slot="te-send-extra-cc" className="min-h-16 [overflow-wrap:anywhere]"
                 onKeyDown={onKeyDown}
-                onChange={(e) => { setValue(e.target.value); setClientError(null); onEdit?.() }} />
+                onChange={(e) => { setValue(e.target.value); setClientError(null); onEdit?.(e.target.value) }} />
             )}
           </Field>
           {failure && (

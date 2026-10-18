@@ -470,6 +470,203 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
         expect(te().report.mock.calls.length).toBe(after)
       })
+
+      // İnceleme 2026-10-18 (5. tur): yoklama raporun ŞU ANKİ durumuna değil gönderimden ÖNCEKİ satıra (ya da bu denemenin
+      // kuyruğuna) bakar. Bırakılan talep (releaseClaim — PDF sırası dolu, onay eskidi) satırı önceki durumuna döndürür.
+      describe('5. tur: bırakılan talep satırı önceki durumuna döndürür — karar gönderimden ÖNCEKİ satıra göre', () => {
+        const sentBefore = { status: 'sent', send_state: 'SENT', last_send_status: 'SENT', last_sent_at: '2026-10-01T08:00:00Z',
+          last_attempt_at: '2026-10-01T08:00:00Z', send_count: 1 }
+        const queuedBefore = { status: 'sent', send_state: 'QUEUED', last_send_status: 'QUEUED', last_sent_at: '2026-10-01T08:00:00Z',
+          last_attempt_at: '2026-10-17T09:00:00Z', send_count: 1 }
+        const NOT_SENT_CC = 'Gönderim tamamlanamadı: rapor gönderilmedi. Nedeni kanalın gönderim günlüğünde; yeniden göndermek için gönder düğmesine basın — pencere yazdığınız ek Bilgi (CC) adresleriyle açılır.'
+        const NOT_SENT = 'Gönderim tamamlanamadı: rapor gönderilmedi. Nedeni kanalın gönderim günlüğünde; sorunu giderip raporu yeniden gönderebilirsiniz.'
+
+        /** Sonucu bilinmeyen gönderim; denetim okuması "sürüyor" der → yoklama başlar. Sonraki okumalar `beforePatch` satırı. */
+        async function unsureThenSending(beforePatch, cc) {
+          if (beforePatch) te().report.mockResolvedValue(reportWith(beforePatch))
+          te().send.mockRejectedValueOnce(await netError())
+          render(<TechErrorReportsPage />)
+          await screen.findByRole('heading', { name: TITLE })
+          fireEvent.click(screen.getByRole('button', { name: /Takıma gönder|Yeniden gönder/ }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          if (cc) fireEvent.change(ccInput(dlg), { target: { value: cc } })
+          te().report.mockResolvedValueOnce(reportWith({ ...(beforePatch || {}), status: 'sending', send_state: 'SENDING' }))
+          fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+          expect(await screen.findByText(/Rapor şu anda gönderiliyor; sonuç birkaç dakika içinde raporda/)).toBeInTheDocument()
+          await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+          await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).toBeDisabled())
+        }
+
+        it('rapor önceden GÖNDERİLMİŞTİ, talep bırakıldı (SENT\'e döndü) → "gönderildi" DEĞİL: "gitmedi" (ek Bilgi ile), yoklama durur; yeniden açılış "gitmemiş" bandı + yazılan ek Bilgi', async () => {
+          await unsureThenSending(sentBefore, 'ek@example.com')
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(await screen.findByText(NOT_SENT_CC)).toBeInTheDocument()
+          expect(screen.queryByText(/Gönderim tamamlandı: rapor gönderildi/)).toBeNull()
+          await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+          const after = te().report.mock.calls.length
+          await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+          expect(te().report.mock.calls.length).toBe(after)
+          fireEvent.click(screen.getByRole('button', { name: 'Yeniden gönder' }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          expect(within(dlg).getByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+          expect(failureBox(dlg)).toHaveTextContent(/Yazdığınız ek Bilgi \(CC\) adresleri korundu/)
+          expect(ccInput(dlg)).toHaveValue('ek@example.com')
+          expect(within(dlg).getByRole('button', { name: 'Gönder' })).not.toBeDisabled()
+          expect(te().send).toHaveBeenCalledTimes(1)
+        })
+
+        it.each([
+          ['eski kuyruğa döndü (değişmedi)', {}],
+          ['okuma ESKİ kuyruğu teslim etti (confirmQueued — last_attempt_at aynı)',
+            { send_state: 'SENT', last_send_status: 'SENT', last_sent_at: '2026-10-17T09:00:00Z', send_count: 2 }],
+        ])('rapor önceden KUYRUKTA, talep bırakıldı; %s → eski kuyruğun sonucu bu gönderimin sonucu DEĞİL: "gitmedi"', async (_name, patch) => {
+          await unsureThenSending(queuedBefore, 'ek@example.com')
+          te().report.mockResolvedValue(reportWith({ ...queuedBefore, ...patch }))
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(await screen.findByText(NOT_SENT_CC)).toBeInTheDocument()
+          expect(screen.queryByText(/Gönderim tamamlandı: rapor gönderildi/)).toBeNull()
+          await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+          fireEvent.click(screen.getByRole('button', { name: 'Yeniden gönder' }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          expect(ccInput(dlg)).toHaveValue('ek@example.com')
+        })
+
+        it('hiç GÖNDERİLMEMİŞ rapor, talep bırakıldı (taslağa döndü) → İLK turda "gitmedi" — "10 dakikada kesinleşmedi" DEĞİL; ek Bilgi yoksa bant "korundu" demez', async () => {
+          await unsureThenSending(null, '')
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(await screen.findByText(NOT_SENT)).toBeInTheDocument()
+          expect(screen.queryByText(/dakika içinde kesinleşmedi/)).toBeNull()
+          await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+          fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          expect(failureBox(dlg)).toHaveTextContent('Raporun durumu yeniden okundu: bu gönderim gitmemiş. Yeniden göndermek için “Gönder”e basın.')
+          expect(failureBox(dlg)).not.toHaveTextContent(/korundu/)
+          expect(ccInput(dlg)).toHaveValue('')
+        })
+
+        it('normal kuyruk yanıtı: taban yanıttan HEMEN SONRAKİ satır (bu denemenin kuyruğu) — eldeki satır bayat olsa da kuyruğun başarısızlığı "gönderildi" sayılmaz; kuyrukta kaldıkça sürer', async () => {
+          // Düzenleyicinin satırı bayat: arada başka biri göndermiş (sunucuda 2. gönderim); bu gönderim kuyruğa alınır
+          te().report.mockResolvedValue(reportWith(sentBefore))
+          te().send.mockResolvedValueOnce({ success: true, data: { state: 'QUEUED', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+          render(<TechErrorReportsPage />)
+          await screen.findByRole('heading', { name: TITLE })
+          fireEvent.click(screen.getByRole('button', { name: 'Yeniden gönder' }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+          const ownQueue = { ...sentBefore, send_state: 'QUEUED', last_send_status: 'QUEUED', last_sent_at: '2026-10-15T08:00:00Z',
+            send_count: 2, last_attempt_at: '2026-10-18T07:00:05Z' }
+          te().report.mockResolvedValue(reportWith(ownQueue))
+          const loads = te().report.mock.calls.length
+          fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+          expect(await screen.findByText(/Posta sunucusu yoğun; rapor sıraya alındı/)).toBeInTheDocument()
+          await waitFor(() => expect(te().report.mock.calls.length).toBe(loads + 1))
+          // Tur 1: hâlâ kuyrukta → sürer (eski kuyruk sayılıp "gitmedi" denmez)
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          await waitFor(() => expect(te().report.mock.calls.length).toBe(loads + 2))
+          expect(screen.queryByText(/Gönderim tamamlanamadı/)).toBeNull()
+          // Tur 2: kuyruk başarısız (failQueued — son gönderim alanları aynı); bayat satıra göre "son gönderim değişti" sanılırdı
+          te().report.mockResolvedValue(reportWith({ ...ownQueue, send_state: 'FAILED', last_send_status: 'FAILED: kuyruk' }))
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(await screen.findByText(NOT_SENT_CC)).toBeInTheDocument()
+          expect(screen.queryByText(/Gönderim tamamlandı: rapor gönderildi/)).toBeNull()
+          await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+          fireEvent.click(screen.getByRole('button', { name: 'Yeniden gönder' }))
+          const again = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          expect(ccInput(again)).toHaveValue('ek@example.com')
+          expect(within(again).getByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+        })
+
+        it('normal kuyruk yanıtı + kuyruk teslim edildi (confirmQueued — deneme damgası aynı) → "gönderildi"', async () => {
+          te().send.mockResolvedValueOnce({ success: true, data: { state: 'QUEUED', to: ['dijital@example.com'], cc: [] } })
+          const dlg = await openSendDialog()
+          const ownQueue = { status: 'queued', send_state: 'QUEUED', last_send_status: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z' }
+          te().report.mockResolvedValue(reportWith(ownQueue))
+          fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+          expect(await screen.findByText(/Posta sunucusu yoğun; rapor sıraya alındı/)).toBeInTheDocument()
+          te().report.mockResolvedValue(reportWith({ ...ownQueue, status: 'sent', send_state: 'SENT', last_send_status: 'SENT',
+            last_sent_at: '2026-10-18T07:00:00Z', send_count: 1 }))
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(await screen.findByText('Gönderim tamamlandı: rapor gönderildi. Alıcılar ve ayrıntılar kanalın gönderim günlüğünde.')).toBeInTheDocument()
+        })
+
+        it('yoklama yanıtı kayıttan ÖNCE okunduysa (kayıt istekten önce başladı, yanıtı istekten sonra geldi): yanıttaki "sent" yerel "changed"ın üstüne YAZILMAZ', async () => {
+          te().report.mockResolvedValue(reportWith(sentBefore))
+          te().send.mockResolvedValueOnce({ success: true, data: { state: 'QUEUED', to: ['dijital@example.com'], cc: [] } })
+          render(<TechErrorReportsPage />)
+          await screen.findByRole('heading', { name: TITLE })
+          fireEvent.click(screen.getByRole('button', { name: 'Yeniden gönder' }))
+          const dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+          const queuedRow = { ...sentBefore, send_state: 'QUEUED', last_send_status: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z' }
+          te().report.mockResolvedValue(reportWith(queuedRow))
+          const loads = te().report.mock.calls.length
+          fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+          expect(await screen.findByText(/Posta sunucusu yoğun; rapor sıraya alındı/)).toBeInTheDocument()
+          await waitFor(() => expect(te().report.mock.calls.length).toBe(loads + 1))
+          const status = () => document.querySelector('[data-slot="te-status"]')
+          await waitFor(() => expect(status()).toHaveAttribute('data-status', 'sent'))
+          // Kayıt başlar; yanıtı bekletilir
+          let releaseSave
+          te().saveReport.mockImplementationOnce(() => new Promise((r) => { releaseSave = r }))
+          fireEvent.change(screen.getByLabelText('Toplam işlem adedi'), { target: { value: '1.250.000' } })
+          fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+          await waitFor(() => expect(releaseSave).toBeTypeOf('function'))
+          // Yoklama isteği kayıttan SONRA gider; sunucu onu kaydın işlenmesinden önce okur ("sent")
+          let releasePoll
+          te().report.mockImplementationOnce(() => new Promise((r) => { releasePoll = r }))
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          await waitFor(() => expect(releasePoll).toBeTypeOf('function'))
+          await act(async () => {
+            releaseSave({ success: true, data: { version: 5, changed: true, updated_at: '2026-10-18T07:00:20Z',
+              values: { fields: { 'error-rate': 0.42, 'total-tx': 1250000 }, issues: {}, texts: {} } } })
+          })
+          await waitFor(() => expect(status()).toHaveAttribute('data-status', 'changed'))
+          await act(async () => { releasePoll(reportWith(queuedRow)) })
+          expect(status()).toHaveAttribute('data-status', 'changed')
+          expect(screen.getByText('Rapor gönderildikten sonra değişti')).toBeInTheDocument()
+          // Yoklama sürüyor (kuyruk): sonraki tur yine aynı kuralla
+          await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+          expect(status()).toHaveAttribute('data-status', 'sent')   // istekten sonra yerel değişiklik yok: sunucunun durumu geçer
+        })
+      })
+    })
+
+    it('5. tur: "gitmemiş" sonrası yeniden açılış İLK kez o denemenin ek Bilgi\'siyle, sonra kullanıcının SON yazdığıyla (hatadan önceki adresler geri gelmez); alan boşaltılınca boş açılır, bant "korundu" demez; gönderim kesinleşince taze', async () => {
+      te().send
+        .mockRejectedValueOnce(await netError())
+        .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['son@example.com'] } })
+      let dlg = await openSendDialog()
+      fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      expect(await within(dlg).findByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+      expect(ccInput(dlg)).toHaveValue('ek@example.com')
+      // Kullanıcı adresi değiştirir ve kapatır
+      fireEvent.change(ccInput(dlg), { target: { value: 'yeni@example.com' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      await waitFor(() => expect(document.querySelector('[data-slot="te-send"]')).not.toBeDisabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+      dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+      expect(ccInput(dlg)).toHaveValue('yeni@example.com')
+      expect(failureBox(dlg)).toHaveTextContent(/Yazdığınız ek Bilgi \(CC\) adresleri korundu/)
+      // Alanı boşaltır, kapatır: sonraki açılış boş ve bant "korundu" demez
+      fireEvent.change(ccInput(dlg), { target: { value: '' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+      dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+      expect(ccInput(dlg)).toHaveValue('')
+      expect(within(dlg).getByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+      expect(failureBox(dlg)).not.toHaveTextContent(/korundu/)
+      // Gönderim kesinleşir: sonraki açılış taze (boş, bantsız)
+      fireEvent.change(ccInput(dlg), { target: { value: 'son@example.com' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+      expect(te().send.mock.calls[1][1]).toEqual({ extra_cc: 'son@example.com' })
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      fireEvent.click(await screen.findByRole('button', { name: /Takıma gönder|Yeniden gönder/ }))
+      dlg = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+      expect(ccInput(dlg)).toHaveValue('')
+      expect(failureBox(dlg)).toBeNull()
     })
   })
 

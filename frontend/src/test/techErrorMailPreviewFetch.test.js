@@ -7,7 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('../api/client', () => ({ api: { techErrors: { mailPreview: vi.fn() } } }))
 import { api } from '../api/client'
 import {
-  MAIL_PREVIEW_BUSY_RETRY_MAX_S, MAIL_PREVIEW_KEEP_MS, busyRetryWaitMs, clearMailPreviewShares, fetchMailPreview, mailPreviewShareCount,
+  MAIL_PREVIEW_BUSY_RETRIES, MAIL_PREVIEW_BUSY_RETRY_TOTAL_S, MAIL_PREVIEW_KEEP_MS, bumpMailPreviewContent, busyRetryWaitMs,
+  clearMailPreviewShares, fetchMailPreview, mailPreviewContentRev, mailPreviewShareCount,
 } from '../components/techerror/mailPreviewFetch.js'
 import { OWNER_KEY } from '../utils/personalStorage.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
@@ -169,7 +170,7 @@ describe('inceleme 2026-10-18 (4. tur): anahtar raporun SÜRÜMÜNÜ ve isteğin
     expect(mp()).toHaveBeenCalledTimes(2)
   })
 
-  it('yeni istek sunucunun eşzamanlılık reddini (429 RATE_LIMITED, Retry-After ≤ 5 sn) alırsa önerilen süre beklenip BİR kez yeniden denenir', async () => {
+  it('yeni istek sunucunun eşzamanlılık reddini (429 RATE_LIMITED + Retry-After) alırsa önerilen süre beklenip yeniden denenir', async () => {
     vi.useFakeTimers()
     const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5, error: 'Sizin için başka bir PDF hazırlanıyor.' }
     mp().mockResolvedValueOnce(busy).mockResolvedValueOnce({ success: true, data: { subject: 'ikinci deneme' } })
@@ -181,31 +182,107 @@ describe('inceleme 2026-10-18 (4. tur): anahtar raporun SÜRÜMÜNÜ ve isteğin
     expect(await p).toEqual({ success: true, data: { subject: 'ikinci deneme' } })
   })
 
-  it('yalnız BİR yeniden deneme: ikinci ret olduğu gibi döner; dakikalık sınırın uzun beklemesi ve önerisiz 429 denenmez', async () => {
+  it('5. tur: önceki hazırlık uzun sürerse İKİNCİ yeniden deneme (5 + 5 sn) yeni önizlemeyi getirir — eskiden tek denemeden sonra "okunamadı"', async () => {
+    vi.useFakeTimers()
+    const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5, error: 'meşgul' }
+    mp().mockResolvedValueOnce(busy).mockResolvedValueOnce(busy).mockResolvedValueOnce({ success: true, data: { subject: 'üçüncü' } })
+    const p = fetchMailPreview('100', { version: 5 })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mp()).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(4900)
+    expect(mp()).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(mp()).toHaveBeenCalledTimes(3)
+    expect(await p).toEqual({ success: true, data: { subject: 'üçüncü' } })
+  })
+
+  it('5. tur: en çok İKİ yeniden deneme, beklemeler toplamı ≤ 15 sn; sonra sunucunun yanıtı (iletisi) olduğu gibi döner', async () => {
     vi.useFakeTimers()
     const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5, error: 'meşgul' }
     mp().mockResolvedValue(busy)
     const p = fetchMailPreview('100', { version: 5 })
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(await p).toEqual(busy)
+    expect(mp()).toHaveBeenCalledTimes(1 + MAIL_PREVIEW_BUSY_RETRIES)
+    // Bütçe: 8 sn'lik ilk öneri denenir, ikinci 8 sn kalan 7 sn'ye sığmaz → ikinci ret döner
+    mp().mockReset()
+    const eight = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 8, error: 'meşgul (8 sn)' }
+    mp().mockResolvedValue(eight)
+    const q = fetchMailPreview('100', { version: 6 })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(await q).toEqual(eight)
     expect(mp()).toHaveBeenCalledTimes(2)
-    mp().mockClear()
+    // Dakikalık sınırın uzun beklemesi bütçeyi aşar: denenmez
+    mp().mockReset()
     const minute = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 42, error: 'dakikalık sınır' }
     mp().mockResolvedValue(minute)
-    expect(await fetchMailPreview('100', { version: 6 })).toEqual(minute)
+    expect(await fetchMailPreview('100', { version: 7 })).toEqual(minute)
     expect(mp()).toHaveBeenCalledTimes(1)
+  })
+
+  it('busyRetryWaitMs: yalnız 429 RATE_LIMITED + Retry-After, kalan bütçeye sığıyorsa', () => {
     expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED' })).toBeNull()
     expect(busyRetryWaitMs({ success: false, status: 429, code: 'PDF_BUSY', retry_after_seconds: 3 })).toBeNull()
     expect(busyRetryWaitMs({ success: false, status: 503, code: 'RATE_LIMITED', retry_after_seconds: 3 })).toBeNull()
     expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 2 })).toBe(2000)
     expect(busyRetryWaitMs({ success: false, errorInfo: { status: 429 }, code: 'RATE_LIMITED', retry_after_seconds: '5' })).toBe(5000)
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 15 })).toBe(15_000)
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 16 })).toBeNull()
+    expect(busyRetryWaitMs({ success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 6 }, 5)).toBeNull()
     expect(busyRetryWaitMs({ success: true })).toBeNull()
   })
 
-  it('bekleme sınırı sunucunun eşzamanlılık önerisiyle aynı (RENDER_BUSY_RETRY_SECONDS)', () => {
+  it('bekleme bütçesi sunucunun eşzamanlılık önerisinin (RENDER_BUSY_RETRY_SECONDS) iki denemesini taşır', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
     const ctrl = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/controller/TechErrorReportController.java'), 'utf8')
     const secs = Number(/RENDER_BUSY_RETRY_SECONDS\s*=\s*(\d+)L/.exec(ctrl)[1])
-    expect(MAIL_PREVIEW_BUSY_RETRY_MAX_S).toBe(secs)
+    expect(MAIL_PREVIEW_BUSY_RETRIES).toBe(2)
+    expect(MAIL_PREVIEW_BUSY_RETRY_TOTAL_S).toBe(15)
+    expect(MAIL_PREVIEW_BUSY_RETRIES * secs).toBeLessThanOrEqual(MAIL_PREVIEW_BUSY_RETRY_TOTAL_S)
+  })
+})
+
+describe('inceleme 2026-10-18 (5. tur): görsel değişikliği sürümü değiştirmez — anahtar görsel revizyonunu da taşır', () => {
+  it('görsel yüklendi / silindi (bumpMailPreviewContent) → 5 sn içinde yeniden açılış ESKİ isteğe katılmaz; kimsenin beklemediği eski istek kesilir', async () => {
+    const d = deferred()
+    mp().mockReturnValueOnce(d.promise).mockResolvedValueOnce({ success: true, data: { subject: 'yeni görseller' } })
+    const c1 = new AbortController()
+    const old = fetchMailPreview('100', { signal: c1.signal, version: 4 })
+    const oldNet = mp().mock.calls[0][1].signal
+    c1.abort()
+    expect(await old).toMatchObject({ aborted: true })
+    expect(mailPreviewContentRev('100')).toBe(0)
+    expect(bumpMailPreviewContent('100')).toBe(1)
+    expect(mailPreviewContentRev(100)).toBe(1)
+    const fresh = await fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(2)
+    expect(fresh).toEqual({ success: true, data: { subject: 'yeni görseller' } })
+    expect(oldNet.aborted).toBe(true)
+    d.resolve({ success: true, data: { subject: 'eski görseller' } })
+  })
+
+  it('görsel değişmediyse (aynı sürüm, aynı revizyon) hâlâ katılır; başka rapor etkilenmez; çağıranın bildirdiği daha yeni revizyon da katılmayı keser', async () => {
+    mp().mockImplementation(() => new Promise(() => {}))
+    bumpMailPreviewContent('101')
+    fetchMailPreview('100', { version: 4 })
+    fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(1)
+    fetchMailPreview('100', { version: 4, contentRev: 3 })
+    expect(mp()).toHaveBeenCalledTimes(2)
+    // Modülün sayacı daha büyükse o geçerli (eski bir revizyon bildiren çağıran eski isteğe katılmaz)
+    bumpMailPreviewContent('100')
+    bumpMailPreviewContent('100')
+    bumpMailPreviewContent('100')
+    bumpMailPreviewContent('100')
+    fetchMailPreview('100', { version: 4, contentRev: 3 })
+    expect(mp()).toHaveBeenCalledTimes(3)
+    fetchMailPreview('100', { version: 4 })
+    expect(mp()).toHaveBeenCalledTimes(3)
+  })
+
+  it('test kancası sayaçları da sıfırlar', () => {
+    bumpMailPreviewContent('100')
+    clearMailPreviewShares()
+    expect(mailPreviewContentRev('100')).toBe(0)
   })
 })

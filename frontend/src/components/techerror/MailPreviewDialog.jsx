@@ -49,7 +49,7 @@ export function pdfTooLargeOf(d) {
 /** Onay durumu → i18n anahtarı (bilinmeyen durum "henüz onaya gönderilmedi" sayılır — ham anahtar asla görünmez). */
 const APPROVAL_TEXT_KEYS = Object.freeze({ pending: 'te.mail.appr.pending', none: 'te.mail.appr.none', rejected: 'te.mail.appr.rejected', stale: 'te.mail.appr.stale' })
 
-export default function MailPreviewDialog({ reportId, reportVersion = null, open, onClose, onSend, sendLabel, uiLang }) {
+export default function MailPreviewDialog({ reportId, reportVersion = null, contentRev = null, open, onClose, onSend, sendLabel, uiLang }) {
   const t = useT()
   const toast = useToast()
   const [state, setState] = useState({ loading: true, failed: false, error: null, data: null })
@@ -85,13 +85,15 @@ export default function MailPreviewDialog({ reportId, reportVersion = null, open
   // kendi AbortController'ıyla (temizlikte iptal, sonucu yok sayılır) ve `fetchMailPreview` ile: aynı rapor için süren
   // istek varsa yenisi atılmaz, ona katılınır. 4. tur: anahtar raporun sürümünü (ve isteğin dilini) taşır — kayıttan sonra
   // açılan pencere kayıttan ÖNCE başlamış isteğe katılıp eski içeriği göstermesin; sürüm açıkken değişirse yeniden okunur.
+  // 5. tur: görsel değişikliği sürümü değiştirmez — `contentRev` (düzenleyicinin görsel sayacı) da anahtarda; pencere açıkken
+  // biten bir yükleme de yeniden okutur.
   const load = useCallback(() => {
     ctrl.current?.abort()
     const c = new AbortController()
     ctrl.current = c
     const my = ++seq.current
     setState({ loading: true, failed: false, error: null, data: null })
-    fetchMailPreview(reportId, { signal: c.signal, version: reportVersion }).then((res) => {
+    fetchMailPreview(reportId, { signal: c.signal, version: reportVersion, contentRev }).then((res) => {
       if (my !== seq.current || c.signal.aborted || res?.aborted) return
       if (res?.success && res.data) setState({ loading: false, failed: false, error: null, data: res.data })
       else setState({ loading: false, failed: true, error: res?.error || null, data: null })
@@ -99,7 +101,7 @@ export default function MailPreviewDialog({ reportId, reportVersion = null, open
       if (my !== seq.current || c.signal.aborted) return
       setState({ loading: false, failed: true, error: e?.message || null, data: null })
     })
-  }, [reportId, reportVersion])
+  }, [reportId, reportVersion, contentRev])
 
   useEffect(() => {
     if (!open) return undefined

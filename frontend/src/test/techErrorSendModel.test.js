@@ -6,7 +6,7 @@ import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
   sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
-  SEND_POLL_MS, SEND_POLL_MAX_MS, SEND_STATUS_FIELDS, sendPollState, withSendStatus,
+  SEND_POLL_MS, SEND_POLL_MAX_MS, SEND_STATUS_FIELDS, pollBaselineAfterQueued, sendPollStep, withSendStatus,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -250,18 +250,84 @@ describe('süren / kuyruktaki gönderimin yoklaması (inceleme 2026-10-18, 4. tu
     expect(SEND_POLL_MS).toBe(10_000)
     expect(SEND_POLL_MAX_MS).toBe(10 * 60_000)
   })
-  it('durum: sürüyor / kuyrukta → pending; SENT → sent; FAILED / SKIPPED → notSent; bayat talep / durum yok → unknown; okunamadı → null', () => {
-    expect(sendPollState({ status: 'sending', send_state: 'SENDING' })).toBe('pending')
-    expect(sendPollState({ status: 'queued', send_state: 'QUEUED' })).toBe('pending')
-    expect(sendPollState({ status: 'sent', send_state: 'QUEUED' })).toBe('pending')
-    expect(sendPollState({ status: 'sent', send_state: 'SENT' })).toBe('sent')
-    expect(sendPollState({ status: 'changed', send_state: 'SENT' })).toBe('sent')
-    expect(sendPollState({ status: 'draft', send_state: 'FAILED' })).toBe('notSent')
-    expect(sendPollState({ status: 'sent', send_state: 'SKIPPED' })).toBe('notSent')
-    expect(sendPollState({ status: 'sent', send_state: 'SENDING' })).toBe('unknown')
-    expect(sendPollState({ status: 'draft', send_state: null })).toBe('unknown')
-    expect(sendPollState(null)).toBeNull()
-    expect(sendPollState('x')).toBeNull()
+  // İnceleme 2026-10-18 (5. tur): karar raporun ŞU ANKİ durumundan DEĞİL, gönderimden önceki satırdan (ya da bu denemenin
+  // kuyruğundan). Bırakılan talep (releaseClaim: PDF sırası dolu, onay eskidi) satırı önceki durumuna döndürür ve last_attempt_at
+  // DAMGALAMAZ — önceden gönderilmiş raporda "gönderildi", önceden kuyruktaki raporda eski kuyruğun sonucu, hiç gönderilmemiş
+  // raporda "10 dakikada kesinleşmedi" deniyordu.
+  describe('yoklama turunun kararı (sendPollStep)', () => {
+    const neverSent = { status: 'draft', send_state: null, last_send_status: null, last_sent_at: null, last_attempt_at: null, send_count: 0 }
+    const sentBefore = { status: 'sent', send_state: 'SENT', last_send_status: 'SENT', last_sent_at: '2026-10-01T08:00:00Z',
+      last_attempt_at: '2026-10-01T08:00:00Z', send_count: 1 }
+    const queuedBefore = { status: 'sent', send_state: 'QUEUED', last_send_status: 'QUEUED', last_sent_at: '2026-10-01T08:00:00Z',
+      last_attempt_at: '2026-10-17T09:00:00Z', send_count: 1 }
+    const sending = (r) => ({ ...r, status: 'sending', send_state: 'SENDING' })
+    const pre = (baseline) => ({ baseline, own: false })
+    // Bu denemenin kuyruğu (finishQueued damgaladı: 07:00:05)
+    const ownQueue = { ...neverSent, status: 'queued', send_state: 'QUEUED', last_send_status: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z' }
+    const own = (baseline) => ({ baseline, own: true })
+    // [ad, yoklama tabanı, okunan, beklenen sonuç]
+    const TABLE = [
+      // ── Gönderimden ÖNCEKİ satıra göre (own: false) ──
+      ['süren talep → sürüyor', pre(sentBefore), sending(sentBefore), 'pending'],
+      ['bırakılan talep, rapor önceden GÖNDERİLMİŞ (SENT\'e döndü) → gitmedi (eskiden "gönderildi")', pre(sentBefore), { ...sentBefore }, 'notSent'],
+      ['bırakılan talep, önceden KUYRUKTA (eski kuyruğa döndü) → gitmedi (eskiden "sürüyor")', pre(queuedBefore), { ...queuedBefore }, 'notSent'],
+      ['bırakılan talep sonrası ESKİ kuyruk teslim edildi (confirmQueued, damga aynı) → bu gönderim gitmedi', pre(queuedBefore),
+        { ...queuedBefore, send_state: 'SENT', last_send_status: 'SENT', last_sent_at: '2026-10-17T09:00:00Z', send_count: 2 }, 'notSent'],
+      ['bırakılan talep sonrası ESKİ kuyruk başarısız (failQueued) → bu gönderim gitmedi', pre(queuedBefore),
+        { ...queuedBefore, send_state: 'FAILED', last_send_status: 'FAILED: kuyruk' }, 'notSent'],
+      ['bırakılan talep, hiç GÖNDERİLMEMİŞ (taslağa döndü) → gitmedi (eskiden "10 dakikada kesinleşmedi")', pre(neverSent), { ...neverSent }, 'notSent'],
+      ['bu gönderim gitti (finishSent: son gönderim + sayaç)', pre(sentBefore),
+        { ...sentBefore, last_sent_at: '2026-10-18T07:00:00Z', last_attempt_at: '2026-10-18T07:00:05Z', send_count: 2 }, 'sent'],
+      ['önceden kuyruktaki raporda bu gönderim gitti (damga değişti + SENT)', pre(queuedBefore),
+        { ...queuedBefore, send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', last_attempt_at: '2026-10-18T07:00:05Z', send_count: 2 }, 'sent'],
+      ['bu gönderim başarısız (finishNotSent)', pre(sentBefore), { ...sentBefore, send_state: 'FAILED', last_attempt_at: '2026-10-18T07:00:05Z' }, 'notSent'],
+      ['bu gönderim kuyruğa alındı → sürüyor', pre(neverSent), ownQueue, 'pending'],
+      ['taze olmayan talep (SENDING, durum başka — pod düşmüş olabilir) → bilinmiyor, "yeniden gönder" DENMEZ', pre(sentBefore),
+        { ...sentBefore, send_state: 'SENDING' }, 'unknown'],
+      ['taban bilinmiyor, rapor gönderilmiş → çift gönderimden kaçınılır', pre(null), sentBefore, 'sent'],
+      // ── Bu denemenin kuyruğuna göre (own: true — kuyruğa alınan gönderimin yanıtından hemen sonraki satır) ──
+      ['kendi kuyruğu hâlâ kuyrukta → sürüyor (unsureSendOutcome eski kuyruk sayıp "gitmedi" derdi)', own(ownQueue), { ...ownQueue }, 'pending'],
+      ['kendi kuyruğu teslim edildi (confirmQueued — damgalamaz) → gitti', own(ownQueue),
+        { ...ownQueue, status: 'sent', send_state: 'SENT', last_send_status: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', send_count: 1 }, 'sent'],
+      ['kendi kuyruğu başarısız (failQueued) → gitmedi', own(ownQueue), { ...ownQueue, status: 'draft', send_state: 'FAILED' }, 'notSent'],
+      ['kendi kuyruğunun üstüne başka talep → sürüyor', own(ownQueue), sending(ownQueue), 'pending'],
+      ['kendi kuyruğunun üstüne gelen talep bırakıldı (kuyruğa döndü) → sürüyor', own(ownQueue), { ...ownQueue }, 'pending'],
+      ['sonraki deneme gitti → gitti', own(ownQueue),
+        { ...ownQueue, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:05:00Z', last_attempt_at: '2026-10-18T07:05:05Z', send_count: 1 }, 'sent'],
+      ['sonraki deneme gitmedi → kuyruğun sonucu artık okunmaz (superseded), "gitmedi" DENMEZ', own(ownQueue),
+        { ...ownQueue, status: 'draft', send_state: 'FAILED', last_attempt_at: '2026-10-18T07:05:05Z' }, 'superseded'],
+    ]
+    it.each(TABLE)('%s', (_name, poll, fresh, expected) => {
+      expect(sendPollStep(poll, fresh).outcome).toBe(expected)
+    })
+    it('okunamadı (null / nesne değil) → null: yoklama sürer, taban aynı', () => {
+      const poll = pre(sentBefore)
+      expect(sendPollStep(poll, null)).toEqual({ outcome: null, poll })
+      expect(sendPollStep(poll, 'x').outcome).toBeNull()
+    })
+    it('önceki satıra göre "kuyrukta" görülünce taban o satıra geçer (own); sonraki teslim o kuyruğun sonucu sayılır', () => {
+      const step = sendPollStep(pre(neverSent), ownQueue)
+      expect(step.outcome).toBe('pending')
+      expect(step.poll).toEqual({ baseline: ownQueue, own: true })
+      const done = { ...ownQueue, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', send_count: 1 }
+      expect(sendPollStep(step.poll, done).outcome).toBe('sent')
+      // Aynı kuyruk aynı tabanla: yeni nesne üretilmez
+      const again = sendPollStep(step.poll, { ...ownQueue })
+      expect(again.poll).toBe(step.poll)
+    })
+    it('kuyruğa alınan gönderimin tabanı: yanıttan sonraki okuma yeni bir deneme damgası taşıyorsa O satır, yoksa önceki satır', () => {
+      expect(pollBaselineAfterQueued(sentBefore, { ...sentBefore, send_state: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z' }))
+        .toEqual({ baseline: { ...sentBefore, send_state: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z' }, own: true })
+      // Okuma kuyruğu çoktan sonuçlandırmış (GET reconcileQueued): yine bu denemenin satırı
+      const settled = { ...ownQueue, status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:00:00Z', send_count: 1 }
+      expect(pollBaselineAfterQueued(neverSent, settled)).toEqual({ baseline: settled, own: true })
+      // Okuma yok / düşürüldü, damga aynı ya da süren talep → önceki satır
+      expect(pollBaselineAfterQueued(sentBefore, null)).toEqual({ baseline: sentBefore, own: false })
+      expect(pollBaselineAfterQueued(sentBefore, { ...sentBefore })).toEqual({ baseline: sentBefore, own: false })
+      expect(pollBaselineAfterQueued(sentBefore, sending({ ...sentBefore, last_attempt_at: '2026-10-18T07:00:05Z' })))
+        .toEqual({ baseline: sentBefore, own: false })
+      expect(pollBaselineAfterQueued(undefined, null)).toEqual({ baseline: null, own: false })
+    })
   })
   it('yalnız gönderim alanları işlenir: sürüm, başlık, onay ve yanıtta olmayan alanlar değişmez', () => {
     const cur = { id: 100, version: 7, title: 'Eylül', status: 'sending', send_state: 'SENDING', send_count: 1, approval: { state: 'approved' }, last_sent_to: 'a@x.com' }
@@ -272,5 +338,15 @@ describe('süren / kuyruktaki gönderimin yoklaması (inceleme 2026-10-18, 4. tu
     expect(cur.status).toBe('sending')                              // giriş değişmez
     expect(SEND_STATUS_FIELDS).not.toContain('version')
     expect(withSendStatus(cur, null)).toBe(cur)
+  })
+  it('5. tur: istekten sonra yerelde "changed" olduysa (keepChanged) yanıttaki "sent" onun üstüne yazılmaz; diğer alanlar yine işlenir', () => {
+    const cur = { status: 'changed', send_state: 'QUEUED', send_count: 1, last_sent_at: '2026-10-01T08:00:00Z' }
+    const fresh = { status: 'sent', send_state: 'QUEUED', send_count: 1, last_sent_at: '2026-10-01T08:00:00Z', last_attempt_at: '2026-10-18T07:00:05Z' }
+    expect(withSendStatus(cur, fresh, { keepChanged: true })).toEqual({ ...fresh, status: 'changed' })
+    // Yerel değişiklik yoksa sunucunun durumu geçer
+    expect(withSendStatus(cur, fresh).status).toBe('sent')
+    // Yalnız "sent" engellenir: süren gönderim / taslak geçer
+    expect(withSendStatus(cur, { ...fresh, status: 'sending' }, { keepChanged: true }).status).toBe('sending')
+    expect(withSendStatus({ ...cur, status: 'sent' }, fresh, { keepChanged: true }).status).toBe('sent')
   })
 })

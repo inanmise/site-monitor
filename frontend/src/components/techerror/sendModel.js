@@ -143,24 +143,79 @@ export const SEND_POLL_MAX_MS = 10 * 60_000
 export const SEND_STATUS_FIELDS = Object.freeze(['status', 'send_state', 'last_send_status', 'last_sent_at', 'last_attempt_at',
   'last_sent_to', 'last_sent_count', 'last_sent_by_name', 'send_count'])
 
-/** Rapor satırına yoklamanın okuduğu gönderim alanlarını işler (yalnız yanıtta OLAN alanlar). */
-export function withSendStatus(report, fresh) {
+/**
+ * Rapor satırına yoklamanın okuduğu gönderim alanlarını işler (yalnız yanıtta OLAN alanlar). `keepChanged` (inceleme
+ * 2026-10-18, 5. tur): yoklama isteği gittikten SONRA düzenleyici durumu kendisi "changed" yaptıysa (kayıt yanıtı, görsel
+ * yükleme / silme) yanıttaki "sent" onun üstüne YAZILMAZ — o okuma kayıttan önceydi; onay kartının "gönderildi" ipucu bu
+ * duruma bakar.
+ */
+export function withSendStatus(report, fresh, { keepChanged = false } = {}) {
   if (!report || !fresh || typeof fresh !== 'object') return report
   const out = { ...report }
   for (const k of SEND_STATUS_FIELDS) if (Object.prototype.hasOwnProperty.call(fresh, k)) out[k] = fresh[k]
+  if (keepChanged && report.status === 'changed' && fresh.status === 'sent') out.status = 'changed'
   return out
 }
 
+const attemptOf = (r) => r?.last_attempt_at ?? null
+const isQueuedRow = (r) => r?.status === 'queued' || r?.send_state === 'QUEUED'
+
 /**
- * Yoklanan raporun gönderim durumu: `'pending'` (sürüyor ya da kuyrukta — yoklama sürer), `'sent'`, `'notSent'` (başarısız
- * ya da atlandı), `'unknown'` (bayat talep, durum yok — sonuç bilinmiyor). `null` / okunamayan satır `null` (yoklama sürer).
+ * Yoklamanın tabanı, BU denemenin kuyruğa alındığı BİLİNİNCE (kuyruğa alınan gönderimin yanıtı ya da belirsiz gönderimde
+ * "kuyrukta" okuması): `row` = o andan sonra okunan satır. Satır yeni bir deneme damgası taşıyorsa (`last_attempt_at`
+ * gönderimden öncekinden farklı; süren talep değil) taban O satırdır (`own: true` — kuyruk bu denemenindir); yoksa (okuma
+ * yok / düşürüldü, damga aynı) gönderimden önceki satır (`own: false`).
  */
-export function sendPollState(report) {
-  if (!report || typeof report !== 'object') return null
-  if (report.status === 'sending' || report.status === 'queued' || report.send_state === 'QUEUED') return 'pending'
-  if (report.send_state === 'SENT') return 'sent'
-  if (report.send_state === 'FAILED' || report.send_state === 'SKIPPED') return 'notSent'
-  return 'unknown'
+export function pollBaselineAfterQueued(before, row) {
+  if (row && typeof row === 'object' && row.status !== 'sending' && row.send_state !== 'SENDING'
+      && attemptOf(row) !== attemptOf(before)) return { baseline: row, own: true }
+  return { baseline: before ?? null, own: false }
+}
+
+/**
+ * Yoklama TURUNUN kararı (inceleme 2026-10-18, 5. tur). Eskiden yalnız raporun ŞU ANKİ `send_state`'i okunuyordu: bırakılan
+ * talep (`releaseClaim` — PDF sırası dolu, onay eskidi; hiçbir şey denenmedi) satırı ÖNCEKİ durumuna döndürür, ve önceden
+ * gönderilmiş raporda "rapor gönderildi" (hiçbir şey gitmeden), önceden kuyruktaki raporda ESKİ kuyruğun sonucu bu
+ * gönderimin sonucu (ek Bilgi hiç gitmeden), hiç gönderilmemiş raporda 10 sn sonra "10 dakikada kesinleşmedi" deniyordu.
+ *
+ * `poll` = `{ baseline, own }`:
+ *  - `own: false` — `baseline` gönderimden ÖNCEKİ satır (belirsiz gönderimin `before`'u): karar her turda
+ *    {@link unsureSendOutcome}`(baseline, fresh)` — gitti yalnız `last_sent_at` / `send_count` değiştiyse (önceden kuyruktaki
+ *    raporda: `last_attempt_at` SENT ile değiştiyse), kuyrukta yalnız BU deneme kuyruğa aldıysa; tabana dönen durum, yeni
+ *    deneme yok = gitmedi ("yeniden gönderebilirsiniz", yazılan ek Bilgi geri gelir). Bu denemenin kuyruğa alındığı
+ *    görülünce taban o satıra geçer (`own: true`).
+ *  - `own: true` — `baseline` BU denemenin kuyruğunu gösteren satır ({@link pollBaselineAfterQueued}). `unsureSendOutcome` onu
+ *    ESKİ kuyruk sayardı (damga aynı → "gitmedi", ilk turda); burada damga aynıyken sonuç kuyruğun KENDİ sonucudur:
+ *    `confirmQueued` → gitti, `failQueued` → gitmedi (ikisi damgalamaz), kuyrukta → sürüyor. Damga değiştiyse sonraki bir
+ *    deneme kuyruğun yerini aldı: o gittiyse gitti, kuyruğa aldıysa onu izler; gitmediyse `superseded` — bu kuyruğun sonucu
+ *    artık raporda okunmaz (posta servisi onu yine de teslim edebilir: "yeniden gönder" DENMEZ).
+ *
+ * Süren talep (durum "sending") her zaman sürüyor; taze OLMAYAN talep (`send_state` SENDING, durum başka — 10 dakikadan
+ * eski: pod talepten sonra düşmüş olabilir, posta gitmiş olabilir) `unknown` — "yeniden gönder" denmez.
+ *
+ * Dönüş `{ outcome, poll }`: `outcome` 'pending' | 'sent' | 'notSent' | 'superseded' | 'unknown' | `null` (okunamadı —
+ * yoklama sürer); `poll` sonraki turun tabanı (değişmediyse aynı nesne).
+ */
+export function sendPollStep(poll, fresh) {
+  if (!fresh || typeof fresh !== 'object') return { outcome: null, poll }
+  const baseline = poll?.baseline ?? null
+  const own = !!poll?.own && !!baseline
+  if (fresh.status === 'sending') return { outcome: 'pending', poll }
+  if (fresh.send_state === 'SENDING') return { outcome: 'unknown', poll }
+  let o
+  if (own && attemptOf(fresh) === attemptOf(baseline)) {
+    o = isQueuedRow(fresh) ? 'queued' : (fresh.send_state === 'SENT' ? 'sent' : 'notSent')
+  } else {
+    o = unsureSendOutcome(baseline, fresh)
+    if (own && o === 'notSent') o = 'superseded'
+  }
+  if (o === 'queued') {
+    // Bu denemenin (ya da onun yerini alan denemenin) kuyruğu: sonraki turlar onun sonucuna bakar
+    const same = own && attemptOf(fresh) === attemptOf(baseline)
+    return { outcome: 'pending', poll: same ? poll : { ...poll, baseline: fresh, own: true } }
+  }
+  if (o === 'sending') return { outcome: 'pending', poll }
+  return { outcome: o, poll }
 }
 
 // ── Gönderim günlüğü ────────────────────────────────────────────────────────────────────────────────

@@ -14,7 +14,8 @@ vi.mock('../api/client', () => ({
   api: withApiFallback({
     techErrors: {
       overview: vi.fn(), reports: vi.fn(), template: vi.fn(), report: vi.fn(), approval: vi.fn(), createReport: vi.fn(),
-      saveReport: vi.fn(), mailPreview: vi.fn(), mailPreviewTest: vi.fn(), send: vi.fn(), imageUrl: (id) => `/api/tech-error-reports/images/${id}`,
+      saveReport: vi.fn(), mailPreview: vi.fn(), mailPreviewTest: vi.fn(), send: vi.fn(), deleteImage: vi.fn(),
+      imageUrl: (id) => `/api/tech-error-reports/images/${id}`,
     },
   }),
 }))
@@ -68,6 +69,7 @@ beforeEach(() => {
   openAllSections()
   te().approval.mockResolvedValue({ success: true, data: { required: false, approval: { state: 'none' } } })
   te().mailPreview.mockResolvedValue(preview())
+  te().deleteImage.mockResolvedValue({ success: true })
 })
 
 describe('e-posta önizlemesi — pencere', () => {
@@ -209,6 +211,52 @@ describe('e-posta önizlemesi — pencere', () => {
     await act(async () => { releaseOld(preview({ subject: 'Kayıttan önceki içerik' })) })
     expect(within(dlg).queryByText('Kayıttan önceki içerik')).toBeNull()
     expect(within(dlg).getByText('Kayıttan sonraki içerik')).toBeInTheDocument()
+  })
+
+  it('5. tur: görsel değişikliği sürümü değiştirmez — hazırlık sürerken kapat → görseli kaldır → 5 sn içinde yeniden aç: ESKİ isteğe katılmaz (eski görseller gösterilmez), kimsenin beklemediği eski istek kesilir', async () => {
+    await openEditor({ images: [{ id: 501, slot_id: 'monthly-tx', file_name: 'aylik.png', width: 800, height: 400, size_bytes: 2048 }] })
+    let releaseOld
+    te().mailPreview.mockImplementationOnce(() => new Promise((r) => { releaseOld = r }))
+    let dlg = await openPreview()
+    await waitFor(() => expect(releaseOld).toBeTypeOf('function'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
+    // Görsel kaldırılır (rapor sürümü DEĞİŞMEZ — sunucu yalnız içerik sayacını artırır)
+    fireEvent.click(screen.getByRole('button', { name: 'Kaldır: Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' }))
+    const ask = await screen.findByRole('dialog', { name: 'Görsel kaldırılsın mı?' })
+    fireEvent.click(within(ask).getByRole('button', { name: 'Kaldır' }))
+    await waitFor(() => expect(te().deleteImage).toHaveBeenCalledWith('100', 501))
+    await waitFor(() => expect(document.querySelector('[data-slot-id="monthly-tx"]')).toHaveAttribute('data-has-image', 'false'))
+    te().mailPreview.mockResolvedValueOnce(preview({ subject: 'Görsel kaldırıldıktan sonra', images_embedded: 0 }))
+    fireEvent.click(screen.getByRole('button', { name: 'E-postayı önizle' }))
+    dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
+    expect(await within(dlg).findByText('Görsel kaldırıldıktan sonra')).toBeInTheDocument()
+    expect(te().mailPreview).toHaveBeenCalledTimes(2)
+    expect(te().mailPreview.mock.calls[0][1].signal.aborted).toBe(true)
+    await act(async () => { releaseOld(preview({ subject: 'Kaldırılmadan önceki görseller' })) })
+    expect(within(dlg).queryByText('Kaldırılmadan önceki görseller')).toBeNull()
+  })
+
+  it('5. tur: sunucu önceki hazırlığı uzun sürdürürse Retry-After kadar beklenip İKİ kez yeniden denenir (≤ 15 sn); sonra sunucunun iletisi pencerede', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const busy = { success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 5,
+        error: 'Sizin için başka bir PDF ya da e-posta önizlemesi hazırlanıyor; kişi başına aynı anda bir tane hazırlanır.' }
+      te().mailPreview.mockResolvedValue(busy)
+      render(<MailPreviewDialog reportId="100" reportVersion={4} open onClose={() => {}} uiLang="tr" />)
+      const dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      await waitFor(() => expect(te().mailPreview).toHaveBeenCalledTimes(2))
+      expect(within(dlg).queryByText('Önizleme hazırlanamadı')).toBeNull()        // hâlâ bekliyor
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      await waitFor(() => expect(te().mailPreview).toHaveBeenCalledTimes(3))
+      expect(await within(dlg).findByText('Önizleme hazırlanamadı')).toBeInTheDocument()
+      expect(within(dlg).getByText(/kişi başına aynı anda bir tane hazırlanır/)).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+      expect(te().mailPreview).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('yük hatası: "Önizleme hazırlanamadı" + sunucu metni + Tekrar dene → ikinci okuma gövdeyi getirir; Gönder hata ekranında yok', async () => {
