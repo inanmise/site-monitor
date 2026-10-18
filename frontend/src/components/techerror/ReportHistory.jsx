@@ -266,6 +266,10 @@ function EventBody({ kind, detail: d, uiLang }) {
       <div className="text-sm">
         <p className="m-0 [overflow-wrap:anywhere]">{d.slot || '—'}</p>
         {meta && <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{meta}</p>}
+        {/* Konusu silinen anomali görseli (2026-10-18): kayıtta konuyla birlikte silindi */}
+        {d.reason === 'topic_removed' && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-hist-topic-removed">{t('te.hist.imgTopicRemoved')}</p>
+        )}
       </div>
     )
   }

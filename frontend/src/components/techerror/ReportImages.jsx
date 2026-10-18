@@ -59,7 +59,17 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
   )
 })
 
-function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0 }) {
+/**
+ * Tek görsel yuvası. Anomali konusu görselleri de bunu kullanır (2026-10-18, `ImageSlotTile`): `beforeUpload` yüklemeden
+ * önce çağrılır (konu henüz kaydedilmediyse düzenleyici raporu kaydeder); false dönerse yükleme yapılmaz, nedeni yuvada.
+ * `hideWidth`: genişlik etiketi gösterilmez (konu görseli her zaman tam genişlik).
+ */
+export function ImageSlotTile(props) {
+  return <SlotTile {...props} />
+}
+
+function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0, beforeUpload = null,
+  hideWidth = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -85,6 +95,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     setBusy(true)
     setPhase('prep')
     try {
+
       // Tarayıcıda hazırla (2026-10-16: çözünürlük korunur): yalnız sunucu sınırını aşan görsel alan ortalamasıyla
       // küçülür, gerekirse PNG'ye çevrilir; neyin yanlış olduğunu ve ne yapılacağını söyleyen hata
       let prepared
@@ -105,6 +116,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       if (others + prepared.file.size > LIMITS.reportImageBytes) {
         setError(t('te.img.errTotal', formatBytes(others + prepared.file.size, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang)))
         return
+      }
+      // Konu görseli (2026-10-18): konu sunucuda kayıtlı değilse önce rapor kaydedilir — görsel hazırlandıktan SONRA (reddedilen
+      // dosya için boşuna kayıt yok); kaydedilmemiş konunun görseli sunucuda sahipsiz kalırdı
+      if (beforeUpload) {
+        let ready = false
+        try { ready = await beforeUpload() } catch { ready = false }
+        if (!ready) { setError(t('te.iss.uploadNeedsSave')); return }
       }
       setPhase('upload')
       const res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
@@ -162,7 +180,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
           <span data-slot="te-image-label">{label}</span>
           <CopyTextButton text={label} />
         </p>
-        <span className="shrink-0 text-xs text-muted-foreground">{slot.width === 'full' ? t('te.width.full') : t('te.width.half')}</span>
+        {!hideWidth && <span className="shrink-0 text-xs text-muted-foreground">{slot.width === 'full' ? t('te.width.full') : t('te.width.half')}</span>}
       </div>
       {image ? (
         <>

@@ -415,6 +415,15 @@ export function formatValue(field, value, lang, yesNo, unit = null) {
   }
 }
 
+/**
+ * Anomali konusunun adedi (müşteri / hata) — sunucudaki TechErrorFormat.count(n, lang, unit) ile AYNI: kısaltma üssü varsa
+ * "1,25M" (6 ondalığa sığmayan ya da sıfır değer tam sayıyla), yoksa tam sayı. Üs yalnız gösterimdir (pay sayıyla hesaplanır).
+ */
+export function formatCount(n, lang, unit = null) {
+  if (n == null || n === '') return '—'
+  return ABBREV_LETTER[unit] ? formatAbbreviated(n, unit, lang) : formatNumber(n, lang)
+}
+
 /** Yüzde değişim ipucu (yalnız gösterim — alanı doldurmaz): önceki → şimdiki. Önceki 0 ya da yoksa null. */
 export function changePercent(prev, cur) {
   const p = Number(prev)
@@ -1303,8 +1312,9 @@ export function newSection(kind, template, labels) {
   if (kind === 'metrics') return { ...base, fields: [{ id: newId('f', template), label: labels.field, type: 'number' }] }
   if (kind === 'images') return { ...base, slots: [{ id: newId('g', template), label: labels.slot, width: 'half' }] }
   if (kind === 'issues') {
+    // Anomali soruları (2026-10-18) açık başlar — etiketleri ŞABLON dilinde (raporun dili)
     return { ...base, item_title: labels.itemTitle, description_label: labels.descriptionLabel,
-      customers_label: labels.customersLabel, errors_label: labels.errorsLabel }
+      customers_label: labels.customersLabel, errors_label: labels.errorsLabel, ...defaultIssueOptions(template?.lang) }
   }
   if (kind === 'summary') return { ...base, lines: [labels.summaryLine] }
   if (kind === 'table') {
@@ -1473,7 +1483,15 @@ export function canonicalValues(v, template = null) {
   const issues = {}
   for (const [k, list] of Object.entries(v?.issues || {})) {
     if (!Array.isArray(list) || list.length === 0) continue
-    issues[k] = list.map((i) => Object.fromEntries(Object.entries(i || {}).filter(([, x]) => x != null)))
+    // Anomali soruları (2026-10-18): şablon verildiyse sorulmayan / gizli cevap düşer (sunucu da saklamaz); pay sunucunun
+    // hesabıdır — hiç gönderilmez, karşılaştırmaya girmez
+    const section = template ? (template.sections || []).find((s) => s.id === k && s.kind === 'issues') : null
+    issues[k] = list.map((i) => {
+      const clean = Object.fromEntries(Object.entries(i || {}).filter(([, x]) => x != null))
+      if (section) return conformIssue(section, clean)
+      delete clean.share
+      return clean
+    })
   }
   // Tablo: boş hücre / satır / tablo düşer; hiç değer yoksa anahtar hiç yazılmaz (tablosuz raporun belgesi öncekiyle
   // aynı kalsın — sunucu da boş tabloyu yazmaz)
@@ -1571,6 +1589,7 @@ export function canonicalTemplate(tpl) {
       if (Array.isArray(s.lines)) out.lines = s.lines.slice()
       // Sunucu kutucukları yalnız doluyken yazar: boş liste ile yokluk aynı sayılır
       if (Array.isArray(s.tiles) && s.tiles.length) out.tiles = s.tiles.slice()
+      if (s.kind === 'issues') canonIssueOptions(out)
       if (Array.isArray(s.columns)) out.columns = s.columns.map(strip)
       // Sunucu grup bayrağını yalnız "true" iken yazar: false ile yokluk aynı sayılır
       if (Array.isArray(s.rows)) out.rows = s.rows.map((r) => strip({ ...r, group: r.group ? true : undefined }))
@@ -2213,6 +2232,12 @@ export function templateDiff(prev, cur) {
     if (s.kind === 'issues') {
       const keys = ['item_title', 'description_label', 'customers_label', 'errors_label']
       if (keys.some((k) => (p[k] || '') !== (s[k] || ''))) out.push({ group: 'section', op: 'labels', label: section })
+      // Anomali soruları (2026-10-18): aç / kapa, etiket, gösterim ya da pay alanı değiştiyse tek satır
+      const a = canonIssueOptions({ ...p })
+      const b = canonIssueOptions({ ...s })
+      if (ISSUE_OPTION_KEYS.some((k) => stableJson(a[k] ?? null) !== stableJson(b[k] ?? null))) {
+        out.push({ group: 'section', op: 'anomaly', label: section })
+      }
     }
   }
   return out
@@ -2360,11 +2385,17 @@ export function revertInvalidValues(values, base, errorKeys) {
       const [, sid, iid, f] = parts
       const idx = (values.issues?.[sid] || []).findIndex((i) => i?.id === iid)
       if (idx < 0) continue
-      const was = (base?.issues?.[sid] || []).find((i) => i?.id === iid)?.[f] ?? null
-      const uk = issueUnitKey(sid, iid, f)
-      if ((values.issues[sid][idx]?.[f] ?? null) === was && sameUnit(uk)) continue
-      put(own().issues[sid][idx], f, was)
-      revertUnit(uk)
+      const prev = (base?.issues?.[sid] || []).find((i) => i?.id === iid)
+      // Birbirine bağlı anomali cevapları (2026-10-18) birlikte döner: tarih + saat aralığı, kesinti + Kesinti ID — yarım
+      // geri dönüş (yalnız bitiş saati) sunucunun reddettiği bir bileşim bırakırdı. Adet alanının kısaltma üssü de değerle
+      // birlikte kayıtlı hâline döner (2026-10-18: "1,25M" yazılıp bozulan adet eski yazımıyla gider)
+      for (const g of ISSUE_REVERT_GROUPS[f] || [f]) {
+        const was = prev?.[g] ?? null
+        const uk = g === 'customers' || g === 'errors' ? issueUnitKey(sid, iid, g) : null
+        if ((values.issues[sid][idx]?.[g] ?? null) === was && (!uk || sameUnit(uk))) continue
+        put(own().issues[sid][idx], g, was)
+        if (uk) revertUnit(uk)
+      }
     } else if (k.startsWith('tables.')) {
       const parts = k.split('.')
       if (parts.length !== 4) continue
@@ -2419,3 +2450,347 @@ export function withSectionsOpened(state, ids) {
 }
 
 export const allSectionsOpen = (state, ids) => !!state && (state.all || (ids || []).every((id) => state.ids.includes(id)))
+
+
+// ── Anomali konuları (2026-10-18, kullanıcı isteği) ──────────────────────────────────────────────────────────────────
+//
+// "Her konu için başlık, NE ZAMAN (gün + saat aralığı), kaç teknik hata, tüm teknik hatalar içindeki payı otomatik, kesinti
+// kaynaklı mı (Evet ise Kesinti ID zorunlu), müşteri etkisi var mı — yoksa müşteri etkisi gösterilmesin, isteğe bağlı
+// görseller; rapor metinleri bunlara göre üretilsin." Sunucu aynası: TechErrorTemplate.IssueOptions, TechErrorValues.Issue,
+// TechErrorIssueShare (pay — doğruluk tablosu TechErrorIssueShareTest.SHARE_TABLE), TechErrorIssueText (giriş metni —
+// TechErrorIssueTextTest.LEAD_TABLE). JS testleri iki tabloyu Java kaynağından okur.
+
+/** Konu başına en çok görsel (TechErrorTemplate.MAX_ISSUE_IMAGES). */
+export const ISSUE_IMAGES = 2
+/** Kesinti ID'si ve görsel açıklamasının en çok uzunluğu (TechErrorValues.MAX_OUTAGE_ID / MAX_CAPTION). */
+export const ISSUE_LIMITS = Object.freeze({ outageId: 60, caption: 200, label: 120 })
+/** Müşteri etkisi yoksa gösterim (TechErrorTemplate.NO_IMPACT_DISPLAY). */
+export const NO_IMPACT_DISPLAY = ['hide_count', 'hide_topic']
+/** Varsayılan "tüm teknik hatalar" alanı (TechErrorTemplate.DEFAULT_RATIO_OF). */
+export const DEFAULT_RATIO_OF = 'error-count'
+/** Soruların varsayılan etiketleri ŞABLON dilinde (TechErrorTemplate.DEFAULT_*_LABEL_*). */
+export const ISSUE_OPTION_LABELS = Object.freeze({
+  tr: Object.freeze({ time_label: 'Ne zaman?', outage_label: 'Kesinti kaynaklı mı?', outage_id_label: 'Kesinti ID', impact_label: 'Müşteri etkisi var mı?' }),
+  en: Object.freeze({ time_label: 'When?', outage_label: 'Caused by an outage?', outage_id_label: 'Outage ID', impact_label: 'Was there customer impact?' }),
+})
+/** Şablon JSON'unda soruların anahtarları (yalnız açıkken yazılır). */
+export const ISSUE_OPTION_KEYS = ['ask_time', 'time_label', 'ask_outage', 'outage_label', 'outage_id_label', 'ask_impact', 'impact_label',
+  'no_impact_display', 'allow_images', 'ratio_of']
+
+/** Bölümün soruları (anahtar yoksa kapalı); etiket boşsa şablon dilinin varsayılanı. */
+export function issueOptions(section, lang = 'tr') {
+  const s = section || {}
+  const d = ISSUE_OPTION_LABELS[lang === 'en' ? 'en' : 'tr']
+  const label = (k) => (typeof s[k] === 'string' && s[k].trim() ? s[k].trim() : d[k])
+  const askImpact = s.ask_impact === true
+  return {
+    askTime: s.ask_time === true,
+    askOutage: s.ask_outage === true,
+    askImpact,
+    allowImages: s.allow_images === true,
+    ratioOf: typeof s.ratio_of === 'string' && s.ratio_of.trim() ? s.ratio_of.trim() : null,
+    noImpactDisplay: askImpact ? (s.no_impact_display === 'hide_topic' ? 'hide_topic' : 'hide_count') : null,
+    hideTopic: askImpact && s.no_impact_display === 'hide_topic',
+    timeLabel: label('time_label'),
+    outageLabel: label('outage_label'),
+    outageIdLabel: label('outage_id_label'),
+    impactLabel: label('impact_label'),
+  }
+}
+
+/** Hiçbir soru açık değil: 2026-10-18 öncesi düzen (sayaç satırı, müşteri her zaman sorulur). */
+export function issueLegacy(opts) {
+  return !opts.askTime && !opts.askOutage && !opts.askImpact && !opts.allowImages && !opts.ratioOf
+}
+
+/** Varsayılan sorular (yeni anomali bölümü): hepsi açık, pay "Ay içindeki teknik hata adedi"ne göre. */
+export function defaultIssueOptions(lang) {
+  const d = ISSUE_OPTION_LABELS[lang === 'en' ? 'en' : 'tr']
+  return { ask_time: true, time_label: d.time_label, ask_outage: true, outage_label: d.outage_label, outage_id_label: d.outage_id_label,
+    ask_impact: true, impact_label: d.impact_label, no_impact_display: 'hide_count', allow_images: true, ratio_of: DEFAULT_RATIO_OF }
+}
+
+/** Konu görselinin yuva kimliği: `iss:<bölüm>:<konu>:<n>` (TechErrorTemplate.issueSlotId). */
+export function issueSlotId(sectionId, issueId, n) {
+  return `iss:${sectionId}:${issueId}:${n}`
+}
+
+/** `iss:<bölüm>:<konu>:<n>` → `{ sectionId, issueId, n }`; biçim tutmuyorsa null. */
+export function parseIssueSlot(slotId) {
+  const m = /^iss:([a-z0-9][a-z0-9_-]{0,39}):([a-z0-9][a-z0-9_-]{0,39}):([1-9])$/.exec(String(slotId || ''))
+  if (!m || Number(m[3]) > ISSUE_IMAGES) return null
+  return { sectionId: m[1], issueId: m[2], n: Number(m[3]) }
+}
+
+/**
+ * Konu görseli hâlâ yaşıyor mu: bölüm şablonda görsele izin veren bir anomali bölümü ve konu bu değerlerde var (kayıttan
+ * sonra sunucu sahipsiz görseli siler — istemci listesi de aynı kuralla süzülür). Şablon yuvası her zaman yaşar.
+ */
+export function issueImageAlive(slotId, template, values) {
+  const p = parseIssueSlot(slotId)
+  if (!p) return true
+  const s = (template?.sections || []).find((x) => x.id === p.sectionId)
+  if (!s || s.kind !== 'issues' || !issueOptions(s, template?.lang).allowImages) return false
+  return (values?.issues?.[p.sectionId] || []).some((i) => i?.id === p.issueId)
+}
+
+/** Konu PDF / e-postaya girmeyecek mi ("konuyu rapora alma" + müşteri etkisi Hayır). */
+export function issueHidden(section, issue, lang = 'tr') {
+  return issueOptions(section, lang).hideTopic && issue?.impact === false
+}
+
+/**
+ * Konunun payı `{ status, value, missing }` (TechErrorIssueShare.of): OK | MISSING (missing: 'errors' | 'total') | ZERO | OVER
+ * | EXEMPT | BAD_REF; pay sorulmuyorsa null. `fields` raporun (hesaplar uygulanmış) değerleri — yuvarlama oranlarla aynı.
+ */
+export function issueShare(section, issue, template, fields) {
+  const ref = issueOptions(section).ratioOf
+  if (!ref || !issue) return null
+  const res = (status, value = null, missing = null) => ({ status, value, missing })
+  const total = allFields(template).find((f) => f.id === ref)
+  if (!total || total.type !== 'number') return res('BAD_REF')
+  if (fieldExempt(total, fields)) return res('EXEMPT')
+  const errors = calcNumber(issue.errors)
+  if (errors == null) return res('MISSING', null, 'errors')
+  const all = calcNumber(fields?.[ref])
+  if (all == null) return res('MISSING', null, 'total')
+  if (all === 0) return res('ZERO')
+  if (errors > all) return res('OVER')
+  const pct = errors / all * 100
+  if (!Number.isFinite(pct)) return res('ZERO')
+  return res('OK', roundCalc(pct))
+}
+
+/** Gün: "12 Eylül 2026" / "12 September 2026"; geçersizse null (TechErrorIssueText.day). */
+export function issueDayLabel(iso, lang) {
+  if (!isRealDate(iso)) return null
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${d} ${monthName(m, lang)} ${y}`
+}
+
+/** `yyyy-MM-dd` gerçek bir gün mü (31 Şubat değil). */
+export function isRealDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''))
+  if (!m) return false
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (mo < 1 || mo > 12 || d < 1) return false
+  return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate()
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** `HH:mm` (saniyeli "14:00:00" kısaltılır); geçersizse null. */
+export function issueTime(v) {
+  const s = String(v ?? '').trim()
+  const x = s.length === 8 && s[5] === ':' ? s.slice(0, 5) : s
+  return TIME_RE.test(x) ? x : null
+}
+
+/** Saat aralığının kısa gösterimi: "14:00–15:30" / "23:30 – ertesi gün 01:15" (EN "… next day"); aralık yoksa null. */
+export function issueRangeLabel(issue, lang) {
+  const a = issueTime(issue?.start)
+  const b = issueTime(issue?.end)
+  if (!a || !b) return null
+  if (!issue.end_next_day) return `${a}–${b}`
+  return lang === 'en' ? `${a} – ${b} next day` : `${a} – ertesi gün ${b}`
+}
+
+function issueWhen(issue, en) {
+  const day = issueDayLabel(issue?.date, en ? 'en' : 'tr')
+  if (!day) return null
+  const a = issueTime(issue?.start)
+  const b = issueTime(issue?.end)
+  const range = a && b
+  if (en) {
+    if (!range) return `on ${day}`
+    return `on ${day}, ${issue.end_next_day ? `${a} – ${b} the next day` : `${a}–${b}`}`
+  }
+  if (!range) return `${day} tarihinde`
+  return `${day}, ${issue.end_next_day ? `${a} – ertesi gün ${b}` : `${a}–${b}`} arasında`
+}
+
+const leadBold = (s) => `**${s}**`
+
+function leadLabel(raw, fallback) {
+  const v = neutralValue(raw == null ? '' : String(raw)).trim()
+  return v || fallback
+}
+
+/**
+ * Konunun GİRİŞ METNİ (TechErrorIssueText.lead — PDF / e-posta / ekran aynı): sorulmayan ya da cevaplanmayan bilgi düşer
+ * (yarım cümle yok), rakamlar ve Kesinti ID kalın (yıldızlı ID düz), dil şablonun dili. `share` hesaplanan pay ya da null;
+ * `resolve` şablon etiketlerinin yer tutucularını çözer.
+ */
+export function issueLeadText(section, issue, share, lang, resolve = (x) => x, errorsUnit = null, customersUnit = null) {
+  if (!section || !issue) return ''
+  const en = lang === 'en'
+  const o = issueOptions(section, en ? 'en' : 'tr')
+  const out = []
+  const when = o.askTime ? issueWhen(issue, en) : null
+  const errors = calcNumber(issue.errors)
+  // Kısaltmayla girilmiş adet (2026-10-18): "1,25M" metinde de "1,25M" (TechErrorIssueText.lead ile aynı)
+  const n = errors == null ? null : leadBold(formatCount(errors, en ? 'en' : 'tr', errorsUnit))
+  const p = share == null || errors == null ? null : leadBold(formatPercent(share, en ? 'en' : 'tr'))
+  let first = null
+  if (en) {
+    const noun = errors === 1 ? 'technical error' : 'technical errors'
+    if (when && n) first = `${when.charAt(0).toUpperCase()}${when.slice(1)}, ${n} ${noun} occurred`
+    else if (when) first = `It happened ${when}`
+    else if (n) first = `This topic caused ${n} ${noun}`
+    if (first && p) first += `; this is ${p} of all technical errors in the period`
+  } else {
+    if (when && n) first = `${when} ${n} teknik hata alındı`
+    else if (when) first = `${when} yaşandı`
+    else if (n) first = `Bu konu nedeniyle ${n} teknik hata alındı`
+    if (first && p) first += `; bu, dönemdeki tüm teknik hataların ${p} kadarıdır`
+  }
+  if (first) out.push(`${first}.`)
+  if (o.askOutage && (issue.outage === true || issue.outage === false)) {
+    if (issue.outage) {
+      const raw = typeof issue.outage_id === 'string' && issue.outage_id.trim() ? neutralValue(issue.outage_id.trim()) : null
+      const label = leadLabel(resolve(o.outageIdLabel), en ? 'Outage ID' : 'Kesinti ID')
+      const ref = raw == null ? '' : ` (${label}: ${raw.includes('*') ? raw : leadBold(raw)})`
+      out.push(`${en ? 'It was caused by an outage' : 'Kesinti kaynaklıdır'}${ref}.`)
+    } else {
+      out.push(en ? 'It was not caused by an outage.' : 'Kesinti kaynaklı değildir.')
+    }
+  }
+  const customers = calcNumber(issue.customers)
+  if (o.askImpact) {
+    if (issue.impact === true) {
+      if (customers != null) {
+        const c = leadBold(formatCount(customers, en ? 'en' : 'tr', customersUnit))
+        out.push(en ? `Customer impact: ${c} ${customers === 1 ? 'customer' : 'customers'}.` : `Müşteri etkisi: ${c} müşteri.`)
+      } else {
+        out.push(en ? 'There was customer impact.' : 'Müşteri etkisi var.')
+      }
+    } else if (issue.impact === false) {
+      out.push(en ? 'No customer impact.' : 'Müşteri etkisi yok.')
+    }
+  } else if (customers != null) {
+    const label = leadLabel(resolve(section.customers_label), en ? 'Affected customers' : 'Etkilenen müşteri sayısı')
+    out.push(`${label.endsWith('?') ? `${label} ` : `${label}: `}${leadBold(formatCount(customers, en ? 'en' : 'tr', customersUnit))}.`)
+  }
+  return out.join(' ')
+}
+
+/** Raporun ayının ilk ve son günü (`yyyy-MM-dd`) — tarih seçicinin sınırları. */
+export function reportMonthBounds(year, month) {
+  if (!year || !month) return null
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const mm = String(month).padStart(2, '0')
+  return { first: `${year}-${mm}-01`, last: `${year}-${mm}-${String(last).padStart(2, '0')}` }
+}
+
+/**
+ * Konunun İSTEMCİ denetimi (sunucu kuralının aynası, TechErrorValues.issues): `{ alan: { key, required, params } }`.
+ * `required`: boş bırakılmış zorunlu alan — kayıt / PDF / gönderim denemesinden sonra gösterilir; diğerleri hemen. Otomatik
+ * kayıt bu alanları kayıtlı değerinde gönderir (revertInvalidValues).
+ */
+export function issueProblems(section, issue, period = null, lang = 'tr') {
+  const out = {}
+  if (!section || !issue) return out
+  const o = issueOptions(section, lang)
+  if (o.askTime) {
+    const date = issue.date == null || issue.date === '' ? null : String(issue.date)
+    if (date && !isRealDate(date)) out.date = { key: 'te.iss.err.dateInvalid', required: false }
+    else if (date && period?.year && period?.month) {
+      const [y, m] = date.split('-').map(Number)
+      if (y !== period.year || m !== period.month) {
+        out.date = { key: 'te.iss.err.dateOutsideMonth', required: false, params: [monthName(period.month, lang), period.year] }
+      }
+    }
+    const hasStart = issue.start != null && issue.start !== ''
+    const hasEnd = issue.end != null && issue.end !== ''
+    const a = hasStart ? issueTime(issue.start) : null
+    const b = hasEnd ? issueTime(issue.end) : null
+    if (hasStart && !a) out.start = { key: 'te.iss.err.timeInvalid', required: false }
+    if (hasEnd && !b) out.end = { key: 'te.iss.err.timeInvalid', required: false }
+    if (a && !hasEnd) out.end = { key: 'te.iss.err.endRequired', required: true }
+    if (b && !hasStart) out.start = { key: 'te.iss.err.startRequired', required: true }
+    if (a && b) {
+      if (!date && !out.date) out.date = { key: 'te.iss.err.dateRequired', required: true }
+      if (!issue.end_next_day && b <= a) out.end = { key: 'te.iss.err.endBeforeStart', required: false }
+      else if (issue.end_next_day && b > a) out.end = { key: 'te.iss.err.rangeTooLong', required: false }
+    }
+  }
+  if (o.askOutage && issue.outage === true) {
+    const id = typeof issue.outage_id === 'string' ? issue.outage_id.trim() : ''
+    if (!id) out.outage_id = { key: 'te.iss.err.outageIdRequired', required: true }
+    else if (id.length > ISSUE_LIMITS.outageId) out.outage_id = { key: 'te.iss.err.outageIdTooLong', required: false, params: [ISSUE_LIMITS.outageId] }
+  }
+  return out
+}
+
+/** İstemci hata anahtarı (ReportSections.issueErrorKey ile aynı biçim): `issue:<bölüm>:<konu>:<alan>`. */
+export function issueKey(sectionId, issueId, field) {
+  return `issue:${sectionId}:${issueId}:${field}`
+}
+
+/** Şablondaki bütün konuların denetimi: `{ 'issue:<bölüm>:<konu>:<alan>': { key, required, params } }`. */
+export function issueValidation(template, issues, period = null) {
+  const out = {}
+  for (const s of template?.sections || []) {
+    if (s.kind !== 'issues') continue
+    for (const i of issues?.[s.id] || []) {
+      const p = issueProblems(s, i, period, template?.lang)
+      for (const [f, v] of Object.entries(p)) out[issueKey(s.id, i.id, f)] = v
+    }
+  }
+  return out
+}
+
+/**
+ * Konunun bölümün sorularına UYGUN kanonik hâli (kaydedilmemiş değişiklik denetimi + gönderim): sorulmayan cevap düşer,
+ * müşteri sayısı yalnız etki Evet'te, Kesinti ID yalnız kesinti Evet'te, "ertesi gün" yalnız saat aralığıyla; sunucunun
+ * hesapladığı pay (`share`) hiç gönderilmez. Sunucu da aynı kuralla saklar — gizli bir değer kayıtta "değişiklik" sayılmaz.
+ */
+export function conformIssue(section, issue) {
+  if (!issue || typeof issue !== 'object') return issue
+  const o = issueOptions(section)
+  const x = { ...issue }
+  delete x.share
+  if (!o.askTime) { delete x.date; delete x.start; delete x.end; delete x.end_next_day }
+  else if (!(x.start && x.end)) delete x.end_next_day
+  if (x.end_next_day === false) delete x.end_next_day
+  if (!o.askOutage) { delete x.outage; delete x.outage_id }
+  else if (x.outage !== true) delete x.outage_id
+  if (!o.askImpact) delete x.impact
+  else if (x.impact !== true) delete x.customers
+  if (!o.allowImages) delete x.captions
+  else if (x.captions && typeof x.captions === 'object') {
+    const c = {}
+    for (const [k, v] of Object.entries(x.captions)) if (typeof v === 'string' && v.trim()) c[k] = v
+    if (Object.keys(c).length) x.captions = c
+    else delete x.captions
+  }
+  return x
+}
+
+/** Otomatik kayıtta geçersiz bir alanla birlikte kayıtlı değerine dönen alanlar (birbirine bağlı cevaplar). */
+export const ISSUE_REVERT_GROUPS = Object.freeze({
+  date: ['date', 'start', 'end', 'end_next_day'],
+  start: ['date', 'start', 'end', 'end_next_day'],
+  end: ['date', 'start', 'end', 'end_next_day'],
+  outage: ['outage', 'outage_id'],
+  outage_id: ['outage', 'outage_id'],
+})
+
+/**
+ * Anomali sorularının kanonik hâli (yerinde): sunucu yalnız AÇIK soruyu ve etiketini yazar — kapalı sorunun `false`
+ * anahtarı, etiketi ve "müşteri etkisi yoksa" gösterimi yoklukla aynı sayılır (sahte "kaydedilmemiş değişiklik" olmasın).
+ */
+export function canonIssueOptions(o) {
+  if (o.ask_time !== true) { delete o.ask_time; delete o.time_label }
+  if (o.ask_outage !== true) { delete o.ask_outage; delete o.outage_label; delete o.outage_id_label }
+  if (o.ask_impact !== true) { delete o.ask_impact; delete o.impact_label; delete o.no_impact_display }
+  else if (o.no_impact_display == null || o.no_impact_display === '') o.no_impact_display = 'hide_count'
+  if (o.allow_images !== true) delete o.allow_images
+  if (o.ratio_of == null || o.ratio_of === '') delete o.ratio_of
+  for (const k of ['time_label', 'outage_label', 'outage_id_label', 'impact_label']) {
+    if (typeof o[k] === 'string' && !o[k].trim()) delete o[k]
+  }
+  return o
+}

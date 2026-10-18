@@ -19,7 +19,8 @@ import ReportHistorySheet from './ReportHistory.jsx'
 import {
   ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
 } from './SectionCollapse.jsx'
-import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
+import { MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
+import { IssuesBlock } from './ReportIssues.jsx'
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
@@ -31,7 +32,8 @@ import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetc
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
-  reportErrorSection, fieldExempt, resolvePlaceholders, resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
+  reportErrorSection, fieldExempt, issueImageAlive, issueValidation, monthName, resolvePlaceholders, resolveTextPlaceholders,
+  revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
@@ -144,6 +146,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [autoHold, setAutoHold] = useState(false)
   const leaving = useRef(false)                         // ayrılma sürüyor (çift tıklama iki kez sormasın / gitmesin)
   const [pending, setPendingMap] = useState({})         // yarım yazılmış sayı alanları (taslağa girmemiş)
+  // Anomali konusunun boş ZORUNLU alanı (Kesinti ID, saat aralığının eksik ucu) kayıt / PDF / gönderim denemesinden sonra
+  // alanın altında gösterilir (2026-10-18); geçersiz değer (bitiş başlangıçtan önce, ay dışı tarih) hemen
+  const [showRequired, setShowRequired] = useState(false)
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
@@ -287,7 +292,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const readOnly = !data?.can_edit
   // Gönderim / onay isteği takımın kendi kapsamı: paylaşımla düzenleyen (9. sürüm) `can_send:false` alır; eski sunucuda can_edit
   const canSend = data?.can_send != null ? !!data.can_send : !readOnly
-  const hasClientErrors = hasAny(clientErrors)
+  // Anomali konularının istemci denetimi (2026-10-18; sunucu kuralının aynası — techErrorModel.issueProblems): kaydı kilitler,
+  // otomatik kayıt bu alanları kayıtlı değerinde gönderir
+  const issueChecks = useMemo(() => issueValidation(data?.template, draft?.issues,
+    data?.report ? { year: data.report.year, month: data.report.month } : null), [data?.template, draft?.issues, data?.report])
+  const issueChecksRef = useRef(issueChecks)
+  issueChecksRef.current = issueChecks
+  const hasClientErrors = hasAny(clientErrors) || Object.keys(issueChecks).length > 0
   const clientErrorsRef = useRef(clientErrors)
   clientErrorsRef.current = clientErrors
   const hasPending = hasAny(pending)
@@ -302,7 +313,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     else delete out[key]
     return out
   }), [])
-  const fieldErrors = useMemo(() => ({ ...serverErrors, ...clientErrors }), [serverErrors, clientErrors])
+  const shownIssueErrors = useMemo(() => {
+    const out = {}
+    for (const [k, v] of Object.entries(issueChecks)) if (showRequired || !v.required) out[k] = t(v.key, ...(v.params || []))
+    return out
+  }, [issueChecks, showRequired, t])
+  const fieldErrors = useMemo(() => ({ ...serverErrors, ...shownIssueErrors, ...clientErrors }),
+    [serverErrors, shownIssueErrors, clientErrors])
+  /** Kaydı durduran istemci sorunu var mı (alan hatası ya da anomali denetimi)? */
+  const blockingNow = () => hasAny(clientErrorsRef.current) || Object.keys(issueChecksRef.current).length > 0
 
   // Yazarken yerel yedek (1 sn sonra) — sekme kapanır / ağ düşerse emek kaybolmasın. Taslak yeniden temizlenince bu
   // sayfanın yazdığı yedek silinir (sonraki ziyarette boşuna "geri yükle" önerilmesin).
@@ -464,6 +483,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   async function doSave({ quiet = false, auto = false } = {}) {
     if (!draftRef.current || readOnly) return false
     const invalidKeys = Object.keys(clientErrorsRef.current).filter((k) => clientErrorsRef.current[k])
+    for (const k of Object.keys(issueChecksRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
     if (!auto && invalidKeys.length) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
     // Otomatik kayıtta yarım yazılmış sayı da geçersiz gibi kayıtlı değerinde gider
     if (auto) for (const k of Object.keys(pendingRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
@@ -506,6 +526,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           setBackup(null)
         }
         if (!auto) setAutoHold(false)
+        if (!auto) setShowRequired(false)
+        // Silinen konunun görselini sunucu bu kayıtta sildi (2026-10-18): yerel liste de aynı kuralla süzülür
+        setImages((list) => {
+          const next = list.filter((i) => issueImageAlive(i.slot_id, canonTpl.current, values))
+          return next.length === list.length ? list : next
+        })
         setServerErrors({})
         setState((s) => (s.loading ? { ...s, loading: false } : s))
         statusGen.current++
@@ -561,7 +587,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   async function ensureSaved() {
     if (readOnly) return true
     await settleSave()
-    if (hasAny(clientErrorsRef.current)) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
+    if (blockingNow()) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
     if (isSavedJson(canonJson(draftRef.current))) return true
     const ok = await showConfirm({ title: t('te.saveFirstTitle'), message: t('te.saveFirstBody'), variant: 'warning',
       confirmText: t('te.saveAndContinue'), cancelText: t('te.cancel') })
@@ -981,6 +1007,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setClientErrors({})
     setServerErrors({})
     setPendingMap({})
+    setShowRequired(false)
   }
 
   const sections = useMemo(() => tpl?.sections || [], [tpl])
@@ -1024,10 +1051,31 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     errSections.current = now
     if (fresh.length) openMany(fresh)
   }, [invalidCounts, openMany])
-  /** Kaydı / PDF'i durduran hatalı alanların bölümlerini açar (kullanıcı kapatmış olabilir). */
+  /** Kaydı / PDF'i durduran hatalı alanların bölümlerini açar (kullanıcı kapatmış olabilir); zorunlu anomali alanları da görünür. */
   function revealErrors() {
-    if (invalidCounts.size) openMany([...invalidCounts.keys()])
+    setShowRequired(true)
+    const ids = new Set(invalidCounts.keys())
+    for (const k of Object.keys(issueChecksRef.current)) {
+      const sid = reportErrorSection(k, tpl)
+      if (sid) ids.add(sid)
+    }
+    if (ids.size) openMany([...ids])
   }
+
+  // Konu görseli yüklemeden önce (2026-10-18): konu sunucuda kayıtlı değilse rapor kaydedilir — kaydedilmemiş konunun görseli
+  // sunucuda sahipsiz kalırdı (sunucu da reddeder). Geri çağrı SABİT (kartlar yazarken yeniden kurulmasın)
+  const beforeIssueUploadRef = useRef(null)
+  beforeIssueUploadRef.current = async (sid, iid) => {
+    if (readOnly) return false
+    await settleSave()
+    const inBase = () => {
+      try { return (JSON.parse(baseRef.current.json || '{}').issues?.[sid] || []).some((i) => i?.id === iid) } catch { return false }
+    }
+    if (inBase()) return true
+    const ok = await save({ quiet: true })
+    return ok && inBase()
+  }
+  const beforeIssueUpload = useCallback((sid, iid) => beforeIssueUploadRef.current?.(sid, iid) ?? false, [])
 
   // Otomatik kayıt: 30 sn'de bir ve sekme gizlenirken; değişiklik yoksa, salt okunurda, çakışmada, başka bir işlem ya da
   // kayıt / yükleme sürerken atlanır
@@ -1230,8 +1278,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             calc={calc} onTarget={setTarget} />
         }
         if (s.kind === 'issues') {
-          return <IssuesBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
-            errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError} onUnit={setUnit} />
+          return <IssuesBlock key={key} section={s} template={tpl} values={draft} shownFields={shownFields} resolve={resolve}
+            uiLang={uiLang} readOnly={readOnly} errors={fieldErrors} onIssues={setIssues} onFieldError={setFieldError}
+            onUnit={setUnit} reportId={reportId} images={images} onImagesChange={onImagesChange}
+            period={{ year: report?.year, month: report?.month, monthName: monthName(report?.month, uiLang) }}
+            beforeIssueUpload={beforeIssueUpload} />
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
