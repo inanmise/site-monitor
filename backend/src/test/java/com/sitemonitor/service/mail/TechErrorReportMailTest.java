@@ -79,7 +79,9 @@ class TechErrorReportMailTest {
         assertThat(html).doesNotContain("Oluşturan:");                  // kimlik verilmedi → eski tek satır
         assertThat(html).contains("ekteki PDF&#39;tedir (mobil.pdf)");
         assertThat(b.mail().text()).contains("ekteki PDF'tedir (mobil.pdf)");
-        // Sıra: band → özet (kutucuk şeridi + metin) → Verileri → Oranları → anomaliler → SLA görselleri → metin → grafikler
+        // Sıra: band → özet (kutucuk şeridi + metin) → Verileri → anomaliler → SLA görselleri → metin → grafikler. Oranları
+        // bölümü YOK (2026-10-18, veri tekrarı yok): bütün oranları özetin cümlelerinde / kutucuklarında — geriye basılacak
+        // alan kalmadı; Verileri yalnız özette yazılmayan kesinti sorusu ve dolu açıklamayla basılır
         int summary = html.indexOf("Yönetici Özeti");
         int tiles = html.indexOf("data-slot=\"te-tiles\"");
         int data = html.indexOf("Mobil Kanalı — Eylül 2026 Verileri");
@@ -90,8 +92,8 @@ class TechErrorReportMailTest {
         assertThat(band).isLessThan(summary);
         assertThat(summary).isLessThan(tiles);
         assertThat(tiles).isLessThan(data);
-        assertThat(data).isLessThan(rates);
-        assertThat(rates).isLessThan(issues);
+        assertThat(rates).as("Oranları: her oran özette — bölüm basılmaz").isEqualTo(-1);
+        assertThat(data).isLessThan(issues);
         assertThat(issues).isLessThan(charts);
         assertThat(charts).isLessThan(note);
         // Map / kota açıklaması "Verileri" bölümünün alanı (7. sürüm): ayrı bölüm başlığı yok, alanın adıyla basılır
@@ -115,13 +117,21 @@ class TechErrorReportMailTest {
     void sectionsLikePdf() throws IOException {
         TechErrorPdfInput in = input("tr", Map.of());
         String html = TechErrorReportMail.build(in, null, "m.pdf").html();
-        // Değer kutucukları: Verileri bölümü girilenler, Oranları hesaplananlar; "Hayır" → kesinti alanları muaf (yok)
+        // Değer kutucukları (2026-10-18, veri tekrarı yok): Verileri bölümünde YALNIZ özette yazılmayan değer — kesinti sorusu
+        // ("Hayır" → kesinti alanları muaf, yok); adetler, SLA ve bütün oranlar özetin kutucuk / cümlelerinde, burada tekrar yok
         String values = html.substring(html.indexOf("Mobil Kanalı — Eylül 2026 Verileri"), html.indexOf("Anormal Artış Gösteren Hatalar"));
-        assertThat(values).contains("data-slot=\"te-values\"").contains("Toplam işlem adedi").contains(">1.000<").contains("Dönemde kesinti oldu mu?").contains(">Hayır<")
-                .contains("Kritik fonksiyonların SLA oranı").contains(">%99,9<").contains("SLA hedefin üstünde mi?")
+        assertThat(values).contains("data-slot=\"te-values\"").contains("Dönemde kesinti oldu mu?").contains(">Hayır<")
+                .contains("Map yapılmamış hatalar hakkında açıklama")
+                .doesNotContain("Toplam işlem adedi").doesNotContain(">1.000<")
+                .doesNotContain("Kritik fonksiyonların SLA oranı").doesNotContain(">%99,9<").doesNotContain("SLA hedefin üstünde mi?")
                 .doesNotContain("Kesinti kaynaklı teknik hata adedi").doesNotContain("Kesinti günleri hariç")
-                .contains("Teknik hata oranı").contains(">%0,5<").contains("Map yapılmamış hataların teknik hatalara oranı").contains(">%40<");
-        assertThat(values.split("class=\"stack\"", -1).length - 1).isGreaterThanOrEqualTo(8);
+                .doesNotContain("Teknik hata oranı").doesNotContain(">%0,5<").doesNotContain("Map yapılmamış hataların teknik hatalara oranı")
+                .doesNotContain(">%40<").doesNotContain("Oranları (otomatik)");
+        assertThat(values.split("class=\"stack\"", -1).length - 1).isEqualTo(1);
+        // Değerler özette, bir kez: kutucuk (değer + fark) ve cümle
+        String head = html.substring(0, html.indexOf("Mobil Kanalı — Eylül 2026 Verileri"));
+        assertThat(head).contains("<strong>%0,5</strong>").contains("<strong>%40</strong>").contains("<strong>%99,9</strong>")
+                .contains("Toplam işlem adedi");
         // Anomali kartı
         String issue = html.substring(html.indexOf("data-slot=\"te-issue\""));
         // 2026-10-18: varsayılan şablonun anomali soruları açık — sayaç satırı yerine cevaplardan kurulan giriş metni (müşteri

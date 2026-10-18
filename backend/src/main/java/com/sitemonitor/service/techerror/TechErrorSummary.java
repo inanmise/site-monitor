@@ -238,28 +238,9 @@ public final class TechErrorSummary {
         }
         Map<String, Field> byId = new HashMap<>();
         for (Field f : t.allFields()) byId.put(f.id(), f);
-        // 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar ("söylenenler"). Metin sınırı
-        // auto ile aynı ölçüyle burada da işler: sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz.
-        List<String> kept = new ArrayList<>(s.lines().size());
-        Set<String> told = new HashSet<>();
-        int len = 0;
-        boolean par = false;
-        for (String line : s.lines()) {
-            if (len > TechErrorTemplate.MAX_RESOLVED_TEXT) {
-                kept.add(null);
-                continue;
-            }
-            String r = line(line, byId, vals, previous, targets, units, t.lang(), channel, year, month);
-            // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (auto ile aynı)
-            boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
-            kept.add(ok ? r : null);
-            if (!ok) continue;
-            // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
-            for (Ref ref : refs(line)) if ("f".equals(ref.kind())) told.add(ref.id());
-            boolean item = isItem(line);
-            len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length();
-            par = !item;
-        }
+        Told pass = told(s, byId, vals, previous, targets, units, t.lang(), channel, year, month);
+        List<String> kept = pass.kept();
+        Set<String> told = pass.told();
         // 2. geçiş: paragraf akışı auto ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir
         boolean[] placed = new boolean[embedded.size()];
         StringBuilder buf = new StringBuilder();
@@ -301,6 +282,84 @@ public final class TechErrorSummary {
             if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month), flushed);
         }
         return capText(out);
+    }
+
+    /** 1. geçişin sonucu: kalıp satırı başına tutulan cümle ({@code null} = düşen) ve "söylenen" alanlar. */
+    private record Told(List<String> kept, Set<String> told) { }
+
+    /**
+     * 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar ("söylenenler"). Metin sınırı
+     * {@link #auto} ile aynı ölçüyle burada da işler: sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz.
+     * {@link #blocks} (söylenmemiş değerler) ve {@link #shownValues} (gösterge bölümünde tekrar basılmayacaklar) AYNI
+     * sonucu kullanır — iki kural ayrışamaz.
+     */
+    private static Told told(Section s, Map<String, Field> byId, Map<String, Object> vals, Map<String, Object> previous,
+                             Map<String, Object> targets, Map<String, Integer> units, String lang, String channel, int year, int month) {
+        List<String> kept = new ArrayList<>(s.lines().size());
+        Set<String> told = new HashSet<>();
+        int len = 0;
+        boolean par = false;
+        for (String line : s.lines()) {
+            if (len > TechErrorTemplate.MAX_RESOLVED_TEXT) {
+                kept.add(null);
+                continue;
+            }
+            String r = line(line, byId, vals, previous, targets, units, lang, channel, year, month);
+            // Madde kalıbı boş gövdeye çözüldüyse ("- {f:x?Var|}" → "-") cümle düşer (auto ile aynı)
+            boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
+            kept.add(ok ? r : null);
+            if (!ok) continue;
+            // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
+            for (Ref ref : refs(line)) if ("f".equals(ref.kind())) told.add(ref.id());
+            boolean item = isItem(line);
+            len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length();
+            par = !item;
+        }
+        return new Told(kept, told);
+    }
+
+    // ── Veri tekrarı yok (2026-10-18) ────────────────────────────────────────────────────────────────
+
+    /**
+     * Yönetici özetinde DEĞERİ gösterilen alanlar (2026-10-18, kullanıcı isteği: "kullanıcının elle girdiği verileri tekrar
+     * etmeden Yönetici Özeti kısmında gösterelim; aynı veriyi birden fazla kez göstermeyelim"). Raporun HER özet bölümü için:
+     * <ul>
+     *   <li>kutucuk şeridinde ÇİZİLEN alanlar ({@link TechErrorTiles#build} — şablonda olmayan / sayı-yüzde olmayan / muaf
+     *       kutucuk çizilmez, sayılmaz; boş değer "—" ile çizilir, sayılır);</li>
+     *   <li>özet otomatikse: TUTULAN (düşmeyen) bir cümlede {@code {f:<alan>}} ile değeri yazılan alanlar — söylenmemiş değer
+     *       kuralının ({@link #blocks}) aynı 1. geçişi; {@code {d:}} / {@code {t:}} / {@code {dt:}} değeri yazmaz, sayılmaz;
+     *       metin sınırından sonraki cümle sayılmaz;</li>
+     *   <li>özet elle düzenlendiyse ({@code texts[<özet>]} boş değil): YALNIZ kutucuklar (elle metnin içeriği bilinmez).</li>
+     * </ul>
+     * PDF ve e-posta, özete GÖMÜLÜ olmayan gösterge bölümlerinde bu alanların sayı / yüzde / evet-hayır değerini tekrar
+     * basmaz ({@link #shownInSummary}). Özet bölümü olmayan ya da hiçbir şey göstermeyen özetin kümesi boştur — çıktı aynı.
+     */
+    public static Set<String> shownValues(Template t, Values v, Map<String, Object> previous, String channel, int year, int month) {
+        Set<String> out = new HashSet<>();
+        if (t == null || v == null) return out;
+        Map<String, Object> vals = v.fields() == null ? Map.of() : v.fields();
+        Map<String, Field> byId = null;
+        for (Section s : t.sections()) {
+            if (!"summary".equals(s.kind())) continue;
+            for (TechErrorTiles.Tile tile : TechErrorTiles.build(t, s, v, previous, channel, year, month)) out.add(tile.id());
+            String override = v.texts() == null ? null : v.texts().get(s.id());
+            if (override != null && !TechErrorRichText.blank(override)) continue;
+            if (byId == null) {
+                byId = new HashMap<>();
+                for (Field f : t.allFields()) byId.put(f.id(), f);
+            }
+            out.addAll(told(s, byId, vals, previous, v.targets(), v.units(), t.lang(), channel, year, month).told());
+        }
+        return out;
+    }
+
+    /**
+     * Gösterge bölümünde bu alan tekrar basılmaz mı: değeri özette gösterilen ({@link #shownValues}) sayı / yüzde /
+     * evet-hayır alanı. Uzun açıklama ({@code textarea}) ve kısa metin hiç düşmez — mevcut kurallarla basılır.
+     */
+    public static boolean shownInSummary(Field f, Set<String> shown) {
+        if (f == null || shown == null || shown.isEmpty() || !shown.contains(f.id())) return false;
+        return "number".equals(f.type()) || "percent".equals(f.type()) || "yesno".equals(f.type());
     }
 
     /** Birleşik metnin uzunluğu: blok olmuş kısım + (ikisi de doluysa ayraç) + tampon. */

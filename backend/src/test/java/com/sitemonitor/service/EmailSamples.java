@@ -551,14 +551,18 @@ final class EmailSamples {
         for (String lang : java.util.List.of("tr", "en")) {
             var t = com.sitemonitor.service.techerror.TechErrorTemplate.defaults(lang);
             java.util.Map<String, Object> tf = new java.util.LinkedHashMap<>(java.util.Map.of(
-                    "error-rate", 0.42, "error-rate-excl", 0.31, "total-tx", 12500000, "tx-increase", true,
-                    "tx-increase-pct", 3.2, "sla-rate", 99.6, "sla-above", true, "error-count", 52500));
+                    "error-rate", 0.42, "total-tx", 12500000, "tx-increase", true,
+                    "tx-increase-pct", 3.2, "sla-rate", 99.97, "sla-above", true, "error-count", 52500));
             // 2026-10-17: map yapılmamış hatalar özet kartında; açıklaması ilgili cümlenin altına düşer
             tf.put("unmapped-count", 1250);
             tf.put("unmapped-rate", 2.38);
             tf.put("unmapped-note", "Yeni hata kodları eşlenmedi.\n- **E-1042** kart limiti\n- E-2210 zaman aşımı");
             // 2026-10-18: kısaltmayla girilmiş toplam işlem ("12,5M") ve sıfır kota hatası (yeşil tik — CID görsel)
             tf.put("quota-count", 0);
+            tf.put("quota-rate", 0);
+            // 2026-10-18 (veri tekrarı yok): kesinti yok → kesinti alanları muaf. Özette yazılan her değer Verileri / Oranları
+            // bölümünde tekrar basılmaz: bu örnekte Oranları hiç basılmaz, Verileri yalnız kesinti sorusu + map açıklamasıyla
+            tf.put("had-outage", false);
             // 2026-10-18: anomali konusu — cevaplardan kurulan giriş metni + konunun görseli (kartın içinde, cid)
             java.util.Map<String, Object> topic = new java.util.LinkedHashMap<>();
             topic.put("id", "k1");
@@ -569,8 +573,8 @@ final class EmailSamples {
             topic.put("start", "14:00");
             topic.put("end", "15:30");
             topic.put("errors", 1250);
-            topic.put("outage", true);
-            topic.put("outage_id", "INC-2026-0915");
+            // Dönemde kesinti yok (yukarıda had-outage = Hayır) → konu da kesinti kaynaklı değil (tutarlı örnek)
+            topic.put("outage", false);
             topic.put("impact", true);
             topic.put("customers", 320);
             topic.put("captions", java.util.Map.of("1", "Saatlik hata adedi"));

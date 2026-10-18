@@ -42,6 +42,10 @@ import static com.sitemonitor.service.report.PdfCanvas.*;
  * belge başlığı. {@code in.sample()} (şablon önizlemesi) ilk sayfaya "ÖRNEK ÖNİZLEME" şeridini, her üst bilgiye ve kapaktaki
  * hazırlayan satırına örnek işaretini ekler.
  *
+ * <p>2026-10-18 (kullanıcı isteği: "aynı veriyi birden fazla kez göstermeyelim"): değeri yönetici özetinde (kutucuk ya da
+ * tutulan {@code {f:}} cümlesi) gösterilen sayı / yüzde / evet-hayır alanı gösterge bölümlerinde tekrar basılmaz
+ * ({@link TechErrorSummary#shownValues}); geriye bir şey kalmayan bölüm hiç basılmaz. E-posta aynı kümeyi kullanır.
+ *
  * <p>Yazıcı hesaplamaz: adetleri kullanıcı girer, otomatik oranları ({@code TechErrorCalc}) servis PDF girdisini kurarken
  * hesaplar. Dil şablondan gelir (TR / EN etiketleri, ay adları,
  * sayı biçimi). Döngüler girdiyle sınırlıdır (bölüm ≤ 20, alan ≤ 30, başlık ≤ 30, yuva ≤ 40, metin ≤ 10 000 karakter).
@@ -75,6 +79,12 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
 
     /** Basılan bölüm başlıkları (çizim sırasıyla): içindekiler ve yer imleri bunlardan kurulur. */
     private final List<PdfCanvas.Mark> marks = new ArrayList<>();
+
+    /**
+     * Değeri yönetici özetinde gösterilen alanlar ({@link TechErrorSummary#shownValues}, 2026-10-18): gösterge bölümlerinde
+     * tekrar basılmaz. Çizimin başında bir kez hesaplanır; iki geçiş aynı girdiden aynı kümeyi kurar.
+     */
+    private java.util.Set<String> shown = java.util.Set.of();
 
     /**
      * Yalnız yerleşim (ilk geçiş, R19 inceleme): görseller gömülmez (en pahalı adım) — yerleşim görselin baytına değil,
@@ -154,6 +164,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         cover(in);
         if (in.sample()) sampleBanner();
         List<TocRow> tocRows = tocTitles == null || tocTitles.isEmpty() ? null : reserveToc(tocTitles);
+        shown = TechErrorSummary.shownValues(in.template(), in.values(), in.previousOrNull(), in.channelName(), in.year(), in.month());
         for (Section s : in.template().sections()) {
             switch (s.kind()) {
                 // Yönetici özetine gömülü bölüm (2026-10-17) kendi bölümü olarak basılmaz: rakamları özet cümlelerinde,
@@ -325,13 +336,17 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         Map<String, Object> vals = in.values().fields();
         for (Field f : s.fields()) {
             if (TechErrorTemplate.exempt(f, vals)) continue;     // "Hayır" cevabıyla muaf alan PDF'e girmez
+            // Değeri yönetici özetinde (kutucuk ya da tutulan cümle) gösterilen sayı / yüzde / evet-hayır tekrar basılmaz
+            // (2026-10-18, kullanıcı isteği: "aynı veriyi birden fazla kez göstermeyelim"); not ve kısa metin etkilenmez
+            if (TechErrorSummary.shownInSummary(f, shown)) continue;
             // Boş uzun açıklama (isteğe bağlı) basılmaz — özet kartına gömülü notlarla aynı kural (7. sürüm, inceleme 2026-10-17);
             // kısa metin alanı boşsa "—" (alan vardı, doldurulmadı)
             if ("textarea".equals(f.type()) && blankText(vals.get(f.id()))) continue;
             if ("text".equals(f.type()) || "textarea".equals(f.type())) texts.add(f);
             else cards.add(f);
         }
-        if (cards.isEmpty() && texts.isEmpty()) return;          // bölümün tüm alanları muaf → başlık da basılmaz
+        // Bölümün tüm alanları muaf, boş not ya da özette gösterilmiş → başlık da basılmaz (içindekiler / yer imi de yok)
+        if (cards.isEmpty() && texts.isEmpty()) return;
         sectionTitle(in.resolve(s.title()));
         if (!cards.isEmpty()) {
             int perRow = cards.size() == 1 ? 1 : cards.size() == 2 || cards.size() == 4 ? 2 : 3;
