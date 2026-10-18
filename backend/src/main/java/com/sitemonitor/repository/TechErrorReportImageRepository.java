@@ -39,6 +39,14 @@ public interface TechErrorReportImageRepository extends JpaRepository<TechErrorR
             + "WHERE i.reportId IN :ids GROUP BY i.reportId")
     List<Object[]> countsByReport(@Param("ids") Collection<Long> reportIds);
 
+    /**
+     * Konu görseli satırları ({@code prefix} = {@code iss:%}) — rapor listesinin görsel sayısı SAHİPSİZ konu görsellerini saymasın
+     * (inceleme 2026-10-18; rapor ekranının kuralı). Satır: [rapor, yuva, bayt]. Baytsız; yalnız bu satırları olan raporların
+     * şablon / değerleri ayrıca okunur.
+     */
+    @Query("SELECT i.reportId, i.slotId, i.sizeBytes FROM TechErrorReportImage i WHERE i.reportId IN :ids AND i.slotId LIKE :prefix")
+    List<Object[]> slotsByReportWithPrefix(@Param("ids") Collection<Long> reportIds, @Param("prefix") String prefix);
+
     @Modifying
     @Transactional
     @Query("DELETE FROM TechErrorReportImage i WHERE i.reportId = :reportId")

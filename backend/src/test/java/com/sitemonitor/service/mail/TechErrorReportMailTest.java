@@ -124,8 +124,12 @@ class TechErrorReportMailTest {
         assertThat(values.split("class=\"stack\"", -1).length - 1).isGreaterThanOrEqualTo(8);
         // Anomali kartı
         String issue = html.substring(html.indexOf("data-slot=\"te-issue\""));
-        assertThat(issue).contains("1. Kart Limiti: Hata Artışı").contains("Etkilenen müşteri sayısı: 1.200 · Bu konudan kaynaklı teknik hata adedi: 3.400")
-                .contains("color:" + MailTokens.WARNING).contains("<strong>09:40</strong>").contains("&#8226;&nbsp;Mobil");
+        // 2026-10-18: varsayılan şablonun anomali soruları açık — sayaç satırı yerine cevaplardan kurulan giriş metni (müşteri
+        // sayısı girilmiş, cevapsız → "müşteri etkisi var"; konunun adedi toplamdan büyük → pay yok)
+        assertThat(issue).contains("1. Kart Limiti: Hata Artışı")
+                .contains("Bu konu nedeniyle <strong>3.400</strong> teknik hata alındı. Müşteri etkisi: <strong>1.200</strong> müşteri.")
+                .doesNotContain("Bu konudan kaynaklı teknik hata adedi: 3.400")
+                .contains("<strong>09:40</strong>").contains("&#8226;&nbsp;Mobil");
         // Metin bölümü (varsayılan metin, çözülmüş)
         assertThat(html).contains("Grafikler hakkında").contains("Yıllık trend ve detay grafikleri aşağıda paylaşılmıştır.");
         // Görselsiz görsel bölümü PDF notuyla
@@ -202,6 +206,33 @@ class TechErrorReportMailTest {
         TechErrorValues.Values v = TechErrorValues.normalize(Map.of("fields", Map.of("total-tx", 10)), tr);
         assertThat(TechErrorReportMail.build(new TechErrorPdfInput(tr, v, "Mobil", "T", 2026, 9, null, null, Map.of()), null, "m.pdf").html())
                 .contains("Son 12 ayın trend grafikleri ekteki PDF&#39;tedir.");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: PDF EKLENEMEDİYSE (onay isteği, fileName null) gömülmeyen görselin kutusu 'ekteki PDF'te' demez"
+            + " — 'bu postaya eklenmedi, PDF'i Site Monitor'den indirin' (20.157.0 metni; TR / EN, düz metin de); ayrı data-slot"
+            + " te-image-no-pdf; okunamayan görsel yine 'okunamadı'")
+    void imageBoxesWhenPdfNotAttached() throws IOException {
+        TechErrorPdfInput in = input("tr", images());
+        TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in.withoutImages(), TechErrorMailImages.allSkipped(in), null, null);
+        String html = b.mail().html();
+        assertThat(html).contains("PDF bu postanın boyut sınırına sığmadığından eklenmedi")
+                .doesNotContain("data-slot=\"te-image-pdf\"").doesNotContain("Görsel ekteki PDF&#39;te");
+        assertThat(html.split("data-slot=\"te-image-no-pdf\"", -1).length - 1).isEqualTo(3);
+        assertThat(html).contains("Görsel bu postaya eklenmedi — görmek için PDF&#39;i Site Monitor&#39;den indirin (tam çözünürlük).");
+        assertThat(b.mail().text()).contains("[Görsel — Site Monitor'deki PDF'te] Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)")
+                .doesNotContain("[Görsel — PDF ekinde]");
+        // Okunamayan görselin metni değişmez (PDF'te de çizilemez); PDF ekliyse kutular eskisi gibi
+        TechErrorMailImages.Result broken = new TechErrorMailImages.Result(Map.of(), List.of("annual-summary"), List.of("annual-tech-rate"), 0);
+        String bh = TechErrorReportMail.buildFull(in.withoutImages(), broken, null, null).mail().html();
+        assertThat(bh).contains("data-slot=\"te-image-unreadable\"").contains("data-slot=\"te-image-no-pdf\"").doesNotContain("data-slot=\"te-image-pdf\"");
+        assertThat(TechErrorReportMail.buildFull(in.withoutImages(), TechErrorMailImages.allSkipped(in), null, "m.pdf").mail().html())
+                .contains("data-slot=\"te-image-pdf\"").doesNotContain("te-image-no-pdf");
+        TechErrorPdfInput en = input("en", images());
+        TechErrorReportMail.Built eb = TechErrorReportMail.buildFull(en.withoutImages(), TechErrorMailImages.allSkipped(en), null, null);
+        assertThat(eb.mail().html()).contains("Image not included in this e-mail — download the PDF from Site Monitor to see it (full resolution).")
+                .doesNotContain("Image in the attached PDF");
+        assertThat(eb.mail().text()).contains("[Image — in the PDF in Site Monitor]");
     }
 
     @Test
@@ -324,5 +355,88 @@ class TechErrorReportMailTest {
         String en = TechErrorReportMail.buildFull(inEn, TechErrorMailImages.allSkipped(inEn), null, null).mail().html();
         assertThat(en).contains("PDF not attached · September 2026").contains("Image not included in this e-mail")
                 .contains("which is not attached to this e-mail").doesNotContain("in the attached PDF");
+    }
+
+    // ── Anomali konuları (2026-10-18) ────────────────────────────────────────────────────────────────
+
+    static Map<String, Object> topic(String id, Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("topic", "Konu " + id);
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    static Template withIssueOption(String lang, String key, Object value) {
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults(lang)));
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> sec : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(sec);
+            if ("issues".equals(sec.get("kind"))) sc.put(key, value);
+            secs.add(sc);
+        }
+        raw.put("sections", secs);
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    static TechErrorPdfInput anomaly(Template t, List<Object> topics, Map<String, TechErrorPdfInput.Image> imgs) {
+        TechErrorValues.Values v = TechErrorCalc.apply(t, TechErrorValues.normalize(Map.of("fields", Map.of("error-count", 5000),
+                "issues", Map.of("issues", topics)), t, java.time.YearMonth.of(2026, 9)), null);
+        return new TechErrorPdfInput(t, v, "Mobil", "Dijital Kanallar", 2026, 9, "Ayşe Yılmaz", Instant.parse("2026-10-02T06:30:00Z"), imgs);
+    }
+
+    @Test
+    @DisplayName("anomali (2026-10-18): kartta giriş metni (PDF ile aynı, rakamlar kalın), açıklama, konunun görseli kartın içinde CID gömülü (açıklaması üstte; Content-ID'de ':' yok); müşteri etkisi yok → 'Müşteri etkisi yok.'; düz metin de aynı")
+    void anomalyCards() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("iss:issues:k1:1", new TechErrorPdfInput.Image(TechErrorMailImagesTest.png(1400, 500, Color.BLUE), 1400, 500));
+        TechErrorPdfInput in = anomaly(t, List.of(
+                topic("k1", "date", "2026-09-12", "start", "14:00", "end", "15:30", "errors", 170, "outage", true, "outage_id", "INC-2026-0915",
+                        "impact", true, "customers", 320, "description", "Limit **sorgusu** zaman aşımı.", "captions", Map.of("1", "Hata grafiği")),
+                topic("k2", "errors", 25, "outage", false, "impact", false)), imgs);
+        TechErrorMailImages.Result prepared = TechErrorMailImages.prepare(in, TechErrorMailImages.DEFAULT_BUDGET);
+        assertThat(prepared.embedded()).containsOnlyKeys("iss:issues:k1:1");
+        assertThat(prepared.embedded().get("iss:issues:k1:1").cid()).isEqualTo("te-img-iss.issues.k1.1");
+        TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in, prepared, null, "m.pdf");
+        String html = b.mail().html();
+        String card = html.substring(html.indexOf("data-slot=\"te-issue\""));
+        assertThat(card).contains("1. Konu k1: Hata Artışı")
+                .contains("12 Eylül 2026, 14:00–15:30 arasında <strong>170</strong> teknik hata alındı; bu, dönemdeki tüm teknik hataların <strong>%3,4</strong> kadarıdır.")
+                .contains("Kesinti kaynaklıdır (Kesinti ID: <strong>INC-2026-0915</strong>). Müşteri etkisi: <strong>320</strong> müşteri.")
+                .contains("Limit <strong>sorgusu</strong> zaman aşımı.")
+                .contains("Hata grafiği").contains("cid:te-img-iss.issues.k1.1")
+                .contains("2. Konu k2: Hata Artışı").contains("Kesinti kaynaklı değildir. Müşteri etkisi yok.");
+        // Görsel kartın içinde: kartın kapanışından önce
+        int img = card.indexOf("cid:te-img-iss.issues.k1.1");
+        int k2 = card.indexOf("2. Konu k2");
+        assertThat(img).isLessThan(k2);
+        assertThat(b.inline()).extracting(x -> x.cid()).contains("te-img-iss.issues.k1.1");
+        assertThat(b.mail().text()).contains("12 Eylül 2026, 14:00–15:30 arasında 170 teknik hata alındı")
+                .contains("[Görsel] Hata grafiği").contains("Müşteri etkisi yok.");
+        // Bütçe yetmezse "PDF ekinde" kutusu kartın içinde
+        String none = TechErrorReportMail.buildFull(in, TechErrorMailImages.prepare(in, 0), null, "m.pdf").mail().html();
+        assertThat(none.substring(none.indexOf("data-slot=\"te-issue\""))).contains("data-slot=\"te-image-pdf\"").doesNotContain("cid:te-img-iss");
+    }
+
+    @Test
+    @DisplayName("anomali: 'konuyu rapora alma' — etkisiz konu e-postada da yok (görseli de gömülmez); eski düzen bölümü eski sayaç satırını basar")
+    void anomalyHideTopicAndLegacy() throws IOException {
+        Template hide = withIssueOption("tr", "no_impact_display", "hide_topic");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("iss:issues:k1:1", new TechErrorPdfInput.Image(TechErrorMailImagesTest.png(400, 200, Color.RED), 400, 200));
+        TechErrorPdfInput in = anomaly(hide, List.of(topic("k1", "errors", 10, "impact", false), topic("k2", "errors", 20, "impact", true)), imgs);
+        TechErrorMailImages.Result prepared = TechErrorMailImages.prepare(in, TechErrorMailImages.DEFAULT_BUDGET);
+        assertThat(prepared.embedded()).isEmpty();                          // rapora alınmayan konunun görseli bütçe yemez
+        String html = TechErrorReportMail.buildFull(in, prepared, null, "m.pdf").mail().html();
+        assertThat(html).doesNotContain("Konu k1").contains("1. Konu k2: Hata Artışı").contains("Müşteri etkisi var.");
+
+        Template legacy = TechErrorTestTemplates.beforeAnomaly("tr");
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(topic("k1", "customers", 1200, "errors", 3400)))), legacy);
+        String old = TechErrorReportMail.build(new TechErrorPdfInput(legacy, v, "Mobil", "T", 2026, 9, null, null, Map.of()), null, "m.pdf").html();
+        assertThat(old).contains("Etkilenen müşteri sayısı: 1.200 · Bu konudan kaynaklı teknik hata adedi: 3.400")
+                .contains("color:" + MailTokens.WARNING).doesNotContain("teknik hata alındı");
     }
 }

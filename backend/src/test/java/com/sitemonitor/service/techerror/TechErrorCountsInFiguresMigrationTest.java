@@ -73,7 +73,10 @@ class TechErrorCountsInFiguresMigrationTest {
             assertThat(section(old, "unmapped").host()).isEqualTo("exec-summary");
             assertThat(ids(section(old, "summary"))).doesNotContain("unmapped-count", "quota-note");
             Template m = TechErrorCountsInFiguresMigration.migrate(old).orElseThrow();
-            assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+            // Anomali soruları (2026-10-18) bu göçten sonra gelir: sonuç onların öncesindeki varsayılan, ardından bugünkü
+            assertThat(TechErrorTemplate.toJson(m)).as(lang).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly(lang)));
+            assertThat(TechErrorTemplate.toJson(TechErrorAnomalyFieldsMigration.migrate(m).orElseThrow())).as(lang)
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
             TechErrorTemplate.normalize(TechErrorTemplate.toMap(m));                     // katı doğrulamadan geçer
             assertThat(section(m, "unmapped")).isNull();
             assertThat(section(m, "quota")).isNull();
@@ -220,8 +223,8 @@ class TechErrorCountsInFiguresMigrationTest {
             assertThat(migration.migrateLocked()).isEqualTo(2);
             TechErrorChannel afterA = channels.findById(a.getId()).orElseThrow();
             assertThat(afterA.getTemplateVersion()).isEqualTo(2);
-            assertThat(afterA.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
-            assertThat(channels.findById(b.getId()).orElseThrow().getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("en")));
+            assertThat(afterA.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly("tr")));
+            assertThat(channels.findById(b.getId()).orElseThrow().getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly("en")));
             assertThat(channels.findById(fresh.getId()).orElseThrow().getTemplateVersion()).isEqualTo(1);
             assertThat(versions.findAll()).anySatisfy(v -> {
                 assertThat(v.getChannelId()).isEqualTo(a.getId());

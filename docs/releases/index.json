@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T13:27:46Z",
+  "generatedAt": "2026-10-18T15:31:14Z",
   "repo": "inanmise/site-monitor",
-  "count": 776,
+  "count": 777,
   "releases": [
+    {
+      "version": "20.159.0",
+      "tag": "v20.159.0",
+      "releasedAt": "2026-10-18T15:31:05Z",
+      "commit": "bea1e6e00a295cb0231f775bf658ba77db163002",
+      "prevVersion": "20.158.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bea1e6e0",
+          "subject": "değişmeyen kayıt bayat \"değişti\" bırakmaz, \"gitmemiş\" bandı taze okumayla, sonraki deneme gitmese de teslim \"gönderildi\", anomali adetleri kısaltmasıyla belgelendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "04c51d1b",
+          "subject": "kilit çatışması 409 değil 503 LOCK_CONFLICT + Retry-After: 2 — istemci \"başkası değiştirdi\" dalına düşmez, otomatik kayıt yeniden dener"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f4b606d7",
+          "subject": "anomali inceleme 2. tur — görsel yazımında kilit sırası, kilit çatışması 409, PDF'siz onay postasında görseller, sahipsiz görsel sayımı, durum satırı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2b09028a",
+          "subject": "anomali konuları inceleme düzeltmeleri — kütüphane göçü, satır kilidi, sahipsiz görsel, onay postası yedeği, yükleme nedenleri, kart memo'su"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "0427536f",
+          "subject": "anomali konuları — CLAUDE.md, kılavuz TR / EN satırı, PDF ve kök kopyalar"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ab0c9af7",
+          "subject": "anomali konu kartı — ne zaman, canlı pay, kesinti ID, müşteri etkisi, konu görselleri ve şablonda \"Anomali alanları\" (arayüz)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "bda3d5b1",
+          "subject": "anomali konularında ne zaman, kesinti ID, müşteri etkisi, otomatik pay ve konu görselleri (sunucu)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.158.0",
       "tag": "v20.158.0",

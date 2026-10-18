@@ -16,6 +16,17 @@ import { ImageLightbox } from './ImageLightbox.jsx'
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
 const BYTE_PARAMS = new Set(['te.img.errTooBig', 'te.img.errStillLarge'])
+/**
+ * Konu görselinden önceki kayıt neden olmadı (inceleme 2026-10-18 — "işaretli alanları düzeltin" her nedende yanlıştı):
+ * `beforeUpload` `{ ok, reason }` döner; bilinmeyen / eski boolean cevap `invalid` gibi okunur.
+ */
+export const UPLOAD_BLOCK_KEYS = Object.freeze({
+  invalid: 'te.iss.uploadNeedsSave',
+  held: 'te.iss.uploadHeld',
+  conflict: 'te.iss.uploadConflict',
+  network: 'te.iss.uploadNetwork',
+  server: 'te.iss.uploadServer',
+})
 
 /**
  * Grafik yuvaları — iki kolonlu ızgara (PDF'in aynısı): yarım yuvalar yan yana, tam yuva iki kolon genişliğinde. Her
@@ -59,7 +70,19 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
   )
 })
 
-function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0 }) {
+/**
+ * Tek görsel yuvası. Anomali konusu görselleri de bunu kullanır (2026-10-18, `ImageSlotTile`): `beforeUpload` yüklemeden
+ * önce çağrılır (konu henüz kaydedilmediyse düzenleyici raporu kaydeder) ve `{ ok, reason }` döner; olmazsa yükleme yapılmaz,
+ * NEDENE göre metin yuvada (`UPLOAD_BLOCK_KEYS`). `hideWidth`: genişlik etiketi gösterilmez (konu görseli her zaman tam
+ * genişlik). `contextLabel`: görselin erişilebilir adına eklenen bağlam (konu başlığı — "Görsel 1" iki konuda karışmasın).
+ * `onRemoved`: görsel silindikten sonra (konu görselinin açıklaması taslaktan düşer).
+ */
+export function ImageSlotTile(props) {
+  return <SlotTile {...props} />
+}
+
+function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0, beforeUpload = null,
+  hideWidth = false, contextLabel = null, onRemoved = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -72,6 +95,8 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   const zoomRef = useRef(null)                    // kapanınca odak görsele döner
   const [drag, setDrag] = useState(false)
   const label = resolve(slot.label)
+  // Ekran okuyucu / alternatif metin adı: bağlam varsa "Konu — Görsel 1" (görünen etiket yine kısa)
+  const fullLabel = contextLabel ? `${contextLabel} — ${label}` : label
   /** Küçültme / çevirme / döndürme özeti (yuvanın altında ve başarı bildiriminde) */
   const noteText = (n) => [
     n.resized && t('te.img.resized', `${n.fromW} × ${n.fromH}`, `${n.toW} × ${n.toH}`, formatBytes(n.fromBytes, uiLang), formatBytes(n.toBytes, uiLang)),
@@ -85,6 +110,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     setBusy(true)
     setPhase('prep')
     try {
+
       // Tarayıcıda hazırla (2026-10-16: çözünürlük korunur): yalnız sunucu sınırını aşan görsel alan ortalamasıyla
       // küçülür, gerekirse PNG'ye çevrilir; neyin yanlış olduğunu ve ne yapılacağını söyleyen hata
       let prepared
@@ -105,6 +131,14 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       if (others + prepared.file.size > LIMITS.reportImageBytes) {
         setError(t('te.img.errTotal', formatBytes(others + prepared.file.size, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang)))
         return
+      }
+      // Konu görseli (2026-10-18): konu sunucuda kayıtlı değilse önce rapor kaydedilir — görsel hazırlandıktan SONRA (reddedilen
+      // dosya için boşuna kayıt yok); kaydedilmemiş konunun görseli sunucuda sahipsiz kalırdı
+      if (beforeUpload) {
+        let ready
+        try { ready = await beforeUpload() } catch { ready = { ok: false, reason: 'network' } }
+        const ok = ready === true || ready?.ok === true
+        if (!ok) { setError(t(UPLOAD_BLOCK_KEYS[ready?.reason] || UPLOAD_BLOCK_KEYS.invalid)); return }
       }
       setPhase('upload')
       const res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
@@ -129,13 +163,17 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   }
 
   async function remove() {
-    const ok = await showConfirm({ title: t('te.img.removeTitle'), message: t('te.img.removeBody', label), variant: 'danger',
+    const ok = await showConfirm({ title: t('te.img.removeTitle'), message: t('te.img.removeBody', fullLabel), variant: 'danger',
       confirmText: t('te.img.remove'), cancelText: t('te.cancel') })
     if (!ok) return
     setBusy(true)
     try {
       const res = await api.techErrors.deleteImage(reportId, image.id)
-      if (res?.success) { setNote(null); onImagesChange((list) => list.filter((i) => i.id !== image.id)) }
+      if (res?.success) {
+        setNote(null)
+        onImagesChange((list) => list.filter((i) => i.id !== image.id))
+        onRemoved?.()
+      }
       else setError(res?.error || t('te.img.removeError'))
     } catch (e) {
       setError(e?.message || t('te.img.removeError'))
@@ -162,7 +200,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
           <span data-slot="te-image-label">{label}</span>
           <CopyTextButton text={label} />
         </p>
-        <span className="shrink-0 text-xs text-muted-foreground">{slot.width === 'full' ? t('te.width.full') : t('te.width.half')}</span>
+        {!hideWidth && <span className="shrink-0 text-xs text-muted-foreground">{slot.width === 'full' ? t('te.width.full') : t('te.width.half')}</span>}
       </div>
       {image ? (
         <>
@@ -171,10 +209,10 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
               sayfaya sığmayacak kadar uzun görsel daralır (displayWidthPct). width / height yer ayırır (yüklenince kayma yok) */}
           {/* Tıklayınca büyük görünüm (2026-10-16, kullanıcı isteği: "görsele tıklanınca büyüteç gibi pop-up açılsın,
               × ile kapansın") */}
-          <Button ref={zoomRef} type="button" variant="ghost" onClick={() => setZoomed(true)} aria-label={t('te.img.zoom', label)}
+          <Button ref={zoomRef} type="button" variant="ghost" onClick={() => setZoomed(true)} aria-label={t('te.img.zoom', fullLabel)}
             data-slot="te-image-zoom" style={{ maxWidth: `${displayWidthPct(slot.width, image.width, image.height)}%` }}
             className="group relative mx-auto block h-auto w-full cursor-zoom-in rounded-md p-0 hover:bg-transparent">
-            <img src={api.techErrors.imageUrl(image.id)} alt={label} loading="lazy" data-slot="te-image"
+            <img src={api.techErrors.imageUrl(image.id)} alt={fullLabel} loading="lazy" data-slot="te-image"
               width={image.width || undefined} height={image.height || undefined}
               className="block h-auto w-full rounded-md border" />
             <span aria-hidden="true"
@@ -205,13 +243,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
             {busy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
               : image ? <RefreshCw aria-hidden="true" /> : <Upload aria-hidden="true" />}
             {busy ? (phase === 'prep' ? t('te.img.preparing') : t('te.img.uploading')) : image ? t('te.img.replace') : t('te.img.upload')}
-            <span className="sr-only">{`: ${label}`}</span>
+            <span className="sr-only">{`: ${fullLabel}`}</span>
           </Button>
           {image && (
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={remove}
               className="text-destructive pointer-coarse:min-h-10">
               <Trash2 aria-hidden="true" /> {t('te.img.remove')}
-              <span className="sr-only">{`: ${label}`}</span>
+              <span className="sr-only">{`: ${fullLabel}`}</span>
             </Button>
           )}
         </div>
@@ -221,7 +259,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     {/* Büyük görünüm yuvanın bırakma alanının DIŞINDA: portal olayları React ağacında kabarcıklanır — içerideyken açık
         pencereye bırakılan dosya bu yuvaya sessizce yükleniyordu (inceleme 2026-10-16) */}
     {image && (
-      <ImageLightbox open={zoomed} onOpenChange={setZoomed} src={api.techErrors.imageUrl(image.id)} label={label}
+      <ImageLightbox open={zoomed} onOpenChange={setZoomed} src={api.techErrors.imageUrl(image.id)} label={fullLabel}
         width={image.width} height={image.height} returnFocusRef={zoomRef} />
     )}
     </>

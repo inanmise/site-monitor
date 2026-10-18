@@ -175,6 +175,34 @@ describe('rapor değişiklik geçmişi', () => {
     expect(sheet.textContent).not.toMatch(/te\.hist\./)
   })
 
+  it('anomali (2026-10-18): konusu silinen görselin olayı konunun adıyla ve "konuyla birlikte silindi" notuyla; anomali cevap satırları okunur', async () => {
+    te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
+      ev(5, 'IMAGE_DELETE', '2026-10-13T11:00:00Z', { detail: { slot: 'Kart Limiti: Hata Artışı — Görsel 1', file_name: 'saatlik.png',
+        width: 400, height: 200, size_bytes: 2048, reason: 'topic_removed' } }),
+      ev(4, 'IMAGE_DELETE', '2026-10-13T10:00:00Z', { detail: { slot: 'Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' } }),
+      ev(3, 'VALUES', '2026-10-13T09:00:00Z', { version: 6, detail: { changes: [
+        { section: 'Anormal Artış Gösteren Hatalar', label: 'Kart Limiti: Hata Artışı · Kesinti ID', type: 'text', op: 'set', before: null,
+          after: 'INC-2026-0915', key: 'i:issues:k1:outage_id' },
+        { section: 'Anormal Artış Gösteren Hatalar', label: 'Kart Limiti: Hata Artışı · Saat aralığı', type: 'text', op: 'change',
+          before: '14:00–15:30', after: '23:30 – ertesi gün 01:15', key: 'i:issues:k1:time' },
+      ] } }),
+    ] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Değişiklik geçmişi' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Değişiklik geçmişi' })
+    await waitFor(() => expect(sheet.querySelectorAll('[data-kind="IMAGE_DELETE"]')).toHaveLength(2))
+    const [topicImg, slotImg] = sheet.querySelectorAll('[data-kind="IMAGE_DELETE"]')
+    expect(topicImg).toHaveTextContent('Kart Limiti: Hata Artışı — Görsel 1')
+    expect(topicImg.querySelector('[data-slot="te-hist-topic-removed"]')).toHaveTextContent('Anomali konusu silindiği için görseli de kayıtla birlikte silindi.')
+    expect(slotImg.querySelector('[data-slot="te-hist-topic-removed"]')).toBeNull()
+    const values = sheet.querySelector('[data-kind="VALUES"]')
+    expect(values).toHaveTextContent('Kart Limiti: Hata Artışı · Kesinti ID')
+    expect(values).toHaveTextContent('INC-2026-0915')
+    expect(values).toHaveTextContent('23:30 – ertesi gün 01:15')
+    expect(sheet.textContent).not.toMatch(/te\.hist\./)
+  })
+
   it('R18: gönderime ek Bilgi (extra_cc) satırı; paylaşımla okuyana adres yerine sayılar (recipient_count / extra_cc_count)', async () => {
     te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
       ev(3, 'SEND', '2026-10-13T11:00:00Z', { detail: { state: 'SENT', recipient_count: 1, recipients: ['dijital@example.com'], extra_cc: ['ek@example.com', 'iki@example.com'] } }),

@@ -149,7 +149,10 @@ class TechErrorSummaryEmbedMigrationTest {
                 assertThat(TechErrorSummaryEmbedMigration.migrate(m)).isEmpty();
                 // Zincir (üretim sırası): gömme (4a) → adetler Verileri'ne (7. sürüm) = bugünkü varsayılan, bayt bayt
                 Template chained = TechErrorCountsInFiguresMigration.migrate(m).orElseThrow();
-                assertThat(TechErrorTemplate.toJson(chained)).as(lang + " zincir").isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
+                assertThat(TechErrorTemplate.toJson(chained)).as(lang + " zincir").isEqualTo(TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly(lang)));
+                // … → anomali soruları (2026-10-18) = bugünkü varsayılan
+                assertThat(TechErrorTemplate.toJson(TechErrorAnomalyFieldsMigration.migrate(chained).orElseThrow())).as(lang + " zincir")
+                        .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults(lang)));
             }
         }
         assertThat(TechErrorSummaryEmbedMigration.migrate(TechErrorTemplate.defaults("tr"))).isEmpty();

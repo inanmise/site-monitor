@@ -874,6 +874,319 @@ class TechErrorReportServiceTest {
         return (List<Map<String, Object>>) TechErrorHistoryService.detail(e).get("changes");
     }
 
+    private static Map<String, Object> topicRaw(String id, Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("topic", "Konu " + id);
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    @Test
+    @DisplayName("anomali (2026-10-18): kayıt payı hesaplar (istemcinin payı yok sayılır), tarih ay dışıysa 400 alanın altında; PDF girdisi payı CANLI hesaplar; konu görseli yalnız kayıtlı konuya, geçmişte konunun adıyla; konu silinince görselleri gider (IMAGE_DELETE, topic_removed); şablon yenilemede konuyla taşınır, görsel kapatılınca düşer")
+    void anomalyTopicsShareAndImages() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = Map.of("error-count", 5000, "total-tx", 100000);
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("fields", f, "issues", Map.of("issues", List.of(
+                topicRaw("k1", "date", "2026-09-12", "start", "14:00", "end", "15:30", "errors", 170, "outage", true, "outage_id", "INC-1",
+                        "impact", true, "customers", 320, "share", 99),
+                topicRaw("k2", "errors", 10)))), 7L);
+        assertThat(s1.getValuesJson()).contains("\"share\":3.4").contains("\"share\":0.2").doesNotContain("\"share\":99");
+        // Ay dışı tarih: alanın anahtarıyla 400 (konu kimliği + alan)
+        assertThatThrownBy(() -> service.saveValues(r.getId(), s1.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                topicRaw("k1", "date", "2026-10-02")))), 7L))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("issues.issues.k1.date"));
+
+        // PDF girdisi payı canlı hesaplar: payı yazılmamış eski belge de payla basılır
+        TechErrorReport stored = reports.findById(r.getId()).orElseThrow();
+        stored.setValuesJson(stored.getValuesJson().replace("\"share\":3.4", "\"share\":1").replace(",\"share\":0.2", ""));
+        reports.saveAndFlush(stored);
+        var in = service.pdfInput(reports.findById(r.getId()).orElseThrow(), ch, "Dijital");
+        assertThat(in.values().issues().get("issues")).extracting(TechErrorValues.Issue::share).containsExactly(3.4, 0.2);
+
+        // Konu görseli: kayıtlı konuya yüklenir; kaydedilmemiş konuya / 3. görsele / bilinmeyen bölüme yüklenmez
+        TechErrorReportImage img = service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "iss:issues:k2:2", TechErrorImageValidatorTest.png(300, 200), "b.png", 7L);
+        assertThat(img.getSlotId()).isEqualTo("iss:issues:k1:1");
+        for (String bad : List.of("iss:issues:k9:1", "iss:issues:k1:3", "iss:nope:k1:1")) {
+            assertThatThrownBy(() -> service.upload(r.getId(), bad, TechErrorImageValidatorTest.png(400, 200), "x.png", 7L))
+                    .as(bad).isInstanceOf(FieldValidationException.class);
+        }
+        assertThat(events.findAll()).anySatisfy(e -> {
+            assertThat(e.getKind()).isEqualTo("IMAGE_ADD");
+            assertThat(e.getDetailJson()).contains("Konu k1: Hata Artışı — Görsel 1");
+        });
+        assertThat(service.pdfInput(reports.findById(r.getId()).orElseThrow(), ch, "Dijital").images())
+                .containsKeys("iss:issues:k1:1", "iss:issues:k2:2");
+
+        // Konu silinir → görseli de gider (aynı işlem), geçmişte konunun adıyla
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        service.saveValues(r.getId(), cur.getVersion(), Map.of("fields", f, "issues", Map.of("issues", List.of(topicRaw("k2", "errors", 10)))), 7L);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("iss:issues:k2:2");
+        assertThat(events.findAll()).anySatisfy(e -> {
+            assertThat(e.getKind()).isEqualTo("IMAGE_DELETE");
+            assertThat(e.getDetailJson()).contains("topic_removed").contains("Konu k1: Hata Artışı — Görsel 1");
+        });
+
+        // Şablon yenileme: konu taşınır → görseli kalır; görsel sorusu kapatılırsa düşer (önizleme sayar)
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.put("title", "Anomaliler (yeni)");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v2 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("lost_images", 0);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("iss:issues:k2:2");
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.remove("allow_images");
+            copy.remove("ask_time");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 2, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v3 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v3)).containsEntry("lost_images", 1);
+        var res = service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        assertThat(res.removedImages()).isEqualTo(1);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+        // Konu kimliği ve değerleri kaldı; pay yeniden hesaplandı
+        assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("\"id\":\"k2\"").contains("\"share\":0.2");
+    }
+
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
+
+    @Test
+    @DisplayName("yarış (inceleme 2026-10-18): konuyu silen kayıt işlemi açıkken başlayan konu görseli yüklemesi rapor satırı kilidinde"
+            + " BEKLER, kaydın işlenmiş değerlerini okur ve 400 alır — silinmiş konunun görseli kalmaz (kilitsiz yükleme eski değerlerde"
+            + " konuyu görüp görseli yazıyordu)")
+    void uploadWaitsForTopicRemoval() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                topicRaw("k1", "errors", 10), topicRaw("k2", "errors", 5)))), 7L);
+        byte[] png = TechErrorImageValidatorTest.png(400, 200);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var saver = pool.submit(() -> tx.execute(st -> {
+                service.saveValues(r.getId(), s1.getVersion(), Map.of("issues", Map.of("issues", List.of(topicRaw("k2", "errors", 5)))), 7L);
+                locked.countDown();
+                try {
+                    Thread.sleep(400);          // kayıt işlemi açık: satır kilitli, k1 silindi ama henüz işlenmedi
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return null;
+            }));
+            assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> service.upload(r.getId(), "iss:issues:k1:1", png, "a.png", 7L))
+                    .isInstanceOf(FieldValidationException.class)
+                    .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("slot"));
+            saver.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+        // Sıra tersine: yükleme önce işlenir → kayıt görseli görür ve konusuyla siler
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        service.upload(r.getId(), "iss:issues:k2:1", png, "b.png", 7L);
+        var outcome = service.saveValues(r.getId(), cur.getVersion(), Map.of("issues", Map.of("issues", List.of())), 7L, false);
+        assertThat(outcome.removedImages()).containsExactly("iss:issues:k2:1");
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+    }
+
+    /** Konusu olmayan (sahipsiz) bir konu görseli satırını doğrudan yazar — eski bir pod'un ya da yarışın bıraktığı durum. */
+    private TechErrorReportImage orphan(TechErrorReport r, String slot, long sizeBytes) throws Exception {
+        TechErrorReportImage img = new TechErrorReportImage();
+        img.setReportId(r.getId());
+        img.setTeamId(r.getTeamId());
+        img.setSlotId(slot);
+        img.setContentType("image/png");
+        img.setWidth(400);
+        img.setHeight(200);
+        img.setSizeBytes(sizeBytes);
+        img.setData(TechErrorImageValidatorTest.png(400, 200));
+        img.setUploadedAt(Instant.parse("2026-10-13T08:00:00Z"));
+        return images.saveAndFlush(img);
+    }
+
+    @Test
+    @DisplayName("sahipsiz konu görseli (inceleme 2026-10-18): PDF / e-posta girdisine yüklenmez, rapor ekranında listelenmez, 40 MB"
+            + " sınırına sayılmaz; gönderim öncesi süpürme siler (IMAGE_DELETE topic_removed, içerik sayacı ARTMAZ); yaşayan görsel kalır")
+    void orphanIssueImagesAreIgnoredAndSwept() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(topicRaw("k1", "errors", 10)))), 7L);
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        // 40 MB'a 10 bayt kalan sahipsiz satır: sayılsaydı sıradaki yükleme reddedilirdi
+        orphan(reports.findById(r.getId()).orElseThrow(), "iss:issues:gone:1", TechErrorReportService.MAX_REPORT_IMAGE_BYTES - 10);
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        assertThat(service.pdfInput(cur, ch, "Dijital").images()).containsOnlyKeys("iss:issues:k1:1");
+        assertThat(service.liveImageMeta(cur)).extracting(TechErrorReportImageRepository.Meta::getSlotId).containsExactly("iss:issues:k1:1");
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", 7L);
+        Long rev = reports.findById(r.getId()).orElseThrow().getContentRev();
+
+        assertThat(service.sweepOrphanIssueImages(r.getId())).isEqualTo(1);
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("iss:issues:k1:1", "sla-shot-1");
+        assertThat(reports.findById(r.getId()).orElseThrow().getContentRev()).isEqualTo(rev);
+        assertThat(events.findAll()).anySatisfy(e -> {
+            assertThat(e.getKind()).isEqualTo("IMAGE_DELETE");
+            assertThat(e.getDetailJson()).contains("topic_removed").contains("Anomali konusu — Görsel 1");
+        });
+        assertThat(service.sweepOrphanIssueImages(r.getId())).isZero();
+        assertThat(service.sweepOrphanIssueImages(999_999L)).isZero();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: sahipsiz konu görseli SAYILMAZ — rapor listesinin görsel adedi / baytı, şablon önizlemesinin"
+            + " lost_images'ı ve şablon yenilemenin removed_images'ı kullanıcının gördüğü görsellerden; yenileme sahipsizi yine siler")
+    void orphanIssueImagesAreNotCounted() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        TechErrorReport plain = service.createReport(ch, 2026, 8, 7L);
+        service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(topicRaw("k1", "errors", 10)))), 7L);
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", 7L);
+        service.upload(plain.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(300, 100), "b.png", 7L);
+        long liveBytes = images.findByReportIdOrderByIdAsc(r.getId()).stream().mapToLong(TechErrorReportImageRepository.Meta::getSizeBytes).sum();
+        long plainBytes = images.findByReportIdOrderByIdAsc(plain.getId()).stream().mapToLong(TechErrorReportImageRepository.Meta::getSizeBytes).sum();
+        orphan(reports.findById(r.getId()).orElseThrow(), "iss:issues:gone:1", 5_000);
+
+        Map<Long, long[]> counts = service.imageCounts(List.of(r.getId(), plain.getId(), 999_999L));
+        assertThat(counts.get(r.getId())).containsExactly(2L, liveBytes);
+        assertThat(counts.get(plain.getId())).containsExactly(1L, plainBytes);
+        assertThat(counts).doesNotContainKey(999_999L);
+        assertThat(service.imageCounts(List.of())).isEmpty();
+
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        assertThat(service.refreshPreview(cur, service.channel(ch.getId()))).containsEntry("lost_images", 0);
+        TechErrorReportService.RefreshResult res = service.refreshTemplate(r.getId(), cur.getVersion(), 7L);
+        assertThat(res.removedImages()).isZero();
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactlyInAnyOrder("iss:issues:k1:1", "sla-shot-1");
+        assertThat(events.findAll()).filteredOn(e -> "TEMPLATE_REFRESH".equals(e.getKind()))
+                .singleElement().satisfies(e -> assertThat(e.getDetailJson()).contains("\"removed_images\":0"));
+    }
+
+    @Autowired jakarta.persistence.EntityManager em;
+
+    /**
+     * Kilit sırası denetimi (inceleme 2026-10-18): başka bir işlem raporun satırını tutarken {@code writer} BEKLER ve bu sırada
+     * raporun görsel satırlarına DOKUNMAMIŞ olmalıdır — tutan işlem görsel satırlarını hemen güncelleyebilir. Eski sıra (görsel önce
+     * silinir, rapor satırı sonra) burada kilitlenme / kilit zaman aşımı verirdi (PostgreSQL'de 40P01).
+     */
+    private void assertLocksReportRowBeforeImages(Long reportId, Runnable writer) throws Exception {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var probed = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var probeMs = new java.util.concurrent.atomic.AtomicLong(-1);
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var holder = pool.submit(() -> tx.execute(st -> {
+                reports.lockRow(reportId);
+                locked.countDown();
+                try {
+                    Thread.sleep(400);          // yazan başladı ve rapor satırını bekliyor
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                long t0 = System.nanoTime();
+                probed.set(em.createNativeQuery("UPDATE tech_error_report_images SET file_name = file_name WHERE report_id = ?1")
+                        .setParameter(1, reportId).executeUpdate());
+                probeMs.set((System.nanoTime() - t0) / 1_000_000L);
+                return null;
+            }));
+            assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long t0 = System.nanoTime();
+            writer.run();
+            long waited = (System.nanoTime() - t0) / 1_000_000L;
+            holder.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(waited).as("yazan rapor satırını bekledi").isGreaterThanOrEqualTo(300L);
+            assertThat(probed.get()).as("beklerken görsel satırları serbestti").isPositive();
+            assertThat(probeMs.get()).as("görsel satırı kilidi beklenmedi").isLessThan(300L);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (kilit sırası): görsel silme, rapor silme ve kanal silme rapor satırını İLK iş olarak kilitler —"
+            + " satırı tutan işlem varken bekler ve görsel satırlarına dokunmaz (eskiden önce görseli silip rapor satırını bekliyordu)")
+    void imageWritersLockTheReportRowFirst() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        var img = service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "sla-shot-2", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
+        assertLocksReportRowBeforeImages(r.getId(), () -> service.deleteImage(r.getId(), img.getId(), 7L));
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("sla-shot-2");
+
+        assertLocksReportRowBeforeImages(r.getId(), () -> service.deleteReport(r.getId(), false));
+        assertThat(reports.findById(r.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+
+        TechErrorReport a = service.createReport(ch, 2026, 8, 7L);
+        TechErrorReport b = service.createReport(ch, 2026, 7, 7L);
+        service.upload(a.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(b.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
+        assertThat(reports.lockForChannel(ch.getId())).containsExactly(Math.min(a.getId(), b.getId()), Math.max(a.getId(), b.getId()));
+        assertLocksReportRowBeforeImages(b.getId(), () -> assertThat(service.deleteChannel(ch.getId())).isEqualTo(2));
+        assertThat(channels.findById(ch.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(a.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(b.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("şablon önizlemesi (inceleme 2026-10-18): yeni şablon 'konuyu rapora alma' diyorsa müşteri etkisi Hayır olan (0 müşteriden"
+            + " çıkarılan dahil) konular hidden_topics'te sayılır; eski şablonda zaten gizli konu sayılmaz")
+    void refreshPreviewCountsNewlyHiddenTopics() {
+        TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTestTemplates.beforeAnomaly("tr"), 7L);
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                topicRaw("k1", "customers", 320, "errors", 10), topicRaw("k2", "customers", 0, "errors", 5)))), 7L);
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr"));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.put("no_impact_display", "hide_topic");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v2 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("hidden_topics", 1);
+        // Uygulandıktan sonra (rapor da gizliyor) yeniden önizleme sayısı 0
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("hidden_topics", 0);
+    }
+
+    @Test
+    @DisplayName("uzunluk ihlali (inceleme 2026-10-18): PostgreSQL / H2 iletileri ve SQLSTATE 22001 tanınır; tekillik ihlali uzunluk değildir")
+    void valueTooLongIsRecognised() {
+        assertThat(TechErrorReportService.valueTooLong(new org.springframework.dao.DataIntegrityViolationException("x",
+                new java.sql.SQLException("ERROR: value too long for type character varying(64)", "22001")))).isTrue();
+        assertThat(TechErrorReportService.valueTooLong(new org.springframework.dao.DataIntegrityViolationException("x",
+                new RuntimeException("Value too long for column \"SLOT_ID CHARACTER VARYING(64)\"")))).isTrue();
+        assertThat(TechErrorReportService.valueTooLong(new org.springframework.dao.DataIntegrityViolationException("x",
+                new java.sql.SQLException("duplicate key value violates unique constraint", "23505")))).isFalse();
+    }
+
     private void at(Instant t) {
         service.useClock(Clock.fixed(t, ZoneOffset.UTC));
     }

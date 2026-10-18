@@ -266,7 +266,7 @@ class TechErrorReportControllerTest {
     void readReportTrend() throws Exception {
         TechErrorTemplate.Template t = com.sitemonitor.service.techerror.TechErrorTestTemplates.withTrend("tr");
         report(100, 10, A, null).setTemplateJson(TechErrorTemplate.toJson(t));
-        when(service.imageMeta(100L)).thenReturn(List.of());
+        when(service.liveImageMeta(any())).thenReturn(List.of());
         var cur = com.sitemonitor.service.techerror.TechErrorValues.normalize(Map.of("fields", Map.of("error-rate", 0.42)), t);
         when(service.trend(any(), any(), any(), any())).thenReturn(com.sitemonitor.service.techerror.TechErrorTrend.build(t, cur, 2026, 9, List.of()));
         mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
@@ -320,7 +320,7 @@ class TechErrorReportControllerTest {
     @DisplayName("rapor okuma: şablon + değer + düzenleme bayrakları; AUDIT için can_edit false ve şablon güncelleme önizlemesi yok")
     void readReport() throws Exception {
         report(100, 10, A, null);
-        when(service.imageMeta(100L)).thenReturn(List.of());
+        when(service.liveImageMeta(any())).thenReturn(List.of());
         mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.report.title").value("Kanal 10 Kanalı Teknik Hata Mesajları - Eylül 2026"))
@@ -349,7 +349,7 @@ class TechErrorReportControllerTest {
         aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of(
                 "fields", Map.of("total-tx", 4_350_000_000L, "error-count", 5_000_000), "units", Map.of("total-tx", 9, "error-count", 6)), t)));
         when(service.previousReport(any())).thenReturn(Optional.of(aug));
-        when(service.imageMeta(100L)).thenReturn(List.of());
+        when(service.liveImageMeta(any())).thenReturn(List.of());
         mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.values.units['total-tx']").value(9))
@@ -1974,5 +1974,84 @@ class TechErrorReportControllerTest {
         mvc.perform(get("/api/tech-error-reports/channels/10/reports").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.reports[0].template_version").value(2));
+    }
+
+    @Test
+    @DisplayName("anomali (2026-10-18): konu görseli yuvası iss:<bölüm>:<konu>:<n> yola kodlanmış gelir, servise çözülmüş geçer, yanıt aynı kimliği taşır; servis reddederse 400 alan slot; konu alanı hatası 400 VALIDATION_FAILED + alanın anahtarı (issues.<bölüm>.<konu>.<alan>); AUDIT yükleyemez")
+    void anomalyTopicImageAndFieldErrors() throws Exception {
+        report(100, 10, A, null);
+        TechErrorReportImage img = new TechErrorReportImage();
+        img.setId(77L);
+        img.setReportId(100L);
+        img.setSlotId("iss:issues:k1:1");
+        img.setContentType("image/png");
+        img.setWidth(400);
+        img.setHeight(200);
+        img.setSizeBytes(1234);
+        when(service.upload(eq(100L), eq("iss:issues:k1:1"), any(), any(), eq(50L))).thenReturn(img);
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("file", "a.png",
+                "image/png", new byte[]{ (byte) 0x89, 'P', 'N', 'G' });
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart(java.net.URI.create("/api/tech-error-reports/reports/100/images/iss%3Aissues%3Ak1%3A1")).file(file)
+                        .session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.slot_id").value("iss:issues:k1:1"))
+                .andExpect(jsonPath("$.data.id").value(77));
+        when(service.upload(eq(100L), eq("iss:issues:k9:1"), any(), any(), eq(50L)))
+                .thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("slot", "Bu konu henüz kaydedilmedi."));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart(java.net.URI.create("/api/tech-error-reports/reports/100/images/iss%3Aissues%3Ak9%3A1")).file(file)
+                        .session(user("USER", A, List.of())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("slot"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart(java.net.URI.create("/api/tech-error-reports/reports/100/images/iss%3Aissues%3Ak1%3A1")).file(file).session(audit()))
+                .andExpect(status().isForbidden());
+        // Konu alanının hatası: anahtar istemcinin alanın altında göstereceği biçimde
+        when(service.saveValues(eq(100L), eq(4L), any(), eq(50L), eq(false))).thenThrow(
+                new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("issues.issues.k1.outage_id",
+                        "1. başlık: Kesinti ID yazın: kesinti kaynaklı konu için zorunludur."));
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":4,\"values\":{\"issues\":{\"issues\":[{\"id\":\"k1\",\"outage\":true}]}}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("issues.issues.k1.outage_id"));
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: değer kaydında konusuyla silinen konu görselleri HER ZAMAN denetime yazılır (image_removed + topic_removed)"
+            + " — otomatik kayıt geçmişte birleşse de; görsel kaydı uzunluk ihlali 400 VALUE_TOO_LONG + açık metin ('eşzamanlı değişiklik' değil)")
+    void topicImageRemovalIsAuditedAndValueTooLongIsClear() throws Exception {
+        report(100, 10, A, null);
+        TechErrorReport saved = new TechErrorReport();
+        saved.setId(100L);
+        saved.setTemplateJson(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+        saved.setValuesJson(TechErrorValues.toJson(TechErrorValues.Values.empty()));
+        saved.setVersion(5L);
+        when(service.saveValues(eq(100L), eq(4L), any(), eq(50L), eq(true)))
+                .thenReturn(new TechErrorReportService.SaveOutcome(saved, true, List.of("iss:issues:k1:1", "iss:issues:k1:2")));
+        mvc.perform(put("/api/tech-error-reports/reports/100").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4,\"auto\":true,\"values\":{\"fields\":{}}}"))
+                .andExpect(status().isOk());
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_UPDATE"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_REPORT"), eq("100"),
+                org.mockito.ArgumentMatchers.argThat((String d) -> d != null && d.contains("iss:issues:k1:1, iss:issues:k1:2")
+                        && d.contains("topic_removed") && d.contains("\"images_removed\":2")));
+        verify(auditService, org.mockito.Mockito.times(1)).recordAction(eq("TECH_ERROR_REPORT_UPDATE"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+
+        when(service.upload(eq(100L), eq("iss:issues:k1:1"), any(), any(), eq(50L))).thenThrow(
+                new com.sitemonitor.config.GlobalExceptionHandler.CodedBadRequestException("VALUE_TOO_LONG",
+                        "Görsel kaydedilemedi: görselin yeri veritabanında ayrılan alana sığmadı (veritabanı şeması güncel değil)."));
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("file", "a.png",
+                "image/png", new byte[]{ (byte) 0x89, 'P', 'N', 'G' });
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart(java.net.URI.create("/api/tech-error-reports/reports/100/images/iss%3Aissues%3Ak1%3A1")).file(file)
+                        .session(user("USER", A, List.of())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALUE_TOO_LONG"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("veritabanı şeması güncel değil")));
     }
 }

@@ -4,6 +4,7 @@ import com.sitemonitor.service.EmailNotificationService.InlineImage;
 import com.sitemonitor.service.report.ImageAreaAverage;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
+import com.sitemonitor.service.techerror.TechErrorValues;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
@@ -62,17 +63,36 @@ public final class TechErrorMailImages {
         }
     }
 
+    /**
+     * Content-ID: önek + yuva kimliği. Konu görseli yuvasının iki noktası (2026-10-18, {@code iss:<bölüm>:<konu>:<n>}) noktaya
+     * döner — Content-ID'de ":" yeri değil; bölüm / konu kimliklerinde nokta yok, şablon yuvalarınınki aynı kalır.
+     */
     public static String cid(String slotId) {
-        return CID_PREFIX + slotId;
+        return CID_PREFIX + (slotId == null ? "" : slotId.replace(':', '.'));
     }
 
     /** Şablonun görsel yuvaları şablon sırasıyla (bütçe ilk yuvalardan dolar — PDF'teki sıra). */
     public static List<String> slotOrder(TechErrorTemplate.Template t) {
+        return slotOrder(t, null);
+    }
+
+    /**
+     * {@link #slotOrder(TechErrorTemplate.Template)} + (2026-10-18) anomali konularının görselleri bölümün yerinde, konu
+     * sırasıyla (rapora alınmayan konu — müşteri etkisi yok + "konuyu rapora alma" — atlanır). {@code v} {@code null} ise
+     * yalnız şablon yuvaları.
+     */
+    public static List<String> slotOrder(TechErrorTemplate.Template t, TechErrorValues.Values v) {
         List<String> order = new ArrayList<>();
         if (t == null) return order;
         for (TechErrorTemplate.Section s : t.sections()) {
-            if (!"images".equals(s.kind())) continue;
-            for (TechErrorTemplate.Slot sl : s.slots()) order.add(sl.id());
+            if ("images".equals(s.kind())) {
+                for (TechErrorTemplate.Slot sl : s.slots()) order.add(sl.id());
+            } else if ("issues".equals(s.kind()) && v != null && s.opts().allowImages()) {
+                for (TechErrorValues.Issue i : v.issues().getOrDefault(s.id(), List.of())) {
+                    if (s.opts().hideTopic() && Boolean.FALSE.equals(i.impact())) continue;
+                    for (int n = 1; n <= TechErrorTemplate.MAX_ISSUE_IMAGES; n++) order.add(TechErrorTemplate.issueSlotId(s.id(), i.id(), n));
+                }
+            }
         }
         return order;
     }
@@ -83,14 +103,14 @@ public final class TechErrorMailImages {
      */
     public static Result prepare(TechErrorPdfInput in, long budget) {
         if (in == null) return Result.empty();
-        return prepare(in.images(), slotOrder(in.template()), MAX_WIDTH, MAX_HEIGHT, budget);
+        return prepare(in.images(), slotOrder(in.template(), in.values()), MAX_WIDTH, MAX_HEIGHT, budget);
     }
 
     /** Hazırlama hiç yapılamadıysa: görseli olan her yuva "PDF ekinde" kutusu alır (hiçbiri "yüklenmedi" görünmez). */
     public static Result allSkipped(TechErrorPdfInput in) {
         List<String> skipped = new ArrayList<>();
         if (in != null && in.images() != null) {
-            for (String slot : slotOrder(in.template())) if (in.images().containsKey(slot)) skipped.add(slot);
+            for (String slot : slotOrder(in.template(), in.values())) if (in.images().containsKey(slot)) skipped.add(slot);
         }
         return new Result(Map.of(), skipped, List.of(), 0);
     }

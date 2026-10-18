@@ -280,4 +280,65 @@ class TechErrorChangeDiffTest {
         assertThat(r.changes()).hasSize(TechErrorChangeDiff.MAX_CHANGES);
         assertThat(r.more()).isEqualTo(240 - TechErrorChangeDiff.MAX_CHANGES);
     }
+
+    static Map<String, Object> topic(Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", "k1");
+        m.put("topic", "Kart Limiti");
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    static Values issues(Template t, Map<String, Object> issue) {
+        return values(Map.of("issues", Map.of("issues", List.of(issue))), t);
+    }
+
+    @Test
+    @DisplayName("anomali cevapları (2026-10-18): tarih ('12 Eylül 2026'), saat aralığı (başlangıç / bitiş / ertesi gün TEK satır), kesinti, Kesinti ID, müşteri etkisi, görsel açıklaması — şablonun soru adlarıyla, kalıcı anahtar i:<bölüm>:<konu>:<parça>; pay satırı yazılmaz; EN")
+    void anomalyRows() {
+        Values b = issues(TR, topic("date", "2026-09-12", "start", "14:00", "end", "15:30", "outage", false, "impact", true,
+                "customers", 300, "errors", 100));
+        Values a = issues(TR, topic("date", "2026-09-13", "start", "23:30", "end", "01:00", "end_next_day", true, "outage", true,
+                "outage_id", "INC-7", "impact", false, "errors", 100, "captions", Map.of("1", "Hata grafiği")));
+        TechErrorChangeDiff.Result r = TechErrorChangeDiff.diff(TR, TechErrorCalc.apply(TR, b, null), TechErrorCalc.apply(TR, a, null),
+                "Mobil", 2026, 9);
+        Change date = find(r, "Kart Limiti: Hata Artışı · Tarih");
+        assertThat(date.before()).isEqualTo("12 Eylül 2026");
+        assertThat(date.after()).isEqualTo("13 Eylül 2026");
+        assertThat(date.key()).isEqualTo("i:issues:k1:date");
+        Change time = find(r, "Saat aralığı");
+        assertThat(time.before()).isEqualTo("14:00–15:30");
+        assertThat(time.after()).isEqualTo("23:30 – ertesi gün 01:00");
+        assertThat(time.key()).isEqualTo("i:issues:k1:time");
+        Change outage = find(r, "Kesinti kaynaklı mı?");
+        assertThat(outage.before()).isEqualTo("Hayır");
+        assertThat(outage.after()).isEqualTo("Evet");
+        Change id = find(r, "Kesinti ID");
+        assertThat(id.op()).isEqualTo("set");
+        assertThat(id.after()).isEqualTo("INC-7");
+        Change impact = find(r, "Müşteri etkisi var mı?");
+        assertThat(impact.after()).isEqualTo("Hayır");
+        Change customers = find(r, "Etkilenen müşteri sayısı");        // etki Hayır → müşteri sayısı düştü
+        assertThat(customers.op()).isEqualTo("clear");
+        Change caption = find(r, "Görsel 1 açıklaması");
+        assertThat(caption.after()).isEqualTo("Hata grafiği");
+        assertThat(r.changes()).extracting(Change::key).allMatch(k -> k.startsWith("i:issues:k1:")).doesNotContain("i:issues:k1:share");
+        assertThat(r.changes()).hasSize(7);
+        assertThat(r.changes()).allMatch(c -> "Kart Limiti: Hata Artışı".equals(c.subject()));
+
+        // Pay yalnız türetilir: toplam değişince konunun satırı yok
+        Values b2 = values(Map.of("fields", Map.of("error-count", 1000), "issues", Map.of("issues", List.of(topic("errors", 10)))), TR);
+        Values a2 = values(Map.of("fields", Map.of("error-count", 2000), "issues", Map.of("issues", List.of(topic("errors", 10)))), TR);
+        TechErrorChangeDiff.Result r2 = TechErrorChangeDiff.diff(TR, TechErrorCalc.apply(TR, b2, null), TechErrorCalc.apply(TR, a2, null),
+                "Mobil", 2026, 9);
+        assertThat(r2.changes()).extracting(Change::key).doesNotContain("i:issues:k1:share").noneMatch(k -> k.startsWith("i:"));
+
+        // EN etiketleri ve biçim
+        TechErrorChangeDiff.Result en = TechErrorChangeDiff.diff(EN, issues(EN, topic("outage", false)),
+                issues(EN, topic("date", "2026-09-05", "outage", true, "outage_id", "X-1")), "Mobile", 2026, 9);
+        assertThat(find(en, "Date").after()).isEqualTo("5 September 2026");
+        assertThat(find(en, "Caused by an outage?").after()).isEqualTo("Yes");
+        assertThat(find(en, "Outage ID").after()).isEqualTo("X-1");
+    }
 }

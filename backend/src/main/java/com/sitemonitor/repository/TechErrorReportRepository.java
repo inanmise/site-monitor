@@ -151,6 +151,41 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Query("SELECT r.id FROM TechErrorReport r WHERE r.channelId = :channelId")
     List<Long> idsForChannel(@Param("channelId") Long channelId);
 
+    /** Raporun kopyalanmış şablonu + değerleri (sahipsiz konu görseli kuralı için; yalnız konu görseli olan raporlar okunur). */
+    interface ContentRow {
+        Long getId();
+        String getTemplateJson();
+        String getValuesJson();
+    }
+
+    @Query("SELECT r.id AS id, r.templateJson AS templateJson, r.valuesJson AS valuesJson FROM TechErrorReport r WHERE r.id IN :ids")
+    List<ContentRow> findContentByIdIn(@Param("ids") Collection<Long> ids);
+
+    /**
+     * Raporun satırını işlem sonuna kadar KİLİTLER (inceleme 2026-10-18): değer kaydı, görsel yükleme, şablon yenileme ve
+     * sahipsiz görsel süpürmesi aynı raporda sırayla çalışır. Kilitsiz yükleme, işlem başında okuduğu (eski) değerlerde konuyu
+     * görüp görseli yazıyordu; aynı anda konuyu silen kayıt henüz işlenmemiş görseli göremiyordu → silinmiş konunun görseli
+     * kalıyordu. Kilitten SONRA okunan satır, öndeki işlemin işlenmiş hâlidir. Rapor yoksa boş liste. Çağıranın işleminde
+     * çalışır (servis {@code @Transactional}); H2 de destekler.
+     *
+     * <p>KİLİT SIRASI: raporun görsellerine ({@code tech_error_report_images}) ya da satırına yazan HER işlem bu kilidi İLK iş
+     * olarak alır (yükleme, değer kaydı, şablon yenileme, süpürme, görsel silme, rapor silme; kanal silme
+     * {@link #lockForChannel}). Görsel satırını önce silip rapor satırına sonra dokunan bir yol, rapor satırını tutup görseli
+     * bekleyen yüklemeyle kilitlenirdi (40P01).
+     */
+    @Query(value = "SELECT id FROM tech_error_reports WHERE id = :id FOR UPDATE", nativeQuery = true)
+    List<Long> lockRow(@Param("id") Long id);
+
+    /**
+     * Kanalın TÜM rapor satırlarını kimlik sırasıyla (artan) kilitler ve kimlikleri döner (inceleme 2026-10-18, kilit sırası):
+     * kanal silme, görselleri ve raporları silmeden ÖNCE çağırır. Raporun görsellerine yazan her yol önce o raporun satırını
+     * kilitler ({@link #lockRow}); kanal silme de aynı sırayı izler — görsel satırını tutup rapor satırını bekleyen bir yol
+     * kalmaz (PostgreSQL 40P01 kilitlenmesi). Artan sıra iki kanal silmesinin birbirini beklemesini sıralı tutar
+     * (PostgreSQL'de LockRows düğümü Sort'un üstünde: satırlar sıralı kilitlenir).
+     */
+    @Query(value = "SELECT id FROM tech_error_reports WHERE channel_id = :channelId ORDER BY id FOR UPDATE", nativeQuery = true)
+    List<Long> lockForChannel(@Param("channelId") Long channelId);
+
     /** İçerik değişti: damga + sayaç +1 (atomik) — @Version artmaz. Her içerik yazımı (değer, görsel, şablon) çağırır. */
     @Modifying
     @Transactional

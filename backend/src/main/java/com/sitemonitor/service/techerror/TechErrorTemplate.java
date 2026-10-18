@@ -83,6 +83,15 @@ public final class TechErrorTemplate {
     /** Yönetici özetinin başındaki renkli kutucuk şeridinde en çok bu kadar alan (kullanıcı kararı 2026-10-17: 4–6). */
     public static final int MAX_TILES = 6;
     public static final List<String> LANGS = List.of("tr", "en");
+    /**
+     * Müşteri etkisi YOKSA ne gösterilir (2026-10-18, anomali konuları): {@code hide_count} müşteri sayısı sorulmaz /
+     * basılmaz, konu kalır ("Müşteri etkisi yok"); {@code hide_topic} konu PDF'e ve e-postaya hiç girmez.
+     */
+    public static final List<String> NO_IMPACT_DISPLAY = List.of("hide_count", "hide_topic");
+    /** Anomali konusu başına en çok bu kadar görsel (tam genişlik, isteğe bağlı açıklama). */
+    public static final int MAX_ISSUE_IMAGES = 2;
+    /** Konu görselinin yuva kimliği öneki: {@code iss:<bölüm>:<konu>:<1|2>}. */
+    public static final String ISSUE_SLOT_PREFIX = "iss:";
 
     static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
     static final ObjectMapper JSON = new ObjectMapper();
@@ -183,6 +192,74 @@ public final class TechErrorTemplate {
 
     public record Slot(String id, String label, String width) { }
 
+    /**
+     * ANOMALİ bölümünün soruları (2026-10-18, kullanıcı isteği: "her konu için başlık, NE ZAMAN (gün + saat aralığı), kaç
+     * teknik hata, tüm teknik hatalar içindeki payı otomatik, kesinti kaynaklı mı (Evet ise Kesinti ID zorunlu), müşteri etkisi
+     * var mı — yoksa müşteri etkisi gösterilmesin, isteğe bağlı görseller; rapor metinleri bunlara göre üretilsin"):
+     * <ul>
+     *   <li>{@code askTime} — tarih (raporun ayı içinde) + başlangıç / bitiş saati ({@code timeLabel} grup adı);</li>
+     *   <li>{@code askOutage} — "Kesinti kaynaklı mı?" ({@code outageLabel}); Evet ise {@code outageIdLabel} zorunlu;</li>
+     *   <li>{@code askImpact} — "Müşteri etkisi var mı?" ({@code impactLabel}); müşteri sayısı yalnız Evet'te sorulur;
+     *       {@code noImpactDisplay} Hayır'da ne gösterileceği ({@link #NO_IMPACT_DISPLAY});</li>
+     *   <li>{@code allowImages} — konu başına en çok {@link #MAX_ISSUE_IMAGES} görsel;</li>
+     *   <li>{@code ratioOf} — "tüm teknik hatalar" olarak kullanılan SAYI alanının kimliği: konunun hata adedinin payı otomatik
+     *       hesaplanır ({@link TechErrorIssueShare}); başvuru kayıtta türüne göre reddedilmez (özet / trend kuralı — düzenleyici
+     *       uyarır).</li>
+     * </ul>
+     * Hiçbiri açık değilse ({@link #legacy}) bölüm 2026-10-18 öncesi gibidir: müşteri sayısı her zaman sorulur, PDF / e-posta
+     * eski sayaç satırını basar (bayt bayt). Hiç ayarlanmamış bölümde ({@code Section.options == null}) şablon JSON'una anahtar
+     * yazılmaz — eski şablonun JSON'u aynı kalır; ayarlanmış bölümde ("hepsi kapalı" dahil) dört aç / kapa anahtarı yazılır.
+     */
+    public record IssueOptions(boolean askTime, String timeLabel, boolean askOutage, String outageLabel, String outageIdLabel,
+                               boolean askImpact, String impactLabel, String noImpactDisplay, boolean allowImages, String ratioOf) {
+        public static final IssueOptions NONE = new IssueOptions(false, null, false, null, null, false, null, null, false, null);
+
+        /** Yeni sorulardan hiçbiri açık değil: eski düzen (sayaç satırı, müşteri her zaman sorulur). */
+        public boolean legacy() {
+            return !askTime && !askOutage && !askImpact && !allowImages && ratioOf == null;
+        }
+
+        /** Müşteri etkisi olmayan konu rapora (PDF / e-posta) hiç girmez. */
+        public boolean hideTopic() {
+            return askImpact && "hide_topic".equals(noImpactDisplay);
+        }
+
+        /** Varsayılan anomali soruları — hepsi açık, pay "Ay içindeki teknik hata adedi"ne göre (şablon dili). */
+        public static IssueOptions defaults(boolean en) {
+            return new IssueOptions(true, en ? DEFAULT_TIME_LABEL_EN : DEFAULT_TIME_LABEL_TR,
+                    true, en ? DEFAULT_OUTAGE_LABEL_EN : DEFAULT_OUTAGE_LABEL_TR, en ? DEFAULT_OUTAGE_ID_LABEL_EN : DEFAULT_OUTAGE_ID_LABEL_TR,
+                    true, en ? DEFAULT_IMPACT_LABEL_EN : DEFAULT_IMPACT_LABEL_TR, "hide_count", true, DEFAULT_RATIO_OF);
+        }
+    }
+
+    static final String DEFAULT_TIME_LABEL_TR = "Ne zaman?";
+    static final String DEFAULT_TIME_LABEL_EN = "When?";
+    static final String DEFAULT_OUTAGE_LABEL_TR = "Kesinti kaynaklı mı?";
+    static final String DEFAULT_OUTAGE_LABEL_EN = "Caused by an outage?";
+    static final String DEFAULT_OUTAGE_ID_LABEL_TR = "Kesinti ID";
+    static final String DEFAULT_OUTAGE_ID_LABEL_EN = "Outage ID";
+    static final String DEFAULT_IMPACT_LABEL_TR = "Müşteri etkisi var mı?";
+    static final String DEFAULT_IMPACT_LABEL_EN = "Was there customer impact?";
+    /** Varsayılan "tüm teknik hatalar" alanı (varsayılan şablonun "Ay içindeki teknik hata adedi"). */
+    static final String DEFAULT_RATIO_OF = "error-count";
+
+    /** Konu görselinin yuva kimliği: {@code iss:<bölüm>:<konu>:<n>} (n = 1 … {@link #MAX_ISSUE_IMAGES}). */
+    public static String issueSlotId(String sectionId, String issueId, int n) {
+        return ISSUE_SLOT_PREFIX + sectionId + ":" + issueId + ":" + n;
+    }
+
+    /** Ayrıştırılmış konu görseli yuvası: bölüm, konu, sıra (1 / 2). */
+    public record IssueSlot(String sectionId, String issueId, int n) { }
+
+    /** {@code iss:<bölüm>:<konu>:<n>} → parçalar; biçim tutmuyorsa {@code null} (kimlikler {@link #ID} kuralına uymalı). */
+    public static IssueSlot parseIssueSlot(String slotId) {
+        if (slotId == null || !slotId.startsWith(ISSUE_SLOT_PREFIX) || slotId.length() > 120) return null;
+        String[] p = slotId.substring(ISSUE_SLOT_PREFIX.length()).split(":", -1);
+        if (p.length != 3 || !ID.matcher(p[0]).matches() || !ID.matcher(p[1]).matches()) return null;
+        if (p[2].length() != 1 || p[2].charAt(0) < '1' || p[2].charAt(0) > (char) ('0' + MAX_ISSUE_IMAGES)) return null;
+        return new IssueSlot(p[0], p[1], p[2].charAt(0) - '0');
+    }
+
     /** Tablo sütunu: {@code type} sayı / yüzde / metin. */
     public record Column(String id, String label, String type) { }
 
@@ -198,7 +275,27 @@ public final class TechErrorTemplate {
      */
     public record Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                           String descriptionLabel, String customersLabel, String errorsLabel, String text,
-                          List<String> lines, List<Column> columns, List<TableRow> rows, String host, List<String> tiles) {
+                          List<String> lines, List<Column> columns, List<TableRow> rows, String host, List<String> tiles,
+                          IssueOptions options) {
+        /** Anomali sorusuz (2026-10-18 öncesi imza): {@code options} yok — eski düzen. */
+        public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
+                       String descriptionLabel, String customersLabel, String errorsLabel, String text,
+                       List<String> lines, List<Column> columns, List<TableRow> rows, String host, List<String> tiles) {
+            this(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host, tiles, null);
+        }
+
+        /** Anomali bölümünün soruları; tanımsızsa (eski kayıt ya da başka tür) {@link IssueOptions#NONE}. */
+        public IssueOptions opts() {
+            return options == null ? IssueOptions.NONE : options;
+        }
+
+        /** Aynı bölüm, başka anomali sorularıyla. */
+        public Section withOptions(IssueOptions o) {
+            return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
+                    lines, columns, rows, host, tiles, o);
+        }
+
         public Section(String id, String kind, String title, List<Field> fields, List<Slot> slots, String itemTitle,
                        String descriptionLabel, String customersLabel, String errorsLabel, String text,
                        List<String> lines, List<Column> columns, List<TableRow> rows, String host) {
@@ -222,23 +319,23 @@ public final class TechErrorTemplate {
         /** Aynı bölüm, başka alanlarla ({@code host} / {@code tiles} dahil diğer her şey korunur). */
         public Section withFields(List<Field> f) {
             return new Section(id, kind, title, f, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, host, tiles);
+                    lines, columns, rows, host, tiles, options);
         }
 
         /** Aynı bölüm, başka cümlelerle (özet) / serilerle (trend). */
         public Section withLines(List<String> l) {
             return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    l, columns, rows, host, tiles);
+                    l, columns, rows, host, tiles, options);
         }
 
         public Section withHost(String h) {
             return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, h, tiles);
+                    lines, columns, rows, h, tiles, options);
         }
 
         public Section withTitle(String t) {
             return new Section(id, kind, t, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, host, tiles);
+                    lines, columns, rows, host, tiles, options);
         }
 
         /**
@@ -248,7 +345,7 @@ public final class TechErrorTemplate {
          */
         public Section withTiles(List<String> tl) {
             return new Section(id, kind, title, fields, slots, itemTitle, descriptionLabel, customersLabel, errorsLabel, text,
-                    lines, columns, rows, host, tl == null ? List.of() : tl);
+                    lines, columns, rows, host, tl == null ? List.of() : tl, options);
         }
     }
 
@@ -289,6 +386,12 @@ public final class TechErrorTemplate {
 
         public Slot slot(String id) {
             for (Slot s : allSlots()) if (s.id().equals(id)) return s;
+            return null;
+        }
+
+        /** Kimliği verilen bölüm (yoksa {@code null}). */
+        public Section section(String id) {
+            for (Section s : sections) if (s.id().equals(id)) return s;
             return null;
         }
 
@@ -379,6 +482,27 @@ public final class TechErrorTemplate {
                     sm.put("description_label", s.descriptionLabel());
                     sm.put("customers_label", s.customersLabel());
                     sm.put("errors_label", s.errorsLabel());
+                    // Anomali soruları (2026-10-18): soruları hiç ayarlanmamış (eski) bölümde HİÇBİR anahtar yazılmaz — sorusuz eski
+                    // şablonun JSON'u bayt bayt aynı kalır (rapor kopyası ↔ kanal şablonu karşılaştırması sahte "şablon değişti"
+                    // demesin). Ayarlanmış bölümde dört aç / kapa anahtarı HER ZAMAN yazılır (kapalı = false): ekibin hepsini
+                    // kapattığı bölüm "hiç ayarlanmamış" bölümden ayrılır — göç onu yeniden açmaz (inceleme 2026-10-18)
+                    IssueOptions o = s.options();
+                    if (o != null) {
+                        sm.put("ask_time", o.askTime());
+                        if (o.askTime()) sm.put("time_label", o.timeLabel());
+                        sm.put("ask_outage", o.askOutage());
+                        if (o.askOutage()) {
+                            sm.put("outage_label", o.outageLabel());
+                            sm.put("outage_id_label", o.outageIdLabel());
+                        }
+                        sm.put("ask_impact", o.askImpact());
+                        if (o.askImpact()) {
+                            sm.put("impact_label", o.impactLabel());
+                            sm.put("no_impact_display", o.noImpactDisplay());
+                        }
+                        sm.put("allow_images", o.allowImages());
+                        if (o.ratioOf() != null) sm.put("ratio_of", o.ratioOf());
+                    }
                 }
                 case "summary" -> {
                     sm.put("lines", new ArrayList<>(s.lines()));
@@ -525,7 +649,8 @@ public final class TechErrorTemplate {
                             ? (strict ? "Technical errors caused by this topic" : "Technical errors caused by this issue")
                             : (strict ? "Bu konudan kaynaklı teknik hata adedi" : "Bu sorundan kaynaklı teknik hata adedi"),
                             MAX_ISSUE_LABEL, strict, si);
-                    sections.add(new Section(id, kind, stitle, List.of(), List.of(), item, d, c, e, null));
+                    sections.add(new Section(id, kind, stitle, List.of(), List.of(), item, d, c, e, null)
+                            .withOptions(issueOptions(sm, en, si, strict)));
                 }
                 case "summary" -> {
                     List<String> lines = summaryLines(sm.get("lines"), si, strict);
@@ -594,6 +719,64 @@ public final class TechErrorTemplate {
             return null;
         }
         return v;
+    }
+
+    /**
+     * Anomali bölümünün soruları (2026-10-18) BİÇİMCE: aç / kapa anahtarları ({@code true} / {@code false}; katıda başka değer
+     * 400), açık sorunun etiketi (boşsa bugünkü varsayılan, en çok {@link #MAX_ISSUE_LABEL}), müşteri etkisi yoksa gösterim
+     * ({@link #NO_IMPACT_DISPLAY}; boşsa {@code hide_count}) ve "tüm teknik hatalar" alanı ({@code ratio_of}: kimlik biçimi —
+     * şablonda olması / sayı olması denetlenmez, düzenleyici uyarır). Hiçbiri açık değilse ve anahtarlardan hiçbiri yazılmamışsa
+     * {@code null} (eski, hiç ayarlanmamış bölüm); anahtar yazılmışsa hepsi kapalı bir seçenek (eski düzen, göç dokunmaz). ESKİ bir
+     * pod bu anahtarları tanımaz: hoşgörülü okumada yok sayar (bölüm eski düzende görünür), şablonu o pod kaydederse düşer.
+     */
+    private static IssueOptions issueOptions(Map<?, ?> sm, boolean en, int si, boolean strict) {
+        boolean time = flag(sm.get("ask_time"), si, strict);
+        boolean outage = flag(sm.get("ask_outage"), si, strict);
+        boolean impact = flag(sm.get("ask_impact"), si, strict);
+        boolean images = flag(sm.get("allow_images"), si, strict);
+        String ratioOf = str(sm.get("ratio_of"));
+        if (ratioOf != null && ratioOf.isEmpty()) ratioOf = null;
+        if (ratioOf != null && !ID.matcher(ratioOf).matches()) {
+            if (strict) throw invalid(where(si) + Msg.t("“tüm teknik hatalar” alanı okunamadı. Alanı yeniden seçip kaydedin.",
+                    "the “all technical errors” field couldn't be read. Pick the field again and save."));
+            ratioOf = null;
+        }
+        String display = impact ? str(sm.get("no_impact_display")) : null;
+        if (impact && (display == null || display.isEmpty())) display = "hide_count";
+        if (impact && !NO_IMPACT_DISPLAY.contains(display)) {
+            if (strict) throw invalid(where(si) + Msg.t("müşteri etkisi yokken ne gösterileceği tanınmadı (müşteri sayısını gizle / konuyu rapora alma).",
+                    "what to show without customer impact isn't recognised (hide the customer count / leave the topic out)."));
+            display = "hide_count";
+        }
+        IssueOptions o = new IssueOptions(time,
+                time ? labelOr(sm.get("time_label"), en ? DEFAULT_TIME_LABEL_EN : DEFAULT_TIME_LABEL_TR, MAX_ISSUE_LABEL, strict, si) : null,
+                outage,
+                outage ? labelOr(sm.get("outage_label"), en ? DEFAULT_OUTAGE_LABEL_EN : DEFAULT_OUTAGE_LABEL_TR, MAX_ISSUE_LABEL, strict, si) : null,
+                outage ? labelOr(sm.get("outage_id_label"), en ? DEFAULT_OUTAGE_ID_LABEL_EN : DEFAULT_OUTAGE_ID_LABEL_TR, MAX_ISSUE_LABEL, strict, si) : null,
+                impact,
+                impact ? labelOr(sm.get("impact_label"), en ? DEFAULT_IMPACT_LABEL_EN : DEFAULT_IMPACT_LABEL_TR, MAX_ISSUE_LABEL, strict, si) : null,
+                display, images, ratioOf);
+        // Hiçbir soru açık değilse: anahtarlardan biri bile YAZILMIŞSA (ekip hepsini kapattı) ayarlanmış sayılır — boş değil,
+        // "hepsi kapalı" seçenek olarak kalır (göç yeniden açmaz); hiç anahtar yoksa null (eski, hiç ayarlanmamış bölüm)
+        if (o.legacy() && !configured(sm)) return null;
+        return o;
+    }
+
+    /** Bölümde anomali sorularının aç / kapa anahtarlarından biri ya da "tüm teknik hatalar" alanı yazılmış mı? */
+    private static boolean configured(Map<?, ?> sm) {
+        for (String k : List.of("ask_time", "ask_outage", "ask_impact", "allow_images")) {
+            if (sm.get(k) instanceof Boolean) return true;
+        }
+        return sm.get("ratio_of") instanceof String;
+    }
+
+    /** Aç / kapa anahtarı: yok / {@code false} → kapalı, {@code true} → açık; başka değer katıda 400, hoşgörülüde kapalı. */
+    private static boolean flag(Object raw, int si, boolean strict) {
+        if (raw == null || Boolean.FALSE.equals(raw)) return false;
+        if (Boolean.TRUE.equals(raw)) return true;
+        if (strict) throw invalid(where(si) + Msg.t("anomali sorularının aç / kapa değeri okunamadı. Sayfayı yenileyip tekrar deneyin.",
+                "an on / off value of the anomaly questions couldn't be read. Reload the page and try again."));
+        return false;
     }
 
     /**
@@ -1128,10 +1311,11 @@ public final class TechErrorTemplate {
                         Calc.increase("total-tx")),
                 new Field("tx-increase-pct", "Önceki aya göre değişim oranı", "percent", DEFAULT_HINT_CHANGE_TR, null,
                         Calc.change("total-tx")))));
-        // Anomali başlıkları (kullanıcı kararı 2026-10-17: "Anormal Artış Gösteren Hatalar", "{konu}: Hata Artışı")
+        // Anomali başlıkları (kullanıcı kararı 2026-10-17: "Anormal Artış Gösteren Hatalar", "{konu}: Hata Artışı"); 2026-10-18:
+        // her konuda ne zaman (tarih + saat aralığı), kesinti (ID zorunlu), müşteri etkisi, görseller ve otomatik pay
         s.add(new Section("issues", "issues", "Anormal Artış Gösteren Hatalar", List.of(), List.of(),
                 "{konu}: Hata Artışı", "Ne oldu? (zaman, yer, etki)", "Etkilenen müşteri sayısı",
-                "Bu konudan kaynaklı teknik hata adedi", null));
+                "Bu konudan kaynaklı teknik hata adedi", null).withOptions(IssueOptions.defaults(false)));
         // SLA erişilebilirlik tablosu ELLE GİRİLMEZ (kullanıcı kararı 2026-10-15): raporlama aracındaki tablonun ekran
         // görüntüsü tam genişlikte (iki kolon) yüklenir — tek görüntü ya da iki ayrı görüntü (ör. iki alt kanal)
         s.add(new Section("sla-shots", "images", "SLA Erişilebilirlik Tablosu", List.of(), List.of(
@@ -1189,7 +1373,7 @@ public final class TechErrorTemplate {
                         Calc.change("total-tx")))));
         s.add(new Section("issues", "issues", "Errors With an Abnormal Increase", List.of(), List.of(),
                 "{topic}: Error Increase", "What happened? (when, where, impact)", "Affected customers",
-                "Technical errors caused by this topic", null));
+                "Technical errors caused by this topic", null).withOptions(IssueOptions.defaults(true)));
         s.add(new Section("sla-shots", "images", "SLA Availability Table", List.of(), List.of(
                 new Slot("sla-shot-1", "{channel} Channel SLA Availability Table", "full"),
                 new Slot("sla-shot-2", "{channel} Channel SLA Availability Table (second screenshot)", "full")),

@@ -2,6 +2,7 @@ package com.sitemonitor.service.report;
 
 import com.sitemonitor.service.BrandMailAssets;
 import com.sitemonitor.service.techerror.TechErrorFormat;
+import com.sitemonitor.service.techerror.TechErrorIssueText;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorRichText;
 import com.sitemonitor.service.techerror.TechErrorSummary;
@@ -378,6 +379,16 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         c.y -= 6;
     }
 
+    /** Anomali giriş metninin yazı boyutu (açıklamadan bir punto büyük — PDF'te yöneticinin önce okuduğu cümle). */
+    private static final float LEAD_SIZE = 9f;
+
+    /**
+     * Anomali konuları. Eski düzendeki bölüm ({@code IssueOptions.legacy}, 2026-10-18 öncesi şablon) eski sayaç satırını basar
+     * (bayt bayt). Yeni düzen (2026-10-18): numaralı başlık, cevaplardan kurulan GİRİŞ METNİ ({@link TechErrorIssueText} —
+     * ekran ve e-postayla aynı), açıklama, konunun görselleri (tam genişlik, açıklaması üstte). Müşteri etkisi olmayan konu
+     * "konuyu rapora alma" ayarında hiç basılmaz (numaralar basılanlara göre). Başlık giriş metninin ilk satırlarıyla aynı
+     * sayfada kalır.
+     */
     private void issues(TechErrorPdfInput in, Section s) throws IOException {
         sectionTitle(in.resolve(s.title()));
         List<Issue> list = in.values().issues().getOrDefault(s.id(), List.of());
@@ -385,37 +396,94 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             note(en ? "No topic was entered for this month." : "Bu ay için başlık girilmedi.");
             return;
         }
+        TechErrorTemplate.IssueOptions o = s.opts();
+        List<Issue> shown = new ArrayList<>();
+        for (Issue i : list) if (!(o.hideTopic() && Boolean.FALSE.equals(i.impact()))) shown.add(i);
+        if (shown.isEmpty()) {
+            note(en ? "No topic with customer impact this month." : "Bu ay müşteri etkisi olan bir konu yok.");
+            return;
+        }
+        String lang = in.template().lang();
         int n = 0;
-        for (Issue i : list) {
+        for (Issue i : shown) {
             n++;
             String title = i.displayTitle(s.itemTitle());
             if (title.isBlank()) title = en ? "Untitled topic" : "Başlıksız konu";
             List<String> head = c.wrapCell(n + ". " + title, CONTENT_W, c.bold, 10.5f, 3);
-            c.ensureSpace(head.size() * 13 + 30);
-            for (String l : head) {
-                c.text(c.bold, 10.5f, MARGIN, c.y, l, INK);
-                c.y -= 13;
-            }
-            String lang = in.template().lang();
-            String counts = in.resolve(s.customersLabel()) + ": "
-                    + TechErrorFormat.count(i.customers(), lang, in.values().issueUnit(s.id(), i.id(), "customers"))
-                    + "     " + in.resolve(s.errorsLabel()) + ": "
-                    + TechErrorFormat.count(i.errors(), lang, in.values().issueUnit(s.id(), i.id(), "errors"));
-            for (String l : c.wrapCell(counts, CONTENT_W, c.bold, 8f, 2)) {
-                c.ensureSpace(11);
-                c.text(c.bold, 8f, MARGIN, c.y, l, BLUE);
-                c.y -= 11;
+            // Kısaltmayla girilmiş adet (2026-10-18): "1,25M" — eski sayaç satırında da giriş metninde de
+            Integer customersUnit = in.values().issueUnit(s.id(), i.id(), "customers");
+            Integer errorsUnit = in.values().issueUnit(s.id(), i.id(), "errors");
+            if (o.legacy()) {
+                c.ensureSpace(head.size() * 13 + 30);
+                for (String l : head) {
+                    c.text(c.bold, 10.5f, MARGIN, c.y, l, INK);
+                    c.y -= 13;
+                }
+                String counts = in.resolve(s.customersLabel()) + ": " + TechErrorFormat.count(i.customers(), lang, customersUnit)
+                        + "     " + in.resolve(s.errorsLabel()) + ": " + TechErrorFormat.count(i.errors(), lang, errorsUnit);
+                for (String l : c.wrapCell(counts, CONTENT_W, c.bold, 8f, 2)) {
+                    c.ensureSpace(11);
+                    c.text(c.bold, 8f, MARGIN, c.y, l, BLUE);
+                    c.y -= 11;
+                }
+            } else {
+                String lead = TechErrorIssueText.lead(s, i, i.share() == null ? null : i.share().doubleValue(), lang, in::resolve,
+                        errorsUnit, customersUnit);
+                // Başlık + giriş metninin ilk iki satırı birlikte: başlık sayfa sonunda yalnız kalmaz. Giriş metni ve açıklaması
+                // olmayan, yalnız görseli olan konuda başlık İLK GÖRSEL SATIRIYLA birlikte (görsel bölümlerinin kuralı —
+                // inceleme 2026-10-18: 30 pt'lik pay başlığı sayfa sonunda yalnız bırakıyordu)
+                boolean descBlank = i.description() == null || i.description().isBlank();
+                Slot firstImage = lead.isBlank() && descBlank && o.allowImages() ? firstIssueImage(in, s, i) : null;
+                float after = !lead.isBlank() ? 2 * (LEAD_SIZE + 3.5f) + 12
+                        : firstImage != null ? 4 + rowHeight(in, List.of(firstImage), CONTENT_W, IMAGE_MAX_H) : 30;
+                c.ensureSpace(head.size() * 13 + after);
+                for (String l : head) {
+                    c.text(c.bold, 10.5f, MARGIN, c.y, l, INK);
+                    c.y -= 13;
+                }
+                if (!lead.isBlank()) {
+                    c.y -= 1;
+                    rich(lead, LEAD_SIZE, MARGIN, CONTENT_W, INK);
+                }
             }
             if (i.description() != null && !i.description().isBlank()) {
                 c.y -= 1;
                 rich(i.description(), 8.5f, MARGIN, CONTENT_W, INK);
             }
+            if (o.allowImages()) issueImages(in, s, i);
             c.y -= 4;
             c.ensureSpace(8);
             c.line(MARGIN, c.y + 2, MARGIN + CONTENT_W, RULE);
             c.y -= 10;
         }
         c.y -= 2;
+    }
+
+    /** Konunun görselleri (2026-10-18): her biri tam genişlikte, açıklaması üstte (yoksa açıklamasız); yüklenmemiş yuva yok. */
+    private void issueImages(TechErrorPdfInput in, Section s, Issue i) throws IOException {
+        for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
+            Slot sl = issueImageSlot(in, s, i, k);
+            if (sl == null) continue;
+            c.y -= 4;
+            imageRow(in, List.of(sl), CONTENT_W, IMAGE_MAX_H);
+        }
+    }
+
+    /** Konunun {@code k}. görselinin yuvası (açıklaması etiket olarak); görsel yoksa {@code null}. */
+    private static Slot issueImageSlot(TechErrorPdfInput in, Section s, Issue i, int k) {
+        String slot = TechErrorTemplate.issueSlotId(s.id(), i.id(), k);
+        if (!in.images().containsKey(slot)) return null;
+        String caption = i.caption(k);
+        return new Slot(slot, caption == null ? "" : caption, "full");
+    }
+
+    /** Konunun basılacak ilk görseli (başlığın sayfa sonunda yalnız kalmaması için yükseklik ölçümü); yoksa {@code null}. */
+    private static Slot firstIssueImage(TechErrorPdfInput in, Section s, Issue i) {
+        for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
+            Slot sl = issueImageSlot(in, s, i, k);
+            if (sl != null) return sl;
+        }
+        return null;
     }
 
     private void text(TechErrorPdfInput in, Section s) throws IOException {
@@ -926,7 +994,7 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             TechErrorPdfInput.Image img = in.images().get(slots.get(k).id());
             // Yalnız yerleşim geçişi görseli gömmez: satır yüksekliği yukarıda ölçüden hesaplandı, çizilemeyen görselin kutusu da
             // aynı yüksekliğe sığar — sayfa sonları gerçek çizimle aynı
-            boolean ok = layoutOnly || c.tryImage(img.data(), img.width(), img.height(), "chart-" + slots.get(k).id(), ix, iy,
+            boolean ok = layoutOnly || c.tryImage(img.data(), img.width(), img.height(), "chart-" + slots.get(k).id().replace(':', '-'), ix, iy,
                     wh[0], wh[1], embedScale);
             if (ok) {
                 c.strokeRect(ix, iy, wh[0], wh[1], RULE);

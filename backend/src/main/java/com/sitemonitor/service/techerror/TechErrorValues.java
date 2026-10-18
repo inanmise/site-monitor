@@ -7,6 +7,8 @@ import com.sitemonitor.service.techerror.TechErrorTemplate.Template;
 import com.sitemonitor.util.Msg;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -20,7 +22,8 @@ import java.util.Set;
  *
  * <pre>
  * { "fields": { "&lt;alan&gt;": 0.42 | 12000 | true | "metin" },
- *   "issues": { "&lt;bölüm&gt;": [ { id, topic, title, title_auto, description, customers, errors } ] },
+ *   "issues": { "&lt;bölüm&gt;": [ { id, topic, title, title_auto, description, customers, errors,
+ *                                  date?, start?, end?, end_next_day?, outage?, outage_id?, impact?, captions?, share? } ] },
  *   "texts":  { "&lt;bölüm&gt;": "serbest metin" },            // metin bölümü ve elle düzenlenmiş yönetici özeti
  *   "tables": { "&lt;bölüm&gt;": { "&lt;satır&gt;": { "&lt;sütun&gt;": 12 | 99.5 | "metin" } } },   // 2026-10-14
  *   "units":  { "&lt;alan&gt;" | "issues.&lt;bölüm&gt;.&lt;konu&gt;.customers" | "tables.&lt;bölüm&gt;.&lt;satır&gt;.&lt;sütun&gt;": 9 } }   // 2026-10-18
@@ -42,8 +45,43 @@ public final class TechErrorValues {
     static final double MAX_NUMBER = 1e15;
     static final double MAX_PERCENT = 1_000_000;
 
+    /** Kesinti ID'sinin en çok uzunluğu (2026-10-18). */
+    public static final int MAX_OUTAGE_ID = 60;
+    /** Konu görseli açıklamasının en çok uzunluğu. */
+    public static final int MAX_CAPTION = 200;
+
+    /**
+     * Anomali konusu. 2026-10-18 (kullanıcı isteği — bölümün {@link TechErrorTemplate.IssueOptions} sorularına göre):
+     * {@code date} (yyyy-MM-dd, raporun ayı içinde), {@code start} / {@code end} (HH:mm; ikisi birlikte; bitiş başlangıçtan
+     * sonra — {@code endNextDay} ise gece yarısını geçen aralık, bitiş başlangıçtan önce ya da ona eşit: en çok 24 saat),
+     * {@code outage} + {@code outageId} (Evet ise ID zorunlu, ≤ {@link #MAX_OUTAGE_ID}), {@code impact} (müşteri sayısı yalnız
+     * Evet'te saklanır), {@code captions} (konu görsellerinin açıklaması, "1" / "2"), {@code share} (hata adedinin tüm teknik
+     * hatalar içindeki payı — SUNUCU hesaplar, {@link TechErrorIssueShare}; istemcinin gönderdiği yok sayılır). Yeni alanlar
+     * belgeye yalnız doluyken yazılır: sorusuz eski raporun JSON'u bayt bayt aynı kalır.
+     */
     public record Issue(String id, String topic, String title, boolean titleAuto, String description, Number customers,
-                        Number errors) {
+                        Number errors, String date, String start, String end, boolean endNextDay, Boolean outage,
+                        String outageId, Boolean impact, Map<String, String> captions, Number share) {
+        /** Yalnız eski alanlarla (2026-10-18 öncesi imza). */
+        public Issue(String id, String topic, String title, boolean titleAuto, String description, Number customers, Number errors) {
+            this(id, topic, title, titleAuto, description, customers, errors, null, null, null, false, null, null, null, Map.of(), null);
+        }
+
+        public Issue {
+            captions = captions == null ? Map.of() : captions;
+        }
+
+        /** Aynı konu, başka pay ile (hesap — {@link TechErrorIssueShare#apply}). */
+        public Issue withShare(Number s) {
+            return new Issue(id, topic, title, titleAuto, description, customers, errors, date, start, end, endNextDay, outage,
+                    outageId, impact, captions, s);
+        }
+
+        /** Konu görselinin açıklaması (yoksa {@code null}). */
+        public String caption(int n) {
+            return captions.get(String.valueOf(n));
+        }
+
         /** PDF / önizleme başlığı: elle yazılan başlık; yoksa kalıp + konu; o da yoksa boş. */
         public String displayTitle(String pattern) {
             if (title != null && !title.isBlank() && !titleAuto) return title.trim();
@@ -114,14 +152,22 @@ public final class TechErrorValues {
     // ── Doğrulama (istemciden) ───────────────────────────────────────────────────────────────────────
 
     public static Values normalize(Object raw, Template t) {
-        return parse(raw, t, true);
+        return parse(raw, t, true, null);
+    }
+
+    /**
+     * İstemci değerlerini KATI doğrular; {@code period} raporun ayı — anomali konusunun tarihi bu ayın içinde olmalı (2026-10-18;
+     * {@code null} = ay denetimi yok).
+     */
+    public static Values normalize(Object raw, Template t, YearMonth period) {
+        return parse(raw, t, true, period);
     }
 
     /** Saklı değerleri hoşgörülü okur (şablon değiştiyse eşleşmeyenler düşer; okunamayan → boş). */
     public static Values fromStored(String json, Template t) {
         try {
             Object raw = json == null || json.isBlank() ? null : TechErrorTemplate.JSON.readValue(json, Object.class);
-            return parse(raw, t, false);
+            return parse(raw, t, false, null);
         } catch (RuntimeException e) {
             return Values.empty();
         }
@@ -146,6 +192,16 @@ public final class TechErrorValues {
                 im.put("description", i.description());
                 im.put("customers", i.customers());
                 im.put("errors", i.errors());
+                // 2026-10-18: yalnız doluyken (eski belge bayt bayt aynı)
+                if (i.date() != null) im.put("date", i.date());
+                if (i.start() != null) im.put("start", i.start());
+                if (i.end() != null) im.put("end", i.end());
+                if (i.endNextDay()) im.put("end_next_day", true);
+                if (i.outage() != null) im.put("outage", i.outage());
+                if (i.outageId() != null) im.put("outage_id", i.outageId());
+                if (i.impact() != null) im.put("impact", i.impact());
+                if (!i.captions().isEmpty()) im.put("captions", new LinkedHashMap<>(i.captions()));
+                if (i.share() != null) im.put("share", i.share());
                 list.add(im);
             }
             iss.put(e.getKey(), list);
@@ -169,7 +225,7 @@ public final class TechErrorValues {
         return m;
     }
 
-    private static Values parse(Object raw, Template t, boolean strict) {
+    private static Values parse(Object raw, Template t, boolean strict, YearMonth period) {
         Map<?, ?> root = raw instanceof Map<?, ?> m ? m : Map.of();
         Map<?, ?> rf = root.get("fields") instanceof Map<?, ?> m ? m : Map.of();
         Map<?, ?> ri = root.get("issues") instanceof Map<?, ?> m ? m : Map.of();
@@ -218,7 +274,7 @@ public final class TechErrorValues {
         Map<String, Map<String, Map<String, Object>>> tables = new LinkedHashMap<>();
         for (Section s : t.sections()) {
             if ("issues".equals(s.kind())) {
-                List<Issue> list = issues(ri.get(s.id()), s, strict);
+                List<Issue> list = issues(ri.get(s.id()), s, strict, period, t.en());
                 if (!list.isEmpty()) issues.put(s.id(), list);
             } else if ("table".equals(s.kind())) {
                 Map<String, Map<String, Object>> tb = table(rtb.get(s.id()), s, strict);
@@ -348,20 +404,28 @@ public final class TechErrorValues {
         return compact(d);
     }
 
-    private static List<Issue> issues(Object raw, Section s, boolean strict) {
+    private static final java.util.regex.Pattern DATE = java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+    private static final java.util.regex.Pattern TIME = java.util.regex.Pattern.compile("([01]\\d|2[0-3]):[0-5]\\d");
+
+    /**
+     * Anomali konuları. Hata anahtarı {@code issues.<bölüm>.<konu kimliği>.<alan>} (2026-10-18; alanın altında gösterilir —
+     * sıra numarası konu taşınınca başka konuya kayardı). Yeni sorular yalnız bölümde AÇIKSA okunur; kapalı sorunun değeri
+     * düşer (ekranda sorulmayan değer PDF'e sızmasın).
+     */
+    private static List<Issue> issues(Object raw, Section s, boolean strict, YearMonth period, boolean en) {
         List<?> list = raw instanceof List<?> l ? l : List.of();
         if (list.size() > MAX_ISSUES) {
             if (strict) throw bad("issues." + s.id(), Msg.t("Bir bölümde en çok 30 başlık olabilir.",
                     "A section can have at most 30 topics."));
             list = list.subList(0, MAX_ISSUES);
         }
+        TechErrorTemplate.IssueOptions o = s.opts();
         List<Issue> out = new ArrayList<>();
         Set<String> ids = new HashSet<>();
         int n = 0;
-        for (Object o : list) {
+        for (Object x : list) {
             n++;
-            if (!(o instanceof Map<?, ?> m)) continue;
-            String key = "issues." + s.id() + "." + n;
+            if (!(x instanceof Map<?, ?> m)) continue;
             String at = Msg.t(n + ". başlık: ", "Topic " + n + ": ");
             String id = TechErrorTemplate.str(m.get("id"));
             if (id == null || !TechErrorTemplate.ID.matcher(id).matches() || ids.contains(id)) {
@@ -370,30 +434,173 @@ public final class TechErrorValues {
                 for (int guard = 0; ids.contains(id) && guard < 1000; guard++) id = "i-" + (++k);
             }
             ids.add(id);
+            String key = "issues." + s.id() + "." + id + ".";
             String topic = TechErrorTemplate.line(m.get("topic"));
             String title = TechErrorTemplate.line(m.get("title"));
             boolean auto = Boolean.TRUE.equals(m.get("title_auto"));
             String desc = TechErrorTemplate.multiline(m.get("description"));
             if (topic.length() > MAX_TOPIC) {
-                if (strict) throw bad(key, at + Msg.t("konu en çok 120 karakter olabilir.", "the subject can be at most 120 characters."));
+                if (strict) throw bad(key + "topic", at + Msg.t("konu en çok 120 karakter olabilir.", "the subject can be at most 120 characters."));
                 topic = topic.substring(0, MAX_TOPIC);
             }
             if (title.length() > TechErrorTemplate.MAX_LABEL) {
                 // Otomatik başlık kalıptan üretilir (kullanıcı yazmadı; gösterimde konudan yeniden çözülür) → kırpılır,
                 // reddedilmez (inceleme 2026-10-13, 2. tur: 200 karakterlik kalıp + 120 karakterlik konu)
-                if (strict && !auto) throw bad(key, at + Msg.t("başlık en çok 200 karakter olabilir.", "the title can be at most 200 characters."));
+                if (strict && !auto) throw bad(key + "title", at + Msg.t("başlık en çok 200 karakter olabilir.", "the title can be at most 200 characters."));
                 title = title.substring(0, TechErrorTemplate.MAX_LABEL);
             }
             if (desc.length() > MAX_LONG_TEXT) {
-                if (strict) throw bad(key, at + Msg.t("açıklama en çok 10 000 karakter olabilir.",
+                if (strict) throw bad(key + "description", at + Msg.t("açıklama en çok 10 000 karakter olabilir.",
                         "the description can be at most 10,000 characters."));
                 desc = desc.substring(0, MAX_LONG_TEXT);
             }
-            Number customers = count(m.get("customers"), key, at + s.customersLabel(), strict);
-            Number errors = count(m.get("errors"), key, at + s.errorsLabel(), strict);
-            out.add(new Issue(id, topic, title, auto, desc, customers, errors));
+            Number customers = count(m.get("customers"), key + "customers", at + s.customersLabel(), strict);
+            Number errors = count(m.get("errors"), key + "errors", at + s.errorsLabel(), strict);
+
+            // ── Ne zaman? (tarih raporun ayı içinde; saat aralığı ikisi birlikte) ──
+            String date = null, start = null, end = null;
+            boolean nextDay = false;
+            if (o.askTime()) {
+                date = text(m.get("date"));
+                if (date != null && !validDate(date)) {
+                    if (strict) throw bad(key + "date", at + Msg.t("tarih okunamadı; takvimden bir gün seçin.",
+                            "the date couldn't be read; pick a day from the calendar."));
+                    date = null;
+                }
+                if (date != null && period != null && !YearMonth.from(LocalDate.parse(date)).equals(period)) {
+                    if (strict) throw bad(key + "date", at + Msg.t("tarih raporun ayı içinde olmalı ("
+                                    + TechErrorTemplate.monthName(period.getMonthValue(), "tr") + " " + period.getYear()
+                                    + "). Başka aya ait bir anomaliyi o ayın raporuna yazın.",
+                            "the date must be in the report's month (" + TechErrorTemplate.monthName(period.getMonthValue(), "en")
+                                    + " " + period.getYear() + "). Write an anomaly of another month into that month's report."));
+                }
+                start = time(m.get("start"), key + "start", at, strict);
+                end = time(m.get("end"), key + "end", at, strict);
+                nextDay = Boolean.TRUE.equals(m.get("end_next_day"));
+                if (strict && start != null && end == null) {
+                    throw bad(key + "end", at + Msg.t("bitiş saatini de girin (saat aralığı başlangıç ve bitişle yazılır).",
+                            "enter the end time too (a time range needs a start and an end)."));
+                }
+                if (strict && start == null && end != null) {
+                    throw bad(key + "start", at + Msg.t("başlangıç saatini de girin (saat aralığı başlangıç ve bitişle yazılır).",
+                            "enter the start time too (a time range needs a start and an end)."));
+                }
+                if (start != null && end != null) {
+                    if (strict && date == null) {
+                        throw bad(key + "date", at + Msg.t("saat aralığı için tarihi de seçin.", "pick the date for the time range too."));
+                    }
+                    int cmp = end.compareTo(start);
+                    if (!nextDay && cmp <= 0) {
+                        if (strict) throw bad(key + "end", at + Msg.t("bitiş saati başlangıçtan sonra olmalı. Gece yarısını geçtiyse “Ertesi gün bitti”yi işaretleyin.",
+                                "the end time must be after the start. If it ran past midnight, tick “Ended the next day”."));
+                        start = null;
+                        end = null;
+                    } else if (nextDay && cmp > 0) {
+                        if (strict) throw bad(key + "end", at + Msg.t("ertesi gün biten aralık 24 saatten uzun olamaz: bitiş saati başlangıç saatinden önce (ya da aynı) olmalı.",
+                                "a range ending the next day can't be longer than 24 hours: the end time must be before (or equal to) the start."));
+                        start = null;
+                        end = null;
+                    }
+                } else {
+                    start = null;                                   // yarım aralık (hoşgörülü okuma) tutulmaz
+                    end = null;
+                }
+                if (start == null) nextDay = false;
+            }
+
+            // ── Kesinti kaynaklı mı? (Evet ise ID zorunlu) ──
+            Boolean outage = null;
+            String outageId = null;
+            if (o.askOutage()) {
+                outage = yesNo(m.get("outage"), key + "outage", at + o.outageLabel(), strict);
+                if (Boolean.TRUE.equals(outage)) {
+                    outageId = TechErrorTemplate.line(m.get("outage_id"));
+                    if (outageId.length() > MAX_OUTAGE_ID) {
+                        if (strict) throw bad(key + "outage_id", at + Msg.t(o.outageIdLabel() + " en çok " + MAX_OUTAGE_ID + " karakter olabilir.",
+                                o.outageIdLabel() + " can be at most " + MAX_OUTAGE_ID + " characters."));
+                        outageId = outageId.substring(0, MAX_OUTAGE_ID);
+                    }
+                    if (outageId.isEmpty()) {
+                        if (strict) throw bad(key + "outage_id", at + Msg.t(o.outageIdLabel() + " yazın: kesinti kaynaklı konu için zorunludur.",
+                                "enter the " + o.outageIdLabel() + ": it's required for a topic caused by an outage."));
+                        outageId = null;
+                    }
+                }
+            }
+
+            // ── Müşteri etkisi var mı? (müşteri sayısı yalnız Evet'te) ──
+            Boolean impact = null;
+            if (o.askImpact()) {
+                impact = yesNo(m.get("impact"), key + "impact", at + o.impactLabel(), strict);
+                // Cevapsız ama müşteri sayısı girilmiş (soru eklenmeden önceki rapor, eski pod): sayı cevabı söyler
+                if (impact == null && customers != null) impact = customers.doubleValue() > 0;
+                if (!Boolean.TRUE.equals(impact)) customers = null;
+            }
+
+            // ── Görsel açıklamaları ──
+            Map<String, String> captions = new LinkedHashMap<>();
+            if (o.allowImages() && m.get("captions") instanceof Map<?, ?> cm) {
+                for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
+                    String c = TechErrorTemplate.line(cm.get(String.valueOf(k)));
+                    if (c.isEmpty()) continue;
+                    if (c.length() > MAX_CAPTION) {
+                        if (strict) throw bad(key + "caption" + k, at + Msg.t("görsel açıklaması en çok " + MAX_CAPTION + " karakter olabilir.",
+                                "an image caption can be at most " + MAX_CAPTION + " characters."));
+                        c = c.substring(0, MAX_CAPTION);
+                    }
+                    captions.put(String.valueOf(k), c);
+                }
+            }
+            out.add(new Issue(id, topic, title, auto, desc, customers, errors, date, start, end, nextDay, outage, outageId, impact,
+                    captions, null));
         }
         return out;
+    }
+
+    /**
+     * Konuları bir anomali bölümünün sorularına UYDURUR (şablon yenileme, 2026-10-18): saklı okumanın hoşgörülü kuralıyla —
+     * kapatılan sorunun cevabı düşer, açılan müşteri etkisi girilmiş müşteri sayısından çıkarılır. Kimlikler ve sıra aynı.
+     */
+    public static List<Issue> conform(List<Issue> list, Section s) {
+        if (list == null || list.isEmpty() || s == null) return list == null ? List.of() : list;
+        Map<String, Object> raw = toMap(new Values(Map.of(), Map.of(s.id(), list), Map.of()));
+        Object issues = ((Map<?, ?>) raw.get("issues")).get(s.id());
+        return issues(issues, s, false, null, false);
+    }
+
+    private static String text(Object v) {
+        String s = v == null ? null : String.valueOf(v).trim();
+        return s == null || s.isEmpty() ? null : s;
+    }
+
+    /** {@code yyyy-MM-dd} biçiminde GERÇEK bir gün mü (31 Şubat değil). */
+    static boolean validDate(String s) {
+        if (s == null || !DATE.matcher(s).matches()) return false;
+        try {
+            LocalDate.parse(s);
+            return true;
+        } catch (java.time.DateTimeException e) {
+            return false;
+        }
+    }
+
+    /** {@code HH:mm} (00:00–23:59); saniyeli "14:00:00" kısaltılır. Boş → null; geçersiz → katıda 400. */
+    private static String time(Object v, String key, String at, boolean strict) {
+        String s = text(v);
+        if (s == null) return null;
+        if (s.length() == 8 && s.charAt(5) == ':') s = s.substring(0, 5);
+        if (!TIME.matcher(s).matches()) {
+            if (strict) throw bad(key, at + Msg.t("saat okunamadı (ss:dd, ör. 14:30).", "the time couldn't be read (hh:mm, e.g. 14:30)."));
+            return null;
+        }
+        return s;
+    }
+
+    private static Boolean yesNo(Object v, String key, String label, boolean strict) {
+        if (v == null) return null;
+        if (v instanceof Boolean b) return b;
+        if (strict) throw bad(key, Msg.t(label + ": Evet ya da Hayır seçin.", label + ": choose Yes or No."));
+        return null;
     }
 
     private static Number count(Object v, String key, String label, boolean strict) {

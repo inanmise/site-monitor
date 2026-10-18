@@ -109,6 +109,19 @@ describe('request — geçici ağ hatasında tek yeniden deneme', () => {
     expect(res).toMatchObject({ success: false })
     expect(global.fetch).toHaveBeenCalledTimes(1)
   })
+
+  it('503 LOCK_CONFLICT + Retry-After (kilit çatışması, 2026-10-18) de istemcide yeniden denenmez; sunucu metni ve kodu kalır', async () => {
+    const msg = 'Aynı kayıt üzerinde aynı anda başka bir işlem sürdüğü için veritabanı isteğinizi durdurdu; işlem tamamlanmamış olabilir. Birkaç saniye sonra tekrar deneyin; önce sayfayı yenileyip son durumu kontrol etmeniz önerilir.'
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 503,
+      headers: { get: (h) => (String(h).toLowerCase() === 'retry-after' ? '2' : null) },
+      json: () => Promise.resolve({ success: false, code: 'LOCK_CONFLICT', error: msg, retry_after_seconds: 2 }),
+    })
+    const res = await api.getCertificates()
+    expect(res).toMatchObject({ success: false, code: 'LOCK_CONFLICT', error: msg })
+    expect(res.errorInfo).toMatchObject({ status: 503, code: 'LOCK_CONFLICT' })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('yeniden deneme kuralları (birim)', () => {

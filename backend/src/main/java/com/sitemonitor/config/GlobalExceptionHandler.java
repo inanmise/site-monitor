@@ -216,6 +216,8 @@ public class GlobalExceptionHandler {
             if (!fe.getFields().isEmpty()) body.put("field", fe.getFields().keySet().iterator().next());
             return ResponseEntity.status(400).body(body);
         }
+        // Kodlu 400 (2026-10-18): kararlı kod + servisin açıklayıcı metni (ör. VALUE_TOO_LONG — genel "metni kısaltın" yerine)
+        if (e instanceof CodedBadRequestException ce) return respond(400, ce.getCode(), e.getMessage());
         // Öneri YAPISAL alanla taşınır: arayüz metni ayrıştırmak zorunda kalırsa TR/EN
         // arasında ya da mesaj her düzenlendiğinde sessizce kırılır.
         if (e instanceof UnresolvableTargetException ue && ue.getSuggestion() != null) {
@@ -280,6 +282,21 @@ public class GlobalExceptionHandler {
             this.fields = java.util.Collections.unmodifiableMap(f);
         }
         public Map<String, String> getFields() { return fields; }
+    }
+
+    /**
+     * 400 + kararlı {@code code} (2026-10-18): alan hatası olmayan, ama genel metinden daha açık söylenmesi gereken istemci
+     * reddi (ör. görsel yuvası kimliği veritabanı sütununa sığmadı → {@code VALUE_TOO_LONG}, "metni kısaltın" denmez).
+     * {@link IllegalArgumentException} alt sınıfı — onu yakalayan eski yollar aynı 400'ü görmeye devam eder.
+     */
+    public static class CodedBadRequestException extends IllegalArgumentException {
+        private final String code;
+        /** {@code message} {@link Msg#t} ile istek dilinde, ne · neden · ne yapmalı. */
+        public CodedBadRequestException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+        public String getCode() { return code; }
     }
 
     /**
@@ -558,6 +575,34 @@ public class GlobalExceptionHandler {
                 "Kayıt siz düzenlerken başka biri tarafından değiştirildi; değişikliğiniz kaydedilmedi. Sayfayı yenileyip güncel hâli üzerinden tekrar deneyin.",
                 "Someone else changed this record while you were editing it, so your change wasn’t saved. Reload the page and try again on the latest version."));
     }
+
+    /**
+     * Kötümser kilit çatışması (inceleme 2026-10-18): PostgreSQL kilitlenme (40P01 → {@code CannotAcquireLockException} /
+     * {@code DeadlockLoserDataAccessException}), serileştirme hatası (40001 → {@code CannotSerializeTransactionException}) ve
+     * kilit bekleme zaman aşımı (55P03) — hepsi {@link org.springframework.dao.PessimisticLockingFailureException}. Veritabanı
+     * ERİŞİLEBİLİR; aynı kayıtta aynı anda iki işlem çatıştı ve biri geri alındı → 503 {@code LOCK_CONFLICT} +
+     * {@code Retry-After: 2} (gövdede {@code retry_after_seconds}). Eskiden {@link TransientDataAccessException} üzerinden
+     * 503 "veritabanına ulaşılamıyor" alıyordu — yanlış neden.
+     *
+     * <p>409 DEĞİL: istemci ekranları 409'u / {@code CONCURRENT_MODIFICATION}'ı "kaydı başkası değiştirdi" diye okur
+     * (rapor otomatik kaydı çakışma afişiyle durur, envanter formu alan adı altına yazar, kodla giriş "başka oturum açık"
+     * adımını açar). Geçici, yinelenebilir bir ret olarak 503 → otomatik kayıt eskisi gibi artan aralıkla yeniden dener.
+     * Metin "hiçbir şey kaydedilmedi" DEMEZ: çok adımlı istekler (onay kararı, gönderim talebi) kısmen ilerlemiş olabilir.
+     */
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handlePessimisticLock(Exception e) {
+        log.warn("Kilit çatışması (eşzamanlı işlem, geri alındı) [istek={}]: {}", rid(), e.toString());
+        Map<String, Object> body = errorBody("LOCK_CONFLICT", Msg.t(
+                "Aynı kayıt üzerinde aynı anda başka bir işlem sürdüğü için veritabanı isteğinizi durdurdu; işlem tamamlanmamış olabilir. Birkaç saniye sonra tekrar deneyin; önce sayfayı yenileyip son durumu kontrol etmeniz önerilir.",
+                "The database stopped your request because another action was working on the same record at the same moment; the action may not have completed. Try again in a few seconds; reloading the page first shows the current state."));
+        body.put("retry_after_seconds", LOCK_CONFLICT_RETRY_SECONDS);
+        return ResponseEntity.status(503)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, String.valueOf(LOCK_CONFLICT_RETRY_SECONDS))
+                .body(body);
+    }
+
+    /** Kilit çatışmasından sonra önerilen bekleme (sn) — {@code Retry-After} başlığı ve {@code retry_after_seconds}. */
+    static final int LOCK_CONFLICT_RETRY_SECONDS = 2;
 
     /** JPA "kayıt yok" (getReferenceById / tembel yükleme) → 404, 500 değil. */
     @ExceptionHandler({jakarta.persistence.EntityNotFoundException.class,

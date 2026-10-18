@@ -820,7 +820,8 @@ public class TechErrorReportController {
         rep.put("file_name", TechErrorReportPdfWriter.fileName(ch.getName(), r.getReportYear(), r.getReportMonth(), t.lang()));
 
         List<Map<String, Object>> imgs = new ArrayList<>();
-        for (TechErrorReportImageRepository.Meta m : service.imageMeta(r.getId())) imgs.add(imageDto(m));
+        // Sahipsiz konu görseli (konusu silinmiş — inceleme 2026-10-18) listelenmez: ekranda yeri yok, 40 MB hesabına girmez
+        for (TechErrorReportImageRepository.Meta m : service.liveImageMeta(r)) imgs.add(imageDto(m));
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("report", rep);
@@ -877,6 +878,13 @@ public class TechErrorReportController {
                             "version", saved.getVersion(), "auto", true)
                          : AuditDetail.of("channel_id", r.getChannelId(), "year", r.getReportYear(), "month", r.getReportMonth(),
                             "version", saved.getVersion()));
+        }
+        // Konusu silindiği için bu kayıtta silinen konu görselleri (2026-10-18) — otomatik kayıt birleşse de HER ZAMAN denetimde
+        // (elle görsel silmenin image_removed'ı gibi; geçmişte de her biri IMAGE_DELETE)
+        if (!outcome.removedImages().isEmpty()) {
+            auditService.recordAction("TECH_ERROR_REPORT_UPDATE", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                    AuditDetail.of("image_removed", String.join(", ", outcome.removedImages()), "images_removed",
+                            outcome.removedImages().size(), "reason", "topic_removed"));
         }
         TechErrorTemplate.Template t = TechErrorTemplate.fromStored(saved.getTemplateJson());
         Map<String, Object> data = new LinkedHashMap<>();

@@ -19,6 +19,9 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { Switch } from '@/components/shadcn/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
+import { FieldContent, FieldDescription, FieldLabel, FieldTitle, Field as ShField } from '@/components/shadcn/field'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
@@ -29,7 +32,8 @@ import {
   embeddedSections, errorCountsBySection, FIELD_TYPES, hostOf, imageRows, insertToken, LIMITS, move, newId, newSection,
   pruneRemovedTrendRefs, resolvePlaceholders, resolveTextPlaceholders, sanitizeHosts, sanitizeSkipRefs, stableJson,
   summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields,
-  trendRefs, trendSectionsUsing, withoutHost, withoutSkip,
+  trendRefs, trendSectionsUsing, withoutHost, withoutSkip, DEFAULT_RATIO_OF, ISSUE_LIMITS, ISSUE_OPTION_LABELS, issueLegacy,
+  issueOptions, ratioOfWarning, ratioSectionsUsing,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
@@ -644,12 +648,16 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                   const hosted = s.kind === 'summary' ? embeddedSections(draft, s.id).length : 0
                   // Bölümün renkli kutucuk olan alanları (4b): kutucuklar da kalkar (pruneRemovedTiles)
                   const tiled = (s.fields || []).filter((f) => tileSectionsUsing(draft, f.id).length).length
+                  // Bölümün bir alanı bir anomali bölümünün "tüm teknik hatalar" alanı (inceleme 2026-10-18): pay hesaplanamaz
+                  const ratioUsers = new Set()
+                  for (const f of s.fields || []) for (const x of ratioSectionsUsing(draft, f.id)) if (x.id !== s.id) ratioUsers.add(x.title || x.id)
                   const message = t('te.tpl.removeSectionBody', s.title || '')
                     + (hosted ? `\n\n${t('te.tpl.removeSectionHosted', hosted)}` : '')
                     + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
                     + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
                     + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
                     + (tiled ? `\n\n${t('te.tpl.removeSectionTiles', tiled)}` : '')
+                    + (ratioUsers.size ? `\n\n${t('te.tpl.removeFieldRatioPart', [...ratioUsers].join(', '))}` : '')
                   const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                     variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                   if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
@@ -870,6 +878,8 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
   const kindName = t(`te.kind.${s.kind}`)
   const heading = String(resolve(s.title || '') ?? '').trim() || t('te.tpl.untitledSection')
   const host = hostOf(draft, s)
+  // Anomali bölümünün pay alanı şablonda yok / sayı değil: uyarı başlıkta da (kapalı bölümde görünsün — inceleme 2026-10-18)
+  const ratioWarn = s.kind === 'issues' ? ratioOfWarning(draft, s) : null
   return (
     <CollapsibleCard sectionId={s.id} slot="te-tpl-section" title={heading} copyText=""
       toggleLabel={(
@@ -881,6 +891,12 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           {host && (
             <Badge variant="outline" className="ms-1 rounded-md overflow-visible align-middle" data-slot="te-tpl-section-hosted">
               <ScrollText aria-hidden="true" className="size-3" /> {t('te.tpl.hostBadge')}
+            </Badge>
+          )}
+          {ratioWarn && (
+            <Badge variant="outline" data-slot="te-tpl-section-ratio-warn"
+              className="ms-1 rounded-md overflow-visible align-middle border-amber-300 text-amber-900 dark:border-amber-800 dark:text-amber-200">
+              <TriangleAlert aria-hidden="true" className="size-3" /> {t('te.tpl.anomaly.ratioWarnBadge')}
             </Badge>
           )}
         </>
@@ -901,7 +917,7 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
         {s.kind === 'metrics' && <HostSelect section={s} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'metrics' && <FieldsEditor section={s} errors={errors} draft={draft} onChange={onChange} />}
         {s.kind === 'images' && <SlotsEditor section={s} errors={errors} draft={draft} slotCount={slotCount} resolve={resolve} onChange={onChange} />}
-        {s.kind === 'issues' && <IssueLabelsEditor section={s} onChange={onChange} />}
+        {s.kind === 'issues' && <IssueLabelsEditor section={s} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'summary' && <SummaryLinesEditor section={s} errors={errors} draft={draft} resolve={resolve} resolveLong={resolveLong} onChange={onChange} />}
         {s.kind === 'table' && <TableEditor section={s} errors={errors} draft={draft} resolve={resolve} onChange={onChange} />}
         {s.kind === 'trend' && <TrendEditor section={s} draft={draft} resolve={resolve} onChange={onChange} />}
@@ -962,9 +978,12 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
     const calcs = calcFieldsUsing(draft, f.id)
     // Renkli kutucuk olarak gösterilen alan (2026-10-17, 4b): silinirse kutucuğu da kalkar (pruneRemovedTiles)
     const tiles = tileSectionsUsing(draft, f.id)
-    if (used.length || charts.length || calcs.length || tiles.length) {
+    // Anomali bölümünün "tüm teknik hatalar" alanı (inceleme 2026-10-18): silinirse konuların payı hesaplanamaz
+    const ratios = ratioSectionsUsing(draft, f.id)
+    if (used.length || charts.length || calcs.length || tiles.length || ratios.length) {
       const calcPart = calcs.length ? t('te.tpl.removeFieldCalcPart', calcs.map((x) => x.label || t('te.tpl.field')).join(', ')) : ''
       const tilePart = tiles.length ? t('te.tpl.removeFieldTilePart') : ''
+      const ratioPart = ratios.length ? t('te.tpl.removeFieldRatioPart', ratios.map((x) => x.title || x.id).join(', ')) : ''
       const [title, message] = used.length && charts.length
         ? [t('te.tpl.removeFieldUsedAnyTitle'), t('te.tpl.removeFieldBothBody', f.label || '', used.length)]
         : used.length
@@ -973,8 +992,10 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
             ? [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
             : calcs.length
               ? [t('te.tpl.removeFieldCalcTitle'), '']
-              : [t('te.tpl.removeFieldTileTitle'), '']
-      const ok = await showConfirm({ title, message: [message, calcPart, tilePart].filter(Boolean).join(' '), variant: 'warning',
+              : tiles.length
+                ? [t('te.tpl.removeFieldTileTitle'), '']
+                : [t('te.tpl.removeFieldRatioTitle'), '']
+      const ok = await showConfirm({ title, message: [message, calcPart, tilePart, ratioPart].filter(Boolean).join(' '), variant: 'warning',
         confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -1270,7 +1291,7 @@ function SlotsEditor({ section: s, errors, draft, slotCount, resolve = (x) => x,
   )
 }
 
-function IssueLabelsEditor({ section: s, onChange }) {
+function IssueLabelsEditor({ section: s, draft, resolve = (x) => x, onChange }) {
   const t = useT()
   const rows = [
     ['item_title', 'te.tpl.itemTitle', 'te.tpl.itemTitleHint'],
@@ -1279,16 +1300,145 @@ function IssueLabelsEditor({ section: s, onChange }) {
     ['errors_label', 'te.tpl.errorsLabel', null],
   ]
   return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {rows.map(([key, label, hint]) => (
-        <div key={key} className={cn('flex flex-col gap-1', key === 'item_title' && 'md:col-span-2')}>
-          <label htmlFor={`te-i-${s.id}-${key}`} className="text-xs font-medium text-muted-foreground">{t(label)}</label>
-          <Input id={`te-i-${s.id}-${key}`} className="pointer-coarse:h-10" value={s[key] || ''} maxLength={key === 'item_title' ? LIMITS.label : LIMITS.issueLabel}
-            onChange={(e) => onChange((x) => ({ ...x, [key]: e.target.value }))} />
-          {hint && <p className="text-xs text-muted-foreground">{t(hint)}</p>}
-        </div>
-      ))}
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="grid gap-3 md:grid-cols-2">
+        {rows.map(([key, label, hint]) => (
+          <div key={key} className={cn('flex flex-col gap-1', key === 'item_title' && 'md:col-span-2')}>
+            <label htmlFor={`te-i-${s.id}-${key}`} className="text-xs font-medium text-muted-foreground">{t(label)}</label>
+            <Input id={`te-i-${s.id}-${key}`} className="pointer-coarse:h-10" value={s[key] || ''} maxLength={key === 'item_title' ? LIMITS.label : LIMITS.issueLabel}
+              onChange={(e) => onChange((x) => ({ ...x, [key]: e.target.value }))} />
+            {hint && <p className="text-xs text-muted-foreground">{t(hint)}</p>}
+          </div>
+        ))}
+      </div>
+      <AnomalyOptionsEditor section={s} draft={draft} resolve={resolve} onChange={onChange} />
     </div>
+  )
+}
+
+/** Dokunmatikte anahtarın vuruş alanı 40 px+ (görünüm aynı) — onay kutusunun proje ekiyle aynı desen. */
+const SWITCH_TOUCH = "relative pointer-coarse:after:absolute pointer-coarse:after:-inset-3 pointer-coarse:after:content-['']"
+
+/** Açılır seçenek satırı: anahtar + ad + ipucu; açıkken altında ayarları. */
+function OptionRow({ id, slot, checked, disabled, onCheckedChange, title, hint, children }) {
+  return (
+    <div data-slot={slot} data-on={checked ? 'true' : 'false'} className="flex min-w-0 flex-col gap-3 rounded-md border bg-muted/20 p-3">
+      <div className="flex items-start gap-3">
+        <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-describedby={`${id}-h`}
+          className={cn('mt-0.5', SWITCH_TOUCH)} />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <label htmlFor={id} className="text-sm font-medium leading-snug [overflow-wrap:anywhere]">{title}</label>
+          <p id={`${id}-h`} className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{hint}</p>
+        </div>
+      </div>
+      {checked && children ? (
+        <div className="grid min-w-0 gap-3 animate-in fade-in-0 duration-200 motion-reduce:animate-none sm:grid-cols-2 sm:ps-11">{children}</div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * ANOMALİ ALANLARI (2026-10-18, kullanıcı isteği): her konuda sorulacak bilgiler — ne zaman (tarih + saat aralığı), kesinti
+ * (Evet ise Kesinti ID zorunlu), müşteri etkisi (yoksa müşteri sayısı gizlenir ya da konu rapora girmez), konu görselleri
+ * (en çok 2) ve konunun hata adedinin seçilen "tüm teknik hatalar" alanına oranı (otomatik). Açılan sorunun etiketi boşsa
+ * ŞABLON dilinin varsayılanı yazılır (raporun dili). Pay alanı şablonda yok ya da sayı değilse kayıt reddedilmez — uyarı.
+ */
+function AnomalyOptionsEditor({ section: s, draft, resolve, onChange }) {
+  const t = useT()
+  const lang = draft?.lang === 'en' ? 'en' : 'tr'
+  const d = ISSUE_OPTION_LABELS[lang]
+  const o = issueOptions(s, lang)
+  const base = `te-an-${s.id}`
+  const fields = allFields(draft)
+  const numbers = fields.filter((f) => f.type === 'number')
+  const ratioField = o.ratioOf ? fields.find((f) => f.id === o.ratioOf) : null
+  const ratioWarn = ratioOfWarning(draft, s)
+  const toggle = (key, on, labelKeys = []) => onChange((x) => {
+    const out = { ...x, [key]: on }
+    if (on) for (const k of labelKeys) if (!String(out[k] || '').trim()) out[k] = d[k]
+    if (key === 'ask_impact' && on && !out.no_impact_display) out.no_impact_display = 'hide_count'
+    return out
+  })
+  const labelInput = (key, label) => (
+    <div className="flex min-w-0 flex-col gap-1">
+      <label htmlFor={`${base}-${key}`} className="text-xs font-medium text-muted-foreground">{t(label)}</label>
+      <Input id={`${base}-${key}`} className="pointer-coarse:h-10" value={s[key] ?? ''} maxLength={ISSUE_LIMITS.label}
+        placeholder={d[key]} data-slot="te-tpl-anomaly-label" data-key={key}
+        onChange={(e) => onChange((x) => ({ ...x, [key]: e.target.value }))} />
+      <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolve(s[key] || d[key])}</p>
+    </div>
+  )
+  return (
+    <section className="flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:p-4" data-slot="te-tpl-anomaly"
+      data-legacy={issueLegacy(o) ? 'true' : 'false'} aria-labelledby={`${base}-t`}>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <h4 id={`${base}-t`} className="m-0 text-sm font-semibold">{t('te.tpl.anomaly.title')}</h4>
+        <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.tpl.anomaly.hint')}</p>
+      </div>
+      <OptionRow id={`${base}-time`} slot="te-tpl-anomaly-time" checked={o.askTime} title={t('te.tpl.anomaly.time')}
+        hint={t('te.tpl.anomaly.timeHint')} onCheckedChange={(c) => toggle('ask_time', c === true, ['time_label'])}>
+        {labelInput('time_label', 'te.tpl.anomaly.timeLabel')}
+      </OptionRow>
+      <OptionRow id={`${base}-outage`} slot="te-tpl-anomaly-outage" checked={o.askOutage} title={t('te.tpl.anomaly.outage')}
+        hint={t('te.tpl.anomaly.outageHint')} onCheckedChange={(c) => toggle('ask_outage', c === true, ['outage_label', 'outage_id_label'])}>
+        {labelInput('outage_label', 'te.tpl.anomaly.questionLabel')}
+        {labelInput('outage_id_label', 'te.tpl.anomaly.outageIdLabel')}
+      </OptionRow>
+      <OptionRow id={`${base}-impact`} slot="te-tpl-anomaly-impact" checked={o.askImpact} title={t('te.tpl.anomaly.impact')}
+        hint={t('te.tpl.anomaly.impactHint')} onCheckedChange={(c) => toggle('ask_impact', c === true, ['impact_label'])}>
+        {labelInput('impact_label', 'te.tpl.anomaly.questionLabel')}
+        <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+          <span id={`${base}-noimp`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.anomaly.noImpact')}</span>
+          <RadioGroup value={o.noImpactDisplay || 'hide_count'} aria-labelledby={`${base}-noimp`}
+            onValueChange={(v) => onChange((x) => ({ ...x, no_impact_display: v }))}
+            className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-slot="te-tpl-anomaly-display">
+            {[
+              { value: 'hide_count', title: t('te.tpl.anomaly.hideCount'), hint: t('te.tpl.anomaly.hideCountHint') },
+              { value: 'hide_topic', title: t('te.tpl.anomaly.hideTopic'), hint: t('te.tpl.anomaly.hideTopicHint') },
+            ].map((x) => {
+              const rid = `${base}-noimp-${x.value}`
+              return (
+                <FieldLabel key={x.value} htmlFor={rid} className="w-full cursor-pointer">
+                  <ShField orientation="horizontal" data-display={x.value} className="min-h-10 items-start gap-2 px-3! py-2!">
+                    <RadioGroupItem value={x.value} id={rid} className="mt-0.5" />
+                    <FieldContent className="gap-0.5">
+                      <FieldTitle className="text-sm">{x.title}</FieldTitle>
+                      <FieldDescription className="m-0 text-xs leading-snug [overflow-wrap:anywhere]">{x.hint}</FieldDescription>
+                    </FieldContent>
+                  </ShField>
+                </FieldLabel>
+              )
+            })}
+          </RadioGroup>
+        </div>
+      </OptionRow>
+      <OptionRow id={`${base}-images`} slot="te-tpl-anomaly-images" checked={o.allowImages} title={t('te.tpl.anomaly.images')}
+        hint={t('te.tpl.anomaly.imagesHint')} onCheckedChange={(c) => toggle('allow_images', c === true)} />
+      <OptionRow id={`${base}-ratio`} slot="te-tpl-anomaly-ratio" checked={!!o.ratioOf} disabled={!o.ratioOf && numbers.length === 0}
+        title={t('te.tpl.anomaly.ratio')} hint={numbers.length === 0 && !o.ratioOf ? t('te.tpl.anomaly.ratioNone') : t('te.tpl.anomaly.ratioHint')}
+        onCheckedChange={(c) => onChange((x) => ({
+          ...x,
+          ratio_of: c === true ? (numbers.find((f) => f.id === DEFAULT_RATIO_OF)?.id || numbers[0]?.id || '') : '',
+        }))}>
+        <div className="flex min-w-0 flex-col gap-1 sm:col-span-2">
+          <label htmlFor={`${base}-ratio-of`} className="text-xs font-medium text-muted-foreground">{t('te.tpl.anomaly.ratioOf')}</label>
+          <NativeSelect id={`${base}-ratio-of`} value={o.ratioOf || ''} className="w-full pointer-coarse:h-10" data-slot="te-tpl-anomaly-ratio-of"
+            aria-describedby={ratioWarn ? `${base}-ratio-w` : undefined}
+            onChange={(e) => onChange((x) => ({ ...x, ratio_of: e.target.value }))}>
+            {!ratioField && o.ratioOf && <NativeSelectOption value={o.ratioOf}>{t('te.tpl.anomaly.ratioUnknown', o.ratioOf)}</NativeSelectOption>}
+            {ratioField && ratioField.type !== 'number' && <NativeSelectOption value={ratioField.id}>{resolve(ratioField.label)}</NativeSelectOption>}
+            {numbers.map((f) => <NativeSelectOption key={f.id} value={f.id}>{resolve(f.label)}</NativeSelectOption>)}
+          </NativeSelect>
+          {ratioWarn && (
+            <p id={`${base}-ratio-w`} className="m-0 flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]"
+              data-slot="te-tpl-anomaly-ratio-warn">
+              <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /> {t(ratioWarn)}
+            </p>
+          )}
+        </div>
+      </OptionRow>
+    </section>
   )
 }
 
@@ -1329,7 +1479,7 @@ function LayoutPreview({ draft, resolve }) {
             ) : (
               <p className="text-muted-foreground">
                 {s.kind === 'metrics' ? t('te.tpl.previewFields', (s.fields || []).length)
-                  : s.kind === 'issues' ? t('te.tpl.previewIssues')
+                  : s.kind === 'issues' ? previewIssuesText(s, draft, t)
                     : s.kind === 'summary' ? t('te.tpl.previewSummary', (s.lines || []).length)
                     : s.kind === 'trend' ? t('te.tpl.previewTrend', (s.series || []).length)
                       : s.kind === 'table' ? t('te.tpl.previewTable', (s.columns || []).length, (s.rows || []).length)
@@ -1845,4 +1995,14 @@ function TablePreview({ cols, rows, resolve, title }) {
       </div>
     </figure>
   )
+}
+
+/** Yerleşim önizlemesinde anomali bölümü: hangi sorular soruluyor (2026-10-18); sorusuz eski düzen eski metni yazar. */
+function previewIssuesText(s, draft, t) {
+  const o = issueOptions(s, draft?.lang)
+  if (issueLegacy(o)) return t('te.tpl.previewIssues')
+  const asked = [o.askTime && t('te.tpl.anomaly.short.time'), o.askOutage && t('te.tpl.anomaly.short.outage'),
+    o.askImpact && t('te.tpl.anomaly.short.impact'), o.allowImages && t('te.tpl.anomaly.short.images'),
+    o.ratioOf && t('te.tpl.anomaly.short.ratio')].filter(Boolean)
+  return t('te.tpl.previewIssuesAsked', asked.join(', '))
 }

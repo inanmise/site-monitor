@@ -131,7 +131,9 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026");
         assertThat(s).contains("%0,42").contains("1.250.000").contains("Evet");
         assertThat(s).contains("1. Kart Limiti: Hata Artışı");
-        assertThat(s).contains("Etkilenen müşteri sayısı: 1.200").contains("3.400");
+        // 2026-10-18: varsayılan şablonda anomali soruları açık — sayaç satırı yerine giriş metni (müşteri sayısı girilmiş →
+        // müşteri etkisi var; toplam yok → pay yok)
+        assertThat(s).contains("Bu konu nedeniyle 3.400 teknik hata alındı.").contains("Müşteri etkisi: 1.200 müşteri.");
         // Map yapılmamış hata açıklaması "Verileri" bölümünde (7. sürüm, 2026-10-17): alanın adıyla basılır; ayrı bölüm başlığı yok
         assertThat(s).contains("İlk satır").contains("İkinci satır").contains("Map yapılmamış hatalar hakkında açıklama");
         assertThat(s).doesNotContain("Map Yapılmamış Hatalar");
@@ -981,7 +983,7 @@ class TechErrorReportPdfWriterTest {
         assertThat(s).contains("Toplam işlem adedi 4,4G +50M (+%1,15)")                  // kutucuk: kısaltmalı değer + kısa fark
                 .contains("Ay içindeki teknik hata adedi 1,25M")
                 .contains("4,4G olarak")                                                     // özet cümlesi {f:total-tx}
-                .contains("Bu konudan kaynaklı teknik hata adedi: 681,6k")
+                .contains("Bu konu nedeniyle 681,6k teknik hata alındı")                 // anomali giriş metni (kısaltmalı adet)
                 .doesNotContain("4.400.000.000");
         // Sıfır işareti: kutucukta 2 (map / kota adedi) + gösterge kartında 2; anomali adedi PDF satırında işaretlenmez
         List<List<float[]>> ticks = zeroTicks(pdf);
@@ -1447,5 +1449,194 @@ class TechErrorReportPdfWriterTest {
         assertThat(enHead).startsWith("SAMPLE PREVIEW · Mobile · September 2026");
         assertThat(TechErrorReportPdfWriter.previewFileName("Bireysel İnternet Şubesi", "tr")).isEqualTo("bireysel-internet-subesi-sablon-onizleme.pdf");
         assertThat(TechErrorReportPdfWriter.previewFileName("POS", "en")).isEqualTo("pos-template-preview.pdf");
+    }
+
+    // ── Anomali konuları (2026-10-18) ────────────────────────────────────────────────────────────────
+
+    static Map<String, Object> topic(String id, Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("topic", "Konu " + id);
+        m.put("title_auto", true);
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
+
+    /** Varsayılan şablonun anomali bölümü, verilen anahtarlarla (ör. no_impact_display = hide_topic). */
+    @SuppressWarnings("unchecked")
+    static Template withIssueOption(String lang, String key, Object value) {
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults(lang)));
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Map<String, Object> sec : (List<Map<String, Object>>) raw.get("sections")) {
+            Map<String, Object> sc = new LinkedHashMap<>(sec);
+            if ("issues".equals(sec.get("kind"))) sc.put(key, value);
+            secs.add(sc);
+        }
+        raw.put("sections", secs);
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    static TechErrorPdfInput anomalyInput(Template t, List<Object> topics, Map<String, TechErrorPdfInput.Image> imgs) {
+        TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t, TechErrorValues.normalize(
+                Map.of("fields", Map.of("error-count", 5000), "issues", Map.of("issues", topics)), t, java.time.YearMonth.of(2026, 9)), null);
+        return new TechErrorPdfInput(t, v, "Mobil", "Dijital Kanallar", 2026, 9, "Ayşe Yılmaz", Instant.parse("2026-10-02T06:30:00Z"), imgs);
+    }
+
+    @Test
+    @DisplayName("anomali (TR): başlığın altında cevaplardan kurulan giriş metni (zaman, adet, pay, Kesinti ID, müşteri), ardından açıklama ve konunun görselleri (tam genişlik, açıklaması üstte); müşteri etkisi yok → 'Müşteri etkisi yok.'; eski sayaç satırı yok")
+    void anomalyLeadAndImages() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("iss:issues:k1:1", new TechErrorPdfInput.Image(chart(1200, 400, Color.BLUE), 1200, 400));
+        TechErrorPdfInput in = anomalyInput(t, List.of(
+                topic("k1", "date", "2026-09-12", "start", "14:00", "end", "15:30", "errors", 170, "outage", true, "outage_id", "INC-2026-0915",
+                        "impact", true, "customers", 320, "description", "Limit sorgusu zaman aşımına uğradı.", "captions", Map.of("1", "Hata grafiği")),
+                topic("k2", "errors", 25, "outage", false, "impact", false)), imgs);
+        String s = text(TechErrorReportPdfWriter.render(in)).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("1. Konu k1: Hata Artışı")
+                .contains("12 Eylül 2026, 14:00–15:30 arasında 170 teknik hata alındı; bu, dönemdeki tüm teknik hataların %3,4 kadarıdır.")
+                .contains("Kesinti kaynaklıdır (Kesinti ID: INC-2026-0915). Müşteri etkisi: 320 müşteri.")
+                .contains("Limit sorgusu zaman aşımına uğradı.").contains("Hata grafiği")
+                .contains("2. Konu k2: Hata Artışı").contains("Bu konu nedeniyle 25 teknik hata alındı; bu, dönemdeki tüm teknik hataların %0,5 kadarıdır.")
+                .contains("Kesinti kaynaklı değildir. Müşteri etkisi yok.")
+                .doesNotContain("Etkilenen müşteri sayısı:");
+        // Giriş metni açıklamadan önce, görselin açıklaması açıklamadan sonra
+        assertThat(s.indexOf("Kesinti kaynaklıdır")).isLessThan(s.indexOf("Limit sorgusu"));
+        assertThat(s.indexOf("Limit sorgusu")).isLessThan(s.indexOf("Hata grafiği"));
+        // Görsel tam genişlikte çizilir (marka logosu küçük)
+        List<float[]> drawn = drawnImages(TechErrorReportPdfWriter.render(in)).stream().filter(x -> x[0] > 120).toList();
+        assertThat(drawn).hasSize(1);
+        assertThat(drawn.get(0)[0]).isGreaterThan(450f);
+    }
+
+    @Test
+    @DisplayName("anomali: 'konuyu rapora alma' — müşteri etkisi olmayan konu PDF'e hiç girmez, numaralar basılanlara göre; hepsi etkisizse not; EN giriş metni")
+    void anomalyHideTopicAndEnglish() throws IOException {
+        Template hide = withIssueOption("tr", "no_impact_display", "hide_topic");
+        String s = text(TechErrorReportPdfWriter.render(anomalyInput(hide, List.of(
+                topic("k1", "errors", 10, "impact", false), topic("k2", "errors", 20, "impact", true)), Map.of())))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).doesNotContain("Konu k1").contains("1. Konu k2: Hata Artışı").doesNotContain("2. Konu");
+        String none = text(TechErrorReportPdfWriter.render(anomalyInput(hide, List.of(topic("k1", "impact", false)), Map.of())))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(none).doesNotContain("Konu k1").contains("Bu ay müşteri etkisi olan bir konu yok.");
+
+        Template en = TechErrorTemplate.defaults("en");
+        String e = text(TechErrorReportPdfWriter.render(anomalyInput(en, List.of(topic("k1", "date", "2026-09-30", "start", "23:30",
+                "end", "01:15", "end_next_day", true, "errors", 1, "outage", false, "impact", false)), Map.of()))).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(e).contains("1. Konu k1: Error Increase")
+                .contains("On 30 September 2026, 23:30 – 01:15 the next day, 1 technical error occurred; this is 0.02% of all technical errors in the period.")
+                .contains("It was not caused by an outage. No customer impact.");
+    }
+
+    @Test
+    @DisplayName("anomali + kısaltma (2026-10-18): '1,25M' yazılan konu hata adedi giriş metninde PDF'te ve e-postada '1,25M' (müşteri '4,4k'); pay SAYIYLA hesaplanır (1.250.000 ÷ 50.000.000 = %2,5); konu adedine sıfır işareti yok; eski düzen sayaç satırı da kısaltmalı")
+    void anomalyAbbreviatedCounts() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, Object> raw = Map.of("fields", Map.of("error-count", 50_000_000),
+                "issues", Map.of("issues", List.of(
+                        topic("k1", "date", "2026-09-12", "errors", 1_250_000, "impact", true, "customers", 4400),
+                        topic("k2", "errors", 0, "impact", false))),
+                "units", Map.of("error-count", 6, "issues.issues.k1.errors", 6, "issues.issues.k1.customers", 3, "issues.issues.k2.errors", 3));
+        TechErrorValues.Values v = com.sitemonitor.service.techerror.TechErrorCalc.apply(t,
+                TechErrorValues.normalize(raw, t, java.time.YearMonth.of(2026, 9)), null);
+        // Pay sayıyla: kısaltma yalnız gösterim (0 adetin üssü saklanmaz)
+        assertThat(v.issues().get("issues").get(0).share().doubleValue()).isEqualTo(2.5);
+        assertThat(v.issueUnit("issues", "k1", "errors")).isEqualTo(6);
+        assertThat(v.issueUnit("issues", "k2", "errors")).isNull();
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Takım", 2026, 9, null, null, Map.of());
+        byte[] pdf = TechErrorReportPdfWriter.render(in);
+        String s = text(pdf).replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("12 Eylül 2026 tarihinde 1,25M teknik hata alındı; bu, dönemdeki tüm teknik hataların %2,5 kadarıdır.")
+                .contains("Müşteri etkisi: 4,4k müşteri.")
+                .contains("Bu konu nedeniyle 0 teknik hata alındı; bu, dönemdeki tüm teknik hataların %0 kadarıdır.")
+                .doesNotContain("1.250.000 teknik hata").doesNotContain("4.400 müşteri");
+        // Konu adedi sıfır işaretini çizmez (gösterge kartları dışında işaret yok)
+        int ticks = 0;
+        for (List<float[]> p : zeroTicks(pdf)) ticks += p.size();
+        String html = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(in, null, null, "m.pdf").mail().html();
+        String card = html.substring(html.indexOf("data-slot=\"te-issue\""));
+        assertThat(card).contains("<strong>1,25M</strong> teknik hata alındı").contains("<strong>%2,5</strong>")
+                .contains("Müşteri etkisi: <strong>4,4k</strong> müşteri.").doesNotContain("cid:te-zero-ok");
+        // Eski düzen: sayaç satırı da kısaltmalı
+        Template legacy = com.sitemonitor.service.techerror.TechErrorTestTemplates.beforeAnomaly("tr");
+        TechErrorValues.Values lv = TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(
+                topic("k1", "customers", 1200, "errors", 3_400_000))), "units", Map.of("issues.issues.k1.errors", 6)), legacy);
+        String ls = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(legacy, lv, "Mobil", "Takım", 2026, 9, null, null, Map.of())))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(ls).contains("Etkilenen müşteri sayısı: 1.200 Bu konudan kaynaklı teknik hata adedi: 3,4M");
+        assertThat(ticks).as("konu adedine işaret yok").isZero();
+    }
+
+    @Test
+    @DisplayName("anomali: eski düzendeki bölüm (2026-10-18 öncesi şablon) eski sayaç satırını basar — giriş metni yok")
+    void anomalyLegacyLayoutUnchanged() throws IOException {
+        Template legacy = com.sitemonitor.service.techerror.TechErrorTestTemplates.beforeAnomaly("tr");
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("issues", Map.of("issues", List.of(
+                topic("k1", "customers", 1200, "errors", 3400)))), legacy);
+        String s = text(TechErrorReportPdfWriter.render(new TechErrorPdfInput(legacy, v, "Mobil", "Takım", 2026, 9, null, null, Map.of())))
+                .replaceAll("[\\s\\u00a0]+", " ");
+        assertThat(s).contains("Etkilenen müşteri sayısı: 1.200 Bu konudan kaynaklı teknik hata adedi: 3.400")
+                .doesNotContain("teknik hata alındı").doesNotContain("Müşteri etkisi:");
+    }
+
+    @Test
+    @DisplayName("anomali: konu başlığı sayfa sonunda yalnız kalmaz — her başlığın ardından aynı sayfada giriş metni gelir (konu sayısı tarayarak)")
+    void anomalyTitleNeverOrphaned() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        for (int n = 6; n <= 18; n += 3) {
+            List<Object> topics = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                topics.add(topic("k" + i, "date", "2026-09-12", "start", "14:00", "end", "15:30", "errors", 10 + i, "outage", false,
+                        "impact", false, "description", ("Satır " + i + " açıklaması ").repeat(14)));
+            }
+            byte[] pdf = TechErrorReportPdfWriter.render(anomalyInput(t, topics, Map.of()));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                int titles = 0;
+                for (int pg = 1; pg <= doc.getNumberOfPages(); pg++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(pg);
+                    st.setEndPage(pg);
+                    String[] lines = st.getText(doc).split("\\R");
+                    if (tocPage(String.join(" ", lines))) continue;
+                    for (int i = 0; i < lines.length; i++) {
+                        if (!lines[i].matches("\\d+\\. Konu k\\d+: Hata Artışı")) continue;
+                        titles++;
+                        assertThat(i + 1).as("konu sayısı %d, sayfa %d: %s", n, pg, lines[i]).isLessThan(lines.length);
+                        assertThat(lines[i + 1]).as("konu sayısı %d, sayfa %d", n, pg).startsWith("12 Eylül 2026");
+                    }
+                }
+                assertThat(titles).as("konu sayısı %d", n).isEqualTo(n);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("anomali (inceleme 2026-10-18): giriş metni ve açıklaması olmayan, yalnız görseli olan konunun başlığı ilk görsel satırıyla"
+            + " aynı sayfada (30 pt'lik pay başlığı sayfa sonunda yalnız bırakıyordu) — önündeki konu sayısı sayfadaki yeri kaydırır")
+    void anomalyImageOnlyTopicTitleNeverOrphaned() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("iss:issues:img:1", new TechErrorPdfInput.Image(chart(1200, 600, Color.BLUE), 1200, 600));
+        for (int n = 0; n <= 14; n++) {
+            List<Object> topics = new ArrayList<>();
+            for (int i = 0; i < n; i++) topics.add(topic("k" + i, "description", ("Satır " + i + " açıklaması ").repeat(9)));
+            topics.add(topic("img", "captions", Map.of("1", "Yalnız görselli konunun grafiği")));
+            byte[] pdf = TechErrorReportPdfWriter.render(anomalyInput(t, topics, imgs));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                int titlePage = -1, captionPage = -1;
+                for (int pg = 1; pg <= doc.getNumberOfPages(); pg++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(pg);
+                    st.setEndPage(pg);
+                    String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (tocPage(txt)) continue;
+                    if (titlePage < 0 && txt.contains("Konu img: Hata Artışı")) titlePage = pg;
+                    if (captionPage < 0 && txt.contains("Yalnız görselli konunun grafiği")) captionPage = pg;
+                }
+                assertThat(titlePage).as("önünde %d konu", n).isPositive();
+                assertThat(captionPage).as("önünde %d konu", n).isEqualTo(titlePage);
+            }
+        }
     }
 }

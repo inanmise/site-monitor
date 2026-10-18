@@ -358,6 +358,7 @@ export function diffText(d, t, resolve, lang = 'tr') {
     case 'section.reorder': return t('te.ver.d.section.reorder')
     case 'section.retype': return t('te.ver.d.section.retype', r(d.label), t(`te.kind.${d.before}`), t(`te.kind.${d.after}`))
     case 'section.labels': return t('te.ver.d.section.labels', r(d.label))
+    case 'section.anomaly': return t('te.ver.d.section.anomaly', r(d.label))
     case 'section.host': {
       // Gösterim yeri (2026-10-17): ayrı bölüm (null) ↔ özet kartı (özetin başlığı; okunamıyorsa "—")
       const where = (x) => (x == null ? t('te.tpl.hostSeparate') : t('te.tpl.hostIn', r(x) || '—'))

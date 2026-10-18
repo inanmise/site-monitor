@@ -1,5 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronDown, CircleCheck, CircleDashed, PenLine, Plus, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, CircleCheck, CircleDashed, PenLine, TriangleAlert, Wand2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -12,8 +12,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import {
   CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
-  abbreviable, abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, issueUnitKey, tableUnitKey, zeroOk,
-  issueDisplayTitle, move, newIssue, parseNumber, resolveIssueTitle, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
+  abbreviable, abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, tableUnitKey, zeroOk,
+  parseNumber, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
   summaryTiles, effectiveTarget, effectiveBetter, calcNumber,
   resolveTextPlaceholders, richBlank, tableCellKey, tableMinWidth,
 } from './techErrorModel.js'
@@ -374,121 +374,6 @@ export function MetricsBlock({ section, values, resolve, uiLang, previous, readO
     <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
       <MetricFieldsGrid section={section} values={values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
         errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} onTarget={onTarget} />
-    </SectionShell>
-  )
-}
-
-export function IssuesBlock({ section, values, resolve, uiLang, readOnly, errors, onIssues, onFieldError, onUnit = null }) {
-  const t = useT()
-  const list = values.issues[section.id] || []
-  const pattern = section.item_title
-  const set = (fn) => onIssues(section.id, fn(list))
-  const patch = (id, p) => set((l) => l.map((i) => (i.id === id ? { ...i, ...p } : i)))
-  return (
-    <SectionShell title={resolve(section.title)} slot="te-issues" sectionId={section.id} hint={t('te.issues.hint')}>
-      {list.length === 0 && <p className="text-sm text-muted-foreground">{t('te.issues.empty')}</p>}
-      <ol className="flex flex-col gap-3">
-        {list.map((iss, idx) => {
-          const base = `te-iss-${section.id}-${iss.id}`
-          // Sunucu hatası sıra numarasıyla gelir; istemci hatası konunun KİMLİĞİ ve alanıyla (müşteri / hata adedi ayrı —
-          // biri düzelince diğerinin hatası silinmez; sıralama değişince hata başka konuya kaymaz; inceleme 2026-10-13)
-          const err = errors[`issues.${section.id}.${idx + 1}`]
-          const fieldErr = (key) => errors[issueErrorKey(section.id, iss.id, key)]
-          const shownTitle = issueDisplayTitle(iss, pattern)
-          return (
-            <li key={iss.id} className="rounded-xl border p-3 sm:p-4" data-slot="te-issue" data-issue={iss.id}
-              data-field={`issues.${section.id}.${idx + 1}`}>
-              <div className="mb-3 flex items-start justify-between gap-2">
-                <p className="min-w-0 text-sm font-semibold leading-snug [overflow-wrap:anywhere]" data-slot="te-issue-title">
-                  {idx + 1}. {shownTitle || t('te.issues.untitled')}
-                </p>
-                {!readOnly && (
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === 0}
-                      aria-label={t('te.moveUp', shownTitle || idx + 1)} onClick={() => set((l) => move(l, idx, -1))}><ArrowUp aria-hidden="true" /></Button>
-                    <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === list.length - 1}
-                      aria-label={t('te.moveDown', shownTitle || idx + 1)} onClick={() => set((l) => move(l, idx, 1))}><ArrowDown aria-hidden="true" /></Button>
-                    <Button type="button" size="icon" variant="ghost" className="size-8 text-destructive pointer-coarse:size-10"
-                      aria-label={t('te.issues.remove', shownTitle || idx + 1)} onClick={() => {
-                        onFieldError(issueErrorKey(section.id, iss.id, 'customers'), null)
-                        onFieldError(issueErrorKey(section.id, iss.id, 'errors'), null)
-                        set((l) => l.filter((x) => x.id !== iss.id))
-                      }}>
-                      <Trash2 aria-hidden="true" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor={`${base}-topic`} className="text-sm font-medium">{t('te.issues.topic')}</label>
-                  <Input id={`${base}-topic`} className="pointer-coarse:h-10" value={iss.topic || ''} disabled={readOnly} maxLength={LIMITS.topic}
-                    placeholder={t('te.issues.topicPlaceholder')}
-                    onChange={(e) => {
-                      const topic = e.target.value
-                      patch(iss.id, iss.title_auto !== false
-                        ? { topic, title: resolveIssueTitle(pattern, topic), title_auto: true }
-                        : { topic })
-                    }} />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex flex-wrap items-center justify-between gap-1">
-                    <label htmlFor={`${base}-title`} className="text-sm font-medium">{t('te.issues.title')}</label>
-                    {iss.title_auto !== false ? (
-                      <Badge variant="secondary" className="rounded-md overflow-visible">{t('te.issues.auto')}</Badge>
-                    ) : !readOnly && (
-                      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs pointer-coarse:h-10"
-                        onClick={() => patch(iss.id, { title: resolveIssueTitle(pattern, iss.topic), title_auto: true })}>
-                        <Wand2 aria-hidden="true" /> {t('te.issues.fromTopic')}
-                      </Button>
-                    )}
-                  </div>
-                  <Input id={`${base}-title`} className="pointer-coarse:h-10" value={iss.title_auto !== false ? resolveIssueTitle(pattern, iss.topic) : (iss.title || '')}
-                    disabled={readOnly} maxLength={LIMITS.label}
-                    onChange={(e) => patch(iss.id, { title: e.target.value, title_auto: false })} />
-                </div>
-                <div className="flex flex-col gap-1.5 md:col-span-2">
-                  <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
-                    <label htmlFor={`${base}-desc`} className="inline text-sm font-medium">{resolve(section.description_label)}</label>
-                    <CopyTextButton text={resolve(section.description_label)} />
-                  </div>
-                  <RichTextarea id={`${base}-desc`} rows={4} value={iss.description || ''} disabled={readOnly} maxLength={LIMITS.longText}
-                    placeholder={t('te.issues.descriptionPlaceholder')} label={resolve(section.description_label)}
-                    invalid={err ? true : undefined} describedBy={err ? `${base}-e` : undefined}
-                    onChange={(x) => patch(iss.id, { description: x })} />
-                </div>
-                {[['customers', section.customers_label], ['errors', section.errors_label]].map(([key, label]) => {
-                  const fe = fieldErr(key)
-                  return (
-                    <div key={key} className="flex flex-col gap-1.5" data-field={issueErrorKey(section.id, iss.id, key)}>
-                      <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
-                        <label htmlFor={`${base}-${key}`} className="inline text-sm font-medium">{resolve(label)}</label>
-                        <CopyTextButton text={resolve(label)} />
-                      </div>
-                      <NumberInput id={`${base}-${key}`} value={iss[key] ?? null} lang={uiLang} disabled={readOnly}
-                        invalid={fe || err ? true : undefined} describedBy={fe ? `${base}-${key}-e` : err ? `${base}-e` : undefined}
-                        unit={onUnit ? values.units?.[issueUnitKey(section.id, iss.id, key)] ?? null : undefined}
-                        onChange={(n, exp) => {
-                          patch(iss.id, { [key]: n })
-                          onUnit?.(issueUnitKey(section.id, iss.id, key), n == null ? null : exp)
-                        }} pendingKey={issueErrorKey(section.id, iss.id, key)}
-                        onError={(k) => onFieldError(issueErrorKey(section.id, iss.id, key), k ? t(k) : null)} />
-                      {fe && <p id={`${base}-${key}-e`} className="text-sm text-destructive" role="alert">{fe}</p>}
-                    </div>
-                  )
-                })}
-              </div>
-              {err && <p id={`${base}-e`} className="mt-2 text-sm text-destructive" role="alert">{err}</p>}
-            </li>
-          )
-        })}
-      </ol>
-      {!readOnly && (
-        <Button type="button" variant="outline" className="w-fit pointer-coarse:min-h-10" disabled={list.length >= LIMITS.issues}
-          onClick={() => set((l) => [...l, newIssue(l)])} data-slot="te-add-issue">
-          <Plus aria-hidden="true" /> {t('te.issues.add')}
-        </Button>
-      )}
     </SectionShell>
   )
 }

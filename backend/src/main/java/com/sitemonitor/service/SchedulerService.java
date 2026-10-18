@@ -1829,6 +1829,9 @@ public class SchedulerService {
         // Takım şablon kütüphanesi (D17): takım başına EN ÇOK BİR varsayılan — servis takım satırını kilitleyip öncekini
         // düşürür; kısmi tekil indeks PostgreSQL'de ek güvence (H2 kısmi indeksi bilmez → yama sessizce atlanır).
         patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_tett_one_default ON tech_error_team_templates(team_id) WHERE is_default = true");
+        // Anomali konusu görselleri (2026-10-18): yuva kimliği iss:<bölüm>:<konu>:<n> 40 karakteri aşabilir (bölüm + konu
+        // kimliği 40'ar) — TechErrorReportImage.slotId 120. PostgreSQL'de VARCHAR büyütmek tabloyu yeniden yazmaz.
+        patch("ALTER TABLE tech_error_report_images ALTER COLUMN slot_id TYPE VARCHAR(120)");
 
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim

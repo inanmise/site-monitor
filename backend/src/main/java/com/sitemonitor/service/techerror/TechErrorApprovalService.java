@@ -122,6 +122,9 @@ public class TechErrorApprovalService {
     @org.springframework.beans.factory.annotation.Qualifier("loginIssueMailExecutor")
     java.util.concurrent.Executor mailExecutor;
 
+    /** Görsel hazırlayıcı (test dikişi; gönderenle aynı: hazırlama hatası onay postasını durdurmaz, yuvalar "PDF ekinde" der). */
+    java.util.function.BiFunction<TechErrorPdfInput, Long, TechErrorMailImages.Result> mailImagePreparer = TechErrorMailImages::prepare;
+
     /** Test dikişi: arka plan havuzu (null = aynı iş parçacığı). */
     void setMailExecutor(java.util.concurrent.Executor executor) {
         this.mailExecutor = executor;
@@ -311,7 +314,7 @@ public class TechErrorApprovalService {
                     TechErrorPdfInput loaded = service.pdfInput(pdfRow, channel, team.getName());
                     fallback[0] = TechErrorMailImages.allSkipped(loaded);
                     try {
-                        prepared[0] = TechErrorMailImages.prepare(loaded, budget);
+                        prepared[0] = mailImagePreparer.apply(loaded, budget);
                     } catch (RuntimeException e) {
                         prepared[0] = fallback[0];
                     }

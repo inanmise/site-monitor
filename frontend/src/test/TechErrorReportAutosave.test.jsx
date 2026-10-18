@@ -219,6 +219,34 @@ describe('otomatik kayıt', () => {
     expect(te().saveReport).toHaveBeenCalledTimes(3)
   })
 
+  it('503 LOCK_CONFLICT (kilit çatışması, 2026-10-18) çakışma DEĞİL: afiş yok, otomatik kayıt durmaz, sonraki turda yeniden dener', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const LOCK = 'Aynı kayıt üzerinde aynı anda başka bir işlem sürdüğü için veritabanı isteğinizi durdurdu; işlem tamamlanmamış olabilir. Birkaç saniye sonra tekrar deneyin; önce sayfayı yenileyip son durumu kontrol etmeniz önerilir.'
+    te().saveReport
+      .mockResolvedValueOnce({ success: false, code: 'LOCK_CONFLICT', status: 503, retry_after_seconds: 2, error: LOCK })
+      .mockImplementation(async (id, values, version) => okSave(version + 1, values.fields))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: SUMMARY }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Toplam işlem adedi' }), { target: { value: '2000' } })
+    act(() => { vi.advanceTimersByTime(AUTOSAVE_MS) })
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(status()).toHaveTextContent(/otomatik kayıt yapılamadı \(\d\d:\d\d\)/))
+    expect(screen.queryByText('Rapor siz düzenlerken değişti')).toBeNull()   // çakışma afişi yok
+    expect(status()).not.toHaveTextContent('otomatik kayıt durdu')
+    expect(status()).not.toHaveTextContent('bu içerikle yapılamıyor')        // 4xx gibi engellenmez
+    expect(screen.queryByText(LOCK)).toBeNull()                                // sessiz: bildirim yok
+    // Bekleme (30 sn) geçince sonraki tur aynı içeriği yeniden gönderir ve kaydeder
+    const realNow = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(realNow + AUTOSAVE_MS + 1000)
+    act(() => { vi.advanceTimersByTime(AUTOSAVE_MS) })
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalledTimes(2))
+    expect(te().saveReport.mock.calls[1][1].fields).toEqual({ 'error-rate': 0.42, 'total-tx': 2000 })
+    expect(te().saveReport.mock.calls[1][3]).toEqual(AUTO)
+    await waitFor(() => expect(status()).toHaveTextContent(/Tüm değişiklikler kaydedildi · otomatik kayıt \d\d:\d\d/))
+    expect(screen.queryByText('Rapor siz düzenlerken değişti')).toBeNull()
+  })
+
   it('elle kayıt ve ayrılma süren otomatik kaydı bekler (aynı sürümle iki istek gitmez, boşuna onay sorulmaz)', async () => {
     const first = deferred()
     te().saveReport.mockImplementationOnce(() => first.promise)

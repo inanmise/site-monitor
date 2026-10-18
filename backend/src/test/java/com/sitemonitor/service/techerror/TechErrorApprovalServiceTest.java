@@ -633,6 +633,90 @@ class TechErrorApprovalServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: PDF + gömülü görseller posta sınırını aşınca onay postasında görselli her yuva 'PDF ekinde' kutusu"
+            + " alır — yedek İZİN İÇİNDE, görseller bellekteyken alınır (eskiden görselsiz girdiden türetiliyordu: şablon görseli"
+            + " 'yüklenmedi', konu görseli hiç görünmüyordu)")
+    void requestMailFallbackKeepsImageBoxes() throws Exception {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                Map.of("id", "k1", "topic", "Kart", "title_auto", true, "errors", 10)))), tech.getId());
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", tech.getId());
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "konu.png", tech.getId());
+        // Hazırlanan görseller sınırı aşar (PDF + gömülü > posta sınırı) → yedek kullanılır
+        var original = approvals.mailImagePreparer;
+        approvals.mailImagePreparer = (in, budget) -> new com.sitemonitor.service.mail.TechErrorMailImages.Result(Map.of(), List.of(),
+                List.of(), Long.MAX_VALUE / 4);
+        try {
+            approvals.request(service.report(s1.getId()), ch, team, tech.getId());
+        } finally {
+            approvals.mailImagePreparer = original;
+        }
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        String body = html.getAllValues().get(0);
+        assertThat(body.split("data-slot=\"te-image-pdf\"", -1).length - 1).as("şablon + konu görseli kutusu").isEqualTo(2);
+        assertThat(body).contains("Kart: Hata Artışı");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: PDF posta sınırına sığmayıp EKLENMEDİĞİNDE sınıra yalnız gömülü görseller sayılır — sığan görseller"
+            + " gövdede kalır (eskiden PDF'in boyu da sayılıp hepsi düşüyor, kutular 'ekteki PDF'te' diyordu); görseller de sığmazsa kutu"
+            + " 'PDF eklenemedi — raporu Site Monitor'de açın' der")
+    void requestPdfNotAttachedKeepsInlineImages() throws Exception {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                Map.of("id", "k1", "topic", "Kart", "title_auto", true, "errors", 10)))), tech.getId());
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", tech.getId());
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "konu.png", tech.getId());
+        TechErrorReport fresh = service.report(s1.getId());
+        int pdfLen = service.renderPdf(() -> service.pdfInput(fresh, ch, team.getName())).pdf().length;
+        long imageBytes = images.findByReportIdOrderByIdAsc(r.getId()).stream().mapToLong(m -> m.getSizeBytes()).sum();
+        long max = pdfLen / 2;
+        assertThat(max).as("sınır PDF'ten küçük, görsellerden büyük").isGreaterThan(imageBytes * 4);
+        when(sender.maxMailBytes()).thenReturn(max);
+
+        TechErrorApprovalService.RequestResult res = approvals.request(fresh, ch, team, tech.getId());
+        assertThat(res.mailProblem()).isEqualTo("PDF_TOO_LARGE");
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.MailAttachment>> att = ArgumentCaptor.forClass(List.class);
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), inline.capture(), eq(false), att.capture());
+        assertThat(att.getAllValues()).allMatch(List::isEmpty);
+        String body = html.getAllValues().get(0);
+        assertThat(body).contains("PDF bu postanın boyut sınırına sığmadığından eklenmedi")
+                .contains("cid:te-img-sla-shot-1").contains("cid:te-img-iss.issues.k1.1")
+                .doesNotContain("data-slot=\"te-image-pdf\"").doesNotContain("data-slot=\"te-image-no-pdf\"");
+        assertThat(inline.getAllValues().get(0)).extracting(EmailNotificationService.InlineImage::cid)
+                .contains("te-img-sla-shot-1", "te-img-iss.issues.k1.1");
+
+        // Görseller de sınırı aşar (hazırlık çok büyük döndü) → yedek kutular "PDF eklenemedi", "ekteki PDF'te" DEĞİL. Aynı rapora
+        // ikinci istek 10 dk dolmadan reddedilir (APPROVAL_PENDING) — ikinci kanalın raporu
+        TechErrorChannel ch2 = channelWithExecs("ceo@example.com");
+        TechErrorReport r2 = service.createReport(ch2, 2026, 9, tech.getId());
+        TechErrorReport t2 = service.saveValues(r2.getId(), r2.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                Map.of("id", "k1", "topic", "Kart", "title_auto", true, "errors", 10)))), tech.getId());
+        service.upload(r2.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", tech.getId());
+        service.upload(r2.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "konu.png", tech.getId());
+        org.mockito.Mockito.clearInvocations(email);
+        var original = approvals.mailImagePreparer;
+        approvals.mailImagePreparer = (in, budget) -> new com.sitemonitor.service.mail.TechErrorMailImages.Result(Map.of(), List.of(),
+                List.of(), Long.MAX_VALUE / 4);
+        try {
+            approvals.request(service.report(t2.getId()), ch2, team, tech.getId());
+        } finally {
+            approvals.mailImagePreparer = original;
+        }
+        ArgumentCaptor<String> html2 = ArgumentCaptor.forClass(String.class);
+        verify(email, org.mockito.Mockito.atLeastOnce()).sendHtml(any(String[].class), any(), anyString(), html2.capture(), any(), any(), eq(false), any());
+        String b2 = html2.getAllValues().get(0);
+        assertThat(b2.split("data-slot=\"te-image-no-pdf\"", -1).length - 1).as("şablon + konu görseli kutusu").isEqualTo(2);
+        assertThat(b2).doesNotContain("data-slot=\"te-image-pdf\"").doesNotContain("cid:te-img-")
+                .contains("Görsel bu postaya eklenmedi — görmek için PDF&#39;i Site Monitor&#39;den indirin (tam çözünürlük).");
+    }
+
+    @Test
     @DisplayName("bağlantı + eskimiş istek: onay reddedilir (belirteç TÜKETİLMEZ), red yine olur; uzun not belirteç tüketilmeden reddedilir; damga geri alma")
     void tokenStaleAndNoteRules() {
         TechErrorChannel ch = channelWithExecs("ceo@example.com");
@@ -882,7 +966,7 @@ class TechErrorApprovalServiceTest {
         approvals.request(service.report(r.getId()), ch, team, tech.getId());
         verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), inline.capture(), eq(false), att.capture());
         assertThat(inline.getValue()).isEmpty();
-        assertThat(html.getValue()).contains("Görsel bu postaya eklenmedi").contains("data-slot=\"te-image-pdf\"").doesNotContain("ekteki PDF");
+        assertThat(html.getValue()).contains("Görsel bu postaya eklenmedi").contains("data-slot=\"te-image-no-pdf\"").doesNotContain("ekteki PDF");
     }
 
     @Test

@@ -13,6 +13,9 @@
 // (60 kanal → 50 + 10); kanalın rapor listesi durum / yıl / arama süzgeçleri ve sayfalama (30 → 25 + 5); URL'de taşınır.
 // 2026-10-18 (R22): kanal analizi — çizgi grafiği (boş ay boşluk, tek değer nokta), ay × kanal tablosu / kanal kartları,
 // dönem ve alan seçimi URL'de; uzun kanal / takım adları sarar; hücre o ayın raporunu açar.
+// 2026-10-18: anomali konuları — kart çipleri, canlı pay, rapordaki giriş metni; takvim + saat (ertesi gün), Kesinti ID,
+// müşteri etkisi, konu görseli (kaydedilmemiş konu önce kaydedilir); "konuyu rapora alma"; şablonda "Anomali alanları" paneli.
+// İnceleme (2026-10-18): İngilizce arayüz geçişi, Kaydet → zorunlu alan → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -238,6 +241,30 @@ const NUMDISP_REPORT = {
       description: '', customers: 0, errors: 681600 }] }, texts: {},
     units: { 'total-tx': 9, 'issues.issues.i-a.errors': 3 } },
   previous: { id: 90, year: 2026, month: 8, fields: { 'total-tx': 4350000000 }, units: { 'total-tx': 6 } },
+}
+// Anomali konuları (2026-10-18): ne zaman, adet + otomatik pay, kesinti + ID, müşteri etkisi, konu görselleri; gerçek uzunlukta ad
+const LONG_TOPIC = 'Kart Limiti Sorgulama ve Taksitlendirme Servisi Zaman Aşımı (Mobil / İnternet Şubesi Ortak Altyapı)'
+const ANOMALY_ISSUES = {
+  id: 'issues', kind: 'issues', title: 'Anormal Artış Gösteren Hatalar', item_title: '{konu}: Hata Artışı',
+  description_label: 'Ne oldu? (zaman, yer, etki)', customers_label: 'Etkilenen müşteri sayısı', errors_label: 'Bu konudan kaynaklı teknik hata adedi',
+  ask_time: true, time_label: 'Ne zaman?', ask_outage: true, outage_label: 'Kesinti kaynaklı mı?', outage_id_label: 'Kesinti ID',
+  ask_impact: true, impact_label: 'Müşteri etkisi var mı?', no_impact_display: 'hide_count', allow_images: true, ratio_of: 'error-count',
+}
+const ANOMALY_TEMPLATE = {
+  v: 1, lang: 'tr', title: '{kanal} Kanalı Teknik Hata Mesajları - {ay} {yil}',
+  sections: [
+    { id: 'summary', kind: 'metrics', title: '{kanal} Kanalı — {ay} {yil} Verileri', fields: [
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
+      { id: 'error-count', label: 'Ay içindeki teknik hata adedi', type: 'number' },
+    ] },
+    ANOMALY_ISSUES,
+  ],
+}
+const ANOMALY_REPORT = {
+  ...REPORT, template: ANOMALY_TEMPLATE, trend: undefined,
+  values: { fields: { 'total-tx': 125430112, 'error-count': 50000 }, issues: { issues: [{ id: 'k1', topic: LONG_TOPIC, title: '',
+    title_auto: true, description: 'Servis yanıt süresi uzadı; **önbellek** yenilendi.', date: '2026-09-12', start: '14:00', end: '15:30',
+    errors: 1700, outage: true, outage_id: 'INC-2026-0915-MOBIL-LIMIT-SORGU-ZAMAN-ASIMI', impact: true, customers: 320 }] }, texts: {} },
 }
 let reportOverride = null
 let templateOverride = null
@@ -563,8 +590,8 @@ async function mock(page, { openSections = true } = {}) {
         else savedReport = { ...put, autoBefore: autoSaves.length }
         body = { success: true, data: { version: (put.version ?? 4) + 1, changed: true, updated_at: '2026-10-13T09:00:00Z', values: put.values } }
       } else body = { success: true, data: reportOverride || REPORT }
-    } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[a-z0-9-]+$/.test(p) && req.method() === 'POST') {
-      const slotId = p.split('/').pop()
+    } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[^/]+$/.test(p) && req.method() === 'POST') {
+      const slotId = decodeURIComponent(p.split('/').pop())
       uploads.push(req.headers()['content-type'] || '')
       uploadSizes.push(pngSize(req.postDataBuffer() || Buffer.alloc(0)))
       uploadBodies.push(req.postDataBuffer() || Buffer.alloc(0))
@@ -1289,6 +1316,212 @@ for (const vp of VIEWPORTS) {
       await page.locator('[data-slot="te-save"]').click()
       await expect.poll(() => savedReport?.values?.units?.['unmapped-count'] ?? 'yok').toBe('yok')
       await page.screenshot({ path: `test-results/channel-reports-numdisp-${vp.name}.png`, fullPage: true })
+    })
+
+    test('anomali konusu (2026-10-18): kart çipleri, canlı pay, rapordaki metin; yeni konu — takvim + saat, kesinti ID, müşteri, görsel; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(150_000)
+      await mock(page)
+      // Arayüz Türkçe (varsayılan İngilizce): metinler ve sayı yazımı TR — rapor metni zaten şablon dilinde (TR)
+      await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
+      reportOverride = JSON.parse(JSON.stringify(ANOMALY_REPORT))
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const first = editor.locator('[data-slot="te-issue"][data-issue="k1"]')
+      await expect(first.locator('[data-slot="te-issue-title"]')).toContainText(`${LONG_TOPIC}: Hata Artışı`, { timeout: 20_000 })
+      // Çipler: zaman, adet + pay, kesinti + ID, müşteri
+      const chips = first.locator('[data-slot="te-issue-chips"]')
+      await expect(chips).toContainText(/12 Eylül 2026 · 14:00–15:30|12 September 2026 · 14:00–15:30/)
+      await expect(chips).toContainText(/%3,4|3\.4%/)
+      await expect(chips).toContainText('INC-2026-0915-MOBIL-LIMIT-SORGU-ZAMAN-ASIMI')
+      await expect(first.locator('[data-slot="te-issue-share-value"]')).toHaveText(/^(%3,4|3\.4%)$/)
+      await expect(first.locator('[data-slot="te-issue-lead"]')).toContainText(
+        '12 Eylül 2026, 14:00–15:30 arasında 1.700 teknik hata alındı; bu, dönemdeki tüm teknik hataların %3,4 kadarıdır.')
+      await expect(first.locator('[data-slot="te-issue-lead"]')).toContainText('Müşteri etkisi: 320 müşteri.')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (anomali)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (anomali)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (anomali)').toEqual([])
+      // Çipler kartın içinde kalır (uzun ID sarar)
+      const cardBox = await first.boundingBox()
+      for (const b of await chips.locator('[data-slot="badge"]').all()) {
+        const bb = await b.boundingBox()
+        expect(bb.x + bb.width, 'çip kartın içinde').toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+      }
+
+      // Yeni konu: ad, adet → canlı pay
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const card = editor.locator('[data-slot="te-issue"]').nth(1)
+      await card.getByLabel('Konu', { exact: true }).fill('Fatura Ödeme')
+      await card.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true }).fill('1.250')
+      await expect(card.locator('[data-slot="te-issue-share-value"]')).toHaveText(/^(%2,5|2\.5%)$/)
+      // Tarih takvimden (raporun ayı), saatler, gece yarısını geçen aralık
+      await card.locator('[data-slot="te-issue-when"] [data-slot="date-picker-trigger"]').click()
+      const dayKey = await page.evaluate(() => new Date(2026, 8, 30).toLocaleDateString())
+      await page.locator(`[data-day="${dayKey}"]`).click()
+      await card.getByLabel('Başlangıç saati').fill('23:30')
+      await card.getByLabel('Bitiş saati').fill('01:15')
+      await expect(card.getByText(/Bitiş saati başlangıçtan sonra olmalı/)).toBeVisible()
+      await card.getByRole('checkbox', { name: 'Ertesi gün bitti' }).click()
+      await expect(card.getByText(/Bitiş saati başlangıçtan sonra olmalı/)).toHaveCount(0)
+      // Kesinti Evet → ID açılır (odakta); müşteri etkisi Evet → sayı
+      await card.locator('[data-slot="te-issue-outage"]').getByRole('radio', { name: 'Evet' }).click()
+      const oid = card.getByLabel('Kesinti ID', { exact: true })
+      await expect(oid).toBeFocused()
+      await oid.fill('INC-2026-0930')
+      await card.locator('[data-slot="te-issue-impact"]').getByRole('radio', { name: 'Evet' }).click()
+      await card.getByLabel('Etkilenen müşteri sayısı', { exact: true }).fill('45')
+      await expect(card.locator('[data-slot="te-issue-lead"]')).toContainText(
+        '30 Eylül 2026, 23:30 – ertesi gün 01:15 arasında 1.250 teknik hata alındı; bu, dönemdeki tüm teknik hataların %2,5 kadarıdır.')
+      await expect(card.locator('[data-slot="te-issue-lead"]')).toContainText('Kesinti kaynaklıdır (Kesinti ID: INC-2026-0930). Müşteri etkisi: 45 müşteri.')
+      // Görsel: kaydedilmemiş konu → önce rapor kaydedilir, sonra konu yuvasına yüklenir
+      const id = await card.getAttribute('data-issue')
+      await card.locator(`[data-slot-id="iss:issues:${id}:1"] input[type="file"]`).setInputFiles({ name: 'saatlik-hata.png', mimeType: 'image/png', buffer: stripedPng(400, 200) })
+      await expect.poll(() => uploads.length).toBe(1)
+      expect(savedReport, 'yüklemeden önce kayıt').not.toBeNull()
+      const sentIssue = savedReport.values.issues.issues.find((x) => x.id === id)
+      expect(sentIssue).toMatchObject({ date: '2026-09-30', start: '23:30', end: '01:15', end_next_day: true, outage: true,
+        outage_id: 'INC-2026-0930', impact: true, customers: 45, errors: 1250 })
+      expect(sentIssue).not.toHaveProperty('share')
+      await expect(card.getByLabel('Görsel 1 açıklaması (isteğe bağlı)')).toBeVisible()
+      await card.getByLabel('Görsel 1 açıklaması (isteğe bağlı)').fill('Saatlik teknik hata adedi')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (yeni konu)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (yeni konu)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (yeni konu)').toEqual([])
+      // Telefonda saatler yan yana, tarih tam satır; geniş ekranda üçü bir satırda
+      const dateBox = await card.locator('[data-field$=":date"]').boundingBox()
+      const startBox = await card.locator('[data-field$=":start"]').boundingBox()
+      const endBox = await card.locator('[data-field$=":end"]').boundingBox()
+      expect(Math.abs(startBox.y - endBox.y), 'başlangıç / bitiş aynı satırda').toBeLessThanOrEqual(2)
+      if (vp.width < 640) expect(startBox.y, 'telefonda tarih üstte').toBeGreaterThan(dateBox.y + dateBox.height - 1)
+      else expect(Math.abs(dateBox.y - startBox.y), 'geniş ekranda tek satır').toBeLessThanOrEqual(2)
+      // Kısaltma (2026-10-18): konu adedi "1,25M" yazılır — giriş metni ve çip "1,25M" der, pay SAYIYLA (1.250.000 ÷ 50.000.000
+      // = %2,5; "1,25" ile hesaplansaydı ~%0); kayıtta sayı tam, üs ayrı (issues.<bölüm>.<konu>.errors); konu adedine sıfır işareti yok
+      await editor.getByLabel('Ay içindeki teknik hata adedi', { exact: true }).fill('50M')
+      await card.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true }).fill('1,25M')
+      await expect(card.locator('[data-slot="te-issue-share-value"]')).toHaveText('%2,5')
+      await expect(card.locator('[data-slot="te-issue-lead"]')).toContainText(
+        '30 Eylül 2026, 23:30 – ertesi gün 01:15 arasında 1,25M teknik hata alındı; bu, dönemdeki tüm teknik hataların %2,5 kadarıdır.')
+      await expect(card.locator('[data-slot="te-issue-lead"]')).not.toContainText('1.250.000')
+      await expect(card.locator('[data-slot="te-issue-chips"]')).toContainText('1,25M')
+      await expect(card.locator('[data-slot="te-zero-ok"]')).toHaveCount(0)
+      await page.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.units?.[`issues.issues.${id}.errors`]).toBe(6)
+      expect(savedReport.values.issues.issues.find((x) => x.id === id).errors).toBe(1250000)
+      expect(savedReport.values.fields['error-count']).toBe(50000000)
+      await page.screenshot({ path: `test-results/channel-reports-anomaly-${vp.name}.png` })
+    })
+
+    test('anomali (2026-10-18): "konuyu rapora alma" notu; şablonda "Anomali alanları" paneli — anahtarlar, pay alanı, seçim kartları; sığar, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
+      const hide = { ...ANOMALY_TEMPLATE, sections: [ANOMALY_TEMPLATE.sections[0], { ...ANOMALY_ISSUES, no_impact_display: 'hide_topic' }] }
+      reportOverride = { ...JSON.parse(JSON.stringify(ANOMALY_REPORT)), template: hide }
+      reportOverride.values.issues.issues[0].impact = false
+      delete reportOverride.values.issues.issues[0].customers
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const first = page.locator('[data-slot="te-issue"][data-issue="k1"]')
+      await expect(first).toHaveAttribute('data-hidden', 'true', { timeout: 20_000 })
+      await expect(first.locator('[data-slot="te-issue-hidden-note"]')).toContainText('Bu konu rapora girmeyecek')
+      await expect(first.locator('[data-slot="te-issue-chips"]')).toContainText('Rapora girmeyecek')
+      await expect(page.locator('[data-slot="te-issues-hidden-note"]')).toContainText('1 konu müşteri etkisi olmadığı için')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (gizli konu)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (gizli konu)').toEqual([])
+
+      templateOverride = hide
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      const panel = page.locator('[data-slot="te-tpl-anomaly"]')
+      await expect(panel).toBeVisible({ timeout: 20_000 })
+      await expect(panel.locator('[data-slot="te-tpl-anomaly-ratio-of"]')).toHaveValue('error-count')
+      await expect(panel.getByRole('radio', { name: /Konuyu rapora alma/ })).toBeChecked()
+      await panel.getByRole('switch', { name: 'Kesinti kaynaklı mı?' }).click()
+      await expect(panel.locator('[data-slot="te-tpl-anomaly-outage"]')).toHaveAttribute('data-on', 'false')
+      await panel.getByRole('switch', { name: 'Kesinti kaynaklı mı?' }).click()
+      await panel.locator('[data-slot="te-tpl-anomaly-outage"]').getByLabel('ID alanının adı').fill('Olay / değişiklik kaydı numarası')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (şablon anomali)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-tpl-anomaly"]'), 'kırpılan metin (şablon anomali)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-tpl-anomaly"]'), 'küçük hedef (şablon anomali)').toEqual([])
+      await page.getByRole('button', { name: 'Şablonu kaydet' }).click()
+      await expect.poll(() => savedTemplate?.template?.sections?.find((x) => x.kind === 'issues')?.outage_id_label).toBe('Olay / değişiklik kaydı numarası')
+      expect(savedTemplate.template.sections.find((x) => x.kind === 'issues')).toMatchObject({ ask_outage: true, no_impact_display: 'hide_topic', ratio_of: 'error-count' })
+      await page.screenshot({ path: `test-results/channel-reports-anomaly-template-${vp.name}.png` })
+    })
+
+    test('anomali — inceleme 2026-10-18: İngilizce arayüz (tekil / çoğul, etiketler), Kaydet → zorunlu alan hatası → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez; sığar, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(150_000)
+      await mock(page)
+      // Arayüz İngilizce (ürün varsayılanı), şablon Türkçe: çipler arayüz dilinde ("1,700 errors"), rapor metni şablon dilinde
+      reportOverride = JSON.parse(JSON.stringify(ANOMALY_REPORT))
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const first = editor.locator('[data-slot="te-issue"][data-issue="k1"]')
+      await expect(first.locator('[data-slot="te-issue-chips"]')).toContainText('1,700 errors · 3.4%', { timeout: 20_000 })
+      await expect(first.locator('[data-slot="te-issue-chips"]')).toContainText('320 customers')
+      await expect(first.locator('[data-slot="te-issue-lead"]')).toContainText('1.700 teknik hata alındı')
+      await expect(first.getByLabel('Start time', { exact: true })).toHaveValue('14:00')
+
+      // Yeni konu; kesinti KLAVYEYLE Evet → Kesinti ID odakta; boşken Kaydet → hata alanın altında, kayıt gitmez
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const card = editor.locator('[data-slot="te-issue"]').nth(1)
+      await card.getByLabel('Subject', { exact: true }).fill('Bill Payment')
+      await card.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true }).fill('1')
+      await expect(card.locator('[data-slot="te-issue-chips"]')).toContainText('1 error · ')
+      const outage = card.locator('[data-slot="te-issue-outage"]')
+      await outage.getByRole('radio', { name: 'Yes' }).focus()
+      await page.keyboard.press('Space')
+      const oid = card.getByLabel('Kesinti ID', { exact: true })
+      await expect(oid).toBeFocused()
+      await expect(card.getByRole('checkbox', { name: 'Ended the next day' })).toBeDisabled()
+      await editor.locator('[data-slot="te-save"]').click()
+      const required = card.getByText("Enter the outage ID: it's required for a topic caused by an outage.")
+      await expect(required).toBeVisible()
+      await expect(oid).toHaveAttribute('aria-invalid', 'true')
+      expect(savedReport, 'zorunlu alan boşken kayıt gitmez').toBeNull()
+      await oid.focus()
+      await page.keyboard.type('INC-2026-1001')
+      await expect(required).toHaveCount(0)
+      await editor.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.issues?.issues?.length).toBe(2)
+      const sent = savedReport.values.issues.issues[1]
+      expect(sent).toMatchObject({ outage: true, outage_id: 'INC-2026-1001', errors: 1 })
+      // Klavyeyle Hayır: ok tuşu sonraki seçeneğe, boşluk seçer → ID gizlenir
+      await outage.getByRole('radio', { name: 'Yes' }).focus()
+      await page.keyboard.press('ArrowRight')
+      await expect(outage.getByRole('radio', { name: 'No' })).toBeFocused()
+      await page.keyboard.press('Space')
+      await expect(card.getByLabel('Kesinti ID', { exact: true })).toHaveCount(0)
+      await expect(card.locator('[data-slot="te-issue-lead"]')).toContainText('Kesinti kaynaklı değildir.')
+
+      // Kaydedilmemiş konunun görseli: önceki kayıt 409 → görsel YÜKLENMEZ, yuva nedenini söyler, çakışma uyarısı görünür
+      let conflictOnce = true
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/100', async (route) => {
+        const req = route.request()
+        const body = req.method() === 'PUT' ? JSON.parse(req.postData() || '{}') : null
+        if (body && body.auto !== true && conflictOnce) {
+          conflictOnce = false
+          await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false,
+            code: 'CONCURRENT_MODIFICATION', error: 'The report was changed by someone else.' }) })
+          return
+        }
+        await route.fallback()
+      })
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const third = editor.locator('[data-slot="te-issue"]').nth(2)
+      await third.getByLabel('Subject', { exact: true }).fill('Card Limit')
+      const id = await third.getAttribute('data-issue')
+      const slot = third.locator(`[data-slot-id="iss:issues:${id}:1"]`)
+      await slot.locator('input[type="file"]').setInputFiles({ name: 'hata.png', mimeType: 'image/png', buffer: stripedPng(400, 200) })
+      await expect(slot.locator('[data-slot="te-image-error"]')).toContainText('someone else saved the report while you were editing it')
+      expect(uploads, 'çakışmada görsel gitmez').toHaveLength(0)
+      await expect(page.getByText('The report changed while you were editing')).toBeVisible()
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (EN anomali)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (EN anomali)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (EN anomali)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-anomaly-en-${vp.name}.png` })
     })
 
     test('rapor: sayı çözülür ve sürümle kaydedilir; grafik ızgarası; görsel yükleme; gönderim onayı', async ({ page }) => {
