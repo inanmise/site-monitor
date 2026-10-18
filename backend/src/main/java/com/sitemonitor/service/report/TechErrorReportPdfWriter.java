@@ -429,8 +429,14 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             } else {
                 String lead = TechErrorIssueText.lead(s, i, i.share() == null ? null : i.share().doubleValue(), lang, in::resolve,
                         errorsUnit, customersUnit);
-                // Başlık + giriş metninin ilk iki satırı birlikte: başlık sayfa sonunda yalnız kalmaz
-                c.ensureSpace(head.size() * 13 + (lead.isBlank() ? 30 : 2 * (LEAD_SIZE + 3.5f) + 12));
+                // Başlık + giriş metninin ilk iki satırı birlikte: başlık sayfa sonunda yalnız kalmaz. Giriş metni ve açıklaması
+                // olmayan, yalnız görseli olan konuda başlık İLK GÖRSEL SATIRIYLA birlikte (görsel bölümlerinin kuralı —
+                // inceleme 2026-10-18: 30 pt'lik pay başlığı sayfa sonunda yalnız bırakıyordu)
+                boolean descBlank = i.description() == null || i.description().isBlank();
+                Slot firstImage = lead.isBlank() && descBlank && o.allowImages() ? firstIssueImage(in, s, i) : null;
+                float after = !lead.isBlank() ? 2 * (LEAD_SIZE + 3.5f) + 12
+                        : firstImage != null ? 4 + rowHeight(in, List.of(firstImage), CONTENT_W, IMAGE_MAX_H) : 30;
+                c.ensureSpace(head.size() * 13 + after);
                 for (String l : head) {
                     c.text(c.bold, 10.5f, MARGIN, c.y, l, INK);
                     c.y -= 13;
@@ -456,12 +462,28 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     /** Konunun görselleri (2026-10-18): her biri tam genişlikte, açıklaması üstte (yoksa açıklamasız); yüklenmemiş yuva yok. */
     private void issueImages(TechErrorPdfInput in, Section s, Issue i) throws IOException {
         for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
-            String slot = TechErrorTemplate.issueSlotId(s.id(), i.id(), k);
-            if (!in.images().containsKey(slot)) continue;
-            String caption = i.caption(k);
+            Slot sl = issueImageSlot(in, s, i, k);
+            if (sl == null) continue;
             c.y -= 4;
-            imageRow(in, List.of(new Slot(slot, caption == null ? "" : caption, "full")), CONTENT_W, IMAGE_MAX_H);
+            imageRow(in, List.of(sl), CONTENT_W, IMAGE_MAX_H);
         }
+    }
+
+    /** Konunun {@code k}. görselinin yuvası (açıklaması etiket olarak); görsel yoksa {@code null}. */
+    private static Slot issueImageSlot(TechErrorPdfInput in, Section s, Issue i, int k) {
+        String slot = TechErrorTemplate.issueSlotId(s.id(), i.id(), k);
+        if (!in.images().containsKey(slot)) return null;
+        String caption = i.caption(k);
+        return new Slot(slot, caption == null ? "" : caption, "full");
+    }
+
+    /** Konunun basılacak ilk görseli (başlığın sayfa sonunda yalnız kalmaması için yükseklik ölçümü); yoksa {@code null}. */
+    private static Slot firstIssueImage(TechErrorPdfInput in, Section s, Issue i) {
+        for (int k = 1; k <= TechErrorTemplate.MAX_ISSUE_IMAGES; k++) {
+            Slot sl = issueImageSlot(in, s, i, k);
+            if (sl != null) return sl;
+        }
+        return null;
     }
 
     private void text(TechErrorPdfInput in, Section s) throws IOException {

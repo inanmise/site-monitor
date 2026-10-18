@@ -504,10 +504,16 @@ class TechErrorTemplateTest {
         assertThat(legacy.options()).isNull();
         assertThat(legacy.opts().legacy()).isTrue();
         assertThat(TechErrorTemplate.toMap(TechErrorTemplate.normalize(none)).toString()).doesNotContain("ask_time", "ratio_of", "allow_images");
-        // Hepsi açıkça false: yine eski düzen
+        // Hepsi açıkça false: yine eski düzen — ama AYARLANMIŞ (inceleme 2026-10-18): seçenek boş değil, anahtarlar false yazılır,
+        // göç "hiç ayarlanmamış" bölümle karıştırıp soruları yeniden açmaz
         Map<String, Object> allFalse = withIssueKeys(ok, Map.of("ask_time", false, "ask_outage", false, "ask_impact", false,
                 "allow_images", false), List.of("ratio_of"));
-        assertThat(issuesOf(TechErrorTemplate.normalize(allFalse)).options()).isNull();
+        var off = issuesOf(TechErrorTemplate.normalize(allFalse));
+        assertThat(off.options()).isNotNull();
+        assertThat(off.opts().legacy()).isTrue();
+        assertThat(sectionMap(TechErrorTemplate.toMap(TechErrorTemplate.normalize(allFalse)), "issues"))
+                .containsEntry("ask_time", false).containsEntry("ask_outage", false).containsEntry("ask_impact", false)
+                .containsEntry("allow_images", false).doesNotContainKeys("time_label", "outage_label", "impact_label", "ratio_of");
 
         // Boş etiket → bugünkü varsayılan; kapalı sorunun etiketi saklanmaz
         Map<String, Object> blank = withIssueKeys(ok, Map.of("outage_label", "", "impact_label", " ", "ask_time", false,

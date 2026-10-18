@@ -535,6 +535,14 @@ public class TechErrorReportSender {
         // Önce kuyruğu sonuçlandır (düzeltme incelemesi 2026-10-15): posta servisi teslim ettiyse rapor hâlâ QUEUED görünebilir
         // (gönderim yolu okuma ucu çağırmaz) — o zaman sonuç kendi SEND_RESULT'uyla yazılır, "bilinmiyor" denmez
         if (report.getChannelId() != null) service.reconcileQueued(List.of(report.getChannelId()));
+        // Konusu silinmiş (sahipsiz) konu görselleri gönderimden önce süpürülür (inceleme 2026-10-18 — yarışta ya da eski bir
+        // pod'un kaydında kalmış olabilir; PDF / posta onları zaten basmaz). Süpürme gönderimi asla durdurmaz
+        try {
+            int swept = service.sweepOrphanIssueImages(report.getId());
+            if (swept > 0) log.info("Teknik hata raporu #{}: gönderim öncesi {} sahipsiz konu görseli silindi", report.getId(), swept);
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} sahipsiz konu görselleri süpürülemedi (gönderim sürer): {}", report.getId(), e.toString());
+        }
         TechErrorReport before = reports.findById(report.getId()).orElse(null);
         String stateBefore = before == null ? null : before.getSendState();
         // Talep bırakılırsa önceki talep zamanı geri yüklenir: kuyruktaki gönderim sonuçlanınca "gönderim anı" odur

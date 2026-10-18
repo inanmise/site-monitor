@@ -633,6 +633,33 @@ class TechErrorApprovalServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: PDF + gömülü görseller posta sınırını aşınca onay postasında görselli her yuva 'PDF ekinde' kutusu"
+            + " alır — yedek İZİN İÇİNDE, görseller bellekteyken alınır (eskiden görselsiz girdiden türetiliyordu: şablon görseli"
+            + " 'yüklenmedi', konu görseli hiç görünmüyordu)")
+    void requestMailFallbackKeepsImageBoxes() throws Exception {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(
+                Map.of("id", "k1", "topic", "Kart", "title_auto", true, "errors", 10)))), tech.getId());
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", tech.getId());
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "konu.png", tech.getId());
+        // Hazırlanan görseller sınırı aşar (PDF + gömülü > posta sınırı) → yedek kullanılır
+        var original = approvals.mailImagePreparer;
+        approvals.mailImagePreparer = (in, budget) -> new com.sitemonitor.service.mail.TechErrorMailImages.Result(Map.of(), List.of(),
+                List.of(), Long.MAX_VALUE / 4);
+        try {
+            approvals.request(service.report(s1.getId()), ch, team, tech.getId());
+        } finally {
+            approvals.mailImagePreparer = original;
+        }
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        String body = html.getAllValues().get(0);
+        assertThat(body.split("data-slot=\"te-image-pdf\"", -1).length - 1).as("şablon + konu görseli kutusu").isEqualTo(2);
+        assertThat(body).contains("Kart: Hata Artışı");
+    }
+
+    @Test
     @DisplayName("bağlantı + eskimiş istek: onay reddedilir (belirteç TÜKETİLMEZ), red yine olur; uzun not belirteç tüketilmeden reddedilir; damga geri alma")
     void tokenStaleAndNoteRules() {
         TechErrorChannel ch = channelWithExecs("ceo@example.com");

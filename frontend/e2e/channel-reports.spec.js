@@ -15,6 +15,7 @@
 // dönem ve alan seçimi URL'de; uzun kanal / takım adları sarar; hücre o ayın raporunu açar.
 // 2026-10-18: anomali konuları — kart çipleri, canlı pay, rapordaki giriş metni; takvim + saat (ertesi gün), Kesinti ID,
 // müşteri etkisi, konu görseli (kaydedilmemiş konu önce kaydedilir); "konuyu rapora alma"; şablonda "Anomali alanları" paneli.
+// İnceleme (2026-10-18): İngilizce arayüz geçişi, Kaydet → zorunlu alan → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -1447,6 +1448,80 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => savedTemplate?.template?.sections?.find((x) => x.kind === 'issues')?.outage_id_label).toBe('Olay / değişiklik kaydı numarası')
       expect(savedTemplate.template.sections.find((x) => x.kind === 'issues')).toMatchObject({ ask_outage: true, no_impact_display: 'hide_topic', ratio_of: 'error-count' })
       await page.screenshot({ path: `test-results/channel-reports-anomaly-template-${vp.name}.png` })
+    })
+
+    test('anomali — inceleme 2026-10-18: İngilizce arayüz (tekil / çoğul, etiketler), Kaydet → zorunlu alan hatası → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez; sığar, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(150_000)
+      await mock(page)
+      // Arayüz İngilizce (ürün varsayılanı), şablon Türkçe: çipler arayüz dilinde ("1,700 errors"), rapor metni şablon dilinde
+      reportOverride = JSON.parse(JSON.stringify(ANOMALY_REPORT))
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const first = editor.locator('[data-slot="te-issue"][data-issue="k1"]')
+      await expect(first.locator('[data-slot="te-issue-chips"]')).toContainText('1,700 errors · 3.4%', { timeout: 20_000 })
+      await expect(first.locator('[data-slot="te-issue-chips"]')).toContainText('320 customers')
+      await expect(first.locator('[data-slot="te-issue-lead"]')).toContainText('1.700 teknik hata alındı')
+      await expect(first.getByLabel('Start time', { exact: true })).toHaveValue('14:00')
+
+      // Yeni konu; kesinti KLAVYEYLE Evet → Kesinti ID odakta; boşken Kaydet → hata alanın altında, kayıt gitmez
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const card = editor.locator('[data-slot="te-issue"]').nth(1)
+      await card.getByLabel('Subject', { exact: true }).fill('Bill Payment')
+      await card.getByLabel('Bu konudan kaynaklı teknik hata adedi', { exact: true }).fill('1')
+      await expect(card.locator('[data-slot="te-issue-chips"]')).toContainText('1 error · ')
+      const outage = card.locator('[data-slot="te-issue-outage"]')
+      await outage.getByRole('radio', { name: 'Yes' }).focus()
+      await page.keyboard.press('Space')
+      const oid = card.getByLabel('Kesinti ID', { exact: true })
+      await expect(oid).toBeFocused()
+      await expect(card.getByRole('checkbox', { name: 'Ended the next day' })).toBeDisabled()
+      await editor.locator('[data-slot="te-save"]').click()
+      const required = card.getByText("Enter the outage ID: it's required for a topic caused by an outage.")
+      await expect(required).toBeVisible()
+      await expect(oid).toHaveAttribute('aria-invalid', 'true')
+      expect(savedReport, 'zorunlu alan boşken kayıt gitmez').toBeNull()
+      await oid.focus()
+      await page.keyboard.type('INC-2026-1001')
+      await expect(required).toHaveCount(0)
+      await editor.locator('[data-slot="te-save"]').click()
+      await expect.poll(() => savedReport?.values?.issues?.issues?.length).toBe(2)
+      const sent = savedReport.values.issues.issues[1]
+      expect(sent).toMatchObject({ outage: true, outage_id: 'INC-2026-1001', errors: 1 })
+      // Klavyeyle Hayır: ok tuşu sonraki seçeneğe, boşluk seçer → ID gizlenir
+      await outage.getByRole('radio', { name: 'Yes' }).focus()
+      await page.keyboard.press('ArrowRight')
+      await expect(outage.getByRole('radio', { name: 'No' })).toBeFocused()
+      await page.keyboard.press('Space')
+      await expect(card.getByLabel('Kesinti ID', { exact: true })).toHaveCount(0)
+      await expect(card.locator('[data-slot="te-issue-lead"]')).toContainText('Kesinti kaynaklı değildir.')
+
+      // Kaydedilmemiş konunun görseli: önceki kayıt 409 → görsel YÜKLENMEZ, yuva nedenini söyler, çakışma uyarısı görünür
+      let conflictOnce = true
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/100', async (route) => {
+        const req = route.request()
+        const body = req.method() === 'PUT' ? JSON.parse(req.postData() || '{}') : null
+        if (body && body.auto !== true && conflictOnce) {
+          conflictOnce = false
+          await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false,
+            code: 'CONCURRENT_MODIFICATION', error: 'The report was changed by someone else.' }) })
+          return
+        }
+        await route.fallback()
+      })
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const third = editor.locator('[data-slot="te-issue"]').nth(2)
+      await third.getByLabel('Subject', { exact: true }).fill('Card Limit')
+      const id = await third.getAttribute('data-issue')
+      const slot = third.locator(`[data-slot-id="iss:issues:${id}:1"]`)
+      await slot.locator('input[type="file"]').setInputFiles({ name: 'hata.png', mimeType: 'image/png', buffer: stripedPng(400, 200) })
+      await expect(slot.locator('[data-slot="te-image-error"]')).toContainText('someone else saved the report while you were editing it')
+      expect(uploads, 'çakışmada görsel gitmez').toHaveLength(0)
+      await expect(page.getByText('The report changed while you were editing')).toBeVisible()
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (EN anomali)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (EN anomali)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (EN anomali)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-anomaly-en-${vp.name}.png` })
     })
 
     test('rapor: sayı çözülür ve sürümle kaydedilir; grafik ızgarası; görsel yükleme; gönderim onayı', async ({ page }) => {

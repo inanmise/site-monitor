@@ -110,6 +110,48 @@ class TechErrorAnomalyFieldsMigrationTest {
         assertThat(s0.opts().legacy()).isTrue();
     }
 
+    /** 2026-10-17 düzeni, anomali bölümünde soruların hepsi KAPALI olarak yazılmış (ekip açıp hepsini kapattı). */
+    static Template allSwitchesOff(String lang) {
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTestTemplates.beforeAnomaly(lang)));
+        List<Map<String, Object>> secs = new ArrayList<>();
+        for (Object o : (List<?>) raw.get("sections")) {
+            @SuppressWarnings("unchecked") Map<String, Object> sec = new LinkedHashMap<>((Map<String, Object>) o);
+            if ("issues".equals(sec.get("kind"))) {
+                sec.put("ask_time", false);
+                sec.put("ask_outage", false);
+                sec.put("ask_impact", false);
+                sec.put("allow_images", false);
+                sec.put("ratio_of", "");
+            }
+            secs.add(sec);
+        }
+        raw.put("sections", secs);
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: ekibin bütün soruları KAPATTIĞI bölüm 'hiç ayarlanmamış' bölümden ayrılır — anahtarlar false yazılır"
+            + " (JSON'da kalır, okununca da ayarlanmış), eski düzende görünür ve göç onu yeniden AÇMAZ; hiç anahtarı olmayan bölüm aynen göçer")
+    void allSwitchesOffStaysOff() {
+        for (String lang : List.of("tr", "en")) {
+            Template off = allSwitchesOff(lang);
+            Section s = issues(off);
+            assertThat(s.options()).as(lang).isNotNull();
+            assertThat(s.opts().legacy()).isTrue();
+            String json = TechErrorTemplate.toJson(off);
+            assertThat(json).contains("\"ask_time\":false").contains("\"allow_images\":false").doesNotContain("time_label");
+            Template back = TechErrorTemplate.fromStored(json);
+            assertThat(issues(back).options()).isNotNull();
+            assertThat(TechErrorTemplate.toJson(back)).isEqualTo(json);
+            assertThat(TechErrorAnomalyFieldsMigration.migrate(off)).as(lang).isEmpty();
+            assertThat(TechErrorAnomalyFieldsMigration.migrate(back)).isEmpty();
+            // Hiç ayarlanmamış (anahtarsız) eski bölüm: JSON'da anomali anahtarı yok, göç açar
+            Template old = TechErrorTestTemplates.beforeAnomaly(lang);
+            assertThat(TechErrorTemplate.toJson(old)).doesNotContain("ask_time").doesNotContain("allow_images");
+            assertThat(TechErrorAnomalyFieldsMigration.migrate(old)).isPresent();
+        }
+    }
+
     @Test
     @DisplayName("iş: adet göçünün nişanı yokken koşmaz; varsa kilit altında koşar")
     void waitsForCountsMigration() {
@@ -159,10 +201,12 @@ class TechErrorAnomalyFieldsMigrationTest {
         @Autowired TechErrorReportRepository reports;
         @Autowired com.sitemonitor.repository.TechErrorReportEventRepository events;
         @Autowired com.sitemonitor.repository.TechErrorTemplateVersionRepository versions;
+        @Autowired com.sitemonitor.repository.TechErrorTeamTemplateRepository library;
         @Autowired JdbcTemplate jdbc;
 
         @BeforeEach
         void clean() {
+            library.deleteAll();
             events.deleteAll();
             versions.deleteAll();
             reports.deleteAll();
@@ -204,6 +248,56 @@ class TechErrorAnomalyFieldsMigrationTest {
             assertThat(migration.done()).isTrue();
             assertThat(migration.migrateLocked()).isZero();
             assertThat(channels.findById(a.getId()).orElseThrow().getTemplateVersion()).isEqualTo(2);
+        }
+
+        private com.sitemonitor.model.TechErrorTeamTemplate entry(long team, String name, String json) {
+            com.sitemonitor.model.TechErrorTeamTemplate e = new com.sitemonitor.model.TechErrorTeamTemplate();
+            e.setTeamId(team);
+            e.setName(name);
+            e.setNameKey(name.toLowerCase(java.util.Locale.ROOT));
+            e.setTemplateJson(json);
+            e.setTemplateLang("tr");
+            e.setSectionCount(8);
+            e.setFieldCount(1);
+            e.setSlotCount(1);
+            e.setCreatedAt(Instant.parse("2026-10-17T09:00:00Z"));
+            e.setUpdatedAt(Instant.parse("2026-10-17T09:00:00Z"));
+            e.setUpdatedByName("Ayşe");
+            return library.saveAndFlush(e);
+        }
+
+        @Test
+        @DisplayName("inceleme 2026-10-18: takım ŞABLON KÜTÜPHANESİ kayıtları da göçer (yeni kanal penceresi takım varsayılanını seçer) —"
+                + " 2026-10-17 düzeni bugünkü varsayılan olur, sürüm +1, 'son güncelleyen' SiteMonitor; ekibin değiştirdiği, hepsini kapattığı"
+                + " ve okunamayan kayıt aynen kalır; tekrar koşmaz")
+        void migratesLibraryEntries() {
+            var oldTr = entry(1L, "Eski TR", TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly("tr")));
+            var oldEn = entry(1L, "Eski EN", TechErrorTemplate.toJson(TechErrorTestTemplates.beforeAnomaly("en")));
+            String customJson = TechErrorTemplate.toJson(replaceIssues(TechErrorTestTemplates.beforeAnomaly("tr"), s -> new Section(s.id(),
+                    s.kind(), s.title(), List.of(), List.of(), "{konu} sorunu", s.descriptionLabel(), s.customersLabel(), s.errorsLabel(), null)));
+            var custom = entry(2L, "Kendi", customJson);
+            String offJson = TechErrorTemplate.toJson(allSwitchesOff("tr"));
+            var off = entry(2L, "Kapalı", offJson);
+            var broken = entry(3L, "Bozuk", "{bozuk");
+            long before = oldTr.getVersion();
+
+            assertThat(migration.migrateLocked()).isEqualTo(2);
+            var a = library.findById(oldTr.getId()).orElseThrow();
+            assertThat(a.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
+            assertThat(a.getVersion()).isEqualTo(before + 1);
+            assertThat(a.getUpdatedByName()).isEqualTo(TechErrorAnomalyFieldsMigration.ACTOR);
+            assertThat(library.findById(oldEn.getId()).orElseThrow().getTemplateJson())
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("en")));
+            var c = library.findById(custom.getId()).orElseThrow();
+            assertThat(c.getTemplateJson()).isEqualTo(customJson);
+            assertThat(c.getVersion()).isEqualTo(custom.getVersion());
+            assertThat(c.getUpdatedByName()).isEqualTo("Ayşe");
+            assertThat(library.findById(off.getId()).orElseThrow().getTemplateJson()).isEqualTo(offJson);
+            assertThat(library.findById(broken.getId()).orElseThrow().getTemplateJson()).isEqualTo("{bozuk");
+            assertThat(migration.migrateLocked()).isZero();                       // nişan yazıldı
+            // Koşullu yazım: okunan sürüm değiştiyse yazmaz (arada ekip kaydetti)
+            assertThat(library.migrateTemplate(a.getId(), a.getVersion() - 1, "{}", Instant.now(), "x")).isZero();
+            assertThat(library.findById(a.getId()).orElseThrow().getTemplateJson()).isNotEqualTo("{}");
         }
 
         @Test

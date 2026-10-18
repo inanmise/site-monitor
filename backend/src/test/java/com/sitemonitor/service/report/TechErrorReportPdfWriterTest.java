@@ -1610,4 +1610,33 @@ class TechErrorReportPdfWriterTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("anomali (inceleme 2026-10-18): giriş metni ve açıklaması olmayan, yalnız görseli olan konunun başlığı ilk görsel satırıyla"
+            + " aynı sayfada (30 pt'lik pay başlığı sayfa sonunda yalnız bırakıyordu) — önündeki konu sayısı sayfadaki yeri kaydırır")
+    void anomalyImageOnlyTopicTitleNeverOrphaned() throws IOException {
+        Template t = TechErrorTemplate.defaults("tr");
+        Map<String, TechErrorPdfInput.Image> imgs = new LinkedHashMap<>();
+        imgs.put("iss:issues:img:1", new TechErrorPdfInput.Image(chart(1200, 600, Color.BLUE), 1200, 600));
+        for (int n = 0; n <= 14; n++) {
+            List<Object> topics = new ArrayList<>();
+            for (int i = 0; i < n; i++) topics.add(topic("k" + i, "description", ("Satır " + i + " açıklaması ").repeat(9)));
+            topics.add(topic("img", "captions", Map.of("1", "Yalnız görselli konunun grafiği")));
+            byte[] pdf = TechErrorReportPdfWriter.render(anomalyInput(t, topics, imgs));
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                int titlePage = -1, captionPage = -1;
+                for (int pg = 1; pg <= doc.getNumberOfPages(); pg++) {
+                    PDFTextStripper st = new PDFTextStripper();
+                    st.setStartPage(pg);
+                    st.setEndPage(pg);
+                    String txt = st.getText(doc).replaceAll("[\\s\\u00a0]+", " ");
+                    if (tocPage(txt)) continue;
+                    if (titlePage < 0 && txt.contains("Konu img: Hata Artışı")) titlePage = pg;
+                    if (captionPage < 0 && txt.contains("Yalnız görselli konunun grafiği")) captionPage = pg;
+                }
+                assertThat(titlePage).as("önünde %d konu", n).isPositive();
+                assertThat(captionPage).as("önünde %d konu", n).isEqualTo(titlePage);
+            }
+        }
+    }
 }

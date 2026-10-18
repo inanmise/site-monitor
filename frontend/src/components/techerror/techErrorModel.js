@@ -1929,6 +1929,26 @@ export function calcFieldsUsing(template, fieldId) {
   return allFields(template).filter((f) => f.id !== fieldId && calcRefs(f.calc).includes(fieldId))
 }
 
+/**
+ * Alanı "tüm teknik hatalar" (`ratio_of`) olarak kullanan anomali bölümleri (inceleme 2026-10-18): alan silinirken onayda
+ * söylenir — pay o bölümde hesaplanamaz (şablon kilitlenmez, düzenleyici uyarır).
+ */
+export function ratioSectionsUsing(template, fieldId) {
+  return (template?.sections || []).filter((s) => s.kind === 'issues' && typeof s.ratio_of === 'string' && s.ratio_of === fieldId)
+}
+
+/**
+ * Anomali bölümünün pay alanı uyarısı: `ratio_of` şablonda yoksa `te.tpl.anomaly.ratioMissing`, sayı alanı değilse
+ * `te.tpl.anomaly.ratioNotNumber`; sorun yoksa (ya da pay sorulmuyorsa) null.
+ */
+export function ratioOfWarning(template, section) {
+  const ref = typeof section?.ratio_of === 'string' ? section.ratio_of.trim() : ''
+  if (!ref) return null
+  const f = allFields(template).find((x) => x.id === ref)
+  if (!f) return 'te.tpl.anomaly.ratioMissing'
+  return f.type !== 'number' ? 'te.tpl.anomaly.ratioNotNumber' : null
+}
+
 export const TREND_MONTHS = 12
 export const TREND_MIN_POINTS = 2
 /** Grafik başlığının eki, şablon dilinde (PDF yazıcısıyla aynı metin — test Java kaynağından okur). */
@@ -2687,9 +2707,10 @@ export function reportMonthBounds(year, month) {
 /**
  * Konunun İSTEMCİ denetimi (sunucu kuralının aynası, TechErrorValues.issues): `{ alan: { key, required, params } }`.
  * `required`: boş bırakılmış zorunlu alan — kayıt / PDF / gönderim denemesinden sonra gösterilir; diğerleri hemen. Otomatik
- * kayıt bu alanları kayıtlı değerinde gönderir (revertInvalidValues).
+ * kayıt bu alanları kayıtlı değerinde gönderir (revertInvalidValues). `lang` şablon dili (soruların etiketleri), `uiLang`
+ * iletinin dili (ay adı — inceleme 2026-10-18: İngilizce arayüzde Türkçe ay adı çıkıyordu; verilmezse şablon dili).
  */
-export function issueProblems(section, issue, period = null, lang = 'tr') {
+export function issueProblems(section, issue, period = null, lang = 'tr', uiLang = null) {
   const out = {}
   if (!section || !issue) return out
   const o = issueOptions(section, lang)
@@ -2699,7 +2720,7 @@ export function issueProblems(section, issue, period = null, lang = 'tr') {
     else if (date && period?.year && period?.month) {
       const [y, m] = date.split('-').map(Number)
       if (y !== period.year || m !== period.month) {
-        out.date = { key: 'te.iss.err.dateOutsideMonth', required: false, params: [monthName(period.month, lang), period.year] }
+        out.date = { key: 'te.iss.err.dateOutsideMonth', required: false, params: [monthName(period.month, uiLang || lang), period.year] }
       }
     }
     const hasStart = issue.start != null && issue.start !== ''
@@ -2729,13 +2750,16 @@ export function issueKey(sectionId, issueId, field) {
   return `issue:${sectionId}:${issueId}:${field}`
 }
 
-/** Şablondaki bütün konuların denetimi: `{ 'issue:<bölüm>:<konu>:<alan>': { key, required, params } }`. */
-export function issueValidation(template, issues, period = null) {
+/**
+ * Şablondaki bütün konuların denetimi: `{ 'issue:<bölüm>:<konu>:<alan>': { key, required, params } }`. `uiLang`: iletinin dili
+ * (ay adı); verilmezse şablon dili.
+ */
+export function issueValidation(template, issues, period = null, uiLang = null) {
   const out = {}
   for (const s of template?.sections || []) {
     if (s.kind !== 'issues') continue
     for (const i of issues?.[s.id] || []) {
-      const p = issueProblems(s, i, period, template?.lang)
+      const p = issueProblems(s, i, period, template?.lang, uiLang)
       for (const [f, v] of Object.entries(p)) out[issueKey(s.id, i.id, f)] = v
     }
   }

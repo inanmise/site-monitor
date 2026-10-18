@@ -33,7 +33,7 @@ import {
   pruneRemovedTrendRefs, resolvePlaceholders, resolveTextPlaceholders, sanitizeHosts, sanitizeSkipRefs, stableJson,
   summaryLineIssues, summaryLinePreview, summaryLinesUsing, summaryRefs, templateErrors, templateErrorSection, trendableFields,
   trendRefs, trendSectionsUsing, withoutHost, withoutSkip, DEFAULT_RATIO_OF, ISSUE_LIMITS, ISSUE_OPTION_LABELS, issueLegacy,
-  issueOptions,
+  issueOptions, ratioOfWarning, ratioSectionsUsing,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import TemplateVersionsDialog from './TemplateVersions.jsx'
@@ -648,12 +648,16 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
                   const hosted = s.kind === 'summary' ? embeddedSections(draft, s.id).length : 0
                   // Bölümün renkli kutucuk olan alanları (4b): kutucuklar da kalkar (pruneRemovedTiles)
                   const tiled = (s.fields || []).filter((f) => tileSectionsUsing(draft, f.id).length).length
+                  // Bölümün bir alanı bir anomali bölümünün "tüm teknik hatalar" alanı (inceleme 2026-10-18): pay hesaplanamaz
+                  const ratioUsers = new Set()
+                  for (const f of s.fields || []) for (const x of ratioSectionsUsing(draft, f.id)) if (x.id !== s.id) ratioUsers.add(x.title || x.id)
                   const message = t('te.tpl.removeSectionBody', s.title || '')
                     + (hosted ? `\n\n${t('te.tpl.removeSectionHosted', hosted)}` : '')
                     + (used.size ? `\n\n${t('te.tpl.removeSectionUsed', used.size)}` : '')
                     + (charted ? `\n\n${t('te.tpl.removeSectionTrend', charted)}` : '')
                     + (calcs.size ? `\n\n${t('te.tpl.removeFieldCalcPart', [...calcs].join(', '))}` : '')
                     + (tiled ? `\n\n${t('te.tpl.removeSectionTiles', tiled)}` : '')
+                    + (ratioUsers.size ? `\n\n${t('te.tpl.removeFieldRatioPart', [...ratioUsers].join(', '))}` : '')
                   const ok = await showConfirm({ title: t('te.tpl.removeSectionTitle'), message,
                     variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel') })
                   if (ok) update((d) => ({ ...d, sections: d.sections.filter((x) => x.id !== s.id) }))
@@ -874,6 +878,8 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
   const kindName = t(`te.kind.${s.kind}`)
   const heading = String(resolve(s.title || '') ?? '').trim() || t('te.tpl.untitledSection')
   const host = hostOf(draft, s)
+  // Anomali bölümünün pay alanı şablonda yok / sayı değil: uyarı başlıkta da (kapalı bölümde görünsün — inceleme 2026-10-18)
+  const ratioWarn = s.kind === 'issues' ? ratioOfWarning(draft, s) : null
   return (
     <CollapsibleCard sectionId={s.id} slot="te-tpl-section" title={heading} copyText=""
       toggleLabel={(
@@ -885,6 +891,12 @@ function SectionCard({ section: s, index, count, errors, slotCount, draft, resol
           {host && (
             <Badge variant="outline" className="ms-1 rounded-md overflow-visible align-middle" data-slot="te-tpl-section-hosted">
               <ScrollText aria-hidden="true" className="size-3" /> {t('te.tpl.hostBadge')}
+            </Badge>
+          )}
+          {ratioWarn && (
+            <Badge variant="outline" data-slot="te-tpl-section-ratio-warn"
+              className="ms-1 rounded-md overflow-visible align-middle border-amber-300 text-amber-900 dark:border-amber-800 dark:text-amber-200">
+              <TriangleAlert aria-hidden="true" className="size-3" /> {t('te.tpl.anomaly.ratioWarnBadge')}
             </Badge>
           )}
         </>
@@ -966,9 +978,12 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
     const calcs = calcFieldsUsing(draft, f.id)
     // Renkli kutucuk olarak gösterilen alan (2026-10-17, 4b): silinirse kutucuğu da kalkar (pruneRemovedTiles)
     const tiles = tileSectionsUsing(draft, f.id)
-    if (used.length || charts.length || calcs.length || tiles.length) {
+    // Anomali bölümünün "tüm teknik hatalar" alanı (inceleme 2026-10-18): silinirse konuların payı hesaplanamaz
+    const ratios = ratioSectionsUsing(draft, f.id)
+    if (used.length || charts.length || calcs.length || tiles.length || ratios.length) {
       const calcPart = calcs.length ? t('te.tpl.removeFieldCalcPart', calcs.map((x) => x.label || t('te.tpl.field')).join(', ')) : ''
       const tilePart = tiles.length ? t('te.tpl.removeFieldTilePart') : ''
+      const ratioPart = ratios.length ? t('te.tpl.removeFieldRatioPart', ratios.map((x) => x.title || x.id).join(', ')) : ''
       const [title, message] = used.length && charts.length
         ? [t('te.tpl.removeFieldUsedAnyTitle'), t('te.tpl.removeFieldBothBody', f.label || '', used.length)]
         : used.length
@@ -977,8 +992,10 @@ function FieldsEditor({ section: s, errors, draft, onChange }) {
             ? [t('te.tpl.removeFieldTrendTitle'), t('te.tpl.removeFieldTrendBody', f.label || '')]
             : calcs.length
               ? [t('te.tpl.removeFieldCalcTitle'), '']
-              : [t('te.tpl.removeFieldTileTitle'), '']
-      const ok = await showConfirm({ title, message: [message, calcPart, tilePart].filter(Boolean).join(' '), variant: 'warning',
+              : tiles.length
+                ? [t('te.tpl.removeFieldTileTitle'), '']
+                : [t('te.tpl.removeFieldRatioTitle'), '']
+      const ok = await showConfirm({ title, message: [message, calcPart, tilePart, ratioPart].filter(Boolean).join(' '), variant: 'warning',
         confirmText: t('te.tpl.removeAnyway'), cancelText: t('te.cancel') })
       if (!ok) return
     }
@@ -1336,7 +1353,7 @@ function AnomalyOptionsEditor({ section: s, draft, resolve, onChange }) {
   const fields = allFields(draft)
   const numbers = fields.filter((f) => f.type === 'number')
   const ratioField = o.ratioOf ? fields.find((f) => f.id === o.ratioOf) : null
-  const ratioWarn = o.ratioOf ? (!ratioField ? 'te.tpl.anomaly.ratioMissing' : ratioField.type !== 'number' ? 'te.tpl.anomaly.ratioNotNumber' : null) : null
+  const ratioWarn = ratioOfWarning(draft, s)
   const toggle = (key, on, labelKeys = []) => onChange((x) => {
     const out = { ...x, [key]: on }
     if (on) for (const k of labelKeys) if (!String(out[k] || '').trim()) out[k] = d[k]

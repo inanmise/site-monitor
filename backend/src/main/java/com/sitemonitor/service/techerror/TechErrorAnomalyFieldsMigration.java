@@ -1,7 +1,9 @@
 package com.sitemonitor.service.techerror;
 
 import com.sitemonitor.model.TechErrorChannel;
+import com.sitemonitor.model.TechErrorTeamTemplate;
 import com.sitemonitor.repository.TechErrorChannelRepository;
+import com.sitemonitor.repository.TechErrorTeamTemplateRepository;
 import com.sitemonitor.service.SchedulerService;
 import com.sitemonitor.service.StandaloneMonitorDeletionBackfill;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Field;
@@ -10,6 +12,7 @@ import com.sitemonitor.service.techerror.TechErrorTemplate.Section;
 import com.sitemonitor.service.techerror.TechErrorTemplate.Template;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -38,6 +41,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * en çok {@link #MAX_ATTEMPTS} başarısız deneme. Her kanal {@code saveTemplate} ile yazılır: koşullu güncelleme (ekibin aynı
  * andaki kaydı kaybolmaz, ≤ 3 yeniden deneme) + sürüm geçmişinde "SiteMonitor" adıyla yeni sürüm. ESKİ bir pod soruların
  * anahtarlarını tanımaz (yok sayar): şablonu o pod kaydederse sorular düşer.
+ *
+ * <p>Takım ŞABLON KÜTÜPHANESİ kayıtları (R21) da aynı kuralla göçer ({@link #migrateLibrary}, inceleme 2026-10-18): yeni kanal
+ * penceresi takım varsayılanını seçer — göçmeyen kayıttan açılan kanal soruları sessizce almazdı. "Hiç ayarlanmamış" bölüm =
+ * anomali anahtarlarından HİÇBİRİ yazılmamış ({@code Section.options == null}); ekibin bütün soruları kapattığı bölüm
+ * ayarlanmış sayılır (anahtarlar {@code false} yazılır) ve göç onu yeniden AÇMAZ. Nişan yazıldıktan SONRA eski bir pod'da
+ * açılan kanal ya da kaydedilen kütüphane şablonu göçmez (tek geçiş): "şablonun son hâlini uygula" / şablon düzenleyicisi
+ * ("Varsayılana dön" ya da anomali anahtarları) düzeltir.
  */
 @Slf4j
 @Service
@@ -64,14 +74,24 @@ public class TechErrorAnomalyFieldsMigration {
     private final TechErrorReportService service;
     private final JdbcTemplate jdbc;
     private final ObjectProvider<SchedulerService> scheduler;
+    /** Takım şablon kütüphanesi (R21) — yeni kanal penceresi takım varsayılanını seçer; null = kütüphane yok (birim testi). */
+    private final TechErrorTeamTemplateRepository library;
     private final AtomicInteger failures = new AtomicInteger();
 
+    /** Kütüphanesiz (birim testleri): yalnız kanallar göçer. */
     public TechErrorAnomalyFieldsMigration(TechErrorChannelRepository channels, TechErrorReportService service, JdbcTemplate jdbc,
                                            ObjectProvider<SchedulerService> scheduler) {
+        this(channels, service, jdbc, scheduler, null);
+    }
+
+    @Autowired
+    public TechErrorAnomalyFieldsMigration(TechErrorChannelRepository channels, TechErrorReportService service, JdbcTemplate jdbc,
+                                           ObjectProvider<SchedulerService> scheduler, TechErrorTeamTemplateRepository library) {
         this.channels = channels;
         this.service = service;
         this.jdbc = jdbc;
         this.scheduler = scheduler;
+        this.library = library;
     }
 
     @Scheduled(initialDelayString = "${site.monitor.tech-error.anomaly-fields-migration.initial-delay-ms:720000}", fixedDelay = 3_600_000L)
@@ -130,9 +150,44 @@ public class TechErrorAnomalyFieldsMigration {
                 }
             }
         }
+        int libraryChanged = migrateLibrary();
         jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
-                KEY, ISO.format(Instant.now()), changed);
-        log.info("Teknik hata raporu anomali soruları göçü tamamlandı: {} kanal şablonu güncellendi", changed);
+                KEY, ISO.format(Instant.now()), changed + libraryChanged);
+        log.info("Teknik hata raporu anomali soruları göçü tamamlandı: {} kanal şablonu, {} kütüphane şablonu güncellendi",
+                changed, libraryChanged);
+        return changed + libraryChanged;
+    }
+
+    /**
+     * Takım şablon kütüphanesi (R21, inceleme 2026-10-18): yeni kanal penceresi takım varsayılanını ilk kaynak olarak seçer —
+     * kütüphanedeki eski anomali bölümü göçmezse yeni kanallar soruları sessizce almazdı. Kanallarla AYNI kural ({@link #migrate}:
+     * yalnız 2026-10-17 varsayılan etiketli, hiç ayarlanmamış bölüm). Okunamayan kayıt atlanır (sistem şablonuna düşülmez —
+     * {@link TechErrorTemplate#readStored}). Yazım KOŞULLU ({@code migrateTemplate}: okunan sürümle, sürüm +1, "son güncelleyen"
+     * {@value #ACTOR}); arada ekip kaydettiyse yeniden okunur (≤ 3), sonra hata (nişan yazılmaz, bir saat sonra yeniden).
+     * Denetim satırı yazılmaz (kanal göçleri gibi tek özet log satırı).
+     */
+    int migrateLibrary() {
+        if (library == null) return 0;
+        int changed = 0;
+        for (TechErrorTeamTemplateRepository.MigrationRow row : library.findMigrationRows()) {
+            for (int attempt = 1; ; attempt++) {
+                TechErrorTeamTemplate cur = library.findById(row.getId()).orElse(null);
+                if (cur == null) break;                                   // okuma ile yazım arasında silindi
+                Optional<Template> stored = TechErrorTemplate.readStored(cur.getTemplateJson());
+                if (stored.isEmpty()) {
+                    log.warn("Teknik hata raporu anomali soruları göçü: kütüphane şablonu #{} okunamadı, atlandı", cur.getId());
+                    break;
+                }
+                Optional<Template> next = migrate(stored.get());
+                if (next.isEmpty()) break;
+                if (library.migrateTemplate(cur.getId(), cur.getVersion(), TechErrorTemplate.toJson(next.get()),
+                        Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS), ACTOR) > 0) {
+                    changed++;
+                    break;
+                }
+                if (attempt >= 3) throw new OptimisticLockingFailureException("tech_error_team_template migration race #" + cur.getId());
+            }
+        }
         return changed;
     }
 

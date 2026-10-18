@@ -367,4 +367,85 @@ class TechErrorReportPostgresTest {
             channels.deleteById(active.getId());
         }
     }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: rapor satırı kilidi PostgreSQL'de (SELECT … FOR UPDATE) — konuyu silen kayıt işlemi açıkken başlayan"
+            + " konu görseli yüklemesi BEKLER, kaydın işlenmiş değerlerini okur ve 400 alır; görsel kalmaz; sahipsiz görsel süpürülür")
+    void topicUploadWaitsForRowLock() throws Exception {
+        var service = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        TechErrorReportRepository reports = PostgresIt.app().bean(TechErrorReportRepository.class);
+        TechErrorReportImageRepository images = PostgresIt.app().bean(TechErrorReportImageRepository.class);
+        TechErrorReportEventRepository events = PostgresIt.app().bean(TechErrorReportEventRepository.class);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(
+                PostgresIt.app().bean(org.springframework.transaction.PlatformTransactionManager.class));
+        long team = 765_430L + (long) (Math.random() * 1000);
+        String tag = "ter-it-" + UUID.randomUUID().toString().substring(0, 8);
+        TechErrorChannel ch = service.createChannel(team, tag + " Kilit", null, TechErrorTemplate.defaults("tr"), null);
+        Long reportId = null;
+        try {
+            TechErrorReport r = service.createReport(ch, 2025, 7, null);
+            reportId = r.getId();
+            assertThat(reports.lockRow(r.getId())).containsExactly(r.getId());
+            assertThat(reports.lockRow(-1L)).isEmpty();
+            java.util.function.Function<String, java.util.Map<String, Object>> topic = id -> java.util.Map.of("id", id, "topic", "Konu " + id,
+                    "title_auto", true, "errors", 5);
+            TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), java.util.Map.of("issues", java.util.Map.of("issues",
+                    List.of(topic.apply("k1"), topic.apply("k2")))), null);
+            var locked = new java.util.concurrent.CountDownLatch(1);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var saver = pool.submit(() -> tx.execute(st -> {
+                    service.saveValues(s1.getId(), s1.getVersion(), java.util.Map.of("issues", java.util.Map.of("issues",
+                            List.of(topic.apply("k2")))), null);
+                    locked.countDown();
+                    try {
+                        Thread.sleep(600);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return null;
+                }));
+                assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                byte[] bytes = png(400, 200);
+                long t0 = System.nanoTime();
+                assertThatThrownBy(() -> service.upload(s1.getId(), "iss:issues:k1:1", bytes, "a.png", null))
+                        .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+                assertThat((System.nanoTime() - t0) / 1_000_000L).as("yükleme kilitte bekledi").isGreaterThanOrEqualTo(300L);
+                saver.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            } finally {
+                pool.shutdownNow();
+            }
+            assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+
+            // Sahipsiz satır (eski pod / yarış kalıntısı): PDF girdisine girmez, süpürme siler
+            TechErrorReportImage orphan = new TechErrorReportImage();
+            orphan.setReportId(r.getId());
+            orphan.setTeamId(team);
+            orphan.setSlotId("iss:issues:gone:1");
+            orphan.setContentType("image/png");
+            orphan.setWidth(400);
+            orphan.setHeight(200);
+            orphan.setSizeBytes(100);
+            orphan.setData(png(400, 200));
+            images.saveAndFlush(orphan);
+            assertThat(service.pdfInput(reports.findById(r.getId()).orElseThrow(), ch, "Takım").images()).isEmpty();
+            assertThat(service.sweepOrphanIssueImages(r.getId())).isEqualTo(1);
+            assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+        } finally {
+            if (reportId != null) {
+                images.deleteAllForReport(reportId);
+                events.deleteAllForReport(reportId);
+            }
+            reports.deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorTemplateVersionRepository.class).deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
+        }
+    }
+
+    private static byte[] png(int w, int h) throws java.io.IOException {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(img, "png", out);
+        return out.toByteArray();
+    }
 }

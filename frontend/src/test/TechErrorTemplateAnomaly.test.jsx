@@ -129,4 +129,26 @@ describe('şablon düzenleyici — anomali alanları', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Payı otomatik hesapla' }))
     expect(within(row('te-tpl-anomaly-ratio')).getByLabelText('“Tüm teknik hatalar” alanı')).toHaveValue('total-tx')
   })
+
+  it('inceleme 2026-10-18: pay alanı silinirken onay "tüm teknik hatalar" kullanımını söyler; silinince uyarı bölüm BAŞLIĞINDA da', async () => {
+    await openEditor()
+    expect(document.querySelector('[data-slot="te-tpl-section-ratio-warn"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '“Ay içindeki teknik hata adedi” alanını kaldır' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Alan anomali konularının payında kullanılıyor' })
+    expect(dlg.textContent).toContain('Bu alan şu anomali bölümlerinin “tüm teknik hatalar” alanı: Teknik hataların anomali olarak arttığı konular.')
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Yine de sil' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="te-tpl-section-ratio-warn"]')).not.toBeNull())
+    const head = document.querySelector('[data-slot="te-tpl-section"][data-kind="issues"] [data-slot="te-section-toggle"]')
+    expect(head.textContent).toContain('Pay alanı geçersiz')
+  })
+
+  it('inceleme 2026-10-18: soruların HEPSİ kapatılınca kayıt yükünde kapalı anahtarlar false olarak gider (sunucu "hiç ayarlanmamış"tan ayırır)', async () => {
+    await openEditor()
+    for (const name of ['Ne zaman? (tarih ve saat aralığı)', 'Kesinti kaynaklı mı?', 'Müşteri etkisi var mı?', 'Konu görselleri (en çok 2)',
+      'Payı otomatik hesapla']) fireEvent.click(screen.getByRole('switch', { name }))
+    expect(panel()).toHaveAttribute('data-legacy', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Şablonu kaydet' }))
+    await waitFor(() => expect(te().saveTemplate).toHaveBeenCalledTimes(1))
+    expect(sentSection()).toMatchObject({ ask_time: false, ask_outage: false, ask_impact: false, allow_images: false, ratio_of: '' })
+  })
 })

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canonicalTemplate, canonicalValues, conformIssue, defaultIssueOptions, issueDayLabel, issueHidden, issueImageAlive, issueLegacy,
   issueOptions, issueProblems, issueRangeLabel, issueSlotId, issueTime, issueValidation, isRealDate, newSection, parseIssueSlot,
-  reportErrorSection, reportMonthBounds, revertInvalidValues, templateDiff,
+  ratioOfWarning, ratioSectionsUsing, reportErrorSection, reportMonthBounds, revertInvalidValues, templateDiff,
 } from '../components/techerror/techErrorModel.js'
 
 // Anomali konularının istemci modeli (2026-10-18): soruların okunması, kanonik değer (gizli cevap gönderilmez), istemci
@@ -79,6 +79,13 @@ describe('istemci denetimi (sunucu kuralının aynası)', () => {
     expect(issueProblems(LEGACY, { id: 'k', outage: true, date: '2030-01-01' }, SEPT)).toEqual({})
   })
 
+  it('inceleme 2026-10-18: ay adı ARAYÜZ dilinde (Türkçe şablon, İngilizce arayüz → "September"); verilmezse şablon dili', () => {
+    expect(issueProblems(SEC, { id: 'k', date: '2026-10-01' }, SEPT, 'tr', 'en').date.params).toEqual(['September', 2026])
+    expect(issueProblems(SEC, { id: 'k', date: '2026-10-01' }, SEPT, 'tr').date.params).toEqual(['Eylül', 2026])
+    const v = issueValidation(TPL, { issues: [{ id: 'a', date: '2026-08-31' }] }, SEPT, 'en')
+    expect(v['issue:issues:a:date'].params).toEqual(['September', 2026])
+  })
+
   it('şablon geneli denetim istemci anahtarıyla; hata anahtarlarının bölümü bulunur', () => {
     const v = issueValidation(TPL, { issues: [{ id: 'a', outage: true }, { id: 'b' }], old: [{ id: 'c', outage: true }] }, SEPT)
     expect(Object.keys(v)).toEqual(['issue:issues:a:outage_id'])
@@ -116,6 +123,19 @@ describe('kanonik değer ve otomatik kayıt', () => {
       topic: 'Yeni ad' })
     expect(out.issues.issues[1]).toEqual({ id: 'n', outage: true })              // yeni konu: zaman cevapları boşa
     expect(draft.issues.issues[0].end).toBe('09:00')                              // taslak değişmez
+  })
+})
+
+describe('pay alanı başvurusu (inceleme 2026-10-18)', () => {
+  it('ratioSectionsUsing alanı pay alanı olarak kullanan anomali bölümlerini bulur; ratioOfWarning yok / sayı değil / tamam', () => {
+    expect(ratioSectionsUsing(TPL, 'error-count').map((x) => x.id)).toEqual(['issues'])
+    expect(ratioSectionsUsing(TPL, 'baska')).toEqual([])
+    expect(ratioOfWarning(TPL, SEC)).toBeNull()
+    expect(ratioOfWarning(TPL, { ...SEC, ratio_of: 'silinmis' })).toBe('te.tpl.anomaly.ratioMissing')
+    const pct = { ...TPL, sections: [{ id: 'm', kind: 'metrics', title: 'V', fields: [{ id: 'error-count', label: 'Hata', type: 'percent' }] }, SEC] }
+    expect(ratioOfWarning(pct, SEC)).toBe('te.tpl.anomaly.ratioNotNumber')
+    expect(ratioOfWarning(TPL, { ...SEC, ratio_of: '' })).toBeNull()
+    expect(ratioOfWarning(TPL, LEGACY)).toBeNull()
   })
 })
 

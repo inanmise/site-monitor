@@ -207,7 +207,8 @@ public final class TechErrorTemplate {
      *       uyarır).</li>
      * </ul>
      * Hiçbiri açık değilse ({@link #legacy}) bölüm 2026-10-18 öncesi gibidir: müşteri sayısı her zaman sorulur, PDF / e-posta
-     * eski sayaç satırını basar (bayt bayt). Anahtarlar şablon JSON'una yalnız açıkken yazılır — eski şablonun JSON'u aynı kalır.
+     * eski sayaç satırını basar (bayt bayt). Hiç ayarlanmamış bölümde ({@code Section.options == null}) şablon JSON'una anahtar
+     * yazılmaz — eski şablonun JSON'u aynı kalır; ayarlanmış bölümde ("hepsi kapalı" dahil) dört aç / kapa anahtarı yazılır.
      */
     public record IssueOptions(boolean askTime, String timeLabel, boolean askOutage, String outageLabel, String outageIdLabel,
                                boolean askImpact, String impactLabel, String noImpactDisplay, boolean allowImages, String ratioOf) {
@@ -481,25 +482,27 @@ public final class TechErrorTemplate {
                     sm.put("description_label", s.descriptionLabel());
                     sm.put("customers_label", s.customersLabel());
                     sm.put("errors_label", s.errorsLabel());
-                    // Anomali soruları (2026-10-18): yalnız AÇIK olanlar yazılır — sorusuz eski şablonun JSON'u bayt bayt aynı
-                    // kalır (rapor kopyası ↔ kanal şablonu karşılaştırması sahte "şablon değişti" demesin)
-                    IssueOptions o = s.opts();
-                    if (o.askTime()) {
-                        sm.put("ask_time", true);
-                        sm.put("time_label", o.timeLabel());
+                    // Anomali soruları (2026-10-18): soruları hiç ayarlanmamış (eski) bölümde HİÇBİR anahtar yazılmaz — sorusuz eski
+                    // şablonun JSON'u bayt bayt aynı kalır (rapor kopyası ↔ kanal şablonu karşılaştırması sahte "şablon değişti"
+                    // demesin). Ayarlanmış bölümde dört aç / kapa anahtarı HER ZAMAN yazılır (kapalı = false): ekibin hepsini
+                    // kapattığı bölüm "hiç ayarlanmamış" bölümden ayrılır — göç onu yeniden açmaz (inceleme 2026-10-18)
+                    IssueOptions o = s.options();
+                    if (o != null) {
+                        sm.put("ask_time", o.askTime());
+                        if (o.askTime()) sm.put("time_label", o.timeLabel());
+                        sm.put("ask_outage", o.askOutage());
+                        if (o.askOutage()) {
+                            sm.put("outage_label", o.outageLabel());
+                            sm.put("outage_id_label", o.outageIdLabel());
+                        }
+                        sm.put("ask_impact", o.askImpact());
+                        if (o.askImpact()) {
+                            sm.put("impact_label", o.impactLabel());
+                            sm.put("no_impact_display", o.noImpactDisplay());
+                        }
+                        sm.put("allow_images", o.allowImages());
+                        if (o.ratioOf() != null) sm.put("ratio_of", o.ratioOf());
                     }
-                    if (o.askOutage()) {
-                        sm.put("ask_outage", true);
-                        sm.put("outage_label", o.outageLabel());
-                        sm.put("outage_id_label", o.outageIdLabel());
-                    }
-                    if (o.askImpact()) {
-                        sm.put("ask_impact", true);
-                        sm.put("impact_label", o.impactLabel());
-                        sm.put("no_impact_display", o.noImpactDisplay());
-                    }
-                    if (o.allowImages()) sm.put("allow_images", true);
-                    if (o.ratioOf() != null) sm.put("ratio_of", o.ratioOf());
                 }
                 case "summary" -> {
                     sm.put("lines", new ArrayList<>(s.lines()));
@@ -722,7 +725,8 @@ public final class TechErrorTemplate {
      * Anomali bölümünün soruları (2026-10-18) BİÇİMCE: aç / kapa anahtarları ({@code true} / {@code false}; katıda başka değer
      * 400), açık sorunun etiketi (boşsa bugünkü varsayılan, en çok {@link #MAX_ISSUE_LABEL}), müşteri etkisi yoksa gösterim
      * ({@link #NO_IMPACT_DISPLAY}; boşsa {@code hide_count}) ve "tüm teknik hatalar" alanı ({@code ratio_of}: kimlik biçimi —
-     * şablonda olması / sayı olması denetlenmez, düzenleyici uyarır). Hiçbiri açık değilse {@code null} (eski düzen). ESKİ bir
+     * şablonda olması / sayı olması denetlenmez, düzenleyici uyarır). Hiçbiri açık değilse ve anahtarlardan hiçbiri yazılmamışsa
+     * {@code null} (eski, hiç ayarlanmamış bölüm); anahtar yazılmışsa hepsi kapalı bir seçenek (eski düzen, göç dokunmaz). ESKİ bir
      * pod bu anahtarları tanımaz: hoşgörülü okumada yok sayar (bölüm eski düzende görünür), şablonu o pod kaydederse düşer.
      */
     private static IssueOptions issueOptions(Map<?, ?> sm, boolean en, int si, boolean strict) {
@@ -752,7 +756,18 @@ public final class TechErrorTemplate {
                 impact,
                 impact ? labelOr(sm.get("impact_label"), en ? DEFAULT_IMPACT_LABEL_EN : DEFAULT_IMPACT_LABEL_TR, MAX_ISSUE_LABEL, strict, si) : null,
                 display, images, ratioOf);
-        return o.legacy() ? null : o;
+        // Hiçbir soru açık değilse: anahtarlardan biri bile YAZILMIŞSA (ekip hepsini kapattı) ayarlanmış sayılır — boş değil,
+        // "hepsi kapalı" seçenek olarak kalır (göç yeniden açmaz); hiç anahtar yoksa null (eski, hiç ayarlanmamış bölüm)
+        if (o.legacy() && !configured(sm)) return null;
+        return o;
+    }
+
+    /** Bölümde anomali sorularının aç / kapa anahtarlarından biri ya da "tüm teknik hatalar" alanı yazılmış mı? */
+    private static boolean configured(Map<?, ?> sm) {
+        for (String k : List.of("ask_time", "ask_outage", "ask_impact", "allow_images")) {
+            if (sm.get(k) instanceof Boolean) return true;
+        }
+        return sm.get("ratio_of") instanceof String;
     }
 
     /** Aç / kapa anahtarı: yok / {@code false} → kapalı, {@code true} → açık; başka değer katıda 400, hoşgörülüde kapalı. */

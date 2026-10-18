@@ -151,6 +151,16 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Query("SELECT r.id FROM TechErrorReport r WHERE r.channelId = :channelId")
     List<Long> idsForChannel(@Param("channelId") Long channelId);
 
+    /**
+     * Raporun satırını işlem sonuna kadar KİLİTLER (inceleme 2026-10-18): değer kaydı, görsel yükleme, şablon yenileme ve
+     * sahipsiz görsel süpürmesi aynı raporda sırayla çalışır. Kilitsiz yükleme, işlem başında okuduğu (eski) değerlerde konuyu
+     * görüp görseli yazıyordu; aynı anda konuyu silen kayıt henüz işlenmemiş görseli göremiyordu → silinmiş konunun görseli
+     * kalıyordu. Kilitten SONRA okunan satır, öndeki işlemin işlenmiş hâlidir. Rapor yoksa boş liste. Çağıranın işleminde
+     * çalışır (servis {@code @Transactional}); H2 de destekler.
+     */
+    @Query(value = "SELECT id FROM tech_error_reports WHERE id = :id FOR UPDATE", nativeQuery = true)
+    List<Long> lockRow(@Param("id") Long id);
+
     /** İçerik değişti: damga + sayaç +1 (atomik) — @Version artmaz. Her içerik yazımı (değer, görsel, şablon) çağırır. */
     @Modifying
     @Transactional

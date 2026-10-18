@@ -216,6 +216,8 @@ public class GlobalExceptionHandler {
             if (!fe.getFields().isEmpty()) body.put("field", fe.getFields().keySet().iterator().next());
             return ResponseEntity.status(400).body(body);
         }
+        // Kodlu 400 (2026-10-18): kararlı kod + servisin açıklayıcı metni (ör. VALUE_TOO_LONG — genel "metni kısaltın" yerine)
+        if (e instanceof CodedBadRequestException ce) return respond(400, ce.getCode(), e.getMessage());
         // Öneri YAPISAL alanla taşınır: arayüz metni ayrıştırmak zorunda kalırsa TR/EN
         // arasında ya da mesaj her düzenlendiğinde sessizce kırılır.
         if (e instanceof UnresolvableTargetException ue && ue.getSuggestion() != null) {
@@ -280,6 +282,21 @@ public class GlobalExceptionHandler {
             this.fields = java.util.Collections.unmodifiableMap(f);
         }
         public Map<String, String> getFields() { return fields; }
+    }
+
+    /**
+     * 400 + kararlı {@code code} (2026-10-18): alan hatası olmayan, ama genel metinden daha açık söylenmesi gereken istemci
+     * reddi (ör. görsel yuvası kimliği veritabanı sütununa sığmadı → {@code VALUE_TOO_LONG}, "metni kısaltın" denmez).
+     * {@link IllegalArgumentException} alt sınıfı — onu yakalayan eski yollar aynı 400'ü görmeye devam eder.
+     */
+    public static class CodedBadRequestException extends IllegalArgumentException {
+        private final String code;
+        /** {@code message} {@link Msg#t} ile istek dilinde, ne · neden · ne yapmalı. */
+        public CodedBadRequestException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+        public String getCode() { return code; }
     }
 
     /**
