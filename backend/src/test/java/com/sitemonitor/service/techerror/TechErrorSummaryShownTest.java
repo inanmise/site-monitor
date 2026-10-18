@@ -214,7 +214,7 @@ class TechErrorSummaryShownTest {
         assertThat(plan.anchor()).isEqualTo("sa");
         assertThat(plan.moved()).extracting(TechErrorSummary.Block::kind, TechErrorSummary.Block::section, TechErrorSummary.Block::field,
                         TechErrorSummary.Block::label, TechErrorSummary.Block::text)
-                .containsExactly(org.assertj.core.groups.Tuple.tuple("note", "m", "t1", "Kısa metin", "kısa"),
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("text", null, null, null, "Kısa metin: kısa"),
                         org.assertj.core.groups.Tuple.tuple("note", "m", "ta1", "Uzun açıklama", "uzun **not**"));
         Section sa = t.sections().get(0);
         Section m = t.sections().stream().filter(s -> "m".equals(s.id())).findFirst().orElseThrow();
@@ -228,6 +228,21 @@ class TechErrorSummaryShownTest {
                 Map.of()), null, "Mobil", 2026, 9);
         assertThat(blank.dissolved()).containsExactly("m");
         assertThat(blank.moved()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("bütünleştirme incelemesi 2026-10-18: özete taşınan KISA METİN söylenmemiş değer satırı gibi düz \"Ad: değer\" (zengin metin değil, yıldız dizisi teke iner, soru işaretli ad iki nokta almaz); tamamı basılan bir cümle {f:} ile zaten yazdıysa hiç eklenmez — iki kez basılmaz")
+    void planShortTextIsAPlainLineAndNeverTwice() {
+        Values v = values(f("n1", 1, "n2", 2, "p1", 99.5, "y1", true, "gate", false, "t1", "A **B** C", "ta1", "not"), Map.of());
+        TechErrorSummary.Plan plain = TechErrorSummary.plan(template(List.of(ALL_M), List.of(), null, null), v, null, "Mobil", 2026, 9);
+        assertThat(plain.dissolved()).containsExactly("m");
+        assertThat(plain.moved()).containsExactly(TechErrorSummary.Block.text("Kısa metin: A *B* C"),
+                TechErrorSummary.Block.note("m", "ta1", "Uzun açıklama", "not"));
+        // Cümle kısa metni zaten yazıyor: satır eklenmez, not yine taşınır
+        TechErrorSummary.Plan told = TechErrorSummary.plan(template(List.of(ALL_M, "Kaynak {f:t1} olarak belirlendi."), List.of(), null, null),
+                v, null, "Mobil", 2026, 9);
+        assertThat(told.dissolved()).containsExactly("m");
+        assertThat(told.moved()).containsExactly(TechErrorSummary.Block.note("m", "ta1", "Uzun açıklama", "not"));
     }
 
     @Test

@@ -36,7 +36,8 @@ import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetc
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
-  reportErrorSection, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions, issueValidation, monthName, resolvePlaceholders,
+  reportErrorSection, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions, issueValidation, monthName, outageAnswerConflict,
+  resolvePlaceholders,
   resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
@@ -1149,6 +1150,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [issueChecks, clientErrors, pending])
   // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
+  // Kesinti cevabı konularla çelişiyor mu (2026-10-18): "Dönemde kesinti oldu mu?" Hayır + kesinti kaynaklı konu → alanın yanında
+  // ve özet kartında bilgi bandı (kayıt engellenmez; rapor ikisini de yazıldığı gibi basar)
+  const outageConflict = outageAnswerConflict(tpl, draft)
   // Ekrandan görsel alma: paylaşımın kendiliğinden kapandığını söyleyen TEK bildirim ilk görsel bölümünde; rapor yalnız anomali
   // konusu görseli taşıyorsa ilk görsel alan konu bölümünde (yoksa hiç söylenmezdi)
   const firstIssueImagesId = firstImagesId ? null
@@ -1426,7 +1430,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
             readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
-            calc={calc} onTarget={setTarget} />
+            calc={calc} onTarget={setTarget} outageConflict={outageConflict} />
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} template={tpl} list={draft.issues?.[s.id] || NO_ISSUES} units={draft.units}
@@ -1439,7 +1443,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
             month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText}
             embedded={embeddedSections(tpl, s.id)} fieldValues={draft} uiLang={uiLang} previous={data.previous}
-            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget} />
+            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget}
+            outageConflict={outageConflict} />
         }
         if (s.kind === 'table') {
           return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}

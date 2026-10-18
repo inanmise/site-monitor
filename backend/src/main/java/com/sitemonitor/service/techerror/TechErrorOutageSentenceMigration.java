@@ -35,14 +35,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * değerleri özette) hiç basmaz, notları özetin sonuna taşır ({@link TechErrorSummary#plan}).
  *
  * <p>Dokunulmaz: ekibin değiştirdiği cümle listesi, {@code had-outage} alanı olmayan ya da türü / hesabı değişmiş şablon.
- * Açılmış / gönderilmiş raporlar DEĞİŞMEZ (şablonun kopyasını taşırlar; taslak "şablonun son hâlini uygula" ile alır). Adet
- * göçü ({@link TechErrorCountsInFiguresMigration}) tamamlanmadan koşmaz (zincir: oran → özet gömme → SLA → adetler → bu).
+ * Açılmış / gönderilmiş raporlar DEĞİŞMEZ (şablonun kopyasını taşırlar; taslak "şablonun son hâlini uygula" ile alır). Anomali
+ * soruları göçü ({@link TechErrorAnomalyFieldsMigration}) tamamlanmadan koşmaz — o da adet göçünü bekler, yani zincir: oran →
+ * özet gömme → SLA → adetler → anomali soruları → bu (iki göç aynı başlangıç gecikmesindeyse sıralı; çatal değil).
  * Açılış yolunda değil: açılıştan 12 dk sonra, saatte bir, kendi kilidi altında; nişan kilit İÇİNDE yeniden okunur ve yalnız
  * TÜM kanallar ve kütüphane kayıtları işlendiyse yazılır (dönüşüm tekrar uygulanınca değişiklik üretmez). Kanal
- * {@code saveTemplate(…, null, "SiteMonitor")} (koşullu, sürüm geçmişinde yeni sürüm), kütüphane kaydı
- * {@link TechErrorTeamTemplateService#systemUpdateTemplate} (okunan sürümle koşullu) ile yazılır; aynı anda kaydeden ekibe
- * karşı en çok 3 deneme; okuma ile kayıt arasında silinen kanal / kayıt atlanır. Eski bir pod yeni cümleyi olduğu gibi basar
- * ve Verileri bölümünü yine basar (çift değer) — veri kaybı yok.
+ * {@code saveTemplate(…, null, "SiteMonitor")} (koşullu, sürüm geçmişinde yeni sürüm), kütüphane kaydı anomali göçüyle AYNI
+ * yolla ({@link #migrateLibrary}: {@code findMigrationRows} + koşullu {@code migrateTemplate}, okunan sürümle) yazılır; aynı anda
+ * kaydeden ekibe karşı en çok 3 deneme; okuma ile kayıt arasında silinen kanal / kayıt atlanır, okunamayan kütüphane kaydına
+ * dokunulmaz. Eski bir pod yeni cümleyi olduğu gibi basar ve Verileri bölümünü yine basar (çift değer) — veri kaybı yok.
  */
 @Slf4j
 @Service
@@ -60,18 +61,16 @@ public class TechErrorOutageSentenceMigration {
     private final TechErrorChannelRepository channels;
     private final TechErrorReportService service;
     private final TechErrorTeamTemplateRepository library;
-    private final TechErrorTeamTemplateService libraryService;
     private final JdbcTemplate jdbc;
     private final ObjectProvider<SchedulerService> scheduler;
     private final AtomicInteger failures = new AtomicInteger();
 
     public TechErrorOutageSentenceMigration(TechErrorChannelRepository channels, TechErrorReportService service,
-                                            TechErrorTeamTemplateRepository library, TechErrorTeamTemplateService libraryService,
-                                            JdbcTemplate jdbc, ObjectProvider<SchedulerService> scheduler) {
+                                            TechErrorTeamTemplateRepository library, JdbcTemplate jdbc,
+                                            ObjectProvider<SchedulerService> scheduler) {
         this.channels = channels;
         this.service = service;
         this.library = library;
-        this.libraryService = libraryService;
         this.jdbc = jdbc;
         this.scheduler = scheduler;
     }
@@ -79,8 +78,8 @@ public class TechErrorOutageSentenceMigration {
     @Scheduled(initialDelayString = "${site.monitor.tech-error.outage-sentence-migration.initial-delay-ms:720000}", fixedDelay = 3_600_000L)
     public void run() {
         if (failures.get() >= MAX_ATTEMPTS) return;
-        // Sıra: önce adet göçü (7. sürüm) — nişanı yoksa ya da okunamıyorsa bu tur beklenir
-        if (!Boolean.TRUE.equals(marker(TechErrorCountsInFiguresMigration.KEY))) return;
+        // Sıra: önce anomali soruları göçü (o da adet göçünü bekler — zincir) — nişanı yoksa ya da okunamıyorsa bu tur beklenir
+        if (!Boolean.TRUE.equals(marker(TechErrorAnomalyFieldsMigration.KEY))) return;
         if (done()) return;
         SchedulerService s = scheduler.getIfAvailable();
         if (s == null) return;
@@ -132,29 +131,43 @@ public class TechErrorOutageSentenceMigration {
                 }
             }
         }
-        int entries = 0;
-        for (TechErrorTeamTemplate e : library.findAll()) {
-            for (int attempt = 1; ; attempt++) {
-                TechErrorTeamTemplate cur = library.findById(e.getId()).orElse(null);
-                if (cur == null) break;
-                // Okunamayan kayıt varsayılana DÜŞÜRÜLMEZ (readStored): dokunulmaz — ekip kütüphaneden siler
-                Optional<Template> stored = TechErrorTemplate.readStored(cur.getTemplateJson());
-                Optional<Template> next = stored.flatMap(TechErrorOutageSentenceMigration::migrate);
-                if (next.isEmpty()) break;
-                try {
-                    if (libraryService.systemUpdateTemplate(cur.getTeamId(), cur.getId(), cur.getVersion(), next.get(), ACTOR)) entries++;
-                    break;
-                } catch (NoSuchElementException ex) {
-                    break;                                                // kayıt ya da takım silindi
-                } catch (OptimisticLockingFailureException ex) {
-                    if (attempt >= 3) throw ex;
-                }
-            }
-        }
+        int entries = migrateLibrary();
         jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
                 KEY, ISO.format(Instant.now()), changed + entries);
         log.info("Teknik hata raporu kesinti cümlesi göçü tamamlandı: {} kanal şablonu, {} kütüphane kaydı güncellendi", changed, entries);
         return changed + entries;
+    }
+
+    /**
+     * Takım şablon kütüphanesi — anomali soruları göçüyle ({@link TechErrorAnomalyFieldsMigration#migrateLibrary}) AYNI yol:
+     * yalnız kimlik + sürüm taranır ({@code findMigrationRows}), kayıt kayıt okunur; okunamayan kayıt atlanır (sistem şablonuna
+     * düşülmez — {@link TechErrorTemplate#readStored}); yazım KOŞULLU ({@code migrateTemplate}: okunan sürümle, sürüm +1, "son
+     * güncelleyen" {@value #ACTOR}); arada ekip kaydettiyse yeniden okunur (≤ 3), sonra hata (nişan yazılmaz, bir saat sonra
+     * yeniden). Göç alan / yuva / bölüm eklemez (yalnız bir özet cümlesi) — kaydın sayımları ve dili değişmez.
+     */
+    int migrateLibrary() {
+        if (library == null) return 0;
+        int changed = 0;
+        for (TechErrorTeamTemplateRepository.MigrationRow row : library.findMigrationRows()) {
+            for (int attempt = 1; ; attempt++) {
+                TechErrorTeamTemplate cur = library.findById(row.getId()).orElse(null);
+                if (cur == null) break;                                   // okuma ile yazım arasında silindi
+                Optional<Template> stored = TechErrorTemplate.readStored(cur.getTemplateJson());
+                if (stored.isEmpty()) {
+                    log.warn("Teknik hata raporu kesinti cümlesi göçü: kütüphane şablonu #{} okunamadı, atlandı", cur.getId());
+                    break;
+                }
+                Optional<Template> next = migrate(stored.get());
+                if (next.isEmpty()) break;
+                if (library.migrateTemplate(cur.getId(), cur.getVersion(), TechErrorTemplate.toJson(next.get()),
+                        Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS), ACTOR) > 0) {
+                    changed++;
+                    break;
+                }
+                if (attempt >= 3) throw new OptimisticLockingFailureException("tech_error_team_template migration race #" + cur.getId());
+            }
+        }
+        return changed;
     }
 
     // ── Saf dönüşüm ──────────────────────────────────────────────────────────────────────────────────

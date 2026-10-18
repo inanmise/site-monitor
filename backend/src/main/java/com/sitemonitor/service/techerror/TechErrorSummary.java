@@ -236,7 +236,8 @@ public final class TechErrorSummary {
             for (Section e : embedded) out.addAll(notes(e, t, vals, channel, year, month));
             return out;
         }
-        return capText(layout(s, t, vals, previous, targets, units, channel, year, month).blocks());
+        Layout lay = layout(s, t, vals, previous, targets, units, channel, year, month);
+        return capText(lay.blocks(), lay.facts());
     }
 
     /**
@@ -245,17 +246,38 @@ public final class TechErrorSummary {
      * aynı ölçü —, yerleşmeyen cümle −1). {@link #blocks} bunu keser; {@link #shownValues} hangi cümlenin kesimden önce
      * BİTTİĞİNİ buradan okur (gömülü bölümlerin söylenmemiş değer satırları da aynı birleşik metindedir).
      */
-    private record Layout(List<Block> blocks, List<String> kept, int[] ends) { }
+    private record Layout(List<Block> blocks, List<String> kept, int[] ends, Set<Integer> facts) { }
 
+    /**
+     * Yerleşim. Söylenmemiş değer kuralının "söylenen" kümesi {@link #shownValues} ile AYNI kuraldır (2026-10-18 bütünleştirme
+     * incelemesi): yalnız basılan metinde TAMAMI kalan (kesim noktasından önce biten) tutulan cümlenin, seçimli başvuruda
+     * SEÇİLEN dalı boş olmayan {@code {f:}} alanı söylenmiştir. Cümlesi kesilen alanın değeri satır olarak basılır; değer
+     * satırları da metin bütçesinde olduğundan (onların ittiği cümle kesilebilir) küme sabitlenene kadar yeniden yerleşir
+     * (küme her turda yalnız küçülür — en çok alan sayısı kadar tur).
+     */
     private static Layout layout(Section s, Template t, Map<String, Object> vals, Map<String, Object> previous,
                                  Map<String, Object> targets, Map<String, Integer> units, String channel, int year, int month) {
-        List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
-        List<Block> out = new ArrayList<>();
         Map<String, Field> byId = new HashMap<>();
         for (Field f : t.allFields()) byId.put(f.id(), f);
         Told pass = told(s, byId, vals, previous, targets, units, t.lang(), channel, year, month);
-        List<String> kept = pass.kept();
-        Set<String> told = pass.told();
+        Set<String> told = new HashSet<>(pass.told());
+        Layout lay = place(s, t, pass.kept(), told, vals, units, channel, year, month);
+        if (TechErrorTemplate.embeddedSections(t, s.id()).isEmpty()) return lay;
+        for (int round = 0, max = told.size() + 1; round < max; round++) {
+            Set<String> whole = wholeRefs(s, t, lay, vals, channel, year, month);
+            if (whole.containsAll(told)) break;
+            told.retainAll(whole);
+            lay = place(s, t, pass.kept(), told, vals, units, channel, year, month);
+        }
+        return lay;
+    }
+
+    /** 2. geçiş: tutulan cümleler + verilen "söylenen" kümesiyle gömülü bölümlerin yerleşimi. */
+    private static Layout place(Section s, Template t, List<String> kept, Set<String> told, Map<String, Object> vals,
+                                Map<String, Integer> units, String channel, int year, int month) {
+        List<Section> embedded = TechErrorTemplate.embeddedSections(t, s.id());
+        List<Block> out = new ArrayList<>();
+        Set<Integer> facts = new HashSet<>();
         int[] ends = new int[kept.size()];
         java.util.Arrays.fill(ends, -1);
         List<int[]> pending = new ArrayList<>();      // tampondaki cümleler: {satır, tampon içindeki bitiş}
@@ -293,6 +315,7 @@ public final class TechErrorSummary {
                 if (add.isEmpty()) continue;                      // eklenecek bir şey yok: paragraf bölünmez
                 resolveEnds(pending, ends, flushed, buf);
                 flushed = flush(out, buf, flushed);
+                markFacts(out, add, facts);
                 flushed = append(out, add, flushed);
                 inParagraph = false;
             }
@@ -300,9 +323,40 @@ public final class TechErrorSummary {
         resolveEnds(pending, ends, flushed, buf);
         flushed = flush(out, buf, flushed);
         for (int k = 0; k < embedded.size(); k++) {
-            if (!placed[k]) flushed = append(out, embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month), flushed);
+            if (placed[k]) continue;
+            List<Block> add = embeddedBlocks(embedded.get(k), t, vals, told, units, channel, year, month);
+            markFacts(out, add, facts);
+            flushed = append(out, add, flushed);
         }
-        return new Layout(out, kept, ends);
+        return new Layout(out, kept, ends, facts);
+    }
+
+    /** Eklenecek gömülü blokların değer satırı bloğunu (not olmayan) çıktıdaki konumuyla işaretler. */
+    private static void markFacts(List<Block> out, List<Block> add, Set<Integer> facts) {
+        for (int i = 0; i < add.size(); i++) if (!add.get(i).note()) facts.add(out.size() + i);
+    }
+
+    /**
+     * Basılan metinde TAMAMI kalan tutulan cümlelerin değer yazan başvuruları ({@link #shownValues} ile AYNI kural): kesim
+     * noktasından önce biten cümle; {@code {f:x?evet|hayır}} yalnız seçilen dal boş değilse.
+     */
+    private static Set<String> wholeRefs(Section s, Template t, Layout lay, Map<String, Object> vals, String channel, int year, int month) {
+        Set<String> out = new HashSet<>();
+        int cut = cutEnd(joinedText(lay.blocks()));
+        for (int i = 0; i < lay.kept().size(); i++) {
+            if (lay.kept().get(i) == null || lay.ends()[i] < 0 || lay.ends()[i] > cut) continue;
+            for (Ref ref : refs(s.lines().get(i))) if ("f".equals(ref.kind()) && writesValue(ref, vals, channel, year, month, t.lang())) {
+                out.add(ref.id());
+            }
+        }
+        return out;
+    }
+
+    /** Değer yazan başvuru mu: {@code {f:}}; seçimli başvuruda SEÇİLEN dal boş değilse. */
+    private static boolean writesValue(Ref ref, Map<String, Object> vals, String channel, int year, int month, String lang) {
+        if (ref.yes() == null) return true;
+        String branch = Boolean.TRUE.equals(vals.get(ref.id())) ? ref.yes() : ref.no();
+        return !TechErrorRichText.blank(literal(branch, channel, year, month, lang));
     }
 
     /** Tampondaki cümlelerin bitişini birleşik metne çevirir (tampon blok olmadan hemen önce çağrılır). */
@@ -341,8 +395,9 @@ public final class TechErrorSummary {
             boolean ok = r != null && !TechErrorRichText.blank(r) && (!isItem(line) || isItem(r));
             kept.add(ok ? r : null);
             if (!ok) continue;
-            // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
-            for (Ref ref : refs(line)) if ("f".equals(ref.kind())) told.add(ref.id());
+            // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17);
+            // seçimli başvuru yalnız SEÇİLEN dalı boş değilse ("{f:y?Kesinti yaşandı.|}" Hayır'da y hakkında bir şey yazmaz)
+            for (Ref ref : refs(line)) if ("f".equals(ref.kind()) && writesValue(ref, vals, channel, year, month, lang)) told.add(ref.id());
             boolean item = isItem(line);
             len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length();
             par = !item;
@@ -364,8 +419,9 @@ public final class TechErrorSummary {
      *       ya da sınırdan sonraki cümlenin değeri basılmaz (inceleme 2026-10-18); gömülü bölümlerin söylenmemiş değer
      *       satırları da aynı birleşik metindedir. {@code {d:}} / {@code {t:}} / {@code {dt:}} değeri yazmaz, sayılmaz;
      *       {@code {f:x?evet|hayır}} yalnız SEÇİLEN dal boş değilse sayılır ("…{f:y?Kesinti yaşandı.|}" Hayır cevabında y
-     *       hakkında bir şey yazmaz — inceleme 2026-10-18). Söylenmemiş değer kuralının ({@link #facts}) kümesi bu iki
-     *       ayrıntıyı bilerek İÇERMEZ (istemciyle ortak doğruluk tablosu değişmesin);</li>
+     *       hakkında bir şey yazmaz — inceleme 2026-10-18). Söylenmemiş değer kuralı ({@link #facts}) AYNI kümeyi kullanır
+     *       (bütünleştirme incelemesi 2026-10-18: cümlesi kesilen ya da seçilen dalı boş olan gömülü değer satır olarak
+     *       basılır; istemci aynı kuralı uygular, {@code TechErrorSummaryBlocksTest.CHOICE_TABLE});</li>
      *   <li>özet elle düzenlendiyse ({@code texts[<özet>]} boş değil): YALNIZ kutucuklar (elle metnin içeriği bilinmez).</li>
      * </ul>
      * PDF ve e-posta, özete GÖMÜLÜ olmayan gösterge bölümlerinde bu alanların sayı / yüzde / evet-hayır değerini tekrar
@@ -380,19 +436,7 @@ public final class TechErrorSummary {
             for (TechErrorTiles.Tile tile : TechErrorTiles.build(t, s, v, previous, channel, year, month)) out.add(tile.id());
             String override = v.texts() == null ? null : v.texts().get(s.id());
             if (override != null && !TechErrorRichText.blank(override)) continue;
-            Layout lay = layout(s, t, vals, previous, v.targets(), v.units(), channel, year, month);
-            int cut = cutEnd(joinedText(lay.blocks()));
-            for (int i = 0; i < lay.kept().size(); i++) {
-                if (lay.kept().get(i) == null || lay.ends()[i] < 0 || lay.ends()[i] > cut) continue;
-                for (Ref ref : refs(s.lines().get(i))) {
-                    if (!"f".equals(ref.kind())) continue;
-                    if (ref.yes() != null) {
-                        String branch = Boolean.TRUE.equals(vals.get(ref.id())) ? ref.yes() : ref.no();
-                        if (TechErrorRichText.blank(literal(branch, channel, year, month, t.lang()))) continue;
-                    }
-                    out.add(ref.id());
-                }
-            }
+            out.addAll(wholeRefs(s, t, layout(s, t, vals, previous, v.targets(), v.units(), channel, year, month), vals, channel, year, month));
         }
         return out;
     }
@@ -457,9 +501,19 @@ public final class TechErrorSummary {
             }
             if (values == 0 || !all) continue;
             dissolved.add(s.id());
+            // Kısa metin (bütünleştirme incelemesi 2026-10-18): söylenmemiş değer satırı gibi DÜZ "Ad: değer" (zengin metin
+            // değil, yıldız dizisi teke iner); tutulan ve tamamı basılan bir cümle {f:} ile zaten yazdıysa ({@code shown})
+            // eklenmez — iki kez basılmaz. Açıklamalar (uzun metin) ardından not olarak
+            StringBuilder lines = new StringBuilder();
             for (Field f : s.fields()) {
-                if (!"textarea".equals(f.type()) && !"text".equals(f.type())) continue;
-                if (TechErrorTemplate.exempt(f, vals)) continue;
+                if (!"text".equals(f.type()) || TechErrorTemplate.exempt(f, vals) || shown.contains(f.id())) continue;
+                if (!(vals.get(f.id()) instanceof String text) || TechErrorRichText.blank(text)) continue;
+                if (!lines.isEmpty()) lines.append('\n');
+                lines.append(factLine(TechErrorTemplate.resolve(f.label() == null ? "" : f.label(), channel, year, month, t.lang()), neutral(text)));
+            }
+            if (!lines.isEmpty()) moved.add(Block.text(lines.toString()));
+            for (Field f : s.fields()) {
+                if (!"textarea".equals(f.type()) || TechErrorTemplate.exempt(f, vals)) continue;
                 if (!(vals.get(f.id()) instanceof String text) || TechErrorRichText.blank(text)) continue;
                 moved.add(Block.note(s.id(), f.id(), TechErrorTemplate.resolve(f.label(), channel, year, month, t.lang()), text));
             }
@@ -567,14 +621,17 @@ public final class TechErrorSummary {
                 value = TechErrorFormat.value(f, v, t.lang(), units == null ? null : units.get(f.id()));
             }
             String label = TechErrorTemplate.resolve(f.label() == null ? "" : f.label(), channel, year, month, t.lang());
-            if (label == null) label = "";
             boolean bold = !yesno && !text;
-            String shown = bold ? "**" + value + "**" : value;
-            String fact = label.endsWith("?") ? label + " " + shown : label + ": " + shown;
             if (!b.isEmpty()) b.append('\n');
-            b.append(keepParagraph(fact));
+            b.append(factLine(label, bold ? "**" + value + "**" : value));
         }
         return b.isEmpty() ? null : b.toString();
+    }
+
+    /** Değer satırı "Ad: değer" (soru işaretiyle biten ad iki nokta almaz); satır başı maddeye benzerse {@link #keepParagraph}. */
+    private static String factLine(String label, String shown) {
+        String l = label == null ? "" : label;
+        return keepParagraph(l.endsWith("?") ? l + " " + shown : l + ": " + shown);
     }
 
     /** Gömülü bölümün notları: dolu, muaf olmayan uzun açıklama alanları (alan sırasıyla); başlık = alanın çözülmüş adı. */
@@ -596,19 +653,39 @@ public final class TechErrorSummary {
      * Notlar sınıra girmez, hiç düşmez. İstemcide aynı kural: {@code techErrorModel.capTextBlocks}.
      */
     static List<Block> capText(List<Block> blocks) {
+        return capText(blocks, Set.of());
+    }
+
+    /**
+     * {@link #capText(List)} + gömülü bölümlerin DEĞER SATIRI blokları ({@code facts}: çıktıdaki konumları; bütünleştirme
+     * incelemesi 2026-10-18): bütçe aynı ölçüyle (değer satırları da birleşik metinde), ama değer satırı bloğu ya TAMAMI
+     * basılır ya hiç — kesim noktasını geçen değer satırı yarıda "…" ile kesilmez, ÖZET METNİNDEN SONRA (sınırın dışında)
+     * tek blokta basılır: cümlesi kesilen / sınırdan sonra kalan gömülü değer kaybolmaz. "…" son tutulan metin (cümle)
+     * bloğuna eklenir. İstemcide aynı kural: {@code techErrorModel.summaryBlocks}.
+     */
+    static List<Block> capText(List<Block> blocks, Set<Integer> facts) {
         String joined = joinedText(blocks);
         if (joined.length() <= TechErrorTemplate.MAX_RESOLVED_TEXT) return blocks;
         int end = cutEnd(joined);
         List<Block> out = new ArrayList<>(blocks.size());
+        StringBuilder rescued = new StringBuilder();
         int start = 0;
         int last = -1;
         int lastStart = 0;
-        for (Block b : blocks) {
+        for (int i = 0; i < blocks.size(); i++) {
+            Block b = blocks.get(i);
             if (b.note()) {
                 out.add(b);
                 continue;
             }
-            if (start < end) {
+            if (facts.contains(i)) {
+                if (start + b.text().length() <= end) {
+                    out.add(b);
+                } else {
+                    if (!rescued.isEmpty()) rescued.append('\n');
+                    rescued.append(b.text());
+                }
+            } else if (start < end) {
                 out.add(b);
                 last = out.size() - 1;
                 lastStart = start;
@@ -619,6 +696,7 @@ public final class TechErrorSummary {
             String txt = out.get(last).text();
             out.set(last, Block.text(txt.substring(0, Math.min(txt.length(), end - lastStart)) + "…"));
         }
+        if (!rescued.isEmpty()) out.add(Block.text(rescued.toString()));
         return out;
     }
 

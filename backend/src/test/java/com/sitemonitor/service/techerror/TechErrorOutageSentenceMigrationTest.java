@@ -23,7 +23,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
@@ -38,7 +37,6 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -151,20 +149,25 @@ class TechErrorOutageSentenceMigrationTest {
     }
 
     @Test
-    @DisplayName("iş: adet göçünün nişanı yokken koşmaz; varsa kendi kilidi altında koşar")
-    void waitsForCountsMigration() {
+    @DisplayName("iş: zincir — anomali soruları göçünün nişanı yokken (adet nişanı olsa da) koşmaz; varsa kendi kilidi altında koşar")
+    void waitsForAnomalyMigration() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Integer.class), any(Object[].class))).thenAnswer(inv -> 0);
         SchedulerService scheduler = mock(SchedulerService.class);
         @SuppressWarnings("unchecked") ObjectProvider<SchedulerService> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(scheduler);
         TechErrorOutageSentenceMigration job = new TechErrorOutageSentenceMigration(mock(TechErrorChannelRepository.class),
-                mock(TechErrorReportService.class), mock(TechErrorTeamTemplateRepository.class), mock(TechErrorTeamTemplateService.class),
-                jdbc, provider);
+                mock(TechErrorReportService.class), mock(TechErrorTeamTemplateRepository.class), jdbc, provider);
+        job.run();
+        verify(scheduler, never()).callWithSchedulerLock(anyString(), any(Supplier.class));
+        // Adet göçü bitti ama anomali soruları göçü henüz değil: beklenir (çatal değil zincir)
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), any(Object[].class)))
+                .thenAnswer(inv -> TechErrorCountsInFiguresMigration.KEY.equals(inv.getArgument(2)) ? 1 : 0);
         job.run();
         verify(scheduler, never()).callWithSchedulerLock(anyString(), any(Supplier.class));
         when(jdbc.queryForObject(anyString(), eq(Integer.class), any(Object[].class)))
-                .thenAnswer(inv -> TechErrorCountsInFiguresMigration.KEY.equals(inv.getArgument(2)) ? 1 : 0);
+                .thenAnswer(inv -> TechErrorCountsInFiguresMigration.KEY.equals(inv.getArgument(2))
+                        || TechErrorAnomalyFieldsMigration.KEY.equals(inv.getArgument(2)) ? 1 : 0);
         when(scheduler.callWithSchedulerLock(anyString(), any(Supplier.class))).thenReturn(Optional.of(0));
         job.run();
         verify(scheduler).callWithSchedulerLock(eq(TechErrorOutageSentenceMigration.LOCK), any(Supplier.class));
@@ -216,7 +219,7 @@ class TechErrorOutageSentenceMigrationTest {
         }
 
         @Test
-        @DisplayName("iş: eski varsayılanlı kanallar (TR / EN) ve kütüphane kayıtları güncellenir (sürüm +1, 'SiteMonitor'), değiştirilmiş / bugünkü şablon dokunulmaz; açılmış rapor kopyasını korur; silinmiş takımın kaydı atlanır; nişan sonrası koşmaz")
+        @DisplayName("iş: eski varsayılanlı kanallar (TR / EN) ve kütüphane kayıtları güncellenir (sürüm +1, 'SiteMonitor'), değiştirilmiş / bugünkü şablon dokunulmaz; açılmış rapor kopyasını korur; silinmiş takımın yetim kaydı anomali göçündeki gibi göçer (yetim kuralı siler); nişan sonrası koşmaz")
         void migratesOnce() {
             TechErrorChannel a = service.createChannel(teamA, "Mobil", null, oldDefault("tr"), 7L);
             TechErrorChannel b = service.createChannel(teamA, "POS", null, oldDefault("en"), 7L);
@@ -235,7 +238,7 @@ class TechErrorOutageSentenceMigrationTest {
             teams.deleteById(teamB);                                    // takım silindi, kayıt yetim kaldı
             assertThat(migration.marker(TechErrorOutageSentenceMigration.KEY)).isFalse();
 
-            assertThat(migration.migrateLocked()).isEqualTo(3);         // 2 kanal + 1 kütüphane kaydı
+            assertThat(migration.migrateLocked()).isEqualTo(4);         // 2 kanal + 2 kütüphane kaydı (biri yetim)
             TechErrorChannel afterA = channels.findById(a.getId()).orElseThrow();
             assertThat(afterA.getTemplateVersion()).isEqualTo(2);
             assertThat(afterA.getTemplateJson()).isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
@@ -253,7 +256,9 @@ class TechErrorOutageSentenceMigrationTest {
             assertThat(libAfter.getUpdatedByName()).isEqualTo(TechErrorOutageSentenceMigration.ACTOR);
             assertThat(libAfter.isDefaultEntry()).isTrue();             // yalnız şablon değişti
             assertThat(libraryRepo.findById(libMine.getId()).orElseThrow().getVersion()).isEqualTo(libMine.getVersion());
-            assertThat(libraryRepo.findById(libGone.getId()).orElseThrow().getTemplateJson()).isEqualTo(libGone.getTemplateJson());
+            // Tek yol (anomali göçüyle aynı: findMigrationRows + koşullu migrateTemplate): takım bakılmaz, yetim kayıt da göçer
+            assertThat(libraryRepo.findById(libGone.getId()).orElseThrow().getTemplateJson())
+                    .isEqualTo(TechErrorTemplate.toJson(TechErrorTemplate.defaults("tr")));
             // Açılmış rapor kopyasını korur; "şablonun son hâlini uygula" farkı görür, değer kaybı yok
             TechErrorReport r = reports.findById(opened.getId()).orElseThrow();
             assertThat(r.getTemplateJson()).isEqualTo(openedTemplate);
@@ -265,15 +270,21 @@ class TechErrorOutageSentenceMigrationTest {
         }
 
         @Test
-        @DisplayName("kütüphane sistem güncellemesi okunan sürümle koşullu: eski sürüm 409 (ekibin kaydı ezilmez), değişiklik yoksa hiçbir şey yazılmaz")
+        @DisplayName("kütüphane göçü anomali göçüyle aynı yol: okunan sürümle koşullu (eski sürümle yazım 0 satır, ekibin kaydı ezilmez), okunamayan kayıt dokunulmaz, ikinci koşu değiştirmez")
         void libraryUpdateIsConditional() {
             TechErrorTeamTemplate e = library.create(teamA, "Eski", oldDefault("tr"), false, 7L);
-            Template next = TechErrorOutageSentenceMigration.migrate(oldDefault("tr")).orElseThrow();
-            assertThatThrownBy(() -> library.systemUpdateTemplate(teamA, e.getId(), e.getVersion() + 5, next, "SiteMonitor"))
-                    .isInstanceOf(OptimisticLockingFailureException.class);
-            assertThat(library.systemUpdateTemplate(teamA, e.getId(), e.getVersion(), next, "SiteMonitor")).isTrue();
+            String json = TechErrorTemplate.toJson(TechErrorOutageSentenceMigration.migrate(oldDefault("tr")).orElseThrow());
+            assertThat(libraryRepo.migrateTemplate(e.getId(), e.getVersion() + 5, json, Instant.now(), "SiteMonitor")).isZero();
+            assertThat(libraryRepo.findById(e.getId()).orElseThrow().getVersion()).isEqualTo(e.getVersion());
+            TechErrorTeamTemplate broken = library.create(teamA, "Bozuk", oldDefault("tr"), false, 7L);
+            jdbc.update("UPDATE tech_error_team_templates SET template_json = ? WHERE id = ?", "{bozuk", broken.getId());
+            assertThat(migration.migrateLibrary()).isEqualTo(1);
             TechErrorTeamTemplate after = libraryRepo.findById(e.getId()).orElseThrow();
-            assertThat(library.systemUpdateTemplate(teamA, e.getId(), after.getVersion(), next, "SiteMonitor")).isFalse();
+            assertThat(after.getTemplateJson()).isEqualTo(json);
+            assertThat(after.getVersion()).isEqualTo(e.getVersion() + 1);
+            assertThat(after.getUpdatedByName()).isEqualTo(TechErrorOutageSentenceMigration.ACTOR);
+            assertThat(libraryRepo.findById(broken.getId()).orElseThrow().getTemplateJson()).isEqualTo("{bozuk");
+            assertThat(migration.migrateLibrary()).isZero();
             assertThat(libraryRepo.findById(e.getId()).orElseThrow().getVersion()).isEqualTo(after.getVersion());
         }
     }

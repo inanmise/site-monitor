@@ -191,4 +191,101 @@ class TechErrorSummaryBlocksTest {
         List<Block> same = List.of(Block.text("kısa"), note);
         assertThat(TechErrorSummary.capText(same)).isSameAs(same);
     }
+
+    // ── Söylenen kümesi = shownValues kuralı (bütünleştirme incelemesi 2026-10-18) ─────────────────────────────────
+
+    /**
+     * Seçimli başvuru şablonu: özete gömülü evet/hayır + adet; ilk cümle seçilen dalı BOŞ olabilen bir seçim taşır. JS testi
+     * aynı şablonu elle kurar.
+     */
+    static Template choiceTemplate() {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("lang", "tr");
+        raw.put("title", "{kanal}");
+        raw.put("sections", List.of(
+                Map.of("id", "exec", "kind", "summary", "title", "Yönetici Özeti", "lines", List.of(
+                        "Dönem değerlendirmesi tamamlandı.{f:q-flag? Kota aşıldı.|}",
+                        "Kota adedi {f:q-count} olarak kaydedilmiştir.")),
+                Map.of("id", "q", "kind", "metrics", "title", "Kota", "host", "exec", "fields", List.of(
+                        Map.of("id", "q-flag", "label", "Kota aşımı oldu mu?", "type", "yesno"),
+                        Map.of("id", "q-count", "label", "Kota hatası adedi", "type", "number")))));
+        return TechErrorTemplate.normalize(raw);
+    }
+
+    /**
+     * Seçimli başvuru doğruluk tablosu (BLOCKS_TABLE ile aynı biçim; JS testi bu kaynaktan okur): {@code {f:x?evet|hayır}}
+     * yalnız SEÇİLEN dal boş değilse x'i söyler — "…{f:q-flag? Kota aşıldı.|}" Hayır'da kota hakkında bir şey yazmaz, değer
+     * satırı basılır (shownValues ile aynı kural).
+     */
+    static final String[][] CHOICE_TABLE = {
+            { "Evet: seçilen dal yazar, değer satırı yok; bir şey eklemeyen yerleşim paragrafı bölmez",
+              "q-flag=true;q-count=5", null,
+              "T:Dönem değerlendirmesi tamamlandı. Kota aşıldı. Kota adedi **5** olarak kaydedilmiştir." },
+            { "Hayır: seçilen dal boş — kota cevabı değer satırı olur, sonraki cümle yeni paragraf",
+              "q-flag=false;q-count=5", null,
+              "T:Dönem değerlendirmesi tamamlandı.",
+              "T:Kota aşımı oldu mu? Hayır",
+              "T:Kota adedi **5** olarak kaydedilmiştir." },
+            { "Hayır ve adet yok: adet cümlesi düşer, kota cevabı yine basılır",
+              "q-flag=false", null,
+              "T:Dönem değerlendirmesi tamamlandı.",
+              "T:Kota aşımı oldu mu? Hayır" },
+    };
+
+    @Test
+    @DisplayName("bütünleştirme incelemesi 2026-10-18: seçilen dalı BOŞ seçimli başvuru alanı söylemez — gömülü değer satır olarak basılır (shownValues ile aynı kural)")
+    void choiceTruthTable() {
+        Template t = choiceTemplate();
+        for (String[] row : CHOICE_TABLE) {
+            List<Block> expected = new ArrayList<>();
+            for (int i = 3; i < row.length; i++) expected.add(expected(row[i]));
+            List<Block> got = TechErrorSummary.blocks(t.sections().get(0), t, values(t, row[1]), Map.of(), "Mobil", 2026, 9);
+            assertThat(got).as(row[0]).isEqualTo(expected);
+        }
+    }
+
+    /** 450 karakterlik dolgu cümlesi (k = sıra). */
+    static String filler(int k) {
+        String head = "Dolgu " + k + " ";
+        return head + "x".repeat(449 - head.length()) + ".";
+    }
+
+    /**
+     * Metin sınırı şablonu: 26 dolgu cümlesi (birleşik 11.725 karakter), 27. cümle sınırı GEÇER ve sonunda gömülü {@code e2}'yi
+     * yazar, 28. cümle sınırın ötesinde (üretilmez) gömülü {@code e1}'i yazar. Şablon doğrudan kurulur (sınıra ulaşmak 20
+     * cümle × 500 karakter sınırını aşar; çözülen değerler ulaştırabilir). JS testi aynı şablonu kurar.
+     */
+    static Template capChoiceTemplate() {
+        List<String> lines = new ArrayList<>();
+        for (int k = 0; k < 26; k++) lines.add(filler(k));
+        String tail = " değeri {f:e2}.";
+        String straddle = "Gömülü " + "y".repeat(450 - "Gömülü ".length() - tail.length()) + tail;
+        lines.add(straddle);
+        lines.add("Sınırın ötesinde {f:e1}.");
+        TechErrorTemplate.Section exec = new TechErrorTemplate.Section("exec", "summary", "Yönetici Özeti", List.of(), List.of(), null, null,
+                null, null, null, List.copyOf(lines), List.of(), List.of(), null, List.of());
+        TechErrorTemplate.Section e = new TechErrorTemplate.Section("e", "metrics", "Gömülü", List.of(
+                new Field("e1", "Gömülü adet", "number", null),
+                new Field("e2", "Gömülü iki", "number", null),
+                new Field("e-note", "Gömülü açıklama", "textarea", null)), List.of(), null, null, null, null, null, List.of(), List.of(),
+                List.of(), "exec", List.of());
+        return new Template("tr", "{kanal}", List.of(exec, e));
+    }
+
+    @Test
+    @DisplayName("bütünleştirme incelemesi 2026-10-18: cümlesi metin sınırında KESİLEN ya da sınırın ötesinde kalan gömülü değer kaybolmaz — değer satırı tamamıyla özet metninden sonra (yarım \"…\" yok); not yerinde")
+    void cutSentenceValuesStillPrint() {
+        Template t = capChoiceTemplate();
+        Map<String, Object> v = new LinkedHashMap<>(Map.of("e1", 7L, "e2", 8L, "e-note", "Not"));
+        List<Block> got = TechErrorSummary.blocks(t.sections().get(0), t, v, Map.of(), "Mobil", 2026, 9);
+        assertThat(got).hasSize(3);
+        assertThat(got.get(0).note()).isFalse();
+        assertThat(got.get(0).text()).startsWith("Dolgu 0 ").endsWith("…").doesNotContain("**8**");
+        assertThat(got.get(0).text().length()).isLessThanOrEqualTo(TechErrorTemplate.MAX_RESOLVED_TEXT);
+        assertThat(got.get(1)).isEqualTo(Block.note("e", "e-note", "Gömülü açıklama", "Not"));
+        assertThat(got.get(2)).isEqualTo(Block.text("Gömülü adet: **7**\nGömülü iki: **8**"));
+        // Kesilen cümlenin değeri "gösterildi" sayılmaz (shownValues ile aynı)
+        TechErrorValues.Values stored = new TechErrorValues.Values(v, Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
+        assertThat(TechErrorSummary.shownValues(t, stored, null, "Mobil", 2026, 9)).doesNotContain("e1", "e2");
+    }
 }

@@ -35,7 +35,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * şablonda SAYI alanı değilse pay sorulmaz). Ekibin değiştirdiği bölüme (başka etiket / kalıp, ya da bir soru açılmış)
  * dokunulmaz. Açılmış / gönderilmiş raporlar DEĞİŞMEZ (şablonun kopyasını taşırlar; taslak "şablonun son hâlini uygula" ile
  * soruları alır, eski konu değerleri {@code carry} ile kalır). Adet göçü ({@link TechErrorCountsInFiguresMigration})
- * tamamlanmadan koşmaz (zincir: oran → özet gömme → SLA → adetler → bu). Açılış yolunda değil: açılıştan 12 dk sonra
+ * tamamlanmadan koşmaz (zincir: oran → özet gömme → SLA → adetler → bu → kesinti cümlesi
+ * {@link TechErrorOutageSentenceMigration}, bu göçün nişanını bekler). Açılış yolunda değil: açılıştan 12 dk sonra
  * (yayılım penceresi), kendi kilidi altında; nişan kilit İÇİNDE yeniden okunur ve yalnız TÜM kanallar işlendiyse yazılır
  * (yarıda kalırsa bir saat sonra kalan kanallar yeniden denenir — dönüşüm tekrar uygulanınca değişiklik üretmez); pod başına
  * en çok {@link #MAX_ATTEMPTS} başarısız deneme. Her kanal {@code saveTemplate} ile yazılır: koşullu güncelleme (ekibin aynı

@@ -921,6 +921,10 @@ function embeddedBlocks(e, template, fields, told, channel, year, month, units =
  *     blokları ardına gelir ve sonraki cümle yeni paragraf başlatır; eklenecek bir şey yoksa paragraf bölünmez (notsuz
  *     varsayılan rapor tek paragraf kalır). Hiçbir cümlesi girmeyen bölüm sonda.</li>
  *   <li>Metin sınırı yalnız METNE: sınırdan sonraki cümle üretilmez ve alanları söylenmiş sayılmaz (değerleri satır olur).</li>
+ *   <li>"Söylenen" alan (bütünleştirme incelemesi 2026-10-18, sunucudaki shownValues ile AYNI kural): basılan metinde TAMAMI
+ *     kalan tutulan cümlenin `{f:}` başvurusu; seçimli başvuru yalnız SEÇİLEN dalı boş değilse. Cümlesi kesilen gömülü
+ *     değer satır olur; değer satırı ya tamamıyla basılır ya özet metninden sonra (sınırın dışında) tek blokta — yarım
+ *     "…" yok (doğruluk tablosu TechErrorSummaryBlocksTest.CHOICE_TABLE).</li>
  * </ul>
  * Gömülü bölüm yoksa tek metin bloğu = {@link summaryAutoText} (davranış değişmez).
  */
@@ -942,10 +946,12 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
   const byId = new Map(allFields(template).map((f) => [f.id, f]))
   const lit = (x) => resolveTextPlaceholders(x, channel, year, month, lang)
   const lines = section.lines || []
+  // Değer yazan başvuru: {f:}; seçimli başvuruda SEÇİLEN dal boş değilse (sunucudaki writesValue)
+  const writes = (ref) => ref.kind === 'f' && (ref.yes == null || !richBlank(lit(fields?.[ref.id] === true ? ref.yes : ref.no)))
   // 1. geçiş: tutulan cümleler (null = düşen) ve tutulan cümlelerin başvurduğu alanlar; metin sınırı summaryAutoText ile
   // aynı ölçüyle burada da işler (sınırdan sonraki cümle üretilmez, alanları söylenmiş sayılmaz)
   const kept = []
-  const told = new Set()
+  const told0 = new Set()
   let len = 0
   let par = false
   for (const line of lines) {
@@ -954,64 +960,146 @@ export function summaryBlocks(template, section, fields, texts, channel, year, m
     const ok = r != null && !richBlank(r) && (!isItemLine(line) || isItemLine(r))
     kept.push(ok ? r : null)
     if (!ok) continue
-    // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17)
-    for (const ref of summaryRefs(line)) if (ref.kind === 'f') told.add(ref.id)
+    // Yalnız DEĞERİ yazan başvuru alanı "söyler"; fark / hedef / uzaklık ({d:} {t:} {dt:}) değeri yazmaz (inceleme 2026-10-17);
+    // seçimli başvuru yalnız SEÇİLEN dalı boş değilse (bütünleştirme incelemesi 2026-10-18)
+    for (const ref of summaryRefs(line)) if (writes(ref)) told0.add(ref.id)
     const item = isItemLine(line)
     len += (len > 0 ? (item ? 1 : par ? 1 : 2) : 0) + r.length
     par = !item
   }
-  // 2. geçiş: paragraf akışı summaryAutoText ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir
+  // 2. geçiş: paragraf akışı summaryAutoText ile aynı; gömülü bölüm ilk başvurulduğu cümlenin ardına yerleşir. Sonuç:
+  // bloklar, değer satırı bloklarının konumları ve her tutulan cümlenin birleşik metindeki BİTİŞİ (sunucudaki place)
+  const place = (told) => {
+    const out = []
+    const facts = new Set()
+    const ends = kept.map(() => -1)
+    let pending = []                     // tampondaki cümleler: [satır, tampon içindeki bitiş]
+    let buf = ''
+    let flushed = 0                      // blok olmuş metnin birleşik uzunluğu ("\n\n" ayraçlar dahil)
+    const joined = () => flushed + (flushed > 0 && buf ? 2 : 0) + buf.length
+    const resolveEnds = () => {
+      if (buf) {
+        const start = flushed > 0 ? flushed + 2 : 0
+        for (const [k, e] of pending) ends[k] = start + e
+      }
+      pending = []
+    }
+    const flush = () => {
+      if (!buf) return
+      flushed = joined()
+      out.push({ kind: 'text', text: buf })
+      buf = ''
+    }
+    const append = (add) => {
+      add.forEach((b, k) => { if (b.kind === 'text') facts.add(out.length + k) })
+      for (const b of add) {
+        if (b.kind === 'text') flushed += (flushed > 0 ? 2 : 0) + b.text.length
+        out.push(b)
+      }
+    }
+    const placed = new Set()
+    let inParagraph = false
+    for (let i = 0; i < kept.length; i++) {
+      if (joined() > MAX_RESOLVED_TEXT) break
+      let r = kept[i]
+      if (r == null) continue
+      const line = lines[i]
+      const item = isItemLine(line)
+      if (!item && !inParagraph) r = keepParagraph(r)
+      if (item) {
+        if (buf) buf += '\n'
+        buf += r
+        inParagraph = false
+      } else if (inParagraph) {
+        buf += ` ${r}`
+      } else {
+        if (buf) buf += '\n\n'
+        buf += r
+        inParagraph = true
+      }
+      pending.push([i, buf.length])
+      if (!embedded.length) continue
+      const ids = new Set(summaryRefs(line).map((x) => x.id))
+      for (const e of embedded) {
+        if (placed.has(e.id) || !(e.fields || []).some((f) => ids.has(f.id))) continue
+        placed.add(e.id)
+        const add = embeddedBlocks(e, template, fields, told, channel, year, month, units)
+        if (!add.length) continue                 // eklenecek bir şey yok: paragraf bölünmez
+        resolveEnds()
+        flush()
+        append(add)
+        inParagraph = false
+      }
+    }
+    resolveEnds()
+    flush()
+    for (const e of embedded) if (!placed.has(e.id)) append(embeddedBlocks(e, template, fields, told, channel, year, month, units))
+    return { out, facts, ends }
+  }
+  // Basılan metinde TAMAMI kalan cümlelerin değer yazan başvuruları (sunucudaki wholeRefs / shownValues)
+  const wholeRefs = (lay) => {
+    const cut = cutEndOf(lay.out.filter((b) => b.kind === 'text').map((b) => b.text).join('\n\n'), MAX_RESOLVED_TEXT)
+    const set = new Set()
+    lay.ends.forEach((e, i) => {
+      if (kept[i] == null || e < 0 || e > cut) return
+      for (const ref of summaryRefs(lines[i])) if (writes(ref)) set.add(ref.id)
+    })
+    return set
+  }
+  const told = new Set(told0)
+  let lay = place(told)
+  if (embedded.length) {
+    // Değer satırları da bütçede: onların ittiği cümle kesilebilir — küme sabitlenene kadar yeniden yerleşir (yalnız küçülür)
+    for (let round = 0, max = told.size + 1; round < max; round++) {
+      const whole = wholeRefs(lay)
+      if ([...told].every((x) => whole.has(x))) break
+      for (const x of [...told]) if (!whole.has(x)) told.delete(x)
+      lay = place(told)
+    }
+  }
+  return capFactBlocks(lay.out, lay.facts, MAX_RESOLVED_TEXT)
+}
+
+/** Birleşik metnin basılan önekinin uzunluğu (sunucudaki cutEnd): sığıyorsa tamamı, sığmıyorsa `max − 1` (vekil çifti düzeltmeli). */
+function cutEndOf(joined, max) {
+  if (joined.length <= max) return joined.length
+  let end = max - 1
+  const code = joined.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end--
+  return end
+}
+
+/**
+ * {@link capTextBlocks} + gömülü değer satırı blokları (`facts`: konumlar; sunucudaki capText(blocks, facts)): değer satırı
+ * ya TAMAMI basılır ya özet metninden sonra (sınırın dışında) tek blokta; "…" son tutulan cümle bloğuna eklenir.
+ */
+function capFactBlocks(blocks, facts, max) {
+  const joined = blocks.filter((b) => b.kind === 'text').map((b) => b.text).join('\n\n')
+  if (joined.length <= max) return blocks
+  const end = cutEndOf(joined, max)
   const out = []
-  let buf = ''
-  let flushed = 0                        // blok olmuş metnin birleşik uzunluğu ("\n\n" ayraçlar dahil)
-  const joined = () => flushed + (flushed > 0 && buf ? 2 : 0) + buf.length
-  const flush = () => {
-    if (!buf) return
-    flushed = joined()
-    out.push({ kind: 'text', text: buf })
-    buf = ''
-  }
-  const append = (add) => {
-    for (const b of add) {
-      if (b.kind === 'text') flushed += (flushed > 0 ? 2 : 0) + b.text.length
+  const rescued = []
+  let start = 0
+  let last = -1
+  let lastStart = 0
+  blocks.forEach((b, i) => {
+    if (b.kind !== 'text') { out.push(b); return }
+    if (facts.has(i)) {
+      if (start + b.text.length <= end) out.push(b)
+      else rescued.push(b.text)
+    } else if (start < end) {
       out.push(b)
+      last = out.length - 1
+      lastStart = start
     }
+    start += b.text.length + 2
+  })
+  if (last >= 0) {
+    const txt = out[last].text
+    out[last] = { kind: 'text', text: `${txt.slice(0, Math.min(txt.length, end - lastStart))}…` }
   }
-  const placed = new Set()
-  let inParagraph = false
-  for (let i = 0; i < kept.length; i++) {
-    if (joined() > MAX_RESOLVED_TEXT) break
-    let r = kept[i]
-    if (r == null) continue
-    const line = lines[i]
-    const item = isItemLine(line)
-    if (!item && !inParagraph) r = keepParagraph(r)
-    if (item) {
-      if (buf) buf += '\n'
-      buf += r
-      inParagraph = false
-    } else if (inParagraph) {
-      buf += ` ${r}`
-    } else {
-      if (buf) buf += '\n\n'
-      buf += r
-      inParagraph = true
-    }
-    if (!embedded.length) continue
-    const ids = new Set(summaryRefs(line).map((x) => x.id))
-    for (const e of embedded) {
-      if (placed.has(e.id) || !(e.fields || []).some((f) => ids.has(f.id))) continue
-      placed.add(e.id)
-      const add = embeddedBlocks(e, template, fields, told, channel, year, month, units)
-      if (!add.length) continue                 // eklenecek bir şey yok: paragraf bölünmez
-      flush()
-      append(add)
-      inParagraph = false
-    }
-  }
-  flush()
-  for (const e of embedded) if (!placed.has(e.id)) append(embeddedBlocks(e, template, fields, told, channel, year, month, units))
-  return capTextBlocks(out, MAX_RESOLVED_TEXT)
+  if (rescued.length) out.push({ kind: 'text', text: rescued.join('\n') })
+  return out
 }
 
 /**
@@ -2552,6 +2640,26 @@ export function issueImageAlive(slotId, template, values) {
   const s = (template?.sections || []).find((x) => x.id === p.sectionId)
   if (!s || s.kind !== 'issues' || !issueOptions(s, template?.lang).allowImages) return false
   return (values?.issues?.[p.sectionId] || []).some((i) => i?.id === p.issueId)
+}
+
+/** Dönem düzeyindeki kesinti sorusu (varsayılan şablon "Dönemde kesinti oldu mu?"; sunucu TechErrorOutageSentenceMigration.OUTAGE_FIELD). */
+export const OUTAGE_FIELD = 'had-outage'
+
+/**
+ * Kesinti cevabı konularla çelişiyor mu (2026-10-18 bütünleştirme incelemesi): dönemin kesinti sorusu ({@link OUTAGE_FIELD},
+ * evet/hayır) açıkça "Hayır" iken kesinti sorulan anomali bölümlerindeki "kesinti kaynaklı" işaretli konuların sayısı; çelişki
+ * yoksa 0. "Evet" + kesintisiz konular çelişki DEĞİLDİR (kesinti anomali konusu olmadan da yaşanabilir); cevap boşsa, alan
+ * yoksa ya da evet/hayır değilse 0. Rapor ikisini de yazıldığı gibi basar — yalnız düzenleyicide uyarı.
+ */
+export function outageAnswerConflict(template, values) {
+  const f = allFields(template).find((x) => x.id === OUTAGE_FIELD)
+  if (!f || f.type !== 'yesno' || values?.fields?.[OUTAGE_FIELD] !== false) return 0
+  let n = 0
+  for (const s of template?.sections || []) {
+    if (s.kind !== 'issues' || !issueOptions(s, template?.lang).askOutage) continue
+    for (const i of values?.issues?.[s.id] || []) if (i?.outage === true) n++
+  }
+  return n
 }
 
 /** Konu PDF / e-postaya girmeyecek mi ("konuyu rapora alma" + müşteri etkisi Hayır). */

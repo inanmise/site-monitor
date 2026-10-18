@@ -1874,6 +1874,75 @@ class TechErrorReportPdfWriterTest {
         }
     }
 
+    /** Kesinti cümlesi göçünden ÖNCE açılmış rapor: kopyalanmış şablonun özetinde kesinti cümlesi yok (bugünkü varsayılan − cümle). */
+    static Template withoutOutageLine(String lang) {
+        Template d = TechErrorTemplate.defaults(lang);
+        String line = "en".equals(lang) ? TechErrorTemplate.OUTAGE_LINE_EN : TechErrorTemplate.OUTAGE_LINE_TR;
+        List<com.sitemonitor.service.techerror.TechErrorTemplate.Section> secs = new ArrayList<>();
+        for (var sec : d.sections()) {
+            if (!"summary".equals(sec.kind())) {
+                secs.add(sec);
+                continue;
+            }
+            List<String> lines = new ArrayList<>(sec.lines());
+            assertThat(lines.remove(line)).as(lang + " varsayılanda kesinti cümlesi").isTrue();
+            secs.add(sec.withLines(List.copyOf(lines)));
+        }
+        return TechErrorTemplate.normalize(TechErrorTemplate.toMap(new Template(d.lang(), d.title(), List.copyOf(secs))));
+    }
+
+    @Test
+    @DisplayName("bütünleştirme incelemesi 2026-10-18: ESKİ rapor (kopyalanmış özetinde kesinti cümlesi yok) — kesinti cevabını hiçbir cümle yazmaz, Verileri PDF'te ve e-postada YERİNDE kalır: \"Dönemde kesinti oldu mu?\" + notlar (bir kez, özette değil); özette gösterilen değerler orada tekrar basılmaz")
+    void oldReportWithoutOutageSentenceKeepsFiguresSection() throws IOException {
+        for (String lang : List.of("tr", "en")) {
+            boolean en = "en".equals(lang);
+            TechErrorPdfInput in = realistic(lang, 0, null, withoutOutageLine(lang));
+            String figuresTitle = en ? "Mobil Channel — September 2026 Figures" : "Mobil Kanalı — Eylül 2026 Verileri";
+            String question = en ? "Was there an outage in the period?" : "Dönemde kesinti oldu mu?";
+            String issuesTitle = en ? "Errors With an Abnormal Increase" : "Anormal Artış Gösteren Hatalar";
+            List<String> notes = en
+                    ? List.of("About the unmapped errors", "E-1042 card limit", "About the quota errors", "The quota was exceeded on the campaign day.")
+                    : List.of("Map yapılmamış hatalar hakkında açıklama", "E-1042 kart limiti", "Kota hataları hakkında açıklama",
+                            "Kampanya gününde kota aşıldı.");
+            // PDF
+            String s = body(TechErrorReportPdfWriter.render(in));
+            int figuresAt = s.indexOf(figuresTitle);
+            assertThat(figuresAt).as(lang + " Verileri basılır").isPositive();
+            int issuesAt = s.indexOf(issuesTitle);
+            assertThat(issuesAt).as(lang).isGreaterThan(figuresAt);
+            String figures = s.substring(figuresAt, issuesAt);
+            assertThat(count(s, question)).as(lang + " kesinti sorusu bir kez").isEqualTo(1);
+            assertThat(figures).as(lang + " soru Verileri'nde").contains(question);
+            assertThat(s).as(lang + " kesinti cümlesi yok").doesNotContain(en ? "There was an outage in the period." : "Dönemde kesinti yaşanmıştır.");
+            for (String part : notes) {
+                assertThat(count(s, part)).as(lang + " PDF not bir kez: " + part).isEqualTo(1);
+                assertThat(figures).as(lang + " not Verileri'nde: " + part).contains(part);
+            }
+            for (String id : TILE_FIGURES) {
+                assertThat(occurrences(figures, shownValue(in, id))).as(lang + " " + id + " Verileri'nde tekrar yok").isZero();
+            }
+            // E-posta (HTML + düz metin)
+            var m = com.sitemonitor.service.mail.TechErrorReportMail.buildFull(in, com.sitemonitor.service.mail.TechErrorMailImages.Result.empty(),
+                    null, "m.pdf").mail();
+            java.util.Locale tr = java.util.Locale.forLanguageTag("tr");
+            for (String doc : List.of(m.html(), m.text())) {
+                boolean plain = doc == m.text();
+                int fAt = doc.indexOf(plain ? figuresTitle.toUpperCase(tr) : figuresTitle);
+                assertThat(fAt).as(lang + " e-posta Verileri" + (plain ? " (düz metin)" : "")).isPositive();
+                int iAt = doc.indexOf(plain ? issuesTitle.toUpperCase(tr) : issuesTitle);
+                assertThat(iAt).isGreaterThan(fAt);
+                String mf = doc.substring(fAt, iAt);
+                assertThat(count(doc, question)).as(lang + " e-posta soru bir kez").isEqualTo(1);
+                assertThat(mf).contains(question);
+                for (String label : en ? List.of("About the unmapped errors", "About the quota errors")
+                        : List.of("Map yapılmamış hatalar hakkında açıklama", "Kota hataları hakkında açıklama")) {
+                    assertThat(count(doc, label)).as(lang + " e-posta not bir kez: " + label).isEqualTo(1);
+                    assertThat(mf).as(lang + " e-posta not Verileri'nde: " + label).contains(label);
+                }
+            }
+        }
+    }
+
     @Test
     @DisplayName("2026-10-18: basılmayan Verileri ve Oranları bölümleri içindekilerde ve yer imlerinde de yok; numaralar son sayfalamaya göre doğru (uzun gerçekçi rapor, TR + EN)")
     void omittedSectionNotInTocOrBookmarks() throws IOException {
