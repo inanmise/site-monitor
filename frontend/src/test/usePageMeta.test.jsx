@@ -80,6 +80,10 @@ describe('pageMeta yardımcıları', () => {
     expect(appMetaKey({ ...base, tab: 'storms' })).toBe('meta.tab.storms')
     expect(appMetaKey({ ...base, tab: NOT_FOUND_TAB })).toBe('meta.page.notFound')
     expect(appMetaKey({ ...base, tab: 'settings', restricted: true })).toBe('meta.page.restricted')
+    // Görsel paneli penceresi (2026-10-18): oturum açıkken kendi başlığı; giriş / parola ekranı önce gelir
+    expect(appMetaKey({ ...base, tab: 'channelreports', imagesPanel: true })).toBe('meta.page.imagesPanel')
+    expect(appMetaKey({ ...base, user: null, imagesPanel: true })).toBe('meta.page.login')
+    expect(appMetaKey({ ...base, mustChangePwd: true, imagesPanel: true })).toBe('meta.page.changePassword')
   })
 
   it('formatTitle: boş marka → SiteMonitor; boş sayfa → yalnız marka', () => {

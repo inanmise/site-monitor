@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import { ImagePlus, RefreshCw, Trash2, Upload, ZoomIn } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -12,6 +12,11 @@ import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
 import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import { ImageLightbox } from './ImageLightbox.jsx'
+import { useSlotCapture } from './capture/SlotCapture.jsx'
+import {
+  CaptureHint, CaptureSessionChip, CaptureStopNotice, ImagesPanelHeaderButton, useCaptureScope,
+} from './capture/CaptureParts.jsx'
+import { postImagesChanged } from './capture/imageSync.js'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
@@ -35,8 +40,12 @@ export const UPLOAD_BLOCK_KEYS = Object.freeze({
  */
 // memo: yazarken (her tuşta düzenleyici yeniden çizilir) değişmeyen görsel bölümleri — 22 yuva — yeniden çizilmez;
 // düzenleyici geri çağrıyı sabit verir (useCallback)
-export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true }) {
+// Ekrandan görsel alma (2026-10-18): yapıştırma / "Ekrandan al" / Görsel paneli `capture/*`; her yükleme ve silme öteki
+// pencerelere duyurulur (imageSync). `inPanel`: Görsel paneli penceresinde (panel düğmesi ve bölüm başı paylaşım çipi yok).
+export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true, inPanel = false }) {
   const t = useT()
+  useCaptureScope()
+  const notifyChange = useCallback((fn) => { onImagesChange(fn); postImagesChanged(reportId) }, [onImagesChange, reportId])
   const bySlot = new Map(images.map((i) => [i.slot_id, i]))
   const total = images.reduce((a, i) => a + (i.size_bytes || 0), 0)
   // Rapor toplamı yükleme ANINDA okunur: hazırlama sürerken başka yuvaya yüklenen görsel de sayılır (inceleme 2026-10-15)
@@ -48,19 +57,23 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
   return (
     // Katlanır kart (2026-10-16): ipucu ve rapor toplamı yalnız açıkken
     <CollapsibleCard sectionId={section.id} slot="te-images" title={resolve(section.title)} contentClassName="flex flex-col gap-3"
+      headerEnd={showTotals && !inPanel ? <ImagesPanelHeaderButton reportId={reportId} readOnly={readOnly} /> : null}
       hint={showTotals ? (
         <>
           <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
           <p className="text-xs text-muted-foreground" data-slot="te-img-total">
             {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
           </p>
+          <CaptureHint readOnly={readOnly} inPanel={inPanel} />
         </>
       ) : null}>
+        {!inPanel && <CaptureSessionChip />}
+        {showTotals && !inPanel && <CaptureStopNotice />}
         {rows.map((row) => (
           <div key={row.map((r) => r.id).join('|')} className="grid gap-3 md:grid-cols-2">
             {row.map((slot) => (
               <SlotTile key={slot.id} slot={slot} image={bySlot.get(slot.id)} reportId={reportId} resolve={resolve}
-                uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange}
+                uiLang={uiLang} readOnly={readOnly} onImagesChange={notifyChange} inPanel={inPanel}
                 otherBytes={() => otherBytesOf(slot.id)}
                 className={slot.width === 'full' ? 'md:col-span-2' : row.length === 1 ? 'md:col-span-1' : ''} />
             ))}
@@ -82,7 +95,7 @@ export function ImageSlotTile(props) {
 }
 
 function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0, beforeUpload = null,
-  hideWidth = false, contextLabel = null, onRemoved = null }) {
+  hideWidth = false, contextLabel = null, onRemoved = null, inPanel = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -182,10 +195,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     }
   }
 
+  // Yapıştırma (Ctrl/⌘+V, "Panodan yapıştır") ve "Ekrandan al" aynı yükleme yoluna varır (capture/SlotCapture)
+  const cap = useSlotCapture({ slotId: slot.id, label, busy, readOnly, inPanel, onFile: upload })
   const inputId = `te-img-${slot.id}`
   return (
     <>
-    <div className={cn('flex min-w-0 flex-col gap-2 rounded-xl border p-3', drag && 'border-primary bg-primary/5', className)}
+    <div className={cn('flex min-w-0 flex-col gap-2 rounded-xl border p-3', cap.zoneClassName, drag && 'border-primary bg-primary/5', className)}
+      {...cap.zoneProps}
       data-slot="te-image-slot" data-slot-id={slot.id} data-width={slot.width} data-has-image={image ? 'true' : 'false'}
       onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); setDrag(true) }}
       onDragLeave={readOnly ? undefined : () => setDrag(false)}
@@ -231,6 +247,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         <div className="flex min-h-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
           <ImagePlus aria-hidden="true" className="size-6" />
           <span>{readOnly ? t('te.img.none') : t('te.img.drop')}</span>
+          {cap.emptyHint}
         </div>
       )}
       {!readOnly && (
@@ -245,6 +262,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
             {busy ? (phase === 'prep' ? t('te.img.preparing') : t('te.img.uploading')) : image ? t('te.img.replace') : t('te.img.upload')}
             <span className="sr-only">{`: ${fullLabel}`}</span>
           </Button>
+          {cap.buttons}
           {image && (
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={remove}
               className="text-destructive pointer-coarse:min-h-10">
@@ -255,7 +273,9 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         </div>
       )}
       {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-image-error">{error}</p>}
+      {cap.notes}
     </div>
+    {cap.dialog}
     {/* Büyük görünüm yuvanın bırakma alanının DIŞINDA: portal olayları React ağacında kabarcıklanır — içerideyken açık
         pencereye bırakılan dosya bu yuvaya sessizce yükleniyordu (inceleme 2026-10-16) */}
     {image && (

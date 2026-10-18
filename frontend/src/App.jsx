@@ -115,6 +115,12 @@ const ExecutiveSummaryPage = lazy(() => import('./components/executive/Executive
 // Kanal teknik hata raporları (2026-10-13): kanal başına şablon + aylık rapor, PDF ve takım e-postasına gönderim.
 // Herkese açık sekme; izin (tech_error_reports.read) ve takım kapsamı sunucuda.
 const TechErrorReportsPage = lazy(() => import('./components/techerror/TechErrorReportsPage'))
+// Görsel paneli (2026-10-18): raporun yalnız görsel yuvaları, ayrı pencerede (`te_view=images`) — kenar çubuksuz kabuk
+const ImagesPanelPage = lazy(() => import('./components/techerror/capture/ImagesPanelPage'))
+import { imagesPanelReportFromSearch } from './components/techerror/capture/panelWindow.js'   // bağımlılıksız, küçük
+// Sekmeler arası etkinlik (2026-10-18): öteki SiteMonitor sekmesi etkinken bu sekme hareketsizlik çıkışı yapmaz
+import { ACTIVITY_EVENT, latestOtherActivity, onOtherActivity, writeActivityStamp } from './utils/crossTabActivity.js'
+import { emitSessionReset } from './utils/sessionResetBus.js'
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -270,6 +276,8 @@ export default function App() {
   const { showConfirm } = useDialog()
   const toast = useToast()
   const t = useT()
+  // Görsel paneli penceresi mi (açılışta bir kez; panel adresi değişmez): kenar çubuğu / pano verisi yüklenmez
+  const [imagesPanelReport] = useState(() => imagesPanelReportFromSearch())
   const [user, setUser] = useState(null)
   const [systemRole, setSystemRole] = useState('USER')
   // Faz 3b: yalnız global (yerel/bootstrap) admin global-only sekmeleri görür;
@@ -662,28 +670,46 @@ export default function App() {
       setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
     }
 
-    const resetTimer = () => {
+    // Sayaç `base` anından kurulur (kendi etkinliği: şimdi; öteki sekmenin etkinliği: onun damgası). Uyarı ve çıkıştan
+    // ÖNCE öteki SiteMonitor sekmelerinin (ör. Görsel paneli penceresi) damgasına bakılır: daha yeniyse sayaç ondan
+    // yeniden kurulur — paylaşılan oturum, kullanıcı başka sekmede çalışırken kapanmaz (2026-10-18). Tek sekmede birebir eski
+    // davranış (kendi damgası okunmaz).
+    const arm = (base) => {
       clearTimeout(logoutTimer.current)
       clearTimeout(warnTimer.current)
       clearInterval(countdownInterval.current)
       setInactivityWarning(false)
+      const now = Date.now()
 
       // TV / duvar ekranı kipi (Panom, 2026-10-11) açıkken hareketsizlik uyarısı ve çıkışı ertelenir: sayaç yeniden kurulur
       warnTimer.current = setTimeout(() => {
-        if (isTvModeActive()) { resetTimer(); return }
+        if (isTvModeActive()) { arm(Date.now()); return }   // TV kipi kullanıcı etkinliği sayılmaz: damga yazılmaz
+        const other = latestOtherActivity()
+        if (other > base) { arm(other); return }
         setWarnDeadline(Date.now() + idleCfg.warnMs)
         setInactivityWarning(true)
-      }, Math.max(1000, idleCfg.totalMs - idleCfg.warnMs))
+      }, Math.max(1000, base + idleCfg.totalMs - idleCfg.warnMs - now))
 
       logoutTimer.current = setTimeout(() => {
-        if (isTvModeActive()) { resetTimer(); return }
+        if (isTvModeActive()) { arm(Date.now()); return }   // TV kipi kullanıcı etkinliği sayılmaz: damga yazılmaz
+        const other = latestOtherActivity()
+        if (other > base) { arm(other); return }
         doAutoLogout()
-      }, idleCfg.totalMs)
+      }, Math.max(0, base + idleCfg.totalMs - now))
+    }
+    // Bu sekmenin etkinliği: damga (en çok 15 sn'de bir) + sayaç şimdiden
+    const resetTimer = () => {
+      writeActivityStamp()
+      arm(Date.now())
     }
 
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click']
     events.forEach((e) => document.addEventListener(e, resetTimer, { passive: true }))
+    // Uygulama içi eylem (ekrandan alma, yapıştırma, yükleme) — belge olayı üretmeyebilir
+    window.addEventListener(ACTIVITY_EVENT, resetTimer)
     const offTv = onTvModeChange(resetTimer)   // kip açılınca görünen uyarı kalkar; kapanınca sayaç baştan başlar
+    // Öteki sekme etkin: uyarı (varsa) kalkar, sayaç yeniden kurulur — kendi damgası YAZILMAZ (sekmeler birbirini beslemez)
+    const offOther = onOtherActivity(() => arm(Date.now()))
     resetTimer()
 
     return () => {
@@ -691,7 +717,9 @@ export default function App() {
       clearTimeout(warnTimer.current)
       clearInterval(countdownInterval.current)
       events.forEach((e) => document.removeEventListener(e, resetTimer))
+      window.removeEventListener(ACTIVITY_EVENT, resetTimer)
       offTv()
+      offOther()
     }
     // idleCfg bağımlılıkta: ayar değiştiğinde (yeniden giriş / F5) zamanlayıcı YENİ süreyle
     // kurulmalı, yoksa eski süre oturum boyunca yaşamaya devam ederdi.
@@ -773,19 +801,20 @@ export default function App() {
   // dolmuşsa yeniler — her sekme geçişinde 6 isteklik tam yükleme tetiklenmesin. İlk yükleme girişte (aşağıdaki effect).
   const DATA_REFRESH_MS = Number(import.meta.env.VITE_DATA_REFRESH_MS ?? 300_000)
   const lastDataLoadRef = useRef(0)
+  // Görsel paneli penceresi pano verisini yüklemez (yalnız raporun görselleri — 2026-10-18)
   useEffect(() => {
-    if (user) {
+    if (user && !imagesPanelReport) {
       loadAliveRef.current = true
       lastDataLoadRef.current = Date.now()
       loadData()
     }
-  }, [user, loadData])
+  }, [user, loadData, imagesPanelReport])
   const refreshDataIfDue = useCallback(() => {
     if (Date.now() - lastDataLoadRef.current < DATA_REFRESH_MS - 1000) return
     lastDataLoadRef.current = Date.now()
     loadData()
   }, [loadData, DATA_REFRESH_MS])
-  useVisibleInterval(refreshDataIfDue, user ? DATA_REFRESH_MS : 0, false)
+  useVisibleInterval(refreshDataIfDue, user && !imagesPanelReport ? DATA_REFRESH_MS : 0, false)
 
   // Yeni eklenen alan adı "ısınıyor" (2026-09-28): ilk kontrol arka planda biterken kart boş değil "hesaplanıyor"
   // gösterir; veri gelene dek sertifika + kart ekleri kısa aralıklarla yeniden istenir. Döngü + oturuma bağlılık
@@ -816,29 +845,29 @@ export default function App() {
       })
     }
   }, [])
-  useVisibleInterval(networkTick, user ? 60_000 : 0)
+  useVisibleInterval(networkTick, user && !imagesPanelReport ? 60_000 : 0)
 
   // Zayıf-algoritma rozetleri: login'de BİR KEZ (5 dk'lık loadData'dan çıkarıldı). Zayıf-algoritma
   // verisi ancak cert sweep'iyle (~saatlik) değişir → sık çekmeye gerek yok; sayfa yenilenince tazelenir.
   useEffect(() => {
-    if (!user) return
+    if (!user || imagesPanelReport) return
     let alive = true
     Promise.resolve(api.admin.getWeakAlgorithms())
       .then(r => { if (alive && r?.success) setWeakAlgStats(r) })
       .catch(() => { /* rozet en iyi-çaba: ağ hatası işlenmemiş ret bırakmasın (2026-10-09) */ })
     return () => { alive = false }
-  }, [user])
+  }, [user, imagesPanelReport])
 
   // Platform kataloğu (pano platform süzgecinin seçenek adları/sırası): login'de BİR KEZ — aktif liste her oturuma
   // açık (GET /admin/platforms). Okunamazsa süzgeç yine çalışır: seçenekler veriden türer, ad = platform_name ya da kod.
   useEffect(() => {
-    if (!user) return
+    if (!user || imagesPanelReport) return
     let alive = true
     api.admin.listPlatforms()
       .then(r => { if (alive && r?.success && Array.isArray(r.data)) setPlatformCatalog(r.data) })
       .catch(() => { /* katalog yok → veriden türet */ })
     return () => { alive = false }
-  }, [user])
+  }, [user, imagesPanelReport])
 
   // Süpersede edilen oturumu HIZLI yakala: kısa aralıklı hafif yoklama + sekmeye/pencereye
   // dönünce anında kontrol. Oturum başka yerden düşürüldüyse ping 401 döner ve client.js
@@ -993,6 +1022,8 @@ export default function App() {
    */
   function resetSessionData() {
     loadAliveRef.current = false
+    // Tembel modüllerin oturum durumu (Kanal raporlarının ekran paylaşımı açıksa kapanır — 2026-10-18)
+    emitSessionReset()
     // Kişisel Panom: önceki oturumun süren paylaşılan kutu istekleri yeni kullanıcıya geçmesin (2026-10-13)
     clearSharedFetches()
     // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
@@ -1606,6 +1637,7 @@ export default function App() {
   usePageMeta(appMetaKey({
     authChecked, user, mustChangePwd, tab, validTabs: VALID_TABS, restricted: restrictedTab,
     accountInactive: accountInactiveNotice, maintenance: maintNotice, sessionExpired: sessionExpiredNotice,
+    imagesPanel: !!imagesPanelReport,
   }))
 
   if (!authChecked) {
@@ -1639,6 +1671,34 @@ export default function App() {
     )
   }
 
+  // Oturum zaman aşımı şeridi (eski .inactivity-warning) — Tailwind + shadcn Button; telefonda sarar. Ana kabuk ve Görsel
+  // paneli aynı şeridi çizer.
+  const inactivityStrip = inactivityWarning ? (
+    <div data-slot="inactivity-warning" ref={inactivityRef}
+      className="fixed inset-x-0 top-0 z-(--z-critical) flex flex-wrap items-center justify-center gap-3 bg-linear-to-r from-[#e65c00] to-[#f9d423] px-4 py-3 text-[#1a1a1a] shadow-lg animate-in slide-in-from-top motion-reduce:animate-none sm:gap-5 sm:px-6 sm:py-3.5">
+      <InactivityCountdownText deadline={warnDeadline} className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
+        format={(sec) => t('app.inactivityWarn', `<strong>${sec}</strong>`)} />
+      <Button type="button" size="sm" className="bg-[#1a1a1a] px-5 font-bold text-white hover:bg-zinc-800"
+        onClick={() => setInactivityWarning(false)}>{t('app.stayLoggedIn')}</Button>
+    </div>
+  ) : null
+
+  // GÖRSEL PANELİ (2026-10-18): ayrı pencerede raporun yalnız görsel yuvaları — kenar çubuğu, gezinme ve pano verisi yok.
+  // Oturum kuralları (hareketsizlik, pasif hesap, bakım, 401) ana kabukla aynı yoldan işler.
+  if (imagesPanelReport) {
+    return (
+      <>
+        <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+        {inactivityStrip}
+        <SystemMaintenanceLayer block={maint.block} offset={maint.offset} globalAdmin={globalAdmin} ended={maintEnded}
+          onExpire={finishMaintenanceLogout} onChanged={refreshMaintenance}
+          style={inactivityH ? { marginTop: inactivityH } : undefined} />
+        <Suspense fallback={<LoadingBlock label={t('app.loading')} />}>
+          <ImagesPanelPage reportId={imagesPanelReport} />
+        </Suspense>
+      </>
+    )
+  }
 
   return (
     <PermissionsProvider user={user}>
@@ -1651,16 +1711,7 @@ export default function App() {
       {/* Pasif hesap (2026-10-02): bloklayan, kapatılamaz pencere — geri sayım bitince giriş sayfasına */}
       <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
 
-      {inactivityWarning && (
-        // Oturum zaman aşımı şeridi (eski .inactivity-warning) — Tailwind + shadcn Button; telefonda sarar.
-        <div data-slot="inactivity-warning" ref={inactivityRef}
-          className="fixed inset-x-0 top-0 z-(--z-critical) flex flex-wrap items-center justify-center gap-3 bg-linear-to-r from-[#e65c00] to-[#f9d423] px-4 py-3 text-[#1a1a1a] shadow-lg animate-in slide-in-from-top motion-reduce:animate-none sm:gap-5 sm:px-6 sm:py-3.5">
-          <InactivityCountdownText deadline={warnDeadline} className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
-            format={(sec) => t('app.inactivityWarn', `<strong>${sec}</strong>`)} />
-          <Button type="button" size="sm" className="bg-[#1a1a1a] px-5 font-bold text-white hover:bg-zinc-800"
-            onClick={() => setInactivityWarning(false)}>{t('app.stayLoggedIn')}</Button>
-        </div>
-      )}
+      {inactivityStrip}
 
       <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} myTeams={myTeams} systemRole={systemRole}
         globalAdmin={globalAdmin} loginInfo={loginInfo} profile={profile} weeklyReportsVisible={weeklyReportsVisible}

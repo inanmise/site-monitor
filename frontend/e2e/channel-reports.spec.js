@@ -104,6 +104,46 @@ function decodePng(body) {
   }
   return { w, h, px: (x, y) => Array.from(out.subarray((y * w + x) * bpp, (y * w + x) * bpp + 3)) }
 }
+// Ekrandan görsel alma (2026-10-18): sahte ekran paylaşımı = renk bloklu bir tuvalin akışı (captureStream). Bloklar
+// 200 × 150 kaynak pikseli; renk sırası (bx + by × 3) % 6 — video çözümünün renk dönüşümüne dayanıklı orta tonlar.
+const CAP_W = 1600
+const CAP_H = 900
+const CAP_BW = 200
+const CAP_BH = 150
+const CAP_COLORS = [[200, 60, 60], [60, 160, 80], [50, 90, 200], [230, 200, 60], [150, 80, 180], [40, 170, 170]]
+async function mockDisplayCapture(target) {
+  await target.addInitScript(({ W, H, BW, BH, COLORS }) => {
+    window.__capCalls = 0
+    window.__capStopped = false
+    const md = navigator.mediaDevices || {}
+    if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: md })
+    md.getDisplayMedia = async () => {
+      window.__capCalls++
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      const ctx = c.getContext('2d')
+      const paint = () => {
+        for (let by = 0; by * BH < H; by++) {
+          for (let bx = 0; bx * BW < W; bx++) {
+            const [r, g, b] = COLORS[(bx + by * 3) % COLORS.length]
+            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+            ctx.fillRect(bx * BW, by * BH, BW, BH)
+          }
+        }
+      }
+      paint()
+      const stream = c.captureStream(10)
+      // Durağan tuval yeni kare üretmez: akış canlı kalsın diye aynı içerik yeniden boyanır
+      const timer = setInterval(paint, 100)
+      for (const tr of stream.getTracks()) {
+        const stop = tr.stop.bind(tr)
+        tr.stop = () => { window.__capStopped = true; clearInterval(timer); stop() }
+      }
+      return stream
+    }
+  }, { W: CAP_W, H: CAP_H, BW: CAP_BW, BH: CAP_BH, COLORS: CAP_COLORS })
+}
 // Çok parçalı yükleme gövdesindeki PNG'nin boyutu (IHDR)
 function pngSize(body) {
   const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
@@ -267,6 +307,10 @@ const ANOMALY_REPORT = {
     errors: 1700, outage: true, outage_id: 'INC-2026-0915-MOBIL-LIMIT-SORGU-ZAMAN-ASIMI', impact: true, customers: 320 }] }, texts: {} },
 }
 let reportOverride = null
+// Ekrandan görsel alma (2026-10-18): yüklenen görseller raporun okumasına girer (sunucu gibi) — Görsel paneli ile düzenleyici
+// arasındaki eşitleme gerçek yeniden okumayla sınanır. Yalnız açan test açar.
+let persistUploads = false
+let storedImages = []
 let templateOverride = null
 let overviewOverride = null     // kanal listesi (8. sürüm: 60 kanal, sayfalama)
 let channelPuts = []            // kanal sırası (R14): PUT /channels/<id> gövdeleri — {id, ...body}
@@ -468,7 +512,8 @@ const libEntry = (id, name, extra = {}) => ({
   version: 1, can_edit: true, ...extra,
 })
 const LONG_LIB = 'Dijital Kanallar Bireysel Bankacılık Mobil ve İnternet Şubesi Ortak Aylık Teknik Hata Şablonu (Takım Varsayılanı 2026)'
-async function mock(page, { openSections = true } = {}) {
+async function mock(page, { openSections = true, target = page } = {}) {
+  persistUploads = false; storedImages = []
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
   testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
   sendLogCalls = []; analyticsCalls = []
@@ -477,14 +522,15 @@ async function mock(page, { openSections = true } = {}) {
   overviewOverride = null
   reportsOverride = null
   libraryEntries = []; libraryWrites = []; channelCreates = []
-  await page.addInitScript(() => {
+  // target: sayfa (varsayılan) ya da bağlam — Görsel paneli testi açılır pencereyi de aynı sahte sunucuya bağlar
+  await target.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
-  if (openSections) await seedOpenSections(page)
-  await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
+  if (openSections) await seedOpenSections(target)
+  await target.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
     const req = route.request()
     const p = new URL(req.url()).pathname
-    if (p === '/api/tech-error-reports/images/501') {
+    if (/^\/api\/tech-error-reports\/images\/\d+$/.test(p)) {
       await route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
       return
     }
@@ -589,7 +635,10 @@ async function mock(page, { openSections = true } = {}) {
         if (put.auto) autoSaves.push(put)
         else savedReport = { ...put, autoBefore: autoSaves.length }
         body = { success: true, data: { version: (put.version ?? 4) + 1, changed: true, updated_at: '2026-10-13T09:00:00Z', values: put.values } }
-      } else body = { success: true, data: reportOverride || REPORT }
+      } else {
+        const base = reportOverride || REPORT
+        body = { success: true, data: persistUploads ? { ...base, images: storedImages } : base }
+      }
     } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[^/]+$/.test(p) && req.method() === 'POST') {
       const slotId = decodeURIComponent(p.split('/').pop())
       uploads.push(req.headers()['content-type'] || '')
@@ -597,6 +646,7 @@ async function mock(page, { openSections = true } = {}) {
       uploadBodies.push(req.postDataBuffer() || Buffer.alloc(0))
       body = { success: true, data: { id: 500 + uploads.length, slot_id: slotId, content_type: 'image/png', file_name: `${slotId}.png`,
         width: 1, height: 1, size_bytes: PNG.length } }
+      if (persistUploads) storedImages = [...storedImages.filter((i) => i.slot_id !== slotId), body.data]
     } else if (p === '/api/tech-error-reports/reports/100/mail-preview') {
       body = { success: true, data: { subject: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Eylül 2026`, delivery: 'TEAM',
         to: ['dijital-kanallar@example.com'], cc: [], to_count: 1, cc_count: 0, recipients_hidden: false, problem: null,
@@ -1779,6 +1829,143 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma (görsel)').toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/channel-reports-trend-${vp.name}.png` })
       await block.screenshot({ path: `test-results/channel-reports-trend-block-${vp.name}.png` })
+    })
+
+    test('ekrandan görsel alma: yapıştır; ekrandan al + kırp (gerçek tuval); Görsel paneli + iki yönlü eşitleme; sığar', async ({ page, context }) => {
+      test.setTimeout(180_000)
+      await mockDisplayCapture(context)
+      await mock(page, { target: context })
+      persistUploads = true
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const paste = editor.locator('[data-slot-id="monthly-tx"]')
+      await expect(paste).toBeVisible({ timeout: 20_000 })
+
+      // 1) Yapıştırma (Ctrl/⌘+V'nin olayı): yuvanın yükleme yolundan, pano adıyla, ölçü aynen
+      await paste.evaluate((el, b64) => {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+        const dt = new DataTransfer()
+        dt.items.add(new File([bytes], 'image.png', { type: 'image/png' }))
+        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+      }, stripedPng(300, 200).toString('base64'))
+      await expect.poll(() => uploads.length, { timeout: 15_000 }).toBe(1)
+      expect(uploadSizes[0]).toMatchObject({ w: 300, h: 200 })
+      expect(uploadBodies[0].toString('latin1')).toMatch(/filename="monthly-tx-pano-\d{8}-\d{6}\.png"/)
+      await expect(paste).toHaveAttribute('data-has-image', 'true')
+
+      if (vp.width < 768) {
+        // Telefonda ekrandan alma ve panel yok (bozuk düğme bırakılmaz); yapıştırma yolu ve "Panodan yapıştır" var
+        await expect(editor.locator('[data-slot="te-image-snip"]')).toHaveCount(0)
+        await expect(editor.locator('[data-slot="te-images-panel-open"]')).toHaveCount(0)
+        await expect(paste.locator('[data-slot="te-image-paste"]')).toBeVisible()
+        await page.waitForTimeout(200)
+        expect(await page.evaluate(overflowX), 'yatay taşma (telefon, görsel)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (telefon, görsel)').toEqual([])
+        expect(await page.evaluate(smallTargets, '[data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
+        return
+      }
+
+      // 2) Ekrandan al: ilk basış paylaşımı başlatır (sahte getDisplayMedia = renk bloklu tuvalin akışı), kırpma penceresi
+      const snipSlot = editor.locator('[data-slot-id="tech-errors"]')
+      await snipSlot.locator('[data-slot="te-image-snip"]').click()
+      const dlg = page.locator('[data-slot="te-cap-dialog"]')
+      await expect(dlg).toBeVisible({ timeout: 15_000 })
+      await expect(editor.locator('[data-slot="te-cap-chip"]').first()).toContainText(/Ekran paylaşımı açık|Screen sharing on/)
+      const stage = dlg.locator('[data-slot="te-cap-stage"]')
+      await expect(stage).toHaveAttribute('data-source', `${CAP_W}x${CAP_H}`)
+      await expect(dlg.locator('[data-slot="alert"]')).toHaveCount(0)   // bloklu kare "boş" sayılmaz
+      await page.waitForTimeout(300)
+      const db = await dlg.boundingBox()
+      expect(db.x, 'pencere solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(db.y + db.height, 'pencere altta taşmaz').toBeLessThanOrEqual(vp.height + 1)
+      expect(db.x + db.width, 'pencere sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-cap-dialog"]'), 'kırpılan metin (kırpma)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-cap-dialog"]'), 'küçük hedef (kırpma)').toEqual([])
+      // Tutamaklar ≥ 24 px (dokunmatikte 40)
+      const handle = await dlg.locator('[data-handle="se"]').boundingBox()
+      expect(handle.width).toBeGreaterThanOrEqual(vp.touch ? 39.5 : 23.5)
+      // Sürükleyerek bölge seç (tamamı seçiliyken sürükleme YENİ seçim)
+      const sb = await stage.boundingBox()
+      await page.mouse.move(sb.x + sb.width * 0.2, sb.y + sb.height * 0.3)
+      await page.mouse.down()
+      await page.mouse.move(sb.x + sb.width * 0.55, sb.y + sb.height * 0.5, { steps: 6 })
+      await page.mouse.move(sb.x + sb.width * 0.7, sb.y + sb.height * 0.8, { steps: 6 })
+      await page.mouse.up()
+      const [rx, ry, rw, rh] = (await stage.getAttribute('data-rect')).split(',').map(Number)
+      expect(rw).toBeGreaterThan(CAP_W * 0.4)
+      expect(rh).toBeGreaterThan(CAP_H * 0.4)
+      await expect(dlg.locator('[data-slot="te-cap-size"]')).toContainText(`${rw} × ${rh}`)
+      await page.screenshot({ path: `test-results/te-cap-dialog-${vp.name}.png` })
+      await dlg.locator('[data-slot="te-cap-confirm"]').click()
+      await expect.poll(() => uploads.length, { timeout: 20_000 }).toBe(2)
+      await expect(dlg).toHaveCount(0)
+      expect(uploadBodies[1].toString('latin1')).toMatch(/filename="tech-errors-ekran-\d{8}-\d{6}\.png"/)
+      // Yüklenen PNG = seçilen bölge, piksel piksel (ölçek yok): ölçü aynı; blok merkezlerinin rengi kaynaktaki bloğun rengi
+      // (video çözümü renk dönüşümü yapar — küçük pay)
+      const img = decodePng(uploadBodies[1])
+      expect(img, 'yüklenen PNG çözülür').not.toBeNull()
+      expect([img.w, img.h]).toEqual([rw, rh])
+      let checked = 0
+      for (let by = 0; by * CAP_BH < CAP_H; by++) {
+        for (let bx = 0; bx * CAP_BW < CAP_W; bx++) {
+          const cx = bx * CAP_BW + CAP_BW / 2
+          const cy = by * CAP_BH + CAP_BH / 2
+          if (cx < rx + 4 || cy < ry + 4 || cx >= rx + rw - 4 || cy >= ry + rh - 4) continue
+          const got = img.px(cx - rx, cy - ry)
+          const want = CAP_COLORS[(bx + by * 3) % CAP_COLORS.length]
+          got.forEach((v, k) => expect(Math.abs(v - want[k]), `blok ${bx},${by} kanal ${k}: ${got} ≠ ${want}`).toBeLessThanOrEqual(14))
+          checked++
+        }
+      }
+      expect(checked, 'denetlenen blok').toBeGreaterThanOrEqual(4)
+      await expect(snipSlot).toHaveAttribute('data-has-image', 'true')
+      // İkinci yuva seçici AÇMADAN o anki kareyi alır
+      await editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-snip"]').click()
+      await expect(dlg).toBeVisible()
+      expect(await page.evaluate(() => window.__capCalls)).toBe(1)
+      await dlg.locator('[data-slot="te-cap-cancel"]').click()
+      await expect(dlg).toHaveCount(0)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (görsel + çip)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (görsel + çip)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-report"]'), 'küçük hedef (görsel + çip)').toEqual([])
+      await editor.locator('[data-slot="te-images"]').first().screenshot({ path: `test-results/te-cap-section-${vp.name}.png` })
+      // "Görsel paneli" ilk görsel bölümünün başlık satırında (bölüm kapalıyken de görünür): başlığın içinde ve kartın sınırında
+      const head = await editor.locator('[data-slot="te-images"]').first().locator('[data-slot="card-header"]').boundingBox()
+      const panelBtn = await editor.locator('[data-slot="te-images-panel-open"]').boundingBox()
+      expect(panelBtn.y).toBeGreaterThanOrEqual(head.y - 1)
+      expect(panelBtn.y + panelBtn.height).toBeLessThanOrEqual(head.y + head.height + 1)
+      expect(panelBtn.x + panelBtn.width).toBeLessThanOrEqual(head.x + head.width + 1)
+      await editor.locator('[data-slot="te-images"]').first().locator('[data-slot="card-header"]')
+        .screenshot({ path: `test-results/te-cap-header-${vp.name}.png` })
+      // Durdur: akışın izleri kapanır, çip kalkar
+      await editor.locator('[data-slot="te-cap-stop"]').first().click()
+      await expect(editor.locator('[data-slot="te-cap-chip"]')).toHaveCount(0)
+      expect(await page.evaluate(() => window.__capStopped)).toBe(true)
+
+      // 3) Görsel paneli: ayrı pencere, yalnız görsel yuvaları (kenar çubuğu yok); panelde yükleme düzenleyiciye yansır
+      const [panel] = await Promise.all([
+        context.waitForEvent('page'),
+        editor.locator('[data-slot="te-images-panel-open"]').click(),
+      ])
+      await panel.setViewportSize({ width: 520, height: 900 })
+      await expect(panel.locator('[data-slot="te-panel"][data-state="ready"]')).toBeVisible({ timeout: 20_000 })
+      expect(new URL(panel.url()).searchParams.get('te_view')).toBe('images')
+      await expect(panel.locator('[data-slot="te-image-slot"]')).toHaveCount(3)
+      await expect(panel.locator('[data-slot="sidebar"]')).toHaveCount(0)
+      await expect(panel.locator('[data-slot-id="monthly-tx"]')).toHaveAttribute('data-has-image', 'true')
+      await expect(panel.locator('[data-slot="te-image-snip"]').first()).toBeVisible()
+      await expect(panel).toHaveTitle(/Görsel paneli|Image panel/)
+      await panel.locator('[data-slot-id="daily-errors"] input[type="file"]').setInputFiles({ name: 'gunluk.png', mimeType: 'image/png',
+        buffer: stripedPng(400, 200) })
+      await expect.poll(() => uploads.length, { timeout: 15_000 }).toBe(3)
+      await expect(editor.locator('[data-slot-id="daily-errors"]')).toHaveAttribute('data-has-image', 'true', { timeout: 10_000 })
+      await panel.waitForTimeout(300)
+      expect(await panel.evaluate(overflowX), 'yatay taşma (panel 520)').toBeLessThanOrEqual(1)
+      expect(await panel.evaluate(clipped, '[data-slot="te-panel"]'), 'kırpılan metin (panel)').toEqual([])
+      if (vp.touch) expect(await panel.evaluate(smallTargets, '[data-slot="te-panel"]'), 'küçük hedef (panel)').toEqual([])
+      await panel.screenshot({ path: `test-results/te-images-panel-${vp.name}.png` })
+      await panel.close()
     })
 
     test('takım şablon kütüphanesi (D17) + raporun şablon sürümü (D19): yönetim penceresi, yeni kanal kaynağı, kütüphaneye kaydet, varsayılana dön; sığar, kesilmez', async ({ page }) => {

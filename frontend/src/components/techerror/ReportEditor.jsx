@@ -14,6 +14,8 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
+import { useImagesSync } from './capture/useImagesSync.js'
+import { KIND_REPORT, postImagesChanged } from './capture/imageSync.js'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import {
@@ -404,6 +406,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setPreviewRev(bumpMailPreviewContent(reportId))
     setData((d) => (d ? { ...d, report: { ...d.report, status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d))
   }, [reportId])
+  // Görsel paneli (2026-10-18): öteki penceredeki yükleme / silme yalnız görsel listesini yeniden okur (taslağa dokunmaz)
+  useImagesSync(reportId, onImagesChange)
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
   const resolveText = useCallback((p) => resolveTextPlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
@@ -1015,7 +1019,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       // Onay sırasında yazılan değişiklik şablon uygulamasıyla kaybolmasın
       if (!isSavedJson(canonJson(draftRef.current))) { toast.error(t('te.fixUnsavedFirst')); return }
       const res = await api.techErrors.refreshTemplate(reportId, baseRef.current.version)
-      if (res?.success) { toast.success(t('te.applyTemplateDone')); dropBackup(reportId); await load() }
+      if (res?.success) { toast.success(t('te.applyTemplateDone')); dropBackup(reportId); postImagesChanged(reportId, KIND_REPORT); await load() }
       else if (res?.code === 'CONCURRENT_MODIFICATION') setConflict(true)
       else toast.error(res?.error || t('te.saveError'), { details: res?.errorInfo })
     } catch (e) {
@@ -1039,6 +1043,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         skipFlush.current = true
         clearTimeout(backupTimer.current)
         dropBackup(reportId)
+        postImagesChanged(reportId, KIND_REPORT)
         toast.success(t('te.reportDeleted'))
         onBack(channel?.id)
       } else {

@@ -79,6 +79,7 @@ const PROPS = {
   CertificateModal: { domain: 'example.com', onClose: () => {} },
   CaDiversityModal: { certs: [], onClose: () => {} },
   RenewalPlanModal: { row: { domain: 'example.com' }, onClose: () => {} },
+  ImagesPanelPage: { reportId: '100' },   // Kanal raporlarının Görsel paneli (2026-10-18) — rapor kimliği adresten
 }
 
 beforeEach(() => { cleanup() })
