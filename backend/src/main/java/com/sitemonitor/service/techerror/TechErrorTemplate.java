@@ -308,7 +308,7 @@ public final class TechErrorTemplate {
 
     /**
      * Saklı JSON'u HOŞGÖRÜLÜ okur ama varsayılana DÜŞMEZ (2026-10-18, takım kütüphanesi incelemesi): JSON boş / okunamıyor,
-     * kök nesne değil ya da tek bir bölümü bile okunamıyorsa boş döner. Kullanıcının SEÇTİĞİ bir kayıt (kütüphane şablonu)
+     * kök nesne değil ya da hiçbir bölümü okunamıyorsa boş döner. Kullanıcının SEÇTİĞİ bir kayıt (kütüphane şablonu)
      * için: {@link #fromStored} burada sistem şablonunu "seçtiğiniz kayıt" diye verirdi — çağıran "okunamadı" der.
      */
     public static Optional<Template> readStored(String json) {

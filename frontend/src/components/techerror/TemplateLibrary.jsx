@@ -423,7 +423,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
       message: t('te.lib.deleteBody', e.name) + (e.is_default ? `\n\n${t('te.lib.deleteDefault')}` : ''),
       variant: 'danger', confirmText: t('te.delete'), cancelText: t('te.cancel'),
     })
-    if (!ok) { focusAfter.current = [e.id]; return }
+    if (!ok) { restoreFocus([e.id]); return }   // vazgeç: odak o satırın menüsüne (ref atamak efekti tetiklemezdi)
     // Silinen satırın yerine bir sonraki, yoksa önceki satırın menüsü; silme başarısızsa aynı satır (ilk aday)
     const i = lib.entries.findIndex((x) => String(x.id) === String(e.id))
     const next = lib.entries[i + 1]?.id
@@ -441,7 +441,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
     if (clean === rename.entry.name) { setRename(null); return }
     const r = await run(`r${rename.entry.id}`,
       () => api.techErrors.updateTeamTemplate(teamId, rename.entry.id, { name: clean, version: rename.entry.version }),
-      () => t('te.lib.renamed', clean))
+      () => t('te.lib.renamed', clean), [rename.entry.id])
     if (r && r.field) setRename((x) => (x ? { ...x, error: r.field } : x))
     else setRename(null)        // kaydedildi ya da çakışma / bulunamadı: bildirim gösterildi, liste yeniden okundu
   }

@@ -119,6 +119,16 @@ describe('yönetim penceresi — işlem sonrası liste yerinde, odak geri döner
     await waitFor(() => expect(document.activeElement).toBe(within(dlg).getByRole('button', { name: 'Kapat' })))
   })
 
+  it('sil → Vazgeç: odak o satırın menü tetiğine döner (gövdeye düşmez), hiçbir şey silinmez', async () => {
+    const dlg = await draw()
+    const trigger = within(dlg).getByRole('button', { name: `${LONG_NAME} — İşlemler` })
+    pressMenuTrigger(trigger)
+    fireEvent.click(await screen.findByRole('menuitem', { name: `Sil: ${LONG_NAME}` }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Kütüphane şablonu silinsin mi?' })).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    expect(te().deleteTeamTemplate).not.toHaveBeenCalled()
+  })
+
   it('yeniden adlandır: ad penceresi kapanınca (kayıt ya da vazgeç) odak o satırın menü tetiğine döner', async () => {
     te().updateTeamTemplate.mockResolvedValue({ success: true, data: { ...entry(6, 'POS kanalı'), changed: true } })
     const dlg = await draw()
