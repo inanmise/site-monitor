@@ -57,6 +57,7 @@ export default function TemplateImportDialog({ open, channelId, draftLang = null
   const [selected, setSelected] = useState('')
   const [busy, setBusy] = useState(false)
   const [gone, setGone] = useState(null)
+  const [unreadable, setUnreadable] = useState(null)    // okunamayan (bozuk) kaynak şablonun sunucu metni
   const seq = useRef(0)
 
   const load = useCallback(async () => {
@@ -73,7 +74,7 @@ export default function TemplateImportDialog({ open, channelId, draftLang = null
   }, [t])
 
   useEffect(() => {
-    if (open) { setSelected(''); setGone(null); load() } else seq.current++
+    if (open) { setSelected(''); setGone(null); setUnreadable(null); load() } else seq.current++
   }, [open, load])
 
   const inactiveSuffix = t('te.imp.inactive')
@@ -86,8 +87,14 @@ export default function TemplateImportDialog({ open, channelId, draftLang = null
     if (!chosen || busy) return
     setBusy(true)
     setGone(null)
+    setUnreadable(null)
     try {
-      const res = await api.techErrors.template(chosen.id)
+      // KATI okuma (inceleme 2026-10-18): bozuk kaynak şablon sistem şablonuna düşmez — 409 TEMPLATE_UNREADABLE, hiçbir şey yüklenmez
+      const res = await api.techErrors.template(chosen.id, { strict: true })
+      if (res?.success === false && res?.code === 'TEMPLATE_UNREADABLE') {
+        setUnreadable(res.error || t('te.imp.unreadable', chosen.name || `#${chosen.id}`))
+        return
+      }
       // Kanal bu arada silinmiş ya da erişim kalkmış (başka takımın kanalı da 404): listeden çıkar, söyle
       if (res?.success === false && res?.status === 404) {
         const removed = chosen
@@ -142,6 +149,11 @@ export default function TemplateImportDialog({ open, channelId, draftLang = null
               <span data-slot="te-tpl-import-gone">{t('te.imp.gone', gone)}</span>
             </AlertBanner>
           )}
+          {unreadable && (
+            <AlertBanner tone="warning" className="mb-0" title={t('te.imp.unreadableTitle')}>
+              <span data-slot="te-tpl-import-unreadable">{unreadable}</span>
+            </AlertBanner>
+          )}
           {list.channels && options.length === 0 && (
             <p className="m-0 text-sm text-muted-foreground" data-slot="te-tpl-import-empty">{t('te.imp.none')}</p>
           )}
@@ -149,7 +161,7 @@ export default function TemplateImportDialog({ open, channelId, draftLang = null
             <div className="flex min-w-0 flex-col gap-1.5" data-touch-picker="">
               <span id="te-tpl-import-label" className="text-sm font-semibold">{t('te.imp.source')}</span>
               <SearchableSelect ariaLabelledBy="te-tpl-import-label" value={selected} options={options} wrapLabels disabled={busy}
-                placeholder={t('te.imp.placeholder')} onChange={(v) => setSelected(String(v))} />
+                placeholder={t('te.imp.placeholder')} onChange={(v) => { setSelected(String(v)); setUnreadable(null) }} />
               {chosen && (
                 <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-tpl-import-meta">
                   {t('te.imp.meta', chosen.lang === 'en' ? t('te.tpl.langEn') : t('te.tpl.langTr'),

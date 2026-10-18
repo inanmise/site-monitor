@@ -28,8 +28,8 @@ import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
 import {
   TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, exportFileName, exportTable,
-  filterChannels, filtersActive, hasExecutives, normalizeFilter, normalizeSort, searchChannels, sortChannels, teamEmailState,
-  teamVisibleState, teamsOf,
+  countOrNull, filterChannels, filtersActive, hasExecutives, missingTeamLabelFor, missingTeamOrdinals, normalizeFilter, normalizeSort, onlyDeletedTeams, searchChannels,
+  sortChannels, teamEmailState, teamVisibleState, teamsOf,
 } from './techErrorSettingsModel.js'
 import { downloadBlob, downloadCsv, toCsv } from '../../utils/csvExport.js'
 import { clientFailure } from '../../utils/errorMessages.js'
@@ -132,7 +132,17 @@ export default function TechErrorReportSettings({ readOnly = false }) {
 
   // Takım dizini okunamazsa adlar kanal satırlarından gelir ("#12" yerine takım adı)
   const teamList = useMemo(() => (directory.length ? directory : teamsFromChannels(settings?.channels)), [directory, settings])
-  const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam')), [teamList, draft, t])
+  // Rehberde olmayan SEÇİLİ kimlik (inceleme 2026-10-18): rehber okunduysa takım silinmiştir ("Silinmiş takım"); okunamadıysa
+  // bilinmez ("Takım adı okunamadı") — asla çıplak "#12". Sunucu silinmiş kimliği kayıtta sessizce düşürür. Numara SAYFA
+  // genelinde tek haritadan (2. tur): kayıtlı görünürlük + hatırlatma listelerinin birleşimi, kimliğe göre artan — iki seçicide
+  // aynı takım aynı numarayı taşır, çip kaldırılınca numaralar kaymaz
+  const missingOrdinals = useMemo(() => missingTeamOrdinals([settings?.ids, rem?.data?.team_ids], teamList, [draft]),
+    [settings, rem, teamList, draft])
+  const missingTeamLabel = useMemo(() => missingTeamLabelFor(missingOrdinals, directory.length > 0, t), [missingOrdinals, directory, t])
+  // Kayıtlı kısıt yalnız silinmiş takımlardan oluşuyor (inceleme 2026-10-18): modülü şu an yalnız kurum geneli görüntüleyiciler görür
+  const visibilityOnlyDeleted = !!settings && onlyDeletedTeams(settings.ids, directory)
+  const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam'), missingTeamLabel),
+    [teamList, draft, t, missingTeamLabel])
   const dirty = !!settings && isDirty(settings.ids, draft)
   const locked = !!settings?.readOnly
 
@@ -254,7 +264,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
         {loadError && !settings && (
           <StatusBlock tone="danger" role="alert" icon={CircleAlert} title={t('te.set.unreadableTitle')} description={String(loadError)}
             className="py-8"
-            actions={<Button type="button" variant="outline" onClick={load} className={TOUCH} data-slot="tes-retry"><RefreshCw aria-hidden="true" /> {t('te.retry')}</Button>} />
+            actions={<Button type="button" variant="outline" onClick={load} disabled={loading || saving || remSaving} className={TOUCH} data-slot="tes-retry"><RefreshCw aria-hidden="true" /> {t('te.retry')}</Button>} />
         )}
         {!settings && !loadError && (
           <div role="status" aria-live="polite" className="flex flex-col gap-3" data-slot="tes-skeleton">
@@ -268,7 +278,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
           <>
             {loadError && (
               <AlertBanner tone="danger" title={t('te.refreshFailed')} className="mb-0"
-                actions={<Button type="button" variant="outline" size="sm" className={cn('h-9 sm:h-8', TOUCH)} onClick={load}><RefreshCw aria-hidden="true" />{t('te.retry')}</Button>}>
+                actions={<Button type="button" variant="outline" size="sm" className={cn('h-9 sm:h-8', TOUCH)} onClick={load}
+                  disabled={loading || saving || remSaving} data-slot="tes-refresh-retry"><RefreshCw aria-hidden="true" />{t('te.retry')}</Button>}>
                 {String(loadError)}
               </AlertBanner>
             )}
@@ -285,6 +296,11 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                 )}
               </Field>
             </div>
+            {visibilityOnlyDeleted && (
+              <div data-slot="tes-only-deleted">
+                <AlertBanner tone="warning" className="mb-0" title={t('te.set.onlyDeletedTitle')}>{t('te.set.onlyDeleted')}</AlertBanner>
+              </div>
+            )}
             {draft.length === 0 && (
               <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground" data-slot="tes-everyone">
                 <Users aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
@@ -301,7 +317,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       {/* 2 — Hatırlatmalar ve posta sınırları (12. sürüm) */}
       {settings && rem && (
         <TechErrorReminderSettings state={rem} teams={teamList} readOnly={locked} onDirtyChange={setRemDirty}
-          onSaving={onRemSaving} onSaved={onRemSaved} onUnsupported={onRemUnsupported} onRetry={load} />
+          onSaving={onRemSaving} onSaved={onRemSaved} onUnsupported={onRemUnsupported} onRetry={load}
+          retryDisabled={loading || saving || remSaving} missingTeamLabel={missingTeamLabel} />
       )}
 
       {/* 3 — Kanallar ve onay akışı (özet) */}
@@ -501,18 +518,22 @@ function VisibilityBadge({ ch }) {
   return <ToneBadge tone="muted" className={CHIP} data-slot="tes-visibility" data-state="unknown">{t('te.set.visibilityUnknown')}</ToneBadge>
 }
 
-/** Onay akışı: yönetici alıcı sayısı + PO onaylayıcı sayısı (metinler eski ekranla aynı). */
+/**
+ * Onay akışı: yönetici alıcı sayısı + PO onaylayıcı sayısı (metinler eski ekranla aynı). Okunamayan / gelmeyen sayı "—"
+ * (inceleme 2026-10-18: bilinmeyen sayı "PO yok" / "onay akışı yok" diyordu — bilinmiyor ≠ 0).
+ */
 function FlowBadges({ ch }) {
   const t = useT()
-  const exec = Number(ch.executive_count) || 0
-  const po = Number(ch.approver_count) || 0
+  const exec = countOrNull(ch.executive_count)
+  const po = countOrNull(ch.approver_count)
+  const label = (n, col, none) => (n == null ? `${t(col)}: —` : n > 0 ? `${t(col)}: ${n}` : t(none))
   return (
     <div className="flex flex-wrap gap-1.5" data-slot="tes-flow">
-      <Badge variant={exec > 0 ? 'secondary' : 'outline'} className={CHIP} data-slot="tes-exec">
-        {exec > 0 ? `${t('te.set.col.exec')}: ${exec}` : t('te.set.noFlow')}
+      <Badge variant={exec > 0 ? 'secondary' : 'outline'} className={CHIP} data-slot="tes-exec" data-state={exec == null ? 'unknown' : undefined}>
+        {label(exec, 'te.set.col.exec', 'te.set.noFlow')}
       </Badge>
-      <Badge variant={po > 0 ? 'secondary' : 'outline'} className={CHIP} data-slot="tes-approvers">
-        {po > 0 ? `${t('te.set.col.approvers')}: ${po}` : t('te.set.noApprover')}
+      <Badge variant={po > 0 ? 'secondary' : 'outline'} className={CHIP} data-slot="tes-approvers" data-state={po == null ? 'unknown' : undefined}>
+        {label(po, 'te.set.col.approvers', 'te.set.noApprover')}
       </Badge>
     </div>
   )

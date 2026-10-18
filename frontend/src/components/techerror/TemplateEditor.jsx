@@ -433,9 +433,15 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
    */
   async function resetTo(choice) {
     const fromLib = choice?.kind === 'library'
+    // Dil uyarısı (inceleme 2026-10-18 — "başka kanaldan şablon al"daki gibi): yüklenecek şablonun dili taslağınkinden
+    // farklıysa onay metni rapor dilinin ve ay adlarının değişeceğini söyler (kütüphane satırı dili taşır)
+    const targetLang = fromLib ? choice.entry?.lang : choice?.lang
+    const draftLang = draft?.lang
+    const langDiffers = (targetLang === 'tr' || targetLang === 'en') && (draftLang === 'tr' || draftLang === 'en') && targetLang !== draftLang
+    const langWarn = langDiffers ? ` ${t('te.lib.resetLangWarn', targetLang === 'en' ? t('te.tpl.langEn') : t('te.tpl.langTr'))}` : ''
     const ok = await showConfirm({
       title: fromLib ? t('te.lib.resetTitle') : t('te.tpl.resetTitle'),
-      message: fromLib ? t('te.lib.resetBody', choice.entry.name) : t('te.tpl.resetBody'),
+      message: (fromLib ? t('te.lib.resetBody', choice.entry.name) : t('te.tpl.resetBody')) + langWarn,
       variant: 'warning',
       confirmText: fromLib ? t('te.lib.resetConfirm') : t('te.tpl.resetConfirm'), cancelText: t('te.cancel'),
     })

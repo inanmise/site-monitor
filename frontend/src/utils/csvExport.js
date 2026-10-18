@@ -54,7 +54,9 @@ export function downloadText(filename, text, type = 'text/plain;charset=utf-8') 
 /**
  * Hazır bir Blob'u indir (2026-10-17: kanalın yıl arşivi ZIP'i, Ayarlar kanal özeti Excel'i) — {@link downloadCsv} ile aynı
  * yol. Büyük dosyada (yıllık PDF arşivi) tarayıcı indirmeyi başlatmadan adres iptal edilmesin diye bağlantı 60 sn tutulur.
- * jsdom'da (test) sessizce çıkar. Yukarıdaki gövdeler DEĞİŞMEDİ.
+ * Fırlatmaz; indirme başlatıldıysa `true`, ortam izin vermediyse (jsdom'da `createObjectURL` yok, bellek, kısıtlı gömülü
+ * görünüm) `false` döner (inceleme 2026-10-18, 3. tur — "PDF indir" eskiden her durumda başarı sayılıyordu). Dönüşü
+ * okumayan eski çağıranlar değişmedi. Yukarıdaki gövdeler DEĞİŞMEDİ.
  */
 export function downloadBlob(filename, blob, revokeAfterMs = 60000) {
   try {
@@ -66,5 +68,8 @@ export function downloadBlob(filename, blob, revokeAfterMs = 60000) {
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), revokeAfterMs)
-  } catch { /* indirme ortamı yok */ }
+    return true
+  } catch {
+    return false   // indirme ortamı yok
+  }
 }

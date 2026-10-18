@@ -7,10 +7,10 @@ import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 // Kanalın yıl arşivi — ZIP (2026-10-17, C12): kanal görünümünün rapor araç çubuğunda "Yıl arşivi (ZIP)" menüsü; seçilen
 // yılın PDF'leri SIRAYLA alınır (429 → 3 sn sonra yeniden), tarayıcıda paketlenir; durum satırı "PDF'ler hazırlanıyor… n / N"
 // + Vazgeç; eksik aylar missing.txt + bildirim; iptalde hiçbir şey indirilmez. Paylaşımla okuyan da görür.
-const dl = vi.hoisted(() => ({ calls: [], throwWith: null }))
+const dl = vi.hoisted(() => ({ calls: [], throwWith: null, result: undefined }))
 vi.mock('../utils/csvExport.js', async (orig) => ({
   ...(await orig()),
-  downloadBlob: (name, blob) => { if (dl.throwWith) throw dl.throwWith; dl.calls.push({ name, blob }) },
+  downloadBlob: (name, blob) => { if (dl.throwWith) throw dl.throwWith; dl.calls.push({ name, blob }); return dl.result },
 }))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -53,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   dl.calls = []
   dl.throwWith = null
+  dl.result = undefined
   window.history.replaceState({}, '', '/?tab=channelreports&te_view=channel&te_ch=10')
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   te().reports.mockResolvedValue({ success: true, data: { channel: channel(10, 'Mobil Şube'), reports: REPORTS,
@@ -125,7 +126,9 @@ describe('kanal yıl arşivi (ZIP)', () => {
     await openMenu()
     fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
     const status = document.querySelector('[data-slot="te-year-zip-status"]')
-    await waitFor(() => expect(status).toHaveTextContent(/Sunucu başka PDF'ler hazırlıyor.*1 \/ 2/))
+    // Bekleme süresi GERÇEK değerle (inceleme 2026-10-18, 4. tur: "birkaç saniye" diyordu, tek bekleme 60 sn olabilir)
+    await waitFor(() => expect(status).toHaveTextContent(/PDF şu an hazırlanamıyor \(sunucu meşgul ya da PDF sınırı dolu\); 3 sn bekleniyor.*1 \/ 2/))
+    expect(status).not.toHaveTextContent(/birkaç saniye/)
     expect(te().pdfBlob).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
     await waitFor(() => expect(dl.calls).toHaveLength(1))
@@ -133,6 +136,20 @@ describe('kanal yıl arşivi (ZIP)', () => {
     const files = await unzipped(dl.calls[0].blob)
     expect(Object.keys(files)).toHaveLength(2)
     expect(Object.keys(files)).not.toContain('missing.txt')
+  })
+
+  it('4. tur: sunucunun önerdiği bekleme (Retry-After 42 sn) durum satırında söylenir; süre dolunca aynı ay yeniden istenir', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    te().pdfBlob
+      .mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 42, error: 'PDF sınırına ulaşıldı.' })
+      .mockImplementation(async (id) => pdfOf(id))
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    const status = document.querySelector('[data-slot="te-year-zip-status"]')
+    await waitFor(() => expect(status).toHaveTextContent(/42 sn bekleniyor, sonra yeniden denenecek… 1 \/ 2/))
+    await act(async () => { await vi.advanceTimersByTimeAsync(42_000) })
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    expect(te().pdfBlob.mock.calls.map((c) => c[0])).toEqual([2511, 2511, 2512])
   })
 
   it('Vazgeç: süren istek dönünce durur, kalan PDF\'ler istenmez, hiçbir şey indirilmez', async () => {
@@ -240,6 +257,17 @@ describe('kanal yıl arşivi (ZIP)', () => {
     expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'idle')
   })
 
+  it('inceleme 2026-10-18 (3. tur): tarayıcı ZIP indirmesini başlatmadıysa (downloadBlob false) başarı bildirimi YOK, açıklayıcı hata', async () => {
+    te().pdfBlob.mockImplementation(async (id) => pdfOf(id))
+    dl.result = false
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    expect(await screen.findByText(/Yıl arşivi hazırlandı ama tarayıcı indirmeyi başlatmadı/)).toBeInTheDocument()
+    expect(dl.calls).toHaveLength(1)
+    expect(screen.queryByText(/2025 arşivi indirildi/)).toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="te-year-zip-bar"]')).toHaveAttribute('data-state', 'idle'))
+  })
+
   it('bayat paket (dinamik import yüklenemedi): "Sayfa güncellendi; yenileyip tekrar deneyin."', async () => {
     te().pdfBlob.mockImplementation(async (id) => pdfOf(id))
     dl.throwWith = new TypeError('Failed to fetch dynamically imported module: https://sm.example/assets/fflate-abc123.js')
@@ -305,6 +333,37 @@ describe('kanal yıl arşivi (ZIP)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kanallara dön' }))
     await waitFor(() => expect(document.querySelector('[data-slot="te-channel"]')).toBeNull())
     expect(screen.queryByText(/Çıkarsanız iptal edilir/)).toBeNull()
+  })
+
+  it("inceleme 2026-10-18: arşiv sürerken \"Excel'e aktar\" kilitli (nedeni açıklamada); Excel hazırlanırken arşiv öğeleri kilitli — tek tıklamadan iki otomatik indirme olmaz", async () => {
+    const gate = deferred()
+    te().pdfBlob.mockImplementation(async (id) => { await gate.promise; return pdfOf(id) })
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '2025 — 2 rapor' }))
+    const xlsx = await screen.findByRole('button', { name: "Excel'e aktar" })
+    await waitFor(() => expect(xlsx).toBeDisabled())
+    expect(xlsx).toHaveAttribute('data-blocked', 'true')
+    expect(xlsx).toHaveAccessibleDescription(/Yıl arşivi hazırlanırken Excel'e aktarılamaz/)
+    fireEvent.click(xlsx)
+    expect(te().exportValues).not.toHaveBeenCalled()
+    gate.resolve()
+    await waitFor(() => expect(dl.calls).toHaveLength(1))
+    await waitFor(() => expect(xlsx).not.toBeDisabled())
+    expect(xlsx).not.toHaveAccessibleDescription(/Yıl arşivi hazırlanırken/)
+    // Excel hazırlanırken arşiv menüsünün öğeleri kilitli, başlık nedenini söyler
+    const ex = deferred()
+    te().exportValues.mockReturnValueOnce(ex.promise)
+    fireEvent.click(xlsx)
+    await screen.findByRole('button', { name: 'Excel hazırlanıyor…' })
+    pressMenuTrigger(screen.getByRole('button', { name: /Yıl arşivi \(ZIP\)/ }))
+    const items = await screen.findAllByRole('menuitem')
+    for (const item of items) expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByText('Excel dosyası hazırlanırken yıl arşivi başlatılamaz; o bitince bir yıl seçin.')).toBeInTheDocument()
+    fireEvent.click(items[0])
+    ex.resolve({ success: true, data: { columns: [], rows: [], reports: [], notes: [] } })
+    await screen.findByText(/Dışa aktarılacak değer yok/)
+    expect(te().pdfBlob).toHaveBeenCalledTimes(2)                       // yalnız ilk arşivin iki PDF'i
+    expect(dl.calls).toHaveLength(1)
   })
 
   it('raporu olmayan kanalda menü yok', async () => {

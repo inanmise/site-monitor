@@ -130,6 +130,26 @@ describe('şablon düzenleyici — başka kanaldan şablon al', () => {
     expect(screen.queryByText('Kanal bulunamadı.')).toBeNull()
   })
 
+  it('bozuk kaynak şablon (409 TEMPLATE_UNREADABLE, inceleme 2026-10-18): pencerede sunucu iletisi; HİÇBİR şey yüklenmez (sistem şablonu da), seçim değişince bant kalkar', async () => {
+    te().template.mockImplementation(async (id) => (String(id) === '20'
+      ? { success: false, status: 409, code: 'TEMPLATE_UNREADABLE', error: '“POS” kanalının şablonu okunamadı; kayıt bozulmuş olabilir. Sistem şablonu yerine kullanılmadı.' }
+      : templateResponse(channel(Number(id), 'Mobil'), 3)))
+    await openEditor()
+    const before = screen.getByLabelText('Rapor başlığı').value
+    const dlg = await openDialog()
+    await pick(dlg, `POS — ${TEAMS[0].name}`)
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Yükle' }))
+    const msg = await within(dlg).findByText(/“POS” kanalının şablonu okunamadı; kayıt bozulmuş olabilir/)
+    expect(msg).toHaveAttribute('data-slot', 'te-tpl-import-unreadable')
+    expect(within(dlg).getByText('Kaynak şablon okunamadı')).toBeInTheDocument()
+    expect(te().template).toHaveBeenLastCalledWith(20, { strict: true })
+    expect(screen.getByLabelText('Rapor başlığı')).toHaveValue(before)
+    expect(document.querySelector('[data-slot="te-tpl-save"]')).toBeDisabled()
+    expect(screen.getByRole('dialog', { name: 'Başka kanalın şablonunu al' })).toBeInTheDocument()
+    await pick(dlg, 'ATM — Kurumsal Kanallar')
+    await waitFor(() => expect(dlg.querySelector('[data-slot="te-tpl-import-unreadable"]')).toBeNull())
+  })
+
   it('yükleme: kaynak şablon kendi diliyle TASLAK olur; Kaydet bu kanalın ŞU ANKİ sürümüyle gider', async () => {
     await openEditor()
     expect(screen.getByRole('button', { name: 'Şablonu kaydet' })).toBeDisabled()
@@ -138,7 +158,8 @@ describe('şablon düzenleyici — başka kanaldan şablon al', () => {
     expect(within(dlg).getByText('Şablon dili: İngilizce · 2 bölüm · 3 alan · 0 görsel yuvası')).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: 'Yükle' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Başka kanalın şablonunu al' })).toBeNull())
-    expect(te().template).toHaveBeenLastCalledWith(20)
+    // KATI okuma (inceleme 2026-10-18): bozuk kaynak sistem şablonuna düşmesin
+    expect(te().template).toHaveBeenLastCalledWith(20, { strict: true })
     expect(screen.getByLabelText('Rapor başlığı')).toHaveValue('POS Channel Technical Errors - {month} {year}')
     expect(screen.getByLabelText('Rapor dili')).toHaveValue('en')
     expect(await screen.findByText('“POS” kanalının şablonu düzenleyiciye yüklendi. Kaydedene kadar hiçbir şey değişmez.')).toBeInTheDocument()

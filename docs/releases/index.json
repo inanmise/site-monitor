@@ -1,9 +1,100 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T02:29:29Z",
+  "generatedAt": "2026-10-18T11:23:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 774,
+  "count": 775,
   "releases": [
+    {
+      "version": "20.157.0",
+      "tag": "v20.157.0",
+      "releasedAt": "2026-10-18T11:23:14Z",
+      "commit": "f0bac301521617370be1c89d2199491f73fa7f9c",
+      "prevVersion": "20.156.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 9,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f0bac301",
+          "subject": "gönderim yoklaması bırakılan talebi \"gönderildi\" saymaz, ek Bilgi son yazılanla taşınır, önizleme görsel değişikliğinde eski isteğe katılmaz, yoklama yerel \"değişti\"yi ezmez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c9b17849",
+          "subject": "teknik hata raporu hatırlatma / onay incelemesi 3 — onay kartı yalnız şu anki içerik gönderildiyse \"gönderildi\" der, aralık dışı değer tek kayıtla düzelir, silinmiş takım numarası sayfa genelinde sab…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "170d840f",
+          "subject": "belirsiz gönderimde ek Bilgi yeniden açılışta korunur, eski kuyruk bu gönderim sayılmaz, önizleme kayıttan önceki isteğe katılmaz, süren gönderim yoklanır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "25211dc5",
+          "subject": "teknik hata raporu hatırlatma / onay incelemesi 2 — İstanbul günüyle bekleme süresi, belirteç başına damga izi, akışı kaldırılmış onay kartı, aralık dışı ayar uyarısı, silinmiş takımlar, özet satırı …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "13703dad",
+          "subject": "belirsiz gönderimde rapor iki kez gönderilmez, gönderim sürüyorsa bekler, önizleme çift açılışta 429 almaz, yıl arşivi Retry-After'a uyar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b70ed6e5",
+          "subject": "teknik hata raporu hatırlatma / onay incelemesi — email_status yalnız posta cevabı, akışsız kanalda onay durumu geçersiz, PDF eklenmeyen onay postası, her karar günlükte, tek sınır okuması, İstanbul …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8c9098e9",
+          "subject": "teknik hata raporu gönderim / dışa aktarım / şablon incelemesi — JSON akışı, indirme, gönderim penceresi, kişi başı PDF sınırı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1f5a9f7a",
+          "subject": "analizde aktif kanal kesimi ayrı bildirilir, ay şeridi aktif kanal sayısını söyler, aylar da kesildiyse pasif notu 'aylar etkilenmedi' demez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f219f52",
+          "subject": "analizde pasif kanallar aktiflerin ay penceresini daraltmaz, ayrı kesim işareti, takım seçici hafif sorguyla"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "557991e4",
+          "subject": "kanallar arası analizde pasif kanallar geçmiş aylarıyla görünür — rozetli, aktiflerin ardında"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.156.0",
       "tag": "v20.156.0",

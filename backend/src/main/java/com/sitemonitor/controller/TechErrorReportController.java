@@ -214,8 +214,9 @@ public class TechErrorReportController {
     // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────────
 
     /**
-     * Takımın (ya da okunabilen bütün takımların) AKTİF kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24
-     * BİTMİŞ ayı (önceki takvim ayıyla biter, İstanbul). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
+     * Takımın (ya da okunabilen bütün takımların) kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24 BİTMİŞ
+     * ayı (önceki takvim ayıyla biter, İstanbul): aktif kanallar her zaman, pasif kanallar yalnız penceresinde raporu varsa
+     * (aktiflerin ardından, satırda {@code active: false}; 2026-10-18 kullanıcı kararı). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
      * görünürlüğü uygulanır); okunamayan takım 404. Değerler raporların KENDİ şablonundan, aynı kimlik ve aynı türle;
      * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar (oran / değişim) rapor ekranı ve PDF gibi CANLI
      * hesaplanır (geçen ay düzeltildiyse analiz de güncel). {@code fresh=1} (Yenile) belleği en fazla 5 sn'de bir atlar.
@@ -297,6 +298,9 @@ public class TechErrorReportController {
             cm.put("name", s.name());
             cm.put("team_id", s.teamId());
             cm.put("team_name", names.get(s.teamId()));
+            // Pasif kanal (2026-10-18, kullanıcı kararı): yalnız penceresinde raporu varsa listelenir, aktiflerin ardından —
+            // arayüz "Pasif" rozeti gösterir (eski sunucuda alan yok → aktif sayılır)
+            cm.put("active", s.active());
             cm.put("points", new LinkedHashMap<>(s.values()));
             List<Map<String, Object>> reps = new ArrayList<>();
             for (TechErrorAnalyticsService.ReportRef rr : s.reports()) {
@@ -313,9 +317,16 @@ public class TechErrorReportController {
         }
         data.put("channels", chRows);
         data.put("channel_count", res.channelCount());
+        // `truncated` yalnız AYLAR kesildiğinde; pasif kanallar ayı asla kısaltmaz — sığmayanlar sıranın sonundan düşer ve
+        // ayrı işaretlenir (inceleme 2026-10-18)
         data.put("truncated", res.truncated());
+        data.put("channels_truncated", res.channelsTruncated());
+        data.put("inactive_omitted", res.inactiveOmitted());
+        data.put("active_count", res.activeCount());
+        data.put("active_omitted", res.activeOmitted());
         List<Map<String, Object>> teamRows = new ArrayList<>();
-        // Takım seçici: aktif kanalı olan okunabilen takımlar; seçili takımın aktif kanalı yoksa o da listede (seçim boş görünmesin)
+        // Takım seçici: aktif kanalı ya da İSTENEN pencerede raporu olan pasif kanalı bulunan okunabilen takımlar; seçili takım
+        // listede değilse o da eklenir (seçim boş görünmesin)
         List<Long> pickable = new ArrayList<>(res.teamsWithChannels());
         if (teamFilter != null && !pickable.contains(teamFilter)) pickable.add(teamFilter);
         for (Long id : pickable) {
@@ -432,7 +443,10 @@ public class TechErrorReportController {
             if (src == null) throw new FieldValidationException("copy_from", Msg.t(
                     "Şablonu kopyalanacak kanal bulunamadı. Listeden yeniden seçin.",
                     "The channel to copy the template from wasn't found. Pick it again from the list."));
-            template = TechErrorTemplate.fromStored(src.getTemplateJson());
+            // Okunamayan (bozuk) kaynak sistem şablonuna sessizce DÜŞMEZ (inceleme 2026-10-18; kütüphaneyle aynı kural):
+            // fromStored burada Türkçe varsayılanı "kopyalanan şablon" diye kanala yazardı → 409 TEMPLATE_UNREADABLE, alan copy_from
+            template = TechErrorTemplate.readStored(src.getTemplateJson())
+                    .orElseThrow(() -> unreadableChannelTemplate(src, "copy_from"));
             source = TechErrorReportService.TemplateSource.copy();
         } else {
             String lang = b.get("lang") == null ? null : String.valueOf(b.get("lang"));
@@ -569,17 +583,39 @@ public class TechErrorReportController {
         return ok(Map.of("deleted", true, "reports_deleted", removed));
     }
 
+    /**
+     * Kanalın şablonu. {@code strict=1} (inceleme 2026-10-18 — "Başka kanaldan şablon al" bu kanalı KAYNAK olarak okur):
+     * okunamayan (bozuk) şablon sistem şablonuna düşmez, 409 {@code TEMPLATE_UNREADABLE} döner — kullanıcı Türkçe
+     * varsayılanı "o kanalın şablonu" diye taslağına almaz. Parametresiz okuma (kanalın KENDİ şablon ekranı) hoşgörülü kalır:
+     * bozuk şablonlu kanalın ekibi düzenleyiciyi açıp şablonu "Varsayılana dön" ya da kaydetmeyle onarabilmeli. Eski pod
+     * parametreyi yok sayar (bugünkü hoşgörülü yanıt).
+     */
     @GetMapping("/channels/{id}/template")
-    public ResponseEntity<Map<String, Object>> getTemplate(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<Map<String, Object>> getTemplate(@PathVariable Long id,
+                                                           @RequestParam(value = "strict", required = false) String strict,
+                                                           HttpSession session) {
         requireRead(session);
         TechErrorChannel ch = readableChannel(id, session);
         if (ch == null) throw notFoundChannel();
+        boolean strictRead = strict != null && ("1".equals(strict.trim()) || "true".equalsIgnoreCase(strict.trim()));
+        Template template = strictRead
+                ? TechErrorTemplate.readStored(ch.getTemplateJson()).orElseThrow(() -> unreadableChannelTemplate(ch, null))
+                : TechErrorTemplate.fromStored(ch.getTemplateJson());
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("channel", channelDto(ch, teams.findById(ch.getTeamId()).orElse(null), session,
                 permissions.allows(session, CRUD, "edit")));
-        data.put("template", TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson())));
+        data.put("template", TechErrorTemplate.toMap(template));
         data.put("version", ch.getTemplateVersion());
         return ok(data);
+    }
+
+    /** Kaynak kanalın şablonu okunamadı (bozuk JSON / bölümsüz): 409 {@code TEMPLATE_UNREADABLE}; {@code field} doluysa alan hatası. */
+    static CodedConflictException unreadableChannelTemplate(TechErrorChannel ch, String field) {
+        String name = ch.getName() == null ? "" : ch.getName();
+        return new CodedConflictException("TEMPLATE_UNREADABLE", Msg.t(
+                "“" + name + "” kanalının şablonu okunamadı; kayıt bozulmuş olabilir. Sistem şablonu yerine kullanılmadı — başka bir kaynak seçin ya da o kanalın ekibi şablonunu kendi şablon ekranından yeniden kaydetsin.",
+                "The template of the channel “" + name + "” couldn't be read; the record may be damaged. The system template wasn't used instead — choose another source, or ask that channel's team to save its template again from its template screen."),
+                field == null ? null : Map.of("field", field));
     }
 
     @PutMapping("/channels/{id}/template")
@@ -1195,22 +1231,117 @@ public class TechErrorReportController {
     // ── PDF + gönderim ───────────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/reports/{id}/pdf")
-    public ResponseEntity<byte[]> pdf(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<?> pdf(@PathVariable Long id, HttpSession session) {
         requireRead(session);
         TechErrorReport r = readableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElse(null);
         String teamName = team == null ? null : team.getName();
-        // İzin görseller belleğe yüklenmeden ÖNCE alınır (renderPdf yükleyiciyi izinle çağırır)
-        TechErrorReportService.Rendered out = service.renderPdf(() -> service.pdfInput(r, ch, teamName));
-        byte[] pdf = out.pdf();
-        String name = TechErrorReportPdfWriter.fileName(ch.getName(), r.getReportYear(), r.getReportMonth(), out.meta().template().lang());
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-                        .filename(name, StandardCharsets.UTF_8).build().toString())
-                .body(pdf);
+        // Kişi başı sınır kapsam denetiminden SONRA (görülemeyen rapor 404, hak yemez)
+        String key = previewKey(session);
+        ResponseEntity<Map<String, Object>> limited = beginRender(key);
+        if (limited != null) return limited;
+        try {
+            // İzin görseller belleğe yüklenmeden ÖNCE alınır (renderPdf yükleyiciyi izinle çağırır)
+            TechErrorReportService.Rendered out;
+            try {
+                out = service.renderPdf(() -> service.pdfInput(r, ch, teamName));
+            } catch (TechErrorReportService.PdfBusyException e) {
+                cancelRenderReservation(key);
+                throw e;
+            }
+            byte[] pdf = out.pdf();
+            String name = TechErrorReportPdfWriter.fileName(ch.getName(), r.getReportYear(), r.getReportMonth(), out.meta().template().lang());
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                            .filename(name, StandardCharsets.UTF_8).build().toString())
+                    .body(pdf);
+        } finally {
+            rendering.remove(key);
+        }
+    }
+
+    /** Rapor PDF'i + e-posta önizlemesi: kişi başına dakikadaki en çok istek (bir yılın arşivi — 12 PDF — rahat sığar). */
+    static final int RENDER_PER_MINUTE = 20;
+    private static final long RENDER_WINDOW_MS = 60_000L;
+    /** Kişinin süren PDF'i varken ikinci isteğe önerilen bekleme ({@code Retry-After}, sn). */
+    static final long RENDER_BUSY_RETRY_SECONDS = 5L;
+    /** Kullanıcı → son istek zamanları (ms); pod başına, sınırlı (1 000 anahtarda süresi geçenler atılır, 10 000'de sıfırlanır). */
+    private final Map<String, Deque<Long>> renderCalls = new HashMap<>();
+    /** Şu an PDF'i / önizlemesi hazırlanan kullanıcılar (kişi başına tek); her giriş isteğin finally'sinde silinir. */
+    final Set<String> rendering = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Saat (testlerde ileri sarılır). */
+    java.util.function.LongSupplier renderClock = System::currentTimeMillis;
+
+    /**
+     * Kişi başı PDF üretim sınırı (inceleme 2026-10-18): rapor PDF'i ve e-posta önizlemesi her çağrıda tam bir PDF üretir ve
+     * pod'un iki PDF iznini GÖNDERİMLE paylaşır — tek kişinin döngüsü (yeniden deneyen betik, art arda tıklama) başkalarının
+     * gönderimini 429'a düşürmesin. Kişi başına aynı anda TEK ({@code rendering}), dakikada en çok {@link #RENDER_PER_MINUTE}
+     * (ikisi ortak). Doluysa 429 {@code RATE_LIMITED} + {@code Retry-After}; eşzamanlılık reddi ve PDF sırası dolu (429
+     * {@code PdfBusyException}) dakikalık hakkı yemez.
+     * Gönderim, onay ve test postası yollarında UYGULANMAZ (onlar kendi kurallarıyla). {@code null} = devam — çağıran
+     * {@code finally}'de {@code rendering.remove(key)} çağırır.
+     */
+    ResponseEntity<Map<String, Object>> beginRender(String key) {
+        if (!rendering.add(key)) {
+            long wait = RENDER_BUSY_RETRY_SECONDS;
+            return rateLimited(Msg.t(
+                    "Sizin için başka bir PDF ya da e-posta önizlemesi hazırlanıyor; kişi başına aynı anda bir tane hazırlanır. O bitince (yaklaşık " + wait + " saniye sonra) yeniden deneyin; bu deneme dakikalık hakkınızdan düşülmedi.",
+                    "Another PDF or e-mail preview is being prepared for you; one is prepared per person at a time. Try again when it has finished (in about " + wait + " seconds); this attempt did not count against your per-minute limit."),
+                    wait);
+        }
+        Long retry = reserveRender(key);
+        if (retry != null) {
+            rendering.remove(key);
+            return rateLimited(Msg.t(
+                    "PDF sınırına ulaşıldı: kişi başına dakikada en çok " + RENDER_PER_MINUTE + " rapor PDF'i ya da e-posta önizlemesi hazırlanır, çünkü PDF'ler gönderimle aynı sırayı paylaşır. " + retry + " saniye sonra yeniden deneyin.",
+                    "PDF limit reached: at most " + RENDER_PER_MINUTE + " report PDFs or e-mail previews per person per minute, because PDFs share one queue with sending. Try again in " + retry + " seconds."),
+                    retry);
+        }
+        return null;
+    }
+
+    private static ResponseEntity<Map<String, Object>> rateLimited(String message, long retryAfter) {
+        Map<String, Object> body = error(429, "RATE_LIMITED", message, null).getBody();
+        body.remove("data");
+        body.put("retry_after_seconds", retryAfter);
+        return ResponseEntity.status(429).header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter)).body(body);
+    }
+
+    /**
+     * PDF sırası dolu ({@link TechErrorReportService.PdfBusyException}): üretim yapılmadı, ayrılan hak geri verilir — yıl
+     * arşivinin 429 yeniden denemeleri (3 sn arayla) kişinin dakikalık bütçesini yemesin. Kişi başına aynı anda tek üretim
+     * olduğundan kuyruğun EN YENİ kaydı bu isteğinkidir.
+     */
+    void cancelRenderReservation(String key) {
+        synchronized (renderCalls) {
+            Deque<Long> q = renderCalls.get(key);
+            if (q != null && !q.isEmpty()) q.pollLast();
+        }
+    }
+
+    /** Sınır içindeyse isteği kaydeder ve {@code null} döner; doluysa en eski isteğin pencereden düşmesine kalan saniye (≥ 1). */
+    Long reserveRender(String key) {
+        long now = renderClock.getAsLong();
+        synchronized (renderCalls) {
+            if (renderCalls.size() > 1_000) {
+                renderCalls.values().removeIf(q -> {
+                    while (!q.isEmpty() && now - q.peekFirst() >= RENDER_WINDOW_MS) q.pollFirst();
+                    return q.isEmpty();
+                });
+                if (renderCalls.size() > 10_000) renderCalls.clear();
+            }
+            Deque<Long> q = renderCalls.computeIfAbsent(key, k -> new ArrayDeque<>());
+            while (!q.isEmpty() && now - q.peekFirst() >= RENDER_WINDOW_MS) q.pollFirst();
+            if (q.size() >= RENDER_PER_MINUTE) {
+                long ms = q.peekFirst() + RENDER_WINDOW_MS - now;
+                return Math.max(1L, (ms + 999) / 1000);
+            }
+            q.addLast(now);
+            return null;
+        }
     }
 
     /**
@@ -1226,7 +1357,19 @@ public class TechErrorReportController {
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         TechErrorReportSender.Delivery delivery = TechErrorApprovalService.approvalRequired(ch)
                 ? TechErrorReportSender.Delivery.EXECUTIVE : TechErrorReportSender.Delivery.TEAM;
-        TechErrorReportSender.Preview p = sender.preview(r, ch, team, delivery);
+        // Önizleme tam bir PDF üretir: rapor PDF'iyle aynı kişi başı sınır (aynı anda 1, dakikada RENDER_PER_MINUTE)
+        String key = previewKey(session);
+        ResponseEntity<Map<String, Object>> limited = beginRender(key);
+        if (limited != null) return limited;
+        TechErrorReportSender.Preview p;
+        try {
+            p = sender.preview(r, ch, team, delivery);
+        } catch (TechErrorReportService.PdfBusyException e) {
+            cancelRenderReservation(key);
+            throw e;
+        } finally {
+            rendering.remove(key);
+        }
         boolean hidden = SessionScope.viewableOnlyByGrant(session, r.getTeamId());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("subject", p.subject());
@@ -1560,7 +1703,8 @@ public class TechErrorReportController {
         Long uid = userId(session);
         boolean approver = uid != null && apps.stream().anyMatch(ap -> uid.equals(ap.id()));
         m.put("is_approver", approver);
-        m.put("can_decide", approver && "pending".equals(state) && permissions.allows(session, APPROVE, "execute"));
+        // Akış kaldırıldıysa (yönetici alıcısı yok) karar verilmez — servis de 409 APPROVAL_FLOW_REMOVED der (inceleme 2026-10-18)
+        m.put("can_decide", required && approver && "pending".equals(state) && permissions.allows(session, APPROVE, "execute"));
         // Onaylı ve onaydan beri değişmemiş rapor: yazabilen yöneticilere (yeniden) gönderebilir
         m.put("can_send_executive", canWrite && required && "approved".equals(state));
         return m;

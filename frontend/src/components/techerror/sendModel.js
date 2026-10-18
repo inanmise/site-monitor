@@ -49,6 +49,175 @@ export function parseExtraCc(raw) {
   return { addresses: out, error: null }
 }
 
+/**
+ * Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir (PDF sırası dolu,
+ * kişi başı sınır — gönderim talebi alınmadan reddedilir).
+ */
+const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED'])
+/**
+ * Sonucu BİLİNMEYEN hatalar (inceleme 2026-10-18, 3. tur): istek sunucuya ulaştı mı, gönderim oldu mu belli değil.
+ *  - ağ hatası / zaman aşımı / iptal (durum 0);
+ *  - 409 `SEND_IN_PROGRESS`: o an bir gönderim SÜRÜYOR — çoğu kez yanıtı kaybolan ilk isteğin kendisi;
+ *  - 503 `DB_UNAVAILABLE` (posta gitmiş, sonuç yazılamamış olabilir) ya da ağ geçidinin 502 / 503 / 504 sayfası (pod
+ *    ölürken, istek işlenirken).
+ * Kod listesinin dışında da her 5xx belirsizdir (4. tur): posta servise verildikten SONRA düşen bir 500 de "gitmiş olabilir"
+ * — tek istisna 502 {@link FINAL_5XX_CODES} (posta sunucusu reddetti: kesin "gitmedi").
+ */
+const UNSURE_SEND_CODES = new Set(['NETWORK_ERROR', 'OFFLINE', 'REQUEST_TIMEOUT', 'REQUEST_ABORTED', 'SEND_IN_PROGRESS',
+  'DB_UNAVAILABLE', 'HTTP_502', 'HTTP_503', 'HTTP_504'])
+/** Sonucu KESİN 5xx: 502 `MAIL_FAILED` (posta sunucusu raporu kabul etmedi — talep sonuçlandı, gönderim yok). */
+const FINAL_5XX_CODES = new Set(['MAIL_FAILED'])
+
+/**
+ * Gönderim hatası penceresi KAPATMALI mı (inceleme 2026-10-18)? Yeniden denenebilir hatada pencere AÇIK kalır ve yazılan ek
+ * Bilgi (CC) korunur — eskiden pencere kapanıyor, bir sonraki "Gönder" ek adreslerSİZ (geri alınamaz) gidebiliyordu.
+ * `res` bir yanıt yükü ya da fırlatılan `ApiError` olabilir. Dönüş:
+ *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır): posta gitmedi, yeniden denenebilir;
+ *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0), 409 `SEND_IN_PROGRESS`, `MAIL_FAILED` dışındaki HER 5xx (500, 503,
+ *                 504, ağ geçidinin 502 sayfası — 4. tur: posta servise verildikten sonra düşen 500 de "gitmiş olabilir"):
+ *                 gönderim olmuş ya da sürüyor olabilir — pencere açık, rapor yeniden okunup durum bilinene kadar "Gönder"
+ *                 KİLİTLİ (`unsureSendOutcome`; inceleme 2026-10-18, 3. tur: kilit yokken ikinci tıklama raporu
+ *                 yöneticilere İKİNCİ kez yolluyordu). Yeniden okuma ucuzdur;
+ *  - `null`     — kesin sonuç (başarı ya da kalıcı ret: posta kapalı, adres yok, onay gerekli, 502 `MAIL_FAILED`…) →
+ *                 pencere kapanır.
+ */
+export function sendFailureKind(res) {
+  if (!res || typeof res !== 'object' || res.success === true) return null
+  const info = res.errorInfo && typeof res.errorInfo === 'object' ? res.errorInfo : {}
+  const code = res.code || info.code || null
+  const status = typeof res.status === 'number' ? res.status : (typeof info.status === 'number' ? info.status : null)
+  if (code && UNSURE_SEND_CODES.has(code)) return 'unsure'
+  if (code && RETRYABLE_SEND_CODES.has(code)) return 'retry'
+  if (code && FINAL_5XX_CODES.has(code)) return null
+  if (status != null && status >= 500) return 'unsure'
+  if (status === 429) return 'retry'
+  if (status === 0) return 'unsure'
+  return null
+}
+
+/**
+ * Sonucu bilinmeyen gönderimden sonra raporun YENİDEN OKUNAN hâli ne diyor (inceleme 2026-10-18, 3. tur)? `before` =
+ * gönderimden önce eldeki rapor satırı, `after` = yeniden okunan (`null` = okunamadı). Dönüş:
+ *  - `'sending'` — bir gönderim sürüyor (taze talep): pencere kapanır, "sürüyor" bildirimi;
+ *  - `'queued'`  — posta kuyrukta (posta servisi yeniden deneyecek): pencere kapanır;
+ *  - `'sent'`    — gönderim gitmiş (son gönderim zamanı değişti ya da gönderim sayısı arttı): pencere kapanır;
+ *  - `'notSent'` — açıkça gitmemiş (son gönderim aynı, süren ya da kuyrukta gönderim yok; deneme olduysa başarısız
+ *                  bitmiş): "Gönder" yeniden açılır, yazılan ek Bilgi korunur;
+ *  - `'unknown'` — rapor okunamadı: "Gönder" KİLİTLİ kalır (yeniden denetlenir).
+ * Önceki satır bilinmiyorsa gönderilmiş bir rapor "gitmiş" sayılır (çift gönderimden kaçınılır).
+ *
+ * <p><b>Tıklamadan ÖNCE kuyrukta bekleyen gönderim (inceleme 2026-10-18, 4. tur):</b> değişmemiş eski kuyruk ("queued") ya
+ * da onun sonucunun okunması (rapor okuması `reconcileQueued` → `confirmQueued`: `last_sent_at` / `send_count` değişir)
+ * BU gönderimin işareti DEĞİLDİR — bu gönderim (ek Bilgi'si, yeni içeriği) hiç olmamış olabilir. Bu gönderim sunucuda
+ * sonuçlandıysa `last_attempt_at` damgalanır (`finishSent` / `finishQueued` / `finishNotSent`; `confirmQueued` damgalamaz,
+ * `releaseClaim` de — o gönderim hiçbir şey denemedi). Önceki satır QUEUED iken: damga değişmediyse `'notSent'`; değiştiyse
+ * sonuç `send_state`'ten (QUEUED → `'queued'`, SENT → `'sent'`, başarısız / atlandı → `'notSent'`).
+ */
+export function unsureSendOutcome(before, after) {
+  if (!after || typeof after !== 'object') return 'unknown'
+  if (after.status === 'sending') return 'sending'
+  if (before && (before.send_state === 'QUEUED' || before.status === 'queued')) {
+    const attemptMoved = (after.last_attempt_at ?? null) !== (before.last_attempt_at ?? null)
+    if (!attemptMoved) return 'notSent'
+    if (after.status === 'queued' || after.send_state === 'QUEUED') return 'queued'
+    return after.send_state === 'SENT' ? 'sent' : 'notSent'
+  }
+  if (after.status === 'queued' || after.send_state === 'QUEUED') return 'queued'
+  const sentAt = after.last_sent_at ?? null
+  if (sentAt != null && sentAt !== (before?.last_sent_at ?? null)) return 'sent'
+  const nowCount = Number(after.send_count ?? 0)
+  const wasCount = Number(before?.send_count ?? 0)
+  if (Number.isFinite(nowCount) && Number.isFinite(wasCount) && nowCount > wasCount) return 'sent'
+  return 'notSent'
+}
+
+/**
+ * Süren / kuyruktaki gönderimin YOKLAMASI (inceleme 2026-10-18, 4. tur): sonucu bilinmeyen gönderim "sürüyor" ya da
+ * "kuyrukta" okununca (ve kuyruğa alınan gönderimden sonra) düzenleyici raporun gönderim durumunu her
+ * {@link SEND_POLL_MS}'de yeniden okur — en çok {@link SEND_POLL_MAX_MS}; eskiden hiçbir şey yeniden okumuyordu, "Gönder"
+ * kapalı kalıyor, sonuç sayfa yenilenmeden görünmüyordu. Taslağa dokunmaz: yalnız {@link SEND_STATUS_FIELDS} alanları.
+ */
+export const SEND_POLL_MS = 10_000
+export const SEND_POLL_MAX_MS = 10 * 60_000
+/** Yoklamanın rapor satırına taşıdığı gönderim alanları (sürüm / içerik / onay alanları DEĞİL — taslak tabanı değişmez). */
+export const SEND_STATUS_FIELDS = Object.freeze(['status', 'send_state', 'last_send_status', 'last_sent_at', 'last_attempt_at',
+  'last_sent_to', 'last_sent_count', 'last_sent_by_name', 'send_count'])
+
+/**
+ * Rapor satırına yoklamanın okuduğu gönderim alanlarını işler (yalnız yanıtta OLAN alanlar). `keepChanged` (inceleme
+ * 2026-10-18, 5. tur): yoklama isteği gittikten SONRA düzenleyici durumu kendisi "changed" yaptıysa (kayıt yanıtı, görsel
+ * yükleme / silme) yanıttaki "sent" onun üstüne YAZILMAZ — o okuma kayıttan önceydi; onay kartının "gönderildi" ipucu bu
+ * duruma bakar.
+ */
+export function withSendStatus(report, fresh, { keepChanged = false } = {}) {
+  if (!report || !fresh || typeof fresh !== 'object') return report
+  const out = { ...report }
+  for (const k of SEND_STATUS_FIELDS) if (Object.prototype.hasOwnProperty.call(fresh, k)) out[k] = fresh[k]
+  if (keepChanged && report.status === 'changed' && fresh.status === 'sent') out.status = 'changed'
+  return out
+}
+
+const attemptOf = (r) => r?.last_attempt_at ?? null
+const isQueuedRow = (r) => r?.status === 'queued' || r?.send_state === 'QUEUED'
+
+/**
+ * Yoklamanın tabanı, BU denemenin kuyruğa alındığı BİLİNİNCE (kuyruğa alınan gönderimin yanıtı ya da belirsiz gönderimde
+ * "kuyrukta" okuması): `row` = o andan sonra okunan satır. Satır yeni bir deneme damgası taşıyorsa (`last_attempt_at`
+ * gönderimden öncekinden farklı; süren talep değil) taban O satırdır (`own: true` — kuyruk bu denemenindir); yoksa (okuma
+ * yok / düşürüldü, damga aynı) gönderimden önceki satır (`own: false`).
+ */
+export function pollBaselineAfterQueued(before, row) {
+  if (row && typeof row === 'object' && row.status !== 'sending' && row.send_state !== 'SENDING'
+      && attemptOf(row) !== attemptOf(before)) return { baseline: row, own: true }
+  return { baseline: before ?? null, own: false }
+}
+
+/**
+ * Yoklama TURUNUN kararı (inceleme 2026-10-18, 5. tur). Eskiden yalnız raporun ŞU ANKİ `send_state`'i okunuyordu: bırakılan
+ * talep (`releaseClaim` — PDF sırası dolu, onay eskidi; hiçbir şey denenmedi) satırı ÖNCEKİ durumuna döndürür, ve önceden
+ * gönderilmiş raporda "rapor gönderildi" (hiçbir şey gitmeden), önceden kuyruktaki raporda ESKİ kuyruğun sonucu bu
+ * gönderimin sonucu (ek Bilgi hiç gitmeden), hiç gönderilmemiş raporda 10 sn sonra "10 dakikada kesinleşmedi" deniyordu.
+ *
+ * `poll` = `{ baseline, own }`:
+ *  - `own: false` — `baseline` gönderimden ÖNCEKİ satır (belirsiz gönderimin `before`'u): karar her turda
+ *    {@link unsureSendOutcome}`(baseline, fresh)` — gitti yalnız `last_sent_at` / `send_count` değiştiyse (önceden kuyruktaki
+ *    raporda: `last_attempt_at` SENT ile değiştiyse), kuyrukta yalnız BU deneme kuyruğa aldıysa; tabana dönen durum, yeni
+ *    deneme yok = gitmedi ("yeniden gönderebilirsiniz", yazılan ek Bilgi geri gelir). Bu denemenin kuyruğa alındığı
+ *    görülünce taban o satıra geçer (`own: true`).
+ *  - `own: true` — `baseline` BU denemenin kuyruğunu gösteren satır ({@link pollBaselineAfterQueued}). `unsureSendOutcome` onu
+ *    ESKİ kuyruk sayardı (damga aynı → "gitmedi", ilk turda); burada damga aynıyken sonuç kuyruğun KENDİ sonucudur:
+ *    `confirmQueued` → gitti, `failQueued` → gitmedi (ikisi damgalamaz), kuyrukta → sürüyor. Damga değiştiyse sonraki bir
+ *    deneme kuyruğun yerini aldı: o gittiyse gitti, kuyruğa aldıysa onu izler; gitmediyse `superseded` — bu kuyruğun sonucu
+ *    artık raporda okunmaz (posta servisi onu yine de teslim edebilir: "yeniden gönder" DENMEZ).
+ *
+ * Süren talep (durum "sending") her zaman sürüyor; taze OLMAYAN talep (`send_state` SENDING, durum başka — 10 dakikadan
+ * eski: pod talepten sonra düşmüş olabilir, posta gitmiş olabilir) `unknown` — "yeniden gönder" denmez.
+ *
+ * Dönüş `{ outcome, poll }`: `outcome` 'pending' | 'sent' | 'notSent' | 'superseded' | 'unknown' | `null` (okunamadı —
+ * yoklama sürer); `poll` sonraki turun tabanı (değişmediyse aynı nesne).
+ */
+export function sendPollStep(poll, fresh) {
+  if (!fresh || typeof fresh !== 'object') return { outcome: null, poll }
+  const baseline = poll?.baseline ?? null
+  const own = !!poll?.own && !!baseline
+  if (fresh.status === 'sending') return { outcome: 'pending', poll }
+  if (fresh.send_state === 'SENDING') return { outcome: 'unknown', poll }
+  let o
+  if (own && attemptOf(fresh) === attemptOf(baseline)) {
+    o = isQueuedRow(fresh) ? 'queued' : (fresh.send_state === 'SENT' ? 'sent' : 'notSent')
+  } else {
+    o = unsureSendOutcome(baseline, fresh)
+    if (own && o === 'notSent') o = 'superseded'
+  }
+  if (o === 'queued') {
+    // Bu denemenin (ya da onun yerini alan denemenin) kuyruğu: sonraki turlar onun sonucuna bakar
+    const same = own && attemptOf(fresh) === attemptOf(baseline)
+    return { outcome: 'pending', poll: same ? poll : { ...poll, baseline: fresh, own: true } }
+  }
+  if (o === 'sending') return { outcome: 'pending', poll }
+  return { outcome: o, poll }
+}
+
 // ── Gönderim günlüğü ────────────────────────────────────────────────────────────────────────────────
 
 export const TAB_SENDLOG = 'sendlog'

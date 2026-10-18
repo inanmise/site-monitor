@@ -12,7 +12,7 @@ import {
 import { periodLabel } from './TechErrorParts.jsx'
 import { clientFailure } from '../../utils/errorMessages.js'
 import {
-  archiveFileName, archiveYears, createArchiveZip, missingText, runArchive, zipPlan,
+  ARCHIVE_RETRY_WAIT_MS, archiveFileName, archiveYears, createArchiveZip, missingText, runArchive, zipPlan,
 } from './yearArchive.js'
 
 const LONG_TOAST_MS = 12000
@@ -58,7 +58,12 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
       const res = await runArchive(plan, {
         fetchPdf: (item, signal) => api.techErrors.pdfBlob(item.id, { signal }),
         signal: c.signal,
-        onProgress: (p) => { if (alive.current) setRun((r) => (r ? { ...r, index: p.index, waiting: p.waiting } : r)) },
+        // Bekleme süresi durum satırında (inceleme 2026-10-18, 4. tur: "birkaç saniye" diyordu, tek bekleme 60 sn olabilir)
+        onProgress: (p) => {
+          if (!alive.current) return
+          const waitSeconds = p.waiting ? Math.max(1, Math.ceil((Number(p.waitMs) || ARCHIVE_RETRY_WAIT_MS) / 1000)) : null
+          setRun((r) => (r ? { ...r, index: p.index, waiting: p.waiting, waitSeconds } : r))
+        },
         // Her PDF gelir gelmez arşive — baytlar bellekte birikmez
         onFile: (f) => zip.addPdf(f.item, f.name, f.bytes),
       })
@@ -83,7 +88,11 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
       // Paketleme sırasında iptal edildiyse de indirme YOK
       if (!alive.current) return
       if (c.signal.aborted) { toast.info(t('te.zip.cancelled')); return }
-      downloadBlob(archiveFileName(channelName, year), blob)
+      // Tarayıcı indirmeyi başlatmadıysa başarı bildirimi YOK (inceleme 2026-10-18, 3. tur — `downloadBlob` false döner)
+      if (downloadBlob(archiveFileName(channelName, year), blob) === false) {
+        toast.error(t('te.zip.downloadFailed'), { duration: LONG_TOAST_MS })
+        return
+      }
       if (res.stopped === 401) toast.error(t('te.zip.sessionEndedPartial', res.files.length, plan.length), { duration: LONG_TOAST_MS })
       else if (res.missing.length) toast.error(t('te.zip.partial', res.files.length, plan.length, months), { duration: LONG_TOAST_MS })
       else toast.success(t('te.zip.done', res.files.length, year), 8000)
@@ -114,8 +123,9 @@ export function useYearArchive({ channelName, reports, resetKey = null }) {
 /**
  * "Yıl arşivi (ZIP)" menüsü: raporu olan her yıl bir öğe (rapor sayısıyla). İş sürerken tetik ODAKLANABİLİR kalır (menü
  * kapanınca odak ona döner — kapalı düğmeye dönemeyip sayfaya düşmesin) ama öğeler kapalıdır; durum satırı süreni söyler.
+ * `blocked`: "Excel'e aktar" hazırlanıyor — öğeler kapalı, menü başlığı nedenini söyler (inceleme 2026-10-18).
  */
-export function YearArchiveMenu({ reports, run, onStart }) {
+export function YearArchiveMenu({ reports, run, onStart, blocked = false }) {
   const t = useT()
   const years = archiveYears(reports)
   if (!years.length) return null
@@ -128,11 +138,11 @@ export function YearArchiveMenu({ reports, run, onStart }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="z-(--z-menu) max-w-[calc(100vw-2rem)]" data-slot="te-year-zip-menu">
         <DropdownMenuLabel className="text-xs font-normal whitespace-normal text-muted-foreground">
-          {run ? t('te.zip.busyHint') : t('te.zip.menuHint')}
+          {run ? t('te.zip.busyHint') : blocked ? t('te.zip.waitXlsx') : t('te.zip.menuHint')}
         </DropdownMenuLabel>
         {years.map((y) => (
           <DropdownMenuItem key={y.year} className="pointer-coarse:min-h-10" data-slot="te-year-zip-item" data-year={y.year}
-            disabled={!!run} onSelect={() => onStart(y.year)}>
+            disabled={!!run || blocked} onSelect={() => { if (!blocked) onStart(y.year) }}>
             <FileArchive aria-hidden="true" /> {t('te.zip.yearItem', y.year, y.count)}
           </DropdownMenuItem>
         ))}
@@ -152,7 +162,7 @@ export function YearArchiveStatus({ run, onCancel }) {
   if (run) {
     if (run.cancelling) text = t('te.zip.cancelling')
     else if (run.packing) text = t('te.zip.packing')
-    else if (run.waiting) text = t('te.zip.waiting', run.index, run.total)
+    else if (run.waiting) text = t('te.zip.waiting', run.index, run.total, run.waitSeconds ?? Math.round(ARCHIVE_RETRY_WAIT_MS / 1000))
     else text = t('te.zip.progress', Math.max(1, run.index), run.total)
   }
   return (

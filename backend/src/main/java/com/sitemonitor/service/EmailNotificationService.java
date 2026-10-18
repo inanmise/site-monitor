@@ -337,20 +337,85 @@ public class EmailNotificationService {
      * ilk denemede EscalationService'in "QUEUED_RETRY..." olarak kaydettiği satırı subject ile
      * (en güncel) bulup günceller. Async retry sonuçları aksi halde yutulduğundan, log gerçeği
      * yansıtmaz ve "Alarm gönderilemedi" rozeti yanlış çalışır. Gönderimi ASLA kırmaz (try/catch).
+     *
+     * <p>Aynı konu birden çok alıcıya AYRI postayla gidebilir (inceleme 2026-10-18: teknik hata raporu onay isteği / onay
+     * hatırlatması her PO'ya aynı konuyla) — sonuç önce konusu VE alıcısı eşleşen en yeni kuyruk satırına yazılır; alıcısı
+     * eşleşen satır yoksa (alıcı listesi günlükte grup adı / farklı biçim) eski kural: konuya göre en yeni satır.
      */
     private void writeBackRetryStatus(MimeMessage msg, String terminalStatus) {
         try {
             String subject = msg.getSubject();
             if (subject == null || subject.isBlank()) return;
-            notificationLogRepo
-                    .findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY")
-                    .ifPresent(logRow -> {
-                        logRow.setEmailStatus(terminalStatus);
-                        notificationLogRepo.save(logRow);
-                    });
+            com.sitemonitor.model.NotificationLog logRow = retryRowFor(subject, toAddresses(msg));
+            if (logRow == null) return;
+            logRow.setEmailStatus(terminalStatus);
+            notificationLogRepo.save(logRow);
         } catch (Exception e) {
             log.warn("Retry sonucu bildirim loguna yazılamadı: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Geri yazılacak kuyruk satırı. Postanın Kime adresleri okunabildiyse: aynı konulu son 20 kuyruk satırından alıcısı
+     * eşleşen en yeni; eşleşen yoksa YALNIZ alıcı sütunu karşılaştırılamayan (adres değil — ör. 7/24 grup adı, boş) en yeni
+     * satır. Alıcı sütunu adres taşıyıp eşleşmeyen satıra ASLA yazılmaz (inceleme 2026-10-18: aynı konulu başka bir PO'nun
+     * satırı yanlışlıkla SENT / FAILED oluyordu) — hiçbir şey yazılmaz, bir WARN. Kime okunamadıysa eski kural (konuya göre en yeni).
+     */
+    com.sitemonitor.model.NotificationLog retryRowFor(String subject, java.util.Set<String> to) {
+        if (to == null || to.isEmpty()) {
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+        }
+        java.util.List<com.sitemonitor.model.NotificationLog> rows =
+                notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
+        if (rows == null) {
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+        }
+        com.sitemonitor.model.NotificationLog uncomparable = null;
+        boolean addressRows = false;
+        for (com.sitemonitor.model.NotificationLog n : rows) {
+            if (!comparableRecipients(n.getRecipientEmail())) {
+                if (uncomparable == null) uncomparable = n;                // en yeni karşılaştırılamayan satır (eski kuralın payı)
+                continue;
+            }
+            addressRows = true;
+            if (recipientMatches(n.getRecipientEmail(), to)) return n;
+        }
+        if (uncomparable != null) return uncomparable;
+        if (addressRows) {
+            log.warn("Retry sonucu bildirim loguna yazılmadı: aynı konulu {} kuyruk satırının hiçbirinin alıcısı postanın alıcılarıyla "
+                    + "eşleşmiyor (konu: {}) — yanlış satıra yazmamak için atlandı", rows.size(), subject);
+        }
+        return null;
+    }
+
+    /** Alıcı sütunu adres taşıyor mu (en az bir '@'): taşımıyorsa (grup adı, boş) alıcıyla karşılaştırılamaz. */
+    static boolean comparableRecipients(String logged) {
+        return logged != null && logged.indexOf('@') >= 0;
+    }
+
+    /** Günlük satırının alıcı listesinde ("a@x, b@y … +3") postanın Kime adreslerinden biri TAM olarak var mı? */
+    static boolean recipientMatches(String logged, java.util.Set<String> to) {
+        if (logged == null || logged.isBlank() || to == null || to.isEmpty()) return false;
+        for (String part : logged.split("[,;\\s]+")) {
+            if (!part.isBlank() && to.contains(part.trim().toLowerCase(java.util.Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    /** Postanın Kime adresleri (küçük harf); okunamazsa boş. */
+    private static java.util.Set<String> toAddresses(MimeMessage msg) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try {
+            jakarta.mail.Address[] rcpts = msg.getRecipients(jakarta.mail.Message.RecipientType.TO);
+            if (rcpts == null) return out;
+            for (jakarta.mail.Address a : rcpts) {
+                String e = a instanceof jakarta.mail.internet.InternetAddress ia ? ia.getAddress() : a.toString();
+                if (e != null && !e.isBlank()) out.add(e.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        } catch (Exception e) {
+            // okunamadı: eski kurala düşülür
+        }
+        return out;
     }
 
     // ── Mail tanılama yardımcıları (yalnız log; mail GÖVDESİ ve SMTP PAROLASI asla loglanmaz) ──

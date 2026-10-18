@@ -8,8 +8,9 @@ import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventory
 import { assignLocation, isAccountInactivePayload, signalAccountInactive } from '../utils/accountInactive.js'
 import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpiry.js'
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
+import { downloadBlob } from '../utils/csvExport.js'
 import {
-  ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, rememberErrorInfo,
+  ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
 } from '../utils/errorMessages.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
@@ -31,7 +32,9 @@ function headerOf(res, name) {
 /**
  * Kanal teknik hata raporunun PDF'ini Blob olarak okur (e-posta ekinin aynısı) — "PDF indir" ve kanalın yıl arşivi (ZIP,
  * 2026-10-17) aynı uçtan geçer. `name` sunucunun Content-Disposition adı (yoksa null). `signal` ile iptal edilir: iptal
- * `{ aborted: true }` döner (hata değil). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır (429 = PDF sırası dolu).
+ * `{ aborted: true }` döner (hata değil). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır (429 = PDF sırası dolu ya da
+ * kişi başı sınır). Ağ hatası ve JSON olmayan hata yanıtı (proxy sayfası) çevrilmiş açıklayıcı metinle döner (inceleme
+ * 2026-10-18: tarayıcının ham "Failed to fetch"i ya da "NETWORK" kullanıcıya gösteriliyordu); künye `errorInfo`'da.
  */
 async function fetchTechErrorPdf(id, signal = null) {
   try {
@@ -40,7 +43,17 @@ async function fetchTechErrorPdf(id, signal = null) {
     if (!res.ok) {
       let body = null
       try { body = await res.json() } catch { body = null }
-      return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
+      // Sunucunun bekleme önerisi (sn; 429 kişi başı sınır — inceleme 2026-10-18, 3. tur): yıl arşivi buna uyar
+      const retryAfter = parseRetryAfter(headerOf(res, 'Retry-After')) ?? parseRetryAfter(body?.retry_after_seconds)
+      if (!body || typeof body !== 'object') {
+        const raw = nonJsonErrorPayload(res.status, res)
+        if (retryAfter != null) raw.retryAfter = retryAfter
+        return raw
+      }
+      const out = { success: false, status: res.status, error: body.error || null, code: body.code || null }
+      attachErrorInfo(out, errorInfoOf({ ...out, requestId: body.request_id || headerOf(res, 'X-Request-Id') }))
+      if (retryAfter != null) out.retryAfter = retryAfter
+      return out
     }
     const blob = await res.blob()
     const disp = headerOf(res, 'Content-Disposition') || ''
@@ -51,8 +64,23 @@ async function fetchTechErrorPdf(id, signal = null) {
     return { success: true, blob, name }
   } catch (e) {
     if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
-    return { success: false, status: 0, error: e?.message || 'NETWORK' }
+    return networkFailurePayload()
   }
+}
+
+/** Ağ hatası (sunucuya ulaşılamadı) → çevrilmiş metinli yumuşak yük; `code` NETWORK_ERROR | OFFLINE (künyede de). */
+function networkFailurePayload() {
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+  const body = {
+    success: false,
+    status: 0,
+    error: networkMessage({ lang: uiLang(), kind: 'network', offline }),
+    code: offline ? 'OFFLINE' : 'NETWORK_ERROR',
+  }
+  const info = { status: 0, code: body.code }
+  attachErrorInfo(body, info)
+  rememberErrorInfo(body.error, info)
+  return body
 }
 
 /**
@@ -563,7 +591,9 @@ export const api = {
       const s = qs.toString()
       return request(`/tech-error-reports/export${s ? `?${s}` : ''}`, { withStatus: true })
     },
-    template: (id) => request(`/tech-error-reports/channels/${id}/template`, { withStatus: true }),
+    // `strict` (inceleme 2026-10-18): başka kanalı KAYNAK olarak okurken — bozuk şablon 409 TEMPLATE_UNREADABLE (sistem
+    // şablonuna düşmez). Kanalın kendi şablon ekranı parametresiz okur (bozuk şablon onarılabilsin). Eski pod parametreyi yok sayar.
+    template: (id, { strict = false } = {}) => request(`/tech-error-reports/channels/${id}/template${strict ? '?strict=1' : ''}`, { withStatus: true }),
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),
     defaultTemplate: (lang) => request(`/tech-error-reports/templates/default?lang=${encodeURIComponent(lang || 'tr')}`, { withStatus: true }),
@@ -609,8 +639,10 @@ export const api = {
       if (status && status !== 'all') qs.set('status', status)
       return request(`/tech-error-reports/channels/${channelId}/send-log?${qs.toString()}`, { withStatus: true })
     },
-    // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir
-    mailPreview: (id) => request(`/tech-error-reports/reports/${id}/mail-preview`, { withStatus: true, timeoutMs: 0 }),
+    // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir.
+    // Pencere `techerror/mailPreviewFetch.js` üzerinden çağırır (süren isteğe katılır, `signal` ile iptal — 3. tur)
+    mailPreview: (id, { signal } = {}) => request(`/tech-error-reports/reports/${id}/mail-preview`,
+      { withStatus: true, timeoutMs: 0, ...(signal ? { signal } : {}) }),
     // Önizlenen postayı YALNIZ kendine gönderir (R13): sunucu PDF'i yeniden üretir — uzun sürebilir; 409 NO_EMAIL / 429 RATE_LIMITED
     mailPreviewTest: (id) => request(`/tech-error-reports/reports/${id}/mail-preview/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
     // PO onayı (2026-10-17, S6): istek PDF üretip onaylayıcılara posta atar, karar yöneticilere gönderir — uzun sürebilir
@@ -618,22 +650,19 @@ export const api = {
     requestApproval: (id) => request(`/tech-error-reports/reports/${id}/approval/request`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
     decideApproval: (id, body) => request(`/tech-error-reports/reports/${id}/approval/decide`,
       { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 0 }),
-    /** PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. */
+    /**
+     * PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. İndirme
+     * `utils/csvExport.downloadBlob` ile (inceleme 2026-10-18): bağlantı DOM'a eklenip tıklanır, adres 60 sn tutulur —
+     * Safari / iPad DOM dışı bağlantıda ya da tıklamadan hemen sonra iptal edilen adreste indirmeyi başlatmıyordu.
+     * Tarayıcı indirmeyi başlatamadıysa (3. tur) başarı DEĞİL: `{ success: false, status: 0, code: 'DOWNLOAD_FAILED' }` —
+     * çağıran çevrilmiş metni gösterir (`te.pdfDownloadFailed`).
+     */
     downloadPdf: async (id) => {
       const res = await fetchTechErrorPdf(id)
       if (!res.success) return res
-      try {
-        const name = res.name || 'teknik-hata-raporu.pdf'
-        const objectUrl = URL.createObjectURL(res.blob)
-        const a = document.createElement('a')
-        a.href = objectUrl
-        a.download = name
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
-        return { success: true, name }
-      } catch (e) {
-        return { success: false, status: 0, error: e?.message || 'NETWORK' }
-      }
+      const name = res.name || 'teknik-hata-raporu.pdf'
+      if (!downloadBlob(name, res.blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null, name }
+      return { success: true, name }
     },
     /**
      * Şablon önizleme PDF'i (R19): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir) örnek değerlerle; hiçbir şey

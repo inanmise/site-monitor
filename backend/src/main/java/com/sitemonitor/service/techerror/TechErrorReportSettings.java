@@ -2,9 +2,12 @@ package com.sitemonitor.service.techerror;
 
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.util.Msg;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Kanal teknik hata raporu modül ayarları (2026-10-17, S6: "görünürlük EKİP bazında aç/kapat — seçim yoksa herkes").
@@ -23,6 +26,13 @@ import java.util.Set;
 public final class TechErrorReportSettings {
 
     private TechErrorReportSettings() {}
+
+    private static final Logger log = LoggerFactory.getLogger(TechErrorReportSettings.class);
+    /** Aralık dışı değer uyarısı pod başına anahtar başına BİR kez (canlı okuma her gönderimde çağrılır — günlük taşmasın). */
+    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
+    /** Aralık dışı değerin kaynağı: kayıtlı ekran değeri (DB override) ya da ortam / önyükleme değeri. */
+    public static final String SOURCE_STORED = "stored";
+    public static final String SOURCE_ENV = "env";
 
     public static final String KEY_TEAM_IDS = "site.monitor.tech-error-report.team-ids";
     public static final String KEY_REMINDER_TEAM_IDS = "site.monitor.tech-error-report.reminder-team-ids";
@@ -118,16 +128,30 @@ public final class TechErrorReportSettings {
     /**
      * CANLI tam sayı ayarı (E21): ekrandan kaydedilmiş değer (DB override) aralık içindeyse o, yoksa {@code fallback}
      * (önyükleme değeri — {@code @Value} alanı: application.properties / ortam değişkeni; testler alanı doğrudan yazar).
-     * Ayar servisi yoksa ya da okunamazsa {@code fallback}.
+     * Ayar servisi yoksa ya da okunamazsa {@code fallback}. Aralık DIŞI değer (bozuk override ya da aralık dışı ortam değeri)
+     * katalog varsayılanına düşer — Ayarlar ekranının gösterdiği {@link #effectiveInt} ile aynı kural (inceleme 2026-10-18:
+     * ortamdaki 60 MB işte kullanılırken ekran 15 gösteriyordu). Düşüş SESSİZ değildir: pod başına anahtar başına bir WARN
+     * ({@link #warnOutOfRange}) ve Ayarlar kartında salt okunur not ({@link #outOfRange}).
      */
     public static int liveInt(AppSettingsService settings, IntRange r, int fallback) {
-        if (settings == null) return fallback;
+        boolean bootOk = fallback >= r.min() && fallback <= r.max();
+        int boot = bootOk ? fallback : r.def();
+        if (settings == null) {
+            if (!bootOk) warnOutOfRange(r, SOURCE_ENV, String.valueOf(fallback));
+            return boot;
+        }
         try {
             String raw = settings.getOverride(r.key());
-            Integer v = raw == null ? null : parseInt(raw);
-            return v != null && v >= r.min() && v <= r.max() ? v : fallback;
+            if (raw == null) {
+                if (!bootOk) warnOutOfRange(r, SOURCE_ENV, String.valueOf(fallback));
+                return boot;
+            }
+            Integer v = parseInt(raw);
+            if (v != null && v >= r.min() && v <= r.max()) return v;
+            warnOutOfRange(r, SOURCE_STORED, raw);
+            return r.def();
         } catch (RuntimeException e) {
-            return fallback;
+            return boot;
         }
     }
 
@@ -136,10 +160,56 @@ public final class TechErrorReportSettings {
         if (settings == null) return r.def();
         try {
             int v = settings.getInt(r.key(), r.def());
-            return v >= r.min() && v <= r.max() ? v : r.def();
+            if (v >= r.min() && v <= r.max()) return v;
+            warnOutOfRange(r, settings.getOverride(r.key()) != null ? SOURCE_STORED : SOURCE_ENV, String.valueOf(v));
+            return r.def();
         } catch (RuntimeException e) {
             return r.def();
         }
+    }
+
+    /** Aralık dışı etkin değer: kaynağı ({@link #SOURCE_STORED} / {@link #SOURCE_ENV}), ham değer ve yerine kullanılan varsayılan. */
+    public record OutOfRange(String source, String value, int used) { }
+
+    /**
+     * Ayar şu an aralık DIŞI bir değer taşıyor mu (inceleme 2026-10-18: ortamdaki 60 MB sessizce 15'e düşüyordu): kayıtlı
+     * override biçimsiz / aralık dışıysa {@link #SOURCE_STORED}, override yok ve ortam / özellik değeri aralık dışıysa
+     * {@link #SOURCE_ENV}; aralık içindeyse ya da okunamazsa null. Yalnız bellekteki override haritası ve Environment okunur
+     * (sorgu yok) — Ayarlar kartı her okumada çağırabilir.
+     */
+    public static OutOfRange outOfRange(AppSettingsService settings, IntRange r) {
+        if (settings == null) return null;
+        try {
+            String raw = settings.getOverride(r.key());
+            if (raw != null) {
+                Integer v = parseInt(raw);
+                return v != null && v >= r.min() && v <= r.max() ? null : new OutOfRange(SOURCE_STORED, raw.trim(), r.def());
+            }
+            int v = settings.getInt(r.key(), r.def());
+            return v >= r.min() && v <= r.max() ? null : new OutOfRange(SOURCE_ENV, String.valueOf(v), r.def());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Aralık dışı değer → katalog varsayılanı: pod başına anahtar başına BİR WARN (değer, kaynak ve kullanılan varsayılanla).
+     * Sessiz düşüş yöneticiyi yanıltıyordu (ortama 60 MB yazıp 15 MB ile gönderim).
+     */
+    static void warnOutOfRange(IntRange r, String source, String value) {
+        if (!WARNED.add(r.key())) return;
+        log.warn("Teknik hata raporu ayarı {} = {} ({}) izin verilen {}–{} aralığının dışında; varsayılan {} kullanılıyor",
+                r.key(), clipValue(value), SOURCE_STORED.equals(source) ? "kayıtlı değer" : "ortam / önyükleme değeri",
+                r.min(), r.max(), r.def());
+    }
+
+    /** Test kancası: uyarı kümesini sıfırlar. */
+    static void resetWarnings() { WARNED.clear(); }
+
+    private static String clipValue(String v) {
+        if (v == null) return "null";
+        String t = v.trim();
+        return t.length() <= 40 ? t : t.substring(0, 40) + "…";
     }
 
     /** Hatırlatma takımları: boş / okunamaz → boş küme (= hatırlatma KAPALI, opt-in). */

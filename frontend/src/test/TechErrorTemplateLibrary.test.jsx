@@ -141,6 +141,25 @@ describe('yeni kanal — takım kütüphanesi kaynağı', () => {
   })
 })
 
+describe('yeni kanal — kopyalanacak kanalın şablonu bozuk (inceleme 2026-10-18)', () => {
+  it('409 TEMPLATE_UNREADABLE (alan copy_from): ileti kopya seçicisinin altında, pencere açık, kanal açılmadı sayılmaz (onSaved yok)', async () => {
+    const onSaved = vi.fn()
+    te().createChannel.mockResolvedValueOnce({ success: false, status: 409, code: 'TEMPLATE_UNREADABLE', field: 'copy_from',
+      error: '“Mobil” kanalının şablonu okunamadı; kayıt bozulmuş olabilir. Sistem şablonu yerine kullanılmadı — başka bir kaynak seçin.' })
+    render(<ChannelDialog mode="create" teams={LIB_TEAMS} channels={[channel(10, 'Mobil')]} onClose={vi.fn()} onSaved={onSaved} />)
+    const dialog = await screen.findByRole('dialog', { name: 'Yeni kanal' })
+    fireEvent.click(radioOf('copy'))
+    await pickFrom(dialog, 'Şablonu kopyalanacak kanal', `Mobil — ${TEAMS[0].name}`)
+    fireEvent.change(within(dialog).getByLabelText(/Kanal adı/), { target: { value: 'ATM' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Kanalı aç' }))
+    await waitFor(() => expect(te().createChannel).toHaveBeenCalledWith(expect.objectContaining({ copy_from: 10, name: 'ATM' })))
+    const msg = await within(dialog).findByText(/“Mobil” kanalının şablonu okunamadı/)
+    expect(msg.closest('[data-slot="te-source-copy"]')).not.toBeNull()
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Yeni kanal' })).toBeInTheDocument()
+  })
+})
+
 describe('kütüphane yönetim penceresi', () => {
   function draw(teams = LIB_TEAMS) {
     render(<LibraryManagerDialog open teams={teams} defaultTeam="1" onClose={vi.fn()} />)
@@ -305,6 +324,65 @@ describe('şablon düzenleyici — kütüphaneye kaydet ve "Varsayılana dön"',
     fireEvent.click(within(c2).getByRole('button', { name: 'Varsayılanı yükle' }))
     await waitFor(() => expect(screen.getByLabelText('Rapor başlığı')).toHaveValue('Sistem en {kanal} {ay} {yil}'))
     expect(te().defaultTemplate).toHaveBeenCalledWith('en')
+  })
+
+  it('inceleme 2026-10-18: "Varsayılana dön" başka dilde bir şablon yüklerken onay dil değişimini söyler (içe almadaki gibi); aynı dilde söylemez', async () => {
+    te().teamTemplate.mockImplementation(async (team, id) => ({ success: true, data: { ...entry(Number(id), 'POS şablonu', { lang: 'en' }),
+      template: { ...TEMPLATE, lang: 'en', title: 'POS {channel} {month} {year}' } } }))
+    await openEditor()
+    expect(screen.getByLabelText('Rapor dili')).toHaveValue('tr')
+    const WARN = 'Bu şablon İngilizce dilinde; yüklerseniz rapor dili ve ay adları İngilizce olur.'
+    // İngilizce kütüphane kaydı → uyarı
+    pressMenuTrigger(screen.getByRole('button', { name: /Varsayılana dön/ }))
+    let menu = await screen.findByRole('menu')
+    await waitFor(() => expect(menu.querySelectorAll('[data-slot="te-tpl-reset-lib"]')).toHaveLength(2))
+    fireEvent.click([...menu.querySelectorAll('[data-slot="te-tpl-reset-lib"]')].find((el) => el.textContent.includes('POS şablonu')))
+    let confirm = await screen.findByRole('dialog', { name: 'Kütüphane şablonu yüklensin mi?' })
+    expect(confirm).toHaveTextContent(WARN)
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Kütüphane şablonu yüklensin mi?' })).toBeNull())
+    expect(te().teamTemplate).not.toHaveBeenCalled()
+    // Türkçe kütüphane kaydı → uyarı yok
+    pressMenuTrigger(screen.getByRole('button', { name: /Varsayılana dön/ }))
+    menu = await screen.findByRole('menu')
+    await waitFor(() => expect(menu.querySelectorAll('[data-slot="te-tpl-reset-lib"]')).toHaveLength(2))
+    fireEvent.click([...menu.querySelectorAll('[data-slot="te-tpl-reset-lib"]')].find((el) => el.textContent.includes(LONG_NAME)))
+    confirm = await screen.findByRole('dialog', { name: 'Kütüphane şablonu yüklensin mi?' })
+    expect(confirm).not.toHaveTextContent(/dilinde; yüklerseniz/)
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Kütüphane şablonu yüklensin mi?' })).toBeNull())
+    // Sistem İngilizce varsayılanı da uyarır
+    pressMenuTrigger(screen.getByRole('button', { name: /Varsayılana dön/ }))
+    menu = await screen.findByRole('menu')
+    fireEvent.click(menu.querySelector('[data-slot="te-tpl-reset-system"][data-lang="en"]'))
+    confirm = await screen.findByRole('dialog', { name: 'Varsayılan şablona dönülsün mü?' })
+    expect(confirm).toHaveTextContent(WARN)
+  })
+
+  it('inceleme 2026-10-18: kütüphaneye kaydet — "yeni" kipte 404 (eski pod / takım silindi) pencerede BANT olarak söylenir (hedef alanı çizilmediği için alan hatası görünmezdi); liste yüklenirken / okunamazken "üzerine" kartı "yok" demez', async () => {
+    let releaseList
+    te().teamTemplates.mockImplementationOnce(() => new Promise((r) => { releaseList = r }))
+    te().createTeamTemplate.mockResolvedValue({ success: false, status: 404, code: 'NOT_FOUND', error: 'İstenen adres bulunamadı.' })
+    await openEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Kütüphaneye kaydet' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Takım kütüphanesine kaydet' })
+    const overwrite = () => dlg.querySelector('[data-mode="overwrite"]')
+    // Yükleniyor: "henüz şablon yok" değil
+    expect(overwrite()).toHaveTextContent('Kütüphane listesi yükleniyor…')
+    expect(overwrite()).not.toHaveTextContent('Kütüphanede henüz şablon yok.')
+    releaseList({ success: false, status: 500, error: 'x' })
+    await waitFor(() => expect(overwrite()).toHaveTextContent('Kütüphane listesi okunamadı — yukarıdan yeniden deneyin.'))
+    expect(overwrite()).not.toHaveTextContent('Kütüphanede henüz şablon yok.')
+    // Yeniden okunur; ancak liste elde ve BOŞSA "yok"
+    te().teamTemplates.mockResolvedValueOnce(libResponse([]))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Tekrar dene' }))
+    await waitFor(() => expect(overwrite()).toHaveTextContent('Kütüphanede henüz şablon yok.'))
+    // Yeni kipte 404 → bant (alan hatası değil); liste yeniden okunur
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kütüphaneye kaydet' }))
+    const banner = await within(dlg).findByText(/Şablon kütüphaneye kaydedilemedi: takımın kütüphanesi bulunamadı/)
+    expect(banner).toHaveAttribute('data-slot', 'te-lib-banner')
+    expect(dlg.querySelector('[data-field="target"]')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Takım kütüphanesine kaydet' })).toBeInTheDocument()
   })
 
   it('menüde kütüphane okunamazsa "okunamadı — yeniden dene" satırı (boş liste gibi davranmaz)', async () => {

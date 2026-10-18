@@ -29,8 +29,11 @@ export function clientErrorCode(code, e) {
  *
  * Hatalar iki ayrı yerden gelir: değerleri OKUMA (sunucu / ağ — sunucunun ya da istemcinin açıklayıcı metni, künyesiyle)
  * ve dosyayı tarayıcıda KURMA (tembel modül yüklenemedi, yazıcı hatası — yalnız çevrilmiş metin; tarayıcı metni künyede).
+ *
+ * `blocked`: kanalın yıl arşivi (ZIP) sürüyor — düğme kilitli, açıklama nedenini söyler; `onBusyChange(busy)`: Excel
+ * hazırlanırken arşiv menüsü kilitlenir (inceleme 2026-10-18: iki indirme tek tıklamadan sonra engellenebiliyordu).
  */
-export default function ChannelXlsxButton({ channel, year }) {
+export default function ChannelXlsxButton({ channel, year, blocked = false, onBusyChange = null }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -38,12 +41,16 @@ export default function ChannelXlsxButton({ channel, year }) {
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const y = Number(year)
-  const hint = year !== 'all' && Number.isInteger(y) && y > 0 ? t('te.xlsx.hintYear', y) : t('te.xlsx.hint')
+  const baseHint = year !== 'all' && Number.isInteger(y) && y > 0 ? t('te.xlsx.hintYear', y) : t('te.xlsx.hint')
+  // Yıl arşivi sürerken kilitli (inceleme 2026-10-18): tek kullanıcı hareketinden sonra iki otomatik indirme Chrome'da
+  // engellenebilir (başarı bildirimi yine görünürdü) — nedeni açıklamada
+  const hint = blocked && !busy ? `${t('te.xlsx.waitArchive')} ${baseHint}` : baseHint
 
   async function run() {
-    if (busyRef.current || !channel?.id) return
+    if (busyRef.current || blocked || !channel?.id) return
     busyRef.current = true
     setBusy(true)
+    onBusyChange?.(true)
     try {
       let res
       try {
@@ -76,12 +83,14 @@ export default function ChannelXlsxButton({ channel, year }) {
     } finally {
       busyRef.current = false
       setBusy(false)
+      onBusyChange?.(false)
     }
   }
 
   return (
     <>
-      <Button type="button" variant="outline" onClick={run} disabled={busy} aria-busy={busy || undefined}
+      <Button type="button" variant="outline" onClick={run} disabled={busy || blocked} aria-busy={busy || undefined}
+        data-blocked={blocked && !busy ? 'true' : undefined}
         title={hint} aria-describedby={hintId} data-slot="te-channel-xlsx" className="pointer-coarse:min-h-10 sm:ml-auto">
         {busy
           ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />

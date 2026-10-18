@@ -320,7 +320,9 @@ public class TechErrorReportSender {
             if (to.isEmpty()) problem = "TEAM_EMAIL_MISSING";
             role = "TEAM";
         }
+        // Sınır BİR kez okunur (inceleme 2026-10-18): PDF merdiveni, görsel toplamı ve PDF_TOO_LARGE metni aynı değeri kullanır
         int maxMb = liveMaxMailMb();
+        long max = Math.max(1, maxMb) * 1024L * 1024L;
         long inlineBudget = Math.max(0, liveInlineMb()) * 1024L * 1024L;
         // Gönderimle AYNI yol (inceleme 2026-10-17): PDF de üretilir (aynı merdiven, aynı izin — 429 PdfBusyException), görseller
         // izin içinde hazırlanır; posta sınırı PDF + gömülü görsellerin TOPLAMI: sığmazsa görseller yalnız PDF'te ("PDF ekinde"
@@ -337,10 +339,9 @@ public class TechErrorReportSender {
                 mailImages[0] = mailFallback[0];
             }
             return loaded;
-        });
+        }, max);
         TechErrorPdfInput in = rendered.meta();
         byte[] pdf = rendered.pdf();
-        long max = Math.max(1, maxMb) * 1024L * 1024L;
         boolean pdfTooLarge = pdf.length > max;
         if (mailImages[0].bytes() > 0 && pdf.length + mailImages[0].bytes() > max) mailImages[0] = mailFallback[0];
         String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
@@ -581,7 +582,9 @@ public class TechErrorReportSender {
             // hazırlanır (ikinci okuma yok; baytlar izin dışında tutulmaz). Hazırlama hatası postayı durdurmaz: görseli
             // olan her yuva "PDF ekinde" kutusu alır
             // Sınırlar CANLI (E21): bu gönderim için bir kez okunur — PDF, görsel bütçesi ve hata iletisi aynı değeri kullanır
+            // (inceleme 2026-10-18: PDF merdiveni de AYNI değeri alır — izin beklenirken değişen ayar ikisini ayırmasın)
             int maxMailMb = liveMaxMailMb();
+            long max = Math.max(1, maxMailMb) * 1024L * 1024L;
             long inlineBudget = Math.max(0, liveInlineMb()) * 1024L * 1024L;
             TechErrorMailImages.Result[] mailImages = { TechErrorMailImages.Result.empty() };
             // "Hepsi PDF ekinde" yedeği de izin içinde alınır: renderPdf görselsiz girdi döndürür, sonradan türetilemez
@@ -597,7 +600,7 @@ public class TechErrorReportSender {
                         mailImages[0] = mailFallback[0];
                     }
                     return loaded;
-                });
+                }, max);
             } catch (TechErrorReportService.PdfBusyException busy) {
                 // Hiçbir şey denenmedi: talep bırakılır, FAILED yazılmaz; iz "atlandı" olarak kalır
                 finalState = "SKIPPED";
@@ -609,7 +612,6 @@ public class TechErrorReportSender {
             byte[] pdf = rendered.pdf();
             subject = TechErrorReportMail.subject(in);
             pdfBytes = pdf.length;
-            long max = Math.max(1, maxMailMb) * 1024L * 1024L;
             if (pdf.length > max) {
                 finalStatus = "FAILED: PDF e-posta sınırını aşıyor (" + mb(pdf.length) + " MB > " + maxMailMb + " MB)";
                 throw pdfTooLarge(pdf.length, maxMailMb);

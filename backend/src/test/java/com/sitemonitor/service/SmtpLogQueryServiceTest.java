@@ -240,6 +240,21 @@ class SmtpLogQueryServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: teknik hata raporu hatırlatma satırları yeniden gönderilemez — iletileri posta gövdesi değil özet / not (kanal listesi, push notu); takıma o metin postalanmaz")
+    void reminderRowsAreNotResendable() {
+        for (String trigger : List.of(com.sitemonitor.service.techerror.TechErrorReminderService.TRIGGER,
+                com.sitemonitor.service.techerror.TechErrorReminderService.TRIGGER_APPROVAL)) {
+            NotificationLog n = new NotificationLog(); n.setId(50L); n.setAlertEventId(0L); n.setSentAt(at(3)); n.setRecipientName("Dijital");
+            n.setRecipientEmail("dijital@example.com"); n.setSubject("[Site Monitor] Teknik hata raporu hatırlatması — Eylül 2026 · Dijital");
+            n.setEmailStatus("FAILED: 550 x"); n.setTrigger(trigger); n.setMessage("Mobil — Rapor açılmadı · push 2 · +3 adres sınır dışında");
+            when(logRepo.findById(50L)).thenReturn(Optional.of(n));
+            assertThat(svc.resend(50L, SmtpLogQueryService.Scope.all(), "admin").reason()).as(trigger).isEqualTo("SUMMARY_NOT_RESENDABLE");
+        }
+        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+        verify(logRepo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("dışa aktarma: süzgeçle eşleşen tüm satırlar, tavan uygulanır")
     void export() {
         assertThat(svc.exportRows(f("FAILED", null, null, null), SmtpLogQueryService.Scope.all(), 2, NOW)).hasSize(2);

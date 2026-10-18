@@ -28,6 +28,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
@@ -114,7 +115,7 @@ class TechErrorApprovalLinkControllerTest {
                 { "not_found", "Bağlantı geçersiz" } };
         for (int i = 0; i < cases.length; i++) {
             String[] c = cases[i];
-            // Her sebep kendi istemci IP'sinden: 8 × 3 istek, denetleyicinin IP başına dakikalık sınırı (30) aynı fasulyede
+            // Her sebep kendi istemci IP'sinden: 9 × 3 istek, denetleyicinin IP başına dakikalık sınırı (30) aynı fasulyede
             // sınıfın diğer testleriyle paylaşılır — sınır üretim davranışı, test onu tetiklemez
             String ip = "10.9.0." + (i + 1);
             when(approvals.status("t-" + c[0])).thenReturn(new TokenStatus(false, c[0], null, null, null, null));
@@ -139,6 +140,34 @@ class TechErrorApprovalLinkControllerTest {
                 anyString(), eq("no_permission (approve)"));
         verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
                 anyString(), eq("superseded (reject)"));
+        verify(approvals, never()).decideViaToken(anyString(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onay akışı kaldırılmış kanalın bağlantısı güvenlik olayı DEĞİL — nötr tonlu 'onay gerekmiyor' sayfası (kırmızı değil), nötr bilgi kaydı TECH_ERROR_APPROVAL_LINK_NOT_NEEDED; karar yazılmaz")
+    void flowRemovedIsNeutral() throws Exception {
+        when(approvals.status("t-flow")).thenReturn(new TokenStatus(false, "flow_removed", null, null, null, null));
+        String ip = "10.9.1.1";
+        mvc.perform(get("/api/tech-error-reports/approve-link").param("token", "t-flow").with(r -> { r.setRemoteAddr(ip); return r; }))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Onay gerekmiyor")))
+                .andExpect(content().string(containsString("raporun onaya ihtiyacı kalmadı ve ekip onu takım adresine doğrudan gönderebilir")))
+                .andExpect(content().string(containsString("Sizin bir şey yapmanız gerekmiyor.")))
+                .andExpect(content().string(containsString(".strip{height:4px;background:" + TechErrorApprovalLinkController.NEUTRAL_ACCENT + "}")))
+                .andExpect(content().string(not(containsString("#dc2626"))))
+                .andExpect(content().string(not(containsString("action='/api/tech-error-reports/approve-link/confirm'"))));
+        mvc.perform(post("/api/tech-error-reports/approve-link/confirm").param("token", "t-flow").with(r -> { r.setRemoteAddr(ip); return r; }))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Onay gerekmiyor")));
+        mvc.perform(post("/api/tech-error-reports/approve-link/reject").param("token", "t-flow").param("note", "Eksik")
+                        .with(r -> { r.setRemoteAddr(ip); return r; }))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Onay gerekmiyor")));
+        verify(auditService, never()).recordSecurityEvent(anyString(), any(), any(), anyString(), anyString(), anyString());
+        verify(auditService, org.mockito.Mockito.times(3)).recordTokenAction(eq("TECH_ERROR_APPROVAL_LINK_NOT_NEEDED"), any(),
+                eq("email-approval"), isNull(), eq("TECH_ERROR_REPORT"), eq("email-token"), contains("flow_removed"));
+        verify(auditService).recordTokenAction(eq("TECH_ERROR_APPROVAL_LINK_NOT_NEEDED"), any(), anyString(), any(), anyString(),
+                anyString(), contains("reject"));
         verify(approvals, never()).decideViaToken(anyString(), any(), anyBoolean(), any());
     }
 

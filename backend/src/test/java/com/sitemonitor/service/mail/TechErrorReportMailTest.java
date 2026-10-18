@@ -286,4 +286,43 @@ class TechErrorReportMailTest {
         assertThat(TechErrorReportMail.buildFull(en, TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf", null,
                 TechErrorReportMail.Audience.APPROVER).mail().html()).contains("PO approver of Dijital Kanallar");
     }
+
+    // ── PDF eklenmeyen posta (inceleme 2026-10-18) ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: PDF eklenmeyen postada (onay isteği, PDF sınırı aşıyor) hiçbir yer 'ekteki PDF' demez — ön başlık, giriş, görsel kutuları, düz metin etiketleri ve trend notu PDF'in Site Monitor'de olduğunu söyler; PDF ekliyken metinler eskisi gibi")
+    void noAttachmentNeverClaimsAttachedPdf() throws IOException {
+        Template t = TechErrorTestTemplates.withTrend("tr");
+        Map<String, Object> f = new HashMap<>();
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        TechErrorValues.Values v = TechErrorValues.normalize(Map.of("fields", f), t);
+        TechErrorPdfInput in = new TechErrorPdfInput(t, v, "Mobil", "Dijital Kanallar", 2026, 9, "Ayşe Yılmaz",
+                Instant.parse("2026-10-02T06:30:00Z"), images(), null, null);
+        TechErrorMailImages.Result none = TechErrorMailImages.allSkipped(in);
+        TechErrorReportMail.Built noPdf = TechErrorReportMail.buildFull(in, none, "https://sm.example", null);
+        String html = noPdf.mail().html();
+        String text = noPdf.mail().text();
+        assertThat(html).contains("PDF eklenmedi · Eylül 2026")
+                .contains("PDF bu postanın boyut sınırına sığmadığından eklenmedi")
+                .contains("Görsel bu postaya eklenmedi — görmek için PDF&#39;i Site Monitor&#39;den indirin (tam çözünürlük).")
+                .contains("PDF bu postaya eklenmedi — Site Monitor&#39;den indirin.")
+                .doesNotContain("ekteki PDF").doesNotContain("PDF rapor ektedir");
+        assertThat(text).contains("[Görsel — Site Monitor'deki PDF'te]").doesNotContain("PDF ekinde").doesNotContain("ekteki PDF");
+        // PDF ekli: eski metinler (bayt bayt aynı sözcükler)
+        TechErrorReportMail.Built withPdf = TechErrorReportMail.buildFull(in, none, "https://sm.example", "m.pdf");
+        assertThat(withPdf.mail().html()).contains("PDF rapor ektedir · Eylül 2026").contains("Görsel ekteki PDF&#39;te (tam çözünürlük).")
+                .contains("Son 12 ayın trend grafikleri ekteki PDF&#39;tedir.").doesNotContain("PDF eklenmedi");
+        assertThat(withPdf.mail().text()).contains("[Görsel — PDF ekinde]");
+        // Okunamayan görsel her iki durumda da kendi metnini taşır
+        TechErrorMailImages.Result unreadable = new TechErrorMailImages.Result(Map.of(), List.of(), List.of("annual-summary"), 0);
+        assertThat(TechErrorReportMail.buildFull(in, unreadable, null, null).mail().html()).contains("Görsel okunamadı (PDF&#39;te de çizilemedi).");
+        // İngilizce
+        Template te = TechErrorTestTemplates.withTrend("en");
+        TechErrorPdfInput inEn = new TechErrorPdfInput(te, TechErrorValues.normalize(Map.of("fields", f), te), "Mobile", "Digital", 2026, 9,
+                "Ayşe", Instant.parse("2026-10-02T06:30:00Z"), images(), null, null);
+        String en = TechErrorReportMail.buildFull(inEn, TechErrorMailImages.allSkipped(inEn), null, null).mail().html();
+        assertThat(en).contains("PDF not attached · September 2026").contains("Image not included in this e-mail")
+                .contains("which is not attached to this e-mail").doesNotContain("in the attached PDF");
+    }
 }

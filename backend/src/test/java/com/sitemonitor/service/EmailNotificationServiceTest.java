@@ -953,6 +953,94 @@ class EmailNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: aynı konu iki alıcıya ayrı postayla gittiyse (her PO'ya onay isteği) 421 yeniden deneme sonucu ALICISI eşleşen kuyruk satırına yazılır — en yeni satıra değil; alıcı eşleşmezse eski kural (konuya göre en yeni)")
+    void retryWriteBackMatchesRecipient() throws Exception {
+        String subject = "[Onay bekliyor] Mobil Kanalı Teknik Hata Mesajları - Eylül 2026";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        when(mockMsg.getRecipients(jakarta.mail.Message.RecipientType.TO))
+                .thenReturn(new jakarta.mail.Address[] { new jakarta.mail.internet.InternetAddress("PO1@example.com") });
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        runRetriesInline();
+        NotificationLog po1 = new NotificationLog();
+        po1.setRecipientEmail("po1@example.com");
+        po1.setEmailStatus("QUEUED_RETRY: 421");
+        NotificationLog po2 = new NotificationLog();                  // aynı konu, DAHA YENİ satır (başka PO)
+        po2.setRecipientEmail("po2@example.com");
+        po2.setEmailStatus("QUEUED_RETRY: 421");
+        when(notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(java.util.List.of(po2, po1));
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(po2));
+
+        service.sendAlert("po1@example.com", subject, "msg");
+
+        assertThat(po1.getEmailStatus()).isEqualTo("SENT");
+        assertThat(po2.getEmailStatus()).as("başka PO'nun satırı").startsWith("QUEUED_RETRY");
+        verify(notificationLogRepo).save(po1);
+        // Alıcısı eşleşen satır yok (ör. günlükte grup adı): eski kural — konuya göre en yeni
+        NotificationLog group = new NotificationLog();
+        group.setRecipientEmail("7/24 ekibi");
+        when(notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(java.util.List.of(group));
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(group));
+        assertThat(service.retryRowFor(subject, java.util.Set.of("po1@example.com"))).isSameAs(group);
+        assertThat(service.retryRowFor(subject, java.util.Set.of())).isSameAs(group);
+        // Tam adres eşleşmesi: "ba@x" "a@x"i içermez; sığdırılmış liste ("… +3") ilk adreslerle eşleşir
+        assertThat(EmailNotificationService.recipientMatches("ba@example.com", java.util.Set.of("a@example.com"))).isFalse();
+        assertThat(EmailNotificationService.recipientMatches("x@example.com, a@example.com … +3", java.util.Set.of("a@example.com"))).isTrue();
+        assertThat(EmailNotificationService.recipientMatches(null, java.util.Set.of("a@example.com"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: 421 geri yazımı — alıcı sütunu ADRES taşıyıp eşleşmeyen satıra asla yazılmaz (aynı konulu başka PO'nun satırı SENT olmaz; hiçbir şey yazılmaz, bir WARN); konuya göre yedek yalnız karşılaştırılamayan (adressiz) satır için")
+    void retryWriteBackNeverHitsAnotherRecipient() throws Exception {
+        String subject = "[Onay bekliyor] Mobil Kanalı Teknik Hata Mesajları - Eylül 2026";
+        NotificationLog po2 = new NotificationLog();
+        po2.setRecipientEmail("po2@example.com");
+        po2.setEmailStatus("QUEUED_RETRY: 421");
+        when(notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(java.util.List.of(po2));
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(po2));
+        int warnsBefore = (int) classAppender.list.stream().filter(e -> e.getLevel() == Level.WARN).count();
+        assertThat(service.retryRowFor(subject, java.util.Set.of("po1@example.com"))).as("başka PO'nun satırı").isNull();
+        assertThat(classAppender.list.stream().filter(e -> e.getLevel() == Level.WARN).count()).isEqualTo(warnsBefore + 1L);
+        assertThat(classAppender.list.get(classAppender.list.size() - 1).getFormattedMessage()).contains("yazılmadı").contains(subject);
+
+        // Uçtan uca: 421 sonrası başarılı yeniden deneme po2'nin satırına DOKUNMAZ
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        when(mockMsg.getRecipients(jakarta.mail.Message.RecipientType.TO))
+                .thenReturn(new jakarta.mail.Address[] { new jakarta.mail.internet.InternetAddress("po1@example.com") });
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        runRetriesInline();
+        service.sendAlert("po1@example.com", subject, "msg");
+        assertThat(po2.getEmailStatus()).startsWith("QUEUED_RETRY");
+        verify(notificationLogRepo, never()).save(po2);
+
+        // Karşılaştırılamayan (adressiz) satır eşleşen yoksa yedek olur; adresli satırlar arasında kalsa da
+        NotificationLog group = new NotificationLog();
+        group.setRecipientEmail("7/24 ekibi");
+        when(notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(java.util.List.of(po2, group));
+        assertThat(service.retryRowFor(subject, java.util.Set.of("po1@example.com"))).isSameAs(group);
+        assertThat(EmailNotificationService.comparableRecipients("a@x.io, b@x.io … +3")).isTrue();
+        assertThat(EmailNotificationService.comparableRecipients("7/24 ekibi")).isFalse();
+        assertThat(EmailNotificationService.comparableRecipients(null)).isFalse();
+        assertThat(EmailNotificationService.comparableRecipients("")).isFalse();
+    }
+
+    @Test
     @DisplayName("sendAlert (plain) with enabled flag and REVOKED type includes correct HTML")
     void sendAlert_revokedType_emailEnabled_sends() throws Exception {
         when(settingsService.getOrDefaults()).thenReturn(settings(true));

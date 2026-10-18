@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeReminders, parseWhole, reminderState,
-  toForm, validateForm,
+  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isRepairKey, isUnsupportedResponse, normalizeOutOfRange, normalizeReminders,
+  parseWhole, reminderState, repairKeys, toForm, validateForm,
 } from '../components/admin/techErrorReminderModel.js'
 
 // Ayarlar → Teknik hata raporu → hatırlatmalar ve posta sınırları (12. sürüm, 2026-10-17): saf model — sunucu aralıklarıyla
@@ -14,6 +14,57 @@ const SERVER = {
   team_ids: [3, 1], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
   reminder_push: true,
 }
+
+describe('techErrorReminderModel — aralık dışı değer notu (inceleme 2026-10-18)', () => {
+  it('normalizeOutOfRange: yalnız bilinen alan + kaynak (env / stored) + tam sayı varsayılan; eski sunucu (alan yok) → boş; uzun değer 40 karakterde kesilir', () => {
+    expect(normalizeOutOfRange(undefined)).toEqual({})
+    expect(normalizeOutOfRange([])).toEqual({})
+    expect(normalizeOutOfRange({
+      max_mail_mb: { source: 'env', value: 60, default: 15 },
+      mail_inline_mb: { source: 'stored', value: ' abc ', default: 6 },
+      reminder_day: { source: 'weird', value: '1', default: 5 },
+      approval_reminder_days: { source: 'env', value: '99', default: 'x' },
+      bogus: { source: 'env', value: '1', default: 1 },
+    })).toEqual({
+      max_mail_mb: { source: 'env', value: '60', default: 15 },
+      mail_inline_mb: { source: 'stored', value: 'abc', default: 6 },
+    })
+    expect(normalizeOutOfRange({ max_mail_mb: { source: 'stored', value: 'x'.repeat(60), default: 15 } }).max_mail_mb.value)
+      .toBe(`${'x'.repeat(40)}…`)
+    // normalizeReminders taşır
+    const saved = normalizeReminders({ ...SERVER, out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 } } })
+    expect(saved.out_of_range.max_mail_mb.value).toBe('60')
+    expect(normalizeReminders(SERVER).out_of_range).toEqual({})
+  })
+
+  it('inceleme 2026-10-18 (2. tur): aralık dışı alan ONARIM bekler — formdaki geçerli değer (varsayılan, kayıtlı görüntüyle aynı sayı) değişiklik sayılır ve TEK kayıtta yazılır; kullanıcı değişikliği sayımı ({ repairs: false }) onu saymaz', () => {
+    const saved = normalizeReminders({ ...SERVER, out_of_range: {
+      max_mail_mb: { source: 'env', value: '60', default: 15 }, approval_reminder_days: { source: 'stored', value: 'abc', default: 3 },
+    } })
+    const form = toForm(saved)
+    expect(repairKeys(saved)).toEqual(['approval_reminder_days', 'max_mail_mb'])
+    expect(isRepairKey(saved, 'max_mail_mb')).toBe(true)
+    expect(isRepairKey(saved, 'reminder_day')).toBe(false)
+    expect(isRepairKey(null, 'max_mail_mb')).toBe(false)
+    expect(changedFields(saved, form)).toEqual({ approval_reminder_days: 3, max_mail_mb: 15 })
+    expect(isFormDirty(saved, form)).toBe(true)
+    expect(changedFields(saved, form, { repairs: false })).toEqual({})
+    expect(isFormDirty(saved, form, { repairs: false })).toBe(false)
+    // Kullanıcı onarım alanına başka bir geçerli değer yazdı: o gider; diğer onarım da aynı kayda girer
+    expect(changedFields(saved, { ...form, max_mail_mb: '25', reminder_day: '7' }))
+      .toEqual({ reminder_day: 7, approval_reminder_days: 3, max_mail_mb: 25 })
+    expect(isFormDirty(saved, { ...form, reminder_day: '7' }, { repairs: false })).toBe(true)
+    // Onarım alanı "değişmemiş" sayılıp doğrulamadan kaçmaz: aralık ve alanlar-arası kural ona da uygulanır
+    expect(validateForm(form, REM_DEFAULT_LIMITS, saved)).toEqual({})
+    expect(validateForm({ ...form, max_mail_mb: '4' }, REM_DEFAULT_LIMITS, saved).max_mail_mb).toEqual({ key: 'te.rem.v.whole', params: [5, 50] })
+    const inlineHigh = { ...saved, mail_inline_mb: 20 }
+    expect(validateForm(toForm(inlineHigh), REM_DEFAULT_LIMITS, inlineHigh).mail_inline_mb).toEqual({ key: 'te.rem.v.inline', params: [20, 15] })
+    // Not yoksa eski davranış: kayıtlıyla aynı değer değişiklik değildir
+    const plain = normalizeReminders(SERVER)
+    expect(changedFields(plain, toForm(plain))).toEqual({})
+    expect(isFormDirty(plain, toForm(plain))).toBe(false)
+  })
+})
 
 describe('techErrorReminderModel', () => {
   it('varsayılan sınırlar Java TechErrorReportSettings ile AYNI (min, max, varsayılan)', () => {
@@ -54,6 +105,20 @@ describe('techErrorReminderModel', () => {
     expect(bad.mail_inline_mb).toBeUndefined()
     expect(parseWhole(' 12 ')).toBe(12)
     expect(parseWhole('-1')).toBeNull()
+  })
+
+  it('inceleme 2026-10-18 (kural 9): kayıtlı değer verilirse YALNIZ değişen alanlar doğrulanır — değişmeyen (aynı değerin başka yazımı da) yeniden denetlenmez; alanlar-arası kural yalnız sınırlardan biri değiştiyse', () => {
+    // Kayıtlı görüntüde aralık dışı / çelişen değerler (eski sunucu, elle yazılmış ayar): kullanıcı yalnız günü değiştirdi
+    const saved = { ...normalizeReminders(SERVER), approval_reminder_days: 40, max_mail_mb: 10, mail_inline_mb: 12 }
+    const form = { ...toForm(saved), reminder_day: '7' }
+    expect(validateForm(form, REM_DEFAULT_LIMITS, saved)).toEqual({})
+    expect(validateForm({ ...form, approval_reminder_days: '040' }, REM_DEFAULT_LIMITS, saved)).toEqual({})   // aynı değer
+    // Değişen alan yine denetlenir; sınır değişince alanlar-arası kural geri gelir
+    expect(validateForm({ ...form, reminder_day: '29' }, REM_DEFAULT_LIMITS, saved).reminder_day).toEqual({ key: 'te.rem.v.whole', params: [1, 28] })
+    expect(validateForm({ ...form, max_mail_mb: '11' }, REM_DEFAULT_LIMITS, saved).mail_inline_mb).toEqual({ key: 'te.rem.v.inline', params: [12, 11] })
+    expect(validateForm({ ...form, approval_reminder_days: '' }, REM_DEFAULT_LIMITS, saved).approval_reminder_days).toBeTruthy()
+    // Kayıtlı değer verilmezse eski davranış (her alan)
+    expect(validateForm(form).approval_reminder_days).toBeTruthy()
   })
 
   it('changedFields: yalnız değişen alanlar (takım sırası değişiklik değil); boş = istek yok; yarım sayı kirli ama gövdeye girmez', () => {

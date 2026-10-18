@@ -175,7 +175,7 @@ class TechErrorAnalyticsServiceTest {
     // ── Testler ────────────────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("pencere önceki takvim ayıyla biter (12 ay, eskiden yeniye); yalnız AKTİF kanallar; değer + rapor kimliği + gönderildi")
+    @DisplayName("pencere önceki takvim ayıyla biter (12 ay, eskiden yeniye); penceresinde raporu olmayan pasif kanal listelenmez; değer + rapor kimliği + gönderildi")
     void windowValuesAndReports() {
         TechErrorChannel mobil = channel(A, "Mobil");
         TechErrorChannel pos = channel(A, "POS");
@@ -625,5 +625,372 @@ class TechErrorAnalyticsServiceTest {
         assertThat(reports.findAnalyticsRows(List.of(mobil.getId(), pos.getId()), from, to, rows.get(0).getId(), page)).hasSize(2);
         assertThat(reports.findAnalyticsRows(List.of(mobil.getId(), pos.getId()), from, to, 0L,
                 org.springframework.data.domain.PageRequest.of(0, 1))).hasSize(1);
+    }
+
+    // ── Pasif kanallar (2026-10-18, kullanıcı kararı: "pasife alınmış kanalları geçmiş aylarıyla birlikte gösterelim") ─
+
+    /** Şablonun ilk metrik bölümüne bir alan ekler. */
+    private static Template withExtra(Template t, String id, String label, String type) {
+        List<Section> out = new ArrayList<>();
+        boolean added = false;
+        for (Section s : t.sections()) {
+            if (added || !"metrics".equals(s.kind())) { out.add(s); continue; }
+            List<Field> fs = new ArrayList<>(s.fields());
+            fs.add(new Field(id, label, type, null));
+            out.add(s.withFields(List.copyOf(fs)));
+            added = true;
+        }
+        return new Template(t.lang(), t.title(), List.copyOf(out));
+    }
+
+    private TechErrorChannel inactive(long team, String name, Template t) {
+        return channel(team, name, t, false);
+    }
+
+    private TechErrorChannel inactive(long team, String name) {
+        return inactive(team, name, TechErrorTemplate.defaults("tr"));
+    }
+
+    @Test
+    @DisplayName("pasif kanal penceresinde raporu varsa listelenir (active=false), aktiflerin ARDINDAN aynı sırayla; raporu yalnız pencere dışında (geçen ay dilimi dahil) olan pasif listelenmez")
+    void inactiveWithReportsListedAfterActive() {
+        TechErrorChannel mobil = channel(A, "Mobil");
+        TechErrorChannel arsiv = inactive(A, "Arşiv Kanalı");                    // adı aktiflerden önce gelir — sıra yine sonda
+        TechErrorChannel pos = channel(B, "POS");
+        TechErrorChannel eskiPos = inactive(B, "Eski POS");
+        TechErrorChannel kapali = inactive(A, "Kapalı Kanal");
+        TechErrorChannel bos = inactive(A, "Boş Kanal");                         // hiç raporu yok
+        report(mobil, END, vals("total-tx", 10));
+        report(arsiv, END.minusMonths(11), vals("total-tx", 700));               // pencerenin en eski ayı
+        report(arsiv, END.minusMonths(3), vals("total-tx", 750));
+        report(eskiPos, END.minusMonths(5), vals("total-tx", 40));
+        report(kapali, END.minusMonths(12), vals("total-tx", 5));                // yalnız "geçen ay" dilimi (pencere dışı)
+        report(kapali, END.minusMonths(20), vals("total-tx", 6));
+
+        Result r = run(Set.of(A, B), null, 12, List.of("total-tx"));
+        assertThat(r.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "POS", "Arşiv Kanalı", "Eski POS");
+        assertThat(r.channels()).extracting(ChannelSeries::active).containsExactly(true, true, false, false);
+        assertThat(r.channelCount()).isEqualTo(4);
+        assertThat(r.truncated()).isFalse();
+        ChannelSeries a = series(r, "Arşiv Kanalı");
+        assertThat(a.values().get("total-tx").get(0)).isEqualTo(700d);
+        assertThat(a.values().get("total-tx").get(8)).isEqualTo(750d);
+        assertThat(a.values().get("total-tx").get(11)).isNull();                // pasife alındıktan sonraki ay boş (0 değil)
+        assertThat(a.reports().get(0)).isNotNull();
+        assertThat(r.channels()).noneMatch(c -> c.id() == kapali.getId() || c.id() == bos.getId());
+        // Aktif kanal raporsuz da listelenir (bugünkü davranış)
+        Result onlyB = run(Set.of(A, B), B, 12, List.of("total-tx"));
+        assertThat(onlyB.channels()).extracting(ChannelSeries::name).containsExactly("POS", "Eski POS");
+        // 6 aylık pencere: Arşiv'in Haziran'ı (−3) ve Eski POS'un Nisan'ı (−5) içeride
+        Result six0 = run(Set.of(A, B), null, 6, List.of("total-tx"));
+        assertThat(six0.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "POS", "Arşiv Kanalı", "Eski POS");
+        // Raporu yalnız 6 aylık pencerenin hemen öncesinde (−6, geçen ay dilimi) olan pasif 6 ayda yok, 12 ayda var
+        reports.deleteAll();
+        analytics.invalidate();
+        report(arsiv, END.minusMonths(6), vals("total-tx", 1));
+        Result six = run(Set.of(A, B), null, 6, List.of("total-tx"));
+        assertThat(six.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "POS");
+        Result twelve = run(Set.of(A, B), null, 12, List.of("total-tx"));
+        assertThat(twelve.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "POS", "Arşiv Kanalı");
+    }
+
+    @Test
+    @DisplayName("referans tür AKTİF kanallardan: iki pasif yüzde, bir aktif sayı → sayı (pasifler tür farkıyla işaretli); aktiflerde olmayan alan listelenen pasiflerin çoğunluğundan; raporsuz pasifin alanı seçilemez")
+    void referenceTypePrefersActiveThenListedInactive() {
+        Template pct = withType(TechErrorTemplate.defaults("tr"), "total-tx", "percent");
+        Template noSla = without(TechErrorTemplate.defaults("tr"), "sla-rate");
+        TechErrorChannel mobil = channel(A, "Mobil", noSla, true);                                  // total-tx sayı, sla-rate yok
+        TechErrorChannel p1 = inactive(A, "Pasif 1", pct);                                         // total-tx yüzde, sla-rate yüzde
+        TechErrorChannel p2 = inactive(A, "Pasif 2", pct);
+        TechErrorChannel p3 = inactive(A, "Pasif 3", withExtra(withType(TechErrorTemplate.defaults("tr"), "sla-rate", "number"),
+                "archive-count", "Arşiv adedi", "number"));                                        // sla-rate SAYI (azınlık)
+        TechErrorChannel kapali = inactive(A, "Kapalı", withExtra(TechErrorTemplate.defaults("tr"), "legacy-count", "Eski adet", "number"));
+        report(mobil, END, noSla, vals("total-tx", 10), null);
+        report(p1, END.minusMonths(2), pct, vals("total-tx", 20, "sla-rate", 99.9), null);
+        report(p2, END.minusMonths(2), pct, vals("total-tx", 30, "sla-rate", 99.5), null);
+        report(p3, END.minusMonths(2), vals("archive-count", 3));
+        report(kapali, END.minusMonths(14), vals("legacy-count", 1));                               // pencere dışında → listelenmez
+
+        Result r = run(Set.of(A), null, 12, List.of("total-tx", "sla-rate"));
+        assertThat(r.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "Pasif 1", "Pasif 2", "Pasif 3");
+        var tx = r.fields().get(0);
+        assertThat(tx.type()).as("aktiflerin çoğunluğu (pasifler sayıca fazla olsa da)").isEqualTo("number");
+        assertThat(tx.typeMismatch()).containsExactly(p1.getId(), p2.getId());
+        assertThat(series(r, "Mobil").values().get("total-tx").get(11)).isEqualTo(10d);
+        assertThat(series(r, "Pasif 1").values().get("total-tx").get(9)).as("raporun şablonunda tür farklı").isNull();
+        var sla = r.fields().get(1);
+        assertThat(sla.type()).as("hiçbir aktif kanal tanımlamıyor → listelenen pasiflerin çoğunluğu").isEqualTo("percent");
+        assertThat(sla.typeMismatch()).containsExactly(p3.getId());
+        assertThat(series(r, "Pasif 1").values().get("sla-rate").get(9)).isEqualTo(99.9);
+        var opts = r.available();
+        // Kanal sayısı: referans türle tanımlayan LİSTELENEN kanallar (aktif Mobil + sayı tanımlı Pasif 3)
+        assertThat(opts.stream().filter(o -> o.id().equals("total-tx")).findFirst().orElseThrow().channels()).isEqualTo(2);
+        assertThat(opts.stream().filter(o -> o.id().equals("sla-rate")).findFirst().orElseThrow().channels()).isEqualTo(2);
+        var archive = opts.stream().filter(o -> o.id().equals("archive-count")).findFirst().orElseThrow();
+        assertThat(archive.type()).isEqualTo("number");
+        assertThat(archive.channels()).isEqualTo(1);
+        assertThat(opts).extracting(TechErrorAnalyticsService.FieldOption::id).doesNotContain("legacy-count");
+        // Seçilebilir alan sırası: önce aktiflerin alanları, pasiflere özgü alan sonda
+        List<String> ids = opts.stream().map(TechErrorAnalyticsService.FieldOption::id).toList();
+        assertThat(ids.indexOf("archive-count")).isGreaterThan(ids.indexOf("total-tx"));
+        assertThat(ids.indexOf("sla-rate")).isGreaterThan(ids.indexOf("total-tx"));
+    }
+
+    @Test
+    @DisplayName("SABİT SORGU pasiflerle de: kanal + TEK hafif pasif sorgusu + pencere = 3 cümle — 4 pasifle de 44 pasifle de; takım seçiliyken de; yalnız pasif kanallı kapsam da 3; pasif kanalı olmayan takımlarda 2")
+    void inactiveChannelsKeepStatementCount() {
+        Statistics stats = emf.unwrap(SessionFactory.class).getStatistics();
+        TechErrorChannel mobil = channel(A, "Mobil");
+        TechErrorChannel arsiv = inactive(A, "Arşiv");
+        inactive(A, "Boş");
+        TechErrorChannel odeme = inactive(C, "Ödeme Eski");
+        report(mobil, END, vals("total-tx", 1));
+        for (int k = 0; k < 6; k++) report(arsiv, END.minusMonths(k + 2), vals("total-tx", k));
+        report(odeme, END.minusMonths(1), vals("total-tx", 9));
+        stats.clear();
+        Result r = run(Set.of(A, C), null, 12, List.of("total-tx", "error-rate"));
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(r.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "Arşiv", "Ödeme Eski");
+        // 40 pasif daha (10'unun penceresinde raporu var): cümle sayısı aynı — pasif kanal başına sorgu yok
+        for (int i = 0; i < 40; i++) {
+            TechErrorChannel p = inactive(i % 2 == 0 ? A : C, String.format("Eski %02d", i));
+            if (i % 4 == 0) report(p, END.minusMonths(i % 12), vals("total-tx", i));
+        }
+        analytics.invalidate();
+        stats.clear();
+        Result many = run(Set.of(A, C), null, 12, List.of("total-tx", "error-rate"));
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(many.channels()).hasSize(13);
+        assertThat(many.channels().get(12).name()).isEqualTo("Ödeme Eski");
+        analytics.invalidate();
+        stats.clear();
+        Result filtered = run(Set.of(A, C), A, 12, List.of("total-tx"));
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(filtered.channels()).hasSize(12);
+        assertThat(filtered.channels()).extracting(ChannelSeries::name).startsWith("Mobil", "Arşiv").doesNotContain("Ödeme Eski");
+        analytics.invalidate();
+        stats.clear();
+        Result onlyInactive = run(Set.of(C), null, 12, List.of());
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(onlyInactive.channels()).extracting(ChannelSeries::name).containsExactly("Ödeme Eski");
+        assertThat(onlyInactive.fields()).extracting(TechErrorAnalyticsService.FieldRef::id).containsExactly("error-rate", "total-tx");
+        assertThat(series(onlyInactive, "Ödeme Eski").values().get("total-tx").get(10)).isEqualTo(9d);
+        // Okunabilen takımlarda pasif kanal yoksa hafif sorgu da yok (eski davranış: 2 cümle)
+        TechErrorChannel pos = channel(B, "POS");
+        report(pos, END, vals("total-tx", 3));
+        analytics.invalidate();
+        stats.clear();
+        run(Set.of(B), null, 12, List.of("total-tx"));
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("tam satırlar yalnız LİSTELENEN kanallar için okunur: takım seçiliyken öteki takımın raporlu pasifi ve kapsamın penceresi dışında raporu olan pasifi pencere okumasına girmez (dilim 1 satır → 3 satır = 4 dilim)")
+    void fullRowsReadOnlyForListedChannels() {
+        Statistics stats = emf.unwrap(SessionFactory.class).getStatistics();
+        TechErrorChannel mobil = channel(A, "Mobil");
+        TechErrorChannel arsiv = inactive(A, "Arşiv");
+        TechErrorChannel kapali = inactive(A, "Kapalı");
+        TechErrorChannel odeme = inactive(C, "Ödeme Eski");
+        report(mobil, END, vals("total-tx", 1));
+        report(arsiv, END.minusMonths(2), vals("total-tx", 2));
+        report(arsiv, END.minusMonths(3), vals("total-tx", 3));
+        report(kapali, END.minusMonths(12), vals("total-tx", 4));                // yalnız "geçen ay" dilimi — listelenmez
+        for (int k = 0; k < 5; k++) report(odeme, END.minusMonths(k), vals("total-tx", 10 + k));
+        analytics.chunkSize = 1;
+        stats.clear();
+        Result r = run(Set.of(A, C), A, 12, List.of("total-tx"));
+        // kanal + hafif pasif sorgusu + 3 dolu dilim (Mobil 1, Arşiv 2) + 1 boş son dilim
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(1 + 1 + 4);
+        assertThat(r.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "Arşiv");
+        assertThat(r.teamsWithChannels()).containsExactly(A, C);
+        assertThat(series(r, "Arşiv").values().get("total-tx").get(9)).isEqualTo(2d);
+        assertThat(r.channels()).noneMatch(c -> c.id() == kapali.getId() || c.id() == odeme.getId());
+    }
+
+    @Test
+    @DisplayName("depo: pasif kanalların istenen dönemdeki EN YENİ rapor dönemi — takım IN listesi, aktif kanal / başka takım / pencere dışı satır vermez, raporsuz pasif yok")
+    void repositoryNewestPeriodOfInactiveChannels() {
+        TechErrorChannel mobil = channel(A, "Mobil");
+        TechErrorChannel arsiv = inactive(A, "Arşiv");
+        inactive(A, "Boş");
+        TechErrorChannel eski = inactive(B, "Eski");
+        report(mobil, YearMonth.of(2026, 9), vals());
+        report(arsiv, YearMonth.of(2026, 1), vals());
+        report(arsiv, YearMonth.of(2026, 5), vals());
+        report(arsiv, YearMonth.of(2026, 10), vals());                          // pencere sonrası
+        report(eski, YearMonth.of(2026, 3), vals());
+        int from = TechErrorAnalyticsService.period(YearMonth.of(2026, 1));
+        int to = TechErrorAnalyticsService.period(YearMonth.of(2026, 9));
+        List<Object[]> onlyA = reports.newestPeriodOfInactiveChannels(List.of(A), from, to);
+        assertThat(onlyA).hasSize(1);
+        assertThat(((Number) onlyA.get(0)[0]).longValue()).isEqualTo(arsiv.getId());
+        assertThat(((Number) onlyA.get(0)[1]).intValue()).isEqualTo(TechErrorAnalyticsService.period(YearMonth.of(2026, 5)));
+        Map<Long, Integer> both = new HashMap<>();
+        for (Object[] row : reports.newestPeriodOfInactiveChannels(List.of(A, B), from, to)) {
+            both.put(((Number) row[0]).longValue(), ((Number) row[1]).intValue());
+        }
+        assertThat(both).containsOnlyKeys(arsiv.getId(), eski.getId());
+        assertThat(both.get(eski.getId())).isEqualTo(TechErrorAnalyticsService.period(YearMonth.of(2026, 3)));
+        assertThat(reports.newestPeriodOfInactiveChannels(List.of(A),
+                TechErrorAnalyticsService.period(YearMonth.of(2026, 6)), to)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("takım seçici: yalnız raporlu pasif kanalı olan takım listede (takım seçiliyken de); raporu pencerede olmayan pasif kanallı takım listede değil")
+    void teamPickerIncludesTeamsWithListedInactiveOnly() {
+        channel(A, "Mobil");
+        TechErrorChannel eski = inactive(B, "Kurumsal Eski");                    // B: yalnız pasif, raporu pencere dışında
+        TechErrorChannel odeme = inactive(C, "Sanal POS Eski");                  // C: yalnız pasif, raporu pencerede
+        report(eski, END.minusMonths(15), vals("total-tx", 1));
+        report(odeme, END.minusMonths(4), vals("total-tx", 2));
+        Result all = run(Set.of(A, B, C), null, 12, List.of("total-tx"));
+        assertThat(all.teamsWithChannels()).containsExactly(A, C);
+        assertThat(all.channels()).extracting(ChannelSeries::name).containsExactly("Mobil", "Sanal POS Eski");
+        Result onlyA = run(Set.of(A, B, C), A, 12, List.of("total-tx"));
+        assertThat(onlyA.teamsWithChannels()).as("seçim değişince seçici değişmez").containsExactly(A, C);
+        assertThat(onlyA.channels()).extracting(ChannelSeries::name).containsExactly("Mobil");
+        Result onlyC = run(Set.of(A, B, C), C, 12, List.of("total-tx"));
+        assertThat(onlyC.channels()).extracting(ChannelSeries::name).containsExactly("Sanal POS Eski");
+        assertThat(onlyC.channels().get(0).active()).isFalse();
+        assertThat(onlyC.teamsWithChannels()).containsExactly(A, C);
+        assertThat(run(Set.of(A, B, C), B, 12, List.of("total-tx")).channels()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("pasifler aktiflerin ay penceresini DARALTMAZ: 50 aktif × 24 ay = 1200 sığar; yalnız en eski ayda raporu olan pasif sığmaz → 24 ay kalır, pasif düşer (channels_truncated; truncated DEĞİL); 49 aktifle aynı pasif listelenir; kısmen sığınca sıranın SONUNDAKİ pasif düşer")
+    void inactiveNeverShrinksActiveWindow() {
+        List<TechErrorChannel> list = new ArrayList<>();
+        for (int i = 0; i < 50; i++) list.add(channel(i < 25 ? A : B, String.format("Kanal %02d", i)));
+        report(list.get(0), END.minusMonths(23), vals("total-tx", 1));            // 24 aylık pencerenin en eski ayı
+        TechErrorChannel old = inactive(B, "Pasif Eski");
+        report(old, END.minusMonths(23), vals("total-tx", 13));                   // yalnız en eski ayda raporu var
+        Result r = run(Set.of(A, B), null, 24, List.of("total-tx"));
+        assertThat(r.months()).hasSize(24);
+        assertThat(r.months().get(0)).isEqualTo(END.minusMonths(23));
+        assertThat(r.truncated()).as("aylar kesilmedi").isFalse();
+        assertThat(r.channelsTruncated()).isTrue();
+        assertThat(r.inactiveOmitted()).isEqualTo(1);
+        assertThat(r.channels()).hasSize(50).allMatch(ChannelSeries::active);
+        assertThat(r.channelCount()).as("gösterilen 50 + listeye alınmayan 1").isEqualTo(51);
+        assertThat(series(r, "Kanal 00").values().get("total-tx").get(0)).isEqualTo(1d);
+        assertThat(r.teamsWithChannels()).containsExactly(A, B);
+
+        // 49 aktif: aynı pasif kalan 24 hücreye sığar → listelenir, 24 ay, işaret yok
+        channels.delete(list.get(49));
+        analytics.invalidate();
+        Result fits = run(Set.of(A, B), null, 24, List.of("total-tx"));
+        assertThat(fits.months()).hasSize(24);
+        assertThat(fits.truncated()).isFalse();
+        assertThat(fits.channelsTruncated()).isFalse();
+        assertThat(fits.inactiveOmitted()).isZero();
+        assertThat(fits.channels()).hasSize(50);
+        assertThat(fits.channelCount()).isEqualTo(50);
+        ChannelSeries last = fits.channels().get(49);
+        assertThat(last.name()).isEqualTo("Pasif Eski");
+        assertThat(last.active()).isFalse();
+        assertThat(last.values().get("total-tx").get(0)).isEqualTo(13d);
+
+        // 48 aktif: 1200 − 48 × 24 = 48 hücre → 2 pasif; 3 raporlu pasif → sıranın SONUNDAKİ (Pasif Eski) düşer
+        channels.delete(list.get(48));
+        TechErrorChannel p1 = inactive(A, "Pasif 1");
+        TechErrorChannel p2 = inactive(B, "Pasif 2");
+        report(p1, END, vals("total-tx", 11));
+        report(p2, END.minusMonths(1), vals("total-tx", 12));
+        analytics.invalidate();
+        Result partial = run(Set.of(A, B), null, 24, List.of("total-tx"));
+        assertThat(partial.months()).hasSize(24);
+        assertThat(partial.truncated()).isFalse();
+        assertThat(partial.channelsTruncated()).isTrue();
+        assertThat(partial.inactiveOmitted()).isEqualTo(1);
+        assertThat(partial.channels()).hasSize(50);
+        assertThat(partial.channels().subList(48, 50)).extracting(ChannelSeries::name).containsExactly("Pasif 1", "Pasif 2");
+        assertThat(partial.channels()).noneMatch(c -> c.id() == old.getId());
+        assertThat(partial.channelCount()).isEqualTo(51);
+        assertThat(series(partial, "Pasif 1").values().get("total-tx").get(23)).isEqualTo(11d);
+        // Daha kısa dönem: hepsi sığar
+        Result twelve = run(Set.of(A, B), null, 12, List.of("total-tx"));
+        assertThat(twelve.channelsTruncated()).isFalse();
+        assertThat(twelve.channels()).extracting(ChannelSeries::name).contains("Pasif 1", "Pasif 2").doesNotContain("Pasif Eski");
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("inceleme 2026-10-18 (2. tur): aktif kanallar hücre sınırını tek başına aşarsa dışarıda kalan AKTİF sayı ayrıca bildirilir; sığarsa 0")
+    void activeOmittedCount() {
+        assertThat(TechErrorAnalyticsService.activeOmitted(TechErrorAnalyticsService.MAX_CELLS)).isZero();
+        assertThat(TechErrorAnalyticsService.activeOmitted(TechErrorAnalyticsService.MAX_CELLS + 7)).isEqualTo(7);
+        assertThat(TechErrorAnalyticsService.activeOmitted(0)).isZero();
+    }
+
+    @Test
+    @DisplayName("aktifler ayları kestiğinde (51 × 24 > 1200 → 23 ay; truncated) pasif kalan hücreye sığarsa listelenir; sığmayan pasif ayrıca işaretlenir; raporu kesilen ayda kalan pasif sayılmaz ama takımı seçicide")
+    void activeTruncationThenInactiveFill() {
+        for (int i = 0; i < 51; i++) channel(i < 26 ? A : B, String.format("Kanal %02d", i));
+        TechErrorChannel p1 = inactive(A, "Pasif 1");
+        TechErrorChannel p2 = inactive(B, "Pasif 2");
+        TechErrorChannel cut = inactive(C, "Ödeme Eski");
+        report(p1, END, vals("total-tx", 11));
+        report(p2, END.minusMonths(1), vals("total-tx", 12));
+        report(cut, END.minusMonths(23), vals("total-tx", 13));                   // 24 ayın en eski ayı — 23 ayda dışarıda
+        Result r = run(Set.of(A, B, C), null, 24, List.of("total-tx"));
+        assertThat(r.months()).hasSize(23);                                       // 1200 / 51
+        assertThat(r.truncated()).isTrue();
+        // 1200 − 51 × 23 = 27 hücre → 1 pasif
+        assertThat(r.channels()).hasSize(52);
+        assertThat(r.channels().get(51).name()).isEqualTo("Pasif 1");
+        assertThat(r.channelsTruncated()).isTrue();
+        assertThat(r.inactiveOmitted()).isEqualTo(1);
+        assertThat(r.channelCount()).isEqualTo(53);
+        assertThat(r.teamsWithChannels()).containsExactly(A, B, C);
+    }
+
+    @Test
+    @DisplayName("takım seçici seçimle DEĞİŞMEZ, aktif pencere kesildiğinde de: team=all / A / B / C aynı liste (İSTENEN pencereye bakar); seçilen pasif-yalnız takım kanalını tam pencereyle gösterir")
+    void teamPickerIdenticalForEverySelection() {
+        for (int i = 0; i < 51; i++) channel(A, String.format("Kanal %02d", i));
+        channel(B, "POS");
+        TechErrorChannel sanal = inactive(C, "Sanal POS Eski");
+        report(sanal, END.minusMonths(23), vals("total-tx", 7));                  // yalnız 24 aylık pencerenin en eski ayı
+        TechErrorChannel eski = inactive(B, "Kurumsal Eski");
+        report(eski, END.minusMonths(30), vals("total-tx", 1));                   // istenen pencerenin dışında
+        Result all = run(Set.of(A, B, C), null, 24, List.of("total-tx"));
+        assertThat(all.truncated()).isTrue();                                     // 52 aktif → 23 ay
+        assertThat(all.channels()).noneMatch(c -> c.id() == sanal.getId());       // raporu gösterilen aylarda yok
+        assertThat(all.teamsWithChannels()).containsExactly(A, B, C);
+        for (Long team : new Long[] {A, B, C}) {
+            assertThat(run(Set.of(A, B, C), team, 24, List.of("total-tx")).teamsWithChannels())
+                    .as("takım %s seçiliyken", team).isEqualTo(all.teamsWithChannels());
+        }
+        Result onlyC = run(Set.of(A, B, C), C, 24, List.of("total-tx"));
+        assertThat(onlyC.months()).hasSize(24);
+        assertThat(onlyC.channels()).extracting(ChannelSeries::name).containsExactly("Sanal POS Eski");
+        assertThat(series(onlyC, "Sanal POS Eski").values().get("total-tx").get(0)).isEqualTo(7d);
+        // 12 ay: C'nin raporu istenen pencerenin dışında → hiçbir seçimde C yok
+        List<Long> twelve = run(Set.of(A, B, C), null, 12, List.of("total-tx")).teamsWithChannels();
+        assertThat(twelve).containsExactly(A, B);
+        for (Long team : new Long[] {A, B}) {
+            assertThat(run(Set.of(A, B, C), team, 12, List.of("total-tx")).teamsWithChannels()).isEqualTo(twelve);
+        }
+    }
+
+    @Test
+    @DisplayName("kanal pasife alınınca / yeniden açılınca (updateChannel) analiz belleği boşalır: pasif kanal raporlarıyla rozetli, raporsuz pasif listeden düşer")
+    void deactivationClearsTheMemo() {
+        TechErrorChannel mobil = reportService.createChannel(A, "Mobil", null, TechErrorTemplate.defaults("tr"), 7L);
+        TechErrorChannel pos = reportService.createChannel(A, "POS", null, TechErrorTemplate.defaults("tr"), 7L);
+        report(mobil, END, vals("total-tx", 10));
+        Result first = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(first.channels()).extracting(ChannelSeries::active).containsExactly(true, true);
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx"))).isSameAs(first);
+        reportService.updateChannel(mobil.getId(), Map.of("active", false), 7L);
+        Result afterMobil = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(afterMobil).isNotSameAs(first);
+        assertThat(afterMobil.channels()).extracting(ChannelSeries::name).containsExactly("POS", "Mobil");
+        assertThat(afterMobil.channels()).extracting(ChannelSeries::active).containsExactly(true, false);
+        reportService.updateChannel(pos.getId(), Map.of("active", false), 7L);
+        Result afterPos = run(Set.of(A), null, 12, List.of("total-tx"));
+        assertThat(afterPos.channels()).extracting(ChannelSeries::name).containsExactly("Mobil");   // POS'un raporu yok
+        reportService.updateChannel(mobil.getId(), Map.of("active", true), 7L);
+        assertThat(run(Set.of(A), null, 12, List.of("total-tx")).channels()).extracting(ChannelSeries::active).containsExactly(true);
     }
 }

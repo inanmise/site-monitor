@@ -17,7 +17,8 @@ vi.mock('../api/client', () => ({
 }))
 const writer = vi.hoisted(() => ({ buildXlsx: vi.fn(() => new Uint8Array([80, 75, 3, 4])), download: vi.fn() }))
 vi.mock('../utils/xlsxWriter.js', () => ({ buildXlsx: writer.buildXlsx, XLSX_MIME: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
-vi.mock('../utils/exportInventory.js', () => ({ triggerDownload: writer.download }))
+// İndirme proje yardımcısıyla (inceleme 2026-10-18: bağlantı DOM'da, adres 60 sn — Safari / iPad); diğer CSV yardımcıları gerçek
+vi.mock('../utils/csvExport.js', async (orig) => ({ ...(await orig()), downloadBlob: writer.download }))
 // Tembel modülün kendisi: gerçek uygulamaya devreder; bir testte tarayıcı hatası (ör. yüklenemeyen parça) taklit edilir
 const chunk = vi.hoisted(() => ({ fail: null }))
 vi.mock('../components/techerror/channelExport.js', async () => {
@@ -87,7 +88,7 @@ describe("kanal görünümü — Excel'e aktar", () => {
     expect(sheets[0].rows[1]).toEqual(['Toplam işlem adedi', 'Sayı', 1000, 2000])
     expect(sheets[0].rows[2]).toEqual(['Teknik hata oranı', 'Yüzde', null, 1.475])
     expect(sheets[1].rows.map((r) => r[0])).toEqual(['Dönem', 'Aralık 2025', 'Eylül 2026'])
-    const [blob, name] = writer.download.mock.calls[0]
+    const [name, blob] = writer.download.mock.calls[0]
     expect(blob).toBeInstanceOf(Blob)
     expect(name).toBe('mobil-2025-2026-degerler.xlsx')
     expect(await screen.findByText('Excel dosyası indirildi: mobil-2025-2026-degerler.xlsx')).toBeInTheDocument()
@@ -100,7 +101,7 @@ describe("kanal görünümü — Excel'e aktar", () => {
     fireEvent.click(await xlsxButton())
     await waitFor(() => expect(writer.download).toHaveBeenCalledTimes(1))
     expect(te().exportValues).toHaveBeenCalledWith({ channel: 10, team: 1, status: 'all', format: 'json', year: 2025 })
-    expect(writer.download.mock.calls[0][1]).toBe('mobil-2025-degerler.xlsx')
+    expect(writer.download.mock.calls[0][0]).toBe('mobil-2025-degerler.xlsx')
   })
 
   it('sunucu reddi (429) iletisiyle tostta söylenir; ağ hatası açıklayıcı yedek metinle; yazıcı çağrılmaz', async () => {

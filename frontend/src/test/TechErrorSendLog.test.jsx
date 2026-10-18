@@ -178,6 +178,8 @@ describe('kanal gönderim günlüğü', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
     expect(await screen.findByText('Günlük yenilenemedi; son okunan sayfayı görüyorsunuz')).toBeInTheDocument()
     expect(document.querySelectorAll('[data-slot="te-sendlog-row"]')).toHaveLength(1)
+    // Şeritteki "Tekrar dene" dokunmatikte ≥ 40 px (inceleme 2026-10-18; size="sm" 32 px'ti)
+    expect(document.querySelector('[data-slot="te-sendlog-refresh-retry"]').className).toMatch(/(^|\s)pointer-coarse:min-h-10(\s|$)/)
   })
 
   it('boş günlük: boş durum metni; süzgeçliyken "süzgece uyan yok"', async () => {
@@ -186,6 +188,10 @@ describe('kanal gönderim günlüğü', () => {
     expect(await screen.findByText('Henüz gönderim yok')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Durum'), { target: { value: 'queued' } })
     expect(await screen.findByText('Süzgece uyan gönderim yok')).toBeInTheDocument()
+    // "Süzgeçleri temizle" dokunmatikte ≥ 40 px (inceleme 2026-10-18; h-9 idi)
+    const clear = document.querySelector('[data-slot="te-sendlog-clear-filters"]')
+    expect(clear).toHaveAccessibleName('Süzgeçleri temizle')
+    expect(clear.className).toMatch(/(^|\s)pointer-coarse:min-h-10(\s|$)/)
   })
 
   it('sekme geçişi: Raporlar sekmesinden günlüğe — te_tab=sendlog; günlükten raporlara dönünce günlük anahtarları silinir', async () => {

@@ -85,6 +85,9 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   const filtersActive = Boolean(rq.trim()) || rstatus !== 'all' || ryear !== 'all'
   // Yıl arşivi (ZIP, 2026-10-17): o yılın TÜM raporları (liste süzgeçlerinden bağımsız), sırayla
   const archive = useYearArchive({ channelName: ch?.name || '', reports, resetKey: channelId })
+  // Excel'e aktarma ile yıl arşivi aynı anda koşmaz (inceleme 2026-10-18): tek tıklamadan sonra iki otomatik indirme
+  // Chrome'da engellenebilir — biri sürerken öbürü kilitli, nedeni yazılır
+  const [xlsxBusy, setXlsxBusy] = useState(false)
 
   useUrlQuerySync({
     [TE_RQ]: rq.trim() ? rq : null,
@@ -263,13 +266,13 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                       </NativeSelect>
                     </div>
                   )}
-                  <YearArchiveMenu reports={reports} run={archive.run} onStart={archive.start} />
+                  <YearArchiveMenu reports={reports} run={archive.run} onStart={archive.start} blocked={xlsxBusy} />
                   {filtersActive && (
                     <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-rclear">
                       <X aria-hidden="true" /> {t('te.filters.clear')}
                     </Button>
                   )}
-                  <ChannelXlsxButton channel={ch} year={ryear} />
+                  <ChannelXlsxButton channel={ch} year={ryear} blocked={!!archive.run} onBusyChange={setXlsxBusy} />
                 </div>
                 <YearArchiveStatus run={archive.run} onCancel={archive.cancel} />
                 <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">

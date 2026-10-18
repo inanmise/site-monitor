@@ -26,9 +26,9 @@ import { cn } from '@/lib/utils'
 import { trendTicks } from '../techErrorModel.js'
 import {
   DEFAULT_MONTHS, MAX_FIELDS, MAX_LINES, MONTH_CHOICES, TABLE_MIN_PX, TE_AN_FIELDS, TE_AN_MONTHS, TE_AN_TEAM, adoptedFields,
-  axisLabel, buildChart, channelCards, csvFileName, csvTable, fieldOptions, filterKey, formatCell, isDefaultFilter,
-  isLonePoint, monthFullLabel, monthShortLabel, normalizeMonths, normalizeTeam, parseFieldsParam, requestParams,
-  serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
+  axisLabel, buildChart, channelCards, csvFileName, csvTable, fieldOptions, filterKey, formatCell, inactiveOmitted, isDefaultFilter,
+  isInactiveChannel, isLonePoint, monthFullLabel, monthShortLabel, monthsCut, normalizeMonths, normalizeTeam, parseFieldsParam,
+  requestParams, serializeFields, tableRows, toggleField, typeMismatchIds, valueCount, yAxisScale,
 } from './analyticsModel.js'
 
 const ALL = '__all__'
@@ -52,6 +52,8 @@ const EMPTY_STATE = { loading: true, error: null, status: null, details: null, d
  * dene. Süzgeç (takım / ay / alanlar) değişince eski veri HEMEN kalkar (yükleniyor iskeleti); Yenile'de kalır. Geç gelen
  * eski yanıt sıra numarasıyla düşer. İstenen alanlar bu kapsamda yoksa sunucu varsayılanları döner — not gösterilir ve
  * adres ikinci istek olmadan düzeltilir. Hesaplanan alanlar sunucuda CANLI (rapor ekranı / PDF ile aynı).
+ * Pasife alınmış kanal (2026-10-18, kullanıcı kararı) yalnız penceresinde raporu varsa, aktiflerin ardında gelir
+ * (`active: false`): anahtarda, "N kanal daha" listesinde, tablo başlığında ve kartta "Pasif" rozeti; CSV başlığında "(pasif)".
  */
 export default function TechErrorAnalytics({ onBack, onOpenReport, returning = false }) {
   const t = useT()
@@ -141,6 +143,8 @@ export default function TechErrorAnalytics({ onBack, onOpenReport, returning = f
   }, [teams, team, teamNames, state.loading, t])
   const channels = Array.isArray(data?.channels) ? data.channels : []
   const monthList = Array.isArray(data?.months) ? data.months : []
+  // Sınır nedeniyle listeye alınmayan pasif kanallar (ayrı not — "yalnız son N ay" şeridi yalnız aylar kesildiğinde)
+  const omitted = inactiveOmitted(data)
   const isDefault = isDefaultFilter({ team, months, fields })
 
   const reset = useCallback(() => {
@@ -267,10 +271,27 @@ export default function TechErrorAnalytics({ onBack, onOpenReport, returning = f
           </AlertBanner>
         </div>
       )}
-      {data?.truncated && monthList.length > 0 && (
+      {monthsCut(data, months) && (
         <div data-slot="te-an-truncated">
           <AlertBanner tone="info" icon={Info} title={t('te.an.truncatedTitle', monthList.length)}>
-            {t('te.an.truncatedBody', monthList.length, data.channel_count ?? channels.length, data.months_requested ?? months)}
+            {t('te.an.truncatedBody', monthList.length, data.active_count ?? data.channel_count ?? channels.length, data.months_requested ?? months)}
+          </AlertBanner>
+        </div>
+      )}
+      {Number(data?.active_omitted) > 0 && (
+        <div data-slot="te-an-active-cut">
+          <AlertBanner tone="info" icon={Info} title={t('te.an.activeCutTitle')}>
+            {t('te.an.activeCutBody', Number(data.active_omitted))}
+          </AlertBanner>
+        </div>
+      )}
+      {data?.channels_truncated === true && (
+        <div data-slot="te-an-inactive-cut">
+          <AlertBanner tone="info" icon={Info} title={t('te.an.inactiveCutTitle')}>
+            {/* Aylar da kesildiyse "aylar etkilenmedi" denmez (inceleme 2026-10-18, 2. tur) */}
+            {monthsCut(data, months)
+              ? (omitted == null ? t('te.an.inactiveCutBodySomeMonths') : t('te.an.inactiveCutBodyMonths', omitted))
+              : (omitted == null ? t('te.an.inactiveCutBodySome') : t('te.an.inactiveCutBody', omitted))}
           </AlertBanner>
         </div>
       )}
@@ -355,6 +376,20 @@ function MismatchNote({ className }) {
   )
 }
 
+/**
+ * "Pasif" rozeti (2026-10-18, kullanıcı kararı): pasife alınmış kanal yalnız penceresinde raporu varsa listelenir — grafik
+ * anahtarında, "N kanal daha" listesinde, tablo başlığında ve kartta adının yanında. Sarar, kırpılmaz.
+ */
+function InactiveBadge({ className }) {
+  const t = useT()
+  return (
+    <Badge variant="outline" className={cn('rounded-md overflow-visible whitespace-normal', className)}
+      data-slot="te-an-inactive">
+      {t('te.inactive')}
+    </Badge>
+  )
+}
+
 /** Bir alanın kartı: başlık + CSV, çizgi grafiği + anahtar, ay × kanal tablosu ya da kanal kartları. */
 function FieldPanel({ field, data, lang, onOpenReport }) {
   const t = useT()
@@ -367,7 +402,7 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
   const typeLabel = t(field.type === 'percent' ? 'te.an.type.percent' : 'te.an.type.number')
 
   function exportCsv() {
-    const { headers, rows } = csvTable(data, field, lang, t('te.an.colMonth'))
+    const { headers, rows } = csvTable(data, field, lang, t('te.an.colMonth'), t('te.an.csvInactive'))
     downloadCsv(csvFileName(field, data?.months), toCsv(headers, rows))
   }
 
@@ -396,11 +431,12 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
         <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1.5 p-0 text-xs" data-slot="te-an-legend" aria-label={t('te.an.legend')}>
           {chart.series.map((s) => (
             <li key={s.key} className="inline-flex min-w-0 items-start gap-1.5" data-slot="te-an-legend-item"
-              data-mismatch={s.mismatch ? 'true' : undefined}>
+              data-mismatch={s.mismatch ? 'true' : undefined} data-inactive={s.inactive ? 'true' : undefined}>
               <span className="mt-1"><SeriesKey shape={s.dashed ? 'dashed' : 'line'} color={s.color} /></span>
               <span className="flex min-w-0 flex-col">
                 <span className="min-w-0 [overflow-wrap:anywhere]">
                   <span className="text-foreground">{s.label}</span>
+                  {s.inactive && <InactiveBadge className="ml-1.5 align-middle" />}
                   {s.team && <span className="text-muted-foreground"> · {s.team}</span>}
                 </span>
                 {s.mismatch && <MismatchNote />}
@@ -419,8 +455,12 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
                 <p className="m-0 text-xs text-muted-foreground">{t('te.an.moreNote', MAX_LINES)}</p>
                 <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0" data-slot="te-an-hidden-list">
                   {chart.hidden.map((h) => (
-                    <li key={h.id} className="flex min-w-0 flex-col [overflow-wrap:anywhere]">
-                      <span>{h.name}{h.team && <span className="text-muted-foreground"> · {h.team}</span>}</span>
+                    <li key={h.id} className="flex min-w-0 flex-col [overflow-wrap:anywhere]" data-inactive={h.inactive ? 'true' : undefined}>
+                      <span>
+                        {h.name}
+                        {h.inactive && <InactiveBadge className="ml-1.5 align-middle" />}
+                        {h.team && <span className="text-muted-foreground"> · {h.team}</span>}
+                      </span>
                       {h.mismatch && <MismatchNote />}
                     </li>
                   ))}
@@ -561,9 +601,11 @@ function MonthTable({ data, field, lang, onOpenReport }) {
           <TableRow>
             <TableHead className="sticky left-0 z-10 w-28 bg-card align-bottom">{t('te.an.colMonth')}</TableHead>
             {channels.map((ch) => (
-              <TableHead key={ch.id} className="whitespace-normal align-bottom text-right" data-channel={ch.id}>
+              <TableHead key={ch.id} className="whitespace-normal align-bottom text-right" data-channel={ch.id}
+                data-inactive={isInactiveChannel(ch) ? 'true' : undefined}>
                 <div className="ml-auto flex min-w-32 max-w-56 flex-col items-end py-1">
                   <span className="text-foreground [overflow-wrap:anywhere]">{ch.name}</span>
+                  {isInactiveChannel(ch) && <InactiveBadge className="my-0.5" />}
                   {ch.team_name && <span className="text-xs font-normal text-muted-foreground [overflow-wrap:anywhere]">{ch.team_name}</span>}
                   {mismatch.has(String(ch.id)) && <MismatchNote className="text-right font-normal" />}
                 </div>
@@ -594,9 +636,11 @@ function ChannelCards({ data, field, lang, onOpenReport }) {
   return (
     <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2" data-slot="te-an-cards">
       {cards.map((c) => (
-        <div key={c.id} className="flex min-w-0 flex-col gap-2 rounded-xl border p-3" data-slot="te-an-card" data-channel={c.id}>
+        <div key={c.id} className="flex min-w-0 flex-col gap-2 rounded-xl border p-3" data-slot="te-an-card" data-channel={c.id}
+          data-inactive={c.inactive ? 'true' : undefined}>
           <div className="flex min-w-0 flex-col gap-1">
             <span className="font-semibold leading-snug [overflow-wrap:anywhere]">{c.name}</span>
+            {c.inactive && <InactiveBadge />}
             {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} static wrap />}
             {c.mismatch && <MismatchNote />}
           </div>

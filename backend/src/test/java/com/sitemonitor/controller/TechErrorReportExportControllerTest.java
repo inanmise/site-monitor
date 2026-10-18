@@ -64,6 +64,7 @@ class TechErrorReportExportControllerTest {
 
     @Autowired MockMvc mvc;
     @Autowired TechErrorReportExportController controller;
+    @Autowired tools.jackson.databind.ObjectMapper objectMapper;
 
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
@@ -275,6 +276,142 @@ class TechErrorReportExportControllerTest {
                 .andReturn();
         String body = res.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(body).doesNotContain("last_sent_to", "_by_", "@example.com", "approval_note", "recipients\"");
+    }
+
+    /** Eski gövde kurulumu (akışa geçmeden önceki kod) — {@link #jsonStreamIsByteIdenticalToTheOldBody} kâhini. */
+    private static java.util.Map<String, Object> oldBody(TechErrorExportService.Result res, java.util.Map<String, Object> filter) {
+        List<java.util.Map<String, Object>> reports = new ArrayList<>();
+        for (TechErrorExportService.ReportMeta r : res.reports()) {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("team_id", r.teamId());
+            m.put("team_name", r.teamName());
+            m.put("channel_id", r.channelId());
+            m.put("channel_name", r.channelName());
+            m.put("year", r.year());
+            m.put("month", r.month());
+            m.put("report_id", r.reportId());
+            m.put("report_status", r.status());
+            m.put("sent_at", r.sentAt() == null ? null : r.sentAt().toString());
+            m.put("changed_after_send", r.changedAfterSend());
+            m.put("approval_state", r.approvalState());
+            m.put("field_count", r.fieldCount());
+            reports.add(m);
+        }
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("columns", TechErrorExportService.COLUMNS);
+        data.put("rows", res.rows());
+        data.put("notes", TechErrorReportExportController.notes(true));
+        data.put("reports", reports);
+        data.put("report_count", res.reports().size());
+        data.put("row_count", res.rows().size());
+        data.put("max_reports", TechErrorExportService.MAX_REPORTS);
+        data.put("filter", filter);
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        return body;
+    }
+
+    @Test
+    @DisplayName("JSON akışla yazılır (inceleme 2026-10-18) ve eski ResponseEntity gövdesiyle BAYT BAYT aynıdır (kâhin: eski harita + uygulamanın ObjectMapper'ı); application/json, no-store")
+    void jsonStreamIsByteIdenticalToTheOldBody() throws Exception {
+        MvcResult res = mvc.perform(get(URL).param("year", "2026").param("team", "1").session(user(A)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.startsWith("application/json")))
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andReturn();
+        String body = res.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        TechErrorExportService.Result data = exporter.export(List.of(channels.get(0)), java.util.Map.of(), null, null);
+        java.util.Map<String, Object> filter = new java.util.LinkedHashMap<>();
+        filter.put("team", 1L);
+        filter.put("channel", null);
+        filter.put("year", 2026);
+        filter.put("month", null);
+        filter.put("status", "sent");
+        assertThat(body).isEqualTo(objectMapper.writeValueAsString(oldBody(data, filter)));
+        assertThat(body).contains("\"report_count\":1").contains("\"max_reports\":" + TechErrorExportService.MAX_REPORTS);
+    }
+
+    @Test
+    @DisplayName("JSON'da kullanıcı kimliği yok: sütun adları ve gövdedeki hiçbir anahtar UserRefWire'ın çevirdiği adlardan değil — opak kimlik tavsiyesi bu akışa uygulanmaz ve gerekmez")
+    void jsonCarriesNoUserRefKeys() throws Exception {
+        java.util.Set<String> forbidden = new java.util.HashSet<>(com.sitemonitor.service.userref.UserRefWire.KEYS);
+        forbidden.addAll(com.sitemonitor.service.userref.UserRefWire.JSON_TEXT_KEYS);
+        forbidden.addAll(List.of("resource_type", "resourceType", "resource_id", "resourceId"));
+        assertThat(TechErrorExportService.COLUMNS).doesNotContainAnyElementsOf(forbidden);
+        String body = mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        java.util.Set<String> keys = new java.util.TreeSet<>();
+        collectKeys(objectMapper.readTree(body), keys);
+        assertThat(keys).contains("success", "data", "columns", "rows", "reports", "filter", "team_id", "report_id");
+        assertThat(keys).doesNotContainAnyElementsOf(forbidden);
+    }
+
+    private static void collectKeys(tools.jackson.databind.JsonNode n, java.util.Set<String> out) {
+        if (n == null) return;
+        if (n.isArray()) {
+            for (tools.jackson.databind.JsonNode c : n) collectKeys(c, out);
+        } else if (n.isObject()) {
+            for (java.util.Map.Entry<String, tools.jackson.databind.JsonNode> e : n.properties()) {
+                out.add(e.getKey());
+                collectKeys(e.getValue(), out);
+            }
+        }
+    }
+
+    /** JSON yazılırken (değer serileştirilirken) bir eylem koşturan değer — CSV testindeki {@code toString} sondasının JSON karşılığı. */
+    public static final class JsonProbe {
+        private final Runnable onWrite;
+
+        JsonProbe(Runnable onWrite) {
+            this.onWrite = onWrite;
+        }
+
+        @com.fasterxml.jackson.annotation.JsonValue
+        public String value() {
+            onWrite.run();
+            return "probe";
+        }
+    }
+
+    @Test
+    @DisplayName("JSON yazılırken: pod izni geri verilmiş, kişinin \"süren dışa aktarım\" işareti DURUYOR — aynı kişinin ikinci isteği beklemeden 429 EXPORT_BUSY; yazma bitince işaret kalkar")
+    void markerHeldWhileJsonIsWritten() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger permitsWhileWriting = new java.util.concurrent.atomic.AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicBoolean markerWhileWriting = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<MvcResult> same = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        JsonProbe probe = new JsonProbe(() -> {
+            if (!once.compareAndSet(false, true)) return;
+            try {
+                permitsWhileWriting.set(controller.exportSlots.availablePermits());
+                markerWhileWriting.set(controller.running.contains("u:" + (50L + A)));
+                same.set(pool.submit(() -> perform(get(URL).param("year", "2026").session(user(A))))
+                        .get(20, java.util.concurrent.TimeUnit.SECONDS));
+            } catch (Throwable e) {
+                failure.set(e);
+            }
+        });
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<TechErrorChannel> chs = inv.getArgument(0);
+            List<List<Object>> rows = new ArrayList<>();
+            for (TechErrorChannel ch : chs) rows.add(row(ch, "comment", "text", ch.getId() == 10L ? probe : "metin"));
+            return new TechErrorExportService.Result(List.of(), rows);
+        }).when(exporter).export(any(), any(), any(), any());
+        try {
+            MvcResult first = mvc.perform(get(URL).param("year", "2026").session(user(A))).andExpect(status().isOk()).andReturn();
+            assertThat(first.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("\"probe\"");
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(failure.get()).isNull();
+        assertThat(permitsWhileWriting.get()).as("JSON yazılırken pod izni geri verilmiş").isEqualTo(TechErrorReportExportController.EXPORT_CONCURRENCY);
+        assertThat(markerWhileWriting.get()).as("kişinin işareti yazma bitene dek durur").isTrue();
+        assertThat(same.get().getResponse().getStatus()).isEqualTo(429);
+        assertThat(code(same.get())).isEqualTo("EXPORT_BUSY");
+        assertThat(controller.running).isEmpty();
     }
 
     @Test

@@ -24,6 +24,10 @@ import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErr
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
 import SendDialog from './SendDialog.jsx'
+import {
+  SEND_POLL_MAX_MS, SEND_POLL_MS, pollBaselineAfterQueued, sendFailureKind, sendPollStep, unsureSendOutcome, withSendStatus,
+} from './sendModel.js'
+import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
@@ -32,6 +36,7 @@ import {
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import { useElementHeight } from '../../hooks/useElementHeight.js'
+import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { cn } from '@/lib/utils'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
@@ -57,6 +62,15 @@ function dropBackup(id) {
 }
 
 const hasAny = (o) => Object.values(o).some(Boolean)
+
+/** Raporun gönderim izi (son deneme / son gönderim / sayaç) — "o okumadan beri gönderim oldu mu?" karşılaştırması için. */
+const sendMarkOf = (r) => ({ attempt: r?.last_attempt_at ?? null, sent: r?.last_sent_at ?? null, count: r?.send_count ?? null,
+  state: r?.send_state ?? null })
+const sameSendMark = (mark, r) => {
+  if (!mark || !r) return false
+  const now = sendMarkOf(r)
+  return now.attempt === mark.attempt && now.sent === mark.sent && now.count === mark.count && now.state === mark.state
+}
 
 /** Otomatik kayıt aralığı (2026-10-16, kullanıcı kararı: "30 saniyede bir"). */
 export const AUTOSAVE_MS = 30_000
@@ -134,6 +148,30 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
   const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
+  // Sonucu bilinmeyen gönderim (inceleme 2026-10-18, 3. tur): { before, msg, details } — rapor yeniden okunup durum
+  // bilinene kadar "Gönder" kilitli; pencere kapatılıp yeniden açılırsa kilit VE yazılan ek Bilgi taşınır (4. tur: bant "ek
+  // Bilgi korundu" diyordu ama alan boş açılıyor, rapor ek adreslersiz gidiyordu) ve durum yeniden denetlenir
+  const unsureSend = useRef(null)
+  // Gönderim "gitmemiş" çözüldü (belirsiz gönderim ya da yoklama): { details, mark } — bir sonraki açılış "gitmemiş" bandını
+  // ve ek Bilgi'yi getirir (yeni deneme siler)
+  const resumeSend = useRef(null)
+  // Yeniden açılışa taşınan ek Bilgi (5. tur): belirsiz / gitmemiş sonuçtan sonra İLK açılış o denemenin adresleriyle açılır,
+  // sonra alanın her değişikliği buraya yazılır — sonraki açılış kullanıcının SON yazdığını getirir (eskiden her açılışta
+  // hatadan önceki adresler geri geliyordu); alan boşaltılınca boş, gönderim kesinleşince silinir
+  const ccCarry = useRef('')
+  const sendDialogRef = useRef(null)
+  sendDialogRef.current = sendDialog
+  // Süren / kuyruktaki gönderimin yoklaması (4. tur): { id, until, baseline, own, extraCc } — `SEND_POLL_MS`'de bir gönderim
+  // alanları yeniden okunur; karar `sendPollStep` ile gönderimden ÖNCEKİ satıra (ya da bu denemenin kuyruğuna) göre (5. tur)
+  const [sendPoll, setSendPoll] = useState(null)
+  const sendPollRef = useRef(null)
+  const pollSeq = useRef(0)
+  const pollIds = useRef(0)
+  // Düzenleyicinin raporun durumunu KENDİSİ değiştirdiği anlar (kayıt yanıtı, görsel yükleme / silme — 5. tur): yoklama
+  // yanıtı istekten sonra gelen yerel bir "changed"ın üstüne "sent" yazmasın
+  const statusGen = useRef(0)
+  // E-posta önizlemesinin görsel revizyonu (5. tur): görsel değişikliği sürümü değiştirmez — önizleme eski isteğe katılmasın
+  const [previewRev, setPreviewRev] = useState(() => mailPreviewContentRev(reportId))
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
@@ -220,19 +258,21 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setState((s) => ({ ...s, loading: true }))
     try {
       const res = await api.techErrors.report(reportId)
-      if (my !== seq.current) return
+      if (my !== seq.current) return null
       if (res?.success && res.data?.report) {
         applyLoaded(res.data, keepDraft)
         setState({ loading: false, error: null, status: null })
-      } else {
-        setState({ loading: false, error: res?.error || tRef.current('te.loadError'), status: res?.status ?? null })
+        // Okunan rapor çağırana döner (sonucu bilinmeyen gönderimin denetimi); geç kalan / hatalı okuma null
+        return res.data
       }
+      setState({ loading: false, error: res?.error || tRef.current('te.loadError'), status: res?.status ?? null })
     } catch (e) {
-      if (my !== seq.current) return
+      if (my !== seq.current) return null
       setState({ loading: false, error: e?.message || tRef.current('te.loadError'), status: 0 })
     } finally {
       if (my === seq.current) loadInFlight.current = false
     }
+    return null
   }, [reportId, applyLoaded, settleSave])
   useEffect(() => { load() }, [load])
   // Ay geçişiyle açıldıysa odak yeni raporun başlığına (tıklanan düğme yeniden kurulumda kaybolur — inceleme 2026-10-14)
@@ -314,8 +354,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // Görsel bölümlerinin geri çağrısı SABİT: ImagesBlock memo'su yazarken yeniden çizimi atlasın
   const onImagesChange = useCallback((fn) => {
     setImages(fn)
+    statusGen.current++
+    setPreviewRev(bumpMailPreviewContent(reportId))
     setData((d) => (d ? { ...d, report: { ...d.report, status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d))
-  }, [])
+  }, [reportId])
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
   const resolveText = useCallback((p) => resolveTextPlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
@@ -448,6 +490,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (!auto) setAutoHold(false)
         setServerErrors({})
         setState((s) => (s.loading ? { ...s, loading: false } : s))
+        statusGen.current++
         setData((d) => (d ? { ...d, report: { ...d.report, version: res.data.version, updated_at: res.data.updated_at,
           updated_by_name: res.data.updated_by_name ?? d.report.updated_by_name,
           status: d.report.status === 'sent' && res.data.changed ? 'changed' : d.report.status } } : d))
@@ -513,7 +556,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     setBusy('pdf')
     try {
       const res = await api.techErrors.downloadPdf(reportId)
-      if (!res?.success) toast.error(res?.error || t('te.pdfError'), { details: res?.errorInfo })
+      // DOWNLOAD_FAILED (inceleme 2026-10-18, 3. tur): PDF geldi ama tarayıcı indirmeyi başlatmadı — sessiz "başarı" yok
+      if (!res?.success) toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('te.pdfDownloadFailed') : (res?.error || t('te.pdfError')),
+        { details: res?.errorInfo })
     } catch (e) {
       toast.error(e?.message || t('te.pdfError'))
     } finally {
@@ -554,24 +599,218 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   /**
    * Gönderim: önce kayıt (ensureSaved), sonra gönderim penceresi (R18 / C13 — eski onay sorusunun metni + isteğe bağlı ek
    * Bilgi (CC) alanı). Onay penceresi açık kalırken istek gider; sunucu ek Bilgi'yi reddederse (alan `extra_cc`) hata alanın
-   * altında, pencere açık — diğer her sonuçta pencere kapanır, bildirim gösterilir ve rapor yenilenir.
+   * altında, pencere açık. Yeniden denenebilir hatada (429 PDF sırası / kişi başı sınır — `sendFailureKind`) pencere de AÇIK
+   * kalır, hata pencerenin içinde, yazılan ek Bilgi korunur (inceleme 2026-10-18: pencere kapanıyor, bir sonraki "Gönder" ek
+   * adresleri olmadan — geri alınamaz — gidebiliyordu); rapor arkada yenilenir. Başarıda ve kesin hatada pencere kapanır,
+   * bildirim gösterilir.
+   *
+   * Sonucu BİLİNMEYEN hatada (ağ hatası, 409 `SEND_IN_PROGRESS`, 503 / 504 — inceleme 2026-10-18, 3. tur) gönderim gitmiş ya
+   * da sürüyor olabilir: pencere açık, "Gönder" (ve Ctrl+Enter) rapor YENİDEN OKUNUP durum bilinene kadar KİLİTLİ
+   * (`checkUnsureSend`, okuma beklenir). Gitmiş / sürüyor / kuyrukta → pencere kapanır, durum bildirilir; açıkça gitmemiş →
+   * "Gönder" yeniden açılır, ek Bilgi korunur; okunamadı → kilit kalır, "Durumu yeniden denetle". Eskiden kilit yoktu: ilk
+   * istek sunucuda tamamlandıysa ikinci tıklama raporu yöneticilere İKİNCİ kez yolluyordu (`claimSend` gönderilmiş raporun
+   * yeniden gönderimine izin verir).
    */
   async function send() {
     if (!(await ensureSaved())) return
-    setSendDialog({ error: null })
+    if (unsureSend.current) {
+      // Çözülmemiş belirsiz gönderim: pencere kilitli açılır, taşınan ek Bilgi'yle (bant "korundu" der) ve durum yeniden
+      // denetlenir (taze, kilitsiz, boş pencere değil)
+      const u = unsureSend.current
+      setSendDialog({ error: null, failure: unsureFailure(u, 'checking'), initialCc: ccCarry.current })
+      checkUnsureSend()
+      return
+    }
+    const r = resumeSend.current
+    resumeSend.current = null
+    // Gönderim "gitmemiş" çözülmüştü: "gitmemiş" bandı + taşınan ek Bilgi (ilk açılışta o denemenin adresleri, sonra
+    // kullanıcının son yazdığı) — yalnız o okumadan beri raporda gönderim olmadıysa (başka sekmede / kişide gönderildiyse
+    // "gitmemiş" bandı bayattır, pencere taze açılır)
+    if (r && sameSendMark(r.mark, data?.report)) {
+      resumeSend.current = r
+      setSendDialog({ error: null, failure: notSentFailure(r.details), initialCc: ccCarry.current })
+      return
+    }
+    ccCarry.current = ''
+    setSendDialog({ error: null, failure: null })
   }
 
+  /** "Gitmemiş" bandı: metin taşınan ek Bilgi'ye göre (boşsa "korundu" demez). */
+  function notSentFailure(details) {
+    return { kind: 'retry', title: t('te.send.checkedNotSentTitle'),
+      message: ccCarry.current.trim() ? t('te.send.checkedNotSent') : t('te.send.checkedNotSentNoCc'), details: details ?? null }
+  }
+
+  /** Pencere içi yeniden denenebilir hata bandı: başlık, metin (+ "ek Bilgi korundu"), künye. */
+  function sendFailure(kind, res, fallback) {
+    const msg = res?.message || res?.error || fallback
+    return { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`, details: res?.errorInfo ?? errorInfoOf(res) }
+  }
+
+  /** Sonucu bilinmeyen gönderimin bandı: `check` 'checking' (rapor okunuyor) | 'unknown' (okunamadı) — ikisinde de kilitli. */
+  function unsureFailure(u, check) {
+    const tail = check === 'unknown' ? t('te.send.unsureCheckFailed') : t('te.send.unsureBody')
+    return { kind: 'unsure', check, title: t('te.send.unsureTitle'), message: `${u.msg} ${tail}`, details: u.details }
+  }
+
+  /**
+   * Sonucu bilinmeyen gönderimden sonra raporu YENİDEN OKUR (beklenir) ve durumu pencereye taşır. Okuma sürerken `busy`
+   * 'sendcheck': düzenleyicinin gönder / gezinme düğmeleri ve otomatik kayıt bekler; pencere kapatılabilir (sonuç yine
+   * bildirilir; çözülmezse yeniden açılışta kilit taşınır).
+   */
+  async function checkUnsureSend() {
+    const u = unsureSend.current
+    if (!u) return
+    setBusy('sendcheck')
+    setSendDialog((d) => (d ? { ...d, failure: unsureFailure(u, 'checking') } : d))
+    let after = null
+    try {
+      const loaded = await load({ keepDraft: true })
+      after = loaded?.report || null
+    } catch {
+      after = null
+    } finally {
+      setBusy(null)
+    }
+    if (unsureSend.current !== u) return
+    const outcome = unsureSendOutcome(u.before, after)
+    if (outcome === 'unknown') {
+      setSendDialog((d) => (d ? { ...d, failure: unsureFailure(u, 'unknown') } : d))
+      return
+    }
+    unsureSend.current = null
+    if (outcome === 'notSent') {
+      // Yeniden açılış da bu bandı ve taşınan ek Bilgi'yi getirir (pencere şimdi kapalıysa bildirim söyler)
+      resumeSend.current = { details: u.details, mark: sendMarkOf(after) }
+      if (!sendDialogRef.current) {
+        toast.info(ccCarry.current.trim() ? t('te.send.checkedNotSentClosed') : t('te.send.checkedNotSentClosedNoCc'), 12000)
+      }
+      setSendDialog((d) => (d ? { ...d, failure: notSentFailure(u.details) } : d))
+      return
+    }
+    // Yoklama bu denemenin yazılan ek Bilgi'sini taşır ("gitmedi" çıkarsa ilk açılış onunla); pencere taze açılır
+    const extraCc = ccCarry.current
+    ccCarry.current = ''
+    setSendDialog(null)
+    if (outcome === 'sent') toast.success(t('te.send.checkedSent'))
+    else if (outcome === 'queued') toast.info(t('te.sendQueued'))
+    else toast.info(t('te.send.checkedSending'))
+    // Sürüyor / kuyrukta: sonuç gelene kadar gönderim durumu yoklanır ("Gönder" kendiliğinden açılır, sonuç bildirilir).
+    // Taban gönderimden ÖNCEKİ satır; kuyruktaysa bu denemenin kuyruğunu gösteren okuma (5. tur)
+    if (outcome !== 'sent') {
+      startSendPoll(outcome === 'queued' ? pollBaselineAfterQueued(u.before, after) : { baseline: u.before, own: false }, extraCc)
+    }
+  }
+
+  function setPoll(p) {
+    sendPollRef.current = p
+    setSendPoll(p)
+  }
+
+  /**
+   * Gönderim durumunu yoklamaya başlar (en çok `SEND_POLL_MAX_MS`; yeni deneme ya da kesin sonuç durdurur). `base` =
+   * `{ baseline, own }` (`sendPollStep`), `extraCc` = bu denemenin ek Bilgi'si. Yoklamanın kimliğini döner.
+   */
+  function startSendPoll(base, extraCc = '') {
+    pollSeq.current++
+    const id = ++pollIds.current
+    setPoll({ id, until: Date.now() + SEND_POLL_MAX_MS, baseline: base?.baseline ?? null, own: !!base?.own, extraCc: extraCc || '' })
+    return id
+  }
+
+  function stopSendPoll() {
+    pollSeq.current++
+    setPoll(null)
+  }
+
+  /**
+   * Yoklama turu (inceleme 2026-10-18, 4. tur): raporu okur ve YALNIZ gönderim alanlarını işler (`withSendStatus` — taslak,
+   * taban sürümü, şablon değişmez). Sıra korumalı: yoklama durdurulduysa / yeniden başladıysa ya da tur sürerken tam yükleme
+   * ya da kayıt BAŞLADIYSA (daha taze veri) yanıt düşer; istekten sonra kayıt yanıtı / görsel değişikliği durumu yerelde
+   * "changed" yaptıysa yanıttaki "sent" onun üstüne yazılmaz (5. tur). Karar `sendPollStep` ile gönderimden ÖNCEKİ satıra
+   * (ya da bu denemenin kuyruğuna) göre: bırakılan talep (PDF sırası dolu, onay eskidi) "gitmedi" sayılır — "Gönder" açılır,
+   * sonraki açılış yazılan ek Bilgi'yle. Kesin sonuçta durur ve bildirir; süre dolunca "sonuç gelmedi" der. Hiç reddetmez
+   * (yoklama kancası reddi yüzeye çıkarırdı).
+   */
+  async function pollSendStatus() {
+    const p = sendPollRef.current
+    if (!p) return
+    if (Date.now() > p.until) {
+      stopSendPoll()
+      toast.info(t('te.send.pollUnknown', Math.round(SEND_POLL_MAX_MS / 60000)), 12000)
+      return
+    }
+    const my = ++pollSeq.current
+    const loadSeq = seq.current
+    const statusMark = statusGen.current
+    let res = null
+    try { res = await api.techErrors.report(reportId) } catch { res = null }
+    const cur = sendPollRef.current
+    if (my !== pollSeq.current || loadSeq !== seq.current || !cur || cur.id !== p.id) return
+    const fresh = res?.success ? res.data?.report : null
+    const step = sendPollStep(cur, fresh)
+    if (!step.outcome) return                         // okunamadı: bir sonraki turda yeniden
+    const keepChanged = statusGen.current !== statusMark
+    setData((d) => (d ? { ...d, report: withSendStatus(d.report, fresh, { keepChanged }) } : d))
+    if (step.outcome === 'pending') {
+      if (step.poll !== cur) setPoll(step.poll)       // bu denemenin kuyruğu görüldü: sonraki turlar onun sonucuna bakar
+      return
+    }
+    stopSendPoll()
+    if (step.outcome === 'sent') {
+      ccCarry.current = ''
+      resumeSend.current = null
+      toast.success(t('te.send.pollSent'))
+    } else if (step.outcome === 'notSent') {
+      // Gitmedi: "Gönder" açık; sonraki açılış "gitmemiş" bandı + bu denemenin ek Bilgi'siyle (pencere açıksa kullanıcının
+      // yazdığına dokunulmaz)
+      if (!sendDialogRef.current) ccCarry.current = cur.extraCc || ''
+      resumeSend.current = { details: null, mark: sendMarkOf(fresh) }
+      setSendDialog((d) => (d ? { ...d, failure: notSentFailure(null) } : d))
+      toast.error(cur.extraCc ? t('te.send.pollNotSentCc') : t('te.send.pollNotSent'), 12000)
+    } else if (step.outcome === 'superseded') {
+      toast.info(t('te.send.pollSuperseded'), 12000)
+    } else {
+      toast.info(t('te.send.pollUnknown', Math.round(SEND_POLL_MAX_MS / 60000)), 12000)
+    }
+  }
+  useVisibleInterval(pollSendStatus, sendPoll ? SEND_POLL_MS : null, false)
+  // Ayrılınca uçuştaki yoklama yanıtı düşer
+  useEffect(() => () => { pollSeq.current++ }, [])
+
   async function confirmSend(extraCc) {
-    if (busy != null) return
+    if (busy != null || unsureSend.current) return
+    // Gönderimden ÖNCEKİ rapor satırı: sonucu bilinmeyen hatada yeniden okunanla karşılaştırılır
+    const before = data?.report || null
     setBusy('send')
+    setSendDialog((d) => (d ? { ...d, failure: null } : d))
+    // Yeni deneme: önceki "gitmemiş" bandı ve süren yoklama biter (bu denemenin sonucu kendi yolundan)
+    resumeSend.current = null
+    stopSendPoll()
     let keepOpen = false
+    let refresh = true
+    let unsure = null
+    let queued = false
+    let refreshing = null
+    const markUnsure = (r) => {
+      keepOpen = true
+      refresh = false
+      // Ek Bilgi taşınır: pencere kapatılıp yeniden açılırsa alan bu adreslerle (sonra kullanıcının son yazdığıyla) açılır
+      ccCarry.current = extraCc || ''
+      unsure = { before, msg: r?.message || r?.error || t('te.sendError'), details: errorInfoOf(r) }
+      unsureSend.current = unsure
+      setSendDialog({ error: null, failure: unsureFailure(unsure, 'checking'), initialCc: ccCarry.current })
+    }
     try {
       // Ek Bilgi yoksa gövdesiz (eski çağrı aynen); varsa yalnız `extra_cc`
       const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
+      const kind = sendFailureKind(res)
       if (res?.success && res.data) {
         const cc = (res.data.cc || []).join(', ')
         const to = (res.data.to || []).join(', ')
-        if (res.data.state === 'QUEUED') toast.info(t('te.sendQueued'))
+        ccCarry.current = ''
+        // Kuyruk: posta servisinin sonucu gelene kadar durum yoklanır (bildirim "kendiliğinden Gönderildi olur" der)
+        if (res.data.state === 'QUEUED') { toast.info(t('te.sendQueued')); queued = true }
         // Kime boş (inceleme 2026-10-18, 2. tur: yöneticilerin hepsi pasif, posta yalnız Bilgi'ye gitti) → boş liste yazılmaz
         else if (!to && cc) toast.success(t('te.sendDoneCcOnly', cc))
         else if (!to) toast.success(t('te.sendDonePlain'))
@@ -582,19 +821,42 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (extraCc && !Array.isArray(res.data.cc)) toast.info(t('te.sendCcNotConfirmed'), 12000)
       } else if (res?.field === 'extra_cc') {
         keepOpen = true
-        setSendDialog({ error: res.error || t('te.send.ccRejected') })
+        refresh = false
+        setSendDialog({ error: res.error || t('te.send.ccRejected'), failure: null })
+      } else if (kind === 'unsure') {
+        markUnsure(res)
+      } else if (kind) {
+        keepOpen = true
+        setSendDialog({ error: null, failure: sendFailure(kind, res, t('te.sendError')) })
       } else {
         toast.error(res?.error || t('te.sendError'), { details: res?.errorInfo })
       }
     } catch (e) {
-      toast.error(e?.message || t('te.sendError'))
+      const kind = sendFailureKind(e)
+      if (kind === 'unsure') markUnsure(e)
+      else if (kind) {
+        keepOpen = true
+        setSendDialog({ error: null, failure: sendFailure(kind, e, t('te.sendError')) })
+      } else toast.error(e?.message || t('te.sendError'))
     } finally {
       setBusy(null)
-      if (!keepOpen) {
-        setSendDialog(null)
-        load({ keepDraft: true })
+      if (!keepOpen) setSendDialog(null)
+      // Pencere açık kalsa da rapor arkada yenilenir (gönderim başka sekmede sürüyor)
+      if (refresh) refreshing = load({ keepDraft: true })
+    }
+    if (queued) {
+      // Kuyruğa alındı: yoklama gönderimden önceki satırla başlar; yanıttan hemen sonraki okuma bu denemenin kuyruğunu
+      // gösteriyorsa taban o satır olur (5. tur — sonuç o kuyruğun kendi sonucu; eski satıra göre karar bayat olabilirdi)
+      const id = startSendPoll({ baseline: before, own: false }, extraCc)
+      const loaded = refreshing ? await refreshing : null
+      const cur = sendPollRef.current
+      if (cur && cur.id === id && !cur.own) {
+        const next = pollBaselineAfterQueued(before, loaded?.report)
+        if (next.own) setPoll({ ...cur, ...next })
       }
     }
+    // Belirsiz sonuç: rapor yeniden okunur ve BEKLENİR — durum bilinene kadar "Gönder" kilitli
+    if (unsure) await checkUnsureSend()
   }
 
   async function applyTemplate() {
@@ -877,7 +1139,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
       <ApprovalCard reportId={reportId} detail={approvalDetail} approval={report.approval} uiLang={uiLang} busy={busy}
         onBusy={setBusy} onRequest={requestApproval} onChanged={() => load({ keepDraft: true })}
-        sentAt={report.last_sent_at} sentTo={report.last_sent_to} />
+        sentAt={report.last_sent_at} sentTo={report.last_sent_to} reportStatus={report.status} />
 
       {state.error && (
         <AlertBanner tone="danger" title={t('te.reloadFailed')}
@@ -978,19 +1240,25 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       </SectionOpenContext.Provider>
 
       {mailPreviewOpen && (
-        <MailPreviewDialog reportId={reportId} open onClose={() => setMailPreviewOpen(false)} uiLang={uiLang}
+        <MailPreviewDialog reportId={reportId} reportVersion={report.version ?? null} contentRev={previewRev} open
+          onClose={() => setMailPreviewOpen(false)} uiLang={uiLang}
           onSend={!readOnly && canSend && busy == null && report.status !== 'sending'
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
           sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
       )}
       {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
       <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}
+        failure={sendDialog?.failure || null} onRecheck={busy == null ? checkUnsureSend : null}
+        initialCc={sendDialog?.initialCc || ''}
         title={approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle')}
         message={approvalRequired
           ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
           : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title))}
         onConfirm={confirmSend} onCancel={() => { if (busy !== 'send') setSendDialog(null) }}
-        onEdit={() => { if (sendDialog?.error) setSendDialog({ error: null }) }} />
+        onEdit={(v) => {
+          if (typeof v === 'string') ccCarry.current = v
+          if (sendDialog?.error) setSendDialog((d) => (d ? { ...d, error: null } : d))
+        }} />
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 

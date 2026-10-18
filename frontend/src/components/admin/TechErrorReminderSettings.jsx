@@ -38,7 +38,8 @@ const TOUCH = 'pointer-coarse:min-h-10'
  * sütun, dizüstünde (≈ 560 px) iki sütun; telefonda tek sütun. Test kancaları `tes-rem-*`.
  */
 export default function TechErrorReminderSettings({
-  state, teams = [], readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry,
+  state, teams = [], readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry, retryDisabled = false,
+  missingTeamLabel = null,
 }) {
   const t = useT()
   const toast = useToast()
@@ -56,21 +57,30 @@ export default function TechErrorReminderSettings({
     return () => { alive.current = false }
   }, [])
 
-  // Üst bileşen yeniden okuduğunda (Yenile): kayıtlı taban güncellenir, kaydedilmemiş taslak korunur
+  // Üst bileşen yeniden okuduğunda (Yenile): kayıtlı taban güncellenir, KULLANICININ kaydedilmemiş taslağı korunur (yalnız
+  // onarım bekleyen form taslak değildir — taze değerleri alır)
   useEffect(() => {
     if (!data) return
     const prev = savedRef.current
     setSaved(data)
-    setForm((cur) => (cur && prev && isFormDirty(prev, cur) ? cur : toForm(data)))
+    setForm((cur) => (cur && prev && isFormDirty(prev, cur, { repairs: false }) ? cur : toForm(data)))
   }, [data])
 
   const unsupported = state?.status === 'unsupported'
-  const locked = readOnly || unsupported || saved?.read_only === true
-  // Eski pod'a düşen kayıtta taslak yerinde kalır ve "kaydedilmedi" sayılır (ayrılırken onay sorulur)
+  // Salt okunur GÖRÜNTÜLEYEN (kapsamlı müdür): aralık dışı not "bir global yönetici kaydedebilir" der, "kaydedin" demez
+  const viewerReadOnly = readOnly || saved?.read_only === true
+  const locked = viewerReadOnly || unsupported
+  // Kaydet etkin mi: kullanıcı değişikliği YA DA onarım alanı (aralık dışı değer yerine geçerli değer — inceleme 2026-10-18,
+  // 2. tur: varsayılan "kayıtlıyla aynı" sayılıp hiç yazılamıyordu). Sayfaya (ayrılırken onay, Yenile) yalnız kullanıcının
+  // kendi değişikliği bildirilir. Eski pod'a düşen kayıtta taslak yerinde kalır ve "kaydedilmedi" sayılır (ayrılırken sorulur)
   const dirty = !!saved && !!form && isFormDirty(saved, form)
-  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  const userDirty = !!saved && !!form && isFormDirty(saved, form, { repairs: false })
+  const repairOnly = dirty && !userDirty
+  useEffect(() => { onDirtyChange?.(userDirty) }, [userDirty, onDirtyChange])
 
-  const options = useMemo(() => teamOptions(teams, form?.team_ids || [], t('noc.ot.inactiveTeam')), [teams, form, t])
+  // Silinmiş / adı okunamayan seçili takım çıplak "#12" değil, sayfanın verdiği etiketle (inceleme 2026-10-18)
+  const options = useMemo(() => teamOptions(teams, form?.team_ids || [], t('noc.ot.inactiveTeam'), missingTeamLabel),
+    [teams, form, t, missingTeamLabel])
   const limits = saved?.limits
 
   if (!state) return null
@@ -83,7 +93,8 @@ export default function TechErrorReminderSettings({
 
   async function save() {
     if (saving || locked || !saved || !form) return
-    const errs = validateForm(form, limits)
+    // Yalnız DEĞİŞEN alanlar doğrulanır (kural 9 — inceleme 2026-10-18): kayıtlı değer yeniden denetlenmez
+    const errs = validateForm(form, limits, saved)
     const map = {}
     for (const k of REM_INT_FIELDS) map[k] = errs[k] ? t(errs[k].key, ...errs[k].params) : false
     if (fe.check(map)) return
@@ -108,7 +119,9 @@ export default function TechErrorReminderSettings({
         }
         return
       }
-      const next = normalizeReminders(res.data) || { ...saved, ...appliedValues(body) }
+      // Yanıt bloğu gelmezse gönderilen değerler kayıtlı sayılır; yazılan alanların aralık dışı notu kalkar (onarım bitti)
+      const next = normalizeReminders(res.data)
+        || { ...saved, ...appliedValues(body), out_of_range: withoutKeys(saved.out_of_range, Object.keys(body)) }
       setSaved(next)
       // Kayıt sırasında yazılan yeni değişiklik silinmez: gönderilen alanlar kaydedildi, diğerleri taslakta kalır
       setForm((cur) => {
@@ -136,7 +149,8 @@ export default function TechErrorReminderSettings({
   }
 
   const retryButton = onRetry && (
-    <Button type="button" variant="outline" size="sm" onClick={onRetry} className={cn('h-9 sm:h-8', TOUCH)} data-slot="tes-rem-retry">
+    <Button type="button" variant="outline" size="sm" onClick={onRetry} disabled={saving || retryDisabled}
+      className={cn('h-9 sm:h-8', TOUCH)} data-slot="tes-rem-retry">
       <RefreshCw aria-hidden="true" /> {t('te.retry')}
     </Button>
   )
@@ -176,8 +190,23 @@ export default function TechErrorReminderSettings({
 
   const numberField = (key, labelKey, hintKey) => {
     const l = limits?.[key] || { min: 0, max: 99 }
+    // Aralık dışı ortam / kayıtlı değer varsayılana düştü (inceleme 2026-10-18): alanın ipucunda salt okunur not — sessiz değil
+    const oor = saved?.out_of_range?.[key]
+    // Yazabilen için "Kaydet alandaki değeri yazar" (onarım alanı — Kaydet etkin); salt okunur görüntüleyen için "bir global
+    // yönetici kaydedebilir" (inceleme 2026-10-18, 2. tur)
+    const oorKey = oor?.source === 'env'
+      ? (viewerReadOnly ? 'te.rem.outOfRangeEnvReadOnly' : 'te.rem.outOfRangeEnv')
+      : (viewerReadOnly ? 'te.rem.outOfRangeStoredReadOnly' : 'te.rem.outOfRangeStored')
+    const hint = oor ? (
+      <>
+        <span data-slot={`tes-rem-oor-${key.replace(/_/g, '-')}`} data-source={oor.source}>
+          {t(oorKey, oor.value || '—', oor.default)}
+        </span>{' '}
+        {t(hintKey, l.min, l.max)}
+      </>
+    ) : t(hintKey, l.min, l.max)
     return (
-      <Field label={t(labelKey)} hint={t(hintKey, l.min, l.max)} className="mb-0 min-w-0" {...fe.fieldProps(key)}>
+      <Field label={t(labelKey)} hint={hint} hintTone={oor ? 'warn' : undefined} className="mb-0 min-w-0" {...fe.fieldProps(key)}>
         {({ id, describedBy, invalid }) => (
           <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" inputMode="numeric"
             min={l.min} max={l.max} step={1} value={form[key]} disabled={locked || saving}
@@ -247,12 +276,20 @@ export default function TechErrorReminderSettings({
 
         {!locked && (
           <div data-slot="tes-rem-save">
-            <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={discard} />
+            <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={userDirty ? discard : undefined}
+              dirtyLabel={repairOnly ? t('te.rem.repairPending') : undefined} />
           </div>
         )}
       </SettingsSection>
     </div>
   )
+}
+
+/** Aralık dışı notlarından yazılan alanlar düşer (yanıt bloğu gelmediğinde). */
+function withoutKeys(map, keys) {
+  const out = { ...(map || {}) }
+  for (const k of keys) delete out[k]
+  return out
 }
 
 /** Yanıt bloğu gelmezse gönderilen değerler kayıtlı sayılır. */

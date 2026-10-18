@@ -187,7 +187,7 @@ describe('kanal analizi', () => {
     window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
     render(<TechErrorReportsPage />)
     await waitFor(() => expect(document.querySelector('[data-slot="empty"][data-tone="danger"]')).not.toBeNull())
-    expect(screen.queryByText('İncelenecek aktif kanal yok')).toBeNull()
+    expect(screen.queryByText('İncelenecek kanal yok')).toBeNull()
     expect(screen.queryByText(/değer girilmemiş/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Tekrar dene' }))
     await waitFor(() => expect(field('total-tx')).not.toBeNull())
@@ -202,7 +202,7 @@ describe('kanal analizi', () => {
     unmount()
     te().analytics.mockResolvedValueOnce(analytics({ channels: [], channel_count: 0 }))
     const second = render(<TechErrorReportsPage />)
-    expect(await screen.findByText('İncelenecek aktif kanal yok')).toBeInTheDocument()
+    expect(await screen.findByText('İncelenecek kanal yok')).toBeInTheDocument()
     second.unmount()
     const empty = analytics()
     empty.data.fields = [{ id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent' }]
@@ -475,5 +475,178 @@ describe('kanal analizi — inceleme düzeltmeleri (2026-10-18)', () => {
     const grid = wrap.querySelector('[data-slot="te-an-cards"]')
     expect(grid.className).toContain('@xl:grid-cols-2')
     expect(grid.className).not.toMatch(/(^|\s)sm:grid-cols-2/)
+  })
+})
+
+// Pasif kanallar (2026-10-18, kullanıcı kararı: "pasife alınmış kanalları geçmiş aylarıyla birlikte gösterelim"): sunucu
+// penceresinde raporu olan pasif kanalı aktiflerin ARDINDAN `active: false` ile gönderir — grafik anahtarında, tablo
+// başlığında ve kartta "Pasif" rozeti (data-inactive), CSV başlığında "(pasif)"; `active` alanı olmayan eski yanıt rozet almaz.
+const LONG_INACTIVE = 'Eski Kurumsal İnternet Şubesi Ödeme ve Nakit Yönetimi Kanalı (Kurumsal Bankacılık / Kapatıldı 2026)'
+
+function withInactive() {
+  const d = analytics()
+  const n = 12
+  const tx = Array(n).fill(null)
+  tx[2] = 400_000
+  const reps = Array(n).fill(null)
+  reps[2] = { id: 900, sent: true }
+  d.data.channels[0].active = true
+  d.data.channels[1].active = true
+  d.data.channels.push({ id: 30, name: LONG_INACTIVE, team_id: 2, team_name: 'Kurumsal Kanallar', active: false,
+    points: { 'error-rate': Array(n).fill(null), 'total-tx': tx }, reports: reps })
+  d.data.channel_count = 3
+  return d
+}
+
+describe('kanal analizi — pasif kanallar (2026-10-18)', () => {
+  it('pasif kanal: grafik anahtarında, tablo başlığında "Pasif" rozeti; sıra sunucununki (aktifler önce); hücre raporu açar', async () => {
+    te().analytics.mockResolvedValue(withInactive())
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const card = field('total-tx')
+    const legend = [...card.querySelectorAll('[data-slot="te-an-legend-item"]')]
+    expect(legend).toHaveLength(3)
+    expect(legend[2]).toHaveAttribute('data-inactive', 'true')
+    expect(within(legend[2]).getByText(LONG_INACTIVE)).toBeInTheDocument()
+    expect(within(legend[2]).getByText('Pasif')).toHaveAttribute('data-slot', 'te-an-inactive')
+    expect(legend[0]).not.toHaveAttribute('data-inactive')
+    expect(legend[1]).not.toHaveAttribute('data-inactive')
+    expect(legend[0].querySelector('[data-slot="te-an-inactive"]')).toBeNull()
+    // Tablo başlığı: sütun sırası sunucununki, pasif sütunda rozet
+    const heads = [...card.querySelectorAll('[data-slot="te-an-table"] th[data-channel]')]
+    expect(heads.map((h) => h.dataset.channel)).toEqual(['10', '20', '30'])
+    expect(heads[2]).toHaveAttribute('data-inactive', 'true')
+    expect(within(heads[2]).getByText('Pasif')).toBeInTheDocument()
+    expect(heads[0].querySelector('[data-slot="te-an-inactive"]')).toBeNull()
+    // Rozet SARAR, kırpılmaz (truncate yok; rounded-md overflow-visible)
+    const badge = within(heads[2]).getByText('Pasif')
+    expect(badge.className).toContain('overflow-visible')
+    expect(badge.className).toContain('rounded-md')
+    expect(badge.className).toContain('whitespace-normal')
+    expect(badge.className).not.toContain('truncate')
+    // Pasif kanalın geçmiş ayı: değer + rapor bağlantısı
+    const cell = card.querySelector('[data-slot="te-an-cell"][data-report="900"]')
+    expect(cell).not.toBeNull()
+    expect(cell).toHaveAccessibleName(/400\.000 — .*raporunu aç/)
+  })
+
+  it('pasif kanal: dar kapta kartta da rozet (data-inactive); "N kanal daha" listesinde de rozetli', async () => {
+    width.value = 400
+    const d = withInactive()
+    // 9 aktif + 1 pasif: pasif grafikte çizilmez, "1 kanal daha" listesine düşer (sunucu sırası: aktifler önce)
+    const base = d.data.channels[1]
+    const extra = []
+    for (let i = 0; i < 7; i++) extra.push({ ...base, id: 40 + i, name: `Kanal ${i}`, active: true })
+    d.data.channels.splice(2, 0, ...extra)
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const card = field('total-tx')
+    const cards = [...card.querySelectorAll('[data-slot="te-an-card"]')]
+    expect(cards).toHaveLength(10)
+    expect(cards[9]).toHaveAttribute('data-inactive', 'true')
+    expect(within(cards[9]).getByText('Pasif')).toBeInTheDocument()
+    expect(cards.slice(0, 9).every((c) => !c.hasAttribute('data-inactive'))).toBe(true)
+    expect(card.querySelectorAll('[data-slot="te-an-legend-item"][data-inactive]')).toHaveLength(0)
+    fireEvent.click(within(card).getByRole('button', { name: '2 kanal daha' }))
+    const hidden = [...card.querySelectorAll('[data-slot="te-an-hidden-list"] li')]
+    expect(hidden).toHaveLength(2)
+    expect(hidden[1]).toHaveAttribute('data-inactive', 'true')
+    expect(within(hidden[1]).getByText('Pasif')).toBeInTheDocument()
+    expect(hidden[0]).not.toHaveAttribute('data-inactive')
+  })
+
+  it('CSV: pasif kanal sütun başlığına arayüz dilinde "(pasif)" / "(inactive)"', async () => {
+    te().analytics.mockResolvedValue(withInactive())
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    const { unmount } = render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    fireEvent.click(within(field('total-tx')).getByRole('button', { name: 'Toplam işlem adedi tablosunu CSV olarak indir' }))
+    const head = (body) => body.slice(body.charCodeAt(0) === 0xfeff ? 1 : 0).split('\r\n')[0]
+    const tr = head(csv.downloadCsv.mock.calls[0][1])
+    expect(tr).toContain(`${LONG_INACTIVE} (Kurumsal Kanallar) (pasif)`)
+    expect(tr).toContain('POS (Kurumsal Kanallar),')
+    expect(tr).not.toContain('POS (Kurumsal Kanallar) (pasif)')
+    unmount()
+    localStorage.setItem(LANG_STORAGE_KEY, 'en')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    fireEvent.click(within(field('total-tx')).getByRole('button', { name: /CSV/ }))
+    const en = head(csv.downloadCsv.mock.calls.at(-1)[1])
+    expect(en).toContain(`${LONG_INACTIVE} (Kurumsal Kanallar) (inactive)`)
+    expect(within(field('total-tx')).getAllByText('Inactive').length).toBeGreaterThan(0)
+  })
+
+  it('eski sunucu (active alanı yok): kanallar aktif sayılır — rozet ve data-inactive yok, CSV etiketsiz', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    expect(document.querySelector('[data-slot="te-an-inactive"]')).toBeNull()
+    expect(document.querySelector('[data-inactive]')).toBeNull()
+    fireEvent.click(within(field('total-tx')).getByRole('button', { name: 'Toplam işlem adedi tablosunu CSV olarak indir' }))
+    expect(csv.downloadCsv.mock.calls[0][1]).not.toContain('(pasif)')
+  })
+
+  it('inceleme 2026-10-18: sığmayan pasif kanallar AYRI not (sayıyla); aylar kesilmediyse "yalnız son N ay" şeridi YOK', async () => {
+    const d = withInactive()
+    Object.assign(d.data, { channels_truncated: true, inactive_omitted: 2, truncated: false, channel_count: 5 })
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    const note = document.querySelector('[data-slot="te-an-inactive-cut"]')
+    expect(note).not.toBeNull()
+    expect(within(note).getByText('Bazı pasif kanallar sınır nedeniyle gösterilmedi')).toBeInTheDocument()
+    expect(within(note).getByText(/sıranın sonundaki 2 pasif kanal listeye alınmadı; aylar bundan etkilenmedi/)).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="te-an-truncated"]')).toBeNull()
+    expect(screen.queryByText(/Yalnız son \d+ ay gösteriliyor/)).toBeNull()
+  })
+
+  it('inceleme 2026-10-18 (2. tur): aktif kanallar sınırı aşınca ayrı not (sayıyla); ay şeridi kanal sayısını AKTİF sayıdan söyler', async () => {
+    const d = withInactive()
+    Object.assign(d.data, { truncated: true, months: months(1), months_requested: 12, channel_count: 1203, active_count: 1201, active_omitted: 1 })
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    expect(await screen.findByText('Bazı aktif kanallar sınır nedeniyle gösterilmedi')).toBeInTheDocument()
+    const act = document.querySelector('[data-slot="te-an-active-cut"]')
+    expect(within(act).getByText(/sıranın sonundaki 1 aktif kanal listeye alınmadı/)).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="te-an-truncated"]').textContent).toMatch(/1201 kanalın 12 ayı/)
+  })
+
+  it('inceleme 2026-10-18: önceki sürümün yanıtı (truncated ama aylar tam) "yalnız son N ay" demez; aylar gerçekten kesildiyse iki not birden; sayı yoksa sayısız not', async () => {
+    const old = withInactive()
+    Object.assign(old.data, { truncated: true })                              // 12 / 12 ay — aylar kesilmemiş
+    te().analytics.mockResolvedValueOnce(old)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    const first = render(<TechErrorReportsPage />)
+    await waitFor(() => expect(field('total-tx')).not.toBeNull())
+    expect(document.querySelector('[data-slot="te-an-truncated"]')).toBeNull()
+    expect(document.querySelector('[data-slot="te-an-inactive-cut"]')).toBeNull()
+    first.unmount()
+
+    const both = withInactive()
+    Object.assign(both.data, { truncated: true, months: months(10), months_requested: 24, channel_count: 130, channels_truncated: true })
+    te().analytics.mockResolvedValueOnce(both)
+    const second = render(<TechErrorReportsPage />)
+    expect(await screen.findByText('Yalnız son 10 ay gösteriliyor')).toBeInTheDocument()
+    const note = document.querySelector('[data-slot="te-an-inactive-cut"]')
+    expect(note).not.toBeNull()
+    expect(within(note).getByText(/sıranın sonundaki bazı pasif kanallar listeye alınmadı/)).toBeInTheDocument()
+    expect(note.textContent).not.toMatch(/\b0 pasif/)
+    expect(note.textContent, 'aylar da kesildi: "aylar etkilenmedi" denmez').not.toMatch(/etkilenmedi/)
+    second.unmount()
+
+    localStorage.setItem(LANG_STORAGE_KEY, 'en')
+    const en = withInactive()
+    Object.assign(en.data, { channels_truncated: true, inactive_omitted: 4 })
+    te().analytics.mockResolvedValueOnce(en)
+    render(<TechErrorReportsPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="te-an-inactive-cut"]')).not.toBeNull())
+    const enNote = document.querySelector('[data-slot="te-an-inactive-cut"]')
+    expect(within(enNote).getByText("Some inactive channels aren't shown because of the limit")).toBeInTheDocument()
+    expect(enNote.textContent).toContain('were left out (4)')
   })
 })

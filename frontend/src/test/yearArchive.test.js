@@ -1,11 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import { unzipSync, strFromU8 } from 'fflate'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
-  ARCHIVE_MAX_RETRIES, ARCHIVE_REQUEST_TIMEOUT_MS, ARCHIVE_RETRY_WAIT_MS, MISSING_FILE, abortableSleep, archiveFileName,
-  archiveYears, createArchiveZip, entryNamer, fallbackPdfName, fileSlug, isPdfBytes, missingReason, missingText, requestSignal,
-  runArchive, safeEntryName, uniqueName, zipPlan,
+  ARCHIVE_MAX_RETRIES, ARCHIVE_MAX_RETRY_WAIT_MS, ARCHIVE_REQUEST_TIMEOUT_MS, ARCHIVE_RETRY_WAIT_MS, ARCHIVE_TOTAL_WAIT_BUDGET_MS,
+  MISSING_FILE, abortableSleep, archiveFileName, archiveYears, createArchiveZip, entryNamer, fallbackPdfName, fileSlug, isPdfBytes,
+  missingReason, missingText, requestSignal, retryWaitMs, runArchive, safeEntryName, uniqueName, zipPlan,
 } from '../components/techerror/yearArchive.js'
 import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 // Kanalın yıl arşivi — ZIP (2026-10-17, C12): saf parçalar. PDF'ler SIRAYLA (tek istek) alınır; 429'da 3 sn bekleyip en çok
 // 3 kez yeniden; eksik aylar missing.txt'ye; iptal → hiçbir şey; PDF girdileri sıkıştırılmadan. İnceleme (aynı gün): her
@@ -130,12 +134,13 @@ describe('yıl arşivi — sıralı koşucu', () => {
       .mockResolvedValueOnce({ success: true, bytes: pdf('2') })
       .mockResolvedValueOnce({ success: true, bytes: pdf('3') })
     const waits = []
-    const res = await runArchive(plan, { fetchPdf, sleep, onProgress: (p) => { if (p.waiting) waits.push(`${p.index}:${p.attempt}`) } })
+    const res = await runArchive(plan, { fetchPdf, sleep, onProgress: (p) => { if (p.waiting) waits.push(`${p.index}:${p.attempt}:${p.waitMs}`) } })
     expect(fetchPdf.mock.calls.map((c) => c[0].id)).toEqual([1, 2, 2, 2, 3])
     expect(sleep).toHaveBeenCalledTimes(2)
     expect(sleep.mock.calls[0][0]).toBe(ARCHIVE_RETRY_WAIT_MS)
     expect(ARCHIVE_RETRY_WAIT_MS).toBe(3000)
-    expect(waits).toEqual(['2:2', '2:3'])
+    // Bekleme süresi durum satırına gider (4. tur)
+    expect(waits).toEqual(['2:2:3000', '2:3:3000'])
     expect(res.files).toHaveLength(3)
     expect(res.missing).toEqual([])
   })
@@ -149,6 +154,72 @@ describe('yıl arşivi — sıralı koşucu', () => {
     expect(sleep).toHaveBeenCalledTimes(3)
     expect(res.files.map((f) => f.item.id)).toEqual([1, 3])
     expect(res.missing).toEqual([{ item: plan[1], reason: 'busy', status: 429, error: null }])
+  })
+
+  describe('inceleme 2026-10-18 (3. tur): 429 Retry-After — kişi başı dakikalık PDF sınırı', () => {
+    const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const CTRL = fs.readFileSync(path.join(ROOT, 'backend/src/main/java/com/sitemonitor/controller/TechErrorReportController.java'), 'utf8')
+
+    it('retryWaitMs: sunucunun önerisine (sn) uyulur, 60 sn ile sınırlı; öneri yoksa / anlamsızsa 3 sn', () => {
+      expect(retryWaitMs({ status: 429, retryAfter: 12 })).toBe(12_000)
+      expect(retryWaitMs({ status: 429, retryAfter: 1 })).toBe(1000)
+      expect(retryWaitMs({ status: 429, retryAfter: 0.4 })).toBe(1000)
+      expect(retryWaitMs({ status: 429, retryAfter: 300 })).toBe(ARCHIVE_MAX_RETRY_WAIT_MS)
+      expect(ARCHIVE_MAX_RETRY_WAIT_MS).toBe(60_000)
+      for (const ra of [undefined, null, 0, -5, 'x', Number.NaN]) expect(retryWaitMs({ status: 429, retryAfter: ra })).toBe(ARCHIVE_RETRY_WAIT_MS)
+      expect(retryWaitMs(null)).toBe(ARCHIVE_RETRY_WAIT_MS)
+      // Sunucunun sınırı en geç bir dakikalık pencerede açılır — üst sınır pencereden kısa değil
+      const windowMs = Number(/RENDER_WINDOW_MS\s*=\s*([0-9_]+)L/.exec(CTRL)[1].replace(/_/g, ''))
+      expect(ARCHIVE_MAX_RETRY_WAIT_MS).toBeGreaterThanOrEqual(windowMs)
+      expect(CTRL).toMatch(/header\(HttpHeaders\.RETRY_AFTER, String\.valueOf\(retryAfter\)\)/)
+    })
+
+    it('aynı dakikadaki ikinci arşiv: 429 RATE_LIMITED + Retry-After 42 sn → 42 sn beklenir, ay kaybolmaz', async () => {
+      const sleep = vi.fn(noSleep)
+      const fetchPdf = vi.fn()
+        .mockResolvedValueOnce({ success: true, bytes: pdf('1') })
+        .mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 42, error: 'PDF sınırına ulaşıldı.' })
+        .mockResolvedValueOnce({ success: true, bytes: pdf('2') })
+        .mockResolvedValueOnce({ success: true, bytes: pdf('3') })
+      const res = await runArchive(plan, { fetchPdf, sleep })
+      expect(sleep.mock.calls.map((c) => c[0])).toEqual([42_000])
+      expect(fetchPdf.mock.calls.map((c) => c[0].id)).toEqual([1, 2, 2, 3])
+      expect(res.files).toHaveLength(3)
+      expect(res.missing).toEqual([])
+    })
+
+    it('öneri 60 sn ile sınırlı; koşunun toplam beklemesi bütçeyi aşamaz — aşacaksa beklenmez, ay "dakikalık PDF sınırı" diye eksik', async () => {
+      expect(ARCHIVE_TOTAL_WAIT_BUDGET_MS).toBe(5 * 60_000)
+      const sleep = vi.fn(noSleep)
+      const limited = { success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 600, error: 'PDF sınırına ulaşıldı.' }
+      const fetchPdf = vi.fn(async () => limited)
+      const res = await runArchive(plan, { fetchPdf, sleep, waitBudgetMs: 150_000 })
+      // Her bekleme 60 sn'ye kırpılır; 150 sn bütçede yalnız ikisi sığar (üçüncüsü bütçeyi aşar → beklenmez)
+      expect(sleep.mock.calls.map((c) => c[0])).toEqual([60_000, 60_000])
+      expect(fetchPdf).toHaveBeenCalledTimes(3 + 1 + 1)                       // 1. ay 3 istek, sonrakiler bekleme yok
+      expect(res.files).toEqual([])
+      expect(res.missing.map((m) => m.reason)).toEqual(['limit', 'limit', 'limit'])
+      expect(res.missing[0]).toEqual({ item: plan[0], reason: 'limit', status: 429, error: 'PDF sınırına ulaşıldı.' })
+    })
+
+    it('429 RATE_LIMITED deneme hakkını tüketirse ay "limit" (dakikalık PDF sınırı), başka 429 "busy" (PDF sırası) — missing.txt doğru nedeni yazar', async () => {
+      const fetchPdf = vi.fn(async (item) => (item.id === 1
+        ? { success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 5 }
+        : item.id === 2 ? { success: false, status: 429, code: 'HTTP_429' } : { success: true, bytes: pdf() }))
+      const sleep = vi.fn(noSleep)
+      const res = await runArchive(plan, { fetchPdf, sleep })
+      expect(sleep.mock.calls.map((c) => c[0])).toEqual([5000, 5000, 5000, 3000, 3000, 3000])
+      expect(res.missing.map((m) => [m.item.id, m.reason])).toEqual([[1, 'limit'], [2, 'busy']])
+      const text = missingText(res.missing, { t, channelName: 'Mobil', year: 2026, labelOf })
+      expect(text).toContain(`- Ocak 2026 — ${TR['te.zip.reason.limit']}`)
+      expect(text).toContain(`- Şubat 2026 — ${t('te.zip.reason.busy', ARCHIVE_MAX_RETRIES + 1)}`)
+      // 4. tur: sunucu kişi başı dakikalık sınırı VE aynı anda tek PDF kuralını aynı kodla (RATE_LIMITED) reddeder — metin ikisini de söyler
+      expect(TR['te.zip.reason.limit']).toMatch(/PDF sınırı \(dakikalık ya da eşzamanlı\)/)
+      expect(EN['te.zip.reason.limit']).toMatch(/PDF limit \(per minute or concurrent\)/)
+      expect(TR['te.zip.reason.limit']).not.toMatch(/meşgul/)
+      expect(CTRL.match(/return rateLimited\(/g)).toHaveLength(2)          // eşzamanlılık + dakikalık: tek kod
+      expect(CTRL).toMatch(/error\(429, "RATE_LIMITED"/)
+    })
   })
 
   it('başka hata yeniden denenmez; PDF olmayan yanıt ve fırlatan istek eksik sayılır', async () => {

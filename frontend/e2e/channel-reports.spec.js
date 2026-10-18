@@ -361,6 +361,7 @@ let analyticsCalls = []         // Kanal analizi istekleri (2026-10-18, R22): UR
 // Kanal analizi (2026-10-18, R22) — sunucu yanıtı isteğin ay sayısı ve alanlarıyla kurulur. Uzun kanal / takım adları,
 // boşluklu seri (iki ay boş), yalnız TEK değeri olan kanal (nokta), gönderilmemiş ay.
 const LONG_CHANNEL_2 = 'Kurumsal İnternet Şubesi ve Nakit Yönetimi Ortak Kanalı (Kurumsal Bankacılık / Dijital Kanallar)'
+const LONG_INACTIVE_CHANNEL = 'Eski Bireysel Mobil Bankacılık ve Kart Ödemeleri Ortak Kanalı (Dijital Kanallar / Kapatıldı Ağustos 2026)'
 const AN_FIELDS = {
   'error-rate': { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' },
   'total-tx': { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
@@ -380,9 +381,13 @@ function analyticsBody(params) {
     'sla-rate': months.map(() => null),
   })
   const reps = (base, unsent) => months.map((_, i) => ({ id: i === last && base === 700 ? 100 : base + i, sent: i !== unsent }))
-  const ch = (id, name, teamId, teamName, kind, base) => ({
-    id, name, team_id: teamId, team_name: teamName, points: Object.fromEntries(ids.map((f) => [f, pts(kind)[f]])),
-    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null)) : reps(base, last),
+  // Pasif kanal (2026-10-18): yalnız eski aylarda raporu var (pasife alınmadan önce), aktiflerin ardında, `active: false`
+  const pastIdx = (i) => i <= last - 3 && i >= last - 5
+  const ch = (id, name, teamId, teamName, kind, base, active = true) => ({
+    id, name, team_id: teamId, team_name: teamName, active,
+    points: Object.fromEntries(ids.map((f) => [f, kind === 'past' ? pts('full')[f].map((v, i) => (pastIdx(i) ? v : null)) : pts(kind)[f]])),
+    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null))
+      : kind === 'past' ? months.map((_, i) => (pastIdx(i) ? { id: base + i, sent: true } : null)) : reps(base, last),
   })
   return {
     team: params.get('team') || 'all', months_requested: n, months, end: { year: 2026, month: 9 },
@@ -396,8 +401,10 @@ function analyticsBody(params) {
       ch(10, LONG_CHANNEL, 5, LONG_TEAM, 'gaps', 700),
       ch(20, 'POS', 5, LONG_TEAM, 'full', 800),
       ch(30, LONG_CHANNEL_2, 6, 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi', 'lone', 900),
+      ch(40, LONG_INACTIVE_CHANNEL, 5, LONG_TEAM, 'past', 950, false),
     ],
-    channel_count: 3, truncated: false,
+    // 24 ay (inceleme 2026-10-18): sığmayan pasif kanallar AYRI işaret — aylar tam, `truncated` yalnız aylar için
+    channel_count: n === 24 ? 6 : 4, truncated: false, channels_truncated: n === 24, inactive_omitted: n === 24 ? 2 : 0,
     teams: [{ id: 5, name: LONG_TEAM }, { id: 6, name: 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi' }],
     month_choices: [6, 12, 24], max_fields: 4,
   }
@@ -1575,12 +1582,12 @@ for (const vp of VIEWPORTS) {
 
       await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
       const years = page.locator('[data-slot="te-report-year"]')
-      await expect(years).toHaveCount(2)
+      await expect(years).toHaveCount(2, { timeout: 20_000 })      // gezinmeden sonraki ilk denetim: yükte 5 sn yetmeyebilir
       await expect(years.first()).toHaveAttribute('data-year', '2026')
       expect(await page.evaluate(overflowX)).toBeLessThanOrEqual(0)
 
       await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
-      await page.locator('[data-slot="te-versions-open"]').click()
+      await page.locator('[data-slot="te-versions-open"]').click({ timeout: 20_000 })
       const dlg = page.locator('[data-slot="te-versions"]')
       await expect(dlg.locator('[data-slot="te-version-item"]')).toHaveCount(2)
       await dlg.locator('[data-slot="te-version-item"][data-version="2"]').click()
@@ -1648,7 +1655,8 @@ for (const vp of VIEWPORTS) {
         report: { ...REPORT.report, approval: { state: 'pending', raw_state: 'PENDING', stale: false, requested_at: '2026-10-13T09:00:00Z' } },
         approval_detail: { ...detail, requested_by_name: LONG_PERSON, can_request: false, is_approver: true, can_decide: true } }
       await page.reload()
-      await expect(card).toHaveAttribute('data-state', 'pending')
+      await expect(editor).toBeVisible({ timeout: 20_000 })      // yeniden yüklemeden sonraki ilk denetim (yükte 5 sn yetmeyebilir)
+      await expect(card).toHaveAttribute('data-state', 'pending', { timeout: 20_000 })
       expect(await page.evaluate(clipped, '[data-slot="te-approval"]'), 'kırpılan metin (bekleyen)').toEqual([])
       expect(await page.evaluate(overflowX), 'yatay taşma (bekleyen)').toBeLessThanOrEqual(1)
       await card.locator('[data-slot="te-approval-approve"]').click()
@@ -1757,6 +1765,59 @@ for (const vp of VIEWPORTS) {
       await expect(confirm).toBeVisible()
       await confirm.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
       await expect.poll(() => sends).toBe(1)
+    })
+
+    test('e-posta önizlemesi (inceleme 2026-10-18): 20 Kime + 20 Bilgi + üç şerit — gövde kayar, başlık ve alt düğmeler pencerede görünür kalır', async ({ page }) => {
+      await mock(page)
+      const many = (who) => Array.from({ length: 20 }, (_, i) => `${who}.${i}.cok-uzun-bir-adres@dijital-kanallar-uygulama-gelistirme.example.com`)
+      // Genel /api taklidinden SONRA kaydedilir — Playwright son kaydı önce dener
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/100/mail-preview', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+          subject: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Eylül 2026`, delivery: 'EXECUTIVE',
+          to: many('yonetici'), cc: many('takim'), to_count: 20, cc_count: 20, to_dropped: 3, cc_dropped: 4,
+          recipients_hidden: false, problem: 'EXEC_RECIPIENTS_MISSING', pdf_too_large: false,
+          file_name: 'mobil-teknik-hata-2026-09.pdf', images_embedded: 1, images_skipped: 0, pdf_bytes: 123456, max_mail_mb: 15,
+          provenance: { created_by: 'Ayşe Yılmaz', created_at: '2026-09-03T11:05:00Z', updated_by: 'Ali Veli', updated_at: '2026-09-05T06:12:00Z',
+            approval_state: 'pending', approved_by: null, approved_at: null },
+          html: '<!doctype html><html><body style="margin:0;font-family:Arial"><div data-slot="te-mail-band" style="background:#0f172a;color:#fff;padding:24px">TEKNİK HATA RAPORU</div></body></html>',
+          text: 'metin' } }),
+      }))
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-mail-preview-btn"]').click()
+      const dlg = page.locator('[data-slot="te-mail-preview"]')
+      await expect(dlg).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-to"]')).toContainText('yonetici.19.')
+      await expect(dlg.locator('[data-slot="te-mail-dropped"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-cc-dropped"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-mail-problem"]')).toBeVisible()
+      await page.waitForTimeout(300)
+      const box = await dlg.boundingBox()
+      expect(box.y, 'pencere üstte taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(box.y + box.height, 'pencere altta taşmaz').toBeLessThanOrEqual(vp.height + 1)
+      // Alt çubuk (Kapat + Bana test gönder) pencerenin İÇİNDE ve ekranda — kaydırmadan erişilir
+      for (const sel of ['[data-slot="te-mail-test"]']) {
+        const b = await dlg.locator(sel).boundingBox()
+        expect(b, `${sel} çizildi`).not.toBeNull()
+        expect(b.y + b.height, `${sel} pencerenin içinde`).toBeLessThanOrEqual(box.y + box.height + 1)
+        expect(b.y + b.height, `${sel} ekranda`).toBeLessThanOrEqual(vp.height + 1)
+      }
+      const close = dlg.locator('[data-slot="dialog-footer"]').getByRole('button', { name: /^(Kapat|Close)$/ })
+      await expect(close).toBeInViewport()
+      const cb = await close.boundingBox()
+      expect(cb.y + cb.height, 'Kapat pencerenin içinde').toBeLessThanOrEqual(box.y + box.height + 1)
+      await expect(dlg.getByRole('heading', { name: /E-posta önizlemesi|E-mail preview/ })).toBeInViewport()
+      // Gövde kayar: sona kaydırılınca önizleme çerçevesi görünür, alt çubuk yerinde
+      const body = dlg.locator('[data-slot="te-mail-body"]')
+      if (vp.width < 768) {
+        expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 1), 'telefonda gövde kaydırılabilir').toBe(true)
+      }
+      await body.evaluate((el) => { el.scrollTop = el.scrollHeight })
+      await expect(dlg.locator('[data-slot="te-mail-frame"]')).toBeInViewport()
+      await expect(close).toBeInViewport()
+      expect(await page.evaluate(clipped, '[data-slot="te-mail-preview"]'), 'kırpılan metin (önizleme, çok alıcı)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma (önizleme, çok alıcı)').toBeLessThanOrEqual(1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-mail-preview"]'), 'küçük hedef (önizleme, çok alıcı)').toEqual([])
     })
 
     test('R18: gönderim penceresinde ek Bilgi (CC) — istemci ve sunucu alan hatası alanın altında, gövdede yalnız extra_cc; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
@@ -2038,22 +2099,49 @@ for (const vp of VIEWPORTS) {
 
       const cards = view.locator('[data-slot="te-an-field"]')
       await expect(cards).toHaveCount(2)
+      await expect(view.locator('[data-slot="te-an-inactive-cut"]')).toHaveCount(0)
+      await expect(view.locator('[data-slot="te-an-truncated"]')).toHaveCount(0)
       const rate = view.locator('[data-slot="te-an-field"][data-field="error-rate"]')
       // Grafik gerçekten çizildi: kanal başına bir çizgi; yalnız tek değeri olan kanal NOKTA alır (boş ay boşluk, 0 değil)
       await expect(rate.locator('.recharts-line-curve').first()).toBeVisible()
       expect(await rate.locator('.recharts-line-curve').count(), 'çizgi sayısı').toBeGreaterThanOrEqual(2)
       await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
-      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(3)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(4)
       await expect(rate.locator('[data-slot="te-an-legend"]')).toContainText(LONG_CHANNEL)
+      // Pasif kanal (2026-10-18): aktiflerin ARDINDA, uzun adının yanında "Pasif" rozeti (anahtarda, tabloda / kartta)
+      const inactiveLegend = rate.locator('[data-slot="te-an-legend-item"][data-inactive="true"]')
+      await expect(inactiveLegend).toHaveCount(1)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]').last()).toHaveAttribute('data-inactive', 'true')
+      await expect(inactiveLegend).toContainText(LONG_INACTIVE_CHANNEL)
+      await expect(inactiveLegend.locator('[data-slot="te-an-inactive"]')).toBeVisible()
+      await expect(inactiveLegend.locator('[data-slot="te-an-inactive"]')).toHaveText(/^(Pasif|Inactive)$/)
       // Kap genişliği: geniş ekranda ay × kanal tablosu, dar ekranda kanal kartları
       const wrap = rate.locator('[data-slot="te-an-table-wrap"]')
       await expect(wrap).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+      let inactiveHolder
       if (vp.width >= 1280) {
         await expect(rate.locator('[data-slot="te-an-row"]')).toHaveCount(12)
         await expect(rate.locator('[data-slot="te-an-row"]').first()).toHaveAttribute('data-month', '2026-9')
+        inactiveHolder = rate.locator('[data-slot="te-an-table"] th[data-inactive="true"]')
+        await expect(rate.locator('[data-slot="te-an-table"] th[data-channel]').last()).toHaveAttribute('data-channel', '40')
       } else {
-        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(3)
+        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(4)
         await expect(rate.locator('[data-slot="te-an-card"]').first()).toContainText(LONG_CHANNEL)
+        inactiveHolder = rate.locator('[data-slot="te-an-card"][data-inactive="true"]')
+        await expect(rate.locator('[data-slot="te-an-card"]').last()).toHaveAttribute('data-inactive', 'true')
+      }
+      await expect(inactiveHolder).toHaveCount(1)
+      await expect(inactiveHolder).toContainText(LONG_INACTIVE_CHANNEL)
+      await expect(inactiveHolder.locator('[data-slot="te-an-inactive"]')).toBeVisible()
+      // Pasif kanalın geçmiş ayı rapor bağlantısı; rozet kabının içinde kalır (taşmaz, kırpılmaz)
+      await expect(rate.locator('[data-slot="te-an-cell"][data-report="956"]')).toHaveCount(1)
+      for (const holder of [inactiveLegend, inactiveHolder]) {
+        const box = await holder.boundingBox()
+        const badge = await holder.locator('[data-slot="te-an-inactive"]').boundingBox()
+        expect(badge.x, 'rozet solda taşmaz').toBeGreaterThanOrEqual(box.x - 1)
+        expect(badge.x + badge.width, 'rozet sağda taşmaz').toBeLessThanOrEqual(box.x + box.width + 1)
+        const el = holder.locator('[data-slot="te-an-inactive"]')
+        expect(await el.evaluate((n) => n.scrollWidth <= n.clientWidth + 1), 'rozet metni kırpılmaz').toBe(true)
       }
       // Boş ay "—"; gönderilmemiş ay soluk (adında "gönderilmedi")
       const unsent = rate.locator('[data-slot="te-an-cell"][data-report="100"]')
@@ -2080,6 +2168,11 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => analyticsCalls.at(-1)?.get('months')).toBe('24')
       await expect.poll(() => new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
       await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+      // Sığmayan pasif kanallar: ayrı, sayılı not; aylar kesilmedi → "yalnız son N ay" şeridi YOK (inceleme 2026-10-18)
+      const inactiveCut = view.locator('[data-slot="te-an-inactive-cut"]')
+      await expect(inactiveCut).toBeVisible()
+      await expect(inactiveCut).toContainText(/(sonundaki 2 pasif kanal|left out \(2\))/)
+      await expect(view.locator('[data-slot="te-an-truncated"]')).toHaveCount(0)
 
       // Alan seçici: SLA oranı eklenir → üçüncü kart, değer yoksa "değer girilmemiş" (grafik / 0 değil)
       await view.locator('[data-slot="te-an-field-picker"]').click()

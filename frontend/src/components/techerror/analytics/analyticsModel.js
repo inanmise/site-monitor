@@ -2,8 +2,11 @@
  * Kanallar arası analiz — saf yardımcılar (2026-10-18, R22). Sunucu yanıtı (`GET /tech-error-reports/analytics`):
  * `{ months:[{year,month}], fields:[{id,label,type,type_mismatch:[kanal]}], available_fields:[{id,label,type,channels}],
  *    dropped_fields:[alan], fields_fallback,
- *    channels:[{id,name,team_id,team_name,points:{<alan>:[v|null…]},reports:[{id,sent,queued?}|null…]}], truncated, teams }`.
+ *    channels:[{id,name,team_id,team_name,active,points:{<alan>:[v|null…]},reports:[{id,sent,queued?}|null…]}], truncated
+ *    (yalnız aylar kesildi), channels_truncated + inactive_omitted (sığmayan pasif kanallar), teams }`.
  * Boş ay `null` — asla 0 değildir (grafikte boşluk, tabloda "—"). React'ten bağımsız; testler doğrudan çağırır.
+ * Pasif kanal (2026-10-18, kullanıcı kararı): sunucu yalnız penceresinde raporu olanı, aktiflerin ARDINDAN gönderir
+ * (`active: false`); `active` alanı olmayan eski sunucu yanıtında kanal aktif sayılır (rozet yok).
  */
 import { compactNumber, formatNumber, formatPercent, monthName, shortMonth } from '../techErrorModel.js'
 import { csvNumber } from '../../../utils/csv.js'
@@ -231,6 +234,33 @@ export function reportAt(channel, i) {
   return { id: r.id, sent, queued: !sent && r.queued === true }
 }
 
+/** Kanal pasif mi — yalnız sunucu açıkça `active: false` dediyse (eski sunucu: alan yok → aktif). */
+export function isInactiveChannel(channel) {
+  return channel?.active === false
+}
+
+/**
+ * Aylar GERÇEKTEN kesildi mi (inceleme 2026-10-18): `truncated` VE gösterilen ay sayısı istenenden az. Pasif kanallar ay
+ * penceresini asla kısaltmaz (sığmayanlar `channels_truncated` ile ayrı bildirilir); ay sayısı karşılaştırması, işareti
+ * pasif kesiminde de koyan önceki sürümün yanıtında "yalnız son N ay" şeridini yanlış göstermez.
+ */
+export function monthsCut(data, requested) {
+  if (!data?.truncated) return false
+  const shown = Array.isArray(data.months) ? data.months.length : 0
+  const want = Number(data.months_requested ?? requested)
+  return shown > 0 && Number.isFinite(want) && shown < want
+}
+
+/**
+ * Sınır nedeniyle listeye alınmayan pasif kanal sayısı: işaret (`channels_truncated`) yoksa 0; işaret var ama sayı okunamıyorsa
+ * null (arayüz sayısız not yazar — asla "0 kanal").
+ */
+export function inactiveOmitted(data) {
+  if (data?.channels_truncated !== true) return 0
+  const n = Number(data.inactive_omitted)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
 /** Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (Set; değerleri okunmaz — kanalın yanında not). */
 export function typeMismatchIds(data, fieldId) {
   const f = (Array.isArray(data?.fields) ? data.fields : []).find((x) => x?.id === fieldId)
@@ -249,7 +279,8 @@ export function valueCount(data, fieldId) {
 /**
  * Grafik verisi: aylar eskiden yeniye satır (`{ key, idx, year, month, c0, c1 … }`), çizilen kanallar en çok `MAX_LINES`
  * (güvenli seri anahtarları `c0…` — kanal kimliği CSS değişkeni adı olamaz). Değeri olmayan ay null (boşluk).
- * Dönüş: `{ rows, series:[{key, channelId, label, team, color, dashed, mismatch}], hidden:[{id, name, team, mismatch}] }`.
+ * Dönüş: `{ rows, series:[{key, channelId, label, team, color, dashed, mismatch, inactive}], hidden:[{id, name, team, mismatch, inactive}] }`.
+ * Sıra sunucununki (aktifler önce, pasifler sonra) — pasifler genelde "N kanal daha" altına düşer.
  */
 export function buildChart(data, fieldId, max = MAX_LINES) {
   const months = Array.isArray(data?.months) ? data.months : []
@@ -258,7 +289,7 @@ export function buildChart(data, fieldId, max = MAX_LINES) {
   const drawn = channels.slice(0, max)
   const series = drawn.map((ch, i) => ({
     key: `c${i}`, channelId: ch.id, label: ch.name || `#${ch.id}`, team: ch.team_name || null, ...lineStyle(i),
-    mismatch: mismatch.has(String(ch.id)),
+    mismatch: mismatch.has(String(ch.id)), inactive: isInactiveChannel(ch),
   }))
   const values = drawn.map((ch) => seriesOf(ch, fieldId, months.length))
   const rows = months.map((m, idx) => {
@@ -268,6 +299,7 @@ export function buildChart(data, fieldId, max = MAX_LINES) {
   })
   const hidden = channels.slice(max).map((ch) => ({
     id: ch.id, name: ch.name || `#${ch.id}`, team: ch.team_name || null, mismatch: mismatch.has(String(ch.id)),
+    inactive: isInactiveChannel(ch),
   }))
   return { rows, series, hidden }
 }
@@ -310,7 +342,7 @@ export function channelCards(data, field, lang) {
   const mismatch = typeMismatchIds(data, field?.id)
   return (data?.channels || []).map((ch, c) => ({
     id: ch.id, name: ch.name || `#${ch.id}`, team_id: ch.team_id, team_name: ch.team_name || null,
-    mismatch: mismatch.has(String(ch.id)),
+    mismatch: mismatch.has(String(ch.id)), inactive: isInactiveChannel(ch),
     items: rows.map((r) => ({ key: r.key, year: r.year, month: r.month, ...r.cells[c] })),
   }))
 }
@@ -324,12 +356,15 @@ export function fieldUnitLabel(field) {
 /**
  * Görünen tablonun CSV'si: başlık [Ay · alan (birim), kanal adları…], satırlar tablo sırasıyla (en yeni ay önce); değer
  * HAM SAYI (Excel hesaplasın — negatif yüzde de sayı kalır, formül koruması metne çevirmez: `csvNumber`), değer yoksa boş
- * hücre — 0 yazılmaz.
+ * hücre — 0 yazılmaz. Pasif kanalın sütun başlığının sonuna `inactiveTag` (arayüz dilinde "(pasif)" / "(inactive)") eklenir.
  */
-export function csvTable(data, field, lang, monthHeader) {
+export function csvTable(data, field, lang, monthHeader, inactiveTag = '') {
   const channels = Array.isArray(data?.channels) ? data.channels : []
   const corner = `${monthHeader} · ${fieldUnitLabel(field)}`
-  const headers = [corner, ...channels.map((ch) => (ch.team_name ? `${ch.name} (${ch.team_name})` : ch.name))]
+  const headers = [corner, ...channels.map((ch) => {
+    const base = ch.team_name ? `${ch.name} (${ch.team_name})` : ch.name
+    return isInactiveChannel(ch) && inactiveTag ? `${base} ${inactiveTag}` : base
+  })]
   const rows = tableRows(data, field, lang).map((r) => [monthFullLabel(r, lang),
     ...r.cells.map((c) => (c.value == null ? '' : csvNumber(c.value) ?? ''))])
   return { headers, rows }
