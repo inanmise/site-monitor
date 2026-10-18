@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { BookmarkPlus, CircleAlert, LibraryBig, Loader2, Pencil, RefreshCw, Star, StarOff, Trash2, X } from 'lucide-react'
+import { BookmarkPlus, CircleAlert, LibraryBig, Pencil, RefreshCw, Star, StarOff, Trash2, X } from 'lucide-react'
+import { Spinner } from '@/components/shadcn/spinner'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -512,7 +513,7 @@ export function LibraryManagerDialog({ open, teams = [], defaultTeam = null, onC
               {/* Liste yerinde kalır; yeniden okunduğu küçük bir göstergeyle söylenir (canlı bölge hep çizili, içerik değişir) */}
               <span className="inline-flex items-center gap-1.5 text-xs" role="status" aria-live="polite" data-slot="te-lib-refreshing"
                 data-state={lib.refreshing ? 'on' : 'off'}>
-                {lib.refreshing && <><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-pulse" /> {t('te.lib.refreshing')}</>}
+                {lib.refreshing && <><Spinner aria-hidden="true" className="size-3.5" /> {t('te.lib.refreshing')}</>}
               </span>
             </div>
           )}
