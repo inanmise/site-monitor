@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import { useT } from '../../i18n/index.jsx'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import {
-  isSectionOpen, parseOpenState, withSectionOpen, withSectionsClosed, withSectionsOpened,
+  OPEN_STATE_MAX_IDS, OPEN_TOPICS_MAX_IDS, isSectionOpen, parseOpenState, pruneOpenState, withSectionOpen, withSectionsClosed,
+  withSectionsOpened,
 } from './techErrorModel.js'
 
 /**
@@ -29,11 +30,17 @@ export const SectionOpenContext = createContext(null)
  */
 export const TopicOpenContext = createContext(null)
 
+/**
+ * Konuların açık kümesinin seçenekleri (inceleme 2026-10-19): tavan = bir raporda olabilecek en çok konu, her yazımda raporda
+ * olmayan konular düşer — 65. konuyu açmak en eski açık konuyu sessizce kapatmaz.
+ */
+export const TOPIC_OPEN_OPTS = Object.freeze({ max: OPEN_TOPICS_MAX_IDS, prune: true })
+
 /** Kişisel kayıt anahtarı: `r` rapor, `t` şablon (kanal). */
 export const sectionOpenKey = (kind, id) => `sm.te.open.${kind}.${id}`
 
-function readOpenState(key) {
-  try { return parseOpenState(globalThis.localStorage?.getItem(key)) } catch { return parseOpenState(null) }
+function readOpenState(key, max) {
+  try { return parseOpenState(globalThis.localStorage?.getItem(key), max) } catch { return parseOpenState(null, max) }
 }
 
 function writeOpenState(key, state) {
@@ -48,24 +55,32 @@ export function rememberSectionsOpen(kind, id, value) {
 /**
  * Açık bölüm durumu (anahtar değişince — başka rapor — yeniden okunur). `ids`: o anki bölüm kimlikleri ("hepsi açık"
  * iken bir bölüm kapatılınca geri kalanlar açık kalsın diye).
+ *
+ * <p>`opts.max`: hatırlanan kimlik tavanı (varsayılan 64 — bölümler; konular {@link OPEN_TOPICS_MAX_IDS}). `opts.prune`
+ * (konular, inceleme 2026-10-19): her yazımdan ÖNCE küme `ids`'te artık olmayan kimliklerden arındırılır (Vazgeç / "son şablonu
+ * uygula" ile kalkan konular tavanı doldurmasın); işlemin kendisi sonra uygulanır — aynı çizimde eklenen yeni konunun (henüz
+ * `ids`'te yok) açılması arınmaya takılmaz.
  */
-export function useSectionOpenState(storageKey, ids) {
-  const [st, setSt] = useState(() => ({ key: storageKey, state: readOpenState(storageKey) }))
+export function useSectionOpenState(storageKey, ids, { max = OPEN_STATE_MAX_IDS, prune = false } = {}) {
+  const [st, setSt] = useState(() => ({ key: storageKey, state: readOpenState(storageKey, max) }))
   let current = st
   if (st.key !== storageKey) {
-    current = { key: storageKey, state: readOpenState(storageKey) }
+    current = { key: storageKey, state: readOpenState(storageKey, max) }
     setSt(current)
   }
   const idsRef = useRef(ids)
   idsRef.current = ids
+  const optsRef = useRef({ max, prune })
+  optsRef.current = { max, prune }
   const update = useCallback((fn) => setSt((cur) => {
-    const next = fn(cur.state)
+    const base = optsRef.current.prune ? pruneOpenState(cur.state, idsRef.current) : cur.state
+    const next = fn(base)
     if (next === cur.state) return cur
     writeOpenState(cur.key, next)
     return { key: cur.key, state: next }
   }), [])
-  const setOpen = useCallback((id, open) => update((s) => withSectionOpen(s, id, open, idsRef.current)), [update])
-  const openMany = useCallback((list) => update((s) => withSectionsOpened(s, list)), [update])
+  const setOpen = useCallback((id, open) => update((s) => withSectionOpen(s, id, open, idsRef.current, optsRef.current.max)), [update])
+  const openMany = useCallback((list) => update((s) => withSectionsOpened(s, list, optsRef.current.max)), [update])
   // Yalnız verilenleri kapatır (bir anomali bölümünün "Tüm konuları kapat"ı — öteki bölümün konuları açık kalır)
   const closeMany = useCallback((list) => update((s) => withSectionsClosed(s, list, idsRef.current)), [update])
   const setAll = useCallback((open) => update(() => (open ? { all: true, ids: [] } : { all: false, ids: [] })), [update])

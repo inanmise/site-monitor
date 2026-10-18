@@ -118,7 +118,7 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
   }), [onIssuesUpdate, sid])
   const remove = useCallback((iid) => {
     onIssuesUpdate(sid, (l) => l.filter((x) => x.id !== iid))
-    // Silinen konunun açık kaydı da düşer (64'lük tavanda canlı konuların yerini tutmasın)
+    // Silinen konunun açık kaydı da düşer (başka yoldan kalkan konular bir sonraki yazımda — TOPIC_OPEN_OPTS.prune)
     setTopicOpen?.(topicOpenId(sid, iid), false)
   }, [onIssuesUpdate, sid, setTopicOpen])
   return (

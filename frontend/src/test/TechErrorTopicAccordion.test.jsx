@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, renderHook, act } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
@@ -21,6 +21,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
+import { TOPIC_OPEN_OPTS, useSectionOpenState } from '../components/techerror/SectionCollapse.jsx'
 
 const te = () => api.techErrors
 const TITLE = 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026'
@@ -242,5 +243,39 @@ describe('katlanır anomali konuları', () => {
     expect(toggleOf('k2')).toHaveAccessibleName('2. Fatura Ödeme Servisi: Hata Artışı')
     fireEvent.click(toggleOf('k2'))
     expect(screen.getByRole('textbox', { name: 'Konu' })).toHaveValue('Fatura Ödeme Servisi')
+  })
+
+  it('inceleme 2026-10-19: açık konu kaydı raporda OLMAYAN konulardan arınır — 64 eski kimlikle dolu kayıtta yeni konu açmak en eski AÇIK konuyu sessizce kapatmaz', async () => {
+    const stale = Array.from({ length: 63 }, (_, i) => `issues:silinen${i}`)
+    localStorage.setItem(KEY, JSON.stringify({ ids: ['issues:k1', ...stale] }))
+    te().report.mockResolvedValue(respond([K1, K2]))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(toggleOf('k1')).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(toggleOf('k2'))
+    expect(toggleOf('k2')).toHaveAttribute('aria-expanded', 'true')
+    expect(toggleOf('k1')).toHaveAttribute('aria-expanded', 'true')
+    expect(stored()).toEqual({ ids: ['issues:k1', 'issues:k2'] })
+  })
+
+  it('inceleme 2026-10-19: tavan bir raporun en çok konusu — 70 gerçek konu (üç bölüm) birlikte açık kalır; aynı çizimde eklenen konu (henüz listede yok) açılır; Vazgeç ile kalkan konu bir sonraki yazımda düşer', () => {
+    localStorage.removeItem('sm.te.open.ri.555')
+    const ids = Array.from({ length: 70 }, (_, i) => `b${Math.floor(i / 30)}:t${i}`)
+    const { result, rerender } = renderHook(({ list }) => useSectionOpenState('sm.te.open.ri.555', list, TOPIC_OPEN_OPTS),
+      { initialProps: { list: ids } })
+    for (const id of ids) act(() => result.current.setOpen(id, true))
+    expect(result.current.state.ids).toEqual(ids)
+    // Yeni konu: taslağa aynı olayda eklendi, kimlik listesi henüz eski — arınma onu düşürmez
+    act(() => result.current.setOpen('b2:yeni', true))
+    expect(result.current.state.ids).toHaveLength(71)
+    expect(result.current.state.ids.at(-1)).toBe('b2:yeni')
+    // Vazgeç: ilk konu taslaktan kalktı; sonraki yazım (başka bir konuyu kapatmak) onun kimliğini de düşürür
+    rerender({ list: [...ids.slice(1), 'b2:yeni'] })
+    act(() => result.current.setOpen(ids[5], false))
+    expect(result.current.state.ids).toHaveLength(69)
+    expect(result.current.state.ids).not.toContain(ids[0])
+    expect(result.current.state.ids).not.toContain(ids[5])
+    expect(result.current.state.ids).toContain('b2:yeni')
+    expect(JSON.parse(localStorage.getItem('sm.te.open.ri.555'))).toEqual({ ids: result.current.state.ids })
   })
 })

@@ -21,7 +21,7 @@ import { KIND_REPORT, postImagesChanged } from './capture/imageSync.js'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import {
-  ExpandAllButton, SectionOpenContext, TopicOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
+  ExpandAllButton, SectionOpenContext, TOPIC_OPEN_OPTS, TopicOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
 } from './SectionCollapse.jsx'
 import { MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { IssuesBlock } from './ReportIssues.jsx'
@@ -1224,7 +1224,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return out.join('|')
   }, [sections, draftIssues])
   const topicKeys = useMemo(() => (topicKeysJoined ? topicKeysJoined.split('|') : []), [topicKeysJoined])
-  const topicOpen = useSectionOpenState(sectionOpenKey('ri', reportId), topicKeys)
+  // Raporda artık olmayan konular her yazımda düşer, tavan = bir raporun en çok konusu (inceleme 2026-10-19 — TOPIC_OPEN_OPTS)
+  const topicOpen = useSectionOpenState(sectionOpenKey('ri', reportId), topicKeys, TOPIC_OPEN_OPTS)
   // Konu başına hatalı alan sayısı + hatalı anahtarlar: yalnız hata KÜMESİ değişince yeni nesne (her tuşta değil — kart memo'su)
   const topicErrKey = useMemo(() => Object.entries(countedErrors)
     .filter(([, v]) => v).map(([k]) => [k, reportErrorTopic(k, draftIssues)]).filter(([, tk]) => tk)
