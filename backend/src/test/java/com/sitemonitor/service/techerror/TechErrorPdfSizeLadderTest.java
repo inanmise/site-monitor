@@ -60,9 +60,14 @@ class TechErrorPdfSizeLadderTest {
         byte[] roomy = svc.renderPdf(() -> in).pdf();
         assertThat(widestImage(roomy)).as("sınır içinde ilk kat (yarım yuva ≈ 1522 px)").isGreaterThan(1500);
 
-        svc.maxMailMb = 1;
-        byte[] fitted = svc.renderPdf(() -> in).pdf();
+        // Gönderen sınırı BİR kez okuyup verir (inceleme 2026-10-18): merdiven alanı değil verilen değeri uygular
+        svc.maxMailMb = 15;
+        byte[] fitted = svc.renderPdf(() -> in, mb).pdf();
         assertThat(fitted.length).isLessThanOrEqualTo(mb);
         assertThat(widestImage(fitted)).as("daha düşük katla gömüldü").isLessThan(1100);
+        // Aralık dışı önyükleme değeri (1 MB < en az 5) ekranın gösterdiği varsayılana (15) düşer — PDF ilk katta kalır
+        svc.maxMailMb = 1;
+        assertThat(svc.mailLimitBytes()).isEqualTo(15L * mb);
+        assertThat(widestImage(svc.renderPdf(() -> in).pdf())).isGreaterThan(1500);
     }
 }

@@ -63,6 +63,16 @@ describe('onay kartı (birim)', () => {
     expect(approvalStateOf({ state: 'stale' })).toBe('stale')
   })
 
+  it('inceleme 2026-10-18: yönetici alıcıları kaldırılmış kanalda bekleyen istek "onay beklemiyor, takım adresine doğrudan gönderin" der; karar düğmesi yok', () => {
+    render(<ApprovalCard reportId={1} uiLang="tr" approval={{ state: 'pending', requested_at: '2026-10-13T09:00:00Z' }}
+      detail={{ required: false, approvers: [], can_decide: false, can_request: false }} />)
+    const card = document.querySelector('[data-slot="te-approval"]')
+    expect(card).not.toBeNull()
+    expect(card).toHaveTextContent('Kanalın yönetici alıcıları kaldırıldı; bu rapor artık onay beklemiyor.')
+    expect(card).not.toHaveTextContent('PO kararı bekleniyor')
+    expect(screen.queryByRole('button', { name: /Onayla|Reddet/ })).toBeNull()
+  })
+
   it('bekleyen istek: durum, isteyen, onaylayıcılar; PO için Onayla / Reddet — red gerekçesiz reddedilmez, gerekçeyle karar gönderilir', async () => {
     te().decideApproval.mockResolvedValue({ success: true, data: { state: 'rejected', send_state: null, sent_to: [] } })
     const onChanged = vi.fn()

@@ -118,16 +118,20 @@ public final class TechErrorReportSettings {
     /**
      * CANLI tam sayı ayarı (E21): ekrandan kaydedilmiş değer (DB override) aralık içindeyse o, yoksa {@code fallback}
      * (önyükleme değeri — {@code @Value} alanı: application.properties / ortam değişkeni; testler alanı doğrudan yazar).
-     * Ayar servisi yoksa ya da okunamazsa {@code fallback}.
+     * Ayar servisi yoksa ya da okunamazsa {@code fallback}. Aralık DIŞI değer (bozuk override ya da aralık dışı ortam değeri)
+     * katalog varsayılanına düşer — Ayarlar ekranının gösterdiği {@link #effectiveInt} ile aynı kural (inceleme 2026-10-18:
+     * ortamdaki 60 MB işte kullanılırken ekran 15 gösteriyordu).
      */
     public static int liveInt(AppSettingsService settings, IntRange r, int fallback) {
-        if (settings == null) return fallback;
+        int boot = fallback >= r.min() && fallback <= r.max() ? fallback : r.def();
+        if (settings == null) return boot;
         try {
             String raw = settings.getOverride(r.key());
-            Integer v = raw == null ? null : parseInt(raw);
-            return v != null && v >= r.min() && v <= r.max() ? v : fallback;
+            if (raw == null) return boot;
+            Integer v = parseInt(raw);
+            return v != null && v >= r.min() && v <= r.max() ? v : r.def();
         } catch (RuntimeException e) {
-            return fallback;
+            return boot;
         }
     }
 

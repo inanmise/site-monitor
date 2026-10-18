@@ -84,7 +84,11 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
     }
   }
 
-  const hint = state === 'pending' ? t('te.appr.pendingHint')
+  // Kanalın yönetici alıcıları kaldırıldı (inceleme 2026-10-18): eski onay durumu bir şey beklemez — karar verilemez (sunucu
+  // 409 APPROVAL_FLOW_REMOVED), rapor takım adresine doğrudan gönderilir
+  const flowRemoved = !required && state !== 'none' && !(state === 'approved' && sentAt)
+  const hint = flowRemoved ? t('te.appr.flowRemovedHint')
+    : state === 'pending' ? t('te.appr.pendingHint')
     : state === 'rejected' ? t('te.appr.rejectedHint')
       : state === 'stale' ? t('te.appr.state.stale')
         : state === 'approved' ? (sentAt ? t('te.appr.sentHint') : t('te.appr.waitingSend')) : null

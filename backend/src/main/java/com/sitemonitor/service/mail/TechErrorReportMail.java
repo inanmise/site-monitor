@@ -104,12 +104,16 @@ public final class TechErrorReportMail {
         boolean en = in.template().en();
         String lang = in.template().lang();
         String period = TechErrorTemplate.monthName(in.month(), lang) + " " + in.year();
+        // PDF eki yok (onay isteğinde sınıra sığmadı): gövdenin hiçbir yeri "ekteki PDF" demez — giriş, görsel kutuları,
+        // düz metin etiketleri ve trend notu "PDF Site Monitor'den indirilir" der (inceleme 2026-10-18: çelişiyordu)
+        boolean attached = fileName != null;
         MailDoc d = MailDoc.create(subject(in)).extraWide()
-                .preheader((en ? "PDF report attached · " : "PDF rapor ektedir · ") + period)
+                .preheader((attached ? (en ? "PDF report attached · " : "PDF rapor ektedir · ")
+                        : (en ? "PDF not attached · " : "PDF eklenmedi · ")) + period)
                 .kicker(en ? "Technical error report" : "Teknik hata raporu");
         d.raw(bandHtml(in, period, en), bandPlain(in, period, en));
         if (intro != null) intro.apply(d);
-        if (fileName == null) {
+        if (!attached) {
             // PDF posta sınırına sığmadı (onay isteği): gövde yine tam, ek yok — bunu söyle (inceleme 2026-10-17)
             d.paragraph(en
                     ? "The PDF did not fit this e-mail's size limit, so it is not attached; the full report and its images are in Site Monitor."
@@ -127,8 +131,8 @@ public final class TechErrorReportMail {
                 case "issues" -> issues(d, in, s, en, lang);
                 case "text" -> text(d, in, s);
                 case "table" -> table(d, in, s, en, lang);
-                case "images" -> images(d, in, s, imgs, en);
-                case "trend" -> trend(d, in, s, en);
+                case "images" -> images(d, in, s, imgs, en, attached);
+                case "trend" -> trend(d, in, s, en, attached);
                 default -> { }
             }
         }
@@ -506,9 +510,10 @@ public final class TechErrorReportMail {
     /**
      * Görsel bölümü: yarım yuvalar ikişer yan yana (telefonda alt alta), tam yuva tek başına; her görselin üstünde yuva adı.
      * Gömülen görsel {@code cid:} ile, bütçeyi aşan ya da okunamayan görsel "PDF ekinde" kutusuyla gösterilir; hiç görsel
-     * yüklenmemişse PDF'teki not.
+     * yüklenmemişse PDF'teki not. {@code attached} false (PDF eklenmedi): kutu "PDF'i Site Monitor'den indirin" der.
      */
-    private static void images(MailDoc d, TechErrorPdfInput in, Section s, TechErrorMailImages.Result prepared, boolean en) {
+    private static void images(MailDoc d, TechErrorPdfInput in, Section s, TechErrorMailImages.Result prepared, boolean en,
+                               boolean attached) {
         List<Slot> present = new ArrayList<>();
         for (Slot sl : s.slots()) if (prepared.present(sl.id())) present.add(sl);
         d.heading(in.resolve(s.title()));
@@ -521,17 +526,18 @@ public final class TechErrorReportMail {
             Slot a = present.get(i);
             Slot b = i + 1 < present.size() ? present.get(i + 1) : null;
             if ("half".equals(a.width()) && b != null && "half".equals(b.width())) {
-                d.raw(imageRowHtml(in, List.of(a, b), halfW, prepared, en), imagePlain(in, List.of(a, b), prepared, en));
+                d.raw(imageRowHtml(in, List.of(a, b), halfW, prepared, en, attached), imagePlain(in, List.of(a, b), prepared, en, attached));
                 i += 2;
             } else {
-                d.raw(imageRowHtml(in, List.of(a), "half".equals(a.width()) ? halfW : CONTENT_W, prepared, en),
-                        imagePlain(in, List.of(a), prepared, en));
+                d.raw(imageRowHtml(in, List.of(a), "half".equals(a.width()) ? halfW : CONTENT_W, prepared, en, attached),
+                        imagePlain(in, List.of(a), prepared, en, attached));
                 i += 1;
             }
         }
     }
 
-    static String imageRowHtml(TechErrorPdfInput in, List<Slot> slots, int colPx, TechErrorMailImages.Result prepared, boolean en) {
+    static String imageRowHtml(TechErrorPdfInput in, List<Slot> slots, int colPx, TechErrorMailImages.Result prepared, boolean en,
+                               boolean attached) {
         int n = slots.size();
         String pct = n == 2 ? "50%" : "100%";
         StringBuilder sb = new StringBuilder("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" data-slot=\"te-images\"><tr><td style=\"font-size:0;line-height:0\">");
@@ -562,7 +568,7 @@ public final class TechErrorReportMail {
                   .append(unreadable ? "te-image-unreadable" : "te-image-pdf").append("\"><tr>")
                   .append("<td style=\"border:1px dashed ").append(MailTokens.BORDER).append(";border-radius:8px;padding:18px 16px;text-align:center;font-family:")
                   .append(MailTokens.FONT).append(";font-size:13px;line-height:18px;color:").append(MailTokens.MUTED).append("\">")
-                  .append(MailKit.esc(placeholderText(unreadable, en)))
+                  .append(MailKit.esc(placeholderText(unreadable, en, attached)))
                   .append("</td></tr></table>");
             }
             sb.append("</td></tr></table></div><!--[if mso]></td><![endif]-->");
@@ -572,17 +578,23 @@ public final class TechErrorReportMail {
     }
 
     /** Gömülmeyen yuvanın kutusu: bütçeye sığmadı → PDF ekinde; okunamadı → PDF'te de çizilemedi (aynı metin olmasın). */
-    static String placeholderText(boolean unreadable, boolean en) {
+    /** {@code attached} false: PDF bu postada yok — görsel tam çözünürlükte Site Monitor'deki PDF'te (inceleme 2026-10-18). */
+    static String placeholderText(boolean unreadable, boolean en, boolean attached) {
         if (unreadable) return en ? "Image could not be read (not drawn in the PDF either)." : "Görsel okunamadı (PDF'te de çizilemedi).";
+        if (!attached) {
+            return en ? "Image not included in this e-mail — download the PDF from Site Monitor to see it (full resolution)."
+                    : "Görsel bu postaya eklenmedi — görmek için PDF'i Site Monitor'den indirin (tam çözünürlük).";
+        }
         return en ? "Image in the attached PDF (full resolution)." : "Görsel ekteki PDF'te (tam çözünürlük).";
     }
 
-    static String imagePlain(TechErrorPdfInput in, List<Slot> slots, TechErrorMailImages.Result prepared, boolean en) {
+    static String imagePlain(TechErrorPdfInput in, List<Slot> slots, TechErrorMailImages.Result prepared, boolean en, boolean attached) {
         StringBuilder t = new StringBuilder();
         for (Slot sl : slots) {
             String tag;
             if (prepared.embedded().containsKey(sl.id())) tag = en ? "[Image] " : "[Görsel] ";
             else if (prepared.unreadable().contains(sl.id())) tag = en ? "[Image — unreadable] " : "[Görsel — okunamadı] ";
+            else if (!attached) tag = en ? "[Image — in the PDF in Site Monitor] " : "[Görsel — Site Monitor'deki PDF'te] ";
             else tag = en ? "[Image — in the PDF] " : "[Görsel — PDF ekinde] ";
             t.append(tag).append(in.resolve(sl.label())).append('\n');
         }
@@ -590,7 +602,7 @@ public final class TechErrorReportMail {
     }
 
     /** Trend grafikleri e-postada çizilmez: çizilecek alanı olan bölüm için PDF notu. */
-    private static void trend(MailDoc d, TechErrorPdfInput in, Section s, boolean en) {
+    private static void trend(MailDoc d, TechErrorPdfInput in, Section s, boolean en, boolean attached) {
         Map<String, Object> vals = in.values().fields();
         boolean any = false;
         for (String ref : s.lines()) {
@@ -600,6 +612,11 @@ public final class TechErrorReportMail {
         }
         if (!any) return;
         d.heading(in.resolve(s.title()));
+        if (!attached) {
+            d.note(en ? "The 12-month trend charts are in the PDF, which is not attached to this e-mail — download it from Site Monitor."
+                    : "Son 12 ayın trend grafikleri PDF'tedir; PDF bu postaya eklenmedi — Site Monitor'den indirin.");
+            return;
+        }
         d.note(en ? "The 12-month trend charts are in the attached PDF." : "Son 12 ayın trend grafikleri ekteki PDF'tedir.");
     }
 

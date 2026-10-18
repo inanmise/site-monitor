@@ -176,6 +176,10 @@ public class TechErrorApprovalLinkController {
             case "not_pending" -> { title = Msg.t("Bekleyen istek yok", "Nothing pending"); msg = Msg.t(
                     "Bu rapor için bekleyen bir onay isteği yok: karar verilmiş ya da yeni bir istek gönderilmiş olabilir.",
                     "There is no pending approval request for this report: it may have been decided, or a newer request was sent."); }
+            // İnceleme 2026-10-18: kanalın yönetici alıcıları kaldırıldı — onay akışı yok, karar yazılmaz, belirteç tüketilmez
+            case "flow_removed" -> { title = Msg.t("Onay gerekmiyor", "No approval needed"); msg = Msg.t(
+                    "Bu kanalın yönetici (executive) alıcıları kaldırıldı; raporun onaya ihtiyacı kalmadı ve ekip onu takım adresine doğrudan gönderebilir. Alıcılar yeniden eklenirse bu bağlantı süresi içinde yine çalışır.",
+                    "This channel's executive recipients were removed, so the report no longer needs approval and the team can send it straight to the team address. If recipients are added again, this link works again until it expires."); }
             case "stale" -> { title = Msg.t("Rapor değişti", "The report changed"); msg = Msg.t(
                     "Rapor onay isteğinden sonra değişti; bu bağlantıyla onaylanamaz. Ekip raporu yeniden onaya göndermeli.",
                     "The report changed after the approval request, so it can't be approved with this link. The team must submit it again."); }

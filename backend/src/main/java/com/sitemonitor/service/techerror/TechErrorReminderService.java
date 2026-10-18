@@ -27,7 +27,6 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -292,6 +291,16 @@ public class TechErrorReminderService {
     }
 
     /**
+     * Onay isteği İLK hatırlatma için vadeli mi: isteğin İstanbul günü + {@code everyDays} ≤ bugün (tekrarlarla aynı gün
+     * kuralı — saat değil). İstek zamanı yoksa hayır.
+     */
+    static boolean firstDue(Instant requestedAt, LocalDate today, int everyDays) {
+        if (requestedAt == null) return false;
+        LocalDate asked = LocalDate.ofInstant(requestedAt, TechErrorReportService.ZONE);
+        return !asked.plusDays(Math.max(0, everyDays)).isAfter(today);
+    }
+
+    /**
      * Kapı reddi: kanalların henüz bu sebeple işaretlenmemiş olanlarına kapı satırı yazar; en az biri YENİYSE bir SKIPPED
      * günlük satırı (o kanallarla). Aynı sebep ertesi gün yeni satır yazdırmaz; normal talep satırına dokunulmaz.
      *
@@ -317,8 +326,13 @@ public class TechErrorReminderService {
      * Kanalın hatırlatılacak durumu; null = hatırlatılmaz (gönderildi, şu an gönderiliyor ya da kuyruktaki gönderimin
      * sonucu hâlâ gelebilir). Sonucu artık gelemeyecek kuyruk ({@link TechErrorReportSender#QUEUED_RESULT_WINDOW} geçti; 421
      * yeniden denemeleri tek pod'un belleğinde yaşar) "gönderim sonucu alınamadı" — gönderilmemiş sayılır.
+     *
+     * <p>{@code approvalFlow} = kanalın BUGÜN onay akışı var mı ({@link TechErrorApprovalService#approvalRequired}; inceleme
+     * 2026-10-18): yönetici alıcıları kaldırılmış kanalda raporun eski onay durumu (bekliyor / reddedildi / onaylandı) bir
+     * anlam taşımaz — ekip raporu takım adresine doğrudan gönderebilir; durum TASLAK ("gönderilmedi") sayılır. Aksi hâlde
+     * takım postası "PO onayı bekliyor, sizin işiniz yok" derken PO hatırlatması da akış olmadığı için atlanırdı.
      */
-    static TechErrorReminderMail.State stateOf(TechErrorReportRepository.Row r, Instant now) {
+    static TechErrorReminderMail.State stateOf(TechErrorReportRepository.Row r, Instant now, boolean approvalFlow) {
         if (r == null) return TechErrorReminderMail.State.MISSING;
         if (r.getLastSentAt() != null) return null;
         if ("QUEUED".equals(r.getSendState())) {
@@ -328,6 +342,7 @@ public class TechErrorReminderService {
         }
         if ("SENDING".equals(r.getSendState()) && r.getSendClaimedAt() != null
                 && r.getSendClaimedAt().isAfter(now.minus(TechErrorReportSender.STALE_CLAIM))) return null;
+        if (!approvalFlow) return TechErrorReminderMail.State.DRAFT;     // akış yok: onay durumu geçersiz, doğrudan gönderilir
         String a = r.getApprovalState();
         long content = r.getContentRev() == null ? 0L : r.getContentRev();
         boolean stale = r.getApprovalRev() != null && content > r.getApprovalRev();
@@ -381,7 +396,7 @@ public class TechErrorReminderService {
         Map<Long, List<Due>> byTeam = new LinkedHashMap<>();
         for (TechErrorChannel ch : chs) {
             TechErrorReportRepository.Row row = rows.get(ch.getId());
-            TechErrorReminderMail.State st = stateOf(row, now);
+            TechErrorReminderMail.State st = stateOf(row, now, TechErrorApprovalService.approvalRequired(ch));
             if (st == null) continue;
             TechErrorReminder c = claimRows.get(ch.getId());
             if (!due(c, today, repeat)) continue;
@@ -397,7 +412,15 @@ public class TechErrorReminderService {
             if (team == null) continue;                                // takımı silinmiş kanal: saklama kuralı temizler
             boolean enTpl = en.getValue().stream().allMatch(d -> "en".equals(langOf(d)));
             String subject = TechErrorReminderMail.teamSubject(period.getYear(), period.getMonthValue(), enTpl, team.getName());
-            List<String> to = TechErrorReportSender.recipients(team);
+            // Takım adresi en çok 20 alıcıya gider (rapor gönderimiyle aynı sınır); fazlası SESSİZ düşmez — günlük satırının
+            // iletisi "+N adres sınır dışında" der ve WARN yazılır (inceleme 2026-10-18)
+            TechErrorReportSender.Addresses addr = TechErrorReportSender.parseAddressesDetailed(team.getEmail());
+            List<String> to = addr.addresses();
+            if (addr.dropped() > 0) {
+                log.warn("Teknik hata raporu hatırlatması: takım {} adresinde {} alıcı {} sınırının dışında kaldı", team.getId(),
+                        addr.dropped(), TechErrorReportSender.MAX_RECIPIENTS);
+            }
+            String overflow = overflowNote(addr.dropped());
             // Kapılar TALEPTEN ÖNCE (inceleme 2026-10-18): red talebi harcamaz; sebebin günlüğü kanal × dönem başına bir kez
             String gate;
             try {
@@ -434,7 +457,7 @@ public class TechErrorReminderService {
             }
             if (mine.isEmpty()) continue;
             try {
-                remindTeam(team, period, mine, claims, enTpl, subject, to, base, day, repeat, pushOn, todayStr, counts);
+                remindTeam(team, period, mine, claims, enTpl, subject, to, overflow, base, day, repeat, pushOn, todayStr, counts);
             } catch (RuntimeException e) {
                 // Beklenmeyen hata bir takımda kalır (diğerleri sürer): talep bırakılır, iz FAILED — ertesi gün yeniden
                 log.warn("Teknik hata raporu hatırlatması takım {} için yarıda kaldı: {}", team.getId(), e.toString(), e);
@@ -453,9 +476,14 @@ public class TechErrorReminderService {
         return null;
     }
 
-    /** Sahiplenilmiş kanallarla bir takımın hatırlatması: posta, push, günlük. */
+    /**
+     * Sahiplenilmiş kanallarla bir takımın hatırlatması: posta, push, günlük. Günlük satırının {@code email_status}'ü YALNIZ
+     * posta servisinin cevabıdır (inceleme 2026-10-18: "SENT · push 2" SMTP günlüğünde SENT değil UNKNOWN sayılıyor,
+     * SENT sayaçları / kendi kendini izleme onu kaçırıyordu); push notu ve sınır dışı adres notu {@code message}'a yazılır.
+     */
     private void remindTeam(Team team, YearMonth period, List<Due> mine, List<Claim> claims, boolean enTpl, String subject,
-                            List<String> to, String base, int day, int repeat, boolean pushOn, String todayStr, int[] counts) {
+                            List<String> to, String overflow, String base, int day, int repeat, boolean pushOn, String todayStr,
+                            int[] counts) {
         String summary = channelSummary(mine, enTpl);
         List<TechErrorReminderMail.Item> items = new ArrayList<>();
         for (Due d : mine) {
@@ -506,7 +534,21 @@ public class TechErrorReminderService {
         }
         if (delivered || queued > 0) counts[0]++;
         else counts[3]++;
-        saveLog(TRIGGER, team.getName(), to, "TEAM", subject, status + pushNote, summary);
+        saveLog(TRIGGER, team.getName(), to, "TEAM", subject, status, withNote(summary, pushNote + overflow));
+    }
+
+    /** Sınırın (20) dışında kalan takım adresi notu ({@code message}); yoksa boş. */
+    static String overflowNote(int dropped) {
+        return dropped <= 0 ? "" : " · +" + dropped + " adres sınır dışında (en çok " + TechErrorReportSender.MAX_RECIPIENTS + " alıcı)";
+    }
+
+    /** İleti + not: not ASLA kırpılmaz (ileti 4000 karaktere sığdırılırken önce özet kısalır). */
+    static String withNote(String message, String note) {
+        String m = message == null ? "" : message;
+        String n = note == null ? "" : note;
+        if (n.isEmpty()) return m;
+        int room = Math.max(0, 4000 - n.length());
+        return (m.length() <= room ? m : m.substring(0, room)) + n;
     }
 
     /**
@@ -556,8 +598,14 @@ public class TechErrorReminderService {
 
     private void approvalReminders(Instant now, LocalDate today, boolean muted, String base, int[] counts) {
         int every = TechErrorReportSettings.effectiveInt(settings, TechErrorReportSettings.APPROVAL_REMINDER_DAYS);
-        List<TechErrorReportRepository.Row> pending = reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING",
-                now.minus(Duration.ofDays(every)));
+        // İLK hatırlatma da İSTANBUL GÜNLERİYLE (inceleme 2026-10-18): istek günü + N gün ≤ bugün — tekrarlar da günle sayılır
+        // ({@link #due}). Eski kural "now − N×24 saat" 09:15'ten SONRA yapılan isteği bir gün geç hatırlatıyordu. Sorgu üst
+        // sınırı = bugünden N−1 gün önceki günün başı (o güne kadar istenenler adaydır); kesin karar {@link #firstDue}.
+        Instant cutoff = today.minusDays(Math.max(0, every - 1L)).atStartOfDay(TechErrorReportService.ZONE).toInstant();
+        List<TechErrorReportRepository.Row> pending = new ArrayList<>();
+        for (TechErrorReportRepository.Row r : reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING", cutoff)) {
+            if (firstDue(r.getApprovalRequestedAt(), today, every)) pending.add(r);
+        }
         if (pending.isEmpty()) return;
         String todayStr = today.toString();
         Map<Long, TechErrorChannel> chMap = new HashMap<>();
@@ -618,7 +666,8 @@ public class TechErrorReminderService {
                     counts[3]++;
                     continue;
                 }
-                Map<Long, Instant> linkUntil = liveLinks(r, now);
+                Links links = links(r, now);
+                Map<Long, Instant> linkUntil = links.live();
                 String requester = service.displayName(r.getApprovalRequestedById());
                 long waiting = Math.max(0, ChronoUnit.DAYS.between(r.getApprovalRequestedAt(), now));
                 String url = TechErrorApprovalMail.reportUrl(base, ch.getId(), r.getId());
@@ -627,7 +676,7 @@ public class TechErrorReminderService {
                     String status;
                     try {
                         MailDoc.Mail mail = TechErrorReminderMail.approval(title, en, a.name(), requester, r.getApprovalRequestedAt(), waiting,
-                                linkUntil.get(a.id()), url, team.getName(), every);
+                                linkUntil.get(a.id()), links.unconfirmed().contains(a.id()), url, team.getName(), every);
                         String st = email.sendHtml(new String[] { a.email() }, null, subject, mail.html(), mail.text(), null, false, null);
                         status = st == null ? "FAILED: sonuç yok" : st;
                     } catch (RuntimeException e) {
@@ -670,23 +719,38 @@ public class TechErrorReminderService {
     }
 
     /**
-     * Onaylayıcı → özgün bağlantısının bitişi; YALNIZ canlı bağlantılar: kullanılmamış, süresi dolmamış, bu isteğin
-     * ({@code approval_rev}) ve bağlantılı postası o PO'ya gerçekten ulaşmış ({@code mailed_at}) — PDF sırası dolu / posta
-     * kapalı / başarısız / uygulama adresi boşken bağlantı ona gitmedi, hatırlatma "bağlantınız geçerli" demez.
+     * Bağlantı durumu: {@code live} = onaylayıcı → özgün bağlantısının bitişi, YALNIZ canlı bağlantılar: kullanılmamış, yerine
+     * geçilmemiş, süresi dolmamış, bu isteğin ({@code approval_rev}) ve bağlantılı postası o PO'ya gerçekten ulaşmış
+     * ({@code mailed_at}) — PDF sırası dolu / posta kapalı / başarısız / uygulama adresi boşken bağlantı ona gitmedi,
+     * hatırlatma "bağlantınız geçerli" demez. {@code unconfirmed} = geçerli ama damgasız ve damgadan ({@link #MAILED_STAMP_SINCE})
+     * ÖNCE üretilmiş belirteçlerin sahipleri: postanın ulaşıp ulaşmadığı bilinmez — hatırlatma "süresi doldu / size
+     * gönderilmedi" diyemez, yalnız "Site Monitor'de açın" der (inceleme 2026-10-18).
      */
-    Map<Long, Instant> liveLinks(TechErrorReportRepository.Row r, Instant now) {
-        Map<Long, Instant> out = new HashMap<>();
+    record Links(Map<Long, Instant> live, Set<Long> unconfirmed) { }
+
+    /**
+     * {@code mailed_at} damgası 20.153.0 ile geldi (yayın 2026-10-18T00:32Z); dağıtım payıyla bu andan ÖNCE üretilen
+     * belirteçte damganın boş olması "posta ulaşmadı" demek değildir. Sonrakilerde boş damga gerçekten ulaşmadı demektir
+     * (eski metin doğru). Belirteç ömrü 14 gün: 2026-11-02'den sonra bu ayrım kendiliğinden düşer.
+     */
+    static final Instant MAILED_STAMP_SINCE = Instant.parse("2026-10-19T00:00:00Z");
+
+    Links links(TechErrorReportRepository.Row r, Instant now) {
+        Map<Long, Instant> live = new HashMap<>();
+        Set<Long> unconfirmed = new HashSet<>();
         try {
             for (TechErrorApprovalToken t : tokens.findByReportIdOrderByIdAsc(r.getId())) {
-                if (t.getUsedAt() == null && t.getSupersededAt() == null && t.getMailedAt() != null && t.getExpiresAt() != null && t.getExpiresAt().isAfter(now)
-                        && java.util.Objects.equals(t.getApprovalRev(), r.getApprovalRev())) {
-                    out.put(t.getUserId(), t.getExpiresAt());
-                }
+                boolean valid = t.getUsedAt() == null && t.getSupersededAt() == null && t.getExpiresAt() != null && t.getExpiresAt().isAfter(now)
+                        && java.util.Objects.equals(t.getApprovalRev(), r.getApprovalRev());
+                if (!valid) continue;
+                if (t.getMailedAt() != null) live.put(t.getUserId(), t.getExpiresAt());
+                else if (t.getCreatedAt() == null || t.getCreatedAt().isBefore(MAILED_STAMP_SINCE)) unconfirmed.add(t.getUserId());
             }
         } catch (RuntimeException e) {
             log.debug("Onay bağlantıları okunamadı (rapor {}): {}", r.getId(), e.toString());
         }
-        return out;
+        unconfirmed.removeAll(live.keySet());
+        return new Links(live, unconfirmed);
     }
 
     private static String titlePattern(TechErrorReportRepository.Row r, TechErrorChannel ch) {

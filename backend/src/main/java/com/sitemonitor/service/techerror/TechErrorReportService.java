@@ -1014,6 +1014,21 @@ public class TechErrorReportService {
      * gelmezse {@link PdfBusyException} (429).
      */
     public Rendered renderPdf(java.util.function.Supplier<TechErrorPdfInput> loader) {
+        // İndirme yolu: sınır burada bir kez okunur (gönderim / önizleme / test / onay postası kendi okuduğu TEK değeri verir)
+        return renderPdf(loader, mailLimitBytes());
+    }
+
+    /** Etkin e-posta sınırı (bayt): Ayarlar'dan kaydedilen değer, yoksa önyükleme değeri. */
+    public long mailLimitBytes() {
+        return Math.max(1, TechErrorReportSettings.liveInt(appSettings, TechErrorReportSettings.MAX_MAIL_MB, maxMailMb)) * 1024L * 1024L;
+    }
+
+    /**
+     * PDF'i verilen e-posta sınırına ({@code limitBytes}) göre üretir. Gönderen sınırı BİR kez okuyup buraya verir
+     * (inceleme 2026-10-18): izin için 15 sn beklerken ayar değişse merdiven ile gönderenin "sığıyor mu" denetimi farklı
+     * değerlere bakardı — PDF yeni sınıra göre küçültülür, gönderen eskisine göre reddederdi (ya da tersi).
+     */
+    public Rendered renderPdf(java.util.function.Supplier<TechErrorPdfInput> loader, long limitBytes) {
         boolean acquired;
         try {
             acquired = pdfSlots.tryAcquire(15, TimeUnit.SECONDS);
@@ -1030,7 +1045,7 @@ public class TechErrorReportService {
             in = loader.get();
             // Görseller tam çözünürlükte saklanır (2026-10-16): PDF e-posta sınırını aşarsa aynı veriden daha düşük gömme
             // katıyla yeniden üretilir — indirilen PDF ile e-posta eki aynı kalır; en düşük katta da sığmazsa gönderen söyler
-            long limit = Math.max(1, TechErrorReportSettings.liveInt(appSettings, TechErrorReportSettings.MAX_MAIL_MB, maxMailMb)) * 1024L * 1024L;
+            long limit = Math.max(1, limitBytes);
             byte[] pdf = null;
             float used = 0;
             for (float scale : TechErrorReportPdfWriter.EMBED_SCALES) {

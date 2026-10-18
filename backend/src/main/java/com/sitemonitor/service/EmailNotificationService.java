@@ -337,20 +337,59 @@ public class EmailNotificationService {
      * ilk denemede EscalationService'in "QUEUED_RETRY..." olarak kaydettiği satırı subject ile
      * (en güncel) bulup günceller. Async retry sonuçları aksi halde yutulduğundan, log gerçeği
      * yansıtmaz ve "Alarm gönderilemedi" rozeti yanlış çalışır. Gönderimi ASLA kırmaz (try/catch).
+     *
+     * <p>Aynı konu birden çok alıcıya AYRI postayla gidebilir (inceleme 2026-10-18: teknik hata raporu onay isteği / onay
+     * hatırlatması her PO'ya aynı konuyla) — sonuç önce konusu VE alıcısı eşleşen en yeni kuyruk satırına yazılır; alıcısı
+     * eşleşen satır yoksa (alıcı listesi günlükte grup adı / farklı biçim) eski kural: konuya göre en yeni satır.
      */
     private void writeBackRetryStatus(MimeMessage msg, String terminalStatus) {
         try {
             String subject = msg.getSubject();
             if (subject == null || subject.isBlank()) return;
-            notificationLogRepo
-                    .findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY")
-                    .ifPresent(logRow -> {
-                        logRow.setEmailStatus(terminalStatus);
-                        notificationLogRepo.save(logRow);
-                    });
+            com.sitemonitor.model.NotificationLog logRow = retryRowFor(subject, toAddresses(msg));
+            if (logRow == null) return;
+            logRow.setEmailStatus(terminalStatus);
+            notificationLogRepo.save(logRow);
         } catch (Exception e) {
             log.warn("Retry sonucu bildirim loguna yazılamadı: {}", e.getMessage());
         }
+    }
+
+    /** Geri yazılacak kuyruk satırı: konu + alıcı eşleşmesi önce, yoksa konuya göre en yeni (eski davranış). */
+    com.sitemonitor.model.NotificationLog retryRowFor(String subject, java.util.Set<String> to) {
+        if (to != null && !to.isEmpty()) {
+            java.util.List<com.sitemonitor.model.NotificationLog> rows =
+                    notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
+            if (rows != null) {
+                for (com.sitemonitor.model.NotificationLog n : rows) if (recipientMatches(n.getRecipientEmail(), to)) return n;
+            }
+        }
+        return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+    }
+
+    /** Günlük satırının alıcı listesinde ("a@x, b@y … +3") postanın Kime adreslerinden biri TAM olarak var mı? */
+    static boolean recipientMatches(String logged, java.util.Set<String> to) {
+        if (logged == null || logged.isBlank() || to == null || to.isEmpty()) return false;
+        for (String part : logged.split("[,;\\s]+")) {
+            if (!part.isBlank() && to.contains(part.trim().toLowerCase(java.util.Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    /** Postanın Kime adresleri (küçük harf); okunamazsa boş. */
+    private static java.util.Set<String> toAddresses(MimeMessage msg) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try {
+            jakarta.mail.Address[] rcpts = msg.getRecipients(jakarta.mail.Message.RecipientType.TO);
+            if (rcpts == null) return out;
+            for (jakarta.mail.Address a : rcpts) {
+                String e = a instanceof jakarta.mail.internet.InternetAddress ia ? ia.getAddress() : a.toString();
+                if (e != null && !e.isBlank()) out.add(e.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        } catch (Exception e) {
+            // okunamadı: eski kurala düşülür
+        }
+        return out;
     }
 
     // ── Mail tanılama yardımcıları (yalnız log; mail GÖVDESİ ve SMTP PAROLASI asla loglanmaz) ──

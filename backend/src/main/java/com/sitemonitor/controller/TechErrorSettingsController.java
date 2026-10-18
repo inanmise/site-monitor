@@ -116,7 +116,7 @@ public class TechErrorSettingsController {
         requireAdmin(session);
         requireGlobalWriter(session);
         Object raw = body == null ? null : body.get("team_ids");
-        List<Long> ids = teamIds(raw, "team_ids", true);
+        List<Long> ids = teamIds(raw, "team_ids", storedIds(TechErrorReportSettings.KEY_TEAM_IDS));
         String csv = csv(ids);
         Map<String, Object> values = new LinkedHashMap<>();
         values.put(TechErrorReportSettings.KEY_TEAM_IDS, csv);
@@ -145,7 +145,8 @@ public class TechErrorSettingsController {
         Map<String, Object> values = new LinkedHashMap<>();
         Map<String, Object> audit = new LinkedHashMap<>();
         if (in.containsKey("reminder_team_ids")) {
-            List<Long> ids = teamIds(in.get("reminder_team_ids"), "reminder_team_ids", true);
+            List<Long> ids = teamIds(in.get("reminder_team_ids"), "reminder_team_ids",
+                    storedIds(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS));
             values.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, csv(ids));
             audit.put("reminder_team_ids", ids);
         }
@@ -211,8 +212,23 @@ public class TechErrorSettingsController {
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────
 
-    /** Takım kimlik dizisi: sayı ya da sayı metni, pozitif, ≤ {@value TechErrorReportSettings#MAX_TEAMS}, hepsi var olmalı. */
-    private List<Long> teamIds(Object raw, String field, boolean checkExists) {
+    /** Ayarda ŞU AN kayıtlı takım kimlikleri (okunamazsa boş — o zaman bilinmeyen her kimlik reddedilir). */
+    private Set<Long> storedIds(String key) {
+        try {
+            Set<Long> s = TechErrorReportSettings.enabledTeamIds(settings.getString(key, ""));
+            return s == null ? Set.of() : s;
+        } catch (RuntimeException e) {
+            return Set.of();
+        }
+    }
+
+    /**
+     * Takım kimlik dizisi: sayı ya da sayı metni, pozitif, ≤ {@value TechErrorReportSettings#MAX_TEAMS}. Var olmayan takım:
+     * YENİ eklenen kimlik 400 (listeyi yenileyin); ZATEN kayıtlı olan (takım sonradan silindi) sessizce düşer — inceleme
+     * 2026-10-18: silinen takımın kimliği ayarda kalınca her kayıt "listeyi yenileyin" ile reddediliyordu, kart da "#id"
+     * gösteriyordu.
+     */
+    private List<Long> teamIds(Object raw, String field, Set<Long> stored) {
         if (raw != null && !(raw instanceof Collection<?>)) {
             throw new FieldValidationException(field, Msg.t("Takım listesi bir dizi olmalı.", "The team list must be an array."));
         }
@@ -231,13 +247,20 @@ public class TechErrorSettingsController {
                     Msg.t("En çok " + TechErrorReportSettings.MAX_TEAMS + " takım seçilebilir.",
                             "At most " + TechErrorReportSettings.MAX_TEAMS + " teams can be selected."));
         }
-        if (checkExists && !ids.isEmpty()) {
+        if (!ids.isEmpty()) {
             Set<Long> known = new HashSet<>();
             for (Team t : teams.findAllById(ids)) known.add(t.getId());
-            if (!known.containsAll(ids)) {
-                throw new FieldValidationException(field,
-                        Msg.t("Seçilen takımlardan biri bulunamadı; listeyi yenileyin.", "One of the selected teams wasn't found; refresh the list."));
+            for (Long id : ids) {
+                if (!known.contains(id) && (stored == null || !stored.contains(id))) {
+                    throw new FieldValidationException(field,
+                            Msg.t("Seçilen takımlardan biri bulunamadı; listeyi yenileyin.", "One of the selected teams wasn't found; refresh the list."));
+                }
             }
+            Set<Long> kept = new LinkedHashSet<>(ids);
+            kept.removeIf(id -> !known.contains(id));      // silinmiş (önceden kayıtlı) takım düşer
+            // Görünürlükte BOŞ liste = herkes: yalnız silinmiş takımlardan oluşan bir kısıt kendiliğinden "herkese açık"a
+            // dönmez (kısıt gevşemez); yönetici "Silinmiş takım" çipini kaldırınca açılır
+            if (!kept.isEmpty() || !"team_ids".equals(field)) ids = kept;
         }
         return new ArrayList<>(ids);
     }

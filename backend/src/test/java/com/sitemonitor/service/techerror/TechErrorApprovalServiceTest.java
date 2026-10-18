@@ -671,7 +671,7 @@ class TechErrorApprovalServiceTest {
         TechErrorReportService plain = new TechErrorReportService(channels, reports, images, users, history);
         plain.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z"), ZoneOffset.UTC));
         TechErrorReportService spy = org.mockito.Mockito.spy(plain);
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(spy).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(spy).renderPdf(any(), org.mockito.ArgumentMatchers.anyLong());
         TechErrorApprovalService a = new TechErrorApprovalService(spy, reports, tokens, users, sender, email, logs, appSettings);
         TechErrorApprovalService.RequestResult res = a.request(r, ch, team, tech.getId());
         assertThat(res.mailed()).isZero();
@@ -815,5 +815,106 @@ class TechErrorApprovalServiceTest {
         approvals.decideViaToken(raw, team, true, null);
         assertThat(logs.findAll()).filteredOn(n -> TechErrorApprovalService.ROLE_APPROVER_INFO.equals(n.getRecipientRole()))
                 .extracting(NotificationLog::getEmailStatus).containsExactly(info.get(0).getEmailStatus(), "SENT");
+    }
+
+    // ── İnceleme 2026-10-18 (2. tur) ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: kanalın yönetici alıcıları kaldırıldı → bekleyen istek karar beklemez: uygulama içi karar 409 APPROVAL_FLOW_REMOVED (onay / red), bağlantı 'flow_removed' (belirteç TÜKETİLMEZ), istek PENDING kalır, gönderim denenmez; alıcılar geri gelince aynı bağlantı karar verir")
+    void decideRefusedWhenFlowRemoved() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), any(), eq(false), any());
+        Matcher m = LINK.matcher(html.getAllValues().get(0));
+        assertThat(m.find()).isTrue();
+        String raw = m.group(1);
+        service.updateChannel(ch.getId(), Map.of("executive_emails", ""), tech.getId());
+        TechErrorChannel noFlow = service.channel(ch.getId());
+        for (boolean approve : new boolean[] { true, false }) {
+            assertThatThrownBy(() -> approvals.decide(service.report(r.getId()), noFlow, team, po1.getId(), approve, approve ? null : "Not", "app"))
+                    .isInstanceOf(CodedConflictException.class).extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("APPROVAL_FLOW_REMOVED");
+        }
+        assertThat(approvals.status(raw).reason()).isEqualTo("flow_removed");
+        assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("flow_removed");
+        assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+        verify(sender, never()).send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE));
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).allSatisfy(t -> assertThat(t.getUsedAt()).isNull());
+        // Alıcılar geri: aynı bağlantı (süresi içinde) yine geçerli
+        service.updateChannel(ch.getId(), Map.of("executive_emails", "ceo@example.com"), tech.getId());
+        assertThat(approvals.status(raw).valid()).isTrue();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: PDF onay postasına sığmadığında gövde görselleri yine gömülür (sınır PDF eklenmediyse görsellerin KENDİSİNE uygulanır); gövde 'ekteki PDF' demez; görseller tek başına da sığmazsa yuva 'görsel yüklenmedi' değil 'bu postaya eklenmedi' der")
+    void requestWithoutPdfKeepsImagesThatFitAlone() throws Exception {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "grafik.png", tech.getId());
+        long pdfLen = service.renderPdf(() -> service.pdfInput(service.report(r.getId()), ch, team.getName())).pdf().length;
+        long limit = 20L * 1024;
+        assertThat(pdfLen).as("ön koşul: PDF sınırdan büyük").isGreaterThan(limit);
+        when(sender.maxMailBytes()).thenReturn(limit);
+        TechErrorApprovalService.RequestResult res = approvals.request(service.report(r.getId()), ch, team, tech.getId());
+        assertThat(res.mailProblem()).isEqualTo("PDF_TOO_LARGE");
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.InlineImage>> inline = ArgumentCaptor.forClass(List.class);
+        @SuppressWarnings("unchecked") ArgumentCaptor<List<EmailNotificationService.MailAttachment>> att = ArgumentCaptor.forClass(List.class);
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), inline.capture(), eq(false), att.capture());
+        assertThat(att.getAllValues()).allMatch(List::isEmpty);
+        assertThat(inline.getAllValues()).allSatisfy(l -> assertThat(l).extracting(EmailNotificationService.InlineImage::cid).containsExactly("te-img-monthly-tx"));
+        assertThat(html.getAllValues().get(0)).contains("cid:te-img-monthly-tx").doesNotContain("ekteki PDF").doesNotContain("PDF ekinde");
+        // Sınır görselden de küçük: görsel düşer — kutu "bu postaya eklenmedi / Site Monitor'den indirin" der (asla "yüklenmedi")
+        org.mockito.Mockito.clearInvocations(email);
+        service.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z").plus(TechErrorApprovalService.RESEND_AFTER).plusSeconds(1), ZoneOffset.UTC));
+        when(sender.maxMailBytes()).thenReturn(10L);
+        approvals.request(service.report(r.getId()), ch, team, tech.getId());
+        verify(email, times(2)).sendHtml(any(String[].class), any(), anyString(), html.capture(), any(), inline.capture(), eq(false), att.capture());
+        assertThat(inline.getValue()).isEmpty();
+        assertThat(html.getValue()).contains("Görsel bu postaya eklenmedi").contains("data-slot=\"te-image-pdf\"").doesNotContain("ekteki PDF");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: her istek kararı bir günlük satırı — PDF / gövde hazırlanamazsa her onaylayıcıya FAILED (sınıf adıyla, gönderim günlüğünde 'iç hata'); hiçbir PO'nun e-postası yoksa 'onaylayıcı e-postası yok' satırı; ikisi de kanala ve rapora bağlı")
+    void everyRequestDecisionLeavesALogRow() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        TechErrorReportService plain = new TechErrorReportService(channels, reports, images, users, history);
+        plain.useClock(Clock.fixed(Instant.parse("2026-10-13T09:00:00Z"), ZoneOffset.UTC));
+        TechErrorReportService spy = org.mockito.Mockito.spy(plain);
+        org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR, "pdf"))
+                .when(spy).renderPdf(any(), org.mockito.ArgumentMatchers.anyLong());
+        TechErrorApprovalService a = new TechErrorApprovalService(spy, reports, tokens, users, sender, email, logs, appSettings);
+        TechErrorApprovalService.RequestResult res = a.request(r, ch, team, tech.getId());
+        assertThat(res.mailProblem()).isEqualTo("MAIL_FAILED");
+        assertThat(res.failed()).isEqualTo(2);
+        assertThat(logs.findAll()).hasSize(2).allSatisfy(n -> {
+            assertThat(n.getTrigger()).isEqualTo(TechErrorApprovalService.TRIGGER);
+            assertThat(n.getEmailStatus()).isEqualTo("FAILED: ResponseStatusException");
+            assertThat(TechErrorSendLogService.reasonOf(n.getEmailStatus())).isEqualTo("INTERNAL_ERROR");
+            assertThat(n.getTechErrorReportId()).isEqualTo(r.getId());
+            assertThat(n.getTechErrorChannelId()).isEqualTo(ch.getId());
+            assertThat(n.getSubject()).startsWith("[Onay bekliyor] ");
+        });
+        assertThat(logs.findAll()).extracting(NotificationLog::getRecipientEmail).containsExactlyInAnyOrder("po1@example.com", "po2@example.com");
+        // Okunabilir sınır BİR kez okunur ve PDF merdivenine o değer verilir
+        verify(spy).renderPdf(any(), eq(15L * 1024 * 1024));
+
+        logs.deleteAll();
+        po1.setEmail(null);
+        po2.setEmail(" ");
+        users.saveAll(List.of(po1, po2));
+        TechErrorChannel ch2 = channelWithExecs("ceo@example.com");
+        TechErrorReport r2 = service.createReport(ch2, 2026, 9, tech.getId());
+        TechErrorApprovalService.RequestResult none = approvals.request(r2, ch2, team, tech.getId());
+        assertThat(none.mailProblem()).isEqualTo("NO_APPROVER_EMAIL");
+        assertThat(logs.findAll()).singleElement().satisfies(n -> {
+            assertThat(n.getEmailStatus()).isEqualTo("SKIPPED: onaylayıcı e-postası yok");
+            assertThat(TechErrorSendLogService.reasonOf(n.getEmailStatus())).isEqualTo("NO_APPROVER_EMAIL");
+            assertThat(n.getTechErrorReportId()).isEqualTo(r2.getId());
+            assertThat(n.getTechErrorChannelId()).isEqualTo(ch2.getId());
+            assertThat(n.getRecipientName()).isEqualTo("Dijital");
+        });
     }
 }

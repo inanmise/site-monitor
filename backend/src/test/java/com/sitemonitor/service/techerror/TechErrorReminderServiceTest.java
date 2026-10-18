@@ -226,7 +226,10 @@ class TechErrorReminderServiceTest {
                 .contains("tab=channelreports&amp;te_st=missing&amp;te_team=" + dijital.getId());
         List<NotificationLog> log = rows(TechErrorReminderService.TRIGGER);
         assertThat(log).hasSize(1);
-        assertThat(log.get(0).getEmailStatus()).startsWith("SENT").contains("push 2");
+        // inceleme 2026-10-18: email_status YALNIZ posta servisinin cevabı (SMTP günlüğü / SENT sayaçları "SENT" görür);
+        // push notu iletide
+        assertThat(log.get(0).getEmailStatus()).isEqualTo("SENT");
+        assertThat(log.get(0).getMessage()).endsWith(" · push 2");
         assertThat(log.get(0).getRecipientRole()).isEqualTo("TEAM");
         assertThat(log.get(0).getMessage()).contains("Mobil — Rapor açılmadı");
         @SuppressWarnings("unchecked") ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
@@ -319,14 +322,15 @@ class TechErrorReminderServiceTest {
         TechErrorChannel a = channel(dijital, "Onaylı");
         TechErrorChannel b = channel(dijital, "Reddedilen");
         TechErrorChannel c = channel(dijital, "Değişen");
-        service.updateChannel(a.getId(), Map.of("executive_emails", "ceo@example.com"), tech.getId());
+        // Üçünün de onay akışı var (yönetici alıcısı): akışı olmayan kanalda onay durumu geçersizdir — inceleme 2026-10-18
+        for (TechErrorChannel x : List.of(a, b, c)) service.updateChannel(x.getId(), Map.of("executive_emails", "ceo@example.com"), tech.getId());
         TechErrorReport ra = service.createReport(service.channel(a.getId()), 2026, 9, tech.getId());
         Instant now = service.now();
         reports.requestApproval(ra.getId(), 0L, now, tech.getId(), now.minus(Duration.ofMinutes(10)));
-        TechErrorReport rb = service.createReport(b, 2026, 9, tech.getId());
+        TechErrorReport rb = service.createReport(service.channel(b.getId()), 2026, 9, tech.getId());
         reports.requestApproval(rb.getId(), 0L, now, tech.getId(), now.minus(Duration.ofMinutes(10)));
         reports.reject(rb.getId(), 0L, now, po1.getId(), "Eksik");
-        TechErrorReport rc = service.createReport(c, 2026, 9, tech.getId());
+        TechErrorReport rc = service.createReport(service.channel(c.getId()), 2026, 9, tech.getId());
         reports.requestApproval(rc.getId(), 0L, now, tech.getId(), now.minus(Duration.ofMinutes(10)));
         reports.touchContent(rc.getId(), now);
         job.run();
@@ -393,7 +397,10 @@ class TechErrorReminderServiceTest {
         job.run();
         verifyMails(0);
         assertThat(rows(TechErrorReminderService.TRIGGER)).singleElement()
-                .satisfies(n -> assertThat(n.getEmailStatus()).startsWith("SKIPPED: takımın e-posta adresi yok").contains("push 2"));
+                .satisfies(n -> {
+                    assertThat(n.getEmailStatus()).isEqualTo("SKIPPED: takımın e-posta adresi yok");
+                    assertThat(n.getMessage()).contains("push 2");
+                });
         // Push kapalı ve adres yok: yalnız günlük satırı, talep harcanır (ertesi gün tekrar yok)
         reminders.deleteAll();
         logs.deleteAll();
@@ -566,7 +573,10 @@ class TechErrorReminderServiceTest {
         int po1Mail = to.getAllValues().get(0)[0].startsWith("po1") ? 0 : 1;
         assertThat(html.getAllValues().get(po1Mail)).contains("kişisel bağlantı").contains("Teknik Kişi").contains("3 gündür")
                 .doesNotContain("approve-link");
-        assertThat(html.getAllValues().get(1 - po1Mail)).contains("süresi doldu ya da size gönderilmedi");
+        // po2'nin geçerli belirteci damgasız VE damgadan (20.153) önce üretildi: ulaşıp ulaşmadığı bilinmiyor → nötr metin
+        // (inceleme 2026-10-18: eskiden "süresi doldu ya da size gönderilmedi" diyordu)
+        assertThat(html.getAllValues().get(1 - po1Mail)).contains("özgün onay postası elinizdeyse")
+                .doesNotContain("süresi doldu").doesNotContain("tarihine kadar geçerli");
         assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).hasSize(3);   // yeni bağlantı üretilmedi
         assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2).allMatch(n -> "PO".equals(n.getRecipientRole()) && "SENT".equals(n.getEmailStatus()));
         // Kanal gönderim günlüğü (E22, tür "reminder"): onay hatırlatması satırı rapora ve kanalına bağlıdır
@@ -755,7 +765,10 @@ class TechErrorReminderServiceTest {
                 .thenReturn(Map.of("queued", 0, "skipped", 3));
         job.run();
         assertThat(rows(TechErrorReminderService.TRIGGER)).singleElement()
-                .satisfies(n -> assertThat(n.getEmailStatus()).isEqualTo("SENT · push: 3 alıcı atlandı (tercih / sınır / tekrar)"));
+                .satisfies(n -> {
+                    assertThat(n.getEmailStatus()).isEqualTo("SENT");
+                    assertThat(n.getMessage()).endsWith(" · push: 3 alıcı atlandı (tercih / sınır / tekrar)");
+                });
     }
 
     @Test
@@ -805,5 +818,119 @@ class TechErrorReminderServiceTest {
         when(visibility.teamVisible(dijital.getId())).thenReturn(true);
         job.run();
         verifyMails(2);
+    }
+
+    // ── İnceleme 2026-10-18 (2. tur) ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onay akışı kaldırılmış kanalda (yönetici alıcısı yok) eski onay durumu geçersiz — bekleyen / reddedilen rapor 'Taslak — gönderilmedi' cümlesiyle, 'PO'ya ayrıca hatırlatma gider' notu yok; akış varken eski cümleler")
+    void noApprovalFlowMeansDraft() {
+        optIn(dijital);
+        TechErrorChannel a = channel(dijital, "Bekleyen");
+        TechErrorChannel b = channel(dijital, "Reddedilen");
+        for (TechErrorChannel c : List.of(a, b)) service.updateChannel(c.getId(), Map.of("executive_emails", "ceo@example.com"), tech.getId());
+        Instant now = service.now();
+        TechErrorReport ra = service.createReport(service.channel(a.getId()), 2026, 9, tech.getId());
+        reports.requestApproval(ra.getId(), 0L, now, tech.getId(), now.minus(Duration.ofMinutes(10)));
+        TechErrorReport rb = service.createReport(service.channel(b.getId()), 2026, 9, tech.getId());
+        reports.requestApproval(rb.getId(), 0L, now, tech.getId(), now.minus(Duration.ofMinutes(10)));
+        reports.reject(rb.getId(), 0L, now, po1.getId(), "Eksik");
+        // Yönetici alıcıları kaldırıldı: onay akışı yok — ekip takım adresine doğrudan gönderebilir
+        for (TechErrorChannel c : List.of(a, b)) service.updateChannel(c.getId(), Map.of("executive_emails", ""), tech.getId());
+        job.run();
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), any(), anyBoolean(), any());
+        assertThat(html.getValue()).contains("Taslak — gönderilmedi").doesNotContain("PO onayı bekliyor")
+                .doesNotContain("Reddedildi").doesNotContain("PO&#39;ya ayrıca hatırlatma gider");
+        assertThat(rows(TechErrorReminderService.TRIGGER)).singleElement()
+                .satisfies(n -> assertThat(n.getMessage()).contains("Bekleyen — Taslak — gönderilmedi").contains("Reddedilen — Taslak — gönderilmedi"));
+        // Saf kural: akış varken eski cümleler, yokken taslak
+        TechErrorReportRepository.Row pending = service.periodRows(List.of(a.getId()), java.time.YearMonth.of(2026, 9)).get(a.getId());
+        assertThat(TechErrorReminderService.stateOf(pending, now, true)).isEqualTo(com.sitemonitor.service.mail.TechErrorReminderMail.State.PENDING);
+        assertThat(TechErrorReminderService.stateOf(pending, now, false)).isEqualTo(com.sitemonitor.service.mail.TechErrorReminderMail.State.DRAFT);
+        assertThat(TechErrorReminderService.stateOf(null, now, false)).isEqualTo(com.sitemonitor.service.mail.TechErrorReminderMail.State.MISSING);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: takım adresinde 20'den fazla alıcı — posta ilk 20'ye gider, fazlası SESSİZ düşmez: günlük iletisi '+N adres sınır dışında' der")
+    void periodReminderOverflowIsLogged() {
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 22; i++) many.append(i == 1 ? "" : ",").append("k").append(i).append("@x.io");   // kolon 200 karakter
+        dijital.setEmail(many.toString());
+        teams.save(dijital);
+        optIn(dijital);
+        channel(dijital, "Mobil");
+        job.run();
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(to.capture(), any(), anyString(), anyString(), anyString(), any(), anyBoolean(), any());
+        assertThat(to.getValue()).hasSize(TechErrorReportSender.MAX_RECIPIENTS).contains("k1@x.io", "k20@x.io")
+                .doesNotContain("k21@x.io");
+        assertThat(rows(TechErrorReminderService.TRIGGER)).singleElement().satisfies(n -> {
+            assertThat(n.getEmailStatus()).isEqualTo("SENT");
+            assertThat(n.getMessage()).contains("+2 adres sınır dışında (en çok 20 alıcı)");
+        });
+        assertThat(TechErrorReminderService.overflowNote(0)).isEmpty();
+        // Not iletiyi kırpmaz: uzun özet kısalır, not kalır
+        String longMsg = "x".repeat(5000);
+        assertThat(TechErrorReminderService.withNote(longMsg, " · push 2")).hasSize(4000).endsWith(" · push 2");
+        assertThat(TechErrorReminderService.withNote("Mobil", "")).isEqualTo("Mobil");
+    }
+
+    private TechErrorReport pendingOn(String channelName, Instant requestedAt) {
+        TechErrorChannel ch = channel(dijital, channelName);
+        service.updateChannel(ch.getId(), Map.of("executive_emails", "ceo@example.com"), tech.getId());
+        TechErrorReport r = service.createReport(service.channel(ch.getId()), 2026, 9, tech.getId());
+        assertThat(reports.requestApproval(r.getId(), 0L, requestedAt, tech.getId(), requestedAt.minus(Duration.ofMinutes(10)))).isEqualTo(1);
+        return service.report(r.getId());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: ilk onay hatırlatması da İSTANBUL GÜNÜYLE — 2 Ekim'de 09:15'ten önce ve sonra yapılan istekler 5 Ekim 09:15'te (3 gün) ikisi de hatırlatılır (eski 72 saat kuralı 11:00 isteğini bir gün geç hatırlatıyordu); 3 Ekim isteği henüz değil")
+    void firstApprovalReminderUsesIstanbulDays() {
+        TechErrorReport early = pendingOn("Erken", Instant.parse("2026-10-02T05:00:00Z"));    // 2 Ekim 08:00 İst
+        TechErrorReport late = pendingOn("Geç", Instant.parse("2026-10-02T08:00:00Z"));       // 2 Ekim 11:00 İst (72 saat dolmadı)
+        TechErrorReport next = pendingOn("Ertesi", Instant.parse("2026-10-03T05:00:00Z"));    // 3 Ekim 08:00 İst
+        TechErrorReminderService.Result res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(2);
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).extracting(NotificationLog::getTechErrorReportId)
+                .containsOnly(early.getId(), late.getId()).doesNotContain(next.getId());
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).extracting(NotificationLog::getTechErrorReportId).contains(next.getId());
+        // Saf kural: istek günü + N ≤ bugün (saat değil); İstanbul gece yarısı sınırı (2 Ekim 23:30 İst = 2 Ekim 20:30 UTC)
+        java.time.LocalDate oct5 = java.time.LocalDate.of(2026, 10, 5);
+        assertThat(TechErrorReminderService.firstDue(Instant.parse("2026-10-02T20:30:00Z"), oct5, 3)).isTrue();
+        assertThat(TechErrorReminderService.firstDue(Instant.parse("2026-10-02T21:30:00Z"), oct5, 3)).as("3 Ekim 00:30 İst").isFalse();
+        assertThat(TechErrorReminderService.firstDue(null, oct5, 3)).isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: damgadan (20.153) SONRA üretilen ve postası ulaşmayan belirteç için hatırlatma 'süresi doldu ya da size gönderilmedi' der; ulaşmış canlı bağlantı bitişiyle anılır")
+    void unmailedTokenAfterStampSaysNotSent() {
+        Instant nov = Instant.parse("2026-11-10T06:15:00Z");                                 // 10 Kasım 09:15 İst
+        at(nov);
+        TechErrorReport r = pendingOn("Mobil", nov.minus(Duration.ofDays(3)));
+        for (AppUser po : List.of(po1, po2)) {
+            TechErrorApprovalToken t = new TechErrorApprovalToken();
+            t.setReportId(r.getId());
+            t.setUserId(po.getId());
+            t.setTokenHash((po == po1 ? "d" : "e").repeat(64));
+            t.setApprovalRev(0L);
+            t.setCreatedAt(nov.minus(Duration.ofDays(3)));
+            t.setExpiresAt(nov.plus(Duration.ofDays(11)));
+            if (po == po1) t.setMailedAt(nov.minus(Duration.ofDays(3)));
+            tokens.save(t);
+        }
+        job.run();
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(to.capture(), any(), anyString(), html.capture(), anyString(), any(), anyBoolean(), any());
+        int po1Mail = to.getAllValues().get(0)[0].startsWith("po1") ? 0 : 1;
+        assertThat(html.getAllValues().get(po1Mail)).contains("tarihine kadar geçerli").doesNotContain("süresi doldu");
+        assertThat(html.getAllValues().get(1 - po1Mail)).contains("süresi doldu ya da size gönderilmedi")
+                .doesNotContain("özgün onay postası elinizdeyse");
+        TechErrorReminderService.Links links = job.links(reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING", nov).get(0), nov);
+        assertThat(links.live()).containsOnlyKeys(po1.getId());
+        assertThat(links.unconfirmed()).isEmpty();
     }
 }

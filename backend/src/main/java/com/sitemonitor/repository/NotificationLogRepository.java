@@ -31,6 +31,13 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     Optional<NotificationLog> findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(
             String subject, String emailStatusPrefix);
 
+    /**
+     * Aynı konulu en yeni 20 kuyruk satırı (inceleme 2026-10-18): aynı konu birden çok alıcıya AYRI postayla gidiyorsa (ör. her
+     * PO'ya onay isteği / hatırlatma) yeniden deneme sonucu alıcısı eşleşen satıra yazılır; eşleşme yoksa eski kural.
+     */
+    java.util.List<NotificationLog> findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(
+            String subject, String emailStatusPrefix);
+
     /** Trigger'a göre arşiv (en yeni üstte) — haftalık erişilebilirlik giden mail geçmişi için. */
     List<NotificationLog> findByTriggerInOrderBySentAtDesc(Collection<String> triggers, Pageable pageable);
 

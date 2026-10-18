@@ -56,6 +56,20 @@ describe('techErrorReminderModel', () => {
     expect(parseWhole('-1')).toBeNull()
   })
 
+  it('inceleme 2026-10-18 (kural 9): kayıtlı değer verilirse YALNIZ değişen alanlar doğrulanır — değişmeyen (aynı değerin başka yazımı da) yeniden denetlenmez; alanlar-arası kural yalnız sınırlardan biri değiştiyse', () => {
+    // Kayıtlı görüntüde aralık dışı / çelişen değerler (eski sunucu, elle yazılmış ayar): kullanıcı yalnız günü değiştirdi
+    const saved = { ...normalizeReminders(SERVER), approval_reminder_days: 40, max_mail_mb: 10, mail_inline_mb: 12 }
+    const form = { ...toForm(saved), reminder_day: '7' }
+    expect(validateForm(form, REM_DEFAULT_LIMITS, saved)).toEqual({})
+    expect(validateForm({ ...form, approval_reminder_days: '040' }, REM_DEFAULT_LIMITS, saved)).toEqual({})   // aynı değer
+    // Değişen alan yine denetlenir; sınır değişince alanlar-arası kural geri gelir
+    expect(validateForm({ ...form, reminder_day: '29' }, REM_DEFAULT_LIMITS, saved).reminder_day).toEqual({ key: 'te.rem.v.whole', params: [1, 28] })
+    expect(validateForm({ ...form, max_mail_mb: '11' }, REM_DEFAULT_LIMITS, saved).mail_inline_mb).toEqual({ key: 'te.rem.v.inline', params: [12, 11] })
+    expect(validateForm({ ...form, approval_reminder_days: '' }, REM_DEFAULT_LIMITS, saved).approval_reminder_days).toBeTruthy()
+    // Kayıtlı değer verilmezse eski davranış (her alan)
+    expect(validateForm(form).approval_reminder_days).toBeTruthy()
+  })
+
   it('changedFields: yalnız değişen alanlar (takım sırası değişiklik değil); boş = istek yok; yarım sayı kirli ama gövdeye girmez', () => {
     const saved = normalizeReminders(SERVER)
     const form = toForm(saved)

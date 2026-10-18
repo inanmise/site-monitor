@@ -115,12 +115,12 @@ class TechErrorReportSenderTest {
         assertThat(ex.cc()).doesNotContain(TechErrorReportSender.recipients(team).get(0));
         assertThat(ex.html()).contains("yönetici (executive) alıcısı").doesNotContain("takımının adresi olduğu");   // EXECUTIVE dipnotu
         // PDF tek başına sınırı aşıyor: gövde gelir, problem PDF_TOO_LARGE (gönderim 409 verir)
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[2 * 1024 * 1024]);
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);
         TechErrorReportSender.Preview big = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(big.problem()).isEqualTo("PDF_TOO_LARGE");
         assertThat(big.pdfTooLarge()).isTrue();
-        assertThat(big.pdfBytes()).isEqualTo(2 * 1024 * 1024);
+        assertThat(big.pdfBytes()).isEqualTo(6 * 1024 * 1024);
         assertThat(big.html()).isNotBlank();
         // Alıcı sorunu da varsa `problem` onu söyler, PDF sınırı ayrı bayrakta KALIR (inceleme 2026-10-17: test düğmesi görünüyordu)
         String keptEmail = team.getEmail();
@@ -130,7 +130,7 @@ class TechErrorReportSenderTest {
         assertThat(bigNoMail.pdfTooLarge()).isTrue();
         team.setEmail(keptEmail);
         // PDF + gömülü görsel toplamı sınırı aşıyor: görseller yalnız PDF'te (gönderimdeki kuralın aynısı), problem yok
-        pdfReturns(new byte[1024 * 1024 - 64]);
+        pdfReturns(new byte[5 * 1024 * 1024 - 64]);
         TechErrorReportSender.Preview sum = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
         assertThat(sum.problem()).isNull();
         assertThat(sum.pdfTooLarge()).isFalse();
@@ -163,7 +163,7 @@ class TechErrorReportSenderTest {
             java.util.function.Supplier<TechErrorPdfInput> loader = inv.getArgument(0);
             TechErrorPdfInput in = loader.get();
             return new TechErrorReportService.Rendered(in.withoutImages(), bytes);
-        }).when(service).renderPdf(any());
+        }).when(service).renderPdf(any(), anyLong());
     }
 
     private void mailReturns(String status) {
@@ -548,8 +548,8 @@ class TechErrorReportSenderTest {
     @DisplayName("posta sınırı PDF + gömülü görsellerin toplamı (inceleme 2026-10-17): sınıra yakın PDF'in yanında görseller gövdeye girmez, yuvalar 'PDF ekinde' der, posta yine SENT")
     void inlineImagesDroppedWhenPdfIsNearTheCap() throws java.io.IOException {
         mailReturns("SENT");
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[1024 * 1024 - 100]);                 // 1 MB sınırının 100 bayt altında
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[5 * 1024 * 1024 - 100]);             // 5 MB sınırının 100 bayt altında
         TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
                 "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(900, 300), 900, 300)));
         when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
@@ -614,14 +614,14 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("geçmiş (inceleme 2026-10-14): istisnayla biten deneme de 'gönderim denendi' olarak sebebiyle yazılır")
     void exceptionalAttemptsAreInHistory() {
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(TechErrorReportService.PdfBusyException.class);
         verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SKIPPED"), org.mockito.ArgumentMatchers.isNull(),
                 eq("PDF_BUSY"), eq(now));
 
         org.mockito.Mockito.reset(history);
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[2 * 1024 * 1024]);
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class);
         verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("FAILED"), org.mockito.ArgumentMatchers.isNull(),
                 eq("PDF_TOO_LARGE"), eq(now));
@@ -667,7 +667,7 @@ class TechErrorReportSenderTest {
         // PDF sırası dolu: talep bırakılır, kuyruktaki gönderim yaşar → SUPERSEDED yazılmaz (sonucu sonra gelir)
         org.mockito.Mockito.reset(history);
         report.setLastSendStatus("QUEUED_RETRY: 421");
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(TechErrorReportService.PdfBusyException.class);
         verify(history, never()).recordSend(any(), eq("SEND_RESULT"), any(), any(), any(), any(), any());
     }
@@ -683,8 +683,8 @@ class TechErrorReportSenderTest {
         when(reports.findById(5L)).thenReturn(java.util.Optional.of(queued));
         report.setChannelId(10L);
         report.setLastSendStatus("QUEUED_RETRY: 421");
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[2 * 1024 * 1024]);                    // PDF çok büyük → posta servisine hiçbir şey gitmez
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);                    // PDF çok büyük → posta servisine hiçbir şey gitmez
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class);
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(service, reports);
         order.verify(service).reconcileQueued(List.of(10L));      // talepten ÖNCE
@@ -825,7 +825,7 @@ class TechErrorReportSenderTest {
     @DisplayName("PDF sırası dolu: hiçbir şey denenmedi — talep önceki durumuna bırakılır, FAILED yazılmaz, SKIPPED izi kalır")
     void pdfBusyReleasesClaim() {
         report.setSendState("SENT");
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(TechErrorReportService.PdfBusyException.class);
         verify(reports).releaseClaim(eq(5L), eq(now), any());
         verify(reports, never()).finishNotSent(anyLong(), any(), anyString(), anyString(), any());
@@ -839,7 +839,7 @@ class TechErrorReportSenderTest {
     @DisplayName("PDF sırası dolu + yarıda kalmış eski talep: talep bırakılır (durum satırın kendi sonucundan — SQL)")
     void pdfBusyAfterStaleClaimReleases() {
         report.setSendState("SENDING");
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(TechErrorReportService.PdfBusyException.class);
         verify(reports).releaseClaim(eq(5L), eq(now), any());
         verify(reports, never()).finishNotSent(anyLong(), any(), anyString(), anyString(), any());
@@ -869,8 +869,8 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("PDF e-posta sınırını aşarsa 409 PDF_TOO_LARGE; satır FAILED olur (SENDING'de kalmaz) ve iz bırakır")
     void pdfTooLarge() {
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[2 * 1024 * 1024]);
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("PDF_TOO_LARGE");
         verify(reports).finishNotSent(eq(5L), eq(now), eq("FAILED"), org.mockito.ArgumentMatchers.startsWith("FAILED: PDF"), eq(now));
@@ -881,7 +881,7 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("talepten sonra beklenmeyen istisna: satır FAILED'e yazılır, iz bırakılır, istisna yukarı gider")
     void unexpectedFailureFinishes() {
-        org.mockito.Mockito.doThrow(new IllegalStateException("bozuk")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new IllegalStateException("bozuk")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(IllegalStateException.class);
         verify(reports).finishNotSent(eq(5L), eq(now), eq("FAILED"), eq("FAILED: IllegalStateException"), eq(now));
         verify(logs).save(any());
@@ -966,34 +966,34 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("kendine test: PDF tek başına sınırı aşıyor → 409 PDF_TOO_LARGE (gönderimle aynı metin), posta yok, günlük FAILED satırı; PDF + görseller sınırı aşıyor → görseller yalnız PDF'te, posta gider")
     void sendTest_pdfTooLargeAndSumRule() throws Exception {
-        sender.maxMailMb = 1;
-        pdfReturns(new byte[2 * 1024 * 1024]);
+        sender.maxMailMb = 5;
+        pdfReturns(new byte[6 * 1024 * 1024]);
         assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr"))
                 .isInstanceOf(CodedConflictException.class)
                 .satisfies(e -> {
                     assertThat(((CodedConflictException) e).getCode()).isEqualTo("PDF_TOO_LARGE");
-                    assertThat(e.getMessage()).contains("2.0 MB").contains("1 MB");
-                    assertThat(((CodedConflictException) e).getExtra()).containsEntry("max_mb", 1);
+                    assertThat(e.getMessage()).contains("6.0 MB").contains("5 MB");
+                    assertThat(((CodedConflictException) e).getExtra()).containsEntry("max_mb", 5);
                 });
         verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logs).save(log.capture());
         assertThat(log.getValue().getTrigger()).isEqualTo("TECH_ERROR_REPORT_TEST");
-        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: PDF e-posta sınırını aşıyor (2.0 MB > 1 MB)");
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: PDF e-posta sınırını aşıyor (6.0 MB > 5 MB)");
         assertThat(log.getValue().getSubject()).startsWith("[TEST] ");
         verify(reports, never()).claimSend(anyLong(), any(), any());
         verifyNoInteractions(history);
         // Gönderimdeki metinle aynı (tek kaynak): send de aynı kodu ve metni verir
         when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
-                .satisfies(e -> assertThat(e.getMessage()).contains("2.0 MB").contains("1 MB"));
+                .satisfies(e -> assertThat(e.getMessage()).contains("6.0 MB").contains("5 MB"));
         // Toplam kuralı: PDF sınıra yakın + gömülü görsel → görseller düşer ("PDF ekinde"), test postası yine gider
         org.mockito.Mockito.reset(logs, email);
         mailReturns("SENT");
         TechErrorPdfInput withImage = new TechErrorPdfInput(TechErrorTemplate.defaults("tr"), TechErrorValues.Values.empty(), "Mobil",
                 "Dijital", 2026, 9, "Ayşe", now, Map.of("annual-summary", new TechErrorPdfInput.Image(samplePng(1600, 400), 1600, 400)));
         when(service.pdfInput(any(), any(), any())).thenReturn(withImage);
-        pdfReturns(new byte[1024 * 1024 - 64]);
+        pdfReturns(new byte[5 * 1024 * 1024 - 64]);
         var res = sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr");
         assertThat(res.state()).isEqualTo("SENT");
         ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
@@ -1006,7 +1006,7 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("kendine test: PDF sırası dolu → PdfBusyException aynen, günlük SKIPPED satırı; beklenmeyen hata → FAILED sınıf adıyla; adres teslim edilemezse NO_EMAIL ve HİÇBİR şey yazılmaz")
     void sendTest_busyUnexpectedAndNoEmail() {
-        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any());
+        org.mockito.Mockito.doThrow(new TechErrorReportService.PdfBusyException("meşgul")).when(service).renderPdf(any(), anyLong());
         assertThatThrownBy(() -> sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ayse@example.com", "tr"))
                 .isInstanceOf(TechErrorReportService.PdfBusyException.class);
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
@@ -1032,5 +1032,25 @@ class TechErrorReportSenderTest {
         }
         verifyNoInteractions(logs, email, history);
         verify(reports, never()).claimSend(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: posta sınırı gönderim / önizleme / test başına BİR kez okunur ve PDF merdivenine o değer verilir — izin beklenirken ayar değişse de merdiven ile 'sığıyor mu' denetimi aynı sınıra bakar")
+    void mailLimitIsReadOncePerRender() {
+        pdfReturns(new byte[6 * 1024 * 1024]);
+        // İlk okuma 5 MB, sonraki okumalar 20 MB: tek okuma → merdiven ve denetim 5 MB (PDF_TOO_LARGE "5 MB")
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn("5", "20");
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
+                .satisfies(e -> assertThat(e.getMessage()).contains("5 MB"));
+        verify(service).renderPdf(any(), eq(5L * 1024 * 1024));
+        verify(settings, org.mockito.Mockito.times(1)).getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB);
+        // Önizleme de aynı: tek okuma, aynı değer
+        org.mockito.Mockito.clearInvocations(service, settings);
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn("20", "5");
+        TechErrorReportSender.Preview p = sender.preview(report, channel, team, TechErrorReportSender.Delivery.TEAM);
+        assertThat(p.maxMailMb()).isEqualTo(20);
+        assertThat(p.pdfTooLarge()).isFalse();
+        verify(service).renderPdf(any(), eq(20L * 1024 * 1024));
+        verify(settings, org.mockito.Mockito.times(1)).getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB);
     }
 }

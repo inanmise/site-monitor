@@ -38,7 +38,8 @@ const TOUCH = 'pointer-coarse:min-h-10'
  * sütun, dizüstünde (≈ 560 px) iki sütun; telefonda tek sütun. Test kancaları `tes-rem-*`.
  */
 export default function TechErrorReminderSettings({
-  state, teams = [], readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry,
+  state, teams = [], readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry, retryDisabled = false,
+  missingTeamLabel = null,
 }) {
   const t = useT()
   const toast = useToast()
@@ -70,7 +71,9 @@ export default function TechErrorReminderSettings({
   const dirty = !!saved && !!form && isFormDirty(saved, form)
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
 
-  const options = useMemo(() => teamOptions(teams, form?.team_ids || [], t('noc.ot.inactiveTeam')), [teams, form, t])
+  // Silinmiş / adı okunamayan seçili takım çıplak "#12" değil, sayfanın verdiği etiketle (inceleme 2026-10-18)
+  const options = useMemo(() => teamOptions(teams, form?.team_ids || [], t('noc.ot.inactiveTeam'), missingTeamLabel),
+    [teams, form, t, missingTeamLabel])
   const limits = saved?.limits
 
   if (!state) return null
@@ -83,7 +86,8 @@ export default function TechErrorReminderSettings({
 
   async function save() {
     if (saving || locked || !saved || !form) return
-    const errs = validateForm(form, limits)
+    // Yalnız DEĞİŞEN alanlar doğrulanır (kural 9 — inceleme 2026-10-18): kayıtlı değer yeniden denetlenmez
+    const errs = validateForm(form, limits, saved)
     const map = {}
     for (const k of REM_INT_FIELDS) map[k] = errs[k] ? t(errs[k].key, ...errs[k].params) : false
     if (fe.check(map)) return
@@ -136,7 +140,8 @@ export default function TechErrorReminderSettings({
   }
 
   const retryButton = onRetry && (
-    <Button type="button" variant="outline" size="sm" onClick={onRetry} className={cn('h-9 sm:h-8', TOUCH)} data-slot="tes-rem-retry">
+    <Button type="button" variant="outline" size="sm" onClick={onRetry} disabled={saving || retryDisabled}
+      className={cn('h-9 sm:h-8', TOUCH)} data-slot="tes-rem-retry">
       <RefreshCw aria-hidden="true" /> {t('te.retry')}
     </Button>
   )

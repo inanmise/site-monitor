@@ -3,8 +3,9 @@ import {
   TES_EXPORT_COLUMNS, TES_FILTERS, TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels,
   exportApprovalStatus, exportFileName, exportHeader, exportReportStatus, exportRow, exportTable, filterChannels,
   filtersActive, hasExecutives, isTeamHidden, matchesFilter, normalizeFilter, normalizeSort, searchChannels, sortChannels,
-  teamEmailState, teamVisibleState, teamsOf,
+  teamEmailState, teamVisibleState, teamsOf, countOrNull, missingTeamText,
 } from '../components/admin/techErrorSettingsModel.js'
+import { teamOptions } from '../components/admin/noc/operatorTeamsModel.js'
 import { TR } from '../i18n/tr.js'
 
 /** Sözlükten t (yer tutucular {0} …) — bileşensiz saf model denemesi. */
@@ -207,5 +208,23 @@ describe('techErrorSettingsModel — dışa aktarma (E22)', () => {
     expect(exportFileName({ year: 2026, month: 9 }, 'csv')).toBe('teknik-hata-raporu-kanallar-2026-09.csv')
     expect(exportFileName({ year: 2026, month: 12 }, 'xlsx')).toBe('teknik-hata-raporu-kanallar-2026-12.xlsx')
     expect(exportFileName(null, 'csv', new Date(2026, 9, 7))).toBe('teknik-hata-raporu-kanallar-2026-10-07.csv')
+  })
+})
+
+describe('techErrorSettingsModel — inceleme 2026-10-18', () => {
+  it('countOrNull: bilinmeyen sayı null (0 değil — "PO yok" demez); negatif / metin bilinmiyor', () => {
+    expect(countOrNull(3)).toBe(3)
+    expect(countOrNull('2')).toBe(2)
+    expect(countOrNull(0)).toBe(0)
+    for (const v of [undefined, null, '', 'x', -1, NaN]) expect(countOrNull(v), String(v)).toBeNull()
+  })
+
+  it('missingTeamText + teamOptions: rehber okunduysa seçili ama rehberde olmayan takım "Silinmiş takım", okunamadıysa "Takım adı okunamadı" — asla çıplak "#99"', () => {
+    expect(missingTeamText(99, true, tr)).toBe('Silinmiş takım')
+    expect(missingTeamText(99, false, tr)).toBe('Takım adı okunamadı')
+    const opts = teamOptions([{ id: 1, name: 'Dijital' }], [1, 99], 'pasif', (id) => missingTeamText(id, true, tr))
+    expect(opts.map((o) => o.label)).toEqual(['Dijital', 'Silinmiş takım'])
+    expect(opts.find((o) => o.value === 99)).toMatchObject({ missing: true })
+    expect(opts.map((o) => o.label).join(' ')).not.toContain('#99')
   })
 })

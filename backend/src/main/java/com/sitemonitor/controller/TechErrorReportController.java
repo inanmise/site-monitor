@@ -1703,7 +1703,8 @@ public class TechErrorReportController {
         Long uid = userId(session);
         boolean approver = uid != null && apps.stream().anyMatch(ap -> uid.equals(ap.id()));
         m.put("is_approver", approver);
-        m.put("can_decide", approver && "pending".equals(state) && permissions.allows(session, APPROVE, "execute"));
+        // Akış kaldırıldıysa (yönetici alıcısı yok) karar verilmez — servis de 409 APPROVAL_FLOW_REMOVED der (inceleme 2026-10-18)
+        m.put("can_decide", required && approver && "pending".equals(state) && permissions.allows(session, APPROVE, "execute"));
         // Onaylı ve onaydan beri değişmemiş rapor: yazabilen yöneticilere (yeniden) gönderebilir
         m.put("can_send_executive", canWrite && required && "approved".equals(state));
         return m;

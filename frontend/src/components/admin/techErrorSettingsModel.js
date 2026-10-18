@@ -162,6 +162,21 @@ export function exportHeader(t) {
   return TES_EXPORT_COLUMNS.map((c) => t(`te.set.export.col.${c}`))
 }
 
+/** Sayım: sonlu, negatif olmayan sayı → sayı; alan yok / okunamaz → null (bilinmiyor ≠ 0 — inceleme 2026-10-18). */
+export function countOrNull(v) {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
+/**
+ * Takım rehberinde olmayan SEÇİLİ kimliğin etiketi (inceleme 2026-10-18): rehber okunduysa takım silinmiştir; okunamadıysa
+ * adı bilinmiyor — asla çıplak "#12".
+ */
+export function missingTeamText(id, directoryLoaded, t) {
+  return directoryLoaded ? t('te.set.deletedTeam') : t('te.set.unknownTeam')
+}
+
 /** Sayım alanı: sonlu sayı → sayı; alan yok / okunamaz → "Bilinmiyor". */
 function countCell(v, unknown) {
   if (v == null || v === '') return unknown

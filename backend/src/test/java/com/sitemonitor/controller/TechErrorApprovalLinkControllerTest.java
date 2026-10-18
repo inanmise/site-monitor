@@ -111,10 +111,12 @@ class TechErrorApprovalLinkControllerTest {
                 // A2: yeniden istek — eski bağlantı "geçersiz" değil, "en son e-postadaki bağlantıyı kullanın"; yeni postanın
                 // ulaşmamış olabileceği için uygulama içi yol da söylenir (inceleme 2026-10-17)
                 { "superseded", "daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın. Postayı bulamıyorsanız raporu Site Monitor&#39;de açıp kararınızı oradan verebilirsiniz." },
+                // İnceleme 2026-10-18: kanalın yönetici alıcıları kaldırıldı — onay gerekmiyor, karar yazılmaz
+                { "flow_removed", "raporun onaya ihtiyacı kalmadı ve ekip onu takım adresine doğrudan gönderebilir" },
                 { "not_found", "Bağlantı geçersiz" } };
         for (int i = 0; i < cases.length; i++) {
             String[] c = cases[i];
-            // Her sebep kendi istemci IP'sinden: 8 × 3 istek, denetleyicinin IP başına dakikalık sınırı (30) aynı fasulyede
+            // Her sebep kendi istemci IP'sinden: 9 × 3 istek, denetleyicinin IP başına dakikalık sınırı (30) aynı fasulyede
             // sınıfın diğer testleriyle paylaşılır — sınır üretim davranışı, test onu tetiklemez
             String ip = "10.9.0." + (i + 1);
             when(approvals.status("t-" + c[0])).thenReturn(new TokenStatus(false, c[0], null, null, null, null));
@@ -132,8 +134,8 @@ class TechErrorApprovalLinkControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(content().string(containsString(c[1])));
         }
-        // 8 sebep × (sayfa + onay + red) = 24 güvenlik olayı; sebep ayrıntıda ("no_permission (approve)" gibi)
-        verify(auditService, org.mockito.Mockito.times(24)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
+        // 9 sebep × (sayfa + onay + red) = 27 güvenlik olayı; sebep ayrıntıda ("no_permission (approve)" gibi)
+        verify(auditService, org.mockito.Mockito.times(27)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
                 eq("TECH_ERROR_REPORT"), anyString(), anyString());
         verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
                 anyString(), eq("no_permission (approve)"));

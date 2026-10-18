@@ -48,8 +48,9 @@ export const savePayload = (draft) => normalizeIds(draft)
 /**
  * Takım rehberi satırları → seçici seçenekleri: ada göre (Türkçe, büyük/küçük harf duyarsız) sıralı; pasif takım etiketi
  * işaretlenir; rehberde olmayan ama SEÇİLİ kimlik (silinmiş takım) adı olmadan da görünür (kaybolmasın).
+ * `missingLabel(id)` verilirse o kimliğin etiketi odur (ör. "Silinmiş takım" — çıplak "#12" yerine); verilmezse "#id".
  */
-export function teamOptions(directory, selected, inactiveSuffix = '') {
+export function teamOptions(directory, selected, inactiveSuffix = '', missingLabel = null) {
   const rows = Array.isArray(directory) ? directory : []
   const seen = new Set()
   const out = []
@@ -61,7 +62,9 @@ export function teamOptions(directory, selected, inactiveSuffix = '') {
     out.push({ value: id, label: `${tm.name ?? id}${inactive && inactiveSuffix ? ` (${inactiveSuffix})` : ''}`, name: tm.name ?? String(id), inactive })
   }
   for (const id of normalizeIds(selected)) {
-    if (!seen.has(id)) out.push({ value: id, label: `#${id}`, name: `#${id}`, inactive: false })
+    if (seen.has(id)) continue
+    const label = typeof missingLabel === 'function' ? String(missingLabel(id) ?? `#${id}`) : `#${id}`
+    out.push({ value: id, label, name: label, inactive: false, missing: true })
   }
   const coll = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })
   return out.sort((a, b) => coll.compare(a.name, b.name))

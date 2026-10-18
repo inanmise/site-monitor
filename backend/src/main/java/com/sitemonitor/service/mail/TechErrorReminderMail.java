@@ -153,6 +153,16 @@ public final class TechErrorReminderMail {
      */
     public static MailDoc.Mail approval(String title, boolean en, String approverName, String requesterName, Instant requestedAt,
                                         long waitingDays, Instant linkValidUntil, String reportUrl, String teamName, int everyDays) {
+        return approval(title, en, approverName, requesterName, requestedAt, waitingDays, linkValidUntil, false, reportUrl, teamName, everyDays);
+    }
+
+    /**
+     * {@code linkUnconfirmed}: bu onaylayıcının GEÇERLİ bir bağlantısı var ama postasının ulaştığı bilinmiyor (20.153'ten
+     * önceki istekler damgasızdır) — not "süresi doldu / size gönderilmedi" iddiasında bulunmaz, yalnız Site Monitor'ü gösterir.
+     */
+    public static MailDoc.Mail approval(String title, boolean en, String approverName, String requesterName, Instant requestedAt,
+                                        long waitingDays, Instant linkValidUntil, boolean linkUnconfirmed, String reportUrl,
+                                        String teamName, int everyDays) {
         String who = requesterName == null || requesterName.isBlank() ? (en ? "A team member" : "Bir takım üyesi") : requesterName.trim();
         String when = requestedAt == null ? "—" : DT.format(requestedAt);
         MailDoc d = MailDoc.create(approvalSubject(title, en)).wide()
@@ -169,6 +179,9 @@ public final class TechErrorReminderMail {
                             + " (Istanbul time) — you can decide from there without signing in."
                     : "Özgün onay postasındaki kişisel bağlantı " + DT.format(linkValidUntil)
                             + " (İstanbul saati) tarihine kadar geçerli — oradan giriş yapmadan karar verebilirsiniz.");
+        } else if (linkUnconfirmed) {
+            d.note(en ? "Open the report in Site Monitor to decide; if you still have the original approval e-mail, its personal link may work too."
+                    : "Karar vermek için raporu Site Monitor'de açın; özgün onay postası elinizdeyse oradaki kişisel bağlantı da çalışıyor olabilir.");
         } else {
             d.note(en ? "The link in the original approval e-mail has expired or was not sent to you; open the report in Site Monitor to decide."
                     : "Özgün onay postasındaki bağlantının süresi doldu ya da size gönderilmedi; karar vermek için raporu Site Monitor'de açın.");

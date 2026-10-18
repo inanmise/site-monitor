@@ -291,4 +291,35 @@ class TechErrorSettingsControllerTest {
         }
         verify(settings, never()).save(any(), anyString());
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("inceleme 2026-10-18: ayarda ZATEN kayıtlı ama silinmiş takım (999) kaydı engellemez — sessizce düşer; YENİ eklenen bilinmeyen takım yine 400; görünürlükte yalnız silinmiş takımlardan oluşan kısıt kendiliğinden 'herkes'e dönmez")
+    void deletedStoredTeamIsDroppedSilently() throws Exception {
+        stored.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, "1,999");
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"reminder_team_ids\":[1,999,2]}"))
+                .andExpect(status().isOk());
+        stored.put(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, "1");
+        mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"reminder_team_ids\":[1,998]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("reminder_team_ids"));
+        stored.put(TechErrorReportSettings.KEY_TEAM_IDS, "2,999");
+        mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2,999]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_ids.length()").value(1))
+                .andExpect(jsonPath("$.data.team_ids[0]").value(2));
+        stored.put(TechErrorReportSettings.KEY_TEAM_IDS, "999");
+        mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[999]}"))
+                .andExpect(status().isOk());
+        mvc.perform(put(MAIN).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[]}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<Map<String, Object>> body = ArgumentCaptor.forClass(Map.class);
+        verify(settings, org.mockito.Mockito.times(4)).save(body.capture(), eq("admin"));
+        List<Map<String, Object>> saves = body.getAllValues();
+        assertThat((Map<String, Object>) saves.get(0).get("values")).containsEntry(TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, "1,2");
+        assertThat((Map<String, Object>) saves.get(1).get("values")).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "2");
+        // Yalnız silinmiş takımlı kısıt gevşemez (boş = herkes olurdu); yönetici çipi kaldırınca açılır
+        assertThat((Map<String, Object>) saves.get(2).get("values")).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "999");
+        assertThat((Map<String, Object>) saves.get(3).get("values")).containsEntry(TechErrorReportSettings.KEY_TEAM_IDS, "");
+    }
 }

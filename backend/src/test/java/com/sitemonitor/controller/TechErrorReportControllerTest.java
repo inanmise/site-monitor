@@ -686,6 +686,12 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.report.approval.state").value("pending"))
                 .andExpect(jsonPath("$.data.approval_detail.can_request").value(true))
                 .andExpect(jsonPath("$.data.approval_detail.resend").value(true));
+        // İnceleme 2026-10-18: yönetici alıcıları kaldırıldı → akış yok; bekleyen istek için karar düğmesi çıkmaz (servis 409 der)
+        ec.setExecutiveEmails(null);
+        mvc.perform(get("/api/tech-error-reports/reports/130").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.approval_detail.required").value(false))
+                .andExpect(jsonPath("$.data.approval_detail.can_decide").value(false))
+                .andExpect(jsonPath("$.data.approval_detail.can_request").value(false));
     }
 
     @Test

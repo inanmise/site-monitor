@@ -291,31 +291,45 @@ public class TechErrorApprovalService {
         int mailed = 0, failed = 0;
         String problem = null;
         List<String> mailedTo = new ArrayList<>();
+        // Her karar bir günlük satırı (inceleme 2026-10-18): postası denenmiş onaylayıcılar burada; beklenmeyen bir hata kalanlara
+        // FAILED yazar (önceden hiç satır kalmıyordu)
+        Set<Long> logged = new java.util.HashSet<>();
+        String lightSubject = requestSubjectOf(fresh, channel);
         if (!mails.isEmpty()) {
+            String subject = lightSubject;
             try {
                 long budget = Math.max(0, TechErrorReportSettings.liveInt(appSettings, TechErrorReportSettings.MAIL_INLINE_MB, mailInlineMb)) * 1024L * 1024L;
+                // Sınır BİR kez okunur (inceleme 2026-10-18): PDF merdiveni ile "PDF sığıyor mu" denetimi aynı değere bakar
+                long max = sender.maxMailBytes();
                 TechErrorMailImages.Result[] prepared = { TechErrorMailImages.Result.empty() };
+                // "Hepsi PDF'te" yedeği izin içinde alınır: renderPdf görselsiz girdi döndürür — sonradan alınan yedek boş çıkar ve
+                // yuvalar "görsel yüklenmedi" derdi (inceleme 2026-10-18)
+                TechErrorMailImages.Result[] fallback = { TechErrorMailImages.Result.empty() };
                 TechErrorReport pdfRow = fresh;
                 TechErrorReportService.Rendered rendered = service.renderPdf(() -> {
                     TechErrorPdfInput loaded = service.pdfInput(pdfRow, channel, team.getName());
+                    fallback[0] = TechErrorMailImages.allSkipped(loaded);
                     try {
                         prepared[0] = TechErrorMailImages.prepare(loaded, budget);
                     } catch (RuntimeException e) {
-                        prepared[0] = TechErrorMailImages.allSkipped(loaded);
+                        prepared[0] = fallback[0];
                     }
                     return loaded;
-                });
+                }, max);
                 TechErrorPdfInput in = rendered.meta();
+                subject = TechErrorApprovalMail.requestSubject(in);
                 byte[] pdf = rendered.pdf();
                 String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), fresh.getReportYear(), fresh.getReportMonth(),
                         in.template().lang());
-                long max = sender.maxMailBytes();
                 // PDF sınıra sığmazsa ek düşer, gövde bunu SÖYLER (fileName null) ve sebep döner (inceleme 2026-10-17)
                 boolean pdfFits = pdf.length <= max;
                 List<EmailNotificationService.MailAttachment> attachments = pdfFits
                         ? List.of(new EmailNotificationService.MailAttachment(fileName, pdf, "application/pdf")) : List.of();
                 if (!pdfFits) problem = "PDF_TOO_LARGE";
-                if (pdf.length + prepared[0].bytes() > max) prepared[0] = TechErrorMailImages.allSkipped(in);
+                // Posta sınırı EKLENEN baytlar için: PDF eklendiyse PDF + görseller, eklenmediyse görseller TEK BAŞINA (inceleme
+                // 2026-10-18: ek düştüğü hâlde görseller de düşüyordu — sığacakları hâlde)
+                long attachedBytes = pdfFits ? pdf.length : 0;
+                if (prepared[0].bytes() > 0 && attachedBytes + prepared[0].bytes() > max) prepared[0] = fallback[0];
                 String requester = service.displayName(by);
                 int execCount = TechErrorReportSender.executiveRecipients(channel).size();
                 for (Approver a : apps) {
@@ -325,7 +339,6 @@ public class TechErrorApprovalService {
                             : baseUrl() + "/api/tech-error-reports/approve-link?token=" + raw;
                     TechErrorReportMail.Built built = TechErrorApprovalMail.request(in, prepared[0], baseUrl(), pdfFits ? fileName : null,
                             fresh.getId(), channel.getId(), requester, a.name(), execCount, decideUrl, (int) TOKEN_TTL.toDays());
-                    String subject = TechErrorApprovalMail.requestSubject(in);
                     String status;
                     try {
                         status = email.sendHtml(new String[] { a.email() }, null, subject, built.mail().html(), built.mail().text(),
@@ -335,6 +348,7 @@ public class TechErrorApprovalService {
                         status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
                     }
                     saveLog(a.name(), a.email(), "PO", subject, status, team.getName(), fresh, channel);
+                    logged.add(a.id());
                     if ("SENT".equals(status) || status.startsWith("QUEUED")) {
                         mailed++;
                         mailedTo.add(a.email());
@@ -345,15 +359,25 @@ public class TechErrorApprovalService {
             } catch (TechErrorReportService.PdfBusyException busy) {
                 problem = "PDF_BUSY";
                 failed = mails.size();
-                for (Approver a : apps) if (a.email() != null) saveLog(a.name(), a.email(), "PO", channel.getName(),
+                for (Approver a : apps) if (a.email() != null) saveLog(a.name(), a.email(), "PO", lightSubject,
                         "SKIPPED: PDF sırası dolu, onay postası gönderilmedi", team.getName(), fresh, channel);
             } catch (RuntimeException e) {
+                // PDF üretilemedi (500), gövde kurulamadı…: postası denenmemiş her onaylayıcıya FAILED satırı (sınıf adıyla →
+                // gönderim günlüğünde "iç hata"); denenmiş olanların satırı zaten yazıldı
                 log.warn("Teknik hata raporu #{} onay postası hazırlanamadı: {}", fresh.getId(), e.toString());
                 problem = "MAIL_FAILED";
-                failed = mails.size();
+                String status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
+                for (Approver a : apps) {
+                    if (a.email() == null || logged.contains(a.id())) continue;
+                    saveLog(a.name(), a.email(), "PO", subject, status, team.getName(), fresh, channel);
+                    failed++;
+                }
             }
         } else {
             problem = "NO_APPROVER_EMAIL";
+            // Onaylayıcıların hiçbirinin e-postası yok: istek uygulama içinde bekler; karar yine bir günlük satırı bırakır
+            // (gönderim günlüğünde "onaylayıcı e-postası yok" — düzeltme PO kullanıcılarının AD adresi)
+            saveLog(team.getName(), "", "PO", lightSubject, TechErrorReminderService.ST_NO_APPROVER_EMAIL, null, fresh, channel);
         }
         // Geçmiş olayı postalardan SONRA: kime gerçekten gittiği ve gitmeme sebebi (inceleme 2026-10-17)
         TechErrorHistoryService h = service.history();
@@ -377,6 +401,10 @@ public class TechErrorApprovalService {
                     "Only the team's active members with the PO (product owner) role can approve or reject this report."));
         }
         String note = validateNote(approve, rawNote);
+        // Kanalın yönetici alıcıları kaldırıldıysa onay akışı YOK (inceleme 2026-10-18): bekleyen istek karar beklemez —
+        // onay otomatik gönderimi EXEC_RECIPIENTS_MISSING ile düşer, isteyen "onaylandı ama gönderilemedi" alırdı. Uygulama
+        // içi ve bağlantıdan karar 409; istek durumu kalır, alıcılar yeniden eklenince karar verilebilir (hatırlatma da sürer)
+        if (!approvalRequired(channel)) throw flowRemoved();
         TechErrorReport fresh = service.report(report.getId());
         if (!"PENDING".equals(fresh.getApprovalState())) throw notPending();
         Long rev = fresh.getApprovalRev();
@@ -564,6 +592,13 @@ public class TechErrorApprovalService {
                 "There is no pending approval request for this report (it may already be decided or withdrawn). Reload the page."));
     }
 
+    /** Onay akışı kaldırıldı: kanalın yönetici alıcısı yok — rapor onaysız, takım adresine doğrudan gönderilir. */
+    static CodedConflictException flowRemoved() {
+        return new CodedConflictException("APPROVAL_FLOW_REMOVED", Msg.t(
+                "Kanalın yönetici (executive) alıcıları kaldırıldı; bu raporun onaya ihtiyacı kalmadı. Ekip raporu takım adresine doğrudan gönderebilir; alıcılar yeniden eklenirse bekleyen istek için karar verilebilir.",
+                "The channel's executive recipients were removed, so this report no longer needs approval. The team can send it straight to the team address; if recipients are added again, the pending request can be decided."));
+    }
+
     private static CodedConflictException stale() {
         return new CodedConflictException("APPROVAL_STALE", Msg.t(
                 "Rapor onay isteğinden sonra değişti; bu hâliyle onaylanamaz. Ekip raporu yeniden onaya göndermeli.",
@@ -574,7 +609,7 @@ public class TechErrorApprovalService {
 
     /**
      * Bağlantı durumu: {@code valid} ise {@code reason} null; değilse not_found | used | superseded | expired | not_pending |
-     * stale | approver_inactive | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
+     * flow_removed (kanalın yönetici alıcıları kaldırıldı — onay gerekmiyor) | stale | approver_inactive | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
      * Sıra: kullanılmış → yerine geçilmiş (A2: yeni istek gönderildi — süresi de dolmuş olsa "en son postayı kullanın" demek
      * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → onaylayıcı değil → rolün onay / okuma izni
      * yok ya da modül takıma kapalı (A1, {@link #linkDecisionAllowed}).
@@ -609,6 +644,9 @@ public class TechErrorApprovalService {
         if (!"PENDING".equals(r.getApprovalState()) || !Objects.equals(r.getApprovalRev(), t.getApprovalRev())) {
             return new TokenStatus(false, "not_pending", t, r, ch, u);
         }
+        // Onay akışı kaldırıldı (kanalın yönetici alıcısı yok): bağlantı karar veremez, belirteç tüketilmez — alıcılar yeniden
+        // eklenirse aynı bağlantı (süresi içinde) yine çalışır (inceleme 2026-10-18)
+        if (!approvalRequired(ch)) return new TokenStatus(false, "flow_removed", t, r, ch, u);
         if (u == null || Boolean.FALSE.equals(u.getActive()) || !isApprover(u.getId(), r.getTeamId())) {
             return new TokenStatus(false, "approver_inactive", t, r, ch, u);
         }
@@ -703,6 +741,21 @@ public class TechErrorApprovalService {
             return url == null || url.isBlank() ? null : url.trim().replaceAll("/+$", "");
         } catch (RuntimeException e) {
             return null;
+        }
+    }
+
+    /**
+     * İstek postasının konusu ağır girdi (görseller) yüklenmeden — PDF sırası dolu / hazırlık hatası / adres yok satırları için
+     * ({@link TechErrorApprovalMail#requestSubject} ile aynı biçim). Şablon okunamazsa kanal adı.
+     */
+    static String requestSubjectOf(TechErrorReport r, TechErrorChannel ch) {
+        String name = ch == null ? null : ch.getName();
+        try {
+            TechErrorTemplate.Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
+            String title = TechErrorTemplate.resolve(t.title(), name, r.getReportYear(), r.getReportMonth(), t.lang());
+            return (t.en() ? "[Approval needed] " : "[Onay bekliyor] ") + title;
+        } catch (RuntimeException e) {
+            return "[Onay bekliyor] " + (name == null ? "" : name);
         }
     }
 

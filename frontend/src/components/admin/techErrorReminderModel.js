@@ -81,18 +81,24 @@ export function parseWhole(v) {
 
 /**
  * Doğrulama — `{ alan: { key, params } }` (hata yoksa boş nesne). Kurallar sunucuyla aynı: her sayı aralık içinde tam sayı,
- * gövde bütçesi posta sınırından KÜÇÜK (ikisi de geçerliyse).
+ * gövde bütçesi posta sınırından KÜÇÜK (ikisi de geçerliyse). `saved` verilirse YALNIZ değişen alanlar denetlenir (kural 9,
+ * inceleme 2026-10-18): kayıtlı değerle aynı sayı (aynı değerin başka yazımı da — "06" = 6) yeniden doğrulanmaz; alanlar-arası
+ * kural yalnız iki sınırdan biri değiştiyse (sunucu da yalnız gönderilen tarafı etkin değerle karşılaştırır).
  */
-export function validateForm(form, limits = REM_DEFAULT_LIMITS) {
+export function validateForm(form, limits = REM_DEFAULT_LIMITS, saved = null) {
   const errs = {}
+  const lim = limits || REM_DEFAULT_LIMITS
+  const unchanged = (k) => saved != null && parseWhole(form?.[k]) != null && parseWhole(form?.[k]) === saved[k]
   for (const k of REM_INT_FIELDS) {
-    const l = limits[k] || REM_DEFAULT_LIMITS[k]
+    if (unchanged(k)) continue
+    const l = lim[k] || REM_DEFAULT_LIMITS[k]
     const n = parseWhole(form?.[k])
     if (n == null || n < l.min || n > l.max) errs[k] = { key: 'te.rem.v.whole', params: [l.min, l.max] }
   }
   const max = parseWhole(form?.max_mail_mb)
   const inline = parseWhole(form?.mail_inline_mb)
-  if (!errs.max_mail_mb && !errs.mail_inline_mb && max != null && inline != null && inline >= max) {
+  const limitsChanged = !unchanged('max_mail_mb') || !unchanged('mail_inline_mb')
+  if (limitsChanged && !errs.max_mail_mb && !errs.mail_inline_mb && max != null && inline != null && inline >= max) {
     errs.mail_inline_mb = { key: 'te.rem.v.inline', params: [inline, max] }
   }
   return errs
