@@ -21101,6 +21101,8 @@ export const EN = {
   'te.iss.hint': "Open a topic for every subject whose technical errors rose abnormally in the month: enter when it happened, how many errors it caused, whether an outage caused it and the customer impact; the report text is built from these answers.",
   'te.iss.hiddenCount': "{0} topic(s) have no customer impact and will be left out of the report (PDF / e-mail); they stay visible here.",
   'te.iss.chipsLabel': "Topic summary",
+  'te.iss.expandAll': "Expand all topics",
+  'te.iss.collapseAll': "Collapse all topics",
   'te.iss.groupTopic': "Topic and title",
   'te.iss.date': "Date",
   'te.iss.datePlaceholder': "Pick a day",

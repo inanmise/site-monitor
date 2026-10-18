@@ -400,14 +400,19 @@ const ME_USER = 'demo'
  * girişte sahibi bilinmeyen kişisel kayıtları siler (`claimPersonalStorage`) ve tohum kaybolur. Her gezinmede yeniden
  * yazılır (yeniden yüklemede de hepsi açık).
  */
-async function seedOpenSections(page, { reports = [100], channels = [10, 20] } = {}) {
-  await page.addInitScript(({ owner, reports: r, channels: c }) => {
+async function seedOpenSections(page, { reports = [100], channels = [10, 20], topics = true } = {}) {
+  // Katlanır anomali konuları (2026-10-18) da kapalı başlar (`sm.te.open.ri.<rapor>`): konu akordeonuyla ilgisi olmayan testler
+  // konuları da açık tohumlar; akordeonu sınayan test `topics: false` ile yalnız bölümleri açar
+  await page.addInitScript(({ owner, reports: r, channels: c, topics: tp }) => {
     try {
       localStorage.setItem('sm.storage.owner', owner)
-      for (const id of r) localStorage.setItem(`sm.te.open.r.${id}`, JSON.stringify({ all: true }))
+      for (const id of r) {
+        localStorage.setItem(`sm.te.open.r.${id}`, JSON.stringify({ all: true }))
+        if (tp) localStorage.setItem(`sm.te.open.ri.${id}`, JSON.stringify({ all: true }))
+      }
       for (const id of c) localStorage.setItem(`sm.te.open.t.${id}`, JSON.stringify({ all: true }))
     } catch { /* yoksay */ }
-  }, { owner: ME_USER, reports, channels })
+  }, { owner: ME_USER, reports, channels, topics })
 }
 
 let savedTemplate = null
@@ -512,7 +517,7 @@ const libEntry = (id, name, extra = {}) => ({
   version: 1, can_edit: true, ...extra,
 })
 const LONG_LIB = 'Dijital Kanallar Bireysel Bankacılık Mobil ve İnternet Şubesi Ortak Aylık Teknik Hata Şablonu (Takım Varsayılanı 2026)'
-async function mock(page, { openSections = true, target = page } = {}) {
+async function mock(page, { openSections = true, openTopics = true, target = page } = {}) {
   persistUploads = false; storedImages = []
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
   testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
@@ -526,7 +531,7 @@ async function mock(page, { openSections = true, target = page } = {}) {
   await target.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
-  if (openSections) await seedOpenSections(target)
+  if (openSections) await seedOpenSections(target, { topics: openTopics })
   await target.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
     const req = route.request()
     const p = new URL(req.url()).pathname
@@ -1460,6 +1465,101 @@ for (const vp of VIEWPORTS) {
       expect(savedReport.values.issues.issues.find((x) => x.id === id).errors).toBe(1250000)
       expect(savedReport.values.fields['error-count']).toBe(50000000)
       await page.screenshot({ path: `test-results/channel-reports-anomaly-${vp.name}.png` })
+    })
+
+    test('konu akordiyonu (2026-10-18): var olan konular kapalı, çipler başlıkta; tıklama + klavye; yeni konu açık ve odakta; Kaydet geçersiz alanlı kapalı konuyu açar; tüm konuları aç / kapat; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(150_000)
+      // Bölümler açık (kullanıcı daha önce açmış), konular KAPALI — akordeonun kendisi sınanıyor
+      await mock(page, { openTopics: false })
+      await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
+      reportOverride = JSON.parse(JSON.stringify(ANOMALY_REPORT))
+      reportOverride.values.issues.issues.push({ id: 'k2', topic: 'Fatura Ödeme ve Otomatik Talimat Servisi (Kurumsal / Bireysel Müşteriler)',
+        title: '', title_auto: true, description: '', errors: 420, outage: false, impact: false })
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const issues = editor.locator('[data-slot="te-issues"]')
+      const first = editor.locator('[data-slot="te-issue"][data-issue="k1"]')
+      const second = editor.locator('[data-slot="te-issue"][data-issue="k2"]')
+      const toggle = (card) => card.locator('[data-slot="te-issue-toggle"]')
+      await expect(first).toHaveAttribute('data-open', 'false', { timeout: 20_000 })
+      await expect(second).toHaveAttribute('data-open', 'false')
+      // Kapalı konu hikâyesini başlıkta söyler: başlık + zaman, adet + pay, kesinti + ID, müşteri
+      await expect(toggle(first)).toHaveAttribute('aria-expanded', 'false')
+      await expect(first.locator('[data-slot="te-issue-title"]')).toContainText(`1. ${LONG_TOPIC}: Hata Artışı`)
+      const chips = first.locator('[data-slot="te-issue-chips"]')
+      await expect(chips).toContainText(/12 Eylül 2026 · 14:00–15:30/)
+      await expect(chips).toContainText('INC-2026-0915-MOBIL-LIMIT-SORGU-ZAMAN-ASIMI')
+      await expect(chips).toContainText('320 müşteri')
+      await expect(second.locator('[data-slot="te-issue-chips"]')).toContainText('Kesinti değil')
+      await expect(first.locator('[data-slot="te-issue-content"]')).toBeHidden()
+      await expect(first.getByLabel('Konu', { exact: true })).toBeHidden()
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kapalı konular)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (kapalı konular)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (kapalı konular)').toEqual([])
+      // Başlık satırının tamamı hedef: düğme kartın genişliğinin büyük kısmı; çipler kartın içinde; taşı / sil düğmenin dışında
+      const cardBox = await first.boundingBox()
+      const tBox = await toggle(first).boundingBox()
+      expect(tBox.width, 'aç / kapat satırı geniş').toBeGreaterThan(cardBox.width * 0.55)
+      for (const b of await chips.locator('[data-slot="badge"]').all()) {
+        const bb = await b.boundingBox()
+        expect(bb.x + bb.width, 'çip kartın içinde').toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+      }
+      // Taşı / sil düğmenin DIŞINDA: geniş kartta sağında, dar kartta (telefon / tablet) alt satırda, sağa yaslı
+      const removeBox = await first.locator('[data-slot="te-issue-remove"]').boundingBox()
+      const besideOrBelow = removeBox.x >= tBox.x + tBox.width - 1 || removeBox.y >= tBox.y + tBox.height - 1
+      expect(besideOrBelow, 'sil düğmesi aç / kapat düğmesinin dışında').toBe(true)
+      expect(removeBox.x + removeBox.width, 'sil düğmesi kartın içinde').toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+      if (vp.width >= 1280) expect(Math.abs(removeBox.y - tBox.y), 'geniş ekranda tek satır').toBeLessThanOrEqual(4)
+
+      // Tıklama açar; içerik görünür; açık konu bu rapor için hatırlanır
+      await toggle(first).click()
+      await expect(first).toHaveAttribute('data-open', 'true')
+      await expect(first.getByLabel('Konu', { exact: true })).toBeVisible()
+      // Klavye: odaktaki düğmede Enter açar, Boşluk kapatır
+      await toggle(second).focus()
+      await page.keyboard.press('Enter')
+      await expect(second).toHaveAttribute('data-open', 'true')
+      await page.keyboard.press('Space')
+      await expect(second).toHaveAttribute('data-open', 'false')
+      await expect.poll(() => page.evaluate(() => localStorage.getItem('sm.te.open.ri.100'))).toBe(JSON.stringify({ ids: ['issues:k1'] }))
+
+      // Yeni konu açık gelir, odak Konu alanında; öteki konuların durumu değişmez
+      await editor.locator('[data-slot="te-add-issue"]').click()
+      const fresh = editor.locator('[data-slot="te-issue"]').nth(2)
+      await expect(fresh).toHaveAttribute('data-open', 'true')
+      await expect(fresh.getByLabel('Konu', { exact: true })).toBeFocused()
+      await expect(second).toHaveAttribute('data-open', 'false')
+      await fresh.getByLabel('Konu', { exact: true }).fill('Mobil Giriş')
+
+      // Geçersiz alanlı konu kapatılınca rozet; Kaydet konuyu açar, alanın altında ileti, kayıt GİTMEZ
+      await first.getByLabel('Kesinti ID', { exact: true }).fill('')
+      await toggle(first).click()
+      await expect(first).toHaveAttribute('data-open', 'false')
+      await expect(first.locator('[data-slot="te-issue-invalid"]')).toContainText('1 alan düzeltilmeli')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (rozet)').toEqual([])
+      await page.locator('[data-slot="te-save"]').click()
+      await expect(first).toHaveAttribute('data-open', 'true')
+      await expect(first.locator('[data-field="issue:issues:k1:outage_id"] [role="alert"]')).toBeVisible()
+      await expect(first.locator('[data-slot="te-issue-invalid"]')).toHaveCount(0)
+      expect(savedReport, 'geçersiz alanla kayıt gitmez').toBeNull()
+      await first.getByLabel('Kesinti ID', { exact: true }).fill('INC-2026-0915')
+
+      // Tüm konuları aç / kapat: yalnız konular; bölüm açık kalır
+      const all = issues.locator('[data-slot="te-issues-all"]')
+      await expect(all).toHaveText(/Tüm konuları aç/)
+      await all.click()
+      for (const c of [first, second, fresh]) await expect(c).toHaveAttribute('data-open', 'true')
+      await expect(all).toHaveText(/Tüm konuları kapat/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (açık konular)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (açık konular)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (açık konular)').toEqual([])
+      await all.click()
+      for (const c of [first, second, fresh]) await expect(c).toHaveAttribute('data-open', 'false')
+      await expect(issues).toHaveAttribute('data-open', 'true')
+      await page.screenshot({ path: `test-results/channel-reports-topic-accordion-${vp.name}.png`, fullPage: true })
     })
 
     test('anomali (2026-10-18): "konuyu rapora alma" notu; şablonda "Anomali alanları" paneli — anahtarlar, pay alanı, seçim kartları; sığar, dokunma hedefleri', async ({ page }) => {

@@ -1,6 +1,6 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, CalendarClock, EyeOff, FileText, Hash, ImageIcon, Plus, ScrollText, Tag, Trash2, Users, Wand2, Zap,
+  ArrowDown, ArrowUp, CalendarClock, ChevronRight, EyeOff, FileText, Hash, ImageIcon, Plus, ScrollText, Tag, Trash2, Users, Wand2, Zap,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -9,19 +9,20 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
 import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import { NumberInput, PendingInputContext, issueErrorKey } from './ReportSections.jsx'
 import { RichText, RichTextarea } from './RichText.jsx'
 import { CopyTextButton } from './TechErrorParts.jsx'
-import { CollapsibleCard } from './SectionCollapse.jsx'
+import { CollapsibleCard, ExpandAllButton, TopicOpenContext, supportsUntilFound, useUntilFound } from './SectionCollapse.jsx'
 import { ImageSlotTile } from './ReportImages.jsx'
 import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './capture/CaptureParts.jsx'
 import { postImagesChanged } from './capture/imageSync.js'
 import {
   ISSUE_IMAGES, ISSUE_LIMITS, LIMITS, allFields, formatCount, formatPercent, issueDayLabel, issueDisplayTitle, issueHidden,
   issueLeadText, issueLegacy, issueOptions, issueRangeLabel, issueShare, issueSlotId, issueUnitKey, move, newIssue, reportMonthBounds,
-  resolveIssueTitle,
+  resolveIssueTitle, topicOpenId,
 } from './techErrorModel.js'
 
 const EMPTY = Object.freeze([])
@@ -43,11 +44,45 @@ const EMPTY = Object.freeze([])
  * (görsel yuvaları dahil) çizilmez. Geri çağrılar konu KİMLİĞİYLE ve sabit (`onIssuesUpdate` işlevsel güncelleme alır); her
  * kart yalnız KENDİ görsellerini ve KENDİ hata anahtarlarını alır. Rapor toplamı (40 MB) yükleme ANINDA okunur (`imagesRef`,
  * 2026-10-15 kuralı — hazırlama sürerken başka yuvaya yüklenen görsel de sayılır).
+ *
+ * <p>KATLANIR KONULAR (2026-10-18, kullanıcı isteği: "Anormal Artış Gösteren Hatalar altında eklenen konu ve başlıklar da kendi
+ * içinde akordiyon gibi açılıp kapanabilsin"): her konu bölümler gibi açılır / kapanır — aynı yapı taşları (`TopicOpenContext`
+ * = `useSectionOpenState` + `useSectionOpenValue`, `useUntilFound`). Var olan konular KAPALI başlar; başlık satırı konunun
+ * başlığını ve özet çiplerini taşır (kapalı konu da ne olduğunu söyler). Yeni eklenen konu AÇIK gelir ve odak ilk alanına
+ * (Konu) geçer. İçerik kapalıyken de kurulu kalır (yarım yazılmış metin, odak, yarım girdiler, görsel yuvaları korunur). Hata
+ * kümesine YENİ anahtar eklenen konu kendiliğinden açılır (düzenleyici); kapalı konuda hatalı alan sayısı rozetle görünür.
+ * "Tüm konuları aç / kapat" yalnız bu bölümün konularını değiştirir; bölümlerin "Tümünü aç"ı konulara dokunmaz. Salt okunur
+ * kullanıcı da açıp kapatabilir. Açık durum kartlara DEĞER olarak (`open`, `invalid`) ve sabit `onToggle` ile verilir: bir
+ * konuyu açmak ya da yazmak öbür kartları çizdirmez.
  */
 export function IssuesBlock({ section, template, list = EMPTY, units = null, shownFields, resolve, uiLang, readOnly, errors, onIssuesUpdate,
   onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload, captureNotice = false }) {
   const t = useT()
   const sid = section.id
+  const topics = useContext(TopicOpenContext)
+  const setTopicOpen = topics?.setOpen
+  const openTopics = topics?.openMany
+  const closeTopics = topics?.closeMany
+  // Sabit: kart memo'su açma / kapamada başka kartı çizmesin
+  const onToggle = useCallback((iid, o) => setTopicOpen?.(topicOpenId(sid, iid), o), [setTopicOpen, sid])
+  // Yeni konu: açık gelir, odak ilk alanına (Konu) — kart çizildikten sonra (açık durum aynı çizimde uygulanır)
+  const [focusTopic, setFocusTopic] = useState(null)
+  useEffect(() => {
+    if (!focusTopic) return
+    const el = globalThis.document?.getElementById(`te-iss-${sid}-${focusTopic}-topic`)
+    if (!el) return
+    setFocusTopic(null)
+    el.focus?.({ preventScroll: false })
+    try { el.scrollIntoView?.({ block: 'center' }) } catch { /* yok */ }
+  }, [focusTopic, list, sid])
+  const topicKeys = list.map((i) => topicOpenId(sid, i.id))
+  const allTopicsOpen = !topics || topicKeys.every((k) => topics.isOpen(k))
+  function addTopic() {
+    const fresh = newIssue(list)
+    onIssuesUpdate(sid, (l) => [...l, fresh])
+    setTopicOpen?.(topicOpenId(sid, fresh.id), true)
+    setFocusTopic(fresh.id)
+  }
   const lang = template?.lang
   const opts = useMemo(() => issueOptions(section, lang), [section, lang])
   const legacy = issueLegacy(opts)
@@ -81,7 +116,11 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
     const idx = l.findIndex((i) => i.id === iid)
     return idx < 0 ? l : move(l, idx, delta)
   }), [onIssuesUpdate, sid])
-  const remove = useCallback((iid) => onIssuesUpdate(sid, (l) => l.filter((x) => x.id !== iid)), [onIssuesUpdate, sid])
+  const remove = useCallback((iid) => {
+    onIssuesUpdate(sid, (l) => l.filter((x) => x.id !== iid))
+    // Silinen konunun açık kaydı da düşer (64'lük tavanda canlı konuların yerini tutmasın)
+    setTopicOpen?.(topicOpenId(sid, iid), false)
+  }, [onIssuesUpdate, sid, setTopicOpen])
   return (
     <CollapsibleCard sectionId={sid} slot="te-issues" title={resolve(section.title)} contentClassName="flex flex-col gap-4"
       hint={<p className="text-sm text-muted-foreground">{t(legacy ? 'te.issues.hint' : 'te.iss.hint')}</p>}>
@@ -96,23 +135,39 @@ export function IssuesBlock({ section, template, list = EMPTY, units = null, sho
           <span className="[overflow-wrap:anywhere]">{t('te.iss.hiddenCount', hidden)}</span>
         </p>
       )}
-      <ol className="m-0 flex list-none flex-col gap-4 p-0">
-        {list.map((iss, idx) => (
-          <IssueCard key={iss.id} section={section} template={template} opts={opts} legacy={legacy} issue={iss} index={idx}
-            count={list.length} shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
-            errors={cardErrors(errors, sid, iss.id, idx)} onFieldError={onFieldError} reportId={reportId}
-            images={byIssue.get(iss.id) || EMPTY} otherBytes={otherBytes} onImagesChange={notifyChange} period={period}
-            beforeIssueUpload={beforeIssueUpload} onPatch={patch} onMove={moveBy} onRemove={remove}
-            // Kısaltma üsleri (2026-10-18) kartın KENDİ iki değeri — memo başka konunun üssünde yeniden çizmesin
-            onUnit={onUnit} errorsUnit={units?.[issueUnitKey(sid, iss.id, 'errors')] ?? null}
-            customersUnit={units?.[issueUnitKey(sid, iss.id, 'customers')] ?? null} />
-        ))}
+      <ol className="m-0 flex list-none flex-col gap-3 p-0">
+        {list.map((iss, idx) => {
+          const tk = topicKeys[idx]
+          const open = topics ? topics.isOpen(tk) : true
+          return (
+            <IssueCard key={iss.id} section={section} template={template} opts={opts} legacy={legacy} issue={iss} index={idx}
+              count={list.length} shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly}
+              errors={cardErrors(errors, sid, iss.id, idx)} onFieldError={onFieldError} reportId={reportId}
+              images={byIssue.get(iss.id) || EMPTY} otherBytes={otherBytes} onImagesChange={notifyChange} period={period}
+              beforeIssueUpload={beforeIssueUpload} onPatch={patch} onMove={moveBy} onRemove={remove}
+              // Katlanır konu (2026-10-18): açık mı + kapalıyken hatalı alan sayısı DEĞER olarak; geri çağrı sabit (sağlayıcı
+              // yoksa — eski kullanım — konu hep açık, düğmesiz)
+              open={open} collapsible={!!topics} onToggle={onToggle} invalid={topics && !open ? topics.invalidCount(tk) : 0}
+              // Kısaltma üsleri (2026-10-18) kartın KENDİ iki değeri — memo başka konunun üssünde yeniden çizmesin
+              onUnit={onUnit} errorsUnit={units?.[issueUnitKey(sid, iss.id, 'errors')] ?? null}
+              customersUnit={units?.[issueUnitKey(sid, iss.id, 'customers')] ?? null} />
+          )
+        })}
       </ol>
-      {!readOnly && (
-        <Button type="button" variant="outline" className="w-fit pointer-coarse:min-h-10" disabled={list.length >= LIMITS.issues}
-          onClick={() => onIssuesUpdate(sid, (l) => [...l, newIssue(l)])} data-slot="te-add-issue">
-          <Plus aria-hidden="true" /> {t('te.issues.add')}
-        </Button>
+      {(!readOnly || (topics && list.length > 0)) && (
+        <div className="flex flex-wrap items-center gap-2" data-slot="te-issues-toolbar">
+          {!readOnly && (
+            <Button type="button" variant="outline" className="w-fit pointer-coarse:min-h-10" disabled={list.length >= LIMITS.issues}
+              onClick={addTopic} data-slot="te-add-issue">
+              <Plus aria-hidden="true" /> {t('te.issues.add')}
+            </Button>
+          )}
+          {/* Yalnız bu bölümün konuları (bölümlerin "Tümünü aç"ından bağımsız); salt okunurda da */}
+          {topics && list.length > 0 && (
+            <ExpandAllButton allOpen={allTopicsOpen} slot="te-issues-all" expandKey="te.iss.expandAll" collapseKey="te.iss.collapseAll"
+              className="h-9 pointer-coarse:min-h-10" onToggle={(o) => (o ? openTopics?.(topicKeys) : closeTopics?.(topicKeys))} />
+          )}
+        </div>
       )}
     </CollapsibleCard>
   )
@@ -241,14 +296,29 @@ const plural = (t, key, n, ...rest) => t(Number(n) === 1 ? `${key}.one` : key, .
 
 const REVEAL = 'animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none'
 
+/*
+ * KONU BAŞLIĞI (2026-10-18, katlanır konular): bölüm kartının deseni bir kademe küçük — başlık (h4) içinde satırın tamamını
+ * kaplayan aç / kapat düğmesi (WAI akordeon), ok önde; düğmenin erişilebilir adı konu başlığı (aria-labelledby), özet çipleri
+ * açıklaması (aria-describedby) — kapalı konu da ne olduğunu söyler. Kopyala / taşı / sil düğmenin DIŞINDA, başlığın kardeşi;
+ * çok satıra saran başlıkta ilk satırla hizalı (`TOPIC_SIDE`). Yalnız jeton renkleri.
+ */
+const TOPIC_TOGGLE = 'h-auto min-h-0 w-full items-start justify-start gap-2 whitespace-normal rounded-lg px-2 py-2 text-left'
+  + ' text-sm font-semibold leading-snug text-foreground has-[>svg]:px-2 sm:text-base pointer-coarse:min-h-10'
+/** Başlığın ilk satırının yüksekliği: `py-2` × 2 + `leading-snug` satırı (sm+: 16 × 1,375 = 22 px) = 38 px. */
+const TOPIC_SIDE = 'flex min-h-[2.375rem] shrink-0 items-center pointer-coarse:min-h-10'
+
 const IssueCard = memo(function IssueCard({ section, template, opts, legacy, issue: iss, index: idx, count, shownFields, resolve,
   uiLang, readOnly, errors, onFieldError, reportId, images, otherBytes, onImagesChange, period, beforeIssueUpload, onPatch, onMove,
-  onRemove, onUnit = null, errorsUnit = null, customersUnit = null }) {
+  onRemove, onUnit = null, errorsUnit = null, customersUnit = null, open = true, collapsible = false, onToggle = null, invalid = 0 }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const sid = section.id
   const iid = iss.id
   const base = `te-iss-${sid}-${iid}`
+  // Katlanır konu: içerik kapalıyken de kurulu kalır (hidden="until-found" — sayfada bul açar)
+  const contentRef = useRef(null)
+  const onFound = useMemo(() => (collapsible && onToggle ? () => onToggle(iid, true) : null), [collapsible, onToggle, iid])
+  useUntilFound(contentRef, open, onFound)
   const pattern = section.item_title
   const shownTitle = issueDisplayTitle(iss, pattern)
   const tplLang = template?.lang === 'en' ? 'en' : 'tr'
@@ -369,46 +439,58 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
   const titleErr = err('title')
   const hasRange = !!(iss.start && iss.end)
   const incomplete = (f) => (half) => onFieldError(fieldKey(f), half ? t('te.iss.err.timeIncomplete') : null)
-  return (
-    <li className={cn('rounded-xl border bg-card p-3 sm:p-4', isHidden && 'border-dashed')} data-slot="te-issue" data-issue={iid}
-      data-hidden={isHidden ? 'true' : undefined} data-field={`issues.${sid}.${idx + 1}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          {/* Konu başlığı bir BAŞLIK (h4): kart içindeki grup başlıkları (h5) bağlamını buradan alır — inceleme 2026-10-18 */}
-          <h4 className="m-0 text-sm font-semibold leading-snug [overflow-wrap:anywhere] sm:text-base" data-slot="te-issue-title">
-            {idx + 1}. {shownTitle || t('te.issues.untitled')}
-          </h4>
-          {chips.length > 0 && (
-            <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" data-slot="te-issue-chips" aria-label={t('te.iss.chipsLabel')}>
-              {chips.map((c) => (
-                <li key={c.key} className="min-w-0 max-w-full">
-                  <Badge variant="outline" data-chip={c.key}
-                    className={cn('h-auto max-w-full justify-start gap-1 whitespace-normal rounded-md py-1 text-left font-normal leading-snug overflow-visible [overflow-wrap:anywhere]',
-                      c.tone === 'warn' && 'border-amber-300 text-amber-900 dark:border-amber-800 dark:text-amber-200',
-                      c.tone === 'muted' && 'text-muted-foreground')}>
-                    <c.icon aria-hidden="true" className="size-3.5 shrink-0" />
-                    <span className="min-w-0">{c.text}</span>
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {!readOnly && (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === 0}
-              aria-label={t('te.moveUp', shownTitle || idx + 1)} onClick={() => onMove(iid, -1)}><ArrowUp aria-hidden="true" /></Button>
-            <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === count - 1}
-              aria-label={t('te.moveDown', shownTitle || idx + 1)} onClick={() => onMove(iid, 1)}><ArrowDown aria-hidden="true" /></Button>
-            <Button type="button" size="icon" variant="ghost" className="size-8 text-destructive pointer-coarse:size-10"
-              aria-label={t('te.issues.remove', shownTitle || idx + 1)} onClick={remove} data-slot="te-issue-remove">
-              <Trash2 aria-hidden="true" />
-            </Button>
-          </div>
-        )}
+  const titleId = `${base}-title-h`
+  const chipsId = `${base}-chips`
+  const titleText = `${idx + 1}. ${shownTitle || t('te.issues.untitled')}`
+  // Özet çipleri: kapalı konunun "hikâyesi" — zaman, adet + pay, kesinti + ID, müşteri etkisi, rapora girmeyecek. Düğmenin içinde
+  // (dokunmatikte satırın tamamı hedef) ama yalnız SÖZ İÇERİĞİ (span — düğmede liste olamaz); adları düğmenin açıklaması
+  const chipList = chips.length > 0 ? (
+    <span id={chipsId} className="flex min-w-0 flex-wrap gap-1.5" data-slot="te-issue-chips">
+      <span className="sr-only">{`${t('te.iss.chipsLabel')}: `}</span>
+      {chips.map((c) => (
+        <Badge key={c.key} variant="outline" data-chip={c.key}
+          className={cn('h-auto max-w-full justify-start gap-1 whitespace-normal rounded-md py-1 text-left text-xs font-normal leading-snug overflow-visible [overflow-wrap:anywhere]',
+            c.tone === 'warn' && 'border-amber-300 text-amber-900 dark:border-amber-800 dark:text-amber-200',
+            c.tone === 'muted' && 'text-muted-foreground')}>
+          <c.icon aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="min-w-0">{c.text}</span>
+        </Badge>
+      ))}
+    </span>
+  ) : null
+  const titleBody = (
+    <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <span id={titleId} className="min-w-0 [overflow-wrap:anywhere]" data-slot="te-issue-title">{titleText}</span>
+      {chipList}
+    </span>
+  )
+  const actions = !readOnly && (
+    <div className={cn(TOPIC_SIDE, 'ms-auto gap-0.5')} data-slot="te-issue-actions">
+      <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === 0}
+        aria-label={t('te.moveUp', shownTitle || idx + 1)} onClick={() => onMove(iid, -1)}><ArrowUp aria-hidden="true" /></Button>
+      <Button type="button" size="icon" variant="ghost" className="size-8 pointer-coarse:size-10" disabled={idx === count - 1}
+        aria-label={t('te.moveDown', shownTitle || idx + 1)} onClick={() => onMove(iid, 1)}><ArrowDown aria-hidden="true" /></Button>
+      <Button type="button" size="icon" variant="ghost" className="size-8 text-destructive pointer-coarse:size-10"
+        aria-label={t('te.issues.remove', shownTitle || idx + 1)} onClick={remove} data-slot="te-issue-remove">
+        <Trash2 aria-hidden="true" />
+      </Button>
+    </div>
+  )
+  // Başlık satırı: h4 (satırın kalanı) + kopyalama ikonu aynı `te-copy-row` kabında (ikon başlığın KARDEŞİ), sağda taşı / sil.
+  // Dar kartta (telefon, 768 px'te iki sütunlu düzen — dokunmatikte dört 40 px düğme) taşı / sil ALT satıra sarar, sağa yaslı:
+  // başlık düğmesi en az 16rem'i korur (e2e: telefonda başlık 122 px'e sıkışıyordu)
+  const headerRow = (heading) => (
+    <div className="flex flex-wrap items-start gap-1 p-1.5" data-slot="te-issue-header">
+      <div data-slot="te-copy-row" className="flex min-w-0 grow basis-64 items-start">
+        {heading}
+        <CopyTextButton text={shownTitle} className={TOPIC_SIDE} />
       </div>
-
-      <div className="mt-4 flex flex-col gap-4">
+      {actions}
+    </div>
+  )
+  const body = (
+    <>
+      <div className="flex flex-col gap-4 border-t px-3 pb-3 pt-4 sm:px-4 sm:pb-4">
         <Group icon={Tag} title={t('te.iss.groupTopic')} slot="te-issue-topic" first>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="flex min-w-0 flex-col gap-1.5" data-field={fieldKey('topic')}>
@@ -641,7 +723,57 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
           </Group>
         )}
       </div>
-      {legacyErr && <p id={`${base}-e`} className="mt-2 text-sm text-destructive" role="alert">{legacyErr}</p>}
-    </li>
+      {legacyErr && <p id={`${base}-e`} className="m-0 px-3 pb-3 text-sm text-destructive sm:px-4" role="alert">{legacyErr}</p>}
+    </>
+  )
+  const liProps = {
+    className: cn('rounded-xl border bg-card', isHidden && 'border-dashed'),
+    'data-slot': 'te-issue',
+    'data-issue': iid,
+    'data-hidden': isHidden ? 'true' : undefined,
+    'data-field': `issues.${sid}.${idx + 1}`,
+  }
+  // Sağlayıcısız (katlanma yok): eski düzen — başlık h4, içerik hep açık
+  if (!collapsible) {
+    return (
+      <li {...liProps}>
+        {headerRow(
+          <h4 className="m-0 flex min-w-0 flex-1 items-start px-2 py-2 text-sm font-semibold leading-snug sm:text-base">{titleBody}</h4>,
+        )}
+        {body}
+      </li>
+    )
+  }
+  return (
+    <Collapsible open={open} onOpenChange={(o) => onToggle?.(iid, o)} asChild>
+      <li {...liProps} data-open={open ? 'true' : 'false'}>
+        {/* Konu başlığı bir BAŞLIK (h4): kart içindeki grup başlıkları (h5) bağlamını buradan alır — inceleme 2026-10-18 */}
+        {headerRow(
+          <h4 className="m-0 min-w-0 flex-1 text-sm font-semibold leading-snug sm:text-base">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" className={TOPIC_TOGGLE} data-slot="te-issue-toggle"
+                aria-labelledby={titleId} aria-describedby={chipList ? chipsId : undefined}>
+                <ChevronRight aria-hidden="true"
+                  className={cn('mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none sm:mt-[3px]',
+                    open && 'rotate-90')} />
+                {titleBody}
+              </Button>
+            </CollapsibleTrigger>
+          </h4>,
+        )}
+        {/* Kapalı konunun hatalı alan sayısı (bölüm rozetinin aynısı); başlık METNİYLE hizalı: satır 6 + düğme 8 + ok 16 + aralık 8 px */}
+        {invalid > 0 && !open && (
+          <div className="pb-3 pe-3 ps-[2.375rem] sm:pe-4">
+            <Badge variant="destructive" className="w-fit rounded-md overflow-visible whitespace-normal" data-slot="te-issue-invalid">
+              {t('te.sec.invalid', invalid)}
+            </Badge>
+          </div>
+        )}
+        <CollapsibleContent forceMount ref={contentRef} data-slot="te-issue-content"
+          className={supportsUntilFound() ? undefined : 'data-[state=closed]:hidden'}>
+          {body}
+        </CollapsibleContent>
+      </li>
+    </Collapsible>
   )
 }, sameCardProps)

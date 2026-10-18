@@ -68,15 +68,18 @@ export function reportResponse(extra = {}) {
 }
 
 /**
- * Katlanır bölümler (2026-10-16) kapalı başlar; içerikle ilgilenen testler bölümleri kullanıcı "Tümünü aç" demiş gibi
- * açık başlatır. Test verisinin rapor (90–120, 200–210) ve kanal (1–40) kimlikleri için yazılır; `localStorage.clear()`
- * SONRASINDA çağrılır. Katlanmanın kendisini sınayan testler bunu çağırmaz.
+ * Katlanır bölümler (2026-10-16) ve katlanır anomali konuları (2026-10-18) kapalı başlar; içerikle ilgilenen testler
+ * bölümleri ve konuları kullanıcı "Tümünü aç" demiş gibi açık başlatır. Test verisinin rapor (90–120, 200–210) ve kanal
+ * (1–40) kimlikleri için yazılır; `localStorage.clear()` SONRASINDA çağrılır. Katlanmanın kendisini sınayan testler bunu
+ * çağırmaz; `{ topics: false }` yalnız bölümleri açar (konu akordeonu testleri).
  */
-export function openAllSections() {
+export function openAllSections({ topics = true } = {}) {
   const all = JSON.stringify({ all: true })
   try {
-    for (let id = 90; id <= 120; id++) localStorage.setItem(`sm.te.open.r.${id}`, all)
-    for (let id = 200; id <= 210; id++) localStorage.setItem(`sm.te.open.r.${id}`, all)
+    for (const id of [...Array.from({ length: 31 }, (_, i) => 90 + i), ...Array.from({ length: 11 }, (_, i) => 200 + i)]) {
+      localStorage.setItem(`sm.te.open.r.${id}`, all)
+      if (topics) localStorage.setItem(`sm.te.open.ri.${id}`, all)
+    }
     for (let id = 1; id <= 40; id++) localStorage.setItem(`sm.te.open.t.${id}`, all)
   } catch { /* depolama yok */ }
 }

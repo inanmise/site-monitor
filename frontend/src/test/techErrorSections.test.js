@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   OPEN_STATE_MAX_IDS, allSectionsOpen, errorCountsBySection, isSectionOpen, parseOpenState, reportErrorSection,
-  revertInvalidValues, templateErrorSection, withSectionOpen, withSectionsOpened,
+  reportErrorTopic, revertInvalidValues, templateErrorSection, topicOpenId, withSectionOpen, withSectionsClosed, withSectionsOpened,
 } from '../components/techerror/techErrorModel.js'
 
 // Katlanır bölümler + otomatik kayıt (2026-10-16): hata anahtarı → bölüm eşlemesi, otomatik kayıtta geçersiz alanların
@@ -297,5 +297,37 @@ describe('açık bölüm durumu', () => {
     expect(allSectionsOpen({ all: false, ids: ['a', 'b', 'z'] }, ['a', 'b'])).toBe(true)
     expect(allSectionsOpen({ all: false, ids: ['a'] }, ['a', 'b'])).toBe(false)
     expect(allSectionsOpen(null, ['a'])).toBe(false)
+  })
+})
+
+// Katlanır anomali konuları (2026-10-18, kullanıcı isteği): konunun açık-küme kimliği, hata anahtarı → konu, bir bölümün
+// konularını kapatma
+describe('katlanır anomali konuları — saf model', () => {
+  it('topicOpenId: <bölüm>:<konu> — iki bölümün aynı konu kimliği karışmaz, bölüm kimliğiyle çakışmaz', () => {
+    expect(topicOpenId('issues', 'k1')).toBe('issues:k1')
+    expect(topicOpenId('issues-2', 'k1')).not.toBe(topicOpenId('issues', 'k1'))
+    expect(topicOpenId('issues', 'k1')).not.toBe('issues')
+  })
+
+  it('reportErrorTopic: istemci issue:<b>:<k>:<alan>, sunucu issues.<b>.<k>.<alan>, eski sunucunun issues.<b>.<n>i (taslaktaki n. konu); başka anahtar null', () => {
+    const issues = { iss: [{ id: 'k1' }, { id: 'k2' }] }
+    expect(reportErrorTopic('issue:iss:k2:outage_id', issues)).toBe('iss:k2')
+    expect(reportErrorTopic('issues.iss.k1.topic', issues)).toBe('iss:k1')
+    expect(reportErrorTopic('issues.iss.2', issues)).toBe('iss:k2')
+    expect(reportErrorTopic('issues.iss.9', issues)).toBeNull()
+    expect(reportErrorTopic('issues.iss', issues)).toBeNull()
+    expect(reportErrorTopic('values.total-tx', issues)).toBeNull()
+    expect(reportErrorTopic('tables.tbl.r1.c1', issues)).toBeNull()
+    expect(reportErrorTopic('issue:iss', issues)).toBeNull()
+    expect(reportErrorTopic(null, issues)).toBeNull()
+  })
+
+  it('withSectionsClosed: yalnız verilenleri kapatır (öteki bölümün konuları açık kalır); hepsi açıkken o anki listeye çevrilir; değişiklik yoksa aynı nesne', () => {
+    const s0 = deepFreeze({ all: false, ids: ['a:1', 'a:2', 'b:1'] })
+    expect(withSectionsClosed(s0, ['a:1', 'a:2'], [])).toEqual({ all: false, ids: ['b:1'] })
+    expect(withSectionsClosed(s0, ['x:9'], [])).toBe(s0)
+    expect(withSectionsClosed(s0, null, [])).toBe(s0)
+    const all = deepFreeze({ all: true, ids: [] })
+    expect(withSectionsClosed(all, ['a:1', 'a:2'], ['a:1', 'a:2', 'b:1'])).toEqual({ all: false, ids: ['b:1'] })
   })
 })

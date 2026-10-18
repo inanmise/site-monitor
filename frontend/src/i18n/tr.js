@@ -21135,6 +21135,8 @@ export const TR = {
   'te.iss.hint': "Ay içinde teknik hataların anomali olarak arttığı her konu için ayrı başlık açın: ne zaman olduğunu, kaç hataya yol açtığını, kesinti kaynaklı olup olmadığını ve müşteri etkisini girin; rapordaki metin bu cevaplardan oluşur.",
   'te.iss.hiddenCount': "{0} konu müşteri etkisi olmadığı için rapora (PDF / e-posta) girmeyecek; burada görünmeye devam eder.",
   'te.iss.chipsLabel': "Konunun özeti",
+  'te.iss.expandAll': "Tüm konuları aç",
+  'te.iss.collapseAll': "Tüm konuları kapat",
   'te.iss.groupTopic': "Konu ve başlık",
   'te.iss.date': "Tarih",
   'te.iss.datePlaceholder': "Gün seçin",

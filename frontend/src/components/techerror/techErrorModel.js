@@ -2557,6 +2557,49 @@ export function withSectionsOpened(state, ids) {
   return s
 }
 
+/**
+ * Verilen bölümleri kapatır ("Tüm konuları kapat" — yalnız o bölümün konuları); değişiklik yoksa aynı nesne. "Hepsi açık"
+ * iken `allIds` (o anki tüm kimlikler) açık listeye çevrilir, kapatılanlar çıkar.
+ */
+export function withSectionsClosed(state, ids, allIds) {
+  let s = state
+  for (const id of ids || []) s = withSectionOpen(s, id, false, allIds)
+  return s
+}
+
+// ── Katlanır anomali konuları (2026-10-18, kullanıcı isteği: "Anormal Artış Gösteren Hatalar altında eklenen konu ve başlıklar
+// da kendi içinde akordiyon gibi açılıp kapanabilsin") ─────────────────────────────────────────────────────────────────
+//
+// Konuların açık kümesi bölümlerinkinden AYRI kişisel kayıtta (`sm.te.open.ri.<rapor>` — aynı aile, PERSONAL_PREFIXES
+// `sm.te.open.`): bölüm "Tümünü aç"ı konulara dokunmaz, konu kimlikleri bölüm kimlikleriyle çakışamaz ve iki kümenin 64'lük
+// tavanı ayrı. Kimlik `<bölüm>:<konu>` (iki kimlikte de ':' yok — TechErrorTemplate.ID) — iki bölümün aynı konu kimliği karışmaz.
+
+/** Konunun açık-küme kimliği: `<bölüm>:<konu>`. */
+export function topicOpenId(sectionId, issueId) {
+  return `${sectionId}:${issueId}`
+}
+
+/**
+ * Rapor ekranındaki bir hata anahtarının KONUSU (açık-küme kimliği; yoksa null). İstemci `issue:<b>:<k>:<alan>`, sunucu
+ * `issues.<b>.<k>.<alan>` ve eski sunucunun sıra numaralı `issues.<b>.<n>`'i (n → taslaktaki n. konu, `issues` ile çözülür).
+ */
+export function reportErrorTopic(key, issues) {
+  const k = String(key || '')
+  if (k.startsWith('issue:')) {
+    const parts = k.split(':')
+    return parts.length >= 4 && parts[1] && parts[2] ? topicOpenId(parts[1], parts[2]) : null
+  }
+  if (k.startsWith('issues.')) {
+    const parts = k.split('.')
+    if (parts.length >= 4 && parts[1] && parts[2]) return topicOpenId(parts[1], parts[2])
+    if (parts.length === 3 && parts[1] && /^[1-9][0-9]{0,2}$/.test(parts[2])) {
+      const iid = (issues?.[parts[1]] || [])[Number(parts[2]) - 1]?.id
+      return iid ? topicOpenId(parts[1], iid) : null
+    }
+  }
+  return null
+}
+
 export const allSectionsOpen = (state, ids) => !!state && (state.all || (ids || []).every((id) => state.ids.includes(id)))
 
 

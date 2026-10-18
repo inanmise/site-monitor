@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import { useT } from '../../i18n/index.jsx'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import {
-  isSectionOpen, parseOpenState, withSectionOpen, withSectionsOpened,
+  isSectionOpen, parseOpenState, withSectionOpen, withSectionsClosed, withSectionsOpened,
 } from './techErrorModel.js'
 
 /**
@@ -21,6 +21,13 @@ import {
  * Sağlayıcı (`SectionOpenContext`) yoksa kart eskisi gibi hep açık çizilir.
  */
 export const SectionOpenContext = createContext(null)
+
+/**
+ * KATLANIR ANOMALİ KONULARI (2026-10-18, kullanıcı isteği): bölümlerinkiyle AYNI yapı (`useSectionOpenState` +
+ * `useSectionOpenValue`), ayrı kayıt (`sm.te.open.ri.<rapor>`, kimlik `<bölüm>:<konu>` — techErrorModel.topicOpenId).
+ * Sağlayıcı yoksa konular eskisi gibi hep açık çizilir.
+ */
+export const TopicOpenContext = createContext(null)
 
 /** Kişisel kayıt anahtarı: `r` rapor, `t` şablon (kanal). */
 export const sectionOpenKey = (kind, id) => `sm.te.open.${kind}.${id}`
@@ -59,8 +66,10 @@ export function useSectionOpenState(storageKey, ids) {
   }), [])
   const setOpen = useCallback((id, open) => update((s) => withSectionOpen(s, id, open, idsRef.current)), [update])
   const openMany = useCallback((list) => update((s) => withSectionsOpened(s, list)), [update])
+  // Yalnız verilenleri kapatır (bir anomali bölümünün "Tüm konuları kapat"ı — öteki bölümün konuları açık kalır)
+  const closeMany = useCallback((list) => update((s) => withSectionsClosed(s, list, idsRef.current)), [update])
   const setAll = useCallback((open) => update(() => (open ? { all: true, ids: [] } : { all: false, ids: [] })), [update])
-  return { state: current.state, setOpen, openMany, setAll }
+  return { state: current.state, setOpen, openMany, closeMany, setAll }
 }
 
 /**
@@ -68,20 +77,42 @@ export function useSectionOpenState(storageKey, ids) {
  * hata kümesi değişince yeni nesne olmalı — her tuşta değil (görsel bölümleri yeniden çizilmesin).
  */
 export function useSectionOpenValue(open, invalidCounts) {
-  const { state, setOpen } = open
+  const { state, setOpen, openMany, closeMany } = open
   return useMemo(() => ({
     isOpen: (id) => isSectionOpen(state, id),
     setOpen,
+    openMany,
+    closeMany,
     invalidCount: (id) => invalidCounts?.get(id) || 0,
-  }), [state, setOpen, invalidCounts])
+  }), [state, setOpen, openMany, closeMany, invalidCounts])
 }
 
 let untilFound = null
-function supportsUntilFound() {
+export function supportsUntilFound() {
   if (untilFound == null) {
     try { untilFound = !!globalThis.document?.body && 'onbeforematch' in globalThis.document.body } catch { untilFound = false }
   }
   return untilFound
+}
+
+/**
+ * Kapalı içerik KURULU kalır ve gizlenir: destekleyen tarayıcıda `hidden="until-found"` (sayfada bul kapalı içerikteki metni
+ * de bulur ve `onFound` ile açar), yoksa çağıranın CSS sınıfı (`data-[state=closed]:hidden`). Yerleşim etkisi: kapalı içerik
+ * ilk çizimde bir kare bile görünmesin. `onFound` yoksa (sağlayıcısız, hep açık) hiçbir şey yapılmaz. Bölüm kartı ve anomali
+ * konusu kartı aynı kancayı kullanır.
+ */
+export function useUntilFound(contentRef, open, onFound) {
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el || !onFound || !supportsUntilFound()) return undefined
+    if (open) {
+      el.removeAttribute('hidden')
+      return undefined
+    }
+    el.setAttribute('hidden', 'until-found')
+    el.addEventListener('beforematch', onFound)
+    return () => el.removeEventListener('beforematch', onFound)
+  }, [contentRef, open, onFound])
 }
 
 /*
@@ -131,18 +162,8 @@ export function CollapsibleCard({
   const slotAttr = slot ? { 'data-slot': slot } : {}
 
   // Yerleşim etkisi: kapalı bölüm ilk çizimde bir kare bile görünmesin (desteklenen tarayıcıda CSS sınıfı kullanılmıyor)
-  useLayoutEffect(() => {
-    const el = contentRef.current
-    if (!el || !setOpen || !supportsUntilFound()) return undefined
-    if (open) {
-      el.removeAttribute('hidden')
-      return undefined
-    }
-    el.setAttribute('hidden', 'until-found')
-    const onMatch = () => setOpen(sectionId, true)
-    el.addEventListener('beforematch', onMatch)
-    return () => el.removeEventListener('beforematch', onMatch)
-  }, [open, setOpen, sectionId])
+  const onFound = useMemo(() => (setOpen ? () => setOpen(sectionId, true) : null), [setOpen, sectionId])
+  useUntilFound(contentRef, open, onFound)
 
   // Başlık satırı: h3 (satırın kalanı) + kopyalama ikonu aynı `te-copy-row` kabında (ikon başlığın KARDEŞİ — başlığın
   // erişilebilir adı temiz kalır), sağda `headerEnd`. Kopyala ve taşı / sil düğmeleri ilk satır yüksekliğinde ortalanır.
@@ -210,14 +231,18 @@ export function CollapsibleCard({
   )
 }
 
-/** "Tümünü aç / kapat": bölümlerden biri kapalıysa açar, hepsi açıksa kapatır. */
-export function ExpandAllButton({ allOpen, onToggle, className }) {
+/**
+ * "Tümünü aç / kapat": bölümlerden biri kapalıysa açar, hepsi açıksa kapatır. Anomali bölümünün "Tüm konuları aç / kapat"ı
+ * da bu düğme (`slot`, `expandKey` / `collapseKey` ile).
+ */
+export function ExpandAllButton({ allOpen, onToggle, className, slot = 'te-sections-all', expandKey = 'te.sec.expandAll',
+  collapseKey = 'te.sec.collapseAll' }) {
   const t = useT()
   const Icon = allOpen ? ChevronsDownUp : ChevronsUpDown
   return (
     <Button type="button" variant="outline" size="sm" className={cn('pointer-coarse:min-h-10', className)}
-      data-slot="te-sections-all" onClick={() => onToggle(!allOpen)}>
-      <Icon aria-hidden="true" /> {allOpen ? t('te.sec.collapseAll') : t('te.sec.expandAll')}
+      data-slot={slot} data-all-open={allOpen ? 'true' : 'false'} onClick={() => onToggle(!allOpen)}>
+      <Icon aria-hidden="true" /> {allOpen ? t(collapseKey) : t(expandKey)}
     </Button>
   )
 }

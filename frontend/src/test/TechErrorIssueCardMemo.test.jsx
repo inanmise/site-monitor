@@ -78,4 +78,30 @@ describe('anomali kartı memo', () => {
     // Taslak her iki değişikliği de tutar (işlevsel güncelleme — kapanıştaki eski liste öbür değişikliği ezmedi)
     expect(screen.getAllByLabelText('Konu').map((i) => i.value)).toEqual(['Kart 2', 'Fatura 2'])
   })
+
+  it('katlanır konular (2026-10-18): bir konuyu açıp kapatmak ve açık konuya yazmak öbür (kapalı) konunun kartını çizmez', async () => {
+    // Yalnız ilk konu açık; ikincisi kapalı (kayıtlı açık küme)
+    localStorage.setItem('sm.te.open.ri.100', JSON.stringify({ ids: ['issues:k1'] }))
+    te().report.mockResolvedValue(reportResponse({ template: TPL, values: { fields: { 'error-count': 5000 },
+      issues: { issues: [topic('k1', 'Kart'), topic('k2', 'Fatura')] }, texts: {} } }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    await waitFor(() => expect(renders.get('iss:issues:k2:1')).toBeGreaterThan(0))
+    const toggle = (iid) => document.querySelector(`[data-slot="te-issue"][data-issue="${iid}"] [data-slot="te-issue-toggle"]`)
+    expect(toggle('k2')).toHaveAttribute('aria-expanded', 'false')
+    const k2Before = renders.get('iss:issues:k2:1')
+    // Açık konuya yazmak kapalı konuyu çizmez
+    const first = document.getElementById('te-iss-issues-k1-topic')
+    for (const v of ['K', 'Ka', 'Kar', 'Kart 2']) fireEvent.change(first, { target: { value: v } })
+    expect(renders.get('iss:issues:k2:1')).toBe(k2Before)
+    // İlk konuyu kapatıp açmak ikinciyi çizmez; ikinciyi açmak birinciyi çizmez
+    fireEvent.click(toggle('k1'))
+    fireEvent.click(toggle('k1'))
+    expect(renders.get('iss:issues:k2:1')).toBe(k2Before)
+    const k1Now = renders.get('iss:issues:k1:1')
+    fireEvent.click(toggle('k2'))
+    expect(toggle('k2')).toHaveAttribute('aria-expanded', 'true')
+    expect(renders.get('iss:issues:k1:1')).toBe(k1Now)
+    expect(renders.get('iss:issues:k2:1')).toBeGreaterThan(k2Before)
+  })
 })
