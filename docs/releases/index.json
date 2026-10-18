@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T11:23:22Z",
+  "generatedAt": "2026-10-18T13:27:46Z",
   "repo": "inanmise/site-monitor",
-  "count": 775,
+  "count": 776,
   "releases": [
+    {
+      "version": "20.158.0",
+      "tag": "v20.158.0",
+      "releasedAt": "2026-10-18T13:27:38Z",
+      "commit": "4be9011fbea7cfe17920d958ef8274d60aeb0b15",
+      "prevVersion": "20.157.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4be9011f",
+          "subject": "kısaltmayla yazılan sıfır \"0G\" değil \"0\" basılır, kılavuz PDF'i yeniden üretildi, 4,4G isteği PDF / e-posta yönetici özetinde sabitlendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c8124d32",
+          "subject": "kısaltmalı sayı harften önce gruplanmaz, sıfır tiki yalnız sayılan sorunda ve geçerli girişte"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4f39509c",
+          "subject": "teknik hata raporunda kısaltmayla girilen sayı raporda da kısaltmasıyla, sıfır adetin yanında yeşil tik"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.157.0",
       "tag": "v20.157.0",
