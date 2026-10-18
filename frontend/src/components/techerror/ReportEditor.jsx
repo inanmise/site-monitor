@@ -21,7 +21,7 @@ import { KIND_REPORT, postImagesChanged } from './capture/imageSync.js'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import {
-  ExpandAllButton, SectionOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
+  ExpandAllButton, SectionOpenContext, TopicOpenContext, sectionOpenKey, useSectionOpenState, useSectionOpenValue,
 } from './SectionCollapse.jsx'
 import { MetricsBlock, PendingInputContext, SummaryBlock, TableBlock, TextBlock } from './ReportSections.jsx'
 import { IssuesBlock } from './ReportIssues.jsx'
@@ -35,10 +35,10 @@ import {
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
-  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
-  reportErrorSection, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions, issueValidation, monthName, outageAnswerConflict,
-  resolvePlaceholders,
-  resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
+  allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
+  normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
+  issueValidation, monthName, outageAnswerConflict, resolvePlaceholders,
+  resolveTextPlaceholders, revertInvalidValues, stableJson, topicOpenId, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
@@ -323,6 +323,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
 
   const dirty = draft != null && base.json != null && !isSavedJson(canonJson(draft))
   const readOnly = !data?.can_edit
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
   // Gönderim / onay isteği takımın kendi kapsamı: paylaşımla düzenleyen (9. sürüm) `can_send:false` alır; eski sunucuda can_edit
   const canSend = data?.can_send != null ? !!data.can_send : !readOnly
   // Anomali konularının istemci denetimi (2026-10-18; sunucu kuralının aynası — techErrorModel.issueProblems): kaydı kilitler,
@@ -423,6 +425,23 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // raporda panel açılınca her pencere dönüşü "gönderimden sonra değişti" demiyor). Değişen liste e-posta önizlemesinin de
   // içeriğidir (önizleme eski isteğe katılmaz) ve durumu bu pencere yazar (gönderim yoklamasının eski yanıtı ezmesin)
   const applySyncedImages = useCallback((list, status) => {
+    // Panelde SİLİNEN konu görselinin açıklaması taslaktan düşer (son inceleme 2026-10-18: boş yuvanın açıklaması taslakta ve
+    // kayıtta kalıyordu — bu pencerenin kendi silmesi bunu `onRemoved` ile zaten yapar). Açıklama kayıtlıysa bu bir
+    // değişikliktir ve öteki düzenlemeler gibi kaydedilir; yalnız taslakta olan açıklama taslağı kayıtlı hâline yaklaştırır
+    // (sahte "kaydedilmemiş değişiklik" yok — dropIssueCaptions değişmeyen taslağı aynen döner)
+    // Salt okunur görünümde taslak değişmez (açıklama görselle birlikte zaten görünmez; sahte "kaydedilmemiş" olmasın)
+    const now = new Set((list || []).map((i) => i?.slot_id))
+    const gone = (imagesRef.current || []).map((i) => (now.has(i?.slot_id) ? null : parseIssueSlot(i?.slot_id))).filter(Boolean)
+    if (gone.length && !readOnlyRef.current) {
+      setDraft((d) => dropIssueCaptions(d, gone))
+      setClientErrors((e) => {
+        const keys = gone.map((p) => `issue:${p.sectionId}:${p.issueId}:caption${p.n}`).filter((k) => k in e)
+        if (!keys.length) return e
+        const out = { ...e }
+        for (const k of keys) delete out[k]
+        return out
+      })
+    }
     setImages(list)
     setPreviewRev(bumpMailPreviewContent(reportId))
     if (status) {
@@ -1195,15 +1214,58 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     errSections.current = now
     if (fresh.length) openMany(fresh)
   }, [invalidCounts, openMany])
-  /** Kaydı / PDF'i durduran hatalı alanların bölümlerini açar (kullanıcı kapatmış olabilir); zorunlu anomali alanları da görünür. */
+
+  // Katlanır anomali konuları (2026-10-18, kullanıcı isteği): bölümlerinkiyle aynı yapı, AYRI kayıt (`sm.te.open.ri.<rapor>`,
+  // kimlik `<bölüm>:<konu>`) — bölüm "Tümünü aç"ı konulara dokunmaz. Var olan konular kapalı başlar; yeni konu açık gelir
+  // (ReportIssues). Kimlik listesi yalnız konu kümesi değişince yeni dizi ("hepsi açık"tan kapatmada geri kalanlar)
+  const topicKeysJoined = useMemo(() => {
+    const out = []
+    for (const s of sections) if (s.kind === 'issues') for (const i of draftIssues?.[s.id] || []) if (i?.id) out.push(topicOpenId(s.id, i.id))
+    return out.join('|')
+  }, [sections, draftIssues])
+  const topicKeys = useMemo(() => (topicKeysJoined ? topicKeysJoined.split('|') : []), [topicKeysJoined])
+  const topicOpen = useSectionOpenState(sectionOpenKey('ri', reportId), topicKeys)
+  // Konu başına hatalı alan sayısı + hatalı anahtarlar: yalnız hata KÜMESİ değişince yeni nesne (her tuşta değil — kart memo'su)
+  const topicErrKey = useMemo(() => Object.entries(countedErrors)
+    .filter(([, v]) => v).map(([k]) => [k, reportErrorTopic(k, draftIssues)]).filter(([, tk]) => tk)
+    .map(([k, tk]) => `${tk}\u0001${k}`).sort().join('\u0002'), [countedErrors, draftIssues])
+  const topicErrors = useMemo(() => {
+    const counts = new Map()
+    const keys = new Map()
+    for (const p of topicErrKey ? topicErrKey.split('\u0002') : []) {
+      const [tk, k] = p.split('\u0001')
+      counts.set(tk, (counts.get(tk) || 0) + 1)
+      keys.set(k, tk)
+    }
+    return { counts, keys }
+  }, [topicErrKey])
+  const topicCtx = useSectionOpenValue(topicOpen, topicErrors.counts)
+  // Hata kümesine YENİ anahtar eklenen konu kendiliğinden açılır (sunucunun alan hatası, kaydın reddettiği alan) — kullanıcının
+  // kapattığı, hatası zaten görünen konu her çizimde yeniden açılmaz
+  const errTopicKeys = useRef(new Set())
+  const openTopicsMany = topicOpen.openMany
+  useEffect(() => {
+    const fresh = new Set()
+    for (const [k, tk] of topicErrors.keys) if (!errTopicKeys.current.has(k)) fresh.add(tk)
+    errTopicKeys.current = new Set(topicErrors.keys.keys())
+    if (fresh.size) openTopicsMany([...fresh])
+  }, [topicErrors, openTopicsMany])
+  /**
+   * Kaydı / PDF'i durduran hatalı alanların bölümlerini ve KONULARINI açar (kullanıcı kapatmış olabilir); zorunlu anomali
+   * alanları da görünür.
+   */
   function revealErrors() {
     setShowRequired(true)
     const ids = new Set(invalidCounts.keys())
+    const topicIds = new Set(topicErrors.counts.keys())
     for (const k of Object.keys(issueChecksRef.current)) {
       const sid = reportErrorSection(k, tpl)
       if (sid) ids.add(sid)
+      const tk = reportErrorTopic(k, draftRef.current?.issues)
+      if (tk) topicIds.add(tk)
     }
     if (ids.size) openMany([...ids])
+    if (topicIds.size) openTopicsMany([...topicIds])
   }
 
   // Konu görseli yüklemeden önce (2026-10-18): konu sunucuda kayıtlı değilse rapor kaydedilir — kaydedilmemiş konunun görseli
@@ -1422,6 +1484,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       )}
 
       <SectionOpenContext.Provider value={sectionCtx}>
+      <TopicOpenContext.Provider value={topicCtx}>
       <PendingInputContext.Provider value={setFieldPending}>
       {sections.map((s) => {
         const key = `${s.id}:${gen}`
@@ -1462,6 +1525,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           errors={fieldErrors} onText={setText} />
       })}
       </PendingInputContext.Provider>
+      </TopicOpenContext.Provider>
       </SectionOpenContext.Provider>
 
       {mailPreviewOpen && (

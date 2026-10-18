@@ -791,6 +791,30 @@ class TechErrorReportSenderTest {
     }
 
     @Test
+    @DisplayName("son inceleme 2026-10-18: bu gönderim için zaten push alan kişi (onay kararının push'u isteyene 'kuyrukta' dedi) kuyrukla saklanır — teslimde takımın 'gönderildi' bildiriminden düşülür; kimse yoksa eski yazım (kolon temizlenir)")
+    void queuedKeepsTheAlreadyNotifiedPerson() {
+        when(logs.save(any())).thenAnswer(inv -> {
+            NotificationLog n = inv.getArgument(0);
+            n.setId(77L);
+            return n;
+        });
+        report.setContentRev(3L);
+        mailReturns("QUEUED_RETRY: 421");
+        assertThat(sender.send(report, channel, team, 8L, TechErrorReportSender.Delivery.TEAM, null, java.util.Set.of(9L)).state())
+                .isEqualTo("QUEUED");
+        verify(reports).finishQueuedNotified(eq(5L), eq(now), eq("QUEUED_RETRY: 421"), eq(now), eq(77L), eq(8L),
+                eq("dijital@example.com, ikinci@example.com"), eq(3L), eq(9L));
+        verify(reports, never()).finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any());
+
+        org.mockito.Mockito.clearInvocations(reports);
+        sender.send(report, channel, team, 8L, TechErrorReportSender.Delivery.TEAM, null, java.util.Arrays.asList(null, null));
+        verify(reports).finishQueued(eq(5L), eq(now), eq("QUEUED_RETRY: 421"), eq(now), eq(77L), eq(8L), anyString(), eq(3L));
+        verify(reports, never()).finishQueuedNotified(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any(), any());
+        assertThat(TechErrorReportSender.firstId(null)).isNull();
+        assertThat(TechErrorReportSender.firstId(java.util.Arrays.asList(null, 4L, 5L))).isEqualTo(4L);
+    }
+
+    @Test
     @DisplayName("gönderim PDF okumasının içerik sayacını saklar")
     void sentRevisionIsTheRenderedRevision() {
         report.setContentRev(4L);

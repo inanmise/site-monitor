@@ -1548,6 +1548,53 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("son inceleme 2026-10-18: onaydan sonra kuyruğa giren yönetici gönderiminde karar push'unu ('kuyrukta') alan isteyen kuyrukla saklanır — teslimde takımın 'gönderildi' bildiriminden düşülür (gönderen = kararı veren PO zaten hariç); aynı satırda sonraki kuyruk talebi bu kişiyi siler (eski talebin kişisi kalmaz)")
+    void queuedDeliveryExcludesTheAlreadyNotifiedRequester() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+            assertThat(reports.claimSend(r.getId(), claim, claim.minusSeconds(600))).isEqualTo(1);
+            Long logId = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n = logs.findById(logId).orElseThrow();
+            n.setRecipientRole("EXECUTIVE");
+            logs.save(n);
+            assertThat(reports.finishQueuedNotified(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 8L, "ceo@b.com", 0L, 9L))
+                    .isEqualTo(1);
+            assertThat(reports.findById(r.getId()).orElseThrow().getQueuedNotifiedId()).isEqualTo(9L);
+            setLogStatus(logId, "SENT");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).delivered(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(8L), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(claim), org.mockito.ArgumentMatchers.eq(List.of(9L)));
+
+            // Aynı satır: işaretli kuyruk, sonra ELLE yeniden gönderim (işaretsiz) kuyruğa girer → kişi silinir, teslimde kimse düşülmez
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
+            Instant first = claim.plusSeconds(60);
+            reports.claimSend(r2.getId(), first, first.minusSeconds(600));
+            Long oldLog = logRow("QUEUED_RETRY: 421");
+            reports.finishQueuedNotified(r2.getId(), first, "QUEUED_RETRY: 421", first, oldLog, 8L, "ceo@b.com", 0L, 9L);
+            Instant second = first.plusSeconds(120);
+            assertThat(reports.claimSend(r2.getId(), second, second.minusSeconds(600))).isEqualTo(1);
+            Long newLog = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n2 = logs.findById(newLog).orElseThrow();
+            n2.setRecipientRole("EXECUTIVE");
+            logs.save(n2);
+            assertThat(reports.finishQueued(r2.getId(), second, "QUEUED_RETRY: 421", second, newLog, 8L, "ceo@b.com", 0L)).isEqualTo(1);
+            assertThat(reports.findById(r2.getId()).orElseThrow().getQueuedNotifiedId()).isNull();
+            setLogStatus(newLog, "SENT");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).delivered(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(8L), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(second), org.mockito.ArgumentMatchers.eq(List.of()));
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
     @DisplayName("inceleme 2026-10-18: onaydan sonra kuyruğa giren YÖNETİCİ gönderimi kuyrukta BAŞARISIZ → gönderen PO + onaya gönderen kişi (aynı kişiyse bir kez), takım adresine kuyrukta yalnız gönderen; talep anı sonuçlandırma işleminde okunan satırdan")
     void queuedExecutiveFailureAlsoTellsTheRequester() {
         TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);

@@ -34,6 +34,25 @@ export const UPLOAD_BLOCK_KEYS = Object.freeze({
   server: 'te.iss.uploadServer',
 })
 
+/** Kilit çakışması (503 LOCK_CONFLICT) sonrası tek yeniden denemenin en uzun beklemesi (sunucu 2 sn önerir). */
+export const LOCK_RETRY_MAX_MS = 3000
+
+/** Yanıt bir kilit çakışması mı (aynı raporda aynı anda iki işlem — ör. Görsel paneli + ana pencere aynı anda yükledi)? */
+export function isLockConflict(res) {
+  return !!res && res.success === false && res.code === 'LOCK_CONFLICT'
+}
+
+/**
+ * Kilit çakışmasından sonra beklenecek süre (ms): sunucunun önerisi (`Retry-After` / `retry_after_seconds`), en çok
+ * {@link LOCK_RETRY_MAX_MS}; öneri yoksa / bozuksa 2 sn.
+ */
+export function lockRetryDelayMs(res) {
+  const raw = res?.retry_after_seconds ?? res?.retryAfter
+  const s = Number(raw)
+  if (raw == null || raw === '' || !Number.isFinite(s) || s < 0) return 2000
+  return Math.min(LOCK_RETRY_MAX_MS, Math.round(s * 1000))
+}
+
 /**
  * Grafik yuvaları — iki kolonlu ızgara (PDF'in aynısı): yarım yuvalar yan yana, tam yuva iki kolon genişliğinde. Her
  * yuvaya bir görsel (PNG / JPEG, ≤ 5 MB); yeni yükleme eskisinin yerini alır. Yükleme sunucuda baytlardan doğrulanır;
@@ -118,9 +137,20 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     n.rotated && t('te.img.rotated'),
   ].filter(Boolean).join(' ')
 
+  // Kilit çakışmasında (503 LOCK_CONFLICT — Görsel paneli ile ana pencere aynı anda yükledi) ya da ağ hatasında HAZIRLANMIŞ
+  // görsel bellekte bekletilir (son inceleme 2026-10-18: kırpılmış ekran görüntüsü yeniden alınmak zorundaydı); başarıda, yeni
+  // yüklemede ya da "Vazgeç"te bırakılır
+  const [kept, setKept] = useState(null)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
+
   async function upload(file) {
     setError(null)
     setNote(null)
+    setKept(null)
     setBusy(true)
     setPhase('prep')
     try {
@@ -140,6 +170,20 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         }
         return
       }
+      await send(prepared)
+    } finally {
+      setBusy(false)
+      setPhase(null)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  /**
+   * Hazırlanmış görseli yükler (yeni dosya ya da bekletilen görselin "Yeniden dene"si). Kilit çakışmasında AYNI dosya,
+   * sunucunun önerdiği süre (≤ 3 sn) sonra BİR KEZ yeniden gönderilir; yine olmazsa ileti yuvada, görsel bekletilir.
+   */
+  async function send(prepared) {
+    try {
       // Rapor toplamı (sunucu da denetler; burada yüklemeden ÖNCE söylenir)
       const others = otherBytes()
       if (others + prepared.file.size > LIMITS.reportImageBytes) {
@@ -155,8 +199,15 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         if (!ok) { setError(t(UPLOAD_BLOCK_KEYS[ready?.reason] || UPLOAD_BLOCK_KEYS.invalid)); return }
       }
       setPhase('upload')
-      const res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
+      let res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
+      if (isLockConflict(res)) {
+        await new Promise((r) => { setTimeout(r, lockRetryDelayMs(res)) })
+        if (!alive.current) return
+        res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
+      }
+      if (!alive.current) return
       if (res?.success && res.data) {
+        setKept(null)
         onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), res.data])
         const changed = prepared.info.resized || prepared.info.converted || prepared.info.rotated
         // Not YÜKLENEN görsele bağlı: başka biri görseli değiştirip yeniden okunursa eski not o görselin altında kalmaz
@@ -166,13 +217,30 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         else toast.success(t('te.img.uploaded', label))
       } else {
         setError(res?.error || t('te.img.uploadError'))
+        if (isLockConflict(res)) setKept(prepared)
       }
     } catch (e) {
+      if (!alive.current) return
       setError(e?.message || t('te.img.uploadError'))
+      // Ağ hatası: hazır görsel de bekletilir (kırpılmış ekran görüntüsü yeniden alınmasın)
+      setKept(prepared)
+    }
+  }
+
+  /** Bekletilen görseli (yeniden hazırlamadan, yeniden almadan) yeniden yükler. */
+  async function retryKept() {
+    const prepared = kept
+    if (!prepared || busy) return
+    setError(null)
+    setBusy(true)
+    setPhase('upload')
+    try {
+      await send(prepared)
     } finally {
-      setBusy(false)
-      setPhase(null)
-      if (inputRef.current) inputRef.current.value = ''
+      if (alive.current) {
+        setBusy(false)
+        setPhase(null)
+      }
     }
   }
 
@@ -318,6 +386,24 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         </div>
       )}
       {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-image-error">{error}</p>}
+      {/* Bekletilen görsel (kilit çakışması / ağ hatası): yeniden almadan yeniden dene ya da bırak */}
+      {kept && !busy && !readOnly && (
+        <div className="flex min-w-0 flex-col gap-2" data-slot="te-image-kept">
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.img.keptHint')}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={retryKept} className="pointer-coarse:min-h-10"
+              data-slot="te-image-retry">
+              <RefreshCw aria-hidden="true" /> {t('te.img.retryKept')}
+              <span className="sr-only">{`: ${fullLabel}`}</span>
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="pointer-coarse:min-h-10" data-slot="te-image-kept-drop"
+              onClick={() => { setKept(null); setError(null) }}>
+              {t('te.img.dropKept')}
+              <span className="sr-only">{`: ${fullLabel}`}</span>
+            </Button>
+          </div>
+        </div>
+      )}
       {cap.notes}
     </div>
     {cap.dialog}

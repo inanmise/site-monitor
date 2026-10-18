@@ -6,7 +6,8 @@
  *   - `sm.dexp.recent`    — alan adı teşhis son sorguları
  *   - `wr.draft.<id>`     — haftalık rapor oturum-kesintisi yedekleri
  *   - `sm.te.draft.<id>` / `sm.te.tpl.<id>` — kanal teknik hata raporu / şablonu kaydedilmemiş taslakları (2026-10-13)
- *   - `sm.te.open.r.<rapor>` / `sm.te.open.t.<kanal>` — açık bıraktığı rapor / şablon bölümleri (2026-10-16)
+ *   - `sm.te.open.r.<rapor>` / `sm.te.open.t.<kanal>` — açık bıraktığı rapor / şablon bölümleri (2026-10-16);
+ *     `sm.te.open.ri.<rapor>` — açık bıraktığı anomali konuları (2026-10-18)
  *   - `sm.activity.<sekme>` — sekmeler arası etkinlik damgası (kullanıcı adının tuzsuz özeti + zaman; 2026-10-18 inceleme)
  *
  * Kural: anahtarlar kullanıcıya göre ayrılır ({@link personalKey}: `<taban>:<kullanıcı>`) ve çıkışta (elle ya da

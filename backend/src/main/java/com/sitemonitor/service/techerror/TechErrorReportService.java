@@ -848,11 +848,11 @@ public class TechErrorReportService {
      * içerik sayacı, talep anı (tekilleştirme anahtarı), kuyruğa alan ve onaya gönderen kişi.
      */
     record QueuedRow(Long id, Long teamId, Long channelId, int year, int month, Long lastSentById, Long sentRev,
-                     Instant sendClaimedAt, Long queuedById, Long approvalRequestedById) {
+                     Instant sendClaimedAt, Long queuedById, Long approvalRequestedById, Long queuedNotifiedId) {
         static QueuedRow of(TechErrorReport r) {
             return new QueuedRow(r.getId(), r.getTeamId(), r.getChannelId(), r.getReportYear() == null ? 0 : r.getReportYear(),
                     r.getReportMonth() == null ? 0 : r.getReportMonth(), r.getLastSentById(), r.getSentRev(), r.getSendClaimedAt(),
-                    r.getQueuedById(), r.getApprovalRequestedById());
+                    r.getQueuedById(), r.getApprovalRequestedById(), r.getQueuedNotifiedId());
         }
     }
 
@@ -880,10 +880,12 @@ public class TechErrorReportService {
             TechErrorChannel ch = channels.findById(rep.channelId()).orElse(null);
             TechErrorPushService.Ctx c = new TechErrorPushService.Ctx(rep.id(), rep.teamId(),
                     ch != null && ch.getName() != null ? ch.getName() : "", rep.year(), rep.month());
-            // confirmQueued gönderen / sayaç / talep anını bekleyen alanlardan son gönderime yazdı
+            // confirmQueued gönderen / sayaç / talep anını bekleyen alanlardan son gönderime yazdı. Bu gönderim için ZATEN push
+            // alan kişi (onay kararının push'u isteyene "kuyrukta" dedi — queued_notified_id) takım bildiriminden düşülür:
+            // aynı teslim için iki push yok (2026-10-18, son inceleme; gönderen = kararı veren PO zaten hariç)
             if (sent) {
                 p.delivered(c, executive, rep.lastSentById(), displayName(rep.lastSentById()), rep.sentRev(),
-                        rep.sendClaimedAt(), List.of());
+                        rep.sendClaimedAt(), rep.queuedNotifiedId() == null ? List.of() : List.of(rep.queuedNotifiedId()));
             } else {
                 Set<Long> to = new LinkedHashSet<>();
                 if (rep.queuedById() != null) to.add(rep.queuedById());

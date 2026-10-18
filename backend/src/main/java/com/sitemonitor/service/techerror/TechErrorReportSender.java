@@ -707,8 +707,15 @@ public class TechErrorReportSender {
                 } else if ("QUEUED".equals(finalState)) {
                     // Posta servisi yeniden deniyor, teslim BİLİNMİYOR — "gönderildi" yazılmaz; okuma uçları günlük
                     // satırının sonucuyla sonuçlandırır (reconcileQueued)
-                    n = reports.finishQueued(report.getId(), claimedAt, clip(finalStatus, 255), at, logId, by,
-                            clip(String.join(", ", active), 500), sentRev);
+                    // Bu gönderim için zaten push alan kişi (onay kararının push'u isteyene "kuyrukta" dedi) kuyrukla saklanır:
+                    // teslim edilince takımın "gönderildi" bildiriminden düşülür (2026-10-18, son inceleme — aynı teslim için
+                    // iki push yok). Yoksa eski yazım (kolon temizlenir)
+                    Long notified = firstId(alsoNotified);
+                    n = notified == null
+                            ? reports.finishQueued(report.getId(), claimedAt, clip(finalStatus, 255), at, logId, by,
+                                    clip(String.join(", ", active), 500), sentRev)
+                            : reports.finishQueuedNotified(report.getId(), claimedAt, clip(finalStatus, 255), at, logId, by,
+                                    clip(String.join(", ", active), 500), sentRev, notified);
                 } else {
                     // SKIPPED / FAILED: gönderilmedi
                     n = reports.finishNotSent(report.getId(), claimedAt, finalState, clip(finalStatus, 255), at);
@@ -885,5 +892,12 @@ public class TechErrorReportSender {
     private static String clip(String s, int max) {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    /** Zaten push alanlardan ilki (bugün yalnız onaya gönderen kişi geçer); yoksa null. */
+    static Long firstId(java.util.Collection<Long> ids) {
+        if (ids == null) return null;
+        for (Long id : ids) if (id != null) return id;
+        return null;
     }
 }

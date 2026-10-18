@@ -391,6 +391,34 @@ class TechErrorPushServiceTest {
         assertThat(text.getValue().tr()).doesNotContain("@");
     }
 
+    @Test
+    @DisplayName("son inceleme 2026-10-18: onay → yöneticilere gönderim KUYRUKTA → sonra teslim: isteyen karar push'unda 'kuyrukta' bilgisini aldı ve takımın 'gönderildi' bildiriminden düşülür (kararı veren PO gönderen olarak zaten hariç) — aynı teslim için ikinci push yok; karar push'u kapalı / kendi kararı → isteyen kuyrukla saklanmaz, takım bildirimini alır")
+    void queuedApprovalDeliveryIsNotPushedTwice() {
+        // 1) karar: PO Bir (1) onayladı, isteyen Teknik Kişi (9); yöneticilere gönderim kuyrukta
+        assertThat(svc.decisionGoesTo(9L, 1L)).isTrue();
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, "QUEUED", null, AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_DECISION);
+        assertThat(names(calls.get(0))).containsExactly("tech");
+        assertThat(text.getValue().tr()).contains("yöneticilere gönderim kuyrukta");
+        // 2) kuyruk teslim edildi: sonuçlandırma kuyrukla saklanan kişiyi (isteyen) geçer → takım bildiriminde ikisi de yok
+        svc.delivered(CTX, true, 1L, "PO Bir", 5L, AT.plusSeconds(1), List.of(9L));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Set<String>> excluded = ArgumentCaptor.forClass(Set.class);
+        verify(push).enqueueTeamNoticeLocalized(eq(7L), eq(TechErrorPushService.TRIGGER_SENT), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                eq("Mobil Bankacılık Eylül 2026"), any(), eq("te-sent:42:5:" + AT.plusSeconds(1).toEpochMilli()), excluded.capture());
+        assertThat(excluded.getValue()).containsExactlyInAnyOrder("po1", "tech");
+        // 3) isteyen karar push'u almadıysa (kendi kararı ya da karar push'u kapalı) gönderen saklamaz → takım bildirimini alır
+        assertThat(svc.decisionGoesTo(9L, 9L)).isFalse();
+        settings.put(TechErrorReportSettings.KEY_PUSH_DECISION, "false");
+        assertThat(svc.decisionGoesTo(9L, 1L)).isFalse();
+        svc.delivered(CTX, true, 1L, "PO Bir", 6L, AT.plusSeconds(2), List.of());
+        verify(push, times(2)).enqueueTeamNoticeLocalized(eq(7L), eq(TechErrorPushService.TRIGGER_SENT), anyString(), anyString(),
+                anyString(), any(), anyString(), excluded.capture());
+        assertThat(excluded.getValue()).containsExactly("po1");
+    }
+
     // ── 5. Gönderilemedi ──────────────────────────────────────────────────────────────────────────────
 
     @Test

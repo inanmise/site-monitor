@@ -197,3 +197,45 @@ describe('anomali konu görseli — ekrandan görsel alma', () => {
     expect(screen.getAllByText(/10 dakika kullanılmadığı/)).toHaveLength(1)
   })
 })
+
+// Görsel panelinde (öteki pencere) SİLİNEN konu görselinin açıklaması (son inceleme 2026-10-18): düzenleyici panelin iletisini
+// alıp görselleri yeniden okuyunca kaybolan konu yuvasının açıklaması taslaktan düşer. Kayıtlı açıklamanın düşmesi bir
+// DEĞİŞİKLİKTİR (öteki düzenlemeler gibi kaydedilir); yalnız taslakta yazılmış açıklama taslağı kayıtlı hâline döndürür.
+describe('panelde silinen konu görselinin açıklaması', () => {
+  const IMG = { id: 701, slot_id: 'iss:issues:k1:1', file_name: 'saatlik.png', width: 400, height: 300, size_bytes: 4000 }
+  const CAPTION = 'Görsel 1 açıklaması (isteğe bağlı)'
+
+  it('kayıtlı açıklama taslaktan düşer ve değişiklik sayılır: Kaydet açıklamasız gönderir; görselin kalkması dışında taslak aynı', async () => {
+    te().report.mockResolvedValue(respond([METRICS, ISSUES], [topic({ captions: { 1: 'Saatlik hata adedi' } })], { images: [IMG] }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    expect(screen.getByLabelText(CAPTION)).toHaveValue('Saatlik hata adedi')
+    expect(screen.getByRole('button', { name: 'Kaydet' })).toBeDisabled()
+    // Panel görseli sildi: sunucunun listesinde artık yok (değerlerde açıklama hâlâ kayıtlı)
+    te().report.mockResolvedValue(respond([METRICS, ISSUES], [topic({ captions: { 1: 'Saatlik hata adedi' } })], { images: [] }))
+    other.postMessage({ reportId: '100', kind: KIND_IMAGES, from: 'w-panel' })
+    await waitFor(() => expect(card().querySelector('[data-slot-id="iss:issues:k1:1"] img')).toBeNull())
+    expect(screen.queryByLabelText(CAPTION)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Kaydet' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(te().saveReport).toHaveBeenCalledTimes(1))
+    const sent = te().saveReport.mock.calls[0][1].issues.issues[0]
+    expect(sent).not.toHaveProperty('captions')
+    expect(sent).toMatchObject({ id: 'k1', topic: 'Kart Limiti' })
+  })
+
+  it('yalnız taslakta yazılan açıklama: panel silince taslak kayıtlı hâline döner (sahte "kaydedilmemiş değişiklik" yok); başka yuvanın açıklaması kalır', async () => {
+    const IMG2 = { ...IMG, id: 702, slot_id: 'iss:issues:k1:2' }
+    te().report.mockResolvedValue(respond([METRICS, ISSUES], [topic({ captions: { 2: 'Günlük dağılım' } })], { images: [IMG, IMG2] }))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.change(screen.getByLabelText(CAPTION), { target: { value: 'Henüz kaydedilmedi' } })
+    expect(screen.getByRole('button', { name: 'Kaydet' })).toBeEnabled()
+    te().report.mockResolvedValue(respond([METRICS, ISSUES], [topic({ captions: { 2: 'Günlük dağılım' } })], { images: [IMG2] }))
+    other.postMessage({ reportId: '100', kind: KIND_IMAGES, from: 'w-panel' })
+    await waitFor(() => expect(screen.queryByLabelText(CAPTION)).toBeNull())
+    expect(screen.getByLabelText('Görsel 2 açıklaması (isteğe bağlı)')).toHaveValue('Günlük dağılım')
+    expect(screen.getByRole('button', { name: 'Kaydet' })).toBeDisabled()
+    expect(te().saveReport).not.toHaveBeenCalled()
+  })
+})
