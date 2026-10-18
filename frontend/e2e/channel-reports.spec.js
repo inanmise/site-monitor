@@ -168,7 +168,8 @@ function channel(id, name) {
 
 const REPORT = {
   report: { id: 100, channel_id: 10, team_id: 5, year: 2026, month: 9, status: 'draft', send_state: null, last_send_status: null,
-    updated_at: '2026-10-02T07:00:00Z', last_sent_at: null, version: 4, title: '', updated_by_name: 'Ayşegül Nur Karaosmanoğlu' },
+    updated_at: '2026-10-02T07:00:00Z', last_sent_at: null, version: 4, title: '', updated_by_name: 'Ayşegül Nur Karaosmanoğlu',
+    template_version: 3 },
   channel: channel(10, LONG_CHANNEL), template: TEMPLATE,
   values: { fields: { 'error-rate': 0.42 }, issues: { issues: [{ id: 'i-1', topic: 'Kart Limiti Sorgulama Servisi', title: '', title_auto: true,
     description: '12 Eylül 09:40–11:15 arasında mobil uygulamada limit sorgusu zaman aşımına uğradı; servis yeniden başlatıldı.',
@@ -285,9 +286,11 @@ const HISTORY = {
     { id: 1, kind: 'CREATE', at: '2026-10-01T08:00:00Z', actor_name: LONG_PERSON, system: false, detail: { template_version: 3 } },
   ],
 }
-const VERSIONS = { current_version: 3, max_versions: 100, versions: [
-  { version: 3, current: true, recorded: true, saved_at: '2026-10-03T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 5, field_count: 8, slot_count: 3 },
-  { version: 2, current: false, recorded: true, saved_at: '2026-10-02T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 4, field_count: 9, slot_count: 3 },
+const VERSIONS = { current_version: 3, max_versions: 100, unknown_version_reports: 1, unlisted_version_reports: 0, versions: [
+  { version: 3, current: true, recorded: true, saved_at: '2026-10-03T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 5, field_count: 8, slot_count: 3,
+    report_count: 2 },
+  { version: 2, current: false, recorded: true, saved_at: '2026-10-02T08:00:00Z', saved_by_name: LONG_PERSON, section_count: 4, field_count: 9, slot_count: 3,
+    report_count: 0, source_kind: 'library', source_name: LONG_TEAM },
 ] }
 const TEMPLATE_V2 = { ...TEMPLATE, title: 'Eski rapor başlığı: {kanal} Kanalı Aylık Teknik Hata ve Erişilebilirlik Değerlendirmesi - {ay} {yil}',
   sections: TEMPLATE.sections.map((x, i) => (i === TEMPLATE.sections.findIndex((y) => y.kind === 'metrics')
@@ -399,6 +402,15 @@ function analyticsBody(params) {
     month_choices: [6, 12, 24], max_fields: 4,
   }
 }
+let libraryEntries = []         // takım şablon kütüphanesi (2026-10-18, D17): GET /teams/5/templates satırları
+let libraryWrites = []          // POST / PUT / DELETE /teams/5/templates — {method, id, body}
+let channelCreates = []         // POST /channels gövdeleri (yeni kanal penceresi)
+const libEntry = (id, name, extra = {}) => ({
+  id, team_id: 5, name, is_default: false, lang: 'tr', section_count: 5, field_count: 8, slot_count: 3,
+  created_at: '2026-10-10T08:00:00Z', created_by_name: LONG_PERSON, updated_at: '2026-10-17T08:00:00Z', updated_by_name: LONG_PERSON,
+  version: 1, can_edit: true, ...extra,
+})
+const LONG_LIB = 'Dijital Kanallar Bireysel Bankacılık Mobil ve İnternet Şubesi Ortak Aylık Teknik Hata Şablonu (Takım Varsayılanı 2026)'
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
   testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
@@ -407,6 +419,7 @@ async function mock(page, { openSections = true } = {}) {
   templateOverride = null
   overviewOverride = null
   reportsOverride = null
+  libraryEntries = []; libraryWrites = []; channelCreates = []
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -430,7 +443,7 @@ async function mock(page, { openSections = true } = {}) {
     else if (p === '/api/me/permissions') body = { success: true, data: { 'tech_error_reports.read': { view: true }, 'tech_error_reports.crud': { edit: true } } }
     else if (p === '/api/tech-error-reports/overview') {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
-        teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false }],
+        teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false, library_read: true }],
         channels: overviewOverride || [channel(10, LONG_CHANNEL), channel(20, 'POS')] } }
     } else if (/^\/api\/tech-error-reports\/channels\/\d+$/.test(p) && req.method() === 'PUT') {
       // Kanal sırası (R14): gövde kaydedilir, overviewOverride'daki kanal güncellenir — yeniden yükleme yeni sırayı getirir
@@ -451,6 +464,38 @@ async function mock(page, { openSections = true } = {}) {
       const params = new URL(req.url()).searchParams
       analyticsCalls.push(params)
       body = { success: true, data: analyticsBody(params) }
+    } else if (/^\/api\/tech-error-reports\/teams\/5\/templates(\/\d+)?$/.test(p)) {
+      // Takım şablon kütüphanesi (D17): liste gövdesiz, tek kayıt gövdeli; yazımlar kaydedilir ve listeye işlenir
+      const m = /templates\/(\d+)$/.exec(p)
+      const id = m ? Number(m[1]) : null
+      const method = req.method()
+      const put = req.postData() ? JSON.parse(req.postData()) : null
+      if (method === 'GET' && id == null) {
+        body = { success: true, data: { team_id: 5, team_name: LONG_TEAM, max: 20, can_edit: true, templates: libraryEntries } }
+      } else if (method === 'GET') {
+        const e = libraryEntries.find((x) => x.id === id)
+        body = e ? { success: true, data: { ...e, template: { ...TEMPLATE, title: `Kütüphane: ${e.name} {kanal} {ay} {yil}` } } }
+          : { success: false, code: 'NOT_FOUND', error: 'Kütüphane şablonu bulunamadı.' }
+      } else if (method === 'POST') {
+        libraryWrites.push({ method, id: null, body: put })
+        if (put?.default) libraryEntries.forEach((x) => { x.is_default = false })
+        const e = libEntry(900 + libraryWrites.length, put?.name, { is_default: !!put?.default, version: 0 })
+        libraryEntries.push(e)
+        body = { success: true, data: e }
+      } else if (method === 'PUT') {
+        libraryWrites.push({ method, id, body: put })
+        const e = libraryEntries.find((x) => x.id === id)
+        if (put && 'default' in put && put.default) libraryEntries.forEach((x) => { x.is_default = false })
+        if (e) Object.assign(e, put?.name ? { name: put.name } : {}, put && 'default' in put ? { is_default: !!put.default } : {}, { version: e.version + 1 })
+        body = { success: true, data: { ...(e || { id }), changed: true } }
+      } else if (method === 'DELETE') {
+        libraryWrites.push({ method, id, body: null })
+        libraryEntries = libraryEntries.filter((x) => x.id !== id)
+        body = { success: true, data: { deleted: true } }
+      }
+    } else if (p === '/api/tech-error-reports/channels' && req.method() === 'POST') {
+      channelCreates.push(JSON.parse(req.postData() || '{}'))
+      body = { success: true, data: channel(20, 'ATM') }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -458,7 +503,10 @@ async function mock(page, { openSections = true } = {}) {
     } else if (/^\/api\/tech-error-reports\/channels\/10\/template\/versions\/[23]$/.test(p)) {
       const v = Number(p.split('/').pop())
       body = { success: true, data: { version: v, saved_at: '2026-10-0' + v + 'T08:00:00Z', saved_by_name: LONG_PERSON,
-        template: v === 2 ? TEMPLATE_V2 : TEMPLATE, current: v === 3 } }
+        template: v === 2 ? TEMPLATE_V2 : TEMPLATE, current: v === 3, report_count: v === 3 ? 2 : 0,
+        source_kind: v === 2 ? 'library' : null, source_name: v === 2 ? LONG_TEAM : null,
+        reports: v === 3 ? [{ id: 100, year: 2026, month: 9, title: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Eylül 2026` },
+          { id: 80, year: 2025, month: 12, title: `${LONG_CHANNEL} Kanalı Teknik Hata Mesajları - Aralık 2025` }] : [] } }
     } else if (/^\/api\/tech-error-reports\/channels\/(10|20)\/template$/.test(p)) {
       const id = Number(p.split('/')[4])
       if (req.method() === 'PUT') {
@@ -745,11 +793,12 @@ for (const vp of VIEWPORTS) {
       // Dokunmatikte takım rozetinin ::after vuruş alanı kanal adı düğmesine binmez (ad ↔ takım satırı 12 px)
       if (vp.touch) expect(await page.evaluate(badgeHitOverlaps, '[data-slot="te-channels"]'), 'rozet vuruş alanı adla çakışıyor').toEqual([])
 
-      // "Yeni kanal" penceresi (kullanıcı isteği 2026-10-17): şablon kaynağı shadcn seçim kartları — 3 seçenek, sığar, 40 px
+      // "Yeni kanal" penceresi (kullanıcı isteği 2026-10-17): şablon kaynağı shadcn seçim kartları — 4 seçenek (2026-10-18:
+      // "Takım kütüphanesinden" eklendi; bu senaryoda kütüphane boş → kart seçilemez), sığar, 40 px
       await page.locator('[data-slot="te-new-channel"]').click()
       const dlg = page.locator('[data-slot="te-channel-dialog"]')
       await expect(dlg).toBeVisible()
-      await expect(dlg.locator('[data-slot="te-source-options"] [role="radio"]')).toHaveCount(3)
+      await expect(dlg.locator('[data-slot="te-source-options"] [role="radio"]')).toHaveCount(4)
       await expect(dlg.locator('[data-slot="te-source-options"] [role="radio"][data-state="checked"]')).toHaveCount(1)
       await dlg.locator('[data-slot="te-source-options"] [data-source="copy"]').click()
       await expect(dlg.locator('[data-slot="te-source-copy"]')).toBeVisible()
@@ -1371,6 +1420,121 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma (görsel)').toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/channel-reports-trend-${vp.name}.png` })
       await block.screenshot({ path: `test-results/channel-reports-trend-block-${vp.name}.png` })
+    })
+
+    test('takım şablon kütüphanesi (D17) + raporun şablon sürümü (D19): yönetim penceresi, yeni kanal kaynağı, kütüphaneye kaydet, varsayılana dön; sığar, kesilmez', async ({ page }) => {
+      test.setTimeout(180_000)
+      await mock(page)
+      libraryEntries = [libEntry(501, LONG_LIB, { is_default: true }), libEntry(502, 'POS kanalları şablonu')]
+
+      // D19 — sürüm penceresi: "bu sürümle N rapor", sürümü bilinmeyen raporlar, ilk sürümün kaynağı, dönem listesi
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=template')
+      await page.locator('[data-slot="te-versions-open"]').click({ timeout: 20_000 })
+      const vdlg = page.locator('[data-slot="te-versions"]')
+      await expect(vdlg.locator('[data-slot="te-version-report-count"]')).toHaveCount(2)
+      await expect(vdlg.locator('[data-slot="te-version-report-count"]').first()).toHaveText(/Bu sürümle 2 rapor|Reports with this version: 2/)
+      await expect(vdlg.locator('[data-slot="te-version-report-count"]').nth(1)).toHaveText(/Bu sürümle bilinen rapor yok|No known reports with this version/)   // bilinmeyen 1 rapor var → "bilinen"
+      await expect(vdlg.locator('[data-slot="te-versions-unknown"]')).toBeVisible()
+      if (vp.width >= 768) await expect(vdlg.locator('[data-slot="te-version-report"]')).toHaveCount(2)
+      await page.waitForTimeout(250)
+      expect(await page.evaluate(clipped, '[data-slot="te-versions"]'), 'kırpılan metin (sürümler)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-versions"]'), 'küçük hedef (sürümler)').toEqual([])
+      await page.keyboard.press('Escape')
+      await expect(vdlg).toHaveCount(0)
+
+      // D19 — rapor başlığında şablon sürümü çipi ("v0" / "vnull" yok)
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      await expect(page.locator('[data-slot="te-report-tpl-version"]')).toHaveText(/Şablon v3|Template v3/, { timeout: 20_000 })
+      expect(await page.locator('[data-slot="te-report"]').innerText()).not.toMatch(/v0\b|vnull|vundefined/)
+
+      // D17 — kütüphane yönetim penceresi (kanal listesinden)
+      await page.goto('/?tab=channelreports')
+      await page.locator('[data-slot="te-library-open"]').click({ timeout: 20_000 })
+      const mgr = page.locator('[data-slot="te-lib-manager"]')
+      await expect(mgr.locator('[data-slot="te-lib-entry"]')).toHaveCount(2)
+      await expect(mgr.locator('[data-slot="te-lib-list"]')).toHaveAttribute('data-layout', vp.width < 700 ? 'cards' : 'table')
+      await expect(mgr.locator('[data-slot="te-lib-entry"]').first()).toContainText(LONG_LIB)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kütüphane)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-lib-manager"]'), 'kırpılan metin (kütüphane)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-lib-manager"]'), 'küçük hedef (kütüphane)').toEqual([])
+      const mbox = await mgr.boundingBox()
+      expect(mbox.x, 'pencere solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(mbox.x + mbox.width, 'pencere sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      await page.screenshot({ path: `test-results/channel-reports-library-manager-${vp.name}.png`, fullPage: false })
+      // "Takım varsayılanı yap" → yalnız default + okunan sürüm gider
+      await mgr.locator('[data-slot="te-lib-entry"][data-entry="502"]').getByRole('button', { name: /(İşlemler|Actions)/ }).click()
+      await page.getByRole('menuitem', { name: /(Takım varsayılanı yap|Make team default): POS kanalları şablonu/ }).click()
+      await expect.poll(() => libraryWrites.length).toBe(1)
+      expect(libraryWrites[0]).toEqual({ method: 'PUT', id: 502, body: { default: true, version: 1 } })
+      await expect(mgr.locator('[data-slot="te-lib-entry"][data-default="true"]')).toContainText('POS kanalları şablonu')
+      // Silme onayı kaydın adını söyler
+      await mgr.locator('[data-slot="te-lib-entry"][data-entry="501"]').getByRole('button', { name: /(İşlemler|Actions)/ }).click()
+      await page.getByRole('menuitem', { name: /^(Sil|Delete): / }).click()
+      const confirm = page.getByRole('dialog', { name: /Kütüphane şablonu silinsin mi|Delete the library template/ })
+      await expect(confirm).toContainText(LONG_LIB)
+      await confirm.getByRole('button', { name: /^(Sil|Delete)$/ }).click()
+      await expect.poll(() => libraryWrites.length).toBe(2)
+      expect(libraryWrites[1]).toEqual({ method: 'DELETE', id: 501, body: null })
+      await expect(mgr.locator('[data-slot="te-lib-entry"]')).toHaveCount(1)
+      await page.keyboard.press('Escape')
+      await expect(mgr).toHaveCount(0)
+
+      // D17 — yeni kanal: takımın varsayılanı (POS kanalları şablonu) ilk kaynak
+      await page.locator('[data-slot="te-new-channel"]').click()
+      const dlg = page.locator('[data-slot="te-channel-dialog"]')
+      await expect(dlg.locator('[data-source="library"] [role="radio"]')).toHaveAttribute('data-state', 'checked')
+      await expect(dlg.locator('[data-slot="te-source-library"]')).toContainText('POS kanalları şablonu')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, '[data-slot="te-channel-dialog"]'), 'kırpılan metin (yeni kanal / kütüphane)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channel-dialog"]'), 'küçük hedef (yeni kanal / kütüphane)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-library-new-channel-${vp.name}.png`, fullPage: false })
+      await dlg.getByLabel(/Kanal adı|Channel name/).fill('ATM')
+      await dlg.locator('[data-slot="te-channel-save"]').click()
+      await expect.poll(() => channelCreates.length).toBe(1)
+      expect(channelCreates[0]).toMatchObject({ team_id: 5, name: 'ATM', library_template_id: 502 })
+      expect(channelCreates[0].lang).toBeUndefined()
+
+      // D17 — şablon düzenleyicisinden kütüphaneye kaydet (kanal açılınca şablonu açılır)
+      await expect(page.locator('[data-slot="te-template-editor"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-tpl-save-library"]').click()
+      const save = page.locator('[data-slot="te-lib-save"]')
+      await expect(save.locator('[data-slot="te-lib-count"]')).toBeVisible()
+      await page.waitForTimeout(250)
+      expect(await page.evaluate(clipped, '[data-slot="te-lib-save"]'), 'kırpılan metin (kütüphaneye kaydet)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-lib-save"]'), 'küçük hedef (kütüphaneye kaydet)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-library-save-${vp.name}.png`, fullPage: false })
+      await save.locator('[data-slot="te-lib-name"]').fill('Kart ve POS kanalları için uzun adlı ortak aylık teknik hata şablonu')
+      await save.locator('[data-slot="te-lib-make-default"]').click()
+      await save.locator('[data-slot="te-lib-save-submit"]').click()
+      await expect.poll(() => libraryWrites.length).toBe(3)
+      expect(libraryWrites[2].method).toBe('POST')
+      expect(libraryWrites[2].body).toMatchObject({ name: 'Kart ve POS kanalları için uzun adlı ortak aylık teknik hata şablonu', default: true })
+      expect(Array.isArray(libraryWrites[2].body.template.sections)).toBe(true)
+      await expect(save).toHaveCount(0)
+
+      // D17 — "Varsayılana dön": sistem varsayılanları + kütüphane (varsayılan önce); seçilen kayıt taslağa yüklenir
+      await page.locator('[data-slot="te-tpl-reset"]').click()
+      const menu = page.locator('[data-slot="te-tpl-reset-menu"]')
+      await expect(menu.locator('[data-slot="te-tpl-reset-lib"]')).toHaveCount(2)
+      await expect(menu.locator('[data-slot="te-tpl-reset-system"]')).toHaveCount(2)
+      await page.waitForTimeout(250)
+      expect(await page.evaluate(clipped, '[data-slot="te-tpl-reset-menu"]'), 'kırpılan metin (varsayılana dön)').toEqual([])
+      if (vp.touch) {
+        const short = await page.evaluate(() => [...document.querySelectorAll('[data-slot="te-tpl-reset-menu"] [role="menuitem"]')]
+          .filter((n) => n.getAttribute('aria-disabled') !== 'true' && n.getBoundingClientRect().height < 39.5).map((n) => n.textContent.slice(0, 30)))
+        expect(short, 'küçük hedef (varsayılana dön)').toEqual([])
+      }
+      const box = await menu.boundingBox()
+      expect(box.x).toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+      await page.screenshot({ path: `test-results/channel-reports-library-reset-${vp.name}.png`, fullPage: false })
+      await menu.locator('[data-slot="te-tpl-reset-lib"]').filter({ hasText: 'POS kanalları şablonu' }).click()
+      const rc = page.getByRole('dialog', { name: /Kütüphane şablonu yüklensin mi|Load the library template/ })
+      await rc.getByRole('button', { name: /Şablonu yükle|Load the template/ }).click()
+      await expect(page.getByLabel(/Report title|Rapor başlığı/)).toHaveValue(/^Kütüphane: POS kanalları şablonu/)
+      expect(libraryWrites).toHaveLength(3)                         // taslağa yüklendi, hiçbir şey kaydedilmedi
+      await page.screenshot({ path: `test-results/channel-reports-library-${vp.name}.png`, fullPage: false })
     })
 
     test('Faz B: geçmiş paneli ve şablon sürümleri sığar, uzun adlar kesilmez; yıllara göre liste; ay geçişi', async ({ page }) => {

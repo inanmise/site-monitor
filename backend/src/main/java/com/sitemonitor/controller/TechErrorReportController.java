@@ -79,6 +79,13 @@ public class TechErrorReportController {
     TechErrorApprovalService approvals;
 
     /**
+     * Takım şablon kütüphanesi (2026-10-18, D17): yeni kanalın şablonu kütüphaneden ({@code library_template_id}). Yoksa
+     * (dilim testleri) bu kaynak 400 ile reddedilir; diğer kaynaklar değişmez.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorTeamTemplateService library;
+
+    /**
      * Dönem özeti önbelleği (R14 inceleme 2026-10-17): Kişisel Panom paneli her açık sekmede / TV'de 60 sn'de bir sorar;
      * anahtar = dönem + kapsam (kurum geneli "*" ya da sıralı görünür takım kimlikleri). 0 = önbellek yok.
      */
@@ -157,6 +164,8 @@ public class TechErrorReportController {
             tm.put("has_email", !TechErrorReportSender.recipients(t).isEmpty());
             tm.put("can_edit", writer && canWriteOwn(session, t.getId()));          // kanal açılabilen takımlar (paylaşım değil)
             tm.put("can_manage", writer && SessionScope.canManage(session, t.getId()));
+            // Takım şablon kütüphanesi (D17) takımın kendi kapsamıyla okunur — paylaşımla görülen takımda yok
+            tm.put("library_read", TechErrorTeamTemplateController.canReadLibrary(session, t.getId()));
             teamRows.add(tm);
         }
         Map<String, Object> data = new LinkedHashMap<>();
@@ -388,20 +397,54 @@ public class TechErrorReportController {
         }
         Template template;
         Object copyFrom = b.get("copy_from");
-        if (copyFrom != null && !String.valueOf(copyFrom).isBlank()) {
+        Object libraryRef = b.get("library_template_id");
+        boolean fromLibrary = libraryRef != null && !String.valueOf(libraryRef).isBlank();
+        boolean fromCopy = copyFrom != null && !String.valueOf(copyFrom).isBlank();
+        TechErrorReportService.TemplateSource source;
+        String libraryName = null;
+        if (fromLibrary && fromCopy) {
+            throw new FieldValidationException("library_template_id", Msg.t(
+                    "Şablon için tek bir kaynak seçin: takım kütüphanesi ya da başka bir kanalın kopyası.",
+                    "Choose one template source: the team library or a copy of another channel."));
+        }
+        if (fromLibrary) {
+            // Takım kütüphanesi (2026-10-18, D17): kayıt AÇILAN kanalın takımına ait olmalı; hoşgörülü okunur, sonra katı
+            // yeniden doğrulanır (kanal şablonu kaydıyla aynı kural)
+            Long libId = parseId(String.valueOf(libraryRef));
+            var entry = libId == null || library == null ? java.util.Optional.<com.sitemonitor.model.TechErrorTeamTemplate>empty()
+                    : library.find(teamId, libId);
+            if (entry.isEmpty()) throw new FieldValidationException("library_template_id", Msg.t(
+                    "Seçilen şablon bu takımın kütüphanesinde bulunamadı; silinmiş olabilir. Listeden yeniden seçin.",
+                    "The chosen template wasn't found in this team's library; it may have been deleted. Pick it again from the list."));
+            try {
+                template = com.sitemonitor.service.techerror.TechErrorTeamTemplateService.validatedTemplate(entry.get());
+            } catch (FieldValidationException e) {
+                throw new FieldValidationException("library_template_id", Msg.t(
+                        "Kütüphanedeki şablon kanala uygulanamadı: " + e.getMessage(),
+                        "The library template can't be applied to the channel: " + e.getMessage()));
+            }
+            libraryName = entry.get().getName();
+            source = TechErrorReportService.TemplateSource.library(libraryName);
+        } else if (fromCopy) {
             Long srcId = parseId(String.valueOf(copyFrom));
             TechErrorChannel src = srcId == null ? null : readableChannel(srcId, session);
             if (src == null) throw new FieldValidationException("copy_from", Msg.t(
                     "Şablonu kopyalanacak kanal bulunamadı. Listeden yeniden seçin.",
                     "The channel to copy the template from wasn't found. Pick it again from the list."));
             template = TechErrorTemplate.fromStored(src.getTemplateJson());
+            source = TechErrorReportService.TemplateSource.copy();
         } else {
             String lang = b.get("lang") == null ? null : String.valueOf(b.get("lang"));
             template = TechErrorTemplate.defaults("en".equals(lang) ? "en" : "tr");
+            source = TechErrorReportService.TemplateSource.defaults();
         }
-        TechErrorChannel ch = service.createChannel(teamId, str(b.get("name")), str(b.get("description")), template, userId(session));
+        TechErrorChannel ch = service.createChannel(teamId, str(b.get("name")), str(b.get("description")), template, userId(session), source);
         auditService.recordAction("TECH_ERROR_CHANNEL_CREATE", session, request, "TECH_ERROR_CHANNEL", String.valueOf(ch.getId()),
-                AuditDetail.of("team_id", teamId, "name", ch.getName(), "copy_from", copyFrom));
+                fromLibrary
+                        ? AuditDetail.of("team_id", teamId, "name", ch.getName(), "source", "library",
+                                "library_template_id", libraryRef, "template_name", libraryName)
+                        : AuditDetail.of("team_id", teamId, "name", ch.getName(), "copy_from", copyFrom,
+                                "source", source.kind()));
         return ok(channelDto(ch, team, session, true));
     }
 
@@ -898,6 +941,10 @@ public class TechErrorReportController {
         if (ch == null) throw notFoundChannel();
         List<Map<String, Object>> out = new ArrayList<>();
         boolean currentRecorded = false;
+        // Sürüm başına rapor sayısı (2026-10-18, D19): kanal için TEK gruplu sorgu — sürüm başına sorgu yok
+        Map<Integer, Long> counts = service.templateVersionCounts(ch.getId());
+        Set<Integer> listed = new HashSet<>();
+        boolean sharedOnly = SessionScope.viewableOnlyByGrant(session, ch.getTeamId());
         if (history != null) {
             for (var v : history.templateVersions(ch.getId())) {
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -909,6 +956,11 @@ public class TechErrorReportController {
                 m.put("slot_count", v.getSlotCount());
                 m.put("current", v.getVersion() == ch.getTemplateVersion());
                 m.put("recorded", true);
+                m.put("report_count", counts.getOrDefault(v.getVersion(), 0L));
+                m.put("source_kind", v.getSourceKind());
+                // Kütüphane kaydının adı takımın kendi alanıdır: yalnız paylaşımla okuyana verilmez (tür kalır)
+                m.put("source_name", sharedOnly ? null : v.getSourceName());
+                listed.add(v.getVersion());
                 if (v.getVersion() == ch.getTemplateVersion()) currentRecorded = true;
                 out.add(m);
             }
@@ -924,13 +976,41 @@ public class TechErrorReportController {
             m.put("slot_count", t.allSlots().size());
             m.put("current", true);
             m.put("recorded", false);
+            m.put("report_count", counts.getOrDefault(ch.getTemplateVersion(), 0L));
+            listed.add(ch.getTemplateVersion());
             out.add(0, m);
+        }
+        // Sürümü bilinmeyen raporlar (bu özellikten önce açılmış) ve listede olmayan (budanmış / hiç kaydedilmemiş) bir
+        // sürümle açılmış raporlar ayrıca sayılır — hiçbiri "0" diye gizlenmez
+        long unknown = counts.getOrDefault(null, 0L);
+        long unlisted = 0;
+        for (Map.Entry<Integer, Long> en : counts.entrySet()) {
+            if (en.getKey() != null && !listed.contains(en.getKey())) unlisted += en.getValue();
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("current_version", ch.getTemplateVersion());
         data.put("versions", out);
         data.put("max_versions", com.sitemonitor.service.techerror.TechErrorHistoryService.MAX_TEMPLATE_VERSIONS);
+        data.put("unknown_version_reports", unknown);
+        data.put("unlisted_version_reports", unlisted);
         return ok(data);
+    }
+
+    /** Sürüm ayrıntısındaki rapor dönemleri: bu sürümle açılmış / güncellenmiş en yeni {@code 24} rapor (başlık raporun kendi kopyasından). */
+    private List<Map<String, Object>> versionReports(TechErrorChannel ch, int version) {
+        Template current = TechErrorTemplate.fromStored(ch.getTemplateJson());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (TechErrorReportRepository.Row r : service.reportsWithTemplateVersion(ch.getId(), version)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId());
+            m.put("year", r.getReportYear());
+            m.put("month", r.getReportMonth());
+            String pattern = r.getTitlePattern() != null ? r.getTitlePattern() : current.title();
+            String lang = r.getTitlePattern() != null && r.getTemplateLang() != null ? r.getTemplateLang() : current.lang();
+            m.put("title", TechErrorTemplate.resolve(pattern, ch.getName(), r.getReportYear(), r.getReportMonth(), lang));
+            out.add(m);
+        }
+        return out;
     }
 
     /** Tek şablon sürümünün tam hâli (salt okuma). Kayıtlı değilse ve istenen o anki sürümse kanalın kendisinden. */
@@ -948,6 +1028,8 @@ public class TechErrorReportController {
             data.put("version", v.getVersion());
             data.put("saved_at", iso(v.getSavedAt()));
             data.put("saved_by_name", v.getSavedByName());
+            data.put("source_kind", v.getSourceKind());
+            data.put("source_name", SessionScope.viewableOnlyByGrant(session, ch.getTeamId()) ? null : v.getSourceName());
             data.put("template", TechErrorTemplate.toMap(TechErrorTemplate.fromStored(v.getTemplateJson())));
         } else if (version == ch.getTemplateVersion()) {
             data.put("version", ch.getTemplateVersion());
@@ -960,6 +1042,9 @@ public class TechErrorReportController {
                     "This template version isn't recorded; the version history started with this feature, or older versions were pruned."));
         }
         data.put("current", version == ch.getTemplateVersion());
+        // Bu sürümle açılmış raporlar (D19): sayı tek gruplu sorgudan, dönemler en çok 24 (en yeni önce)
+        data.put("report_count", service.templateVersionCounts(ch.getId()).getOrDefault(version, 0L));
+        data.put("reports", versionReports(ch, version));
         return ok(data);
     }
 
@@ -1699,6 +1784,8 @@ public class TechErrorReportController {
         m.put("last_attempt_at", iso(r.getLastAttemptAt()));
         m.put("last_sent_to", r.getLastSentTo());
         m.put("send_count", r.getSendCount());
+        // Raporun kopyaladığı kanal şablonu sürümü (D19); null = bilinmiyor (arayüz "v0" / "vnull" yazmaz)
+        m.put("template_version", r.getTemplateVersion());
         m.put("approval", approvalDto(r));
         return m;
     }
@@ -1737,6 +1824,7 @@ public class TechErrorReportController {
             public Long getSentRev() { return r.getSentRev(); }
             public String getTitlePattern() { return r.getTitlePattern(); }
             public String getTemplateLang() { return r.getTemplateLang(); }
+            public Integer getTemplateVersion() { return r.getTemplateVersion(); }
             public String getSendState() { return r.getSendState(); }
             public Instant getSendClaimedAt() { return r.getSendClaimedAt(); }
             public Instant getLastSentAt() { return r.getLastSentAt(); }

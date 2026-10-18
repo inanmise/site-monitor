@@ -1817,6 +1817,15 @@ public class SchedulerService {
         patch("ALTER TABLE notification_logs ADD COLUMN tech_error_channel_id BIGINT");
         patch("ALTER TABLE notification_logs ADD COLUMN tech_error_report_id BIGINT");
 
+        // Raporun kopyaladığı şablon sürümü (2026-10-18, D19 — NULL = bilinmiyor; TechErrorReportTemplateVersionBackfill
+        // geçmiş olaylarından doldurur) + kanal açılışındaki şablon kaynağı (D17, sürüm geçmişinin ilk satırı).
+        patch("ALTER TABLE tech_error_reports ADD COLUMN template_version INTEGER");
+        patch("ALTER TABLE tech_error_template_versions ADD COLUMN source_kind VARCHAR(16)");
+        patch("ALTER TABLE tech_error_template_versions ADD COLUMN source_name VARCHAR(200)");
+        // Takım şablon kütüphanesi (D17): takım başına EN ÇOK BİR varsayılan — servis takım satırını kilitleyip öncekini
+        // düşürür; kısmi tekil indeks PostgreSQL'de ek güvence (H2 kısmi indeksi bilmez → yama sessizce atlanır).
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_tett_one_default ON tech_error_team_templates(team_id) WHERE is_default = true");
+
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim
         // günlükleri…) CONCURRENTLY bile açılışı dakikalarca bekletebilir: pod bu sürede REFUSING_TRAFFIC, startup probe

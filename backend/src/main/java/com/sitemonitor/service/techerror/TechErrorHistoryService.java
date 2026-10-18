@@ -404,6 +404,17 @@ public class TechErrorHistoryService {
     /** {@code actorName}: kişi değil sistem yazdıysa görünen ad (ör. otomatik oran göçü); null → kaydedenin adı. */
     @Transactional
     public void recordTemplateVersion(TechErrorChannel ch, int version, String templateJson, Instant at, Long by, String actorName) {
+        recordTemplateVersion(ch, version, templateJson, at, by, actorName, null, null);
+    }
+
+    /**
+     * {@link #recordTemplateVersion(TechErrorChannel, int, String, Instant, Long, String)} + şablonun KAYNAĞI (2026-10-18,
+     * D17): kanal açılışında {@code library} (+ kütüphane kaydının adı), {@code copy} ya da {@code default}. Sürüm
+     * penceresi kanalın ilk sürümünde "Takım kütüphanesinden: …" der.
+     */
+    @Transactional
+    public void recordTemplateVersion(TechErrorChannel ch, int version, String templateJson, Instant at, Long by, String actorName,
+                                      String sourceKind, String sourceName) {
         if (versions.existsByChannelIdAndVersion(ch.getId(), version)) return;
         Template t = TechErrorTemplate.fromStored(templateJson);
         TechErrorTemplateVersion v = new TechErrorTemplateVersion();
@@ -417,6 +428,8 @@ public class TechErrorHistoryService {
         v.setSectionCount(t.sections().size());
         v.setFieldCount(t.allFields().size());
         v.setSlotCount(t.allSlots().size());
+        v.setSourceKind(sourceKind);
+        v.setSourceName(sourceName == null ? null : sourceName.length() > 200 ? sourceName.substring(0, 200) : sourceName);
         versions.save(v);
         if (versions.countByChannelId(ch.getId()) > MAX_TEMPLATE_VERSIONS) {
             List<Integer> edge = versions.versionsNewestFirst(ch.getId(), PageRequest.of(MAX_TEMPLATE_VERSIONS, 1));

@@ -75,6 +75,7 @@ class TechErrorReportControllerTest {
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.techerror.TechErrorApprovalService approvals;
     @MockitoBean com.sitemonitor.service.techerror.TechErrorAnalyticsService analytics;
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorTeamTemplateService library;
 
     private final List<TechErrorChannel> channels = new ArrayList<>();
     private final List<TechErrorReport> reports = new ArrayList<>();
@@ -246,6 +247,7 @@ class TechErrorReportControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.field").value("team_id"));
         verify(service, never()).createChannel(eq(B), any(), any(), any(), any());
+        verify(service, never()).createChannel(eq(B), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -437,6 +439,8 @@ class TechErrorReportControllerTest {
             public int getSectionCount() { return 5; }
             public int getFieldCount() { return 10 + v; }
             public int getSlotCount() { return 2; }
+            public String getSourceKind() { return v == 1 ? "library" : null; }
+            public String getSourceName() { return v == 1 ? "Takım varsayılanı" : null; }
         };
     }
 
@@ -1616,5 +1620,135 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.fields[0].type_mismatch.length()").value(0))
                 .andExpect(jsonPath("$.data.channels[0].reports[11].queued").doesNotExist());
         verify(analytics).analytics(any(), any(), eq(12), any(), any(), any(), eq(false));
+    }
+
+    // ── Takım şablon kütüphanesi (D17) ve raporun şablon sürümü (D19), 2026-10-18 ───────────────────
+
+    private static com.sitemonitor.model.TechErrorTeamTemplate libraryEntry(long id, long team, String json) {
+        com.sitemonitor.model.TechErrorTeamTemplate e = new com.sitemonitor.model.TechErrorTeamTemplate();
+        e.setId(id);
+        e.setTeamId(team);
+        e.setName("Takım varsayılanı (Dijital Kanallar)");
+        e.setTemplateJson(json);
+        e.setVersion(1L);
+        return e;
+    }
+
+    @Test
+    @DisplayName("kütüphaneden kanal: kayıt AÇILAN takımın kütüphanesinden okunur, katı doğrulanır, kaynak (library + ad) servise ve denetime gider; başka takımın / yok kaydı ve bozuk kayıt 400 library_template_id; kopya ile birlikte 400")
+    void createChannelFromLibrary() throws Exception {
+        TechErrorTemplate.Template d = TechErrorTemplate.defaults("tr");
+        TechErrorTemplate.Template titled = new TechErrorTemplate.Template(d.lang(), "Kütüphane {kanal} {ay} {yil}", d.sections());
+        when(library.find(A, 5L)).thenReturn(Optional.of(libraryEntry(5, A, TechErrorTemplate.toJson(titled))));
+        when(library.find(A, 6L)).thenReturn(Optional.of(libraryEntry(6, A, "{bozuk")));
+        TechErrorChannel created = channel(30, A);
+        when(service.createChannel(eq(A), eq("Mobil"), any(), any(), eq(50L), any())).thenReturn(created);
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"Mobil\",\"library_template_id\":5}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(30));
+        verify(service).createChannel(eq(A), eq("Mobil"), any(),
+                org.mockito.ArgumentMatchers.argThat(t -> "Kütüphane {kanal} {ay} {yil}".equals(t.title())), eq(50L),
+                org.mockito.ArgumentMatchers.argThat(src -> src != null && "library".equals(src.kind())
+                        && "Takım varsayılanı (Dijital Kanallar)".equals(src.name())));
+        verify(auditService).recordAction(eq("TECH_ERROR_CHANNEL_CREATE"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TECH_ERROR_CHANNEL"),
+                eq("30"), org.mockito.ArgumentMatchers.argThat(dt -> dt != null && dt.contains("library")));
+        // Başka takımın kaydı: aranan takım AÇILAN kanalın takımı → bulunmaz
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("library_template_id"));
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":6}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("library_template_id"));
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"POS\",\"library_template_id\":5,\"copy_from\":10}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("library_template_id"));
+        verify(service, never()).createChannel(eq(A), eq("POS"), any(), any(), any(), any());
+        // Varsayılan kaynak işaretlenir
+        when(service.createChannel(eq(A), eq("ATM"), any(), any(), eq(50L), any())).thenReturn(channel(31, A));
+        mvc.perform(post("/api/tech-error-reports/channels").session(user("USER", A, List.of()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":1,\"name\":\"ATM\",\"lang\":\"en\"}"))
+                .andExpect(status().isOk());
+        verify(service).createChannel(eq(A), eq("ATM"), any(), org.mockito.ArgumentMatchers.argThat(t -> "en".equals(t.lang())), eq(50L),
+                org.mockito.ArgumentMatchers.argThat(src -> src != null && "default".equals(src.kind())));
+    }
+
+    @Test
+    @DisplayName("genel bakış: takım satırı library_read taşır — kendi takımı true; YALNIZ paylaşımla görülen takım false")
+    void overviewLibraryRead() throws Exception {
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[0].id").value(1))
+                .andExpect(jsonPath("$.data.teams[0].library_read").value(true));
+        mvc.perform(get("/api/tech-error-reports/overview").session(grantee(B, A, true)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[?(@.id == 1)].library_read").value(org.hamcrest.Matchers.contains(false)))
+                .andExpect(jsonPath("$.data.teams[?(@.id == 2)].library_read").value(org.hamcrest.Matchers.contains(true)));
+    }
+
+    @Test
+    @DisplayName("sürüm penceresi (D19): her sürümde report_count (tek gruplu sorgu), sürümü bilinmeyen ve listede olmayan sürümlerin raporları ayrı; ilk sürümün kaynağı; ayrıntıda en yeni dönemler raporun kendi başlığıyla")
+    void templateVersionsReportCounts() throws Exception {
+        when(history.templateVersions(10L)).thenReturn(List.of(meta(3), meta(2), meta(1)));
+        Map<Integer, Long> counts = new java.util.HashMap<>();
+        counts.put(3, 4L);
+        counts.put(1, 2L);
+        counts.put(7, 5L);           // listede olmayan (budanmış) sürüm
+        counts.put(null, 6L);        // sürümü bilinmeyen
+        when(service.templateVersionCounts(10L)).thenReturn(counts);
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versions[0].report_count").value(4))
+                .andExpect(jsonPath("$.data.versions[1].report_count").value(0))
+                .andExpect(jsonPath("$.data.versions[2].report_count").value(2))
+                .andExpect(jsonPath("$.data.versions[2].source_kind").value("library"))
+                .andExpect(jsonPath("$.data.versions[2].source_name").value("Takım varsayılanı"))
+                .andExpect(jsonPath("$.data.unknown_version_reports").value(6))
+                .andExpect(jsonPath("$.data.unlisted_version_reports").value(5));
+        verify(service, org.mockito.Mockito.times(1)).templateVersionCounts(10L);
+        // Yalnız paylaşımla okuyan: kütüphane kaydının ADI verilmez (kütüphane takımın kendi alanı), tür kalır
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions").session(grantee(B, A, false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versions[2].source_kind").value("library"))
+                .andExpect(jsonPath("$.data.versions[2].source_name").value(org.hamcrest.Matchers.nullValue()));
+        // Kayıtlı sürümü olmayan kanal: o anki sürüm satırı da sayıyı taşır
+        when(history.templateVersions(10L)).thenReturn(List.of());
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.versions[0].recorded").value(false))
+                .andExpect(jsonPath("$.data.versions[0].report_count").value(4))
+                .andExpect(jsonPath("$.data.unlisted_version_reports").value(7));
+        TechErrorReport sep = report(100, 10, A, null);
+        sep.setTitlePattern("{kanal} Raporu {ay} {yil}");
+        sep.setTemplateLang("tr");
+        when(service.reportsWithTemplateVersion(10L, 3)).thenReturn(List.of(TechErrorReportController.rowOf(sep)));
+        when(history.templateVersion(10L, 3)).thenReturn(Optional.empty());
+        mvc.perform(get("/api/tech-error-reports/channels/10/template/versions/3").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.report_count").value(4))
+                .andExpect(jsonPath("$.data.reports[0].id").value(100))
+                .andExpect(jsonPath("$.data.reports[0].month").value(9))
+                .andExpect(jsonPath("$.data.reports[0].title").value("Kanal 10 Raporu Eylül 2026"));
+    }
+
+    @Test
+    @DisplayName("rapor yanıtı ve liste satırı raporun şablon sürümünü taşır (D19); bilinmeyen null (sıfır değil)")
+    void reportCarriesTemplateVersion() throws Exception {
+        TechErrorReport r = report(100, 10, A, null);
+        r.setTemplateVersion(2);
+        report(101, 10, A, null);
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.report.template_version").value(2))
+                .andExpect(jsonPath("$.data.channel.template_version").value(3));
+        mvc.perform(get("/api/tech-error-reports/reports/101").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.report.template_version").value(org.hamcrest.Matchers.nullValue()));
+        when(service.reportRows(10L)).thenReturn(List.of(TechErrorReportController.rowOf(r)));
+        mvc.perform(get("/api/tech-error-reports/channels/10/reports").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reports[0].template_version").value(2));
     }
 }

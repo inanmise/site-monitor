@@ -567,6 +567,16 @@ export const api = {
     saveTemplate: (id, template, version) => request(`/tech-error-reports/channels/${id}/template`,
       { method: 'PUT', body: JSON.stringify({ template, version }), withStatus: true }),
     defaultTemplate: (lang) => request(`/tech-error-reports/templates/default?lang=${encodeURIComponent(lang || 'tr')}`, { withStatus: true }),
+    // Takım şablon kütüphanesi (2026-10-18, D17): takımın KENDİ kapsamı (paylaşım açmaz); liste gövdesiz, tek kayıt gövdeli.
+    // Güncelleme yalnız gönderilen alanlar + okunan `version` (eskiyse 409 CONCURRENT_MODIFICATION)
+    teamTemplates: (teamId) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/templates`, { withStatus: true }),
+    teamTemplate: (teamId, id) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/templates/${encodeURIComponent(id)}`, { withStatus: true }),
+    createTeamTemplate: (teamId, body) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/templates`,
+      { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    updateTeamTemplate: (teamId, id, body) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/templates/${encodeURIComponent(id)}`,
+      { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    deleteTeamTemplate: (teamId, id) => request(`/tech-error-reports/teams/${encodeURIComponent(teamId)}/templates/${encodeURIComponent(id)}`,
+      { method: 'DELETE', withStatus: true }),
     // Değişiklik ve sürüm geçmişi (2026-10-14): geçmiş anahtar kümesi sayfalı (before = son görülen olayın kimliği)
     reportHistory: (id, before = null, limit = 50) => request(`/tech-error-reports/reports/${id}/history?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`, { withStatus: true }),
     templateVersions: (channelId) => request(`/tech-error-reports/channels/${channelId}/template/versions`, { withStatus: true }),

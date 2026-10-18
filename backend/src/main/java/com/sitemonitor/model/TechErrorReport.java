@@ -68,6 +68,16 @@ public class TechErrorReport {
     @Column(name = "template_lang", length = 4)
     private String templateLang;
 
+    /**
+     * Raporun KOPYALADIĞI kanal şablonu sürümü (2026-10-18, D19): açılışta kanalın o anki {@code template_version}'ı,
+     * "şablonun son hâlini uygula"da kanalın güncel sürümü — ikisi de şablon kopyasıyla AYNI varlık kaydında yazılır.
+     * Sürüm penceresi "bu sürümle N rapor" der. null = bilinmiyor (bu sütundan önce açılmış ve geçmiş olayından
+     * bulunamamış rapor; {@code TechErrorReportTemplateVersionBackfill} geçmişten doldurur, tahmin etmez). Değer kaydı
+     * {@code @DynamicUpdate} sayesinde bu sütuna dokunmaz (geri doldurmanın koşullu yazdığı değer ezilmez).
+     */
+    @Column(name = "template_version")
+    private Integer templateVersion;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

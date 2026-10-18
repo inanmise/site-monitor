@@ -11,6 +11,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
 import { TrendBlock } from './ReportTrend.jsx'
@@ -801,6 +802,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   if (!data || !draft) return null
 
   const upd = data.template_update
+  // Şablon sürümleri (D19): yalnız pozitif tam sayı gösterilir (null / 0 / bozuk → çizilmez)
+  const posInt = (v) => (Number.isInteger(Number(v)) && Number(v) > 0 && v !== null && v !== '' ? Number(v) : null)
+  const reportTplVersion = posInt(report.template_version)
+  const channelTplVersion = posInt(channel?.template_version)
   return (
     <div className={cn('flex flex-col gap-4', actionsHeight > 0 ? '' : 'pb-24')}
       style={actionsHeight > 0 ? { paddingBottom: actionsHeight + 16 } : undefined} data-slot="te-report" data-report={reportId}>
@@ -851,6 +856,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           {/* Yalnız paylaşımla görülen raporda rozet tıklanmaz: üye penceresi sahip takımın kişilerini gösterirdi */}
           <TeamBadge teamId={channel?.team_id} teamName={channel?.team_name} wrap
             static={!!(data?.shared_access || channel?.shared_access)} />
+          {/* Raporun kopyaladığı kanal şablonu sürümü (D19); bilinmiyorsa çip yok ("v0" / "vnull" yazılmaz) */}
+          {reportTplVersion != null && (
+            <Badge variant="outline" className="rounded-md overflow-visible" data-slot="te-report-tpl-version" data-version={reportTplVersion}>
+              {t('te.tplVersionChip', reportTplVersion)}
+            </Badge>
+          )}
           {report.created_at && (
             <span className="[overflow-wrap:anywhere]" data-slot="te-created">· {t('te.createdLine', fmtDateTime(report.created_at, uiLang), report.created_by_name || '—')}</span>
           )}
@@ -912,7 +923,17 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       )}
       {upd?.differs && !readOnly && (
         <AlertBanner tone="info" icon={LayoutTemplate} title={t('te.templateChangedTitle')}
-          actions={<Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={applyTemplate}>{t('te.applyTemplate')}</Button>}>
+          actions={(
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Kanal şablonu daha yeni sürümdeyse sürüm numarası (D19) — raporunki bilinmiyorsa da kanalınki söylenir */}
+              {channelTplVersion != null && (reportTplVersion == null || channelTplVersion > reportTplVersion) && (
+                <Badge variant="outline" className="rounded-md overflow-visible" data-slot="te-channel-tpl-version" data-version={channelTplVersion}>
+                  {t('te.tplChannelVersion', channelTplVersion)}
+                </Badge>
+              )}
+              <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={applyTemplate}>{t('te.applyTemplate')}</Button>
+            </div>
+          )}>
           {t('te.templateChangedBody')}
         </AlertBanner>
       )}
