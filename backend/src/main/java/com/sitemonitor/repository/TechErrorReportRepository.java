@@ -67,6 +67,36 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Query("SELECT r.channelId, COUNT(r) FROM TechErrorReport r WHERE r.channelId IN :ids GROUP BY r.channelId")
     List<Object[]> countByChannel(@Param("ids") Collection<Long> channelIds);
 
+    /**
+     * Kanallar arası analiz satırı (2026-10-18, R22): raporun KENDİ kopyalanmış şablonu + değerleri + gönderim durumu. Liste
+     * satırının ({@link Row}) aksine metin kolonlarını taşır — yalnız analiz penceresindeki (ve hesaplanan değişim oranları
+     * için ondan bir önceki aydaki) raporlar okunur.
+     */
+    interface AnalyticsRow {
+        Long getId();
+        Long getChannelId();
+        Integer getReportYear();
+        Integer getReportMonth();
+        String getTemplateJson();
+        String getValuesJson();
+        Instant getLastSentAt();
+        String getSendState();
+    }
+
+    /**
+     * Analiz penceresindeki raporlar, kimlik sırasıyla DİLİM DİLİM (anahtar kümesi: {@code id > after}, dilim boyu
+     * {@code page}; sayım sorgusu yok) — kanal sayısından bağımsız. Dönem {@code yıl × 12 + ay} olarak {@code [from, to]}
+     * aralığında (iki uç dahil). Bellekte aynı anda en çok bir dilimin metin kolonları durur (inceleme 2026-10-18).
+     */
+    @Query("SELECT r.id AS id, r.channelId AS channelId, r.reportYear AS reportYear, r.reportMonth AS reportMonth, "
+            + "r.templateJson AS templateJson, r.valuesJson AS valuesJson, r.lastSentAt AS lastSentAt, r.sendState AS sendState "
+            + "FROM TechErrorReport r WHERE r.channelId IN :ids "
+            + "AND (r.reportYear * 12 + r.reportMonth) >= :from AND (r.reportYear * 12 + r.reportMonth) <= :to "
+            + "AND r.id > :after ORDER BY r.id")
+    List<AnalyticsRow> findAnalyticsRows(@Param("ids") Collection<Long> channelIds, @Param("from") int fromPeriod,
+                                         @Param("to") int toPeriod, @Param("after") long afterId,
+                                         org.springframework.data.domain.Pageable page);
+
     @Query("SELECT r.id FROM TechErrorReport r WHERE r.channelId = :channelId")
     List<Long> idsForChannel(@Param("channelId") Long channelId);
 

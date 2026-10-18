@@ -74,6 +74,7 @@ class TechErrorReportControllerTest {
     @MockitoBean PermissionService permissions;
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.techerror.TechErrorApprovalService approvals;
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorAnalyticsService analytics;
 
     private final List<TechErrorChannel> channels = new ArrayList<>();
     private final List<TechErrorReport> reports = new ArrayList<>();
@@ -1288,5 +1289,332 @@ class TechErrorReportControllerTest {
             com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
             controller.resetSummaryCache();
         }
+    }
+
+    // ── R18 (2026-10-18): gönderime ek Bilgi (C13) + kanal gönderim günlüğü (E22) ─────────────────
+
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorSendLogService sendLogs;
+
+    @Test
+    @DisplayName("C13 ek Bilgi: gövdede extra_cc varsa 6 argümanlı gönderim (takım yolu TEAM, onay akışında EXECUTIVE), yanıt cc taşır, denetim yalnız sayı; geçersiz giriş 400 VALIDATION_FAILED alan extra_cc, denetim yok; boş extra_cc = eski çağrı; dizi kabul, sayı türü 400; paylaşımla düzenleyen 403")
+    void sendWithExtraCc() throws Exception {
+        report(100, 10, A, null);
+        MockHttpSession s = user("USER", A, List.of());
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.TEAM), eq("ek@example.com, iki@example.com"))).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("takim1@example.com"), 1234, "Konu", List.of("ek@example.com", "iki@example.com")));
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":\"ek@example.com, iki@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("SENT"))
+                .andExpect(jsonPath("$.data.cc.length()").value(2))
+                .andExpect(jsonPath("$.data.cc[0]").value("ek@example.com"));
+        verify(sender, never()).send(any(), any(), any(), any());
+        org.mockito.ArgumentCaptor<String> audit = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_SEND"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                eq("TECH_ERROR_REPORT"), eq("100"), audit.capture());
+        org.assertj.core.api.Assertions.assertThat(audit.getValue()).doesNotContain("ek@example.com");      // adres denetime yazılmaz
+
+        // Dizi de kabul edilir (öğeler virgülle birleşir)
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.TEAM), eq("a@example.com, b@example.com"))).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("takim1@example.com"), 1, "Konu", List.of("a@example.com", "b@example.com")));
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":[\"a@example.com\",\"b@example.com\"]}"))
+                .andExpect(status().isOk());
+
+        // Geçersiz adres: sunucunun alan hatası (gönderici doğrular — talepten önce)
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.TEAM), eq("bozuk")))
+                .thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("extra_cc", "«bozuk» geçerli bir e-posta adresi değil."));
+        org.mockito.Mockito.clearInvocations(auditService);
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":\"bozuk\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("extra_cc"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("bozuk")));
+        verify(auditService, never()).recordAction(eq("TECH_ERROR_REPORT_SEND"), any(HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                any(), any(), anyString());
+        // Sayı türü: 400 extra_cc, gönderim denenmez
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":5}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("extra_cc"));
+
+        // Boş extra_cc = ek yok → eski 4 argümanlı çağrı (byte-identical yol)
+        when(sender.send(any(), any(), any(), any())).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("takim1@example.com"), 1234, "Konu"));
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":\"  \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cc.length()").value(0));
+        verify(sender).send(any(), any(), any(), any());
+
+        // Onay akışlı kanal: onaylı rapor EXECUTIVE yoluyla, ek Bilgi ile
+        execChannel(30, A);
+        TechErrorReport approved = report(130, 30, A, null);
+        approved.setApprovalState("APPROVED");
+        approved.setApprovalRev(0L);
+        when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE), eq("ek@example.com"))).thenReturn(
+                new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 1, "Konu", List.of("takim1@example.com", "ek@example.com")));
+        mvc.perform(post("/api/tech-error-reports/reports/130/send").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":\"ek@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cc[1]").value("ek@example.com"));
+
+        // Paylaşımla düzenleyen gönderemez (ek Bilgi de)
+        mvc.perform(post("/api/tech-error-reports/reports/100/send").session(grantee(B, A, true))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"extra_cc\":\"ek@example.com\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("E22 kanal gönderim günlüğü: takımın okuyanı alıcıları görür; ham durum metni HİÇ KİMSEYE dönmez (yalnız sebep kodu — inceleme 2026-10-18); sığmayan adres sayısı to_more; yalnız paylaşımla okuyan yalnız sayıları (to / cc null); AUDIT okur; başka takım 404 (servis çağrılmaz); sayfa / boyut / süzgeç servise geçer")
+    void sendLog() throws Exception {
+        report(100, 10, A, null);
+        var row = new com.sitemonitor.service.techerror.TechErrorSendLogService.Row(77L, "2026-10-13T08:00:00Z", "TECH_ERROR_REPORT", "report",
+                "TEAM", "failed", "SMTP_FAILED", 100L, 2026, 9,
+                List.of("takim1@example.com"), List.of("ek@example.com"), 4, 1, 3, 0);
+        when(sendLogs.page(eq(10L), any(), any(), any(), any())).thenReturn(
+                new com.sitemonitor.service.techerror.TechErrorSendLogService.Page(List.of(row), 31, 1, 25, "report", "failed"));
+        mvc.perform(get("/api/tech-error-reports/channels/10/send-log?page=1&size=25&kind=report&status=failed").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(31))
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.size").value(25))
+                .andExpect(jsonPath("$.data.total_pages").value(2))
+                .andExpect(jsonPath("$.data.recipients_hidden").value(false))
+                .andExpect(jsonPath("$.data.rows[0].id").value(77))
+                .andExpect(jsonPath("$.data.rows[0].kind").value("report"))
+                .andExpect(jsonPath("$.data.rows[0].role").value("TEAM"))
+                .andExpect(jsonPath("$.data.rows[0].status").value("failed"))
+                .andExpect(jsonPath("$.data.rows[0].reason").value("SMTP_FAILED"))
+                .andExpect(jsonPath("$.data.rows[0].status_text").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("550"))))
+                .andExpect(jsonPath("$.data.rows[0].year").value(2026))
+                .andExpect(jsonPath("$.data.rows[0].month").value(9))
+                .andExpect(jsonPath("$.data.rows[0].to[0]").value("takim1@example.com"))
+                .andExpect(jsonPath("$.data.rows[0].to.length()").value(1))
+                .andExpect(jsonPath("$.data.rows[0].to_more").value(3))
+                .andExpect(jsonPath("$.data.rows[0].cc_more").value(0))
+                .andExpect(jsonPath("$.data.rows[0].cc[0]").value("ek@example.com"))
+                .andExpect(jsonPath("$.data.rows[0].to_count").value(4));
+        verify(sendLogs).page(10L, "report", "failed", 1, 25);
+        // Yalnız paylaşımla okuyan: kişi verisi yok, sayılar ve sınıf kalır
+        mvc.perform(get("/api/tech-error-reports/channels/10/send-log").session(grantee(B, A, false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.recipients_hidden").value(true))
+                .andExpect(jsonPath("$.data.rows[0].to").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.rows[0].cc").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.rows[0].status_text").doesNotExist())
+                .andExpect(jsonPath("$.data.rows[0].reason").value("SMTP_FAILED"))      // kod kişi verisi taşımaz
+                .andExpect(jsonPath("$.data.rows[0].to_more").value(0))
+                .andExpect(jsonPath("$.data.rows[0].to_count").value(4))
+                .andExpect(jsonPath("$.data.rows[0].cc_count").value(1))
+                .andExpect(jsonPath("$.data.rows[0].status").value("failed"));
+        // AUDIT okur (adresleri görür — paylaşım değil, kurum geneli görüntüleyici)
+        mvc.perform(get("/api/tech-error-reports/channels/10/send-log").session(audit()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.recipients_hidden").value(false));
+        // Başka takım: 404 (varlığı sızmaz), servis çağrılmaz
+        org.mockito.Mockito.clearInvocations(sendLogs);
+        mvc.perform(get("/api/tech-error-reports/channels/10/send-log").session(user("USER", B, List.of())))
+                .andExpect(status().isNotFound());
+        verify(sendLogs, never()).page(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R18 geçmiş: yalnız paylaşımla okuyan gönderim olayının alıcı / ek Bilgi ADRESLERİNİ görmez (recipient_count / extra_cc_count kalır); takımın okuyanı görür")
+    void historyMasksPeopleForGrantOnly() throws Exception {
+        report(100, 10, A, null);
+        when(history.reportHistory(eq(100L), any(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(
+                new com.sitemonitor.service.techerror.TechErrorHistoryService.HistoryPage(List.of(
+                        event(9, "SEND", 7L, "Ayşe", "{\"state\":\"SENT\",\"recipient_count\":1,\"recipients\":[\"takim1@example.com\"],\"extra_cc\":[\"ek@example.com\",\"iki@example.com\"]}")),
+                        false, Instant.parse("2026-10-01T08:00:00Z"), false));
+        mvc.perform(get("/api/tech-error-reports/reports/100/history").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.events[0].detail.recipients[0]").value("takim1@example.com"))
+                .andExpect(jsonPath("$.data.events[0].detail.extra_cc.length()").value(2));
+        mvc.perform(get("/api/tech-error-reports/reports/100/history").session(grantee(B, A, false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.events[0].detail.recipients").doesNotExist())
+                .andExpect(jsonPath("$.data.events[0].detail.extra_cc").doesNotExist())
+                .andExpect(jsonPath("$.data.events[0].detail.recipient_count").value(1))
+                .andExpect(jsonPath("$.data.events[0].detail.extra_cc_count").value(2))
+                .andExpect(jsonPath("$.data.events[0].detail.state").value("SENT"));
+        org.assertj.core.api.Assertions.assertThat(TechErrorReportController.maskHistoryPeople(Map.of("state", "SENT"))).isEqualTo(Map.of("state", "SENT"));
+        org.assertj.core.api.Assertions.assertThat(TechErrorReportController.extraCcOf(null)).isNull();
+        org.assertj.core.api.Assertions.assertThat(TechErrorReportController.extraCcOf(Map.of("extra_cc", ""))).isNull();
+    }
+
+    // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────
+
+    private static com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result analyticsResult() {
+        java.util.List<Double> tx = new ArrayList<>(java.util.Collections.nCopies(12, (Double) null));
+        tx.set(11, 1_250_000d);
+        java.util.List<com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef> reps =
+                new ArrayList<>(java.util.Collections.nCopies(12, (com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef) null));
+        reps.set(11, new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef(100L, true));
+        java.util.List<YearMonth> months = new ArrayList<>();
+        for (int i = 11; i >= 0; i--) months.add(YearMonth.of(2026, 9).minusMonths(i));
+        return new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(months, 12,
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldRef("total-tx", "Toplam işlem adedi", "number")),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldOption("total-tx", "Toplam işlem adedi", "number", 1)),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(10L, "Kanal 10", A,
+                        Map.of("total-tx", tx), reps)), 1, false, List.of(A));
+    }
+
+    private static com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result analyticsFallbackResult() {
+        var base = analyticsResult();
+        java.util.List<com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef> reps =
+                new ArrayList<>(java.util.Collections.nCopies(12, (com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef) null));
+        reps.set(11, new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ReportRef(100L, false, true));
+        var ch = base.channels().get(0);
+        return new com.sitemonitor.service.techerror.TechErrorAnalyticsService.Result(base.months(), 12,
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.FieldRef("total-tx", "Toplam işlem adedi", "number", List.of(20L))),
+                base.available(),
+                List.of(new com.sitemonitor.service.techerror.TechErrorAnalyticsService.ChannelSeries(ch.id(), ch.name(), ch.teamId(), ch.values(), reps)),
+                1, false, List.of(A), List.of("gone-field"), true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Collection<Long> analyticsTeams() {
+        org.mockito.ArgumentCaptor<java.util.Collection<Long>> c = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(analytics, org.mockito.Mockito.atLeastOnce()).analytics(c.capture(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        return c.getValue();
+    }
+
+    @Test
+    @DisplayName("analiz: üye kendi takımıyla, varsayılan 12 ay ve alan istenmeden; yanıtta boş ay null (0 değil), rapor kimliği + gönderildi, takım adı")
+    void analytics_memberScopeAndShape() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team").value("all"))
+                .andExpect(jsonPath("$.data.team_name").doesNotExist())
+                .andExpect(jsonPath("$.data.months.length()").value(12))
+                .andExpect(jsonPath("$.data.months[11].month").value(9))
+                .andExpect(jsonPath("$.data.end.year").value(2026))
+                .andExpect(jsonPath("$.data.fields[0].id").value("total-tx"))
+                .andExpect(jsonPath("$.data.available_fields[0].channels").value(1))
+                .andExpect(jsonPath("$.data.channels[0].team_name").value("Takım 1"))
+                .andExpect(jsonPath("$.data.channels[0].points['total-tx'][11]").value(1_250_000d))
+                .andExpect(jsonPath("$.data.channels[0].points['total-tx'][0]").doesNotExist())
+                .andExpect(jsonPath("$.data.channels[0].reports[11].id").value(100))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].sent").value(true))
+                .andExpect(jsonPath("$.data.channels[0].reports[0]").doesNotExist())
+                .andExpect(jsonPath("$.data.teams[0].name").value("Takım 1"))
+                .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.max_fields").value(4));
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(null), eq(12), eq(List.of()), eq(YearMonth.of(2026, 9)), any(), eq(false));
+    }
+
+    @Test
+    @DisplayName("analiz: takım süzgeci yalnız okunabilen takım (başka takım / bozuk kimlik 404); AUDIT her takımı okur; alan ve ay parametreleri iletilir")
+    void analytics_teamFilter() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(s)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "abc").session(s)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").param("months", "24")
+                        .param("fields", "error-rate, total-tx,error-rate").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team").value("1"))
+                .andExpect(jsonPath("$.data.team_name").value("Takım 1"));
+        verify(analytics).analytics(eq(java.util.Set.of(A)), eq(A), eq(24), eq(List.of("error-rate", "total-tx")), any(), any(), eq(false));
+        org.mockito.Mockito.clearInvocations(analytics);
+        // Seçili takımın aktif kanalı yoksa da takım seçicide kalır (sonuçta yalnız A'nın kanalı var); adı da yanıtta
+        // (inceleme 2026-10-18, 2. tur — seçici çıplak "#kimlik" yazmasın)
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "2").session(audit()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_name").value("Takım 2"))
+                .andExpect(jsonPath("$.data.teams.length()").value(2))
+                .andExpect(jsonPath("$.data.teams[1].id").value(2));
+        assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);
+    }
+
+    @Test
+    @DisplayName("analiz parametreleri: ay yalnız 6 / 12 / 24, en çok 4 alan, bozuk alan kimliği → 400 VALIDATION_FAILED (servise gitmez)")
+    void analytics_paramValidation() throws Exception {
+        MockHttpSession s = user("USER", A, List.of());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("months", "7").session(s))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("months"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("months", "abc").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("months"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "a,b,c,d,e").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "Toplam İşlem").session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "x".repeat(500)).session(s))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("fields"));
+        verify(analytics, never()).analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    @DisplayName("analiz: okuma izni yoksa 403; modül görünürlüğü (S6) kapalı takımın üyesi 403, açık takımın üyesi yalnız kendi takımı")
+    void analytics_permissionAndModuleVisibility() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
+        MockHttpSession noRead = user("USER", A, List.of());
+        noRead.setAttribute("systemRole", "NONE");
+        when(permissions.allows(org.mockito.ArgumentMatchers.<HttpSession>argThat(x -> x != null && "NONE".equals(x.getAttribute("systemRole"))),
+                eq("tech_error_reports.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/tech-error-reports/analytics").session(noRead)).andExpect(status().isForbidden());
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of()))).andExpect(status().isForbidden());
+            mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", B, List.of()))).andExpect(status().isOk());
+            assertThat(analyticsTeams()).containsExactly(B);
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
+    }
+
+    @Test
+    @DisplayName("analiz + erişim paylaşımı: VIEW paylaşımı paylaşan takımı okur (süzgeçle de); modül o takıma kapalıysa paylaşımla da 404")
+    void analytics_teamAccessGrant() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analyticsResult());
+        MockHttpSession g = grantee(B, A, false);
+        mvc.perform(get("/api/tech-error-reports/analytics").session(g)).andExpect(status().isOk());
+        assertThat(analyticsTeams()).containsExactlyInAnyOrder(A, B);
+        mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").session(g)).andExpect(status().isOk());
+        verify(analytics).analytics(any(), eq(A), eq(12), any(), any(), any(), eq(false));
+        com.sitemonitor.service.AppSettingsService st = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(st.getString(eq(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_TEAM_IDS), any())).thenReturn("2");
+        com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(new com.sitemonitor.service.techerror.TechErrorVisibilityService(st));
+        try {
+            mvc.perform(get("/api/tech-error-reports/analytics").param("team", "1").session(grantee(B, A, false)))
+                    .andExpect(status().isNotFound());
+        } finally {
+            com.sitemonitor.service.techerror.TechErrorVisibilityService.setCurrent(null);
+        }
+    }
+
+    @Test
+    @DisplayName("analiz: fresh=1 servise iletilir; düşen alanlar + varsayılana dönüş, alan türü farkı ve kuyruktaki rapor yanıtta")
+    void analytics_freshFallbackMismatchQueued() throws Exception {
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(analyticsFallbackResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").param("fields", "gone-field").param("fresh", "1")
+                        .session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fields_fallback").value(true))
+                .andExpect(jsonPath("$.data.dropped_fields[0]").value("gone-field"))
+                .andExpect(jsonPath("$.data.fields[0].type_mismatch[0]").value(20))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].sent").value(false))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].queued").value(true));
+        verify(analytics).analytics(any(), eq(null), eq(12), eq(List.of("gone-field")), any(), any(), eq(true));
+        org.mockito.Mockito.clearInvocations(analytics);
+        // Varsayılan yanıt: dönüş yok, düşen alan yok, kuyruk işareti yalnız kuyruktaki raporda
+        when(analytics.analytics(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(analyticsResult());
+        mvc.perform(get("/api/tech-error-reports/analytics").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fields_fallback").value(false))
+                .andExpect(jsonPath("$.data.dropped_fields.length()").value(0))
+                .andExpect(jsonPath("$.data.fields[0].type_mismatch.length()").value(0))
+                .andExpect(jsonPath("$.data.channels[0].reports[11].queued").doesNotExist());
+        verify(analytics).analytics(any(), any(), eq(12), any(), any(), any(), eq(false));
     }
 }

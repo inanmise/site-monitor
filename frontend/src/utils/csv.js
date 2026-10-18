@@ -33,9 +33,25 @@ export function neutraliseFormula(value) {
   return s
 }
 
+/** {@link csvNumber} işaret sınıfı — yalnız sonlu bir JS sayısını taşır. */
+class CsvNumberCell {
+  constructor(n) { this.n = n }
+}
+
+/**
+ * Sayı hücresi (2026-10-18, kanal analizi): kodun ÜRETTİĞİ sonlu bir JS sayısı formül olamaz — `-0.5` eksi işaretiyle
+ * başlasa da Excel onu SAYI olarak okur; düz `csvCell(-0.5)` başına tek tırnak koyup METNE çevirirdi (Excel hesaplayamaz).
+ * Yalnız sonlu sayı kabul edilir (değilse null); dışarıdan gelen METİN asla buradan geçmez — o `csvCell`'in formül
+ * korumasına tabidir.
+ */
+export function csvNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) ? new CsvNumberCell(n) : null
+}
+
 /** Formül nötrleme + tırnaklama uygulanmış hücre. null/undefined → boş dize. */
 export function csvCell(value) {
   if (value == null) return ''
+  if (value instanceof CsvNumberCell) return String(value.n)
   const s = neutraliseFormula(value)
   if (s === '') return ''
   return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s

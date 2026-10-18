@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate, MailWarning, Plus,
-  Radio, RefreshCw, Search, X,
+  ArrowDown, ArrowUp, ChartLine, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate,
+  MailWarning, Plus, Radio, RefreshCw, Search, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -65,7 +65,7 @@ const movable = (ch) => !!ch?.can_edit && !ch?.shared_access
  * olabilirdi — hiçbir şey görünür biçimde değişmezdi); takım süzgeci sunucuda süzdüğü için takımın tüm kanalları
  * listededir, taşımayı kapatmaz. Taşıma sonucu `aria-live` satırında söylenir; kanal başka sayfaya geçtiyse sayfa izler.
  */
-export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpenReport }) {
+export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpenReport, onOpenAnalytics }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -403,6 +403,13 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
               {filtersActive && (
                 <Button type="button" variant="ghost" onClick={clearFilters} className="pointer-coarse:min-h-10" data-slot="te-clear-filters">
                   <X aria-hidden="true" /> {t('te.filters.clear')}
+                </Button>
+              )}
+              {/* Kanal analizi (2026-10-18, R22): aynı alanlar kanallar ve aylar boyunca — grafik + tablo */}
+              {onOpenAnalytics && (
+                <Button type="button" variant="outline" onClick={onOpenAnalytics} className="pointer-coarse:min-h-10 sm:ml-auto"
+                  data-slot="te-analytics-open" title={t('te.an.openHint')}>
+                  <ChartLine aria-hidden="true" /> {t('te.an.open')}
                 </Button>
               )}
             </div>

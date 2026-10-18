@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T00:33:00Z",
+  "generatedAt": "2026-10-18T01:07:30Z",
   "repo": "inanmise/site-monitor",
-  "count": 771,
+  "count": 772,
   "releases": [
+    {
+      "version": "20.154.0",
+      "tag": "v20.154.0",
+      "releasedAt": "2026-10-18T01:07:22Z",
+      "commit": "e2f29e711915975d419494b81ee6c71931e0f56d",
+      "prevVersion": "20.153.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e2f29e71",
+          "subject": "gönderim günlüğünde hatırlatma sebepleri doğru kodlanır, analize dönüşte taze veri, gönderim Ctrl+Enter ile, pasif Kime günlüğe yazılmaz"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "2bc6ef58",
+          "subject": "tek seferlik ek Bilgi, kanal gönderim günlüğü ve kanallar arası analiz — CLAUDE.md, kılavuz TR/EN, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5016c492",
+          "subject": "kanal analizinde yüzde ekseni veriye göre, düşen alan seçiminde varsayılana dönüş, çoğunluk türü, canlı oranlar, dokunma hedefi, ilk hatada araç çubuğu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "c663a791",
+          "subject": "kanal teknik hata raporlarında kanallar arası / aylar arası analiz — aynı alanlar 6/12/24 ay × kanal grafik + tablo + CSV"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9249706d",
+          "subject": "onay hatırlatması ve diğer PO'lara bilgi postası kanal gönderim günlüğüne bağlanır (rapor + kanal); takım düzeyindeki dönem hatırlatması bağsız kalır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ccebae5f",
+          "subject": "gönderim günlüğü ham SMTP metni göstermez, kısaltılmış alıcı listesi açıklanır, pasif Bilgi adresleri yazılmaz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7bfcb139",
+          "subject": "teknik hata raporu gönderimine tek seferlik ek Bilgi (CC) ve kanal başına gönderim günlüğü"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.153.0",
       "tag": "v20.153.0",

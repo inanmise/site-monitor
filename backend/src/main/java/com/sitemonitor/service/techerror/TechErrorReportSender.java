@@ -1,6 +1,7 @@
 package com.sitemonitor.service.techerror;
 
 import com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException;
+import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.model.TechErrorChannel;
@@ -108,8 +109,77 @@ public class TechErrorReportSender {
         this.appSettings = appSettings;
     }
 
-    /** Gönderim sonucu: {@code state} SENT | QUEUED | SKIPPED | FAILED; {@code to} gerçek alıcılar. */
-    public record Result(String state, String status, List<String> to, int pdfBytes, String subject) { }
+    /**
+     * Gönderim sonucu: {@code state} SENT | QUEUED | SKIPPED | FAILED; {@code to} gerçek alıcılar; {@code cc} postanın Bilgi
+     * listesi (takım adresi + bu gönderime eklenen ek Bilgi — R18 / C13; yoksa boş).
+     */
+    public record Result(String state, String status, List<String> to, int pdfBytes, String subject, List<String> cc) {
+        public Result(String state, String status, List<String> to, int pdfBytes, String subject) {
+            this(state, status, to, pdfBytes, subject, List.of());
+        }
+    }
+
+    /** Bir gönderime eklenebilecek ek Bilgi (CC) adresi sayısı (R18 / C13). */
+    public static final int MAX_EXTRA_CC = 10;
+    /** Ek Bilgi girişinin üst uzunluğu (karakter) — ayrıştırmadan ÖNCE denetlenir (sınırsız girdi taranmaz). */
+    public static final int MAX_EXTRA_CC_INPUT = 4000;
+    /** Ek Bilgi girişinin ayraçları: virgül, noktalı virgül, boşluk / satır sonu (doğrusal tarama). */
+    private static final Pattern EXTRA_CC_SPLIT = Pattern.compile("[,;\\s]+");
+
+    /**
+     * Bu gönderime EK Bilgi (CC) adresleri (R18 / C13, 2026-10-18 — kullanıcı onayı): {@code raw} virgülle ayrılmış adresler.
+     * Kurallar: her öğe teslim edilebilir biçimde ({@link #isDeliverable}) — değilse 400 {@code extra_cc} adresi adıyla söyler;
+     * birbirinin tekrarı (büyük / küçük harf) tek sayılır; en çok {@value #MAX_EXTRA_CC} farklı adres; Kime ya da mevcut
+     * Bilgi'de zaten olan adres eklenmez (iki kez gitmez); mevcut Bilgi + ek ≤ {@value #MAX_RECIPIENTS} — aşarsa 400 (asla
+     * sessiz düşmez). Boş giriş = ek yok. Kanalda SAKLANMAZ; yalnız bu gönderimin postasına, günlük satırının Bilgi'sine ve
+     * geçmiş olayına ({@code extra_cc}) girer. Pasif kullanıcı adresleri posta hunisinde düşer.
+     */
+    public static List<String> extraCc(String raw, List<String> to, List<String> cc) {
+        if (raw == null || raw.isBlank()) return List.of();
+        if (raw.length() > MAX_EXTRA_CC_INPUT) {
+            throw new FieldValidationException("extra_cc", Msg.t(
+                    "Ek Bilgi (CC) alanı çok uzun (en çok " + MAX_EXTRA_CC_INPUT + " karakter). En çok " + MAX_EXTRA_CC
+                            + " adresi virgülle ayırarak yazın.",
+                    "The extra CC field is too long (at most " + MAX_EXTRA_CC_INPUT + " characters). Enter at most " + MAX_EXTRA_CC
+                            + " addresses separated by commas."));
+        }
+        List<String> entered = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (String part : EXTRA_CC_SPLIT.split(raw)) {
+            String e = part.trim();
+            if (e.isEmpty()) continue;
+            if (!isDeliverable(e)) {
+                String shown = e.length() > 80 ? e.substring(0, 80) + "…" : e;
+                throw new FieldValidationException("extra_cc", Msg.t(
+                        "«" + shown + "» geçerli bir e-posta adresi değil. Ek Bilgi (CC) adreslerini virgülle ayırın, ör. ad.soyad@kurum.com.tr.",
+                        "“" + shown + "” isn't a valid e-mail address. Separate the extra CC addresses with commas, e.g. name.surname@company.com."));
+            }
+            if (seen.add(e.toLowerCase(Locale.ROOT))) entered.add(e);
+        }
+        if (entered.size() > MAX_EXTRA_CC) {
+            throw new FieldValidationException("extra_cc", Msg.t(
+                    "Bir gönderime en çok " + MAX_EXTRA_CC + " ek Bilgi (CC) adresi eklenebilir; " + entered.size()
+                            + " adres yazdınız. Fazlasını çıkarın.",
+                    "At most " + MAX_EXTRA_CC + " extra CC addresses can be added to one send; you entered " + entered.size()
+                            + ". Remove the extra ones."));
+        }
+        Set<String> existing = new java.util.HashSet<>();
+        for (String e : to == null ? List.<String>of() : to) existing.add(e.toLowerCase(Locale.ROOT));
+        int base = 0;
+        for (String e : cc == null ? List.<String>of() : cc) if (existing.add(e.toLowerCase(Locale.ROOT))) base++;
+        List<String> add = new ArrayList<>();
+        for (String e : entered) if (existing.add(e.toLowerCase(Locale.ROOT))) add.add(e);
+        if (base + add.size() > MAX_RECIPIENTS) {
+            throw new FieldValidationException("extra_cc", Msg.t(
+                    "Bilgi (CC) listesi en çok " + MAX_RECIPIENTS + " adres olabilir: takımın Bilgi listesinde " + base + " adres var, "
+                            + add.size() + " ek adresle " + (base + add.size()) + " oluyor. Ek adresleri " + Math.max(0, MAX_RECIPIENTS - base)
+                            + " adrese indirin.",
+                    "The CC list can have at most " + MAX_RECIPIENTS + " addresses: the team's CC list has " + base + ", and with "
+                            + add.size() + " extra addresses it would be " + (base + add.size()) + ". Reduce the extra addresses to "
+                            + Math.max(0, MAX_RECIPIENTS - base) + "."));
+        }
+        return add;
+    }
 
     /**
      * Kime gider (2026-10-17, S6): TEAM = takımın adresi (eski akış, byte-identical); EXECUTIVE = kanalın yönetici
@@ -323,7 +393,8 @@ public class TechErrorReportSender {
             }
             throw e;
         } finally {
-            saveLog(TEST_TRIGGER, team, List.of(to), null, "SELF", subject != null ? subject : TEST_SUBJECT_PREFIX + channel.getName(), status);
+            saveLog(TEST_TRIGGER, team, List.of(to), null, "SELF", subject != null ? subject : TEST_SUBJECT_PREFIX + channel.getName(), status,
+                    report);
         }
     }
 
@@ -387,6 +458,16 @@ public class TechErrorReportSender {
     }
 
     public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery) {
+        return send(report, channel, team, by, delivery, null);
+    }
+
+    /**
+     * {@code extraCcRaw}: bu gönderime EK Bilgi (CC) adresleri (R18 / C13; null / boş = yok — eski akış byte-identical).
+     * Doğrulama ({@link #extraCc}) TALEPTEN ÖNCE: geçersiz giriş 400 {@code extra_cc}, hiçbir şey yazılmaz. Takıma gönderimde
+     * Bilgi = ek adresler; yöneticilere gönderimde takım adresinin ardına eklenir. Onay sonrası otomatik gönderim
+     * ({@code TechErrorApprovalService.decide}) ve kendine test postası ek Bilgi kullanmaz.
+     */
+    public Result send(TechErrorReport report, TechErrorChannel channel, Team team, Long by, Delivery delivery, String extraCcRaw) {
         List<String> to;
         String[] cc = null;
         String role;
@@ -427,6 +508,24 @@ public class TechErrorReportSender {
                     "The team has no e-mail address on record. Send again after an administrator adds one under Admin → Teams; "
                             + "until then you can download the PDF and forward it yourself."));
         }
+        // R18 / C13: bu gönderime ek Bilgi — doğrulama talepten ÖNCE (geçersiz giriş hiçbir şey yazmaz); Kime / Bilgi'deki
+        // adres tekrar eklenmez, toplam Bilgi ≤ 20 (aşarsa 400, sessiz düşmez)
+        final List<String> requestedExtras = extraCc(extraCcRaw, to, cc == null ? List.of() : List.of(cc));
+        // İnceleme (2026-10-18): ek Bilgi TEK BAŞINA bir raporu "gönderildi" yapmaz. Kime ve mevcut Bilgi'de etkin (pasif
+        // olmayan) alıcı kalmadıysa ek adresler postaya EKLENMEZ — gönderim ek Bilgi hiç yazılmamış gibi sonuçlanır (takım
+        // adresinin hepsi pasif → posta hunisi "SKIPPED: pasif kullanıcı" → 409 MAIL_DISABLED). Geçmiş olayı istenen ek
+        // adresleri (gönderilmedi) taşır.
+        final boolean extrasApplied = !requestedExtras.isEmpty() && baseReachable(to, cc);
+        final List<String> extras = extrasApplied ? requestedExtras : List.of();
+        if (!requestedExtras.isEmpty() && !extrasApplied) {
+            log.warn("Teknik hata raporu #{} ({}): Kime / Bilgi'de etkin alıcı yok — {} ek Bilgi adresi eklenmedi (ek Bilgi tek başına gönderim yapmaz)",
+                    report.getId(), delivery, requestedExtras.size());
+        }
+        if (!extras.isEmpty()) {
+            List<String> merged = new ArrayList<>(cc == null ? List.of() : List.of(cc));
+            merged.addAll(extras);
+            cc = merged.toArray(new String[0]);
+        }
         final int droppedCc = ccDroppedCount;
         Instant claimedAt = service.now();
         // Kuyruktaki bir gönderimin üzerine yeniden gönderim (inceleme 2026-10-14): talep kuyruktaki gönderimi bitirir, ilk
@@ -452,6 +551,8 @@ public class TechErrorReportSender {
         int pdfBytes = 0;
         Long sentRev = null;
         List<String> active = to;
+        List<String> activeTo = null;      // posta servisi döndükten sonra: Kime'nin pasif hesaplar düşülmüş hâli (önce: bilinmiyor)
+        List<String> activeCc = null;      // posta servisi döndükten sonra: Bilgi'nin pasif hesaplar düşülmüş hâli (önce: bilinmiyor)
         Boolean queuedAtClaim = null;      // talepten sonraki okuma: kuyruktaki gönderim hâlâ sonuçlanmamış mıydı?
         boolean mailAttempted = false;     // posta servisine bir şey verildi mi?
         boolean mailReturned = false;      // posta servisi bir sonuç DÖNDÜ mü (istisna değil)?
@@ -530,9 +631,12 @@ public class TechErrorReportSender {
             mailReturned = true;
             finalStatus = status == null ? "FAILED: sonuç yok" : status;
             finalState = classify(finalStatus);
-            // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz
+            // Posta servisi yalnız pasif kullanıcılara ait adresleri düşürür — "kime gitti" kaydı da onları saymaz (Kime VE
+            // Bilgi; günlük satırı, yanıt ve geçmiş aynı listeyi yazar — inceleme 2026-10-18)
             active = activeRecipients(to);
-            return new Result(finalState, finalStatus, active, pdfBytes, subject);
+            activeTo = active;
+            activeCc = cc == null ? List.of() : activeRecipients(List.of(cc));
+            return new Result(finalState, finalStatus, active, pdfBytes, subject, activeCc);
         } catch (RuntimeException e) {
             if (!released && !(e instanceof CodedConflictException)) {
                 log.warn("Teknik hata raporu gönderilemedi (rapor {}): {}", report.getId(), e.toString());
@@ -544,8 +648,11 @@ public class TechErrorReportSender {
             throw e;
         } finally {
             Instant at = service.now();
-            // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar)
-            Long logId = saveLog(team, active.isEmpty() ? to : active, cc, role, subject != null ? subject : channel.getName(), finalStatus);
+            // Günlük satırı ÖNCE: kuyruktaki gönderim bu satırla sonuçlandırılır (posta servisi SENT / FAILED yazar). Kime ve
+            // Bilgi aynı kuralla: posta servisi döndüyse pasif hesaplarınkiler düşülür; hepsi pasifse (gönderim atlandı) istenen
+            // liste "neden gitmedi"yi gösterir; servise ulaşmadıysa istenen liste
+            Long logId = saveLog(TRIGGER, team, loggedTo(to, activeTo, activeCc), loggedCc(cc, activeCc, activeTo), role,
+                    subject != null ? subject : channel.getName(), finalStatus, report);
             // Kuyruktaki bir gönderimin üzerine yapılan deneme HİÇBİR ŞEY teslim etmediyse ya da kuyruğa almadıysa (posta servisine
             // ulaşmadı: PDF çok büyük / beklenmeyen hata; ya da servis SKIPPED / FAILED döndü) kuyruktaki gönderim yaşamaya devam
             // eder: talep bırakılır (durum satırın kendi son sonucundan), "bitirildi" ve "sonucu bilinmiyor" yazılmaz — servisin
@@ -589,17 +696,59 @@ public class TechErrorReportSender {
                         : TechErrorHistoryService.sendReason(finalStatus);
                 List<String> recorded = "SENT".equals(finalState) || "QUEUED".equals(finalState) ? active : null;
                 // A3: sınır dışında kalan alıcı sayısı geçmişte görünür (yalnız varsa — olay ayrıntısı aksi hâlde eskisiyle aynı);
-                // Kime ve Bilgi ayrı anahtarlarla (`dropped_recipients` / `dropped_cc`)
-                if (droppedRecipients > 0 || droppedCc > 0) {
+                // Kime ve Bilgi ayrı anahtarlarla (`dropped_recipients` / `dropped_cc`). R18 / C13: bu gönderimin ek Bilgi
+                // adresleri `extra_cc` (gönderildiyse pasif hesaplarınkiler hariç; gönderilmediyse istenen liste — eklenmemiş
+                // olsa da: etkin alıcı yoktu). Gönderildi ama ek adresler eklenmediyse (süzgeç anlık görüntüsü arada değişti)
+                // `extra_cc` yazılmaz — o adreslere posta gitmedi
+                if (droppedRecipients > 0 || droppedCc > 0 || !requestedExtras.isEmpty()) {
                     java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
                     if (droppedRecipients > 0) extra.put("dropped_recipients", droppedRecipients);
                     if (droppedCc > 0) extra.put("dropped_cc", droppedCc);
+                    if (!requestedExtras.isEmpty()) {
+                        boolean delivered = "SENT".equals(finalState) || "QUEUED".equals(finalState);
+                        List<String> extraRecorded = !delivered ? requestedExtras : extrasApplied ? activeRecipients(extras) : List.of();
+                        if (!extraRecorded.isEmpty()) extra.put("extra_cc", List.copyOf(extraRecorded));
+                    }
                     h.recordSend(report, "SEND", by, finalState, recorded, reason, at, extra);
                 } else {
                     h.recordSend(report, "SEND", by, finalState, recorded, reason, at);
                 }
             }
         }
+    }
+
+    /**
+     * Ek Bilgi olmadan da etkin bir alıcı var mı (inceleme 2026-10-18): Kime'de ya da mevcut Bilgi'de (yöneticilere gönderimde
+     * takım adresi) pasif olmayan bir adres. Yoksa ek Bilgi postaya eklenmez — tek başına raporu "gönderildi" yapmasın.
+     */
+    private boolean baseReachable(List<String> to, String[] cc) {
+        if (!activeRecipients(to).isEmpty()) return true;
+        return cc != null && cc.length > 0 && !activeRecipients(List.of(cc)).isEmpty();
+    }
+
+    /**
+     * Günlük satırının Bilgi listesi — Kime ile AYNI kural (inceleme 2026-10-18; Kime pasifleri düşürüp Bilgi düşürmüyordu):
+     * posta servisine ulaşmadıysa ({@code activeCc == null}) istenen liste; ulaştıysa pasif hesaplarınkiler düşülmüş liste;
+     * Bilgi'nin hepsi pasifse yalnız Kime de tümüyle pasifken (gönderim atlandı) istenen liste, aksi hâlde Bilgi yok.
+     */
+    static String[] loggedCc(String[] cc, List<String> activeCc, List<String> activeTo) {
+        if (cc == null || cc.length == 0) return null;
+        if (activeCc == null) return cc;
+        if (!activeCc.isEmpty()) return activeCc.toArray(new String[0]);
+        return activeTo == null || activeTo.isEmpty() ? cc : null;
+    }
+
+    /**
+     * Günlük satırının Kime listesi — {@link #loggedCc} ile AYNI kural (inceleme 2026-10-18, 2. tur: yöneticilerin hepsi pasif,
+     * takım Bilgi'si etkinken satır SENT ama Kime pasif adresleri listeliyordu): posta servisine ulaşmadıysa
+     * ({@code activeTo == null}) istenen liste; ulaştıysa pasif hesaplarınkiler düşülmüş liste; Kime'nin hepsi pasifse yalnız
+     * Bilgi de tümüyle pasifken (gönderim atlandı — "neden gitmedi") istenen liste, aksi hâlde Kime BOŞ (posta Bilgi'ye gitti).
+     */
+    static List<String> loggedTo(List<String> to, List<String> activeTo, List<String> activeCc) {
+        if (to == null || to.isEmpty()) return List.of();
+        if (activeTo == null) return to;
+        if (!activeTo.isEmpty()) return activeTo;
+        return activeCc == null || activeCc.isEmpty() ? to : List.of();
     }
 
     /** Yalnız pasif kullanıcılara ait adresler çıkarılmış alıcılar (koruma yoksa liste aynen). */
@@ -623,15 +772,16 @@ public class TechErrorReportSender {
         return "FAILED";
     }
 
-    /** Gönderim kararının günlük satırı; kimliği döner (yazılamazsa null — karar yine de sonlanır). */
-    private Long saveLog(Team team, List<String> to, String[] cc, String role, String subject, String status) {
-        return saveLog(TRIGGER, team, to, cc, role, subject, status);
-    }
-
-    /** Aynı satır şekli, verilen tetikleyiciyle ({@link #TRIGGER} gönderim, {@link #TEST_TRIGGER} kendine test). */
-    private Long saveLog(String trigger, Team team, List<String> to, String[] cc, String role, String subject, String status) {
+    /**
+     * Kararın günlük satırı, verilen tetikleyiciyle ({@link #TRIGGER} gönderim, {@link #TEST_TRIGGER} kendine test); kimliği
+     * döner (yazılamazsa null — karar yine de sonlanır). Satır raporun kanalına / raporuna bağlanır (R18 / E22, kanalın
+     * gönderim günlüğü — {@link TechErrorSendLogService#link}).
+     */
+    private Long saveLog(String trigger, Team team, List<String> to, String[] cc, String role, String subject, String status,
+                         TechErrorReport report) {
         try {
             NotificationLog n = new NotificationLog();
+            TechErrorSendLogService.link(n, report == null ? null : report.getChannelId(), report == null ? null : report.getId());
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientName(clip(team.getName() == null ? "" : team.getName(), 255));

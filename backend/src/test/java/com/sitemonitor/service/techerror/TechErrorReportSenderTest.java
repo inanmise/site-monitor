@@ -267,6 +267,210 @@ class TechErrorReportSenderTest {
         assertThat(TechErrorReportSender.ccAddresses(team, List.of()).dropped()).isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("R18 / C13 ek Bilgi (yardımcı): boş = yok; ayraç virgül / noktalı virgül / boşluk; tekrar ve Kime / Bilgi'deki adres eklenmez (büyük-küçük harf); geçersiz adres alan hatası adıyla; 11 farklı adres 400; Bilgi toplamı 20'yi aşarsa 400 (tam 20 geçer); aşırı uzun giriş 400")
+    void extraCcRules() {
+        assertThat(TechErrorReportSender.extraCc(null, List.of("a@example.com"), List.of())).isEmpty();
+        assertThat(TechErrorReportSender.extraCc("  \n ", List.of("a@example.com"), List.of())).isEmpty();
+        assertThat(TechErrorReportSender.extraCc("Ek@example.com; ek@example.com, DIJITAL@example.com\nyeni@example.com  iki@example.com, cc@example.com",
+                List.of("dijital@example.com"), List.of("cc@example.com")))
+                .containsExactly("Ek@example.com", "yeni@example.com", "iki@example.com");
+        assertThatThrownBy(() -> TechErrorReportSender.extraCc("ok@example.com, bozuk-adres", List.of("a@example.com"), List.of()))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class)
+                .hasMessageContaining("bozuk-adres")
+                .extracting(e -> ((com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException) e).getFields().keySet())
+                .isEqualTo(java.util.Set.of("extra_cc"));
+        StringBuilder eleven = new StringBuilder();
+        for (int i = 1; i <= 11; i++) eleven.append("e").append(i).append("@example.com, ");
+        assertThatThrownBy(() -> TechErrorReportSender.extraCc(eleven.toString(), List.of("a@example.com"), List.of()))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class).hasMessageContaining("11");
+        // 10 farklı adres + tekrarı = 10 → geçer
+        StringBuilder ten = new StringBuilder();
+        for (int i = 1; i <= 10; i++) ten.append("e").append(i).append("@example.com, E").append(i).append("@example.com; ");
+        assertThat(TechErrorReportSender.extraCc(ten.toString(), List.of("a@example.com"), List.of())).hasSize(10);
+        // Bilgi toplamı: takım Bilgi'si 15 + 6 ek = 21 → 400 (sessiz düşmez); 15 + 5 = 20 geçer
+        List<String> baseCc = new java.util.ArrayList<>();
+        for (int i = 1; i <= 15; i++) baseCc.add("t" + i + "@example.com");
+        assertThatThrownBy(() -> TechErrorReportSender.extraCc("x1@example.com, x2@example.com, x3@example.com, x4@example.com, x5@example.com, x6@example.com",
+                List.of("ceo@example.com"), baseCc))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class).hasMessageContaining("21");
+        assertThat(TechErrorReportSender.extraCc("x1@example.com, x2@example.com, x3@example.com, x4@example.com, x5@example.com, t1@example.com",
+                List.of("ceo@example.com"), baseCc)).hasSize(5);
+        assertThatThrownBy(() -> TechErrorReportSender.extraCc("a".repeat(TechErrorReportSender.MAX_EXTRA_CC_INPUT + 1), List.of(), List.of()))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+    }
+
+    @Test
+    @DisplayName("R18 / C13 ek Bilgi (gönderim): takıma gönderimde Bilgi = ek adresler, günlük satırı Bilgi'de taşır, geçmiş olayı extra_cc, sonuç cc; yöneticilere gönderimde takım Bilgi'sinin ARDINA eklenir; geçersiz giriş talepten ÖNCE 400 — talep / posta / günlük / geçmiş yok; günlük satırı kanala + rapora bağlı (E22); test postası ek Bilgi'siz ve bağlı")
+    void extraCcSend() {
+        report.setChannelId(3L);
+        mailReturns("SENT");
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, "ek@example.com, Dijital@example.com; iki@example.com");
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.cc()).containsExactly("ek@example.com", "iki@example.com");    // Kime'deki takım adresi Bilgi'ye eklenmez
+        ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(eq(new String[]{ "dijital@example.com", "ikinci@example.com" }), cc.capture(), anyString(), anyString(), anyString(),
+                any(), eq(false), any());
+        assertThat(cc.getValue()).containsExactly("ek@example.com", "iki@example.com");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getCc()).isEqualTo("ek@example.com, iki@example.com");
+        assertThat(log.getValue().getTechErrorChannelId()).isEqualTo(3L);
+        assertThat(log.getValue().getTechErrorReportId()).isEqualTo(5L);
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"), any(), org.mockito.ArgumentMatchers.isNull(), eq(now),
+                eq(Map.of("extra_cc", List.of("ek@example.com", "iki@example.com"))));
+        verify(reports).finishSent(eq(5L), eq(now), eq("SENT"), eq(now), eq(7L), eq("dijital@example.com, ikinci@example.com"), eq(0L));   // last_sent_to = Kime
+
+        // Yöneticilere: Bilgi = takım adresi + ek
+        org.mockito.Mockito.reset(email, logs, history);
+        when(service.history()).thenReturn(history);
+        mailReturns("SENT");
+        channel.setExecutiveEmails("ceo@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var ex = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE, "ek@example.com");
+        assertThat(ex.cc()).containsExactly("dijital@example.com", "ikinci@example.com", "ek@example.com");
+        verify(email).sendHtml(eq(new String[]{ "ceo@example.com" }), cc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        assertThat(cc.getValue()).containsExactly("dijital@example.com", "ikinci@example.com", "ek@example.com");
+
+        // Geçersiz giriş: talepten ÖNCE durur — hiçbir şey yazılmaz
+        org.mockito.Mockito.reset(email, logs, history, reports);
+        when(service.history()).thenReturn(history);
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, "bozuk"))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verifyNoInteractions(logs, history, email);
+
+        // Ek Bilgi'siz eski yol: Bilgi yok (takıma gönderim byte-identical)
+        org.mockito.Mockito.reset(reports);
+        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
+        when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(1);
+        mailReturns("SENT");
+        channel.setExecutiveEmails(null);
+        var plain = sender.send(report, channel, team, 7L);
+        assertThat(plain.cc()).isEmpty();
+        verify(email).sendHtml(any(String[].class), org.mockito.ArgumentMatchers.isNull(), anyString(), anyString(), anyString(), any(), eq(false), any());
+
+        // Test postası: ek Bilgi yok, satır SELF ve kanala bağlı
+        org.mockito.Mockito.reset(email, logs);
+        mailReturns("SENT");
+        sender.sendTest(report, channel, team, TechErrorReportSender.Delivery.TEAM, "ben@example.com", "tr");
+        verify(email).sendHtml(eq(new String[]{ "ben@example.com" }), org.mockito.ArgumentMatchers.isNull(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getRecipientRole()).isEqualTo("SELF");
+        assertThat(log.getValue().getCc()).isNull();
+        assertThat(log.getValue().getTechErrorChannelId()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: pasif hesabın Bilgi adresi günlük satırına da yazılmaz (Kime ile aynı kural) — günlük, yanıt cc ve geçmiş extra_cc aynı liste; yöneticilere gönderimde takım Bilgi'sindeki pasif adres de")
+    void passiveCcNotLogged() {
+        report.setChannelId(3L);
+        sender.inactiveGuard = mock(com.sitemonitor.service.InactiveRecipientGuard.class);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("pasif@example.com")).thenReturn(true);
+        mailReturns("SENT");
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, "ek@example.com, pasif@example.com");
+        assertThat(res.cc()).containsExactly("ek@example.com");
+        ArgumentCaptor<String[]> mailCc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(any(String[].class), mailCc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        assertThat(mailCc.getValue()).containsExactly("ek@example.com", "pasif@example.com");   // posta hunisi kendisi düşürür
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getCc()).isEqualTo("ek@example.com");
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SENT"), any(), org.mockito.ArgumentMatchers.isNull(), eq(now),
+                eq(Map.of("extra_cc", List.of("ek@example.com"))));
+
+        // Yöneticilere: takım Bilgi'sindeki pasif adres günlüğe yazılmaz
+        org.mockito.Mockito.reset(email, logs);
+        mailReturns("SENT");
+        when(sender.inactiveGuard.isInactiveOnlyEmail("ikinci@example.com")).thenReturn(true);
+        channel.setExecutiveEmails("ceo@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var ex = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(ex.cc()).containsExactly("dijital@example.com");
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getCc()).isEqualTo("dijital@example.com");
+
+        // Kural tek yerde: servise ulaşmadı → istenen; Bilgi'nin hepsi pasif + Kime etkin → Bilgi yok; hepsi pasif → istenen
+        String[] cc = { "a@example.com", "b@example.com" };
+        assertThat(TechErrorReportSender.loggedCc(cc, null, List.of("to@example.com"))).isSameAs(cc);
+        assertThat(TechErrorReportSender.loggedCc(cc, List.of("a@example.com"), List.of("to@example.com"))).containsExactly("a@example.com");
+        assertThat(TechErrorReportSender.loggedCc(cc, List.of(), List.of("to@example.com"))).isNull();
+        assertThat(TechErrorReportSender.loggedCc(cc, List.of(), List.of())).isSameAs(cc);
+        assertThat(TechErrorReportSender.loggedCc(null, List.of(), List.of())).isNull();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: takım adresinin HEPSİ pasif + etkin ek Bilgi → ek Bilgi postaya eklenmez; gönderim ek Bilgi yokmuş gibi atlanır (SKIPPED pasif → 409 MAIL_DISABLED); rapor 'gönderildi' olmaz, last_sent_to yazılmaz; geçmiş istenen ek adresleri taşır. Yöneticilere gönderimde takım Bilgi'si etkinse ek Bilgi eklenir (tek başına değil)")
+    void extraCcAloneNeverSends() {
+        report.setChannelId(3L);
+        sender.inactiveGuard = mock(com.sitemonitor.service.InactiveRecipientGuard.class);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("dijital@example.com")).thenReturn(true);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("ikinci@example.com")).thenReturn(true);
+        mailReturns(com.sitemonitor.service.InactiveRecipientGuard.STATUS_SKIPPED);   // posta hunisi: Kime'nin hepsi pasif, Bilgi yok
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, "ek@example.com");
+        assertThat(res.state()).isEqualTo("SKIPPED");
+        assertThat(res.cc()).isEmpty();
+        verify(email).sendHtml(eq(new String[]{ "dijital@example.com", "ikinci@example.com" }), org.mockito.ArgumentMatchers.isNull(),
+                anyString(), anyString(), anyString(), any(), eq(false), any());
+        verify(reports, never()).finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any());
+        verify(reports).finishNotSent(eq(5L), eq(now), eq("SKIPPED"), eq(com.sitemonitor.service.InactiveRecipientGuard.STATUS_SKIPPED), eq(now));
+        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("SKIPPED"), org.mockito.ArgumentMatchers.isNull(),
+                eq("INACTIVE_RECIPIENTS"), eq(now), eq(Map.of("extra_cc", List.of("ek@example.com"))));
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getCc()).isNull();
+        assertThat(log.getValue().getRecipientEmail()).isEqualTo("dijital@example.com, ikinci@example.com");   // "neden gitmedi"
+
+        // Yöneticiler pasif ama takım Bilgi'si etkin: ek Bilgi tek başına değil → eklenir (eski yöneticiler yolu aynen)
+        org.mockito.Mockito.reset(email, logs);
+        mailReturns("SENT");
+        when(sender.inactiveGuard.isInactiveOnlyEmail("dijital@example.com")).thenReturn(false);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("ceo@example.com")).thenReturn(true);
+        channel.setExecutiveEmails("ceo@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE, "ek@example.com");
+        ArgumentCaptor<String[]> mailCc = ArgumentCaptor.forClass(String[].class);
+        verify(email).sendHtml(eq(new String[]{ "ceo@example.com" }), mailCc.capture(), anyString(), anyString(), anyString(), any(), eq(false), any());
+        assertThat(mailCc.getValue()).containsExactly("dijital@example.com", "ikinci@example.com", "ek@example.com");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (2. tur): yöneticilerin HEPSİ pasif, takım Bilgi'si etkin → posta Bilgi'ye gitti: günlük satırı SENT, Kime BOŞ (pasif adresler listelenmez), Bilgi etkin adresler; yanıt to boş, cc dolu. Kural tek yerde (loggedTo = loggedCc'nin aynası)")
+    void passiveToNotLoggedWhenCcReceived() {
+        report.setChannelId(3L);
+        sender.inactiveGuard = mock(com.sitemonitor.service.InactiveRecipientGuard.class);
+        when(sender.inactiveGuard.isInactiveOnlyEmail("ceo@example.com")).thenReturn(true);
+        mailReturns("SENT");
+        channel.setExecutiveEmails("ceo@example.com");
+        report.setApprovalState("APPROVED");
+        report.setApprovalRev(3L);
+        report.setContentRev(3L);
+        var res = sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.EXECUTIVE);
+        assertThat(res.state()).isEqualTo("SENT");
+        assertThat(res.to()).isEmpty();
+        assertThat(res.cc()).containsExactly("dijital@example.com", "ikinci@example.com");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).isEqualTo("SENT");
+        assertThat(log.getValue().getRecipientEmail()).isEmpty();
+        assertThat(log.getValue().getCc()).isEqualTo("dijital@example.com, ikinci@example.com");
+
+        // Kural: servise ulaşmadı → istenen; Kime etkin → etkinler; Kime hepsi pasif + Bilgi etkin → boş; hepsi pasif → istenen
+        List<String> to = List.of("a@example.com", "b@example.com");
+        assertThat(TechErrorReportSender.loggedTo(to, null, null)).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(to, List.of("a@example.com"), List.of())).containsExactly("a@example.com");
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), List.of("cc@example.com"))).isEmpty();
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), List.of())).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(to, List.of(), null)).isSameAs(to);
+        assertThat(TechErrorReportSender.loggedTo(List.of(), null, null)).isEmpty();
+    }
+
     private static byte[] samplePng(int w, int h) throws java.io.IOException {
         java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = bi.createGraphics();

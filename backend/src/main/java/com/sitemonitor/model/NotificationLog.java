@@ -43,6 +43,18 @@ public class NotificationLog {
     /** Comma-separated CC addresses, null if none */
     private String cc;
 
+    /**
+     * Kanal teknik hata raporu bağı (2026-10-18, R18 / E22 — kanal başına gönderim günlüğü): satırı yazan teknik hata
+     * raporu yolunun KANALI ve RAPORU. Yalnız teknik hata raporu tetikleyicilerinde dolu (gönderim, test postası, onay
+     * postaları); diğer bildirimlerde ve bu bağdan önce yazılmış satırlarda null — kanalın gönderim günlüğünde görünmezler.
+     * Rapor silinse de kanal bağı kalır (dönem bilinmez). Kolonlar {@code SchedulerService.applySchemaPatches}'te.
+     */
+    @Column(name = "tech_error_channel_id")
+    private Long techErrorChannelId;
+
+    @Column(name = "tech_error_report_id")
+    private Long techErrorReportId;
+
     /** VARCHAR kolonlarının uzunluğu (kolon tanımı yok → JPA varsayılanı 255). */
     public static final int VARCHAR_MAX = 255;
 

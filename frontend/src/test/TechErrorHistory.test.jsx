@@ -175,6 +175,25 @@ describe('rapor değişiklik geçmişi', () => {
     expect(sheet.textContent).not.toMatch(/te\.hist\./)
   })
 
+  it('R18: gönderime ek Bilgi (extra_cc) satırı; paylaşımla okuyana adres yerine sayılar (recipient_count / extra_cc_count)', async () => {
+    te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [
+      ev(3, 'SEND', '2026-10-13T11:00:00Z', { detail: { state: 'SENT', recipient_count: 1, recipients: ['dijital@example.com'], extra_cc: ['ek@example.com', 'iki@example.com'] } }),
+      ev(2, 'SEND', '2026-10-13T10:00:00Z', { detail: { state: 'SENT', recipient_count: 2, extra_cc_count: 1 } }),
+    ] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(screen.getByRole('button', { name: 'Değişiklik geçmişi' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Değişiklik geçmişi' })
+    await waitFor(() => expect(sheet.querySelectorAll('[data-kind="SEND"]')).toHaveLength(2))
+    const [own, masked] = sheet.querySelectorAll('[data-kind="SEND"]')
+    expect(own.querySelector('[data-slot="te-history-send-extra-cc"]')).toHaveTextContent('Bu gönderime ek Bilgi (CC): ek@example.com, iki@example.com')
+    expect(own.querySelector('[data-slot="te-history-send-count"]')).toBeNull()
+    expect(masked.querySelector('[data-slot="te-history-send-count"]')).toHaveTextContent('2 alıcı — adresler erişim paylaşımıyla görüntülemede gösterilmez')
+    expect(masked.querySelector('[data-slot="te-history-send-extra-cc"]')).toHaveTextContent('Bu gönderime 1 ek Bilgi (CC) adresi eklendi')
+    expect(masked.textContent).not.toContain('@')
+    expect(sheet.textContent).not.toMatch(/te\.hist\./)
+  })
+
   it('otomatik kayıt (2026-10-16): birleşmiş VALUES olayında "Otomatik kayıt" rozeti + kayıt sayısı; elle kayıtta ikisi de yok', async () => {
     const change = { section: 'Mobil Kanalı — Eylül 2026 Özeti', label: 'Toplam işlem adedi', type: 'number', op: 'change', before: '10', after: '12' }
     te().reportHistory.mockResolvedValue({ success: true, data: { has_more: false, report: REPORT_META, events: [

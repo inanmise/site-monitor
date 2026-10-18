@@ -1811,6 +1811,12 @@ public class SchedulerService {
         // (Instant → TIMESTAMP WITH TIME ZONE; NULL = bağlantı onaylayıcıya gitmedi, hatırlatma "bağlantınız geçerli" demez).
         patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN mailed_at TIMESTAMP WITH TIME ZONE");
 
+        // Kanal başına gönderim günlüğü (2026-10-18, R18 / E22): teknik hata raporu satırlarının kanal / rapor bağı —
+        // NotificationLog.techErrorChannelId / techErrorReportId (NULL = bağsız; eski satırlar günlükte görünmez). Varsayılansız
+        // nullable kolon PostgreSQL'de anlık (tablo yeniden yazılmaz); sorgu DeferredIndexBuilder kataloğundaki kısmi kanal indeksiyle daralır (adı burada geçmez — kapı).
+        patch("ALTER TABLE notification_logs ADD COLUMN tech_error_channel_id BIGINT");
+        patch("ALTER TABLE notification_logs ADD COLUMN tech_error_report_id BIGINT");
+
         // ── Filtrelenen alanlara eksik indeksler (2026-10-08 denetimi) — ERTELENMİŞ kurulum ──
         // Büyük, sürekli büyüyen tablolarda (uptime_checks, audit_log, activity_log, alert_events, push / bildirim
         // günlükleri…) CONCURRENTLY bile açılışı dakikalarca bekletebilir: pod bu sürede REFUSING_TRAFFIC, startup probe

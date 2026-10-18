@@ -11,6 +11,8 @@
 // bölümleri açık tohumlar (`seedOpenSections`).
 // 2026-10-17 (8. sürüm): kanal listesi — dönem kartları süzgeç, arama / sıralama, geniş kapta tablo, telefonda kart, sayfalama
 // (60 kanal → 50 + 10); kanalın rapor listesi durum / yıl / arama süzgeçleri ve sayfalama (30 → 25 + 5); URL'de taşınır.
+// 2026-10-18 (R22): kanal analizi — çizgi grafiği (boş ay boşluk, tek değer nokta), ay × kanal tablosu / kanal kartları,
+// dönem ve alan seçimi URL'de; uzun kanal / takım adları sarar; hücre o ayın raporunu açar.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -322,9 +324,85 @@ let testMails = 0               // "Bana test gönder" (R13): rapor gönderimi D
 let approvalRequests = 0        // PO onayı (2026-10-17, S6)
 let decisions = []
 let previewBodies = []          // şablon önizleme PDF'i (R19): gönderilen taslaklar
+let sendBodies = []             // R18 / C13: gönderim gövdeleri (ek Bilgi yoksa gövde yok → null)
+let sendLogCalls = []           // R18 / E22: gönderim günlüğü istekleri (sorgu dizgeleri)
+// Uzun alıcı listesi: gerçek uzunlukta kurumsal adresler. notification_logs.recipient_email VARCHAR(255) — sunucu listeyi
+// NotificationLog.fitList ile " … +N" ekiyle saklar, TechErrorSendLogService.splitFitted eki ayırır: yanıt yalnız kolona
+// sığan TAM adresler + `to_more` (inceleme 2026-10-18: mock sunucunun GERÇEK şeklini taşır — 9 adresin hepsi değil)
+const SENDLOG_LONG_TO = Array.from({ length: 9 }, (_, i) => `dijital.kanallar.uygulama.gelistirme.${i}@ornek-kurum-bilgi-teknolojileri.example.com`)
+function serverFitted(list, max = 255) {
+  const items = []
+  let len = 0
+  for (let i = 0; i < list.length; i++) {
+    const suffix = i + 1 < list.length ? ` … +${list.length - i - 1}` : ''
+    const next = len + (len === 0 ? 0 : 2) + list[i].length + suffix.length
+    if (next > max) break
+    len += (len === 0 ? 0 : 2) + list[i].length
+    items.push(list[i])
+  }
+  return { items, more: list.length - items.length }
+}
+const SENDLOG_FITTED_TO = serverFitted(SENDLOG_LONG_TO)
+const SENDLOG_ROWS = [
+  { id: 3, at: '2026-10-13T08:00:00Z', kind: 'report', trigger: 'TECH_ERROR_REPORT', role: 'TEAM', status: 'sent', reason: null,
+    report_id: 100, year: 2026, month: 9, to: SENDLOG_FITTED_TO.items, to_more: SENDLOG_FITTED_TO.more,
+    cc: ['ek.bilgi.adresi@ornek-kurum-bilgi-teknolojileri.example.com'], cc_more: 0, to_count: 9, cc_count: 1 },
+  // Ham durum metni (posta sunucusunun iletisi) yanıtta YOK — yalnız sebep kodu
+  { id: 2, at: '2026-10-12T08:00:00Z', kind: 'test', trigger: 'TECH_ERROR_REPORT_TEST', role: 'SELF', status: 'failed', reason: 'SMTP_FAILED',
+    report_id: 100, year: 2026, month: 9, to: ['ayse.yilmaz@example.com'], to_more: 0, cc: [], cc_more: 0, to_count: 1, cc_count: 0 },
+  { id: 1, at: '2026-10-11T08:00:00Z', kind: 'approval', trigger: 'TECH_ERROR_APPROVAL', role: 'APPROVER', status: 'queued', reason: 'QUEUED',
+    report_id: null, year: null, month: null, to: ['mehmet.kaya@example.com'], to_more: 0, cc: [], cc_more: 0, to_count: 1, cc_count: 0 },
+]
+let analyticsCalls = []         // Kanal analizi istekleri (2026-10-18, R22): URLSearchParams
+
+// Kanal analizi (2026-10-18, R22) — sunucu yanıtı isteğin ay sayısı ve alanlarıyla kurulur. Uzun kanal / takım adları,
+// boşluklu seri (iki ay boş), yalnız TEK değeri olan kanal (nokta), gönderilmemiş ay.
+const LONG_CHANNEL_2 = 'Kurumsal İnternet Şubesi ve Nakit Yönetimi Ortak Kanalı (Kurumsal Bankacılık / Dijital Kanallar)'
+const AN_FIELDS = {
+  'error-rate': { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent' },
+  'total-tx': { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number' },
+  'sla-rate': { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent' },
+}
+function analyticsBody(params) {
+  const n = [6, 12, 24].includes(Number(params.get('months'))) ? Number(params.get('months')) : 12
+  const months = Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 8 - (n - 1) + i, 1))
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
+  })
+  const ids = (params.get('fields') || 'error-rate,total-tx').split(',').filter((id) => AN_FIELDS[id])
+  const last = n - 1
+  const pts = (kind) => ({
+    'error-rate': months.map((_, i) => (kind === 'lone' ? (i === last - 4 ? 0.9 : null) : kind === 'gaps' && (i === last - 7 || i === last - 6) ? null : 0.4 + i / 100)),
+    'total-tx': months.map((_, i) => (kind === 'lone' ? (i === last - 4 ? 4200 : null) : 1_100_000 + i * 12_500)),
+    'sla-rate': months.map(() => null),
+  })
+  const reps = (base, unsent) => months.map((_, i) => ({ id: i === last && base === 700 ? 100 : base + i, sent: i !== unsent }))
+  const ch = (id, name, teamId, teamName, kind, base) => ({
+    id, name, team_id: teamId, team_name: teamName, points: Object.fromEntries(ids.map((f) => [f, pts(kind)[f]])),
+    reports: kind === 'lone' ? months.map((_, i) => (i === last - 4 ? { id: base, sent: true } : null)) : reps(base, last),
+  })
+  return {
+    team: params.get('team') || 'all', months_requested: n, months, end: { year: 2026, month: 9 },
+    fields: ids.map((id) => AN_FIELDS[id]),
+    available_fields: [
+      { id: 'total-tx', label: 'Toplam işlem adedi', type: 'number', channels: 3 },
+      { id: 'error-rate', label: 'Teknik hata oranı', type: 'percent', channels: 3 },
+      { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', type: 'percent', channels: 2 },
+    ],
+    channels: [
+      ch(10, LONG_CHANNEL, 5, LONG_TEAM, 'gaps', 700),
+      ch(20, 'POS', 5, LONG_TEAM, 'full', 800),
+      ch(30, LONG_CHANNEL_2, 6, 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi', 'lone', 900),
+    ],
+    channel_count: 3, truncated: false,
+    teams: [{ id: 5, name: LONG_TEAM }, { id: 6, name: 'Kurumsal Bankacılık Dijital Kanallar ve Nakit Yönetimi Uygulama Geliştirme Ekibi' }],
+    month_choices: [6, 12, 24], max_fields: 4,
+  }
+}
 async function mock(page, { openSections = true } = {}) {
   savedTemplate = null; savedReport = null; autoSaves = []; uploads = []; uploadSizes = []; uploadBodies = []; sends = 0
-  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []
+  testMails = 0; approvalRequests = 0; decisions = []; channelPuts = []; orderPuts = []; previewBodies = []; sendBodies = []
+  sendLogCalls = []; analyticsCalls = []
   reportOverride = null
   templateOverride = null
   overviewOverride = null
@@ -369,6 +447,10 @@ async function mock(page, { openSections = true } = {}) {
       orderPuts.push({ team, ids })
       ids.forEach((id, i) => { const c = (overviewOverride || []).find((x) => x.id === id); if (c) c.sort_order = i + 1 })
       body = { success: true, data: { team_id: team, changed: ids.length, channels: ids.map((id, i) => ({ id, sort_order: i + 1 })) } }
+    } else if (p === '/api/tech-error-reports/analytics') {
+      const params = new URL(req.url()).searchParams
+      analyticsCalls.push(params)
+      body = { success: true, data: analyticsBody(params) }
     } else if (p === '/api/tech-error-reports/reports/100/history') {
       body = { success: true, data: HISTORY }
     } else if (p === '/api/tech-error-reports/channels/10/template/versions') {
@@ -419,8 +501,22 @@ async function mock(page, { openSections = true } = {}) {
       testMails++
       body = { success: true, data: { sent_to: 'ayse.yilmaz@example.com', status: 'SENT' } }
     } else if (p === '/api/tech-error-reports/reports/100/send') {
+      const sent = req.postData() ? JSON.parse(req.postData()) : null
+      sendBodies.push(sent)
+      // R18 / C13: sunucunun ek Bilgi alan hatası (Bilgi toplamı 20'yi aşıyor) — `reddet@` adresiyle tetiklenir
+      if (sent?.extra_cc && sent.extra_cc.includes('reddet@')) {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'VALIDATION_FAILED',
+          field: 'extra_cc', fields: { extra_cc: 'x' },
+          error: 'Bilgi (CC) listesi en çok 20 adres olabilir: takımın Bilgi listesinde 19 adres var, 2 ek adresle 21 oluyor. Ek adresleri 1 adrese indirin.' }) })
+        return
+      }
       sends++
-      body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], subject: 'x', pdf_bytes: 1000 } }
+      body = { success: true, data: { state: 'SENT', to: ['dijital-kanallar@example.com'], cc: sent?.extra_cc ? sent.extra_cc.split(', ') : [],
+        subject: 'x', pdf_bytes: 1000 } }
+    } else if (p === '/api/tech-error-reports/channels/10/send-log') {
+      sendLogCalls.push(new URL(req.url()).search)
+      body = { success: true, data: { rows: SENDLOG_ROWS, total: SENDLOG_ROWS.length, page: 0, size: 25, total_pages: 1, kind: 'all',
+        status: 'all', recipients_hidden: false } }
     } else if (p === '/api/tech-error-reports/reports/100/approval/request') {
       approvalRequests++
       body = { success: true, data: { state: 'pending', approvers: [{ name: 'Mehmet Kaya', has_email: true }], mailed: 1, failed: 0,
@@ -455,6 +551,21 @@ function smallTargets(sel) {
     if (h < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || b.id || '').trim().slice(0, 30)}" ${Math.round(h)}`)
   }
   return out
+}
+
+/** Kanal analizi hücre bağlantıları (te-an-cell düğmeleri): dokunmatikte GENİŞLİK de ≥ 40 px ("—" tek karakter). */
+function narrowCells(sel) {
+  const root = document.querySelector(sel)
+  if (!root) return ['NO_ROOT']
+  const out = []
+  let measured = 0
+  for (const b of root.querySelectorAll('button[data-slot="te-an-cell"]')) {
+    const r = b.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    measured++
+    if (r.width < 39.5 || r.height < 39.5) out.push(`"${(b.textContent || '').trim().slice(0, 20)}" ${Math.round(r.width)}×${Math.round(r.height)}`)
+  }
+  return measured ? out : ['NO_CELLS']
 }
 
 function clipped(sel) {
@@ -1344,7 +1455,7 @@ for (const vp of VIEWPORTS) {
       reportOverride = { ...REPORT, channel: execChannel, report: { ...REPORT.report, approval: { state: 'none', raw_state: null, stale: false } }, approval_detail: detail }
       await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
       const editor = page.locator('[data-slot="te-report"]')
-      await expect(editor).toBeVisible()
+      await expect(editor).toBeVisible({ timeout: 20_000 })      // soğuk açılış (ilk test, tembel parçalar) — diğer testler gibi
       const card = page.locator('[data-slot="te-approval"]')
       await expect(card).toHaveAttribute('data-state', 'none')
       await expect(page.locator('[data-slot="te-send"]')).toHaveCount(0)
@@ -1424,6 +1535,96 @@ for (const vp of VIEWPORTS) {
       await expect(confirm).toBeVisible()
       await confirm.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
       await expect.poll(() => sends).toBe(1)
+    })
+
+    test('R18: gönderim penceresinde ek Bilgi (CC) — istemci ve sunucu alan hatası alanın altında, gövdede yalnız extra_cc; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-send"]').click()
+      const dlg = page.locator('[data-slot="te-send-dialog"]')
+      await expect(dlg).toBeVisible()
+      await expect(dlg.getByRole('heading', { name: /Rapor takıma gönderilsin mi\?|Send the report to the team\?/ })).toBeVisible()
+      const cc = dlg.locator('[data-slot="te-send-extra-cc"]')
+      await expect(cc).toBeVisible()
+      await expect(dlg).toContainText(/en çok 10 adres|at most 10 addresses/)
+      const box = await dlg.boundingBox()
+      expect(box.x, 'pencere solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, 'pencere ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      // İstemci denetimi: geçersiz adres alanın altında, istek gitmez
+      await cc.fill('ek@example.com, bozuk-adres')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect(dlg).toContainText(/bozuk-adres/)
+      await expect(cc).toHaveAttribute('aria-invalid', 'true')
+      expect(sendBodies, 'geçersiz giriş gönderilmez').toHaveLength(0)
+      // Sunucunun alan hatası (Bilgi toplamı 20'yi aşıyor): pencere açık, metin alanın altında, yazılan korunur
+      await cc.fill('reddet@example.com, iki@example.com')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect(dlg).toContainText('Bilgi (CC) listesi en çok 20 adres olabilir')
+      await expect(dlg).toBeVisible()
+      await expect(cc).toHaveValue('reddet@example.com, iki@example.com')
+      expect(sends).toBe(0)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(clipped, '[data-slot="te-send-dialog"]'), 'kırpılan metin (gönderim penceresi)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-send-dialog"]'), 'küçük hedef (gönderim penceresi)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-send-dialog-${vp.name}.png`, fullPage: false })
+      // Geçerli adresler: gövdede yalnız tekilleşmiş extra_cc
+      await cc.fill('ek@example.com; iki@example.com EK@example.com')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      await expect.poll(() => sends).toBe(1)
+      expect(sendBodies[sendBodies.length - 1]).toEqual({ extra_cc: 'ek@example.com, iki@example.com' })
+      await expect(dlg).toHaveCount(0)
+      await expect(page.getByText(/Bilgi \(CC\): ek@example\.com, iki@example\.com|CC: ek@example\.com, iki@example\.com/)).toBeVisible()
+      expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+    })
+
+    test('R18: kanal gönderim günlüğü — sekme, tablo (1280) / kart (390), uzun alıcı listesi sararak tam, durum metni; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=channel&te_ch=10')
+      const tab = page.locator('[data-slot="te-tab-sendlog"]')
+      await expect(tab).toBeVisible({ timeout: 20_000 })
+      await tab.click()
+      const log = page.locator('[data-slot="te-sendlog"]')
+      await expect(log).toBeVisible()
+      await expect(log.locator('[data-slot="te-sendlog-row"]')).toHaveCount(3)
+      await expect.poll(() => page.evaluate(() => window.location.search)).toContain('te_tab=sendlog')
+      expect(sendLogCalls[0]).toContain('page=0')
+      expect(sendLogCalls[0]).toContain('size=25')
+      if (vp.width >= 1280) await expect(log).toHaveAttribute('data-layout', 'table')
+      if (vp.width < 640) await expect(log).toHaveAttribute('data-layout', 'cards')
+      // Kolona sığan adresler kırpılmadan sarılır, sığmayanlar sayıyla ("+N adres daha" — "tam yazıldı" denmez); tablo kabı kaymaz
+      expect(SENDLOG_FITTED_TO.items.length, 'gerçek sığdırma: liste kısalır').toBeLessThan(SENDLOG_LONG_TO.length)
+      expect(SENDLOG_FITTED_TO.more).toBeGreaterThan(0)
+      const first = log.locator('[data-slot="te-sendlog-row"]').first()
+      const recipients = first.locator('[data-slot="te-sendlog-recipients"]')
+      await expect(recipients).toContainText(SENDLOG_FITTED_TO.items[SENDLOG_FITTED_TO.items.length - 1])
+      await expect(recipients).not.toContainText(SENDLOG_LONG_TO[SENDLOG_LONG_TO.length - 1])
+      await expect(first.locator('[data-slot="te-sendlog-to-more"]')).toContainText(new RegExp(`\\+${SENDLOG_FITTED_TO.more} (adres daha|more address)`))
+      await expect(first.locator('[data-slot="te-sendlog-cc"]')).toContainText('ek.bilgi.adresi@')
+      // Sebep dilinde yazılır; ham posta sunucusu iletisi (550 / FAILED / QUEUED_RETRY) hiçbir yerde yok
+      await expect(log.locator('[data-slot="te-sendlog-reason"][data-reason="SMTP_FAILED"]')).toBeVisible()
+      await expect(log.locator('[data-slot="te-sendlog-reason"][data-reason="QUEUED"]')).toBeVisible()
+      await expect(log).not.toContainText(/550|FAILED|QUEUED_RETRY|Kayıtlı durum|Recorded status/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(clipped, '[data-slot="te-sendlog"]'), 'kırpılan metin (gönderim günlüğü)').toEqual([])
+      expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+      const table = log.locator('[data-slot="te-sendlog-table"]')
+      if (await table.count()) {
+        expect(await table.evaluate((n) => n.scrollWidth - n.clientWidth), 'tablo kabı yatayda kaymaz').toBeLessThanOrEqual(1)
+      }
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-sendlog"]'), 'küçük hedef (gönderim günlüğü)').toEqual([])
+        const tabBox = await tab.boundingBox()
+        expect(tabBox.height, 'sekme dokunma hedefi').toBeGreaterThanOrEqual(39.5)
+      }
+      // Kanal sekmeleri sığar (üç sekme, telefonda sarılır)
+      const tabsList = page.locator('[data-slot="tabs-list"]').first()
+      const tl = await tabsList.boundingBox()
+      expect(tl.x + tl.width, 'sekme listesi ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      // Süzgeç: tür değişince istek kind ile gider
+      await log.locator('[data-slot="te-slog-kind"]').selectOption('test')
+      await expect.poll(() => sendLogCalls[sendLogCalls.length - 1]).toContain('kind=test')
+      await page.screenshot({ path: `test-results/channel-reports-send-log-${vp.name}.png`, fullPage: false })
     })
 
     test('katlanır bölümler + otomatik kayıt', async ({ page }) => {
@@ -1597,6 +1798,109 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-template-editor"]'), 'küçük hedef (şablon, hepsi açık)').toEqual([])
       // Tam sayfa görüntüsü EN SONDA (dokunmatik öykünmeyi sıfırlar)
       await page.screenshot({ path: `test-results/channel-reports-sections-${vp.name}.png`, fullPage: true })
+    })
+
+    test('analiz (2026-10-18, R22): kanallardan açılır; çizgi grafiği (boş ay boşluk, tek değer nokta), tablo / kart, alan + dönem seçimi; uzun adlar sarar; sığar, dokunma hedefleri', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page)
+      await page.goto('/?tab=channelreports')
+      const open = page.locator('[data-slot="te-analytics-open"]')
+      await expect(open).toBeVisible({ timeout: 20_000 })
+      await open.click()
+      const view = page.locator('[data-slot="te-analytics"]')
+      await expect(view).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('analytics')
+      await expect.poll(() => analyticsCalls.length).toBeGreaterThan(0)
+      expect(analyticsCalls[0].get('months')).toBe('12')
+      expect(analyticsCalls[0].get('fields')).toBeNull()
+
+      const cards = view.locator('[data-slot="te-an-field"]')
+      await expect(cards).toHaveCount(2)
+      const rate = view.locator('[data-slot="te-an-field"][data-field="error-rate"]')
+      // Grafik gerçekten çizildi: kanal başına bir çizgi; yalnız tek değeri olan kanal NOKTA alır (boş ay boşluk, 0 değil)
+      await expect(rate.locator('.recharts-line-curve').first()).toBeVisible()
+      expect(await rate.locator('.recharts-line-curve').count(), 'çizgi sayısı').toBeGreaterThanOrEqual(2)
+      await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+      await expect(rate.locator('[data-slot="te-an-legend-item"]')).toHaveCount(3)
+      await expect(rate.locator('[data-slot="te-an-legend"]')).toContainText(LONG_CHANNEL)
+      // Kap genişliği: geniş ekranda ay × kanal tablosu, dar ekranda kanal kartları
+      const wrap = rate.locator('[data-slot="te-an-table-wrap"]')
+      await expect(wrap).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+      if (vp.width >= 1280) {
+        await expect(rate.locator('[data-slot="te-an-row"]')).toHaveCount(12)
+        await expect(rate.locator('[data-slot="te-an-row"]').first()).toHaveAttribute('data-month', '2026-9')
+      } else {
+        await expect(rate.locator('[data-slot="te-an-card"]')).toHaveCount(3)
+        await expect(rate.locator('[data-slot="te-an-card"]').first()).toContainText(LONG_CHANNEL)
+      }
+      // Boş ay "—"; gönderilmemiş ay soluk (adında "gönderilmedi")
+      const unsent = rate.locator('[data-slot="te-an-cell"][data-report="100"]')
+      await expect(unsent).toHaveAttribute('data-state', 'unsent')
+      await expect(unsent).toHaveAccessibleName(/gönderilmedi|not sent/)
+      await expect(rate.locator('[data-slot="te-an-cell"][data-state="none"]').first()).toContainText('—')
+
+      // Y ekseni VERİYE göre (inceleme 2026-10-18): oranlar %0,4–%0,9 — eksen 0'dan başlamaz
+      const domain = (await rate.locator('[data-slot="te-an-chart"]').getAttribute('data-y-domain')).split(',').map(Number)
+      expect(domain[0], 'Y ekseni alt sınırı').toBeGreaterThan(0)
+      expect(domain[1]).toBeGreaterThanOrEqual(0.9)
+
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin').toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef').toEqual([])
+        // Hücre bağlantıları ("—" tek karakter de) GENİŞLİKTE de en az 40 px (inceleme 2026-10-18)
+        expect(await page.evaluate(narrowCells, '[data-slot="te-analytics"]'), 'dar hücre bağlantısı').toEqual([])
+      }
+
+      // Dönem: 24 ay → yeni istek ve URL
+      await view.getByRole('button', { name: /^(24 ay|24 months)$/ }).click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('months')).toBe('24')
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
+      await expect(rate.locator('[data-slot="te-an-dot"]')).toHaveCount(1)
+
+      // Alan seçici: SLA oranı eklenir → üçüncü kart, değer yoksa "değer girilmemiş" (grafik / 0 değil)
+      await view.locator('[data-slot="te-an-field-picker"]').click()
+      const list = page.locator('[data-slot="te-an-field-list"]')
+      await expect(list).toBeVisible()
+      await list.getByRole('option', { name: /Kritik fonksiyonların SLA oranı/ }).click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('fields')).toBe('error-rate,total-tx,sla-rate')
+      await page.keyboard.press('Escape')
+      await expect(cards).toHaveCount(3)
+      const sla = view.locator('[data-slot="te-an-field"][data-field="sla-rate"]')
+      await expect(sla.locator('[data-slot="te-an-novalues"]')).toBeVisible()
+      await expect(sla.locator('.recharts-line-curve')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (üç alan, 24 ay)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-analytics"]'), 'kırpılan metin (üç alan)').toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="te-analytics"]'), 'küçük hedef (üç alan)').toEqual([])
+        expect(await page.evaluate(narrowCells, '[data-slot="te-analytics"]'), 'dar hücre bağlantısı (üç alan)').toEqual([])
+      }
+      // Araç çubuğu: Yenile (fresh=1, veri yerinde) ve süzgeç varsayılanda değilken "Varsayılana dön"
+      await view.locator('[data-slot="te-an-refresh"]').click()
+      await expect.poll(() => analyticsCalls.at(-1)?.get('fresh')).toBe('1')
+      await expect(cards).toHaveCount(3)
+      await expect(view.locator('[data-slot="te-an-reset"]')).toBeVisible()
+
+      // Hücre o ayın raporunu açar; "Analize dön" analizi aynı süzgeçlerle açar (inceleme 2026-10-18)
+      await rate.locator('[data-slot="te-an-cell"][data-report="100"]').click()
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_rep')).toBe('100')
+      expect(new URL(page.url()).searchParams.get('te_view')).toBe('report')
+      expect(new URL(page.url()).searchParams.get('te_from')).toBe('analytics')
+      const backBtn = page.locator('[data-slot="te-back"]')
+      await expect(backBtn).toContainText(/Analize dön|Back to the analysis/)
+      const callsBeforeBack = analyticsCalls.length
+      await backBtn.click()
+      await expect(view).toBeVisible()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBe('analytics')
+      expect(new URL(page.url()).searchParams.get('te_an_months')).toBe('24')
+      expect(new URL(page.url()).searchParams.get('te_from')).toBeNull()
+      // Dönüşün ilk okuması taze (inceleme 2026-10-18, 2. tur): düzeltilen değer / silinen rapor bellekten eski gelmesin
+      await expect.poll(() => analyticsCalls.length).toBeGreaterThan(callsBeforeBack)
+      expect(analyticsCalls[callsBeforeBack].get('fresh')).toBe('1')
+      await expect(cards).toHaveCount(3)
     })
 
     if (!vp.touch) {

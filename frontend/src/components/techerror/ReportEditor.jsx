@@ -22,6 +22,7 @@ import { IssuesBlock, MetricsBlock, PendingInputContext, SummaryBlock, TableBloc
 import { StatusBadge, fmtDateTime, periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
+import SendDialog from './SendDialog.jsx'
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
@@ -99,7 +100,7 @@ function isFileDrag(e) {
  * kaydı bekler (iki kayıt aynı sürümle yarışmaz). Sunucu aynı kişinin 15 dk içindeki otomatik kayıtlarını geçmişte tek
  * satırda birleştirir.
  */
-export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef }) {
+export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef, backLabel = null }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
   const toast = useToast()
@@ -131,6 +132,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
+  const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
@@ -548,22 +550,38 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     }
   }
 
+  /**
+   * Gönderim: önce kayıt (ensureSaved), sonra gönderim penceresi (R18 / C13 — eski onay sorusunun metni + isteğe bağlı ek
+   * Bilgi (CC) alanı). Onay penceresi açık kalırken istek gider; sunucu ek Bilgi'yi reddederse (alan `extra_cc`) hata alanın
+   * altında, pencere açık — diğer her sonuçta pencere kapanır, bildirim gösterilir ve rapor yenilenir.
+   */
   async function send() {
     if (!(await ensureSaved())) return
-    const ok = await showConfirm({
-      title: approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle'),
-      message: approvalRequired
-        ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
-        : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title)),
-      variant: 'info', confirmText: t('te.sendConfirm'), cancelText: t('te.cancel'),
-    })
-    if (!ok) return
+    setSendDialog({ error: null })
+  }
+
+  async function confirmSend(extraCc) {
+    if (busy != null) return
     setBusy('send')
+    let keepOpen = false
     try {
-      const res = await api.techErrors.send(reportId)
+      // Ek Bilgi yoksa gövdesiz (eski çağrı aynen); varsa yalnız `extra_cc`
+      const res = extraCc ? await api.techErrors.send(reportId, { extra_cc: extraCc }) : await api.techErrors.send(reportId)
       if (res?.success && res.data) {
+        const cc = (res.data.cc || []).join(', ')
+        const to = (res.data.to || []).join(', ')
         if (res.data.state === 'QUEUED') toast.info(t('te.sendQueued'))
-        else toast.success(t('te.sendDone', (res.data.to || []).join(', ')))
+        // Kime boş (inceleme 2026-10-18, 2. tur: yöneticilerin hepsi pasif, posta yalnız Bilgi'ye gitti) → boş liste yazılmaz
+        else if (!to && cc) toast.success(t('te.sendDoneCcOnly', cc))
+        else if (!to) toast.success(t('te.sendDonePlain'))
+        else if (extraCc && cc) toast.success(t('te.sendDoneCc', to, cc))
+        else toast.success(t('te.sendDone', to))
+        // Dönüşümlü dağıtım (inceleme 2026-10-18): ek Bilgi'yi bilmeyen eski bir pod gövdeyi yok sayıp gönderir ve yanıtta
+        // `cc` olmaz — ek adreslere posta gitmemiş olabilir; sessiz "gönderildi" yerine kullanıcıya söylenir
+        if (extraCc && !Array.isArray(res.data.cc)) toast.info(t('te.sendCcNotConfirmed'), 12000)
+      } else if (res?.field === 'extra_cc') {
+        keepOpen = true
+        setSendDialog({ error: res.error || t('te.send.ccRejected') })
       } else {
         toast.error(res?.error || t('te.sendError'), { details: res?.errorInfo })
       }
@@ -571,7 +589,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       toast.error(e?.message || t('te.sendError'))
     } finally {
       setBusy(null)
-      load({ keepDraft: true })
+      if (!keepOpen) {
+        setSendDialog(null)
+        load({ keepDraft: true })
+      }
     }
   }
 
@@ -751,7 +772,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       className="h-auto min-h-8 w-fit max-w-full justify-start whitespace-normal py-1.5 text-left pointer-coarse:min-h-10"
       onClick={() => leave(() => onBack(channel?.id))}>
       <ArrowLeft aria-hidden="true" />
-      <span className="[overflow-wrap:anywhere]">{channel?.name ? t('te.backToChannel', channel.name) : t('te.backToChannels')}</span>
+      <span className="[overflow-wrap:anywhere]">{backLabel || (channel?.name ? t('te.backToChannel', channel.name) : t('te.backToChannels'))}</span>
     </Button>
   )
 
@@ -769,7 +790,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return (
       <div className="flex flex-col gap-4">
         <Button type="button" variant="ghost" size="sm" className="w-fit pointer-coarse:min-h-10" onClick={() => onBack(null)}>
-          <ArrowLeft aria-hidden="true" /> {t('te.backToChannels')}
+          <ArrowLeft aria-hidden="true" /> {backLabel || t('te.backToChannels')}
         </Button>
         <StatusBlock tone={gone ? 'neutral' : 'danger'} icon={CircleAlert} title={gone ? t('te.reportGoneTitle') : t('te.loadErrorTitle')}
           description={state.error}
@@ -941,6 +962,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
           sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
       )}
+      {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
+      <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}
+        title={approvalRequired ? t('te.appr.sendExec') : t('te.sendTitle')}
+        message={approvalRequired
+          ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
+          : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title))}
+        onConfirm={confirmSend} onCancel={() => { if (busy !== 'send') setSendDialog(null) }}
+        onEdit={() => { if (sendDialog?.error) setSendDialog({ error: null }) }} />
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 

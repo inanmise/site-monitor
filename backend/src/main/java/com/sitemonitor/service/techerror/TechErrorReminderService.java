@@ -99,6 +99,10 @@ public class TechErrorReminderService {
     static final String ST_HIDDEN = "SKIPPED: modül bu takıma kapalı";
     static final String ST_PASSIVE = "SKIPPED: pasif takım";
     static final String ST_NOFLOW = "SKIPPED: kanalın onay akışı kaldırıldı";
+    /** Sistem bakımı susturması (genel iz metni — {@link TechErrorSendLogService#reasonOf} bu sabitle eşler). */
+    static final String ST_MAINTENANCE = SystemMaintenanceService.STATUS_SKIPPED;
+    /** Onay hatırlatması: takımın hiçbir PO'sunun e-postası yok ({@link TechErrorSendLogService#reasonOf} → NO_RECIPIENT). */
+    static final String ST_NO_APPROVER_EMAIL = "SKIPPED: onaylayıcı e-postası yok";
 
     private static final List<String> PERIOD_KINDS = List.of(TechErrorReminder.KIND_PERIOD, SKIP_HIDDEN, SKIP_PASSIVE);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -416,7 +420,7 @@ public class TechErrorReminderService {
                 continue;
             }
             if (muted) {
-                saveLog(TRIGGER, team.getName(), to, "TEAM", subject, "SKIPPED: sistem bakımı", channelSummary(en.getValue(), enTpl));
+                saveLog(TRIGGER, team.getName(), to, "TEAM", subject, ST_MAINTENANCE, channelSummary(en.getValue(), enTpl));
                 counts[3]++;
                 continue;                                              // talep YOK: bakım bitince ertesi gün yeniden denenir
             }
@@ -584,13 +588,13 @@ public class TechErrorReminderService {
                 gate = approvalGate(ch, team);
             } catch (RuntimeException e) {
                 log.warn("Onay hatırlatması rapor {} için yarıda kaldı: {}", r.getId(), e.toString(), e);
-                saveLog(TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
+                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
                 counts[3]++;
                 continue;
             }
             if (gate != null) {
                 if (!markSkipped(List.of(ch), p, gate, null, todayStr).isEmpty()) {
-                    saveLog(TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, approvalGateStatus(gate), title);
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, approvalGateStatus(gate), title);
                     counts[3]++;
                 }
                 continue;
@@ -600,7 +604,7 @@ public class TechErrorReminderService {
             boolean fresh = existing == null || !ref.equals(existing.getRefKey());
             if (!fresh && !due(existing, today, every)) continue;
             if (muted) {
-                saveLog(TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "SKIPPED: sistem bakımı", title);
+                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_MAINTENANCE, title);
                 counts[3]++;
                 continue;
             }
@@ -610,7 +614,7 @@ public class TechErrorReminderService {
                 List<TechErrorApprovalService.Approver> apps = new ArrayList<>();
                 for (TechErrorApprovalService.Approver a : approvals.approvers(team.getId())) if (a.email() != null) apps.add(a);
                 if (apps.isEmpty()) {
-                    saveLog(TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "SKIPPED: onaylayıcı e-postası yok", title);
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_NO_APPROVER_EMAIL, title);
                     counts[3]++;
                     continue;
                 }
@@ -632,7 +636,7 @@ public class TechErrorReminderService {
                     }
                     if (status.startsWith("SENT") || status.startsWith("QUEUED")) reached++;
                     else if (status.startsWith("SKIPPED")) finalSkips++;   // posta kapalı / pasif: son karar, her gün denenmez
-                    saveLog(TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status, title);
+                    saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status, title);
                 }
                 if (reached > 0) counts[2]++;
                 else {
@@ -643,7 +647,7 @@ public class TechErrorReminderService {
                 // Beklenmeyen hata bir raporda kalır: talep bırakılır, iz FAILED — ertesi gün yeniden
                 log.warn("Onay hatırlatması rapor {} için yarıda kaldı: {}", r.getId(), e.toString(), e);
                 release(c);
-                saveLog(TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
+                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
                 counts[3]++;
             }
         }
@@ -714,8 +718,19 @@ public class TechErrorReminderService {
     }
 
     private void saveLog(String trigger, String name, List<String> to, String role, String subject, String status, String message) {
+        saveLogFor(null, null, trigger, name, to, role, subject, status, message);
+    }
+
+    /**
+     * Günlük satırı; rapora özgü satır (onay hatırlatması) kanal + rapora bağlanır ({@link TechErrorSendLogService#link}) —
+     * kanal gönderim günlüğünün "Hatırlatma" türü onu gösterir. Takım düzeyindeki dönem hatırlatması birden çok kanalı
+     * kapsadığından bağsız kalır (SMTP günlüğünde görünür).
+     */
+    private void saveLogFor(Long channelId, Long reportId, String trigger, String name, List<String> to, String role, String subject,
+                            String status, String message) {
         try {
             NotificationLog n = new NotificationLog();
+            if (channelId != null) TechErrorSendLogService.link(n, channelId, reportId);
             n.setAlertEventId(0L);   // alarm kaynaklı değil (kolon NOT NULL)
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientName(name == null ? "" : name);           // varlık kolona sığdırır (NotificationLog.fitColumns)

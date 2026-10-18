@@ -13,6 +13,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.report.TechErrorReportPdfWriter;
+import com.sitemonitor.service.techerror.TechErrorAnalyticsService;
 import com.sitemonitor.service.techerror.TechErrorApprovalService;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorReportSender;
@@ -93,6 +94,13 @@ public class TechErrorReportController {
     void resetSummaryCache() {
         summaryMemo.clear();
     }
+
+    /** Kanal başına gönderim günlüğü (R18 / E22). Yoksa (dilim testleri) uç 409 {@code SEND_LOG_UNAVAILABLE} döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorSendLogService sendLogs;
+    /** Kanallar arası analiz (2026-10-18, R22). Yoksa (dilim testleri) analiz ucu 409 {@code ANALYTICS_UNAVAILABLE} döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorAnalyticsService analytics;
 
     public TechErrorReportController(TechErrorReportService service, TechErrorReportSender sender, TeamRepository teams,
                                      PermissionService permissions, AuditService auditService) {
@@ -192,6 +200,171 @@ public class TechErrorReportController {
             summaryMemo.put(key, new SummaryMemo(nowMs, frozen));
         }
         return ok(frozen);
+    }
+
+    // ── Kanallar arası analiz (2026-10-18, R22) ──────────────────────────────────────────────────────
+
+    /**
+     * Takımın (ya da okunabilen bütün takımların) AKTİF kanallarında aynı kimlikli sayı / yüzde alanlarının son 6 / 12 / 24
+     * BİTMİŞ ayı (önceki takvim ayıyla biter, İstanbul). Okuma kapsamı modülünkü (erişim paylaşımı VIEW de okur, modül
+     * görünürlüğü uygulanır); okunamayan takım 404. Değerler raporların KENDİ şablonundan, aynı kimlik ve aynı türle;
+     * muaf / tür farkı / rapor yok → null (0 değil). Hesaplanan alanlar (oran / değişim) rapor ekranı ve PDF gibi CANLI
+     * hesaplanır (geçen ay düzeltildiyse analiz de güncel). {@code fresh=1} (Yenile) belleği en fazla 5 sn'de bir atlar.
+     * İstenen alanların hiçbiri kapsamda yoksa varsayılan alanlar döner ({@code fields_fallback}, {@code dropped_fields}).
+     * Kişi verisi yok (kanal ve takım adları, değerler). Yazma yok.
+     */
+    @GetMapping("/analytics")
+    public ResponseEntity<Map<String, Object>> analytics(@RequestParam(value = "team", required = false) String team,
+                                                         @RequestParam(value = "months", required = false) String months,
+                                                         @RequestParam(value = "fields", required = false) String fields,
+                                                         @RequestParam(value = "fresh", required = false) String fresh,
+                                                         HttpSession session) {
+        requireRead(session);
+        int m = analyticsMonths(months);
+        List<String> requested = analyticsFields(fields);
+        if (analytics == null) {
+            throw new CodedConflictException("ANALYTICS_UNAVAILABLE", Msg.t(
+                    "Kanal analizi bu sunucuda kullanılamıyor. Sayfayı yenileyin; sürerse sistem yöneticisine bildirin.",
+                    "Channel analysis is not available on this server. Reload the page; if it persists, tell a system administrator."));
+        }
+        Set<Long> visible = visibleTeamIds(session);          // null = hepsi (kurum geneli görüntüleyici)
+        Map<Long, Team> teamMap = new LinkedHashMap<>();
+        for (Team t : visible == null ? teams.findAll() : teams.findAllById(visible)) {
+            if (t != null && t.getId() != null && canRead(session, t.getId())) teamMap.put(t.getId(), t);
+        }
+        Long teamFilter = null;
+        if (team != null && !team.isBlank() && !"all".equals(team.trim())) {
+            teamFilter = parseId(team);
+            if (teamFilter == null || !teamMap.containsKey(teamFilter)) {
+                throw new NoSuchElementException(Msg.t(
+                        "Takım bulunamadı ya da bu takımın raporlarını göremezsiniz. Listeden başka bir takım seçin.",
+                        "The team wasn't found, or you can't see its reports. Pick another team from the list."));
+            }
+        }
+        Map<Long, String> names = new HashMap<>();
+        teamMap.forEach((id, t) -> names.put(id, t.getName() == null ? "" : t.getName()));
+        YearMonth end = service.defaultPeriod();
+        boolean refresh = "1".equals(fresh) || "true".equalsIgnoreCase(fresh);
+        TechErrorAnalyticsService.Result res = analytics.analytics(teamMap.keySet(), teamFilter, m, requested, end, names, refresh);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("team", teamFilter == null ? "all" : String.valueOf(teamFilter));
+        // Seçili takımın adı (inceleme 2026-10-18, 2. tur): seçici aktif kanalı olmayan takımı da adıyla gösterir — çıplak
+        // "#kimlik" değil; okunabilen takımlardan (kapsam denetimi yukarıda)
+        if (teamFilter != null) data.put("team_name", names.get(teamFilter));
+        data.put("months_requested", res.monthsRequested());
+        List<Map<String, Object>> monthRows = new ArrayList<>();
+        for (YearMonth ym : res.months()) monthRows.add(Map.of("year", ym.getYear(), "month", ym.getMonthValue()));
+        data.put("months", monthRows);
+        data.put("end", Map.of("year", end.getYear(), "month", end.getMonthValue()));
+        List<Map<String, Object>> fieldRows = new ArrayList<>();
+        for (TechErrorAnalyticsService.FieldRef f : res.fields()) {
+            Map<String, Object> fm = new LinkedHashMap<>();
+            fm.put("id", f.id());
+            fm.put("label", f.label());
+            fm.put("type", f.type());
+            // Alanı GÜNCEL şablonunda başka türle tanımlayan kanallar (arayüz "yalnız aynı türdeki aylar" der — o kanalın
+            // referans türdeki eski raporları değer verir)
+            fm.put("type_mismatch", f.typeMismatch() == null ? List.of() : f.typeMismatch());
+            fieldRows.add(fm);
+        }
+        data.put("fields", fieldRows);
+        data.put("dropped_fields", res.dropped() == null ? List.of() : res.dropped());
+        data.put("fields_fallback", res.fieldsFallback());
+        List<Map<String, Object>> options = new ArrayList<>();
+        for (TechErrorAnalyticsService.FieldOption o : res.available()) {
+            Map<String, Object> om = new LinkedHashMap<>();
+            om.put("id", o.id());
+            om.put("label", o.label());
+            om.put("type", o.type());
+            om.put("channels", o.channels());
+            options.add(om);
+        }
+        data.put("available_fields", options);
+        List<Map<String, Object>> chRows = new ArrayList<>();
+        for (TechErrorAnalyticsService.ChannelSeries s : res.channels()) {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            cm.put("id", s.id());
+            cm.put("name", s.name());
+            cm.put("team_id", s.teamId());
+            cm.put("team_name", names.get(s.teamId()));
+            cm.put("points", new LinkedHashMap<>(s.values()));
+            List<Map<String, Object>> reps = new ArrayList<>();
+            for (TechErrorAnalyticsService.ReportRef rr : s.reports()) {
+                if (rr == null) { reps.add(null); continue; }
+                Map<String, Object> rm = new LinkedHashMap<>();
+                rm.put("id", rr.id());
+                rm.put("sent", rr.sent());
+                // Hiç gönderilmemiş, gönderimi posta kuyruğunda (sonuç bilinmiyor) — "gönderilmedi" değil
+                if (rr.queued()) rm.put("queued", true);
+                reps.add(rm);
+            }
+            cm.put("reports", reps);
+            chRows.add(cm);
+        }
+        data.put("channels", chRows);
+        data.put("channel_count", res.channelCount());
+        data.put("truncated", res.truncated());
+        List<Map<String, Object>> teamRows = new ArrayList<>();
+        // Takım seçici: aktif kanalı olan okunabilen takımlar; seçili takımın aktif kanalı yoksa o da listede (seçim boş görünmesin)
+        List<Long> pickable = new ArrayList<>(res.teamsWithChannels());
+        if (teamFilter != null && !pickable.contains(teamFilter)) pickable.add(teamFilter);
+        for (Long id : pickable) {
+            Team t = teamMap.get(id);
+            if (t == null) continue;
+            Map<String, Object> tm = new LinkedHashMap<>();
+            tm.put("id", t.getId());
+            tm.put("name", t.getName());
+            teamRows.add(tm);
+        }
+        data.put("teams", teamRows);
+        data.put("month_choices", TechErrorAnalyticsService.MONTH_CHOICES);
+        data.put("max_fields", TechErrorAnalyticsService.MAX_FIELDS);
+        return ok(data);
+    }
+
+    /** {@code months}: boş = 12; yalnız 6 / 12 / 24 — başka değer 400 {@code VALIDATION_FAILED} (alan {@code months}). */
+    static int analyticsMonths(String raw) {
+        if (raw == null || raw.isBlank()) return TechErrorAnalyticsService.DEFAULT_MONTHS;
+        String s = raw.trim();
+        if (s.length() <= 3) {
+            try {
+                int v = Integer.parseInt(s);
+                if (TechErrorAnalyticsService.MONTH_CHOICES.contains(v)) return v;
+            } catch (NumberFormatException ignored) { /* aşağıda */ }
+        }
+        throw new FieldValidationException("months", Msg.t(
+                "Dönem 6, 12 ya da 24 ay olabilir. Listeden birini seçip yeniden deneyin.",
+                "The period can be 6, 12 or 24 months. Pick one from the list and try again."));
+    }
+
+    /**
+     * {@code fields}: virgülle ayrılmış alan kimlikleri (boş = varsayılan). Kimlik kuralı şablonla aynı; tekrarlar düşer;
+     * en çok {@value TechErrorAnalyticsService#MAX_FIELDS} — aşan ya da bozuk kimlik 400 {@code VALIDATION_FAILED}.
+     * Uzunluk düzenli ifadeden ÖNCE denetlenir.
+     */
+    static List<String> analyticsFields(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        if (raw.length() > 400) throw tooManyFields();
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            String id = part.trim();
+            if (id.isEmpty()) continue;
+            if (id.length() > 40 || !TechErrorAnalyticsService.FIELD_ID.matcher(id).matches()) {
+                throw new FieldValidationException("fields", Msg.t(
+                        "Seçilen alanlardan biri okunamadı. Alanları listeden yeniden seçin.",
+                        "One of the chosen fields couldn't be read. Pick the fields from the list again."));
+            }
+            out.add(id);
+        }
+        if (out.size() > TechErrorAnalyticsService.MAX_FIELDS) throw tooManyFields();
+        return List.copyOf(out);
+    }
+
+    private static FieldValidationException tooManyFields() {
+        return new FieldValidationException("fields", Msg.t(
+                "En çok " + TechErrorAnalyticsService.MAX_FIELDS + " alan birlikte incelenebilir. Bir alanı kaldırıp yeniden deneyin.",
+                "At most " + TechErrorAnalyticsService.MAX_FIELDS + " fields can be compared together. Remove one and try again."));
     }
 
     // ── Kanallar ─────────────────────────────────────────────────────────────────────────────────────
@@ -679,6 +852,7 @@ public class TechErrorReportController {
         boolean more = false;
         boolean capped = false;
         Instant since = null;
+        boolean peopleHidden = SessionScope.viewableOnlyByGrant(session, r.getTeamId());   // kişi verisi paylaşımla görünmez (R18)
         if (history != null) {
             var page = history.reportHistory(r.getId(), beforeId, limit == null ? 50 : limit);
             for (var e : page.events()) {
@@ -689,7 +863,8 @@ public class TechErrorReportController {
                 m.put("actor_name", e.getActorName());
                 m.put("system", e.getActorId() == null);
                 m.put("version", e.getReportVersion());
-                m.put("detail", com.sitemonitor.service.techerror.TechErrorHistoryService.detail(e));
+                Map<String, Object> detail = com.sitemonitor.service.techerror.TechErrorHistoryService.detail(e);
+                m.put("detail", peopleHidden ? maskHistoryPeople(detail) : detail);
                 list.add(m);
             }
             more = page.hasMore();
@@ -786,6 +961,84 @@ public class TechErrorReportController {
         }
         data.put("current", version == ch.getTemplateVersion());
         return ok(data);
+    }
+
+    // ── Kanal gönderim günlüğü (R18 / E22, 2026-10-18) ───────────────────────────────────────────────
+
+    /**
+     * Kanalın gönderim günlüğü: rapor gönderimi, kendine test, onay ve hatırlatma postalarının {@code notification_logs}
+     * satırları (en yeni önce, sunucu sayfalı — {@code page} 0 tabanlı, {@code size} ≤ 100; {@code kind} all | report | test |
+     * approval | reminder, {@code status} all | sent | queued | skipped | failed; son sayfadan büyük {@code page} → son sayfa,
+     * yanıttaki {@code page} gerçek sayfa). Kapı kanalın okuma kapsamı (başka takım → 404). Ham durum metni (posta sunucusunun
+     * iletisi: sunucu adı, port) HİÇ KİMSEYE dönmez — yalnız durum sınıfı ({@code status}) ve sabit sebep kodu
+     * ({@code reason}, {@link com.sitemonitor.service.techerror.TechErrorSendLogService#reasonOf}). Sığdırılmış alıcı
+     * listesinin eki ayrılır: {@code to} / {@code cc} yalnız tam adresler, {@code to_more} / {@code cc_more} sığmayan sayısı.
+     * Kişi verisi paylaşımla görünmez: yalnız paylaşımla okuyan adresleri görmez — yalnız sayılar ({@code to_count} /
+     * {@code cc_count}).
+     */
+    @GetMapping("/channels/{id}/send-log")
+    public ResponseEntity<Map<String, Object>> sendLog(@PathVariable Long id,
+                                                       @RequestParam(value = "page", required = false) Integer page,
+                                                       @RequestParam(value = "size", required = false) Integer size,
+                                                       @RequestParam(value = "kind", required = false) String kind,
+                                                       @RequestParam(value = "status", required = false) String status,
+                                                       HttpSession session) {
+        requireRead(session);
+        TechErrorChannel ch = readableChannel(id, session);
+        if (ch == null) throw notFoundChannel();
+        if (sendLogs == null) {
+            throw new CodedConflictException("SEND_LOG_UNAVAILABLE", Msg.t(
+                    "Gönderim günlüğü bu sunucuda kullanılamıyor. Birkaç dakika sonra sayfayı yenileyin.",
+                    "The send log is not available on this server. Reload the page in a few minutes."));
+        }
+        boolean hidden = SessionScope.viewableOnlyByGrant(session, ch.getTeamId());
+        var p = sendLogs.page(ch.getId(), kind, status, page, size);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (var row : p.rows()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", row.id());
+            m.put("at", row.at());
+            m.put("kind", row.kind());
+            m.put("trigger", row.trigger());
+            m.put("role", row.role());
+            m.put("status", row.status());
+            // Sabit kod (ham durum metni dönmez — inceleme 2026-10-18); kişi verisi taşımaz, paylaşımla okuyana da gider
+            m.put("reason", row.reason());
+            m.put("report_id", row.reportId());
+            m.put("year", row.year());
+            m.put("month", row.month());
+            m.put("to", hidden ? null : row.to());
+            m.put("cc", hidden ? null : row.cc());
+            m.put("to_more", hidden ? 0 : row.toMore());
+            m.put("cc_more", hidden ? 0 : row.ccMore());
+            m.put("to_count", row.toCount());
+            m.put("cc_count", row.ccCount());
+            rows.add(m);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("rows", rows);
+        data.put("total", p.total());
+        data.put("page", p.page());
+        data.put("size", p.size());
+        data.put("total_pages", p.size() <= 0 ? 0 : (int) Math.ceil(p.total() / (double) p.size()));
+        data.put("kind", p.kind());
+        data.put("status", p.status());
+        data.put("recipients_hidden", hidden);
+        return ok(data);
+    }
+
+    /**
+     * Geçmiş olayı ayrıntısında kişi verisi (R18): yalnız paylaşımla okuyan alıcı / ek Bilgi ADRESLERİNİ görmez — sayıları kalır
+     * ({@code recipient_count}, {@code extra_cc_count}). Diğer okuyanlara ayrıntı aynen.
+     */
+    static Map<String, Object> maskHistoryPeople(Map<String, Object> detail) {
+        if (detail == null || (!detail.containsKey("recipients") && !detail.containsKey("extra_cc"))) return detail;
+        Map<String, Object> out = new LinkedHashMap<>(detail);
+        Object to = out.remove("recipients");
+        if (to instanceof Collection<?> c && !out.containsKey("recipient_count")) out.put("recipient_count", c.size());
+        Object extra = out.remove("extra_cc");
+        if (extra instanceof Collection<?> c) out.put("extra_cc_count", c.size());
+        return out;
     }
 
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
@@ -1023,9 +1276,17 @@ public class TechErrorReportController {
         }
     }
 
+    /**
+     * Gönderim. İsteğe bağlı gövde {@code {extra_cc: "a@x.com, b@y.com"}} (R18 / C13, 2026-10-18 — kullanıcı onayı): yalnız
+     * BU gönderime ek Bilgi (CC) adresleri — kanalda saklanmaz; takıma ve yöneticilere gönderimde (onay sonrası otomatik
+     * gönderimde değil). Kural {@link TechErrorReportSender#extraCc}: geçersiz adres / 10'dan fazla / Bilgi toplamı 20'yi aşıyor
+     * → 400 {@code VALIDATION_FAILED} alan {@code extra_cc}, hiçbir şey yazılmaz. Dizi de kabul edilir (öğeler birleştirilir).
+     */
     @PostMapping("/reports/{id}/send")
-    public ResponseEntity<Map<String, Object>> send(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> send(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                                    HttpSession session, HttpServletRequest request) {
         requireWrite(session);
+        String extraCc = extraCcOf(body);
         TechErrorReport r = ownWritableReport(id, session);
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
@@ -1039,21 +1300,34 @@ public class TechErrorReportController {
                     Map.of("approval", approvalDto(rowOf(r))));
         }
         TechErrorReportSender.Result res;
+        boolean extra = extraCc != null;
         try {
-            res = required ? sender.send(r, ch, team, userId(session), TechErrorReportSender.Delivery.EXECUTIVE)
-                    : sender.send(r, ch, team, userId(session));
+            // Ek Bilgi yoksa eski çağrılar (byte-identical yol); varsa teslim yolu açıkça verilir
+            if (extra) {
+                res = sender.send(r, ch, team, userId(session),
+                        required ? TechErrorReportSender.Delivery.EXECUTIVE : TechErrorReportSender.Delivery.TEAM, extraCc);
+            } else {
+                res = required ? sender.send(r, ch, team, userId(session), TechErrorReportSender.Delivery.EXECUTIVE)
+                        : sender.send(r, ch, team, userId(session));
+            }
+        } catch (FieldValidationException e) {
+            throw e;            // giriş hatası (ek Bilgi): gönderim denenmedi, denetime yazılmaz
         } catch (RuntimeException e) {
             auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",
                             "reason", failureReason(e)));
             throw e;
         }
+        List<String> resCc = res.cc() == null ? List.of() : res.cc();
         auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
-                AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
+                extra ? AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
+                        "channel", ch.getName(), "year", r.getReportYear(), "month", r.getReportMonth(), "cc", resCc.size(), "extra_cc", true)
+                        : AuditDetail.of("outcome", res.state(), "recipients", res.to().size(), "pdf_bytes", res.pdfBytes(),
                         "channel", ch.getName(), "year", r.getReportYear(), "month", r.getReportMonth()));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("state", res.state());
         data.put("to", res.to());
+        data.put("cc", resCc);
         data.put("subject", res.subject());
         data.put("pdf_bytes", res.pdfBytes());
         switch (res.state()) {
@@ -1590,6 +1864,41 @@ public class TechErrorReportController {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /**
+     * Gönderim gövdesinin {@code extra_cc}'si (R18 / C13): yok / boş → null (ek Bilgi yok); metin aynen; dizi → öğeler virgülle
+     * birleşir; başka tür → 400 {@code extra_cc}. Uzunluk / adres kuralı {@link TechErrorReportSender#extraCc}'te.
+     */
+    static String extraCcOf(Map<String, Object> body) {
+        if (body == null) return null;
+        Object v = body.get("extra_cc");
+        if (v == null) return null;
+        String raw;
+        if (v instanceof String s) {
+            raw = s;
+        } else if (v instanceof Collection<?> c) {
+            if (c.size() > TechErrorReportSender.MAX_EXTRA_CC_INPUT) raw = "x".repeat(TechErrorReportSender.MAX_EXTRA_CC_INPUT + 1);
+            else {
+                StringBuilder sb = new StringBuilder();
+                for (Object o : c) {
+                    if (!(o instanceof String s)) throw extraCcType();
+                    if (sb.length() > 0) sb.append(", ");
+                    sb.append(s);
+                    if (sb.length() > TechErrorReportSender.MAX_EXTRA_CC_INPUT) break;
+                }
+                raw = sb.toString();
+            }
+        } else {
+            throw extraCcType();
+        }
+        return raw.isBlank() ? null : raw;
+    }
+
+    private static FieldValidationException extraCcType() {
+        return new FieldValidationException("extra_cc", Msg.t(
+                "Ek Bilgi (CC) adresleri metin olarak gönderilmeli (virgülle ayrılmış). Sayfayı yenileyip tekrar deneyin.",
+                "The extra CC addresses must be sent as text (separated by commas). Reload the page and try again."));
     }
 
     private static NoSuchElementException notFoundChannel() {

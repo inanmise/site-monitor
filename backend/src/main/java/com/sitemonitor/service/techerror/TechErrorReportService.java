@@ -108,6 +108,41 @@ public class TechErrorReportService {
         return history;
     }
 
+    /**
+     * Kanal analizinin pod belleği (R22; inceleme 2026-10-18, 2. tur): bir raporun değerleri kaydedilince, rapor açılınca /
+     * silinince, şablon uygulanınca ve kanal / şablon değişince boşaltılır — düzeltilen değer ya da silinen rapor 60 sn
+     * bayat görünmesin. Yoksa (dilim testleri) atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorAnalyticsService analytics;
+
+    /**
+     * Analiz belleğini işlem İŞLENDİKTEN sonra boşaltır (işlem yoksa hemen): işlem sürerken boşaltılsaydı araya giren bir
+     * analiz okuması eski veriyi yeniden belleğe yazardı. Ucuz (yalnız bellek); hata yazma akışını bozmaz.
+     */
+    void analyticsChanged() {
+        TechErrorAnalyticsService a = analytics;
+        if (a == null) return;
+        Runnable clear = () -> {
+            try {
+                a.invalidate();
+            } catch (RuntimeException ignored) {
+                // yalnız bellek — yazma akışı etkilenmez (en geç TTL sonunda tazelenir)
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            clear.run();
+                        }
+                    });
+        } else {
+            clear.run();
+        }
+    }
+
     // ── Dönem ────────────────────────────────────────────────────────────────────────────────────────
 
     /** Varsayılan rapor dönemi: İstanbul saatine göre bir önceki ay (Ocak'ta önceki yılın Aralık'ı). */
@@ -250,6 +285,7 @@ public class TechErrorReportService {
         if (!changed) return ch;
         ch.setUpdatedAt(now());
         ch.setUpdatedById(by);
+        analyticsChanged();
         try {
             return channels.saveAndFlush(ch);
         } catch (DataIntegrityViolationException e) {
@@ -403,6 +439,7 @@ public class TechErrorReportService {
         }
         channels.delete(ch);
         channels.flush();
+        analyticsChanged();
         return n;
     }
 
@@ -435,6 +472,7 @@ public class TechErrorReportService {
         // okunan sürüm == beklenen sürüm olan JSON, o sürümün gerçek içeriğidir)
         if (prevVersion == expectedVersion) history.recordTemplateVersion(before, prevVersion, prevJson, prevAt, prevBy);
         history.recordTemplateVersion(before, expectedVersion + 1, json, now, by, actorName);
+        analyticsChanged();
         return expectedVersion + 1;
     }
 
@@ -505,6 +543,7 @@ public class TechErrorReportService {
             throw reportExists(null);
         }
         history.record(saved, "CREATE", by, saved.getVersion(), Map.of("template_version", ch.getTemplateVersion()), now);
+        analyticsChanged();
         return saved;
     }
 
@@ -542,6 +581,7 @@ public class TechErrorReportService {
         TechErrorReport saved = reports.saveAndFlush(r);
         reports.touchContent(saved.getId(), now);      // içerik sayacı (atomik, aynı işlem)
         boolean merged = history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now, auto);
+        analyticsChanged();
         return new SaveOutcome(saved, merged);
     }
 
@@ -580,6 +620,7 @@ public class TechErrorReportService {
         detail.put("removed_values", Math.max(0, removedValues));
         detail.put("removed_images", removedImages);
         history.record(saved, "TEMPLATE_REFRESH", by, saved.getVersion(), detail, now);
+        analyticsChanged();
         return new RefreshResult(saved, Math.max(0, removedValues), removedImages);
     }
 
@@ -627,6 +668,7 @@ public class TechErrorReportService {
                     "Rapor şu anda gönderiliyor ya da az önce gönderildi; silinmedi. Sayfayı yenileyin; gönderilmiş raporu yalnız takım yöneticisi silebilir.",
                     "The report is being sent or was just sent, so it wasn't deleted. Reload the page; only a team manager can delete a sent report."));
         }
+        analyticsChanged();
         return wasSent;
     }
 

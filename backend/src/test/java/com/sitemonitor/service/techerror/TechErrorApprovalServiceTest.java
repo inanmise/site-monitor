@@ -222,6 +222,11 @@ class TechErrorApprovalServiceTest {
         assertThat(html.getAllValues().get(0)).contains("data-slot=\"te-mail-band\"").contains("Onayınız bekleniyor");
         List<NotificationLog> rows = logs.findAll();
         assertThat(rows).hasSize(2).allMatch(n -> TechErrorApprovalService.TRIGGER.equals(n.getTrigger()) && "SENT".equals(n.getEmailStatus()));
+        // R18 / E22: onay postası satırları kanala / rapora bağlı → kanalın gönderim günlüğünde görünür
+        assertThat(rows).allSatisfy(n -> {
+            assertThat(n.getTechErrorChannelId()).isEqualTo(ch.getId());
+            assertThat(n.getTechErrorReportId()).isEqualTo(r.getId());
+        });
         assertThat(events.findAll()).extracting(e -> e.getKind()).contains("APPROVAL_REQUEST");
         assertThatThrownBy(() -> approvals.request(service.report(r.getId()), ch, team, tech.getId()))
                 .isInstanceOf(CodedConflictException.class).extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("APPROVAL_PENDING");
@@ -258,6 +263,11 @@ class TechErrorApprovalServiceTest {
         assertThat(after.getApprovalNote()).isEqualTo("Uygun");
         assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).allMatch(t -> t.getUsedAt() != null);
         verify(sender).send(any(), eq(ch), eq(team), eq(po2.getId()), eq(TechErrorReportSender.Delivery.EXECUTIVE));
+        // R18 / C13: onay sonrası otomatik gönderim ek Bilgi (CC) taşımaz — 6 argümanlı ek Bilgi yolu hiç çağrılmaz
+        verify(sender, org.mockito.Mockito.never()).send(any(), any(), any(), any(), any(), any());
+        // Karar postası (isteyene) da kanala / rapora bağlı
+        assertThat(logs.findAll().stream().filter(n -> "REQUESTER".equals(n.getRecipientRole())))
+                .isNotEmpty().allSatisfy(n -> assertThat(n.getTechErrorChannelId()).isEqualTo(ch.getId()));
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         // 2 istek + isteyene karar + kararı vermeyen PO'ya bilgi (12. sürüm, C10)
