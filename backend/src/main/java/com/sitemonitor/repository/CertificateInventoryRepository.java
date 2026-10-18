@@ -45,6 +45,13 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
      *  performans: tam entity yerine iki sütun). Sütunlar: {@code [domain, teamId]}. */
     @Query("SELECT c.domain, c.teamId FROM CertificateInventory c WHERE c.active = true")
     List<Object[]> findActiveDomainTeams();
+
+    /**
+     * Grafana ölçüm aktarıcısı (2026-10-18): alan adı → SY / UG takımı (alarm sahipliği ve sertifika UG etiketi) — TÜM
+     * satırlar (pasif envanterin alarmı da sahibine bağlanır, {@code AlertOwnership} gibi). Sütunlar {@code [domain, teamId, ugTeamId]}.
+     */
+    @Query("SELECT c.domain, c.teamId, c.ugTeamId FROM CertificateInventory c WHERE c.domain IS NOT NULL")
+    List<Object[]> findDomainOwners();
     List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     /** Takımın UG olarak bağlı olduğu TÜM kayıtlar (pasif/silinmiş dahil) — takım taşıma/silme etkisi (2026-09-28). */

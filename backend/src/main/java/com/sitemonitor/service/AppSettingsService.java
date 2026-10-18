@@ -315,6 +315,13 @@ public class AppSettingsService {
         if (com.sitemonitor.service.techerror.TechErrorReportSettings.isKey(s.key())) {
             com.sitemonitor.service.techerror.TechErrorReportSettings.validate(s.key(), val);
         }
+        // Grafana panosu + ölçüm aktarıcısı (2026-10-18): kimlik / adres / etiket eşleyicisi / aralıklar — aynı kural her uçta.
+        if (com.sitemonitor.service.grafana.GrafanaDashboardSettings.isKey(s.key())) {
+            com.sitemonitor.service.grafana.GrafanaDashboardSettings.validate(s.key(), val);
+        }
+        if (com.sitemonitor.service.metrics.MetricsExportSettings.isKey(s.key())) {
+            com.sitemonitor.service.metrics.MetricsExportSettings.validate(s.key(), val);
+        }
         // Kendi kendini izleme (2026-10-11): aralıklar ve alıcı biçimleri — hangi uçtan yazılırsa yazılsın aynı kural.
         if (com.sitemonitor.service.watchdog.WatchdogSettings.isKey(s.key())) {
             com.sitemonitor.service.watchdog.WatchdogSettings.validate(s.key(), val);

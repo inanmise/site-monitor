@@ -78,6 +78,10 @@ class AuditCoverageTest {
                 "Teknik hata raporu şablonu ÖRNEK PDF önizlemesi (2026-10-17): düzenleyicideki taslağı örnek değerlerle PDF'e "
               + "çizer ve döndürür — hiçbir kaydı yazmaz, göndermez. POST yalnız kaydedilmemiş taslak şablonu gövdede taşıdığı "
               + "için; şablon kaydı (TECH_ERROR_TEMPLATE_SAVE) denetlenir. Kullanıcı başına dakikada 6.");
+        EXEMPT.put("GrafanaDashboardController#preview",
+                "Grafana panosu ÖN İZLEMESİ (2026-10-18): kaydedilmemiş form değerleriyle pano özetini (panel / değişken / ölçüm "
+              + "sayısı) hesaplar — hiçbir ayarı yazmaz, dosya üretmez. POST yalnız form gövdesini taşıdığı için; kayıt "
+              + "(GRAFANA_SETTINGS_SAVE) ve indirme (GRAFANA_DASHBOARD_EXPORT) denetlenir.");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");

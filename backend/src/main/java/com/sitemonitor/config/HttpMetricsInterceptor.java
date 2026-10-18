@@ -16,6 +16,12 @@ public class HttpMetricsInterceptor implements HandlerInterceptor {
 
     private final HttpMetricsService httpMetricsService;
 
+    /** Uç etiketsiz gecikme histogramı (2026-10-18, Grafana p95) — isteğe bağlı: birim testinde yok. */
+    private com.sitemonitor.service.metrics.HttpLatencyMetrics latency;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLatency(com.sitemonitor.service.metrics.HttpLatencyMetrics latency) { this.latency = latency; }
+
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
         req.setAttribute(START_ATTR, System.currentTimeMillis());
@@ -39,7 +45,8 @@ public class HttpMetricsInterceptor implements HandlerInterceptor {
         // hangi yolun istendiği erişim log'unda ve client-errors yüzeyinde zaten duruyor.
         Object pattern = req.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         String route = (pattern instanceof String p && !p.isBlank()) ? p : "(unmatched)";
-        httpMetricsService.record(req.getMethod() + " " + route, res.getStatus(),
-                System.currentTimeMillis() - start);
+        long elapsed = System.currentTimeMillis() - start;
+        httpMetricsService.record(req.getMethod() + " " + route, res.getStatus(), elapsed);
+        if (latency != null) latency.record(res.getStatus(), elapsed);
     }
 }

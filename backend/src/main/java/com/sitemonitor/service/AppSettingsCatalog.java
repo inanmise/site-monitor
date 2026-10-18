@@ -343,6 +343,26 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.watchdog.confirm-checks",      "watchdog", Type.INT),
         new Setting("site.monitor.watchdog.stale-ratio-percent", "watchdog", Type.INT),
         new Setting("site.monitor.watchdog.cert-stale-hours",    "watchdog", Type.INT),
+        // Grafana panosu + izleme ölçümleri aktarıcısı (2026-10-18) — Ayarlar → Platform → Grafana panosu yönetir (grup Genel
+        // Ayarlar'da GİZLİ, GeneralSettings SKIP_GROUPS). Doğrulama GrafanaDashboardSettings / MetricsExportSettings.validate.
+        // Hepsi GLOBAL_ONLY (aşağıda): etiket eşleyicisi altyapı adı (ad alanı / iş) taşır, aktarıcı tüm pod'ların yükünü belirler.
+        new Setting("site.monitor.grafana.title",                "grafana", Type.STRING),
+        new Setting("site.monitor.grafana.uid",                  "grafana", Type.STRING),
+        new Setting("site.monitor.grafana.link-base-url",        "grafana", Type.STRING),
+        new Setting("site.monitor.grafana.selector",             "grafana", Type.STRING),
+        new Setting("site.monitor.grafana.time-from",            "grafana", Type.ENUM,
+                com.sitemonitor.service.grafana.GrafanaDashboardSettings.TIME_FROM_OPTIONS),
+        new Setting("site.monitor.grafana.refresh",              "grafana", Type.ENUM,
+                com.sitemonitor.service.grafana.GrafanaDashboardSettings.REFRESH_OPTIONS),
+        new Setting("site.monitor.grafana.language",             "grafana", Type.ENUM, java.util.List.of("tr", "en")),
+        new Setting("site.monitor.grafana.sections",             "grafana", Type.CSV),
+        new Setting("site.monitor.grafana.per-monitor",          "grafana", Type.BOOL),
+        new Setting("site.monitor.grafana.default-team",         "grafana", Type.STRING),
+        new Setting("site.monitor.grafana.top-n",                "grafana", Type.INT),
+        new Setting("site.monitor.metrics.export.enabled",       "grafana", Type.BOOL),
+        new Setting("site.monitor.metrics.export.per-monitor",   "grafana", Type.BOOL),
+        new Setting("site.monitor.metrics.export.max-entities",  "grafana", Type.INT),
+        new Setting("site.monitor.metrics.export.refresh-seconds", "grafana", Type.INT),
         // Aylık yönetici özeti (2026-10-10) — Raporlar → Yönetici Özeti sayfası yönetir (grup Genel Ayarlar'da GİZLİ,
         // GeneralSettings SKIP_GROUPS). Zamanlanmış gönderim VARSAYILAN KAPALI (opt-in). Hepsi GLOBAL_ONLY (aşağıda).
         new Setting("site.monitor.executive-summary.enabled",               "executive-summary", Type.BOOL),
@@ -653,7 +673,23 @@ public final class AppSettingsCatalog {
         "site.monitor.tech-error-report.push.approval-reminder",
         "site.monitor.tech-error-report.push.decision",
         "site.monitor.tech-error-report.push.delivered",
-        "site.monitor.tech-error-report.push.failed"
+        "site.monitor.tech-error-report.push.failed",
+        // 2026-10-18: Grafana panosu (etiket eşleyicisi altyapı adı taşır) ve ölçüm aktarıcısı (tüm pod'ların yükü) — kurum geneli.
+        "site.monitor.grafana.title",
+        "site.monitor.grafana.uid",
+        "site.monitor.grafana.link-base-url",
+        "site.monitor.grafana.selector",
+        "site.monitor.grafana.time-from",
+        "site.monitor.grafana.refresh",
+        "site.monitor.grafana.language",
+        "site.monitor.grafana.sections",
+        "site.monitor.grafana.per-monitor",
+        "site.monitor.grafana.default-team",
+        "site.monitor.grafana.top-n",
+        "site.monitor.metrics.export.enabled",
+        "site.monitor.metrics.export.per-monitor",
+        "site.monitor.metrics.export.max-entities",
+        "site.monitor.metrics.export.refresh-seconds"
     ));
 
     /**

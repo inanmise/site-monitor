@@ -863,6 +863,20 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             """)
     List<Object[]> countRecoveredSinceByTypeAndTeam(@Param("from") String from);
 
+    /**
+     * Grafana ölçüm aktarıcısı ({@code MonitoringMetricsExporter}, 2026-10-18): AÇIK alarmların dar izdüşümü — dakikada bir,
+     * kayıt başına sorgu yok. Sahiplik ({@code AlertOwnership}) bağlam JSON'undaki bağımsızlık işaretine baktığı için
+     * {@code contextJson} de okunur. Sayfa yalnız LIMIT (çağıran tavanı aşarsa aileyi dürüstçe düşürür).
+     * Sütunlar: {@code [id, domain, alertType, alertLevel, acknowledged, teamId, createdAt, contextJson]}.
+     */
+    @Query("""
+            SELECT e.id, e.domain, e.alertType, e.alertLevel, e.acknowledged, e.teamId, e.createdAt, e.contextJson
+            FROM AlertEvent e
+            WHERE e.resolved = false
+            ORDER BY e.id ASC
+            """)
+    List<Object[]> findOpenMetricRows(Pageable pageable);
+
     /** İmza zaman çizelgesi (en yeniden eskiye, SAYFALI): "bu alarmdan ÖNCEKİ oluşum" için. */
     @Query("SELECT e.domain, e.alertType, e.createdAt FROM AlertEvent e "
          + "WHERE e.domain IN :domains ORDER BY e.createdAt DESC")
