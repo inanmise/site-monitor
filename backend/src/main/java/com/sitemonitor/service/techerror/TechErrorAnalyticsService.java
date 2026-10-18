@@ -167,10 +167,22 @@ public class TechErrorAnalyticsService {
      * @param channelsTruncated listelenebilecek pasif kanallardan bazıları hücre sınırı nedeniyle listeye alınmadı (sıranın
      *                          sonundan; aylar bundan etkilenmez)
      * @param inactiveOmitted   listeye alınmayan pasif kanal sayısı
+     * @param activeCount       kapsamın AKTİF kanal sayısı (hiçbir kesimden önce) — ay kesimi uyarısı bu sayıyı söyler (ay
+     *                          penceresini yalnız aktifler belirler)
+     * @param activeOmitted     aktif kanal sayısı tek başına {@link #MAX_CELLS}'i aştığı için sıranın sonundan listeye
+     *                          alınmayan AKTİF kanal sayısı (0 = yok; inceleme 2026-10-18 — eskiden yalnız {@code truncated})
      */
     public record Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
                          List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels,
-                         List<String> dropped, boolean fieldsFallback, boolean channelsTruncated, int inactiveOmitted) {
+                         List<String> dropped, boolean fieldsFallback, boolean channelsTruncated, int inactiveOmitted,
+                         int activeCount, int activeOmitted) {
+        public Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
+                      List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels,
+                      List<String> dropped, boolean fieldsFallback, boolean channelsTruncated, int inactiveOmitted) {
+            this(months, monthsRequested, fields, available, channels, channelCount, truncated, teamsWithChannels, dropped,
+                    fieldsFallback, channelsTruncated, inactiveOmitted, channelCount - inactiveOmitted, 0);
+        }
+
         public Result(List<YearMonth> months, int monthsRequested, List<FieldRef> fields, List<FieldOption> available,
                       List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels,
                       List<String> dropped, boolean fieldsFallback) {
@@ -182,6 +194,11 @@ public class TechErrorAnalyticsService {
                       List<ChannelSeries> channels, int channelCount, boolean truncated, List<Long> teamsWithChannels) {
             this(months, monthsRequested, fields, available, channels, channelCount, truncated, teamsWithChannels, List.of(), false);
         }
+    }
+
+    /** Aktif kanal sayısı tek başına hücre sınırını aşarsa sıranın sonundan listeye alınmayan aktif kanal sayısı (0 = yok). */
+    static int activeOmitted(int activeCount) {
+        return Math.max(0, activeCount - MAX_CELLS);
     }
 
     /**
@@ -335,7 +352,8 @@ public class TechErrorAnalyticsService {
         // MAX_CELLS → en yeni aylar (kanal sayısı tek başına sınırı aşarsa ilk kanallar)
         int activeCount = scope.size();
         boolean truncated = false;
-        if (activeCount > MAX_CELLS) {
+        int activeOmitted = activeOmitted(activeCount);
+        if (activeOmitted > 0) {
             scope = new ArrayList<>(scope.subList(0, MAX_CELLS));
             truncated = true;
         }
@@ -485,7 +503,8 @@ public class TechErrorAnalyticsService {
                     optionCounts.getOrDefault(o.id(), 0)));
         }
         return new Result(window, months, List.copyOf(fieldRefs), List.copyOf(available), List.copyOf(out), channelCount,
-                truncated, List.copyOf(teamsWithChannels), res.dropped(), res.fallback(), channelsTruncated, inactiveOmitted);
+                truncated, List.copyOf(teamsWithChannels), res.dropped(), res.fallback(), channelsTruncated, inactiveOmitted,
+                activeCount, activeOmitted);
     }
 
     private static Parsed parse(String templateJson) {

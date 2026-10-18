@@ -322,6 +322,8 @@ public class TechErrorReportController {
         data.put("truncated", res.truncated());
         data.put("channels_truncated", res.channelsTruncated());
         data.put("inactive_omitted", res.inactiveOmitted());
+        data.put("active_count", res.activeCount());
+        data.put("active_omitted", res.activeOmitted());
         List<Map<String, Object>> teamRows = new ArrayList<>();
         // Takım seçici: aktif kanalı ya da İSTENEN pencerede raporu olan pasif kanalı bulunan okunabilen takımlar; seçili takım
         // listede değilse o da eklenir (seçim boş görünmesin)

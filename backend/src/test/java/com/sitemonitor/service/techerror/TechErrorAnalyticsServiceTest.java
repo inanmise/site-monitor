@@ -915,6 +915,14 @@ class TechErrorAnalyticsServiceTest {
     }
 
     @Test
+    @org.junit.jupiter.api.DisplayName("inceleme 2026-10-18 (2. tur): aktif kanallar hücre sınırını tek başına aşarsa dışarıda kalan AKTİF sayı ayrıca bildirilir; sığarsa 0")
+    void activeOmittedCount() {
+        assertThat(TechErrorAnalyticsService.activeOmitted(TechErrorAnalyticsService.MAX_CELLS)).isZero();
+        assertThat(TechErrorAnalyticsService.activeOmitted(TechErrorAnalyticsService.MAX_CELLS + 7)).isEqualTo(7);
+        assertThat(TechErrorAnalyticsService.activeOmitted(0)).isZero();
+    }
+
+    @Test
     @DisplayName("aktifler ayları kestiğinde (51 × 24 > 1200 → 23 ay; truncated) pasif kalan hücreye sığarsa listelenir; sığmayan pasif ayrıca işaretlenir; raporu kesilen ayda kalan pasif sayılmaz ama takımı seçicide")
     void activeTruncationThenInactiveFill() {
         for (int i = 0; i < 51; i++) channel(i < 26 ? A : B, String.format("Kanal %02d", i));

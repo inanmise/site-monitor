@@ -604,6 +604,18 @@ describe('kanal analizi — pasif kanallar (2026-10-18)', () => {
     expect(screen.queryByText(/Yalnız son \d+ ay gösteriliyor/)).toBeNull()
   })
 
+  it('inceleme 2026-10-18 (2. tur): aktif kanallar sınırı aşınca ayrı not (sayıyla); ay şeridi kanal sayısını AKTİF sayıdan söyler', async () => {
+    const d = withInactive()
+    Object.assign(d.data, { truncated: true, months: months(1), months_requested: 12, channel_count: 1203, active_count: 1201, active_omitted: 1 })
+    te().analytics.mockResolvedValue(d)
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=analytics')
+    render(<TechErrorReportsPage />)
+    expect(await screen.findByText('Bazı aktif kanallar sınır nedeniyle gösterilmedi')).toBeInTheDocument()
+    const act = document.querySelector('[data-slot="te-an-active-cut"]')
+    expect(within(act).getByText(/sıranın sonundaki 1 aktif kanal listeye alınmadı/)).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="te-an-truncated"]').textContent).toMatch(/1201 kanalın 12 ayı/)
+  })
+
   it('inceleme 2026-10-18: önceki sürümün yanıtı (truncated ama aylar tam) "yalnız son N ay" demez; aylar gerçekten kesildiyse iki not birden; sayı yoksa sayısız not', async () => {
     const old = withInactive()
     Object.assign(old.data, { truncated: true })                              // 12 / 12 ay — aylar kesilmemiş
@@ -624,6 +636,7 @@ describe('kanal analizi — pasif kanallar (2026-10-18)', () => {
     expect(note).not.toBeNull()
     expect(within(note).getByText(/sıranın sonundaki bazı pasif kanallar listeye alınmadı/)).toBeInTheDocument()
     expect(note.textContent).not.toMatch(/\b0 pasif/)
+    expect(note.textContent, 'aylar da kesildi: "aylar etkilenmedi" denmez').not.toMatch(/etkilenmedi/)
     second.unmount()
 
     localStorage.setItem(LANG_STORAGE_KEY, 'en')

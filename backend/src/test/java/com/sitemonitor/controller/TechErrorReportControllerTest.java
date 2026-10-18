@@ -1535,7 +1535,9 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.data.channel_count").value(5))
                 .andExpect(jsonPath("$.data.truncated").value(false))
                 .andExpect(jsonPath("$.data.channels_truncated").value(true))
-                .andExpect(jsonPath("$.data.inactive_omitted").value(3));
+                .andExpect(jsonPath("$.data.inactive_omitted").value(3))
+                .andExpect(jsonPath("$.data.active_count").value(2))       // 5 kanal − 3 dışarıda kalan pasif
+                .andExpect(jsonPath("$.data.active_omitted").value(0));
     }
 
     @Test

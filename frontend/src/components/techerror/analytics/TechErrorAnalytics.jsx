@@ -274,14 +274,24 @@ export default function TechErrorAnalytics({ onBack, onOpenReport, returning = f
       {monthsCut(data, months) && (
         <div data-slot="te-an-truncated">
           <AlertBanner tone="info" icon={Info} title={t('te.an.truncatedTitle', monthList.length)}>
-            {t('te.an.truncatedBody', monthList.length, data.channel_count ?? channels.length, data.months_requested ?? months)}
+            {t('te.an.truncatedBody', monthList.length, data.active_count ?? data.channel_count ?? channels.length, data.months_requested ?? months)}
+          </AlertBanner>
+        </div>
+      )}
+      {Number(data?.active_omitted) > 0 && (
+        <div data-slot="te-an-active-cut">
+          <AlertBanner tone="info" icon={Info} title={t('te.an.activeCutTitle')}>
+            {t('te.an.activeCutBody', Number(data.active_omitted))}
           </AlertBanner>
         </div>
       )}
       {data?.channels_truncated === true && (
         <div data-slot="te-an-inactive-cut">
           <AlertBanner tone="info" icon={Info} title={t('te.an.inactiveCutTitle')}>
-            {omitted == null ? t('te.an.inactiveCutBodySome') : t('te.an.inactiveCutBody', omitted)}
+            {/* Aylar da kesildiyse "aylar etkilenmedi" denmez (inceleme 2026-10-18, 2. tur) */}
+            {monthsCut(data, months)
+              ? (omitted == null ? t('te.an.inactiveCutBodySomeMonths') : t('te.an.inactiveCutBodyMonths', omitted))
+              : (omitted == null ? t('te.an.inactiveCutBodySome') : t('te.an.inactiveCutBody', omitted))}
           </AlertBanner>
         </div>
       )}
