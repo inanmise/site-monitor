@@ -700,6 +700,8 @@ class TechErrorApprovalServiceTest {
         for (TechErrorApprovalToken t : tokens.findByReportIdOrderByIdAsc(r.getId())) mailed.put(t.getUserId(), t.getMailedAt());
         assertThat(mailed.get(po1.getId())).as("QUEUED: posta servisi aldı").isEqualTo(service.now());
         assertThat(mailed).containsEntry(po2.getId(), null);
+        // Bu sürümün ürettiği her belirteç damgayı izler (mail_tracked): damgasız = gerçekten ulaşmadı (hatırlatma bunu söyler)
+        assertThat(tokens.findByReportIdOrderByIdAsc(r.getId())).allSatisfy(t -> assertThat(t.getMailTracked()).isTrue());
 
         // Uygulama adresi boş: posta SENT ama bağlantı taşımıyordu → damga yok
         when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("");
@@ -836,6 +838,14 @@ class TechErrorApprovalServiceTest {
             assertThatThrownBy(() -> approvals.decide(service.report(r.getId()), noFlow, team, po1.getId(), approve, approve ? null : "Not", "app"))
                     .isInstanceOf(CodedConflictException.class).extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("APPROVAL_FLOW_REMOVED");
         }
+        assertThat(approvals.status(raw).reason()).isEqualTo("flow_removed");
+        // İnceleme 2026-10-18: kişi kapıları akış kapısından ÖNCE — pasif PO "onay gerekmiyor" değil kendi sebebini görür
+        AppUser owner = users.findById(approvals.status(raw).user().getId()).orElseThrow();
+        owner.setActive(false);
+        users.save(owner);
+        assertThat(approvals.status(raw).reason()).isEqualTo("approver_inactive");
+        owner.setActive(true);
+        users.save(owner);
         assertThat(approvals.status(raw).reason()).isEqualTo("flow_removed");
         assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("flow_removed");
         assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");

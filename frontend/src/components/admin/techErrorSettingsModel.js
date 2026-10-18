@@ -173,8 +173,23 @@ export function countOrNull(v) {
  * Takım rehberinde olmayan SEÇİLİ kimliğin etiketi (inceleme 2026-10-18): rehber okunduysa takım silinmiştir; okunamadıysa
  * adı bilinmiyor — asla çıplak "#12".
  */
-export function missingTeamText(id, directoryLoaded, t) {
+export function missingTeamText(id, directoryLoaded, t, ordinal = 1, count = 1) {
+  // Birden fazla eksik takım aynı etiketle görünmesin (inceleme 2026-10-18): "Silinmiş takım 1", "Silinmiş takım 2" — sıra
+  // kimliğe göre artan (`teamOptions`), kimlik gösterilmez
+  if (count > 1) return t(directoryLoaded ? 'te.set.deletedTeamN' : 'te.set.unknownTeamN', ordinal)
   return directoryLoaded ? t('te.set.deletedTeam') : t('te.set.unknownTeam')
+}
+
+/**
+ * Kayıtlı görünürlük listesi YALNIZ silinmiş takımlardan mı oluşuyor (inceleme 2026-10-18): sunucu böyle bir listeyi "herkes"e
+ * çevirmez (kısıt gevşemez) — modülü şu an yalnız kurum geneli görüntüleyiciler görür; sayfa bunu söyler. Rehber okunmadıysa
+ * (boş) bilinmez → false (bilinmeyen ≠ silinmiş).
+ */
+export function onlyDeletedTeams(ids, directory) {
+  const list = Array.isArray(ids) ? ids : []
+  if (list.length === 0 || !Array.isArray(directory) || directory.length === 0) return false
+  const known = new Set(directory.map((tm) => Number(tm?.id)).filter(Number.isFinite))
+  return list.every((id) => !known.has(Number(id)))
 }
 
 /** Sayım alanı: sonlu sayı → sayı; alan yok / okunamaz → "Bilinmiyor". */

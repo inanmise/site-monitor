@@ -18,7 +18,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
-import ApprovalCard, { approvalStateOf } from '../components/techerror/ApprovalCard.jsx'
+import ApprovalCard, { approvalStateOf, flowRemovedHintKey } from '../components/techerror/ApprovalCard.jsx'
 
 const te = () => api.techErrors
 const TITLE = 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026'
@@ -68,9 +68,47 @@ describe('onay kartı (birim)', () => {
       detail={{ required: false, approvers: [], can_decide: false, can_request: false }} />)
     const card = document.querySelector('[data-slot="te-approval"]')
     expect(card).not.toBeNull()
-    expect(card).toHaveTextContent('Kanalın yönetici alıcıları kaldırıldı; bu rapor artık onay beklemiyor.')
+    expect(card).toHaveTextContent('Kanalın yönetici alıcıları kaldırıldı; bu onay isteği için karar verilemez')
+    expect(card).toHaveTextContent('Yönetici alıcıları yeniden eklenirse istek yeniden geçerli olur.')
     expect(card).not.toHaveTextContent('PO kararı bekleniyor')
+    // Rozet gerçek durumu söyler: "Onay akışı kaldırıldı" (eski "Onay bekliyor" yanıltıyordu); önceki durum yalnız bilgi satırında
+    const badge = card.querySelector('[data-slot="te-approval-state"]')
+    expect(badge).toHaveTextContent('Onay akışı kaldırıldı')
+    expect(badge).toHaveAttribute('data-flow', 'removed')
+    expect(badge).not.toHaveTextContent('Onay bekliyor')
+    expect(card.querySelector('[data-slot="te-approval-prev"]')).toHaveTextContent('Önceki onay durumu: Onay bekliyor')
     expect(screen.queryByRole('button', { name: /Onayla|Reddet/ })).toBeNull()
+  })
+
+  it('inceleme 2026-10-18: akışı kaldırılmış kanalda ipucu duruma göre — reddedilmiş / eskimiş / onaylanıp gönderilmemiş rapor "bekleyen istek" demez; gönderilmiş rapor "gönderildi" der ("doğrudan gönderebilirsiniz" değil)', () => {
+    const removed = { required: false, approvers: [], can_decide: false, can_request: false }
+    const cases = [
+      { state: 'rejected', prev: 'Reddedildi' },
+      { state: 'stale', prev: 'İstekten sonra değişti' },
+      { state: 'approved', prev: 'Onaylandı' },
+    ]
+    for (const c of cases) {
+      const { unmount } = render(<ApprovalCard reportId={1} uiLang="tr" approval={{ state: c.state, requested_at: '2026-10-13T09:00:00Z' }} detail={removed} />)
+      const card = document.querySelector('[data-slot="te-approval"]')
+      expect(card.querySelector('[data-slot="te-approval-state"]'), c.state).toHaveTextContent('Onay akışı kaldırıldı')
+      expect(card.querySelector('[data-slot="te-approval-prev"]'), c.state).toHaveTextContent(`Önceki onay durumu: ${c.prev}`)
+      const hint = card.querySelector('[data-slot="te-approval-hint"]')
+      expect(hint, c.state).toHaveTextContent('rapor artık onay gerektirmiyor ve takım adresine doğrudan gönderilebilir')
+      expect(hint.textContent, c.state).not.toMatch(/bekleyen|karar verilebilir|yeniden onaya gönder/i)
+      expect(card, c.state).not.toHaveTextContent('henüz yöneticilere gönderilmedi')
+      unmount()
+    }
+    // Bekleyen istek ama rapor takım adresine zaten gönderilmiş: "gönderildi" + son gönderim satırı
+    render(<ApprovalCard reportId={1} uiLang="tr" approval={{ state: 'pending', requested_at: '2026-10-13T09:00:00Z' }} detail={removed}
+      sentAt="2026-10-14T09:00:00Z" sentTo="dijital@example.com" />)
+    const card = document.querySelector('[data-slot="te-approval"]')
+    const hint = card.querySelector('[data-slot="te-approval-hint"]')
+    expect(hint).toHaveTextContent('Rapor gönderildi — son gönderim aşağıda.')
+    expect(hint).not.toHaveTextContent('doğrudan gönderilebilir')
+    expect(card).toHaveTextContent('dijital@example.com')
+    expect(flowRemovedHintKey('pending', null)).toBe('te.appr.flowRemovedPendingHint')
+    expect(flowRemovedHintKey('rejected', null)).toBe('te.appr.flowRemovedHint')
+    expect(flowRemovedHintKey('approved', '2026-10-14T09:00:00Z')).toBe('te.appr.flowRemovedSentHint')
   })
 
   it('bekleyen istek: durum, isteyen, onaylayıcılar; PO için Onayla / Reddet — red gerekçesiz reddedilmez, gerekçeyle karar gönderilir', async () => {

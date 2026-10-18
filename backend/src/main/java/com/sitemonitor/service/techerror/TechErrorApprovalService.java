@@ -279,6 +279,7 @@ public class TechErrorApprovalService {
             t.setApprovalRev(rev);
             t.setCreatedAt(now);
             t.setExpiresAt(now.plus(TOKEN_TTL));
+            t.setMailTracked(Boolean.TRUE);                 // bu sürüm mailed_at damgalar: damgasız kalırsa posta ulaşmadı
             TechErrorApprovalToken saved = tokens.save(t);
             rawTokens.put(a.id(), raw);
             if (saved != null && saved.getId() != null) tokenIds.put(a.id(), saved.getId());
@@ -611,8 +612,9 @@ public class TechErrorApprovalService {
      * Bağlantı durumu: {@code valid} ise {@code reason} null; değilse not_found | used | superseded | expired | not_pending |
      * flow_removed (kanalın yönetici alıcıları kaldırıldı — onay gerekmiyor) | stale | approver_inactive | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
      * Sıra: kullanılmış → yerine geçilmiş (A2: yeni istek gönderildi — süresi de dolmuş olsa "en son postayı kullanın" demek
-     * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → onaylayıcı değil → rolün onay / okuma izni
-     * yok ya da modül takıma kapalı (A1, {@link #linkDecisionAllowed}).
+     * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → onaylayıcı değil / pasif → rolün onay / okuma
+     * izni yok ya da modül takıma kapalı (A1, {@link #linkDecisionAllowed}) → onay akışı kaldırıldı ({@code flow_removed};
+     * kişi kapılarından SONRA — inceleme 2026-10-18: pasif PO "onay gerekmiyor" görmesin; bu sebep güvenlik olayı değildir).
      */
     public record TokenStatus(boolean valid, String reason, TechErrorApprovalToken token, TechErrorReport report,
                               TechErrorChannel channel, AppUser user, boolean stale) {
@@ -644,15 +646,16 @@ public class TechErrorApprovalService {
         if (!"PENDING".equals(r.getApprovalState()) || !Objects.equals(r.getApprovalRev(), t.getApprovalRev())) {
             return new TokenStatus(false, "not_pending", t, r, ch, u);
         }
-        // Onay akışı kaldırıldı (kanalın yönetici alıcısı yok): bağlantı karar veremez, belirteç tüketilmez — alıcılar yeniden
-        // eklenirse aynı bağlantı (süresi içinde) yine çalışır (inceleme 2026-10-18)
-        if (!approvalRequired(ch)) return new TokenStatus(false, "flow_removed", t, r, ch, u);
         if (u == null || Boolean.FALSE.equals(u.getActive()) || !isApprover(u.getId(), r.getTeamId())) {
             return new TokenStatus(false, "approver_inactive", t, r, ch, u);
         }
         // A1: uygulama içi uçla aynı kapılar — rolün onay ya da okuma izni kapalıysa veya modül raporun takımına kapalıysa
         // PO bağlantıdan da karar veremez (inceleme 2026-10-17: okuma izni ve modül görünürlüğü de)
         if (!linkDecisionAllowed(u, r.getTeamId())) return new TokenStatus(false, "no_permission", t, r, ch, u);
+        // Onay akışı kaldırıldı (kanalın yönetici alıcısı yok): bağlantı karar veremez, belirteç tüketilmez — alıcılar yeniden
+        // eklenirse aynı bağlantı (süresi içinde) yine çalışır (inceleme 2026-10-18). Kişi kapılarından SONRA (inceleme
+        // 2026-10-18): pasif / yetkisiz hesap "onay gerekmiyor" sayfası görmez, kendi gerçek sebebini görür
+        if (!approvalRequired(ch)) return new TokenStatus(false, "flow_removed", t, r, ch, u);
         // İstekten sonra değişen içerik: bağlantı geçerli ama ONAYLANAMAZ (reddedilebilir) — sayfa bunu söyler
         long content = r.getContentRev() == null ? 0L : r.getContentRev();
         boolean stale = r.getApprovalRev() == null || content != r.getApprovalRev();

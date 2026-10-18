@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * PO onayı e-posta bağlantısı (2026-10-17, S6) — girişsiz, haftalık rapor onay bağlantısıyla aynı desen: sunucu tarafı
  * HTML sayfa, betik yok (CSP), POST formları. Belirteç = yetki (onaylayıcıya özel, 14 gün, tek kullanımlık, özetli).
  * Yollar {@code AuthInterceptor.PUBLIC} ve {@code OriginCheckFilter.EXEMPT_PATHS} listesindedir. Geçersiz / reddedilen
- * bağlantı güvenlik olayı yazar ({@code TECH_ERROR_APPROVAL_LINK_DENIED}); karar {@code TECH_ERROR_REPORT_APPROVE |
+ * bağlantı güvenlik olayı yazar ({@code TECH_ERROR_APPROVAL_LINK_DENIED}) — zararsız "onay akışı kaldırıldı" hariç
+ * ({@link #NEUTRAL_REASONS}: nötr bilgi kaydı {@code TECH_ERROR_APPROVAL_LINK_NOT_NEEDED} + nötr sayfa); karar {@code TECH_ERROR_REPORT_APPROVE |
  * REJECT} ({@code via=email_token}). IP başına dakikada {@link #PER_MINUTE} istek (belirteç 256 bit rastgele — tahmin
  * edilemez; sınır yalnız gürültüye karşı).
  */
@@ -162,6 +163,7 @@ public class TechErrorApprovalLinkController {
 
     private ResponseEntity<String> denied(TokenStatus st, HttpServletRequest request, String action) {
         String reason = st.reason() == null ? "not_found" : st.reason();
+        if (NEUTRAL_REASONS.contains(reason)) return neutral(st, reason, request, action);
         auditService.recordSecurityEvent("TECH_ERROR_APPROVAL_LINK_DENIED", request, null, "TECH_ERROR_REPORT",
                 st.report() == null ? "email-token" : String.valueOf(st.report().getId()), reason + " (" + action + ")");
         String title;
@@ -176,10 +178,6 @@ public class TechErrorApprovalLinkController {
             case "not_pending" -> { title = Msg.t("Bekleyen istek yok", "Nothing pending"); msg = Msg.t(
                     "Bu rapor için bekleyen bir onay isteği yok: karar verilmiş ya da yeni bir istek gönderilmiş olabilir.",
                     "There is no pending approval request for this report: it may have been decided, or a newer request was sent."); }
-            // İnceleme 2026-10-18: kanalın yönetici alıcıları kaldırıldı — onay akışı yok, karar yazılmaz, belirteç tüketilmez
-            case "flow_removed" -> { title = Msg.t("Onay gerekmiyor", "No approval needed"); msg = Msg.t(
-                    "Bu kanalın yönetici (executive) alıcıları kaldırıldı; raporun onaya ihtiyacı kalmadı ve ekip onu takım adresine doğrudan gönderebilir. Alıcılar yeniden eklenirse bu bağlantı süresi içinde yine çalışır.",
-                    "This channel's executive recipients were removed, so the report no longer needs approval and the team can send it straight to the team address. If recipients are added again, this link works again until it expires."); }
             case "stale" -> { title = Msg.t("Rapor değişti", "The report changed"); msg = Msg.t(
                     "Rapor onay isteğinden sonra değişti; bu bağlantıyla onaylanamaz. Ekip raporu yeniden onaya göndermeli.",
                     "The report changed after the approval request, so it can't be approved with this link. The team must submit it again."); }
@@ -201,6 +199,29 @@ public class TechErrorApprovalLinkController {
                     "This approval link is invalid. Make sure you copied the whole link from the e-mail, or open the report in Site Monitor."); }
         }
         return htmlPage(title, "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
+    }
+
+    /**
+     * Güvenlik olayı OLMAYAN sebepler (inceleme 2026-10-18): kanalın onay akışı kaldırıldı ({@code flow_removed}) — bağlantı
+     * geçerli, etkin bir onaylayıcıya ait ve zararsız; reddedilmiş bağlantı gibi kırmızı sayfa + {@code *_LINK_DENIED} güvenlik
+     * olayı yanıltıcıydı. Nötr bilgi kaydı ({@code TECH_ERROR_APPROVAL_LINK_NOT_NEEDED}, sonuç SUCCESS) + nötr tonlu sayfa.
+     */
+    static final java.util.Set<String> NEUTRAL_REASONS = java.util.Set.of("flow_removed");
+    /** Nötr sayfa vurgusu (gri-mavi: hata / uyarı tonu değil). */
+    static final String NEUTRAL_ACCENT = "#64748b";
+
+    private ResponseEntity<String> neutral(TokenStatus st, String reason, HttpServletRequest request, String action) {
+        auditService.recordTokenAction("TECH_ERROR_APPROVAL_LINK_NOT_NEEDED", request, "email-approval",
+                st.report() == null ? null : st.report().getTeamId(), "TECH_ERROR_REPORT",
+                st.report() == null ? "email-token" : String.valueOf(st.report().getId()),
+                AuditDetail.of("via", "email_token", "reason", reason, "action", action,
+                        "approver", st.user() == null ? null : name(st.user())));
+        // Kanalın yönetici alıcıları kaldırıldı: onay akışı yok, karar yazılmaz, belirteç tüketilmez
+        String title = Msg.t("Onay gerekmiyor", "No approval needed");
+        String msg = Msg.t(
+                "Bu kanalın yönetici (executive) alıcıları kaldırıldı; raporun onaya ihtiyacı kalmadı ve ekip onu takım adresine doğrudan gönderebilir. Sizin bir şey yapmanız gerekmiyor. Alıcılar yeniden eklenirse bu bağlantı süresi içinde yine çalışır.",
+                "This channel's executive recipients were removed, so the report no longer needs approval and the team can send it straight to the team address. You don't need to do anything. If recipients are added again, this link works again until it expires.");
+        return htmlPage(title, "<p class='msg'>" + esc(msg) + "</p>", NEUTRAL_ACCENT);
     }
 
     // ── Bakım, sınır, sayfa ──────────────────────────────────────────────────────────────────────────

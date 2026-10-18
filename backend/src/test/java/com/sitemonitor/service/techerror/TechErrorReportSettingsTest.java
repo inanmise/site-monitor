@@ -76,6 +76,46 @@ class TechErrorReportSettingsTest {
         assertThat(TechErrorReportSettings.effectiveInt(s, TechErrorReportSettings.REMINDER_DAY)).isEqualTo(12);
     }
 
+    @Test
+    @DisplayName("inceleme 2026-10-18: aralık dışı ortam / kayıtlı değer sessiz düşmez — pod başına anahtar başına BİR WARN (değer, kaynak, varsayılan); outOfRange kartın notu için kaynağı ve değeri söyler")
+    void outOfRangeIsWarnedOnceAndReported() {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(TechErrorReportSettings.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> app = new ch.qos.logback.core.read.ListAppender<>();
+        app.start();
+        logger.addAppender(app);
+        try {
+            TechErrorReportSettings.resetWarnings();
+            AppSettingsService s = mock(AppSettingsService.class);
+            // Ortam değeri 60 MB (aralık 5–50): override yok → önyükleme değeri aralık dışı → varsayılan 15
+            for (int i = 0; i < 5; i++) {
+                assertThat(TechErrorReportSettings.liveInt(s, TechErrorReportSettings.MAX_MAIL_MB, 60)).isEqualTo(15);
+            }
+            when(s.getInt(eq(TechErrorReportSettings.KEY_MAX_MAIL_MB), anyInt())).thenReturn(60);
+            assertThat(TechErrorReportSettings.effectiveInt(s, TechErrorReportSettings.MAX_MAIL_MB)).isEqualTo(15);
+            java.util.List<String> warns = app.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).singleElement().satisfies(m -> assertThat(m).contains(TechErrorReportSettings.KEY_MAX_MAIL_MB)
+                    .contains("= 60").contains("ortam").contains("5–50").contains("varsayılan 15"));
+            TechErrorReportSettings.OutOfRange env = TechErrorReportSettings.outOfRange(s, TechErrorReportSettings.MAX_MAIL_MB);
+            assertThat(env).isEqualTo(new TechErrorReportSettings.OutOfRange(TechErrorReportSettings.SOURCE_ENV, "60", 15));
+            // Bozuk kayıtlı değer: kaynak "stored", ayrı anahtar → kendi WARN'ı
+            when(s.getOverride(TechErrorReportSettings.KEY_MAIL_INLINE_MB)).thenReturn(" 99 ");
+            assertThat(TechErrorReportSettings.liveInt(s, TechErrorReportSettings.MAIL_INLINE_MB, 6)).isEqualTo(6);
+            assertThat(TechErrorReportSettings.outOfRange(s, TechErrorReportSettings.MAIL_INLINE_MB))
+                    .isEqualTo(new TechErrorReportSettings.OutOfRange(TechErrorReportSettings.SOURCE_STORED, "99", 6));
+            assertThat(app.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)).hasSize(2);
+            // Aralık içi değer: not yok, uyarı yok
+            when(s.getInt(eq(TechErrorReportSettings.KEY_REMINDER_DAY), anyInt())).thenReturn(12);
+            assertThat(TechErrorReportSettings.outOfRange(s, TechErrorReportSettings.REMINDER_DAY)).isNull();
+            assertThat(TechErrorReportSettings.outOfRange(null, TechErrorReportSettings.REMINDER_DAY)).isNull();
+            assertThat(TechErrorReportSettings.liveInt(s, TechErrorReportSettings.REMINDER_DAY, 12)).isEqualTo(12);
+            assertThat(app.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)).hasSize(2);
+        } finally {
+            logger.detachAppender(app);
+            TechErrorReportSettings.resetWarnings();
+        }
+    }
+
     private static final class IntRangeCase {
         static void check(AppSettingsService s, String override, int fallback, int expected) {
             when(s.getOverride(TechErrorReportSettings.KEY_MAX_MAIL_MB)).thenReturn(override);

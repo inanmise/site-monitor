@@ -52,7 +52,7 @@ const REMINDERS = {
 }
 
 /** mockApi'den SONRA kaydedilen yollar önceliklidir. Arayüz dili TR (varsayılan EN — metin iddiaları Türkçe). */
-async function routes(page, { readOnly = false, fail = () => false, reminders = null } = {}) {
+async function routes(page, { readOnly = false, fail = () => false, reminders = null, settingsExtra = {} } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   await page.route((u) => new URL(u).pathname === '/api/teams/directory', json({ success: true, data: TEAMS }))
@@ -66,7 +66,7 @@ async function routes(page, { readOnly = false, fail = () => false, reminders = 
       return json({ success: true, data: { team_ids: body.team_ids || [] } })(route)
     }
     if (fail()) return json({ success: false, code: 'DB_UNAVAILABLE', error: 'Veritabanına şu an ulaşılamıyor. Biraz bekleyip yeniden deneyin.' }, 503)(route)
-    return json(settingsBody({ read_only: readOnly }))(route)
+    return json(settingsBody({ read_only: readOnly, ...settingsExtra }))(route)
   })
   let current = reminders ? { ...reminders } : null
   await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings/reminders', (route) => {
@@ -290,6 +290,31 @@ for (const vp of VIEWPORTS) {
       expect(sheet).toContain('İnternet Şubesi')
       expect(sheet).toContain('POS')
       expect(sheet).not.toContain('ATM')
+    })
+
+    test('inceleme 2026-10-18: yalnız silinmiş takımlardan oluşan görünürlük afişi + numaralı "Silinmiş takım N" + aralık dışı ortam değeri notu sığar, kırpılmaz', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page, {
+        settingsExtra: { team_ids: [98, 99] },
+        reminders: { ...REMINDERS, out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 } } },
+      })
+      await page.goto('/?tab=settings&sec=techerror')
+      const root = page.locator(ROOT)
+      await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
+      const banner = root.locator('[data-slot="tes-only-deleted"]')
+      await expect(banner).toContainText('Modül yalnız silinmiş takımlara açık')
+      await expect(banner).toContainText('yalnız global yöneticiler ve denetçiler (AUDIT) görüyor')
+      await expect(root.getByRole('combobox', { name: 'Modülü gören takımlar' })).toHaveText(/Silinmiş takım 1, Silinmiş takım 2/)
+      const note = root.locator('[data-slot="tes-rem-oor-max-mail-mb"]')
+      await note.scrollIntoViewIfNeeded()
+      await expect(note).toHaveText(/Ortam değeri \(60\) izin verilen aralığın dışında; varsayılan 15 kullanılıyor\./)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, ROOT), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, ROOT), `@${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, ROOT), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
+      const box = await note.boundingBox()
+      expect(box.x + box.width, `@${vp.name}: not sağdan taşmaz`).toBeLessThanOrEqual(vp.width + 1)
     })
   })
 }

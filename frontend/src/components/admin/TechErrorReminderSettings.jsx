@@ -181,8 +181,18 @@ export default function TechErrorReminderSettings({
 
   const numberField = (key, labelKey, hintKey) => {
     const l = limits?.[key] || { min: 0, max: 99 }
+    // Aralık dışı ortam / kayıtlı değer varsayılana düştü (inceleme 2026-10-18): alanın ipucunda salt okunur not — sessiz değil
+    const oor = saved?.out_of_range?.[key]
+    const hint = oor ? (
+      <>
+        <span data-slot={`tes-rem-oor-${key.replace(/_/g, '-')}`} data-source={oor.source}>
+          {t(oor.source === 'env' ? 'te.rem.outOfRangeEnv' : 'te.rem.outOfRangeStored', oor.value || '—', oor.default)}
+        </span>{' '}
+        {t(hintKey, l.min, l.max)}
+      </>
+    ) : t(hintKey, l.min, l.max)
     return (
-      <Field label={t(labelKey)} hint={t(hintKey, l.min, l.max)} className="mb-0 min-w-0" {...fe.fieldProps(key)}>
+      <Field label={t(labelKey)} hint={hint} hintTone={oor ? 'warn' : undefined} className="mb-0 min-w-0" {...fe.fieldProps(key)}>
         {({ id, describedBy, invalid }) => (
           <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" inputMode="numeric"
             min={l.min} max={l.max} step={1} value={form[key]} disabled={locked || saving}

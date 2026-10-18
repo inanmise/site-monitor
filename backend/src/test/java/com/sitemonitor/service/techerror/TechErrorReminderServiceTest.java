@@ -905,6 +905,24 @@ class TechErrorReminderServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: postadaki 'N gündür bekliyor' İSTANBUL GÜNLERİYLE — 4 Ekim 16:00 isteği 5 Ekim 09:15'te '1 gündür' (24 saatlik adım '0 gündür' diyordu); N=3'te altbilgi ile gövde aynı sayıyı söyler")
+    void waitingDaysCountIstanbulDays() {
+        settings.put(TechErrorReportSettings.KEY_APPROVAL_REMINDER_DAYS, "1");
+        pendingOn("Mobil", Instant.parse("2026-10-04T13:00:00Z"));                             // 4 Ekim 16:00 İst
+        job.run();
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(any(), any(), anyString(), html.capture(), anyString(), any(), anyBoolean(), any());
+        assertThat(html.getAllValues()).allSatisfy(h -> assertThat(h).contains("1 gündür").doesNotContain("0 gündür"));
+        // Saf kural: gün farkı (saat değil); İstanbul gece yarısı sınırı; negatif / boş → 0
+        java.time.LocalDate oct5 = java.time.LocalDate.of(2026, 10, 5);
+        assertThat(TechErrorReminderService.waitingDays(Instant.parse("2026-10-02T13:00:00Z"), oct5)).as("2 Ekim 16:00 → 3 gün").isEqualTo(3);
+        assertThat(TechErrorReminderService.waitingDays(Instant.parse("2026-10-04T21:30:00Z"), oct5)).as("5 Ekim 00:30 İst").isZero();
+        assertThat(TechErrorReminderService.waitingDays(Instant.parse("2026-10-04T20:30:00Z"), oct5)).as("4 Ekim 23:30 İst").isEqualTo(1);
+        assertThat(TechErrorReminderService.waitingDays(Instant.parse("2026-10-07T06:00:00Z"), oct5)).isZero();
+        assertThat(TechErrorReminderService.waitingDays(null, oct5)).isZero();
+    }
+
+    @Test
     @DisplayName("inceleme 2026-10-18: damgadan (20.153) SONRA üretilen ve postası ulaşmayan belirteç için hatırlatma 'süresi doldu ya da size gönderilmedi' der; ulaşmış canlı bağlantı bitişiyle anılır")
     void unmailedTokenAfterStampSaysNotSent() {
         Instant nov = Instant.parse("2026-11-10T06:15:00Z");                                 // 10 Kasım 09:15 İst
@@ -918,6 +936,7 @@ class TechErrorReminderServiceTest {
             t.setApprovalRev(0L);
             t.setCreatedAt(nov.minus(Duration.ofDays(3)));
             t.setExpiresAt(nov.plus(Duration.ofDays(11)));
+            t.setMailTracked(Boolean.TRUE);                                                 // damgayı izleyen sürüm üretti
             if (po == po1) t.setMailedAt(nov.minus(Duration.ofDays(3)));
             tokens.save(t);
         }
@@ -932,5 +951,35 @@ class TechErrorReminderServiceTest {
         TechErrorReminderService.Links links = job.links(reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING", nov).get(0), nov);
         assertThat(links.live()).containsOnlyKeys(po1.getId());
         assertThat(links.unconfirmed()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: ayrım takvim tarihinden değil VERİDEN — eski sürümün / yuvarlanan dağıtımda eski pod'un ürettiği damgasız belirteç (mail_tracked NULL) eski tarih sınırından SONRA da nötr metin alır; damgayı izleyen sürümün damgasız belirteci 'gönderilmedi' der")
+    void untrackedTokenIsNeutralWhateverTheDate() {
+        Instant nov = Instant.parse("2026-11-10T06:15:00Z");                                 // eski sabit sınırdan (19 Ekim) çok sonra
+        at(nov);
+        TechErrorReport r = pendingOn("Mobil", nov.minus(Duration.ofDays(3)));
+        for (AppUser po : List.of(po1, po2)) {
+            TechErrorApprovalToken t = new TechErrorApprovalToken();
+            t.setReportId(r.getId());
+            t.setUserId(po.getId());
+            t.setTokenHash((po == po1 ? "f" : "9").repeat(64));
+            t.setApprovalRev(0L);
+            t.setCreatedAt(nov.minus(Duration.ofDays(3)));
+            t.setExpiresAt(nov.plus(Duration.ofDays(11)));
+            if (po == po2) t.setMailTracked(Boolean.TRUE);                                  // po1: eski pod (bayrak yok)
+            tokens.save(t);
+        }
+        job.run();
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, times(2)).sendHtml(to.capture(), any(), anyString(), html.capture(), anyString(), any(), anyBoolean(), any());
+        int po1Mail = to.getAllValues().get(0)[0].startsWith("po1") ? 0 : 1;
+        assertThat(html.getAllValues().get(po1Mail)).contains("özgün onay postası elinizdeyse")
+                .doesNotContain("süresi doldu").doesNotContain("tarihine kadar geçerli");
+        assertThat(html.getAllValues().get(1 - po1Mail)).contains("süresi doldu ya da size gönderilmedi");
+        TechErrorReminderService.Links links = job.links(reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING", nov).get(0), nov);
+        assertThat(links.live()).isEmpty();
+        assertThat(links.unconfirmed()).containsOnly(po1.getId());
     }
 }

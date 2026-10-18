@@ -28,7 +28,7 @@ import { StatusBadge, periodLabel } from '../techerror/TechErrorParts.jsx'
 import { TE_CHANNEL, TE_VIEW, VIEW_CHANNEL } from '../techerror/techErrorModel.js'
 import {
   TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels, exportFileName, exportTable,
-  countOrNull, filterChannels, filtersActive, hasExecutives, missingTeamText, normalizeFilter, normalizeSort, searchChannels,
+  countOrNull, filterChannels, filtersActive, hasExecutives, missingTeamText, normalizeFilter, normalizeSort, onlyDeletedTeams, searchChannels,
   sortChannels, teamEmailState, teamVisibleState, teamsOf,
 } from './techErrorSettingsModel.js'
 import { downloadBlob, downloadCsv, toCsv } from '../../utils/csvExport.js'
@@ -134,7 +134,9 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const teamList = useMemo(() => (directory.length ? directory : teamsFromChannels(settings?.channels)), [directory, settings])
   // Rehberde olmayan SEÇİLİ kimlik (inceleme 2026-10-18): rehber okunduysa takım silinmiştir ("Silinmiş takım"); okunamadıysa
   // bilinmez ("Takım adı okunamadı") — asla çıplak "#12". Sunucu silinmiş kimliği kayıtta sessizce düşürür.
-  const missingTeamLabel = useCallback((id) => missingTeamText(id, directory.length > 0, t), [directory, t])
+  const missingTeamLabel = useCallback((id, ordinal, count) => missingTeamText(id, directory.length > 0, t, ordinal, count), [directory, t])
+  // Kayıtlı kısıt yalnız silinmiş takımlardan oluşuyor (inceleme 2026-10-18): modülü şu an yalnız kurum geneli görüntüleyiciler görür
+  const visibilityOnlyDeleted = !!settings && onlyDeletedTeams(settings.ids, directory)
   const options = useMemo(() => teamOptions(teamList, draft, t('noc.ot.inactiveTeam'), missingTeamLabel),
     [teamList, draft, t, missingTeamLabel])
   const dirty = !!settings && isDirty(settings.ids, draft)
@@ -290,6 +292,11 @@ export default function TechErrorReportSettings({ readOnly = false }) {
                 )}
               </Field>
             </div>
+            {visibilityOnlyDeleted && (
+              <div data-slot="tes-only-deleted">
+                <AlertBanner tone="warning" className="mb-0" title={t('te.set.onlyDeletedTitle')}>{t('te.set.onlyDeleted')}</AlertBanner>
+              </div>
+            )}
             {draft.length === 0 && (
               <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground" data-slot="tes-everyone">
                 <Users aria-hidden="true" className="mt-0.5 size-4 shrink-0" />

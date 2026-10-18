@@ -37,8 +37,31 @@ export function normalizeReminders(r) {
     const d = REM_DEFAULT_LIMITS[k]
     limits[k] = { min: intOr(l?.min, d.min), max: intOr(l?.max, d.max), default: intOr(l?.default, d.default) }
   }
-  const out = { team_ids: normalizeIds(r.team_ids), reminder_push: r.reminder_push !== false, limits, read_only: r.read_only === true }
+  const out = {
+    team_ids: normalizeIds(r.team_ids), reminder_push: r.reminder_push !== false, limits, read_only: r.read_only === true,
+    out_of_range: normalizeOutOfRange(r.out_of_range),
+  }
   for (const k of REM_INT_FIELDS) out[k] = intOr(r[k], limits[k].default)
+  return out
+}
+
+/**
+ * Aralık dışı değer notları (inceleme 2026-10-18): `{ <alan>: { source: 'env' | 'stored', value, default } }` — sunucu, ortam
+ * ya da kayıtlı değeri aralık dışı olup varsayılana düşen alanları söyler (eski sunucu alanı göndermez → boş nesne, not yok).
+ * Bilinmeyen alan / kaynak atlanır; değer metin olarak tutulur (biçimsiz kayıtlı değer de gösterilebilsin, ≤ 40 karakter).
+ */
+export function normalizeOutOfRange(raw) {
+  const out = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const k of REM_INT_FIELDS) {
+    const o = raw[k]
+    if (!o || typeof o !== 'object') continue
+    if (o.source !== 'env' && o.source !== 'stored') continue
+    const def = Number(o.default)
+    if (!Number.isInteger(def)) continue
+    const value = String(o.value ?? '').trim()
+    out[k] = { source: o.source, value: value.length > 40 ? `${value.slice(0, 40)}…` : value, default: def }
+  }
   return out
 }
 

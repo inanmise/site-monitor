@@ -301,6 +301,16 @@ public class TechErrorReminderService {
     }
 
     /**
+     * Postadaki "N gündür bekliyor": isteğin İstanbul günü ile bugün arasındaki GÜN farkı — {@link #firstDue} ile aynı sayım
+     * (inceleme 2026-10-18: 24 saatlik adımla sayılınca 16:00'da yapılan istek ertesi gün 09:15'te "0 gündür" diyordu, N=3'te
+     * altbilgi "her 3 günde bir" derken gövde "2 gündür" diyordu). Negatif olmaz.
+     */
+    static long waitingDays(Instant requestedAt, LocalDate today) {
+        if (requestedAt == null || today == null) return 0;
+        return Math.max(0, ChronoUnit.DAYS.between(LocalDate.ofInstant(requestedAt, TechErrorReportService.ZONE), today));
+    }
+
+    /**
      * Kapı reddi: kanalların henüz bu sebeple işaretlenmemiş olanlarına kapı satırı yazar; en az biri YENİYSE bir SKIPPED
      * günlük satırı (o kanallarla). Aynı sebep ertesi gün yeni satır yazdırmaz; normal talep satırına dokunulmaz.
      *
@@ -669,7 +679,7 @@ public class TechErrorReminderService {
                 Links links = links(r, now);
                 Map<Long, Instant> linkUntil = links.live();
                 String requester = service.displayName(r.getApprovalRequestedById());
-                long waiting = Math.max(0, ChronoUnit.DAYS.between(r.getApprovalRequestedAt(), now));
+                long waiting = waitingDays(r.getApprovalRequestedAt(), today);
                 String url = TechErrorApprovalMail.reportUrl(base, ch.getId(), r.getId());
                 int reached = 0, finalSkips = 0;
                 for (TechErrorApprovalService.Approver a : apps) {
@@ -722,18 +732,16 @@ public class TechErrorReminderService {
      * Bağlantı durumu: {@code live} = onaylayıcı → özgün bağlantısının bitişi, YALNIZ canlı bağlantılar: kullanılmamış, yerine
      * geçilmemiş, süresi dolmamış, bu isteğin ({@code approval_rev}) ve bağlantılı postası o PO'ya gerçekten ulaşmış
      * ({@code mailed_at}) — PDF sırası dolu / posta kapalı / başarısız / uygulama adresi boşken bağlantı ona gitmedi,
-     * hatırlatma "bağlantınız geçerli" demez. {@code unconfirmed} = geçerli ama damgasız ve damgadan ({@link #MAILED_STAMP_SINCE})
-     * ÖNCE üretilmiş belirteçlerin sahipleri: postanın ulaşıp ulaşmadığı bilinmez — hatırlatma "süresi doldu / size
-     * gönderilmedi" diyemez, yalnız "Site Monitor'de açın" der (inceleme 2026-10-18).
+     * hatırlatma "bağlantınız geçerli" demez. {@code unconfirmed} = geçerli ama damgasız ve damgayı İZLEMEYEN bir pod'un
+     * ürettiği ({@code mail_tracked} NULL) belirteçlerin sahipleri: postanın ulaşıp ulaşmadığı bilinmez — hatırlatma "süresi
+     * doldu / size gönderilmedi" diyemez, yalnız "Site Monitor'de açın" der.
+     *
+     * <p>Ayrım VERİDEN (inceleme 2026-10-18): önceki sürüm sabit bir takvim tarihiyle (2026-10-19) ayırıyordu — prod elle
+     * dağıtıldığı için o tarihten sonra eski sürümde kalan ya da yuvarlanan dağıtım / geri dönüşte eski pod'un ürettiği
+     * belirteç damgasız kalıp yanlışlıkla "size gönderilmedi" diyordu. Artık her belirteç kendi üreticisini söyler:
+     * {@code mail_tracked} TRUE ise damgasız = gerçekten ulaşmadı (eski metin doğru), NULL ise bilinmez (nötr metin).
      */
     record Links(Map<Long, Instant> live, Set<Long> unconfirmed) { }
-
-    /**
-     * {@code mailed_at} damgası 20.153.0 ile geldi (yayın 2026-10-18T00:32Z); dağıtım payıyla bu andan ÖNCE üretilen
-     * belirteçte damganın boş olması "posta ulaşmadı" demek değildir. Sonrakilerde boş damga gerçekten ulaşmadı demektir
-     * (eski metin doğru). Belirteç ömrü 14 gün: 2026-11-02'den sonra bu ayrım kendiliğinden düşer.
-     */
-    static final Instant MAILED_STAMP_SINCE = Instant.parse("2026-10-19T00:00:00Z");
 
     Links links(TechErrorReportRepository.Row r, Instant now) {
         Map<Long, Instant> live = new HashMap<>();
@@ -744,7 +752,7 @@ public class TechErrorReminderService {
                         && java.util.Objects.equals(t.getApprovalRev(), r.getApprovalRev());
                 if (!valid) continue;
                 if (t.getMailedAt() != null) live.put(t.getUserId(), t.getExpiresAt());
-                else if (t.getCreatedAt() == null || t.getCreatedAt().isBefore(MAILED_STAMP_SINCE)) unconfirmed.add(t.getUserId());
+                else if (!Boolean.TRUE.equals(t.getMailTracked())) unconfirmed.add(t.getUserId());   // üretici damgalamıyordu
             }
         } catch (RuntimeException e) {
             log.debug("Onay bağlantıları okunamadı (rapor {}): {}", r.getId(), e.toString());

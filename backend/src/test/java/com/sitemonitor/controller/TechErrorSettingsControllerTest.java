@@ -217,6 +217,26 @@ class TechErrorSettingsControllerTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: aralık dışı ortam değeri (60 MB) varsayılana düşer ve yanıt bunu söyler (out_of_range: kaynak, değer, varsayılan); kayıtlı bozuk değer 'stored'; aralık içi alan listede yok")
+    void getRemindersReportsOutOfRangeValues() throws Exception {
+        mvc.perform(get(REM).session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.out_of_range").isMap())
+                .andExpect(jsonPath("$.data.out_of_range.max_mail_mb").doesNotExist());
+        stored.put(TechErrorReportSettings.KEY_MAX_MAIL_MB, "60");                 // getInt → ortam / özellik değeri (override yok)
+        when(settings.getOverride(TechErrorReportSettings.KEY_MAIL_INLINE_MB)).thenReturn("abc");
+        mvc.perform(get(REM).session(scopedAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.max_mail_mb").value(15))
+                .andExpect(jsonPath("$.data.out_of_range.max_mail_mb.source").value("env"))
+                .andExpect(jsonPath("$.data.out_of_range.max_mail_mb.value").value("60"))
+                .andExpect(jsonPath("$.data.out_of_range.max_mail_mb.default").value(15))
+                .andExpect(jsonPath("$.data.out_of_range.mail_inline_mb.source").value("stored"))
+                .andExpect(jsonPath("$.data.out_of_range.mail_inline_mb.value").value("abc"))
+                .andExpect(jsonPath("$.data.out_of_range.reminder_day").doesNotExist());
+    }
+
+    @Test
     @DisplayName("PUT /settings/reminders yalnız gönderilen alanları yazar; görünürlük (team_ids) bu uçta YOK SAYILIR; denetim değişen anahtarları taşır; yanıt yeni değerler")
     void putWritesOnlySentKeys() throws Exception {
         mvc.perform(put(REM).session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)

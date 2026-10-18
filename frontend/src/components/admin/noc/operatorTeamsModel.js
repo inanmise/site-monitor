@@ -48,7 +48,9 @@ export const savePayload = (draft) => normalizeIds(draft)
 /**
  * Takım rehberi satırları → seçici seçenekleri: ada göre (Türkçe, büyük/küçük harf duyarsız) sıralı; pasif takım etiketi
  * işaretlenir; rehberde olmayan ama SEÇİLİ kimlik (silinmiş takım) adı olmadan da görünür (kaybolmasın).
- * `missingLabel(id)` verilirse o kimliğin etiketi odur (ör. "Silinmiş takım" — çıplak "#12" yerine); verilmezse "#id".
+ * `missingLabel(id, ordinal, count)` verilirse o kimliğin etiketi odur (ör. "Silinmiş takım" — çıplak "#12" yerine); verilmezse
+ * "#id". `ordinal` = rehberde olmayan seçili kimlikler arasında kimliğe göre artan sıra (1'den), `count` = onların sayısı —
+ * birden fazla silinmiş takım aynı etiketle görünmesin ("Silinmiş takım 1", "Silinmiş takım 2"; inceleme 2026-10-18).
  */
 export function teamOptions(directory, selected, inactiveSuffix = '', missingLabel = null) {
   const rows = Array.isArray(directory) ? directory : []
@@ -61,11 +63,11 @@ export function teamOptions(directory, selected, inactiveSuffix = '', missingLab
     const inactive = tm.active === false
     out.push({ value: id, label: `${tm.name ?? id}${inactive && inactiveSuffix ? ` (${inactiveSuffix})` : ''}`, name: tm.name ?? String(id), inactive })
   }
-  for (const id of normalizeIds(selected)) {
-    if (seen.has(id)) continue
-    const label = typeof missingLabel === 'function' ? String(missingLabel(id) ?? `#${id}`) : `#${id}`
+  const missing = normalizeIds(selected).filter((id) => !seen.has(id)).sort((a, b) => a - b)
+  missing.forEach((id, i) => {
+    const label = typeof missingLabel === 'function' ? String(missingLabel(id, i + 1, missing.length) ?? `#${id}`) : `#${id}`
     out.push({ value: id, label, name: label, inactive: false, missing: true })
-  }
+  })
   const coll = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })
   return out.sort((a, b) => coll.compare(a.name, b.name))
 }

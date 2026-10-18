@@ -355,16 +355,42 @@ public class EmailNotificationService {
         }
     }
 
-    /** Geri yazılacak kuyruk satırı: konu + alıcı eşleşmesi önce, yoksa konuya göre en yeni (eski davranış). */
+    /**
+     * Geri yazılacak kuyruk satırı. Postanın Kime adresleri okunabildiyse: aynı konulu son 20 kuyruk satırından alıcısı
+     * eşleşen en yeni; eşleşen yoksa YALNIZ alıcı sütunu karşılaştırılamayan (adres değil — ör. 7/24 grup adı, boş) en yeni
+     * satır. Alıcı sütunu adres taşıyıp eşleşmeyen satıra ASLA yazılmaz (inceleme 2026-10-18: aynı konulu başka bir PO'nun
+     * satırı yanlışlıkla SENT / FAILED oluyordu) — hiçbir şey yazılmaz, bir WARN. Kime okunamadıysa eski kural (konuya göre en yeni).
+     */
     com.sitemonitor.model.NotificationLog retryRowFor(String subject, java.util.Set<String> to) {
-        if (to != null && !to.isEmpty()) {
-            java.util.List<com.sitemonitor.model.NotificationLog> rows =
-                    notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
-            if (rows != null) {
-                for (com.sitemonitor.model.NotificationLog n : rows) if (recipientMatches(n.getRecipientEmail(), to)) return n;
-            }
+        if (to == null || to.isEmpty()) {
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
         }
-        return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+        java.util.List<com.sitemonitor.model.NotificationLog> rows =
+                notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
+        if (rows == null) {
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+        }
+        com.sitemonitor.model.NotificationLog uncomparable = null;
+        boolean addressRows = false;
+        for (com.sitemonitor.model.NotificationLog n : rows) {
+            if (!comparableRecipients(n.getRecipientEmail())) {
+                if (uncomparable == null) uncomparable = n;                // en yeni karşılaştırılamayan satır (eski kuralın payı)
+                continue;
+            }
+            addressRows = true;
+            if (recipientMatches(n.getRecipientEmail(), to)) return n;
+        }
+        if (uncomparable != null) return uncomparable;
+        if (addressRows) {
+            log.warn("Retry sonucu bildirim loguna yazılmadı: aynı konulu {} kuyruk satırının hiçbirinin alıcısı postanın alıcılarıyla "
+                    + "eşleşmiyor (konu: {}) — yanlış satıra yazmamak için atlandı", rows.size(), subject);
+        }
+        return null;
+    }
+
+    /** Alıcı sütunu adres taşıyor mu (en az bir '@'): taşımıyorsa (grup adı, boş) alıcıyla karşılaştırılamaz. */
+    static boolean comparableRecipients(String logged) {
+        return logged != null && logged.indexOf('@') >= 0;
     }
 
     /** Günlük satırının alıcı listesinde ("a@x, b@y … +3") postanın Kime adreslerinden biri TAM olarak var mı? */

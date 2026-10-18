@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeReminders, parseWhole, reminderState,
-  toForm, validateForm,
+  REM_DEFAULT_LIMITS, REM_INT_FIELDS, changedFields, isFormDirty, isUnsupportedResponse, normalizeOutOfRange, normalizeReminders, parseWhole,
+  reminderState, toForm, validateForm,
 } from '../components/admin/techErrorReminderModel.js'
 
 // Ayarlar → Teknik hata raporu → hatırlatmalar ve posta sınırları (12. sürüm, 2026-10-17): saf model — sunucu aralıklarıyla
@@ -14,6 +14,31 @@ const SERVER = {
   team_ids: [3, 1], reminder_day: 5, reminder_repeat_days: 3, approval_reminder_days: 3, max_mail_mb: 15, mail_inline_mb: 6,
   reminder_push: true,
 }
+
+describe('techErrorReminderModel — aralık dışı değer notu (inceleme 2026-10-18)', () => {
+  it('normalizeOutOfRange: yalnız bilinen alan + kaynak (env / stored) + tam sayı varsayılan; eski sunucu (alan yok) → boş; uzun değer 40 karakterde kesilir', () => {
+    expect(normalizeOutOfRange(undefined)).toEqual({})
+    expect(normalizeOutOfRange([])).toEqual({})
+    expect(normalizeOutOfRange({
+      max_mail_mb: { source: 'env', value: 60, default: 15 },
+      mail_inline_mb: { source: 'stored', value: ' abc ', default: 6 },
+      reminder_day: { source: 'weird', value: '1', default: 5 },
+      approval_reminder_days: { source: 'env', value: '99', default: 'x' },
+      bogus: { source: 'env', value: '1', default: 1 },
+    })).toEqual({
+      max_mail_mb: { source: 'env', value: '60', default: 15 },
+      mail_inline_mb: { source: 'stored', value: 'abc', default: 6 },
+    })
+    expect(normalizeOutOfRange({ max_mail_mb: { source: 'stored', value: 'x'.repeat(60), default: 15 } }).max_mail_mb.value)
+      .toBe(`${'x'.repeat(40)}…`)
+    // normalizeReminders taşır; not formu kirletmez (değişiklik sayılmaz)
+    const saved = normalizeReminders({ ...SERVER, out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 } } })
+    expect(saved.out_of_range.max_mail_mb.value).toBe('60')
+    expect(normalizeReminders(SERVER).out_of_range).toEqual({})
+    expect(isFormDirty(saved, toForm(saved))).toBe(false)
+    expect(changedFields(saved, toForm(saved))).toEqual({})
+  })
+})
 
 describe('techErrorReminderModel', () => {
   it('varsayılan sınırlar Java TechErrorReportSettings ile AYNI (min, max, varsayılan)', () => {

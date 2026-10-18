@@ -195,6 +195,13 @@ public class TechErrorSettingsController {
             r.put(e.getKey(), TechErrorReportSettings.effectiveInt(settings, e.getValue()));
         }
         r.put("reminder_push", TechErrorReportSettings.reminderPush(settings));
+        // Aralık dışı değer (ortam ya da kayıtlı) varsayılana düştüyse kart bunu söyler (inceleme 2026-10-18); yalnız sorunlu alanlar
+        Map<String, Object> outOfRange = new LinkedHashMap<>();
+        for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
+            TechErrorReportSettings.OutOfRange o = TechErrorReportSettings.outOfRange(settings, e.getValue());
+            if (o != null) outOfRange.put(e.getKey(), Map.of("source", o.source(), "value", o.value(), "default", o.used()));
+        }
+        r.put("out_of_range", outOfRange);
         Map<String, Object> limits = new LinkedHashMap<>();
         for (Map.Entry<String, IntRange> e : INT_FIELDS.entrySet()) {
             limits.put(e.getKey(), Map.of("min", e.getValue().min(), "max", e.getValue().max(), "default", e.getValue().def()));

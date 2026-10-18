@@ -407,6 +407,15 @@ public class SmtpLogQueryService {
         return out;
     }
 
+    /**
+     * {@code message} alanı posta gövdesi DEĞİL, kararın özeti / notu olan tetikleyiciler — yeniden gönderilemez
+     * ({@code SUMMARY_NOT_RESENDABLE}). Teknik hata raporu hatırlatmaları: dönem hatırlatmasının iletisi kanal özeti + push /
+     * sınır dışı adres notu, onay hatırlatmasınınki rapor başlığı ({@code TechErrorReminderService.saveLogFor}).
+     */
+    static final Set<String> SUMMARY_ONLY_TRIGGERS = Set.of(
+            com.sitemonitor.service.techerror.TechErrorReminderService.TRIGGER,
+            com.sitemonitor.service.techerror.TechErrorReminderService.TRIGGER_APPROVAL);
+
     /** Yeniden gönderim sonucu. */
     public record ResendResult(boolean ok, String status, Long newLogId, String reason) { }
 
@@ -424,6 +433,11 @@ public class SmtpLogQueryService {
         // 7/24 satırı yeniden gönderilemez: günlükte adres değil grup adı, gövde de MASKELİ (telefonsuz) duruyor —
         // yeniden gönderim 7/24 ekibine eksik bir arama listesi yollardı. Sonraki tetik zaten yeniden dener.
         if (com.sitemonitor.service.noc.NocLogRedaction.isNoc(n)) return new ResendResult(false, null, null, "NOC_NOT_RESENDABLE");
+        // İletisi posta GÖVDESİ değil ÖZET / NOT olan satır (teknik hata raporu hatırlatmaları — kanal listesi, push / adres
+        // notu; inceleme 2026-10-18): yeniden gönderim o metni HTML gövde diye takıma postalardı. Sonraki tur zaten yeniden dener.
+        if (n.getTrigger() != null && SUMMARY_ONLY_TRIGGERS.contains(n.getTrigger())) {
+            return new ResendResult(false, null, null, "SUMMARY_NOT_RESENDABLE");
+        }
         if (n.getRecipientEmail() == null || n.getRecipientEmail().isBlank()) return new ResendResult(false, null, null, "NO_RECIPIENT");
         // Kolona sığmayan alıcı listesi "… +N" ile kısaltıldı (2026-10-12): yeniden gönderim alıcıların bir KISMINA giderdi.
         if (NotificationLog.fitted(n.getRecipientEmail())) return new ResendResult(false, null, null, "RECIPIENTS_TRUNCATED");

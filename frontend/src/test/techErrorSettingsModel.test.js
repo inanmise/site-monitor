@@ -3,7 +3,7 @@ import {
   TES_EXPORT_COLUMNS, TES_FILTERS, TES_FLAG_FILTERS, TES_PERIOD_FILTERS, TES_SORTS, TES_TABLE_MIN_PX, channelPeriodStatus, countChannels,
   exportApprovalStatus, exportFileName, exportHeader, exportReportStatus, exportRow, exportTable, filterChannels,
   filtersActive, hasExecutives, isTeamHidden, matchesFilter, normalizeFilter, normalizeSort, searchChannels, sortChannels,
-  teamEmailState, teamVisibleState, teamsOf, countOrNull, missingTeamText,
+  teamEmailState, teamVisibleState, teamsOf, countOrNull, missingTeamText, onlyDeletedTeams,
 } from '../components/admin/techErrorSettingsModel.js'
 import { teamOptions } from '../components/admin/noc/operatorTeamsModel.js'
 import { TR } from '../i18n/tr.js'
@@ -226,5 +226,28 @@ describe('techErrorSettingsModel — inceleme 2026-10-18', () => {
     expect(opts.map((o) => o.label)).toEqual(['Dijital', 'Silinmiş takım'])
     expect(opts.find((o) => o.value === 99)).toMatchObject({ missing: true })
     expect(opts.map((o) => o.label).join(' ')).not.toContain('#99')
+  })
+
+  it('inceleme 2026-10-18: birden fazla eksik takım numaralanır (kimliğe göre artan; kimlik gösterilmez); tek eksik numarasız', () => {
+    expect(missingTeamText(99, true, tr, 2, 3)).toBe('Silinmiş takım 2')
+    expect(missingTeamText(99, false, tr, 1, 2)).toBe('Adı okunamayan takım 1')
+    expect(missingTeamText(99, true, tr, 1, 1)).toBe('Silinmiş takım')
+    const label = (id, i, n) => missingTeamText(id, true, tr, i, n)
+    const opts = teamOptions([{ id: 1, name: 'Dijital' }], [99, 1, 42, 7], 'pasif', label)
+    expect(opts.map((o) => o.label)).toEqual(['Dijital', 'Silinmiş takım 1', 'Silinmiş takım 2', 'Silinmiş takım 3'])
+    expect(opts.filter((o) => o.missing).map((o) => o.value)).toEqual([7, 42, 99])
+    expect(opts.map((o) => o.label).join(' ')).not.toMatch(/#\d/)
+    // Eski tek argümanlı etiket işlevi de çalışır
+    expect(teamOptions([], [5], '', (id) => `X${id}`).map((o) => o.label)).toEqual(['X5'])
+  })
+
+  it('inceleme 2026-10-18: onlyDeletedTeams — kayıtlı liste YALNIZ rehberde olmayan takımlardan oluşuyorsa true; rehber okunmadıysa / liste boşsa / biri varsa false', () => {
+    const dir = [{ id: 1, name: 'Dijital' }, { id: 2, name: 'Ödeme' }]
+    expect(onlyDeletedTeams([98, 99], dir)).toBe(true)
+    expect(onlyDeletedTeams([1, 99], dir)).toBe(false)
+    expect(onlyDeletedTeams([], dir)).toBe(false)
+    expect(onlyDeletedTeams([99], [])).toBe(false)
+    expect(onlyDeletedTeams([99], null)).toBe(false)
+    expect(onlyDeletedTeams(['2'], dir)).toBe(false)
   })
 })

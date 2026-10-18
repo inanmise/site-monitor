@@ -306,6 +306,7 @@ public final class AuditEventCatalog {
             "TECH_ERROR_REPORT_APPROVE",  // PO onayladı → yöneticilere gönderim (via=app | email_token)
             "TECH_ERROR_REPORT_REJECT",   // PO reddetti (not)
             "TECH_ERROR_APPROVAL_LINK_DENIED", // onay bağlantısı geçersiz / süresi dolmuş / bakım
+            "TECH_ERROR_APPROVAL_LINK_NOT_NEEDED", // onay bağlantısı açıldı ama kanalın onay akışı kaldırılmış (nötr bilgi, 2026-10-18)
             "TECH_ERROR_SETTINGS_SAVE",   // modül görünürlüğü (takım listesi) kaydedildi
             "TEMPLATE_CREATE",
             "TEMPLATE_DELETE",

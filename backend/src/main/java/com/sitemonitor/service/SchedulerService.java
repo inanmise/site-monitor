@@ -1810,6 +1810,9 @@ public class SchedulerService {
         // Teknik hata raporu onay bağlantısı postası ulaştı mı (2026-10-18, hatırlatma incelemesi) — TechErrorApprovalToken.mailedAt
         // (Instant → TIMESTAMP WITH TIME ZONE; NULL = bağlantı onaylayıcıya gitmedi, hatırlatma "bağlantınız geçerli" demez).
         patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN mailed_at TIMESTAMP WITH TIME ZONE");
+        // Belirteci üreten sürüm mailed_at damgasını izliyor mu (inceleme 2026-10-18) — TechErrorApprovalToken.mailTracked
+        // (NULL = eski sürüm / eski pod: postanın ulaşıp ulaşmadığı bilinmez, hatırlatma nötr metin kullanır).
+        patch("ALTER TABLE tech_error_approval_tokens ADD COLUMN mail_tracked BOOLEAN");
 
         // Kanal başına gönderim günlüğü (2026-10-18, R18 / E22): teknik hata raporu satırlarının kanal / rapor bağı —
         // NotificationLog.techErrorChannelId / techErrorReportId (NULL = bağsız; eski satırlar günlükte görünmez). Varsayılansız

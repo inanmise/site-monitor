@@ -512,6 +512,62 @@ describe('TechErrorReportSettings — inceleme 2026-10-18', () => {
     expect(card).not.toHaveTextContent('#99')
   })
 
+  it('inceleme 2026-10-18: birden fazla silinmiş takım ayırt edilir ("Silinmiş takım 1", "Silinmiş takım 2"); liste yalnız silinmişlerden oluşuyorsa uyarı afişi — biri hâlâ varsa afiş yok', async () => {
+    api.admin.techErrorSettings.mockResolvedValueOnce(settings({ team_ids: [99, 98] }))
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ team_ids: [97, 96, 1] }))
+    const { unmount } = render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const vis = screen.getByRole('combobox', { name: 'Modülü gören takımlar' })
+    expect(vis).toHaveTextContent('Silinmiş takım 1, Silinmiş takım 2')
+    expect(vis).not.toHaveTextContent('#9')
+    const banner = document.querySelector('[data-slot="tes-only-deleted"]')
+    expect(banner).not.toBeNull()
+    expect(banner).toHaveTextContent('Modül yalnız silinmiş takımlara açık')
+    expect(banner).toHaveTextContent('yalnız global yöneticiler ve denetçiler (AUDIT) görüyor')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    const remTeams = within(card).getAllByRole('combobox').find((el) => /Silinmiş takım/.test(el.textContent))
+    expect(remTeams).toHaveTextContent('Dijital Kanallar')
+    expect(remTeams).toHaveTextContent('Silinmiş takım 1')
+    expect(remTeams).toHaveTextContent('Silinmiş takım 2')
+    unmount()
+
+    // Bir takım hâlâ var: kısıt geçerli, afiş yok
+    api.admin.techErrorSettings.mockResolvedValueOnce(settings({ team_ids: [1, 99] }))
+    const second = render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    expect(document.querySelector('[data-slot="tes-only-deleted"]')).toBeNull()
+    second.unmount()
+
+    // Rehber okunamadı: silinmiş mi bilinmez → afiş yok, etiketler "Adı okunamayan takım N"
+    api.teams.directory.mockResolvedValue({ success: false, error: 'yok' })
+    api.admin.techErrorSettings.mockResolvedValueOnce(settings({ team_ids: [99, 98] }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    expect(document.querySelector('[data-slot="tes-only-deleted"]')).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Modülü gören takımlar' })).toHaveTextContent('Adı okunamayan takım 1, Adı okunamayan takım 2')
+  })
+
+  it('inceleme 2026-10-18: aralık dışı ortam değeri (60 MB) varsayılana düştüyse kart alanın ipucunda söyler (salt okunur not, alana bağlı); aralık içi alanda not yok', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings())
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk({
+      out_of_range: { max_mail_mb: { source: 'env', value: '60', default: 15 }, mail_inline_mb: { source: 'stored', value: 'abc', default: 6 } },
+    }))
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    const env = card.querySelector('[data-slot="tes-rem-oor-max-mail-mb"]')
+    expect(env).not.toBeNull()
+    expect(env).toHaveAttribute('data-source', 'env')
+    expect(env).toHaveTextContent('Ortam değeri (60) izin verilen aralığın dışında; varsayılan 15 kullanılıyor.')
+    const input = within(card).getByLabelText('E-posta boyut sınırı (MB)')
+    expect(input).toHaveValue(15)
+    const described = (input.getAttribute('aria-describedby') || '').split(' ').map((id) => document.getElementById(id)?.textContent || '').join(' ')
+    expect(described).toContain('Ortam değeri (60)')
+    expect(card.querySelector('[data-slot="tes-rem-oor-mail-inline-mb"]')).toHaveTextContent('Kayıtlı değer (abc) izin verilen aralığın dışında; varsayılan 6 kullanılıyor.')
+    expect(card.querySelector('[data-slot="tes-rem-oor-reminder-day"]')).toBeNull()
+    expect(remBar()).not.toHaveAttribute('data-dirty')                         // not formu kirletmez
+  })
+
   it('takım rehberi okunamazsa rehberde olmayan seçili takım "Takım adı okunamadı" (silinmiş denmez)', async () => {
     api.teams.directory.mockResolvedValue({ success: false, error: 'yok' })
     api.admin.techErrorSettings.mockResolvedValue(settings({ team_ids: [99] }))

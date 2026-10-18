@@ -22,6 +22,17 @@ export const APPROVAL_TONE = Object.freeze({
 const TONE = APPROVAL_TONE
 const ICON = { none: ShieldCheck, pending: Clock, approved: CheckCircle2, rejected: XCircle, stale: RefreshCw }
 
+/**
+ * Onay akışı kaldırılmış kanalda (yönetici alıcısı yok, rapor eski bir onay durumu taşıyor) ipucu anahtarı — inceleme
+ * 2026-10-18: gönderilmiş rapor "gönderildi" der ("doğrudan gönderebilirsiniz" değil); bekleyen istek "karar verilemez, alıcılar
+ * geri gelirse istek yeniden geçerli" der; reddedilmiş / eskimiş / onaylanıp gönderilmemiş rapor "bekleyen" sözcüğü taşımaz.
+ */
+export function flowRemovedHintKey(state, sentAt) {
+  if (sentAt) return 'te.appr.flowRemovedSentHint'
+  if (state === 'pending') return 'te.appr.flowRemovedPendingHint'
+  return 'te.appr.flowRemovedHint'
+}
+
 export function approvalStateOf(approval) {
   const s = approval?.state
   return TONE[s] ? s : 'none'
@@ -48,7 +59,11 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
   const state = approvalStateOf(approval)
   const required = !!detail?.required
   if (!required && state === 'none') return null
-  const Icon = ICON[state] || ShieldCheck
+  // Kanalın yönetici alıcıları kaldırıldı (inceleme 2026-10-18): eski onay durumu bir şey beklemez — karar verilemez (sunucu
+  // 409 APPROVAL_FLOW_REMOVED), rapor takım adresine doğrudan gönderilir. Rozet "Onay akışı kaldırıldı" der (eski "Onay
+  // bekliyor" yanıltıyordu), önceki durum ayrı bir satırda yalnız bilgi; ipucu duruma göre (`flowRemovedHintKey`)
+  const flowRemoved = !required && state !== 'none'
+  const Icon = flowRemoved ? ShieldCheck : ICON[state] || ShieldCheck
   const approvers = Array.isArray(detail?.approvers) ? detail.approvers : []
   const approverNames = approvers.map((a) => a?.name).filter(Boolean)
   const execCount = Number(detail?.executive_count) || 0
@@ -84,10 +99,7 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
     }
   }
 
-  // Kanalın yönetici alıcıları kaldırıldı (inceleme 2026-10-18): eski onay durumu bir şey beklemez — karar verilemez (sunucu
-  // 409 APPROVAL_FLOW_REMOVED), rapor takım adresine doğrudan gönderilir
-  const flowRemoved = !required && state !== 'none' && !(state === 'approved' && sentAt)
-  const hint = flowRemoved ? t('te.appr.flowRemovedHint')
+  const hint = flowRemoved ? t(flowRemovedHintKey(state, sentAt))
     : state === 'pending' ? t('te.appr.pendingHint')
     : state === 'rejected' ? t('te.appr.rejectedHint')
       : state === 'stale' ? t('te.appr.state.stale')
@@ -100,8 +112,9 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
         <h2 id="te-approval-title" className="m-0 flex items-center gap-2 text-base font-semibold">
           <ShieldCheck aria-hidden="true" className="size-4 text-muted-foreground" /> {t('te.appr.title')}
         </h2>
-        <Badge className={cn('rounded-md overflow-visible whitespace-normal', TONE[state])} data-slot="te-approval-state">
-          <Icon aria-hidden="true" className="size-3.5" /> {t(`te.appr.state.${state}`)}
+        <Badge className={cn('rounded-md overflow-visible whitespace-normal', TONE[flowRemoved ? 'none' : state])} data-slot="te-approval-state"
+          data-flow={flowRemoved ? 'removed' : undefined}>
+          <Icon aria-hidden="true" className="size-3.5" /> {t(flowRemoved ? 'te.appr.state.flowRemoved' : `te.appr.state.${state}`)}
         </Badge>
         {required && <Badge variant="outline" className="rounded-md overflow-visible whitespace-normal">{t('te.appr.execCount', execCount)}</Badge>}
       </div>
@@ -117,8 +130,13 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
           <span className="font-semibold">{t('te.appr.note')}: </span>{approval.note}
         </blockquote>
       )}
-      {hint && <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{hint}</p>}
-      {state === 'approved' && sentAt && (
+      {flowRemoved && (
+        <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-approval-prev">
+          {t('te.appr.prevState', t(state === 'stale' ? 'te.appr.state.staleShort' : `te.appr.state.${state}`))}
+        </p>
+      )}
+      {hint && <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-approval-hint">{hint}</p>}
+      {(state === 'approved' || flowRemoved) && sentAt && (
         <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.lastSent', fmtDateTime(sentAt, uiLang), sentTo || '—')}</p>
       )}
       {required && (

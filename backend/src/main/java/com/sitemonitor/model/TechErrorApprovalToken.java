@@ -64,4 +64,12 @@ public class TechErrorApprovalToken {
      */
     @Column(name = "mailed_at")
     private Instant mailedAt;
+    /**
+     * Bu belirteç {@code mailed_at} damgasını İZLEYEN bir sürümde mi üretildi (inceleme 2026-10-18, takvim tarihi yerine
+     * veriden): TRUE = üreten pod postanın ulaştığını damgalar — damgasız TRUE belirteç gerçekten ulaşmadı demektir. NULL =
+     * eski sürüm (damgasız) ya da yuvarlanan dağıtım / geri dönüşte eski pod üretti; postanın ulaşıp ulaşmadığı BİLİNMEZ,
+     * onay hatırlatması nötr metin kullanır ("Site Monitor'de açın; özgün bağlantı çalışıyor olabilir").
+     */
+    @Column(name = "mail_tracked")
+    private Boolean mailTracked;
 }
